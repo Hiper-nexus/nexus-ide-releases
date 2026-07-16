@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectLimit } from './limit-detector';
+import { detectLimit, tierScopeFromModelId } from './limit-detector';
 
 describe('detectLimit', () => {
   it('detects Claude usage-limit messages as rate-limit', () => {
@@ -198,5 +198,58 @@ describe('detectLimit — classificador vendorado do oh-my-pi', () => {
     expect(detectLimit('capacity planning doc for the data team')).toBeNull();
     // Prosa de squad com "account" + "rate limit" sem verbo de resultado.
     expect(detectLimit('switch account when you see a rate limit')).toBeNull();
+  });
+});
+
+describe('detectLimit — escopo de tier (cooldown escopado do oh-my-pi)', () => {
+  it('extrai tier:opus de um id de modelo completo perto do erro', () => {
+    const hit = detectLimit(
+      'Error: 429 Too Many Requests for model claude-opus-4-6',
+    );
+    expect(hit?.kind).toBe('rate-limit');
+    expect(hit?.scope).toBe('tier:opus');
+  });
+
+  it('extrai tier pelo nome de família isolado perto do erro', () => {
+    const hit = detectLimit(
+      'Claude usage limit reached. Opus limit resets at 6pm.',
+    );
+    expect(hit?.kind).toBe('rate-limit');
+    expect(hit?.scope).toBe('tier:opus');
+  });
+
+  it('extrai tier no caminho do classificador vendorado', () => {
+    const hit = detectLimit(
+      'You have exhausted your capacity on claude-fable-5. Your quota will reset after 10pm.',
+    );
+    expect(hit?.kind).toBe('quota');
+    expect(hit?.scope).toBe('tier:fable');
+  });
+
+  it('sem menção a modelo → sem escopo (cooldown global da conta)', () => {
+    const hit = detectLimit('Error: 429 Too Many Requests');
+    expect(hit?.kind).toBe('rate-limit');
+    expect(hit?.scope).toBeUndefined();
+  });
+
+  it('nome de família longe da vizinhança do erro não vira escopo', () => {
+    const filler = 'x'.repeat(300);
+    const hit = detectLimit(`Error: 429 Too Many Requests ${filler} sonnet`);
+    expect(hit?.kind).toBe('rate-limit');
+    expect(hit?.scope).toBeUndefined();
+  });
+});
+
+describe('tierScopeFromModelId', () => {
+  it('classifica ids anthropic em tier via identity classifier', () => {
+    expect(tierScopeFromModelId('claude-sonnet-4-5')).toBe('tier:sonnet');
+    expect(tierScopeFromModelId('anthropic/claude-fable-5')).toBe('tier:fable');
+    expect(tierScopeFromModelId('claude-4-6-opus')).toBe('tier:opus');
+  });
+
+  it('não escopa modelos não-anthropic nem entradas vazias', () => {
+    expect(tierScopeFromModelId('gpt-5.2-codex')).toBeUndefined();
+    expect(tierScopeFromModelId('gemini-3-pro')).toBeUndefined();
+    expect(tierScopeFromModelId(undefined)).toBeUndefined();
   });
 });

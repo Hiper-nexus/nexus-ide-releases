@@ -68,6 +68,8 @@ vi.mock('./limit-detector', () => ({
       ? { reason: 'rate limit', cooldownMs: 60_000 }
       : null,
   ),
+  // Panes de teste não têm model — escopo indefinido = comportamento global.
+  tierScopeFromModelId: vi.fn(() => undefined),
 }));
 
 vi.mock('../persistence/account-store', () => ({
@@ -78,6 +80,11 @@ vi.mock('../persistence/account-store', () => ({
   }),
   getActiveAccount: vi.fn(() => accountMocks.current),
   pickAvailable: vi.fn(() => accountMocks.next),
+  pickAvailableForFailover: vi.fn(() => ({
+    account: accountMocks.next,
+    probe: false,
+  })),
+  isAccountBlockedForScope: vi.fn(() => false),
   setCooldown: accountMocks.setCooldown,
   prepareAccountForSpawn: vi.fn((adapterId: string, id: string) => {
     const acct =
@@ -299,7 +306,7 @@ describe('account failover authority and lifecycle', () => {
   });
 
   it('does not poison coalesce when prepare fails; retries alternate account', async () => {
-    const { prepareAccountForSpawn, pickAvailable } = await import(
+    const { prepareAccountForSpawn, pickAvailableForFailover } = await import(
       '../persistence/account-store'
     );
     const scope = testProjectScope();
@@ -339,9 +346,9 @@ describe('account failover authority and lifecycle', () => {
         apiKey: null,
         authEnv: {},
       }));
-    vi.mocked(pickAvailable)
-      .mockImplementationOnce(() => accountMocks.next)
-      .mockImplementationOnce(() => accountC);
+    vi.mocked(pickAvailableForFailover)
+      .mockImplementationOnce(() => ({ account: accountMocks.next, probe: false }))
+      .mockImplementationOnce(() => ({ account: accountC, probe: false }));
 
     ptyMocks.dataTaps[0]!('sess-prep', 'LIMIT');
 
@@ -428,5 +435,194 @@ describe('account failover authority and lifecycle', () => {
 
     expect(accountMocks.setCooldown).not.toHaveBeenCalled();
     expect(owner.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () => {
+  function armPane(id: number): Renderer {
+    const scope = testProjectScope();
+    const owner = renderer(id);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: `pane-${id}`,
+      sessionId: `sess-${id}`,
+      missionId: `m-${id}`,
+      scope,
+    });
+    return owner;
+  }
+
+  it('todas bloqueadas: evento carrega nextUnblockAtMs e agenda retry que troca quando a irmã libera', async () => {
+    const { pickAvailableForFailover } = await import(
+      '../persistence/account-store'
+    );
+    const owner = armPane(808);
+    // Primeira decisão: nada livre; irmã mais próxima libera em 130s.
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: null,
+      probe: false,
+      nextUnblockAtMs: 130_000,
+    }));
+
+    ptyMocks.dataTaps[0]!('sess-808', 'LIMIT');
+
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-808',
+        switched: false,
+        nextUnblockAtMs: 130_000,
+        // min(própria conta 100k+60k, irmã 130k) + 1s de folga.
+        scheduledRetryAtMs: 131_000,
+      }),
+    );
+
+    // Dispara a espera-pela-irmã: o pick default volta a devolver account-b.
+    vi.advanceTimersByTime(31_000);
+
+    const sends = owner.send.mock.calls.filter(
+      (c) => c[0] === ACCOUNT_CHANNELS.failover,
+    );
+    expect(sends).toHaveLength(2);
+    expect(sends[1]![1]).toEqual(
+      expect.objectContaining({
+        switched: true,
+        toAccountId: 'account-b',
+        crossAccount: true,
+        reason: expect.stringContaining('retry automático'),
+      }),
+    );
+  });
+
+  it('espera o fim do PRÓPRIO cooldown quando é o menor (sem irmã mais cedo)', async () => {
+    const { pickAvailableForFailover } = await import(
+      '../persistence/account-store'
+    );
+    const owner = armPane(809);
+    // Irmãs só liberam bem depois do cooldown da própria conta (60s).
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: null,
+      probe: false,
+      nextUnblockAtMs: 500_000,
+    }));
+
+    ptyMocks.dataTaps[0]!('sess-809', 'LIMIT');
+
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        switched: false,
+        nextUnblockAtMs: 500_000,
+        // min(100k+60k própria, 500k irmã) + 1s.
+        scheduledRetryAtMs: 161_000,
+      }),
+    );
+  });
+
+  it('sondagem last-resort: evento marca probe e não grava coalesce', async () => {
+    const { pickAvailableForFailover, prepareAccountForSpawn } = await import(
+      '../persistence/account-store'
+    );
+    const owner = armPane(810);
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: accountMocks.next,
+      probe: true,
+      nextUnblockAtMs: 900_000,
+    }));
+    const prepareCallsBefore =
+      vi.mocked(prepareAccountForSpawn).mock.calls.length;
+
+    ptyMocks.dataTaps[0]!('sess-810', 'LIMIT');
+
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        switched: true,
+        toAccountId: 'account-b',
+        probe: true,
+      }),
+    );
+    // Prepare recebeu a permissão explícita de sondagem em conta fria.
+    const probeCall = vi
+      .mocked(prepareAccountForSpawn)
+      .mock.calls.slice(prepareCallsBefore)
+      .find((call) => call[1] === 'account-b');
+    expect(probeCall?.[3]).toEqual({ allowCoolingProbe: true });
+
+    // Segundo pane no mesmo from-account NÃO reusa a sondagem via coalesce:
+    // a decisão de probe nunca é coalescida (uma request de teste por vez).
+    const owner2Scope = testProjectScope();
+    addPane({
+      owner,
+      paneId: 'pane-810b',
+      sessionId: 'sess-810b',
+      missionId: 'm-810b',
+      scope: owner2Scope,
+    });
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: null,
+      probe: false,
+    }));
+    ptyMocks.dataTaps[0]!('sess-810b', 'LIMIT');
+    const sends = owner.send.mock.calls.filter(
+      (c) => c[0] === ACCOUNT_CHANNELS.failover,
+    );
+    const second = sends.find(
+      (c) => (c[1] as { paneId?: string }).paneId === 'pane-810b',
+    );
+    expect(second?.[1]).toEqual(expect.objectContaining({ switched: false }));
+  });
+
+  it('saída da sessão cancela a espera-pela-irmã pendente', async () => {
+    const { pickAvailableForFailover } = await import(
+      '../persistence/account-store'
+    );
+    const owner = armPane(811);
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: null,
+      probe: false,
+      nextUnblockAtMs: 130_000,
+    }));
+
+    ptyMocks.dataTaps[0]!('sess-811', 'LIMIT');
+    ptyMocks.exitTaps[0]!('sess-811');
+    vi.advanceTimersByTime(120_000);
+
+    const sends = owner.send.mock.calls.filter(
+      (c) => c[0] === ACCOUNT_CHANNELS.failover,
+    );
+    // Só o evento switched:false original; nenhum retry após o exit.
+    expect(sends).toHaveLength(1);
+  });
+
+  it('propaga o escopo do hit para o cooldown da conta exausta', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const owner = armPane(812);
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'rate-limit' as const,
+            reason: 'opus limit',
+            cooldownMs: 60_000,
+            scope: 'tier:opus',
+          }
+        : null,
+    );
+
+    ptyMocks.dataTaps[0]!('sess-812', 'LIMIT');
+
+    expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+      'account-a',
+      160_000,
+      'opus limit',
+      'tier:opus',
+    );
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ switched: true, toAccountId: 'account-b' }),
+    );
   });
 });

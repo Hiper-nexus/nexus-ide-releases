@@ -20,10 +20,18 @@ export function useFailoverController(): void {
     return window.nexus.accounts.onFailover((event) => {
       const push = useToastStore.getState().push;
       if (!event.switched) {
+        // Espera-pela-irmã: o main agendou retry automático quando alguma
+        // conta (a própria ou uma irmã em cooldown) liberar — mostra o
+        // horário em vez de só "sem contas".
+        const retryNote = event.scheduledRetryAtMs
+          ? ` Nova tentativa automática às ${new Date(
+              event.scheduledRetryAtMs,
+            ).toLocaleTimeString()}.`
+          : '';
         push(
           'error',
           `Limite atingido em "${event.fromAccountLabel}"`,
-          `${event.reason}. Nenhuma outra conta disponível — adicione outra em Configurações → Providers.`,
+          `${event.reason}. Nenhuma outra conta disponível — adicione outra em Configurações → Providers.${retryNote}`,
         );
         return;
       }

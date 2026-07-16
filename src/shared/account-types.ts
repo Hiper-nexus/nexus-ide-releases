@@ -78,6 +78,20 @@ export interface FailoverEvent {
   coalesced?: boolean;
   /** Mission bound to the failing pane when known (continuity pack). */
   missionId?: string;
+  /**
+   * Quando switched=false com todas as contas em cooldown: menor blockedUntil
+   * entre as irmãs elegíveis (epoch ms). O main agenda um retry automático em
+   * min(fim do cooldown da própria conta, este instante) + 1s; a UI pode
+   * mostrar o horário em vez de só "nenhuma conta disponível".
+   */
+  nextUnblockAtMs?: number;
+  /** Epoch ms do retry automático agendado pelo main (espera-pela-irmã). */
+  scheduledRetryAtMs?: number;
+  /**
+   * True quando a troca é uma SONDAGEM last-resort: a conta destino ainda
+   * está em cooldown, mas a janela de probe venceu e não havia alternativa.
+   */
+  probe?: boolean;
 }
 
 /** Main → renderer: user activated an account; panes may need restart. */
