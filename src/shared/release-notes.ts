@@ -13,26 +13,36 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.18.0',
+  version: '0.19.0',
   date: '2026-07-16',
-  codename: 'Cockpit Ligado',
+  codename: 'Oh My Pi — na tela',
   summary:
-    'Tudo que estava pronto atrás de flag agora nasce ligado e visível: painel contextual, onboarding progressivo, blocos de comando, busca unificada, memórias, editor, skills e MCP Hub — com o painel Labs para ligar/desligar qualquer flag pela interface. Inclui o inbox de notificações de agentes, o perfil de design com dials e todo o crossover Oh My Pi da 0.17.0.',
+    'A segunda leva do crossover Oh My Pi: as capacidades que só viviam no backend agora têm interface de primeira classe — painel de memória com busca, inventário de configs por workspace, preço e janela no seletor de modelo, companion mobile criptografado com QR, e drawers direitos mutuamente exclusivos. Motor testado (0.17.0/0.18.0), agora operacional na tela.',
   highlights: [
     {
-      title: 'Cockpit inteiro ligado por default',
+      title: 'Painel de Memória do workspace',
       detail:
-        'Painel contextual direito (busca, skills, editor, memória, missão, git), onboarding progressivo, blocos de comando no terminal, journal de missões, memória Markdown, memória agentic FTS5 e MCP Hub nascem habilitados — capability pronta deixou de ficar invisível atrás de flag. Escritas sensíveis continuam atrás de clique com confirmação.',
+        'Um drawer mostra os fatos, decisões e preferências que os agentes registram no projeto: estatísticas por tipo, busca instantânea (recall FTS5) com navegação por teclado, e estados vazio/desligado claros. A memória agentic compartilhada entre CLIs deixou de ser só uma tool sem tela.',
     },
     {
-      title: 'Labs: as flags do produto viraram interface',
+      title: 'Inventário de configs por workspace',
       detail:
-        'Configurações → Sistema → Labs lista toda feature flag com estado real, descrição e origem da decisão (padrão, override, kill switch), com switch persistido e "Restaurar padrão". Ligar ou desligar qualquer capability é um clique — sem editar arquivo à mão.',
+        'Um painel mostra o que cada CLI enxerga neste workspace — MCP servers, regras, skills e comandos de .claude, .cursor, .codex, AGENTS.md e GEMINI.md — agrupado por ecossistema de origem, com conflitos de nome destacados e segredos nunca materializados.',
     },
     {
-      title: 'Inbox de notificações de agentes',
+      title: 'Preço e janela no seletor de modelo',
       detail:
-        'Um sininho na barra do workspace acumula CONCLUÍDO e ENCERRADO por agente: só notifica trabalho de verdade (busy sustentado), "Ir ao pane" foca o agente na hora, e itens de pane fechado avisam em vez de quebrar.',
+        'Ao compor uma missão, cada modelo mostra um selo discreto com janela de contexto e preço por milhão de tokens — a base de centenas de modelos do crossover finalmente visível onde a decisão acontece.',
+    },
+    {
+      title: 'Companion mobile com tela e QR',
+      detail:
+        'Configurações → Sistema → Companion mobile inicia/para o relay criptografado ponta a ponta, exibe o QR de pareamento e os links de controle e somente-leitura, com aviso de segurança — e o output dos panes já flui para o dispositivo. O transporte E2E que existia sem interface agora se opera pela tela.',
+    },
+    {
+      title: 'Drawers direitos que não se atropelam',
+      detail:
+        'Orquestração, pane omp e memória passam a ser mutuamente exclusivos no slot direito — abrir um fecha o outro — acabando com painéis empilhados que escondiam o de baixo sem sinal.',
     },
     {
       title: 'Perfil de design no motor automático',
@@ -129,7 +139,7 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Release metadata alinhada',
       detail:
-        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.18.0 — a 0.17.0 nunca foi tagueada e seu conteúdo sai nesta release.',
+        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.19.0, com a segunda leva de UI do crossover reconciliada sobre a 0.18.0.',
     },
   ],
 };

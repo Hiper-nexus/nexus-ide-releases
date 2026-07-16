@@ -147,6 +147,8 @@ import { registerSearchMixerIpc } from "./search/search-mixer-ipc";
 import { getSearchMixer } from "./search/search-mixer-bootstrap";
 import { registerProductWaveIpc } from "./product-wave-ipc";
 import { registerDiscoveryIpc } from "./discovery/discovery-ipc";
+import { registerMemoryIpc } from "./memory/memory-ipc";
+import { registerModelMetadataIpc } from "./adapters/model-metadata-ipc";
 import { registerMissionEventIpc } from "./orch/mission-event-ipc";
 import { startAgentLifecycleService } from "./agents/agent-lifecycle-service";
 import {
@@ -424,6 +426,10 @@ function bootstrap(): void {
   registerProductWaveIpc();
   // Descoberta universal de configs de ecossistemas de agente (read-only, B4).
   registerDiscoveryIpc();
+  // Memória agentic por workspace (C2): stats/recall read-only + forget.
+  registerMemoryIpc();
+  // Metadado rico de modelo (A2): preço/janela/capacidades, read-only.
+  registerModelMetadataIpc();
   // Agent lifecycle: record finished/needs-input; reap finished only (never running).
   startAgentLifecycleService();
   registerBrowserIpc(projectRuntimeManager);

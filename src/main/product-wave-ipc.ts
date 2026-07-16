@@ -51,6 +51,10 @@ import {
   markSaved,
   MAX_EDITOR_CHARS,
 } from './editor/editor-document';
+import {
+  publishEditorDocumentApply,
+  publishEditorDocumentOpen,
+} from './editor/editor-buffer-bridge';
 import { writeFileAtomic } from './util/atomic-write';
 import { runSearchMixerQuery } from './search/search-mixer-bootstrap';
 import {
@@ -455,18 +459,23 @@ export function registerProductWaveIpc(): void {
     try {
       const st = fs.statSync(full);
       const bytes = readEditorBytesOrEmpty(full);
-      return openEditorDocument({
+      const doc = openEditorDocument({
         path: full,
         bytes,
         mtimeMs: st.mtimeMs,
       });
+      // Publish the live buffer so a hashline patch sees the open document.
+      publishEditorDocumentOpen(event.sender, doc);
+      return doc;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       // Missing file after a valid in-scope path → empty document.
-      return openEditorDocument({
+      const doc = openEditorDocument({
         path: full,
         bytes: Buffer.from(''),
       });
+      publishEditorDocumentOpen(event.sender, doc);
+      return doc;
     }
   });
 
@@ -501,8 +510,14 @@ export function registerProductWaveIpc(): void {
       // intermediate dirs under that containment.
       fs.mkdirSync(path.dirname(full), { recursive: true, mode: 0o700 });
       writeFileAtomic(full, next.content);
-      return markSaved(next);
+      const saved = markSaved(next);
+      // Saved buffer is now clean and matches disk — refresh the registry.
+      publishEditorDocumentApply(event.sender, saved);
+      return saved;
     }
+    // Edit without write: the buffer is (possibly) dirty — publish it so a
+    // hashline patch validates against the unsaved content.
+    publishEditorDocumentApply(event.sender, next);
     return next;
   });
 }

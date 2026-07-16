@@ -23,6 +23,7 @@ import {
   startCompanionRelayTransport,
   stopCompanionRelayTransport,
 } from './companion-relay-transport';
+import { initCompanionRelayPtyBridge } from './companion-relay-pty-bridge';
 
 const startSchema = z
   .object({
@@ -38,6 +39,9 @@ function withError(
 }
 
 export function registerCompanionRelayIpc(): void {
+  // Encaminhamento PTY → relay: tap único, no-op enquanto não há host ativo.
+  initCompanionRelayPtyBridge();
+
   ipcMain.handle(COMPANION_RELAY_CHANNELS.status, (event) => {
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     return getCompanionRelayTransportInfo(scope);

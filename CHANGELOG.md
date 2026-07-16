@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.19.0 — Oh My Pi na tela
+
+Segunda leva do crossover [oh-my-pi](https://github.com/can1357/oh-my-pi): as
+capacidades que só viviam no backend/MCP ganham UI de primeira classe. Reconciliada
+sobre a 0.18.0 (Cockpit Ligado).
+
+### Adicionado
+
+- **Painel de Memória** do workspace: stats por tipo/escopo + recall FTS5 com
+  debounce, navegação por teclado, AA e estados vazio/desligado. IPC read-only
+  `memory:*` escopado por gate.
+- **Inventário de configs**: painel do que cada CLI enxerga no workspace
+  (MCP/rules/skills/commands) por ecossistema, com shadowing destacado.
+- **Preço/janela no seletor de modelo**: `ModelMetaBadge` no wizard de missão via
+  IPC read-only `model:richMetadata`.
+- **Companion mobile na tela**: seção de Settings inicia/para o relay E2E, exibe
+  QR e links full/view com aviso de segurança; push de PTY ligado ao pty-manager.
+- **Exclusividade de drawer direito** (orquestração/omp/memória), **registry de
+  buffers** do editor (hashline modo buffer), botões de Memória e Configs na
+  WorkspaceBar.
+
+### Corrigido
+
+- Reconciliação com a 0.18.0: adotado o toggle de flags `Labs` da main (canal
+  único `product:flags.setOverride`), removida a implementação duplicada do
+  crossover para evitar handler IPC em conflito.
+- `ModelMetaBadge` tolera `window.nexus` ausente (ambiente de teste).
+- Release metadata realinhada em 0.19.0.
+
 ## 0.18.0 — Cockpit Ligado
 
 Data: 2026-07-16

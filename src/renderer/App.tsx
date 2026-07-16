@@ -11,6 +11,8 @@ import { VoiceHud } from './components/VoiceHud';
 import { VoiceSettings } from './components/VoiceSettings';
 import { OrchestrationPanel } from './components/OrchestrationPanel';
 import { OmpRpcPanel } from './components/omp/OmpRpcPanel';
+import { MemoryPanel } from './components/memory/MemoryPanel';
+import { ConfigInventoryPanel } from './components/discovery/ConfigInventoryPanel';
 import { MissionRail } from './components/MissionRail';
 import { SettingsDrawer } from './components/settings/SettingsDrawer';
 import { LaunchScreen } from './components/LaunchScreen';
@@ -442,6 +444,8 @@ export function App() {
         <HomeDeck />
         <OrchestrationPanel />
         <OmpRpcPanel />
+        <MemoryPanel />
+        <ConfigInventoryPanel />
         <ContextualPanel
           flagEnabled={productFlags[FEATURE_FLAG_IDS.contextualPanel] !== false}
           workspaceId={currentWorkspace?.path}

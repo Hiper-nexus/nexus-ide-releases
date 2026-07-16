@@ -1,0 +1,62 @@
+/* ModelMetaBadge — selo discreto de preço/janela ao lado do seletor de modelo.
+   Sinal em neutro profundo: o número informa sem competir com o control. */
+
+.model-meta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: help;
+  /* Assenta ao chegar o metadado — sem coreografia, só presença. */
+  animation: model-meta-badge-in 160ms var(--ease-out-quart);
+}
+
+@keyframes model-meta-badge-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-meta-badge {
+    animation: none;
+  }
+}
+
+.model-meta-badge__line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Célula do seletor de modelo no Mission Wizard: empilha o <select> e o selo
+   numa única coluna do grid de controles (preserva as 3 colunas do roster). */
+.wizard__model-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.wizard__model-cell .wizard__model-meta {
+  padding-left: 2px;
+}
+
+/* Marcador de raciocínio: um acento parcimonioso, não um enfeite. */
+.model-meta-badge__reason {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-round);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
