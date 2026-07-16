@@ -22,6 +22,10 @@ export function IntegrationsPanel({
   const [ghToken, setGhToken] = useState('');
   const [linKey, setLinKey] = useState('');
   const [prs, setPrs] = useState<ForgePrSummary[]>([]);
+  const [branchReview, setBranchReviewState] = useState<{
+    branch: string;
+    review: ForgePrSummary | null;
+  } | null>(null);
   const [ghIssues, setGhIssues] = useState<ExternalIssue[]>([]);
   const [linIssues, setLinIssues] = useState<ExternalIssue[]>([]);
   const [forwards, setForwards] = useState<PortForwardInfo[]>([]);
@@ -52,9 +56,13 @@ export function IntegrationsPanel({
     if (g) {
       const pr = await window.nexus.integrations.listPrs();
       const issues = await window.nexus.integrations.listGithubIssues({ limit: 15 });
+      const branch = await window.nexus.integrations.branchReview();
       if (!live()) return;
       setPrs(pr.ok ? pr.prs : []);
       setGhIssues(issues.ok ? issues.issues : []);
+      setBranchReviewState(
+        branch.ok ? { branch: branch.branch, review: branch.review } : null,
+      );
       // Mostra o primeiro erro real (PRs e issues compartilham token/origin).
       setGhError(!pr.ok ? pr.error : !issues.ok ? issues.error : null);
     } else {
@@ -172,6 +180,24 @@ export function IntegrationsPanel({
 
         <section className="int-panel__sec">
           <h4>Criar PR (GitHub)</h4>
+          {branchReview && (
+            <p className="int-panel__dim int-panel__branch-review">
+              Branch <strong>{branchReview.branch}</strong>:{' '}
+              {branchReview.review ? (
+                <button
+                  type="button"
+                  className="int-panel__link"
+                  onClick={() =>
+                    void window.nexus.app.openExternal(branchReview.review!.url)
+                  }
+                >
+                  PR #{branchReview.review.number} ({branchReview.review.state})
+                </button>
+              ) : (
+                'sem PR aberto ainda'
+              )}
+            </p>
+          )}
           <input
             className="int-panel__input"
             value={prTitle}

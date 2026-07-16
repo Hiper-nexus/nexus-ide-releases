@@ -310,6 +310,11 @@ export interface NexusApi {
       paneId: string,
       active: boolean,
     ): Promise<{ paneId: string; active: boolean }>;
+    /** width ≤480 liga emulação mobile (UA + métricas, com reload); null desliga. */
+    setDeviceEmulation(
+      paneId: string,
+      width: number | null,
+    ): Promise<{ paneId: string; emulating: boolean }>;
     sendDesignSelection(
       paneId: string,
       payload: BrowserDesignSendPayload,

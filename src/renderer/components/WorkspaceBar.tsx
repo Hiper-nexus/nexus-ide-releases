@@ -110,6 +110,7 @@ export function WorkspaceBar({
   const missions = useOrchStore((s) => s.missions);
   const boundWorkspacePath = useOrchStore((s) => s.boundWorkspacePath);
   const toggleSettings = useSettingsStore((s) => s.toggleDrawer);
+  const closeSettingsDrawer = useSettingsStore((s) => s.closeDrawer);
   const workspace = useWorkspaceStore((s) => s.current);
   const openWizard = useMissionWizardStore((s) => s.openForMission);
   const openNewWorkspace = useMissionWizardStore((s) => s.openForNewWorkspace);
@@ -360,6 +361,14 @@ export function WorkspaceBar({
   const inlineTools = secondaryTools.filter((t) => INLINE_TOOL_IDS.has(t.id));
   const overflowTools = secondaryTools.filter((t) => !INLINE_TOOL_IDS.has(t.id));
 
+  // Painéis/panes abrem ATRÁS do drawer de configurações — ativar uma
+  // ferramenta com o drawer aberto parecia clique morto (bug de operador).
+  // Toda ativação fecha o drawer primeiro para o resultado ficar visível.
+  function activateTool(tool: ToolDef): void {
+    closeSettingsDrawer();
+    tool.onClick();
+  }
+
   function renderToolBtn(tool: ToolDef, opts?: { menu?: boolean }) {
     if (opts?.menu) {
       return (
@@ -369,7 +378,7 @@ export function WorkspaceBar({
           className={`workspace-bar__menu-item ${tool.active ? 'workspace-bar__menu-item--active' : ''}`}
           title={tool.title}
           onClick={() => {
-            tool.onClick();
+            activateTool(tool);
             setMoreOpen(false);
           }}
         >
@@ -383,7 +392,7 @@ export function WorkspaceBar({
         key={tool.id}
         type="button"
         className={`workspace-bar__btn ${tool.active ? 'workspace-bar__btn--view-active' : ''} ${tool.id === 'view' ? 'workspace-bar__btn--view' : ''}`}
-        onClick={tool.onClick}
+        onClick={() => activateTool(tool)}
         title={tool.title}
         aria-label={tool.title}
       >

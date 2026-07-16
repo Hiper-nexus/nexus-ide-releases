@@ -30,6 +30,8 @@ function safePathspec(value: string, ctx: z.RefinementCtx): void {
 export const INTEGRATIONS_CHANNELS = {
   forgeCreatePr: 'integrations:forge.createPr',
   forgeListPrs: 'integrations:forge.listPrs',
+  /** PR/MR aberto para a branch atual (read-side da camada forge). */
+  forgeBranchReview: 'integrations:forge.branchReview',
   githubListIssues: 'integrations:github.listIssues',
   linearListIssues: 'integrations:linear.listIssues',
   linearSetKey: 'integrations:linear.setKey',

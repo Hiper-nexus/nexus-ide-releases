@@ -195,14 +195,26 @@ function applyEvent(event: OmpRpcPushEvent): void {
         ],
       });
       return;
-    case 'notice':
+    case 'notice': {
+      // Morte por falta de auth/modelo vira estado acionável (CTA de login no
+      // painel) em vez de uma linha perdida no transcript.
+      const isLoginNeeded =
+        event.level === 'error' &&
+        /No models available|\/login|API key/i.test(event.message);
       set({
+        ...(isLoginNeeded
+          ? {
+              startError:
+                'omp sem login/modelo — abra o omp no terminal, rode /login e inicie a sessão de novo.',
+            }
+          : {}),
         transcript: [
           ...get().transcript,
           { id: nextId(), kind: 'notice', level: event.level, text: event.message },
         ],
       });
       return;
+    }
     case 'exit':
       set({
         sessionId: null,

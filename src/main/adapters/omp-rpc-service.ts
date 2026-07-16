@@ -299,6 +299,7 @@ export class OmpRpcSession {
   private stdoutBuffer = '';
   private readonly stdoutDecoder = new StringDecoder('utf8');
   private readonly stderrDecoder = new StringDecoder('utf8');
+  private readonly diagnosticTail: string[] = [];
   private reqCounter = 0;
   private readonly pending = new Map<string, PendingRequest>();
   /** Comandos enfileirados enquanto o frame ready não chega. */
@@ -344,7 +345,10 @@ export class OmpRpcSession {
     );
     this.proc.stderr?.on('data', (chunk) => {
       const text = decodeStreamChunk(this.stderrDecoder, chunk).trim();
-      if (text) console.warn(`[omp-rpc:${this.sessionId}] stderr: ${text.slice(0, 400)}`);
+      if (text) {
+        console.warn(`[omp-rpc:${this.sessionId}] stderr: ${text.slice(0, 400)}`);
+        this.rememberDiagnostic(text);
+      }
     });
     this.proc.on('exit', (code) => this.onExit(code));
     this.proc.on('error', (err) => {
@@ -469,6 +473,9 @@ export class OmpRpcSession {
         value = JSON.parse(trimmed);
       } catch {
         // Linha inválida: registra e segue — o parser nunca derruba a sessão.
+        // É aqui que caem mensagens humanas do CLI ("No models available.
+        // Use /login…") — o tail vira diagnóstico visível se o processo sair.
+        this.rememberDiagnostic(trimmed);
         console.warn(
           `[omp-rpc:${this.sessionId}] linha NDJSON inválida ignorada: ` +
             trimmed.slice(0, 200),
@@ -744,6 +751,13 @@ export class OmpRpcSession {
     }
   }
 
+  /** Últimas linhas humanas (stderr + stdout não-NDJSON) — o motivo REAL de
+   * uma morte prematura, que antes era engolido ("código 1" seco). */
+  private rememberDiagnostic(text: string): void {
+    this.diagnosticTail.push(text.slice(0, 300));
+    if (this.diagnosticTail.length > 6) this.diagnosticTail.shift();
+  }
+
   private onExit(code: number | null): void {
     if (this.lifecycle === 'exited') return;
     this.lifecycle = 'exited';
@@ -754,6 +768,13 @@ export class OmpRpcSession {
     }
     this.rejectAllPending(new Error('processo omp encerrou'));
     for (const requestId of [...this.pendingUi.keys()]) this.settleUi(requestId);
+    if (code !== null && code !== 0 && this.diagnosticTail.length > 0) {
+      this.push({
+        kind: 'notice',
+        level: 'error',
+        message: `omp saiu com código ${code}: ${this.diagnosticTail.join(' · ')}`,
+      });
+    }
     this.push({ kind: 'exit', code: this.exitCode });
   }
 

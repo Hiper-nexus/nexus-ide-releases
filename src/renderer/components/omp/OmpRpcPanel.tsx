@@ -5,6 +5,8 @@ import {
   type OmpPendingUiRequest,
   type OmpTranscriptEntry,
 } from '../../state/omp-rpc-store';
+import { useLayoutStore } from '../../state/layout-store';
+import { waitForSession } from '../../terminal/terminal-host';
 
 /**
  * Painel da sessão oh-my-pi via RPC nativo (`omp --mode rpc-ui`, sem PTY):
@@ -370,6 +372,21 @@ export function OmpRpcPanel() {
       {startError ? (
         <div className="omp-panel__error">
           {startError}
+          {/sem login\/modelo/i.test(startError) && (
+            <button
+              type="button"
+              className="settings-btn settings-btn--primary omp-panel__install"
+              onClick={() => {
+                const paneId = useLayoutStore.getState().addShellPane();
+                void waitForSession(paneId).then((sessionId) => {
+                  if (sessionId) window.nexus.pty.write(sessionId, 'omp\r');
+                });
+              }}
+              title="Abre um terminal com o omp — rode /login lá e volte para Iniciar sessão"
+            >
+              Abrir omp no terminal (/login)
+            </button>
+          )}
           {/não encontrado no PATH/i.test(startError) && (
             <button
               type="button"

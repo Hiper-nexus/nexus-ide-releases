@@ -51,6 +51,9 @@ export const BROWSER_CHANNELS = {
   /** invoke: renderer → main. Ship ALL annotations as one consolidated
    * design-feedback prompt into an agent CLI pane (or dry-run for copy). */
   designAnnotationsSend: 'browser:designAnnotationsSend',
+  /** invoke: renderer → main. Emulação de device do preview responsivo:
+   * UA mobile + métricas de tela no webContents (com reload). */
+  deviceEmulation: 'browser:deviceEmulation',
 } as const;
 
 export const DEV_SERVER_CHANNELS = {
