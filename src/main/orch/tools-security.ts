@@ -30,7 +30,7 @@ function resolveAuditInput(
     throw new Error('provide either path or content, not both');
   }
   if (relativePath) {
-    assertAgentReadablePath(relativePath);
+    assertAgentReadablePath(executionScopeFor(ctx), relativePath);
     const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
     try {
       if (handle.stat.size > MAX_AUDIT_BYTES) {

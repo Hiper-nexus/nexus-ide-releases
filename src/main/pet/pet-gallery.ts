@@ -209,6 +209,12 @@ async function importPetShareInstance(
   // main process. Reject metadata/link-local/reserved destinations before any
   // request, and forbid redirects (a 302 → 169.254.169.254 would otherwise
   // bounce the fetch into the cloud-metadata service).
+  //
+  // Residual: `fetch` below re-resolves the hostname, so a TOCTOU DNS-rebinding
+  // window remains (guard sees a public IP, fetch gets a private one). The
+  // direct-literal and redirect vectors are closed; fully pinning would need a
+  // custom undici dispatcher that connects by the resolved IP while preserving
+  // the TLS SNI/servername — deferred (accepted residual).
   const guard = await checkNetworkTarget(
     new URL(ref.origin).hostname,
     lookupImpl,

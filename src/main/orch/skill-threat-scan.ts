@@ -23,9 +23,15 @@ export interface ThreatFinding {
   readonly detail: string;
 }
 
-// Known secret/credential locations an exfiltration payload would target.
-const SECRET_PATH_RE =
-  /(\.claude\/\.credentials|\.credentials\.json|CLAUDE_CODE_OAUTH_TOKEN|\.ssh\/id_[a-z0-9]+|id_rsa|id_ed25519|\.aws\/credentials|\.config\/gcloud|gcloud\/credentials|\.netrc|\.git-credentials|\.npmrc|find-generic-password|security\s+find-generic-password|\.nexus\/(?:secrets\.enc|managed-accounts|mcp-hub\.json))/i;
+// HIGH-signal secret locations: reading one of these has essentially no benign
+// reason inside a marketplace skill. Combined with network egress → block.
+const HIGH_SECRET_PATH_RE =
+  /(\.claude\/\.credentials|\.credentials\.json|CLAUDE_CODE_OAUTH_TOKEN|\.ssh\/id_[a-z0-9]+|id_rsa|id_ed25519|\.aws\/credentials|\.config\/gcloud|gcloud\/credentials|find-generic-password|security\s+find-generic-password|\.nexus\/(?:secrets\.enc|managed-accounts|mcp-hub\.json))/i;
+
+// LOWER-signal credential files that legitimate devops/publish skills reference
+// (private registry auth, git creds). These only ever warn — never block — so a
+// "publish to a private npm registry" skill is not refused.
+const LOW_SECRET_PATH_RE = /(\.netrc|\.git-credentials|\.npmrc)/i;
 
 // Network egress primitives.
 const NET_EGRESS_RE =
@@ -71,19 +77,12 @@ export function scanTextForThreats(text: string): ThreatFinding[] {
   const findings: ThreatFinding[] = [];
   if (!text) return findings;
 
-  // BLOCK: reverse shell / pipe-to-shell / obfuscated exec are unambiguous.
+  // BLOCK: reverse shell and obfuscated exec are unambiguous.
   if (REVERSE_SHELL_RE.test(text)) {
     findings.push({
       rule: 'reverse-shell',
       severity: 'block',
       detail: 'reverse-shell pattern (e.g. /dev/tcp, nc -e)',
-    });
-  }
-  if (PIPE_TO_SHELL_RE.test(text) && NET_EGRESS_RE.test(text)) {
-    findings.push({
-      rule: 'pipe-to-shell',
-      severity: 'block',
-      detail: 'network fetch piped into a shell interpreter (curl … | sh)',
     });
   }
   if (OBFUSCATED_EXEC_RE.test(text)) {
@@ -93,12 +92,14 @@ export function scanTextForThreats(text: string): ThreatFinding[] {
       detail: 'base64/eval obfuscated code execution',
     });
   }
-  // BLOCK: a secret path combined with network egress or an upload flag in
-  // proximity = credential exfiltration.
+  // BLOCK: a HIGH-signal secret path combined with network egress or an upload
+  // flag *in proximity* = credential exfiltration (the core skill→key-theft
+  // chain). Proximity (not whole-file co-occurrence) avoids blocking a skill
+  // that merely mentions a key path and, separately, uses the network.
   if (
-    SECRET_PATH_RE.test(text) &&
-    (proximityHasBoth(text, SECRET_PATH_RE, NET_EGRESS_RE) ||
-      proximityHasBoth(text, SECRET_PATH_RE, DATA_UPLOAD_RE))
+    HIGH_SECRET_PATH_RE.test(text) &&
+    (proximityHasBoth(text, HIGH_SECRET_PATH_RE, NET_EGRESS_RE) ||
+      proximityHasBoth(text, HIGH_SECRET_PATH_RE, DATA_UPLOAD_RE))
   ) {
     findings.push({
       rule: 'credential-exfiltration',
@@ -107,18 +108,24 @@ export function scanTextForThreats(text: string): ThreatFinding[] {
     });
   }
 
-  // WARN: lower-confidence signals recorded but not blocking.
-  if (
-    findings.length === 0 &&
-    SECRET_PATH_RE.test(text)
-  ) {
+  // WARN: lower-confidence signals — recorded in provenance, never blocking, so
+  // ordinary content-rich skills (rustup-style `curl | sh`, private-registry
+  // publish) still install.
+  if (proximityHasBoth(text, NET_EGRESS_RE, PIPE_TO_SHELL_RE)) {
+    findings.push({
+      rule: 'pipe-to-shell',
+      severity: 'warn',
+      detail: 'network fetch piped into a shell interpreter (curl … | sh)',
+    });
+  }
+  if (HIGH_SECRET_PATH_RE.test(text) || LOW_SECRET_PATH_RE.test(text)) {
     findings.push({
       rule: 'secret-path-reference',
       severity: 'warn',
       detail: 'references a known credential/secret path',
     });
   }
-  if (findings.every((f) => f.severity !== 'block') && DATA_UPLOAD_RE.test(text)) {
+  if (DATA_UPLOAD_RE.test(text)) {
     findings.push({
       rule: 'data-upload-flag',
       severity: 'warn',

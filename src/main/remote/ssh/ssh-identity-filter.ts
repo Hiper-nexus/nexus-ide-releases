@@ -25,7 +25,9 @@ export function filterAllowedIdentityFingerprints(
   available: readonly string[],
   allowed: readonly string[],
 ): string[] {
-  // Wildcard = explicit "offer all identities" (unchanged legacy semantics).
+  // Wildcard = explicit "offer all identities". NOTE: this is intentionally a
+  // fail-OPEN case — only pass `['*']` when offering every agent identity is
+  // acceptable. A specific fingerprint list below is the fail-closed default.
   if (identityAllowlistIsWildcard(allowed)) return [...available];
   // SHA-256 fingerprints are case-sensitive base64 — compare exactly (H3/L17).
   const allow = new Set(allowed.map(normalizeFingerprint));

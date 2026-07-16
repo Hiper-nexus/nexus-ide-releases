@@ -28,7 +28,13 @@ export const METADATA_HOSTNAMES: ReadonlySet<string> = new Set([
   'metadata.goog',
   'metadata',
   'metadata.azure.internal',
+  'instance-data.ec2.internal',
 ]);
+
+/** Strip the surrounding brackets URL.hostname keeps on IPv6 literals. */
+function unbracket(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+}
 
 export type NetworkTargetCheck =
   | { ok: true; address: string; addresses: string[] }
@@ -54,7 +60,7 @@ export async function checkNetworkTarget(
   host: string,
   lookup: HostLookup = defaultLookup,
 ): Promise<NetworkTargetCheck> {
-  const trimmed = host.trim();
+  const trimmed = unbracket(host.trim());
   const lower = trimmed.toLowerCase().replace(/\.$/, '');
   if (METADATA_HOSTNAMES.has(lower)) {
     return { ok: false, error: 'destino bloqueado (endpoint de metadata)' };

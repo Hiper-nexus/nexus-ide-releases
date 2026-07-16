@@ -12,11 +12,16 @@ const SECRET_VALUE_RE =
 const GLM_KEY_RE = /\b[0-9a-f]{32}\.[A-Za-z0-9]{12,}\b/gi;
 
 // Secret carried inside an HTTP header value, e.g. -H "x-goog-api-key: AIza…".
+// The value must be secret-shaped (≥12 token chars) so prose like
+// "authorization: read the docs" is not clobbered.
 const HEADER_SECRET_RE =
-  /((?:x-[a-z0-9-]*api-key|x-goog-api-key|x-api-key|authorization|api-key)\s*:\s*)([^\s"']+)/gi;
+  /((?:x-[a-z0-9-]*api-key|x-goog-api-key|x-api-key|authorization|api-key)\s*:\s*)([A-Za-z0-9._~+/=-]{12,})/gi;
 
+// Note: no bare `key` alternative — it over-redacts benign flags like
+// `sort --key=2` and `openssl -key file.pem`. Provider key values are matched by
+// SECRET_VALUE_RE regardless of the flag.
 const FLAG_SECRET_RE =
-  /(--?(?:token|secret|password|pass|api[-_]?key|key|authorization|cookie|credential|bearer)(?:=|\s+))(\S+)/gi;
+  /(--?(?:token|secret|password|pass|api[-_]?key|authorization|cookie|credential|bearer)(?:=|\s+))(\S+)/gi;
 
 const ENV_ASSIGN_RE =
   /\b((?=[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API_KEY|CREDENTIAL|AUTH|BEARER))[A-Za-z_][A-Za-z0-9_]*)=([^\s]+)/g;

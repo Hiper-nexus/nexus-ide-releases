@@ -126,7 +126,7 @@ const fileOpen: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
-    assertAgentReadablePath(relativePath);
+    assertAgentReadablePath(executionScopeFor(ctx), relativePath);
     const encoding = str(args, 'encoding') ?? 'utf-8';
     const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
     try {
@@ -163,7 +163,7 @@ const fileClose: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
-    assertAgentReadablePath(relativePath);
+    assertAgentReadablePath(executionScopeFor(ctx), relativePath);
     const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
     handle.close();
     return { path: relativePath, closed: true };
@@ -199,7 +199,7 @@ const fileRead: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
-    assertAgentReadablePath(relativePath);
+    assertAgentReadablePath(executionScopeFor(ctx), relativePath);
     const encoding = str(args, 'encoding') ?? 'utf-8';
     const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
     try {

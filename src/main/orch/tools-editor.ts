@@ -46,7 +46,7 @@ const editorFocus: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
-    assertAgentReadablePath(relativePath);
+    assertAgentReadablePath(executionScopeFor(ctx), relativePath);
     const { content } = readWorkspaceTextFile(executionScopeFor(ctx), relativePath);
     const line = typeof args.line === 'number' ? args.line : undefined;
     const column = typeof args.column === 'number' ? args.column : undefined;
@@ -215,7 +215,7 @@ const editorGotoLine: McpToolDef = {
       typeof args.column === 'number' && args.column >= 1
         ? args.column
         : 1;
-    assertAgentReadablePath(relativePath);
+    assertAgentReadablePath(executionScopeFor(ctx), relativePath);
     const { content: raw } = readWorkspaceTextFile(executionScopeFor(ctx), relativePath);
     const lines = raw.split('\n');
     const targetLine = lineNum <= lines.length ? lines[lineNum - 1] : '';

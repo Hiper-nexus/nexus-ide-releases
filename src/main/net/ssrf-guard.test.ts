@@ -48,4 +48,9 @@ describe('checkNetworkTarget', () => {
     });
     expect(r.ok).toBe(false);
   });
+
+  it('handles bracketed IPv6: allows [::1] loopback, blocks mapped metadata', async () => {
+    expect((await checkNetworkTarget('[::1]')).ok).toBe(true);
+    expect((await checkNetworkTarget('[::ffff:169.254.169.254]')).ok).toBe(false);
+  });
 });

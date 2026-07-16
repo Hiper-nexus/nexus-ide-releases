@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { ProjectExecutionScope } from '../../shared/types';
 
 /**
  * Read policy for AGENT-facing file tools (M2 mitigation).
@@ -44,9 +45,32 @@ export function isAgentDeniedReadPath(relativePath: string): boolean {
   return DENIED_PATTERNS.some((re) => re.test(normalized));
 }
 
-/** Throws if an agent tool tries to read a secret-bearing workspace path. */
-export function assertAgentReadablePath(relativePath: string): void {
-  if (isAgentDeniedReadPath(relativePath)) {
+/**
+ * Throws if an agent tool tries to read a secret-bearing workspace path.
+ *
+ * The check runs on the RESOLVED, root-relative path — not the raw argument —
+ * so it cannot be bypassed with an absolute path (`/…/.nexus/mcp-hub.json`) or a
+ * re-entrant `../<workspace-name>/.nexus/mcp-hub.json` that resolves back inside
+ * the root. Inputs that escape the workspace are left to the reader (which fails
+ * closed on them).
+ */
+export function assertAgentReadablePath(
+  scope: ProjectExecutionScope,
+  relativePath: string,
+): void {
+  // Lexically resolve the argument the same way the file reader does — absolute
+  // paths anchor on themselves, relative ones anchor on the root — then compute
+  // the root-relative form. This is a pure check (the reader still enforces
+  // realpath/symlink confinement); it exists only to catch secret-path reads
+  // whether addressed relatively, absolutely, or via a re-entrant `..`.
+  const root = path.resolve(scope.rootRealPath);
+  const resolved = path.isAbsolute(relativePath)
+    ? path.resolve(relativePath)
+    : path.resolve(root, relativePath);
+  const rootRelative = path.relative(root, resolved);
+  // Escapes the workspace — the reader rejects it; not a secret-path concern.
+  if (rootRelative.startsWith('..') || path.isAbsolute(rootRelative)) return;
+  if (isAgentDeniedReadPath(rootRelative)) {
     throw new Error(
       `access denied: '${relativePath}' holds credentials and is not readable by agent tools`,
     );

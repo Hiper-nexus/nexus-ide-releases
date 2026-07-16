@@ -78,4 +78,21 @@ describe('redactCommandLine', () => {
       expect(r.redacted).toBe(false);
     }
   });
+
+  it('does not over-redact benign --key / -key flags and prose', () => {
+    for (const cmd of [
+      'sort --key=2 data.txt',
+      'openssl rsa -key priv.pem -out pub.pem',
+      'echo authorization: read the docs',
+    ]) {
+      const r = redactCommandLine(cmd);
+      expect(r.command).toBe(cmd);
+      expect(r.redacted).toBe(false);
+    }
+  });
+
+  it('still redacts a secret-shaped opaque header value', () => {
+    const r = redactCommandLine('curl -H "x-api-key: 0123456789abcdefXYZ" https://api');
+    expect(r.command).not.toContain('0123456789abcdefXYZ');
+  });
 });
