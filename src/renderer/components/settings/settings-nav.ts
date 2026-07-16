@@ -7,6 +7,7 @@ export type SettingsSection =
   | 'vision'
   | 'diagnostics'
   | 'audit'
+  | 'labs'
   | 'media'
   | 'providers'
   | 'usage-quota'
@@ -255,6 +256,14 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
         subtitle: 'relay E2E · QR',
         aliases: ['companion', 'relay', 'mobile', 'celular', 'e2e', 'qr'],
       },
+      {
+        id: 'labs',
+        icon: 'LAB',
+        pixelIcon: 'sparkle',
+        title: 'Labs',
+        subtitle: 'feature flags',
+        aliases: ['labs', 'flags', 'feature flags', 'experimentos'],
+      },
     ],
   },
   {
@@ -426,6 +435,7 @@ const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
   audit: 'system',
   remote: 'system',
   'companion-relay': 'system',
+  labs: 'system',
 };
 
 export function settingsSectionPillar(

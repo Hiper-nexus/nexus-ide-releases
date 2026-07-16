@@ -2155,3 +2155,23 @@
 .settings-qr .qr-code {
   display: block;
 }
+
+/* Labs — lista de feature flags. Rows reutilizam ops-consent-panel/ops-switch;
+   aqui só o que é específico da seção. */
+.labs-flag__reset {
+  margin-top: 6px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.72rem;
+  background: transparent;
+  color: var(--text-dim, #9aa4b2);
+  border: 1px solid var(--border, rgba(154, 164, 178, 0.35));
+  border-radius: 6px;
+  cursor: pointer;
+}
+.labs-flag__reset:hover:not(:disabled) {
+  color: var(--text, #e6edf3);
+}
+.labs-flags__error {
+  color: var(--danger, #ff6b6b);
+  font-size: 0.8rem;
+}

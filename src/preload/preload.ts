@@ -18,8 +18,8 @@ import {
   MODEL_CHANNELS,
 } from '../shared/channels';
 import { COMPANION_RELAY_CHANNELS } from '../shared/companion-relay-types';
-import { CROSSOVER_FLAG_SET_CHANNEL } from '../shared/crossover-flags';
 import { OPS_CHANNELS } from '../shared/ops-ipc';
+import type { ProductFlagResolutionRow } from '../shared/product-api';
 import { PET_CHANNELS } from '../shared/pet-types';
 import type { PetPrefs } from '../shared/pet-types';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
@@ -420,6 +420,15 @@ const providersChangedListeners = new Set<
 >();
 ipcRenderer.on(PROVIDER_CHANNELS.changed, (_e, list: ProviderSettingsInfo[]) =>
   providersChangedListeners.forEach((cb) => cb(list)),
+);
+
+const productFlagsChangedListeners = new Set<
+  (list: ProductFlagResolutionRow[]) => void
+>();
+ipcRenderer.on(
+  PRODUCT_WAVE_CHANNELS.flagsChanged,
+  (_e, list: ProductFlagResolutionRow[]) =>
+    productFlagsChangedListeners.forEach((cb) => cb(list)),
 );
 
 const accountsChangedListeners = new Set<(list: AccountInfo[]) => void>();
@@ -916,6 +925,9 @@ const api: NexusApi = {
   },
   product: {
     flagsList: () => ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.flagsList),
+    flagsSetOverride: (input: { id: string; enabled: boolean | null }) =>
+      ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.flagsSetOverride, input),
+    onFlagsChanged: (cb) => addListener(productFlagsChangedListeners, cb),
     memoryList: () => ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.memoryList),
     memoryRemember: (input) =>
       ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.memoryRemember, input),
@@ -952,8 +964,6 @@ const api: NexusApi = {
       ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.editorOpen, { relativePath }),
     editorApply: (input) =>
       ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.editorApply, input),
-    flagsSetOverride: (input) =>
-      ipcRenderer.invoke(CROSSOVER_FLAG_SET_CHANNEL, input),
   },
   discovery: {
     workspaceConfigs: () =>

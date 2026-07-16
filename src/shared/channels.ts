@@ -90,6 +90,9 @@ export const SEARCH_MIXER_CHANNELS = {
  */
 export const PRODUCT_WAVE_CHANNELS = {
   flagsList: 'product:flags.list',
+  flagsSetOverride: 'product:flags.setOverride',
+  /** Push main→renderer com a lista re-resolvida após mudar um override. */
+  flagsChanged: 'product:flags.changed',
   memoryList: 'product:memory.list',
   memoryRemember: 'product:memory.remember',
   memorySearch: 'product:memory.search',

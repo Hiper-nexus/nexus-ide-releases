@@ -4,6 +4,7 @@ import { askConfirm } from '../../state/confirm-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useVoiceStore } from '../../voice/voice-store';
 import { CURRENT_RELEASE } from '../../../shared/release-notes';
+import type { DesignDirection } from '../../../shared/settings-types';
 import { UpdateReadinessPanel } from './ObservabilitySections';
 import { AudioDeviceControls } from './AudioDeviceControls';
 import { OrchestratorDefaults } from './OrchestratorDefaults';
@@ -195,17 +196,59 @@ export function SystemSection() {
   );
 }
 
+const DESIGN_DIRECTION_LABELS: Array<{
+  value: DesignDirection;
+  label: string;
+}> = [
+  { value: 'auto', label: 'Auto — segue o design system do projeto' },
+  { value: 'minimalist', label: 'Minimalista — reduzir ao essencial' },
+  { value: 'brutalist', label: 'Brutalista — cru, denso, sem arredondar' },
+  { value: 'soft', label: 'Soft — acolhedor, cantos e sombras suaves' },
+];
+
+function DesignDial({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="settings-field">
+      {label}: {value}/10{value === 5 ? ' (neutro)' : ''}
+      <input
+        className="settings-range"
+        type="range"
+        min={1}
+        max={10}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  );
+}
+
 export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
   const squads = useOrchStore((s) => s.squads);
   const openPanel = useOrchStore((s) => s.openPanel);
   const [leanCode, setLeanCode] = useState(true);
   const [seniorMode, setSeniorMode] = useState(true);
   const [designPro, setDesignPro] = useState(true);
+  const [designDirection, setDesignDirection] = useState<DesignDirection>('auto');
+  const [designVariance, setDesignVariance] = useState(5);
+  const [designMotion, setDesignMotion] = useState(5);
+  const [designDensity, setDesignDensity] = useState(5);
   useEffect(() => {
     void window.nexus.settings.orchGet().then((o) => {
       setLeanCode(o.leanCode);
       setSeniorMode(o.seniorMode);
       setDesignPro(o.designPro);
+      setDesignDirection(o.designDirection ?? 'auto');
+      setDesignVariance(o.designVariance ?? 5);
+      setDesignMotion(o.designMotion ?? 5);
+      setDesignDensity(o.designDensity ?? 5);
     });
   }, []);
   return (
@@ -250,6 +293,60 @@ export function SquadsSection({ onNavigate }: { onNavigate: () => void }) {
           }}
         />
       </div>
+      {designPro && (
+        <>
+          <h4 className="settings-section-heading">
+            Perfil de design (tarefas de UI)
+          </h4>
+          <p className="settings-detail__hint">
+            Modula a carta de design injetada nos workers de UI. Dials no
+            neutro e direção Auto não adicionam nada ao prompt; as proibições
+            anti-genérico valem sempre.
+          </p>
+          <label className="settings-field">
+            Direção estética
+            <select
+              className="settings-input"
+              value={designDirection}
+              onChange={(event) => {
+                const value = event.target.value as DesignDirection;
+                setDesignDirection(value);
+                void window.nexus.settings.orchSet({ designDirection: value });
+              }}
+            >
+              {DESIGN_DIRECTION_LABELS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <DesignDial
+            label="Ousadia de layout"
+            value={designVariance}
+            onChange={(value) => {
+              setDesignVariance(value);
+              void window.nexus.settings.orchSet({ designVariance: value });
+            }}
+          />
+          <DesignDial
+            label="Intensidade de motion"
+            value={designMotion}
+            onChange={(value) => {
+              setDesignMotion(value);
+              void window.nexus.settings.orchSet({ designMotion: value });
+            }}
+          />
+          <DesignDial
+            label="Densidade visual"
+            value={designDensity}
+            onChange={(value) => {
+              setDesignDensity(value);
+              void window.nexus.settings.orchSet({ designDensity: value });
+            }}
+          />
+        </>
+      )}
       <div className="settings-section-heading settings-section-heading--with-count">
         <h4>Squads disponíveis</h4>
         <span className="settings-chip">{squads.length}</span>

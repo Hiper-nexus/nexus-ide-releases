@@ -120,6 +120,25 @@ describe('withHandoffContract tiering', () => {
     expect(frontend).toContain('[DESIGN]');
   });
 
+  it('composes the design profile (direction + dials) into the design charter', async () => {
+    const { getOrchSettings } = await import('../persistence/settings-store');
+    vi.mocked(getOrchSettings).mockReturnValueOnce({
+      leanCode: false,
+      seniorMode: false,
+      designPro: true,
+      designDirection: 'brutalist',
+      designMotion: 9,
+    } as ReturnType<typeof getOrchSettings>);
+    const prompt = withHandoffContract(
+      'implementar a landing page',
+      mcpAdapter,
+      { category: 'executor' },
+    );
+    expect(prompt).toContain('[DESIGN]');
+    expect(prompt).toContain('BRUTALIST');
+    expect(prompt).toContain('Motion intensity 9/10');
+  });
+
   it('still honors the settings toggles as the outer gate', async () => {
     const { getOrchSettings } = await import('../persistence/settings-store');
     vi.mocked(getOrchSettings).mockReturnValueOnce({

@@ -13,12 +13,47 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.17.0',
+  version: '0.19.0',
   date: '2026-07-16',
-  codename: 'Oh My Pi',
+  codename: 'Oh My Pi — na tela',
   summary:
-    'O motor de código open-source oh-my-pi (MIT) entra no cockpit: pane de agente tipado sem PTY-scraping, edição por hash, companion criptografado ponta a ponta, memória compartilhada entre CLIs e failover com cooldown por tier — código maduro vendorado, não reescrito.',
+    'A segunda leva do crossover Oh My Pi: as capacidades que só viviam no backend agora têm interface de primeira classe — painel de memória com busca, inventário de configs por workspace, preço e janela no seletor de modelo, companion mobile criptografado com QR, e drawers direitos mutuamente exclusivos. Motor testado (0.17.0/0.18.0), agora operacional na tela.',
   highlights: [
+    {
+      title: 'Painel de Memória do workspace',
+      detail:
+        'Um drawer mostra os fatos, decisões e preferências que os agentes registram no projeto: estatísticas por tipo, busca instantânea (recall FTS5) com navegação por teclado, e estados vazio/desligado claros. A memória agentic compartilhada entre CLIs deixou de ser só uma tool sem tela.',
+    },
+    {
+      title: 'Inventário de configs por workspace',
+      detail:
+        'Um painel mostra o que cada CLI enxerga neste workspace — MCP servers, regras, skills e comandos de .claude, .cursor, .codex, AGENTS.md e GEMINI.md — agrupado por ecossistema de origem, com conflitos de nome destacados e segredos nunca materializados.',
+    },
+    {
+      title: 'Preço e janela no seletor de modelo',
+      detail:
+        'Ao compor uma missão, cada modelo mostra um selo discreto com janela de contexto e preço por milhão de tokens — a base de centenas de modelos do crossover finalmente visível onde a decisão acontece.',
+    },
+    {
+      title: 'Companion mobile com tela e QR',
+      detail:
+        'Configurações → Sistema → Companion mobile inicia/para o relay criptografado ponta a ponta, exibe o QR de pareamento e os links de controle e somente-leitura, com aviso de segurança — e o output dos panes já flui para o dispositivo. O transporte E2E que existia sem interface agora se opera pela tela.',
+    },
+    {
+      title: 'Drawers direitos que não se atropelam',
+      detail:
+        'Orquestração, pane omp e memória passam a ser mutuamente exclusivos no slot direito — abrir um fecha o outro — acabando com painéis empilhados que escondiam o de baixo sem sinal.',
+    },
+    {
+      title: 'Perfil de design no motor automático',
+      detail:
+        'A Carta de Design ganha direção estética (Auto/Minimalista/Brutalista/Soft) e dials 1–10 de ousadia, motion e densidade em Configurações → Squads. Neutro não injeta nada; extremos viram instrução explícita para os workers de UI.',
+    },
+    {
+      title: 'Anotações no Design Mode',
+      detail:
+        'Com um elemento selecionado, "＋ anotar" fixa uma nota com intenção (corrigir/mudar/pergunta/aprovado) e badge numerado na própria página; o tray copia o feedback consolidado ou envia tudo de uma vez ao agente, com as notas do usuário nunca cortadas por orçamento de prompt.',
+    },
     {
       title: 'Pane omp de primeira classe (sem PTY-scraping)',
       detail:
@@ -97,9 +132,14 @@ export const CURRENT_RELEASE: AppRelease = {
         'A tool de memória agentic ganhou uma exceção estreita para funcionar em panes livres, sem abrir escrita não-ligada a missão para nenhuma outra ferramenta.',
     },
     {
+      title: 'Design Mode sem estado fantasma',
+      detail:
+        'Anotações e design bar resetam juntos por um caminho único de invalidação — navegação real, rota SPA, crash do renderer da página e troca de workspace — acabando com a barra "ON" fantasma após reload; o sync de badges enfileirado não congela mais as ações do tray.',
+    },
+    {
       title: 'Release metadata alinhada',
       detail:
-        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.17.0, corrigindo a inconsistência de versão deixada por um release anterior incompleto.',
+        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.19.0, com a segunda leva de UI do crossover reconciliada sobre a 0.18.0.',
     },
   ],
 };
