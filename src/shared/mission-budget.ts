@@ -97,7 +97,10 @@ export function summarizeWorkspaceMissionBudgets(
   readonly totalSpentTokens: number;
   readonly totalMaxTokens: number;
   readonly totalSpentSteps: number;
+  /** Human strip, e.g. "1 missões · 1.0k/20k tok". */
   readonly label: string;
+  /** Compact chip text without mission count prefix. */
+  readonly shortLabel: string;
 } {
   let totalSpentTokens = 0;
   let totalMaxTokens = 0;
@@ -112,15 +115,20 @@ export function summarizeWorkspaceMissionBudgets(
     totalMaxTokens += snap.maxTokens;
     totalSpentSteps += snap.spentSteps;
   }
+  const shortLabel =
+    activeCount === 0
+      ? '0 tok'
+      : `${formatTok(totalSpentTokens)}/${formatTok(totalMaxTokens)} tok`;
   const label =
     activeCount === 0
       ? '0 missões com budget'
-      : `${activeCount} missões · ${formatTok(totalSpentTokens)}/${formatTok(totalMaxTokens)} tok`;
+      : `${activeCount} missões · ${shortLabel}`;
   return {
     activeCount,
     totalSpentTokens,
     totalMaxTokens,
     totalSpentSteps,
     label,
+    shortLabel,
   };
 }
