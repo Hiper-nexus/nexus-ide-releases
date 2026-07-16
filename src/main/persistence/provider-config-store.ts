@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { z } from 'zod';
 import os from 'node:os';
 import path from 'node:path';
 import { BrowserWindow, dialog, ipcMain } from 'electron';
@@ -41,6 +42,12 @@ import {
   getCustomModels,
   removeCustomModel,
 } from '../adapters/custom-models';
+import {
+  discoveredModelsFor,
+  refreshAllDiscoveredModels,
+} from '../adapters/model-discovery';
+import { cliInstallRecipeFor } from '../adapters/cli-install-recipes';
+import { execFile } from 'node:child_process';
 import {
   getKey,
   hasCachedSecret,
@@ -580,12 +587,16 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
   const effectiveBin = cfg.binPath || detectedBin;
   const installed =
     adapter.kind === 'cli-pty' ? isBinResolvable(effectiveBin) : true;
-  const models = [
-    ...adapter.models.list,
-    ...getCustomModels(adapterId).filter(
-      (m) => !adapter.models.list.includes(m),
-    ),
-  ];
+  const custom = getCustomModels(adapterId).filter(
+    (m) => !adapter.models.list.includes(m),
+  );
+  // Modelos vivos reportados pela própria CLI (ex.: kimi provider list) —
+  // modelo novo lançado aparece sem esperar release do Nexus.
+  const staticIds = [...adapter.models.list, ...custom];
+  const discovered = discoveredModelsFor(adapterId).filter(
+    (m) => !staticIds.includes(m),
+  );
+  const models = [...staticIds, ...discovered];
   return {
     adapterId,
     label: adapter.label,
@@ -593,6 +604,7 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     kind: adapter.kind,
     enabled: cfg.enabled,
     installed,
+    canAutoInstall: cliInstallRecipeFor(adapterId) !== null,
     binPath: cfg.binPath,
     detectedBin,
     defaultModel: cfg.defaultModel || adapter.models.default,
@@ -657,6 +669,31 @@ export function unregisterProviderListener(wc: WebContents): void {
   listeners.delete(wc);
 }
 
+/** Confirmação nativa (não-spoofável) antes de instalar uma CLI — mostra o
+ * comando exato; mesma doutrina SEC#4 do confirmExecConfig. */
+async function confirmCliInstall(
+  label: string,
+  argv: readonly string[],
+): Promise<boolean> {
+  const opts = {
+    type: 'question' as const,
+    buttons: ['Cancelar', 'Instalar'],
+    defaultId: 1,
+    cancelId: 0,
+    title: `Instalar ${label}`,
+    message: `Instalar a CLI de ${label} nesta máquina?`,
+    detail:
+      `O NexusIDE vai executar exatamente:\n\n  ${argv.join(' ')}\n\n` +
+      'Fonte oficial do provider. Nada além deste comando será executado.',
+    noLink: true,
+  };
+  const win = BrowserWindow.getFocusedWindow();
+  const result = win
+    ? await dialog.showMessageBox(win, opts)
+    : await dialog.showMessageBox(opts);
+  return result.response === 1;
+}
+
 /** Native, un-spoofable confirmation before trusting a renderer-supplied
  * binary/args as the thing the app will execute (SEC#4). */
 async function confirmExecConfig(
@@ -714,7 +751,61 @@ async function warnInvalidBin(
 export function registerProviderIpc(): void {
   load();
 
-  ipcMain.handle(PROVIDER_CHANNELS.list, () => listProviderSettings());
+  ipcMain.handle(PROVIDER_CHANNELS.installCli, async (_e, raw) => {
+    const parsed = z
+      .object({ adapterId: z.string().min(1).max(64) })
+      .safeParse(raw);
+    if (!parsed.success) return { ok: false, error: 'adapter inválido' };
+    const adapter = getAdapter(parsed.data.adapterId);
+    if (!adapter) return { ok: false, error: 'adapter desconhecido' };
+    const recipe = cliInstallRecipeFor(adapter.id);
+    if (!recipe) {
+      return {
+        ok: false,
+        error:
+          'Sem instalador automático para esta CLI nesta plataforma ainda — ' +
+          'use o site oficial do provider.',
+      };
+    }
+    if (!isBinResolvable(recipe.runner)) {
+      return { ok: false, error: recipe.runnerHint };
+    }
+    const confirmed = await confirmCliInstall(adapter.label, recipe.argv);
+    if (!confirmed) return { ok: false, error: 'instalação cancelada' };
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          recipe.argv[0],
+          recipe.argv.slice(1),
+          // brew pode compilar; 15 min é teto honesto para 1ª instalação.
+          { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
+          (error) => (error ? reject(error) : resolve()),
+        );
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        error:
+          err instanceof Error
+            ? `instalação falhou: ${err.message.slice(0, 300)}`
+            : 'instalação falhou',
+      };
+    }
+    // A CLI recém-instalada aparece como installed no próximo snapshot.
+    broadcast();
+    return { ok: true };
+  });
+
+  ipcMain.handle(PROVIDER_CHANNELS.list, () => {
+    // Descoberta viva em background: quando terminar, o broadcast de
+    // providers empurra a lista atualizada (o "Atualizar modelos" chama list,
+    // e o changed subsequente entrega os modelos novos sem segundo clique).
+    refreshAllDiscoveredModels(
+      listAdapters().map((a) => a.id),
+      () => broadcast(),
+    );
+    return listProviderSettings();
+  });
 
   ipcMain.handle(PROVIDER_CHANNELS.setConfig, async (_event, raw) => {
     const parsed = providerConfigPatchSchema.safeParse(raw);

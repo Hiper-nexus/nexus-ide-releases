@@ -1092,6 +1092,14 @@ export async function setBrowserDesignMode(
     return { paneId, ...result };
   } catch (error) {
     abortDesignModeTransition(sessionKey, generation);
+    if (!active) {
+      // Desligar NUNCA pode falhar para o usuário: uma SPA ocupada/mid-route
+      // que não confirma o design_disable deixava a barra presa em "ON +
+      // erro". O overlay da página morre sozinho na próxima navegação; o
+      // estado local é a autoridade do desligamento.
+      clearDesignSession(sessionKey);
+      return { paneId, active: false };
+    }
     throw error;
   }
 }

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
+import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useAccountStore } from '../../state/account-store';
+import { useLayoutStore } from '../../state/layout-store';
+import { useSettingsStore } from '../../state/settings-store';
+import { waitForSession } from '../../terminal/terminal-host';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
 import {
@@ -99,6 +103,9 @@ export function AccountsManager({
   const isClaude = adapterId === 'claude';
   const active = accounts.find((a) => a.active) ?? null;
   const standby = accounts.filter((a) => !a.active);
+  const addShellPane = useLayoutStore((s) => s.addShellPane);
+  const closeSettingsDrawer = useSettingsStore((s) => s.closeDrawer);
+  const loginCommand = accountLoginCommandFor(adapterId);
 
   async function refreshAuth() {
     const list = await window.nexus.providers.authStatus();
@@ -204,6 +211,31 @@ export function AccountsManager({
       );
     } else {
       showNotice(res.error ?? 'Não foi possível salvar a sessão logada.', 'err');
+    }
+  }
+
+  /**
+   * "Entrar com nova conta": abre um terminal já disparando o comando de
+   * login da CLI — o próprio CLI abre o navegador na URL de auth do provider.
+   * Sem isto, adicionar conta por login criava a entrada e parava aí (o
+   * usuário tinha que descobrir e rodar o comando na mão).
+   */
+  async function openLoginTerminal() {
+    if (!loginCommand) return;
+    setBusy(true);
+    try {
+      const paneId = addShellPane();
+      const sessionId = await waitForSession(paneId);
+      if (!sessionId) {
+        showNotice('Não consegui abrir o terminal de login.', 'err');
+        return;
+      }
+      window.nexus.pty.write(sessionId, `${loginCommand}\r`);
+      // Fecha o drawer para o terminal (e o navegador que o CLI abre) ficarem
+      // visíveis; ao voltar aqui, é só "Salvar no vault".
+      closeSettingsDrawer();
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -418,6 +450,17 @@ export function AccountsManager({
       {auth?.detail && auth.state !== 'ok' && (
         <p className="acct__auth-detail" role="status">
           {auth.detail}
+          {auth.state === 'missing' && loginCommand && (
+            <button
+              type="button"
+              className="settings-btn acct__login-now"
+              onClick={() => void openLoginTerminal()}
+              disabled={busy}
+              title={`Abre um terminal com “${loginCommand}”`}
+            >
+              Fazer login agora
+            </button>
+          )}
         </p>
       )}
 
@@ -489,6 +532,29 @@ export function AccountsManager({
 
         {addMode === null && (
           <div className="acct__add-choices">
+            {loginCommand && (
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary acct__add-choice"
+                onClick={() => void openLoginTerminal()}
+                disabled={busy}
+                title={`Abre um terminal com “${loginCommand}” — o navegador abre na página de login do provider`}
+              >
+                <span className="acct__add-choice-icon" aria-hidden="true">
+                  <PixelIcon name="user" size={14} />
+                </span>
+                <span className="acct__add-choice-text">
+                  <strong>Entrar com nova conta</strong>
+                  <span>
+                    Dispara o login de {displayName} — o navegador abre na
+                    página do provider. Depois volte e salve a sessão no vault.
+                  </span>
+                </span>
+                <span className="acct__add-plus" aria-hidden="true">
+                  →
+                </span>
+              </button>
+            )}
             {canSnapshot && (
               <button
                 type="button"

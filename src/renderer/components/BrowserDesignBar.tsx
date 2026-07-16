@@ -22,8 +22,46 @@ function intentLabel(intent: string): string {
   );
 }
 
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+function breakpointLabel(width: number): string {
+  if (width <= 480) return 'Mobile';
+  if (width <= 1024) return 'Tablet';
+  return 'Desktop';
+}
+
+function breakpointIcon(width: number): string {
+  if (width <= 480) return '📱';
+  if (width <= 1024) return '▯';
+  return '🖥';
+}
+
+/**
+ * Erros que significam "o pane/escopo mudou de vida" — lifecycle benigno, não
+ * falha do usuário. A barra reseta em silêncio (mesma doutrina do catch vazio
+ * do listDesignAnnotations no mount).
+ */
+export function isBenignDesignLifecycleError(message: string): boolean {
+  return /unknown browser pane|renderer has no authorized workspace scope|browser pane belongs to another/i.test(
+    message,
+  );
+}
+
+/** Traduz o wrapper cru do Electron para texto curto e acionável. */
+export function errorText(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const inner = raw.replace(
+    /^Error invoking remote method '[^']+':\s*Error:\s*/,
+    '',
+  );
+  if (/live mission agent in the same project checkout/i.test(inner)) {
+    return 'envio requer um agente de missão ativo neste workspace — lance uma missão ou use ⧉ copiar';
+  }
+  if (/frozen context revision/i.test(inner)) {
+    return 'o agente alvo não está no contrato atual da missão — reabra a missão ou use ⧉ copiar';
+  }
+  if (/design mode transition was not applied/i.test(inner)) {
+    return 'a página não confirmou o modo Design — recarregue a página e tente de novo';
+  }
+  return inner;
 }
 
 type Props = {
@@ -56,6 +94,17 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
   const [breakpoint, setBreakpoint] = useState<number | null>(null);
   const [instruction, setInstruction] = useState('');
   const [status, setStatus] = useState<string | null>(null);
+
+  function reportError(err: unknown): void {
+    const raw = err instanceof Error ? err.message : String(err);
+    if (isBenignDesignLifecycleError(raw)) {
+      // Pane/escopo mudou de vida no meio da chamada — a barra reseta pelos
+      // eventos de modo; erro cru aqui só assusta sem ação possível.
+      setStatus(null);
+      return;
+    }
+    setStatus(errorText(err));
+  }
   const [targetPaneId, setTargetPaneId] = useState<string | null>(null);
   const [annotationIntent, setAnnotationIntent] =
     useState<BrowserDesignAnnotationIntent>('fix');
@@ -101,7 +150,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
       // quando a página desliga o picker via Escape.
       await window.nexus.browser.setDesignMode(paneId, !isActive);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      reportError(err);
     }
   }
 
@@ -121,7 +170,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
       );
       setInstruction('');
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      reportError(err);
     }
   }
 
@@ -142,7 +191,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
       await navigator.clipboard.writeText(result.prompt);
       setStatus(`contexto copiado (${result.promptChars} chars) ✓`);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      reportError(err);
     }
   }
 
@@ -163,7 +212,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
       setTrayOpen(true);
       setStatus(`anotação #${result.annotations.length} adicionada ✓`);
     } catch (err) {
-      setStatus(errorText(err));
+      reportError(err);
     }
   }
 
@@ -176,7 +225,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
       setAnnotations(paneId, result.annotations);
       if (result.annotations.length === 0) setTrayOpen(false);
     } catch (err) {
-      setStatus(errorText(err));
+      reportError(err);
     }
   }
 
@@ -187,7 +236,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
       setTrayOpen(false);
       setStatus('anotações limpas');
     } catch (err) {
-      setStatus(errorText(err));
+      reportError(err);
     }
   }
 
@@ -216,7 +265,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
           : `feedback enviado (${result.annotations}) ✓`,
       );
     } catch (err) {
-      setStatus(errorText(err));
+      reportError(err);
     }
   }
 
@@ -249,37 +298,40 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
           {isActive ? 'Design ON' : 'Design'}
         </span>
       </button>
-      {isActive && (
-        <span className="design-bar__breakpoints">
-          {DESIGN_BREAKPOINTS.map((width) => (
-            <button
-              key={width}
-              type="button"
-              data-testid={`design-bp-${width}`}
-              className={`browser-bar__btn design-bar__bp ${breakpoint === width ? 'design-bar__toggle--on' : ''}`}
-              title={`Preview em ${width}px`}
-              onClick={() => {
-                setBreakpoint(width);
-                setBrowserViewportOverride(paneId, width);
-              }}
-            >
-              {width}
-            </button>
-          ))}
+      {/* Preview responsivo é ferramenta de VISUALIZAÇÃO — vive sempre na
+          barra, sem depender do picker do modo Design (achado de operador:
+          "modo mobile nem aparece"). */}
+      <span className="design-bar__breakpoints">
+        {DESIGN_BREAKPOINTS.map((width) => (
           <button
+            key={width}
             type="button"
-            data-testid="design-bp-full"
-            className={`browser-bar__btn design-bar__bp ${breakpoint === null ? 'design-bar__toggle--on' : ''}`}
-            title="Largura total do pane"
+            data-testid={`design-bp-${width}`}
+            className={`browser-bar__btn design-bar__bp ${breakpoint === width ? 'design-bar__toggle--on' : ''}`}
+            title={`${breakpointLabel(width)} — preview em ${width}px`}
+            aria-label={`Preview ${breakpointLabel(width)} (${width}px)`}
             onClick={() => {
-              setBreakpoint(null);
-              setBrowserViewportOverride(paneId, null);
+              setBreakpoint(width);
+              setBrowserViewportOverride(paneId, width);
             }}
           >
-            ⛶
+            {breakpointIcon(width)} {width}
           </button>
-        </span>
-      )}
+        ))}
+        <button
+          type="button"
+          data-testid="design-bp-full"
+          className={`browser-bar__btn design-bar__bp ${breakpoint === null ? 'design-bar__toggle--on' : ''}`}
+          title="Largura total do pane"
+          aria-label="Largura total do pane"
+          onClick={() => {
+            setBreakpoint(null);
+            setBrowserViewportOverride(paneId, null);
+          }}
+        >
+          ⛶
+        </button>
+      </span>
       {isActive && !selection && (
         <span className="design-bar__hint">clique num elemento da página…</span>
       )}
@@ -413,7 +465,11 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
           📝 {annotations.length}
         </button>
       )}
-      {status && <span className="design-bar__status">{status}</span>}
+      {status && (
+        <span className="design-bar__status" title={status}>
+          {status}
+        </span>
+      )}
     </div>
       {composerOpen && isActive && selection && (
         <div

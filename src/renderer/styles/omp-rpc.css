@@ -234,6 +234,11 @@
   border-bottom: 1px solid var(--border);
 }
 
+.omp-panel__install {
+  display: block;
+  margin-top: 8px;
+}
+
 .omp-panel__body {
   flex: 1;
   overflow-y: auto;

@@ -53,6 +53,8 @@ export interface ProviderSettingsInfo {
   kind: 'cli-pty' | 'api-provider';
   enabled: boolean;
   installed: boolean;
+  /** True quando há receita de instalação 1-clique para esta plataforma. */
+  canAutoInstall: boolean;
   binPath: string;
   detectedBin: string;
   defaultModel: string;
@@ -128,4 +130,5 @@ export const PROVIDER_CHANNELS = {
   removeModel: 'provider:removeModel',
   changed: 'provider:changed',
   authStatus: 'provider:authStatus',
+  installCli: 'provider:installCli',
 } as const;

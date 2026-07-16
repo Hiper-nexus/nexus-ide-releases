@@ -368,10 +368,27 @@ function ProviderTile({
 
 function ProviderDetail({ provider }: { provider: ProviderSettingsInfo }) {
   const setConfig = useProviderStore((s) => s.setConfig);
+  const hydrateProviders = useProviderStore((s) => s.hydrate);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [binDraft, setBinDraft] = useState(provider.binPath);
   const [argsDraft, setArgsDraft] = useState(provider.extraArgs.join(' '));
+  const [installBusy, setInstallBusy] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
   const riskWarning = providerRiskWarning(provider);
+
+  async function installCli() {
+    setInstallBusy(true);
+    setInstallError(null);
+    try {
+      const result = await window.nexus.providers.installCli(
+        provider.adapterId,
+      );
+      if (!result.ok) setInstallError(result.error ?? 'instalação falhou');
+      else await hydrateProviders();
+    } finally {
+      setInstallBusy(false);
+    }
+  }
 
   const extraArgsKey = provider.extraArgs.join('\0');
   useEffect(() => {
@@ -402,6 +419,22 @@ function ProviderDetail({ provider }: { provider: ProviderSettingsInfo }) {
               ? `Detectado · ${provider.detectedBin || provider.adapterId}`
               : 'Não encontrado no PATH — instale a CLI ou aponte o binário em Avançado'}
           </p>
+          {!provider.installed && provider.canAutoInstall && (
+            <button
+              type="button"
+              className="settings-btn settings-btn--primary prov-detail__install"
+              disabled={installBusy}
+              onClick={() => void installCli()}
+              title="Instala a CLI do provider pela fonte oficial (confirmação nativa mostra o comando exato)"
+            >
+              {installBusy ? 'Instalando…' : 'Instalar automaticamente'}
+            </button>
+          )}
+          {installError && (
+            <p className="prov-detail__install-error" role="alert">
+              ⚠ {installError}
+            </p>
+          )}
         </div>
         <label className="prov__toggle" title="Habilitar/desabilitar">
           <input

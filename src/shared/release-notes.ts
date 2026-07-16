@@ -13,6 +13,53 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.2',
+  date: '2026-07-16',
+  codename: 'Orquestração Destravada',
+  summary:
+    'Auditoria senior sobre o runtime real corrigiu a cadeia inteira que fazia toda missão morrer no bootstrap de contexto, o falso "não logado" nos panes do Claude, o bloqueio permanente do workspace no seletor de pasta — e entregou o restyle visual que estava preso fora do main (onboarding centrado com presença, chips no rail, GitHub na barra).',
+  highlights: [
+    {
+      title: 'Missões passam do bootstrap',
+      detail:
+        'O reviewer independente de contexto deixou de ser bloqueado pelo gate, o Nexus computa os hashes de fonte sozinho (agente não precisa de tool de hash) e review em andamento não é mais tratado como timeout. Drafts aprovam, contrato congela, workers trabalham.',
+    },
+    {
+      title: 'Panes do Claude sem /login fantasma',
+      detail:
+        'A identidade OAuth nativa agora viaja para o HOME efêmero dos panes gated (e login fresco feito dentro do pane é resgatado no teardown). GLM/LongCat continuam isolados da conta nativa.',
+    },
+    {
+      title: 'Workspace não trava mais no seletor',
+      detail:
+        'Pasta apagada e recriada no mesmo caminho não gera mais "checkout id collision" permanente — o registro se auto-cura para o mesmo path e segue fail-closed para paths diferentes.',
+    },
+    {
+      title: 'Visual novo de verdade',
+      detail:
+        'Onboarding Bridge-inspired centrado com a presença endorfinada, chips de meta no rail de missões, GitHub inline na barra do workspace, notificações sem nome cortado e gpt-5.6 nos tiers altos do roteador.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Review de contexto não morre mais em timeout',
+      detail:
+        'O pane revisor continua vivo após a janela de poll e a tool reporta "pendente" com instrução de acompanhamento em vez de falha.',
+    },
+    {
+      title: 'Invariantes estruturadas com caminho sancionado',
+      detail:
+        'O doctor agora ensina exatamente como propor uma invariante observada de fontes reais (.context/nexus/invariants) com revisão independente — o bloqueio deixou de ser beco sem saída.',
+    },
+    {
+      title: 'git_status em pasta que não é repositório',
+      detail:
+        'Raiz de workspace multi-projeto responde {isRepo:false} com orientação, em vez de "Git executable-config inspection failed".',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.1',
   date: '2026-07-16',
   codename: 'Oh My Pi — na tela',
