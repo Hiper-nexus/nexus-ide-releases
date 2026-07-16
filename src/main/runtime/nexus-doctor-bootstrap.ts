@@ -43,6 +43,18 @@ const DEFAULT_DEPENDENCIES: NexusDoctorBootstrapDependencies = {
   secureReadOnlyArgs: secureAutonomousCliArgs,
 };
 
+export function buildMultiPcBackendStatus(
+  leaseBackendConfigured: boolean,
+  syncBackendConfigured: boolean,
+): MultiPcBackendStatus {
+  return Object.freeze({
+    leaseBackendConfigured,
+    syncBackendConfigured,
+    requireSharedExecution:
+      leaseBackendConfigured || syncBackendConfigured,
+  });
+}
+
 function canEnforceReadOnly(
   provider: ProviderSettingsInfo,
   dependencies: NexusDoctorBootstrapDependencies,

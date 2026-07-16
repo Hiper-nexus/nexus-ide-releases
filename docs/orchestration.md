@@ -16,6 +16,11 @@ Cada pane de agente recebe no spawn:
 Aliases aceitos em `tools/call`: `nexus_pane_spawn` ≡ `pane_spawn` (o
 `tools/list` expõe apenas os canônicos `nexus_*`).
 
+Tools de bootstrap do orquestrador são serializadas pela prompt queue da
+missão. Panes filhos com autoridade `readOnly`, como reviewers de contexto e
+merge, não reservam essa fila: eles precisam inspecionar e votar enquanto o
+orquestrador mantém a operação pai aguardando.
+
 ## As 24 tools
 
 | Grupo | Tools |

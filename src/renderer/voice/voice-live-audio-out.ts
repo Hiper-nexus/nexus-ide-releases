@@ -18,9 +18,11 @@ import {
   setSuppressRealtimeAudioOut,
   suppressRealtimeAudioOut,
   takePendingRealtimeAudioOut,
+  turnExecution,
   wakeMic,
 } from './voice-session-state';
 import { resetLiveMuteRescues } from './live-mute-rescue';
+import { logVoiceTurnMilestone } from './voice-turn-telemetry';
 
 export { resetPendingRealtimeAudioOut };
 
@@ -59,6 +61,14 @@ export function playRealtimeAudioOut(event: JarvisLiveAudioOutEvent): void {
       if (chunkMs <= 0) {
         reportPlayback(event, 'cancelled');
         return;
+      }
+      try {
+        logVoiceTurnMilestone(String(turnExecution.currentToken), 'first_audio', {
+          path: 'realtime',
+          chunkMs,
+        });
+      } catch {
+        // Observabilidade nunca transforma áudio agendado em playback falho.
       }
       resetLiveMuteRescues();
       const tick = realtimeAudioPlayedCounter.tick(Date.now());

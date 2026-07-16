@@ -98,6 +98,7 @@ import {
 import { registerLayoutIpc } from "./persistence/layout-ipc";
 import { registerAdapterIpc } from "./adapters/adapter-ipc";
 import { registerVoiceIpc, closeVoiceIpc } from "./voice/voice-ipc";
+import { configureVoiceLogWorkspaceResolver } from "./voice/voice-log";
 import { registerVisionIpc } from "./vision/ipc-bridge";
 import {
   initAdapterRegistry,
@@ -119,6 +120,7 @@ import {
 } from "./orch/orch-ipc";
 import { ProjectRuntimeManager } from "./runtime/project-runtime-manager";
 import {
+  buildMultiPcBackendStatus,
   configureNexusDoctorRuntime,
   disposeNexusDoctorRuntime,
 } from "./runtime/nexus-doctor-bootstrap";
@@ -401,11 +403,10 @@ function bootstrap(): void {
   });
   configureNexusDoctorRuntime({
     runtimeManager: projectRuntimeManager,
-    multiPc: {
-      leaseBackendConfigured: cronBackend !== null,
-      syncBackendConfigured: syncCapability.backendConfigured,
-      requireSharedExecution: true,
-    },
+    multiPc: buildMultiPcBackendStatus(
+      cronBackend !== null,
+      syncCapability.backendConfigured,
+    ),
   });
   registerPtyIpc();
   // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;
@@ -445,6 +446,9 @@ function bootstrap(): void {
   registerOrchIpc();
   registerAuthProbeIpc();
   registerWorkspaceIpc();
+  configureVoiceLogWorkspaceResolver(
+    () => getWorkspaceState().current?.path ?? null,
+  );
   registerOrientationIpc();
   registerProviderIpc();
   registerFilesIpc();

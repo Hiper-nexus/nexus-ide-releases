@@ -37,6 +37,7 @@ const SELECTION: BrowserDesignElementContext = {
 
 let designEventCb: ((payload: BrowserDesignEventPayload) => void) | null = null;
 let setDesignMode: ReturnType<typeof vi.fn>;
+let setDeviceEmulation: ReturnType<typeof vi.fn>;
 let sendDesignSelection: ReturnType<typeof vi.fn>;
 let designAnnotate: ReturnType<typeof vi.fn>;
 let listDesignAnnotations: ReturnType<typeof vi.fn>;
@@ -70,6 +71,7 @@ function setNexusMock(): void {
     paneId: PANE_ID,
     active,
   }));
+  setDeviceEmulation = vi.fn(async () => undefined);
   sendDesignSelection = vi.fn(async () => ({
     ok: true,
     targetPaneId: 'pane-cli',
@@ -115,6 +117,7 @@ function setNexusMock(): void {
     value: {
       browser: {
         setDesignMode,
+        setDeviceEmulation,
         sendDesignSelection,
         designAnnotate,
         listDesignAnnotations,
@@ -306,6 +309,7 @@ describe('BrowserDesignBar', () => {
       bp.click();
     });
     expect(hostStubs.setBrowserViewportOverride).toHaveBeenCalledWith(PANE_ID, 375);
+    expect(setDeviceEmulation).toHaveBeenCalledWith(PANE_ID, 375);
     const full = container.querySelector<HTMLButtonElement>(
       '[data-testid=design-bp-full]',
     )!;
@@ -313,6 +317,7 @@ describe('BrowserDesignBar', () => {
       full.click();
     });
     expect(hostStubs.setBrowserViewportOverride).toHaveBeenCalledWith(PANE_ID, null);
+    expect(setDeviceEmulation).toHaveBeenCalledWith(PANE_ID, null);
   });
 
   it('disables sending when no agent pane exists', () => {

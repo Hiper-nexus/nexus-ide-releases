@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { formatVoiceLine, logVoice } from './voice-log';
+import {
+  configureVoiceLogWorkspaceResolver,
+  formatVoiceLine,
+  logVoice,
+} from './voice-log';
 
 /**
  * Logger persistente de voz: garante que a morte silenciosa do mic (e demais
@@ -57,6 +61,7 @@ describe('voice-log logVoice (persistência)', () => {
   });
 
   afterEach(() => {
+    configureVoiceLogWorkspaceResolver(null);
     fs.rmSync(tmpDir, { recursive: true, force: true });
     delete process.env.NEXUS_VOICE_LOG_FILE;
     delete process.env.NEXUS_VOICE_LOG_MAX_BYTES;
@@ -70,6 +75,28 @@ describe('voice-log logVoice (persistência)', () => {
     expect(content).toContain('mic.died');
     expect(content).toContain('track ended');
     expect(content.trim()).toMatch(/\{"attempt":3\}$/);
+  });
+
+  it('espelha a mesma linha no workspace ativo', () => {
+    const workspace = path.join(tmpDir, 'workspace');
+    fs.mkdirSync(workspace);
+    configureVoiceLogWorkspaceResolver(() => workspace);
+
+    logVoice('info', 'turn.committed', 'turno pronto', { turnId: 'turn-1' });
+
+    const workspaceLog = path.join(workspace, '.nexus', 'logs', 'voice.log');
+    expect(fs.readFileSync(workspaceLog, 'utf8')).toBe(
+      fs.readFileSync(logFile, 'utf8'),
+    );
+  });
+
+  it('não derruba a voz quando o espelho do workspace falha', () => {
+    const invalidWorkspace = path.join(tmpDir, 'not-a-directory');
+    fs.writeFileSync(invalidWorkspace, 'file');
+    configureVoiceLogWorkspaceResolver(() => invalidWorkspace);
+
+    expect(() => logVoice('warn', 'mirror.failed')).not.toThrow();
+    expect(fs.readFileSync(logFile, 'utf8')).toContain('mirror.failed');
   });
 
   it('rotaciona quando excede o limite (voice.log -> voice.log.1)', () => {

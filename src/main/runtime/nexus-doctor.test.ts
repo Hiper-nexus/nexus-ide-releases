@@ -517,7 +517,31 @@ describe('inspectNexusReadiness', () => {
     );
   });
 
-  it('blocks missing multi-pc backends by default', () => {
+  it('warns for missing multi-pc backends in single-device mode', () => {
+    const root = makeRoot();
+    const report = inspectNexusReadiness({
+      ...baseOptions(root),
+      multiPc: {
+        leaseBackendConfigured: false,
+        syncBackendConfigured: false,
+        requireSharedExecution: false,
+      },
+    });
+    expect(report.blockers).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'lease-backend-unconfigured' }),
+        expect.objectContaining({ code: 'sync-backend-unconfigured' }),
+      ]),
+    );
+    expect(report.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'lease-backend-unconfigured' }),
+        expect.objectContaining({ code: 'sync-backend-unconfigured' }),
+      ]),
+    );
+  });
+
+  it('blocks missing multi-pc backends when shared execution is required', () => {
     const root = makeRoot();
     const report = inspectNexusReadiness({
       ...baseOptions(root),

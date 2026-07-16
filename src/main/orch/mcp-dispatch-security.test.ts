@@ -18,6 +18,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   bumpMissionPromptIntent,
+  peekMissionPromptQueue,
   resetMissionPromptQueues,
 } from './mission-prompt-queue-registry';
 
@@ -846,6 +847,95 @@ describe('MCP dispatch effect safety', () => {
       error: expect.stringContaining('intent_preempted'),
       effectMayHaveCommitted: true,
     });
+  });
+
+  it('allows a mission-bound read-only child while its orchestrator awaits review', async () => {
+    let releaseParent!: () => void;
+    const parentWait = new Promise<void>((resolve) => {
+      releaseParent = resolve;
+    });
+    const parentHandler = vi.fn(async () => {
+      await parentWait;
+      return { paneId: 'reviewer-pane' };
+    });
+    const childGetHandler = vi.fn(async () => ({ status: 'proposed' }));
+    const childReviewHandler = vi.fn(async () => ({ status: 'approved' }));
+    const parent = dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_context_draft_review_run',
+        description: 'spawn and await an independent reviewer',
+        inputSchema: { type: 'object', properties: {} },
+        handler: parentHandler,
+      }),
+      'nexus_context_draft_review_run',
+      { draftId: 'draft-security-test' },
+      orchestratorMissionContext(),
+      workflowOptions(),
+    );
+    await vi.waitFor(() => expect(parentHandler).toHaveBeenCalledOnce());
+
+    resetGateForTests();
+    const childContext = mintToken({
+      label: 'context-reviewer-security-test',
+      role: 'worker',
+      missionId: TEST_MISSION_ID,
+      readOnly: true,
+      scope: auditScope,
+      allowedTools: [
+        'nexus_context_draft_get',
+        'nexus_context_draft_review',
+      ],
+    });
+    const childRegistry: McpRegistry = {
+      serverName: 'nexus-security-test',
+      serverVersion: '0.0.1',
+      tools: [
+        {
+          name: 'nexus_context_draft_get',
+          description: 'read the bound context draft',
+          inputSchema: { type: 'object', properties: {} },
+          handler: childGetHandler,
+        },
+        {
+          name: 'nexus_context_draft_review',
+          description: 'persist the independent review verdict',
+          inputSchema: { type: 'object', properties: {} },
+          handler: childReviewHandler,
+        },
+      ],
+    };
+    const childGet = await dispatchToolCall(
+      'http-mcp',
+      childRegistry,
+      'nexus_context_draft_get',
+      { draftId: 'draft-security-test' },
+      childContext,
+      workflowOptions(),
+    );
+    const childReview = await dispatchToolCall(
+      'http-mcp',
+      childRegistry,
+      'nexus_context_draft_review',
+      {
+        draftId: 'draft-security-test',
+        decision: 'approve',
+        rationale: 'The bound sources and hashes match the proposed content.',
+      },
+      childContext,
+      workflowOptions(),
+    );
+
+    expect(childGet).toMatchObject({ ok: true });
+    expect(childReview).toMatchObject({ ok: true });
+    expect(childGetHandler).toHaveBeenCalledOnce();
+    expect(childReviewHandler).toHaveBeenCalledOnce();
+    expect(peekMissionPromptQueue(TEST_MISSION_ID).executing?.body).toBe(
+      'nexus_context_draft_review_run',
+    );
+
+    releaseParent();
+    await expect(parent).resolves.toMatchObject({ ok: true });
   });
 
   it('blocks a stale token whose revision differs from the frozen contract', async () => {

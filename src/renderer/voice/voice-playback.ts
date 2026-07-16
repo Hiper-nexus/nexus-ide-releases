@@ -54,7 +54,11 @@ function base64ToBytes(base64: string): Uint8Array {
 /** Plays the TTS bytes and returns the actual playback duration in ms (0 if a
  *  newer playback superseded it). The returned duration lets callers tie the
  *  post-TTS wake-suppression window to the REAL length of what was spoken. */
-export async function playAudioBase64(base64: string, _format: string): Promise<number> {
+export async function playAudioBase64(
+  base64: string,
+  _format: string,
+  onPlaybackStart?: () => void,
+): Promise<number> {
   if (isResponseMuted()) return 0;
   const gen = playbackGen;
   const bytes = base64ToBytes(base64);
@@ -90,6 +94,11 @@ export async function playAudioBase64(base64: string, _format: string): Promise<
     await new Promise<void>((resolve) => {
       source.onended = () => resolve();
       source.start();
+      try {
+        onPlaybackStart?.();
+      } catch {
+        // Observabilidade nunca interfere no playback.
+      }
     });
     liveSources = liveSources.filter((s) => s !== source);
     return durationMs;
@@ -99,9 +108,12 @@ export async function playAudioBase64(base64: string, _format: string): Promise<
 }
 
 /** Plays a SpeakResult (audio mode) and returns the playback duration in ms. */
-export async function playSpeakResult(result: SpeakResult): Promise<number> {
+export async function playSpeakResult(
+  result: SpeakResult,
+  onPlaybackStart?: () => void,
+): Promise<number> {
   if (result.ok && result.mode === 'audio') {
-    return playAudioBase64(result.audioBase64, result.format);
+    return playAudioBase64(result.audioBase64, result.format, onPlaybackStart);
   }
   return 0;
 }

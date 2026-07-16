@@ -27,6 +27,13 @@ export interface VoiceLogEntry {
 
 /** Caminho padrão (display/diagnóstico). logVoice resolve o path a cada call. */
 export const VOICE_LOG_FILE = path.join(os.homedir(), '.nexus', 'logs', 'voice.log');
+let workspaceResolver: (() => string | null) | null = null;
+
+export function configureVoiceLogWorkspaceResolver(
+  resolver: (() => string | null) | null,
+): void {
+  workspaceResolver = resolver;
+}
 
 /** Override de teste (NEXUS_VOICE_LOG_FILE) ou padrão. */
 function resolveLogFile(): string {
@@ -56,6 +63,29 @@ function consoleMirror(level: VoiceLogLevel, line: string): void {
   else console.log(line);
 }
 
+function appendVoiceLine(file: string, line: string, maxBytes: number): void {
+  try {
+    if (fs.existsSync(file) && fs.statSync(file).size >= maxBytes) {
+      fs.renameSync(file, `${file}.1`);
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `${line}\n`);
+  } catch {
+    // observabilidade best-effort: um destino não bloqueia o outro nem a voz.
+  }
+}
+
+function resolveWorkspaceLogFile(): string | null {
+  try {
+    const workspace = workspaceResolver?.();
+    return workspace
+      ? path.join(workspace, '.nexus', 'logs', 'voice.log')
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Anexa um evento ao voice.log (rotacionando se necessário) e espelha no
  * console. Falha silenciosamente — jamais propaga exceção.
@@ -74,15 +104,8 @@ export function logVoice(
     data,
   });
   consoleMirror(level, line);
-  try {
-    const file = resolveLogFile();
-    const max = resolveMaxBytes();
-    if (fs.existsSync(file) && fs.statSync(file).size >= max) {
-      fs.renameSync(file, `${file}.1`);
-    }
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.appendFileSync(file, `${line}\n`);
-  } catch {
-    // observabilidade best-effort: não derrubar a voz por causa de log.
+  const files = new Set([resolveLogFile(), resolveWorkspaceLogFile()]);
+  for (const file of files) {
+    if (file) appendVoiceLine(file, line, resolveMaxBytes());
   }
 }

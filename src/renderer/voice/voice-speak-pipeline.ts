@@ -39,6 +39,7 @@ export async function speakSegment(text: string, label: string): Promise<SpeakRe
 export async function speakAndPlayPipelined(
   text: string,
   isCurrent?: () => boolean,
+  onFirstAudio?: () => void,
 ): Promise<
   | { ok: true; playedMs: number; cancelled?: boolean }
   | { ok: false; error: string }
@@ -57,7 +58,7 @@ export async function speakAndPlayPipelined(
 
   const restPromise =
     rest && firstSpoken.mode === 'audio' ? speakSegment(rest, 'TTS continuação') : null;
-  let playedMs = await playSpeakResult(firstSpoken);
+  let playedMs = await playSpeakResult(firstSpoken, onFirstAudio);
 
   if (!rest) return { ok: true, playedMs };
   const restSpoken = restPromise

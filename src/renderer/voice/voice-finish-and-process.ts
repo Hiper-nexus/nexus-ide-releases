@@ -89,6 +89,7 @@ import {
   shouldRearmAfterAudioOnly,
 } from './live-wake-greeting';
 import { followUpAuthority } from './follow-up-authority';
+import { logVoiceTurnMilestone } from './voice-turn-telemetry';
 
 /**
  * A warm socket is not authorization to keep listening. A silent follow-up
@@ -212,6 +213,10 @@ export async function finishAndProcess(
     const result = wakeMic.isUtteranceActive()
       ? wakeMic.finishUtterance()
       : await capture.stop();
+    logVoiceTurnMilestone(String(turnToken), 'speech_end', {
+      reason: activeCaptureReason,
+      durationSec: result.durationSec,
+    });
     const routing = store.info?.routing ?? 'focused-pane';
     const shouldTryRealtimeTranscript =
       routing === 'jarvis' && shouldStreamToRealtime();

@@ -53,6 +53,16 @@ The settings UI exposes this as **Jarvis Live**. For hands-free operation, enabl
 both **Hey Jarvis** and **Jarvis Live**; for a tighter workstation flow, leave
 wake word off and use the PTT shortcut to enter the same live session.
 
+### Observabilidade por turno
+
+Cada turno registra em `voice.log` os marcos `wake`, `speech_start`,
+`speech_end`, `turn_committed`, `first_tool_call`, `effect_confirmed` e
+`first_audio`, quando aplicáveis. Cada linha inclui timestamp absoluto,
+`deltaFromWakeMs` e `deltaFromPreviousMs`. O log global em
+`~/.nexus/logs/voice.log` é espelhado em `<workspace>/.nexus/logs/voice.log`
+quando há workspace aberto; falhas de I/O em qualquer destino nunca afetam a
+voz.
+
 ## Jarvis Brain Providers
 
 The Jarvis brain is separate from STT/TTS. It is the chat model that receives

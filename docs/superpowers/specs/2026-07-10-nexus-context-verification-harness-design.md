@@ -227,6 +227,11 @@ interface ContextSourceRef {
 Busca vetorial é índice derivado. O resultado sempre retorna as fontes; sem
 fonte, não vira regra bloqueante.
 
+Uma attestation cujo `sourceHash` mudou, mas cujo alvo ainda é byte a byte
+idêntico ao hash atestado, representa drift somente da fonte e gera warning.
+Alvo ausente, alterado, malformado ou sem attestation continua bloqueante; o
+Doctor nunca transforma documento de contexto ausente em warning.
+
 ## Layout de projeto
 
 ```text

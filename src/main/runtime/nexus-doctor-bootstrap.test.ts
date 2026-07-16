@@ -8,6 +8,7 @@ import {
   type NexusDoctorReport,
 } from './nexus-doctor';
 import {
+  buildMultiPcBackendStatus,
   buildDoctorProviderSnapshot,
   configureNexusDoctorRuntime,
   disposeNexusDoctorRuntime,
@@ -96,6 +97,19 @@ function adapter(): CliPtyAdapter {
 afterEach(() => disposeNexusDoctorRuntime());
 
 describe('Nexus Doctor production bootstrap', () => {
+  it('derives single-device and shared execution from configured backends', () => {
+    expect(buildMultiPcBackendStatus(false, false)).toEqual({
+      leaseBackendConfigured: false,
+      syncBackendConfigured: false,
+      requireSharedExecution: false,
+    });
+    expect(buildMultiPcBackendStatus(true, false)).toEqual({
+      leaseBackendConfigured: true,
+      syncBackendConfigured: false,
+      requireSharedExecution: true,
+    });
+  });
+
   it('derives read-only capability by exercising the enforced CLI policy', () => {
     const secureReadOnlyArgs = vi.fn(() => ['--sandbox', 'read-only']);
     expect(buildDoctorProviderSnapshot(provider(), {
