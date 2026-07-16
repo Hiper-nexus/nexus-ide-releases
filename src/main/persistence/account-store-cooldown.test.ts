@@ -160,6 +160,25 @@ describe('cooldown escopado (tier)', () => {
     expect(pick.account?.id).toBe(b.id);
   });
 
+  it('linha legada de cooldown (DB antigo, sem bloco espelhado) ainda bloqueia', () => {
+    // Reproduz um DB de versão anterior à tabela account_cooldown_blocks: a
+    // conta tem cooldown_until na própria linha, mas NADA em blocos. Exercita o
+    // ramo de síntese de bloco legado em effectiveBlock, que setCooldown nunca
+    // alcança (ele sempre grava o bloco espelhado).
+    const a = addAcct('a');
+    openDb!
+      .prepare('UPDATE accounts SET cooldown_until = ?, last_error = ? WHERE id = ?')
+      .run(NOW + HOUR, 'legacy quota', a.id);
+    expect(blockRowCount()).toBe(0); // nenhum bloco espelhado
+    initAccountStore(openDb); // re-hidrata a partir da linha legada
+
+    // O cooldown legado é global: bloqueia o escopo global E qualquer tier.
+    expect(isAccountBlockedForScope(a.id, NOW)).toBe(true);
+    expect(isAccountBlockedForScope(a.id, NOW, 'tier:fable')).toBe(true);
+    // E já não bloqueia depois de expirar.
+    expect(isAccountBlockedForScope(a.id, NOW + HOUR + 1)).toBe(false);
+  });
+
   it('escopado usa max(): um retry-after curto não encurta um bloco longo', () => {
     const a = addAcct('a');
     setCooldown(a.id, NOW + 100_000, 'long', 'tier:fable');

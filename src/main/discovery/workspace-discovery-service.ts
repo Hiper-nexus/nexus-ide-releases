@@ -106,7 +106,15 @@ export type WorkspaceDiscoveryResult = z.infer<
 export interface DiscoverWorkspaceOptions {
   /** Home alternativa (testes). Default: os.homedir(). */
   home?: string;
-  /** Ambiente para expansão de ${VAR} nos configs. Default: process.env. */
+  /**
+   * Ambiente para expansão de `${VAR}` nos configs. **Default: vazio.**
+   * Este inventário é read-only e cruza main→renderer; expandir contra
+   * `process.env` materializaria segredos de configs de workspace não
+   * confiáveis (e a máscara é por NOME de chave, então um campo de nome
+   * benigno carregando `${SECRET}` vazaria). Com env vazio, `${VAR}` sem
+   * default permanece literal — a estrutura fica visível, o valor nunca. Só
+   * os testes passam um env explícito para exercitar a expansão.
+   */
   env?: Readonly<Record<string, string | undefined>>;
   /** Ignora o cache e revarre (raro; o fingerprint já invalida sozinho). */
   force?: boolean;
@@ -171,7 +179,7 @@ export function discoverWorkspaceConfigs(
   const raw = discoverConfigs({
     workspaceRoot: root,
     home,
-    env: options.env ?? process.env,
+    env: options.env ?? {},
     io,
   });
 

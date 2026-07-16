@@ -253,6 +253,29 @@ describe('companion-relay-transport', () => {
     expect(dispatchSpy).not.toHaveBeenCalled();
   });
 
+  it('frame indecifrável de guest não derruba a sessão do host (view-only DoS)', async () => {
+    const { fullLink } = await startTransport();
+    const guest = await joinGuest(fullLink, 'phone');
+    await guest.next(); // welcome
+
+    // Um guest hostil/quebrado injeta um envelope com payload que passa o
+    // formato mínimo (IV 12B + tag) mas falha o GCM. O relay cego encaminha ao
+    // host sem poder verificar. O host deve dropar só esse frame, não a sessão.
+    const garbage = new Uint8Array(28);
+    garbage.set([9, 9, 9], 12); // bytes não-nulos após o IV → tag inválida
+    guest.ws.send(packEnvelope(0, garbage));
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Sessão continua viva: um novo output de pane ainda flui ao guest legítimo.
+    transport!.pushPaneOutput('pane-alive', 'session-alive', 'still-here');
+    const frame = await guest.next();
+    expect(frame.t).toBe('pty');
+    expect((frame as Extract<CompanionHostFrame, { t: 'pty' }>).pane).toBe(
+      'pane-alive',
+    );
+    expect(transport!.info().running).toBe(true);
+  });
+
   it('frame pty selado chega ao guest e abre corretamente', async () => {
     const { fullLink } = await startTransport();
     const guest = await joinGuest(fullLink, 'phone');

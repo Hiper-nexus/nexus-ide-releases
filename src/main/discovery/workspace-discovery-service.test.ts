@@ -147,6 +147,24 @@ describe('discoverWorkspaceConfigs', () => {
     expect(sharedFallback?.env?.API_TOKEN).toBe('fallback-token');
   });
 
+  it('default (sem env) NÃO materializa segredo do process.env em campo benigno', () => {
+    const { ws, home } = makeFixture();
+    // Segredo real no ambiente do processo, com o mesmo nome do ${VAR} do config.
+    const prev = process.env.NEXUS_TEST_TOKEN;
+    process.env.NEXUS_TEST_TOKEN = 'super-secret-from-process-env';
+    try {
+      // Chamada de produção NÃO passa env → default vazio: nada de process.env.
+      const result = discoverWorkspaceConfigs(ws, { home });
+      const shared = result.mcpServers.find((s) => s.name === 'shared-mcp');
+      // Cai no fallback literal do config, jamais no valor do process.env.
+      expect(shared?.env?.API_TOKEN).toBe('fallback-token');
+      expect(JSON.stringify(result)).not.toContain('super-secret-from-process-env');
+    } finally {
+      if (prev === undefined) delete process.env.NEXUS_TEST_TOKEN;
+      else process.env.NEXUS_TEST_TOKEN = prev;
+    }
+  });
+
   it('workspace vazio → listas vazias', () => {
     const ws = tmpDir('nexus-discovery-empty-ws-');
     const home = tmpDir('nexus-discovery-empty-home-');

@@ -66,6 +66,11 @@ class FakeOmpProcess implements OmpChildLike {
     this.emitter.emit('stdout:data', raw);
   }
 
+  /** Emite um Buffer cru — usado para simular boundary de chunk em multibyte. */
+  emitStdoutBytes(bytes: Buffer): void {
+    this.emitter.emit('stdout:data', bytes);
+  }
+
   /** Emite um frame JSON completo com o \n do protocolo. */
   emitFrame(frame: object): void {
     this.emitStdout(`${JSON.stringify(frame)}\n`);
@@ -706,6 +711,29 @@ describe('robustez do parser NDJSON', () => {
     await becomeIdle(harness);
     harness.proc.emitFrame({ type: 'subagent_progress', payload: {} });
     expect(harness.session.state).toBe('idle');
+  });
+
+  it('UTF-8 multibyte partido entre Buffers é remontado sem U+FFFD', async () => {
+    const harness = createHarness();
+    await becomeIdle(harness);
+    // Frame com pt-BR + emoji; parte os bytes no meio do 🚀 (F0 9F 9A 80).
+    const frame = `${JSON.stringify({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'café 🚀 ação' },
+    })}\n`;
+    const bytes = Buffer.from(frame, 'utf8');
+    const rocket = Buffer.from('🚀', 'utf8');
+    const cut = bytes.indexOf(rocket) + 2; // no meio dos 4 bytes do emoji
+    harness.proc.emitStdoutBytes(bytes.subarray(0, cut));
+    harness.proc.emitStdoutBytes(bytes.subarray(cut));
+    await Promise.resolve();
+    const textPush = harness.pushes.find(
+      (p) =>
+        p.kind === 'text-delta' && String(p.delta ?? '').includes('café'),
+    ) as { kind: 'text-delta'; delta: string } | undefined;
+    expect(textPush).toBeDefined();
+    expect(textPush?.delta).toBe('café 🚀 ação');
+    expect(textPush?.delta).not.toContain('�');
   });
 });
 

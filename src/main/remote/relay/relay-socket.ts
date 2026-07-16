@@ -220,6 +220,13 @@ export class RelaySocket {
         try {
           frame = await open(this.#opts.key, envelope.payload);
         } catch {
+          // O host recebe frames de qualquer guest através do relay cego, que os
+          // encaminha sem poder verificá-los. Um guest quebrado ou hostil (mesmo
+          // view-only) não pode derrubar a sessão inteira com um frame
+          // indecifrável: dropamos só aquele frame. Já para o guest, falha de
+          // decriptação = chave da sala errada; reconectar não ajuda, então é
+          // fatal (semântica original preservada).
+          if (this.#opts.role === 'host') return;
           this.#failFatal('bad key or corrupted frame');
           return;
         }

@@ -1,4 +1,5 @@
 import { execFile, spawn as nodeSpawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import {
   OMP_PINNED_MAJOR,
   ompAgentEndFrameSchema,
@@ -84,6 +85,19 @@ export interface OmpHostToolDispatchResult {
   ok: boolean;
   result?: unknown;
   error?: string;
+}
+
+/**
+ * Decodifica um chunk de stream preservando UTF-8 multibyte que caia num boundary
+ * de chunk do pipe. Buffers passam pelo StringDecoder (bufferiza a sequência
+ * parcial até completar o code point); strings — de streams com encoding ou de
+ * fakes de teste — passam direto.
+ */
+function decodeStreamChunk(
+  decoder: StringDecoder,
+  chunk: Buffer | string,
+): string {
+  return typeof chunk === 'string' ? chunk : decoder.write(chunk);
 }
 
 export interface OmpAutoApprovalRecord {
@@ -283,6 +297,8 @@ export class OmpRpcSession {
 
   private lifecycle: OmpRpcSessionLifecycle = 'spawning';
   private stdoutBuffer = '';
+  private readonly stdoutDecoder = new StringDecoder('utf8');
+  private readonly stderrDecoder = new StringDecoder('utf8');
   private reqCounter = 0;
   private readonly pending = new Map<string, PendingRequest>();
   /** Comandos enfileirados enquanto o frame ready não chega. */
@@ -318,9 +334,16 @@ export class OmpRpcSession {
       env: config.env ?? buildOmpChildEnv(),
     });
 
-    this.proc.stdout?.on('data', (chunk) => this.onStdout(String(chunk)));
+    // UTF-8 multibyte pode cair num boundary de chunk do pipe; um StringDecoder
+    // próprio bufferiza sequências parciais e só entrega code points completos
+    // (senão pt-BR/emoji viram U+FFFD e corrompem tanto o texto exibido quanto os
+    // argumentos de host_tool_call roteados ao MCP). Strings (fakes/streams com
+    // encoding) passam direto.
+    this.proc.stdout?.on('data', (chunk) =>
+      this.onStdout(decodeStreamChunk(this.stdoutDecoder, chunk)),
+    );
     this.proc.stderr?.on('data', (chunk) => {
-      const text = String(chunk).trim();
+      const text = decodeStreamChunk(this.stderrDecoder, chunk).trim();
       if (text) console.warn(`[omp-rpc:${this.sessionId}] stderr: ${text.slice(0, 400)}`);
     });
     this.proc.on('exit', (code) => this.onExit(code));
