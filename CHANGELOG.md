@@ -1,5 +1,19 @@
 # Changelog
 
+## Não lançado — Perfil de design no motor automático
+
+- O motor que injeta a Carta de Design nos workers de UI ganha um **perfil de
+  design** configurável em Configurações → Squads: **direção estética**
+  (Auto / Minimalista / Brutalista / Soft) e três **dials 1–10** — ousadia de
+  layout, intensidade de motion e densidade visual (conceito adaptado do
+  taste-skill, MIT — ver `THIRD_PARTY_NOTICES.md`; texto injetado é nosso).
+- Frugal por construção: direção Auto + dials na banda neutra (4–7) injetam a
+  carta pura, byte a byte — o recurso não custa nada no prompt de quem não o
+  usa. Só dials extremos (1–3 / 8–10) e direções explícitas viram linhas.
+- As proibições anti-genérico da carta continuam absolutas: o perfil modula o
+  gosto dentro delas (o bloco injetado declara isso ao agente), e valores fora
+  da faixa em settings antigos são clampados em vez de quebrar o spawn.
+
 ## 0.17.0 — Oh My Pi
 
 Crossover com o coding agent open-source [oh-my-pi](https://github.com/can1357/oh-my-pi)

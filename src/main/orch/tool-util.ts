@@ -15,7 +15,7 @@ import { getProjectDomainStores } from './project-domain-store-registry';
 import { LEGACY_MARKER } from './legacy-handoff';
 import { PONYTAIL_RULES } from './ponytail';
 import { ENGINEERING_CHARTER } from './engineering-charter';
-import { DESIGN_CHARTER } from './design-charter';
+import { composeDesignCharter } from './design-profile';
 import { getOrchSettings } from '../persistence/settings-store';
 import { resolveCwdForScope } from './workspace-path';
 import { canUseNexusMcp } from './cli-mcp-inject';
@@ -238,7 +238,10 @@ export function withHandoffContract(
   const tier = charterTierForWorker({ prompt, ...hints });
   const charter =
     orch.seniorMode && tier.engineering ? `\n\n${ENGINEERING_CHARTER}` : '';
-  const design = orch.designPro && tier.design ? `\n\n${DESIGN_CHARTER}` : '';
+  // A carta de design é composta com o perfil (direção + dials) do workspace;
+  // perfil neutro degrada para a carta pura, sem custo extra de prompt.
+  const design =
+    orch.designPro && tier.design ? `\n\n${composeDesignCharter(orch)}` : '';
   const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
   return `${prompt}${charter}${design}${lean}\n\n${contract}`;
 }

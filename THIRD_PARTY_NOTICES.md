@@ -3,6 +3,16 @@
 NexusIDE includes third-party software and data. The corresponding licenses
 remain with their copyright holders.
 
+## taste-skill design dials
+
+The design profile of the automatic prompt engine
+(`src/main/orch/design-profile.ts`) adapts the concept and taxonomy of the
+aesthetic-direction variants (minimalist/brutalist/soft) and the 1–10 design
+dials (variance/motion/density) from
+[`leonxlnx/taste-skill`](https://github.com/leonxlnx/taste-skill)
+(MIT, copyright 2026 Leonxlnx). The injected instruction text is original to
+NexusIDE; no upstream files are redistributed.
+
 ## WebRTC AEC3 WebAssembly
 
 Realtime echo cancellation uses `@ennuicastr/webrtcaec3.js@0.3.0`, a
