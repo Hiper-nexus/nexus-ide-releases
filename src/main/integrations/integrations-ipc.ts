@@ -242,7 +242,7 @@ export function registerIntegrationsIpc(): void {
     return listLinearIssues(key, parsed.data.limit);
   });
 
-  ipcMain.handle(INTEGRATIONS_CHANNELS.sshPortForward, (_e, raw) => {
+  ipcMain.handle(INTEGRATIONS_CHANNELS.sshPortForward, async (_e, raw) => {
     const parsed = portForwardSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid request' };
     return startPortForward(parsed.data);

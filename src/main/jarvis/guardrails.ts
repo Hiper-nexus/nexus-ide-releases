@@ -150,6 +150,13 @@ export function confirmationReason(
   if (toolName === 'nexus_audio_generate' || toolName === 'audio_generate') {
     return mediaConfirmation('audio', args);
   }
+  if (toolName === 'nexus_catalog_install' || toolName === 'catalog_install') {
+    // M8: spell out that this downloads UNVERIFIED third-party code from the
+    // community catalog into ~/.claude, which the coding agent can later run.
+    const kind = safeMediaArg(args.kind, 'component');
+    const slug = safeMediaArg(args.slug, 'unknown');
+    return `INSTALAR ${kind} de terceiro do catálogo (${slug}) em ~/.claude — código não verificado que o agente pode executar`;
+  }
   return `tool: ${toolName}`;
 }
 

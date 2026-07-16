@@ -199,6 +199,10 @@ export function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
+      // Pin the safe defaults explicitly (L3) so a future Electron default change
+      // or an accidental edit can't silently weaken the renderer.
+      webSecurity: true,
+      allowRunningInsecureContent: false,
     },
   });
 

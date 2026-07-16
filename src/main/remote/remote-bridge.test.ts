@@ -143,17 +143,6 @@ describe('remote bridge', () => {
     socket.close();
   });
 
-  it('rotates the pairing code after too many failures', async () => {
-    const before = bridge.getRemoteBridgeInfo().pairingCode;
-    const socket = await connect();
-    for (let i = 0; i < 8; i += 1) {
-      const res = await rpc(socket, { id: `f${i}`, type: 'pair', code: 'AAAAAAAA' });
-      expect(res.ok).toBe(false);
-    }
-    socket.close();
-    expect(bridge.getRemoteBridgeInfo().pairingCode).not.toBe(before);
-  });
-
   it('issues a token on correct pairing and accepts it on a fresh socket', async () => {
     const code = bridge.getRemoteBridgeInfo().pairingCode;
     const pairSocket = await connect();
@@ -337,6 +326,24 @@ describe('remote bridge', () => {
       'deploy\n',
     );
     socket.close();
+  });
+
+  // Kept LAST: it locks this IP out of pairing for a cooldown, which would
+  // otherwise leak into other tests that pair from the same loopback address.
+  it('locks out an IP after too many failures WITHOUT rotating the shared code (L16)', async () => {
+    const before = bridge.getRemoteBridgeInfo().pairingCode;
+    const socket = await connect();
+    for (let i = 0; i < 8; i += 1) {
+      const res = await rpc(socket, { id: `f${i}`, type: 'pair', code: 'AAAAAAAA' });
+      expect(res.ok).toBe(false);
+    }
+    // Further attempts from this IP are locked out...
+    const locked = await rpc(socket, { id: 'locked', type: 'pair', code: 'AAAAAAAA' });
+    expect(locked.ok).toBe(false);
+    expect(locked.error).toMatch(/too many attempts/);
+    socket.close();
+    // ...but the honest user's code is untouched (no global rotation).
+    expect(bridge.getRemoteBridgeInfo().pairingCode).toBe(before);
   });
 
 });

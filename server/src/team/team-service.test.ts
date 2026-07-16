@@ -50,10 +50,10 @@ describe('createInvite / joinTeam', () => {
 
     const inv = await createInvite(db, teamId, owner);
 
-    expect(inv.code).toMatch(/^[A-Z2-7]{4}-[A-Z2-7]{4}$/);
+    expect(inv.code).toMatch(/^[A-Z2-7]{4}-[A-Z2-7]{4}-[A-Z2-7]{4}$/);
     const rows = await db.select().from(schema.teamInvites);
     expect(rows[0].codeHash).not.toBe(inv.code);
-    expect(rows[0].codeHash).not.toBe(inv.code.replace('-', ''));
+    expect(rows[0].codeHash).not.toBe(inv.code.replace(/-/g, ''));
     expect(rows[0].codePrefix).toBe(inv.code.slice(0, 4));
     const member = await acc(db, 'm@x.com');
     const result = await joinTeam(db, member, inv.code.toLowerCase());
