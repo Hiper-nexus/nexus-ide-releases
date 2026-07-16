@@ -267,6 +267,41 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('allows context_draft_review from an unbound independent reviewer pane', async () => {
+    // Drafts de contexto de projeto têm missionId nulo e o reviewer pane é
+    // deliberadamente spawnado sem vínculo de missão (independência do autor;
+    // cli-context-draft-reviewer só vincula quando o draft tem missão). A
+    // autoridade real vive no handler: reviewer ≠ autor, provider distinto e
+    // re-hash das fontes (context-draft-store.review). Exención ESTREITA por
+    // nome, como memory_retain — context_doctor segue bloqueado sem missão.
+    resetGateForTests();
+    const reviewerContext = mintToken({
+      label: 'context-reviewer-test',
+      role: 'worker',
+      scope: auditScope,
+    });
+    const handler = vi.fn(async () => ({ ok: true }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_context_draft_review',
+        description: 'independent context draft review',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_context_draft_review',
+      {
+        draftId: 'draft-test-1',
+        decision: 'approve',
+        rationale: 'sources re-verified against the checkout.',
+      },
+      reviewerContext,
+    );
+
+    expect(result).not.toMatchObject({ denied: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('allows a confirmed renderer UI action without mission authority', async () => {
     const handler = vi.fn(async () => ({ ok: true }));
     const confirm = vi.fn(async () => true);

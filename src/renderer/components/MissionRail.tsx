@@ -329,14 +329,6 @@ export function MissionRail() {
               <span className="mission-rail__summary-line">{railBeat.line}</span>
             ) : null}
           </span>
-          {listReady && workspaceBudget.activeCount > 0 && (
-            <span
-              className="mission-rail__summary mission-rail__summary--budget"
-              title="Orçamento agregado (intent contract: tokens/steps estimados)"
-            >
-              {workspaceBudget.label}
-            </span>
-          )}
         </div>
         <div className="mission-rail__head-actions">
           <button
@@ -358,19 +350,72 @@ export function MissionRail() {
             <PixelIcon name="board" size={11} />
           </button>
         </div>
+        {/* Chips do polish: a narrativa endorfinada fica acima, números aqui. */}
+        <div className="mission-rail__meta" role="status" aria-live="polite">
+          {!listReady ? (
+            <span className="mission-rail__chip mission-rail__chip--muted">
+              a carregar…
+            </span>
+          ) : (
+            <>
+              <span
+                className="mission-rail__chip"
+                title="Missões em progresso ou bloqueadas neste workspace"
+              >
+                <span className="mission-rail__chip-value">{activeCount}</span>
+                <span className="mission-rail__chip-label">
+                  ativa{activeCount === 1 ? '' : 's'}
+                </span>
+              </span>
+              <span
+                className="mission-rail__chip"
+                title="Total de missões listadas nesta pasta"
+              >
+                <span className="mission-rail__chip-value">
+                  {localMissions.length}
+                </span>
+                <span className="mission-rail__chip-label">aqui</span>
+              </span>
+              {workspaceBudget.activeCount > 0 && (
+                <span
+                  className={`mission-rail__chip mission-rail__chip--budget${
+                    workspaceBudget.totalMaxTokens > 0 &&
+                    workspaceBudget.totalSpentTokens /
+                      Math.max(1, workspaceBudget.totalMaxTokens) >=
+                      0.8
+                      ? ' mission-rail__chip--warn'
+                      : ''
+                  }`}
+                  title="Orçamento agregado (intent contract: tokens estimados)"
+                >
+                  <span className="mission-rail__chip-value">
+                    {workspaceBudget.shortLabel}
+                  </span>
+                </span>
+              )}
+            </>
+          )}
+        </div>
       </header>
 
-      <div className="activity-rail__search">
-        <input
-          className="activity-rail__search-input"
-          type="search"
-          placeholder="Filtrar missões desta pasta…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Filtrar missões deste workspace"
-        />
+      <div className="mission-rail__tools">
+        <label className="activity-rail__search">
+          <span className="settings-visually-hidden">
+            Filtrar missões deste workspace
+          </span>
+          <span className="activity-rail__search-icon" aria-hidden="true">
+            <PixelIcon name="search" size={11} />
+          </span>
+          <input
+            className="activity-rail__search-input"
+            type="search"
+            placeholder="Filtrar missões…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </label>
+        <AgentDropZone compact />
       </div>
-      <AgentDropZone compact />
 
       <div className="activity-rail__body">
         {extIssues.length > 0 && (

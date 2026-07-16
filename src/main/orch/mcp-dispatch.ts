@@ -405,6 +405,14 @@ export async function dispatchToolCall(
     // missão a outras tools. A mutação é estreita e validada (≤8KB, redação de
     // segredo, dedupe) e toca só o banco de memória em userData.
     canonical === 'memory_retain' ||
+    // context_draft_review é a decisão do reviewer independente do bootstrap:
+    // drafts de contexto de PROJETO têm missionId nulo e o reviewer pane é
+    // deliberadamente spawnado sem vínculo de missão (cli-context-draft-reviewer
+    // só vincula quando o draft tem missão). Sem esta exención, todo draft de
+    // projeto fica eternamente 'proposed' e nenhuma missão congela contrato.
+    // A autoridade real vive no handler: reviewer ≠ autor (id/sessão), provider
+    // distinto e re-hash de fontes/alvo antes de aprovar (context-draft-store).
+    canonical === 'context_draft_review' ||
     effectPolicy === 'mission-control' ||
     effectPolicy === 'renderer-authorized-effect' ||
     effectPolicy === 'routine-local-operation';

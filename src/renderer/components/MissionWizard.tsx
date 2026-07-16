@@ -1072,45 +1072,58 @@ export function MissionWizard() {
 
           {step === 'mode' && (
             <div className="wizard__section">
-              <p className="wizard__label">ESCOLHA O MODO</p>
-              <div className="wizard__modes">
+              <p className="wizard__label">COMO QUER TRABALHAR</p>
+              <p className="wizard__mode-desc" style={{ marginTop: -6, marginBottom: 4 }}>
+                Escolha o caminho. Pode mudar depois — o Nexus guarda o contexto da pasta.
+              </p>
+              <div className="wizard__modes wizard__modes--featured">
                 <button
-                  className={`wizard__mode ${mode === 'libre' ? 'wizard__mode--active' : ''}`}
+                  className={`wizard__mode wizard__mode--featured ${mode === 'libre' ? 'wizard__mode--active' : ''}`}
                   onClick={() => chooseMode('libre')}
                 >
+                  <span className="wizard__mode-badge wizard__mode-badge--rec">
+                    Recomendado
+                  </span>
                   <span className="wizard__mode-icon">
                     <PixelIcon name="terminal" size={22} />
                   </span>
                   <span className="wizard__mode-title">Modo Livre</span>
                   <span className="wizard__mode-desc">
-                    Escolha providers e quantidade de panes
+                    Grade de terminais e providers — o dia a dia, com ou sem IA.
                   </span>
+                  <span className="wizard__mode-cta">Continuar ›</span>
                 </button>
                 <button
-                  className={`wizard__mode ${mode === 'squad' ? 'wizard__mode--active' : ''}`}
+                  className={`wizard__mode wizard__mode--featured ${mode === 'squad' ? 'wizard__mode--active' : ''}`}
                   onClick={() => chooseMode('squad')}
                   disabled={squads.length === 0}
                 >
+                  <span className="wizard__mode-badge">Avançado</span>
                   <span className="wizard__mode-icon">
                     <PixelIcon name="users" size={22} />
                   </span>
                   <span className="wizard__mode-title">Modo Squad</span>
                   <span className="wizard__mode-desc">
-                    Use um preset de squad salvo
+                    Time pronto (preset) no mesmo objetivo — planejar e executar em paralelo.
                     {squads.length === 0 && ' (nenhum squad salvo)'}
                   </span>
+                  <span className="wizard__mode-cta">Montar squad ›</span>
                 </button>
                 <button
-                  className={`wizard__mode ${mode === 'agentic' ? 'wizard__mode--active' : ''}`}
+                  className={`wizard__mode wizard__mode--featured ${mode === 'agentic' ? 'wizard__mode--active' : ''}`}
                   onClick={() => chooseMode('agentic')}
                 >
+                  <span className="wizard__mode-badge wizard__mode-badge--ai">
+                    IA monta o time
+                  </span>
                   <span className="wizard__mode-icon">
                     <PixelIcon name="bolt" size={22} />
                   </span>
                   <span className="wizard__mode-title">Modo Agêntico</span>
                   <span className="wizard__mode-desc">
-                    Descreva o que quer — a IA monta o time e dispara
+                    Descreva o objetivo — a IA desenha o roster e dispara a missão.
                   </span>
+                  <span className="wizard__mode-cta">Descrever objetivo ›</span>
                 </button>
               </div>
               <div className="wizard__actions">
