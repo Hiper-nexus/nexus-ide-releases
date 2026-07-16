@@ -4,7 +4,21 @@
  * unit tested. The failover engine feeds it a rolling window of recent output.
  */
 
-export type LimitKind = 'rate-limit' | 'quota' | 'auth';
+import {
+  backoffMsForReason,
+  classifyRateLimitText,
+  type ClassifiedReason,
+} from '../../vendor/omp/rate-limit/classify';
+import { parseRetryAfterMsFromText } from '../../vendor/omp/rate-limit/retry-after-text';
+
+/**
+ * - 'quota': conta/plano esgotado — cooldown longo, pinta a janela Semanal.
+ * - 'rate-limit': janela rolante (5h) ou taxa por minuto — cooldown médio.
+ * - 'auth': credencial expirada/inválida — trocar de conta pode recuperar.
+ * - 'transient': blip do provedor (capacidade do modelo / 5xx) — cooldown de
+ *   SEGUNDOS; não é janela de uso (a conta volta sozinha).
+ */
+export type LimitKind = 'rate-limit' | 'quota' | 'auth' | 'transient';
 
 export interface LimitHit {
   kind: LimitKind;
@@ -97,6 +111,8 @@ const PATTERNS: Pattern[] = [
 /**
  * Try to read an explicit reset time ("resets at 3pm", "try again in 42
  * minutes") to size the cooldown precisely; falls back to the pattern default.
+ * O parser vendorado do omp cobre as variantes extras (hint `retry-after-ms=`,
+ * headers ecoados no terminal, prosa "retry in 26.3s").
  */
 function parseResetCooldown(text: string): number | null {
   const mins = /try again in (\d+)\s*(?:minute|min)/i.exec(text);
@@ -105,7 +121,26 @@ function parseResetCooldown(text: string): number | null {
   if (secs) return Number(secs[1]) * 1000;
   const hrs = /(?:resets?|available again) in (\d+)\s*hour/i.exec(text);
   if (hrs) return Number(hrs[1]) * HOUR;
-  return null;
+  return parseRetryAfterMsFromText(text);
+}
+
+/** Mapeia a taxonomia do omp para os kinds do Nexus. */
+const KIND_BY_REASON: Record<ClassifiedReason, LimitKind> = {
+  QUOTA_EXHAUSTED: 'quota',
+  RATE_LIMIT_EXCEEDED: 'rate-limit',
+  MODEL_CAPACITY_EXHAUSTED: 'transient',
+  SERVER_ERROR: 'transient',
+};
+
+function cooldownForReason(reason: ClassifiedReason): number {
+  // Quota mantém a janela LONGA do Nexus (esgotou a conta → rotaciona e
+  // espera), não os 30min do omp — lá o valor era backoff de retry
+  // in-process, aqui é quarentena de conta na frota.
+  if (reason === 'QUOTA_EXHAUSTED') return 12 * HOUR;
+  // Transitórios usam as durações CURTAS do omp (30s / 45s+jitter / 20s):
+  // capacidade e 5xx se resolvem sozinhos; o cooldown longo de quota tiraria
+  // a conta da frota sem motivo.
+  return backoffMsForReason(reason);
 }
 
 export function detectLimit(text: string): LimitHit | null {
@@ -117,6 +152,20 @@ export function detectLimit(text: string): LimitHit | null {
       kind: pattern.kind,
       reason: match[0].trim().slice(0, 120),
       cooldownMs: parsed ?? pattern.cooldownMs,
+    };
+  }
+  // Fonte ADICIONAL (vendored de oh-my-pi): taxonomia QUOTA / RATE_LIMIT /
+  // CAPACITY / SERVER sobre fraseologia de Anthropic/Google/xAI/provedores
+  // chineses que os padrões acima não cobrem. Os padrões legados têm
+  // precedência total — zero mudança de kind/cooldown para textos que eles
+  // já reconheciam.
+  const classified = classifyRateLimitText(text);
+  if (classified) {
+    const parsed = parseResetCooldown(text);
+    return {
+      kind: KIND_BY_REASON[classified.reason],
+      reason: classified.matched.trim().slice(0, 120),
+      cooldownMs: parsed ?? cooldownForReason(classified.reason),
     };
   }
   return null;

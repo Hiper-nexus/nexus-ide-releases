@@ -47,6 +47,26 @@ describe('quota-from-limit', () => {
     expect(windowsFromCooldown(100, 'codex', 200)).toEqual([]);
   });
 
+  it('transient hits paint no usage window (blip, not quota)', () => {
+    const now = 10_000;
+    const w = windowsFromLimitHit(
+      { kind: 'transient', reason: '503 overloaded', cooldownMs: 45_000 },
+      'claude',
+      now,
+      now,
+    );
+    expect(w).toEqual([]);
+    // Merge não inventa esgotamento a partir de um blip.
+    const merged = applyLimitHitToWindows(
+      defaultUnknownWindows('claude'),
+      { kind: 'transient', reason: '503 overloaded', cooldownMs: 45_000 },
+      'claude',
+      now,
+      now,
+    );
+    expect(merged.find((x) => x.usedRatio === 1)).toBeUndefined();
+  });
+
   it('maps quota-kind weekly exhaustion (not 5h) for weekly limit hits', () => {
     const now = 10_000;
     const w = windowsFromLimitHit(

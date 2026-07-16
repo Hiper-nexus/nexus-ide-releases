@@ -46,6 +46,13 @@ export function windowsFromLimitHit(
       }),
     ];
   }
+  if (hit.kind === 'transient') {
+    // Blip transitório (capacidade do modelo / 5xx, cooldown de segundos):
+    // não é janela de uso — pintar a barra 5h/Semanal como esgotada mentiria.
+    // O cooldown curto da conta já aparece via windowsFromCooldown quando o
+    // failover o aplica.
+    return [];
+  }
   // auth — not a usage window; leave unknown shell (same fleet slots)
   return [
     unknownWindow('hours', '5 Horas'),
