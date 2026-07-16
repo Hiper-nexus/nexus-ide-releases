@@ -4,12 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const repositoryRoot = resolve(serverRoot, '..');
 const outputDirectory = resolve(serverRoot, 'dist-relay');
 
 await rm(outputDirectory, { recursive: true, force: true });
 await build({
-  entryPoints: [resolve(repositoryRoot, 'src/main/remote/relay/relay-server-main.ts')],
+  entryPoints: [resolve(serverRoot, 'src/relay/server.ts')],
   outfile: resolve(outputDirectory, 'index.js'),
   bundle: true,
   packages: 'external',
