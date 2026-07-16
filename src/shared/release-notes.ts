@@ -13,133 +13,93 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.16.6',
-  date: '2026-07-15',
-  codename: 'Live sem Silêncio',
+  version: '0.17.0',
+  date: '2026-07-16',
+  codename: 'Oh My Pi',
   summary:
-    'O Live só assume uma resposta quando há áudio ou tool-call real; instalações antigas continuam saltando direto para a maior release compatível.',
+    'O motor de código open-source oh-my-pi (MIT) entra no cockpit: pane de agente tipado sem PTY-scraping, edição por hash, companion criptografado ponta a ponta, memória compartilhada entre CLIs e failover com cooldown por tier — código maduro vendorado, não reescrito.',
   highlights: [
     {
-      title: 'Uma única atualização até a versão mais nova',
+      title: 'Pane omp de primeira classe (sem PTY-scraping)',
       detail:
-        'O Nexus consulta os releases estáveis, escolhe a maior versão semântica com ZIP da arquitetura atual e atualiza a oferta antes de baixar, mesmo quando uma versão intermediária ficou aberta na tela.',
+        'O oh-my-pi roda via protocolo RPC tipado sobre pipes: estado busy/idle determinístico, streaming, custo e contexto ao vivo, e troca de modelo cross-provider no meio da conversa. Aprovações sempre passam pelo host, com trilha de auditoria fail-closed.',
     },
     {
-      title: 'Ícone do Dock estável com o pet ativo',
+      title: 'Edição por hash de conteúdo (hashline)',
       detail:
-        'O companion usa skipTransformProcessType e nunca chama dock.show() no hot path. O app fixa o ícone do bundle no tile e só pede show quando o Dock está realmente oculto.',
+        'O editor ganha um patch bus que ancora cada mudança no hash do arquivo: patch multi-arquivo é all-or-nothing, âncora obsoleta é rejeitada antes de corromper, e a recuperação falha fechada. Disponível a qualquer agente pela tool nexus_editor_apply_patch.',
     },
     {
-      title: 'Rascunhos resistem a fechamento acidental',
+      title: 'Companion mobile criptografado ponta a ponta',
       detail:
-        'Objetivos e anexos de missão, chaves de voz, anotações de diff, seleção de agente e navegação de Settings voltam intactos após Escape, overlay ou uma ação da Jarvis; Cancelar e concluir continuam descartando de forma explícita.',
+        'O transporte novo do companion usa relay cego com AES-256-GCM: a chave viaja só no fragmento do QR e o servidor nunca vê o conteúdo. View-only vê o estado, comandos que mutam a máquina ficam no desktop — a política de segurança do companion continua sendo a autoridade.',
     },
     {
-      title: 'Gate de evidências antes do handoff',
+      title: 'Memória agentic compartilhada entre CLIs',
       detail:
-        'Objetivos que prometem prints, capturas ou áudios em uma etapa futura ficam em awaiting_goal; a Jarvis, o wizard e o preflight final mantêm a missão sem panes e sem especialistas até os anexos chegarem.',
+        'retain/recall/stats sobre SQLite FTS5, com banco por workspace e um global do usuário. Todas as CLIs hospedadas passam a lembrar fatos do projeto entre sessões, com redação de segredo e deduplicação.',
     },
     {
-      title: 'Anexos de prints e áudio no objetivo',
+      title: 'Failover com cooldown por tier',
       detail:
-        'O wizard aceita imagens e áudios com limite por arquivo e total, salva os arquivos no workspace e injeta os caminhos no kickoff para a investigação reproduzir o problema.',
+        'Um limite semanal do Fable não tira mais a conta do Sonnet: os blocos de cooldown ganham escopo por família de modelo, o failover espera a conta-irmã que libera em segundos em vez da janela de horas, e a conta volta ao pool sozinha.',
     },
     {
-      title: 'Modelos fortes como padrão dos squads',
+      title: 'Catálogo de modelos com preço e janela',
       detail:
-        'Agentes Grok passam a usar grok-4.5 e agentes AGY/Gemini usam gemini-3.5-flash-high ao criar, carregar ou trocar o provider de um squad; uma escolha manual continua preservada.',
+        'Uma base vendorada de centenas de modelos dá preço por milhão de tokens, janela de contexto e capacidades para tudo que o Nexus roteia — incluindo GLM/z.ai, DeepSeek, Sakana Fugu e OpenRouter.',
     },
     {
-      title: 'Scheduler paralelo operacional',
+      title: 'Descoberta universal de configs de agente',
       detail:
-        'Missões aprovadas com plano selado agora distribuem tasks prontas e disjuntas em panes isolados, respeitando dependências, orçamento e o gate de ownership antes do merge.',
+        'O Nexus inventaria MCP servers, regras, skills e comandos de .claude, .cursor, .codex, AGENTS.md e GEMINI.md com prioridades e deduplicação, sem materializar segredos do ambiente.',
     },
     {
-      title: 'Merge serial validado',
+      title: 'Squad de review com prioridades P0–P3',
       detail:
-        'Cada task concluída passa pela MergeQueue existente com sensores, revisão independente e finalização durável; conflitos, violações e grafos inválidos falham fechados.',
+        'Um squad builtin distribui revisores read-only por localidade e entrega achados tipados com prioridade P0–P3, confiança e âncoras de linha — verdito claro sobre o que bloqueia release.',
     },
     {
-      title: 'MCP Across Tools',
+      title: 'Detecção de rate-limit mais fina',
       detail:
-        'O Nexus lê configs MCP de Nexus, Cursor, Claude Code, Codex, OpenCode e Cline e mostra uma matriz de presença por server sem inventar dados ou vazar segredos.',
+        'O detector distingue quota esgotada de um pico transitório: um "too many requests" passageiro entra em cooldown curto e não queima a conta-irmã, com padrões multilíngues do ecossistema oh-my-pi somados aos existentes.',
     },
     {
-      title: 'Sync fill-gaps com freio de produção',
+      title: 'omp como CLI hospedada no grid',
       detail:
-        'A simulação e o sync importam lacunas com backup antes de qualquer write; a escrita continua atrás de feature flag default-off para liberar por override consciente.',
-    },
-    {
-      title: 'Settings por pilares',
-      detail:
-        'Configurações agora agrupam Você, App, Agentes e Sistema, reduzindo a sensação de gaveta técnica e deixando Providers, MCPs, Tools e Squads mais encontráveis.',
-    },
-    {
-      title: 'Cockpit com presença',
-      detail:
-        'Home, rail, picker e orquestração usam estados vazios narrativos e feedback de missão sem animação invasiva, respeitando modo sóbrio e reduced motion.',
-    },
-    {
-      title: 'Contratos compartilhados menores',
-      detail:
-        'ProductApi, project identity e payloads de superfície foram extraídos de types.ts para arquivos focados, deixando o contrato do preload mais legível.',
+        'O oh-my-pi aparece no picker de agentes como qualquer outra CLI, com o servidor MCP do Nexus injetado por HOME-overlay privado — login e sessões do usuário preservados, o bearer isolado por sessão.',
     },
   ],
   fixes: [
     {
-      title: 'Oferta cacheada não instala versão intermediária',
+      title: 'Companion resiste a frame malicioso',
       detail:
-        'O clique em baixar reconsulta o GitHub antes de escolher o asset; qualquer oferta intermediária aberta passa a baixar a maior release estável compatível no mesmo fluxo.',
+        'Um guest view-only não derruba mais a sessão do host com um frame indecifrável: o host descarta o quadro em vez de encerrar, e só o próprio guest com chave errada trata a falha como definitiva.',
+    },
+    {
+      title: 'Texto em pt-BR e emoji sem corrupção no pane omp',
+      detail:
+        'A leitura do protocolo RPC preserva caracteres multibyte que caem no limite de um chunk do pipe, então acentos e emoji não viram caractere de substituição nem corrompem argumentos de ferramenta.',
+    },
+    {
+      title: 'Autoridade de contexto read-only respeitada por patch',
+      detail:
+        'O gate de missão passa a extrair os caminhos de dentro de um patch hashline, então o invariante de .context/ somente-leitura para executores não pode ser furado por uma edição via patch.',
+    },
+    {
+      title: 'Inventário de configs não materializa segredo',
+      detail:
+        'A descoberta de configs não expande mais variáveis de ambiente ao montar o inventário read-only, mantendo o template literal e nunca resolvendo um segredo do processo para a interface.',
+    },
+    {
+      title: 'Memória livre em pane sem missão',
+      detail:
+        'A tool de memória agentic ganhou uma exceção estreita para funcionar em panes livres, sem abrir escrita não-ligada a missão para nenhuma outra ferramenta.',
     },
     {
       title: 'Release metadata alinhada',
       detail:
-        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.16.6, removendo o bloqueio que deixava a árvore de release inconsistente.',
-    },
-    {
-      title: 'Carga lenta não entra em loop de recarregamento',
-      detail:
-        'O watchdog espera a navegação ativa e só reinicia uma carga realmente travada após 30 segundos, evitando ERR_ABORTED, tela piscando e falha de boot no pacote Intel.',
-    },
-    {
-      title: 'Terminal e toolbar sem piscar',
-      detail:
-        'Reemissões idênticas são suprimidas e o estado visual mantém busy por uma janela curta entre pausas de output; o estado real continua imediato para guards e orquestração.',
-    },
-    {
-      title: 'Evidência anexada não fica presa no gate',
-      detail:
-        'A mensagem de espera ganha prioridade quando faltam prints ou áudios, e o mesmo detector libera imediatamente o fluxo quando a interação já trouxe um anexo.',
-    },
-    {
-      title: 'Live só assume com evidência real',
-      detail:
-        'Depois de uma transcrição final ou de um resgate autorizado, o Nexus espera áudio ou tool-call do provider. Se o Live permanecer mudo, o mesmo turno segue para cérebro e TTS Classic em vez de terminar em silêncio.',
-    },
-    {
-      title: 'Ownership e DAG endurecidos',
-      detail:
-        'Claims de diretório agora colidem com arquivos descendentes, e self-dependency, dependências desconhecidas e ciclos não podem prender uma missão indefinidamente.',
-    },
-    {
-      title: 'Feature flag fail-closed restaurada',
-      detail:
-        'O MCP Hub sync havia ficado default-on durante a leva; a release corrige para default-off, preservando observe read-only sem abrir writes por padrão.',
-    },
-    {
-      title: 'Parser de configs tolerante',
-      detail:
-        'Leitura de JSON/TOML grande, ausente ou inválido falha fechado e retorna estado missing/error em vez de quebrar o painel.',
-    },
-    {
-      title: 'Writes sempre com backup',
-      detail:
-        'Export para ferramentas externas nunca apaga servers existentes, não cria configs ambíguas de Claude/Codex/Cline do zero e grava por caminho atômico com .bak.',
-    },
-    {
-      title: 'Release hygiene',
-      detail:
-        'Versão, changelog, lockfile e release notes permanecem sincronizados, com o gate de feature flags e a suíte completa verdes.',
+        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.17.0, corrigindo a inconsistência de versão deixada por um release anterior incompleto.',
     },
   ],
 };
