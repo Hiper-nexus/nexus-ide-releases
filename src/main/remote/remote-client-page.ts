@@ -3,6 +3,12 @@
  * origem HTTPS. Pareia por código, lista panes/missões, lê a saída e envia
  * input — a ÚNICA rota de escrita é pane.input (8KB cap), igual ao protocolo
  * WS. Zero dependências externas (CSP-friendly, roda offline no celular).
+ *
+ * Token persistido em localStorage (origem HTTPS da própria bridge): reload
+ * não exige re-pareamento; revogação no desktop invalida o token no servidor
+ * e o cliente cai de volta para a tela de pareamento. Terminal em tempo real:
+ * consome pushes `pane.stream.data` (terminal-stream-protocol) e usa o poll
+ * apenas como reconciliação — um gap de seq dispara pane.read para curar.
  */
 
 export const REMOTE_CLIENT_HTML = `<!doctype html>
@@ -103,8 +109,58 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
 <script>
 (function () {
   var ws = null, token = null, nextId = 1, pending = {}, curPane = null, poll = null;
+  var curStreamId = null, lastSeq = 0, streamLive = false;
+  var TOKEN_KEY = 'nexusRemoteToken';
   var $ = function (id) { return document.getElementById(id); };
   function setConn(on, txt) { $('dot').className = 'dot' + (on ? ' on' : ''); $('sub').textContent = txt; }
+  function loadToken() { try { return localStorage.getItem(TOKEN_KEY); } catch (_) { return null; } }
+  function saveToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (_) {} }
+  function clearToken() { try { localStorage.removeItem(TOKEN_KEY); } catch (_) {} }
+  function showPairScreen(msg) {
+    token = null; clearToken();
+    $('home').classList.add('hidden');
+    $('detail').classList.add('hidden');
+    $('pair').classList.remove('hidden');
+    if (msg) $('pairErr').textContent = msg;
+  }
+
+  // Frame do terminal-stream-protocol (16 bytes de header, little-endian):
+  // kind 0x74 · version 1 · opcode · streamId u32@4 · seq u64@8 (low u32@12).
+  function decodeStreamFrame(b64) {
+    try {
+      var bin = atob(b64);
+      if (bin.length < 16) return null;
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      if (bytes[0] !== 0x74 || bytes[1] !== 1) return null;
+      var view = new DataView(bytes.buffer);
+      return {
+        opcode: bytes[2],
+        streamId: view.getUint32(4, true),
+        seq: view.getUint32(12, true),
+        text: new TextDecoder().decode(bytes.subarray(16)),
+      };
+    } catch (_) { return null; }
+  }
+
+  function handleStreamPush(msg) {
+    if (!curPane || msg.streamId !== curStreamId) return;
+    var frame = decodeStreamFrame(msg.frameBase64 || '');
+    if (!frame || frame.opcode !== 1) return; // só Output interessa aqui
+    if (lastSeq && frame.seq !== lastSeq + 1) {
+      // Gap (backpressure/reconexão): reconciliar com o tail completo.
+      readOutput();
+      return;
+    }
+    lastSeq = frame.seq;
+    var pre = $('output');
+    var atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+    var next = pre.textContent + frame.text;
+    // Bound de memória no celular: manter só a cauda.
+    if (next.length > 200000) next = next.slice(next.length - 160000);
+    pre.textContent = next;
+    if (atBottom) pre.scrollTop = pre.scrollHeight;
+  }
 
   function connect() {
     return new Promise(function (resolve, reject) {
@@ -114,7 +170,8 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       ws.onclose = function () { setConn(false, 'desconectado'); if (poll) clearInterval(poll); };
       ws.onmessage = function (e) {
         var msg; try { msg = JSON.parse(e.data); } catch (_) { return; }
-        if (msg.id && pending[msg.id]) { pending[msg.id](msg); delete pending[msg.id]; }
+        if (msg.id && pending[msg.id]) { pending[msg.id](msg); delete pending[msg.id]; return; }
+        if (msg.type === 'pane.stream.data') handleStreamPush(msg);
       };
     });
   }
@@ -141,12 +198,31 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       .then(function (r) {
         token = r.token || (r.result && r.result.token);
         if (!token) throw new Error('sem token');
+        saveToken(token);
         $('pair').classList.add('hidden');
         $('home').classList.remove('hidden');
         return refresh();
       })
       .catch(function (err) { $('pairErr').textContent = err.message; });
   };
+
+  // Token salvo: reload não exige re-pareamento. Se o desktop revogou, o auth
+  // falha e a tela de pareamento volta com o motivo.
+  (function bootWithSavedToken() {
+    var saved = loadToken();
+    if (!saved) return;
+    connect()
+      .then(function () { return send('auth', { token: saved }); })
+      .then(function () {
+        token = saved;
+        $('pair').classList.add('hidden');
+        $('home').classList.remove('hidden');
+        return refresh();
+      })
+      .catch(function (err) {
+        showPairScreen('sessão expirada — pareie de novo (' + err.message + ')');
+      });
+  })();
 
   function renderMissions(list) {
     var el = $('missionList'); el.textContent = '';
@@ -229,21 +305,47 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
   }
   $('refreshBtn').onclick = function () { refresh(); };
 
+  function schedulePoll() {
+    if (poll) clearInterval(poll);
+    // Com stream ao vivo o poll vira reconciliação lenta; sem stream (bridge
+    // antiga), continua sendo a fonte primária.
+    poll = setInterval(readOutput, streamLive ? 15000 : 2500);
+  }
   function openPane(p) {
     curPane = p;
+    curStreamId = null; lastSeq = 0; streamLive = false;
     $('home').classList.add('hidden');
     $('detail').classList.remove('hidden');
     $('detailName').textContent = p.title || p.paneId;
     $('detailErr').textContent = '';
     readOutput();
-    if (poll) clearInterval(poll);
-    poll = setInterval(readOutput, 2500);
+    send('pane.stream.open', { paneId: p.paneId })
+      .then(function (r) {
+        var res = r.result || r;
+        if (curPane !== p) return;
+        curStreamId = res.streamId;
+        var sub = decodeStreamFrame(res.subscribeFrameBase64 || '');
+        if (sub) lastSeq = sub.seq;
+        streamLive = true;
+        schedulePoll();
+      })
+      .catch(function () { /* bridge antiga sem push — poll de 2.5s cobre */ });
+    schedulePoll();
   }
   function readOutput() {
     if (!curPane) return;
     send('pane.read', { paneId: curPane.paneId, lines: 200 })
       .then(function (r) {
-        var out = (r.result && r.result.output) || r.output || '';
+        var res = r.result || r;
+        var out = res.output || '';
+        if (res.stream && typeof res.stream.seq === 'number') {
+          // O read re-encoda o tail como frame novo: realinha o cursor de seq
+          // para os próximos pushes.
+          lastSeq = res.stream.seq;
+          if (typeof res.stream.streamId === 'number' && curStreamId === null) {
+            curStreamId = res.stream.streamId;
+          }
+        }
         var pre = $('output'); var atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
         pre.textContent = out; if (atBottom) pre.scrollTop = pre.scrollHeight;
       })
@@ -259,6 +361,7 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
   };
   $('backBtn').onclick = function () {
     if (poll) clearInterval(poll); curPane = null;
+    curStreamId = null; lastSeq = 0; streamLive = false;
     $('detail').classList.add('hidden');
     $('home').classList.remove('hidden');
     refresh();
