@@ -151,6 +151,12 @@ export function assertSafeLocalGitConfig(
     );
   }
   if (config.status !== 0 && config.status !== 1) {
+    // `git config --local` fora de um repo sai 128 — reportar isso como
+    // "inspection failed" mandava o agente caçar um bug inexistente quando o
+    // cwd (ex.: raiz de workspace multi-projeto) simplesmente não é um repo.
+    if (/not a git repository|--local can only be used inside/i.test(config.stderr)) {
+      throw new Error(`not a git repository: ${cwd}`);
+    }
     throw new GitCommandError(
       'Git executable-config inspection failed',
       args,

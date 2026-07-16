@@ -135,8 +135,23 @@ const gitStatus: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
-    const { stdout } = await gitExec(['status', '--short', '--branch'], cwd);
-    return { cwd, output: stdout };
+    try {
+      const { stdout } = await gitExec(['status', '--short', '--branch'], cwd);
+      return { cwd, isRepo: true, output: stdout };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/not a git repository/i.test(message)) throw error;
+      // Raiz de workspace multi-projeto (ex.: ~/dev) não é repo — isso é um
+      // fato útil para o agente, não uma falha de ferramenta.
+      return {
+        cwd,
+        isRepo: false,
+        output: '',
+        note:
+          'Este diretório não é um repositório git. Informe cwd apontando ' +
+          'para um repositório (ex.: um subdiretório do workspace).',
+      };
+    }
   },
 };
 
