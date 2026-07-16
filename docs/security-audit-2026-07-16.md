@@ -30,10 +30,14 @@ arquiteturais e num punhado de vazamentos de plaintext nas bordas:
    instala agents/skills de um repositório comunitário no GitHub sem nenhuma
    verificação de assinatura/integridade do *conteúdo*. É exatamente o vetor
    "skill maliciosa → roubo de chave" que você levantou. (H1)
-2. **Agentes rodam em full-auto** — as tools **nativas** (Bash/Write) dos CLIs
-   rodam em `--dangerously-skip-permissions`/bypass, fora do sandbox e da
-   confirmação do Nexus. Um agente vítima de prompt-injection tem o maior raio
-   de alcance do app. (H2)
+2. **Agentes rodam em full-auto — POR DESIGN.** As tools **nativas** (Bash/Write)
+   dos CLIs rodam em `--dangerously-skip-permissions`/bypass, com o shell do
+   usuário e sem confirmação. Isso é uma **decisão de produto intencional e
+   não-negociável** (os agentes precisam operar sem pedir "yes" o tempo todo) —
+   **não é um bug a corrigir limitando o agente**. A consequência é que o agente
+   é um motor de execução *confiável*, então todo o ônus de segurança migra para
+   **o que entra no contexto dele** (H1) e para **proteger as credenciais em
+   repouso** (T2). Nenhuma dessas defesas toca na autonomia do agente. (H2)
 3. **Fronteira "mesmo usuário" carrega o modelo** — um agente/skill malicioso
    rodando como o mesmo usuário consegue coletar credenciais de vários
    side-channels em plaintext (managed homes, `mcp-hub.json`, histórico de
@@ -47,7 +51,7 @@ do pet) alcançáveis a partir do processo main.
 
 | Severidade | Qtd | Achados |
 |---|---|---|
-| **HIGH** | 6 | H1 supply-chain de skills · H2 exec nativa full-auto · H3 allowlist SSH `*` · H4 SSRF port-forward · H5 exec sem confirmação no mobile · H6 MITM TLS mobile |
+| **HIGH** | 6 | H1 supply-chain de skills · H2 full-auto do agente (premissa de design; defesa via input+credenciais) · H3 allowlist SSH `*` · H4 SSRF port-forward · H5 exec sem confirmação no mobile · H6 MITM TLS mobile |
 | **MEDIUM** | 12 | segredos plaintext (managed homes, `mcp-hub.json`, argv Keychain), redação de histórico incompleta, IPC de hook sem auth, SSRF do pet, gate de `catalog_install`, diálogo de install fraco, shadowing de skill, rate-limit em memória, race de auth-code |
 | **LOW** | ~15 | CSP `blob:`, deep-links sem confirmação, `webSecurity` implícito, `providers.conf`/`providers.json` plaintext, chave Gemini na URL, entropia de convite, DoS de pareamento, etc. |
 
@@ -71,6 +75,17 @@ Quatro perfis de invasor considerados:
   tentando parear/interceptar o companion mobile ou hijackar um terminal.
 - **D. Invasor remoto não-autenticado**: batendo na API do backend, webhooks
   forjados, IDOR entre tenants.
+
+> **Restrição de design (não-negociável).** Os agentes operam em **full-auto /
+> full-access por intenção** — devem executar sem pedir confirmação ("yes") o
+> tempo todo, e **nenhuma correção pode quebrar essa funcionalidade nem reduzir a
+> autonomia deles**. Portanto este relatório trata a capacidade total do agente
+> como *premissa*, não como vulnerabilidade. Todas as correções recomendadas são
+> **preservadoras de comportamento**: agem sobre o que o agente *ingere* e sobre
+> como as *credenciais ficam guardadas* — nunca adicionando prompts, sandbox ou
+> gates de runtime ao agente. (Observação: a confirmação recomendada para o
+> **companion mobile** — H5/H6 — governa um *dispositivo remoto/humano*, não o
+> agente local autônomo; não afeta o full-auto.)
 
 ---
 
@@ -100,10 +115,14 @@ completa, passo a passo, do ponto de vista do invasor (perfis A+B):
    ~/.nexus/managed-accounts/*/auth.json e .nexus/mcp-hub.json.
 ```
 
-Cada elo tem um achado correspondente abaixo (H1, H2, M1, M2, M8). **A defesa
+Cada elo tem um achado correspondente abaixo (H1, M1, M2, M8). **A defesa
 do install (traversal/zip-slip/caps) é excelente, mas defende o cano — não o que
-passa por ele.** O ponto de ruptura é a ausência de (a) verificação de
-autenticidade do conteúdo e (b) sandbox nas tools nativas do agente.
+passa por ele.** Como o full-auto do agente (elo 6) é intencional e não será
+tocado, os dois pontos de ruptura *acionáveis sem quebrar nada* são: **(a)**
+ausência de verificação de autenticidade do conteúdo que entra (elos 3-5, H1) e
+**(b)** credenciais deixadas em plaintext em arquivos que o agente pode ler
+(elo 7, M1/M2/M3/M4). Cortando (a) e (b), a cadeia se rompe mesmo com o agente
+mantendo full-access.
 
 ---
 
@@ -127,24 +146,41 @@ autenticidade do conteúdo e (b) sandbox nas tools nativas do agente.
   skills; badge "skill de terceiro não-verificado" com trust explícito.
 - **Status:** validado em primeira mão (li `catalog.ts` e `gate.ts`).
 
-### H2 — Tools nativas do agente rodam em full-auto, fora do sandbox/confirmação do Nexus
+### H2 — Full-auto do agente é premissa de design; o risco migra para input e credenciais (NÃO se resolve limitando o agente)
 - **Onde:** `src/adapters/builtin/claude.json:101-105` (e codex/agy/…),
   `src/main/pty/autonomous-cli-policy.ts:205-207` (`--allowedTools mcp__nexus`),
   `src/main/orch/hooks-gen.ts:71-87` (real-HOME recebe zero-click **sem** PreToolUse
   hook), `gate.ts:139-142` (`isHookToolAllowed` retorna `true` para Bash/Edit/Write
   nativos de um worker). O PTY do agente é spawnado como binário nu
-  (`pty-manager.ts spawnAgentSession`) — **não** embrulhado em bubblewrap/Seatbelt.
-- **Cenário do invasor:** um agente vítima de prompt-injection ignora as tools
-  `nexus_*` (que são bem-gated) e usa o próprio `Bash`/`Write`. O confinamento
-  passa a depender **inteiramente** do CLI do provedor honrar `--allowedTools
-  mcp__nexus` (Claude) ou `--sandbox workspace-write` (Codex) **em modo bypass/yolo**.
-  A confirmação nativa e o sandbox do Nexus cobrem só as chamadas `nexus_*`.
-- **Impacto:** potencial execução de comando no host — o maior raio de alcance do
-  app. É o elo 6 da cadeia de §3.
-- **Correção:** tratar o confinamento do CLI do provedor como defense-in-depth
-  não-confiável: embrulhar o **próprio PTY do agente** no mesmo `buildScopedExecPlan`
-  usado pelo `terminal_run`, e/ou instalar o hook PreToolUse em **todos** os panes
-  (inclusive real-HOME `mcpAutoload`) para que o Bash nativo também passe pelo gate.
+  (`pty-manager.ts spawnAgentSession`).
+- **Premissa de design (confirmada pelo produto):** essa autonomia total é
+  **intencional e não-negociável** — os agentes devem operar sem pedir "yes", e
+  **nada disso deve mudar**. Portanto o full-auto **não é a vulnerabilidade** e
+  **não deve ser embrulhado em sandbox nem receber gates/confirmações de runtime**.
+  O que este achado registra é a *consequência*: um agente plenamente autônomo é um
+  motor de execução confiável, logo o app fica seguro exatamente na medida em que
+  controla (1) o que entra no contexto do agente e (2) o que ele consegue colher.
+- **Cenário do invasor:** um agente vítima de prompt-injection (via H1, ou repo/web
+  hostil) usa seu próprio `Bash`/`Write` para exfiltrar. É o elo 6 da cadeia de §3 —
+  e ele **vai** rodar, por design.
+- **Impacto:** maior raio de alcance do app — mas mitigável **sem** tocar na
+  autonomia, atacando as pontas (input e credenciais).
+- **Correção (preservadora de comportamento — não adiciona prompt nem sandbox ao agente):**
+  - **Input-trust (upstream):** só deixar entrar conteúdo verificado — verificação
+    de autenticidade de skills/agents (H1) aplicada como *política automática*
+    (permite verificado, recusa não-verificado; sem prompt); marcar repo/página/output
+    de outro agente como não-confiável; ligar os tools `content_audit`/`security_audit`
+    (que já existem) no caminho de ingestão de skills e de contexto externo.
+  - **Credenciais em repouso (downstream):** tirar segredos dos arquivos plaintext
+    que o agente lê com `cat`/`file_read` — `mcp-hub.json` no cofre (M2), managed-homes
+    efêmeros e apagados após uso (M1), credencial Claude via stdin (M3), redação de
+    histórico estendida (M4). O CLI continua recebendo o que precisa em runtime, então
+    **nenhuma funcionalidade quebra** — só some a cópia plaintext em repouso.
+  - **Escopo de credencial (contém raio sem prompt):** materializar/injetar cada
+    credencial só no pane/conta que a usa, de forma efêmera, para que um agente
+    comprometido num pane não leia as credenciais vivas de outra conta.
+- **Status:** capacidade confirmada como decisão de produto; reenquadrado a pedido —
+  o alvo da correção é input + credenciais, nunca a autonomia do agente.
 - **Status:** confirmado por código (flags full-auto e hook ausente são certos);
   **verificar** se cada CLI de provedor de fato confina as tools nativas em bypass
   (não verificável só por este repo — recomendo teste e2e por adapter).
@@ -466,13 +502,18 @@ Um relatório sênior honesto precisa registrar as defesas reais — e há muita
   read/write de arquivos e `mcp.invoke`. Qualquer XSS de DOM no React = RCE local.
   O renderer (`src/renderer/**`) **não** foi auditado aqui e é o maior risco real
   não-coberto — priorizar uma varredura de sinks XSS. L1 (`blob:`) agrava.
-- **T2 — A fronteira "mesmo usuário" é load-bearing.** O cofre cifrado resiste, mas
-  H1/H2/M1/M2/M3/M4 mostram que um agente/skill malicioso same-user coleta a maioria
-  das credenciais vivas por side-channels plaintext **sem tocar no cofre**. É o fio
-  que conecta o vetor de skill maliciosa ao roubo de chave.
+- **T2 — A fronteira "mesmo usuário" é load-bearing, e é AQUI que se defende sem
+  quebrar o full-auto.** O cofre cifrado resiste, mas M1/M2/M3/M4 mostram que um
+  agente/skill same-user coleta a maioria das credenciais vivas por side-channels
+  plaintext **sem tocar no cofre**. Como o agente é autônomo por design (H2), a
+  única defesa que não reduz a autonomia é **não deixar segredo em plaintext no
+  alcance dele** — mover para o cofre e materializar efêmero. É o fio que conecta o
+  vetor de skill maliciosa ao roubo de chave, e o ponto de maior alavancagem.
 - **T3 — "Confirmação" vale o quanto vale a fonte de confiança.** A confirmação do
-  MCP é nativa no desktop (boa); a do mobile é atestada pelo cliente (quebrada, H5);
-  as tools nativas do agente driblam a confirmação por completo (H2).
+  MCP é nativa no desktop (boa); a do mobile é atestada pelo próprio cliente
+  (quebrada, H5). As tools nativas do agente não passam por confirmação — mas isso
+  é **intencional** (full-auto, H2), então a resposta certa não é confirmar o
+  agente, e sim controlar o que entra nele (H1) e o que ele alcança (T2).
 - **T4 — O README exagera.** "keys guardadas no macOS Keychain (nunca em plaintext)"
   é falso em pelo menos 4 lugares (M1, M2, M4, L4). Alinhar a documentação com a
   realidade.
@@ -481,14 +522,22 @@ Um relatório sênior honesto precisa registrar as defesas reais — e há muita
 
 ## 9. Plano de remediação priorizado
 
-**Agora (reduz o cenário que você levantou):**
-1. **H1** — manifesto assinado + verificação de digest para skills/agents; allowlist
-   curada; badge de "não-verificado". *(corta o elo 4 da cadeia)*
-2. **H2** — embrulhar o PTY do agente no mesmo sandbox do `terminal_run` e instalar
-   o hook PreToolUse em todos os panes. *(corta o elo 6)*
-3. **M2/M1/M3/M4** — tirar segredos plaintext das bordas: `mcp-hub.json` no cofre,
-   managed-homes efêmeros, credencial Claude via stdin, redação de histórico
-   estendida. *(fecha o roubo de chave via same-user)*
+> **Regra:** toda ação abaixo é **preservadora de comportamento** — não adiciona
+> prompt, sandbox ou gate de runtime ao agente, e não reduz o full-auto. O agente
+> segue com full-access; fechamos as pontas (input e credenciais).
+
+**Agora (reduz o cenário que você levantou, SEM tocar na autonomia):**
+1. **H1** — manifesto assinado + verificação de digest para skills/agents, como
+   *política automática* (permite verificado, recusa não-verificado; sem prompt);
+   allowlist curada; badge de "não-verificado". *(corta os elos 3-5 da cadeia)*
+2. **M2/M1/M3/M4** — tirar segredos plaintext do alcance do agente: `mcp-hub.json`
+   no cofre, managed-homes efêmeros (materializa p/ o CLI e apaga após uso),
+   credencial Claude via stdin, redação de histórico estendida. O CLI continua
+   recebendo o que precisa em runtime → **nenhuma funcionalidade quebra**.
+   *(fecha o elo 7 — roubo de chave via same-user; é o maior ganho não-disruptivo)*
+3. **H2 (input-trust)** — ligar `content_audit`/`security_audit` (já existem) no
+   caminho de ingestão de skills e de contexto externo, para *marcar/filtrar*
+   conteúdo hostil **antes** de chegar ao agente — sem interromper a execução dele.
 
 **Próximo (superfície de rede/SSRF):**
 4. **H4/M6** — allowlist/bloqueio de destinos privados no port-forward e no import do
@@ -500,19 +549,27 @@ Um relatório sênior honesto precisa registrar as defesas reais — e há muita
 
 **Depois (hardening/higiene):**
 7. **M5** — autenticar `agent-hook:ingestStatus` como o gêmeo HTTP.
-8. **M7/M8/M9** — gate e diálogo de `catalog_install`; namespacear skills por slug.
+8. **M9 + M7/M8** — namespacear skills por slug (M9). Sobre `catalog_install`
+   (M7/M8): com H1 (verificação automática) no lugar, dá para **manter o install
+   sem fricção** — agente instala skill *verificada* livremente, e a não-verificada
+   é *recusada por política* (não por prompt). Assim o full-auto do install é
+   preservado sem abrir a porta de supply-chain. (M7/M8 só fazem sentido se você
+   optar por manter algum diálogo; caso contrário, H1 os substitui.)
 9. **M10/M11/L13** — rate-limit compartilhado; redação de env do backend; binding do
    auth-code.
-10. **Follow-up dedicado:** auditoria de XSS do renderer (T1) e teste e2e de
-    confinamento das tools nativas por adapter (H2).
+10. **Follow-up dedicado:** auditoria de XSS do renderer (T1) — maior risco não-coberto.
 
 ---
 
 ## 10. Riscos residuais / não verificados
 
-- **Renderer (`src/renderer/**`) não auditado** — dominante para T1/H2.
-- **Semântica de bypass dos CLIs de provedor** (crux de H2) não verificável só por
-  este repo — exige teste dinâmico por adapter.
+- **Renderer (`src/renderer/**`) não auditado** — dominante para T1 (qualquer XSS
+  vira RCE porque o preload expõe `pty.spawn`/`files`/`mcp.invoke`).
+- **Full-auto do agente é premissa, não risco a corrigir** (H2, por decisão de
+  produto). Este relatório **não** trata a autonomia do agente como algo a limitar
+  nem depende do confinamento do CLI do provedor; a defesa fica em input (H1) e
+  credenciais em repouso (T2). A verificação de que o CLI do provedor confina suas
+  tools nativas é, portanto, *não-objetivo* — a segurança não deve depender disso.
 - **ACL do item de Keychain do `safeStorage`** (se um binário diferente same-user é
   negado/prompted) não testado em runtime; governa a força de M1–M4.
 - **Sem execução dinâmica:** todos os achados são de revisão estática com linhas
