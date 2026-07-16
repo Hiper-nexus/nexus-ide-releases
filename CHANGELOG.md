@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.19.2 — Orquestração Destravada
+
+Data: 2026-07-16
+
+Auditoria senior sobre o runtime real do operador encontrou e corrigiu a
+cadeia inteira que fazia toda missão morrer no bootstrap, o falso "não logado"
+nos panes do Claude, o bloqueio permanente de workspace no `workspace:pick` —
+e entregou o restyle visual que estava preso fora do main.
+
+### Orquestração — bootstrap de contexto convergindo (PR #34)
+
+- **Reviewer independente destravado** (P0): o gate MCP negava
+  `nexus_context_draft_review` de panes sem missão — mas drafts de projeto têm
+  missionId nulo e o reviewer é spawnado sem vínculo por design. Todo draft
+  ficava `proposed` para sempre e nenhum contrato congelava. Exención estreita
+  por nome (precedente `memory_retain`); a autoridade real segue no handler
+  (reviewer ≠ autor, provider distinto, re-hash de fontes).
+- **Fim do `sourceHash` incomputável** (P0): agentes hospedados não têm tool
+  de hash; o Nexus agora computa o sha256 das fontes no propose (e re-verifica
+  em review/apply). `expectedTargetHash` omitido vincula ao estado atual.
+- **Review em andamento não é falha** (P0): `context_draft_review_run` devolvia
+  "timed out" após 2 min com o pane revisor ainda vivo; agora responde
+  `pending` com instrução de poll via `context_draft_get`.
+- **`missing-structured-invariants` tem caminho** (P1): hint do autopilot e
+  remediação do doctor ensinam o movimento sancionado — invariante OBSERVADA de
+  fontes reais em `.context/nexus/invariants/*.json` + revisão independente.
+- **`nexus_git_status` em raiz não-git** (ex.: workspace multi-projeto) devolve
+  `{isRepo:false}` com nota, em vez de "Git executable-config inspection
+  failed".
+
+### Auth e identidade
+
+- **Pane do Claude não pede mais /login com a máquina logada** (P0): o HOME
+  efêmero de panes gated ganhava um `.claude.json` stub sem `oauthAccount`
+  (a identidade é file-backed; o Keychain guarda só o segredo). O adapter
+  Claude nativo projeta a identidade no overlay (+link de `.credentials.json`)
+  e o teardown resgata login fresco feito dentro do pane. GLM/LongCat nunca
+  recebem a identidade nativa.
+- **`workspace:pick` não trava mais o workspace** (P0): pasta apagada e
+  recriada no mesmo path deixava o registro em "checkout id collision" para
+  sempre; mesma-path agora se auto-cura, paths diferentes seguem fail-closed.
+
+### Visual e produto
+
+- **Restyle `ui/mission-rail-polish` entregue**: onboarding Bridge-inspired
+  centrado (hero, trail de steps, featured cards) reconciliado com a camada
+  endorfinada (pet, saudação); MissionRail com chips de meta (ativas/aqui/
+  budget compacto); MissionWizard com cards de modo badge/CTA.
+- **GitHub de primeira classe**: botão inline na workspace bar (saiu do menu
+  ⋯) + aviso claro de que "Entrar com GitHub" (conta Nexus) não configura a
+  API — o PAT vive no painel de integrações.
+- **Inbox de notificações sem corte**: nome do agente usa a largura livre com
+  tooltip; rótulo "Login do CLI" virou "Contas reserva".
+- **Router com gpt-5.6/gpt-5.6-sol** no catálogo e nos tiers hard/critical.
+
+### Backend SaaS
+
+- **Assinaturas Pro em BRL** (frente paralela): tier Free permanente + Pro
+  mensal com Stripe Checkout, portal, webhooks assinados e cloud sync
+  Pro-only; deploy Railway, migrações e runbooks de produção.
+
 ## 0.19.1 — Cockpit Endurecido
 
 Data: 2026-07-16
