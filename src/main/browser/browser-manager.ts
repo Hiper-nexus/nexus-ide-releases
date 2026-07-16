@@ -11,6 +11,8 @@ import path from 'node:path';
 import { BROWSER_CHANNELS } from '../../shared/channels';
 import {
   BROWSER_DESIGN_CHANNELS,
+  type BrowserDesignAnnotationMarker,
+  type BrowserDesignEvent,
   type BrowserDesignRect,
 } from '../../shared/browser-design';
 import type {
@@ -68,13 +70,19 @@ import {
   type PinnedBrowserProxy,
 } from './browser-network-proxy';
 import {
+  browserDesignAnnotationMarkersResultSchema,
   browserDesignModeResultSchema,
   browserStylePreviewClearResultSchema,
   browserStylePreviewResultSchema,
 } from './browser-design-schema';
 import {
   abortDesignModeTransition,
+  addDesignAnnotation,
+  clearDesignAnnotations,
   clearDesignSession,
+  deleteDesignAnnotation,
+  getDesignAnnotationSummaries,
+  getDesignAnnotations,
   getDesignGeneration,
   getLastSelection,
   getSelections,
@@ -84,7 +92,10 @@ import {
   prepareDesignModeTransition,
 } from './design-session';
 import { clampScreenshotClip } from './screenshot-clip';
-import { sendDesignSelectionToAgent } from '../orch/design-send';
+import {
+  sendDesignAnnotationsToAgent,
+  sendDesignSelectionToAgent,
+} from '../orch/design-send';
 import { readWorkspaceDesignSystem } from '../orch/design-system-reader';
 import { searchWorkspaceForSelection } from '../orch/design-code-search';
 import {
@@ -188,6 +199,30 @@ const designPreviewClearSchema = z
   .object({
     paneId: paneIdSchema,
     selector: z.string().min(1).max(1_024).optional(),
+  })
+  .strict();
+const designAnnotateSchema = z
+  .object({
+    paneId: paneIdSchema,
+    comment: z.string().min(1).max(2_000),
+    intent: z.enum(['fix', 'change', 'question', 'approve']),
+    priority: z.enum(['blocking', 'important', 'suggestion']).optional(),
+  })
+  .strict();
+const designAnnotationDeleteSchema = z
+  .object({
+    paneId: paneIdSchema,
+    annotationId: z.string().uuid(),
+  })
+  .strict();
+const designAnnotationsSendSchema = z
+  .object({
+    paneId: paneIdSchema,
+    // Optional so a dry run (clipboard copy) works without any agent pane;
+    // the handler enforces it for real sends.
+    targetPaneId: paneIdSchema.optional(),
+    dir: z.string().max(4_096).optional(),
+    dryRun: z.boolean().optional(),
   })
   .strict();
 
@@ -654,11 +689,19 @@ async function createEntry(
   wc.on('did-navigate', (_event, url) => {
     entry.url = url;
     entry.error = undefined;
-    clearDesignSession(key);
+    // Annotations and the picker session both point at the OLD document —
+    // rects and selectors stop meaning anything after a real navigation.
+    resetDesignPaneState(entry, key, { sameDocument: false });
     emitState(entry);
   });
   wc.on('did-navigate-in-page', (_event, url) => {
+    // SPA routing (pushState) never fires did-navigate, but the annotated UI
+    // is just as gone. Hash-only hops keep the design state.
+    const previousUrl = entry.url;
     entry.url = url;
+    if (shouldResetDesignForUrlChange(previousUrl, url)) {
+      resetDesignPaneState(entry, key, { sameDocument: true });
+    }
     emitState(entry);
   });
   wc.on('did-fail-load', (_event, code, desc, url, isMainFrame) => {
@@ -675,6 +718,10 @@ async function createEntry(
     );
     entry.loading = false;
     entry.error = `browser renderer exited: ${details.reason}`;
+    // The document died with the renderer: a live design session here would
+    // keep isDesignModeActive() true for a page that no longer exists (and
+    // with it the write-back gate). Same reset as a navigation.
+    resetDesignPaneState(entry, key, { sameDocument: false });
     emitState(entry);
   });
   wc.once('destroyed', () => {
@@ -1082,6 +1129,151 @@ export async function clearBrowserStylePreview(
   return { paneId, ...result };
 }
 
+/**
+ * Mirrors the pane's annotation set as numbered badges in the page (geometry
+ * + advisory selector only — comments never reach the page side). Best-effort
+ * by design: a pane mid-load or hidden keeps the annotations in the main
+ * store; the badges simply catch up on the next mutation.
+ */
+async function syncDesignAnnotationMarkers(
+  paneId: string,
+  scope: ProjectExecutionScope,
+): Promise<void> {
+  const key = browserKey(scope, paneId);
+  const markers: BrowserDesignAnnotationMarker[] = [];
+  for (const [index, annotation] of getDesignAnnotations(key).entries()) {
+    const { selection } = annotation;
+    // Pre-rectPage payloads cannot follow scroll — skip their badge, the
+    // annotation itself still lives in the tray and in the batch prompt.
+    if (!selection.rectPage) continue;
+    markers.push({
+      id: annotation.id,
+      index,
+      rectPage: selection.rectPage,
+      rectViewport: selection.rect,
+      isFixed: selection.isFixed === true,
+      // Lets the page layer track the LIVE element box (reflow/breakpoint/
+      // sticky safe); the frozen rects above are its fallback.
+      selector: selection.selector,
+    });
+  }
+  try {
+    browserDesignAnnotationMarkersResultSchema.parse(
+      await runBrowserAutomationForPane(
+        paneId,
+        scope,
+        'design_set_annotation_markers',
+        { markers },
+      ),
+    );
+  } catch {
+    // Badges are cosmetic; the main store stays the source of truth.
+  }
+}
+
+const designMarkerSyncChains = new Map<string, Promise<void>>();
+
+/**
+ * Fire-and-forget badge sync, serialized per pane so out-of-order pushes
+ * cannot leave stale badges. NEVER awaited by IPC handlers: the automation
+ * round-trip can stall up to its 7s timeout on a busy/reloading page, and the
+ * badge repaint is cosmetic while the main store already committed.
+ */
+function queueDesignAnnotationMarkerSync(
+  paneId: string,
+  scope: ProjectExecutionScope,
+): void {
+  const key = browserKey(scope, paneId);
+  const chain = designMarkerSyncChains.get(key) ?? Promise.resolve();
+  const next = chain
+    .then(() => syncDesignAnnotationMarkers(paneId, scope))
+    .catch(() => {
+      // syncDesignAnnotationMarkers already swallows; keep the chain alive.
+    })
+    .finally(() => {
+      if (designMarkerSyncChains.get(key) === next) {
+        designMarkerSyncChains.delete(key);
+      }
+    });
+  designMarkerSyncChains.set(key, next);
+}
+
+/**
+ * True when an in-page navigation actually changed the page the annotations
+ * were pinned on: origin/path/query moved (SPA pushState routing). Hash-only
+ * hops stay within the same rendered document — annotations survive them.
+ */
+export function shouldResetDesignForUrlChange(
+  previousUrl: string,
+  nextUrl: string,
+): boolean {
+  try {
+    const previous = new URL(previousUrl);
+    const next = new URL(nextUrl);
+    return (
+      previous.origin !== next.origin ||
+      previous.pathname !== next.pathname ||
+      previous.search !== next.search
+    );
+  } catch {
+    // Unparseable URLs (about:blank boot states): reset only on inequality.
+    return previousUrl !== nextUrl;
+  }
+}
+
+/**
+ * SINGLE document-death path for the design subsystem: clears the picker
+ * session AND the annotations, disarms page-side state when the document is
+ * still alive (SPA route change), and tells the renderer — so the design bar
+ * and the annotation tray never survive a page their data no longer matches.
+ * Used by did-navigate, in-page SPA navigation, renderer crash and destroy.
+ */
+function resetDesignPaneState(
+  entry: BrowserEntry,
+  key: string,
+  options: { sameDocument: boolean },
+): void {
+  const generation = getDesignGeneration(key);
+  const hadState =
+    generation !== null || getDesignAnnotations(key).length > 0;
+  clearDesignSession(key);
+  clearDesignAnnotations(key);
+  if (!hadState) return;
+  if (options.sameDocument) {
+    // The document survived (pushState routing): the picker overlay and the
+    // badge layer are still alive in the page — disarm them best-effort.
+    if (generation) {
+      void runBrowserAutomationForPane(
+        entry.paneId,
+        entry.scope,
+        'design_disable',
+        { generation },
+      ).catch(() => {});
+    }
+    void runBrowserAutomationForPane(
+      entry.paneId,
+      entry.scope,
+      'design_set_annotation_markers',
+      { markers: [] },
+    ).catch(() => {});
+  }
+  if (!canSend(entry.owner)) return;
+  // The dying page cannot emit its own disable event, so the main
+  // synthesizes the 'navigation' mode transition the renderer store already
+  // understands — design bar and annotation tray reset together.
+  const navigationEvent: BrowserDesignEvent = {
+    eventId: randomUUID(),
+    generation: generation ?? randomUUID(),
+    type: 'mode',
+    at: Date.now(),
+    mode: { active: false, reason: 'navigation' },
+  };
+  entry.owner.send(BROWSER_CHANNELS.designEvent, {
+    paneId: entry.paneId,
+    event: navigationEvent,
+  });
+}
+
 function withEntry(
   paneId: string,
   scope: ProjectExecutionScope,
@@ -1138,7 +1330,9 @@ export function destroyBrowser(
   assertEntryScope(entry, scope);
   browsers.delete(key);
   pendingBoundsByKey.delete(key);
-  clearDesignSession(key);
+  // Notifies the renderer too (when the owner window survives the pane, e.g.
+  // a workspace-scope change) so the design bar/tray don't go ghost.
+  resetDesignPaneState(entry, key, { sameDocument: false });
   const win = liveOwnerWindow(entry.owner);
   try {
     win?.contentView.removeChildView(entry.view);
@@ -1216,6 +1410,47 @@ function requireDesignTarget(
   };
 }
 
+type DesignTarget = ReturnType<typeof requireDesignTarget>;
+
+/** Best-effort DESIGN.md: never fail a design send because the workspace has
+ * no (or an unreadable) design system — shared by both send paths. */
+function readDesignSystemBestEffort(
+  scope: ProjectExecutionScope,
+  dir?: string,
+): string | undefined {
+  try {
+    return readWorkspaceDesignSystem(resolveCwdForScope(scope, dir)) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Authority-re-checking PTY injector shared by the selection and annotation
+ * send paths. This is a security guard — the target's session/mission/context
+ * revision is re-validated at inject time so a mid-send authority swap aborts
+ * instead of delivering the prompt to the wrong agent. ONE implementation:
+ * a hardening fix here reaches both paths.
+ */
+function designTargetInjector(
+  sender: WebContents,
+  scope: ProjectExecutionScope,
+  target: DesignTarget,
+): (sessionId: string, prompt: string) => Promise<void> {
+  return async (sessionId, prompt) => {
+    requireLiveRendererWorkspaceScope(sender, scope);
+    const liveTarget = requireDesignTarget(sender, scope, target.paneId);
+    if (
+      liveTarget.sessionId !== sessionId ||
+      liveTarget.missionId !== target.missionId ||
+      liveTarget.contextRevision !== target.contextRevision
+    ) {
+      throw new Error('design target authority changed');
+    }
+    await injectPastedPrompt(sessionId, prompt);
+  };
+}
+
 export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void {
   browserRuntimeManager = runtimeManager;
   unsubscribeBrowserScopeChanges?.();
@@ -1282,19 +1517,7 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
         styleDiff: parsed.data.styleDiff,
         intent: parsed.data.intent,
         dryRun: parsed.data.dryRun,
-        // Never fail design-send because DESIGN.md is unreadable/missing —
-        // resolveCwdForScope can throw ENOENT on synthetic test roots.
-        designSystem: (() => {
-          try {
-            return (
-              readWorkspaceDesignSystem(
-                resolveCwdForScope(scope, parsed.data.dir),
-              ) ?? undefined
-            );
-          } catch {
-            return undefined;
-          }
-        })(),
+        designSystem: readDesignSystemBestEffort(scope, parsed.data.dir),
       },
       {
         getSelection: getLastSelection,
@@ -1312,22 +1535,7 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
             target.missionId,
             { clip },
           ),
-        inject: async (sessionId, prompt) => {
-          requireLiveRendererWorkspaceScope(event.sender, scope);
-          const liveTarget = requireDesignTarget(
-            event.sender,
-            scope,
-            target.paneId,
-          );
-          if (
-            liveTarget.sessionId !== sessionId ||
-            liveTarget.missionId !== target.missionId ||
-            liveTarget.contextRevision !== target.contextRevision
-          ) {
-            throw new Error('design target authority changed');
-          }
-          await injectPastedPrompt(sessionId, prompt);
-        },
+        inject: designTargetInjector(event.sender, scope, target),
       },
     );
   });
@@ -1354,6 +1562,122 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
       parsed.data.paneId,
       scope,
       parsed.data.selector,
+    );
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotate, async (event, raw) => {
+    const parsed = designAnnotateSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('invalid design annotate payload');
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const key = browserKey(scope, parsed.data.paneId);
+    addDesignAnnotation(key, {
+      comment: parsed.data.comment,
+      intent: parsed.data.intent,
+      ...(parsed.data.priority ? { priority: parsed.data.priority } : {}),
+    });
+    queueDesignAnnotationMarkerSync(parsed.data.paneId, scope);
+    return {
+      paneId: parsed.data.paneId,
+      annotations: getDesignAnnotationSummaries(key),
+    };
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotations, async (event, raw) => {
+    const parsed = paneSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('invalid design annotations payload');
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    return {
+      paneId: parsed.data.paneId,
+      annotations: getDesignAnnotationSummaries(
+        browserKey(scope, parsed.data.paneId),
+      ),
+    };
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotationDelete, async (event, raw) => {
+    const parsed = designAnnotationDeleteSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('invalid design annotation delete payload');
+    }
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const key = browserKey(scope, parsed.data.paneId);
+    if (!deleteDesignAnnotation(key, parsed.data.annotationId)) {
+      throw new Error('unknown design annotation');
+    }
+    queueDesignAnnotationMarkerSync(parsed.data.paneId, scope);
+    return {
+      paneId: parsed.data.paneId,
+      annotations: getDesignAnnotationSummaries(key),
+    };
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotationsClear, async (event, raw) => {
+    const parsed = paneSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('invalid design annotations clear payload');
+    }
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const key = browserKey(scope, parsed.data.paneId);
+    clearDesignAnnotations(key);
+    queueDesignAnnotationMarkerSync(parsed.data.paneId, scope);
+    return {
+      paneId: parsed.data.paneId,
+      annotations: getDesignAnnotationSummaries(key),
+    };
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotationsSend, async (event, raw) => {
+    const parsed = designAnnotationsSendSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('invalid design annotations send payload');
+    }
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const sourceKey = browserKey(scope, parsed.data.paneId);
+    // A dry run (clipboard copy) injects nothing: it must work without any
+    // live mission agent — skip the target authorization entirely.
+    if (parsed.data.dryRun) {
+      return sendDesignAnnotationsToAgent(
+        {
+          paneId: sourceKey,
+          dryRun: true,
+          designSystem: readDesignSystemBestEffort(scope, parsed.data.dir),
+        },
+        {
+          getAnnotations: getDesignAnnotations,
+          findPane: () => null,
+          inject: async () => {
+            throw new Error('dry run never injects');
+          },
+        },
+      );
+    }
+    if (!parsed.data.targetPaneId) {
+      throw new Error('design annotations send requires a target pane');
+    }
+    const target = requireDesignTarget(
+      event.sender,
+      scope,
+      parsed.data.targetPaneId,
+    );
+    return sendDesignAnnotationsToAgent(
+      {
+        paneId: sourceKey,
+        targetPaneRef: target.paneId,
+        designSystem: readDesignSystemBestEffort(scope, parsed.data.dir),
+      },
+      {
+        getAnnotations: getDesignAnnotations,
+        findPane: () => ({
+          paneId: target.paneId,
+          sessionId: target.sessionId,
+        }),
+        inject: designTargetInjector(event.sender, scope, target),
+      },
     );
   });
 

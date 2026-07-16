@@ -1,5 +1,45 @@
 # Changelog
 
+## Não lançado — Anotações de Design (paridade Orca Design Mode)
+
+- Design Mode ganha **anotações**: com um elemento selecionado, "＋ anotar" abre
+  um composer próprio (comentário + intenção corrigir/mudar/pergunta/aprovado;
+  Enter no composer anota — nunca envia nada ao agente) e fixa a nota no
+  elemento — badge numerado aparece na própria página. Os badges seguem o
+  elemento VIVO pelo selector (sobrevivem a reflow, breakpoints da própria
+  design bar e sticky), com fallback para a geometria congelada. Teto de 20
+  por página.
+- Tray "📝 N" na design bar lista as anotações (excluir uma, limpar todas),
+  **copia** o feedback consolidado (funciona sem nenhum agente aberto — dry
+  run não exige alvo) ou **envia tudo de uma vez** pro agente: um prompt único
+  numerado igual aos badges, com os dados da página no envelope não confiável
+  padrão e DESIGN.md anexado como contexto confiável quando existir. As notas
+  do usuário NUNCA são cortadas pelo orçamento do prompt — envelope e
+  DESIGN.md encolhem primeiro (com `omittedEntries` explícito). Itens
+  [pergunta] pedem resposta; [aprovado] são registro.
+- Anotações sobrevivem ao toggle do modo Design (dá pra navegar a página e
+  enviar depois) e morrem com o documento — por UM caminho único de
+  invalidação que cobre navegação real, **rota SPA (pushState)**, crash do
+  renderer da página e destruição do pane (troca de workspace): main, badges
+  na página e renderer resetam juntos via evento `navigation` sintetizado
+  (antes a design bar ficava "ON" fantasma após reload). Saltos só de hash
+  preservam as anotações.
+- O sync dos badges é enfileirado e nunca bloqueia a resposta das ações do
+  tray (a página ocupada não congela mais o "＋ anotar" por até 7s).
+- O store é main-owned: o renderer só envia a nota digitada; o contexto do
+  elemento é o snapshot da seleção já validada por Zod. Os badges na página
+  recebem SÓ geometria — comentários nunca chegam ao lado da página.
+- `nexus_design_selection_get` passa a listar as anotações da página (e
+  continua respondendo quando só há anotações, com o picker desligado).
+- Origem: adaptado do Design Mode do Orca (stablyai/orca @ 5e10091, MIT) —
+  viewport-bridge de badges, modelo de anotação e formato do feedback — com
+  provenance em `third_party/provenance/orca-5e1009.json` e notas em
+  `THIRD_PARTY_NOTICES.md`. Fecha o terceiro alvo do transplante Orca
+  (mobile QR ✓, forge-registry ✓, design mode ✓).
+- TDD: marcadores do preload (9), picker rectPage/isFixed (+1), sessão de
+  anotações no main (+6), formatter (4), envio em lote (+4), tool MCP (+3),
+  UI da design bar (+6). `tsc` limpo.
+
 ## 0.16.6 — Live sem Silêncio
 
 Data: 2026-07-15

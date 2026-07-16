@@ -21,6 +21,48 @@
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
       "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/5e100914d3f557953c810da36448986a87efec14/src/shared/browser-annotation-viewport-bridge.ts",
+      "upstreamCommit": "5e100914d3f557953c810da36448986a87efec14",
+      "originalSha256": "237a941df42a857fb8934b147effb5eac22555c9acf4f8e04d9cdc415ff3eefc",
+      "originalPath": "src/shared/browser-annotation-viewport-bridge.ts",
+      "nexusPath": "src/preload/browser-design-annotations.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "In-page numbered annotation badges. Orca builds a JS string template injected into a dedicated world (worldId 1207) and mirrors viewport geometry back over prefixed console messages; Nexus ports the marker rendering/positioning algorithm (closed ShadowRoot host, badge at the element's bottom-center, rectPage-scroll vs rectViewport for isFixed markers, rAF-coalesced scroll/resize repositioning, visibility culling) to a TypeScript module in the pane's ISOLATED preload world, driven by the closed automation channel (design_set_annotation_markers). Markers carry geometry only — comments/element data never reach the page side. Strict page-side arg validation added (parseAnnotationMarkers).",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-16",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/5e100914d3f557953c810da36448986a87efec14/src/shared/browser-grab-types.ts",
+      "upstreamCommit": "5e100914d3f557953c810da36448986a87efec14",
+      "originalSha256": "2fb9daee17b16d60eb1ceca1a04b27e2ff6390cbbbb305a83d98b5942a92100f",
+      "originalPath": "src/shared/browser-grab-types.ts",
+      "nexusPath": "src/shared/browser-design.ts (annotation section) + src/main/browser/design-session.ts (annotation store)",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Annotation model only (BrowserPageAnnotation → BrowserDesignAnnotation): comment + intent (fix/change/question/approve) + priority (blocking/important/suggestion), 20-per-page cap, comment cap 2000 chars, annotations dropped on navigation. Orca persists annotations in the renderer Zustand store; Nexus moves authority to the main process (design-session.ts): the renderer contributes only the typed note and the element context is the already-validated selection snapshot, frozen at annotate time. The grab payload extraction itself was NOT imported — Nexus keeps its own richer L0/L1/L2 selection context.",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-16",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/5e100914d3f557953c810da36448986a87efec14/src/renderer/src/components/browser-pane/browser-annotation-output.ts",
+      "upstreamCommit": "5e100914d3f557953c810da36448986a87efec14",
+      "originalSha256": "a766bb60e9bdd82e89bf4cca2e1080d6ddeecc2ce526f0588a652642d433bc47",
+      "originalPath": "src/renderer/src/components/browser-pane/browser-annotation-output.ts",
+      "nexusPath": "src/main/orch/design-annotation-format.ts",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Consolidated 'design feedback' prompt for a pane's annotations. Orca emits free-form markdown (page heading, per-annotation element label/selector/styles/HTML fences with backtick-run escaping); Nexus rebuilds the output on its untrusted-envelope prompt discipline (design-context-format.ts): page-derived data ships ONLY inside a bounded BEGIN/END_UNTRUSTED_PAGE_DATA JSON block (redacted + control-char scrubbed via safePageText), while the numbered user notes (trusted, typed in the IDE) and the per-intent instructions live outside it. Numbering matches the in-page badges. PT-BR intent labels; DESIGN.md attached as trusted block like design-send.",
+      "secondaryProvenance": [],
+      "importDate": "2026-07-16",
+      "status": "imported"
     }
   ]
 }

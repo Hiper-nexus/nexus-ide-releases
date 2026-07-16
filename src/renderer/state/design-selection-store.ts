@@ -1,5 +1,8 @@
 import { create } from 'zustand';
-import type { BrowserDesignElementContext } from '../../shared/browser-design';
+import type {
+  BrowserDesignAnnotationSummary,
+  BrowserDesignElementContext,
+} from '../../shared/browser-design';
 import type { BrowserDesignEventPayload } from '../../shared/types';
 
 /**
@@ -13,6 +16,13 @@ export interface DesignPaneState {
   selection: BrowserDesignElementContext | null;
   /** Multi-selection set (F4 shift+click), oldest first. */
   selections: BrowserDesignElementContext[];
+  /**
+   * Annotation summaries mirrored from the MAIN-owned store (Orca Design Mode
+   * parity). Refreshed from every annotation IPC response; cleared when a
+   * 'navigation' mode event arrives — annotations die with the document, but
+   * SURVIVE a plain design-mode off.
+   */
+  annotations: BrowserDesignAnnotationSummary[];
 }
 
 const MAX_SELECTIONS = 8;
@@ -20,10 +30,19 @@ const MAX_SELECTIONS = 8;
 interface DesignSelectionState {
   byPane: Record<string, DesignPaneState>;
   applyEvent(payload: BrowserDesignEventPayload): void;
+  setAnnotations(
+    paneId: string,
+    annotations: BrowserDesignAnnotationSummary[],
+  ): void;
   reset(): void;
 }
 
-const EMPTY: DesignPaneState = { isActive: false, selection: null, selections: [] };
+const EMPTY: DesignPaneState = {
+  isActive: false,
+  selection: null,
+  selections: [],
+  annotations: [],
+};
 
 export const useDesignSelectionStore = create<DesignSelectionState>((set) => ({
   byPane: {},
@@ -38,6 +57,10 @@ export const useDesignSelectionStore = create<DesignSelectionState>((set) => ({
               isActive: event.mode.active,
               selection: event.mode.active ? current.selection : null,
               selections: event.mode.active ? current.selections : [],
+              annotations:
+                !event.mode.active && event.mode.reason === 'navigation'
+                  ? []
+                  : current.annotations,
             },
           },
         };
@@ -69,6 +92,17 @@ export const useDesignSelectionStore = create<DesignSelectionState>((set) => ({
       }
       return state;
     });
+  },
+  setAnnotations: (paneId, annotations) => {
+    set((state) => ({
+      byPane: {
+        ...state.byPane,
+        [paneId]: {
+          ...(state.byPane[paneId] ?? EMPTY),
+          annotations,
+        },
+      },
+    }));
   },
   reset: () => set({ byPane: {} }),
 }));

@@ -7,6 +7,11 @@ import type {
 import type { BrowserDesignEvent } from '../shared/browser-design';
 import { redactVisibleSecrets } from '../shared/vision-ipc';
 import {
+  createAnnotationMarkerLayer,
+  parseAnnotationMarkers,
+  type AnnotationMarkerLayer,
+} from './browser-design-annotations';
+import {
   createDesignMode,
   type DesignModeController,
 } from './browser-design-mode';
@@ -589,6 +594,16 @@ export function createBrowserAutomation(
     return stylePreview;
   }
 
+  // Lazy annotation badge layer — independent from the picker overlay, so
+  // annotation markers survive toggling design mode off.
+  let annotationMarkers: AnnotationMarkerLayer | null = null;
+  function ensureAnnotationMarkers(): AnnotationMarkerLayer {
+    if (!annotationMarkers) {
+      annotationMarkers = createAnnotationMarkerLayer(win);
+    }
+    return annotationMarkers;
+  }
+
   function stylePreviewArgs(args: Record<string, unknown>): {
     selector: string;
     styles: Record<string, string>;
@@ -772,6 +787,14 @@ export function createBrowserAutomation(
         const selector =
           typeof args.selector === 'string' && args.selector ? args.selector : undefined;
         return stylePreview.clear(selector);
+      }
+      if (command === 'design_set_annotation_markers') {
+        const markers = parseAnnotationMarkers(args.markers);
+        // An empty set with no live layer is a no-op — do not mount anything.
+        if (markers.length === 0 && !annotationMarkers) {
+          return { applied: true, markers: 0 };
+        }
+        return ensureAnnotationMarkers().set(markers);
       }
       throw new Error('unsupported browser automation command');
     },

@@ -66,6 +66,8 @@ export const browserDesignElementContextSchema = z
     classes: z.array(z.string().max(128)).max(32),
     selector: z.string().max(1_024),
     rect: browserDesignRectSchema,
+    rectPage: browserDesignRectSchema.optional(),
+    isFixed: z.boolean().optional(),
     text: z.string().max(512),
     outerHtml: z.string().max(4_096),
     attributes: boundedRecord(24, 64, 256),
@@ -99,6 +101,13 @@ export const browserStylePreviewResultSchema = z
 
 export const browserStylePreviewClearResultSchema = z
   .object({ cleared: z.number().int().min(0).max(1_024) })
+  .strict();
+
+export const browserDesignAnnotationMarkersResultSchema = z
+  .object({
+    applied: z.literal(true),
+    markers: z.number().int().min(0).max(64),
+  })
   .strict();
 
 export const browserDesignReorderIntentSchema = z
