@@ -68,6 +68,28 @@ export const terminalSettingsPatchSchema = z.object({
 export type TerminalSettingsPatch = z.infer<typeof terminalSettingsPatchSchema>;
 
 /**
+ * Direções estéticas do perfil de design (taxonomia adaptada do taste-skill,
+ * MIT — github.com/leonxlnx/taste-skill). `auto` = seguir o design system do
+ * projeto, sem direção imposta.
+ */
+export const DESIGN_DIRECTIONS = [
+  'auto',
+  'minimalist',
+  'brutalist',
+  'soft',
+] as const;
+export type DesignDirection = (typeof DESIGN_DIRECTIONS)[number];
+
+/** Dial 1–10 do perfil de design. 5 = neutro: não injeta nenhuma linha extra. */
+export const DESIGN_DIAL_NEUTRAL = 5;
+const designDialSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(10)
+  .default(DESIGN_DIAL_NEUTRAL);
+
+/**
  * Configurações de orquestração (seção `orch` do ~/.nexus/settings.json).
  * leanCode = injetar as regras ponytail (lazy senior dev, MIT —
  * github.com/DietrichGebert/ponytail) no prompt de todo worker de squad.
@@ -78,6 +100,14 @@ export const orchSettingsSchema = z.object({
   seniorMode: z.boolean().default(true),
   /** Carta de Design anti-genérico (Impeccable) para tarefas com UI. */
   designPro: z.boolean().default(true),
+  /** Direção estética aplicada pelo motor de design junto com a carta. */
+  designDirection: z.enum(DESIGN_DIRECTIONS).default('auto'),
+  /** Ousadia de layout: 1 = padrões convencionais, 10 = composição editorial. */
+  designVariance: designDialSchema,
+  /** Intensidade de motion: 1 = UI estática, 10 = animação coreografada. */
+  designMotion: designDialSchema,
+  /** Densidade visual: 1 = uma ideia por viewport, 10 = UI densa em dados. */
+  designDensity: designDialSchema,
   /** Modo sóbrio: oculta HUD/celebrações/narração da gamificação (o XP
    *  continua acumulando em silêncio). */
   soberMode: z.boolean().default(false),
