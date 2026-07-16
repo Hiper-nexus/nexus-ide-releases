@@ -13,6 +13,33 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.5',
+  date: '2026-07-16',
+  codename: 'Frota Completa',
+  summary:
+    'O oh-my-pi entra em operação de background (roteador + Reviewer D no squad Review P0–P3, o rito que ele mesmo originou) e a parte de orquestração ganha a UX que faltava: editar squad abre um modal centralizado de verdade, e o painel inteiro recebeu hierarquia, hover e respiro.',
+  highlights: [
+    {
+      title: 'omp trabalhando em background',
+      detail:
+        'O roteador escala o omp como diversidade (medium/hard) e o squad Review P0–P3 ganhou o Reviewer D (omp) — rode uma missão com esse squad para vê-lo revisar ao lado de Claude, Kimi e AGY.',
+    },
+    {
+      title: 'Editar squad no meio da tela',
+      detail:
+        'O editor virou um dialog centralizado com fundo escurecido, Esc/clique-fora e foco automático — nada de rolar até o fim da lista para achá-lo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Painel de orquestração legível',
+      detail:
+        'Mais largura e respiro, tab ativa com âncora, toolbar fixa ao rolar, cards com hover e roster do editor em cartões com focus ring.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.4',
   date: '2026-07-16',
   codename: 'Paridade Viva',
@@ -45,48 +72,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'OMP RPC explica a morte',
       detail:
         'Saída com código ≠0 mostra o motivo real (ex.: sem /login) e oferece abrir o omp no terminal para autenticar.',
-    },
-  ],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.3',
-  date: '2026-07-16',
-  codename: 'Operacional para o Cliente',
-  summary:
-    'Cada fricção de operador do 0.19.2 virou fluxo funcional: conta por login dispara o auth do provider no navegador, CLIs ausentes se instalam com um clique pela fonte oficial, GitHub funciona sem setup via sessão do gh, o Kimi K3 (e todo modelo novo que a CLI conhecer) aparece sozinho, e o modo Design ganhou erros legíveis, desligamento que nunca falha e preview mobile sempre visível.',
-  highlights: [
-    {
-      title: 'Entrar com nova conta — de verdade',
-      detail:
-        'Adicionar conta por assinatura abre um terminal já rodando o login da CLI (claude /login, codex login, grok, kimi, opencode, agy) — o navegador abre na página do provider e depois é só Salvar no vault.',
-    },
-    {
-      title: 'Máquina fresca fica operacional pelo app',
-      detail:
-        'Provider ausente ganha "Instalar automaticamente" com confirmação nativa mostrando o comando exato, só de fontes oficiais (npm/brew). O painel OMP instala o omp e reinicia a sessão sozinho.',
-    },
-    {
-      title: 'GitHub sem setup',
-      detail:
-        'Sem PAT, o Nexus usa a sessão do gh CLI já autenticada — PRs e issues listam e criam na hora; o token nunca é persistido pelo app.',
-    },
-    {
-      title: 'Modelos novos aparecem sozinhos',
-      detail:
-        'Kimi K3 no catálogo e descoberta viva: Atualizar modelos pergunta à própria CLI o que ela conhece — sem esperar release do Nexus.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Modo Design confiável',
-      detail:
-        'Desligar nunca mais falha em página ocupada, erros viram texto acionável com tooltip e o preview responsivo (📱 375 / ▯ 768 / 🖥 1440) fica sempre visível na barra do browser.',
-    },
-    {
-      title: 'Metadata de release consistente',
-      detail:
-        'Notas internas e versão do servidor acompanham o pacote — o invariante furado no bump anterior agora é coberto pela suíte.',
     },
   ],
 };

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.19.5 — Frota Completa
+
+Data: 2026-07-16
+
+### Orquestração
+
+- **omp em operação de background**: entra na tabela de roteamento (tiers
+  medium/hard, agregando os providers logados no próprio omp) e ganha o
+  assento Reviewer D no squad builtin Review P0–P3 — o pipeline é um port do
+  review do próprio oh-my-pi, agora ele participa do próprio rito.
+- **Editor de squad vira modal centralizado**: abria inline no fim da lista
+  (fora da viewport, exigia rolagem). Agora: dialog no meio da tela com
+  scrim, Esc/clique-fora, foco no primeiro campo e scroll interno.
+- **Polish do painel**: painel mais largo com respiro, tab ativa com âncora
+  de acento, toolbar sticky, cards com hover, campos do editor com focus
+  ring e roster em cartões.
+
 ## 0.19.4 — Paridade Viva
 
 Data: 2026-07-16
