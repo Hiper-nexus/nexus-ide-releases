@@ -35,8 +35,26 @@ Escrita destrutiva (`git.push`, `fs.delete`, `mission.complete`) exige confirma�
 Inspiração: home com hosts/stats + lista de trabalho.  
 Implementação: thin client embutido (sem App Store lag), protocol versionável no bridge.
 
+## Stream em tempo real e sessão persistente (feito)
+
+- A bridge empurra `pane.stream.data` (frames do terminal-stream-protocol via
+  `remote-output-bus`, tap único compartilhado com o relay do companion) para
+  clientes que abriram `pane.stream.open` (resposta negocia `pushAvailable`;
+  uma inscrição ativa por socket; `pane.stream.close` encerra). O cliente
+  acompanha o cursor dedicado `pushSeq` — imune aos encodes de resposta de
+  `pane.read`/`pane.input` — e backpressure derruba frames (nunca acumula
+  buffer): o gap é curado com um único `pane.read` de reconciliação
+  (debounced).
+- O thin client consome os pushes e mantém o poll só como reconciliação
+  (15 s com stream vivo; 2,5 s em bridges antigas sem push).
+- Token persistido em `localStorage` da origem HTTPS da bridge: reload não
+  re-pareia; revogação no desktop invalida server-side e o cliente volta
+  sozinho para a tela de pareamento.
+
 ## Próximos passos (pós fase 5)
 
 - Conta ativa no `ops.snapshot` (secret-free).
-- Stream terminal em tempo real no thin client (hoje poll `pane.read`).
-- QR pairing na UI Settings (já há rotate pairing no IPC).
+- PWA (manifest + service worker) e notificações push locais.
+- Push também no caminho do relay (companion-relay-transport hoje mantém
+  contrato request/response; o parâmetro `pushTarget` do
+  `handleAuthedMessage` já aceita um sink futuro).

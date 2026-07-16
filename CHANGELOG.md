@@ -1,5 +1,41 @@
 # Changelog
 
+<<<<<<< HEAD
+## Não lançado — Mobile em tempo real com sessão persistente
+
+Fecha os dois últimos degraus operacionais do companion no device (dossiê
+2026-07-15 §7): o thin client deixava de parear a cada reload e fazia poll de
+2,5 s num `<pre>` enquanto o stream binário existia server-side sem uso.
+
+- **Push de terminal em tempo real**: a bridge assina `tapSessionData` e
+  empurra `pane.stream.data` (terminal-stream-protocol, mesmo domínio de seq
+  do `pane.read`) para os sockets autenticados que abriram
+  `pane.stream.open`. Backpressure derruba frames em vez de acumular buffer
+  (fail-safe ≤256 KiB por socket); o gap de seq resultante é detectado pelo
+  cliente e curado com um `pane.read` de reconciliação.
+- **Thin client streaming**: decodifica os frames no browser (header de 16
+  bytes, opcode Output), acompanha seq, aparo de cauda para memória de
+  celular, e rebaixa o poll para reconciliação de 15 s (2,5 s permanece como
+  fallback em bridge antiga sem push).
+- **Sessão persistente**: token guardado em `localStorage` da origem HTTPS da
+  própria bridge — reload não re-pareia; revogação/expiração no desktop
+  derruba o auth server-side e o cliente volta sozinho à tela de pareamento
+  com o motivo.
+- Compatibilidade: `handleAuthedMessage` ganha `pushTarget` opcional — o
+  caminho do relay (companion-relay-transport) segue request/response
+  intacto. TDD: push só para inscritos + seq monotônica + isolamento de
+  sessão não relacionada; suíte remota 109/109; `tsc` limpo.
+- Endurecido pela rodada de review (Codex + CodeRabbit, 7 achados):
+  **remote-output-bus** unifica o tap de PTY entre bridge WS e relay do
+  companion (UM encode por chunk — bridge+relay simultâneos não criam gaps
+  falsos entre si); **cursor de push dedicado** (`pushSeq`) imune aos encodes
+  de resposta de `pane.read`/`pane.input` (sem tempestade de resync entre
+  clientes); negociação explícita `pushAvailable` (bridge antiga mantém poll
+  2,5 s); inscrição única por socket + `pane.stream.close` (pane antigo não
+  enche o buffer); debounce de reconciliação por gap; revogação AO VIVO
+  derruba o cliente para a tela de pareamento; token só é apagado em rejeição
+  explícita do auth (queda de rede preserva a sessão).
+
 ## 0.19.0 — Oh My Pi na tela
 
 Segunda leva do crossover [oh-my-pi](https://github.com/can1357/oh-my-pi): as

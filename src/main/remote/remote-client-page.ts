@@ -3,6 +3,12 @@
  * origem HTTPS. Pareia por código, lista panes/missões, lê a saída e envia
  * input — a ÚNICA rota de escrita é pane.input (8KB cap), igual ao protocolo
  * WS. Zero dependências externas (CSP-friendly, roda offline no celular).
+ *
+ * Token persistido em localStorage (origem HTTPS da própria bridge): reload
+ * não exige re-pareamento; revogação no desktop invalida o token no servidor
+ * e o cliente cai de volta para a tela de pareamento. Terminal em tempo real:
+ * consome pushes `pane.stream.data` (terminal-stream-protocol) e usa o poll
+ * apenas como reconciliação — um gap de seq dispara pane.read para curar.
  */
 
 export const REMOTE_CLIENT_HTML = `<!doctype html>
@@ -103,18 +109,93 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
 <script>
 (function () {
   var ws = null, token = null, nextId = 1, pending = {}, curPane = null, poll = null;
+  var curStreamId = null, lastSeq = 0, streamLive = false;
+  var TOKEN_KEY = 'nexusRemoteToken';
   var $ = function (id) { return document.getElementById(id); };
   function setConn(on, txt) { $('dot').className = 'dot' + (on ? ' on' : ''); $('sub').textContent = txt; }
+  function loadToken() { try { return localStorage.getItem(TOKEN_KEY); } catch (_) { return null; } }
+  function saveToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (_) {} }
+  function clearToken() { try { localStorage.removeItem(TOKEN_KEY); } catch (_) {} }
+  function showPairScreen(msg) {
+    token = null; clearToken();
+    $('home').classList.add('hidden');
+    $('detail').classList.add('hidden');
+    $('pair').classList.remove('hidden');
+    if (msg) $('pairErr').textContent = msg;
+  }
+
+  // Frame do terminal-stream-protocol (16 bytes de header, little-endian):
+  // kind 0x74 · version 1 · opcode · streamId u32@4 · seq u64@8 (low u32@12).
+  function decodeStreamFrame(b64) {
+    try {
+      var bin = atob(b64);
+      if (bin.length < 16) return null;
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      if (bytes[0] !== 0x74 || bytes[1] !== 1) return null;
+      var view = new DataView(bytes.buffer);
+      return {
+        opcode: bytes[2],
+        streamId: view.getUint32(4, true),
+        seq: view.getUint32(12, true),
+        text: new TextDecoder().decode(bytes.subarray(16)),
+      };
+    } catch (_) { return null; }
+  }
+
+  var resyncInFlight = false;
+  function resyncAfterGap() {
+    // Debounce: um gap gera UMA reconciliação; pushes seguintes com seq
+    // desalinhada esperam o pane.read realinhar lastSeq em vez de disparar
+    // uma rajada de reads (e estourar o rate limit da bridge).
+    if (resyncInFlight) return;
+    resyncInFlight = true;
+    readOutput(function () { resyncInFlight = false; });
+  }
+  function handleStreamPush(msg) {
+    if (!curPane || msg.streamId !== curStreamId) return;
+    var frame = decodeStreamFrame(msg.frameBase64 || '');
+    if (!frame || frame.opcode !== 1) return; // só Output interessa aqui
+    if (resyncInFlight) return; // o pane.read em voo já cobre este trecho
+    // Cursor de push dedicado (msg.seq): imune aos encodes de resposta de
+    // pane.read/input de OUTROS clientes — gap aqui é perda real de push.
+    if (typeof msg.seq !== 'number') return;
+    if (msg.seq <= lastSeq) return; // duplicado/atrasado — já coberto
+    if (lastSeq && msg.seq !== lastSeq + 1) {
+      // Gap (backpressure/reconexão): reconciliar com o tail completo.
+      resyncAfterGap();
+      return;
+    }
+    lastSeq = msg.seq;
+    var pre = $('output');
+    var atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+    var next = pre.textContent + frame.text;
+    // Bound de memória no celular: manter só a cauda.
+    if (next.length > 200000) next = next.slice(next.length - 160000);
+    pre.textContent = next;
+    if (atBottom) pre.scrollTop = pre.scrollHeight;
+  }
 
   function connect() {
     return new Promise(function (resolve, reject) {
       ws = new WebSocket('wss://' + location.host);
       ws.onopen = function () { setConn(true, 'conectado'); resolve(); };
       ws.onerror = function () { reject(new Error('falha de conexão (aceite o certificado)')); };
-      ws.onclose = function () { setConn(false, 'desconectado'); if (poll) clearInterval(poll); };
+      ws.onclose = function (e) {
+        setConn(false, 'desconectado');
+        if (poll) clearInterval(poll);
+        // Revogação/expiração AO VIVO: a bridge fecha com o motivo. Voltar
+        // para o pareamento na hora — sem isso a tela fica morta com token
+        // podre salvo e o usuário só se recupera limpando o storage.
+        var reason = (e && e.reason) || '';
+        if (/token|revoked|revogad|expired|expirad/i.test(reason)) {
+          showPairScreen('sessão encerrada no desktop — pareie de novo');
+        }
+      };
       ws.onmessage = function (e) {
         var msg; try { msg = JSON.parse(e.data); } catch (_) { return; }
-        if (msg.id && pending[msg.id]) { pending[msg.id](msg); delete pending[msg.id]; }
+        if (msg.id && pending[msg.id]) { pending[msg.id](msg); delete pending[msg.id]; return; }
+        if (msg.type === 'pane.stream.data') handleStreamPush(msg);
       };
     });
   }
@@ -141,12 +222,43 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       .then(function (r) {
         token = r.token || (r.result && r.result.token);
         if (!token) throw new Error('sem token');
+        saveToken(token);
         $('pair').classList.add('hidden');
         $('home').classList.remove('hidden');
         return refresh();
       })
       .catch(function (err) { $('pairErr').textContent = err.message; });
   };
+
+  // Token salvo: reload não exige re-pareamento. Só a REJEIÇÃO explícita do
+  // auth apaga o token — queda de rede/refresh transitória preserva a sessão
+  // (recarregar tenta de novo com o mesmo token).
+  (function bootWithSavedToken() {
+    var saved = loadToken();
+    if (!saved) return;
+    connect()
+      .then(function () {
+        return send('auth', { token: saved }).catch(function (err) {
+          err.authRejected = true;
+          throw err;
+        });
+      })
+      .then(function () {
+        token = saved;
+        $('pair').classList.add('hidden');
+        $('home').classList.remove('hidden');
+        // Falha do refresh não derruba a sessão: a home mostra o erro dela.
+        return refresh().catch(function () {});
+      })
+      .catch(function (err) {
+        if (err && err.authRejected) {
+          showPairScreen('sessão expirada — pareie de novo (' + err.message + ')');
+        } else {
+          $('pairErr').textContent =
+            'sem conexão com o desktop — recarregue para tentar de novo';
+        }
+      });
+  })();
 
   function renderMissions(list) {
     var el = $('missionList'); el.textContent = '';
@@ -229,25 +341,57 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
   }
   $('refreshBtn').onclick = function () { refresh(); };
 
+  function schedulePoll() {
+    if (poll) clearInterval(poll);
+    // Com stream ao vivo o poll vira reconciliação lenta; sem stream (bridge
+    // antiga), continua sendo a fonte primária.
+    poll = setInterval(readOutput, streamLive ? 15000 : 2500);
+  }
+  function closeStreams() {
+    // Abrir mão do push antigo ao trocar de pane/voltar: frames de um pane
+    // ruidoso que ninguém está vendo só consomem o buffer do socket.
+    send('pane.stream.close', {}).catch(function () { /* bridge antiga */ });
+  }
   function openPane(p) {
+    if (curPane && curPane.paneId !== p.paneId) closeStreams();
     curPane = p;
+    curStreamId = null; lastSeq = 0; streamLive = false; resyncInFlight = false;
     $('home').classList.add('hidden');
     $('detail').classList.remove('hidden');
     $('detailName').textContent = p.title || p.paneId;
     $('detailErr').textContent = '';
     readOutput();
-    if (poll) clearInterval(poll);
-    poll = setInterval(readOutput, 2500);
+    send('pane.stream.open', { paneId: p.paneId })
+      .then(function (r) {
+        var res = r.result || r;
+        if (curPane !== p) return;
+        // Negociação explícita: bridge antiga responde ao open mas nunca
+        // empurra — sem a flag, o poll de 2,5 s continua sendo a fonte.
+        if (res.pushAvailable !== true) return;
+        curStreamId = res.streamId;
+        lastSeq = typeof res.pushSeq === 'number' ? res.pushSeq : 0;
+        streamLive = true;
+        schedulePoll();
+      })
+      .catch(function () { /* bridge antiga sem push — poll de 2.5s cobre */ });
+    schedulePoll();
   }
-  function readOutput() {
-    if (!curPane) return;
+  function readOutput(done) {
+    if (!curPane) { if (done) done(); return; }
     send('pane.read', { paneId: curPane.paneId, lines: 200 })
       .then(function (r) {
-        var out = (r.result && r.result.output) || r.output || '';
+        var res = r.result || r;
+        var out = res.output || '';
+        if (res.stream && typeof res.stream.pushSeq === 'number') {
+          // Realinha o cursor de PUSH após a reconciliação (o seq do frame
+          // avança com encodes de resposta e não serve de baseline).
+          lastSeq = res.stream.pushSeq;
+        }
         var pre = $('output'); var atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
         pre.textContent = out; if (atBottom) pre.scrollTop = pre.scrollHeight;
+        if (done) done();
       })
-      .catch(function (err) { $('detailErr').textContent = err.message; });
+      .catch(function (err) { $('detailErr').textContent = err.message; if (done) done(); });
   }
   $('sendBtn').onclick = function () {
     if (!curPane) return;
@@ -258,7 +402,10 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       .catch(function (err) { $('detailErr').textContent = err.message; });
   };
   $('backBtn').onclick = function () {
-    if (poll) clearInterval(poll); curPane = null;
+    if (poll) clearInterval(poll);
+    closeStreams();
+    curPane = null;
+    curStreamId = null; lastSeq = 0; streamLive = false; resyncInFlight = false;
     $('detail').classList.add('hidden');
     $('home').classList.remove('hidden');
     refresh();

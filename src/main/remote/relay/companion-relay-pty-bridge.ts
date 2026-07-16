@@ -1,10 +1,10 @@
 /**
  * Liga a saída dos panes PTY ao transporte relay do companion mobile.
  *
- * Não-invasivo e fail-safe: instala UM tap de sessão (`tapSessionData`) que,
- * quando existe um host de relay ativo, encaminha cada chunk de output para os
- * guests via `pushPaneOutput`. Sem host ativo (o caso comum, flag OFF) o tap
- * retorna de imediato — custo desprezível e zero efeito sobre o terminal local.
+ * Não-invasivo e fail-safe: consome o `remote-output-bus` (tap único de PTY,
+ * UM encode por chunk compartilhado com a bridge WS — sem host ativo o bus
+ * nem encoda). Uma seq por sessão entre os dois transportes: bridge e relay
+ * simultâneos não criam mais gaps falsos de seq um para o outro.
  *
  * O que o mobile vê é decidido pela MESMA autoridade de pane do remote-bridge:
  * só encaminhamos panes que o caller do relay (role 'user', escopo do host)
@@ -14,9 +14,9 @@
  * NUNCA logar sessionId/paneId/payload aqui: o encaminhamento é mudo e qualquer
  * falha é engolida para nunca quebrar o caminho de output do PTY.
  */
-import { tapSessionData } from '../../pty/pty-manager';
 import { getPaneAuthzInfo } from '../../orch/pane-registry';
 import { authorizePaneAccess } from '../../orch/pane-authz';
+import { subscribeEncodedSessionOutput } from '../remote-output-bus';
 import { getActiveCompanionRelayHost } from './companion-relay-transport';
 
 let untap: (() => void) | null = null;
@@ -27,26 +27,29 @@ let untap: (() => void) | null = null;
  */
 export function initCompanionRelayPtyBridge(): () => void {
   if (untap) return untap;
-  untap = tapSessionData((sessionId, data) => {
-    if (data.length === 0) return;
-    // Sem host ativo não há nada a encaminhar (flag OFF / relay parado).
-    const host = getActiveCompanionRelayHost();
-    if (!host) return;
-    try {
-      const pane = getPaneAuthzInfo(sessionId);
-      if (!pane) return;
-      // Autoridade de pane idêntica à do bridge (pane.stream.open): só panes
-      // legíveis pelo escopo do host chegam ao mobile. Fora de escopo → drop.
-      const decision = authorizePaneAccess(
-        { role: 'user', scope: host.scope },
-        pane,
-        'read',
-      );
-      if (!decision.allow) return;
-      host.pushPaneOutput(pane.paneId, sessionId, data);
-    } catch {
-      // Fail-safe: o relay jamais pode quebrar o output local do PTY.
-    }
+  untap = subscribeEncodedSessionOutput({
+    // Sem host ativo não há nada a encaminhar (flag OFF / relay parado) — e o
+    // bus nem encoda o chunk quando nenhum consumidor o quer.
+    wants: () => getActiveCompanionRelayHost() !== null,
+    deliver: (sessionId, encoded) => {
+      const host = getActiveCompanionRelayHost();
+      if (!host) return;
+      try {
+        const pane = getPaneAuthzInfo(sessionId);
+        if (!pane) return;
+        // Autoridade de pane idêntica à do bridge (pane.stream.open): só panes
+        // legíveis pelo escopo do host chegam ao mobile. Fora de escopo → drop.
+        const decision = authorizePaneAccess(
+          { role: 'user', scope: host.scope },
+          pane,
+          'read',
+        );
+        if (!decision.allow) return;
+        host.pushEncodedPaneOutput(pane.paneId, encoded);
+      } catch {
+        // Fail-safe: o relay jamais pode quebrar o output local do PTY.
+      }
+    },
   });
   return untap;
 }

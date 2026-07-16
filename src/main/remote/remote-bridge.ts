@@ -26,6 +26,10 @@ import {
   orchWriteSession,
 } from '../pty/pty-manager';
 import {
+  peekPushCursor,
+  subscribeEncodedSessionOutput,
+} from './remote-output-bus';
+import {
   clearRemoteTerminalStreams,
   encodeRemoteTerminalOutput,
   openRemoteTerminalStream,
@@ -289,6 +293,90 @@ function closeAllAuthenticatedClients(reason: string): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// pane.stream push — real-time terminal output for subscribed companions.
+// The thin client used to poll pane.read every 2.5 s while the binary stream
+// existed server-side unused; pushing closes that gap. Frames come from the
+// shared remote-output-bus (ONE encode per chunk, shared with the companion
+// relay) so every consumer sees the same seq domain as pane.read — a client
+// that misses a push (backpressure skip, reconnect) sees a genuine seq gap
+// and heals via pane.read.
+// ---------------------------------------------------------------------------
+
+const STREAM_PUSH_MAX_BUFFERED_BYTES = 256 * 1024;
+
+const streamSubscribers = new Map<string, Set<WebSocket>>();
+let sessionDataTapDispose: (() => void) | null = null;
+
+function subscribePaneStream(ws: WebSocket, sessionId: string): void {
+  // Uma inscrição ativa por socket: o thin client vê um pane por vez, e sem
+  // esta troca server-side um pane ruidoso já visitado continuaria enchendo
+  // o buffer do socket para sempre (o close explícito do cliente é cortesia,
+  // não garantia).
+  dropStreamSubscriber(ws);
+  let set = streamSubscribers.get(sessionId);
+  if (!set) {
+    set = new Set();
+    streamSubscribers.set(sessionId, set);
+  }
+  set.add(ws);
+  ensureSessionDataTap();
+}
+
+function unsubscribePaneStream(ws: WebSocket, sessionId?: string): void {
+  if (sessionId) {
+    const set = streamSubscribers.get(sessionId);
+    if (set) {
+      set.delete(ws);
+      if (set.size === 0) streamSubscribers.delete(sessionId);
+    }
+    return;
+  }
+  dropStreamSubscriber(ws);
+}
+
+function dropStreamSubscriber(ws: WebSocket): void {
+  for (const [sessionId, set] of streamSubscribers) {
+    set.delete(ws);
+    if (set.size === 0) streamSubscribers.delete(sessionId);
+  }
+}
+
+function clearStreamSubscriptions(): void {
+  streamSubscribers.clear();
+  sessionDataTapDispose?.();
+  sessionDataTapDispose = null;
+}
+
+function ensureSessionDataTap(): void {
+  if (sessionDataTapDispose) return;
+  sessionDataTapDispose = subscribeEncodedSessionOutput({
+    wants: (sessionId) => (streamSubscribers.get(sessionId)?.size ?? 0) > 0,
+    deliver: (sessionId, encoded) => {
+      const subscribers = streamSubscribers.get(sessionId);
+      if (!subscribers) return;
+      // isClientAuthenticated may close/mutate the set — iterate a copy.
+      for (const ws of [...subscribers]) {
+        if (!isClientAuthenticated(ws)) {
+          subscribers.delete(ws);
+          continue;
+        }
+        // Backpressure fail-safe: skipping creates a seq gap the client
+        // detects and heals with a pane.read resync — never unbounded buffer.
+        if (ws.bufferedAmount > STREAM_PUSH_MAX_BUFFERED_BYTES) continue;
+        send(ws, {
+          type: 'pane.stream.data',
+          streamId: encoded.streamId,
+          // Cursor dedicado de push: encodes de resposta (pane.read/input)
+          // avançam o seq do frame mas NÃO este cursor — sem gaps falsos.
+          seq: encoded.pushSeq,
+          frameBase64: encoded.frameBase64,
+        });
+      }
+    },
+  });
+}
+
 function clearAllAuthenticatedClients(): void {
   for (const ws of [...authenticatedClients.keys()]) {
     clearAuthenticatedClient(ws);
@@ -462,6 +550,10 @@ export type AuthedBridgeCommand = {
 export async function handleAuthedMessage(
   msg: AuthedBridgeCommand,
   scope: ProjectExecutionScope,
+  // Optional push target: when the caller is a live WS client, pane.stream.open
+  // also subscribes it to real-time output pushes. Relay/other callers keep the
+  // request/response contract unchanged.
+  pushTarget?: WebSocket,
 ) {
   // Defesa em profundidade do companion mobile: RPCs modelados pela política
   // passam pelo gate (destrutivos exigem confirmação do device; mission.complete
@@ -487,7 +579,8 @@ export async function handleAuthedMessage(
       // Production path: frame terminal output with ORCA terminal-stream-protocol
       // so remote/mobile clients can reconnect with resumeFromSeq.
       const stream = encodeRemoteTerminalOutput(sessionId, output);
-      return { output, stream };
+      // pushSeq realinha o cursor de push do cliente após a reconciliação.
+      return { output, stream: { ...stream, pushSeq: peekPushCursor(sessionId) } };
     }
     case 'pane.input': {
       const data = typeof msg.data === 'string' ? msg.data : '';
@@ -502,7 +595,27 @@ export async function handleAuthedMessage(
     }
     case 'pane.stream.open': {
       const sessionId = sessionIdOf(msg.paneId, scope, 'read');
-      return openRemoteTerminalStream(sessionId);
+      const subscribed = Boolean(pushTarget);
+      if (pushTarget) subscribePaneStream(pushTarget, sessionId);
+      return {
+        ...openRemoteTerminalStream(sessionId),
+        // Negociação explícita: bridges antigas respondem sem esta flag e o
+        // cliente mantém o poll de 2,5 s como fonte primária.
+        pushAvailable: subscribed,
+        pushSeq: peekPushCursor(sessionId),
+      };
+    }
+    case 'pane.stream.close': {
+      // Sem paneId: encerra TODAS as inscrições deste socket (troca de pane no
+      // thin client). Frames de pane antigo parariam de consumir o buffer do
+      // socket — é o cliente abrindo mão do próprio push, sem authz extra.
+      if (!pushTarget) return { ok: true };
+      if (typeof msg.paneId === 'string' && msg.paneId.length > 0) {
+        unsubscribePaneStream(pushTarget, sessionIdOf(msg.paneId, scope, 'read'));
+      } else {
+        unsubscribePaneStream(pushTarget);
+      }
+      return { ok: true };
     }
     case 'pane.stream.frame': {
       const sessionId = sessionIdOf(msg.paneId, scope, 'write');
@@ -613,6 +726,7 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
   ws.on('close', () => {
     clearTimeout(unauthTimer);
     clearAuthenticatedClient(ws);
+    dropStreamSubscriber(ws);
     clients.delete(ws);
   });
   // A protocol error (e.g. an oversized frame rejected by maxPayload) emits
@@ -690,7 +804,7 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
       if (!isClientAuthenticated(ws)) throw new Error('auth required');
       const authenticated = authenticatedClients.get(ws);
       if (!authenticated) throw new Error('auth required');
-      const result = await handleAuthedMessage(msg, authenticated.scope);
+      const result = await handleAuthedMessage(msg, authenticated.scope, ws);
       send(ws, { id: msg.id, ok: true, result });
     } catch (err) {
       send(ws, {
@@ -757,6 +871,7 @@ export async function startRemoteBridge(
 }
 
 export function stopRemoteBridge(scope?: ProjectExecutionScope): RemoteBridgeInfo {
+  clearStreamSubscriptions();
   clearRemoteTerminalStreams();
   if (scope && activeBridgeScope) assertBridgeScope(scope);
   for (const client of clients) client.close(1001, 'bridge stopped');
