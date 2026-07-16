@@ -7,6 +7,8 @@ import type {
 import { useProductFlags } from '../../lib/use-product-flags';
 import { MainGeneratedQr } from '../MainGeneratedQr';
 
+const PRODUCTION_RELAY_URL = 'wss://relay.nexuside.app';
+
 /**
  * Companion mobile relay (transporte E2E via relay cego). A sala é selada com
  * AES-256-GCM; a chave vive apenas no fragmento do link — por isso o link full
@@ -102,7 +104,6 @@ export function CompanionRelaySection() {
   const flagOn = flags[FEATURE_FLAG_IDS.remoteRelayTransport] === true;
 
   const [info, setInfo] = useState<CompanionRelayTransportInfo | null>(null);
-  const [relayUrl, setRelayUrl] = useState('wss://relay.nexuside.app');
   const [busy, setBusy] = useState(false);
   const [uiError, setUiError] = useState<string | null>(null);
   const [bridgeMissing, setBridgeMissing] = useState(false);
@@ -150,12 +151,11 @@ export function CompanionRelaySection() {
 
   const start = useCallback(async () => {
     const bridge = relayBridge();
-    const url = relayUrl.trim();
-    if (!bridge || url.length === 0) return;
+    if (!bridge) return;
     setBusy(true);
     setUiError(null);
     try {
-      const next = await bridge.start({ relayUrl: url });
+      const next = await bridge.start({ relayUrl: PRODUCTION_RELAY_URL });
       setInfo(next);
       if (next.error) setUiError(next.error);
     } catch (err) {
@@ -163,7 +163,7 @@ export function CompanionRelaySection() {
     } finally {
       setBusy(false);
     }
-  }, [relayUrl]);
+  }, []);
 
   const stop = useCallback(async () => {
     const bridge = relayBridge();
@@ -232,26 +232,14 @@ export function CompanionRelaySection() {
           </div>
 
           <div className="settings-field">
-            <label className="settings-field__note" htmlFor="companion-relay-url">
-              URL do relay — <code>wss://…</code> (só <code>ws://</code> para
-              localhost). Rede de confiança: quem receber o link full controla a
-              sessão.
-            </label>
+            <p className="settings-field__note">
+              Relay NexusIDE protegido. O endereço é configurado automaticamente;
+              quem receber o QR Full controla a sessão.
+            </p>
             <div className="settings-row" style={{ marginBottom: 0 }}>
-              <input
-                id="companion-relay-url"
-                className="settings-input"
-                placeholder="wss://relay.exemplo.dev"
-                value={relayUrl}
-                spellCheck={false}
-                autoComplete="off"
-                disabled={busy || running}
-                onChange={(e) => setRelayUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !running) void start();
-                }}
-                style={{ flex: 1 }}
-              />
+              <code className="settings-input" style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                {PRODUCTION_RELAY_URL}
+              </code>
               {running ? (
                 <button
                   type="button"
@@ -265,10 +253,10 @@ export function CompanionRelaySection() {
                 <button
                   type="button"
                   className="settings-btn settings-btn--primary"
-                  disabled={busy || relayUrl.trim().length === 0}
+                  disabled={busy}
                   onClick={() => void start()}
                 >
-                  Iniciar
+                  Iniciar Companion
                 </button>
               )}
               <button
