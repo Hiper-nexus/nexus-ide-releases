@@ -121,6 +121,8 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     },
     kimi: {
       models: [
+        { id: 'kimi-code/k3', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'kimi-code/kimi-for-coding-highspeed', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'kimi-code/kimi-for-coding', availability: 'cheap', costTier: 'low', source: 'bundled' },
       ],
     },

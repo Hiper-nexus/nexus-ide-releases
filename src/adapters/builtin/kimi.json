@@ -58,6 +58,8 @@
   "models": {
     "flag": "--model",
     "list": [
+      "kimi-code/k3",
+      "kimi-code/kimi-for-coding-highspeed",
       "kimi-code/kimi-for-coding",
       "kimi-k2.7",
       "kimi-k2.6",
