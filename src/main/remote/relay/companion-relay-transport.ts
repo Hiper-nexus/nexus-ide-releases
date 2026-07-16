@@ -172,7 +172,19 @@ export class CompanionRelayHost {
    */
   pushPaneOutput(pane: string, sessionId: string, text: string): void {
     if (!this.#running || !this.#socket) return;
-    const encoded = encodeRemoteTerminalOutput(sessionId, text);
+    this.pushEncodedPaneOutput(pane, encodeRemoteTerminalOutput(sessionId, text));
+  }
+
+  /**
+   * Variante para frames JÁ encodados pelo remote-output-bus: o mesmo chunk é
+   * encodado UMA vez e compartilhado com a bridge WS — uma seq por sessão,
+   * sem gaps falsos quando os dois transportes estão ativos.
+   */
+  pushEncodedPaneOutput(
+    pane: string,
+    encoded: { seq: number; frameBase64: string },
+  ): void {
+    if (!this.#running || !this.#socket) return;
     this.#send({ t: 'pty', pane, seq: encoded.seq, data: encoded.frameBase64 }, 0);
   }
 

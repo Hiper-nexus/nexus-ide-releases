@@ -8,6 +8,7 @@ import type {
 } from '../../shared/orch-types';
 import { markVictory } from './onboarding-store';
 import { getActiveWorkspacePath } from './active-workspace';
+import { claimRightDrawer, registerRightDrawer } from './right-drawer';
 
 /**
  * Renderer mirror of the orchestration domain (missions / handoffs / todos /
@@ -119,8 +120,16 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       workspaceEpoch: s.workspaceEpoch + 1,
     })),
 
-  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
-  openPanel: (tab) => set({ panelOpen: true, panelTab: tab }),
+  togglePanel: () => {
+    const panelOpen = !get().panelOpen;
+    // Opening this drawer claims the shared right slot, closing the omp panel.
+    if (panelOpen) claimRightDrawer('orch');
+    set({ panelOpen });
+  },
+  openPanel: (tab) => {
+    claimRightDrawer('orch');
+    set({ panelOpen: true, panelTab: tab });
+  },
   setPanelTab: (tab) => set({ panelTab: tab }),
   toggleBoard: () => set((s) => ({ boardOpen: !s.boardOpen })),
   openBoard: () => set({ boardOpen: true }),
@@ -167,3 +176,11 @@ export const useOrchStore = create<OrchState>((set, get) => ({
     set({ squads });
   },
 }));
+
+// Right-drawer exclusivity: closing is a plain state write (never routed back
+// through togglePanel/openPanel), so a claim from the omp panel cannot recurse.
+registerRightDrawer('orch', () => {
+  if (useOrchStore.getState().panelOpen) {
+    useOrchStore.setState({ panelOpen: false });
+  }
+});

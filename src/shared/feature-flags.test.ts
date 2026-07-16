@@ -48,7 +48,6 @@ describe('feature flags', () => {
     // real); ficam OFF só as com efeito fora do workspace, dependência de infra
     // externa ou sem consumidor. Mudar este conjunto exige decisão revisada.
     const DEFAULT_OFF = new Set([
-      'feature.mcp.hub', // escreve configs de outras ferramentas no HOME
       'feature.remote.relayTransport', // exige relay hospedado + URL explícita
       'feature.autonomy.profiles', // sem consumidor no produto ainda
     ]);

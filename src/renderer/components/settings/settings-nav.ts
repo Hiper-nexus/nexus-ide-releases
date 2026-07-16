@@ -17,6 +17,7 @@ export type SettingsSection =
   | 'marketplace'
   | 'design-systems'
   | 'remote'
+  | 'companion-relay'
   | 'agents'
   | 'skills'
   | 'media-catalog'
@@ -248,6 +249,14 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
         aliases: ['ssh', 'remote'],
       },
       {
+        id: 'companion-relay',
+        icon: 'REL',
+        pixelIcon: 'split-right',
+        title: 'Companion mobile',
+        subtitle: 'relay E2E · QR',
+        aliases: ['companion', 'relay', 'mobile', 'celular', 'e2e', 'qr'],
+      },
+      {
         id: 'labs',
         icon: 'LAB',
         pixelIcon: 'sparkle',
@@ -425,6 +434,7 @@ const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
   vision: 'system',
   audit: 'system',
   remote: 'system',
+  'companion-relay': 'system',
   labs: 'system',
 };
 

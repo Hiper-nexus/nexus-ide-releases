@@ -14,7 +14,10 @@ import {
   SEARCH_MIXER_CHANNELS,
   PRODUCT_WAVE_CHANNELS,
   DISCOVERY_CHANNELS,
+  MEMORY_CHANNELS,
+  MODEL_CHANNELS,
 } from '../shared/channels';
+import { COMPANION_RELAY_CHANNELS } from '../shared/companion-relay-types';
 import { OPS_CHANNELS } from '../shared/ops-ipc';
 import type { ProductFlagResolutionRow } from '../shared/product-api';
 import { PET_CHANNELS } from '../shared/pet-types';
@@ -841,6 +844,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(REMOTE_CHANNELS.remoteSpawnList, { target }),
     createTmux: (req) =>
       ipcRenderer.invoke(REMOTE_CHANNELS.remoteSpawnCreate, req),
+    relay: {
+      status: () => ipcRenderer.invoke(COMPANION_RELAY_CHANNELS.status),
+      start: (req) => ipcRenderer.invoke(COMPANION_RELAY_CHANNELS.start, req),
+      stop: () => ipcRenderer.invoke(COMPANION_RELAY_CHANNELS.stop),
+    },
   },
   settings: {
     get: () => ipcRenderer.invoke(SETTINGS_CHANNELS.get),
@@ -960,6 +968,15 @@ const api: NexusApi = {
   discovery: {
     workspaceConfigs: () =>
       ipcRenderer.invoke(DISCOVERY_CHANNELS.workspaceConfigs),
+  },
+  memory: {
+    stats: () => ipcRenderer.invoke(MEMORY_CHANNELS.stats),
+    recall: (input) => ipcRenderer.invoke(MEMORY_CHANNELS.recall, input),
+    forget: (id) => ipcRenderer.invoke(MEMORY_CHANNELS.forget, { id }),
+  },
+  model: {
+    richMetadata: (adapterId, modelId) =>
+      ipcRenderer.invoke(MODEL_CHANNELS.richMetadata, { adapterId, modelId }),
   },
   integrations: createIntegrationsBridge(ipcRenderer),
   accounts: {

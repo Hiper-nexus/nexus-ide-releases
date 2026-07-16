@@ -22,6 +22,7 @@ import {
   waitForSession,
 } from '../terminal/terminal-host';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
+import { initAgentNotificationBridge } from './agent-notification-bridge';
 
 /**
  * Renderer half of the orchestration bridge:
@@ -307,6 +308,9 @@ export function useOrchBridge(): void {
     const unsubState = useSessionStateStore.subscribe(() => {
       window.nexus.orch.syncPanes(snapshotPanes());
     });
+    // Inbox de notificações de agentes: transições busy→idle sustentado /
+    // exited viram itens no sininho da workspace bar (fora do state-store).
+    const stopNotifBridge = initAgentNotificationBridge();
     window.nexus.orch.syncPanes(snapshotPanes());
 
     return () => {
@@ -314,6 +318,7 @@ export function useOrchBridge(): void {
       unsubLayout();
       unsubSession();
       unsubState();
+      stopNotifBridge();
     };
   }, []);
 }

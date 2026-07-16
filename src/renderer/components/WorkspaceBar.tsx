@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useOmpRpcStore } from '../state/omp-rpc-store';
+import { useMemoryStore } from '../state/memory-store';
+import { useConfigInventoryStore } from '../state/config-inventory-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
@@ -28,6 +30,7 @@ import {
 } from '../orch/account-restart-controller';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { statusLabel } from '../lib/mission-rail-groups';
+import { AgentNotifications } from './AgentNotifications';
 import { FleetChip } from './FleetChip';
 import {
   clearEphemeralDraft,
@@ -98,6 +101,10 @@ export function WorkspaceBar({
   const toggleOrchPanel = useOrchStore((s) => s.togglePanel);
   const ompPanelOpen = useOmpRpcStore((s) => s.panelOpen);
   const toggleOmpPanel = useOmpRpcStore((s) => s.togglePanel);
+  const memoryPanelOpen = useMemoryStore((s) => s.panelOpen);
+  const toggleMemoryPanel = useMemoryStore((s) => s.togglePanel);
+  const configInventoryOpen = useConfigInventoryStore((s) => s.open);
+  const toggleConfigInventory = useConfigInventoryStore((s) => s.toggle);
   const opsBoardOpen = useOrchStore((s) => s.boardOpen);
   const toggleOpsBoard = useOrchStore((s) => s.toggleBoard);
   const missions = useOrchStore((s) => s.missions);
@@ -308,6 +315,22 @@ export function WorkspaceBar({
       active: ompPanelOpen,
       onClick: toggleOmpPanel,
     },
+    {
+      id: 'memory',
+      label: 'Memória',
+      icon: 'sparkle',
+      title: 'Memória do workspace — fatos, decisões e preferências dos agentes',
+      active: memoryPanelOpen,
+      onClick: toggleMemoryPanel,
+    },
+    {
+      id: 'configs',
+      label: 'Configs',
+      icon: 'config',
+      title: 'O que cada CLI enxerga neste workspace (MCP, rules, skills, comandos)',
+      active: configInventoryOpen,
+      onClick: toggleConfigInventory,
+    },
   ];
 
   // Dieta da bar (critique P1): só Terminal fica inline; todo o resto mora no
@@ -443,6 +466,7 @@ export function WorkspaceBar({
         {/* Status: frota + cost (capped width). O OperatorHud (XP) mora no
             rail — a zona de status da bar é só sinal operacional. */}
         <div className="workspace-bar__zone workspace-bar__zone--status">
+          <AgentNotifications />
           <FleetChip />
           <QuotaChip />
           {!compact && <CostSummary />}

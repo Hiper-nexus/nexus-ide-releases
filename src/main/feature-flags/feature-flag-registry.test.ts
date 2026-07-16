@@ -42,8 +42,7 @@ describe('FeatureFlagRegistry', () => {
       expect(registry.isEnabled(FEATURE_FLAG_IDS.missionEventJournal)).toBe(
         true,
       );
-      // …e as de maior blast radius / sem consumidor continuam fail-closed.
-      expect(registry.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(false);
+      // …e as que seriam no-op sem infra/consumidor continuam fail-closed.
       expect(registry.isEnabled(FEATURE_FLAG_IDS.remoteRelayTransport)).toBe(
         false,
       );
@@ -98,7 +97,9 @@ describe('FeatureFlagRegistry', () => {
     });
     // Corrupt overrides are ignored — builtin defaults stay authoritative.
     expect(registry.isEnabled(FEATURE_FLAG_IDS.missionEventJournal)).toBe(true);
-    expect(registry.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(false);
+    expect(registry.isEnabled(FEATURE_FLAG_IDS.remoteRelayTransport)).toBe(
+      false,
+    );
   });
 
   it('persists overrides atomically', () => {
@@ -109,14 +110,16 @@ describe('FeatureFlagRegistry', () => {
       runtimeChannel: 'dev',
       overridesPath,
     });
-    registry.setOverride(FEATURE_FLAG_IDS.mcpHub, true);
+    // Override OFF sobre default-ON: prova que o override persiste e vence.
+    registry.setOverride(FEATURE_FLAG_IDS.mcpHub, false);
     registry.persistOverrides();
 
     const reloaded = new FeatureFlagRegistry({
       runtimeChannel: 'dev',
       overridesPath,
     });
-    expect(reloaded.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(true);
+    expect(reloaded.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(false);
+    expect(reloaded.resolve(FEATURE_FLAG_IDS.mcpHub).reason).toBe('override');
   });
 
   it('forceEnableAll turns product flags on but kill switch stays authoritative', () => {
@@ -151,16 +154,18 @@ describe('FeatureFlagRegistry', () => {
       overridesPath,
       JSON.stringify({
         schemaVersion: 1,
-        overrides: [{ id: FEATURE_FLAG_IDS.mcpHub, enabled: true }],
+        overrides: [
+          { id: FEATURE_FLAG_IDS.remoteRelayTransport, enabled: true },
+        ],
       }),
       'utf8',
     );
 
     configureFeatureFlagRegistry({ runtimeChannel: 'dev', overridesPath });
 
-    expect(getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(
-      true,
-    );
+    expect(
+      getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.remoteRelayTransport),
+    ).toBe(true);
   });
 
   it('clearOverride returns the flag to its builtin default and persists', () => {

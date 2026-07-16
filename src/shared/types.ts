@@ -103,6 +103,12 @@ import type {
 } from './media-types';
 import type { NotesApi } from './note-types';
 import type { OmpRpcApi } from './omp-rpc-types';
+import type { MemoryBridge } from './memory-ui-types';
+import type { RichModelMetadataView } from './model-metadata-types';
+import type {
+  CompanionRelayStartRequest,
+  CompanionRelayTransportInfo,
+} from './companion-relay-types';
 import type { PipeApi } from './pipe-types';
 import type { VisionApi } from './vision-ipc';
 import type {
@@ -631,6 +637,15 @@ export interface NexusApi {
     detectClis(target: string): Promise<RemoteCliDetection>;
     listTmux(target: string): Promise<RemoteSpawnResult>;
     createTmux(req: RemoteSpawnRequest): Promise<RemoteSpawnResult>;
+    /**
+     * Companion mobile E2E (entrega B2): relay cego + AES-256-GCM. Canais
+     * remote:relay.*. Atrás da flag feature.remote.relayTransport.
+     */
+    relay: {
+      status(): Promise<CompanionRelayTransportInfo>;
+      start(req: CompanionRelayStartRequest): Promise<CompanionRelayTransportInfo>;
+      stop(): Promise<CompanionRelayTransportInfo>;
+    };
   };
   settings: {
     get(): Promise<TerminalSettings>;
@@ -724,6 +739,22 @@ export interface NexusApi {
    */
   discovery: {
     workspaceConfigs(): Promise<unknown>;
+  };
+  /**
+   * Memória agentic por workspace (entrega C2): stats do banco, recall FTS5 e
+   * forget. Envelope { enabled }: com a flag feature.memory.workspaceMemory OFF
+   * o main devolve { enabled: false } em vez de lançar. Canais: memory:*.
+   */
+  memory: MemoryBridge;
+  /**
+   * Metadado rico read-only de modelo (preço USD/MTok, janela de contexto,
+   * capacidades). Canal: model:richMetadata. Fonte: getRichModelMetadata.
+   */
+  model: {
+    richMetadata(
+      adapterId: string,
+      modelId: string,
+    ): Promise<RichModelMetadataView | null>;
   };
   /** GitHub / Linear / git SCM / SSH (see integrations-api.ts). */
   integrations: IntegrationsApi;

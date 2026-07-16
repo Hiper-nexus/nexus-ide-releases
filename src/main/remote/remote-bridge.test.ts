@@ -315,9 +315,16 @@ describe('remote bridge', () => {
       if (msg.type === 'pane.stream.data') bystanderPushes.push(msg);
     });
 
-    // Synthetic PTY output: two chunks for the subscribed session and one
-    // for an unrelated session that must never leak to these clients.
+    // Synthetic PTY output: first chunk, then a pane.read from ANOTHER client
+    // (response-only encode — must not shift the push cursor), then a second
+    // chunk, plus noise on an unrelated session that must never leak.
     ptyMocks.sessionDataTap?.('session-stream-1', 'hello ');
+    await rpc(bystander, {
+      id: 'read-mid',
+      type: 'pane.read',
+      paneId: 'pane-stream',
+      lines: 10,
+    });
     ptyMocks.sessionDataTap?.('session-stream-1', 'world');
     ptyMocks.sessionDataTap?.('session-unrelated', 'noise');
 
@@ -329,6 +336,8 @@ describe('remote bridge', () => {
 
     expect(pushes.length).toBe(2);
     expect(pushes[0]!.streamId).toBe(openedResult.streamId);
+    // Dedicated push cursor: the interleaved pane.read encoded a response
+    // frame, yet the push seq stays CONSECUTIVE — no false gap, no resync storm.
     expect(pushes[1]!.seq).toBe(pushes[0]!.seq + 1);
     const { decodeTerminalStreamFrame, TerminalStreamOpcode } = await import(
       '../../shared/terminal-stream-protocol'
@@ -344,6 +353,17 @@ describe('remote bridge', () => {
     expect(new TextDecoder().decode(second!.payload)).toBe('world');
     // The authenticated-but-unsubscribed client never receives pushes.
     expect(bystanderPushes.length).toBe(0);
+
+    // pane.stream.close: the subscriber gives up its push and later PTY
+    // output no longer reaches it.
+    const closed = await rpc(subscriber, {
+      id: 'push-close',
+      type: 'pane.stream.close',
+    });
+    expect(closed.ok).toBe(true);
+    ptyMocks.sessionDataTap?.('session-stream-1', 'after-close');
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(pushes.length).toBe(2);
     subscriber.close();
     bystander.close();
   });

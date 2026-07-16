@@ -89,11 +89,11 @@ export type FeatureFlagId =
  * Product foundations. Na fase atual (operador único, sem usuários externos)
  * as superfícies prontas ficam default-ON para serem descobertas em uso real;
  * o painel Labs em Configurações e o kill switch mantêm a autoridade final de
- * desligamento. Permanecem default-OFF apenas as capacidades cujo efeito sai
- * do workspace (mcp.hub escreve configs de outras ferramentas no HOME), que
- * dependem de infra externa (relay E2E sem URL hospedada) ou que ainda não têm
- * consumidor no produto (autonomy.profiles). O scheduler segue habilitado —
- * seu loop de produção é fail-closed atrás de missão aprovada e plano selado.
+ * desligamento. Permanecem default-OFF apenas as capacidades que dependem de
+ * infra externa (relay E2E sem URL hospedada) ou que ainda não têm consumidor
+ * no produto (autonomy.profiles) — ligá-las hoje seria um no-op. O scheduler
+ * segue habilitado — seu loop de produção é fail-closed atrás de missão
+ * aprovada e plano selado.
  */
 export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
   {
@@ -176,7 +176,9 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
-    defaultEnabled: false,
+    // Ligado a pedido do operador; toda escrita em config de terceiros segue
+    // click-gated (dry-run → confirmação → backup; fill-gaps nunca deleta).
+    defaultEnabled: true,
   },
   {
     id: FEATURE_FLAG_IDS.skillsCatalog,

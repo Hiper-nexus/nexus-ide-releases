@@ -8,6 +8,7 @@ import {
   type OmpRpcUiResponse,
 } from '../../shared/omp-rpc-types';
 import { getActiveWorkspacePath } from './active-workspace';
+import { claimRightDrawer, registerRightDrawer } from './right-drawer';
 
 /**
  * Espelho renderer de UMA sessão omp rpc-ui hospedada no main (B1: painel
@@ -237,7 +238,10 @@ export const useOmpRpcStore = create<OmpRpcUiState>((set, get) => ({
   pendingUi: [],
 
   togglePanel() {
-    set((state) => ({ panelOpen: !state.panelOpen }));
+    const panelOpen = !get().panelOpen;
+    // Opening this drawer claims the shared right slot, closing the orch panel.
+    if (panelOpen) claimRightDrawer('omp');
+    set({ panelOpen });
   },
 
   setApprovalPolicy(policy) {
@@ -319,3 +323,11 @@ export const useOmpRpcStore = create<OmpRpcUiState>((set, get) => ({
     set({ sessionId: null, pendingUi: [] });
   },
 }));
+
+// Right-drawer exclusivity: closing is a plain state write (never routed back
+// through togglePanel), so a claim from the orch panel cannot recurse here.
+registerRightDrawer('omp', () => {
+  if (useOmpRpcStore.getState().panelOpen) {
+    useOmpRpcStore.setState({ panelOpen: false });
+  }
+});

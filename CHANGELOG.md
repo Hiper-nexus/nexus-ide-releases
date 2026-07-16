@@ -1,5 +1,6 @@
 # Changelog
 
+<<<<<<< HEAD
 ## Não lançado — Mobile em tempo real com sessão persistente
 
 Fecha os dois últimos degraus operacionais do companion no device (dossiê
@@ -24,12 +25,58 @@ Fecha os dois últimos degraus operacionais do companion no device (dossiê
   caminho do relay (companion-relay-transport) segue request/response
   intacto. TDD: push só para inscritos + seq monotônica + isolamento de
   sessão não relacionada; suíte remota 109/109; `tsc` limpo.
+- Endurecido pela rodada de review (Codex + CodeRabbit, 7 achados):
+  **remote-output-bus** unifica o tap de PTY entre bridge WS e relay do
+  companion (UM encode por chunk — bridge+relay simultâneos não criam gaps
+  falsos entre si); **cursor de push dedicado** (`pushSeq`) imune aos encodes
+  de resposta de `pane.read`/`pane.input` (sem tempestade de resync entre
+  clientes); negociação explícita `pushAvailable` (bridge antiga mantém poll
+  2,5 s); inscrição única por socket + `pane.stream.close` (pane antigo não
+  enche o buffer); debounce de reconciliação por gap; revogação AO VIVO
+  derruba o cliente para a tela de pareamento; token só é apagado em rejeição
+  explícita do auth (queda de rede preserva a sessão).
 
-## Não lançado — Labs + superfícies prontas ligadas por default
+## 0.19.0 — Oh My Pi na tela
+
+Segunda leva do crossover [oh-my-pi](https://github.com/can1357/oh-my-pi): as
+capacidades que só viviam no backend/MCP ganham UI de primeira classe. Reconciliada
+sobre a 0.18.0 (Cockpit Ligado).
+
+### Adicionado
+
+- **Painel de Memória** do workspace: stats por tipo/escopo + recall FTS5 com
+  debounce, navegação por teclado, AA e estados vazio/desligado. IPC read-only
+  `memory:*` escopado por gate.
+- **Inventário de configs**: painel do que cada CLI enxerga no workspace
+  (MCP/rules/skills/commands) por ecossistema, com shadowing destacado.
+- **Preço/janela no seletor de modelo**: `ModelMetaBadge` no wizard de missão via
+  IPC read-only `model:richMetadata`.
+- **Companion mobile na tela**: seção de Settings inicia/para o relay E2E, exibe
+  QR e links full/view com aviso de segurança; push de PTY ligado ao pty-manager.
+- **Exclusividade de drawer direito** (orquestração/omp/memória), **registry de
+  buffers** do editor (hashline modo buffer), botões de Memória e Configs na
+  WorkspaceBar.
+
+### Corrigido
+
+- Reconciliação com a 0.18.0: adotado o toggle de flags `Labs` da main (canal
+  único `product:flags.setOverride`), removida a implementação duplicada do
+  crossover para evitar handler IPC em conflito.
+- `ModelMetaBadge` tolera `window.nexus` ausente (ambiente de teste).
+- Release metadata realinhada em 0.19.0.
+
+## 0.18.0 — Cockpit Ligado
+
+Data: 2026-07-16
 
 Fase de operador único: capability pronta atrás de flag invisível não é
-maturidade, é estoque. Este lote torna as flags visíveis/operáveis na UI e
-liga por default o que já tem superfície completa e efeito contido.
+maturidade, é estoque. A 0.18.0 liga por default tudo que tem superfície
+pronta, entrega o painel Labs para operar flags pela UI, resgata o inbox de
+notificações de agentes (PR #20) e consolida o que estava "não lançado":
+perfil de design no motor automático e anotações do Design Mode. Inclui
+também todo o crossover Oh My Pi da 0.17.0 (nunca tagueada).
+
+### Labs + superfícies ligadas por default
 
 - **Configurações → Sistema → Labs**: painel com TODAS as feature flags do
   produto — estado real resolvido pelo main (kill switch > override > canal >
@@ -52,8 +99,25 @@ liga por default o que já tem superfície completa e efeito contido.
   (3), contrato de defaults por flag re-pinado (shared + registry), hook com
   defaults novos, seção Labs (5: render, toggle, restaurar, kill switch,
   reasons). `tsc` limpo.
+- **MCP Hub também default-ON** (pedido do operador): toda escrita em
+  config de terceiros segue click-gated — dry-run → confirmação → backup;
+  fill-gaps nunca deleta. Ficam OFF só relay E2E (exige relay hospedado +
+  URL `wss://`) e perfis de autonomia (sem consumidor na UI) — ligá-los
+  hoje seria no-op; ambos alternáveis no Labs.
 
-## Não lançado — Perfil de design no motor automático
+### Inbox de notificações de agentes (resgate do PR #20)
+
+- Sininho na workspace bar com CONCLUÍDO / ENCERRADO por pane de agente:
+  "concluído" só após busy sustentado (≥1,5s) — idle curto não spamma;
+  "Ir ao pane" foca o agente e valida se o pane ainda existe (toast quando
+  não); marcar lida, marcar todas, limpar; teto de 40 itens; focus trap +
+  Esc no painel.
+- Bridge de transições vive fora do session-state-store (sem side-effects
+  no store), é idempotente e desliga limpo no teardown do orch-bridge.
+- Reimplantado sobre a main atual a partir da stack revisada do PR #20
+  (#19 → #20 fechados); domínio puro + bridge com testes (8) verdes.
+
+### Perfil de design no motor automático
 
 - O motor que injeta a Carta de Design nos workers de UI ganha um **perfil de
   design** configurável em Configurações → Squads: **direção estética**
@@ -66,6 +130,46 @@ liga por default o que já tem superfície completa e efeito contido.
 - As proibições anti-genérico da carta continuam absolutas: o perfil modula o
   gosto dentro delas (o bloco injetado declara isso ao agente), e valores fora
   da faixa em settings antigos são clampados em vez de quebrar o spawn.
+
+### Anotações de Design (paridade Orca Design Mode)
+
+- Design Mode ganha **anotações**: com um elemento selecionado, "＋ anotar" abre
+  um composer próprio (comentário + intenção corrigir/mudar/pergunta/aprovado;
+  Enter no composer anota — nunca envia nada ao agente) e fixa a nota no
+  elemento — badge numerado aparece na própria página. Os badges seguem o
+  elemento VIVO pelo selector (sobrevivem a reflow, breakpoints da própria
+  design bar e sticky), com fallback para a geometria congelada. Teto de 20
+  por página.
+- Tray "📝 N" na design bar lista as anotações (excluir uma, limpar todas),
+  **copia** o feedback consolidado (funciona sem nenhum agente aberto — dry
+  run não exige alvo) ou **envia tudo de uma vez** pro agente: um prompt único
+  numerado igual aos badges, com os dados da página no envelope não confiável
+  padrão e DESIGN.md anexado como contexto confiável quando existir. As notas
+  do usuário NUNCA são cortadas pelo orçamento do prompt — envelope e
+  DESIGN.md encolhem primeiro (com `omittedEntries` explícito). Itens
+  [pergunta] pedem resposta; [aprovado] são registro.
+- Anotações sobrevivem ao toggle do modo Design (dá pra navegar a página e
+  enviar depois) e morrem com o documento — por UM caminho único de
+  invalidação que cobre navegação real, **rota SPA (pushState)**, crash do
+  renderer da página e destruição do pane (troca de workspace): main, badges
+  na página e renderer resetam juntos via evento `navigation` sintetizado
+  (antes a design bar ficava "ON" fantasma após reload). Saltos só de hash
+  preservam as anotações.
+- O sync dos badges é enfileirado e nunca bloqueia a resposta das ações do
+  tray (a página ocupada não congela mais o "＋ anotar" por até 7s).
+- O store é main-owned: o renderer só envia a nota digitada; o contexto do
+  elemento é o snapshot da seleção já validada por Zod. Os badges na página
+  recebem SÓ geometria — comentários nunca chegam ao lado da página.
+- `nexus_design_selection_get` passa a listar as anotações da página (e
+  continua respondendo quando só há anotações, com o picker desligado).
+- Origem: adaptado do Design Mode do Orca (stablyai/orca @ 5e10091, MIT) —
+  viewport-bridge de badges, modelo de anotação e formato do feedback — com
+  provenance em `third_party/provenance/orca-5e1009.json` e notas em
+  `THIRD_PARTY_NOTICES.md`. Fecha o terceiro alvo do transplante Orca
+  (mobile QR ✓, forge-registry ✓, design mode ✓).
+- TDD: marcadores do preload (9), picker rectPage/isFixed (+1), sessão de
+  anotações no main (+6), formatter (4), envio em lote (+4), tool MCP (+3),
+  UI da design bar (+6). `tsc` limpo.
 
 ## 0.17.0 — Oh My Pi
 
@@ -112,46 +216,6 @@ Provenance em `third_party/provenance/oh-my-pi-03c48d0.json`; análise senior em
 - Descoberta de configs não materializa segredo do ambiente no inventário
   read-only (mantém `${VAR}` literal).
 - Release metadata realinhada em 0.17.0 (package/server/lockfile/changelog/notas).
-
-## Não lançado — Anotações de Design (paridade Orca Design Mode)
-
-- Design Mode ganha **anotações**: com um elemento selecionado, "＋ anotar" abre
-  um composer próprio (comentário + intenção corrigir/mudar/pergunta/aprovado;
-  Enter no composer anota — nunca envia nada ao agente) e fixa a nota no
-  elemento — badge numerado aparece na própria página. Os badges seguem o
-  elemento VIVO pelo selector (sobrevivem a reflow, breakpoints da própria
-  design bar e sticky), com fallback para a geometria congelada. Teto de 20
-  por página.
-- Tray "📝 N" na design bar lista as anotações (excluir uma, limpar todas),
-  **copia** o feedback consolidado (funciona sem nenhum agente aberto — dry
-  run não exige alvo) ou **envia tudo de uma vez** pro agente: um prompt único
-  numerado igual aos badges, com os dados da página no envelope não confiável
-  padrão e DESIGN.md anexado como contexto confiável quando existir. As notas
-  do usuário NUNCA são cortadas pelo orçamento do prompt — envelope e
-  DESIGN.md encolhem primeiro (com `omittedEntries` explícito). Itens
-  [pergunta] pedem resposta; [aprovado] são registro.
-- Anotações sobrevivem ao toggle do modo Design (dá pra navegar a página e
-  enviar depois) e morrem com o documento — por UM caminho único de
-  invalidação que cobre navegação real, **rota SPA (pushState)**, crash do
-  renderer da página e destruição do pane (troca de workspace): main, badges
-  na página e renderer resetam juntos via evento `navigation` sintetizado
-  (antes a design bar ficava "ON" fantasma após reload). Saltos só de hash
-  preservam as anotações.
-- O sync dos badges é enfileirado e nunca bloqueia a resposta das ações do
-  tray (a página ocupada não congela mais o "＋ anotar" por até 7s).
-- O store é main-owned: o renderer só envia a nota digitada; o contexto do
-  elemento é o snapshot da seleção já validada por Zod. Os badges na página
-  recebem SÓ geometria — comentários nunca chegam ao lado da página.
-- `nexus_design_selection_get` passa a listar as anotações da página (e
-  continua respondendo quando só há anotações, com o picker desligado).
-- Origem: adaptado do Design Mode do Orca (stablyai/orca @ 5e10091, MIT) —
-  viewport-bridge de badges, modelo de anotação e formato do feedback — com
-  provenance em `third_party/provenance/orca-5e1009.json` e notas em
-  `THIRD_PARTY_NOTICES.md`. Fecha o terceiro alvo do transplante Orca
-  (mobile QR ✓, forge-registry ✓, design mode ✓).
-- TDD: marcadores do preload (9), picker rectPage/isFixed (+1), sessão de
-  anotações no main (+6), formatter (4), envio em lote (+4), tool MCP (+3),
-  UI da design bar (+6). `tsc` limpo.
 
 ## 0.16.6 — Live sem Silêncio
 

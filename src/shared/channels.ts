@@ -125,6 +125,28 @@ export const DISCOVERY_CHANNELS = {
   workspaceConfigs: 'discovery:workspace-configs',
 } as const;
 
+/**
+ * Memória agentic por workspace (entrega C2). Leitura (stats/recall) + a única
+ * mutação forget. Registrado em main/memory/memory-ipc.ts.
+ */
+export const MEMORY_CHANNELS = {
+  /** invoke: bank stats (por kind/scope, ativas, recalls). */
+  stats: 'memory:stats',
+  /** invoke: recall FTS5 { query, limit?, kind? }. */
+  recall: 'memory:recall',
+  /** invoke: esquece uma memória por id (tombstone auditável). */
+  forget: 'memory:forget',
+} as const;
+
+/**
+ * Metadado rico de modelo (preço/janela/capacidades). Read-only; registrado em
+ * main/adapters/model-metadata-ipc.ts.
+ */
+export const MODEL_CHANNELS = {
+  /** invoke: renderer → main. Metadado rico de um modelo (preço/janela). */
+  richMetadata: 'model:richMetadata',
+} as const;
+
 /** Agent lifecycle observability (record / list / reap finished only). */
 export const AGENT_LIFECYCLE_CHANNELS = {
   record: 'agent-lifecycle:record',

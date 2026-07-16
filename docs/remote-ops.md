@@ -37,10 +37,14 @@ Implementação: thin client embutido (sem App Store lag), protocol versionável
 
 ## Stream em tempo real e sessão persistente (feito)
 
-- A bridge empurra `pane.stream.data` (terminal-stream-protocol, mesmo domínio
-  de seq do `pane.read`) para clientes que abriram `pane.stream.open`;
-  backpressure derruba frames (nunca acumula buffer) e o gap de seq resultante
-  é curado pelo cliente com um `pane.read` de reconciliação.
+- A bridge empurra `pane.stream.data` (frames do terminal-stream-protocol via
+  `remote-output-bus`, tap único compartilhado com o relay do companion) para
+  clientes que abriram `pane.stream.open` (resposta negocia `pushAvailable`;
+  uma inscrição ativa por socket; `pane.stream.close` encerra). O cliente
+  acompanha o cursor dedicado `pushSeq` — imune aos encodes de resposta de
+  `pane.read`/`pane.input` — e backpressure derruba frames (nunca acumula
+  buffer): o gap é curado com um único `pane.read` de reconciliação
+  (debounced).
 - O thin client consome os pushes e mantém o poll só como reconciliação
   (15 s com stream vivo; 2,5 s em bridges antigas sem push).
 - Token persistido em `localStorage` da origem HTTPS da bridge: reload não

@@ -61,6 +61,7 @@ import {
 } from './CatalogSections';
 import { DesignSystemsSection } from './DesignSystemsSection';
 import { HarnessSection } from './HarnessSection';
+import { CompanionRelaySection } from './CompanionRelaySection';
 import { LabsSection } from './LabsSection';
 
 /**
@@ -465,6 +466,7 @@ export function SettingsDrawer() {
           {section === 'marketplace' && <MarketplaceSection />}
           {section === 'design-systems' && <DesignSystemsSection />}
           {section === 'remote' && <RemoteSection />}
+          {section === 'companion-relay' && <CompanionRelaySection />}
           {section === 'labs' && <LabsSection />}
           {section === 'agents' && <AgentsSection />}
           {section === 'skills' && <SkillsSection />}

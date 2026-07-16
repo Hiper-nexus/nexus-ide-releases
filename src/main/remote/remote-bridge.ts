@@ -24,8 +24,11 @@ import { getProjectDomainStores } from '../orch/project-domain-store-registry';
 import {
   orchResizeSession,
   orchWriteSession,
-  tapSessionData,
 } from '../pty/pty-manager';
+import {
+  peekPushCursor,
+  subscribeEncodedSessionOutput,
+} from './remote-output-bus';
 import {
   clearRemoteTerminalStreams,
   encodeRemoteTerminalOutput,
@@ -293,18 +296,24 @@ function closeAllAuthenticatedClients(reason: string): void {
 // ---------------------------------------------------------------------------
 // pane.stream push — real-time terminal output for subscribed companions.
 // The thin client used to poll pane.read every 2.5 s while the binary stream
-// existed server-side unused; pushing closes that gap. Frames share the SAME
-// TerminalStreamSession seq domain as pane.read, so a client that misses a
-// push (backpressure skip, reconnect) sees a seq gap and heals via pane.read.
+// existed server-side unused; pushing closes that gap. Frames come from the
+// shared remote-output-bus (ONE encode per chunk, shared with the companion
+// relay) so every consumer sees the same seq domain as pane.read — a client
+// that misses a push (backpressure skip, reconnect) sees a genuine seq gap
+// and heals via pane.read.
 // ---------------------------------------------------------------------------
 
 const STREAM_PUSH_MAX_BUFFERED_BYTES = 256 * 1024;
-const STREAM_PUSH_SLICE_CHARS = 24_000;
 
 const streamSubscribers = new Map<string, Set<WebSocket>>();
 let sessionDataTapDispose: (() => void) | null = null;
 
 function subscribePaneStream(ws: WebSocket, sessionId: string): void {
+  // Uma inscrição ativa por socket: o thin client vê um pane por vez, e sem
+  // esta troca server-side um pane ruidoso já visitado continuaria enchendo
+  // o buffer do socket para sempre (o close explícito do cliente é cortesia,
+  // não garantia).
+  dropStreamSubscriber(ws);
   let set = streamSubscribers.get(sessionId);
   if (!set) {
     set = new Set();
@@ -312,6 +321,18 @@ function subscribePaneStream(ws: WebSocket, sessionId: string): void {
   }
   set.add(ws);
   ensureSessionDataTap();
+}
+
+function unsubscribePaneStream(ws: WebSocket, sessionId?: string): void {
+  if (sessionId) {
+    const set = streamSubscribers.get(sessionId);
+    if (set) {
+      set.delete(ws);
+      if (set.size === 0) streamSubscribers.delete(sessionId);
+    }
+    return;
+  }
+  dropStreamSubscriber(ws);
 }
 
 function dropStreamSubscriber(ws: WebSocket): void {
@@ -329,13 +350,11 @@ function clearStreamSubscriptions(): void {
 
 function ensureSessionDataTap(): void {
   if (sessionDataTapDispose) return;
-  sessionDataTapDispose = tapSessionData((sessionId, data) => {
-    const subscribers = streamSubscribers.get(sessionId);
-    if (!subscribers || subscribers.size === 0 || !data) return;
-    for (let offset = 0; offset < data.length; offset += STREAM_PUSH_SLICE_CHARS) {
-      const chunk = data.slice(offset, offset + STREAM_PUSH_SLICE_CHARS);
-      // One encode per chunk keeps a single monotonic seq per session.
-      const stream = encodeRemoteTerminalOutput(sessionId, chunk);
+  sessionDataTapDispose = subscribeEncodedSessionOutput({
+    wants: (sessionId) => (streamSubscribers.get(sessionId)?.size ?? 0) > 0,
+    deliver: (sessionId, encoded) => {
+      const subscribers = streamSubscribers.get(sessionId);
+      if (!subscribers) return;
       // isClientAuthenticated may close/mutate the set — iterate a copy.
       for (const ws of [...subscribers]) {
         if (!isClientAuthenticated(ws)) {
@@ -347,12 +366,14 @@ function ensureSessionDataTap(): void {
         if (ws.bufferedAmount > STREAM_PUSH_MAX_BUFFERED_BYTES) continue;
         send(ws, {
           type: 'pane.stream.data',
-          streamId: stream.streamId,
-          seq: stream.seq,
-          frameBase64: stream.frameBase64,
+          streamId: encoded.streamId,
+          // Cursor dedicado de push: encodes de resposta (pane.read/input)
+          // avançam o seq do frame mas NÃO este cursor — sem gaps falsos.
+          seq: encoded.pushSeq,
+          frameBase64: encoded.frameBase64,
         });
       }
-    }
+    },
   });
 }
 
@@ -558,7 +579,8 @@ export async function handleAuthedMessage(
       // Production path: frame terminal output with ORCA terminal-stream-protocol
       // so remote/mobile clients can reconnect with resumeFromSeq.
       const stream = encodeRemoteTerminalOutput(sessionId, output);
-      return { output, stream };
+      // pushSeq realinha o cursor de push do cliente após a reconciliação.
+      return { output, stream: { ...stream, pushSeq: peekPushCursor(sessionId) } };
     }
     case 'pane.input': {
       const data = typeof msg.data === 'string' ? msg.data : '';
@@ -573,8 +595,27 @@ export async function handleAuthedMessage(
     }
     case 'pane.stream.open': {
       const sessionId = sessionIdOf(msg.paneId, scope, 'read');
+      const subscribed = Boolean(pushTarget);
       if (pushTarget) subscribePaneStream(pushTarget, sessionId);
-      return openRemoteTerminalStream(sessionId);
+      return {
+        ...openRemoteTerminalStream(sessionId),
+        // Negociação explícita: bridges antigas respondem sem esta flag e o
+        // cliente mantém o poll de 2,5 s como fonte primária.
+        pushAvailable: subscribed,
+        pushSeq: peekPushCursor(sessionId),
+      };
+    }
+    case 'pane.stream.close': {
+      // Sem paneId: encerra TODAS as inscrições deste socket (troca de pane no
+      // thin client). Frames de pane antigo parariam de consumir o buffer do
+      // socket — é o cliente abrindo mão do próprio push, sem authz extra.
+      if (!pushTarget) return { ok: true };
+      if (typeof msg.paneId === 'string' && msg.paneId.length > 0) {
+        unsubscribePaneStream(pushTarget, sessionIdOf(msg.paneId, scope, 'read'));
+      } else {
+        unsubscribePaneStream(pushTarget);
+      }
+      return { ok: true };
     }
     case 'pane.stream.frame': {
       const sessionId = sessionIdOf(msg.paneId, scope, 'write');

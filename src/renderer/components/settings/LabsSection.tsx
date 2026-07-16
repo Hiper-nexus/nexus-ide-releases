@@ -36,7 +36,7 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
   },
   'feature.mcp.hub': {
     title: 'MCP Hub + Across Tools sync',
-    hint: 'ATENÇÃO: o sync escreve configs de outras ferramentas (Cursor/Claude/Codex) no seu HOME. Ligue deliberadamente.',
+    hint: 'O sync escreve configs de outras ferramentas (Cursor/Claude/Codex) no seu HOME — sempre via dry-run → confirmação → backup.',
   },
   'feature.skills.catalog': {
     title: 'Catálogo de skills',

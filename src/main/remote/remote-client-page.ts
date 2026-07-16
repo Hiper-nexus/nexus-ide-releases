@@ -143,16 +143,30 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
     } catch (_) { return null; }
   }
 
+  var resyncInFlight = false;
+  function resyncAfterGap() {
+    // Debounce: um gap gera UMA reconciliação; pushes seguintes com seq
+    // desalinhada esperam o pane.read realinhar lastSeq em vez de disparar
+    // uma rajada de reads (e estourar o rate limit da bridge).
+    if (resyncInFlight) return;
+    resyncInFlight = true;
+    readOutput(function () { resyncInFlight = false; });
+  }
   function handleStreamPush(msg) {
     if (!curPane || msg.streamId !== curStreamId) return;
     var frame = decodeStreamFrame(msg.frameBase64 || '');
     if (!frame || frame.opcode !== 1) return; // só Output interessa aqui
-    if (lastSeq && frame.seq !== lastSeq + 1) {
+    if (resyncInFlight) return; // o pane.read em voo já cobre este trecho
+    // Cursor de push dedicado (msg.seq): imune aos encodes de resposta de
+    // pane.read/input de OUTROS clientes — gap aqui é perda real de push.
+    if (typeof msg.seq !== 'number') return;
+    if (msg.seq <= lastSeq) return; // duplicado/atrasado — já coberto
+    if (lastSeq && msg.seq !== lastSeq + 1) {
       // Gap (backpressure/reconexão): reconciliar com o tail completo.
-      readOutput();
+      resyncAfterGap();
       return;
     }
-    lastSeq = frame.seq;
+    lastSeq = msg.seq;
     var pre = $('output');
     var atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
     var next = pre.textContent + frame.text;
@@ -167,7 +181,17 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       ws = new WebSocket('wss://' + location.host);
       ws.onopen = function () { setConn(true, 'conectado'); resolve(); };
       ws.onerror = function () { reject(new Error('falha de conexão (aceite o certificado)')); };
-      ws.onclose = function () { setConn(false, 'desconectado'); if (poll) clearInterval(poll); };
+      ws.onclose = function (e) {
+        setConn(false, 'desconectado');
+        if (poll) clearInterval(poll);
+        // Revogação/expiração AO VIVO: a bridge fecha com o motivo. Voltar
+        // para o pareamento na hora — sem isso a tela fica morta com token
+        // podre salvo e o usuário só se recupera limpando o storage.
+        var reason = (e && e.reason) || '';
+        if (/token|revoked|revogad|expired|expirad/i.test(reason)) {
+          showPairScreen('sessão encerrada no desktop — pareie de novo');
+        }
+      };
       ws.onmessage = function (e) {
         var msg; try { msg = JSON.parse(e.data); } catch (_) { return; }
         if (msg.id && pending[msg.id]) { pending[msg.id](msg); delete pending[msg.id]; return; }
@@ -206,21 +230,33 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       .catch(function (err) { $('pairErr').textContent = err.message; });
   };
 
-  // Token salvo: reload não exige re-pareamento. Se o desktop revogou, o auth
-  // falha e a tela de pareamento volta com o motivo.
+  // Token salvo: reload não exige re-pareamento. Só a REJEIÇÃO explícita do
+  // auth apaga o token — queda de rede/refresh transitória preserva a sessão
+  // (recarregar tenta de novo com o mesmo token).
   (function bootWithSavedToken() {
     var saved = loadToken();
     if (!saved) return;
     connect()
-      .then(function () { return send('auth', { token: saved }); })
+      .then(function () {
+        return send('auth', { token: saved }).catch(function (err) {
+          err.authRejected = true;
+          throw err;
+        });
+      })
       .then(function () {
         token = saved;
         $('pair').classList.add('hidden');
         $('home').classList.remove('hidden');
-        return refresh();
+        // Falha do refresh não derruba a sessão: a home mostra o erro dela.
+        return refresh().catch(function () {});
       })
       .catch(function (err) {
-        showPairScreen('sessão expirada — pareie de novo (' + err.message + ')');
+        if (err && err.authRejected) {
+          showPairScreen('sessão expirada — pareie de novo (' + err.message + ')');
+        } else {
+          $('pairErr').textContent =
+            'sem conexão com o desktop — recarregue para tentar de novo';
+        }
       });
   })();
 
@@ -311,9 +347,15 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
     // antiga), continua sendo a fonte primária.
     poll = setInterval(readOutput, streamLive ? 15000 : 2500);
   }
+  function closeStreams() {
+    // Abrir mão do push antigo ao trocar de pane/voltar: frames de um pane
+    // ruidoso que ninguém está vendo só consomem o buffer do socket.
+    send('pane.stream.close', {}).catch(function () { /* bridge antiga */ });
+  }
   function openPane(p) {
+    if (curPane && curPane.paneId !== p.paneId) closeStreams();
     curPane = p;
-    curStreamId = null; lastSeq = 0; streamLive = false;
+    curStreamId = null; lastSeq = 0; streamLive = false; resyncInFlight = false;
     $('home').classList.add('hidden');
     $('detail').classList.remove('hidden');
     $('detailName').textContent = p.title || p.paneId;
@@ -323,33 +365,33 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       .then(function (r) {
         var res = r.result || r;
         if (curPane !== p) return;
+        // Negociação explícita: bridge antiga responde ao open mas nunca
+        // empurra — sem a flag, o poll de 2,5 s continua sendo a fonte.
+        if (res.pushAvailable !== true) return;
         curStreamId = res.streamId;
-        var sub = decodeStreamFrame(res.subscribeFrameBase64 || '');
-        if (sub) lastSeq = sub.seq;
+        lastSeq = typeof res.pushSeq === 'number' ? res.pushSeq : 0;
         streamLive = true;
         schedulePoll();
       })
       .catch(function () { /* bridge antiga sem push — poll de 2.5s cobre */ });
     schedulePoll();
   }
-  function readOutput() {
-    if (!curPane) return;
+  function readOutput(done) {
+    if (!curPane) { if (done) done(); return; }
     send('pane.read', { paneId: curPane.paneId, lines: 200 })
       .then(function (r) {
         var res = r.result || r;
         var out = res.output || '';
-        if (res.stream && typeof res.stream.seq === 'number') {
-          // O read re-encoda o tail como frame novo: realinha o cursor de seq
-          // para os próximos pushes.
-          lastSeq = res.stream.seq;
-          if (typeof res.stream.streamId === 'number' && curStreamId === null) {
-            curStreamId = res.stream.streamId;
-          }
+        if (res.stream && typeof res.stream.pushSeq === 'number') {
+          // Realinha o cursor de PUSH após a reconciliação (o seq do frame
+          // avança com encodes de resposta e não serve de baseline).
+          lastSeq = res.stream.pushSeq;
         }
         var pre = $('output'); var atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
         pre.textContent = out; if (atBottom) pre.scrollTop = pre.scrollHeight;
+        if (done) done();
       })
-      .catch(function (err) { $('detailErr').textContent = err.message; });
+      .catch(function (err) { $('detailErr').textContent = err.message; if (done) done(); });
   }
   $('sendBtn').onclick = function () {
     if (!curPane) return;
@@ -360,8 +402,10 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       .catch(function (err) { $('detailErr').textContent = err.message; });
   };
   $('backBtn').onclick = function () {
-    if (poll) clearInterval(poll); curPane = null;
-    curStreamId = null; lastSeq = 0; streamLive = false;
+    if (poll) clearInterval(poll);
+    closeStreams();
+    curPane = null;
+    curStreamId = null; lastSeq = 0; streamLive = false; resyncInFlight = false;
     $('detail').classList.add('hidden');
     $('home').classList.remove('hidden');
     refresh();

@@ -4,6 +4,7 @@ import type { ProviderSettingsInfo } from '../../shared/provider-settings-types'
 import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
 import { AgentAvatar } from './AgentAvatar';
 import { ProviderLogo } from './ProviderLogo';
+import { ModelMetaBadge } from './model/ModelMetaBadge';
 
 /**
  * Etapa REVISAR do Mission Wizard — roster editável (CLI/modelo/effort +
@@ -152,20 +153,27 @@ export function MissionWizardReview({
                       </select>
                     )}
                   </span>
-                <select
-                  className="wizard__mini-select"
-                  value={a.model ?? cliAdapter?.models.default ?? ''}
-                  onChange={(e) => onUpdateAgent(a.id, { model: e.target.value })}
-                >
-                  {models.length === 0 && (
-                    <option value={a.model ?? ''}>{a.model ?? '—'}</option>
-                  )}
-                  {models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
+                <div className="wizard__model-cell">
+                  <select
+                    className="wizard__mini-select"
+                    value={a.model ?? cliAdapter?.models.default ?? ''}
+                    onChange={(e) => onUpdateAgent(a.id, { model: e.target.value })}
+                  >
+                    {models.length === 0 && (
+                      <option value={a.model ?? ''}>{a.model ?? '—'}</option>
+                    )}
+                    {models.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  <ModelMetaBadge
+                    adapterId={a.cli}
+                    modelId={a.model ?? cliAdapter?.models.default}
+                    className="wizard__model-meta"
+                  />
+                </div>
                   <select
                     className="wizard__mini-select wizard__mini-select--effort"
                     value={a.effort ?? 'medium'}
