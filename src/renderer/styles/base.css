@@ -2036,7 +2036,10 @@ body {
   font-size: 13px;
   font-weight: 650;
   color: var(--text);
-  max-width: 140px;
+  /* Nome ocupa a largura livre da linha (badge + tempo ficam à direita);
+     ellipsis só quando realmente não couber — não um teto fixo de 140px. */
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
