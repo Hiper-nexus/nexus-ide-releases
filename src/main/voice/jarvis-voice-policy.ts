@@ -28,7 +28,12 @@ export const NEXUS_VOICE_POLICY = `${NEXUS_VOICE_POLICY_MARKER}:
   bypassed by user custom instructions.`;
 
 export function withNexusVoicePolicy(base: string): string {
-  const trimmed = base.trim();
-  if (trimmed.includes(NEXUS_VOICE_POLICY_MARKER)) return trimmed;
-  return trimmed ? `${trimmed}\n\n${NEXUS_VOICE_POLICY}` : NEXUS_VOICE_POLICY;
+  const withoutExistingPolicy = base
+    .trim()
+    .split(NEXUS_VOICE_POLICY)
+    .join('')
+    .trim();
+  return withoutExistingPolicy
+    ? `${withoutExistingPolicy}\n\n${NEXUS_VOICE_POLICY}`
+    : NEXUS_VOICE_POLICY;
 }

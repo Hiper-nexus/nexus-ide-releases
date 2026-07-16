@@ -25,6 +25,7 @@ export interface LiveProviderRuntimeHost {
   getActiveTurnId(): string | undefined;
   setProviderSpeaking(speaking: boolean): void;
   setLastUserTranscript(text: string): void;
+  abandonPendingConversationTurn(): void;
   settleSmokeResponseDone(): void;
   settleSmokeFailure(reason: JarvisLiveSmokeFailureReason): void;
   /** Emits a renderer event only when a completed provider response follows a tool result. */
@@ -203,6 +204,7 @@ function bindResponseLifecycle(
   provider.onInterrupted(() => {
     if (host.getProvider() !== provider) return;
     host.setProviderSpeaking(false);
+    host.abandonPendingConversationTurn();
     host.fsm.interrupt('barge-in');
   });
   provider.onResponseDone(() => {

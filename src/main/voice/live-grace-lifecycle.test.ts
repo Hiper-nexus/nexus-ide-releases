@@ -282,4 +282,37 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       ).toHaveLength(1);
     });
   });
+
+  it('does not pair an abandoned prompt with a later assistant transcript', async () => {
+    const provider = fakeProvider(async () => {});
+    await withGeminiMocks(provider, async (LiveTransportController) => {
+      const lifecycleBoundaries = [
+        'interrupt',
+        'onStop',
+        'hardStop',
+        'enterDormant',
+      ] as const;
+      for (const boundary of lifecycleBoundaries) {
+        const conversation = {
+          resume: vi.fn(() => []),
+          record: vi.fn(),
+          clear: vi.fn(),
+        };
+        const controller = new LiveTransportController(
+          () => {},
+          new JarvisLiveSession(() => {}, () => 1000),
+          () => 1000,
+          undefined,
+          undefined,
+          undefined,
+          conversation,
+        );
+        controller.recordLiveHistory('user', `abandoned by ${boundary}`);
+        if (boundary === 'interrupt') controller.interrupt('test');
+        else controller[boundary]();
+        controller.recordLiveHistory('assistant', 'late response');
+        expect(conversation.record, boundary).not.toHaveBeenCalled();
+      }
+    });
+  });
 });

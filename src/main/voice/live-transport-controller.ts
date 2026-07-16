@@ -703,6 +703,7 @@ export class LiveTransportController {
   }
 
   interrupt(reason: string): ReturnType<JarvisLiveSession['interrupt']> {
+    this.abandonPendingConversationTurn();
     const status = this._fsm.getState().status;
     if (status === 'speaking' || status === 'thinking') {
       this._provider?.interrupt();
@@ -723,6 +724,7 @@ export class LiveTransportController {
    * Farewell / hard teardown uses hardStop().
    */
   onStop(): void {
+    this.abandonPendingConversationTurn();
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
     this.discardPendingToolFollowUp();
@@ -758,6 +760,7 @@ export class LiveTransportController {
 
   /** Hard teardown — closes the socket immediately (farewell / process exit). */
   hardStop(): void {
+    this.abandonPendingConversationTurn();
     this.keepWarmForWake = false;
     this.aec?.reset();
     this.smokeProbe.settleFailure('session_closed');
@@ -817,6 +820,7 @@ export class LiveTransportController {
   }
 
   enterDormant(): void {
+    this.abandonPendingConversationTurn();
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
     this.discardPendingToolFollowUp();
@@ -873,6 +877,10 @@ export class LiveTransportController {
     }
   }
 
+  private abandonPendingConversationTurn(): void {
+    this.pendingConversationUser = null;
+  }
+
   injectResumeContext(): void {
     const ctx = buildResumeContext(this._liveHistory);
     if (!ctx || !this._provider?.isReady) return;
@@ -917,6 +925,7 @@ export class LiveTransportController {
         this._lastUserTranscript = text;
         this.notePotentialWorkDelegation(text);
       },
+      abandonPendingConversationTurn: () => this.abandonPendingConversationTurn(),
       settleSmokeResponseDone: () => this.smokeProbe.settleResponseDone(),
       settleSmokeFailure: (reason) => this.smokeProbe.settleFailure(reason),
       onProviderResponseDone: () => {
