@@ -43,11 +43,20 @@ describe('feature flags', () => {
     ).toMatchObject({ enabled: false, reason: 'unknown-flag' });
   });
 
-  it('keeps deferred product-wave flags off and scheduler release-ready', () => {
+  it('pins the default-on/off contract per flag (flips are reviewed decisions)', () => {
+    // Fase de operador único: superfícies prontas nascem ON (descoberta em uso
+    // real); ficam OFF só as com efeito fora do workspace, dependência de infra
+    // externa ou sem consumidor. Mudar este conjunto exige decisão revisada.
+    const DEFAULT_OFF = new Set([
+      'feature.mcp.hub', // escreve configs de outras ferramentas no HOME
+      'feature.remote.relayTransport', // exige relay hospedado + URL explícita
+      'feature.autonomy.profiles', // sem consumidor no produto ainda
+    ]);
     for (const flag of BUILTIN_FEATURE_FLAGS) {
-      expect(flag.defaultEnabled).toBe(
-        flag.id === 'orch.parallelScheduler',
-      );
+      expect(
+        flag.defaultEnabled,
+        `defaultEnabled inesperado para ${flag.id}`,
+      ).toBe(!DEFAULT_OFF.has(flag.id));
       expect(flag.channel).toBe('dev');
     }
   });

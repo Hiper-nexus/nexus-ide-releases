@@ -2,7 +2,7 @@
  * Product-wave IPC: memory, skills, MCP hub, autonomy, search, feature flags,
  * editor document model. All paths respect fail-closed, default-off flags.
  */
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
@@ -146,15 +146,66 @@ function loadMcpHub(root: string): McpHubConfig {
   }
 }
 
+function listFlagResolutions(): Array<{
+  id: string;
+  enabled: boolean;
+  reason: string;
+  definition: unknown;
+}> {
+  const reg = getFeatureFlagRegistry();
+  return reg.list().map((f) => ({
+    id: f.id,
+    enabled: reg.isEnabled(f.id),
+    reason: reg.resolve(f.id).reason,
+    definition: f,
+  }));
+}
+
+const flagOverrideSchema = z
+  .object({
+    id: z.string().min(1).max(128),
+    /** boolean = override explícito; null = limpar (volta ao default). */
+    enabled: z.boolean().nullable(),
+  })
+  .strict();
+
+/**
+ * Aplica um override de flag no registry vivo e persiste em disco.
+ * Exportada para teste unitário do caminho Labs (ids desconhecidos lançam
+ * dentro do registry — fail-closed).
+ */
+export function applyFlagOverride(input: unknown): Array<{
+  id: string;
+  enabled: boolean;
+  reason: string;
+  definition: unknown;
+}> {
+  const parsed = flagOverrideSchema.parse(input);
+  const reg = getFeatureFlagRegistry();
+  if (parsed.enabled === null) {
+    reg.clearOverride(parsed.id);
+  } else {
+    reg.setOverride(parsed.id, parsed.enabled);
+  }
+  reg.persistOverrides();
+  return listFlagResolutions();
+}
+
+function broadcastFlagsChanged(list: ReturnType<typeof listFlagResolutions>): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    const wc = win.webContents;
+    if (wc.isDestroyed() || wc.isCrashed()) continue;
+    wc.send(PRODUCT_WAVE_CHANNELS.flagsChanged, list);
+  }
+}
+
 export function registerProductWaveIpc(): void {
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.flagsList, () => {
-    const reg = getFeatureFlagRegistry();
-    return reg.list().map((f) => ({
-      id: f.id,
-      enabled: reg.isEnabled(f.id),
-      reason: reg.resolve(f.id).reason,
-      definition: f,
-    }));
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.flagsList, () => listFlagResolutions());
+
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.flagsSetOverride, (_event, raw) => {
+    const list = applyFlagOverride(raw);
+    broadcastFlagsChanged(list);
+    return list;
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryList, (event) => {

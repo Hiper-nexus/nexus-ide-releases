@@ -4,15 +4,22 @@
  */
 import type { McpHubSyncApplyInput } from './mcp-hub-sync-api';
 
+export interface ProductFlagResolutionRow {
+  id: string;
+  enabled: boolean;
+  reason: string;
+  definition: unknown;
+}
+
 export interface ProductApi {
-  flagsList(): Promise<
-    Array<{
-      id: string;
-      enabled: boolean;
-      reason: string;
-      definition: unknown;
-    }>
-  >;
+  flagsList(): Promise<ProductFlagResolutionRow[]>;
+  /** boolean liga/desliga por override persistido; null limpa (volta ao default). */
+  flagsSetOverride(input: {
+    id: string;
+    enabled: boolean | null;
+  }): Promise<ProductFlagResolutionRow[]>;
+  /** Push do main após qualquer mudança de override; retorna unsubscribe. */
+  onFlagsChanged(cb: (list: ProductFlagResolutionRow[]) => void): () => void;
   memoryList(): Promise<unknown[]>;
   memoryRemember(input: {
     title: string;
