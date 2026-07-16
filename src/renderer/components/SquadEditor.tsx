@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Squad, AgentCategory } from '../../shared/orch-types';
 import type { AdapterInfo } from '../../shared/adapter-types';
 import { applySquadEdit, type EditableAgent } from '../../shared/squad-edit';
@@ -47,6 +48,13 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
   }, []);
 
   const installed = useMemo(() => adapters.filter((a) => a.installed), [adapters]);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  // Modal centralizado: foco entra no primeiro campo ao abrir (também faz o
+  // Esc funcionar sem precisar clicar dentro antes).
+  useEffect(() => {
+    nameInputRef.current?.focus();
+  }, []);
 
   function updateAgent(index: number, patch: Partial<EditableAgent>) {
     setAgents((prev) =>
@@ -94,15 +102,24 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
     }
   }
 
-  return (
+  // Portal + scrim: o editor abria INLINE no fim da lista de squads — nascia
+  // fora da viewport e o usuário tinha que rolar até ele (achado de
+  // operador). Modal centralizado é o comportamento esperado de "Editar".
+  return createPortal(
+    <div
+      className="squad-editor__scrim"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
+    >
     <div
       className="squad-editor"
       role="dialog"
       aria-modal="true"
       aria-label={`Editar ${squad.name}`}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
-      }}
     >
       <header className="squad-editor__head">
         <strong>
@@ -119,6 +136,7 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
       <label className="squad-editor__field">
         Nome
         <input
+          ref={nameInputRef}
           className="squad-editor__input"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -212,5 +230,7 @@ export function SquadEditor({ squad, onClose, onSaved }: Props) {
         </button>
       </div>
     </div>
+    </div>,
+    document.body,
   );
 }

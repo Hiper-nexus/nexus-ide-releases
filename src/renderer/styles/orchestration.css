@@ -17,7 +17,7 @@
   top: 8px;
   right: 8px;
   bottom: 8px;
-  width: 340px;
+  width: 384px;
   display: flex;
   flex-direction: column;
   background: var(--bg-elevated);
@@ -92,12 +92,13 @@
 .orch-panel__tab--active {
   color: var(--accent);
   background: var(--accent-soft);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .orch-panel__body {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 10px;
 }
 
 .orch-panel__empty {
@@ -111,6 +112,11 @@
   display: flex;
   gap: 6px;
   margin-bottom: 8px;
+  position: sticky;
+  top: -10px;
+  z-index: 1;
+  padding: 6px 0;
+  background: var(--bg-elevated);
 }
 
 .orch-panel__btn {
@@ -118,9 +124,18 @@
   border: 1px solid var(--border-strong);
   color: var(--text);
   font-size: 11px;
-  padding: 3px 9px;
+  min-height: 26px;
+  padding: 4px 12px;
   border-radius: var(--radius-md);
   cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.orch-panel__btn--primary {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .orch-panel__btn:hover:not(:disabled) {
@@ -158,8 +173,9 @@
 .orch-item {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: var(--bg);
+  transition: border-color 120ms ease, transform 120ms ease;
   /* Item novo na timeline (handoff chegou, missão criada) entra assentando —
      o olho é puxado para a novidade sem coreografia. */
   animation: orch-item-in 200ms var(--ease-out-quart);
@@ -178,6 +194,10 @@
   .orch-item { animation: none; }
 }
 
+.orch-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
 .orch-item__head {
   display: flex;
   align-items: center;
@@ -190,16 +210,58 @@
   flex-shrink: 0;
 }
 
-/* Squad editor */
+/* Squad editor — modal centralizado (portal em document.body). O editor
+   abria inline no FIM da lista de squads: nascia fora da viewport e o
+   usuário rolava até ele. "Editar" abre um dialog no meio da tela. */
+.squad-editor__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-soft-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: color-mix(in srgb, var(--bg) 58%, transparent);
+  backdrop-filter: blur(3px);
+  animation: squad-scrim-in 140ms var(--ease-out-expo);
+}
+
+@keyframes squad-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .squad-editor {
-  margin-top: 10px;
-  padding: 14px;
-  border: 1px solid var(--border, oklch(30% 0.01 250));
-  border-radius: 10px;
-  background: var(--surface-raised, oklch(20% 0.01 250));
+  width: min(680px, 100%);
+  max-height: min(78vh, 720px);
+  overflow-y: auto;
+  padding: 18px 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-2);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  animation: squad-card-in 170ms var(--ease-out-expo);
+}
+
+@keyframes squad-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .squad-editor__scrim,
+  .squad-editor {
+    animation: none;
+  }
 }
 
 .squad-editor__head {
@@ -229,14 +291,21 @@
   border: 1px solid var(--border, oklch(30% 0.01 250));
   border-radius: 6px;
   color: var(--text, oklch(92% 0 0));
-  padding: 6px 8px;
-  font-size: 12px;
+  padding: 8px 10px;
+  font-size: 12.5px;
   font-family: inherit;
+}
+
+.squad-editor__input:focus-visible,
+.squad-editor__textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .squad-editor__textarea {
   resize: vertical;
-  min-height: 60px;
+  min-height: 96px;
 }
 
 .squad-editor__roster {
@@ -252,8 +321,12 @@
 
 .squad-editor__agent {
   display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr 1.4fr;
-  gap: 6px;
+  grid-template-columns: 1.3fr 0.9fr 0.9fr 1.3fr;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
 }
 
 .squad-editor__error {
