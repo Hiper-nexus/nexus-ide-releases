@@ -329,6 +329,18 @@ const RAW_SQUADS: Squad[] = [
         allowedTools: [...REVIEW_P0P3_READONLY_TOOLS],
         allowedSkills: [],
       },
+      {
+        // O pipeline É um port do oh-my-pi — o omp revisa no próprio rito,
+        // e é assim que ele entra em operação de background (achado de
+        // operador: "omp integrado mas nunca vi em ação").
+        id: 'reviewer-d',
+        agentName: 'Reviewer D (omp)',
+        category: 'reviewer',
+        cli: 'omp',
+        effort: 'high',
+        allowedTools: [...REVIEW_P0P3_READONLY_TOOLS],
+        allowedSkills: [],
+      },
     ],
   },
   {
