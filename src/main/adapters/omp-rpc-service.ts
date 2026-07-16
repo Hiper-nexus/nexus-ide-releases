@@ -1,4 +1,5 @@
 import { execFile, spawn as nodeSpawn } from 'node:child_process';
+import { buildOmpInheritedKeyEnv } from './omp-provider-keys';
 import { StringDecoder } from 'node:string_decoder';
 import {
   OMP_PINNED_MAJOR,
@@ -272,6 +273,9 @@ export function buildOmpChildEnv(
       env[key] = value;
     }
   }
+  // Herança de chaves do vault (nunca do ambiente): o omp nasce com as API
+  // keys que o usuário já guardou no Nexus — zero login extra para elas.
+  Object.assign(env, buildOmpInheritedKeyEnv());
   env.NO_COLOR = '1';
   return env;
 }
