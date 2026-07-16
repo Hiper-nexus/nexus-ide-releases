@@ -45,7 +45,7 @@ describe('SquadEditor', () => {
       );
     });
 
-    const saveBtn = [...host.querySelectorAll('button')].find((b) =>
+    const saveBtn = [...document.body.querySelectorAll('button')].find((b) =>
       /criar cópia|salvar/i.test(b.textContent ?? ''),
     ) as HTMLButtonElement;
     expect(saveBtn).toBeTruthy();

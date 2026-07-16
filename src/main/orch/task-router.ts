@@ -59,6 +59,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.4', effort: 'medium' },
     { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'medium' },
+    // omp como diversidade: agrega os providers logados no próprio omp —
+    // entra quando os primários do tier não estão instalados/disponíveis.
+    { adapterId: 'omp', model: 'zai/glm-5', effort: 'medium' },
   ],
   hard: [
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
@@ -68,6 +71,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'high' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'high' },
+    { adapterId: 'omp', model: 'xai/grok-4.5', effort: 'high' },
   ],
   critical: [
     { adapterId: 'claude', model: 'claude-fable-5', effort: 'xhigh' },
