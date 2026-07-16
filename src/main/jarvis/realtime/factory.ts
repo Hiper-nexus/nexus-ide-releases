@@ -11,6 +11,7 @@ import type {
   RealtimeProviderId,
   TurnManagedRealtimeProvider,
 } from './provider';
+import { withNexusVoicePolicy } from '../../voice/jarvis-voice-policy';
 
 export interface RealtimeProviderFactoryOptions {
   config: VoiceConfig;
@@ -154,7 +155,8 @@ export function createRealtimeProviderCandidates(
   options: RealtimeProviderFactoryOptions,
 ): RealtimeProviderCandidate[] {
   const live = options.config.jarvisLive;
-  const instructions = options.instructions ?? loadJarvisSystemPrompt(options.promptPath);
+  const baseInstructions =
+    options.instructions ?? loadJarvisSystemPrompt(options.promptPath);
   const candidates: RealtimeProviderCandidate[] = [];
   for (const providerId of resolveRealtimeProviderIds(options.config)) {
     if (providerId === 'openai') {
@@ -172,7 +174,7 @@ export function createRealtimeProviderCandidates(
               apiKey,
               model: live.openaiModel,
               voice,
-              instructions,
+              instructions: withNexusVoicePolicy(baseInstructions),
               tools: [
                 ...coarseVoiceToolsAsRealtimeDefinitions(),
                 ...createNexusRealtimeTools(),
@@ -192,7 +194,9 @@ export function createRealtimeProviderCandidates(
           apiKey,
           model: live.liveModel,
           voiceName: live.voiceName,
-          instructions: geminiInstructions(instructions),
+          instructions: withNexusVoicePolicy(
+            geminiInstructions(baseInstructions),
+          ),
           // A bounded spoken-action surface prevents overlapping MCP schemas
           // from turning an imperative into a similarly named wrong action.
           // Detailed operations remain available through audited nexus_action.

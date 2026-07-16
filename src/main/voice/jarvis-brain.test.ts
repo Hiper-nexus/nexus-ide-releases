@@ -207,6 +207,12 @@ describe('jarvisThink brain providers', () => {
     const messages = JSON.parse(String(init.body)).messages as Array<{ content: string }>;
     expect(messages.some((m) => m.content.includes('VOICE IDENTITY'))).toBe(true);
     expect(messages.some((m) => m.content.includes('never pass raw Portuguese'))).toBe(true);
+    expect(
+      messages.some((m) => m.content.includes('NEXUS VOICE OPERATING CONTRACT')),
+    ).toBe(true);
+    expect(
+      messages.some((m) => m.content.includes('Never control or claim access to the desktop')),
+    ).toBe(true);
   });
 
   it('falls back to OpenAI when Gemini fails', async () => {
