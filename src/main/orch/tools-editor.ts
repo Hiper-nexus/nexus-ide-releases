@@ -6,6 +6,7 @@ import {
   updateWorkspaceTextFile,
 } from './workspace-file';
 import { applyHashlinePatch } from '../editor/hashline-session';
+import { assertAgentReadablePath } from './agent-path-policy';
 
 /**
  * Editor manipulation MCP tools for Jarvis agent.
@@ -46,6 +47,7 @@ const editorFocus: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
+    assertAgentReadablePath(executionScopeFor(ctx), relativePath);
     const { content } = readWorkspaceTextFile(executionScopeFor(ctx), relativePath);
     const line = typeof args.line === 'number' ? args.line : undefined;
     const column = typeof args.column === 'number' ? args.column : undefined;
@@ -257,6 +259,7 @@ const editorGotoLine: McpToolDef = {
       typeof args.column === 'number' && args.column >= 1
         ? args.column
         : 1;
+    assertAgentReadablePath(executionScopeFor(ctx), relativePath);
     const { content: raw } = readWorkspaceTextFile(executionScopeFor(ctx), relativePath);
     const lines = raw.split('\n');
     const targetLine = lineNum <= lines.length ? lines[lineNum - 1] : '';

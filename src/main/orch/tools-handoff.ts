@@ -114,11 +114,20 @@ const handoffListTool: McpToolDef = {
       includeDelivered: { type: 'boolean' },
     },
   },
-  handler: async (args, ctx) =>
-    getProjectDomainStores(ctx.scope).handoffs.list({
-      missionId: str(args, 'missionId') ?? ctx.missionId,
+  handler: async (args, ctx) => {
+    // L10: only an orchestrator may enumerate other missions' handoffs. A worker
+    // is confined to its own mission, so a prompt-injected worker cannot read
+    // another mission's handoff summaries/artifacts by passing a guessed id.
+    const requestedMission = str(args, 'missionId');
+    const missionId =
+      ctx.role === 'orchestrator'
+        ? (requestedMission ?? ctx.missionId)
+        : ctx.missionId;
+    return getProjectDomainStores(ctx.scope).handoffs.list({
+      missionId,
       includeDelivered: args.includeDelivered === true,
-    }),
+    });
+  },
 };
 
 const handoffAcknowledgeTool: McpToolDef = {

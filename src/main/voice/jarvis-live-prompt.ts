@@ -1,4 +1,5 @@
 import type { VoicePersona } from '../../shared/voice-config';
+import { withNexusVoicePolicy } from './jarvis-voice-policy';
 
 /**
  * System instruction for Jarvis Live (realtime transport). Keep the prompt in
@@ -99,5 +100,5 @@ export function buildLiveSystemInstruction(
       `Project memory for the current checkout only:\n${memoryBlock.trim()}`,
     );
   }
-  return parts.join('\n\n');
+  return withNexusVoicePolicy(parts.join('\n\n'));
 }

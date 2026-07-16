@@ -48,6 +48,7 @@ import {
   isScreenContext,
   localToolCallId,
   buildResumeContext,
+  MAX_LIVE_HISTORY_ENTRY_CHARS,
   trimLiveHistory,
 } from './live-transport-helpers';
 import {
@@ -55,6 +56,7 @@ import {
   sendProviderContext as sendLiveProviderContext,
 } from './live-transport-context';
 import type { JarvisMemoryAccess } from './jarvis-memory';
+import type { JarvisConversationAccess } from './jarvis-conversation';
 import { LiveToolCallCoordinator } from './live-tool-call-registry';
 import {
   connectFirstLiveProvider,
@@ -146,6 +148,10 @@ export class LiveTransportController {
   private activeTurnId: string | undefined;
   /** P4: bounded recent final transcripts surviving transport stop. */
   private _liveHistory: Array<{ role: 'user' | 'assistant'; text: string }> = [];
+  /** The current user turn waiting for its final assistant reply on disk. */
+  private pendingConversationUser: string | null = null;
+  /** A broken scoped store must not emit one warning for every spoken turn. */
+  private conversationRecordWarningLogged = false;
   /** P4: grace/idle timers. */
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -172,8 +178,24 @@ export class LiveTransportController {
     questionSource?: PendingQuestionSource,
     private readonly memory?: JarvisMemoryAccess,
     private readonly aec?: LiveAecProcessor,
+    private readonly conversation?: JarvisConversationAccess,
   ) {
     this.now = now;
+    if (conversation) {
+      try {
+        this._liveHistory = trimLiveHistory(
+          conversation.resume().map((turn) => ({
+            role: turn.role,
+            text: turn.content,
+          })),
+          getVoiceConfig().jarvisLive.maxWindowTurns,
+        );
+      } catch (error) {
+        logVoice('warn', 'live.conversationResumeFailed', 'retomada de conversa falhou', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     this.pendingQuestionRouter = new PendingQuestionRouter({ now });
     this.questionPoller = new LiveQuestionPoller(questionSource, (question) => {
       this.noteNarratedQuestion(question.paneId, question.questionHash);
@@ -681,6 +703,7 @@ export class LiveTransportController {
   }
 
   interrupt(reason: string): ReturnType<JarvisLiveSession['interrupt']> {
+    this.abandonPendingConversationTurn();
     const status = this._fsm.getState().status;
     if (status === 'speaking' || status === 'thinking') {
       this._provider?.interrupt();
@@ -701,6 +724,7 @@ export class LiveTransportController {
    * Farewell / hard teardown uses hardStop().
    */
   onStop(): void {
+    this.abandonPendingConversationTurn();
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
     this.discardPendingToolFollowUp();
@@ -736,6 +760,7 @@ export class LiveTransportController {
 
   /** Hard teardown — closes the socket immediately (farewell / process exit). */
   hardStop(): void {
+    this.abandonPendingConversationTurn();
     this.keepWarmForWake = false;
     this.aec?.reset();
     this.smokeProbe.settleFailure('session_closed');
@@ -795,6 +820,7 @@ export class LiveTransportController {
   }
 
   enterDormant(): void {
+    this.abandonPendingConversationTurn();
     this.smokeProbe.settleFailure('session_closed');
     this.clearPendingRendererAudio();
     this.discardPendingToolFollowUp();
@@ -824,9 +850,35 @@ export class LiveTransportController {
   }
 
   recordLiveHistory(role: 'user' | 'assistant', text: string): void {
+    const bounded = text.trim().slice(0, MAX_LIVE_HISTORY_ENTRY_CHARS);
+    if (!bounded) return;
+    const previous = this._liveHistory.at(-1);
+    if (previous?.role === role && previous.text === bounded) return;
     const maxTurns = getVoiceConfig().jarvisLive.maxWindowTurns;
-    this._liveHistory.push({ role, text });
+    this._liveHistory.push({ role, text: bounded });
     this._liveHistory = trimLiveHistory(this._liveHistory, maxTurns);
+    if (role === 'user') {
+      this.pendingConversationUser = bounded;
+      return;
+    }
+    const userText = this.pendingConversationUser;
+    this.pendingConversationUser = null;
+    if (!userText || !this.conversation) return;
+    try {
+      this.conversation.record(userText, bounded);
+    } catch (error) {
+      // Conversation persistence must never take down the live voice session.
+      if (!this.conversationRecordWarningLogged) {
+        this.conversationRecordWarningLogged = true;
+        logVoice('warn', 'live.conversationRecordFailed', 'gravação de conversa falhou', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  private abandonPendingConversationTurn(): void {
+    this.pendingConversationUser = null;
   }
 
   injectResumeContext(): void {
@@ -873,6 +925,7 @@ export class LiveTransportController {
         this._lastUserTranscript = text;
         this.notePotentialWorkDelegation(text);
       },
+      abandonPendingConversationTurn: () => this.abandonPendingConversationTurn(),
       settleSmokeResponseDone: () => this.smokeProbe.settleResponseDone(),
       settleSmokeFailure: (reason) => this.smokeProbe.settleFailure(reason),
       onProviderResponseDone: () => {

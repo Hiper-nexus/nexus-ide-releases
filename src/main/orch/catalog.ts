@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import { scanComponentFiles, type ScanInput } from './skill-threat-scan';
 
 /**
  * aitmpl catalog (davila7/claude-code-templates) — the catalog install
@@ -63,6 +64,11 @@ export interface CatalogProvenance {
   sha256?: string;
   fileCount?: number;
   totalBytes?: number;
+  /**
+   * Non-blocking content-trust warnings raised by the install-time threat scan
+   * (H1). Blocking findings abort the install and never reach here.
+   */
+  warnings?: string[];
 }
 
 type CatalogHost = 'api.github.com' | 'raw.githubusercontent.com';
@@ -381,6 +387,18 @@ async function installAgent(slug: string): Promise<InstallResult> {
     };
   }
   const payload = await readResponseLimited(response, MAX_FILE_BYTES);
+
+  // H1 content-trust gate: refuse to publish unambiguously malicious content
+  // (credential exfiltration, reverse shell, pipe-to-shell). Automatic and
+  // fail-closed — no prompt, no effect on agent autonomy.
+  const scan = scanComponentFiles([{ name: destName, buffer: payload }]);
+  if (scan.blocked) {
+    return {
+      ok: false,
+      error: `componente bloqueado por segurança (conteúdo potencialmente malicioso): ${scan.blockReason}`,
+    };
+  }
+
   const parent = path.dirname(targetPath);
   await fs.promises.mkdir(parent, {
     recursive: true,
@@ -414,6 +432,7 @@ async function installAgent(slug: string): Promise<InstallResult> {
         sha256: sha256(payload),
         fileCount: 1,
         totalBytes: payload.byteLength,
+        ...(scan.warnings.length > 0 ? { warnings: scan.warnings } : {}),
       },
     };
   } finally {
@@ -479,6 +498,7 @@ async function installSkill(slug: string): Promise<InstallResult> {
   ];
   const seenEntries = new Set<string>();
   const files: Array<{ repoPath: string; digest: string; bytes: number }> = [];
+  const scanInputs: ScanInput[] = [];
   let entryCount = 0;
   let totalBytes = 0;
 
@@ -560,11 +580,22 @@ async function installSkill(slug: string): Promise<InstallResult> {
           digest: sha256(buffer),
           bytes: buffer.byteLength,
         });
+        scanInputs.push({ name: entryPath, buffer });
         await fs.promises.writeFile(path.join(localDir, entryName), buffer, {
           flag: 'wx',
           mode: 0o600,
         });
       }
+    }
+
+    // H1 content-trust gate: scan all downloaded files before publishing. A
+    // blocking finding aborts the install (staging is cleaned in `finally`).
+    const scan = scanComponentFiles(scanInputs);
+    if (scan.blocked) {
+      return {
+        ok: false,
+        error: `componente bloqueado por segurança (conteúdo potencialmente malicioso): ${scan.blockReason}`,
+      };
     }
 
     if (fs.existsSync(targetDir)) return { ok: true, skipped: true };
@@ -586,6 +617,7 @@ async function installSkill(slug: string): Promise<InstallResult> {
         sha256: aggregateSkillDigest(files),
         fileCount: files.length,
         totalBytes,
+        ...(scan.warnings.length > 0 ? { warnings: scan.warnings } : {}),
       },
     };
   } finally {

@@ -8,11 +8,19 @@ import {
 } from '../orch/scoped-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 
-/** Recent classic voice conversation, isolated to one project checkout. */
+/** Recent voice conversation, isolated to one project checkout. */
 
 export const CONVERSATION_MAX_MESSAGES = 40;
-export const RESUME_WINDOW_MS = 5 * 60_000;
+// Long enough to survive an ordinary work session/restart without injecting a
+// stale conversation on the next day. Durable facts use ScopedJarvisMemory.
+export const RESUME_WINDOW_MS = 2 * 60 * 60_000;
 export const RESUME_INJECT_MESSAGES = 6;
+
+export interface JarvisConversationAccess {
+  record(userText: string, assistantText: string): void;
+  resume(): JarvisTurn[];
+  clear(): void;
+}
 
 const CONVERSATION_ID = 'jarvis-conversation:recent';
 const CONVERSATION_KIND = 'jarvis-project-conversation';
@@ -59,7 +67,7 @@ function parseState(raw: unknown): ConversationState {
   }
 }
 
-export class ScopedJarvisConversation {
+export class ScopedJarvisConversation implements JarvisConversationAccess {
   readonly #binding: ScopedStoreBinding;
 
   constructor(

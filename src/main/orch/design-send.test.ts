@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BrowserDesignElementContext } from '../../shared/browser-design';
-import { sendDesignSelectionToAgent, type DesignSendDeps } from './design-send';
+import {
+  sendDesignAnnotationsToAgent,
+  sendDesignSelectionToAgent,
+  type DesignAnnotationsSendDeps,
+  type DesignSendDeps,
+} from './design-send';
 
 const SELECTION: BrowserDesignElementContext = {
   ref: 'e1',
@@ -257,5 +262,112 @@ describe('sendDesignSelectionToAgent', () => {
 
     await expect(pending).rejects.toThrow(/selection changed/i);
     expect(deps.inject).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendDesignAnnotationsToAgent (batch, Orca Design Mode parity)', () => {
+  const ANNOTATION = {
+    id: 'a1',
+    comment: 'aumentar o contraste',
+    intent: 'fix' as const,
+    priority: 'suggestion' as const,
+    createdAt: 1_700_000_000_000,
+    label: 'button#save "Salvar"',
+    selection: SELECTION,
+  };
+
+  function makeBatchDeps(
+    overrides: Partial<DesignAnnotationsSendDeps> = {},
+  ): DesignAnnotationsSendDeps {
+    return {
+      getAnnotations: vi.fn(() => [ANNOTATION]),
+      findPane: vi.fn(() => ({ paneId: 'pane-cli', sessionId: 'sess-1' })),
+      inject: vi.fn(async () => {}),
+      ...overrides,
+    };
+  }
+
+  it('formats ALL annotations into one prompt and injects it', async () => {
+    const deps = makeBatchDeps({
+      getAnnotations: vi.fn(() => [
+        ANNOTATION,
+        { ...ANNOTATION, id: 'a2', comment: 'centralizar o card', intent: 'change' as const },
+      ]),
+    });
+    const result = await sendDesignAnnotationsToAgent(
+      { paneId: 'pane-browser', targetPaneRef: 'pane-cli' },
+      deps,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      targetPaneId: 'pane-cli',
+      targetSessionId: 'sess-1',
+      annotations: 2,
+    });
+    const [, prompt] = (deps.inject as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, string];
+    expect(prompt).toContain('1. [corrigir] aumentar o contraste');
+    expect(prompt).toContain('2. [mudar] centralizar o card');
+    expect(result.prompt).toBeUndefined();
+  });
+
+  it('dryRun returns the prompt for clipboard copy without injecting', async () => {
+    const deps = makeBatchDeps();
+    const result = await sendDesignAnnotationsToAgent(
+      { paneId: 'pane-browser', targetPaneRef: 'pane-cli', dryRun: true },
+      deps,
+    );
+    expect(deps.inject).not.toHaveBeenCalled();
+    expect(result.prompt).toContain('BEGIN_UNTRUSTED_PAGE_DATA');
+    expect(result.promptChars).toBe(result.prompt!.length);
+  });
+
+  it('dryRun works WITHOUT any target pane (copy needs no live agent)', async () => {
+    const deps = makeBatchDeps({ findPane: vi.fn(() => null) });
+    const result = await sendDesignAnnotationsToAgent(
+      { paneId: 'pane-browser', dryRun: true },
+      deps,
+    );
+    expect(deps.findPane).not.toHaveBeenCalled();
+    expect(deps.inject).not.toHaveBeenCalled();
+    expect(result.prompt).toContain('1. [corrigir] aumentar o contraste');
+    expect(result.targetPaneId).toBe('');
+    expect(result.targetSessionId).toBe('');
+  });
+
+  it('attaches DESIGN.md as trusted context and flags it', async () => {
+    const deps = makeBatchDeps();
+    const result = await sendDesignAnnotationsToAgent(
+      {
+        paneId: 'pane-browser',
+        targetPaneRef: 'pane-cli',
+        dryRun: true,
+        designSystem: '# Tokens',
+      },
+      deps,
+    );
+    expect(result.designSystemAttached).toBe(true);
+    expect(result.prompt).toContain('BEGIN_DESIGN_SYSTEM');
+  });
+
+  it('fails without annotations, unknown target, or dead session', async () => {
+    await expect(
+      sendDesignAnnotationsToAgent(
+        { paneId: 'pane-browser', targetPaneRef: 'pane-cli' },
+        makeBatchDeps({ getAnnotations: vi.fn(() => []) }),
+      ),
+    ).rejects.toThrow(/no design annotations/);
+    await expect(
+      sendDesignAnnotationsToAgent(
+        { paneId: 'pane-browser', targetPaneRef: 'pane-x' },
+        makeBatchDeps({ findPane: vi.fn(() => null) }),
+      ),
+    ).rejects.toThrow(/unknown target pane/);
+    await expect(
+      sendDesignAnnotationsToAgent(
+        { paneId: 'pane-browser', targetPaneRef: 'pane-cli' },
+        makeBatchDeps({ findPane: vi.fn(() => ({ paneId: 'pane-cli' })) }),
+      ),
+    ).rejects.toThrow(/no live session/);
   });
 });

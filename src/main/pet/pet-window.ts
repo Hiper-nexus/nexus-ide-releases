@@ -829,6 +829,9 @@ function createPetWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
+      // Pin safe defaults explicitly (L3) to match the main window.
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       // O pet nunca recebe foco; não reduzir RAF/timers enquanto ele está
       // visível, senão a animação parece travar durante o arrasto.
       backgroundThrottling: false,

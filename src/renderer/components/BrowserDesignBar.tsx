@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { BrowserDesignAnnotationIntent } from '../../shared/browser-design';
+import { DESIGN_ANNOTATION_INTENT_LABELS } from '../../shared/browser-design';
 import { setBrowserViewportOverride } from '../browser/browser-host';
 import { DESIGN_BREAKPOINTS } from '../browser/viewport-override';
 import { listPanes } from '../lib/split-tree';
@@ -6,6 +8,23 @@ import { useDesignSelectionStore } from '../state/design-selection-store';
 import { useLayoutStore } from '../state/layout-store';
 
 const EMPTY_SELECTIONS: never[] = [];
+const EMPTY_ANNOTATIONS: never[] = [];
+
+const ANNOTATION_INTENTS = Object.entries(
+  DESIGN_ANNOTATION_INTENT_LABELS,
+) as Array<[BrowserDesignAnnotationIntent, string]>;
+
+function intentLabel(intent: string): string {
+  return (
+    DESIGN_ANNOTATION_INTENT_LABELS[
+      intent as BrowserDesignAnnotationIntent
+    ] ?? intent
+  );
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 type Props = {
   paneId: string;
@@ -30,10 +49,36 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
   const selections = useDesignSelectionStore(
     (s) => s.byPane[paneId]?.selections ?? EMPTY_SELECTIONS,
   );
+  const annotations = useDesignSelectionStore(
+    (s) => s.byPane[paneId]?.annotations ?? EMPTY_ANNOTATIONS,
+  );
+  const setAnnotations = useDesignSelectionStore((s) => s.setAnnotations);
   const [breakpoint, setBreakpoint] = useState<number | null>(null);
   const [instruction, setInstruction] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [targetPaneId, setTargetPaneId] = useState<string | null>(null);
+  const [annotationIntent, setAnnotationIntent] =
+    useState<BrowserDesignAnnotationIntent>('fix');
+  const [annotationComment, setAnnotationComment] = useState('');
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [trayOpen, setTrayOpen] = useState(false);
+
+  // Hidrata a lista do MAIN (fonte de verdade): anotações sobrevivem a
+  // remount do pane e ao toggle do picker.
+  useEffect(() => {
+    let alive = true;
+    window.nexus.browser
+      .listDesignAnnotations(paneId)
+      .then((result) => {
+        if (alive) setAnnotations(paneId, result.annotations);
+      })
+      .catch(() => {
+        // Pane ainda não criado no main — a lista continua vazia.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [paneId, setAnnotations]);
 
   const rootNode = useLayoutStore((s) => s.root);
   const agentPanes = useMemo(
@@ -101,6 +146,80 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
     }
   }
 
+  async function annotate(): Promise<void> {
+    if (!selection) return;
+    const comment = annotationComment.trim();
+    if (!comment) {
+      setStatus('escreva o comentário da anotação');
+      return;
+    }
+    try {
+      const result = await window.nexus.browser.designAnnotate(paneId, {
+        comment,
+        intent: annotationIntent,
+      });
+      setAnnotations(paneId, result.annotations);
+      setAnnotationComment('');
+      setTrayOpen(true);
+      setStatus(`anotação #${result.annotations.length} adicionada ✓`);
+    } catch (err) {
+      setStatus(errorText(err));
+    }
+  }
+
+  async function deleteAnnotation(annotationId: string): Promise<void> {
+    try {
+      const result = await window.nexus.browser.deleteDesignAnnotation(
+        paneId,
+        annotationId,
+      );
+      setAnnotations(paneId, result.annotations);
+      if (result.annotations.length === 0) setTrayOpen(false);
+    } catch (err) {
+      setStatus(errorText(err));
+    }
+  }
+
+  async function clearAnnotations(): Promise<void> {
+    try {
+      const result = await window.nexus.browser.clearDesignAnnotations(paneId);
+      setAnnotations(paneId, result.annotations);
+      setTrayOpen(false);
+      setStatus('anotações limpas');
+    } catch (err) {
+      setStatus(errorText(err));
+    }
+  }
+
+  async function sendAnnotations(dryRun: boolean): Promise<void> {
+    if (annotations.length === 0) return;
+    // Copiar (dryRun) funciona SEM agente alvo — nada é injetado.
+    if (!dryRun && !effectiveTarget) return;
+    setStatus(dryRun ? 'preparando feedback…' : 'enviando feedback…');
+    try {
+      const result = await window.nexus.browser.sendDesignAnnotations(paneId, {
+        ...(dryRun ? { dryRun: true } : {}),
+        ...(!dryRun && effectiveTarget ? { targetPaneId: effectiveTarget } : {}),
+      });
+      if (dryRun) {
+        if (!result.prompt) {
+          setStatus('nada para copiar');
+          return;
+        }
+        await navigator.clipboard.writeText(result.prompt);
+        setStatus(`feedback copiado (${result.promptChars} chars) ✓`);
+        return;
+      }
+      setStatus(
+        result.designSystemAttached
+          ? `feedback enviado (${result.annotations}) ✓ (+ DESIGN.md)`
+          : `feedback enviado (${result.annotations}) ✓`,
+      );
+    } catch (err) {
+      setStatus(errorText(err));
+    }
+  }
+
   const selectionLabel = selection
     ? `${selection.tag}${selection.id ? `#${selection.id}` : ''}${
         selection.classes.length ? `.${selection.classes.slice(0, 2).join('.')}` : ''
@@ -108,6 +227,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
     : null;
 
   return (
+    <>
     <div className={`design-bar nodrag ${isActive ? 'design-bar--active' : ''}`}>
       <button
         type="button"
@@ -188,6 +308,16 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
               if (e.key === 'Enter') void send();
             }}
           />
+          <button
+            type="button"
+            data-testid="design-annotate"
+            className={`browser-bar__btn design-bar__send ${composerOpen ? 'design-bar__toggle--on' : ''}`}
+            aria-pressed={composerOpen}
+            title="Anotar: fixa um comentário neste elemento (badge numerado na página) para enviar tudo junto depois"
+            onClick={() => setComposerOpen((open) => !open)}
+          >
+            ＋ anotar
+          </button>
           {agentPanes.length > 1 && (
             <select
               data-testid="design-target"
@@ -271,7 +401,127 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
           </button>
         </>
       )}
+      {annotations.length > 0 && (
+        <button
+          type="button"
+          data-testid="design-annotations-badge"
+          className={`browser-bar__btn design-bar__annotations-badge ${trayOpen ? 'design-bar__toggle--on' : ''}`}
+          aria-pressed={trayOpen}
+          title="Anotações fixadas nesta página (sobrevivem ao modo Design; somem ao navegar)"
+          onClick={() => setTrayOpen((open) => !open)}
+        >
+          📝 {annotations.length}
+        </button>
+      )}
       {status && <span className="design-bar__status">{status}</span>}
     </div>
+      {composerOpen && isActive && selection && (
+        <div
+          className="design-annotations-composer nodrag"
+          data-testid="design-annotation-composer"
+        >
+          <input
+            data-testid="design-annotation-comment"
+            className="design-bar__instruction"
+            placeholder="comentário da anotação (fixa no elemento selecionado)"
+            value={annotationComment}
+            spellCheck={false}
+            onChange={(e) => setAnnotationComment(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter AQUI anota — nunca envia nada pro agente.
+              if (e.key === 'Enter') void annotate();
+            }}
+          />
+          <select
+            data-testid="design-annotation-intent"
+            className="design-bar__target"
+            value={annotationIntent}
+            aria-label="Intenção da anotação"
+            onChange={(e) =>
+              setAnnotationIntent(e.target.value as BrowserDesignAnnotationIntent)
+            }
+          >
+            {ANNOTATION_INTENTS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            data-testid="design-annotation-add"
+            className="browser-bar__btn design-bar__send"
+            title="Fixar a anotação neste elemento"
+            onClick={() => void annotate()}
+          >
+            fixar
+          </button>
+        </div>
+      )}
+      {trayOpen && annotations.length > 0 && (
+        <div className="design-annotations-tray nodrag" data-testid="design-annotations-tray">
+          <ul className="design-annotations-tray__list">
+            {annotations.map((annotation) => (
+              <li key={annotation.id} className="design-annotations-tray__item">
+                <span
+                  className="design-annotations-tray__label"
+                  title={annotation.label}
+                >
+                  #{annotation.index} [{intentLabel(annotation.intent)}]{' '}
+                  {annotation.label}
+                </span>
+                <span className="design-annotations-tray__comment">
+                  {annotation.comment}
+                </span>
+                <button
+                  type="button"
+                  data-testid={`design-annotation-delete-${annotation.index}`}
+                  className="browser-bar__btn design-annotations-tray__delete"
+                  title="Excluir esta anotação"
+                  aria-label={`Excluir anotação ${annotation.index}`}
+                  onClick={() => void deleteAnnotation(annotation.id)}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="design-annotations-tray__actions">
+            <button
+              type="button"
+              data-testid="design-annotations-send"
+              className="browser-bar__btn design-bar__send"
+              disabled={!effectiveTarget}
+              title={
+                effectiveTarget
+                  ? 'Enviar TODAS as anotações pro agente como um feedback único'
+                  : 'Abra um pane de agente CLI para receber o feedback'
+              }
+              onClick={() => void sendAnnotations(false)}
+            >
+              → agente ({annotations.length})
+            </button>
+            <button
+              type="button"
+              data-testid="design-annotations-copy"
+              className="browser-bar__btn"
+              title="Copiar o feedback consolidado (sem enviar; não precisa de agente)"
+              onClick={() => void sendAnnotations(true)}
+            >
+              ⧉ copiar
+            </button>
+            <button
+              type="button"
+              data-testid="design-annotations-clear"
+              className="browser-bar__btn"
+              title="Limpar todas as anotações desta página"
+              onClick={() => void clearAnnotations()}
+            >
+              limpar
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

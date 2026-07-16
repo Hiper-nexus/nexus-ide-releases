@@ -136,13 +136,22 @@ function load(): void {
 
 function persist(): void {
   try {
-    fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+    fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true, mode: 0o700 });
     const out: Record<string, ProviderConfig> = {};
     for (const [id, cfg] of configs) out[id] = cfg;
+    // 0600 (L7): this file can carry user-supplied extraArgs and is adjacent to
+    // secret material — do not leave it world-readable.
     fs.writeFileSync(
       CONFIG_FILE,
       JSON.stringify(encodeProviderConfigFile(out), null, 2),
+      { mode: 0o600 },
     );
+    // writeFileSync's mode only applies on creation; enforce on existing files.
+    try {
+      fs.chmodSync(CONFIG_FILE, 0o600);
+    } catch {
+      // best effort (e.g. non-POSIX fs)
+    }
   } catch (err) {
     console.warn('[provider-config] failed to persist:', err);
   }

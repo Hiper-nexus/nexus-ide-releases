@@ -89,6 +89,15 @@ export interface BrowserDesignElementContext {
   /** Best-effort unique CSS selector (id > path); advisory, not stable. */
   selector: string;
   rect: BrowserDesignRect;
+  /**
+   * Page-relative rect (viewport rect + scroll offsets at selection time).
+   * Lets annotation markers follow the page as it scrolls. Absent on payloads
+   * produced before this field existed — consumers must degrade gracefully.
+   */
+  rectPage?: BrowserDesignRect;
+  /** True when the element (or an ancestor) is position:fixed/sticky —
+   * markers for it track the viewport instead of the page. */
+  isFixed?: boolean;
   /** Visible text, redacted and truncated. */
   text: string;
   /** Sanitized outerHTML (redacted, truncated, no inline event handlers). */
@@ -124,4 +133,92 @@ export interface BrowserDesignEvent {
   selection?: BrowserDesignElementContext;
   mode?: BrowserDesignModeState;
   reorder?: BrowserDesignReorderIntent;
+}
+
+// ---------------------------------------------------------------------------
+// Design annotations (Orca Design Mode parity): the user pins numbered notes
+// on page elements — comment + intent — and later ships ALL of them to an
+// agent as one consolidated "design feedback" prompt. The annotation store is
+// MAIN-owned (design-session): the renderer only contributes the typed note;
+// the element context is the already-validated selection snapshot.
+// Model adapted from stablyai/orca (MIT — see third_party/provenance/
+// orca-5e1009.json): BrowserPageAnnotation / annotation intents.
+// ---------------------------------------------------------------------------
+
+export type BrowserDesignAnnotationIntent =
+  | 'fix'
+  | 'change'
+  | 'question'
+  | 'approve';
+
+export type BrowserDesignAnnotationPriority =
+  | 'blocking'
+  | 'important'
+  | 'suggestion';
+
+/**
+ * Rótulos PT-BR canônicos das intenções — usados pelo tray (renderer) e pelo
+ * prompt consolidado (main). Uma fonte única: o contrato numerado depende de
+ * tray e prompt dizerem a mesma coisa sobre a mesma anotação.
+ */
+export const DESIGN_ANNOTATION_INTENT_LABELS: Record<
+  BrowserDesignAnnotationIntent,
+  string
+> = {
+  fix: 'corrigir',
+  change: 'mudar',
+  question: 'pergunta',
+  approve: 'aprovado',
+};
+
+export const DESIGN_ANNOTATION_LIMITS = {
+  /** Hard cap of live annotations per browser pane (Orca: 20/page). */
+  maxPerPane: 20,
+  commentMaxChars: 2_000,
+  labelMaxChars: 160,
+} as const;
+
+/** Full annotation record (main-owned; selection is a frozen snapshot). */
+export interface BrowserDesignAnnotation {
+  id: string;
+  comment: string;
+  intent: BrowserDesignAnnotationIntent;
+  priority: BrowserDesignAnnotationPriority;
+  /** Epoch ms (main clock). */
+  createdAt: number;
+  /** Short human label derived from the selection (`tag#id.cls "text"`). */
+  label: string;
+  selection: BrowserDesignElementContext;
+}
+
+/** Renderer-facing projection: everything the tray needs, nothing heavy. */
+export interface BrowserDesignAnnotationSummary {
+  id: string;
+  /** 1-based position — matches the numbered badge shown in the page. */
+  index: number;
+  label: string;
+  comment: string;
+  intent: BrowserDesignAnnotationIntent;
+  priority: BrowserDesignAnnotationPriority;
+  createdAt: number;
+}
+
+/**
+ * In-page numbered badge for one annotation. Geometry + an advisory selector
+ * only: the preload marker layer never sees comments or element data.
+ */
+export interface BrowserDesignAnnotationMarker {
+  id: string;
+  /** 0-based; the badge renders index+1. */
+  index: number;
+  rectPage: BrowserDesignRect;
+  rectViewport: BrowserDesignRect;
+  isFixed: boolean;
+  /**
+   * The annotation's frozen CSS selector. When it still resolves in the live
+   * document, the badge tracks the element's REAL box (survives reflow,
+   * breakpoint previews and sticky positioning); the rects above are the
+   * fallback for elements that no longer resolve.
+   */
+  selector?: string;
 }

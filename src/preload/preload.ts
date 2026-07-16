@@ -573,6 +573,25 @@ const api: NexusApi = {
         paneId,
         ...(selector ? { selector } : {}),
       }),
+    designAnnotate: (paneId, payload) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.designAnnotate, {
+        paneId,
+        ...payload,
+      }),
+    listDesignAnnotations: (paneId) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.designAnnotations, { paneId }),
+    deleteDesignAnnotation: (paneId, annotationId) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.designAnnotationDelete, {
+        paneId,
+        annotationId,
+      }),
+    clearDesignAnnotations: (paneId) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.designAnnotationsClear, { paneId }),
+    sendDesignAnnotations: (paneId, payload) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.designAnnotationsSend, {
+        paneId,
+        ...payload,
+      }),
   },
   devServer: {
     onDetected: (cb) => addListener(devServerListeners, cb),

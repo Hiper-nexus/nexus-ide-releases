@@ -26,6 +26,7 @@ const COMMANDS = new Set<BrowserAutomationCommand>([
   'design_disable',
   'design_set_style_preview',
   'design_clear_style_preview',
+  'design_set_annotation_markers',
 ]);
 const MAX_ARGS_BYTES = 16 * 1024;
 

@@ -5,14 +5,18 @@ import type { Db } from '../db/client';
 import { subscriptions, teamInvites, teamMembers, teams } from '../db/schema';
 
 const INVITE_TTL_MS = 7 * 24 * 3600 * 1000;
-const CODE_LENGTH = 8;
+// 12 base32 chars ≈ 60 bits (L14): a distributed guesser can no longer
+// meaningfully grind the keyspace over the 7-day TTL. `normalizeCode` strips the
+// grouping dashes, so validation (DB lookup on the hash) is format-agnostic and
+// codes issued before this change keep working.
+const CODE_LENGTH = 12;
 const CODE_GROUP_SIZE = 4;
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 function inviteCode(): string {
   const bytes = crypto.randomBytes(CODE_LENGTH);
   const chars = Array.from(bytes, (byte) => BASE32[byte % BASE32.length]).join('');
-  return `${chars.slice(0, CODE_GROUP_SIZE)}-${chars.slice(CODE_GROUP_SIZE)}`;
+  return chars.match(/.{1,4}/g)!.join('-');
 }
 
 function normalizeCode(raw: string): string {

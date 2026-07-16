@@ -72,9 +72,11 @@ const PAIRING_TTL_MS = 5 * 60 * 1000;
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const MAX_CLIENTS = 16;
 const UNAUTH_TIMEOUT_MS = 15_000;
-// Bound the number of guesses against a single pairing code: once exceeded the
-// code is rotated, so an attacker can never grind the full keyspace.
+// Bound the number of guesses per client IP. Exceeding it locks that IP out for
+// a cooldown instead of rotating the shared code (L16): an unauthenticated peer
+// must never be able to invalidate the code a legitimate user is scanning.
 const MAX_PAIRING_FAILURES = 8;
+const PAIRING_LOCKOUT_MS = 60_000;
 // Unambiguous alphabet (no 0/O/1/I/L) over 8 chars ≈ 32^8 ≈ 1.1e12 keyspace.
 const PAIRING_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const PAIRING_LEN = 8;
@@ -95,7 +97,10 @@ let wss: WebSocketServer | null = null;
 let port: number | null = null;
 let boundHost: string | null = null;
 let tlsRecord: TlsRecord | null = null;
-let pairingFailures = 0;
+const pairingFailuresByIp = new Map<
+  string,
+  { count: number; lockedUntil: number }
+>();
 let pairing = makePairing();
 let tokenCache: TokenRecord[] | null = null;
 let activeBridgeScope: ProjectExecutionScope | null = null;
@@ -120,8 +125,25 @@ function randomCode(): string {
 }
 
 function makePairing(): { code: string; expiresAt: number } {
-  pairingFailures = 0;
+  pairingFailuresByIp.clear();
   return { code: randomCode(), expiresAt: Date.now() + PAIRING_TTL_MS };
+}
+
+/** Ms remaining on an IP's pairing lockout, or 0 if not locked. */
+function pairingLockRemaining(ip: string): number {
+  const entry = pairingFailuresByIp.get(ip);
+  if (!entry) return 0;
+  return Math.max(0, entry.lockedUntil - Date.now());
+}
+
+/** Record a failed pairing attempt for an IP and lock it out past the cap. */
+function recordPairingFailure(ip: string): void {
+  const entry = pairingFailuresByIp.get(ip) ?? { count: 0, lockedUntil: 0 };
+  entry.count += 1;
+  if (entry.count >= MAX_PAIRING_FAILURES) {
+    entry.lockedUntil = Date.now() + PAIRING_LOCKOUT_MS;
+  }
+  pairingFailuresByIp.set(ip, entry);
 }
 
 function pairingCode(): { code: string; expiresAt: number } {
@@ -567,6 +589,20 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
     ws.close(1013, 'too many connections');
     return;
   }
+  // Cross-site WebSocket-hijacking defense: a browser sends an Origin header, so
+  // only same-origin browser pages (the served thin-client) are accepted. Native
+  // apps send no Origin and are unaffected. Auth is a bearer token in the message
+  // (not an ambient cookie), so this is defense-in-depth against pre-auth reach.
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin.length > 0) {
+    const host = req.headers.host;
+    const sameOrigin =
+      !!host && (origin === `https://${host}` || origin === `http://${host}`);
+    if (!sameOrigin) {
+      ws.close(1008, 'origin not allowed');
+      return;
+    }
+  }
   clients.add(ws);
   const ip = clientIp(req);
   // Reap sockets that connect but never authenticate — they otherwise pin a
@@ -611,6 +647,9 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
       if (msg.type === 'pair') {
         const scope = activeBridgeScope;
         if (!scope) throw new Error('bridge project scope is unavailable');
+        if (pairingLockRemaining(ip) > 0) {
+          throw new Error('too many attempts; try again later');
+        }
         const code = typeof msg.code === 'string' ? msg.code.trim().toUpperCase() : '';
         const current = pairingCode();
         const supplied = Buffer.from(code);
@@ -620,10 +659,12 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
           crypto.timingSafeEqual(supplied, expected) &&
           Date.now() <= current.expiresAt;
         if (!match) {
-          pairingFailures += 1;
-          if (pairingFailures >= MAX_PAIRING_FAILURES) pairing = makePairing();
+          // Per-IP lockout — never rotate the shared code an honest user is
+          // actively scanning (L16).
+          recordPairingFailure(ip);
           throw new Error('invalid pairing code');
         }
+        pairingFailuresByIp.delete(ip);
         const issued = issueToken(scope);
         authenticateClient(ws, issued.record, scope);
         clearTimeout(unauthTimer);

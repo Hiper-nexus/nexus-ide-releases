@@ -39,6 +39,18 @@ export const BROWSER_CHANNELS = {
   designPreview: 'browser:designPreview',
   /** invoke: renderer → main. Clear one/all style previews of a pane (F2). */
   designPreviewClear: 'browser:designPreviewClear',
+  /** invoke: renderer → main. Pin an annotation on the current selection
+   * (comment + intent) — the main snapshots the validated selection. */
+  designAnnotate: 'browser:designAnnotate',
+  /** invoke: renderer → main. List the pane's annotations (summaries). */
+  designAnnotations: 'browser:designAnnotations',
+  /** invoke: renderer → main. Delete one annotation by id. */
+  designAnnotationDelete: 'browser:designAnnotationDelete',
+  /** invoke: renderer → main. Clear all annotations of a pane. */
+  designAnnotationsClear: 'browser:designAnnotationsClear',
+  /** invoke: renderer → main. Ship ALL annotations as one consolidated
+   * design-feedback prompt into an agent CLI pane (or dry-run for copy). */
+  designAnnotationsSend: 'browser:designAnnotationsSend',
 } as const;
 
 export const DEV_SERVER_CHANNELS = {

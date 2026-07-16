@@ -5,6 +5,14 @@
  */
 import net from 'node:net';
 import type { PortForwardInfo } from '../../shared/integrations-types';
+import { checkNetworkTarget } from '../net/ssrf-guard';
+
+/**
+ * SSRF guard (H4): a port forward must never let a renderer/agent proxy the
+ * main process to cloud-metadata / link-local / reserved destinations. Loopback,
+ * private (RFC1918) and CGNAT stay allowed so forwarding a real remote/LAN dev
+ * server keeps working. The resolved address is pinned to defeat DNS rebinding.
+ */
 
 type ForwardHandle = {
   info: PortForwardInfo;
@@ -34,17 +42,23 @@ export function closeAllPortForwards(): void {
   for (const id of [...active.keys()]) closePortForward(id);
 }
 
-export function startPortForward(input: {
+export async function startPortForward(input: {
   localPort: number;
   remoteHost: string;
   remotePort: number;
   label?: string;
-}): { ok: true; info: PortForwardInfo } | { ok: false; error: string } {
+}): Promise<
+  { ok: true; info: PortForwardInfo } | { ok: false; error: string }
+> {
   for (const h of active.values()) {
     if (h.info.localPort === input.localPort) {
       return { ok: false, error: `local port ${input.localPort} already forwarded` };
     }
   }
+
+  const target = await checkNetworkTarget(input.remoteHost);
+  if (!target.ok) return { ok: false, error: target.error };
+  const pinnedHost = target.address;
 
   const id = `pf-${++seq}`;
   const info: PortForwardInfo = {
@@ -57,7 +71,7 @@ export function startPortForward(input: {
   };
 
   const server = net.createServer((client) => {
-    const upstream = net.connect(input.remotePort, input.remoteHost);
+    const upstream = net.connect(input.remotePort, pinnedHost);
     client.pipe(upstream);
     upstream.pipe(client);
     client.on('error', () => upstream.destroy());

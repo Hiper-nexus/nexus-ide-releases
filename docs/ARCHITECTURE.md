@@ -264,6 +264,22 @@ instrumentação/reorder é registrada e todas as mutações diretas falham
 fechadas. O fluxo seleção → agente e o preview efêmero não dependem desse
 motor e permanecem ativos.
 
+**Anotações de design (paridade com o Design Mode do Orca, MIT):** o usuário
+fixa notas numeradas em elementos da página (comentário + intenção
+corrigir/mudar/pergunta/aprovado; teto 20/página) e envia TUDO de uma vez como
+um feedback consolidado. O store é main-owned em `design-session.ts` — o
+renderer só contribui a nota digitada; o contexto do elemento é o snapshot da
+seleção já validada (congelado no momento do anotar). Badges numerados são
+renderizados na página por uma camada própria do preload
+(`browser-design-annotations.ts`, ShadowRoot fechado, só geometria — comentário
+nunca chega à página), independente do picker: anotações sobrevivem ao modo
+Design off e morrem com o documento (did-navigate limpa main + renderer via
+evento de modo `navigation` sintetizado, e destrói junto com o pane). O envio
+em lote (`design-annotation-format.ts`) numera os itens igual aos badges e
+embala os dados da página no envelope não confiável padrão; os comentários do
+usuário (confiáveis) e as instruções por intenção ficam fora do envelope.
+`nexus_design_selection_get` lista as anotações da página junto da seleção.
+
 Aliases curtos `pane_*`/`handoff_*` mantidos no registry (namespace duplo) para prompts/agentes que usam nomes não-prefixados. **Sempre permitidos independente de allowlist:** `ToolSearch`, `nexus_handoff_submit`, `nexus_handoff_list`.
 
 ### E.3 Handoffs — mecanismo durável

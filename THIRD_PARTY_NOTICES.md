@@ -165,6 +165,26 @@ JS string injected via `executeJavaScript`; Nexus ports it to TypeScript module
 functions inside its existing preload overlay and adapts it to this project's
 secret redaction. The fast path (`#id` for a simple-css-ident id) is preserved.
 
+The design **annotations** feature (numbered notes pinned on page elements,
+shipped to an agent as one consolidated feedback prompt) is also adapted from
+Orca's Design Mode at the same pin:
+
+- `src/preload/browser-design-annotations.ts` — in-page numbered badge layer,
+  adapted from `src/shared/browser-annotation-viewport-bridge.ts` (Orca injects
+  a JS string template and mirrors viewport geometry over console messages;
+  Nexus keeps its preload-module architecture in the pane's isolated world,
+  driven by the closed automation channel, geometry-only).
+- The annotation model (comment + intent + priority, 20-per-page cap, cleared
+  on navigation) in `src/shared/browser-design.ts` and the main-owned store in
+  `src/main/browser/design-session.ts` adapt `BrowserPageAnnotation` from
+  `src/shared/browser-grab-types.ts` (Orca persists annotations in the
+  renderer store; Nexus makes the main process the authority).
+- The consolidated feedback prompt in `src/main/orch/design-annotation-format.ts`
+  adapts the output model of
+  `src/renderer/src/components/browser-pane/browser-annotation-output.ts`,
+  rebuilt on this project's untrusted-envelope prompt discipline (page data
+  never ships as free-form markdown).
+
 License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
 `third_party/provenance/orca-5e1009.json`.
 

@@ -3,7 +3,7 @@
  * Kept in a dedicated file so live-transport-controller.test.ts stays under
  * the 800-line module cap.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { DEFAULT_VOICE_CONFIG } from '../../shared/voice-config';
 import { JarvisLiveSession } from './jarvis-live';
 import type { TurnManagedRealtimeProvider } from '../jarvis/realtime/provider';
@@ -48,7 +48,10 @@ function fakeProvider(connect: () => Promise<void>): TurnManagedRealtimeProvider
 
 async function withGeminiMocks(
   provider: TurnManagedRealtimeProvider,
-  run: (LiveTransportController: typeof import('./live-transport-controller').LiveTransportController) => Promise<void>,
+  run: (
+    LiveTransportController: typeof import('./live-transport-controller').LiveTransportController,
+    logVoiceSpy: MockInstance,
+  ) => Promise<void>,
 ): Promise<void> {
   vi.resetModules();
   const candidates: RealtimeProviderCandidate[] = [{ id: 'gemini', provider }];
@@ -76,10 +79,13 @@ async function withGeminiMocks(
     resolveRealtimeProviderIds: () => ['gemini'],
   }));
 
+  const voiceLog = await import('./voice-log');
+  const logVoiceSpy = vi.spyOn(voiceLog, 'logVoice');
   const { LiveTransportController } = await import('./live-transport-controller');
   try {
-    await run(LiveTransportController);
+    await run(LiveTransportController, logVoiceSpy);
   } finally {
+    logVoiceSpy.mockRestore();
     vi.doUnmock('./voice-config-store');
     vi.doUnmock('./voice-secrets');
     vi.doUnmock('./jarvis-memory');
@@ -202,6 +208,111 @@ describe('LiveTransportController P4 grace lifecycle', () => {
       await controller.onStart();
       const ctxCalls = vi.mocked(provider.sendContext).mock.calls.map((c) => String(c[0]));
       expect(ctxCalls.some((t) => t.includes('[reconexão]'))).toBe(true);
+    });
+  });
+
+  it('restores project conversation on construction and persists completed live turns', async () => {
+    const provider = fakeProvider(async () => {});
+    await withGeminiMocks(provider, async (LiveTransportController) => {
+      const session = new JarvisLiveSession(() => {}, () => 1000);
+      const conversation = {
+        resume: vi.fn(() => [
+          { role: 'user' as const, content: 'qual era a decisão?' },
+          { role: 'assistant' as const, content: 'Manter a memória no Nexus.' },
+        ]),
+        record: vi.fn(),
+        clear: vi.fn(),
+      };
+      const controller = new LiveTransportController(
+        () => {},
+        session,
+        () => 1000,
+        undefined,
+        undefined,
+        undefined,
+        conversation,
+      );
+
+      expect(controller.liveHistory).toEqual([
+        { role: 'user', text: 'qual era a decisão?' },
+        { role: 'assistant', text: 'Manter a memória no Nexus.' },
+      ]);
+
+      controller.recordLiveHistory('user', 'e o próximo passo?');
+      controller.recordLiveHistory('assistant', 'Persistir o modo Realtime.');
+      expect(conversation.record).toHaveBeenCalledWith(
+        'e o próximo passo?',
+        'Persistir o modo Realtime.',
+      );
+    });
+  });
+
+  it('logs a broken conversation store only once while keeping live history bounded', async () => {
+    const provider = fakeProvider(async () => {});
+    await withGeminiMocks(provider, async (LiveTransportController, logVoiceSpy) => {
+      const session = new JarvisLiveSession(() => {}, () => 1000);
+      const conversation = {
+        resume: vi.fn(() => []),
+        record: vi.fn(() => {
+          throw new Error('disk unavailable');
+        }),
+        clear: vi.fn(),
+      };
+      const controller = new LiveTransportController(
+        () => {},
+        session,
+        () => 1000,
+        undefined,
+        undefined,
+        undefined,
+        conversation,
+      );
+
+      controller.recordLiveHistory('user', 'primeira pergunta');
+      controller.recordLiveHistory('assistant', 'primeira resposta');
+      controller.recordLiveHistory('user', 'segunda pergunta');
+      controller.recordLiveHistory('assistant', 'segunda resposta');
+
+      expect(conversation.record).toHaveBeenCalledTimes(2);
+      expect(controller.liveHistory).toHaveLength(4);
+      expect(
+        logVoiceSpy.mock.calls.filter(
+          (call) => call[1] === 'live.conversationRecordFailed',
+        ),
+      ).toHaveLength(1);
+    });
+  });
+
+  it('does not pair an abandoned prompt with a later assistant transcript', async () => {
+    const provider = fakeProvider(async () => {});
+    await withGeminiMocks(provider, async (LiveTransportController) => {
+      const lifecycleBoundaries = [
+        'interrupt',
+        'onStop',
+        'hardStop',
+        'enterDormant',
+      ] as const;
+      for (const boundary of lifecycleBoundaries) {
+        const conversation = {
+          resume: vi.fn(() => []),
+          record: vi.fn(),
+          clear: vi.fn(),
+        };
+        const controller = new LiveTransportController(
+          () => {},
+          new JarvisLiveSession(() => {}, () => 1000),
+          () => 1000,
+          undefined,
+          undefined,
+          undefined,
+          conversation,
+        );
+        controller.recordLiveHistory('user', `abandoned by ${boundary}`);
+        if (boundary === 'interrupt') controller.interrupt('test');
+        else controller[boundary]();
+        controller.recordLiveHistory('assistant', 'late response');
+        expect(conversation.record, boundary).not.toHaveBeenCalled();
+      }
     });
   });
 });
