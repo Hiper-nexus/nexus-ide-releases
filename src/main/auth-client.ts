@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { resolveBackendUrl } from './backend-url';
 
 /**
  * Cliente de auth do app. O login SÓ nasce aqui: beginLogin gera um nonce
@@ -42,7 +43,7 @@ function defaultDeps(): AuthDeps {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { shell } = require('electron') as typeof import('electron');
   return {
-    backendUrl: process.env.NEXUS_BACKEND_URL ?? 'https://api.nexuside.app',
+    backendUrl: resolveBackendUrl(),
     fetchFn: fetch,
     setSecret: (k, v) => secrets.setSecret(k, v),
     applyLicense: (jwt) => billing.applyLicenseToken(jwt),

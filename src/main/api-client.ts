@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { resolveBackendUrl } from './backend-url';
 
 export interface ApiDeps {
   backendUrl: string;
@@ -28,7 +29,7 @@ function defaultDeps(): ApiDeps {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const secrets = require('./persistence/secrets-store') as typeof import('./persistence/secrets-store');
   return {
-    backendUrl: process.env.NEXUS_BACKEND_URL ?? 'https://api.nexuside.app',
+    backendUrl: resolveBackendUrl(),
     fetchFn: fetch,
     getSecret: (key) => secrets.getSecret(key),
     setSecret: (key, value) => secrets.setSecret(key, value),
