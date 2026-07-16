@@ -13,6 +13,22 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.7',
+  date: '2026-07-16',
+  codename: 'Chaves Herdadas',
+  summary:
+    'O oh-my-pi nasce funcionando: as API keys que você já guardou no Nexus (GLM, Kimi/Moonshot, DeepSeek, OpenRouter…) são herdadas automaticamente pela sessão do omp — zero login extra para esses providers. Assinaturas (Claude Max, plano Codex) seguem pelo /login do próprio omp: um clique de autorização, por design dos providers.',
+  highlights: [
+    {
+      title: 'omp com suas chaves, sem login',
+      detail:
+        'Salvou a key do GLM ou do Kimi no Nexus? A sessão do omp já abre com esses providers ativos — as chaves viajam do vault direto para o processo, com os nomes de env que o omp reconhece.',
+    },
+  ],
+  fixes: [],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.6',
   date: '2026-07-16',
   codename: 'Pet Obediente',
@@ -31,31 +47,4 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.5',
-  date: '2026-07-16',
-  codename: 'Frota Completa',
-  summary:
-    'O oh-my-pi entra em operação de background (roteador + Reviewer D no squad Review P0–P3, o rito que ele mesmo originou) e a parte de orquestração ganha a UX que faltava: editar squad abre um modal centralizado de verdade, e o painel inteiro recebeu hierarquia, hover e respiro.',
-  highlights: [
-    {
-      title: 'omp trabalhando em background',
-      detail:
-        'O roteador escala o omp como diversidade (medium/hard) e o squad Review P0–P3 ganhou o Reviewer D (omp) — rode uma missão com esse squad para vê-lo revisar ao lado de Claude, Kimi e AGY.',
-    },
-    {
-      title: 'Editar squad no meio da tela',
-      detail:
-        'O editor virou um dialog centralizado com fundo escurecido, Esc/clique-fora e foco automático — nada de rolar até o fim da lista para achá-lo.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Painel de orquestração legível',
-      detail:
-        'Mais largura e respiro, tab ativa com âncora, toolbar fixa ao rolar, cards com hover e roster do editor em cartões com focus ring.',
-    },
-  ],
 };

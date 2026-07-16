@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.19.7 — Chaves Herdadas
+
+Data: 2026-07-16
+
+- **omp herda as API keys do Nexus**: as chaves que você já salvou (GLM/z.ai,
+  Moonshot/Kimi, DeepSeek, MiniMax, Qwen, OpenRouter, Anthropic por key) são
+  injetadas automaticamente na sessão do omp com os nomes que ele reconhece —
+  esses providers funcionam sem nenhum login extra. Só entram chaves que
+  existem no vault; nada vaza do ambiente.
+- Assinaturas (Claude Max, plano Codex, GLM coding plan) continuam pelo
+  /login do próprio omp — 1 clique de autorização no navegador, por design
+  dos providers (token por aplicativo, revogável e dentro dos termos).
+
 ## 0.19.6 — Pet Obediente
 
 Data: 2026-07-16
