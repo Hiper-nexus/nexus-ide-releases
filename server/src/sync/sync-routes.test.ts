@@ -25,6 +25,7 @@ function mutation(overrides: Record<string, unknown> = {}) {
 }
 
 async function setup(options: {
+  paid?: boolean;
   limits?: {
     maxProjectsPerAccount?: number;
     maxEntitiesPerProject?: number;
@@ -38,6 +39,18 @@ async function setup(options: {
     .insert(accounts)
     .values({ email: `sync-${crypto.randomUUID()}@test.local` })
     .returning({ id: accounts.id });
+  if (options.paid !== false) {
+    await db.insert(schema.subscriptions).values({
+      ownerType: 'account',
+      accountId: account.id,
+      stripeSubscriptionId: `sub_${account.id}`,
+      stripeCustomerId: `cus_${account.id}`,
+      plan: 'pro',
+      status: 'active',
+      seats: 1,
+      currentPeriodEnd: new Date(1_900_000_000_000),
+    });
+  }
   const { session } = await issueTokens(db, account.id);
   const app = express();
   app.use(express.json({ limit: '256kb' }));
@@ -69,6 +82,20 @@ describe('sync control-plane routes', () => {
     await request(fixture.app)
       .get(`/v1/sync/projects/${PROJECT_ID}`)
       .expect(401);
+  });
+
+  it('reserva sincronização em nuvem para Pro e mantém o Free local', async () => {
+    const free = await setup({ paid: false });
+
+    const response = await request(free.app)
+      .get(`/v1/sync/projects/${PROJECT_ID}`)
+      .set(free.auth);
+
+    expect(response.status).toBe(403);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: 'pro-required',
+    });
   });
 
   it('persists and reads only portable metadata with server authority time', async () => {
@@ -111,6 +138,16 @@ describe('sync control-plane routes', () => {
       .insert(accounts)
       .values({ email: `sync-other-${crypto.randomUUID()}@test.local` })
       .returning({ id: accounts.id });
+    await fixture.db.insert(schema.subscriptions).values({
+      ownerType: 'account',
+      accountId: other.id,
+      stripeSubscriptionId: `sub_${other.id}`,
+      stripeCustomerId: `cus_${other.id}`,
+      plan: 'pro',
+      status: 'active',
+      seats: 1,
+      currentPeriodEnd: new Date(1_900_000_000_000),
+    });
     const { session } = await issueTokens(fixture.db, other.id);
 
     const read = await request(fixture.app)

@@ -13,13 +13,15 @@ export type {
   TeamInfo,
   InviteInfo,
 } from '../../shared/contract';
-import type { LicenseInfo, PlanId } from '../../shared/contract';
+import type { LicenseInfo } from '../../shared/contract';
+import { PRO_MONTHLY_PRICE, type PublicPlanId } from '../../shared/pricing';
 
 export interface PlanDef {
-  id: PlanId;
+  id: PublicPlanId;
   name: string;
-  /** Monthly price in USD; null = "fale conosco". */
-  priceMonthly: number | null;
+  priceMonthlyMinor: number;
+  currency: 'brl';
+  promotionLabel?: string;
   tagline: string;
   features: string[];
 }
@@ -29,37 +31,29 @@ export const PLANS: PlanDef[] = [
   {
     id: 'free',
     name: 'Free',
-    priceMonthly: 0,
-    tagline: 'Para uso pessoal',
+    priceMonthlyMinor: 0,
+    currency: 'brl',
+    tagline: 'Sem prazo e sem cartão',
     features: [
-      'Grid + canvas ilimitados',
-      'Todas as CLIs locais',
-      'Squads e missões',
-      'Voz (suas próprias keys)',
+      'Terminal, editor e canvas locais',
+      'Todas as CLIs instaladas na máquina',
+      'Projetos e missões salvos localmente',
+      'Use suas próprias contas e chaves',
     ],
   },
   {
     id: 'pro',
     name: 'Pro',
-    priceMonthly: 19,
+    priceMonthlyMinor: PRO_MONTHLY_PRICE.unitAmount,
+    currency: PRO_MONTHLY_PRICE.currency,
+    promotionLabel: 'Preço promocional',
     tagline: 'Para quem opera todo dia',
     features: [
       'Tudo do Free',
       'Failover multi-conta avançado',
       'Squads ilimitados na nuvem',
+      'Sincronização entre máquinas',
       'Suporte prioritário',
-    ],
-  },
-  {
-    id: 'team',
-    name: 'Team',
-    priceMonthly: null,
-    tagline: 'Squads compartilhados no time',
-    features: [
-      'Tudo do Pro',
-      'Squads/playbooks compartilhados',
-      'Billing centralizado',
-      'Onboarding dedicado',
     ],
   },
 ];

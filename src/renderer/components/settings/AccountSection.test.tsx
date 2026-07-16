@@ -65,6 +65,26 @@ describe('AccountSection', () => {
     act(() => root.unmount());
   });
 
+  it('oferece somente Free permanente e Pro promocional em reais', async () => {
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const planCards = [...host.querySelectorAll<HTMLElement>('.account__plan')];
+    expect(planCards).toHaveLength(2);
+    expect(planCards.map((card) => card.textContent)).toEqual([
+      expect.stringContaining('Free'),
+      expect.stringContaining('Pro'),
+    ]);
+    expect(planCards[0].textContent).toContain('Sem prazo e sem cartão');
+    expect(planCards[1].textContent).toMatch(/R\$\s*59,99/);
+    expect(planCards[1].textContent).toContain('Preço promocional');
+    expect(planCards.some((card) => card.textContent?.includes('Team'))).toBe(false);
+    act(() => root.unmount());
+  });
+
   it('shows team zone and hides login when signed in', async () => {
     (window.nexus.billing.get as ReturnType<typeof vi.fn>).mockResolvedValue({
       plan: 'pro',

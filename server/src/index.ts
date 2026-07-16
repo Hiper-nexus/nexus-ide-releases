@@ -109,6 +109,18 @@ export function sanitizeRuntimeEnvironment(
   return { ...sanitized };
 }
 
+export function formatStartupFailure(
+  error: unknown,
+  environment: Readonly<Record<string, string | undefined>>,
+): string {
+  const message = error instanceof Error ? error.message : 'unknown startup error';
+  const redacted = SENSITIVE_ENV_KEYS.reduce((current, key) => {
+    const secret = environment[key];
+    return secret ? current.replaceAll(secret, '[redacted]') : current;
+  }, message);
+  return `[server] startup failed: ${redacted}`;
+}
+
 export async function startServer(
   rawEnvironment: Readonly<Record<string, string | undefined>>,
   dependencies: ServerBootDependencies,
@@ -233,8 +245,8 @@ async function runProductionServer(): Promise<void> {
 if (isMainModule(import.meta.url, process.argv[1])) {
   try {
     await runProductionServer();
-  } catch {
-    console.error('[server] startup failed: verify environment, database, and migrations');
+  } catch (error) {
+    console.error(formatStartupFailure(error, process.env));
     process.exitCode = 1;
   }
 }

@@ -63,7 +63,7 @@ import type { MediaProviderId } from '../shared/media-types';
 import { GAMIFICATION_CHANNELS } from '../shared/gamification-types';
 import type { GamificationSnapshot } from '../shared/gamification-types';
 import { BILLING_CHANNELS } from '../shared/billing-types';
-import type { CheckoutRequest, PlanId } from '../shared/billing-types';
+import type { CheckoutRequest } from '../shared/billing-types';
 import type { CostSnapshot } from '../shared/cost-types';
 import { NOTE_CHANNELS } from '../shared/note-types';
 import type { Note, NotesChangedEvent } from '../shared/note-types';
@@ -1094,7 +1094,7 @@ const api: NexusApi = {
   },
   billing: {
     get: () => ipcRenderer.invoke(BILLING_CHANNELS.get),
-    openCheckout: (request: PlanId | CheckoutRequest) =>
+    openCheckout: (request: CheckoutRequest['plan'] | CheckoutRequest) =>
       ipcRenderer.invoke(BILLING_CHANNELS.checkout, request),
     openPortal: () => ipcRenderer.invoke(BILLING_CHANNELS.portal),
   },

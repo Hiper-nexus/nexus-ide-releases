@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import {
   PLANS,
   type LicenseInfo,
+  type PlanDef,
   type PlanId,
   type TeamInfo,
 } from '../../../shared/billing-types';
+import type { PublicPlanId } from '../../../../shared/pricing';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
 
@@ -14,13 +16,18 @@ import { PixelIcon } from '../PixelIcon';
  * vê chaves de pagamento. Contas CLI (Claude/Codex/…) ficam em Providers.
  */
 
-function planPrice(price: number | null): string {
-  if (price === null) return 'fale conosco';
-  if (price === 0) return 'grátis';
-  return `US$ ${price}/mês`;
+function planPrice(plan: PlanDef): string {
+  if (plan.priceMonthlyMinor === 0) return 'Grátis para sempre';
+  const formatted = new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: plan.currency.toUpperCase(),
+    minimumFractionDigits: 2,
+  }).format(plan.priceMonthlyMinor / 100);
+  return `${formatted}/mês`;
 }
 
 function planName(id: PlanId): string {
+  if (id === 'team') return 'Team (legado)';
   return PLANS.find((p) => p.id === id)?.name ?? id;
 }
 
@@ -43,8 +50,6 @@ export function AccountSection() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState<'github' | 'google' | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
-  const [teamCheckoutName, setTeamCheckoutName] = useState('');
-  const [teamCheckoutSeats, setTeamCheckoutSeats] = useState(2);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,26 +187,15 @@ export function AccountSection() {
     await reloadTeam();
   };
 
-  const startCheckout = async (plan: PlanId) => {
+  const startCheckout = async (plan: PublicPlanId) => {
     setCheckoutError(null);
     if (plan === 'free') {
       setCheckoutError('Use o portal para alterar uma assinatura ativa.');
       return;
     }
-    if (plan === 'team' && !teamCheckoutName.trim()) {
-      setCheckoutError('Informe o nome do time para o checkout Team.');
-      return;
-    }
     setCheckoutBusy(true);
     try {
-      const result =
-        plan === 'team'
-          ? await window.nexus.billing.openCheckout({
-              plan,
-              teamName: teamCheckoutName.trim(),
-              seats: teamCheckoutSeats,
-            })
-          : await window.nexus.billing.openCheckout(plan);
+      const result = await window.nexus.billing.openCheckout(plan);
       if (!result.ok) {
         setCheckoutError(result.error ?? 'Não foi possível abrir o checkout.');
       }
@@ -438,12 +432,17 @@ export function AccountSection() {
             return (
               <article
                 key={plan.id}
-                className={`account__plan ${isCurrent ? 'account__plan--current' : ''}`}
+                className={`account__plan ${plan.id === 'pro' ? 'account__plan--featured' : ''} ${isCurrent ? 'account__plan--current' : ''}`}
               >
                 <div className="account__plan-head">
-                  <span className="account__plan-name">{plan.name}</span>
+                  <span className="account__plan-title-row">
+                    <span className="account__plan-name">{plan.name}</span>
+                    {plan.promotionLabel && (
+                      <span className="account__plan-promo">{plan.promotionLabel}</span>
+                    )}
+                  </span>
                   <span className="account__plan-price">
-                    {planPrice(plan.priceMonthly)}
+                    {planPrice(plan)}
                   </span>
                 </div>
                 <p className="account__plan-tagline">{plan.tagline}</p>
@@ -459,58 +458,24 @@ export function AccountSection() {
                     incluso
                   </span>
                 ) : (
-                  <>
-                    {plan.id === 'team' && (
-                      <div className="account__team-checkout">
-                        <label className="account__field-label" htmlFor="team-checkout-name">
-                          Nome do time
-                        </label>
-                        <label className="account__field-label" htmlFor="team-checkout-seats">
-                          Assentos
-                        </label>
-                        <input
-                          id="team-checkout-name"
-                          className="settings-input"
-                          placeholder="Nome do time"
-                          value={teamCheckoutName}
-                          onChange={(event) =>
-                            setTeamCheckoutName(event.target.value)
-                          }
-                        />
-                        <input
-                          id="team-checkout-seats"
-                          className="settings-input account__seats-input"
-                          min={2}
-                          max={100}
-                          type="number"
-                          value={teamCheckoutSeats}
-                          aria-label="Número de assentos"
-                          onChange={(event) => {
-                            const seats = Number(event.target.value);
-                            setTeamCheckoutSeats(
-                              Number.isFinite(seats) ? seats : 2,
-                            );
-                          }}
-                        />
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      className="settings-btn settings-btn--primary account__plan-cta"
-                      disabled={checkoutBusy}
-                      onClick={() => void startCheckout(plan.id)}
-                      title="Abre o checkout no navegador"
-                    >
-                      {checkoutBusy
-                        ? 'Abrindo…'
-                        : `Assinar ${plan.name}`}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn--primary account__plan-cta"
+                    disabled={checkoutBusy}
+                    onClick={() => void startCheckout(plan.id)}
+                    title="Abrir checkout seguro da Stripe"
+                  >
+                    {checkoutBusy ? 'Abrindo…' : `Assinar ${plan.name}`}
+                  </button>
                 )}
               </article>
             );
           })}
         </div>
+        <p className="account__zone-hint account__billing-note">
+          O Free não expira. O Pro é cobrado mensalmente em reais pela Stripe e
+          pode ser cancelado a qualquer momento no portal da assinatura.
+        </p>
       </div>
 
       {checkoutError && (

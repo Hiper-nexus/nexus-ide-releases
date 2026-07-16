@@ -57,7 +57,5 @@ export interface TeamInfo {
 }
 
 export interface CheckoutRequest {
-  plan: 'pro' | 'team';
-  seats?: number;
-  teamName?: string;
+  plan: 'pro';
 }

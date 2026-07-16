@@ -14,7 +14,6 @@ const FULL = {
   STRIPE_SECRET_KEY: 'sk_test_x',
   STRIPE_WEBHOOK_SECRET: 'whsec_x',
   STRIPE_PRICE_PRO: 'price_pro',
-  STRIPE_PRICE_TEAM: 'price_team',
   PUBLIC_SITE_URL: 'https://nexuside.app',
 };
 
@@ -43,7 +42,12 @@ describe('parseEnv', () => {
     expect(() => parseEnv({ ...FULL, STRIPE_SECRET_KEY: undefined } as never)).toThrow(/STRIPE_SECRET_KEY/);
     expect(() => parseEnv({ ...FULL, STRIPE_WEBHOOK_SECRET: undefined } as never)).toThrow(/STRIPE_WEBHOOK_SECRET/);
     expect(() => parseEnv({ ...FULL, STRIPE_PRICE_PRO: undefined } as never)).toThrow(/STRIPE_PRICE_PRO/);
-    expect(() => parseEnv({ ...FULL, STRIPE_PRICE_TEAM: undefined } as never)).toThrow(/STRIPE_PRICE_TEAM/);
+  });
+
+  it('aceita STRIPE_PRICE_TEAM apenas para compatibilidade com assinaturas legadas', () => {
+    expect(parseEnv({ ...FULL, STRIPE_PRICE_TEAM: 'price_team_legacy' }).STRIPE_PRICE_TEAM)
+      .toBe('price_team_legacy');
+    expect(parseEnv(FULL).STRIPE_PRICE_TEAM).toBeUndefined();
   });
 
   it('rejeita PUBLIC_SITE_URL que não é URL', () => {

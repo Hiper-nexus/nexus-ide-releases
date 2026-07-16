@@ -110,6 +110,33 @@ describe('webhook', () => {
     expect(fake.calls.retrieve).toEqual(['sub_1']);
   });
 
+  it('invoice.paid aceita o shape parent.subscription_details da API Dahlia', async () => {
+    const { db, env, accountId } = await setup();
+    const fake = makeFakeStripe({
+      event: {
+        id: 'evt_invoice_dahlia',
+        type: 'invoice.paid',
+        data: {
+          object: {
+            parent: {
+              type: 'subscription_details',
+              subscription_details: { subscription: 'sub_1' },
+            },
+          },
+        },
+      },
+      subscription: subState(accountId),
+    });
+    const app = appFor({ db, env, stripe: fake.stripe });
+
+    const r = await request(app).post('/v1/billing/webhook')
+      .set('stripe-signature', 's')
+      .send('{}');
+
+    expect(r.status).toBe(200);
+    expect(fake.calls.retrieve).toEqual(['sub_1']);
+  });
+
   it('evento sem subscription retorna 200 e marca como processado', async () => {
     const { db, env } = await setup();
     const fake = makeFakeStripe({

@@ -2,6 +2,7 @@ import type { Server } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  formatStartupFailure,
   isMainModule,
   sanitizeRuntimeEnvironment,
   startServer,
@@ -72,6 +73,15 @@ describe('server entrypoint', () => {
 
     expect(sanitized).toEqual({ SAFE_VALUE: 'kept' });
     expect(raw.GITHUB_PERSONAL_ACCESS_TOKEN).toBe('must-not-reach-runtime');
+  });
+
+  it('reports startup context without exposing configured secrets', () => {
+    const error = new Error('Stripe rejected sk_live_secret and whsec_secret');
+
+    expect(formatStartupFailure(error, {
+      STRIPE_SECRET_KEY: 'sk_live_secret',
+      STRIPE_WEBHOOK_SECRET: 'whsec_secret',
+    })).toBe('[server] startup failed: Stripe rejected [redacted] and [redacted]');
   });
 
   it('fails closed and releases the pool before listen when DB/schema is not ready', async () => {

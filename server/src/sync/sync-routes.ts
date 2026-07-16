@@ -9,6 +9,7 @@ import type { Db } from '../db/client';
 import { asyncHandler as ah } from '../middleware/errors';
 import { rateLimit } from '../middleware/rate-limit';
 import { requireAuth } from '../middleware/require-auth';
+import { requirePro } from '../middleware/require-pro';
 import {
   compareAndSwapSyncProject,
   readSyncProject,
@@ -38,6 +39,7 @@ export function buildSyncRouter(deps: {
 }): Router {
   const router = Router();
   const limiter = rateLimit({ windowMs: 60_000, max: 120 });
+  const paidOnly = requirePro(deps.db, deps.now);
   const service = { db: deps.db, now: deps.now, limits: deps.limits };
   router.use((_req, res, next) => {
     res.set('cache-control', 'no-store');
@@ -48,6 +50,7 @@ export function buildSyncRouter(deps: {
     '/sync/projects/:projectId',
     limiter,
     requireAuth(deps.db),
+    paidOnly,
     ah(async (req, res) => {
       const path = pathSchema.safeParse(req.params);
       if (!path.success) return invalidSyncState(res);
@@ -71,6 +74,7 @@ export function buildSyncRouter(deps: {
     '/sync/projects/:projectId',
     limiter,
     requireAuth(deps.db),
+    paidOnly,
     ah(async (req, res) => {
       const path = pathSchema.safeParse(req.params);
       const body = casBodySchema.safeParse(req.body);

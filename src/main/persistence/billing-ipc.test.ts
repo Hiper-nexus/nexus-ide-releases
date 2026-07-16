@@ -39,20 +39,16 @@ describe('registerBillingIpc', () => {
     });
   });
 
-  it('repassa nome e assentos no checkout Team', async () => {
+  it('repassa o checkout Pro como único plano pago', async () => {
     const handler = electronMock.handlers.get(BILLING_CHANNELS.checkout);
     expect(handler).toBeDefined();
 
-    const result = await handler?.(null, {
-      plan: 'team',
-      teamName: 'Core Ops',
-      seats: 7,
-    });
+    const result = await handler?.(null, { plan: 'pro' });
 
     expect(result).toEqual({ ok: true });
     expect(billingDeps.apiFetch).toHaveBeenCalledWith('/v1/billing/checkout', {
       method: 'POST',
-      body: { plan: 'team', teamName: 'Core Ops', seats: 7 },
+      body: { plan: 'pro' },
     });
     expect(electronMock.openExternal).toHaveBeenCalledWith(
       'https://checkout.example/session',
@@ -68,5 +64,14 @@ describe('registerBillingIpc', () => {
     expect(result).toEqual({ ok: false, error: 'plano inválido' });
     expect(billingDeps.apiFetch).not.toHaveBeenCalled();
     expect(electronMock.openExternal).not.toHaveBeenCalled();
+  });
+
+  it('recusa o plano Team legado no checkout', async () => {
+    const handler = electronMock.handlers.get(BILLING_CHANNELS.checkout);
+
+    const result = await handler?.(null, { plan: 'team', seats: 3 });
+
+    expect(result).toEqual({ ok: false, error: 'plano inválido' });
+    expect(billingDeps.apiFetch).not.toHaveBeenCalled();
   });
 });

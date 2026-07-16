@@ -6,16 +6,30 @@ import type { BillingDeps } from './billing-routes';
 import { applySubscriptionState } from './subscription-service';
 import type { StripeEvent } from './stripe-like';
 
+function stripeId(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (typeof value !== 'object' || value === null) return null;
+  const id = (value as { id?: unknown }).id;
+  return typeof id === 'string' ? id : null;
+}
+
 function subscriptionIdFrom(event: StripeEvent): string | null {
-  const object = event.data.object as { id?: unknown; subscription?: unknown };
+  const object = event.data.object as {
+    id?: unknown;
+    subscription?: unknown;
+    parent?: {
+      subscription_details?: { subscription?: unknown } | null;
+    } | null;
+  };
   if (event.type === 'checkout.session.completed') {
-    return typeof object.subscription === 'string' ? object.subscription : null;
+    return stripeId(object.subscription);
   }
   if (event.type.startsWith('customer.subscription.')) {
-    return typeof object.id === 'string' ? object.id : null;
+    return stripeId(object.id);
   }
   if (event.type.startsWith('invoice.')) {
-    return typeof object.subscription === 'string' ? object.subscription : null;
+    return stripeId(object.subscription)
+      ?? stripeId(object.parent?.subscription_details?.subscription);
   }
   return null;
 }

@@ -43,6 +43,25 @@ describe('applySubscriptionState', () => {
     expect(a.plan).toBe('pro');
   });
 
+  it('lê current_period_end do item no shape atual da API Dahlia', async () => {
+    const db = await makeTestDb();
+    const acc = await anAccount(db);
+    const periodEnd = Math.floor(Date.now() / 1000) + 172_800;
+    await applySubscriptionState(db, sub(acc, {
+      current_period_end: undefined,
+      items: {
+        data: [{
+          quantity: 1,
+          price: { id: 'price_pro' },
+          current_period_end: periodEnd,
+        }],
+      },
+    }), PRICES);
+
+    const [row] = await db.select().from(schema.subscriptions);
+    expect(row.currentPeriodEnd?.getTime()).toBe(periodEnd * 1000);
+  });
+
   it('past_due liga graceUntil (+7d) e MANTÉM o plano no cache', async () => {
     const db = await makeTestDb();
     const acc = await anAccount(db);
@@ -113,5 +132,18 @@ describe('applySubscriptionState', () => {
     expect(row.ownerType).toBe('team');
     expect(row.seats).toBe(5);
     expect(row.teamId).toBe(team.id);
+  });
+
+  it('recusa preço desconhecido em vez de conceder Pro por padrão', async () => {
+    const db = await makeTestDb();
+    const acc = await anAccount(db);
+
+    await expect(applySubscriptionState(db, sub(acc, {
+      items: { data: [{ quantity: 1, price: { id: 'price_outro' } }] },
+    }), PRICES)).rejects.toThrow(/price não autorizado/i);
+
+    expect(await db.select().from(schema.subscriptions)).toHaveLength(0);
+    const [account] = await db.select().from(schema.accounts).where(eq(schema.accounts.id, acc));
+    expect(account.plan).toBe('free');
   });
 });

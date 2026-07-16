@@ -10,7 +10,7 @@ import type { StripeSubscription } from './stripe-like';
  */
 
 export const GRACE_MS = 7 * 24 * 3600 * 1000;
-export type PriceMap = { pricePro: string; priceTeam: string };
+export type PriceMap = { pricePro: string; priceTeam?: string };
 
 export async function applySubscriptionState(
   db: Db,
@@ -18,10 +18,23 @@ export async function applySubscriptionState(
   prices: PriceMap,
   now: () => number = Date.now,
 ): Promise<void> {
-  const priceId = sub.items.data[0]?.price.id ?? '';
-  const plan = priceId === prices.priceTeam || sub.metadata.plan === 'team' ? 'team' : 'pro';
-  const teamId = sub.metadata.teamId || null;
-  const accountId = sub.metadata.accountId || null;
+  const subscriptionItem = sub.items.data[0];
+  const priceId = subscriptionItem?.price.id ?? '';
+  const plan = priceId === prices.pricePro
+    ? 'pro'
+    : prices.priceTeam && priceId === prices.priceTeam
+      ? 'team'
+      : null;
+  if (!plan) throw new Error(`Stripe price não autorizado: ${priceId || '(ausente)'}`);
+
+  const teamId = plan === 'team' ? sub.metadata.teamId || null : null;
+  const accountId = plan === 'pro' ? sub.metadata.accountId || null : null;
+  if (plan === 'pro' && !accountId) throw new Error('assinatura Pro sem accountId');
+  if (plan === 'team' && !teamId) throw new Error('assinatura Team legada sem teamId');
+  const currentPeriodEnd = subscriptionItem?.current_period_end ?? sub.current_period_end;
+  if (!Number.isFinite(currentPeriodEnd)) {
+    throw new Error('assinatura Stripe sem current_period_end válido');
+  }
 
   // Ancora a graça na primeira observação de past_due: se a linha já estava
   // past_due com graceUntil setado, REUSA esse valor (retries do Stripe não
@@ -46,8 +59,8 @@ export async function applySubscriptionState(
     stripeCustomerId: sub.customer,
     plan: plan as 'pro' | 'team',
     status: sub.status,
-    seats: sub.items.data[0]?.quantity ?? 1,
-    currentPeriodEnd: new Date(sub.current_period_end * 1000),
+    seats: subscriptionItem?.quantity ?? 1,
+    currentPeriodEnd: new Date(currentPeriodEnd! * 1000),
     graceUntil,
     updatedAt: new Date(now()),
   };

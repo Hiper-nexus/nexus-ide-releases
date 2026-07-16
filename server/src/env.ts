@@ -49,7 +49,8 @@ const schema = z.object({
   STRIPE_SECRET_KEY: z.string().min(1),
   STRIPE_WEBHOOK_SECRET: z.string().min(1),
   STRIPE_PRICE_PRO: z.string().min(1),
-  STRIPE_PRICE_TEAM: z.string().min(1),
+  /** Somente para processar assinaturas Team antigas; novos checkouts são Pro. */
+  STRIPE_PRICE_TEAM: z.string().min(1).optional(),
   PUBLIC_SITE_URL: z.string().url(),
   PORT: z.coerce.number().int().positive().default(8080),
 });

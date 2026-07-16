@@ -1,0 +1,11 @@
+[build]
+builder = "RAILPACK"
+buildCommand = "npm --workspace server run build"
+
+[deploy]
+preDeployCommand = ["npm --workspace server run db:migrate"]
+startCommand = "npm --workspace server run start"
+healthcheckPath = "/ready"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

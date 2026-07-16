@@ -11,5 +11,5 @@
     "rootDirs": ["src", "../shared"],
     "types": ["node"]
   },
-  "include": ["src/**/*", "../shared/**/*"]
+  "include": ["src/**/*", "scripts/provision-stripe.ts", "../shared/**/*"]
 }

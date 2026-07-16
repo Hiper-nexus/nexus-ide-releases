@@ -137,7 +137,6 @@ import type {
   CheckoutRequest,
   InviteInfo,
   LicenseState,
-  PlanId,
   TeamInfo,
 } from './billing-types';
 import type { IntegrationsApi } from './integrations-api';
@@ -271,7 +270,7 @@ export interface NexusApi {
   };
   billing: {
     get(): Promise<LicenseState>;
-    openCheckout(request: PlanId | CheckoutRequest): Promise<{ ok: boolean; error?: string }>;
+    openCheckout(request: CheckoutRequest['plan'] | CheckoutRequest): Promise<{ ok: boolean; error?: string }>;
     openPortal(): Promise<{ ok: boolean }>;
   };
   team: {

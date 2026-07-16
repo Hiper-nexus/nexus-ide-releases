@@ -318,7 +318,7 @@
 
 .account__plans {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
 }
 
@@ -337,11 +337,23 @@
   background: color-mix(in srgb, var(--accent) 6%, var(--bg));
 }
 
+.account__plan--featured {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+}
+
 .account__plan-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+}
+
+.account__plan-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
 }
 
 .account__plan-name {
@@ -351,8 +363,20 @@
 
 .account__plan-price {
   color: var(--accent);
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.account__plan-promo {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
 }
 
 .account__plan-tagline {
@@ -394,21 +418,13 @@
 .account__plan-cta {
   align-self: flex-start;
   margin-top: auto;
+  min-height: 40px;
+  padding-inline: 16px;
+  border-radius: var(--radius-round);
 }
 
-.account__team-checkout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 76px;
-  gap: 4px 8px;
-  align-items: end;
-}
-
-.account__team-checkout .account__field-label {
-  grid-row: 1;
-}
-
-.account__seats-input {
-  min-width: 0;
+.account__billing-note {
+  max-width: 68ch;
 }
 
 .account__note {
@@ -421,12 +437,9 @@
     align-items: flex-start;
   }
 
-  .account__team-checkout {
-    grid-template-columns: 1fr;
-  }
-
-  .account__team-checkout .account__field-label {
-    grid-row: auto;
+  .account__plan-head {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

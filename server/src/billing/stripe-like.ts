@@ -8,8 +8,16 @@ export interface StripeSubscription {
   id: string;
   customer: string;
   status: string; // active | trialing | past_due | canceled | ...
-  items: { data: Array<{ quantity?: number; price: { id: string } }> };
-  current_period_end: number; // epoch segundos
+  items: {
+    data: Array<{
+      quantity?: number;
+      price: { id: string };
+      /** API Dahlia (2026): período pertence ao SubscriptionItem. */
+      current_period_end?: number;
+    }>;
+  };
+  /** APIs anteriores à Dahlia expunham o período na Subscription. */
+  current_period_end?: number;
   metadata: Record<string, string>;
 }
 
@@ -17,6 +25,15 @@ export interface StripeEvent {
   id: string;
   type: string;
   data: { object: Record<string, unknown> };
+}
+
+export interface StripePrice {
+  id: string;
+  active: boolean;
+  currency: string;
+  unit_amount: number | null;
+  type: string;
+  recurring: { interval: string; interval_count: number } | null;
 }
 
 export interface StripeLike {
@@ -36,6 +53,9 @@ export interface StripeLike {
   subscriptions: {
     retrieve(id: string): Promise<StripeSubscription>;
   };
+  prices: {
+    retrieve(id: string): Promise<StripePrice>;
+  };
   webhooks: {
     constructEvent(body: Buffer | string, sig: string, secret: string): StripeEvent;
   };
@@ -44,12 +64,13 @@ export interface StripeLike {
 /** Fake p/ testes: grava chamadas e responde o que o teste programar. */
 export function makeFakeStripe(over: Partial<{
   subscription: StripeSubscription;
+  price: StripePrice;
   checkoutUrl: string;
   portalUrl: string;
   event: StripeEvent | Error;
 }> = {}) {
   const calls: Record<string, unknown[]> = {
-    customersCreate: [], checkoutCreate: [], portalCreate: [], retrieve: [],
+    customersCreate: [], checkoutCreate: [], portalCreate: [], retrieve: [], priceRetrieve: [],
   };
   const stripe: StripeLike = {
     customers: {
@@ -70,6 +91,19 @@ export function makeFakeStripe(over: Partial<{
         calls.retrieve.push(id);
         if (!over.subscription) throw new Error('fake: sem subscription programada');
         return over.subscription;
+      },
+    },
+    prices: {
+      retrieve: async (id) => {
+        calls.priceRetrieve.push(id);
+        return over.price ?? {
+          id,
+          active: true,
+          currency: 'brl',
+          unit_amount: 5_999,
+          type: 'recurring',
+          recurring: { interval: 'month', interval_count: 1 },
+        };
       },
     },
     webhooks: {

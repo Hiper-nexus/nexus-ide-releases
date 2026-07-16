@@ -87,18 +87,9 @@ export function currentPlan(): string {
 function normalizeCheckoutRequest(raw: unknown): CheckoutRequest | null {
   const req = (typeof raw === 'object' && raw !== null ? raw : { plan: raw }) as {
     plan?: unknown;
-    seats?: unknown;
-    teamName?: unknown;
   };
   if (req.plan === 'pro') return { plan: 'pro' };
-  if (req.plan !== 'team') return null;
-  return {
-    plan: 'team',
-    seats: typeof req.seats === 'number' && Number.isFinite(req.seats)
-      ? req.seats
-      : undefined,
-    teamName: typeof req.teamName === 'string' ? req.teamName : undefined,
-  };
+  return null;
 }
 
 function defaultBillingIpcDeps(): BillingIpcDeps {
