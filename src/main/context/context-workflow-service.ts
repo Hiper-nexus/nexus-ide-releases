@@ -33,6 +33,7 @@ import {
   type StoredMissionContract,
   type WorkflowActorIdentity,
 } from './context-workflow-store';
+import { Patch } from '../../vendor/omp/hashline/input';
 import { EventLedger } from './event-ledger';
 import { inspectGitBinding, bindingMatchesGit, type GitBindingSnapshot } from './git-binding';
 import { createWorkflowState, type EvidenceBinding, type WorkflowEvidence, type WorkflowState } from './prevc-engine';
@@ -1317,15 +1318,39 @@ export class ContextWorkflowService {
     if (workflow.stage !== 'execution') {
       throw new Error(`code mutation blocked during workflow stage ${workflow.stage}`);
     }
-    const pathValue = typeof args.path === 'string' ? args.path.replaceAll('\\', '/') : '';
-    if (
-      pathValue === '.context' ||
-      pathValue.startsWith('.context/')
-    ) {
-      throw new Error('versioned context authority is read-only to executors');
+    for (const candidate of mutationTargetPaths(args)) {
+      if (candidate === '.context' || candidate.startsWith('.context/')) {
+        throw new Error('versioned context authority is read-only to executors');
+      }
     }
     if (toolName === 'nexus_git_push' || toolName === 'nexus_git_pull') {
       throw new Error('mission Git integration must use the Nexus merge queue');
     }
   }
+}
+
+/**
+ * Todos os caminhos que uma mutação vai tocar, normalizados a forward-slash.
+ * Um patch hashline (`nexus_editor_apply_patch`) NÃO carrega o alvo em
+ * `args.path`: os paths vivem nos headers de seção `[path#TAG]` e no destino de
+ * `MV`. Sem extraí-los, o invariante PREVC de `.context/` read-only seria
+ * furado por um executor que escrevesse via patch. Parseamos com o mesmo
+ * `Patch.parse` do applier para não divergir do que de fato aterrissa em disco.
+ */
+function mutationTargetPaths(args: Readonly<Record<string, unknown>>): string[] {
+  const paths: string[] = [];
+  if (typeof args.path === 'string') paths.push(args.path);
+  if (typeof args.patch === 'string') {
+    try {
+      for (const section of Patch.parse(args.patch).sections) {
+        paths.push(section.path);
+        const op = section.fileOp;
+        if (op?.kind === 'move') paths.push(op.dest);
+      }
+    } catch {
+      // Patch ilegível: o applier vai rejeitá-lo adiante. Aqui não relaxamos o
+      // gate — apenas não temos paths extras a checar.
+    }
+  }
+  return paths.map((p) => p.replaceAll('\\', '/'));
 }

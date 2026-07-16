@@ -283,6 +283,19 @@ describe('native context workflow service', () => {
       path: '.context/docs/business-model.md',
     })).toThrow(/read-only/i);
 
+    // Patch hashline: o alvo vive no header de seção, não em args.path. O gate
+    // PREVC precisa extraí-lo, senão um executor escreveria em .context/ via patch.
+    expect(() => service.assertMutationAllowed('mission-a', 'nexus_editor_apply_patch', {
+      patch: '[src/ok.ts#1a2b]\nINS.TAIL:\n+// ok\n',
+    })).not.toThrow();
+    expect(() => service.assertMutationAllowed('mission-a', 'nexus_editor_apply_patch', {
+      patch: '[.context/config/policy.json#1a2b]\nINS.TAIL:\n+{}\n',
+    })).toThrow(/read-only/i);
+    // MV para dentro de .context/ também é bloqueado.
+    expect(() => service.assertMutationAllowed('mission-a', 'nexus_editor_apply_patch', {
+      patch: '[src/x.ts#1a2b]\nMV .context/x.ts\n',
+    })).toThrow(/read-only/i);
+
     expect(service.advance('mission-a', 'validation-primary').stage)
       .toBe('validation-primary');
     expect(() => service.assertMutationAllowed('mission-a', 'nexus_file_write', { path: 'src/a.ts' }))

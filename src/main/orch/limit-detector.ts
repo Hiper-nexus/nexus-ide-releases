@@ -4,13 +4,76 @@
  * unit tested. The failover engine feeds it a rolling window of recent output.
  */
 
-export type LimitKind = 'rate-limit' | 'quota' | 'auth';
+import {
+  backoffMsForReason,
+  classifyRateLimitText,
+  type ClassifiedReason,
+} from '../../vendor/omp/rate-limit/classify';
+import { parseRetryAfterMsFromText } from '../../vendor/omp/rate-limit/retry-after-text';
+import { parseAnthropicModelId } from '../../vendor/omp/catalog/identity';
+
+/**
+ * - 'quota': conta/plano esgotado — cooldown longo, pinta a janela Semanal.
+ * - 'rate-limit': janela rolante (5h) ou taxa por minuto — cooldown médio.
+ * - 'auth': credencial expirada/inválida — trocar de conta pode recuperar.
+ * - 'transient': blip do provedor (capacidade do modelo / 5xx) — cooldown de
+ *   SEGUNDOS; não é janela de uso (a conta volta sozinha).
+ */
+export type LimitKind = 'rate-limit' | 'quota' | 'auth' | 'transient';
 
 export interface LimitHit {
   kind: LimitKind;
   reason: string;
   /** Suggested cooldown in ms before this account is retried. */
   cooldownMs: number;
+  /**
+   * Escopo do bloqueio quando o erro menciona um modelo/tier específico
+   * (`tier:opus`, `tier:sonnet`, …). Ausente = limite da conta inteira.
+   * Um cooldown escopado NÃO tira a conta do pool para outros modelos.
+   */
+  scope?: string;
+}
+
+// Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT):
+// Claude escopa o bloco de credencial por tier do modelo (blockScope).
+// Aqui a extração é textual (PTY): id completo via identity classifier,
+// senão nome de família anthropic isolado perto do trecho que casou.
+
+/** Janela de vizinhança (chars) ao redor do match para procurar o modelo. */
+const TIER_NEAR_WINDOW = 160;
+
+/** `claude-opus-4-6` → `tier:opus`; não-anthropic/idéia vaga → undefined. */
+export function tierScopeFromModelId(modelId: string | undefined): string | undefined {
+  if (!modelId) return undefined;
+  const identity = parseAnthropicModelId(modelId);
+  return identity ? `tier:${identity.kind}` : undefined;
+}
+
+/** Nome de família anthropic isolado (o erro raramente ecoa o id completo). */
+const BARE_ANTHROPIC_FAMILY = /\b(opus|sonnet|haiku|fable|mythos)\b/i;
+/** Id de modelo Claude completo dentro do texto de erro. */
+const CLAUDE_MODEL_ID = /\bclaude-[a-z0-9][a-z0-9.-]*/i;
+
+/**
+ * Extrai `tier:<família>` do texto ao redor do trecho de erro que casou.
+ * Só considera a vizinhança do match para não capturar prosa distante do
+ * agente ("vou usar sonnet…") como escopo de um limite não relacionado.
+ */
+function extractAnthropicTierScope(
+  text: string,
+  matchIndex: number,
+  matchLength: number,
+): string | undefined {
+  const start = Math.max(0, matchIndex - TIER_NEAR_WINDOW);
+  const end = Math.min(text.length, matchIndex + matchLength + TIER_NEAR_WINDOW);
+  const near = text.slice(start, end);
+  const fullId = CLAUDE_MODEL_ID.exec(near);
+  if (fullId) {
+    const scoped = tierScopeFromModelId(fullId[0]);
+    if (scoped) return scoped;
+  }
+  const bare = BARE_ANTHROPIC_FAMILY.exec(near);
+  return bare ? `tier:${bare[1].toLowerCase()}` : undefined;
 }
 
 interface Pattern {
@@ -97,6 +160,8 @@ const PATTERNS: Pattern[] = [
 /**
  * Try to read an explicit reset time ("resets at 3pm", "try again in 42
  * minutes") to size the cooldown precisely; falls back to the pattern default.
+ * O parser vendorado do omp cobre as variantes extras (hint `retry-after-ms=`,
+ * headers ecoados no terminal, prosa "retry in 26.3s").
  */
 function parseResetCooldown(text: string): number | null {
   const mins = /try again in (\d+)\s*(?:minute|min)/i.exec(text);
@@ -105,7 +170,26 @@ function parseResetCooldown(text: string): number | null {
   if (secs) return Number(secs[1]) * 1000;
   const hrs = /(?:resets?|available again) in (\d+)\s*hour/i.exec(text);
   if (hrs) return Number(hrs[1]) * HOUR;
-  return null;
+  return parseRetryAfterMsFromText(text);
+}
+
+/** Mapeia a taxonomia do omp para os kinds do Nexus. */
+const KIND_BY_REASON: Record<ClassifiedReason, LimitKind> = {
+  QUOTA_EXHAUSTED: 'quota',
+  RATE_LIMIT_EXCEEDED: 'rate-limit',
+  MODEL_CAPACITY_EXHAUSTED: 'transient',
+  SERVER_ERROR: 'transient',
+};
+
+function cooldownForReason(reason: ClassifiedReason): number {
+  // Quota mantém a janela LONGA do Nexus (esgotou a conta → rotaciona e
+  // espera), não os 30min do omp — lá o valor era backoff de retry
+  // in-process, aqui é quarentena de conta na frota.
+  if (reason === 'QUOTA_EXHAUSTED') return 12 * HOUR;
+  // Transitórios usam as durações CURTAS do omp (30s / 45s+jitter / 20s):
+  // capacidade e 5xx se resolvem sozinhos; o cooldown longo de quota tiraria
+  // a conta da frota sem motivo.
+  return backoffMsForReason(reason);
 }
 
 export function detectLimit(text: string): LimitHit | null {
@@ -113,10 +197,33 @@ export function detectLimit(text: string): LimitHit | null {
     const match = pattern.re.exec(text);
     if (!match) continue;
     const parsed = parseResetCooldown(text);
+    const scope = extractAnthropicTierScope(text, match.index, match[0].length);
     return {
       kind: pattern.kind,
       reason: match[0].trim().slice(0, 120),
       cooldownMs: parsed ?? pattern.cooldownMs,
+      ...(scope ? { scope } : {}),
+    };
+  }
+  // Fonte ADICIONAL (vendored de oh-my-pi): taxonomia QUOTA / RATE_LIMIT /
+  // CAPACITY / SERVER sobre fraseologia de Anthropic/Google/xAI/provedores
+  // chineses que os padrões acima não cobrem. Os padrões legados têm
+  // precedência total — zero mudança de kind/cooldown para textos que eles
+  // já reconheciam.
+  const classified = classifyRateLimitText(text);
+  if (classified) {
+    const parsed = parseResetCooldown(text);
+    const matchedIndex = text.indexOf(classified.matched);
+    const scope = extractAnthropicTierScope(
+      text,
+      matchedIndex >= 0 ? matchedIndex : 0,
+      matchedIndex >= 0 ? classified.matched.length : 0,
+    );
+    return {
+      kind: KIND_BY_REASON[classified.reason],
+      reason: classified.matched.trim().slice(0, 120),
+      cooldownMs: parsed ?? cooldownForReason(classified.reason),
+      ...(scope ? { scope } : {}),
     };
   }
   return null;

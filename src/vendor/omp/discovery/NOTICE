@@ -1,0 +1,28 @@
+Este diretório vendoriza uma adaptação enxuta da camada de descoberta de
+configs de ecossistemas de agente do projeto oh-my-pi (omp).
+
+  Fonte:    https://github.com/can1357/oh-my-pi
+            packages/coding-agent/src/{discovery,capability}/
+            commit 03c48d073bd4849726cc14750b5aecfa310bdf26 (pinado)
+  Licença:  MIT
+  Copyright (c) 2025 Mario Zechner
+  Copyright (c) 2025-2026 Can Bölük
+
+Modificações locais (NexusIDE, integração oh-my-pi × NexusIDE — entrega B4):
+  - Escopo reduzido às 4 capabilities da v1 do Nexus: MCP servers,
+    context/rule files, skills e slash commands (das 13 do omp).
+  - Providers portados: claude (80), codex (70), gemini (60), cursor (50),
+    cline (40), copilot/github (30), agents-md (10), mcp-json (5).
+    opencode (55), windsurf (50) e vscode (20) ficam para uma próxima onda;
+    a tabela de prioridades completa é preservada em types.ts.
+  - Removida a dependência de Bun/pi-utils/pi-natives: fs síncrono de
+    node:fs, parser de frontmatter mínimo local, walker recursivo local com
+    limite de profundidade e skip de node_modules/.git (sem glob nativo).
+  - Registry dinâmico de capabilities/providers substituído por uma lista
+    estática ordenada por prioridade com dedup first-wins (index.ts).
+  - Cache de fs trocado por um FsProbe que grava fingerprint de mtimes para
+    invalidação barata pelo serviço consumidor (fs-probe.ts).
+  - Varredura restrita a workspaceRoot + home do usuário (sem walk-up de
+    ancestrais além da raiz do workspace).
+  - Expansão de env vars (${VAR} / ${VAR:-default}) preservada nos configs
+    de MCP; valores de env/keys nunca são logados por este código.

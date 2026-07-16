@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useOmpRpcStore } from '../state/omp-rpc-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
@@ -95,6 +96,8 @@ export function WorkspaceBar({
 
   const orchPanelOpen = useOrchStore((s) => s.panelOpen);
   const toggleOrchPanel = useOrchStore((s) => s.togglePanel);
+  const ompPanelOpen = useOmpRpcStore((s) => s.panelOpen);
+  const toggleOmpPanel = useOmpRpcStore((s) => s.togglePanel);
   const opsBoardOpen = useOrchStore((s) => s.boardOpen);
   const toggleOpsBoard = useOrchStore((s) => s.toggleBoard);
   const missions = useOrchStore((s) => s.missions);
@@ -296,6 +299,14 @@ export function WorkspaceBar({
       title: 'Missões, handoffs, tarefas e squads',
       active: orchPanelOpen,
       onClick: toggleOrchPanel,
+    },
+    {
+      id: 'omp',
+      label: 'OMP RPC',
+      icon: 'agent',
+      title: 'Sessão oh-my-pi nativa via RPC (sem PTY)',
+      active: ompPanelOpen,
+      onClick: toggleOmpPanel,
     },
   ];
 

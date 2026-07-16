@@ -447,8 +447,20 @@ function sessionIdOf(
   return pane.sessionId;
 }
 
-async function handleAuthedMessage(
-  msg: ReturnType<typeof command>,
+/** Shape das mensagens autenticadas aceitas pelo dispatch da bridge. */
+export type AuthedBridgeCommand = {
+  id?: string;
+  type: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Dispatch autenticado da bridge. Exportado para o transporte relay do
+ * companion (companion-relay-transport) reutilizar o MESMO caminho de RPC —
+ * a mobile-companion-policy continua sendo a autoridade aqui dentro.
+ */
+export async function handleAuthedMessage(
+  msg: AuthedBridgeCommand,
   scope: ProjectExecutionScope,
 ) {
   // Defesa em profundidade do companion mobile: RPCs modelados pela política

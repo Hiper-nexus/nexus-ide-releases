@@ -64,6 +64,7 @@ const REQUIRES_EXPLICIT_ALLOW = new Set([
 
 const ORCHESTRATOR_DENIED_TOOLS = new Set([
   "file_write", "editor_insert", "editor_replace_selection",
+  "editor_apply_patch",
   "terminal_run", "terminal_kill", "git_add", "git_commit", "git_push",
   "git_pull", "git_branch_create", "git_branch_switch",
   "image_generate", "video_generate", "audio_generate",

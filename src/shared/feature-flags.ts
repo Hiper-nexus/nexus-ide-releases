@@ -73,7 +73,11 @@ export const FEATURE_FLAG_IDS = {
   mcpHub: 'feature.mcp.hub',
   skillsCatalog: 'feature.skills.catalog',
   nexusMemory: 'feature.memory.nexusMemory',
+  /** Memória agentic por workspace (retain/recall FTS5) — entrega C2. */
+  workspaceMemory: 'feature.memory.workspaceMemory',
   autonomyProfiles: 'feature.autonomy.profiles',
+  /** E2E relay transport for the mobile companion (blind relay + AES-256-GCM). */
+  remoteRelayTransport: 'feature.remote.relayTransport',
   /** Deterministic parallel mission task scheduler (worktree fan-out). */
   parallelScheduler: 'orch.parallelScheduler',
 } as const;
@@ -194,12 +198,36 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     defaultEnabled: false,
   },
   {
+    id: FEATURE_FLAG_IDS.workspaceMemory,
+    owner: 'memory',
+    description:
+      'Workspace-scoped agentic memory (retain/recall/stats) over SQLite FTS5, shared by all hosted CLIs; derived from oh-my-pi mnemopi design.',
+    channel: 'dev',
+    createdAt: '2026-07-15',
+    removeAfter: '2026-12-31',
+    killSwitch: false,
+    telemetry: true,
+    defaultEnabled: false,
+  },
+  {
     id: FEATURE_FLAG_IDS.autonomyProfiles,
     owner: 'security',
     description: 'Explicit Inspect/Edit/Autonomous/Custom autonomy profiles.',
     channel: 'dev',
     createdAt: '2026-07-13',
     removeAfter: '2026-12-31',
+    killSwitch: false,
+    telemetry: true,
+    defaultEnabled: false,
+  },
+  {
+    id: FEATURE_FLAG_IDS.remoteRelayTransport,
+    owner: 'remote',
+    description:
+      'E2E transport for the mobile companion: blind relay rooms + AES-256-GCM sealed frames (oh-my-pi wire). Relay URL must be configured explicitly; never defaults to a public relay.',
+    channel: 'dev',
+    createdAt: '2026-07-15',
+    removeAfter: '2027-06-30',
     killSwitch: false,
     telemetry: true,
     defaultEnabled: false,

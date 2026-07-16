@@ -1,8 +1,10 @@
-import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { buildEditorTools } from '../tools-editor';
+import { buildFileTools } from '../tools-files';
+import { resetHashlineSessions } from '../../editor/hashline-session';
 import { testProjectScope } from './scope-fixture';
 
 const workspace = vi.hoisted(() => ({ current: '' }));
@@ -107,6 +109,181 @@ describe('tools-editor', () => {
     const result = await goto.handler({ path: 'app.ts', line: 3 }, fakeCtx());
     expect(result).toHaveProperty('lineContent', 'const z = 3;');
     expect(result).toHaveProperty('totalLines', 3);
+  });
+});
+
+describe('nexus_editor_apply_patch (hashline patch bus)', () => {
+  const applyTool = () =>
+    buildEditorTools().find((t) => t.name === 'nexus_editor_apply_patch')!;
+  const readTool = () =>
+    buildFileTools().find((t) => t.name === 'nexus_file_read')!;
+
+  beforeAll(() => {
+    workspace.current = wsDir;
+    fs.mkdirSync(wsDir, { recursive: true });
+  });
+
+  beforeEach(() => {
+    resetHashlineSessions();
+    fs.writeFileSync(
+      path.join(wsDir, 'patch-me.ts'),
+      'alpha\nbeta\ngamma\n',
+      'utf-8',
+    );
+    fs.writeFileSync(path.join(wsDir, 'other.ts'), 'one\ntwo\n', 'utf-8');
+  });
+
+  it('nexus_file_read hashline mode mints a [path#TAG] header with numbered lines', async () => {
+    const result = (await readTool().handler(
+      { path: 'patch-me.ts', hashline: true },
+      fakeCtx(),
+    )) as { header: string; tag: string; content: string; totalLines: number };
+    expect(result.tag).toMatch(/^[0-9A-F]{4}$/);
+    expect(result.header).toBe(`[patch-me.ts#${result.tag}]`);
+    expect(result.content.split('\n')[0]).toBe(result.header);
+    expect(result.content).toContain('1:alpha');
+    expect(result.content).toContain('3:gamma');
+    expect(result.totalLines).toBe(4);
+  });
+
+  it('applies a read-then-patch round trip through the workspace primitives', async () => {
+    const read = (await readTool().handler(
+      { path: 'patch-me.ts', hashline: true },
+      fakeCtx(),
+    )) as { header: string };
+    const patch = `${read.header}\nSWAP 2.=2:\n+BETA`;
+
+    const result = (await applyTool().handler({ patch }, fakeCtx())) as {
+      files: number;
+      applied: Array<{ path: string; op: string; edits: number; header: string }>;
+      summary: string;
+    };
+
+    expect(result.files).toBe(1);
+    expect(result.applied[0].path).toBe('patch-me.ts');
+    expect(result.applied[0].op).toBe('update');
+    expect(result.applied[0].edits).toBeGreaterThan(0);
+    expect(result.applied[0].header).toMatch(/^\[patch-me\.ts#[0-9A-F]{4}\]$/);
+    expect(result.summary).toContain('patch-me.ts');
+    expect(fs.readFileSync(path.join(wsDir, 'patch-me.ts'), 'utf-8')).toBe(
+      'alpha\nBETA\ngamma\n',
+    );
+  });
+
+  it('rejects a stale tag with the mismatch context and leaves the file untouched', async () => {
+    const read = (await readTool().handler(
+      { path: 'patch-me.ts', hashline: true },
+      fakeCtx(),
+    )) as { header: string };
+    // External drift after the read (rewrites the anchored line).
+    fs.writeFileSync(
+      path.join(wsDir, 'patch-me.ts'),
+      'alpha\nCHANGED\ngamma\ndelta\n',
+      'utf-8',
+    );
+
+    await expect(
+      applyTool().handler({ patch: `${read.header}\nSWAP 2.=2:\n+BETA` }, fakeCtx()),
+    ).rejects.toThrow(/file changed between read and edit/);
+    expect(fs.readFileSync(path.join(wsDir, 'patch-me.ts'), 'utf-8')).toBe(
+      'alpha\nCHANGED\ngamma\ndelta\n',
+    );
+  });
+
+  it('applies multi-file patches all-or-nothing: one bad section aborts every write', async () => {
+    const readA = (await readTool().handler(
+      { path: 'patch-me.ts', hashline: true },
+      fakeCtx(),
+    )) as { header: string };
+    const patch = [
+      readA.header,
+      'SWAP 1.=1:',
+      '+ALPHA',
+      // Second section carries a fabricated tag: prepare must fail before ANY write.
+      '[other.ts#0000]',
+      'SWAP 1.=1:',
+      '+ONE',
+    ].join('\n');
+
+    await expect(applyTool().handler({ patch }, fakeCtx())).rejects.toThrow(
+      /Edit rejected/,
+    );
+    expect(fs.readFileSync(path.join(wsDir, 'patch-me.ts'), 'utf-8')).toBe(
+      'alpha\nbeta\ngamma\n',
+    );
+    expect(fs.readFileSync(path.join(wsDir, 'other.ts'), 'utf-8')).toBe(
+      'one\ntwo\n',
+    );
+  });
+
+  it('applies a valid multi-file patch and reports one section per file', async () => {
+    const readA = (await readTool().handler(
+      { path: 'patch-me.ts', hashline: true },
+      fakeCtx(),
+    )) as { header: string };
+    const readB = (await readTool().handler(
+      { path: 'other.ts', hashline: true },
+      fakeCtx(),
+    )) as { header: string };
+    const patch = [
+      readA.header,
+      'SWAP 1.=1:',
+      '+ALPHA',
+      readB.header,
+      'INS.TAIL:',
+      '+three',
+    ].join('\n');
+
+    const result = (await applyTool().handler({ patch }, fakeCtx())) as {
+      files: number;
+      applied: Array<{ path: string }>;
+    };
+
+    expect(result.files).toBe(2);
+    expect(result.applied.map((s) => s.path).sort()).toEqual([
+      'other.ts',
+      'patch-me.ts',
+    ]);
+    expect(fs.readFileSync(path.join(wsDir, 'patch-me.ts'), 'utf-8')).toBe(
+      'ALPHA\nbeta\ngamma\n',
+    );
+    expect(fs.readFileSync(path.join(wsDir, 'other.ts'), 'utf-8')).toBe(
+      'one\ntwo\nthree\n',
+    );
+  });
+
+  it('rejects edits anchored on lines the hashline read never displayed', async () => {
+    const read = (await readTool().handler(
+      { path: 'patch-me.ts', hashline: true, offset: 1, limit: 1 },
+      fakeCtx(),
+    )) as { header: string; lines: number };
+    expect(read.lines).toBe(1);
+
+    await expect(
+      applyTool().handler({ patch: `${read.header}\nSWAP 3.=3:\n+GAMMA` }, fakeCtx()),
+    ).rejects.toThrow(/never displayed/);
+  });
+
+  it('keeps session snapshot stores isolated by gate token', async () => {
+    const read = (await readTool().handler(
+      { path: 'patch-me.ts', hashline: true },
+      fakeCtx(),
+    )) as { header: string };
+
+    // Another session did not mint this tag; content hash still matches the
+    // live file, so the patch applies on hash identity (tags are content-derived).
+    const otherCtx = { ...fakeCtx(), token: 'other-session' };
+    const result = (await applyTool().handler(
+      { patch: `${read.header}\nSWAP 2.=2:\n+BETA` },
+      otherCtx,
+    )) as { applied: Array<{ op: string }> };
+    expect(result.applied[0].op).toBe('update');
+  });
+
+  it('rejects a patch without any [path#TAG] section', async () => {
+    await expect(
+      applyTool().handler({ patch: 'SWAP 1.=1:\n+X' }, fakeCtx()),
+    ).rejects.toThrow(/must begin with/);
   });
 });
 

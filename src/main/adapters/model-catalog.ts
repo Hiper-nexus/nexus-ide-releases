@@ -9,6 +9,12 @@ import type {
   ModelInfoMap,
 } from '../../shared/adapter-types';
 import publishedCatalogRaw from '../../../resources/model-catalog.json';
+import { bareModelId } from '../../vendor/omp/catalog/identity';
+import {
+  RICH_MODEL_CATALOG,
+  findRichModelInProvider,
+  type RichModelEntry,
+} from '../../vendor/omp/catalog/rich-models';
 
 export interface AdapterModelCatalog {
   models?: ModelCatalogEntryInfo[];
@@ -419,4 +425,83 @@ export function modelInfoForAdapter(
     if (entry) info[model] = entry;
   }
   return info;
+}
+
+// ---------------------------------------------------------------------------
+// Metadados ricos (recorte vendorado do oh-my-pi — src/vendor/omp/catalog/)
+//
+// Camada ADITIVA e read-only: resolve preço USD/MTok, contextWindow, maxTokens
+// e capacidades a partir do catálogo vendorado. Não participa (nem altera) o
+// schema availability/costTier acima — quem roteia continua usando o
+// ModelCatalog em camadas; isto é fonte de verdade complementar para UI/custo.
+//
+// PENDÊNCIA (renderer): o único canal de catálogo hoje é adapter:list →
+// AdapterInfo[], cujo models.info usa o schema compartilhado
+// ModelCatalogEntryInfo — expor o metadado rico exigiria mudar esse schema.
+// Por ora a função fica pronta no main; expor via IPC é entrega futura.
+// ---------------------------------------------------------------------------
+
+/** Metadado rico resolvido + provider omp de onde o match veio. */
+export interface RichModelMetadata extends RichModelEntry {
+  /** Provider do catálogo omp que forneceu o metadado (ex.: 'anthropic', 'xai'). */
+  ompProvider: string;
+}
+
+/**
+ * Adapter Nexus → providers omp candidatos, em ordem de preferência.
+ * `omp` não aparece aqui: seus ids carregam o prefixo `provider/` e são
+ * resolvidos direto pelo prefixo (ex.: `zai/glm-5` → provider `zai`).
+ */
+const OMP_PROVIDERS_BY_ADAPTER: Record<string, readonly string[]> = {
+  claude: ['anthropic'],
+  codex: ['openai-codex', 'openai'],
+  glm: ['zai', 'zhipu-coding-plan'],
+  kimi: ['kimi-code', 'moonshot'],
+  grok: ['xai'],
+  // agy expõe gemini-* e também claude-*-thinking — anthropic entra como
+  // fallback para o strip de `-thinking` resolver preço/janela.
+  agy: ['google-gemini-cli', 'google', 'anthropic'],
+};
+
+function toRichMetadata(ompProvider: string, entry: RichModelEntry): RichModelMetadata {
+  return { ...entry, ompProvider };
+}
+
+/**
+ * Resolve metadados ricos (preço, janela, capacidades) para um modelo de um
+ * adapter Nexus. Fuzzy leve por provider (case-insensitive, strip de sufixo de
+ * data/thinking/esforço, expansão de snapshot) — ver
+ * src/vendor/omp/catalog/rich-models.ts. Retorna null quando o modelo não
+ * existe no recorte vendorado.
+ */
+export function getRichModelMetadata(
+  adapterId: string,
+  modelId: string | undefined,
+): RichModelMetadata | null {
+  if (!modelId) return null;
+  const trimmed = modelId.trim();
+  if (trimmed.length === 0) return null;
+
+  // 1. Prefixo `provider/` explícito (adapter omp e ids tipo
+  //    `kimi-code/kimi-for-coding`): resolve direto no provider indicado.
+  const slash = trimmed.indexOf('/');
+  if (slash > 0) {
+    const prefix = trimmed.slice(0, slash);
+    if (RICH_MODEL_CATALOG[prefix]) {
+      const entry = findRichModelInProvider(prefix, trimmed.slice(slash + 1));
+      if (entry) return toRichMetadata(prefix, entry);
+    }
+  }
+
+  // 2. Cadeia de providers do adapter, com o id como veio e como "bare"
+  //    (sem namespace) quando o prefixo não é um provider do recorte.
+  const bare = bareModelId(trimmed);
+  for (const providerId of OMP_PROVIDERS_BY_ADAPTER[adapterId] ?? []) {
+    const entry =
+      findRichModelInProvider(providerId, trimmed) ??
+      (bare !== trimmed ? findRichModelInProvider(providerId, bare) : null);
+    if (entry) return toRichMetadata(providerId, entry);
+  }
+
+  return null;
 }

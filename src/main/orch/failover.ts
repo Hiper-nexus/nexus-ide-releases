@@ -1,5 +1,9 @@
 import type { WebContents } from 'electron';
-import { ACCOUNT_CHANNELS, type FailoverEvent } from '../../shared/account-types';
+import {
+  ACCOUNT_CHANNELS,
+  type Account,
+  type FailoverEvent,
+} from '../../shared/account-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { tapSessionData, tapSessionExit } from '../pty/pty-manager';
 import {
@@ -12,11 +16,12 @@ import {
   getOwnedPaneAuthzInfoBySession,
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
-import { detectLimit } from './limit-detector';
+import { detectLimit, tierScopeFromModelId, type LimitHit } from './limit-detector';
 import {
   getAccount,
   getActiveAccount,
-  pickAvailable,
+  isAccountBlockedForScope,
+  pickAvailableForFailover,
   prepareAccountForSpawn,
   setCooldown,
 } from '../persistence/account-store';
@@ -43,6 +48,15 @@ const WINDOW_CHARS = 4000;
 const REARM_MS = 30_000;
 /** Reuse the same A→B decision for concurrent panes hitting the same limit. */
 const COALESCE_MS = 5_000;
+// Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT)
+// + docs/non-compaction-retry-policy.md: espera-pela-irmã em vez da janela
+// multi-hora — retry em min(fim do próprio cooldown, retryAtMs da irmã) + 1s.
+/** Folga após o instante de liberação para a credencial existir de fato. */
+const RETRY_BUFFER_MS = 1_000;
+/** Piso entre re-agendamentos (mesmo espírito do rearm de 30s do watch). */
+const RETRY_MIN_RESCHEDULE_MS = REARM_MS;
+/** Teto de re-agendamentos por watch — evita timer eterno em pool morto. */
+const MAX_SCHEDULED_RETRIES = 8;
 
 interface CoalesceEntry {
   toAccountId: string;
@@ -52,6 +66,14 @@ interface CoalesceEntry {
 
 /** adapterId\0fromAccountId → recent replacement. */
 const coalesceByFrom = new Map<string, CoalesceEntry>();
+
+interface ScheduledRetry {
+  timer: ReturnType<typeof setTimeout>;
+  authority: FailoverAuthority;
+}
+
+/** watchKey → retry agendado esperando a irmã (ou o próprio cooldown) liberar. */
+const pendingRetries = new Map<string, ScheduledRetry>();
 
 interface SessionWatch {
   readonly authority: FailoverAuthority;
@@ -131,6 +153,13 @@ function isCurrentAuthority(authority: FailoverAuthority): boolean {
   );
 }
 
+function cancelScheduledRetry(key: string): void {
+  const pending = pendingRetries.get(key);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingRetries.delete(key);
+}
+
 function cleanupOwner(
   owner: WebContents,
   scope?: ProjectExecutionScope,
@@ -141,6 +170,14 @@ function cleanupOwner(
       (!scope || sameProjectScope(watch.authority.scope, scope))
     ) {
       watches.delete(key);
+    }
+  }
+  for (const [key, pending] of [...pendingRetries]) {
+    if (
+      pending.authority.owner === owner &&
+      (!scope || sameProjectScope(pending.authority.scope, scope))
+    ) {
+      cancelScheduledRetry(key);
     }
   }
 }
@@ -191,6 +228,300 @@ function emitFailover(
   requestMissionDriverTick();
 }
 
+/** Prefer freer cota among eligible accounts when fleet snapshot exists. */
+function quotaScoresFor(adapterId: string): Map<string, number> | undefined {
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    if (!snap) return undefined;
+    const quotaScores = new Map<string, number>();
+    for (const e of snap.entries) {
+      if (e.adapterId === adapterId && e.accountId) {
+        quotaScores.set(e.accountId, quotaAvailabilityScore(e));
+      }
+    }
+    return quotaScores;
+  } catch {
+    /* quota service optional at boot race */
+    return undefined;
+  }
+}
+
+interface SwitchRequest {
+  /** watchKey — chave do retry agendado deste pane. */
+  key: string;
+  authority: FailoverAuthority;
+  paneId: string;
+  adapterId: string;
+  /** Modelo do pane (escopo tier da seleção quando anthropic). */
+  paneModel: string | undefined;
+  hit: LimitHit;
+  now: number;
+  /** Conta exausta/pinada (origem do failover), quando conhecida. */
+  current: Account | null;
+  /** Conta a excluir da seleção (a que acabou de estourar) ou null (retry). */
+  excludeId: string | null;
+  /** Instante em que a PRÓPRIA conta libera (para a espera-pela-irmã). */
+  ownUnblockAtMs: number | undefined;
+  /** 0 = hit original; >0 = retry agendado (falha silenciosa, re-agenda). */
+  attempt: number;
+  /** Sufixo pt-BR no reason do evento (ex.: retry automático). */
+  reasonSuffix: string;
+}
+
+/**
+ * Núcleo da decisão de failover: coalesce → seleção escopo-ciente (com
+ * sondagem last-resort) → prepare (com um alternate) → evento. Quando nada
+ * está livre, agenda a espera-pela-irmã em vez de desistir.
+ */
+function performSwitch(req: SwitchRequest): void {
+  const { key, authority, paneId, adapterId, hit, now, current, attempt } = req;
+  const fromLabel = current?.label ?? adapterId;
+  const fromAccountId = current?.id;
+  // Escopo da seleção: tier do modelo do pane; senão o tier citado no erro.
+  const selectionScope = tierScopeFromModelId(req.paneModel) ?? hit.scope;
+
+  const coalesceKey = `${adapterId}\0${fromAccountId ?? '_'}`;
+  let coalesced = false;
+  let probe = false;
+  let next: Account | null = null;
+  let nextUnblockAtMs: number | undefined;
+  const recent = coalesceByFrom.get(coalesceKey);
+  if (recent && recent.expiresAt > now) {
+    const reused = getAccount(recent.toAccountId);
+    if (
+      reused &&
+      reused.adapterId === adapterId &&
+      !isAccountBlockedForScope(reused.id, now, selectionScope)
+    ) {
+      next = reused;
+      coalesced = true;
+    } else {
+      // Stale/bad coalesce entry — drop so we re-pick.
+      coalesceByFrom.delete(coalesceKey);
+    }
+  }
+
+  const quotaScores = quotaScoresFor(adapterId);
+
+  if (!next) {
+    const selection = pickAvailableForFailover(
+      adapterId,
+      req.excludeId,
+      now,
+      quotaScores,
+      { allowProbe: true, ...(selectionScope ? { scope: selectionScope } : {}) },
+    );
+    next = selection.account;
+    probe = selection.probe;
+    nextUnblockAtMs = selection.nextUnblockAtMs;
+  }
+
+  // Pin-only prepare; never record coalesce until a target is spawnable.
+  // On prepare failure, drop poisoned coalesce and try one alternate.
+  let prepareError: string | undefined;
+  if (next) {
+    let prepared = prepareAccountForSpawn(adapterId, next.id, now, {
+      allowCoolingProbe: probe,
+    });
+    if (!prepared.ok) {
+      prepareError = prepared.error;
+      console.warn('[failover] next account not spawnable:', prepared.error);
+      coalesceByFrom.delete(coalesceKey);
+      coalesced = false;
+      const failedId = next.id;
+      // Alternate sem probe: a sondagem (se houve) já foi consumida.
+      const alternate = pickAvailableForFailover(
+        adapterId,
+        failedId,
+        now,
+        quotaScores,
+        selectionScope ? { scope: selectionScope } : undefined,
+      );
+      next = alternate.account;
+      probe = false;
+      if (nextUnblockAtMs === undefined) {
+        nextUnblockAtMs = alternate.nextUnblockAtMs;
+      }
+      if (next) {
+        prepared = prepareAccountForSpawn(adapterId, next.id, now);
+        if (!prepared.ok) {
+          prepareError = prepared.error;
+          next = null;
+        } else {
+          prepareError = undefined;
+        }
+      } else {
+        next = null;
+      }
+    }
+  }
+
+  if (!next) {
+    // Espera-pela-irmã (política do omp): retry automático em
+    // min(fim do cooldown da própria conta, menor blockedUntil das irmãs)+1s
+    // em vez de desistir ou esperar a janela multi-hora do provedor.
+    const retryTarget = Math.min(
+      req.ownUnblockAtMs ?? Number.POSITIVE_INFINITY,
+      nextUnblockAtMs ?? Number.POSITIVE_INFINITY,
+    );
+    let scheduledRetryAtMs: number | undefined;
+    if (Number.isFinite(retryTarget) && attempt < MAX_SCHEDULED_RETRIES) {
+      scheduledRetryAtMs = retryTarget + RETRY_BUFFER_MS;
+      scheduleFailoverRetry(key, authority, hit, scheduledRetryAtMs, attempt + 1);
+    }
+    console.info(
+      '[failover]',
+      JSON.stringify({
+        paneId,
+        adapterId,
+        fromAccountId: fromAccountId ?? null,
+        toAccountId: null,
+        reason: hit.reason,
+        switched: false,
+        prepareError: prepareError ?? null,
+        nextUnblockAtMs: nextUnblockAtMs ?? null,
+        scheduledRetryAtMs: scheduledRetryAtMs ?? null,
+        attempt,
+      }),
+    );
+    // Retries agendados falham em silêncio (o evento original já informou a
+    // UI); só o hit original emite switched:false.
+    if (attempt > 0) return;
+    emitFailover(authority, {
+      paneId,
+      fromAccountLabel: fromLabel,
+      toAccountLabel: '',
+      reason: prepareError
+        ? `${hit.reason} (falha na conta: ${prepareError})`
+        : hit.reason,
+      switched: false,
+      fromAccountId,
+      missionId: authority.missionId,
+      ...(nextUnblockAtMs !== undefined ? { nextUnblockAtMs } : {}),
+      ...(scheduledRetryAtMs !== undefined ? { scheduledRetryAtMs } : {}),
+    });
+    return;
+  }
+
+  // Only after successful prepare: share this A→B decision with concurrent
+  // panes. Sondagens nunca entram no coalesce: é UMA request de teste, não um
+  // destino saudável para a rajada inteira.
+  if (!coalesced && !probe) {
+    coalesceByFrom.set(coalesceKey, {
+      toAccountId: next.id,
+      toLabel: next.label,
+      expiresAt: now + COALESCE_MS,
+    });
+  }
+
+  const crossAccount = Boolean(
+    fromAccountId ? fromAccountId !== next.id : true,
+  );
+
+  console.info(
+    '[failover]',
+    JSON.stringify({
+      paneId,
+      adapterId,
+      fromAccountId: fromAccountId ?? null,
+      toAccountId: next.id,
+      reason: hit.reason,
+      switched: true,
+      crossAccount,
+      coalesced,
+      probe,
+      attempt,
+      missionId: authority.missionId ?? null,
+    }),
+  );
+
+  emitFailover(authority, {
+    paneId,
+    fromAccountLabel: fromLabel,
+    toAccountLabel: next.label,
+    reason: `${hit.reason}${req.reasonSuffix}`,
+    switched: true,
+    toAccountId: next.id,
+    fromAccountId,
+    crossAccount,
+    coalesced,
+    missionId: authority.missionId,
+    ...(probe ? { probe } : {}),
+  });
+}
+
+/** Agenda (ou re-agenda) a espera-pela-irmã de um watch. */
+function scheduleFailoverRetry(
+  key: string,
+  authority: FailoverAuthority,
+  hit: LimitHit,
+  retryAtMs: number,
+  attempt: number,
+): void {
+  cancelScheduledRetry(key);
+  // Primeiro agendamento respeita o instante exato (+buffer); re-agendamentos
+  // têm piso de 30s — integração com o rearm: nunca mais cedo que o menor
+  // entre o rearm e a liberação real.
+  const minDelay = attempt <= 1 ? RETRY_BUFFER_MS : RETRY_MIN_RESCHEDULE_MS;
+  const delay = Math.max(retryAtMs - Date.now(), minDelay);
+  const timer = setTimeout(() => {
+    pendingRetries.delete(key);
+    try {
+      fireScheduledRetry(key, authority, hit, attempt);
+    } catch (err) {
+      console.warn('[failover] scheduled retry error:', err);
+    }
+  }, delay);
+  timer.unref?.();
+  pendingRetries.set(key, { timer, authority });
+}
+
+/**
+ * Dispara a espera-pela-irmã: re-executa a decisão de failover sem excluir
+ * ninguém — se o cooldown da própria conta expirou ela volta a ser elegível
+ * (retomada same-account); senão uma irmã liberada (ou sondagem) assume.
+ */
+function fireScheduledRetry(
+  key: string,
+  authority: FailoverAuthority,
+  hit: LimitHit,
+  attempt: number,
+): void {
+  if (!isCurrentAuthority(authority)) return;
+  const pane = findPaneBySessionOwnedBy(authority.owner, authority.sessionId);
+  if (
+    !pane ||
+    pane.paneId !== authority.paneId ||
+    pane.sessionId !== authority.sessionId ||
+    pane.kind !== 'cli-agent' ||
+    !pane.adapterId
+  ) {
+    return;
+  }
+  const now = Date.now();
+  const adapterId = pane.adapterId;
+  const pinned = pane.accountId ? getAccount(pane.accountId) : null;
+  const current =
+    pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
+  performSwitch({
+    key,
+    authority,
+    paneId: pane.paneId,
+    adapterId,
+    paneModel: pane.model,
+    hit,
+    now,
+    current,
+    excludeId: null,
+    ownUnblockAtMs:
+      current?.cooldownUntil && current.cooldownUntil > now
+        ? current.cooldownUntil
+        : undefined,
+    attempt,
+    reasonSuffix: ' — retry automático (conta liberada)',
+  });
+}
+
 function handleChunk(sessionId: string, data: string, now: number): void {
   const authority = resolveAuthority(sessionId);
   if (!authority) return;
@@ -220,156 +551,37 @@ function handleChunk(sessionId: string, data: string, now: number): void {
 
   watch.firedAt = now;
   watch.buffer = ''; // consumed
+  // Um hit fresco supersede qualquer espera-pela-irmã pendente deste watch.
+  cancelScheduledRetry(key);
 
   const adapterId = pane.adapterId;
   const pinned = pane.accountId ? getAccount(pane.accountId) : null;
   const current =
     pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
-  const fromLabel = current?.label ?? adapterId;
-  const fromAccountId = current?.id;
 
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);
 
   // Put the exhausted account on cooldown, then pick the next available one.
-  if (current) setCooldown(current.id, now + hit.cooldownMs, hit.reason);
-
-  const coalesceKey = `${adapterId}\0${fromAccountId ?? '_'}`;
-  let coalesced = false;
-  let next = null as ReturnType<typeof pickAvailable>;
-  const recent = coalesceByFrom.get(coalesceKey);
-  if (recent && recent.expiresAt > now) {
-    const reused = getAccount(recent.toAccountId);
-    if (
-      reused &&
-      reused.adapterId === adapterId &&
-      (!reused.cooldownUntil || reused.cooldownUntil <= now)
-    ) {
-      next = reused;
-      coalesced = true;
-    } else {
-      // Stale/bad coalesce entry — drop so we re-pick.
-      coalesceByFrom.delete(coalesceKey);
-    }
+  // Com escopo (erro cita um tier anthropic): a conta segue no pool para os
+  // demais modelos; sem escopo o cooldown é global (comportamento legado).
+  if (current) {
+    setCooldown(current.id, now + hit.cooldownMs, hit.reason, hit.scope);
   }
 
-  // Prefer freer cota among eligible accounts when fleet snapshot exists.
-  let quotaScores: Map<string, number> | undefined;
-  try {
-    const snap = requireQuotaService().lastSnapshot();
-    if (snap) {
-      quotaScores = new Map();
-      for (const e of snap.entries) {
-        if (e.adapterId === adapterId && e.accountId) {
-          quotaScores.set(e.accountId, quotaAvailabilityScore(e));
-        }
-      }
-    }
-  } catch {
-    /* quota service optional at boot race */
-  }
-
-  if (!next) {
-    next = pickAvailable(
-      adapterId,
-      current?.id ?? null,
-      now,
-      quotaScores,
-    );
-  }
-
-  // Pin-only prepare; never record coalesce until a target is spawnable.
-  // On prepare failure, drop poisoned coalesce and try one alternate.
-  let prepareError: string | undefined;
-  if (next) {
-    let prepared = prepareAccountForSpawn(adapterId, next.id, now);
-    if (!prepared.ok) {
-      prepareError = prepared.error;
-      console.warn('[failover] next account not spawnable:', prepared.error);
-      coalesceByFrom.delete(coalesceKey);
-      coalesced = false;
-      const failedId = next.id;
-      next = pickAvailable(adapterId, failedId, now, quotaScores);
-      if (next) {
-        prepared = prepareAccountForSpawn(adapterId, next.id, now);
-        if (!prepared.ok) {
-          prepareError = prepared.error;
-          next = null;
-        } else {
-          prepareError = undefined;
-        }
-      } else {
-        next = null;
-      }
-    }
-  }
-
-  if (!next) {
-    console.info(
-      '[failover]',
-      JSON.stringify({
-        paneId: pane.paneId,
-        adapterId,
-        fromAccountId: fromAccountId ?? null,
-        toAccountId: null,
-        reason: hit.reason,
-        switched: false,
-        prepareError: prepareError ?? null,
-      }),
-    );
-    emitFailover(authority, {
-      paneId: pane.paneId,
-      fromAccountLabel: fromLabel,
-      toAccountLabel: '',
-      reason: prepareError
-        ? `${hit.reason} (falha na conta: ${prepareError})`
-        : hit.reason,
-      switched: false,
-      fromAccountId,
-      missionId: authority.missionId,
-    });
-    return;
-  }
-
-  // Only after successful prepare: share this A→B decision with concurrent panes.
-  if (!coalesced) {
-    coalesceByFrom.set(coalesceKey, {
-      toAccountId: next.id,
-      toLabel: next.label,
-      expiresAt: now + COALESCE_MS,
-    });
-  }
-
-  const crossAccount = Boolean(
-    fromAccountId ? fromAccountId !== next.id : true,
-  );
-
-  console.info(
-    '[failover]',
-    JSON.stringify({
-      paneId: pane.paneId,
-      adapterId,
-      fromAccountId: fromAccountId ?? null,
-      toAccountId: next.id,
-      reason: hit.reason,
-      switched: true,
-      crossAccount,
-      coalesced,
-      missionId: authority.missionId ?? null,
-    }),
-  );
-
-  emitFailover(authority, {
+  performSwitch({
+    key,
+    authority,
     paneId: pane.paneId,
-    fromAccountLabel: fromLabel,
-    toAccountLabel: next.label,
-    reason: hit.reason,
-    switched: true,
-    toAccountId: next.id,
-    fromAccountId,
-    crossAccount,
-    coalesced,
-    missionId: authority.missionId,
+    adapterId,
+    paneModel: pane.model,
+    hit,
+    now,
+    current,
+    excludeId: current?.id ?? null,
+    ownUnblockAtMs: current ? now + hit.cooldownMs : undefined,
+    attempt: 0,
+    reasonSuffix: '',
   });
 }
 
@@ -386,6 +598,9 @@ export function initFailover(): void {
     for (const [key, watch] of [...watches]) {
       if (watch.authority.sessionId === sessionId) watches.delete(key);
     }
+    for (const [key, pending] of [...pendingRetries]) {
+      if (pending.authority.sessionId === sessionId) cancelScheduledRetry(key);
+    }
   });
 }
 
@@ -395,6 +610,7 @@ export function shutdownFailover(): void {
   untapData = null;
   untapExit = null;
   watches.clear();
+  for (const key of [...pendingRetries.keys()]) cancelScheduledRetry(key);
   coalesceByFrom.clear();
   for (const [wc, onDestroyed] of destroyHandlers) {
     wc.removeListener('destroyed', onDestroyed);

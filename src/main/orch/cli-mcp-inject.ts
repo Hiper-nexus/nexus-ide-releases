@@ -29,7 +29,13 @@ import {
  * Claude e família (mcpAutoload) continuam pelo `--mcp-config` existente.
  */
 
-export type McpInjectionKind = "codex" | "agy" | "opencode" | "kimi" | "grok";
+export type McpInjectionKind =
+  | "codex"
+  | "agy"
+  | "opencode"
+  | "kimi"
+  | "grok"
+  | "omp";
 type NexusMcpAdapter = Pick<CliPtyAdapter, "quirks">;
 type NexusMcpAdapterLike = {
   quirks: { mcpAutoload?: boolean; nexusMcp?: unknown };
@@ -44,7 +50,8 @@ export function supportsMcpInjection(
     integration === "agy" ||
     integration === "opencode" ||
     integration === "kimi" ||
-    integration === "grok"
+    integration === "grok" ||
+    integration === "omp"
     ? integration
     : null;
 }
@@ -364,6 +371,169 @@ export function prepareAgyMcpConfig(
   } catch (error) {
     fs.rmSync(homeDir, { recursive: true, force: true });
     throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Oh My Pi (omp) — HOME-overlay privado por sessão, no mesmo desenho do AGY.
+//
+// O omp resolve config de usuário em `~/.omp/agent/` (mcp.json, agent.db,
+// sessions/, blobs/). Profiles (`OMP_PROFILE`) relocariam TAMBÉM `agent.db`
+// e as sessões — quebrando o login/OAuth do usuário — e o schema de MCP
+// deles não interpola env vars em headers. Portanto: HOME privado com
+// symlinks preservando login/histórico, e somente `agent/mcp.json` como
+// cópia privada contendo o bearer desta sessão (0600, purgado no teardown).
+// ---------------------------------------------------------------------------
+
+export interface OmpMcpFragment {
+  mcpServers: {
+    nexus: {
+      type: "http";
+      url: string;
+      headers: { Authorization: string };
+    };
+  };
+}
+
+export interface OmpMcpConfigOptions {
+  home?: string;
+  artifactRoot?: string;
+}
+
+export interface OmpMcpConfigResult {
+  homeDir: string;
+  configPath: string;
+}
+
+const activeOmpHomes = new Map<string, { homeDir: string; realHome: string }>();
+
+export function ompMcpFragment(url: string, token: string): OmpMcpFragment {
+  return {
+    mcpServers: {
+      nexus: {
+        type: "http",
+        url,
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    },
+  };
+}
+
+/** Merge puro: preserva o mcp.json existente e injeta/atualiza mcpServers.nexus. */
+export function mergeOmpMcpConfig(
+  existing: unknown,
+  fragment: OmpMcpFragment,
+): Record<string, unknown> {
+  const base =
+    existing && typeof existing === "object"
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  const previous =
+    base.mcpServers && typeof base.mcpServers === "object"
+      ? (base.mcpServers as Record<string, unknown>)
+      : {};
+  return {
+    ...base,
+    mcpServers: { ...previous, nexus: fragment.mcpServers.nexus },
+  };
+}
+
+export function purgeStaleOmpMcpConfigs(
+  options: OmpMcpConfigOptions = {},
+): ArtifactPurgeResult {
+  const home = path.resolve(options.home ?? os.homedir());
+  const artifactRoot = path.resolve(
+    options.artifactRoot ?? path.join(home, ".nexus", "ephemeral", "omp"),
+  );
+  return purgeOwnedSessionRoot(
+    artifactRoot,
+    Array.from(activeOmpHomes.values(), (s) => s.homeDir),
+    options.artifactRoot ? path.dirname(artifactRoot) : home,
+  );
+}
+
+function buildOmpHomeOverlay(realHome: string, homeDir: string): void {
+  ensurePrivateDirectory(homeDir);
+  linkDirectoryEntries(realHome, homeDir, new Set([".omp", ".nexus"]));
+
+  const realOmp = path.join(realHome, ".omp");
+  const privateOmp = path.join(homeDir, ".omp");
+  ensurePrivateDirectory(privateOmp);
+  linkDirectoryEntries(realOmp, privateOmp, new Set(["agent"]));
+
+  // Garante que a árvore REAL exista antes do overlay: assim `agent.db`,
+  // `sessions/` e `blobs/` viram symlinks e toda escrita do pane persiste
+  // no perfil verdadeiro do usuário (login feito dentro do pane incluído).
+  const realAgent = path.join(realOmp, "agent");
+  fs.mkdirSync(path.join(realAgent, "sessions"), { recursive: true });
+  fs.mkdirSync(path.join(realAgent, "blobs"), { recursive: true });
+  const privateAgent = path.join(privateOmp, "agent");
+  ensurePrivateDirectory(privateAgent);
+  linkDirectoryEntries(realAgent, privateAgent, new Set(["mcp.json"]));
+}
+
+/**
+ * Prepara um HOME-overlay exclusivo para um processo omp. O restante do HOME
+ * continua visível por symlink para preservar login (agent.db), sessões e
+ * skills; somente `~/.omp/agent/mcp.json` é cópia privada contendo o bearer
+ * desta sessão.
+ */
+export function prepareOmpMcpConfig(
+  url: string,
+  token: string,
+  options: OmpMcpConfigOptions = {},
+): OmpMcpConfigResult {
+  const realHome = path.resolve(options.home ?? os.homedir());
+  const artifactRoot = path.resolve(
+    options.artifactRoot ?? path.join(realHome, ".nexus", "ephemeral", "omp"),
+  );
+  const sessionKey = createHash("sha256")
+    .update(token)
+    .digest("hex")
+    .slice(0, 32);
+  const homeDir = path.join(artifactRoot, sessionKey);
+  cleanupOmpMcpConfig(token);
+  ensurePrivateDirectory(artifactRoot);
+  fs.rmSync(homeDir, { recursive: true, force: true });
+
+  try {
+    buildOmpHomeOverlay(realHome, homeDir);
+    const configPath = path.join(homeDir, ".omp", "agent", "mcp.json");
+    const realConfig = path.join(realHome, ".omp", "agent", "mcp.json");
+    writeJsonAtomic(
+      configPath,
+      mergeOmpMcpConfig(readJson(realConfig), ompMcpFragment(url, token)),
+    );
+    activeOmpHomes.set(token, { homeDir, realHome });
+    return { homeDir, configPath };
+  } catch (error) {
+    fs.rmSync(homeDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Remove somente os artefatos privados associados ao token informado. */
+export function cleanupOmpMcpConfig(token: string): void {
+  const session = activeOmpHomes.get(token);
+  if (!session) return;
+  activeOmpHomes.delete(token);
+  // Arquivos NOVOS que o omp tenha criado direto em `agent/` do overlay
+  // (primeiro uso sem `agent.db` real, caches novos) voltam para o perfil
+  // verdadeiro antes do purge — o mcp.json com o bearer nunca.
+  try {
+    syncBackOverlayAuth(
+      path.join(session.homeDir, ".omp", "agent"),
+      path.join(session.realHome, ".omp", "agent"),
+      new Set(),
+      new Set(["mcp.json"]),
+    );
+  } catch {
+    // Never let a sync-back failure block teardown.
+  }
+  try {
+    fs.rmSync(session.homeDir, { recursive: true, force: true });
+  } catch {
+    // Best effort on process/session teardown.
   }
 }
 

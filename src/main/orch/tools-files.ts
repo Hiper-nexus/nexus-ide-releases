@@ -10,6 +10,7 @@ import {
   writeWorkspaceTextFile,
 } from './workspace-file';
 import { resolveCwdForScope } from './workspace-path';
+import { readWorkspaceFileAsHashline } from '../editor/hashline-session';
 import { assertAgentReadablePath } from './agent-path-policy';
 
 /**
@@ -174,7 +175,10 @@ const fileRead: McpToolDef = {
   name: 'nexus_file_read',
   description:
     'Read a file from the workspace. Returns the full content as text. ' +
-    'Optionally specify a line range (offset/limit) for large files.',
+    'Optionally specify a line range (offset/limit) for large files. ' +
+    'With hashline: true, the content is returned as numbered ' +
+    '"LINE:TEXT" rows under a "[path#TAG]" header; copy that header ' +
+    'verbatim to anchor edits with nexus_editor_apply_patch.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -194,6 +198,12 @@ const fileRead: McpToolDef = {
         type: 'string',
         description: 'File encoding (default: utf-8)',
       },
+      hashline: {
+        type: 'boolean',
+        description:
+          'Return hashline-numbered content with a snapshot-tag header ' +
+          'for nexus_editor_apply_patch (default: false)',
+      },
     },
     required: ['path'],
   },
@@ -201,6 +211,26 @@ const fileRead: McpToolDef = {
     const relativePath = requireStr(args, 'path');
     assertAgentReadablePath(executionScopeFor(ctx), relativePath);
     const encoding = str(args, 'encoding') ?? 'utf-8';
+    if (args.hashline === true) {
+      const offset = typeof args.offset === 'number' ? args.offset : undefined;
+      const limit = typeof args.limit === 'number' ? args.limit : undefined;
+      const read = await readWorkspaceFileAsHashline(
+        executionScopeFor(ctx),
+        ctx.token,
+        relativePath,
+        { offset, limit },
+      );
+      return {
+        path: relativePath,
+        hashline: true,
+        header: read.header,
+        tag: read.tag,
+        offset: read.offset,
+        lines: read.lines,
+        totalLines: read.totalLines,
+        content: read.content,
+      };
+    }
     const handle = openWorkspaceFileForRead(executionScopeFor(ctx), relativePath);
     try {
       const offset = typeof args.offset === 'number' ? args.offset : undefined;

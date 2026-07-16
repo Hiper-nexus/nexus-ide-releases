@@ -122,6 +122,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
       offset: positiveInt.optional(),
       limit: positiveInt.max(20_000).optional(),
       encoding: z.string().min(1).max(32).optional(),
+      hashline: z.boolean().optional(),
     }).strict(),
   ],
   [
@@ -207,6 +208,12 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
       oldText: z.string().min(1).max(MAX_MCP_PAYLOAD_BYTES),
       newText: z.string().max(MAX_MCP_PAYLOAD_BYTES),
       replaceAll: z.boolean().optional(),
+    }).strict(),
+  ],
+  [
+    'editor_apply_patch',
+    z.object({
+      patch: z.string().min(1).max(MAX_MCP_PAYLOAD_BYTES),
     }).strict(),
   ],
   [
