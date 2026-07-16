@@ -2,7 +2,12 @@
  * Catalog / browser / design / layout / PTY payload types shared across IPC.
  * Extracted from types.ts for the Akita ~800-line module budget.
  */
-import type { BrowserDesignEvent } from './browser-design';
+import type {
+  BrowserDesignAnnotationIntent,
+  BrowserDesignAnnotationPriority,
+  BrowserDesignAnnotationSummary,
+  BrowserDesignEvent,
+} from './browser-design';
 
 /** One locally installed catalog component / plugin file / hook home. */
 export interface InstalledItemInfo {
@@ -176,6 +181,36 @@ export interface BrowserDesignSendResult {
   targetSessionId: string;
   promptChars: number;
   screenshotPath?: string;
+  /** Present only when dryRun=true: the formatted prompt, for clipboard copy. */
+  prompt?: string;
+  /** True when a workspace DESIGN.md was attached as design-system context. */
+  designSystemAttached?: boolean;
+}
+
+export interface BrowserDesignAnnotatePayload {
+  comment: string;
+  intent: BrowserDesignAnnotationIntent;
+  priority?: BrowserDesignAnnotationPriority;
+}
+
+export interface BrowserDesignAnnotationsResult {
+  paneId: string;
+  annotations: BrowserDesignAnnotationSummary[];
+}
+
+export interface BrowserDesignAnnotationsSendPayload {
+  targetPaneId: string;
+  dir?: string;
+  /** Prepare the prompt without injecting into the target PTY (for clipboard copy). */
+  dryRun?: boolean;
+}
+
+export interface BrowserDesignAnnotationsSendResult {
+  ok: true;
+  targetPaneId: string;
+  targetSessionId: string;
+  promptChars: number;
+  annotations: number;
   /** Present only when dryRun=true: the formatted prompt, for clipboard copy. */
   prompt?: string;
   /** True when a workspace DESIGN.md was attached as design-system context. */

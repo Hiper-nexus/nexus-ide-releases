@@ -53,7 +53,9 @@ const INPUT_VALUE_ATTRIBUTE_RE =
 const UNSAFE_CONTROL_CHAR_RE =
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 
-function safePageText(value: string, maxChars: number): string {
+/** Reda\u00E7\u00E3o + scrub de controle + teto \u2014 compartilhado com o formatter de
+ * anota\u00E7\u00F5es (design-annotation-format.ts). */
+export function safePageText(value: string, maxChars: number): string {
   return redactVisibleSecrets(value)
     .replace(UNSAFE_CONTROL_CHAR_RE, '\uFFFD')
     .slice(0, maxChars);

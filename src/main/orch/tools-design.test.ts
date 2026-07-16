@@ -23,6 +23,8 @@ vi.mock('../browser/browser-manager', () => ({
 }));
 
 import {
+  addDesignAnnotation,
+  clearDesignSession,
   ingestDesignEvent,
   prepareDesignModeTransition,
   resetDesignSessionsForTest,
@@ -179,5 +181,46 @@ describe('nexus_design_selection_get', () => {
     )) as { screenshot?: unknown; selection: unknown };
     expect(result.selection).toBeDefined();
     expect(result.screenshot).toBeUndefined();
+  });
+});
+
+describe('nexus_design_selection_get — annotations', () => {
+  it('lists the pane annotations alongside the selection', async () => {
+    ingestSelection('pane-1');
+    addDesignAnnotation('pane-1', {
+      comment: 'aumentar o contraste',
+      intent: 'fix',
+    });
+    const result = (await getTool().handler({ paneId: 'pane-1' }, CTX)) as {
+      annotations?: Array<{ index: number; comment: string; intent: string }>;
+    };
+    expect(result.annotations).toHaveLength(1);
+    expect(result.annotations![0]).toMatchObject({
+      index: 1,
+      comment: 'aumentar o contraste',
+      intent: 'fix',
+    });
+  });
+
+  it('still answers when only annotations remain (design mode toggled off)', async () => {
+    ingestSelection('pane-1');
+    addDesignAnnotation('pane-1', { comment: 'trocar a cor', intent: 'change' });
+    clearDesignSession('pane-1');
+    const result = (await getTool().handler({ paneId: 'pane-1' }, CTX)) as {
+      selection?: unknown;
+      annotations?: unknown[];
+      candidates: unknown[];
+    };
+    expect(result.selection).toBeUndefined();
+    expect(result.annotations).toHaveLength(1);
+    expect(result.candidates).toEqual([]);
+  });
+
+  it('omits the annotations key when the pane has none', async () => {
+    ingestSelection('pane-1');
+    const result = (await getTool().handler({ paneId: 'pane-1' }, CTX)) as {
+      annotations?: unknown[];
+    };
+    expect(result.annotations).toBeUndefined();
   });
 });

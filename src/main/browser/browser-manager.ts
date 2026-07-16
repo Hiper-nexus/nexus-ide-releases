@@ -11,6 +11,8 @@ import path from 'node:path';
 import { BROWSER_CHANNELS } from '../../shared/channels';
 import {
   BROWSER_DESIGN_CHANNELS,
+  type BrowserDesignAnnotationMarker,
+  type BrowserDesignEvent,
   type BrowserDesignRect,
 } from '../../shared/browser-design';
 import type {
@@ -68,13 +70,19 @@ import {
   type PinnedBrowserProxy,
 } from './browser-network-proxy';
 import {
+  browserDesignAnnotationMarkersResultSchema,
   browserDesignModeResultSchema,
   browserStylePreviewClearResultSchema,
   browserStylePreviewResultSchema,
 } from './browser-design-schema';
 import {
   abortDesignModeTransition,
+  addDesignAnnotation,
+  clearDesignAnnotations,
   clearDesignSession,
+  deleteDesignAnnotation,
+  getDesignAnnotationSummaries,
+  getDesignAnnotations,
   getDesignGeneration,
   getLastSelection,
   getSelections,
@@ -84,7 +92,10 @@ import {
   prepareDesignModeTransition,
 } from './design-session';
 import { clampScreenshotClip } from './screenshot-clip';
-import { sendDesignSelectionToAgent } from '../orch/design-send';
+import {
+  sendDesignAnnotationsToAgent,
+  sendDesignSelectionToAgent,
+} from '../orch/design-send';
 import { readWorkspaceDesignSystem } from '../orch/design-system-reader';
 import { searchWorkspaceForSelection } from '../orch/design-code-search';
 import {
@@ -188,6 +199,28 @@ const designPreviewClearSchema = z
   .object({
     paneId: paneIdSchema,
     selector: z.string().min(1).max(1_024).optional(),
+  })
+  .strict();
+const designAnnotateSchema = z
+  .object({
+    paneId: paneIdSchema,
+    comment: z.string().min(1).max(2_000),
+    intent: z.enum(['fix', 'change', 'question', 'approve']),
+    priority: z.enum(['blocking', 'important', 'suggestion']).optional(),
+  })
+  .strict();
+const designAnnotationDeleteSchema = z
+  .object({
+    paneId: paneIdSchema,
+    annotationId: z.string().uuid(),
+  })
+  .strict();
+const designAnnotationsSendSchema = z
+  .object({
+    paneId: paneIdSchema,
+    targetPaneId: paneIdSchema,
+    dir: z.string().max(4_096).optional(),
+    dryRun: z.boolean().optional(),
   })
   .strict();
 
@@ -654,7 +687,29 @@ async function createEntry(
   wc.on('did-navigate', (_event, url) => {
     entry.url = url;
     entry.error = undefined;
+    // Annotations and the picker session both point at the OLD document —
+    // rects and selectors stop meaning anything after a real navigation.
+    const hadDesignState =
+      getDesignGeneration(key) !== null ||
+      getDesignAnnotations(key).length > 0;
     clearDesignSession(key);
+    clearDesignAnnotations(key);
+    if (hadDesignState && canSend(entry.owner)) {
+      // The dying document cannot emit its own disable event, so the main
+      // synthesizes the 'navigation' mode transition the renderer store
+      // already understands — design bar and annotation tray reset together.
+      const navigationEvent: BrowserDesignEvent = {
+        eventId: randomUUID(),
+        generation: randomUUID(),
+        type: 'mode',
+        at: Date.now(),
+        mode: { active: false, reason: 'navigation' },
+      };
+      entry.owner.send(BROWSER_CHANNELS.designEvent, {
+        paneId: entry.paneId,
+        event: navigationEvent,
+      });
+    }
     emitState(entry);
   });
   wc.on('did-navigate-in-page', (_event, url) => {
@@ -1082,6 +1137,45 @@ export async function clearBrowserStylePreview(
   return { paneId, ...result };
 }
 
+/**
+ * Mirrors the pane's annotation set as numbered badges in the page (geometry
+ * only — comments never reach the page side). Best-effort by design: a pane
+ * mid-load or hidden keeps the annotations in the main store; the badges
+ * simply catch up on the next mutation.
+ */
+async function syncDesignAnnotationMarkers(
+  paneId: string,
+  scope: ProjectExecutionScope,
+): Promise<void> {
+  const key = browserKey(scope, paneId);
+  const markers: BrowserDesignAnnotationMarker[] = [];
+  for (const [index, annotation] of getDesignAnnotations(key).entries()) {
+    const { selection } = annotation;
+    // Pre-rectPage payloads cannot follow scroll — skip their badge, the
+    // annotation itself still lives in the tray and in the batch prompt.
+    if (!selection.rectPage) continue;
+    markers.push({
+      id: annotation.id,
+      index,
+      rectPage: selection.rectPage,
+      rectViewport: selection.rect,
+      isFixed: selection.isFixed === true,
+    });
+  }
+  try {
+    browserDesignAnnotationMarkersResultSchema.parse(
+      await runBrowserAutomationForPane(
+        paneId,
+        scope,
+        'design_set_annotation_markers',
+        { markers },
+      ),
+    );
+  } catch {
+    // Badges are cosmetic; the main store stays the source of truth.
+  }
+}
+
 function withEntry(
   paneId: string,
   scope: ProjectExecutionScope,
@@ -1139,6 +1233,7 @@ export function destroyBrowser(
   browsers.delete(key);
   pendingBoundsByKey.delete(key);
   clearDesignSession(key);
+  clearDesignAnnotations(key);
   const win = liveOwnerWindow(entry.owner);
   try {
     win?.contentView.removeChildView(entry.view);
@@ -1354,6 +1449,125 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
       parsed.data.paneId,
       scope,
       parsed.data.selector,
+    );
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotate, async (event, raw) => {
+    const parsed = designAnnotateSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('invalid design annotate payload');
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const key = browserKey(scope, parsed.data.paneId);
+    addDesignAnnotation(key, {
+      comment: parsed.data.comment,
+      intent: parsed.data.intent,
+      ...(parsed.data.priority ? { priority: parsed.data.priority } : {}),
+    });
+    await syncDesignAnnotationMarkers(parsed.data.paneId, scope);
+    return {
+      paneId: parsed.data.paneId,
+      annotations: getDesignAnnotationSummaries(key),
+    };
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotations, async (event, raw) => {
+    const parsed = paneSchema.safeParse(raw);
+    if (!parsed.success) throw new Error('invalid design annotations payload');
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    return {
+      paneId: parsed.data.paneId,
+      annotations: getDesignAnnotationSummaries(
+        browserKey(scope, parsed.data.paneId),
+      ),
+    };
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotationDelete, async (event, raw) => {
+    const parsed = designAnnotationDeleteSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('invalid design annotation delete payload');
+    }
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const key = browserKey(scope, parsed.data.paneId);
+    if (!deleteDesignAnnotation(key, parsed.data.annotationId)) {
+      throw new Error('unknown design annotation');
+    }
+    await syncDesignAnnotationMarkers(parsed.data.paneId, scope);
+    return {
+      paneId: parsed.data.paneId,
+      annotations: getDesignAnnotationSummaries(key),
+    };
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotationsClear, async (event, raw) => {
+    const parsed = paneSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('invalid design annotations clear payload');
+    }
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const key = browserKey(scope, parsed.data.paneId);
+    clearDesignAnnotations(key);
+    await syncDesignAnnotationMarkers(parsed.data.paneId, scope);
+    return { paneId: parsed.data.paneId, annotations: [] };
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.designAnnotationsSend, async (event, raw) => {
+    const parsed = designAnnotationsSendSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error('invalid design annotations send payload');
+    }
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const sourceKey = browserKey(scope, parsed.data.paneId);
+    const target = requireDesignTarget(
+      event.sender,
+      scope,
+      parsed.data.targetPaneId,
+    );
+    return sendDesignAnnotationsToAgent(
+      {
+        paneId: sourceKey,
+        targetPaneRef: target.paneId,
+        dryRun: parsed.data.dryRun,
+        // Same rule as designSend: DESIGN.md is best-effort, never blocking.
+        designSystem: (() => {
+          try {
+            return (
+              readWorkspaceDesignSystem(
+                resolveCwdForScope(scope, parsed.data.dir),
+              ) ?? undefined
+            );
+          } catch {
+            return undefined;
+          }
+        })(),
+      },
+      {
+        getAnnotations: getDesignAnnotations,
+        findPane: () => ({
+          paneId: target.paneId,
+          sessionId: target.sessionId,
+        }),
+        inject: async (sessionId, prompt) => {
+          requireLiveRendererWorkspaceScope(event.sender, scope);
+          const liveTarget = requireDesignTarget(
+            event.sender,
+            scope,
+            target.paneId,
+          );
+          if (
+            liveTarget.sessionId !== sessionId ||
+            liveTarget.missionId !== target.missionId ||
+            liveTarget.contextRevision !== target.contextRevision
+          ) {
+            throw new Error('design target authority changed');
+          }
+          await injectPastedPrompt(sessionId, prompt);
+        },
+      },
     );
   });
 

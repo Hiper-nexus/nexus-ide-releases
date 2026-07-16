@@ -137,6 +137,10 @@ import type { IntegrationsApi } from './integrations-api';
 import type { ProductApi } from './product-api';
 import type {
   AgentSpecWriteRequest,
+  BrowserDesignAnnotatePayload,
+  BrowserDesignAnnotationsResult,
+  BrowserDesignAnnotationsSendPayload,
+  BrowserDesignAnnotationsSendResult,
   BrowserDesignEventPayload,
   BrowserDesignSendPayload,
   BrowserDesignSendResult,
@@ -314,6 +318,20 @@ export interface NexusApi {
       paneId: string,
       selector?: string,
     ): Promise<{ paneId: string; cleared: number }>;
+    designAnnotate(
+      paneId: string,
+      payload: BrowserDesignAnnotatePayload,
+    ): Promise<BrowserDesignAnnotationsResult>;
+    listDesignAnnotations(paneId: string): Promise<BrowserDesignAnnotationsResult>;
+    deleteDesignAnnotation(
+      paneId: string,
+      annotationId: string,
+    ): Promise<BrowserDesignAnnotationsResult>;
+    clearDesignAnnotations(paneId: string): Promise<BrowserDesignAnnotationsResult>;
+    sendDesignAnnotations(
+      paneId: string,
+      payload: BrowserDesignAnnotationsSendPayload,
+    ): Promise<BrowserDesignAnnotationsSendResult>;
   };
   devServer: {
     onDetected(cb: (payload: DevServerDetectedPayload) => void): Unsubscribe;

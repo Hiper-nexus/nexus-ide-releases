@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrowserDesignEvent } from '../../shared/browser-design';
 import {
+  addDesignAnnotation,
+  clearDesignAnnotations,
   clearDesignSession,
+  deleteDesignAnnotation,
+  getDesignAnnotationSummaries,
+  getDesignAnnotations,
   getLastSelection,
   ingestDesignEvent,
   isDesignModeActive,
@@ -398,5 +403,67 @@ describe('clearDesignSession', () => {
     clearDesignSession('pane-a');
     expect(getLastSelection('pane-a')).toBeNull();
     expect(isDesignModeActive('pane-a')).toBe(false);
+  });
+});
+
+describe('design annotations (Orca Design Mode parity)', () => {
+  function annotate(comment = 'aumentar o contraste', intent: 'fix' | 'change' | 'question' | 'approve' = 'fix') {
+    return addDesignAnnotation('pane-a', { comment, intent });
+  }
+
+  it('pins the CURRENT selection as a frozen snapshot with a derived label', () => {
+    ingestDesignEvent('pane-a', selectionEvent());
+    const annotation = annotate();
+    expect(annotation.label).toBe('button#save.btn.btn-primary "Salvar"');
+    expect(annotation.priority).toBe('suggestion');
+    // A later click must NOT mutate the pinned snapshot.
+    const live = getLastSelection('pane-a')!;
+    (live as { text: string }).text = 'mutated';
+    expect(getDesignAnnotations('pane-a')[0].selection.text).toBe('Salvar');
+  });
+
+  it('requires a selection and a non-empty comment', () => {
+    expect(() => annotate()).toThrow(/no design selection/);
+    ingestDesignEvent('pane-a', selectionEvent());
+    expect(() => annotate('   ')).toThrow(/non-empty comment/);
+  });
+
+  it('caps at 20 annotations per pane', () => {
+    ingestDesignEvent('pane-a', selectionEvent());
+    for (let i = 0; i < 20; i += 1) annotate(`nota ${i}`);
+    expect(() => annotate('nota 21')).toThrow(/annotation limit reached/);
+  });
+
+  it('summaries expose 1-based indexes matching the page badges', () => {
+    ingestDesignEvent('pane-a', selectionEvent());
+    annotate('primeira', 'fix');
+    annotate('segunda', 'question');
+    const summaries = getDesignAnnotationSummaries('pane-a');
+    expect(summaries.map((s) => [s.index, s.comment, s.intent])).toEqual([
+      [1, 'primeira', 'fix'],
+      [2, 'segunda', 'question'],
+    ]);
+  });
+
+  it('delete removes one by id; clear removes all; both are pane-scoped', () => {
+    ingestDesignEvent('pane-a', selectionEvent());
+    const first = annotate('primeira');
+    annotate('segunda');
+    expect(deleteDesignAnnotation('pane-a', first.id)).toBe(true);
+    expect(deleteDesignAnnotation('pane-a', first.id)).toBe(false);
+    expect(getDesignAnnotations('pane-a').map((a) => a.comment)).toEqual([
+      'segunda',
+    ]);
+    clearDesignAnnotations('pane-a');
+    expect(getDesignAnnotations('pane-a')).toEqual([]);
+  });
+
+  it('annotations survive clearDesignSession (design mode off) by design', () => {
+    ingestDesignEvent('pane-a', selectionEvent());
+    annotate();
+    clearDesignSession('pane-a');
+    expect(getDesignAnnotations('pane-a')).toHaveLength(1);
+    // …but a fresh annotate now fails: there is no live selection anymore.
+    expect(() => annotate()).toThrow(/no design selection/);
   });
 });

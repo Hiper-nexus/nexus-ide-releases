@@ -640,4 +640,36 @@ describe('picker selection (L0 context)', () => {
     hoverAndClick(win, button);
     expect(pageHandler).toHaveBeenCalledTimes(1);
   });
+
+  it('ships rectPage (rect + scroll) and isFixed for annotation markers', async () => {
+    const { win, automation, events } = fixture();
+    Object.defineProperty(win, 'scrollX', { value: 15, configurable: true });
+    Object.defineProperty(win, 'scrollY', { value: 240, configurable: true });
+    const pinned = win.document.createElement('div');
+    pinned.id = 'toast';
+    pinned.style.position = 'fixed';
+    win.document.body.appendChild(pinned);
+
+    await automation.run('design_enable', DESIGN_ARGS);
+    hoverAndClick(win, win.document.getElementById('save')!);
+    hoverAndClick(win, pinned);
+
+    const [flow, fixed] = events
+      .filter((e) => e.type === 'selection')
+      .map((e) => e.selection!);
+    expect(flow.rectPage).toEqual({
+      x: flow.rect.x + 15,
+      y: flow.rect.y + 240,
+      width: flow.rect.width,
+      height: flow.rect.height,
+    });
+    expect(flow.isFixed).toBe(false);
+    expect(fixed.isFixed).toBe(true);
+    // The enriched payload still validates against the main-process schema.
+    expect(() =>
+      browserDesignEventSchema.parse(
+        events.find((e) => e.type === 'selection'),
+      ),
+    ).not.toThrow();
+  });
 });

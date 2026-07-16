@@ -1553,6 +1553,78 @@ body {
   max-width: 200px;
 }
 
+/* Anotações de design (paridade Orca): badge de contagem + tray da página. */
+.design-bar__annotations-badge {
+  width: auto;
+  padding: 0 8px;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+/* Strip em FLUXO (como .browser-pane__error): a surface do browser é um
+ * WebContentsView nativo pintado acima do DOM — um dropdown sobreposto
+ * ficaria invisível; o tray empurra a surface para baixo. */
+.design-annotations-tray {
+  flex: 0 0 auto;
+  max-height: 180px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--design) 8%, var(--bg));
+  font-size: 12px;
+}
+
+.design-annotations-tray__list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.design-annotations-tray__item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'label delete'
+    'comment delete';
+  gap: 0 6px;
+  align-items: center;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.design-annotations-tray__label {
+  grid-area: label;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.design-annotations-tray__comment {
+  grid-area: comment;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.design-annotations-tray__delete {
+  grid-area: delete;
+}
+
+.design-annotations-tray__actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
 .browser-pane__body {
   flex: 1 1 auto;
   min-height: 0;

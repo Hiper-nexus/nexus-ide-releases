@@ -1,7 +1,9 @@
 import type {
+  BrowserDesignAnnotation,
   BrowserDesignElementContext,
   BrowserDesignRect,
 } from '../../shared/browser-design';
+import { formatDesignAnnotationsPrompt } from './design-annotation-format';
 import {
   queryFromSelection,
   type DesignCodeCandidate,
@@ -169,6 +171,70 @@ export async function sendDesignSelectionToAgent(
     targetSessionId: target.sessionId,
     promptChars: prompt.length,
     ...(screenshotPath ? { screenshotPath } : {}),
+    ...(input.dryRun ? { prompt } : {}),
+    ...(input.designSystem?.trim() ? { designSystemAttached: true } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Batch push: ALL annotations of a pane as one consolidated feedback prompt
+// (Orca Design Mode parity). No L2 search and no screenshots by design —
+// annotations are pinned across time, so their rects/screenshots would be
+// stale; selectors + framework hints in the payload are the localization
+// signal, and the agent can still pull nexus_design_selection_get live.
+// ---------------------------------------------------------------------------
+
+export interface DesignAnnotationsSendInput {
+  paneId: string;
+  targetPaneRef: string;
+  dryRun?: boolean;
+  designSystem?: string;
+}
+
+export interface DesignAnnotationsSendDeps {
+  getAnnotations(paneId: string): BrowserDesignAnnotation[];
+  findPane(paneRef: string): { paneId: string; sessionId?: string } | null;
+  inject(sessionId: string, prompt: string): Promise<void>;
+}
+
+export interface DesignAnnotationsSendResult {
+  ok: true;
+  targetPaneId: string;
+  targetSessionId: string;
+  promptChars: number;
+  annotations: number;
+  prompt?: string;
+  designSystemAttached?: boolean;
+}
+
+export async function sendDesignAnnotationsToAgent(
+  input: DesignAnnotationsSendInput,
+  deps: DesignAnnotationsSendDeps,
+): Promise<DesignAnnotationsSendResult> {
+  const annotations = deps.getAnnotations(input.paneId);
+  if (annotations.length === 0) {
+    throw new Error(
+      'no design annotations for this pane: annotate elements in design mode first',
+    );
+  }
+  const target = deps.findPane(input.targetPaneRef);
+  if (!target) throw new Error(`unknown target pane: ${input.targetPaneRef}`);
+  if (!target.sessionId) {
+    throw new Error(`target pane has no live session: ${input.targetPaneRef}`);
+  }
+  const prompt = formatDesignAnnotationsPrompt({
+    annotations,
+    designSystem: input.designSystem,
+  });
+  if (!input.dryRun) {
+    await deps.inject(target.sessionId, prompt);
+  }
+  return {
+    ok: true,
+    targetPaneId: target.paneId,
+    targetSessionId: target.sessionId,
+    promptChars: prompt.length,
+    annotations: annotations.length,
     ...(input.dryRun ? { prompt } : {}),
     ...(input.designSystem?.trim() ? { designSystemAttached: true } : {}),
   };

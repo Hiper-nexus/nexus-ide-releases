@@ -550,6 +550,7 @@ export function createDesignMode(
 
   function buildContext(element: Element): BrowserDesignElementContext {
     const isSensitive = isSensitiveTree(element);
+    const rect = rectOf(element);
     const context: BrowserDesignElementContext = {
       ref: deps.refFor(element),
       tag: element.tagName.toLowerCase().slice(0, 32),
@@ -559,7 +560,16 @@ export function createDesignMode(
             .slice(0, MAX_CLASSES)
             .map((cls) => redactBrowserText(cls).slice(0, MAX_CLASS_CHARS)),
       selector: redactBrowserText(buildSelector(element, !isSensitive)),
-      rect: rectOf(element),
+      rect,
+      // Page-relative rect + fixed detection so annotation badges pinned to
+      // this selection can follow the page as it scrolls.
+      rectPage: {
+        x: rect.x + (Number.isFinite(win.scrollX) ? win.scrollX : 0),
+        y: rect.y + (Number.isFinite(win.scrollY) ? win.scrollY : 0),
+        width: rect.width,
+        height: rect.height,
+      },
+      isFixed: isViewportPinned(element),
       text: safeVisibleText(element),
       outerHtml: sanitizedOuterHtml(element),
       attributes: filteredAttributes(element, isSensitive),
@@ -577,6 +587,22 @@ export function createDesignMode(
   function rectOf(element: Element): BrowserDesignElementContext['rect'] {
     const rect = element.getBoundingClientRect();
     return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  }
+
+  function isViewportPinned(element: Element): boolean {
+    // fixed/sticky anywhere in the chain pins the box to the viewport, so a
+    // page-relative badge would drift on scroll. Bounded, best-effort walk.
+    let current: Element | null = element;
+    for (let depth = 0; current && depth < MAX_CONTEXT_DEPTH; depth += 1) {
+      try {
+        const position = win.getComputedStyle(current).position;
+        if (position === 'fixed' || position === 'sticky') return true;
+      } catch {
+        return false;
+      }
+      current = current.parentElement;
+    }
+    return false;
   }
 
   function targetOf(event: Event): Element | null {

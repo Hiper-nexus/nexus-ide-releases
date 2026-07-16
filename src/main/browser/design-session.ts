@@ -1,7 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import type {
+  BrowserDesignAnnotation,
+  BrowserDesignAnnotationIntent,
+  BrowserDesignAnnotationPriority,
+  BrowserDesignAnnotationSummary,
   BrowserDesignElementContext,
   BrowserDesignEvent,
 } from '../../shared/browser-design';
+import { DESIGN_ANNOTATION_LIMITS } from '../../shared/browser-design';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { browserDesignEventSchema } from './browser-design-schema';
 
@@ -185,7 +191,112 @@ export function onDesignEvent(listener: DesignEventListener): () => void {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Design annotations (Orca Design Mode parity). MAIN-owned, in a map separate
+// from the picker session on purpose: annotations survive toggling design
+// mode off (the user can keep browsing and still ship the batch), but die
+// with the DOCUMENT — the browser-manager clears them on did-navigate and on
+// pane destroy, where their coordinates and selectors stop meaning anything.
+// ---------------------------------------------------------------------------
+
+const annotations = new Map<string, BrowserDesignAnnotation[]>();
+
+export interface DesignAnnotationNote {
+  comment: string;
+  intent: BrowserDesignAnnotationIntent;
+  priority?: BrowserDesignAnnotationPriority;
+}
+
+function annotationLabel(selection: BrowserDesignElementContext): string {
+  const id = selection.id ? `#${selection.id}` : '';
+  const classes = selection.classes.length
+    ? `.${selection.classes.slice(0, 2).join('.')}`
+    : '';
+  const text = selection.text
+    ? ` "${selection.text.slice(0, 40)}${selection.text.length > 40 ? '…' : ''}"`
+    : '';
+  return `${selection.tag}${id}${classes}${text}`.slice(
+    0,
+    DESIGN_ANNOTATION_LIMITS.labelMaxChars,
+  );
+}
+
+/**
+ * Pins an annotation on the pane's CURRENT selection (already validated when
+ * it was ingested from the preload). The renderer contributes only the typed
+ * note — never the element context — so a compromised renderer cannot forge
+ * page data. Throws without an active selection or when the pane is full.
+ */
+export function addDesignAnnotation(
+  paneId: string,
+  note: DesignAnnotationNote,
+): BrowserDesignAnnotation {
+  const selection = getLastSelection(paneId);
+  if (!selection) {
+    throw new Error(
+      'no design selection to annotate: enable design mode and click an element first',
+    );
+  }
+  const comment = note.comment.trim();
+  if (!comment) throw new Error('annotation requires a non-empty comment');
+  const list = annotations.get(paneId) ?? [];
+  if (list.length >= DESIGN_ANNOTATION_LIMITS.maxPerPane) {
+    throw new Error(
+      `annotation limit reached (${DESIGN_ANNOTATION_LIMITS.maxPerPane} per pane): send or clear the current batch first`,
+    );
+  }
+  const annotation: BrowserDesignAnnotation = {
+    id: randomUUID(),
+    comment: comment.slice(0, DESIGN_ANNOTATION_LIMITS.commentMaxChars),
+    intent: note.intent,
+    priority: note.priority ?? 'suggestion',
+    createdAt: Date.now(),
+    label: annotationLabel(selection),
+    // Freeze the selection: later clicks must not mutate a pinned note.
+    selection: JSON.parse(JSON.stringify(selection)) as BrowserDesignElementContext,
+  };
+  list.push(annotation);
+  annotations.set(paneId, list);
+  return annotation;
+}
+
+export function getDesignAnnotations(paneId: string): BrowserDesignAnnotation[] {
+  return [...(annotations.get(paneId) ?? [])];
+}
+
+export function getDesignAnnotationSummaries(
+  paneId: string,
+): BrowserDesignAnnotationSummary[] {
+  return getDesignAnnotations(paneId).map((annotation, index) => ({
+    id: annotation.id,
+    index: index + 1,
+    label: annotation.label,
+    comment: annotation.comment,
+    intent: annotation.intent,
+    priority: annotation.priority,
+    createdAt: annotation.createdAt,
+  }));
+}
+
+export function deleteDesignAnnotation(
+  paneId: string,
+  annotationId: string,
+): boolean {
+  const list = annotations.get(paneId);
+  if (!list) return false;
+  const next = list.filter((annotation) => annotation.id !== annotationId);
+  if (next.length === list.length) return false;
+  if (next.length === 0) annotations.delete(paneId);
+  else annotations.set(paneId, next);
+  return true;
+}
+
+export function clearDesignAnnotations(paneId: string): void {
+  annotations.delete(paneId);
+}
+
 export function resetDesignSessionsForTest(): void {
   sessions.clear();
   listeners.clear();
+  annotations.clear();
 }

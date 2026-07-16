@@ -38,10 +38,34 @@ const SELECTION: BrowserDesignElementContext = {
 let designEventCb: ((payload: BrowserDesignEventPayload) => void) | null = null;
 let setDesignMode: ReturnType<typeof vi.fn>;
 let sendDesignSelection: ReturnType<typeof vi.fn>;
+let designAnnotate: ReturnType<typeof vi.fn>;
+let listDesignAnnotations: ReturnType<typeof vi.fn>;
+let deleteDesignAnnotation: ReturnType<typeof vi.fn>;
+let clearDesignAnnotations: ReturnType<typeof vi.fn>;
+let sendDesignAnnotations: ReturnType<typeof vi.fn>;
 let container: HTMLDivElement;
 let root: Root;
 
+/** Espelho main-side das anotações usado pelos mocks (fonte de verdade). */
+let mockAnnotations: Array<{
+  id: string;
+  index: number;
+  label: string;
+  comment: string;
+  intent: string;
+  priority: string;
+  createdAt: number;
+}> = [];
+
+function reindex(): void {
+  mockAnnotations = mockAnnotations.map((annotation, i) => ({
+    ...annotation,
+    index: i + 1,
+  }));
+}
+
 function setNexusMock(): void {
+  mockAnnotations = [];
   setDesignMode = vi.fn(async (_paneId: string, active: boolean) => ({
     paneId: PANE_ID,
     active,
@@ -52,12 +76,51 @@ function setNexusMock(): void {
     targetSessionId: 'sess-1',
     promptChars: 100,
   }));
+  designAnnotate = vi.fn(
+    async (_paneId: string, payload: { comment: string; intent: string }) => {
+      mockAnnotations.push({
+        id: `a${mockAnnotations.length + 1}`,
+        index: mockAnnotations.length + 1,
+        label: 'button#save "Salvar"',
+        comment: payload.comment,
+        intent: payload.intent,
+        priority: 'suggestion',
+        createdAt: 1,
+      });
+      return { paneId: PANE_ID, annotations: [...mockAnnotations] };
+    },
+  );
+  listDesignAnnotations = vi.fn(async () => ({
+    paneId: PANE_ID,
+    annotations: [...mockAnnotations],
+  }));
+  deleteDesignAnnotation = vi.fn(async (_paneId: string, id: string) => {
+    mockAnnotations = mockAnnotations.filter((a) => a.id !== id);
+    reindex();
+    return { paneId: PANE_ID, annotations: [...mockAnnotations] };
+  });
+  clearDesignAnnotations = vi.fn(async () => {
+    mockAnnotations = [];
+    return { paneId: PANE_ID, annotations: [] };
+  });
+  sendDesignAnnotations = vi.fn(async () => ({
+    ok: true,
+    targetPaneId: 'pane-cli',
+    targetSessionId: 'sess-1',
+    promptChars: 500,
+    annotations: mockAnnotations.length,
+  }));
   Object.defineProperty(window, 'nexus', {
     configurable: true,
     value: {
       browser: {
         setDesignMode,
         sendDesignSelection,
+        designAnnotate,
+        listDesignAnnotations,
+        deleteDesignAnnotation,
+        clearDesignAnnotations,
+        sendDesignAnnotations,
         onDesignEvent: (cb: (payload: BrowserDesignEventPayload) => void) => {
           designEventCb = cb;
           return () => {
@@ -112,7 +175,7 @@ function selectionEvent(): BrowserDesignEventPayload {
   };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   setNexusMock();
   useDesignSelectionStore.getState().reset();
   useLayoutStore.getState().setPanes([
@@ -120,6 +183,8 @@ beforeEach(() => {
     { id: PANE_ID, kind: 'browser', title: 'browser' },
   ]);
   render();
+  // Deixa a hidratação de anotações do mount (listDesignAnnotations) assentar.
+  await act(async () => {});
 });
 
 afterEach(() => {
@@ -262,5 +327,179 @@ describe('BrowserDesignBar', () => {
       'button[data-testid="design-send"]',
     )!;
     expect(send.disabled).toBe(true);
+  });
+});
+
+describe('BrowserDesignBar — anotações (paridade Orca)', () => {
+  function typeInstruction(text: string): void {
+    const input = container.querySelector<HTMLInputElement>(
+      'input[data-testid="design-instruction"]',
+    )!;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value',
+    )!.set!;
+    act(() => {
+      setter.call(input, text);
+      input.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+  }
+
+  async function annotate(comment: string, intent = 'fix'): Promise<void> {
+    typeInstruction(comment);
+    if (intent !== 'fix') {
+      const select = container.querySelector<HTMLSelectElement>(
+        '[data-testid="design-annotation-intent"]',
+      )!;
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLSelectElement.prototype,
+        'value',
+      )!.set!;
+      act(() => {
+        setter.call(select, intent);
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+      });
+    }
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="design-annotate"]',
+    )!;
+    await act(async () => {
+      button.click();
+    });
+  }
+
+  it('anota a seleção corrente com comentário + intenção e abre o tray', async () => {
+    emit(modeEvent(true));
+    emit(selectionEvent());
+    await annotate('aumentar o contraste', 'change');
+
+    expect(designAnnotate).toHaveBeenCalledWith(PANE_ID, {
+      comment: 'aumentar o contraste',
+      intent: 'change',
+    });
+    const badge = container.querySelector('[data-testid="design-annotations-badge"]')!;
+    expect(badge.textContent).toContain('1');
+    const tray = container.querySelector('[data-testid="design-annotations-tray"]')!;
+    expect(tray.textContent).toContain('aumentar o contraste');
+    expect(tray.textContent).toContain('[mudar]');
+    // O campo de instrução é reaproveitado como comentário e limpa após anotar.
+    expect(
+      container.querySelector<HTMLInputElement>(
+        'input[data-testid="design-instruction"]',
+      )!.value,
+    ).toBe('');
+  });
+
+  it('recusa anotar sem comentário (status orienta o usuário)', async () => {
+    emit(modeEvent(true));
+    emit(selectionEvent());
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="design-annotate"]',
+    )!;
+    await act(async () => {
+      button.click();
+    });
+    expect(designAnnotate).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('escreva o comentário');
+  });
+
+  it('anotações sobrevivem ao modo Design off; enviar em lote usa o pane alvo', async () => {
+    emit(modeEvent(true));
+    emit(selectionEvent());
+    await annotate('primeira nota');
+    emit(modeEvent(false));
+
+    // Badge continua visível com o picker desligado.
+    const badge = container.querySelector<HTMLButtonElement>(
+      '[data-testid="design-annotations-badge"]',
+    )!;
+    expect(badge.textContent).toContain('1');
+
+    const send = container.querySelector<HTMLButtonElement>(
+      '[data-testid="design-annotations-send"]',
+    )!;
+    await act(async () => {
+      send.click();
+    });
+    expect(sendDesignAnnotations).toHaveBeenCalledWith(PANE_ID, {
+      targetPaneId: 'pane-cli',
+    });
+    expect(container.textContent).toContain('feedback enviado (1) ✓');
+  });
+
+  it('excluir e limpar atualizam a lista pela resposta do main', async () => {
+    emit(modeEvent(true));
+    emit(selectionEvent());
+    await annotate('primeira');
+    await annotate('segunda');
+    expect(
+      container.querySelector('[data-testid="design-annotations-badge"]')!
+        .textContent,
+    ).toContain('2');
+
+    const del = container.querySelector<HTMLButtonElement>(
+      '[data-testid="design-annotation-delete-1"]',
+    )!;
+    await act(async () => {
+      del.click();
+    });
+    expect(deleteDesignAnnotation).toHaveBeenCalledWith(PANE_ID, 'a1');
+    expect(
+      container.querySelector('[data-testid="design-annotations-badge"]')!
+        .textContent,
+    ).toContain('1');
+
+    const clear = container.querySelector<HTMLButtonElement>(
+      '[data-testid="design-annotations-clear"]',
+    )!;
+    await act(async () => {
+      clear.click();
+    });
+    expect(clearDesignAnnotations).toHaveBeenCalledWith(PANE_ID);
+    expect(
+      container.querySelector('[data-testid="design-annotations-badge"]'),
+    ).toBeNull();
+  });
+
+  it('navegação (mode reason=navigation) limpa as anotações no renderer', async () => {
+    emit(modeEvent(true));
+    emit(selectionEvent());
+    await annotate('nota que morre com o documento');
+    emit({
+      paneId: PANE_ID,
+      event: {
+        eventId: '7f9b2c64-1a2b-4c3d-8e9f-0a1b2c3d4e70',
+        generation: '7f9b2c64-1a0d-4b3e-8f90-2b3c4d5e6f70',
+        type: 'mode',
+        at: 9,
+        mode: { active: false, reason: 'navigation' },
+      },
+    });
+    expect(
+      container.querySelector('[data-testid="design-annotations-badge"]'),
+    ).toBeNull();
+  });
+
+  it('hidrata a lista do main ao montar (anotações persistem a remount)', async () => {
+    mockAnnotations.push({
+      id: 'a9',
+      index: 1,
+      label: 'div.card',
+      comment: 'nota persistida',
+      intent: 'fix',
+      priority: 'suggestion',
+      createdAt: 1,
+    });
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    render();
+    await act(async () => {});
+    expect(listDesignAnnotations).toHaveBeenCalled();
+    expect(
+      container.querySelector('[data-testid="design-annotations-badge"]')!
+        .textContent,
+    ).toContain('1');
   });
 });

@@ -4,6 +4,7 @@ import {
   captureBrowserScreenshot,
 } from '../browser/browser-manager';
 import {
+  getDesignAnnotationSummaries,
   getLastSelection,
   getSelections,
   isDesignModeActive,
@@ -28,7 +29,8 @@ const designSelectionGetTool: McpToolDef = {
     'Read the current design-mode selection of a browser pane: L0 DOM context ' +
     '(tag/classes/selector/styles, redacted), L1 framework hints when the page ' +
     'runs a dev build, and top workspace code candidates (file:line, scored). ' +
-    'Set includeScreenshot for an element PNG.',
+    'Set includeScreenshot for an element PNG. Also lists the pane’s design ' +
+    'annotations (numbered user feedback pinned on elements) when any exist.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -46,7 +48,11 @@ const designSelectionGetTool: McpToolDef = {
     authorizePaneRef(ctx, paneId, 'read');
     const sessionKey = browserDesignSessionKey(ctx.scope, paneId);
     const selection = getLastSelection(sessionKey);
-    if (!selection) {
+    // Annotations outlive the picker session (design mode off keeps them), so
+    // a pane with pinned feedback is still a meaningful read without a live
+    // selection — only the fully-empty case fails.
+    const annotations = getDesignAnnotationSummaries(sessionKey);
+    if (!selection && annotations.length === 0) {
       throw new Error(
         'no design selection for this pane: enable design mode on the browser ' +
           'pane and click an element first',
@@ -54,18 +60,20 @@ const designSelectionGetTool: McpToolDef = {
     }
 
     let candidates: Awaited<ReturnType<typeof searchWorkspaceForSelection>> = [];
-    try {
-      const workspaceDir = resolveCwdForScope(ctx.scope, str(args, 'dir'));
-      candidates = await searchWorkspaceForSelection(
-        workspaceDir,
-        queryFromSelection(selection),
-      );
-    } catch {
-      // L2 is advisory: an unresolvable workspace never blocks the selection.
+    if (selection) {
+      try {
+        const workspaceDir = resolveCwdForScope(ctx.scope, str(args, 'dir'));
+        candidates = await searchWorkspaceForSelection(
+          workspaceDir,
+          queryFromSelection(selection),
+        );
+      } catch {
+        // L2 is advisory: an unresolvable workspace never blocks the selection.
+      }
     }
 
     let screenshot;
-    if (args.includeScreenshot === true) {
+    if (args.includeScreenshot === true && selection) {
       try {
         screenshot = await captureBrowserScreenshot(
           paneId,
@@ -82,10 +90,11 @@ const designSelectionGetTool: McpToolDef = {
     return {
       paneId,
       designModeActive: isDesignModeActive(sessionKey),
-      selection,
+      ...(selection ? { selection } : {}),
       // Multi-selection set (F4); a single click yields a one-element list.
       ...(selections.length > 1 ? { selections } : {}),
       candidates,
+      ...(annotations.length > 0 ? { annotations } : {}),
       ...(screenshot ? { screenshot } : {}),
     };
   },
