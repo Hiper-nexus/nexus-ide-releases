@@ -103,7 +103,9 @@ export function IntegrationsPanel({
             <p className="int-panel__dim">
               O “Entrar com GitHub” das Configurações conecta sua conta Nexus —
               ele NÃO dá acesso à API do GitHub. Para PRs e issues aqui, cole um
-              Personal Access Token (github.com/settings/tokens).
+              Personal Access Token (github.com/settings/tokens) — ou rode
+              `gh auth login` num terminal: o Nexus usa a sessão do gh CLI
+              automaticamente.
             </p>
           )}
           <label className="int-panel__field">
