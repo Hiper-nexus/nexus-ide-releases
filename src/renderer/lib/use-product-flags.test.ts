@@ -7,7 +7,7 @@ describe('builtinFlagDefaults', () => {
     const defaults = builtinFlagDefaults();
     expect(defaults[FEATURE_FLAG_IDS.contextualPanel]).toBe(true);
     expect(defaults[FEATURE_FLAG_IDS.progressiveOnboarding]).toBe(true);
-    expect(defaults[FEATURE_FLAG_IDS.mcpHub]).toBe(false);
+    expect(defaults[FEATURE_FLAG_IDS.mcpHub]).toBe(true);
     expect(defaults[FEATURE_FLAG_IDS.remoteRelayTransport]).toBe(false);
     expect(defaults[FEATURE_FLAG_IDS.autonomyProfiles]).toBe(false);
   });

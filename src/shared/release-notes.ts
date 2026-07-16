@@ -13,12 +13,37 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.17.0',
+  version: '0.18.0',
   date: '2026-07-16',
-  codename: 'Oh My Pi',
+  codename: 'Cockpit Ligado',
   summary:
-    'O motor de código open-source oh-my-pi (MIT) entra no cockpit: pane de agente tipado sem PTY-scraping, edição por hash, companion criptografado ponta a ponta, memória compartilhada entre CLIs e failover com cooldown por tier — código maduro vendorado, não reescrito.',
+    'Tudo que estava pronto atrás de flag agora nasce ligado e visível: painel contextual, onboarding progressivo, blocos de comando, busca unificada, memórias, editor, skills e MCP Hub — com o painel Labs para ligar/desligar qualquer flag pela interface. Inclui o inbox de notificações de agentes, o perfil de design com dials e todo o crossover Oh My Pi da 0.17.0.',
   highlights: [
+    {
+      title: 'Cockpit inteiro ligado por default',
+      detail:
+        'Painel contextual direito (busca, skills, editor, memória, missão, git), onboarding progressivo, blocos de comando no terminal, journal de missões, memória Markdown, memória agentic FTS5 e MCP Hub nascem habilitados — capability pronta deixou de ficar invisível atrás de flag. Escritas sensíveis continuam atrás de clique com confirmação.',
+    },
+    {
+      title: 'Labs: as flags do produto viraram interface',
+      detail:
+        'Configurações → Sistema → Labs lista toda feature flag com estado real, descrição e origem da decisão (padrão, override, kill switch), com switch persistido e "Restaurar padrão". Ligar ou desligar qualquer capability é um clique — sem editar arquivo à mão.',
+    },
+    {
+      title: 'Inbox de notificações de agentes',
+      detail:
+        'Um sininho na barra do workspace acumula CONCLUÍDO e ENCERRADO por agente: só notifica trabalho de verdade (busy sustentado), "Ir ao pane" foca o agente na hora, e itens de pane fechado avisam em vez de quebrar.',
+    },
+    {
+      title: 'Perfil de design no motor automático',
+      detail:
+        'A Carta de Design ganha direção estética (Auto/Minimalista/Brutalista/Soft) e dials 1–10 de ousadia, motion e densidade em Configurações → Squads. Neutro não injeta nada; extremos viram instrução explícita para os workers de UI.',
+    },
+    {
+      title: 'Anotações no Design Mode',
+      detail:
+        'Com um elemento selecionado, "＋ anotar" fixa uma nota com intenção (corrigir/mudar/pergunta/aprovado) e badge numerado na própria página; o tray copia o feedback consolidado ou envia tudo de uma vez ao agente, com as notas do usuário nunca cortadas por orçamento de prompt.',
+    },
     {
       title: 'Pane omp de primeira classe (sem PTY-scraping)',
       detail:
@@ -97,9 +122,14 @@ export const CURRENT_RELEASE: AppRelease = {
         'A tool de memória agentic ganhou uma exceção estreita para funcionar em panes livres, sem abrir escrita não-ligada a missão para nenhuma outra ferramenta.',
     },
     {
+      title: 'Design Mode sem estado fantasma',
+      detail:
+        'Anotações e design bar resetam juntos por um caminho único de invalidação — navegação real, rota SPA, crash do renderer da página e troca de workspace — acabando com a barra "ON" fantasma após reload; o sync de badges enfileirado não congela mais as ações do tray.',
+    },
+    {
       title: 'Release metadata alinhada',
       detail:
-        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.17.0, corrigindo a inconsistência de versão deixada por um release anterior incompleto.',
+        'Package, server, lockfile, changelog e release notes ficam na mesma versão 0.18.0 — a 0.17.0 nunca foi tagueada e seu conteúdo sai nesta release.',
     },
   ],
 };

@@ -43,19 +43,20 @@ describe('applyFlagOverride (Labs)', () => {
     const overridesPath = configureTempRegistry();
     const { applyFlagOverride } = await import('./product-wave-ipc');
 
+    // Override OFF sobre default-ON — distinto do default, persiste em disco.
     const list = applyFlagOverride({
       id: FEATURE_FLAG_IDS.mcpHub,
-      enabled: true,
+      enabled: false,
     });
     const hub = list.find((row) => row.id === FEATURE_FLAG_IDS.mcpHub);
-    expect(hub).toMatchObject({ enabled: true, reason: 'override' });
+    expect(hub).toMatchObject({ enabled: false, reason: 'override' });
 
     const onDisk = JSON.parse(fs.readFileSync(overridesPath, 'utf8')) as {
       overrides: Array<{ id: string; enabled: boolean }>;
     };
     expect(onDisk.overrides).toContainEqual({
       id: FEATURE_FLAG_IDS.mcpHub,
-      enabled: true,
+      enabled: false,
     });
   });
 
