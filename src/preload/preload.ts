@@ -572,6 +572,8 @@ const api: NexusApi = {
     onState: (cb) => addListener(browserStateListeners, cb),
     setDesignMode: (paneId: string, active: boolean) =>
       ipcRenderer.invoke(BROWSER_CHANNELS.designMode, { paneId, active }),
+    setDeviceEmulation: (paneId: string, width: number | null) =>
+      ipcRenderer.invoke(BROWSER_CHANNELS.deviceEmulation, { paneId, width }),
     sendDesignSelection: (paneId, payload) =>
       ipcRenderer.invoke(BROWSER_CHANNELS.designSend, { paneId, ...payload }),
     onDesignEvent: (cb) => addListener(browserDesignListeners, cb),

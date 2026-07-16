@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import os from 'node:os';
 import path from 'node:path';
-import { BrowserWindow, dialog, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain, net } from 'electron';
 import type { WebContents } from 'electron';
 import {
   hasSensitiveChange,
@@ -46,7 +46,10 @@ import {
   discoveredModelsFor,
   refreshAllDiscoveredModels,
 } from '../adapters/model-discovery';
-import { cliInstallRecipeFor } from '../adapters/cli-install-recipes';
+import {
+  cliInstallRecipeFor,
+  describeInstallRecipe,
+} from '../adapters/cli-install-recipes';
 import { execFile } from 'node:child_process';
 import {
   getKey,
@@ -670,10 +673,10 @@ export function unregisterProviderListener(wc: WebContents): void {
 }
 
 /** Confirmação nativa (não-spoofável) antes de instalar uma CLI — mostra o
- * comando exato; mesma doutrina SEC#4 do confirmExecConfig. */
+ * comando/URL exato; mesma doutrina SEC#4 do confirmExecConfig. */
 async function confirmCliInstall(
   label: string,
-  argv: readonly string[],
+  description: string,
 ): Promise<boolean> {
   const opts = {
     type: 'question' as const,
@@ -683,8 +686,8 @@ async function confirmCliInstall(
     title: `Instalar ${label}`,
     message: `Instalar a CLI de ${label} nesta máquina?`,
     detail:
-      `O NexusIDE vai executar exatamente:\n\n  ${argv.join(' ')}\n\n` +
-      'Fonte oficial do provider. Nada além deste comando será executado.',
+      `O NexusIDE vai executar exatamente:\n\n  ${description}\n\n` +
+      'Fonte oficial do provider. Nada além disto será executado.',
     noLink: true,
   };
   const win = BrowserWindow.getFocusedWindow();
@@ -692,6 +695,38 @@ async function confirmCliInstall(
     ? await dialog.showMessageBox(win, opts)
     : await dialog.showMessageBox(opts);
   return result.response === 1;
+}
+
+/** Baixa o instalador oficial (HTTPS) para um arquivo temporário 0700 e o
+ * executa com bash — nunca `curl | sh`: o conteúdo em disco é o que roda. */
+async function runScriptInstall(scriptUrl: string): Promise<void> {
+  const url = new URL(scriptUrl);
+  if (url.protocol !== 'https:') {
+    throw new Error('instalador oficial precisa ser HTTPS');
+  }
+  const response = await net.fetch(scriptUrl);
+  if (!response.ok) {
+    throw new Error(`download do instalador falhou: HTTP ${response.status}`);
+  }
+  const body = await response.text();
+  if (!body.trim()) throw new Error('instalador oficial veio vazio');
+  const file = path.join(
+    os.tmpdir(),
+    `nexus-cli-install-${Date.now()}-${process.pid}.sh`,
+  );
+  fs.writeFileSync(file, body, { mode: 0o700 });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'bash',
+        [file],
+        { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
+        (error) => (error ? reject(error) : resolve()),
+      );
+    });
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 }
 
 /** Native, un-spoofable confirmation before trusting a renderer-supplied
@@ -770,18 +805,25 @@ export function registerProviderIpc(): void {
     if (!isBinResolvable(recipe.runner)) {
       return { ok: false, error: recipe.runnerHint };
     }
-    const confirmed = await confirmCliInstall(adapter.label, recipe.argv);
+    const confirmed = await confirmCliInstall(
+      adapter.label,
+      describeInstallRecipe(recipe),
+    );
     if (!confirmed) return { ok: false, error: 'instalação cancelada' };
     try {
-      await new Promise<void>((resolve, reject) => {
-        execFile(
-          recipe.argv[0],
-          recipe.argv.slice(1),
-          // brew pode compilar; 15 min é teto honesto para 1ª instalação.
-          { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
-          (error) => (error ? reject(error) : resolve()),
-        );
-      });
+      if (recipe.kind === 'script') {
+        await runScriptInstall(recipe.scriptUrl);
+      } else {
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            recipe.argv[0],
+            recipe.argv.slice(1),
+            // brew pode compilar; 15 min é teto honesto para 1ª instalação.
+            { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
+            (error) => (error ? reject(error) : resolve()),
+          );
+        });
+      }
     } catch (err) {
       return {
         ok: false,

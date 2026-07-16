@@ -137,6 +137,14 @@ const pendingBoundsByKey = new Map<
 const ELEMENT_SHOT_PADDING = 8;
 const DNS_TIMEOUT_MS = 3_000;
 const securedSessions = new WeakSet<Session>();
+// Emulação mobile do preview responsivo: breakpoint ≤480 troca UA + métricas
+// para o site servir o layout mobile REAL (não só a largura estreitada).
+const MOBILE_EMULATION_MAX_WIDTH = 480;
+const MOBILE_EMULATION_HEIGHT = 844;
+const MOBILE_EMULATION_USER_AGENT =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) ' +
+  'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+const originalUserAgents = new Map<string, string>();
 let browserRuntimeManager: ProjectRuntimeManager | null = null;
 let unsubscribeBrowserScopeChanges: (() => void) | null = null;
 
@@ -1490,6 +1498,50 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
       paneId: entry.paneId,
       event: designEvent,
     });
+  });
+
+  ipcMain.handle(BROWSER_CHANNELS.deviceEmulation, async (event, raw) => {
+    const parsed = z
+      .object({
+        paneId: z.string().min(1).max(128),
+        width: z.number().int().min(240).max(4096).nullable(),
+      })
+      .strict()
+      .safeParse(raw);
+    if (!parsed.success) throw new Error('invalid device emulation payload');
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const entry = withOwnedEntry(event.sender, scope, parsed.data.paneId);
+    const wc = entry.view.webContents;
+    if (wc.isDestroyed()) throw new Error('browser pane is unavailable');
+    const key = browserKey(scope, parsed.data.paneId);
+    const width = parsed.data.width;
+    const emulate = width !== null && width <= MOBILE_EMULATION_MAX_WIDTH;
+    if (emulate) {
+      // Guarda o UA original UMA vez por pane para restaurar no desligamento.
+      if (!originalUserAgents.has(key)) {
+        originalUserAgents.set(key, wc.getUserAgent());
+      }
+      wc.setUserAgent(MOBILE_EMULATION_USER_AGENT);
+      wc.enableDeviceEmulation({
+        screenPosition: 'mobile',
+        screenSize: { width, height: MOBILE_EMULATION_HEIGHT },
+        viewPosition: { x: 0, y: 0 },
+        viewSize: { width, height: MOBILE_EMULATION_HEIGHT },
+        deviceScaleFactor: 0,
+        scale: 1,
+      });
+    } else {
+      wc.disableDeviceEmulation();
+      const original = originalUserAgents.get(key);
+      if (original) {
+        wc.setUserAgent(original);
+        originalUserAgents.delete(key);
+      }
+    }
+    // UA só vale a partir da próxima navegação — o reload faz o site servir o
+    // layout certo (menu hambúrguer, media queries, etc.) imediatamente.
+    wc.reload();
+    return { paneId: parsed.data.paneId, emulating: emulate };
   });
 
   ipcMain.handle(BROWSER_CHANNELS.designMode, async (event, raw) => {

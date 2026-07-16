@@ -313,6 +313,11 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
             onClick={() => {
               setBreakpoint(width);
               setBrowserViewportOverride(paneId, width);
+              // ≤480 também emula device (UA mobile + métricas, com reload):
+              // o site serve o layout mobile REAL, não só a largura.
+              window.nexus.browser
+                .setDeviceEmulation(paneId, width)
+                .catch(() => reportError(new Error('emulação de device falhou')));
             }}
           >
             {breakpointIcon(width)} {width}
@@ -327,6 +332,9 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
           onClick={() => {
             setBreakpoint(null);
             setBrowserViewportOverride(paneId, null);
+            window.nexus.browser.setDeviceEmulation(paneId, null).catch(() => {
+              // desligar emulação é best-effort; navegação seguinte normaliza
+            });
           }}
         >
           ⛶
