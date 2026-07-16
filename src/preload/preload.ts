@@ -13,6 +13,7 @@ import {
   TERMINAL_BLOCK_CHANNELS,
   SEARCH_MIXER_CHANNELS,
   PRODUCT_WAVE_CHANNELS,
+  DISCOVERY_CHANNELS,
 } from '../shared/channels';
 import { OPS_CHANNELS } from '../shared/ops-ipc';
 import { PET_CHANNELS } from '../shared/pet-types';
@@ -64,6 +65,12 @@ import { NOTE_CHANNELS } from '../shared/note-types';
 import type { Note, NotesChangedEvent } from '../shared/note-types';
 import { PIPE_CHANNELS } from '../shared/pipe-types';
 import type { Pipe, PipeMode } from '../shared/pipe-types';
+import { OMP_RPC_CHANNELS } from '../shared/omp-rpc-types';
+import type {
+  OmpRpcEventEnvelope,
+  OmpRpcStartRequest,
+  OmpRpcUiResponse,
+} from '../shared/omp-rpc-types';
 import { ONBOARDING_CHANNELS } from '../shared/onboarding-types';
 import type { OnboardingPatch } from '../shared/onboarding-types';
 import type {
@@ -451,6 +458,10 @@ ipcRenderer.on(NOTE_CHANNELS.changed, (_e, event: NotesChangedEvent) =>
 const pipesChangedListeners = new Set<(pipes: Pipe[]) => void>();
 ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
   pipesChangedListeners.forEach((cb) => cb(pipes)),
+);
+const ompRpcEventListeners = new Set<(envelope: OmpRpcEventEnvelope) => void>();
+ipcRenderer.on(OMP_RPC_CHANNELS.event, (_e, envelope: OmpRpcEventEnvelope) =>
+  ompRpcEventListeners.forEach((cb) => cb(envelope)),
 );
 
 const api: NexusApi = {
@@ -933,6 +944,10 @@ const api: NexusApi = {
     editorApply: (input) =>
       ipcRenderer.invoke(PRODUCT_WAVE_CHANNELS.editorApply, input),
   },
+  discovery: {
+    workspaceConfigs: () =>
+      ipcRenderer.invoke(DISCOVERY_CHANNELS.workspaceConfigs),
+  },
   integrations: createIntegrationsBridge(ipcRenderer),
   accounts: {
     list: () => ipcRenderer.invoke(ACCOUNT_CHANNELS.list),
@@ -1016,6 +1031,29 @@ const api: NexusApi = {
       ipcRenderer.invoke(NOTE_CHANNELS.save, { workspacePath, note }),
     remove: (id: string) => ipcRenderer.invoke(NOTE_CHANNELS.remove, { id }),
     onChanged: (cb) => addListener(notesChangedListeners, cb),
+  },
+  ompRpc: {
+    start: (request: OmpRpcStartRequest) =>
+      ipcRenderer.invoke(OMP_RPC_CHANNELS.start, request),
+    prompt: (sessionId: string, message: string, behavior?: 'steer' | 'followUp') =>
+      ipcRenderer.invoke(OMP_RPC_CHANNELS.prompt, { sessionId, message, behavior }),
+    abort: (sessionId: string) =>
+      ipcRenderer.invoke(OMP_RPC_CHANNELS.abort, { sessionId }),
+    setModel: (sessionId: string, provider: string, modelId: string) =>
+      ipcRenderer.invoke(OMP_RPC_CHANNELS.setModel, { sessionId, provider, modelId }),
+    getState: (sessionId: string) =>
+      ipcRenderer.invoke(OMP_RPC_CHANNELS.getState, { sessionId }),
+    listModels: (sessionId: string) =>
+      ipcRenderer.invoke(OMP_RPC_CHANNELS.listModels, { sessionId }),
+    respondUi: (sessionId: string, requestId: string, response: OmpRpcUiResponse) =>
+      ipcRenderer.invoke(OMP_RPC_CHANNELS.respondUi, {
+        sessionId,
+        requestId,
+        response,
+      }),
+    dispose: (sessionId: string) =>
+      ipcRenderer.invoke(OMP_RPC_CHANNELS.dispose, { sessionId }),
+    onEvent: (cb) => addListener(ompRpcEventListeners, cb),
   },
   pipes: {
     list: () => ipcRenderer.invoke(PIPE_CHANNELS.list),

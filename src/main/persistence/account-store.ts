@@ -40,8 +40,31 @@ import {
 const KEY_PREFIX = 'acctkey:'; // api-key accounts
 const CRED_PREFIX = 'acctcred:'; // subscription credential blobs
 
+// Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT):
+// blocos de cooldown por (conta, escopo). Escopo '' bloqueia a conta inteira
+// (comportamento legado, espelhado em accounts.cooldown_until); escopo
+// 'tier:<família>' bloqueia só spawns daquele tier. probeAfter permite UMA
+// sondagem controlada por janela em blocos longos (quota 12h) quando não há
+// alternativa livre — "um request na mão vale mais que key nenhuma".
+
+/** Escopo vazio = bloco global da conta (compatível com cooldownUntil). */
+const GLOBAL_SCOPE = '';
+/** Janela máxima até a primeira sondagem permitida (min com blockedUntil). */
+const PROBE_AFTER_MAX_MS = 30 * 60 * 1000;
+
+export interface CooldownBlock {
+  blockedUntil: number;
+  reason: string;
+  /** Instante a partir do qual uma sondagem last-resort é permitida. */
+  probeAfter: number;
+  /** Sondagem já consumida nesta janela (uma por janela de probe). */
+  probedAt?: number;
+}
+
 const accounts = new Map<string, Account>();
 const activeByAdapter = new Map<string, string>();
+/** accountId → (blockScope → bloco). Cache de leitura do SQLite. */
+const cooldownBlocks = new Map<string, Map<string, CooldownBlock>>();
 let db: Db | null = null;
 let readOnly = true;
 let counter = 0;
@@ -98,6 +121,31 @@ interface Row {
   created_at: number;
 }
 
+interface CooldownBlockRow {
+  account_id: string;
+  block_scope: string;
+  blocked_until: number;
+  reason: string;
+  probe_after: number;
+  probed_at: number | null;
+}
+
+/**
+ * DDL defensivo: o schema canônico vive em db.ts, mas o store também roda
+ * sobre DBs de teste/legados sem a tabela — CREATE IF NOT EXISTS é o padrão
+ * de migração aditiva do repo (roda em todo open, idempotente).
+ */
+const COOLDOWN_BLOCKS_DDL = `
+CREATE TABLE IF NOT EXISTS account_cooldown_blocks (
+  account_id    TEXT NOT NULL,
+  block_scope   TEXT NOT NULL DEFAULT '',
+  blocked_until INTEGER NOT NULL,
+  reason        TEXT NOT NULL DEFAULT '',
+  probe_after   INTEGER NOT NULL,
+  probed_at     INTEGER,
+  PRIMARY KEY (account_id, block_scope)
+);`;
+
 export function initAccountStore(database: Db | null): void {
   db = database;
   readOnly = true;
@@ -105,6 +153,7 @@ export function initAccountStore(database: Db | null): void {
 
   const hydratedAccounts = new Map<string, Account>();
   const hydratedActive = new Map<string, string>();
+  const hydratedBlocks = new Map<string, Map<string, CooldownBlock>>();
   try {
     for (const row of database.prepare('SELECT * FROM accounts').all() as Row[]) {
       const account: Account = {
@@ -121,6 +170,21 @@ export function initAccountStore(database: Db | null): void {
       hydratedAccounts.set(row.id, account);
       if (row.active === 1) hydratedActive.set(account.adapterId, account.id);
     }
+    database.exec(COOLDOWN_BLOCKS_DDL);
+    const blockRows = database
+      .prepare('SELECT * FROM account_cooldown_blocks')
+      .all() as CooldownBlockRow[];
+    for (const row of blockRows) {
+      const byScope =
+        hydratedBlocks.get(row.account_id) ?? new Map<string, CooldownBlock>();
+      byScope.set(row.block_scope, {
+        blockedUntil: row.blocked_until,
+        reason: row.reason,
+        probeAfter: row.probe_after,
+        probedAt: row.probed_at ?? undefined,
+      });
+      hydratedBlocks.set(row.account_id, byScope);
+    }
   } catch (error) {
     console.warn('[accounts] failed to hydrate; using read-only cache:', error);
     db = null;
@@ -129,6 +193,7 @@ export function initAccountStore(database: Db | null): void {
 
   replaceMap(accounts, hydratedAccounts);
   replaceMap(activeByAdapter, hydratedActive);
+  replaceMap(cooldownBlocks, hydratedBlocks);
   readOnly = false;
 }
 
@@ -350,11 +415,15 @@ export function claudeOAuthAccessToken(accountId?: string): string | null {
  * Resolve and activate the exact account pinned to a pane before its PTY is
  * created. This deliberately does not fall back to the provider's active
  * account: a pinned account is an isolation boundary, not a preference hint.
+ *
+ * `allowCoolingProbe`: sondagem last-resort do failover — a conta ainda está
+ * em cooldown, mas o pool inteiro está bloqueado e a janela de probe venceu.
  */
 export function prepareAccountForSpawn(
   adapterId: string,
   accountId: string,
   now = Date.now(),
+  options?: { allowCoolingProbe?: boolean },
 ): AccountSpawnPreparation {
   const account = getAccount(accountId);
   if (!account || account.adapterId !== adapterId) {
@@ -364,7 +433,11 @@ export function prepareAccountForSpawn(
     };
   }
 
-  if (account.cooldownUntil && account.cooldownUntil > now) {
+  if (
+    !options?.allowCoolingProbe &&
+    account.cooldownUntil &&
+    account.cooldownUntil > now
+  ) {
     return {
       ok: false,
       error: `selected account "${account.label}" is cooling down`,
@@ -423,6 +496,185 @@ export function pickAvailable(
     now,
     quotaScoreByAccountId,
   );
+}
+
+/** DELETE oportunista de bloco expirado; nunca falha o caminho de leitura. */
+function deleteCooldownBlockRow(accountId: string, scope: string): void {
+  if (!db || readOnly) return;
+  try {
+    db.prepare(
+      'DELETE FROM account_cooldown_blocks WHERE account_id = ? AND block_scope = ?',
+    ).run(accountId, scope);
+  } catch {
+    // Limpeza preguiçosa é oportunista; o bloco expirado já não bloqueia.
+  }
+}
+
+/** Bloco vigente de um escopo exato, com limpeza preguiçosa ao expirar. */
+function activeBlock(
+  accountId: string,
+  scope: string,
+  now: number,
+): CooldownBlock | null {
+  const byScope = cooldownBlocks.get(accountId);
+  const block = byScope?.get(scope);
+  if (!byScope || !block) return null;
+  if (block.blockedUntil <= now) {
+    // Restauração automática: cooldown expirado devolve a conta ao pool.
+    byScope.delete(scope);
+    if (byScope.size === 0) cooldownBlocks.delete(accountId);
+    deleteCooldownBlockRow(accountId, scope);
+    return null;
+  }
+  return block;
+}
+
+interface EffectiveBlock {
+  block: CooldownBlock;
+  /** Escopo do bloco vencedor ('' = global) — alvo de markProbeConsumed. */
+  blockScope: string;
+}
+
+/**
+ * Bloco que impede a conta de atender um spawn no escopo dado: o global
+ * (linha legada da conta ou bloco escopo '') sempre conta; o escopado só
+ * conta quando `scope` casa. Vence o de maior blockedUntil (regra do omp).
+ */
+function effectiveBlock(
+  account: Account,
+  now: number,
+  scope?: string,
+): EffectiveBlock | null {
+  let result: EffectiveBlock | null = null;
+  const global = activeBlock(account.id, GLOBAL_SCOPE, now);
+  if (global) result = { block: global, blockScope: GLOBAL_SCOPE };
+  if (account.cooldownUntil && account.cooldownUntil > now) {
+    // Linha legada sem bloco espelhado (DB antigo): sintetiza sem janela de
+    // probe antecipada (probeAfter = fim do cooldown → sem sondagem).
+    if (!result || account.cooldownUntil > result.block.blockedUntil) {
+      result = {
+        block: {
+          blockedUntil: account.cooldownUntil,
+          reason: account.lastError ?? '',
+          probeAfter: account.cooldownUntil,
+        },
+        blockScope: GLOBAL_SCOPE,
+      };
+    }
+  }
+  if (scope && scope !== GLOBAL_SCOPE) {
+    const scoped = activeBlock(account.id, scope, now);
+    if (scoped && (!result || scoped.blockedUntil > result.block.blockedUntil)) {
+      result = { block: scoped, blockScope: scope };
+    }
+  }
+  return result;
+}
+
+/**
+ * True quando a conta está bloqueada para spawns no escopo dado. Sem escopo,
+ * só blocos globais contam — uma conta com bloco `tier:x` segue disponível
+ * para os demais modelos (contrato central do cooldown escopado).
+ */
+export function isAccountBlockedForScope(
+  accountId: string,
+  now = Date.now(),
+  scope?: string,
+): boolean {
+  const account = accounts.get(accountId);
+  if (!account) return false;
+  return effectiveBlock(account, now, scope) !== null;
+}
+
+/** Persiste o consumo da sondagem (uma por janela) no bloco vencedor. */
+function markProbeConsumed(
+  account: Account,
+  entry: EffectiveBlock,
+  now: number,
+): void {
+  const consumed: CooldownBlock = { ...entry.block, probedAt: now };
+  upsertCooldownBlock(account.id, entry.blockScope, consumed);
+}
+
+export interface FailoverPickOptions {
+  /** Escopo do spawn alvo (ex.: 'tier:opus'); ausente = só blocos globais. */
+  scope?: string;
+  /**
+   * Habilita a sondagem last-resort: quando nada está livre, uma conta cujo
+   * bloco tem probeAfter vencido e ainda não foi sondado nesta janela é
+   * devolvida com `probe: true` (e a sondagem é consumida na hora).
+   */
+  allowProbe?: boolean;
+}
+
+export interface FailoverPick {
+  account: Account | null;
+  /** True = sondagem controlada: a conta ainda está em cooldown. */
+  probe: boolean;
+  /**
+   * Menor blockedUntil entre as irmãs elegíveis quando nada está livre —
+   * o chamador agenda retry nesse instante + 1s em vez de desistir ou
+   * esperar a janela multi-hora do provedor (retryAtMs do omp).
+   */
+  nextUnblockAtMs?: number;
+}
+
+// Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT):
+// seleção escopo-ciente + retryAtMs da irmã + probe-after last-resort.
+export function pickAvailableForFailover(
+  adapterId: string,
+  excludeId: string | null,
+  now = Date.now(),
+  quotaScoreByAccountId?: ReadonlyMap<string, number>,
+  options?: FailoverPickOptions,
+): FailoverPick {
+  const siblings = listAccounts(adapterId).filter((a) => a.id !== excludeId);
+  const free = siblings.filter((a) => !effectiveBlock(a, now, options?.scope));
+  const chosen = chooseAccount(
+    free,
+    activeByAdapter.get(adapterId) ?? null,
+    excludeId,
+    now,
+    quotaScoreByAccountId,
+  );
+  if (chosen) return { account: chosen, probe: false };
+
+  let nextUnblockAtMs: number | undefined;
+  const blocked: Array<{ account: Account; entry: EffectiveBlock }> = [];
+  for (const sibling of siblings) {
+    const entry = effectiveBlock(sibling, now, options?.scope);
+    if (!entry) continue;
+    blocked.push({ account: sibling, entry });
+    if (
+      nextUnblockAtMs === undefined ||
+      entry.block.blockedUntil < nextUnblockAtMs
+    ) {
+      nextUnblockAtMs = entry.block.blockedUntil;
+    }
+  }
+
+  if (options?.allowProbe) {
+    const probeCandidate = blocked
+      .filter(
+        ({ entry }) =>
+          entry.block.probeAfter <= now && entry.block.probedAt === undefined,
+      )
+      .sort((a, b) => a.account.createdAt - b.account.createdAt)[0];
+    if (probeCandidate) {
+      markProbeConsumed(probeCandidate.account, probeCandidate.entry, now);
+      return {
+        account: probeCandidate.account,
+        probe: true,
+        ...(nextUnblockAtMs !== undefined ? { nextUnblockAtMs } : {}),
+      };
+    }
+  }
+
+  return {
+    account: null,
+    probe: false,
+    ...(nextUnblockAtMs !== undefined ? { nextUnblockAtMs } : {}),
+  };
 }
 
 export interface AddAccountInput {
@@ -582,6 +834,9 @@ export function removeAccount(id: string): void {
   }
   try {
     database.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+    database
+      .prepare('DELETE FROM account_cooldown_blocks WHERE account_id = ?')
+      .run(id);
   } catch (error) {
     if (previousSecret !== null) {
       const restore = setSecret(secretKey, previousSecret);
@@ -597,6 +852,7 @@ export function removeAccount(id: string): void {
   }
 
   accounts.delete(id);
+  cooldownBlocks.delete(id);
   if (activeByAdapter.get(account.adapterId) === id) {
     activeByAdapter.delete(account.adapterId);
   }
@@ -627,12 +883,78 @@ export function supportsSessionSnapshot(adapterId: string): boolean {
   return adapterId === 'claude' || isFileAuthAdapter(adapterId);
 }
 
-export function setCooldown(id: string, until: number, reason: string): void {
+/** Grava/atualiza um bloco (SQLite primeiro, cache depois; fail-closed). */
+function upsertCooldownBlock(
+  id: string,
+  scope: string,
+  block: CooldownBlock,
+): void {
+  const database = requireWritableDb();
+  try {
+    database
+      .prepare(
+        `INSERT INTO account_cooldown_blocks
+           (account_id, block_scope, blocked_until, reason, probe_after, probed_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(account_id, block_scope) DO UPDATE SET
+           blocked_until = excluded.blocked_until,
+           reason        = excluded.reason,
+           probe_after   = excluded.probe_after,
+           probed_at     = excluded.probed_at`,
+      )
+      .run(
+        id,
+        scope,
+        block.blockedUntil,
+        block.reason,
+        block.probeAfter,
+        block.probedAt ?? null,
+      );
+  } catch (error) {
+    failPersistence('cooldown block', error);
+  }
+  const byScope = cooldownBlocks.get(id) ?? new Map<string, CooldownBlock>();
+  byScope.set(scope, block);
+  cooldownBlocks.set(id, byScope);
+}
+
+/**
+ * Coloca a conta em cooldown. Sem `scope`: bloco GLOBAL — comportamento
+ * legado intacto (cooldownUntil/lastError na linha da conta, last-write-wins)
+ * + bloco espelhado com probeAfter. Com `scope` (ex.: 'tier:opus'): a conta
+ * segue no pool para outros modelos; só o bloco escopado é registrado, com
+ * max() de expiração (um retry-after curto não encurta um bloco longo).
+ */
+export function setCooldown(
+  id: string,
+  until: number,
+  reason: string,
+  scope?: string,
+): void {
   const account = accounts.get(id);
   if (!account) return;
+  const now = Date.now();
+  const blockScope = scope ?? GLOBAL_SCOPE;
+  const existing = cooldownBlocks.get(id)?.get(blockScope);
+  const blockedUntil =
+    blockScope === GLOBAL_SCOPE
+      ? until
+      : Math.max(existing?.blockedUntil ?? 0, until);
+  const block: CooldownBlock = {
+    blockedUntil,
+    reason,
+    // Nova marcação abre nova janela de sondagem (probedAt limpo).
+    probeAfter: Math.min(blockedUntil, now + PROBE_AFTER_MAX_MS),
+  };
   const nextAccounts = new Map(accounts);
-  nextAccounts.set(id, { ...account, cooldownUntil: until, lastError: reason });
+  nextAccounts.set(
+    id,
+    blockScope === GLOBAL_SCOPE
+      ? { ...account, cooldownUntil: until, lastError: reason }
+      : { ...account, lastError: reason },
+  );
   persistSnapshot(nextAccounts, activeByAdapter, 'cooldown');
+  upsertCooldownBlock(id, blockScope, block);
   replaceMap(accounts, nextAccounts);
   emit();
 }

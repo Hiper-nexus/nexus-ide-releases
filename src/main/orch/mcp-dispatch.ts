@@ -398,6 +398,13 @@ export async function dispatchToolCall(
   const canonical = canonicalToolName(tool.name);
   const permitsUnboundEffect =
     canonical === 'mission_create' ||
+    // memory_retain é a única bootstrap-authority efetiva que precisa rodar
+    // fora de missão: a memória agentic é compartilhada por TODAS as CLIs
+    // hospedadas, panes livres inclusive. Exención ESTREITA por nome — não a
+    // classe bootstrap-authority inteira — para não abrir escrita não-ligada a
+    // missão a outras tools. A mutação é estreita e validada (≤8KB, redação de
+    // segredo, dedupe) e toca só o banco de memória em userData.
+    canonical === 'memory_retain' ||
     effectPolicy === 'mission-control' ||
     effectPolicy === 'renderer-authorized-effect' ||
     effectPolicy === 'routine-local-operation';

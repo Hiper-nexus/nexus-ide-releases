@@ -14,6 +14,52 @@
   gosto dentro delas (o bloco injetado declara isso ao agente), e valores fora
   da faixa em settings antigos são clampados em vez de quebrar o spawn.
 
+## 0.17.0 — Oh My Pi
+
+Crossover com o coding agent open-source [oh-my-pi](https://github.com/can1357/oh-my-pi)
+(MIT): peças maduras vendoradas e integradas ao cockpit, não reescritas do zero.
+Provenance em `third_party/provenance/oh-my-pi-03c48d0.json`; análise senior em
+`docs/analysis/2026-07-15-oh-my-pi-crossover-senior.md`.
+
+### Adicionado
+
+- **Pane omp de primeira classe** via `omp --mode rpc-ui` (NDJSON tipado sobre
+  pipes): estado determinístico (sem PTY-scraping), streaming, custo/contexto ao
+  vivo, troca de modelo cross-provider mid-session. Aprovações sempre no host com
+  auditoria fail-closed; host tools roteadas pelo skill-gate real; spawn sempre
+  com `--approval-mode always-ask`. Adapter `omp` no grid com injeção MCP por
+  HOME-overlay privado por sessão.
+- **hashline** vendorado como patch bus do editor (tool `nexus_editor_apply_patch`):
+  edição ancorada em hash de conteúdo, all-or-nothing multi-arquivo, rejeição de
+  âncora obsoleta, recuperação fail-closed. xxHash32 reimplementado em TS puro
+  (paridade de bytes provada por vetores canônicos).
+- **Companion mobile E2E**: relay cego + AES-256-GCM (pi-wire), chave no fragmento
+  do QR, view-only vs controle por posse de write-token, endurecimentos
+  multi-tenant (cap de salas/peers, rate-limit, origin, TTL). Atrás da flag
+  `feature.remote.relayTransport` (default off).
+- **Memória agentic por workspace** (`nexus_memory_retain/recall/stats`) sobre
+  SQLite FTS5, banco por workspace + global do usuário, redação de segredo e
+  dedupe. Atrás da flag `feature.memory.workspaceMemory` (default off).
+- **Cooldown de failover por tier**: bloco escopado por família de modelo não tira
+  a conta do pool para outros modelos; espera-pela-irmã em vez da janela longa;
+  probe-after e restauração automática.
+- **Catálogo rico de modelos** (preço/MTok, janela, capacidades) vendorado do omp,
+  com re-sync pinável; **descoberta universal de configs** de `.claude`/`.cursor`/
+  `.codex`/`AGENTS.md`/`GEMINI.md`; **squad builtin Review P0–P3** com findings
+  tipados; **classificadores de rate-limit** (quota vs transitório, multilíngues).
+
+### Corrigido
+
+- Companion: guest view-only não derruba mais a sessão do host com um frame
+  indecifrável (host descarta o quadro; fatal só para o próprio guest).
+- Pane omp: caracteres multibyte (pt-BR/emoji) partidos no limite de chunk do pipe
+  são remontados via StringDecoder, sem corromper texto nem argumentos de tool.
+- PREVC: o gate de mutação extrai os paths de dentro do patch hashline e aplica o
+  invariante `.context/` read-only a cada seção.
+- Descoberta de configs não materializa segredo do ambiente no inventário
+  read-only (mantém `${VAR}` literal).
+- Release metadata realinhada em 0.17.0 (package/server/lockfile/changelog/notas).
+
 ## Não lançado — Anotações de Design (paridade Orca Design Mode)
 
 - Design Mode ganha **anotações**: com um elemento selecionado, "＋ anotar" abre

@@ -1,0 +1,55 @@
+{
+  "source": "can1357/oh-my-pi",
+  "upstreamCommit": "03c48d073",
+  "upstreamRepository": "https://github.com/can1357/oh-my-pi",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2025 Mario Zechner; Copyright (c) 2025-2026 Can Bölük",
+  "licenseFile": "third_party/licenses/oh-my-pi-MIT.txt",
+  "importedAt": "2026-07-15",
+  "headerPolicy": "Every copied/adapted file carries: Vendored/derived from can1357/oh-my-pi@03c48d073 <upstream path> (MIT); See third_party/licenses/oh-my-pi-MIT.txt. Existing copyright notices inside source are never stripped. AGPL-touching upstream areas (src/markit, mupdf) are excluded from vendoring by policy.",
+  "analysisDoc": "docs/analysis/2026-07-15-oh-my-pi-crossover-senior.md",
+  "areas": [
+    {
+      "upstreamPath": "packages/catalog/src/models.json + packages/catalog/src/identity/",
+      "nexusPath": "src/vendor/omp/catalog/",
+      "type": "extracted-subset",
+      "changeSummary": "Recorte de providers relevantes ao Nexus (preço/janela/capacidades) + classificador de identidade de modelo; re-sync via scripts/vendor-omp-catalog.mjs."
+    },
+    {
+      "upstreamPath": "packages/ai/src/error/rate-limit.ts + packages/ai/src/utils/retry-after.ts",
+      "nexusPath": "src/vendor/omp/rate-limit/",
+      "type": "adapted",
+      "changeSummary": "Taxonomia QUOTA/RATE_LIMIT/CAPACITY/SERVER e parsing de retry-after adaptados de headers HTTP para texto de PTY; integrados ao limit-detector do Nexus."
+    },
+    {
+      "upstreamPath": "packages/coding-agent review pipeline (prompts/agents/reviewer.md, prompts/review-request.md, bundled/review)",
+      "nexusPath": "src/main/orch/review-findings.ts + squad builtin review-p0p3",
+      "type": "derived",
+      "changeSummary": "Schema de findings P0-P3/confidence/cross-boundary e distribuição por localidade portados como squad builtin do Nexus (prompts adaptados a pt-BR e ao MCP nexus_*)."
+    },
+    {
+      "upstreamPath": "packages/hashline/",
+      "nexusPath": "src/vendor/omp/hashline/",
+      "type": "vendored",
+      "changeSummary": "Patch language ancorada em hash (applier + recovery + testes); Bun.hash.xxHash32 substituído por implementação TS validada por fixtures; Filesystem adaptado às primitivas seguras do Nexus."
+    },
+    {
+      "upstreamPath": "packages/coding-agent/src/capability/ + src/discovery/",
+      "nexusPath": "src/vendor/omp/discovery/ + src/main/discovery/",
+      "type": "adapted-subset",
+      "changeSummary": "Descoberta de MCP servers/rules/skills/commands dos ecossistemas claude/cursor/codex/gemini/cline/copilot/agents-md com prioridades e _source; enxugada para 4 capabilities."
+    },
+    {
+      "upstreamPath": "packages/wire/ + packages/collab-web/src/lib/codec.ts + collab relay reference",
+      "nexusPath": "src/vendor/omp/wire/ + src/main/remote/relay/",
+      "type": "vendored+adapted",
+      "changeSummary": "Protocolo de sala E2E (AES-256-GCM, chave no fragment, write-token) e relay cego portado Bun→Node ws como transporte v2 do companion; política mobile do Nexus permanece autoridade."
+    },
+    {
+      "upstreamPath": "packages/coding-agent/src/modes/rpc/rpc-types.ts (referência de protocolo)",
+      "nexusPath": "src/main/adapters/omp-rpc-*.ts",
+      "type": "derived-types",
+      "changeSummary": "Frames NDJSON do modo RPC reescritos como tipos zod do Nexus para hospedar omp --mode rpc-ui como pane de primeira classe; binário omp consumido como processo externo (nunca redistribuído — mupdf AGPL)."
+    }
+  ]
+}

@@ -14,6 +14,7 @@ import { buildDesignTools } from './tools-design';
 import { buildDesignSystemTools } from './tools-design-system';
 import { buildWorkspaceDependencyTools } from './tools-workspace-dependencies';
 import { buildSecurityTools } from './tools-security';
+import { buildMemoryTools } from './tools-memory';
 
 /**
  * The MCP toolset — the orchestration tools in the
@@ -43,5 +44,6 @@ export function buildToolset(): McpToolDef[] {
     ...buildDesignSystemTools(),
     ...buildWorkspaceDependencyTools(),
     ...buildSecurityTools(),
+    ...buildMemoryTools(),
   ];
 }

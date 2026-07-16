@@ -244,6 +244,29 @@ describe('MCP dispatch effect safety', () => {
     }
   });
 
+  it('allows memory_retain as a missionless free-pane effect (bootstrap exemption)', async () => {
+    // A memória agentic é compartilhada por todas as CLIs hospedadas; retain
+    // precisa rodar em pane livre (sem missão). A exención é ESTREITA por nome:
+    // o teste acima prova que context_doctor (também bootstrap-authority) segue
+    // bloqueado sem missão.
+    const handler = vi.fn(async () => ({ ok: true }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_memory_retain',
+        description: 'agentic memory retain',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_memory_retain',
+      { content: 'projeto usa better-sqlite3', kind: 'fact' },
+      userContext(),
+    );
+
+    expect(result).not.toMatchObject({ denied: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('allows a confirmed renderer UI action without mission authority', async () => {
     const handler = vi.fn(async () => ({ ok: true }));
     const confirm = vi.fn(async () => true);

@@ -52,6 +52,8 @@ import {
 } from './hooks-gen';
 import {
   cleanupAgyMcpConfig,
+  cleanupOmpMcpConfig,
+  prepareOmpMcpConfig,
   codexMcpArgs,
   prepareAgyMcpConfig,
   purgeStaleAgyMcpConfigs,
@@ -427,6 +429,11 @@ function installSpawnHook(): void {
           });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
+        } else if (flavor === 'omp') {
+          // omp resolve `~/.omp/agent/mcp.json` via HOME; overlay privado por
+          // sessão preserva login/sessões por symlink e isola o bearer.
+          const ompConfig = prepareOmpMcpConfig(mcpUrl(), ctx.token);
+          env.HOME = ompConfig.homeDir;
         }
       }
       if (!skillsPrepared) {
@@ -438,6 +445,7 @@ function installSpawnHook(): void {
     } catch (err) {
       releaseSessionByToken(ctx.token);
       cleanupAgyMcpConfig(ctx.token);
+      cleanupOmpMcpConfig(ctx.token);
       cleanupCliMcpSession(ctx.token);
       cleanupSessionArtifacts(ctx.token);
       throw new Error(
@@ -459,6 +467,7 @@ function installSpawnHook(): void {
         // registry and remove any token-bearing files we wrote.
         releaseSessionByToken(ctx.token);
         cleanupAgyMcpConfig(ctx.token);
+      cleanupOmpMcpConfig(ctx.token);
         cleanupCliMcpSession(ctx.token);
         cleanupSessionArtifacts(ctx.token);
       },
@@ -534,6 +543,7 @@ function installLegacyParser(): void {
     if (token) {
       sessionTokens.delete(sessionId);
       cleanupAgyMcpConfig(token);
+    cleanupOmpMcpConfig(token);
       cleanupCliMcpSession(token);
       cleanupSessionArtifacts(token);
     }
@@ -609,6 +619,7 @@ export function stopMcpServer(): void {
   cliPromptAutoResponder.clear();
   for (const token of sessionTokens.values()) {
     cleanupAgyMcpConfig(token);
+    cleanupOmpMcpConfig(token);
     cleanupCliMcpSession(token);
     cleanupSessionArtifacts(token);
     releaseSessionByToken(token);

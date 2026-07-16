@@ -126,6 +126,17 @@ export function confirmationReason(
   if (toolName === 'nexus_editor_replace_selection' || toolName === 'editor_replace_selection') {
     return `replace in ${String(args.path ?? 'unknown file')}`;
   }
+  if (toolName === 'nexus_editor_apply_patch' || toolName === 'editor_apply_patch') {
+    const patch = typeof args.patch === 'string' ? args.patch : '';
+    const paths = [...patch.matchAll(/^\[([^\]#\n]+)(?:#[0-9A-Fa-f]{4})?\]\s*$/gm)]
+      .map((match) => match[1].trim())
+      .filter((value) => value.length > 0);
+    const unique = [...new Set(paths)];
+    if (unique.length === 0) return 'apply hashline patch';
+    const shown = unique.slice(0, 5).join(', ');
+    const extra = unique.length > 5 ? ` (+${unique.length - 5} more)` : '';
+    return `apply hashline patch to ${shown}${extra}`;
+  }
   if (toolName === 'nexus_browser_open' || toolName === 'browser_open') {
     return `open browser target ${safeBrowserTarget(args.url)}`;
   }

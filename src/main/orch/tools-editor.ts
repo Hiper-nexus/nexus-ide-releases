@@ -5,6 +5,7 @@ import {
   readWorkspaceTextFile,
   updateWorkspaceTextFile,
 } from './workspace-file';
+import { applyHashlinePatch } from '../editor/hashline-session';
 import { assertAgentReadablePath } from './agent-path-policy';
 
 /**
@@ -182,6 +183,49 @@ const editorReplaceSelection: McpToolDef = {
   },
 };
 
+const editorApplyPatch: McpToolDef = {
+  name: 'nexus_editor_apply_patch',
+  description:
+    'Apply a hashline patch document to one or more workspace files. ' +
+    'A patch is a sequence of file sections, each starting with a ' +
+    '"[path#TAG]" header whose 4-hex TAG was minted by a prior ' +
+    'nexus_file_read call with hashline: true (never invent a TAG). ' +
+    'Section bodies use line-anchored ops: "SWAP A.=B:" followed by ' +
+    '"+line" payload rows replaces lines A..B; "DEL A" / "DEL A.=B" ' +
+    'deletes lines; "INS.PRE N:" / "INS.POST N:" insert before/after ' +
+    'line N; "INS.HEAD:" / "INS.TAIL:" insert at file start/end; ' +
+    '"MV dest" moves the file and "REM" deletes it. All sections are ' +
+    'validated before any write, so the patch applies all-or-nothing. ' +
+    'If a file changed since it was read, the tool rejects with the ' +
+    'current content context — re-read the file and retry with the ' +
+    'fresh TAG.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      patch: {
+        type: 'string',
+        description:
+          'Hashline patch document (one or more "[path#TAG]" sections ' +
+          'with line-anchored edit ops)',
+      },
+    },
+    required: ['patch'],
+  },
+  handler: async (args, ctx) => {
+    const patchText = requireStr(args, 'patch');
+    const outcome = await applyHashlinePatch(
+      executionScopeFor(ctx),
+      ctx.token,
+      patchText,
+    );
+    return {
+      files: outcome.applied.length,
+      summary: outcome.summary,
+      applied: outcome.applied,
+    };
+  },
+};
+
 const editorGotoLine: McpToolDef = {
   name: 'nexus_editor_goto_line',
   description:
@@ -230,5 +274,11 @@ const editorGotoLine: McpToolDef = {
 };
 
 export function buildEditorTools(): McpToolDef[] {
-  return [editorFocus, editorInsert, editorReplaceSelection, editorGotoLine];
+  return [
+    editorFocus,
+    editorInsert,
+    editorReplaceSelection,
+    editorApplyPatch,
+    editorGotoLine,
+  ];
 }

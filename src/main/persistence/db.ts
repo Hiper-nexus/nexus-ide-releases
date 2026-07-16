@@ -112,6 +112,22 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_at     INTEGER NOT NULL
 );
 
+/* Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT):
+   espelho SQLite dos blocos de cooldown por conta+escopo (auth_credential_blocks
+   no omp). block_scope '' = conta inteira; 'tier:<família>' = só aquele tier.
+   probe_after = min(blocked_until, marcação+30min): instante a partir do qual
+   UMA sondagem last-resort é permitida; probed_at marca a sondagem consumida.
+   Migração: CREATE TABLE IF NOT EXISTS roda em todo open (padrão do repo). */
+CREATE TABLE IF NOT EXISTS account_cooldown_blocks (
+  account_id    TEXT NOT NULL,
+  block_scope   TEXT NOT NULL DEFAULT '',
+  blocked_until INTEGER NOT NULL,
+  reason        TEXT NOT NULL DEFAULT '',
+  probe_after   INTEGER NOT NULL,
+  probed_at     INTEGER,
+  PRIMARY KEY (account_id, block_scope)
+);
+
 CREATE TABLE IF NOT EXISTS provider_pane_sessions (
   installation_id TEXT NOT NULL,
   project_id      TEXT NOT NULL,

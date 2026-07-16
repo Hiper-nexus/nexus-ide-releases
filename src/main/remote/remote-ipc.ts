@@ -23,6 +23,7 @@ import {
   detectRemoteClis,
   listRemoteTmuxSessions,
 } from './remote-spawn';
+import { registerCompanionRelayIpc } from './relay/companion-relay-ipc';
 
 const startSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
@@ -81,6 +82,9 @@ async function confirmRemoteSpawn(
 }
 
 export function registerRemoteIpc(): void {
+  // Transporte E2E do companion via relay cego (feature.remote.relayTransport,
+  // default OFF) — canais tipados em shared/companion-relay-types.
+  registerCompanionRelayIpc();
   ipcMain.handle(REMOTE_CHANNELS.bridgeStatus, (event) =>
     getRemoteBridgeInfo(requireLiveRendererWorkspaceScope(event.sender)),
   );
