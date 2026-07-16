@@ -22,6 +22,18 @@ function intentLabel(intent: string): string {
   );
 }
 
+function breakpointLabel(width: number): string {
+  if (width <= 480) return 'Mobile';
+  if (width <= 1024) return 'Tablet';
+  return 'Desktop';
+}
+
+function breakpointIcon(width: number): string {
+  if (width <= 480) return '📱';
+  if (width <= 1024) return '▯';
+  return '🖥';
+}
+
 /**
  * Erros que significam "o pane/escopo mudou de vida" — lifecycle benigno, não
  * falha do usuário. A barra reseta em silêncio (mesma doutrina do catch vazio
@@ -286,37 +298,40 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
           {isActive ? 'Design ON' : 'Design'}
         </span>
       </button>
-      {isActive && (
-        <span className="design-bar__breakpoints">
-          {DESIGN_BREAKPOINTS.map((width) => (
-            <button
-              key={width}
-              type="button"
-              data-testid={`design-bp-${width}`}
-              className={`browser-bar__btn design-bar__bp ${breakpoint === width ? 'design-bar__toggle--on' : ''}`}
-              title={`Preview em ${width}px`}
-              onClick={() => {
-                setBreakpoint(width);
-                setBrowserViewportOverride(paneId, width);
-              }}
-            >
-              {width}
-            </button>
-          ))}
+      {/* Preview responsivo é ferramenta de VISUALIZAÇÃO — vive sempre na
+          barra, sem depender do picker do modo Design (achado de operador:
+          "modo mobile nem aparece"). */}
+      <span className="design-bar__breakpoints">
+        {DESIGN_BREAKPOINTS.map((width) => (
           <button
+            key={width}
             type="button"
-            data-testid="design-bp-full"
-            className={`browser-bar__btn design-bar__bp ${breakpoint === null ? 'design-bar__toggle--on' : ''}`}
-            title="Largura total do pane"
+            data-testid={`design-bp-${width}`}
+            className={`browser-bar__btn design-bar__bp ${breakpoint === width ? 'design-bar__toggle--on' : ''}`}
+            title={`${breakpointLabel(width)} — preview em ${width}px`}
+            aria-label={`Preview ${breakpointLabel(width)} (${width}px)`}
             onClick={() => {
-              setBreakpoint(null);
-              setBrowserViewportOverride(paneId, null);
+              setBreakpoint(width);
+              setBrowserViewportOverride(paneId, width);
             }}
           >
-            ⛶
+            {breakpointIcon(width)} {width}
           </button>
-        </span>
-      )}
+        ))}
+        <button
+          type="button"
+          data-testid="design-bp-full"
+          className={`browser-bar__btn design-bar__bp ${breakpoint === null ? 'design-bar__toggle--on' : ''}`}
+          title="Largura total do pane"
+          aria-label="Largura total do pane"
+          onClick={() => {
+            setBreakpoint(null);
+            setBrowserViewportOverride(paneId, null);
+          }}
+        >
+          ⛶
+        </button>
+      </span>
       {isActive && !selection && (
         <span className="design-bar__hint">clique num elemento da página…</span>
       )}
