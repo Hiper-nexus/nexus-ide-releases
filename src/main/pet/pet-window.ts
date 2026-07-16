@@ -111,6 +111,22 @@ let lookLastCursor = { x: 0, y: 0 };
 let lookLastMoveAt = 0;
 /** Cache: setIgnoreMouseEvents é caro e a alternar no canto pisca o compositor. */
 let petIgnoresMouse = true;
+/**
+ * Janela de silêncio durante a transição de fullscreen do macOS: moveTop/
+ * showInactive/setVisibleOnAllWorkspaces na janelinha do pet NO MEIO da
+ * animação sequestram a troca de Space — o app fullscreen fica num Space que
+ * o usuário não está vendo ("o Nexus inteiro sumiu"). Durante o guard, todo
+ * raise/assert vira no-op; um único re-pin diferido roda após a animação.
+ */
+let fullscreenGuardUntil = 0;
+let fullscreenRepinTimer: NodeJS.Timeout | null = null;
+const FULLSCREEN_GUARD_MS = 1_200;
+const FULLSCREEN_REPIN_DELAY_MS = 1_450;
+
+function inFullscreenTransition(): boolean {
+  return Date.now() < fullscreenGuardUntil;
+}
+
 /** Cache do nível alwaysOnTop — evita setAlwaysOnTop/moveTop em spam (pisca). */
 let petPinnedTop = false;
 let lastRaiseAt = 0;
@@ -378,6 +394,7 @@ function applyIgnoreMouseEvents(ignore: boolean, force = false): void {
  *   debounce + só re-pin quando o flag caiu (ou force=true no boot/urgent).
  */
 function raisePetAboveAll(force = false): void {
+  if (inFullscreenTransition()) return;
   if (!petWindow || petWindow.isDestroyed()) return;
   const now = Date.now();
   const demoted = !petWindow.isAlwaysOnTop() || !petPinnedTop;
@@ -709,6 +726,7 @@ function petNearDisplayEdge(
  * (spam de setIgnoreMouseEvents pisca o compositor).
  */
 function assertPetVisible(force = false): void {
+  if (inFullscreenTransition()) return;
   if (!petWindow || petWindow.isDestroyed()) return;
   if (!getPrefs().enabled) return;
   ensurePetWindowSize(petWindow);
@@ -1351,10 +1369,16 @@ export function initDesktopPet(): void {
     // pin de all-workspaces + topo, o pet fica no Space antigo ("sumiu da
     // tela"). Reforça na entrada E na saída, e reclampa para área visível.
     const onFullScreenTransition = () => {
-      petPinnedTop = false;
-      raisePetAboveAll(true);
-      assertPetVisible(true);
-      scheduleReclampPet();
+      // Silêncio já: nada de tocar na janela do pet até a animação acabar.
+      fullscreenGuardUntil = Date.now() + FULLSCREEN_GUARD_MS;
+      if (fullscreenRepinTimer) clearTimeout(fullscreenRepinTimer);
+      fullscreenRepinTimer = setTimeout(() => {
+        fullscreenRepinTimer = null;
+        petPinnedTop = false;
+        raisePetAboveAll(true);
+        assertPetVisible(true);
+        scheduleReclampPet();
+      }, FULLSCREEN_REPIN_DELAY_MS);
     };
     win.on('enter-full-screen', onFullScreenTransition);
     win.on('leave-full-screen', onFullScreenTransition);
