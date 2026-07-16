@@ -34,6 +34,10 @@ const READ_ONLY_TOOLS = new Set([
   'git_status',
   'handoff_list',
   'media_providers',
+  // Consulta de memória agentic (C2): leitura FTS local; o único write é o
+  // contador de recall no banco de memória em userData (nunca no workspace).
+  'memory_recall',
+  'memory_stats',
   'merge_status',
   'mission_get',
   'mission_list',
@@ -72,6 +76,11 @@ const BOOTSTRAP_AUTHORITY_TOOLS = new Set([
   'mission_create',
   'mission_freeze_contract',
   'mission_set_status',
+  // Memória agentic (C2): mutação estreita e validada (≤8KB, redação de
+  // segredos, dedupe) do banco de memórias em userData — não toca workspace
+  // nem dados externos e precisa funcionar antes/fora de missão para TODAS
+  // as CLIs hospedadas (panes livres inclusive).
+  'memory_retain',
 ]);
 
 /**

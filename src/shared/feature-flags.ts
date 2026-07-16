@@ -73,6 +73,8 @@ export const FEATURE_FLAG_IDS = {
   mcpHub: 'feature.mcp.hub',
   skillsCatalog: 'feature.skills.catalog',
   nexusMemory: 'feature.memory.nexusMemory',
+  /** Memória agentic por workspace (retain/recall FTS5) — entrega C2. */
+  workspaceMemory: 'feature.memory.workspaceMemory',
   autonomyProfiles: 'feature.autonomy.profiles',
   /** E2E relay transport for the mobile companion (blind relay + AES-256-GCM). */
   remoteRelayTransport: 'feature.remote.relayTransport',
@@ -190,6 +192,18 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     description: 'Local-first .nexus-memory/ Markdown memory with wikilinks.',
     channel: 'dev',
     createdAt: '2026-07-13',
+    removeAfter: '2026-12-31',
+    killSwitch: false,
+    telemetry: true,
+    defaultEnabled: false,
+  },
+  {
+    id: FEATURE_FLAG_IDS.workspaceMemory,
+    owner: 'memory',
+    description:
+      'Workspace-scoped agentic memory (retain/recall/stats) over SQLite FTS5, shared by all hosted CLIs; derived from oh-my-pi mnemopi design.',
+    channel: 'dev',
+    createdAt: '2026-07-15',
     removeAfter: '2026-12-31',
     killSwitch: false,
     telemetry: true,
