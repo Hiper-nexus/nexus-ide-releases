@@ -21,7 +21,7 @@ describe('SETTINGS_GROUPS', () => {
     expect(ids).toContain('shortcuts');
   });
 
-  test('primary nav is Você · App · Agentes · Sistema with 14 day-to-day entries', () => {
+  test('primary nav is Você · App · Agentes · Sistema with 15 day-to-day entries', () => {
     const labels = SETTINGS_PRIMARY_GROUPS.map((g) => g.label);
     expect(labels).toEqual(['Você', 'App', 'Agentes', 'Sistema']);
     expect(settingsPrimaryPillarOrder()).toEqual([
@@ -33,7 +33,11 @@ describe('SETTINGS_GROUPS', () => {
     const primaryIds = SETTINGS_PRIMARY_GROUPS.flatMap((g) =>
       g.items.map((i) => i.id),
     );
-    expect(primaryIds).toHaveLength(14);
+    expect(primaryIds).toHaveLength(15);
+    // Labs é primário por decisão: o painel de descoberta de flags não pode
+    // ficar atrás do "Avançado" (achado de operador na 0.19).
+    expect(primaryIds).toContain('labs');
+    expect(isAdvancedSettingsSection('labs')).toBe(false);
     expect(primaryIds).toContain('voice');
     expect(primaryIds).toContain('appearance');
     expect(primaryIds).toContain('ranking');

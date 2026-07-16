@@ -31,27 +31,40 @@ export type PaneRuntimeHint =
   | 'hibernated'
   | 'unknown';
 
-/** Minimum continuous busy/spawning time before idle counts as completed. */
+/** Minimum continuous busy time before idle counts as completed. */
 export const MIN_BUSY_MS_FOR_COMPLETED = 1_500;
+
+/**
+ * Época de atividade de um pane. `fromIdle` marca a origem: só uma época
+ * nascida da aresta idle→busy (turno real do usuário) pode virar COMPLETED.
+ * Boot/respawn (spawning→busy) dura mais que o mínimo em praticamente todo
+ * spawn de CLI — sem a origem, reabrir um workspace com N panes dispararia
+ * N "CONCLUÍDO" falsos.
+ */
+export interface BusyEpoch {
+  readonly startedAt: number;
+  readonly fromIdle: boolean;
+}
 
 export interface TransitionEvalInput {
   readonly prev: PaneRuntimeHint | undefined;
   readonly next: PaneRuntimeHint;
-  /** Wall-clock when busy/spawning started (if still in a busy epoch). */
-  readonly busyStartedAt: number | undefined;
+  /** Época corrente do pane (undefined = fora de atividade). */
+  readonly busyEpoch: BusyEpoch | undefined;
   readonly now: number;
   readonly minBusyMs?: number;
 }
 
 export interface TransitionEvalResult {
   readonly kind: AgentNotificationKind | null;
-  /** Updated busy epoch start for this pane (undefined = not busy). */
-  readonly busyStartedAt: number | undefined;
+  /** Época atualizada para este pane (undefined = não ocupado). */
+  readonly busyEpoch: BusyEpoch | undefined;
 }
 
 /**
  * Evaluate one pane runtime transition. Tracks busy epoch so short
- * busy→idle blips (tool ticks, false idle) do not spam COMPLETED.
+ * busy→idle blips (tool ticks, false idle) do not spam COMPLETED, and so
+ * boot noise (spawning→busy) never counts as a finished turn.
  */
 export function evaluatePaneTransition(
   input: TransitionEvalInput,
@@ -59,45 +72,53 @@ export function evaluatePaneTransition(
   const minBusy = input.minBusyMs ?? MIN_BUSY_MS_FOR_COMPLETED;
   const { prev, next, now } = input;
 
-  if (next === 'busy' || next === 'spawning') {
+  // Boot/respawn: nunca abre época elegível — o output de inicialização
+  // não é um turno concluído.
+  if (next === 'spawning') {
+    return { kind: null, busyEpoch: undefined };
+  }
+
+  if (next === 'busy') {
     return {
       kind: null,
-      busyStartedAt: input.busyStartedAt ?? now,
+      busyEpoch: input.busyEpoch ?? { startedAt: now, fromIdle: prev === 'idle' },
     };
   }
 
   if (next === 'exited' && prev !== 'exited') {
-    return { kind: 'exited', busyStartedAt: undefined };
+    return { kind: 'exited', busyEpoch: undefined };
   }
 
-  if (next === 'idle' && (prev === 'busy' || prev === 'spawning')) {
-    const started = input.busyStartedAt;
+  if (next === 'idle' && prev === 'busy') {
+    const epoch = input.busyEpoch;
     const sustained =
-      typeof started === 'number' && now - started >= minBusy;
+      epoch !== undefined &&
+      epoch.fromIdle &&
+      now - epoch.startedAt >= minBusy;
     return {
       kind: sustained ? 'completed' : null,
-      busyStartedAt: undefined,
+      busyEpoch: undefined,
     };
   }
 
   // hibernated / unknown / idle from idle — clear busy epoch, no notify
   if (next === 'hibernated' || next === 'unknown' || next === 'idle') {
-    return { kind: null, busyStartedAt: undefined };
+    return { kind: null, busyEpoch: undefined };
   }
 
-  return { kind: null, busyStartedAt: input.busyStartedAt };
+  return { kind: null, busyEpoch: input.busyEpoch };
 }
 
-/** @deprecated Prefer evaluatePaneTransition (busy-duration aware). */
+/** @deprecated Prefer evaluatePaneTransition (busy-epoch aware). */
 export function notificationKindFromTransition(
   prev: PaneRuntimeHint | undefined,
   next: PaneRuntimeHint,
-  opts?: { busyStartedAt?: number; now?: number; minBusyMs?: number },
+  opts?: { busyEpoch?: BusyEpoch; now?: number; minBusyMs?: number },
 ): AgentNotificationKind | null {
   return evaluatePaneTransition({
     prev,
     next,
-    busyStartedAt: opts?.busyStartedAt,
+    busyEpoch: opts?.busyEpoch,
     now: opts?.now ?? Date.now(),
     minBusyMs: opts?.minBusyMs,
   }).kind;

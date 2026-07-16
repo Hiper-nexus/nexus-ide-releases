@@ -3,7 +3,7 @@ import type { ProductFlagResolutionRow } from '../../../shared/product-api';
 
 /**
  * Labs — todas as feature flags do produto com switch persistido.
- * Fonte de verdade é o registry do main (kill switch > override > canal >
+ * Fonte de verdade é o registry do main (kill switch > canal > override >
  * default); aqui só se lê a resolução e se grava override via IPC. Sem uma
  * superfície destas, capability pronta atrás de flag é invisível ao operador.
  */
@@ -48,7 +48,7 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
   },
   'feature.memory.workspaceMemory': {
     title: 'Memória agentic por workspace',
-    hint: 'nexus_memory_retain/recall/stats (FTS5) compartilhada por todas as CLIs hospedadas.',
+    hint: 'nexus_memory_retain/recall/stats (FTS5) compartilhada entre CLIs; abre o painel Memória na barra do workspace.',
   },
   'feature.autonomy.profiles': {
     title: 'Perfis de autonomia',
@@ -56,7 +56,7 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
   },
   'feature.remote.relayTransport': {
     title: 'Companion via relay E2E',
-    hint: 'Exige URL wss:// de um relay hospedado (nunca usa relay público por default).',
+    hint: 'Libera a seção Companion mobile em Configurações → Sistema; exige URL wss:// de um relay hospedado (nunca usa relay público por default).',
   },
   'orch.parallelScheduler': {
     title: 'Scheduler paralelo de missões',
@@ -141,7 +141,7 @@ function FlagRow({
 
 export function LabsSection() {
   const [rows, setRows] = useState<ProductFlagResolutionRow[] | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -166,7 +166,9 @@ export function LabsSection() {
   }, []);
 
   const apply = async (id: string, enabled: boolean | null) => {
-    setPendingId(id);
+    // Pending por-id: alternar B enquanto A salva não pode reabilitar o switch
+    // de A nem "roubar" o rótulo salvando.
+    setPending((p) => new Set(p).add(id));
     setError(null);
     try {
       const list = await window.nexus?.product?.flagsSetOverride({
@@ -177,7 +179,11 @@ export function LabsSection() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setPendingId(null);
+      setPending((p) => {
+        const next = new Set(p);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -185,7 +191,7 @@ export function LabsSection() {
     <section>
       <p className="ops-consent-panel__copy">
         Toda capability do produto atrás de flag, com o estado real resolvido
-        pelo main (kill switch &gt; override &gt; canal &gt; default). Mudanças
+        pelo main (kill switch &gt; canal &gt; override &gt; default). Mudanças
         persistem e valem na hora para painéis; o que é preparado no boot (ex.:
         integração de shell) vale para novos terminais ou após reiniciar.
       </p>
@@ -197,7 +203,7 @@ export function LabsSection() {
           <FlagRow
             key={row.id}
             row={row}
-            pending={pendingId === row.id}
+            pending={pending.has(row.id)}
             onToggle={(id, next) => void apply(id, next)}
             onReset={(id) => void apply(id, null)}
           />

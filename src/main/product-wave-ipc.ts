@@ -157,12 +157,23 @@ function listFlagResolutions(): Array<{
   definition: unknown;
 }> {
   const reg = getFeatureFlagRegistry();
-  return reg.list().map((f) => ({
-    id: f.id,
-    enabled: reg.isEnabled(f.id),
-    reason: reg.resolve(f.id).reason,
-    definition: f,
-  }));
+  return reg.list().map((f) => {
+    // Uma única resolução por flag (evita telemetria dupla e enabled/reason
+    // vindos de avaliações distintas).
+    const r = reg.resolve(f.id);
+    return { id: f.id, enabled: r.enabled, reason: r.reason, definition: f };
+  });
+}
+
+/**
+ * Flags são um gate de PRODUTO e qualquer renderer confiável pode alterná-las
+ * — mas só a webContents de uma janela do app (não um WebContentsView de pane
+ * de browser, que carrega web arbitrária) pode mutar/persistir o estado global.
+ */
+function assertTrustedFlagSender(event: Electron.IpcMainInvokeEvent): void {
+  if (!BrowserWindow.fromWebContents(event.sender)) {
+    throw new Error('untrusted sender for feature flag IPC');
+  }
 }
 
 const flagOverrideSchema = z
@@ -186,12 +197,22 @@ export function applyFlagOverride(input: unknown): Array<{
 }> {
   const parsed = flagOverrideSchema.parse(input);
   const reg = getFeatureFlagRegistry();
+  const prev = reg.peekOverride(parsed.id); // para rollback se o persist falhar
   if (parsed.enabled === null) {
     reg.clearOverride(parsed.id);
   } else {
     reg.setOverride(parsed.id, parsed.enabled);
   }
-  reg.persistOverrides();
+  try {
+    reg.persistOverrides();
+  } catch (err) {
+    // Persist falhou (disco cheio/permesão): reverte o estado VIVO para não
+    // deixar main ≠ disco ≠ UI. O caller propaga o erro; a UI mantém o valor
+    // antigo e nada foi gravado.
+    if (prev === undefined) reg.clearOverride(parsed.id);
+    else reg.setOverride(parsed.id, prev);
+    throw err;
+  }
   return listFlagResolutions();
 }
 
@@ -203,11 +224,36 @@ function broadcastFlagsChanged(list: ReturnType<typeof listFlagResolutions>): vo
   }
 }
 
-export function registerProductWaveIpc(): void {
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.flagsList, () => listFlagResolutions());
+/**
+ * Efeito de segurança do override: desligar `feature.remote.relayTransport`
+ * enquanto um relay está ativo derruba o transporte — senão o celular pareado
+ * segue conectado (fail-open) mesmo com a flag off. A flag gateia só o start;
+ * este é o par que faz o desligar valer na hora, como o painel Labs promete.
+ */
+async function enforceRelayFlagState(): Promise<void> {
+  if (getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.remoteRelayTransport)) {
+    return;
+  }
+  try {
+    const relay = await import('./remote/relay/companion-relay-transport');
+    if (relay.getActiveCompanionRelayHost()) {
+      relay.stopCompanionRelayTransport();
+    }
+  } catch {
+    // Módulo de relay indisponível (ex.: contexto de teste) — nada a parar.
+  }
+}
 
-  ipcMain.handle(PRODUCT_WAVE_CHANNELS.flagsSetOverride, (_event, raw) => {
+export function registerProductWaveIpc(): void {
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.flagsList, (event) => {
+    assertTrustedFlagSender(event);
+    return listFlagResolutions();
+  });
+
+  ipcMain.handle(PRODUCT_WAVE_CHANNELS.flagsSetOverride, async (event, raw) => {
+    assertTrustedFlagSender(event);
     const list = applyFlagOverride(raw);
+    await enforceRelayFlagState();
     broadcastFlagsChanged(list);
     return list;
   });

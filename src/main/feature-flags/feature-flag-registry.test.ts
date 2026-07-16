@@ -138,6 +138,72 @@ describe('FeatureFlagRegistry', () => {
     );
   });
 
+  it('forceEnableAll is ephemeral — never written by persistOverrides', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ff-'));
+    tempDirs.push(dir);
+    const overridesPath = path.join(dir, 'feature-flags.json');
+    const registry = new FeatureFlagRegistry({
+      runtimeChannel: 'stable',
+      overridesPath,
+    });
+
+    registry.forceEnableAll();
+    // Um override explícito (usuário desliga UMA flag) dispara o persist…
+    registry.setOverride(FEATURE_FLAG_IDS.mcpHub, false);
+    registry.persistOverrides();
+
+    // …e o disco só carrega o override explícito, nunca as flags forçadas.
+    const onDisk = JSON.parse(fs.readFileSync(overridesPath, 'utf8')) as {
+      overrides: Array<{ id: string; enabled: boolean }>;
+    };
+    expect(onDisk.overrides).toEqual([
+      { id: FEATURE_FLAG_IDS.mcpHub, enabled: false },
+    ]);
+
+    // Um relaunch sem o force volta aos defaults (relay/autonomy OFF).
+    const relaunch = new FeatureFlagRegistry({
+      runtimeChannel: 'stable',
+      overridesPath,
+    });
+    expect(relaunch.isEnabled(FEATURE_FLAG_IDS.remoteRelayTransport)).toBe(
+      false,
+    );
+    expect(relaunch.isEnabled(FEATURE_FLAG_IDS.mcpHub)).toBe(false);
+  });
+
+  it('preserves overrides for ids this build does not know (downgrade safety)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-ff-'));
+    tempDirs.push(dir);
+    const overridesPath = path.join(dir, 'feature-flags.json');
+    fs.writeFileSync(
+      overridesPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        overrides: [
+          { id: FEATURE_FLAG_IDS.searchMixer, enabled: false },
+          { id: 'feature.future.only', enabled: true },
+        ],
+      }),
+      'utf8',
+    );
+    const registry = new FeatureFlagRegistry({
+      runtimeChannel: 'dev',
+      overridesPath,
+    });
+    // Um toggle qualquer reescreve o arquivo…
+    registry.setOverride(FEATURE_FLAG_IDS.mcpHub, false);
+    registry.persistOverrides();
+
+    const onDisk = JSON.parse(fs.readFileSync(overridesPath, 'utf8')) as {
+      overrides: Array<{ id: string; enabled: boolean }>;
+    };
+    // …e a flag desconhecida sobrevive à reescrita.
+    expect(onDisk.overrides).toContainEqual({
+      id: 'feature.future.only',
+      enabled: true,
+    });
+  });
+
   it('kill switch engaged after forceEnableAll still wins', () => {
     const registry = new FeatureFlagRegistry({ runtimeChannel: 'dev' });
     registry.forceEnableAll();

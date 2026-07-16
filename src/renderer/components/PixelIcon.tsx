@@ -38,7 +38,8 @@ export type PixelIconName =
   | 'update'
   | 'star'
   | 'star-outline'
-  | 'search';
+  | 'search'
+  | 'bell';
 
 /**
  * Icon set pixel — desenhado no MESMO grid 11×11 do NexusMark, em rects crisp
@@ -405,6 +406,17 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [6, 6, 1, 1],
     [7, 7, 1, 1],
     [8, 8, 1, 1],
+  ],
+  // sino: cabo, corpo em sino e badalo — semântica de notificações
+  bell: [
+    [5, 1, 1, 1],
+    [4, 2, 3, 1],
+    [4, 3, 3, 1],
+    [3, 4, 5, 1],
+    [3, 5, 5, 1],
+    [3, 6, 5, 1],
+    [2, 7, 7, 1],
+    [5, 8, 1, 1],
   ],
 };
 

@@ -1,5 +1,6 @@
 import {
   evaluatePaneTransition,
+  type BusyEpoch,
   type PaneRuntimeHint,
 } from '../../shared/agent-notification';
 import { listPanes } from '../lib/split-tree';
@@ -10,9 +11,14 @@ import { useSessionStateStore } from '../state/session-state-store';
 /**
  * Subscribes to pane session transitions and feeds the agent notification
  * inbox. Keeps session-state-store pure (no product side-effects there).
+ *
+ * Consome `displayStates` (não `paneStates`): a apresentação já segura busy→idle
+ * por ~1,4s, então um gap silencioso curto no meio de um turno não vira um
+ * "CONCLUÍDO" prematuro — a notificação fica alinhada ao que o chip/borda do
+ * pane mostram ao operador.
  */
 
-const busyStartedAt = new Map<string, number>();
+const busyEpochs = new Map<string, BusyEpoch>();
 let lastSnapshot = new Map<string, PaneRuntimeHint>();
 let unsub: (() => void) | null = null;
 let stopBridge: (() => void) | null = null;
@@ -43,14 +49,14 @@ function processTransition(
   const evalResult = evaluatePaneTransition({
     prev,
     next,
-    busyStartedAt: busyStartedAt.get(paneId),
+    busyEpoch: busyEpochs.get(paneId),
     now,
   });
 
-  if (evalResult.busyStartedAt === undefined) {
-    busyStartedAt.delete(paneId);
+  if (evalResult.busyEpoch === undefined) {
+    busyEpochs.delete(paneId);
   } else {
-    busyStartedAt.set(paneId, evalResult.busyStartedAt);
+    busyEpochs.set(paneId, evalResult.busyEpoch);
   }
 
   if (!evalResult.kind) return;
@@ -65,7 +71,7 @@ function processTransition(
 }
 
 function onSessionStateChange(): void {
-  const current = useSessionStateStore.getState().paneStates;
+  const current = useSessionStateStore.getState().displayStates;
   const now = Date.now();
   const nextSnapshot = new Map<string, PaneRuntimeHint>();
 
@@ -78,7 +84,7 @@ function onSessionStateChange(): void {
 
   // Panes removed from the map — drop busy tracking only.
   for (const paneId of lastSnapshot.keys()) {
-    if (!current.has(paneId)) busyStartedAt.delete(paneId);
+    if (!current.has(paneId)) busyEpochs.delete(paneId);
   }
 
   lastSnapshot = nextSnapshot;
@@ -87,14 +93,17 @@ function onSessionStateChange(): void {
 /** Idempotent: call once from orch-bridge / app bootstrap. */
 export function initAgentNotificationBridge(): () => void {
   if (stopBridge) return stopBridge;
-  lastSnapshot = new Map(useSessionStateStore.getState().paneStates);
-  unsub = useSessionStateStore.subscribe(onSessionStateChange);
+  lastSnapshot = new Map(useSessionStateStore.getState().displayStates);
+  const thisUnsub = useSessionStateStore.subscribe(onSessionStateChange);
+  unsub = thisUnsub;
   stopBridge = () => {
-    if (!unsub && !stopBridge) return;
-    unsub?.();
+    // Cada init cria seu próprio stop; um handle obsoleto (bridge já
+    // reiniciado) não pode derrubar a subscription atual.
+    if (unsub !== thisUnsub) return;
+    thisUnsub();
     unsub = null;
     stopBridge = null;
-    busyStartedAt.clear();
+    busyEpochs.clear();
     lastSnapshot = new Map();
   };
   return stopBridge;
@@ -102,6 +111,6 @@ export function initAgentNotificationBridge(): () => void {
 
 /** Test helper — clear busy epochs without tearing down the bridge. */
 export function resetAgentNotificationBridgeForTests(): void {
-  busyStartedAt.clear();
+  busyEpochs.clear();
   lastSnapshot = new Map();
 }

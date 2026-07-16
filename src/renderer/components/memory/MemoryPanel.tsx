@@ -175,6 +175,7 @@ export function MemoryPanel() {
   const moveActive = useMemoryStore((s) => s.moveActive);
   const setActive = useMemoryStore((s) => s.setActive);
   const forget = useMemoryStore((s) => s.forget);
+  const refreshStats = useMemoryStore((s) => s.refreshStats);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const activeRef = useRef<HTMLLIElement | null>(null);
@@ -188,6 +189,16 @@ export function MemoryPanel() {
       activeRef.current?.scrollIntoView({ block: 'nearest' });
     }
   }, [activeIndex]);
+
+  // Toggle da flag workspaceMemory no Labs re-resolve no main e chega por push;
+  // com o painel aberto, re-busca stats para refletir ligado/desligado na hora
+  // em vez de deixar dados obsoletos até a próxima interação.
+  useEffect(() => {
+    const unsub = window.nexus?.product?.onFlagsChanged?.(() => {
+      if (useMemoryStore.getState().panelOpen) void refreshStats();
+    });
+    return () => unsub?.();
+  }, [refreshStats]);
 
   const onInputKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {

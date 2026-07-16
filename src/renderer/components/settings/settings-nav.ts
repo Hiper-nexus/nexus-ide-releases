@@ -207,6 +207,17 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
       subtitle: 'mic · permissões',
       aliases: ['diagnostics', 'health', 'permissions'],
     },
+    // Labs mora na nav primária de propósito: o painel que dá visibilidade às
+    // capabilities não pode ele mesmo viver atrás do "Avançado" (achado de
+    // operador — "onde vejo as flags? não vi nada").
+    {
+      id: 'labs',
+      icon: 'LAB',
+      pixelIcon: 'sparkle',
+      title: 'Labs',
+      subtitle: 'feature flags',
+      aliases: ['labs', 'flags', 'feature flags', 'experimentos'],
+    },
   ]),
 ];
 
@@ -255,14 +266,6 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
         title: 'Companion mobile',
         subtitle: 'relay E2E · QR',
         aliases: ['companion', 'relay', 'mobile', 'celular', 'e2e', 'qr'],
-      },
-      {
-        id: 'labs',
-        icon: 'LAB',
-        pixelIcon: 'sparkle',
-        title: 'Labs',
-        subtitle: 'feature flags',
-        aliases: ['labs', 'flags', 'feature flags', 'experimentos'],
       },
     ],
   },
