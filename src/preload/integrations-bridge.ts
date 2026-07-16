@@ -27,6 +27,8 @@ export function createIntegrationsBridge(ipcRenderer: IpcRenderer): Integrations
       ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitFileDiff, input),
     createPr: (req) => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeCreatePr, req),
     listPrs: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeListPrs),
+    branchReview: () =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeBranchReview),
     listGithubIssues: (opts) =>
       ipcRenderer.invoke(INTEGRATIONS_CHANNELS.githubListIssues, opts ?? {}),
     listLinearIssues: (opts) =>

@@ -20,7 +20,7 @@ import {
   requireRendererWorkspaceScope,
 } from '../persistence/renderer-workspace-scope';
 import {
-  createGithubPr,
+  defaultGithubHttp,
   listGithubIssues,
   listGithubPulls,
 } from './github-api';
@@ -40,15 +40,24 @@ import {
   parseGithubRepo,
 } from './git-workspace';
 import { orchestratePrCreation } from './pr-orchestration';
-import { selectForge } from '../source-control/forge-registry';
+import {
+  resolveForgeProvider,
+  selectForge,
+} from '../source-control/forge-registry';
+import type {
+  ForgeAuthorization,
+  ForgeProviderId,
+} from '../source-control/forge-provider';
 import {
   getGithubToken,
+  getGitlabToken,
   getLinearKey,
   hasGithubToken,
   hasLinearKey,
   setGithubToken,
   setLinearKey,
 } from './token-vault';
+
 import {
   closePortForward,
   listPortForwards,
@@ -57,6 +66,20 @@ import {
 import { createSsh2Transport, remoteWorktreeCreate } from './ssh2-transport';
 import { createSshSessionManager } from '../remote/ssh/ssh-session-manager';
 import { createRemoteHostCapability } from '../remote/remote-capability';
+
+/** Token da forge do remote atual (vault/env + sessão gh/glab). */
+function forgeTokenFor(providerId: ForgeProviderId): string | null {
+  if (providerId === 'gitlab') return getGitlabToken();
+  if (providerId === 'github') return getGithubToken();
+  return null;
+}
+
+function forgeTokenMissingHint(providerId: ForgeProviderId): string {
+  if (providerId === 'gitlab') {
+    return 'Token GitLab ausente — rode `glab auth login` ou defina NEXUS_GITLAB_TOKEN.';
+  }
+  return 'GitHub token missing — cole um PAT em Integrações ou rode `gh auth login`.';
+}
 
 function workspaceCwd(event: Electron.IpcMainInvokeEvent): string {
   const scope = requireRendererWorkspaceScope(event.sender);
@@ -166,23 +189,33 @@ export function registerIntegrationsIpc(): void {
   ipcMain.handle(INTEGRATIONS_CHANNELS.forgeCreatePr, async (event, raw) => {
     const parsed = createPrSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid request' };
-    const token = getGithubToken();
-    if (!token) return { ok: false, error: 'GitHub token missing — set in Integrations' };
     try {
       const cwd = workspaceCwd(event);
-      // Seleção de forge por remote (github/gitlab/bitbucket) — mensagem clara
-      // por provider em vez do genérico "não é GitHub".
       const forge = selectForge(gitRemoteOrigin(cwd));
       if (!forge) {
         return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
       }
-      if (forge.providerId !== 'github') {
+      const token = forgeTokenFor(forge.providerId);
+      if (!token) {
+        return { ok: false, error: forgeTokenMissingHint(forge.providerId) };
+      }
+      // Camada forge de verdade (paridade Orca): GitHub E GitLab criam
+      // review pelo MESMO caminho autorizado+auditado do provider.
+      const provider = resolveForgeProvider(forge, token, defaultGithubHttp);
+      if (!provider.enabled || !provider.supportsReviewCreation) {
         return {
           ok: false,
-          error: `origin é ${forge.host} (${forge.providerId}); criação de PR só suporta GitHub por enquanto`,
+          error: `criação de PR/MR ainda não suportada para ${forge.providerId}`,
         };
       }
-      const repo = { owner: forge.owner, name: forge.name };
+      const repo = { owner: forge.owner, name: forge.name, host: forge.host };
+      const authorization: ForgeAuthorization = {
+        grantedBy: 'operator-ui',
+        grantedAt: Date.now(),
+        scope: ['create-review'],
+        reason: 'Criar PR/MR pelo painel de integrações',
+        expiresAt: Date.now() + 2 * 60_000,
+      };
       // Regras de PR (no-self-target + push-antes-de-criar) vivem na função
       // pura orchestratePrCreation, testada em pr-orchestration.test.ts.
       return orchestratePrCreation(
@@ -191,16 +224,52 @@ export function registerIntegrationsIpc(): void {
           currentBranch: () => gitCurrentBranch(cwd),
           defaultBranch: () => gitDefaultBranch(cwd),
           push: (branch) => gitPushCurrentBranch(cwd, branch),
-          createPr: ({ sourceBranch, targetBranch }) =>
-            createGithubPr(token, repo.owner, repo.name, {
-              title: parsed.data.title,
-              body: parsed.data.body ?? '',
-              sourceBranch,
-              targetBranch,
-              draft: parsed.data.draft,
-            }),
+          createPr: async ({ sourceBranch, targetBranch }) => {
+            const result = await provider.createReview(
+              repo,
+              {
+                title: parsed.data.title,
+                body: parsed.data.body ?? '',
+                sourceBranch,
+                targetBranch,
+                draft: parsed.data.draft,
+              },
+              authorization,
+            );
+            return result.ok
+              ? { ok: true, url: result.url, number: result.number }
+              : { ok: false, error: result.reason };
+          },
         },
       );
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.forgeBranchReview, async (event) => {
+    try {
+      const cwd = workspaceCwd(event);
+      const forge = selectForge(gitRemoteOrigin(cwd));
+      if (!forge) {
+        return { ok: false, error: 'origin não é um remote hospedado reconhecido' };
+      }
+      const token = forgeTokenFor(forge.providerId);
+      if (!token) {
+        return { ok: false, error: forgeTokenMissingHint(forge.providerId) };
+      }
+      const branch = gitCurrentBranch(cwd);
+      if (!branch) return { ok: false, error: 'não consegui resolver a branch atual' };
+      const provider = resolveForgeProvider(forge, token, defaultGithubHttp);
+      if (!provider.getReviewForBranch) {
+        return { ok: true, branch, review: null };
+      }
+      const result = await provider.getReviewForBranch(
+        { owner: forge.owner, name: forge.name, host: forge.host },
+        branch,
+      );
+      if (!result.ok) return { ok: false, error: result.reason };
+      return { ok: true, branch, review: result.review };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

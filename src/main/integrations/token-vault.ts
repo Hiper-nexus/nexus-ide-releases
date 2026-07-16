@@ -10,10 +10,36 @@ import {
 } from '../voice/voice-secrets';
 
 const GITHUB_ENV = 'NEXUS_GITHUB_TOKEN';
+const GITLAB_ENV = 'NEXUS_GITLAB_TOKEN';
 const LINEAR_ENV = 'NEXUS_LINEAR_API_KEY';
 const GH_TOKEN_TTL_MS = 60_000;
 
 let ghCliTokenCache: { value: string | null; at: number } | null = null;
+let glabCliTokenCache: { value: string | null; at: number } | null = null;
+
+/** Token da sessão de um CLI de forge (gh/glab) — lido on-demand, nunca
+ * persistido pelo Nexus, cacheado 60s. */
+function forgeCliToken(
+  bin: string,
+  cache: { value: string | null; at: number } | null,
+  save: (next: { value: string | null; at: number }) => void,
+): string | null {
+  const now = Date.now();
+  if (cache && now - cache.at < GH_TOKEN_TTL_MS) return cache.value;
+  let value: string | null = null;
+  try {
+    const out = execFileSync(bin, ['auth', 'token'], {
+      encoding: 'utf8',
+      timeout: 3_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    value = out.length > 0 ? out : null;
+  } catch {
+    value = null;
+  }
+  save({ value, at: now });
+  return value;
+}
 
 /**
  * Fallback sem setup (paridade Orca): quando não há PAT salvo nem env, usa a
@@ -23,23 +49,31 @@ let ghCliTokenCache: { value: string | null; at: number } | null = null;
  * O PATH real do usuário já foi resolvido no boot (path-resolver).
  */
 function ghCliToken(): string | null {
-  const now = Date.now();
-  if (ghCliTokenCache && now - ghCliTokenCache.at < GH_TOKEN_TTL_MS) {
-    return ghCliTokenCache.value;
-  }
-  let value: string | null = null;
-  try {
-    const out = execFileSync('gh', ['auth', 'token'], {
-      encoding: 'utf8',
-      timeout: 3_000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    value = out.length > 0 ? out : null;
-  } catch {
-    value = null;
-  }
-  ghCliTokenCache = { value, at: now };
-  return value;
+  return forgeCliToken('gh', ghCliTokenCache, (next) => {
+    ghCliTokenCache = next;
+  });
+}
+
+function glabCliToken(): string | null {
+  return forgeCliToken('glab', glabCliTokenCache, (next) => {
+    glabCliTokenCache = next;
+  });
+}
+
+export function getGitlabToken(): string | null {
+  return resolveVoiceApiKey(GITLAB_ENV)?.trim() || glabCliToken();
+}
+
+export function setGitlabToken(token: string): { ok: boolean; error?: string } {
+  return setVoiceApiKey(GITLAB_ENV, token.trim());
+}
+
+export function hasGitlabToken(): boolean {
+  return (
+    hasStoredVoiceApiKey(GITLAB_ENV) ||
+    Boolean(process.env[GITLAB_ENV]?.trim()) ||
+    glabCliToken() !== null
+  );
 }
 
 export function getGithubToken(): string | null {

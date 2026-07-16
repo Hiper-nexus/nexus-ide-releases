@@ -55,6 +55,22 @@ export interface IntegrationsApi {
       }
     | { ok: false; error: string }
   >;
+  /** PR/MR aberto para a branch atual (null quando não existe). */
+  branchReview(): Promise<
+    | {
+        ok: true;
+        branch: string;
+        review: {
+          number: number;
+          url: string;
+          title: string;
+          state: string;
+          sourceBranch: string;
+          targetBranch: string;
+        } | null;
+      }
+    | { ok: false; error: string }
+  >;
   listGithubIssues(opts?: {
     limit?: number;
     state?: 'open' | 'closed' | 'all';
