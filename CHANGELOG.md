@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.19.12 — Instala de Verdade
+
+Data: 2026-07-17
+
+- **Instalador de CLIs com cascata de canais**: quando o canal primário não
+  funciona na máquina (sem Node/npm, sem Homebrew, ou o clássico erro de
+  permissão do npm -g), o instalador cai automaticamente para o canal oficial
+  alternativo — Claude usa o instalador nativo da Anthropic, Codex cai para o
+  brew, Kimi e opencode tentam brew e npm. Sem nenhum canal utilizável, o
+  resumo diz exatamente o que falta ("instale Node OU Homebrew") em vez de
+  falhar em silêncio.
+
 ## 0.19.11 — Rota Livre
 
 Data: 2026-07-17
