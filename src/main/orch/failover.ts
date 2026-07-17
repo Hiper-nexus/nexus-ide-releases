@@ -17,6 +17,8 @@ import {
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
 import { detectLimit, tierScopeFromModelId, type LimitHit } from './limit-detector';
+import { providerApiRefutesLimit } from './limit-refutation';
+import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import {
   getAccount,
   getActiveAccount,
@@ -226,6 +228,22 @@ function emitFailover(
     event,
   );
   requestMissionDriverTick();
+}
+
+/** Latest fleet-snapshot entry for one account (undefined at boot race). */
+function quotaEntryFor(
+  adapterId: string,
+  accountId: string,
+): ProviderQuotaEntry | undefined {
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    return snap?.entries.find(
+      (e) => e.adapterId === adapterId && e.accountId === accountId,
+    );
+  } catch {
+    /* quota service optional at boot race */
+    return undefined;
+  }
 }
 
 /** Prefer freer cota among eligible accounts when fleet snapshot exists. */
@@ -558,6 +576,26 @@ function handleChunk(sessionId: string, data: string, now: number): void {
   const pinned = pane.accountId ? getAccount(pane.accountId) : null;
   const current =
     pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
+
+  // Second-layer defense: a fresh, authoritative provider-api reading can
+  // refute a PTY-scraped limit. If the account is demonstrably healthy, the
+  // terminal signal is untrusted (echoed handoff/prose/logs) — do not cool it
+  // down or switch. Source-isolation in detectLimit already drops Nexus's own
+  // pack; this also catches false positives from the surrounding output.
+  if (current && providerApiRefutesLimit(quotaEntryFor(adapterId, current.id), hit, now)) {
+    console.info(
+      '[failover]',
+      JSON.stringify({
+        paneId: pane.paneId,
+        adapterId,
+        fromAccountId: current.id,
+        reason: hit.reason,
+        switched: false,
+        suppressed: 'provider-api-healthy',
+      }),
+    );
+    return;
+  }
 
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);

@@ -45,6 +45,67 @@ describe('detectLimit', () => {
     expect(detectLimit('invalid api key provided')?.kind).toBe('auth');
   });
 
+  it('detects real 401 spellings (framed number / unauthorized)', () => {
+    expect(detectLimit('Error: HTTP 401 Unauthorized')?.kind).toBe('auth');
+    expect(detectLimit('API request failed: 401 Unauthorized')?.kind).toBe('auth');
+    expect(detectLimit('status code: 401')?.kind).toBe('auth');
+    expect(detectLimit('error: 401')?.kind).toBe('auth');
+  });
+
+  it('does NOT treat the failover handoff pack as a fresh limit (phantom loop)', () => {
+    // The failover continuity pack is injected into the SAME pane's PTY and
+    // echoed back onto stdout, where the detector re-scans it. A bare "401" in
+    // that self-authored text must NOT re-trigger failover — that was the
+    // "Limite atingido em <conta>" loop on the last remaining account.
+    expect(
+      detectLimit(
+        '[NEXUS FAILOVER HANDOFF]\n' +
+          'Account "conta b" hit a provider limit (401 — retry automático (conta liberada)).\n' +
+          'You are now running on account "conta adm" in a NEW provider session.',
+      ),
+    ).toBeNull();
+    // Agent prose that merely mentions a 401/402 while working must not fire.
+    expect(
+      detectLimit('the failover engine fires whenever it sees a 401 in the output'),
+    ).toBeNull();
+    expect(detectLimit('see issue #402 for the payment refactor')).toBeNull();
+    expect(detectLimit('the log rotated at line 401 of the trace')).toBeNull();
+  });
+
+  it('ignores a full handoff pack whose scrollback echoes a FRAMED provider error', () => {
+    // The real cascade: the continuity pack embeds a scrollback excerpt of the
+    // PRIOR terminal, which quotes the ORIGINAL provider error verbatim. Framing
+    // the bare number does not help — "HTTP 401", "payment required", "429" all
+    // survive framing. The whole self-authored pack (header → footer, excerpt
+    // included) must be excised before matching, or every replacement account
+    // is cooled down in turn (the fleet-wide phantom cascade).
+    const pack = [
+      '[NEXUS FAILOVER HANDOFF]',
+      'Account "conta adm" hit a provider limit (HTTP 401 Unauthorized).',
+      'You are now running on account "conta b" in a NEW provider session.',
+      'Terminal scrollback above is historical context only — the previous conversation id is NOT transferable across accounts.',
+      'Continue as the orchestrator from the next pending step. Do not re-do completed work.',
+      'Mission id: mission-7ab5d15d.',
+      'Recent terminal excerpt (may be partial):',
+      '"""',
+      'Error: HTTP 401 Unauthorized. status code: 429 too many requests. payment required. rate_limit_exceeded.',
+      '"""',
+      'Execute the next concrete step now.',
+    ].join('\n');
+    expect(detectLimit(pack)).toBeNull();
+  });
+
+  it('still detects a real limit that arrives AFTER the handoff pack', () => {
+    // Isolation is scoped to Nexus's own pack — real provider output that lands
+    // in the same buffer, after the pack footer, must still fire failover.
+    const s =
+      '[NEXUS FAILOVER HANDOFF]\n' +
+      'Account "conta adm" hit a provider limit (HTTP 401 Unauthorized).\n' +
+      'Execute the next concrete step now.\n' +
+      '\n$ codex run\nError: 429 Too Many Requests';
+    expect(detectLimit(s)?.kind).toBe('rate-limit');
+  });
+
   it('detects Codex/ChatGPT and Grok limit signatures', () => {
     expect(
       detectLimit('codex: ChatGPT usage limit reached — try again later')?.kind,

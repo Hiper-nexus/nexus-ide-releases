@@ -258,6 +258,66 @@ describe('account failover authority and lifecycle', () => {
     expect(accountMocks.setCooldown).toHaveBeenCalledOnce();
   });
 
+  it('suppresses a PTY limit when a fresh provider-api reading refutes it', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? { kind: 'rate-limit', reason: 'rate limit', cooldownMs: 60_000 }
+        : null,
+    );
+    const { requireQuotaService } = await import('../quota/quota-service');
+    vi.mocked(requireQuotaService).mockReturnValueOnce({
+      lastSnapshot: () => ({
+        updatedAt: 100_000,
+        worstUsedRatio: 0.07,
+        highUsageCount: 0,
+        unknownCount: 0,
+        entries: [
+          {
+            id: 'claude:account-a',
+            adapterId: 'claude',
+            accountId: 'account-a',
+            label: 'Account A',
+            installed: true,
+            onCooldown: false,
+            updatedAt: 100_000,
+            windows: [
+              {
+                kind: 'hours' as const,
+                label: '5 Horas',
+                usedRatio: 0.07,
+                source: 'provider-api' as const,
+                confidence: 'high' as const,
+              },
+            ],
+          },
+        ],
+      }),
+    } as unknown as ReturnType<typeof requireQuotaService>);
+
+    const scope = testProjectScope();
+    const owner = renderer(717);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: 'pane-717',
+      sessionId: 'session-717',
+      missionId: 'mission-717',
+      scope,
+    });
+
+    ptyMocks.dataTaps[0]('session-717', 'LIMIT');
+
+    // Healthy provider-api → no cooldown, no switch event.
+    expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.anything(),
+    );
+  });
+
   it('coalesces multi-pane bursts on the same exhausted account to one target', () => {
     const scope = testProjectScope();
     const owner = renderer(606);
