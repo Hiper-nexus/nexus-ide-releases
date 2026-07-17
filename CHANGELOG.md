@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.19.13 — Missão com Nome Próprio
+
+Data: 2026-07-17
+
+- **Missão agêntica não veste mais a identidade do squad reusado**: o modo
+  agêntico continua honrando o roster salvo, mas a missão agora nasce com o
+  título do SEU objetivo (não "Clone Overclock" numa missão de dashboards) e
+  as instruções do squad são reapontadas para o objetivo vigente — o
+  orquestrador não recebe mais duas missões concorrentes no kickoff.
+- **Modelo escolhido na revisão persiste até o spawn**: eventos de
+  adapters/providers (quota, install-check) resetavam o roster editado — o
+  Fable escolhido para o orquestrador voltava silenciosamente a opus-4-8.
+  O roster agora só recarrega quando o squad muda de verdade.
+- **Notas internas de release sincronizadas**: a tela "O que há de novo"
+  estava parada na 0.19.7; versões de server e lockfile realinhadas.
+
 ## 0.19.12 — Instala de Verdade
 
 Data: 2026-07-17

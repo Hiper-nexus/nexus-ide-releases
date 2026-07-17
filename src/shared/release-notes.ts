@@ -13,6 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.13',
+  date: '2026-07-17',
+  codename: 'Missão com Nome Próprio',
+  summary:
+    'Missão agêntica com squad reusado deixa de vestir a identidade da missão antiga: o título vem do SEU objetivo, o modelo escolhido na revisão do roster persiste até o spawn (adeus Fable virando opus sozinho) e as instruções do squad são reapontadas para o objetivo vigente antes do kickoff.',
+  highlights: [
+    {
+      title: 'Título da missão é o seu objetivo',
+      detail:
+        'Reusar o roster salvo não renomeia mais a missão com o nome do squad antigo — a missão de dashboards chama-se dashboards, não "Clone Overclock".',
+    },
+    {
+      title: 'Roster revisado é o roster que sobe',
+      detail:
+        'Eventos de quota/instalação não resetam mais suas edições na tela de revisão; o modelo do orquestrador que você escolheu é o que o pane usa.',
+    },
+  ],
+  fixes: [],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.12',
   date: '2026-07-17',
   codename: 'Instala de Verdade',
@@ -33,23 +54,3 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [],
 };
 
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.11',
-  date: '2026-07-17',
-  codename: 'Rota Livre',
-  summary:
-    'Fim dos becos sem saída de missão: pane que morre 3 vezes seguidas vira estado terminal com causa acionável em vez de churnar para sempre, e drift de contexto pós-freeze ganhou rota de recuperação com a tool de refreeze do contrato — preservando objetivo e critérios.',
-  highlights: [
-    {
-      title: 'Fim do loop de respawn',
-      detail:
-        'Após 3 respawns consecutivos sem progresso a missão para com diagnóstico claro (verifique login/credencial do adapter e use Retomar no rail).',
-    },
-    {
-      title: 'Refreeze de contrato após drift',
-      detail:
-        'Mudou o contexto depois do freeze? nexus_mission_refreeze_contract recongela na mesma missão, com piso de risco e ledger auditável.',
-    },
-  ],
-  fixes: [],
-};
