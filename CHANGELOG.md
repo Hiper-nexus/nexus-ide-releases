@@ -11,6 +11,13 @@ Data: 2026-07-17
   brew, Kimi e opencode tentam brew e npm. Sem nenhum canal utilizável, o
   resumo diz exatamente o que falta ("instale Node OU Homebrew") em vez de
   falhar em silêncio.
+- **omp instala em máquina sem Homebrew**: o oh-my-pi ganhou o instalador
+  oficial do projeto (omp.sh/install) como fallback — era brew-only e ficava
+  sem rota nenhuma em máquina fresca.
+- **Instalador acha o brew/npm mesmo com PATH incompleto**: app aberto pelo
+  Finder pode não herdar o PATH do terminal; a seleção e a execução dos
+  instaladores agora procuram também nos diretórios padrão (/opt/homebrew/bin,
+  /usr/local/bin, ~/.local/bin) — fim do "sem Homebrew" com o brew instalado.
 
 ## 0.19.11 — Rota Livre
 
