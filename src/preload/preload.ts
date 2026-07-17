@@ -75,6 +75,8 @@ import type {
   OmpRpcStartRequest,
   OmpRpcUiResponse,
 } from '../shared/omp-rpc-types';
+import { OMP_AUTH_CHANNELS } from '../shared/omp-auth-types';
+import type { OmpAuthEventEnvelope } from '../shared/omp-auth-types';
 import { ONBOARDING_CHANNELS } from '../shared/onboarding-types';
 import type { OnboardingPatch } from '../shared/onboarding-types';
 import type {
@@ -475,6 +477,10 @@ ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
 const ompRpcEventListeners = new Set<(envelope: OmpRpcEventEnvelope) => void>();
 ipcRenderer.on(OMP_RPC_CHANNELS.event, (_e, envelope: OmpRpcEventEnvelope) =>
   ompRpcEventListeners.forEach((cb) => cb(envelope)),
+);
+const ompAuthEventListeners = new Set<(envelope: OmpAuthEventEnvelope) => void>();
+ipcRenderer.on(OMP_AUTH_CHANNELS.event, (_e, envelope: OmpAuthEventEnvelope) =>
+  ompAuthEventListeners.forEach((cb) => cb(envelope)),
 );
 
 const api: NexusApi = {
@@ -1088,6 +1094,13 @@ const api: NexusApi = {
     dispose: (sessionId: string) =>
       ipcRenderer.invoke(OMP_RPC_CHANNELS.dispose, { sessionId }),
     onEvent: (cb) => addListener(ompRpcEventListeners, cb),
+  },
+  ompAuth: {
+    listProviders: () => ipcRenderer.invoke(OMP_AUTH_CHANNELS.listProviders),
+    login: (providerId: string) =>
+      ipcRenderer.invoke(OMP_AUTH_CHANNELS.login, { providerId }),
+    cancelLogin: () => ipcRenderer.invoke(OMP_AUTH_CHANNELS.cancelLogin),
+    onEvent: (cb) => addListener(ompAuthEventListeners, cb),
   },
   pipes: {
     list: () => ipcRenderer.invoke(PIPE_CHANNELS.list),

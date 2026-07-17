@@ -7,8 +7,14 @@ import {
   type OmpRpcStateSnapshot,
   type OmpRpcUiResponse,
 } from '../../shared/omp-rpc-types';
+import {
+  ompAuthEventEnvelopeSchema,
+  type OmpAuthProviderInfo,
+  type OmpAuthPushEvent,
+} from '../../shared/omp-auth-types';
 import { getActiveWorkspacePath } from './active-workspace';
 import { claimRightDrawer, registerRightDrawer } from './right-drawer';
+import { useToastStore } from './toast-store';
 
 /**
  * Espelho renderer de UMA sessão omp rpc-ui hospedada no main (B1: painel
@@ -41,6 +47,14 @@ export interface OmpPendingUiRequest {
   placeholder: string | null;
 }
 
+/** Fluxo de login OAuth em andamento (auth-broker), dirigido pelo painel. */
+export interface OmpLoginFlowState {
+  providerId: string;
+  phase: 'awaiting-auth' | 'done' | 'error';
+  url?: string;
+  error?: string;
+}
+
 interface OmpRpcUiState {
   panelOpen: boolean;
   sessionId: string | null;
@@ -51,15 +65,24 @@ interface OmpRpcUiState {
   transcript: OmpTranscriptEntry[];
   models: OmpRpcModelInfo[];
   pendingUi: OmpPendingUiRequest[];
+  authProviders: OmpAuthProviderInfo[];
+  authProvidersLoading: boolean;
+  /** Erro da última listagem de contas (inline na seção, sem toast). */
+  authProvidersError: string | null;
+  loginFlow: OmpLoginFlowState | null;
 
   togglePanel(): void;
   setApprovalPolicy(policy: OmpApprovalPolicy): void;
   start(): Promise<void>;
+  refreshModels(): Promise<void>;
   sendPrompt(message: string, behavior?: 'steer' | 'followUp'): Promise<void>;
   abort(): Promise<void>;
   setModel(provider: string, modelId: string): Promise<void>;
   respondUi(requestId: string, response: OmpRpcUiResponse): Promise<void>;
   disposeSession(): Promise<void>;
+  loadAuthProviders(): Promise<void>;
+  startProviderLogin(providerId: string): Promise<void>;
+  cancelProviderLogin(): Promise<void>;
 }
 
 let entrySeq = 0;
@@ -78,6 +101,65 @@ function ensureSubscription(): void {
     if (state.sessionId !== sessionId) return;
     applyEvent(event);
   });
+}
+
+let authSubscribed = false;
+/** flowId do login em andamento (null até o invoke de login resolver). */
+let activeAuthFlowId: string | null = null;
+/** Cancelamento voluntário: o 'error' resultante não vira toast vermelho. */
+let suppressAuthErrorToast = false;
+
+/** Garante a assinatura única do canal de eventos do auth-broker. */
+function ensureAuthSubscription(): void {
+  if (authSubscribed) return;
+  authSubscribed = true;
+  window.nexus.ompAuth.onEvent((raw) => {
+    const parsed = ompAuthEventEnvelopeSchema.safeParse(raw);
+    if (!parsed.success) return; // evento fora do contrato: descarta
+    applyAuthEvent(parsed.data.flowId, parsed.data.event);
+  });
+}
+
+function applyAuthEvent(flowId: string, event: OmpAuthPushEvent): void {
+  const set = useOmpRpcStore.setState;
+  const get = useOmpRpcStore.getState;
+  if (activeAuthFlowId && activeAuthFlowId !== flowId) return;
+  const flow = get().loginFlow;
+  if (flow && flow.providerId !== event.providerId) return;
+  switch (event.phase) {
+    case 'awaiting-auth': {
+      if (!flow) return;
+      set({ loginFlow: { ...flow, phase: 'awaiting-auth', url: event.url } });
+      return;
+    }
+    case 'done': {
+      activeAuthFlowId = null;
+      set({ loginFlow: null });
+      const name =
+        get().authProviders.find((p) => p.id === event.providerId)?.name ??
+        event.providerId;
+      useToastStore.getState().push('success', `Conta conectada: ${name}`);
+      // Sonda + modelos mudam com a credencial nova — o dropdown atualiza
+      // sem reiniciar a sessão.
+      void get().loadAuthProviders();
+      if (get().sessionId) void get().refreshModels();
+      return;
+    }
+    case 'error': {
+      activeAuthFlowId = null;
+      const cancelled = suppressAuthErrorToast;
+      suppressAuthErrorToast = false;
+      set({ loginFlow: null });
+      if (!cancelled) {
+        useToastStore
+          .getState()
+          .push('error', 'Login não concluído', event.message);
+      }
+      return;
+    }
+    default:
+      return;
+  }
 }
 
 function appendDelta(
@@ -206,7 +288,7 @@ function applyEvent(event: OmpRpcPushEvent): void {
         ...(isLoginNeeded
           ? {
               startError:
-                'omp sem login/modelo — abra o omp no terminal, rode /login e inicie a sessão de novo.',
+                'omp sem login/modelo — conecte uma conta na seção Contas abaixo (ou rode /login no omp do terminal) e inicie a sessão de novo.',
             }
           : {}),
         transcript: [
@@ -257,6 +339,10 @@ export const useOmpRpcStore = create<OmpRpcUiState>((set, get) => ({
   transcript: [],
   models: [],
   pendingUi: [],
+  authProviders: [],
+  authProvidersLoading: false,
+  authProvidersError: null,
+  loginFlow: null,
 
   togglePanel() {
     const panelOpen = !get().panelOpen;
@@ -287,9 +373,79 @@ export const useOmpRpcStore = create<OmpRpcUiState>((set, get) => ({
       return;
     }
     set({ starting: false, sessionId: result.sessionId });
-    const models = await window.nexus.ompRpc.listModels(result.sessionId);
-    if (models.ok && get().sessionId === result.sessionId) {
-      set({ models: models.models });
+    await get().refreshModels();
+  },
+
+  async refreshModels() {
+    const sessionId = get().sessionId;
+    if (!sessionId) return;
+    const result = await window.nexus.ompRpc.listModels(sessionId);
+    if (result.ok && get().sessionId === sessionId) {
+      set({ models: result.models });
+    }
+  },
+
+  async loadAuthProviders() {
+    if (get().authProvidersLoading) return;
+    ensureAuthSubscription();
+    set({ authProvidersLoading: true, authProvidersError: null });
+    try {
+      const result = await window.nexus.ompAuth.listProviders();
+      if (result.ok) {
+        set({ authProviders: result.providers, authProvidersLoading: false });
+      } else {
+        set({
+          authProviders: [],
+          authProvidersLoading: false,
+          authProvidersError: result.error ?? 'falha ao listar as contas do omp',
+        });
+      }
+    } catch (err) {
+      set({
+        authProviders: [],
+        authProvidersLoading: false,
+        authProvidersError: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+
+  async startProviderLogin(providerId) {
+    if (get().loginFlow) return; // single-flight (o main também enforce)
+    ensureAuthSubscription();
+    activeAuthFlowId = null;
+    // Card otimista: spinner até a URL OAuth chegar por push.
+    set({ loginFlow: { providerId, phase: 'awaiting-auth' } });
+    try {
+      const result = await window.nexus.ompAuth.login(providerId);
+      if (!result.ok) {
+        if (get().loginFlow?.providerId === providerId) set({ loginFlow: null });
+        useToastStore
+          .getState()
+          .push('error', 'Não foi possível iniciar o login', result.error);
+        return;
+      }
+      activeAuthFlowId = result.flowId ?? null;
+    } catch (err) {
+      if (get().loginFlow?.providerId === providerId) set({ loginFlow: null });
+      useToastStore
+        .getState()
+        .push(
+          'error',
+          'Não foi possível iniciar o login',
+          err instanceof Error ? err.message : String(err),
+        );
+    }
+  },
+
+  async cancelProviderLogin() {
+    if (!get().loginFlow) return;
+    suppressAuthErrorToast = true;
+    set({ loginFlow: null });
+    try {
+      const result = await window.nexus.ompAuth.cancelLogin();
+      if (!result.ok) suppressAuthErrorToast = false;
+    } catch {
+      suppressAuthErrorToast = false;
     }
   },
 

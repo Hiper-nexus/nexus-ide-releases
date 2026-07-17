@@ -30,6 +30,146 @@ function contextTone(percent: number): 'ok' | 'warn' | 'danger' {
   return 'ok';
 }
 
+/**
+ * Seção "Contas": login OAuth de assinaturas do omp (auth-broker) sem
+ * terminal — lista os provedores, sonda conectados e dirige o fluxo
+ * (abre o navegador, aguarda o callback, confirma). Funciona SEM sessão
+ * ativa; o painel desmonta ao fechar, então a lista recarrega a cada abertura.
+ */
+function OmpAccountsSection() {
+  const authProviders = useOmpRpcStore((s) => s.authProviders);
+  const authProvidersLoading = useOmpRpcStore((s) => s.authProvidersLoading);
+  const authProvidersError = useOmpRpcStore((s) => s.authProvidersError);
+  const loginFlow = useOmpRpcStore((s) => s.loginFlow);
+  const models = useOmpRpcStore((s) => s.models);
+  const loadAuthProviders = useOmpRpcStore((s) => s.loadAuthProviders);
+  const startProviderLogin = useOmpRpcStore((s) => s.startProviderLogin);
+  const cancelProviderLogin = useOmpRpcStore((s) => s.cancelProviderLogin);
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    void loadAuthProviders();
+  }, [loadAuthProviders]);
+
+  const hasDisconnected = authProviders.some((p) => !p.connected);
+  const showHint = models.length <= 1 && hasDisconnected;
+  const flowProvider = loginFlow
+    ? authProviders.find((p) => p.id === loginFlow.providerId)
+    : undefined;
+
+  return (
+    <section className="omp-accounts" aria-label="Contas do omp">
+      {showHint ? (
+        <p className="omp-accounts__hint">
+          Conecte uma assinatura abaixo para liberar mais modelos no seletor.
+        </p>
+      ) : null}
+      <button
+        type="button"
+        className="omp-accounts__header"
+        aria-expanded={!collapsed}
+        onClick={() => setCollapsed((value) => !value)}
+      >
+        <span aria-hidden="true">{collapsed ? '▸' : '▾'}</span>
+        Contas
+        {authProvidersLoading ? (
+          <span className="omp-accounts__status">· sondando…</span>
+        ) : null}
+      </button>
+      {collapsed ? null : (
+        <div className="omp-accounts__body">
+          {loginFlow ? (
+            <div className="omp-auth-flow" aria-live="polite">
+              <div className="omp-auth-flow__title">
+                Autorize no navegador: {flowProvider?.name ?? loginFlow.providerId}
+              </div>
+              {loginFlow.url ? (
+                <>
+                  <span className="omp-auth-flow__url" title={loginFlow.url}>
+                    {loginFlow.url}
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      className="omp-btn omp-btn--primary"
+                      onClick={() => {
+                        const url = loginFlow.url;
+                        if (!url) return;
+                        // openExternal só aceita https (mesma guarda do open-url
+                        // do transcript) — a URL vem validada do main.
+                        void window.nexus.app.openExternal(url).then((res) => {
+                          if (!res.ok) {
+                            useToastStore
+                              .getState()
+                              .push(
+                                'error',
+                                'Não foi possível abrir a URL',
+                                res.error ?? url,
+                              );
+                          }
+                        });
+                      }}
+                    >
+                      Abrir no navegador
+                    </button>
+                  </div>
+                </>
+              ) : null}
+              <div className="omp-auth-flow__waiting">
+                <span className="omp-tool__spinner" aria-hidden="true" />
+                aguardando autorização…
+                <button
+                  type="button"
+                  className="omp-btn omp-btn--dim"
+                  onClick={() => void cancelProviderLogin()}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {authProvidersError ? (
+            <p className="omp-accounts__error">{authProvidersError}</p>
+          ) : null}
+          {!authProvidersError && authProviders.length === 0 && !authProvidersLoading ? (
+            <p className="omp-accounts__status">Nenhum provedor OAuth encontrado.</p>
+          ) : null}
+          <ul className="omp-accounts__list">
+            {authProviders.map((provider) => (
+              <li key={provider.id} className="omp-account">
+                <span
+                  className={`omp-account__dot omp-account__dot--${
+                    provider.connected ? 'on' : 'off'
+                  }`}
+                  aria-hidden="true"
+                />
+                <span className="omp-account__name">{provider.name}</span>
+                <span className="omp-sr-only">
+                  {provider.connected ? 'conectado' : 'não conectado'}
+                </span>
+                {provider.connected ? (
+                  <span className="omp-account__check" aria-hidden="true">
+                    ✓
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="omp-btn"
+                    disabled={loginFlow !== null}
+                    onClick={() => void startProviderLogin(provider.id)}
+                  >
+                    Conectar
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // Desfecho da tool em texto, para leitores de tela — o glyph ✓/✗/spinner é
 // puramente visual (aria-hidden). Cobre running→ok/error.
 const TOOL_STATUS_LABEL: Record<'running' | 'ok' | 'error', string> = {
@@ -404,6 +544,8 @@ export function OmpRpcPanel() {
           )}
         </div>
       ) : null}
+
+      <OmpAccountsSection />
 
       <div className="omp-panel__body" ref={bodyRef}>
         {transcript.length === 0 ? (

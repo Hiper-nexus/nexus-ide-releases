@@ -239,6 +239,135 @@
   margin-top: 8px;
 }
 
+/* Contas OAuth do omp (auth-broker): login de assinaturas pelo painel, sem
+   terminal. Visível com ou sem sessão — o dot é estado, nunca decoração. */
+.omp-accounts {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.omp-accounts__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.omp-accounts__header:hover {
+  color: var(--text);
+}
+
+.omp-accounts__status {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.omp-accounts__hint {
+  color: var(--warn);
+  font-size: var(--text-xs);
+}
+
+.omp-accounts__error {
+  color: var(--danger);
+  font-size: var(--text-xs);
+}
+
+.omp-accounts__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.omp-accounts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.omp-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+  padding: 2px 0;
+}
+
+.omp-account__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-round);
+  flex: none;
+  background: var(--text-dim);
+}
+
+.omp-account__dot--on {
+  background: var(--ok);
+}
+
+.omp-account__name {
+  flex: 1;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.omp-account__check {
+  color: var(--ok);
+}
+
+/* Card do fluxo em andamento: URL explícita (o usuário vê para ONDE vai) +
+   abertura via openExternal https-only + spinner até o callback. */
+.omp-auth-flow {
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.omp-auth-flow__title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.omp-auth-flow__url {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.omp-auth-flow__waiting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.omp-auth-flow__waiting .omp-btn {
+  margin-left: auto;
+}
+
 .omp-panel__body {
   flex: 1;
   overflow-y: auto;

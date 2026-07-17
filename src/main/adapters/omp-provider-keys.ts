@@ -2,14 +2,19 @@ import { loadLauncherProviderKey } from './launcher-provider-manager';
 
 /**
  * Herança de chaves para o omp: as API keys que o usuário JÁ guardou no Nexus
- * (providers.conf do launcher — GLM, Moonshot, DeepSeek, OpenRouter…) são
- * injetadas no processo do omp com os nomes de env que ele reconhece — o omp
- * nasce funcionando sem novo login.
+ * (providers.conf do launcher — GLM, Moonshot, DeepSeek, OpenRouter, OpenAI,
+ * Gemini, xAI, Groq, Cerebras, Mistral…) são injetadas no processo do omp com
+ * os nomes de env que ele reconhece — o omp nasce funcionando sem novo login.
+ *
+ * O mapeamento cobre também upstreams FORA da tabela UPSTREAM_PROVIDERS do
+ * launcher: o parser do providers.conf aceita qualquer linha
+ * `^[a-z0-9_-]+=…` (launcher-provider-manager.ts), então uma linha solta
+ * `openai=sk-...` já é suficiente para a chave chegar ao omp.
  *
  * Fora por design: logins de ASSINATURA (Claude Max, Codex, contas OAuth das
  * outras CLIs). Esses tokens são emitidos para o app que os criou — reusar em
- * outro cliente viola termos e expira sem aviso. Assinatura no omp = /login
- * dele mesmo.
+ * outro cliente viola termos e expira sem aviso. Assinatura no omp = login
+ * dele mesmo (auth-broker, dirigido pelo painel OMP·RPC).
  *
  * Só entram no env as chaves que EXISTEM — nunca variáveis vazias, e nomes
  * desconhecidos pelo omp são ignorados por ele sem efeito colateral.
@@ -26,6 +31,12 @@ const UPSTREAM_TO_OMP_ENV: ReadonlyArray<readonly [string, readonly string[]]> =
     ['minimax', ['MINIMAX_API_KEY']],
     ['qwen', ['DASHSCOPE_API_KEY']],
     ['openrouter', ['OPENROUTER_API_KEY']],
+    ['openai', ['OPENAI_API_KEY']],
+    ['gemini', ['GEMINI_API_KEY']],
+    ['xai', ['XAI_API_KEY']],
+    ['groq', ['GROQ_API_KEY']],
+    ['cerebras', ['CEREBRAS_API_KEY']],
+    ['mistral', ['MISTRAL_API_KEY']],
   ]);
 
 export function buildOmpInheritedKeyEnv(
