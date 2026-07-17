@@ -7,6 +7,11 @@ import {
   doctorFinding,
 } from './nexus-doctor-support';
 
+/** Remediação humana por código de blocker do Context Doctor. */
+export function contextBlockerRemediation(code: string): string | undefined {
+  return CONTEXT_REMEDIATION[code];
+}
+
 const CONTEXT_REMEDIATION: Readonly<Record<string, string>> = Object.freeze({
   'missing-business-context':
     'Documente project-overview, business-model e domain-glossary em .context/docs/ a partir de fontes versionadas.',

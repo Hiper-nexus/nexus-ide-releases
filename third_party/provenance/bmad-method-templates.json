@@ -1,0 +1,20 @@
+{
+  "source": "bmad-code-org/bmad-method",
+  "upstreamRepository": "https://github.com/bmad-code-org/bmad-method",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2025 BMad Code, LLC",
+  "licenseFile": "third_party/licenses/bmad-method-MIT.txt",
+  "importedAt": "2026-07-17",
+  "type": "vendored-verbatim",
+  "nexusPath": "assets/skills/bmad-templates",
+  "files": [
+    { "originalPath": "src/bmm-skills/2-plan-workflows/bmad-prd/assets/prd-template.md", "nexusPath": "assets/skills/bmad-templates/prd/prd-template.md" },
+    { "originalPath": "src/bmm-skills/2-plan-workflows/bmad-prd/assets/prd-validation-checklist.md", "nexusPath": "assets/skills/bmad-templates/prd/prd-validation-checklist.md" },
+    { "originalPath": "src/bmm-skills/3-solutioning/bmad-architecture/assets/spine-template.md", "nexusPath": "assets/skills/bmad-templates/architecture/spine-template.md" },
+    { "originalPath": "src/bmm-skills/3-solutioning/bmad-create-epics-and-stories/templates/epics-template.md", "nexusPath": "assets/skills/bmad-templates/stories/epics-template.md" },
+    { "originalPath": "src/bmm-skills/4-implementation/bmad-create-story/template.md", "nexusPath": "assets/skills/bmad-templates/stories/story-template.md" },
+    { "originalPath": "src/bmm-skills/4-implementation/bmad-create-story/checklist.md", "nexusPath": "assets/skills/bmad-templates/stories/story-checklist.md" },
+    { "originalPath": "src/bmm-skills/4-implementation/bmad-dev-story/checklist.md", "nexusPath": "assets/skills/bmad-templates/implementation/dev-story-checklist.md" }
+  ],
+  "notes": "Subset curado de templates/checklists do BMAD Method vendorado verbatim; SKILL.md é do Nexus. Bundle via scripts/bundle-skills.mjs; materializado pelo skill-mirror para as CLIs dos panes."
+}

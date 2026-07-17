@@ -268,6 +268,9 @@ const RAW_SQUADS: Squad[] = [
       // de modelos = custo menor e sem sobrecarregar um provedor só.
       { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'codex', effort: 'medium' },
       { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'agy', effort: 'medium' },
+      // Executor generalista no omp: entra no menu para tarefas que cruzam
+      // frente/back ou quando o orquestrador quer paralelizar implementação.
+      { id: 'generalist', agentName: 'Generalist (omp)', category: 'executor', cli: 'omp', effort: 'medium' },
       { id: 'ux', agentName: 'UX Designer', category: 'reviewer', cli: 'claude', effort: 'medium' },
       { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
       { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
@@ -289,6 +292,9 @@ const RAW_SQUADS: Squad[] = [
       { id: 'correctness', agentName: 'Correctness', category: 'reviewer', cli: 'kimi', effort: 'high' },
       { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
       { id: 'performance', agentName: 'Performance', category: 'reviewer', cli: 'agy', effort: 'high' },
+      // Quarto olhar no omp: casos de borda e integrações cross-boundary
+      // (mesma diversidade de modelos dos outros squads).
+      { id: 'edge-cases', agentName: 'Edge Cases (omp)', category: 'reviewer', cli: 'omp', effort: 'high' },
     ],
   },
   {
@@ -352,15 +358,141 @@ const RAW_SQUADS: Squad[] = [
       '# Research & Arquitetura\n' +
       'Você é o orquestrador. Mande os scouts levantarem o terreno em ' +
       'paralelo, sintetize os achados e peça ao arquiteto um plano de ' +
-      'implementação com trade-offs. Depois passe o plano ao Contrarian ' +
-      'para ele atacar (custos ocultos, riscos, alternativa mais simples) ' +
-      'antes de qualquer código.',
+      'implementação com trade-offs. O Architect DEVE entregar junto um ' +
+      'diagrama de arquitetura gerado com a skill archify (HTML ' +
+      'self-contained salvo em docs/architecture/<slug>.html) cobrindo o ' +
+      'estado atual e o proposto; abra o HTML num pane de browser para o ' +
+      'usuário ver. Depois passe o plano ao Contrarian para ele atacar ' +
+      '(custos ocultos, riscos, alternativa mais simples) antes de ' +
+      'qualquer código.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
       { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'agy', effort: 'medium' },
       { id: 'scout-b', agentName: 'Scout B', category: 'scout', cli: 'grok', effort: 'medium' },
+      { id: 'scout-c', agentName: 'Scout C (omp)', category: 'scout', cli: 'omp', effort: 'medium' },
       { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
       { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },
+    ],
+  },
+  {
+    // Planejamento estilo BMAD adaptado a brownfield: leitura REAL do sistema
+    // antes de qualquer pergunta, interrogatório grilling (uma pergunta por
+    // vez, decisões do usuário), e documentos versionáveis como entrega.
+    id: 'nexus-plan',
+    name: 'Planejamento & PRD',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Planejamento & PRD (brownfield-first)\n' +
+      'Você é o orquestrador de planejamento. A entrega final são documentos ' +
+      'versionáveis em docs/ (PRD, arquitetura e stories) — NENHUM código de ' +
+      'produção é escrito nesta missão. Spawne os workers do roster via ' +
+      'nexus_pane_spawn (em paralelo quando as etapas permitirem), aguarde ' +
+      'com nexus_pane_wait_many e colete entregas com nexus_handoff_list.\n' +
+      '\n' +
+      '## 1. Leitura real do sistema (sempre primeiro)\n' +
+      'Antes de qualquer pergunta ao usuário, mande os explorers levantarem ' +
+      'em paralelo o estado REAL do workspace: stack e dependências, módulos ' +
+      'e fronteiras, fluxos críticos, integrações externas, testes e dívidas ' +
+      'aparentes. Fatos se buscam no código — NUNCA pergunte ao usuário o ' +
+      'que o repositório já responde.\n' +
+      '\n' +
+      '## 2. Interrogatório (skill grilling)\n' +
+      'Com o terreno mapeado, entreviste o usuário no rito da skill ' +
+      '`grilling`: UMA pergunta por vez, sempre com a sua recomendação ' +
+      'junto; espere a resposta antes da próxima. Decisões são do usuário; ' +
+      'fatos são do código. Percorra: problema e usuário-alvo, resultado ' +
+      'esperado, escopo IN/OUT, restrições (prazo, plataformas, compliance), ' +
+      'riscos aceitáveis e critérios de sucesso mensuráveis. Não avance ' +
+      'para o PRD sem confirmar entendimento compartilhado.\n' +
+      '\n' +
+      '## 3. PRD\n' +
+      'Peça ao PM o PRD em docs/prd/<slug>.md no formato do template ' +
+      'prd/prd-template.md da skill bmad-templates (vision, JTBD, FRs ' +
+      'aninhados por feature, NFRs, assumptions indexadas, escopo negativo). ' +
+      'O PRD referencia os achados dos explorers — nada de suposição que o ' +
+      'código contradiga. Antes de aprovar, o PM valida o documento item a ' +
+      'item com prd/prd-validation-checklist.md e registra o resultado no ' +
+      'fim do arquivo.\n' +
+      '\n' +
+      '## 4. Arquitetura com diagrama\n' +
+      'Peça ao Architect o plano técnico em docs/architecture/<slug>.md ' +
+      'estruturado pelo architecture/spine-template.md da skill ' +
+      'bmad-templates, ancorado no estado atual: componentes tocados, ' +
+      'mudanças por módulo, contratos e migrações, sequenciamento e ' +
+      'trade-offs. O Architect DEVE gerar o diagrama com a skill archify ' +
+      '(HTML self-contained em docs/architecture/<slug>.html) cobrindo ' +
+      'estado atual e proposto, e o HTML deve ser aberto num pane de ' +
+      'browser para o usuário ver.\n' +
+      '\n' +
+      '## 5. Shard em stories\n' +
+      'Peça ao PO quebrar PRD+arquitetura em épicos ' +
+      '(stories/epics-template.md) e stories (stories/story-template.md) em ' +
+      'docs/stories/: cada story autossuficiente, com critérios de aceite ' +
+      'verificáveis e dependências explícitas, validada com ' +
+      'stories/story-checklist.md — prontas para o squad Implementação por ' +
+      'Stories consumir uma a uma.\n' +
+      '\n' +
+      '## 6. Validação final\n' +
+      'O Contrarian ataca o pacote inteiro: custos ocultos, alternativa mais ' +
+      'simples, o que quebra em produção. Incorpore o que sobreviver e ' +
+      'finalize com um handoff listando os caminhos de todos os documentos.',
+    agents: [
+      { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
+      { id: 'explorer-a', agentName: 'Explorer A', category: 'scout', cli: 'agy', effort: 'medium' },
+      { id: 'explorer-b', agentName: 'Explorer B (omp)', category: 'scout', cli: 'omp', effort: 'medium' },
+      { id: 'pm', agentName: 'PM', category: 'executor', cli: 'claude', effort: 'high' },
+      { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
+      { id: 'po', agentName: 'PO', category: 'executor', cli: 'codex', effort: 'medium' },
+      { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },
+    ],
+  },
+  {
+    // Elo de execução do ciclo BMAD: consome docs/stories/ do Planejamento &
+    // PRD e implementa story por story com gate de Definition of Done.
+    id: 'nexus-story-impl',
+    name: 'Implementação por Stories',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Implementação por Stories (ciclo BMAD)\n' +
+      'Você é o orquestrador do ciclo disciplinado de implementação: consome ' +
+      'as stories de docs/stories/ (geradas pelo squad Planejamento & PRD) ' +
+      'e as implementa UMA POR VEZ até acabarem ou o usuário mandar parar. ' +
+      'Spawne workers via nexus_pane_spawn, aguarde com nexus_pane_wait_many ' +
+      'e colete entregas com nexus_handoff_list.\n' +
+      '\n' +
+      '## Ciclo por story\n' +
+      '1. **Seleção**: liste docs/stories/ e escolha a próxima story aberta ' +
+      'sem dependência pendente. Sem stories? Finalize orientando rodar o ' +
+      'squad Planejamento & PRD primeiro.\n' +
+      '2. **SM prepara**: o SM transforma a story num pacote de ' +
+      'implementação autossuficiente no formato stories/story-template.md ' +
+      'da skill bmad-templates — Dev Notes com arquivos/padrões REAIS do ' +
+      'código, tasks, critérios de aceite — e valida com ' +
+      'stories/story-checklist.md ANTES de entregar ao Dev.\n' +
+      '3. **Dev implementa**: executa as tasks com testes, mantendo File ' +
+      'List e Dev Agent Record da story atualizados. Escopo é SÓ o da ' +
+      'story — mudança fora do escopo volta como proposta, nunca como ' +
+      'código.\n' +
+      '4. **QA valida**: roda os testes de verdade e percorre ' +
+      'implementation/dev-story-checklist.md (Definition of Done) item a ' +
+      'item; reprovou, volta ao Dev citando o item exato.\n' +
+      '5. **Fechamento**: com DoD verde, atualize o status na própria story ' +
+      'em docs/stories/, registre no handoff e passe à próxima.\n' +
+      '\n' +
+      '## Regras\n' +
+      '- Uma story por vez por Dev; o segundo Dev entra apenas em stories ' +
+      'independentes entre si.\n' +
+      '- NUNCA marque story concluída com teste falhando ou DoD incompleto.\n' +
+      '- Ao final (ou ao parar), o handoff lista stories concluídas, ' +
+      'reprovadas e restantes.',
+    agents: [
+      { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
+      { id: 'sm', agentName: 'SM', category: 'executor', cli: 'claude', effort: 'medium' },
+      { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex', effort: 'medium' },
+      { id: 'dev-b', agentName: 'Dev B (omp)', category: 'executor', cli: 'omp', effort: 'medium' },
+      { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
     ],
   },
 ];

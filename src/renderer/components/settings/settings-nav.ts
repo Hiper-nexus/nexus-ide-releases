@@ -70,8 +70,15 @@ function pillarGroup(
   };
 }
 
-/** Primário emocional — Você · App · Agentes · Sistema (visíveis sem Avançado). */
-export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
+/**
+ * Nav PLANA — todas as seções sempre visíveis, agrupadas por cabeçalho, sem
+ * colapso aninhado. O modelo anterior ("Mais configurações" → grupos
+ * colapsáveis → item) enterrava seções críticas em três cliques (achado de
+ * operador: "para chegar no acesso remoto do celular tem que garimpar").
+ * Uma lista rolável com cabeçalhos de seção + busca é o padrão dos settings
+ * que o usuário já conhece (VS Code, BridgeMind).
+ */
+export const SETTINGS_GROUPS: NavGroup[] = [
   pillarGroup('you', [
     {
       id: 'account',
@@ -198,103 +205,9 @@ export const SETTINGS_PRIMARY_GROUPS: NavGroup[] = [
       aliases: ['media', 'image', 'video', 'audio', 'seedream', 'seedance'],
     },
   ]),
-  pillarGroup('system', [
-    {
-      id: 'diagnostics',
-      icon: 'DIA',
-      pixelIcon: 'warn',
-      title: 'Diagnóstico',
-      subtitle: 'mic · permissões',
-      aliases: ['diagnostics', 'health', 'permissions'],
-    },
-    // Labs mora na nav primária de propósito: o painel que dá visibilidade às
-    // capabilities não pode ele mesmo viver atrás do "Avançado" (achado de
-    // operador — "onde vejo as flags? não vi nada").
-    {
-      id: 'labs',
-      icon: 'LAB',
-      pixelIcon: 'sparkle',
-      title: 'Labs',
-      subtitle: 'feature flags',
-      aliases: ['labs', 'flags', 'feature flags', 'experimentos'],
-    },
-  ]),
-];
-
-/** Catálogo e ops raras — progressive disclosure, ainda nos pilares. */
-export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
-  {
-    label: 'Sistema · saúde',
-    story: 'Versão, consentimento e bridge',
-    pillarId: 'system',
-    items: [
-      {
-        id: 'system',
-        icon: 'i',
-        pixelIcon: 'update',
-        title: 'Sistema',
-        subtitle: 'versão · changelog',
-      },
-      {
-        id: 'vision',
-        icon: 'VIS',
-        pixelIcon: 'vision',
-        title: 'Vision',
-        subtitle: 'consent · tela',
-        aliases: ['screen', 'capture', 'vision'],
-      },
-      {
-        id: 'audit',
-        icon: 'AUD',
-        pixelIcon: 'files',
-        title: 'Auditoria',
-        subtitle: 'ações · confirmações',
-        aliases: ['audit', 'confirmations'],
-      },
-      {
-        id: 'remote',
-        icon: 'SSH',
-        pixelIcon: 'split-right',
-        title: 'Remote',
-        subtitle: 'bridge · ssh',
-        aliases: ['ssh', 'remote'],
-      },
-      {
-        id: 'companion-relay',
-        icon: 'REL',
-        pixelIcon: 'split-right',
-        title: 'Companion mobile',
-        subtitle: 'relay E2E · QR',
-        aliases: ['companion', 'relay', 'mobile', 'celular', 'e2e', 'qr'],
-      },
-    ],
-  },
-  {
-    label: 'Agentes · integrações',
-    story: 'Marketplace e design systems',
-    pillarId: 'agents',
-    items: [
-      {
-        id: 'marketplace',
-        icon: 'MKT',
-        pixelIcon: 'star',
-        title: 'Marketplace',
-        subtitle: 'catálogo · 1 clique',
-        aliases: ['marketplace', 'catalog'],
-      },
-      {
-        id: 'design-systems',
-        icon: 'DS',
-        pixelIcon: 'grid',
-        title: 'Design Systems',
-        subtitle: 'designmd.ai · DESIGN.md',
-        aliases: ['design systems', 'designmd', 'design'],
-      },
-    ],
-  },
   {
     label: 'Agentes · catálogo',
-    story: 'Subagents, skills e modelos',
+    story: 'Subagents, skills, modelos e marketplace',
     pillarId: 'agents',
     items: [
       {
@@ -328,6 +241,22 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
         title: 'Modelos',
         subtitle: 'geração · whitelist',
         aliases: ['generation', 'models', 'whitelist'],
+      },
+      {
+        id: 'marketplace',
+        icon: 'MKT',
+        pixelIcon: 'star',
+        title: 'Marketplace',
+        subtitle: 'catálogo · 1 clique',
+        aliases: ['marketplace', 'catalog'],
+      },
+      {
+        id: 'design-systems',
+        icon: 'DS',
+        pixelIcon: 'grid',
+        title: 'Design Systems',
+        subtitle: 'designmd.ai · DESIGN.md',
+        aliases: ['design systems', 'designmd', 'design'],
       },
     ],
   },
@@ -370,42 +299,73 @@ export const SETTINGS_ADVANCED_GROUPS: NavGroup[] = [
       },
     ],
   },
+  pillarGroup('system', [
+    {
+      id: 'diagnostics',
+      icon: 'DIA',
+      pixelIcon: 'warn',
+      title: 'Diagnóstico',
+      subtitle: 'mic · permissões',
+      aliases: ['diagnostics', 'health', 'permissions'],
+    },
+    {
+      id: 'system',
+      icon: 'i',
+      pixelIcon: 'update',
+      title: 'Sistema',
+      subtitle: 'versão · changelog',
+    },
+    {
+      id: 'vision',
+      icon: 'VIS',
+      pixelIcon: 'vision',
+      title: 'Vision',
+      subtitle: 'consent · tela',
+      aliases: ['screen', 'capture', 'vision'],
+    },
+    {
+      id: 'audit',
+      icon: 'AUD',
+      pixelIcon: 'files',
+      title: 'Auditoria',
+      subtitle: 'ações · confirmações',
+      aliases: ['audit', 'confirmations'],
+    },
+    {
+      id: 'labs',
+      icon: 'LAB',
+      pixelIcon: 'sparkle',
+      title: 'Labs',
+      subtitle: 'feature flags',
+      aliases: ['labs', 'flags', 'feature flags', 'experimentos'],
+    },
+  ]),
+  // Acesso remoto ganha seção própria SEMPRE visível — era o item mais
+  // enterrado da nav antiga e é porta de entrada do companion no celular.
+  {
+    label: 'Remoto & mobile',
+    story: 'Bridge, SSH e companion no celular',
+    pillarId: 'system',
+    items: [
+      {
+        id: 'remote',
+        icon: 'SSH',
+        pixelIcon: 'split-right',
+        title: 'Remote',
+        subtitle: 'bridge · ssh',
+        aliases: ['ssh', 'remote'],
+      },
+      {
+        id: 'companion-relay',
+        icon: 'REL',
+        pixelIcon: 'split-right',
+        title: 'Companion mobile',
+        subtitle: 'relay E2E · QR',
+        aliases: ['companion', 'relay', 'mobile', 'celular', 'e2e', 'qr'],
+      },
+    ],
+  },
 ];
-
-/** União para busca e testes de cobertura de seções. */
-export const SETTINGS_GROUPS: NavGroup[] = [
-  ...SETTINGS_PRIMARY_GROUPS,
-  ...SETTINGS_ADVANCED_GROUPS,
-];
-
-const ADVANCED_SECTION_IDS = new Set(
-  SETTINGS_ADVANCED_GROUPS.flatMap((g) => g.items.map((i) => i.id)),
-);
-
-export function isAdvancedSettingsSection(id: SettingsSection): boolean {
-  return ADVANCED_SECTION_IDS.has(id);
-}
-
-export function isSettingsGroupExpanded(
-  group: NavGroup,
-  activeSection: SettingsSection,
-  manuallyExpanded: ReadonlySet<string>,
-): boolean {
-  return (
-    manuallyExpanded.has(group.label) ||
-    group.items.some((item) => item.id === activeSection)
-  );
-}
-
-export function toggleSettingsGroup(
-  expanded: ReadonlySet<string>,
-  label: string,
-): Set<string> {
-  const next = new Set(expanded);
-  if (next.has(label)) next.delete(label);
-  else next.add(label);
-  return next;
-}
 
 /** YOU · APP · AGENTS · SYSTEM — pilares emocionais da nav (endorphin). */
 const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {

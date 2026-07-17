@@ -786,7 +786,9 @@ export async function finishAndProcess(
             beginListening: deps.beginListening,
             wakeAutoStop: deps.wakeAutoStop,
             armFollowUp: true,
-            canReopen: () => true,
+            // Token do turno, como os demais canReopen: um powerOff (que abre
+            // turno novo) mata esta continuidade em vez de reabrir a escuta.
+            canReopen: () => turnExecution.currentToken === turnToken,
           });
         } else {
           replyMuteReopenCount = 0;

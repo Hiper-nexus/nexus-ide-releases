@@ -44,6 +44,15 @@ describe('ensureSkillsForCli', () => {
       fs.existsSync(path.join(home, '.codex', 'skills', 'ponytail', 'SKILL.md')),
     ).toBe(true);
     expect(
+      fs.existsSync(path.join(home, '.codex', 'skills', 'archify', 'SKILL.md')),
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(home, '.codex', 'skills', 'bmad-templates', 'SKILL.md')),
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(home, '.codex', 'skills', 'grilling', 'SKILL.md')),
+    ).toBe(true);
+    expect(
       fs.existsSync(path.join(home, '.codex', 'skills', 'bridgeward', 'SKILL.md')),
     ).toBe(true);
     expect(

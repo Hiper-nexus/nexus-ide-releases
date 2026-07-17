@@ -6,6 +6,7 @@ import {
   type OmpTranscriptEntry,
 } from '../../state/omp-rpc-store';
 import { useLayoutStore } from '../../state/layout-store';
+import { useToastStore } from '../../state/toast-store';
 import { waitForSession } from '../../terminal/terminal-host';
 
 /**
@@ -441,6 +442,35 @@ export function OmpRpcPanel() {
                   className={`omp-line omp-line--notice omp-line--${entry.level}`}
                 >
                   {entry.text}
+                </div>
+              );
+            case 'open-url':
+              // URL exibida por inteiro (o usuário vê para ONDE vai antes de
+              // clicar); a abertura passa pelo openExternal https-only do main.
+              return (
+                <div key={entry.id} className="omp-line omp-line--notice omp-line--info">
+                  <span className="omp-open-url__label">
+                    O omp pediu para abrir: {entry.url}
+                  </span>{' '}
+                  <button
+                    type="button"
+                    className="omp-btn omp-btn--primary"
+                    onClick={() => {
+                      // openExternal só aceita https; um flow de login que
+                      // pedir http/localhost falharia em silêncio sem isto.
+                      void window.nexus.app.openExternal(entry.url).then((res) => {
+                        if (!res.ok) {
+                          useToastStore.getState().push(
+                            'error',
+                            'Não foi possível abrir a URL',
+                            res.error ?? entry.url,
+                          );
+                        }
+                      });
+                    }}
+                  >
+                    Abrir no navegador
+                  </button>
                 </div>
               );
             default:

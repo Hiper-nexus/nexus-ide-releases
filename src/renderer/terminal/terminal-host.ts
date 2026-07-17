@@ -26,6 +26,7 @@ import {
   submitPromptToPane as submitPanePrompt,
   submitPromptToPaneConfirmed as submitPanePromptConfirmed,
 } from './pane-submit';
+import { WebglLeasePool } from './webgl-lease';
 
 /**
  * Persistent terminal manager.
@@ -58,8 +59,8 @@ interface Host {
   /** True while the viewport should keep following parsed PTY output. */
   followOutput: boolean;
   cleanups: Array<() => void>;
-  /** Devolve o slot de WebGL ao pool quando o host morre. */
-  webglRelease?: () => void;
+  /** Live WebGL addon while this host holds a lease from the pool. */
+  webgl?: WebglAddon;
 }
 
 function reportPaneResumeIncident(
@@ -103,10 +104,50 @@ function reportPaneResumeIncident(
 
 // Chromium limita contextos WebGL por página (~8-16); um squad grande +
 // respawns estourava o pool e os terminais mais antigos ficavam EM BRANCO.
-// Acima do teto, novos terminais usam o renderer DOM (mais lento, sempre
-// legível).
-const WEBGL_MAX = 4;
-let webglInUse = 0;
+// Os contextos são ALUGADOS por recência de foco (ver webgl-lease.ts): focar
+// um pane no renderer DOM rouba o slot do detentor menos recente, então o
+// que o usuário está olhando renderiza sempre em WebGL. O teto fica abaixo
+// do limite do Chromium para absorver o lag de GC entre dispose e create.
+const WEBGL_MAX = 8;
+const webglPool = new WebglLeasePool(WEBGL_MAX);
+
+/** Bind a host to the lease pool: how to load and unload its WebGL addon. */
+function registerWebglLease(paneId: string, host: Host): void {
+  webglPool.register(paneId, {
+    activate: (): boolean => {
+      if (host.disposed || !host.opened) return false;
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          webglPool.notifyLost(paneId);
+          if (host.webgl === webgl) host.webgl = undefined;
+          webgl.dispose();
+        });
+        host.term.loadAddon(webgl);
+        host.webgl = webgl;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    deactivate: (): void => {
+      const webgl = host.webgl;
+      host.webgl = undefined;
+      try {
+        webgl?.dispose();
+      } catch {
+        // Addon already gone with the terminal.
+      }
+      try {
+        // The DOM renderer repaints lazily; force a refresh so the evicted
+        // pane doesn't sit stale until its next PTY write.
+        host.term.refresh(0, Math.max(0, host.term.rows - 1));
+      } catch {
+        // Terminal not opened or already disposed.
+      }
+    },
+  });
+}
 
 const hosts = new Map<string, Host>();
 const MAX_PERSISTED_SCROLLBACK = 256_000;
@@ -195,7 +236,13 @@ export function applyTerminalSettings(settings: TerminalSettings): void {
   }
 }
 
-function buildTerminal(): {
+// Agentes produzem o grosso do output e dominam custo de memória/pintura
+// (pior ainda quando evictados para o renderer DOM), então recebem um buffer
+// mais enxuto. O snapshot persistido de 256 KB não é afetado.
+const SCROLLBACK_SHELL = 10_000;
+const SCROLLBACK_AGENT = 5_000;
+
+function buildTerminal(kind: 'shell' | 'cli-agent'): {
   term: Terminal;
   fit: FitAddon;
   search: SearchAddon;
@@ -208,7 +255,9 @@ function buildTerminal(): {
     cursorBlink: false,
     allowProposedApi: true,
     theme: themeOf(currentSettings),
-    scrollback: 10_000,
+    scrollback: kind === 'cli-agent' ? SCROLLBACK_AGENT : SCROLLBACK_SHELL,
+    // Alt+roda (modificador fixo do xterm 6) rola 5x mais rápido.
+    fastScrollSensitivity: 5,
   });
   const fit = new FitAddon();
   const search = new SearchAddon();
@@ -505,11 +554,65 @@ function makeResizeObserver(host: Host): ResizeObserver {
   });
 }
 
+/** Re-measure every live terminal: fit, propagate cols/rows, repaint. */
+function refitAllHosts(): void {
+  for (const host of hosts.values()) {
+    if (host.disposed || !host.opened) continue;
+    try {
+      host.fit.fit();
+    } catch {
+      continue; // Not measurable right now; the ResizeObserver will settle it.
+    }
+    if (host.sessionId) {
+      window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
+    }
+    try {
+      host.term.refresh(0, Math.max(0, host.term.rows - 1));
+    } catch {
+      // The next PTY write repaints.
+    }
+  }
+}
+
+let refitAllTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleRefitAll(): void {
+  if (refitAllTimer) clearTimeout(refitAllTimer);
+  refitAllTimer = setTimeout(() => {
+    refitAllTimer = null;
+    refitAllHosts();
+  }, RESIZE_DEBOUNCE_MS);
+}
+
+/**
+ * Zoom (Cmd +/-) e trocas de escala/monitor mudam o devicePixelRatio SEM
+ * necessariamente alterar o box dos panes — o ResizeObserver por host nunca
+ * dispara e a grade cols/rows fica congelada no tamanho antigo. Observa o
+ * próprio DPR (a media query casa UM ratio específico, então precisa ser
+ * recriada após cada mudança) mais um resize de janela como backstop.
+ */
+function watchDisplayScale(): void {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('resize', scheduleRefitAll);
+  if (typeof window.matchMedia !== 'function') return;
+  let media: MediaQueryList | null = null;
+  const onChange = (): void => {
+    scheduleRefitAll();
+    rebind();
+  };
+  const rebind = (): void => {
+    media?.removeEventListener('change', onChange);
+    media = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    media.addEventListener('change', onChange);
+  };
+  rebind();
+}
+watchDisplayScale();
+
 function createShellHost(pane: PaneModel): Host {
   const element = document.createElement('div');
   element.className = 'term-host';
 
-  const { term, fit, search, serialize } = buildTerminal();
+  const { term, fit, search, serialize } = buildTerminal('shell');
 
   const host: Host = {
     element,
@@ -550,7 +653,7 @@ function createCliAgentHost(pane: PaneModel): Host {
   const element = document.createElement('div');
   element.className = 'term-host term-host--agent';
 
-  const { term, fit, search, serialize } = buildTerminal();
+  const { term, fit, search, serialize } = buildTerminal('cli-agent');
 
   const host: Host = {
     element,
@@ -730,27 +833,8 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
         }
       });
     }
-    if (webglInUse < WEBGL_MAX) {
-      try {
-        const webgl = new WebglAddon();
-        webglInUse += 1;
-        let released = false;
-        const release = () => {
-          if (released) return;
-          released = true;
-          webglInUse -= 1;
-        };
-        host.webglRelease = release;
-        webgl.onContextLoss(() => {
-          release();
-          webgl.dispose();
-        });
-        host.term.loadAddon(webgl);
-      } catch {
-        // Canvas/DOM renderer fallback.
-      }
-    }
     host.opened = true;
+    registerWebglLease(pane.id, host);
   }
 
   try {
@@ -885,6 +969,9 @@ export function focusHost(paneId: string): void {
   }
   const host = hosts.get(paneId);
   if (!host || host.disposed) return;
+  // Focus recency drives the WebGL lease: a DOM-rendered pane reclaims a
+  // context here (stealing from the least-recently-focused holder).
+  if (host.opened) webglPool.touch(paneId);
   // Promote any background backlog immediately so the focused pane is not
   // stuck behind the cooperative drain of other hidden panes.
   flushTerminalOutput(host.term);
@@ -1228,7 +1315,7 @@ export function submitPromptToPaneConfirmed(
 
 function disposeHost(host: Host, paneId: string): void {
   host.disposed = true;
-  host.webglRelease?.();
+  webglPool.unregister(paneId);
   host.ro.disconnect();
   host.cleanups.forEach((fn) => fn());
   if (host.sessionId) window.nexus.pty.kill(host.sessionId);

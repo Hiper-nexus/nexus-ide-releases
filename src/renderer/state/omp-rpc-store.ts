@@ -29,7 +29,8 @@ export type OmpTranscriptEntry =
       argsPreview: string;
       status: 'running' | 'ok' | 'error';
     }
-  | { id: number; kind: 'notice'; level: 'info' | 'warning' | 'error'; text: string };
+  | { id: number; kind: 'notice'; level: 'info' | 'warning' | 'error'; text: string }
+  | { id: number; kind: 'open-url'; url: string };
 
 export interface OmpPendingUiRequest {
   requestId: string;
@@ -215,6 +216,14 @@ function applyEvent(event: OmpRpcPushEvent): void {
       });
       return;
     }
+    case 'open-url':
+      set({
+        transcript: [
+          ...get().transcript,
+          { id: nextId(), kind: 'open-url', url: event.url },
+        ],
+      });
+      return;
     case 'exit':
       set({
         sessionId: null,

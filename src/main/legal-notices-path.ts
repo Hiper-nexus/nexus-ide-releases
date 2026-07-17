@@ -27,6 +27,25 @@ export function resolveThirdPartyNoticesPath(opts: {
   return null;
 }
 
+/**
+ * `shell.openPath` entrega o caminho ao app externo (Finder/editor), que NÃO
+ * lê dentro do app.asar — mesmo com `fs.existsSync` passando via shim do
+ * Electron, abrir falha com "Failed to open path". Para caminhos dentro do
+ * asar, extrai uma cópia para um diretório real e abre a cópia.
+ */
+export function materializeOpenableNoticesPath(
+  found: string,
+  tempDir: string,
+  copy: (src: string, dest: string) => void = fs.copyFileSync,
+): string {
+  if (!found.split(path.sep).some((part) => part.endsWith('.asar'))) {
+    return found;
+  }
+  const dest = path.join(tempDir, 'NexusIDE-THIRD_PARTY_NOTICES.md');
+  copy(found, dest);
+  return dest;
+}
+
 /** Files that must be present in the packaged app for legal compliance. */
 export const PACKAGED_LEGAL_FILES = [
   '/LICENSE',

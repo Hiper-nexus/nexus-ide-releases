@@ -371,6 +371,9 @@ export const ompRpcPushEventSchema = z.discriminatedUnion('kind', [
       message: z.string(),
     })
     .strict(),
+  // open_url do CLI (ex.: /login OAuth) — o renderer mostra um link clicável;
+  // a abertura passa pelo openExternal validado (https-only) do main.
+  z.object({ kind: z.literal('open-url'), url: z.string() }).strict(),
   z.object({ kind: z.literal('exit'), code: z.number().nullable() }).strict(),
 ]);
 export type OmpRpcPushEvent = z.infer<typeof ompRpcPushEventSchema>;

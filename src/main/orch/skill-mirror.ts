@@ -4,6 +4,9 @@ import path from 'node:path';
 import { PONYTAIL_RULES } from './ponytail';
 import { BUILTIN_BRIDGEMIND_SKILLS } from './bridge-mind-skills';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
+import { ARCHIFY_MANIFEST } from './archify-manifest';
+import { BMAD_TEMPLATES_MANIFEST } from './bmad-templates-manifest';
+import type { SkillAsset } from './impeccable-manifest';
 
 const GENERATED_PONYTAIL_SKILL = `---
 name: ponytail
@@ -11,6 +14,27 @@ description: Use for lean senior implementation: reuse existing code, avoid spec
 ---
 
 ${PONYTAIL_RULES}
+`;
+
+/**
+ * Vendored verbatim from mattpocock/skills — skills/productivity/grilling
+ * (MIT, Copyright (c) 2026 Matt Pocock). See
+ * third_party/licenses/mattpocock-skills-MIT.txt. Usada pelo squad de
+ * planejamento: fatos vêm do código, decisões vêm do usuário, uma pergunta
+ * por vez.
+ */
+const GENERATED_GRILLING_SKILL = `---
+name: grilling
+description: Grill the user relentlessly about a plan, decision, or idea. Use when the user wants to stress-test their thinking, or uses any 'grill' trigger phrases.
+---
+
+Interview me relentlessly about every aspect of this until we reach a shared understanding. Walk down each branch of the decision tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+
+Ask the questions one at a time, waiting for feedback on each question before continuing. Asking multiple questions at once is bewildering.
+
+If a *fact* can be found by exploring the environment (filesystem, tools, etc.), look it up rather than asking me. The *decisions*, though, are mine — put each one to me and wait for my answer.
+
+Do not act on it until I confirm we have reached a shared understanding.
 `;
 
 interface SkillSource {
@@ -54,35 +78,46 @@ function writeGeneratedSkills(root: string): string {
   const dir = path.join(root, 'ponytail');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'SKILL.md'), GENERATED_PONYTAIL_SKILL);
+  const grillingDir = path.join(root, 'grilling');
+  fs.mkdirSync(grillingDir, { recursive: true });
+  fs.writeFileSync(path.join(grillingDir, 'SKILL.md'), GENERATED_GRILLING_SKILL);
   for (const skill of BUILTIN_BRIDGEMIND_SKILLS) {
     const skillDir = path.join(root, skill.name);
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill.body);
   }
-  // Impeccable is ~1.8 MB across ~30 files. Rewriting (and base64-decoding) all of
-  // it on every agent spawn is wasteful; materialize it only when it is missing or
-  // stale — bundled SKILL.md differs from the materialized one — which also keeps
-  // it fresh across app updates.
-  const bundledImpeccableSkill = IMPECCABLE_MANIFEST['SKILL.md'];
-  const materializedImpeccableSkill = path.join(root, 'impeccable', 'SKILL.md');
-  const currentImpeccableSkill = (() => {
+  // Bundled multi-file skills (impeccable ~1.8 MB, archify ~600 KB).
+  // Rewriting (and base64-decoding) everything on every agent spawn is
+  // wasteful; materialize only when missing or stale — bundled SKILL.md
+  // differs from the materialized one — which also keeps them fresh across
+  // app updates.
+  materializeManifestSkill(root, 'impeccable', IMPECCABLE_MANIFEST);
+  materializeManifestSkill(root, 'archify', ARCHIFY_MANIFEST);
+  materializeManifestSkill(root, 'bmad-templates', BMAD_TEMPLATES_MANIFEST);
+  return root;
+}
+
+function materializeManifestSkill(
+  root: string,
+  name: string,
+  manifest: Record<string, SkillAsset>,
+): void {
+  const bundledSkill = manifest['SKILL.md'];
+  const materializedSkill = path.join(root, name, 'SKILL.md');
+  const currentSkill = (() => {
     try {
-      return fs.readFileSync(materializedImpeccableSkill, 'utf8');
+      return fs.readFileSync(materializedSkill, 'utf8');
     } catch {
       return null;
     }
   })();
-  if (
-    !bundledImpeccableSkill ||
-    currentImpeccableSkill !== bundledImpeccableSkill.content
-  ) {
-    for (const [relPath, asset] of Object.entries(IMPECCABLE_MANIFEST)) {
-      const destPath = path.join(root, 'impeccable', relPath);
+  if (!bundledSkill || currentSkill !== bundledSkill.content) {
+    for (const [relPath, asset] of Object.entries(manifest)) {
+      const destPath = path.join(root, name, relPath);
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
       fs.writeFileSync(destPath, Buffer.from(asset.content, asset.encoding));
     }
   }
-  return root;
 }
 
 function readSkillSources(sourceDirs: string[]): Map<string, SkillSource> {

@@ -117,6 +117,9 @@ export function BrowserPane({ pane, isCanvas }: Props) {
           aria-label="URL do browser"
         />
       </form>
+      {state.loading && (
+        <div className="browser-bar__progress nodrag" aria-hidden="true" />
+      )}
       <BrowserDesignBar
         paneId={pane.id}
         stylesOpen={stylesOpen}

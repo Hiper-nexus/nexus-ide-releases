@@ -109,6 +109,40 @@ export function hasMirroredScope(
 }
 
 /**
+ * Slots de maxWorkers realmente ocupados: linhas worker de mission_panes cujo
+ * pane NÃO está comprovadamente morto. As linhas duráveis nunca são podadas
+ * (são histórico + identidade de respawn), então contar linhas cruas fazia o
+ * gate contar "quantos workers já EXISTIRAM" — worker morto/fechado segurava
+ * o slot para sempre e a missão ficava permanentemente sem spawn (deadlock
+ * de campo: "limite de 3 estourou" com todos os panes mortos, sem cura nem
+ * por restart). Fail-safe herdada do driver: sem workspace espelhado ninguém
+ * é dado como morto (worker recém-spawnado sem snapshot ainda conta), e linha
+ * sem paneId (pré-bind) também conta.
+ */
+export function countLiveMissionWorkerSlots(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  rows: readonly MissionPaneSpec[],
+  snapshots: readonly PaneSnapshot[] = listPaneSnapshots(),
+): { live: number; deadPaneIds: readonly string[] } {
+  const workers = rows.filter((row) => row.role === 'worker');
+  const mirrored =
+    hasMirroredWorkspaceScope(scope) || hasMirroredScope(scope, snapshots);
+  if (!mirrored) return { live: workers.length, deadPaneIds: [] };
+  const scoped = snapshotsForScope(scope, snapshots);
+  const deadPaneIds: string[] = [];
+  for (const worker of workers) {
+    if (!worker.paneId) continue;
+    const snapshot = snapshotForPersistedPane(missionId, worker, scoped);
+    if (!snapshot || snapshot.state === 'exited') deadPaneIds.push(worker.paneId);
+  }
+  return {
+    live: workers.length - deadPaneIds.length,
+    deadPaneIds: Object.freeze(deadPaneIds),
+  };
+}
+
+/**
  * Recovery decisions must never compare mission/pane identity against panes
  * of another project: ids repeat across workspaces, so snapshots that
  * definitively belong to a different scope are dropped before

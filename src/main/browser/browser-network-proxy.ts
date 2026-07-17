@@ -155,10 +155,42 @@ function sanitizedHeaders(
   return safe;
 }
 
+const UPSTREAM_FAILURE_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ETIMEDOUT',
+]);
+
+/**
+ * Distingue "o DESTINO caiu" de "o proxy quebrou". O 502 genérico "proxy
+ * unavailable" mentia no caso mais comum de campo: um preview local
+ * (127.0.0.1:porta) cujo processo morreu — o proxy está saudável, a conexão
+ * é que foi recusada. Sem a distinção o usuário caça um problema no Nexus
+ * quando o que precisa é reiniciar o servidor dele.
+ */
+export function describeUpstreamFailure(error: unknown): string | null {
+  const code =
+    error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : null;
+  const timedOut =
+    error instanceof Error && /upstream timeout/i.test(error.message);
+  if (!timedOut && (!code || !UPSTREAM_FAILURE_CODES.has(code))) return null;
+  return (
+    `target server unreachable (${timedOut ? 'ETIMEDOUT' : code}) — ` +
+    'the destination did not respond. If this is a local preview, its ' +
+    'process may have exited: restart the server and reload.'
+  );
+}
+
 function respondBlocked(response: ServerResponse, error: unknown): void {
   const status = error instanceof BrowserProxyPolicyError ? 403 : 502;
   const body =
-    status === 403 ? 'blocked by browser network policy' : 'proxy unavailable';
+    status === 403
+      ? 'blocked by browser network policy'
+      : describeUpstreamFailure(error) ?? 'proxy unavailable';
   if (response.headersSent) {
     response.destroy();
     return;

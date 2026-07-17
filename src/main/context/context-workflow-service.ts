@@ -7,6 +7,7 @@ import type {
 } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { contextBlockerRemediation } from '../runtime/nexus-doctor-context-check';
 import {
   createScopedMissionStore,
   type ScopedMission,
@@ -172,7 +173,20 @@ export class ContextReadinessError extends Error {
   readonly report: ContextReadinessReport;
 
   constructor(report: ContextReadinessReport) {
-    super(`project context is not ready: ${report.blockers.map((item) => item.code).join(', ')}`);
+    // O dispatch MCP serializa APENAS err.message para o orquestrador — o
+    // report rico era descartado e o agente recebia só uma lista de códigos,
+    // sem remediação nem próximo passo (beco sem saída de diagnóstico).
+    // A mensagem carrega tudo que o agente precisa para agir.
+    const lines = report.blockers.map((item) => {
+      const remediation = contextBlockerRemediation(item.code);
+      return `- ${item.code}: ${item.message}${remediation ? ` → ${remediation}` : ''}`;
+    });
+    super(
+      `project context is not ready: ${report.blockers.map((item) => item.code).join(', ')}\n` +
+        `${lines.join('\n')}\n` +
+        'Rode nexus_context_doctor: o autopilot de bootstrap resolve o que for ' +
+        'automatizável e devolve o próximo passo em autopilotHint.',
+    );
     this.name = 'ContextReadinessError';
     this.report = report;
   }

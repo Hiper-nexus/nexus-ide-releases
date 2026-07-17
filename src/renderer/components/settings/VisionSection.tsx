@@ -49,6 +49,18 @@ function VisionConsentPanel({
   );
 }
 
+/**
+ * Erros de ipcRenderer.invoke chegam embrulhados ("Error invoking remote
+ * method 'vision:capture': ScreenRecordingPermissionDenied: …") — exibe só a
+ * mensagem humana, sem o prefixo do transporte nem o nome da classe.
+ */
+function friendlyCaptureError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return raw
+    .replace(/^Error invoking remote method '[^']+':\s*/, '')
+    .replace(/^ScreenRecordingPermissionDenied:\s*/, '');
+}
+
 export function VisionSection() {
   const allowCloudImage = useVisionConsentStore((s) => s.allowCloudImage);
   const consentToken = useVisionConsentStore((s) => s.consentToken);
@@ -82,8 +94,14 @@ export function VisionSection() {
       setCaptureStatus(`${result.width}x${result.height} capturado`);
       void refreshPermission();
     } catch (err) {
-      setCaptureStatus(err instanceof Error ? err.message : String(err));
+      setCaptureStatus(friendlyCaptureError(err));
+      void refreshPermission();
     }
+  };
+
+  const openScreenSettings = async () => {
+    const res = await window.nexus.vision.openScreenSettings();
+    if (!res.ok && res.error) setCaptureStatus(res.error);
   };
 
   useEffect(() => {
@@ -140,7 +158,18 @@ export function VisionSection() {
         <button className="settings-btn" type="button" onClick={() => void refreshPermission()}>
           Rechecar permissão
         </button>
+        {permission === 'denied' && window.nexus.platform === 'darwin' && (
+          <button className="settings-btn" type="button" onClick={() => void openScreenSettings()}>
+            Abrir Ajustes do Sistema
+          </button>
+        )}
       </div>
+      {permission === 'denied' && (
+        <p className="settings-field__note">
+          Habilite o NexusIDE em Gravação de Tela e depois feche e reabra o
+          app — o macOS só aplica a permissão no próximo start.
+        </p>
+      )}
       {captureStatus && <p className="settings-field__note">{captureStatus}</p>}
     </section>
   );

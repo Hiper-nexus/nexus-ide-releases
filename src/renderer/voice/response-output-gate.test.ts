@@ -25,12 +25,16 @@ vi.mock('./voice-live-ipc', () => ({
   logVoiceEvent: vi.fn(),
 }));
 
-vi.mock('./voice-session-state', () => ({
-  livePlayer: { stop: vi.fn() },
-  resetPendingRealtimeAudioOut: vi.fn(),
-  setRealtimeTurnActive: vi.fn(),
-  setSuppressRealtimeAudioOut: vi.fn(),
-}));
+vi.mock('./voice-session-state', async () => {
+  const { TurnExecutionOwner } = await import('./turn-execution-owner');
+  return {
+    livePlayer: { stop: vi.fn() },
+    resetPendingRealtimeAudioOut: vi.fn(),
+    setRealtimeTurnActive: vi.fn(),
+    setSuppressRealtimeAudioOut: vi.fn(),
+    turnExecution: new TurnExecutionOwner(),
+  };
+});
 
 describe('response-output-gate', () => {
   beforeEach(() => {
@@ -89,6 +93,19 @@ describe('response-output-gate', () => {
     expect(window.nexus.voice.liveStop).toHaveBeenCalled();
     expect(useVoiceStore.getState().status).toBe('idle');
     expect(useVoiceStore.getState().note).toContain('desligada');
+  });
+
+  it('powerOffJarvis invalida o token do turno em voo (mata os canReopen)', async () => {
+    // Regressão: um turno terminando logo após o clique reabria a escuta via
+    // releaseAfterLiveProviderAnswer — a Jarvis "não desligava". O power-off
+    // abre um turno novo, então todo canReopen preso ao token antigo falha.
+    const { turnExecution } = await import('./voice-session-state');
+    const inFlightToken = turnExecution.beginTurn();
+    const canReopen = () => turnExecution.currentToken === inFlightToken;
+    expect(canReopen()).toBe(true);
+
+    await powerOffJarvis();
+    expect(canReopen()).toBe(false);
   });
 
   it('powerOffJarvis falls back to hard teardown when stop fails', async () => {

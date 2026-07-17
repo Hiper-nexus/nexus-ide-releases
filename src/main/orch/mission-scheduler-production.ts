@@ -21,6 +21,7 @@ import {
   spawnPaneAndMaybePrompt,
 } from './tool-util';
 import { reserveWorkerSpawnSlot } from './tools-panes';
+import { countLiveMissionWorkerSlots } from './mission-driver-io';
 import {
   createSchedulerRuntimeState,
   runSchedulerTick,
@@ -124,9 +125,12 @@ async function dispatchTask(
     scope,
     missionId,
     contract: mission.intentContract,
-    currentWorkerCount: stores.missionPanes
-      .list(missionId)
-      .filter((pane) => pane.role === 'worker').length,
+    // Só workers VIVOS ocupam slot (linha durável de worker morto não conta).
+    currentWorkerCount: countLiveMissionWorkerSlots(
+      scope,
+      missionId,
+      stores.missionPanes.list(missionId),
+    ).live,
     allowedTools: null,
   });
   if (!reservation.ok) throw new Error(reservation.error);
