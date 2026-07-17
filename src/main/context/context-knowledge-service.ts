@@ -218,6 +218,16 @@ export class ContextKnowledgeService {
     return this.#store.list(options);
   }
 
+  /** Draft ativo (proposed/approved) que ocupa o target, cross-mission. */
+  activeForTarget(targetPath: string): ContextDraftRecord | null {
+    return this.#store.activeForTarget(targetPath);
+  }
+
+  /** Libera o wedge de draft-fantasma: supera o draft ativo do target. */
+  supersedeActiveForTarget(targetPath: string): ContextDraftRecord | null {
+    return this.#store.supersedeActiveForTarget(targetPath);
+  }
+
   propose(
     input: ProposeKnowledgeDraftInput,
     author: ContextAttestationActor,

@@ -284,14 +284,74 @@ export class ContextDraftStore {
       })();
     } catch (error) {
       if (isUniqueConstraint(error)) {
-        throw new Error(`an active context draft already exists for target: ${targetPath}`, {
-          cause: error,
-        });
+        // O índice único é por target_path (cross-mission); um draft órfão de
+        // OUTRA missão trava o target e o draft_list escopado por missão o
+        // esconde — o pipeline emperra sem ID acionável. Surface o bloqueador
+        // (id/status/missão) para que o orquestrador possa superá-lo.
+        const blocker = this.activeForTarget(targetPath);
+        const detail = blocker
+          ? ` (draft ativo id=${blocker.id} status=${blocker.status} missão=${blocker.missionId ?? 'nenhuma'}; ` +
+            `use nexus_context_draft_supersede com esse target para liberar)`
+          : '';
+        throw new Error(
+          `an active context draft already exists for target: ${targetPath}${detail}`,
+          { cause: error },
+        );
       }
       throw error;
     }
     this.#binding.emitChange();
     return this.#required(id);
+  }
+
+  /**
+   * Draft ATIVO (proposed/approved) que ocupa o target — regardless de missão.
+   * É o que o índice único protege; usado para diagnosticar/liberar o wedge.
+   */
+  activeForTarget(rawTargetPath: string): ContextDraftRecord | null {
+    const targetPath = normalizeContextAuthorityTarget(rawTargetPath);
+    const row = this.#binding.readDatabase().prepare(
+      `SELECT * FROM context_drafts
+       WHERE target_path = ? AND status IN ('proposed', 'approved')
+       ORDER BY created_at DESC LIMIT 1`,
+    ).get(targetPath) as DraftRow | undefined;
+    return row ? parseDraftRow(row) : null;
+  }
+
+  /**
+   * Escape do wedge de draft-fantasma: cancela (rejeita) o draft ativo do
+   * target, liberando o índice único para uma nova proposta. Rejeita — não
+   * 'superseded' — porque 'superseded' só é válido na transição applied→
+   * superseded (exige reviewer + appliedAt); um proposed órfão vira 'rejected'
+   * com um revisor de sistema. Devolve o draft cancelado, ou null se livre.
+   */
+  supersedeActiveForTarget(rawTargetPath: string): ContextDraftRecord | null {
+    const targetPath = normalizeContextAuthorityTarget(rawTargetPath);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const cleared = db.transaction(() => {
+      const active = this.activeForTarget(targetPath);
+      if (!active) return null;
+      const result = db.prepare(
+        `UPDATE context_drafts
+         SET status = 'rejected',
+             reviewer_id = ?, reviewer_session_id = ?, reviewer_provider = ?,
+             review_rationale = ?, reviewed_at = ?, updated_at = ?
+         WHERE id = ? AND status IN ('proposed', 'approved')`,
+      ).run(
+        'nexus-system',
+        'nexus-system-supersede',
+        'nexus',
+        'draft órfão superado pelo orquestrador para destravar o pipeline de contexto',
+        now,
+        now,
+        active.id,
+      );
+      return result.changes === 1 ? active.id : null;
+    })();
+    if (!cleared) return null;
+    this.#binding.emitChange();
+    return this.get(cleared);
   }
 
   get(rawId: string): ContextDraftRecord | null {

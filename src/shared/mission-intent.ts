@@ -380,16 +380,20 @@ export function defaultBudgetsForRisk(
   if (risk === 'sensitive') {
     return {
       planningTokens: 1_200,
-      executionTokens: 12_000,
-      maxWorkers: 2,
-      maxSteps: 200,
+      // executionTokens é ledger (não bloqueia — ver assertStepAndTokenBudget);
+      // o limite real é maxWorkers/maxSteps. Presets subidos: os antigos
+      // (2 workers/200 steps) foram calibrados na era do teto de token que já
+      // não existe e sufocavam missões reais (caso de campo 17/07).
+      executionTokens: 200_000,
+      maxWorkers: 3,
+      maxSteps: 400,
     };
   }
   return {
     planningTokens: 1_200,
-    executionTokens: 20_000,
-    maxWorkers: 3,
-    maxSteps: 500,
+    executionTokens: 800_000,
+    maxWorkers: 4,
+    maxSteps: 600,
   };
 }
 

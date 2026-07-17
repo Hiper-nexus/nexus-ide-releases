@@ -595,6 +595,37 @@ const contextDraftApplyTool: McpToolDef = {
   },
 };
 
+const contextDraftSupersedeTool: McpToolDef = {
+  name: 'nexus_context_draft_supersede',
+  description:
+    'Escape hatch for a wedged context pipeline: when draft_propose reports ' +
+    '"an active context draft already exists" but draft_list shows nothing ' +
+    '(an orphan draft from another mission holds the target), supersede that ' +
+    'active draft by TARGET so a fresh proposal can proceed. Orchestrator-only.',
+  inputSchema: {
+    type: 'object',
+    properties: { targetPath: { type: 'string' } },
+    required: ['targetPath'],
+  },
+  handler: async (args, ctx) => {
+    if (ctx.role === 'worker') {
+      throw new Error('only an orchestrator can supersede context authority');
+    }
+    const targetPath = z.string().trim().min(1).max(1024).parse(args.targetPath);
+    const service = getContextKnowledgeService(ctx.scope);
+    const superseded = service.supersedeActiveForTarget(targetPath);
+    if (!superseded) {
+      return { superseded: false, targetPath };
+    }
+    return {
+      superseded: true,
+      targetPath,
+      draftId: superseded.id,
+      previousMissionId: superseded.missionId,
+    };
+  },
+};
+
 const contextDraftReviewRunTool: McpToolDef = {
   name: 'nexus_context_draft_review_run',
   description:
@@ -1213,6 +1244,7 @@ export function buildContextTools(): McpToolDef[] {
     contextDraftGetTool,
     contextDraftReviewTool,
     contextDraftApplyTool,
+    contextDraftSupersedeTool,
     contextDraftReviewRunTool,
     contextCommitTool,
     freezeTool,

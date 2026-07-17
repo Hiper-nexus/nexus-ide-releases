@@ -331,9 +331,9 @@ describe('budget and parent/child ceilings', () => {
       goal: 'small task',
       intentVersion: 1,
     });
-    // default maxWorkers for normal is 3
-    expect(assertWorkerBudget(contract, 2).ok).toBe(true);
-    expect(assertWorkerBudget(contract, 3).ok).toBe(false);
+    // default maxWorkers for normal is 4
+    expect(assertWorkerBudget(contract, 3).ok).toBe(true);
+    expect(assertWorkerBudget(contract, 4).ok).toBe(false);
     // No contract = no ceiling (legacy mid-migration).
     expect(assertWorkerBudget(null, 99).ok).toBe(true);
   });
