@@ -60,10 +60,22 @@ describe('secureAutonomousCliArgs', () => {
       source: 'pending',
       role: 'worker',
     })).toBe(true);
+    // Orquestrador despachado tem escrita nativa: ele spawna ANTES do freeze
+    // (nunca teria contextRevision) e o fechamento da missão — commit, git
+    // push, merge — é efeito legítimo dele. Read-only aqui travava push/merge
+    // no terminal sempre que os workers esgotavam.
     expect(requiresReadOnlyNativeAuthority({
       source: 'pending',
       role: 'orchestrator',
-      contextRevision: 'context-revision-a',
+    })).toBe(false);
+    expect(requiresReadOnlyNativeAuthority({
+      source: 'legacy-squad',
+      role: 'orchestrator',
+    })).toBe(true);
+    expect(requiresReadOnlyNativeAuthority({
+      source: 'pending',
+      role: 'orchestrator',
+      readOnly: true,
     })).toBe(true);
     expect(requiresReadOnlyNativeAuthority({
       source: 'direct-user',

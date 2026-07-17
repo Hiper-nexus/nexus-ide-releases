@@ -22,9 +22,16 @@ export interface NativeEffectAuthority {
 }
 
 /**
- * Only a context-revision-bound worker may write through provider-native
- * tools. Bootstrap/orchestrator panes remain read-only and perform effects
- * through the audited Nexus MCP workflow instead.
+ * Autoridade nativa de escrita:
+ * - worker vinculado a contrato congelado (contextRevision) — como sempre;
+ * - ORQUESTRADOR despachado com autoridade real — mudança operacional: o
+ *   fechamento da missão (commit, git push, merge de PR) é efeito legítimo
+ *   do coordenador, e ele spawna ANTES do freeze (nunca teria
+ *   contextRevision). Mantê-lo read-only travava push/merge no terminal
+ *   sempre que os workers esgotavam (achado de operador: "o Nexus não
+ *   deixava o terminal fazer git push nem merge").
+ * Panes legacy-squad, reviewers com readOnly explícito e workers sem
+ * contexto congelado continuam read-only, agindo só pelo MCP auditado.
  */
 export function requiresReadOnlyNativeAuthority(
   authority: NativeEffectAuthority,
@@ -32,11 +39,9 @@ export function requiresReadOnlyNativeAuthority(
   if (authority.readOnly === true) return true;
   // A pane opened directly by the user follows the provider permission choice.
   if (authority.source === 'direct-user') return false;
-  return (
-    authority.source === 'legacy-squad' ||
-    authority.role !== 'worker' ||
-    !authority.contextRevision
-  );
+  if (authority.source === 'legacy-squad') return true;
+  if (authority.role === 'orchestrator') return false;
+  return authority.role !== 'worker' || !authority.contextRevision;
 }
 
 function removeSequence(args: string[], sequence: readonly string[]): string[] {
