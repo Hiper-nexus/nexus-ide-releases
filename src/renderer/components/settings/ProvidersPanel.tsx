@@ -630,6 +630,46 @@ export function ProvidersPanel() {
     }
   }
 
+  const missingInstallable = useMemo(
+    () => providers.filter((p) => !p.installed && p.canAutoInstall),
+    [providers],
+  );
+  const [provisioning, setProvisioning] = useState<string | null>(null);
+  const [provisionSummary, setProvisionSummary] = useState<string | null>(null);
+
+  /**
+   * Provisionador de máquina nova: instala TODAS as CLIs ausentes em
+   * sequência pelo mesmo fluxo gated de 1 CLI (receita oficial em código +
+   * confirmação nativa com o comando exato por instalação — a doutrina de
+   * segurança não muda no lote, só a conveniência).
+   */
+  async function provisionMissing() {
+    setProvisionSummary(null);
+    const done: string[] = [];
+    const failed: string[] = [];
+    for (const provider of missingInstallable) {
+      setProvisioning(provider.label);
+      try {
+        const result = await window.nexus.providers.installCli(provider.adapterId);
+        if (result.ok) done.push(provider.label);
+        else failed.push(`${provider.label} (${result.error ?? 'falhou'})`);
+      } catch {
+        failed.push(provider.label);
+      }
+    }
+    setProvisioning(null);
+    await hydrate();
+    setProvisionSummary(
+      [
+        done.length > 0 ? `instaladas: ${done.join(', ')}` : null,
+        failed.length > 0 ? `pendentes: ${failed.join('; ')}` : null,
+        done.length === 0 && failed.length === 0 ? 'nada a instalar' : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    );
+  }
+
   function onTabKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     const order = PROVIDERS_HUB_TABS;
     const idx = order.indexOf(tab);
@@ -664,7 +704,25 @@ export function ProvidersPanel() {
             tokens · modelos · contas
           </p>
         </div>
+        {missingInstallable.length > 0 && (
+          <button
+            type="button"
+            className="settings-btn settings-btn--primary"
+            disabled={provisioning !== null}
+            onClick={() => void provisionMissing()}
+            title="Instala em sequência todas as CLIs ausentes com instalador oficial — cada uma pede a confirmação nativa com o comando exato"
+          >
+            {provisioning
+              ? `Instalando ${provisioning}…`
+              : `Instalar ${missingInstallable.length} CLIs ausentes`}
+          </button>
+        )}
       </header>
+      {provisionSummary && (
+        <p className="settings-field__note" role="status">
+          {provisionSummary}
+        </p>
+      )}
 
       <div
         className="prov-hub__tabs"
