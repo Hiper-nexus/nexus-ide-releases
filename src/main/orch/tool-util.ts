@@ -11,6 +11,8 @@ import {
 import type { AgentGateContext } from './gate';
 import { orchWriteSession } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
+import { discoverCliModels } from '../adapters/cli-model-discovery';
+import { resolveRoutableModel } from './task-router';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { LEGACY_MARKER } from './legacy-handoff';
 import { PONYTAIL_RULES } from './ponytail';
@@ -252,11 +254,35 @@ export async function spawnPaneAndMaybePrompt(
 ): Promise<{ paneId: string; sessionId: string }> {
   const adapter = getAdapter(options.adapterId);
   if (!adapter) throw new Error(`unknown adapter: ${options.adapterId}`);
+  // Defesa em profundidade contra modelo-fantasma (caso de campo 17/07): a
+  // superfície de seleção (dropdown do squad, roster, route_task) podia oferecer
+  // um id que o CLI instalado não roda (ex.: `gpt-5.6` depois da OpenAI
+  // renomear para `gpt-5.6-sol`/`-luna`/`-terra`). Sem isto o CLI ignora o
+  // pedido e cai SILENCIOSAMENTE no seu default (`gpt-5.5`), fazendo o modelo
+  // escolhido pelo usuário NÃO valer. Aqui, imediatamente antes do PTY,
+  // resolvemos o modelo contra a lista REAL do CLI (cache do próprio CLI quando
+  // existe; senão a lista estática do adapter): id exato quando roda, senão a
+  // 1ª variante da mesma família. Sem variante, mantém o pedido (não piora).
+  const runnableModels =
+    discoverCliModels().get(options.adapterId) ?? adapter.models.list;
+  const modelResolution = resolveRoutableModel(options.model, runnableModels);
+  const effectiveModel = modelResolution.ok ? modelResolution.model : options.model;
+  if (
+    options.model &&
+    modelResolution.ok &&
+    modelResolution.model !== options.model
+  ) {
+    console.warn(
+      `[spawn] ${options.adapterId}:${options.model} não é um modelo que o CLI roda; ` +
+        `usando a variante real ${modelResolution.model ?? '(default)'}.`,
+    );
+  }
   // Agent CLIs can read and execute native tools. Pin every orchestrated spawn
   // to the active workspace before the renderer/PTY boundary; never inherit
   // pty-manager's user-shell fallback to HOME.
   const safeOptions: SpawnToolOptions = {
     ...options,
+    model: effectiveModel,
     executionScope: options.executionScope ?? options.scope,
     cwd: resolveCwdForScope(options.executionScope ?? options.scope, options.cwd),
   };
@@ -270,7 +296,7 @@ export async function spawnPaneAndMaybePrompt(
     getProjectDomainStores(options.scope).missionPanes.record({
       missionId: options.missionId,
       adapterId: options.adapterId,
-      model: options.model,
+      model: effectiveModel,
       effort: options.effort,
       cwd: safeOptions.cwd,
       executionScope: safeOptions.executionScope,
