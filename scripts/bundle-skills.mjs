@@ -23,6 +23,11 @@ const SKILLS = [
     constName: 'ARCHIFY_MANIFEST',
     outFile: 'archify-manifest.ts',
   },
+  {
+    dir: 'bmad-templates',
+    constName: 'BMAD_TEMPLATES_MANIFEST',
+    outFile: 'bmad-templates-manifest.ts',
+  },
 ];
 
 function walk(dir) {

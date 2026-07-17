@@ -5,6 +5,7 @@ import { PONYTAIL_RULES } from './ponytail';
 import { BUILTIN_BRIDGEMIND_SKILLS } from './bridge-mind-skills';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
 import { ARCHIFY_MANIFEST } from './archify-manifest';
+import { BMAD_TEMPLATES_MANIFEST } from './bmad-templates-manifest';
 import type { SkillAsset } from './impeccable-manifest';
 
 const GENERATED_PONYTAIL_SKILL = `---
@@ -92,6 +93,7 @@ function writeGeneratedSkills(root: string): string {
   // app updates.
   materializeManifestSkill(root, 'impeccable', IMPECCABLE_MANIFEST);
   materializeManifestSkill(root, 'archify', ARCHIFY_MANIFEST);
+  materializeManifestSkill(root, 'bmad-templates', BMAD_TEMPLATES_MANIFEST);
   return root;
 }
 

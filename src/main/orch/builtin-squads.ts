@@ -407,25 +407,31 @@ const RAW_SQUADS: Squad[] = [
       'para o PRD sem confirmar entendimento compartilhado.\n' +
       '\n' +
       '## 3. PRD\n' +
-      'Peça ao PM o PRD em docs/prd/<slug>.md: contexto, problema, ' +
-      'objetivos mensuráveis, personas, requisitos funcionais numerados ' +
-      '(FR1…) e não-funcionais (NFR1…), escopo negativo (o que NÃO entra), ' +
-      'riscos com mitigação e métricas de sucesso. O PRD referencia os ' +
-      'achados dos explorers — nada de suposição que o código contradiga.\n' +
+      'Peça ao PM o PRD em docs/prd/<slug>.md no formato do template ' +
+      'prd/prd-template.md da skill bmad-templates (vision, JTBD, FRs ' +
+      'aninhados por feature, NFRs, assumptions indexadas, escopo negativo). ' +
+      'O PRD referencia os achados dos explorers — nada de suposição que o ' +
+      'código contradiga. Antes de aprovar, o PM valida o documento item a ' +
+      'item com prd/prd-validation-checklist.md e registra o resultado no ' +
+      'fim do arquivo.\n' +
       '\n' +
       '## 4. Arquitetura com diagrama\n' +
       'Peça ao Architect o plano técnico em docs/architecture/<slug>.md ' +
-      'ancorado no estado atual: componentes tocados, mudanças por módulo, ' +
-      'contratos e migrações, sequenciamento e trade-offs. O Architect DEVE ' +
-      'gerar o diagrama com a skill archify (HTML self-contained em ' +
-      'docs/architecture/<slug>.html) cobrindo estado atual e proposto, e o ' +
-      'HTML deve ser aberto num pane de browser para o usuário ver.\n' +
+      'estruturado pelo architecture/spine-template.md da skill ' +
+      'bmad-templates, ancorado no estado atual: componentes tocados, ' +
+      'mudanças por módulo, contratos e migrações, sequenciamento e ' +
+      'trade-offs. O Architect DEVE gerar o diagrama com a skill archify ' +
+      '(HTML self-contained em docs/architecture/<slug>.html) cobrindo ' +
+      'estado atual e proposto, e o HTML deve ser aberto num pane de ' +
+      'browser para o usuário ver.\n' +
       '\n' +
       '## 5. Shard em stories\n' +
-      'Peça ao PO quebrar PRD+arquitetura em épicos e stories em ' +
-      'docs/stories/<slug>.md: cada story com contexto autossuficiente, ' +
-      'critérios de aceite verificáveis e dependências explícitas — prontas ' +
-      'para virarem missões de implementação uma a uma.\n' +
+      'Peça ao PO quebrar PRD+arquitetura em épicos ' +
+      '(stories/epics-template.md) e stories (stories/story-template.md) em ' +
+      'docs/stories/: cada story autossuficiente, com critérios de aceite ' +
+      'verificáveis e dependências explícitas, validada com ' +
+      'stories/story-checklist.md — prontas para o squad Implementação por ' +
+      'Stories consumir uma a uma.\n' +
       '\n' +
       '## 6. Validação final\n' +
       'O Contrarian ataca o pacote inteiro: custos ocultos, alternativa mais ' +
@@ -439,6 +445,54 @@ const RAW_SQUADS: Squad[] = [
       { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
       { id: 'po', agentName: 'PO', category: 'executor', cli: 'codex', effort: 'medium' },
       { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },
+    ],
+  },
+  {
+    // Elo de execução do ciclo BMAD: consome docs/stories/ do Planejamento &
+    // PRD e implementa story por story com gate de Definition of Done.
+    id: 'nexus-story-impl',
+    name: 'Implementação por Stories',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Implementação por Stories (ciclo BMAD)\n' +
+      'Você é o orquestrador do ciclo disciplinado de implementação: consome ' +
+      'as stories de docs/stories/ (geradas pelo squad Planejamento & PRD) ' +
+      'e as implementa UMA POR VEZ até acabarem ou o usuário mandar parar. ' +
+      'Spawne workers via nexus_pane_spawn, aguarde com nexus_pane_wait_many ' +
+      'e colete entregas com nexus_handoff_list.\n' +
+      '\n' +
+      '## Ciclo por story\n' +
+      '1. **Seleção**: liste docs/stories/ e escolha a próxima story aberta ' +
+      'sem dependência pendente. Sem stories? Finalize orientando rodar o ' +
+      'squad Planejamento & PRD primeiro.\n' +
+      '2. **SM prepara**: o SM transforma a story num pacote de ' +
+      'implementação autossuficiente no formato stories/story-template.md ' +
+      'da skill bmad-templates — Dev Notes com arquivos/padrões REAIS do ' +
+      'código, tasks, critérios de aceite — e valida com ' +
+      'stories/story-checklist.md ANTES de entregar ao Dev.\n' +
+      '3. **Dev implementa**: executa as tasks com testes, mantendo File ' +
+      'List e Dev Agent Record da story atualizados. Escopo é SÓ o da ' +
+      'story — mudança fora do escopo volta como proposta, nunca como ' +
+      'código.\n' +
+      '4. **QA valida**: roda os testes de verdade e percorre ' +
+      'implementation/dev-story-checklist.md (Definition of Done) item a ' +
+      'item; reprovou, volta ao Dev citando o item exato.\n' +
+      '5. **Fechamento**: com DoD verde, atualize o status na própria story ' +
+      'em docs/stories/, registre no handoff e passe à próxima.\n' +
+      '\n' +
+      '## Regras\n' +
+      '- Uma story por vez por Dev; o segundo Dev entra apenas em stories ' +
+      'independentes entre si.\n' +
+      '- NUNCA marque story concluída com teste falhando ou DoD incompleto.\n' +
+      '- Ao final (ou ao parar), o handoff lista stories concluídas, ' +
+      'reprovadas e restantes.',
+    agents: [
+      { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
+      { id: 'sm', agentName: 'SM', category: 'executor', cli: 'claude', effort: 'medium' },
+      { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex', effort: 'medium' },
+      { id: 'dev-b', agentName: 'Dev B (omp)', category: 'executor', cli: 'omp', effort: 'medium' },
+      { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
     ],
   },
 ];

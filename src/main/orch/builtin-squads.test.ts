@@ -49,6 +49,7 @@ describe('built-in squads (invariantes gerais)', () => {
       'review-p0p3',
       'nexus-research',
       'nexus-plan',
+      'nexus-story-impl',
     ];
     for (const id of devSquadIds) {
       const squad = BUILTIN_SQUADS.find((entry) => entry.id === id);
