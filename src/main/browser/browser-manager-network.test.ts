@@ -98,6 +98,7 @@ vi.mock('electron', () => ({
     }
     setVisible = vi.fn();
     setBounds = vi.fn();
+    setBackgroundColor = vi.fn();
 
     constructor(options: { webPreferences: Record<string, unknown> }) {
       state.order.push('view');

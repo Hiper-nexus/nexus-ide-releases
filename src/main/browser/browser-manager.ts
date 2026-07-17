@@ -648,6 +648,10 @@ async function createEntry(
     await networkProxy.close();
     throw error;
   }
+  // O WebContentsView nasce com o fundo BRANCO padrão do Chromium; num shell
+  // escuro, todo load lento vira um retângulo branco gigante até o primeiro
+  // paint do site. Mesma cor do --bg do renderer (base.css).
+  view.setBackgroundColor('#0a0e15');
   const entry: BrowserEntry = {
     paneId,
     scope: Object.freeze({ ...scope }),
