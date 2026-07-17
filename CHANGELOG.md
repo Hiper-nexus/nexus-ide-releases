@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.19.16 — Modelo que Você Escolhe
+
+Data: 2026-07-17
+
+- **O modelo escolhido é o modelo que roda**: a superfície de seleção podia
+  oferecer um id que o CLI não roda (ex.: `gpt-5.6` depois de a OpenAI
+  renomear para `gpt-5.6-sol`/`-luna`/`-terra`); o CLI ignorava e caía
+  silenciosamente no default `gpt-5.5`. Agora o roteador E o spawn resolvem o
+  modelo contra a lista REAL do CLI — id exato quando roda, senão a variante
+  da mesma família — e nunca emitem um modelo fantasma. Vale para o roster do
+  squad, o route_task e squads salvos com id antigo.
+- **Colar print (⌘V) nas evidências da missão**: cole um screenshot direto no
+  compositor de objetivo e ele vira anexo de evidência, sem sair para o Finder.
+- **Operador vivo (gamificação)**: XP por turnos de agente e feedback visual do
+  progresso do operador.
+
 ## 0.19.15 — Login sem Terminal
 
 Data: 2026-07-17

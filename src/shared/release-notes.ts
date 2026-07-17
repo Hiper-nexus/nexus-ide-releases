@@ -13,6 +13,32 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.16',
+  date: '2026-07-17',
+  codename: 'Modelo que Você Escolhe',
+  summary:
+    'O modelo que você seleciona no squad é o modelo que roda. A seleção podia oferecer um id que o CLI não executa (ex.: gpt-5.6 depois de a OpenAI renomear para gpt-5.6-sol/-luna/-terra) e o CLI caía silenciosamente no default. Agora o roteador e o spawn resolvem o modelo contra a lista real do CLI e nunca emitem um fantasma. Também: colar print (⌘V) nas evidências e o Operador vivo (gamificação).',
+  highlights: [
+    {
+      title: 'Modelo fantasma nunca mais',
+      detail:
+        'Roteador e spawn resolvem o id escolhido para a variante real da família (gpt-5.6 → gpt-5.6-sol); vale para roster do squad, route_task e squads salvos.',
+    },
+    {
+      title: 'Colar print nas evidências (⌘V)',
+      detail:
+        'Cole um screenshot direto no compositor de objetivo e ele vira anexo — sem passar pelo Finder.',
+    },
+    {
+      title: 'Operador vivo',
+      detail:
+        'XP por turnos de agente e feedback visual do progresso do operador.',
+    },
+  ],
+  fixes: [],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.15',
   date: '2026-07-17',
   codename: 'Login sem Terminal',
@@ -38,18 +64,3 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [],
 };
 
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.14',
-  date: '2026-07-17',
-  codename: 'Sem Freio de Mão',
-  summary:
-    'Missões não travam mais por "orçamento de tokens esgotado": aquele teto era um contador sintético (estimativas fictícias por tool, não a conta real do provider) e derrubava missões ainda no bootstrap. Agora o ledger só registra — quem protege contra desgoverno são os limites reais: driver da missão, PREVC e workers vivos.',
-  highlights: [
-    {
-      title: 'Fim do bloqueio por tokens fictícios',
-      detail:
-        'O contrato de intenção continua auditando passos e gasto estimado, mas nenhuma tool é negada por isso. Missões já travadas por orçamento destravam sozinhas no próximo passo.',
-    },
-  ],
-  fixes: [],
-};
