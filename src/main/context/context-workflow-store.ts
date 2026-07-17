@@ -156,6 +156,84 @@ export class ContextWorkflowStore {
     });
   }
 
+  /**
+   * Re-congela o contrato após DRIFT de contexto (revision N+1 na mesma
+   * linha; histórico fica no event_ledger). O workflow recomeça no estágio
+   * inicial da rota com binding novo — evidência pendente sob o contexto
+   * antigo deixa de valer (honestidade do PREVC); receipts imutáveis já
+   * emitidos permanecem como auditoria. Sem isto, qualquer commit em
+   * .context/ após o freeze matava a missão permanentemente
+   * (#assertContextCurrent sem rota de recuperação — beco crítico da
+   * auditoria 17/07).
+   */
+  refreeze(
+    contract: MissionContract,
+    workflow: WorkflowState,
+    rawAuthor: WorkflowActorIdentity,
+  ): StoredMissionContract {
+    const parsedContract = parseMissionContract(contract);
+    const parsedWorkflow = parseWorkflowState(workflow);
+    const author = identitySchema.parse(rawAuthor);
+    if (
+      parsedContract.projectId !== this.scope.projectId ||
+      parsedContract.checkoutId !== this.scope.checkoutId ||
+      parsedWorkflow.binding.projectId !== this.scope.projectId ||
+      parsedWorkflow.binding.checkoutId !== this.scope.checkoutId ||
+      parsedWorkflow.binding.missionId !== parsedContract.missionId ||
+      parsedWorkflow.binding.contractHash !== parsedContract.contractHash ||
+      parsedWorkflow.binding.contextHash !== parsedContract.contextRevision ||
+      parsedWorkflow.binding.baseSha !== parsedContract.baseCommit
+    ) {
+      throw new Error('contract/workflow binding does not match project scope');
+    }
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    db.transaction(() => {
+      const existing = db
+        .prepare('SELECT revision FROM mission_contracts WHERE mission_id = ?')
+        .get(parsedContract.missionId) as { revision: number } | undefined;
+      if (!existing) {
+        throw new Error('mission has no frozen contract to refreeze');
+      }
+      // Revision do workflow é ESTRUTURAL (estágios completados + 1), não um
+      // contador de linhas: recomeçar a rota = revision 1 com binding novo.
+      const nextWorkflow = parsedWorkflow;
+      db.prepare(
+        `UPDATE mission_contracts SET
+           revision = ?, contract_hash = ?, context_revision = ?,
+           contract_json = ?, author_id = ?, author_session_id = ?,
+           author_provider = ?, frozen_at = ?
+         WHERE mission_id = ?`,
+      ).run(
+        existing.revision + 1,
+        parsedContract.contractHash,
+        parsedContract.contextRevision,
+        canonicalJson(parsedContract),
+        author.id,
+        author.sessionId,
+        author.provider,
+        now,
+        parsedContract.missionId,
+      );
+      db.prepare(
+        `UPDATE workflow_states SET
+           revision = ?, stage = ?, workflow_json = ?, updated_at = ?
+         WHERE mission_id = ?`,
+      ).run(
+        nextWorkflow.revision,
+        nextWorkflow.stage,
+        canonicalJson(nextWorkflow),
+        now,
+        parsedContract.missionId,
+      );
+    })();
+    return Object.freeze({
+      contract: parsedContract,
+      author: Object.freeze({ ...author }),
+      frozenAt: now,
+    });
+  }
+
   getContract(rawMissionId: string): StoredMissionContract | null {
     const missionId = missionIdSchema.parse(rawMissionId);
     const row = this.#binding

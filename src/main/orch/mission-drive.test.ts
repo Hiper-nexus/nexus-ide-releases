@@ -200,6 +200,47 @@ describe('decideDriveAction', () => {
     ).toBe('respawn-fresh-context');
   });
 
+  it('loop de respawn vira block-human no teto (não churna para sempre)', () => {
+    // Evidência de campo: 10 respawns "success" em 16min com o pane morrendo
+    // de novo a cada vez — a missão ficava eternamente presa em churn.
+    const looping = baseRunning({
+      paneDead: true,
+      lastProgressAt: NOW - 1_000,
+      lastActionKind: 'respawn-fresh-context',
+      iteration: CONFIG.maxRespawnAttempts,
+    });
+    const action = decideDriveAction(looping, NOW, CONFIG);
+    expect(action.kind).toBe('block-human');
+    expect(action.reason).toMatch(/respawns/);
+    expect(action.reason).toMatch(/Retomar/);
+
+    // Abaixo do teto, ou vindo de outra ação, respawn continua permitido.
+    expect(
+      decideDriveAction(
+        baseRunning({
+          paneDead: true,
+          lastProgressAt: NOW - 1_000,
+          lastActionKind: 'respawn-fresh-context',
+          iteration: CONFIG.maxRespawnAttempts - 1,
+        }),
+        NOW,
+        CONFIG,
+      ).kind,
+    ).toBe('respawn-fresh-context');
+    expect(
+      decideDriveAction(
+        baseRunning({
+          paneDead: true,
+          lastProgressAt: NOW - 1_000,
+          lastActionKind: 'advance',
+          iteration: CONFIG.maxRespawnAttempts + 2,
+        }),
+        NOW,
+        CONFIG,
+      ).kind,
+    ).toBe('respawn-fresh-context');
+  });
+
   it('advance quando trusted evidence pronta para o step atual', () => {
     const state = baseRunning({
       steps: [

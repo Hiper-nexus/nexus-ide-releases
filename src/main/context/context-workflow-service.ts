@@ -413,6 +413,107 @@ export class ContextWorkflowService {
     return Object.freeze({ contract, workflow, readiness });
   }
 
+  /**
+   * Re-congela o contrato de uma missão cujo CONTEXTO derivou após o freeze
+   * (commit em .context/, nova attestation, policy/sensors). Mantém goal,
+   * critérios e escopo do contrato original — refreeze cura o vínculo com o
+   * contexto/base atuais, nunca reescreve a missão em silêncio. O workflow
+   * recomeça no estágio inicial da rota (evidência pendente sob o contexto
+   * antigo deixa de valer); receipts imutáveis permanecem como auditoria.
+   */
+  refreezeContract(
+    missionId: string,
+    rawAuthor: WorkflowIdentity,
+  ): FrozenMissionWorkflow {
+    const stored = this.#store.getContract(missionId);
+    if (!stored) {
+      throw new Error('mission has no frozen contract to refreeze');
+    }
+    const readiness = this.inspectReadiness();
+    if (!readiness.ready || !readiness.contextRevision) {
+      throw new ContextReadinessError(readiness);
+    }
+    if (readiness.contextRevision === stored.contract.contextRevision) {
+      throw new Error(
+        'context has not drifted since the freeze — refreeze is only for drift recovery',
+      );
+    }
+    const config = loadContextConfiguration(this.scope);
+    const corpus = ingestProjectContext(this.scope);
+    const invariantRefs = new Set(
+      corpus.facts.filter((fact) => fact.category === 'invariant')
+        .map((fact) => fact.id),
+    );
+    const previous = stored.contract;
+    const git = (this.#dependencies.inspectGit ?? inspectGitBinding)(this.scope);
+    const contract = compileMissionContract(
+      {
+        schemaVersion: 1,
+        scope: this.scope,
+        missionId: previous.missionId,
+        baseCommit: git.baseSha,
+        contextRevision: readiness.contextRevision,
+        goal: previous.goal,
+        nonGoals: [...previous.nonGoals],
+        acceptanceCriteria: previous.acceptanceCriteria.map((criterion) => ({
+          id: criterion.id,
+          statement: criterion.statement,
+          requiredSensorIds: [...criterion.requiredSensorIds],
+          invariantRefs: [...criterion.invariantRefs],
+          requiredArtifactIds: [...criterion.requiredArtifactIds],
+        })),
+        businessInvariantRefs: [...previous.businessInvariantRefs],
+        impactedDomains: [...previous.impactedDomains],
+        impactedSymbols: [...previous.impactedSymbols],
+        requestedSensors: [...previous.requiredSensors],
+        requiredArtifacts: [...previous.requiredArtifacts],
+        // Piso de risco: goal/critérios idênticos reproduzem a classificação,
+        // mas hints originais não são retidos no contrato compilado — estes
+        // hints determinísticos garantem que o refreeze NUNCA rebaixa o rigor
+        // da rota ('credential' dispara CRITICAL_SIGNAL; 'security', HIGH).
+        riskHints:
+          previous.risk === 'critical'
+            ? ['credential']
+            : previous.risk === 'high'
+              ? ['security']
+              : [],
+      },
+      {
+        invariantRefs,
+        availableSensorIds: new Set(config.sensors.map((sensor) => sensor.id)),
+        blockingConflictIds: readiness.blockers
+          .filter((blocker) => blocker.code === 'context-conflict')
+          .flatMap((blocker) => blocker.details ?? []),
+      },
+    );
+    const workflow = createWorkflowState(contract.risk, bindingFor(contract, git));
+    const author = normalizeWorkflowIdentity(rawAuthor);
+    this.#store.refreeze(contract, workflow, author);
+    this.#ledger.append({
+      projectId: this.scope.projectId,
+      checkoutId: this.scope.checkoutId,
+      missionId: contract.missionId,
+      type: 'contract-frozen',
+      actor: { kind: 'agent', id: author.id },
+      payload: {
+        refreeze: true,
+        risk: contract.risk,
+        baseSha: contract.baseCommit,
+        previousContractHash: previous.contractHash,
+        previousContextRevision: previous.contextRevision,
+        criterionIds: contract.acceptanceCriteria.map((criterion) => criterion.id),
+      },
+      versions: {
+        appVersion: this.#dependencies.appVersion,
+        contextHash: contract.contextRevision,
+        contractHash: contract.contractHash,
+        policyHash: config.policyHash,
+        evaluatorVersion: 'prevc-v1',
+      },
+    });
+    return Object.freeze({ contract, workflow, readiness });
+  }
+
   getMissionWorkflow(missionId: string): {
     readonly contract: StoredMissionContract | null;
     readonly workflow: WorkflowState | null;
@@ -834,12 +935,18 @@ export class ContextWorkflowService {
 
   #assertContextCurrent(contract: MissionContract): ContextReadinessReport {
     const readiness = this.inspectReadiness();
-    if (
-      !readiness.ready ||
-      !readiness.contextRevision ||
-      readiness.contextRevision !== contract.contextRevision
-    ) {
+    if (!readiness.ready || !readiness.contextRevision) {
       throw new ContextReadinessError(readiness);
+    }
+    if (readiness.contextRevision !== contract.contextRevision) {
+      // Drift com contexto READY não é "not ready" — a mensagem antiga saía
+      // sem código nenhum e o agente ficava sem rota. Agora aponta a cura.
+      throw new Error(
+        'mission context drifted after freeze: the project context revision ' +
+          'changed. Chame nexus_mission_refreeze_contract para re-vincular o ' +
+          'contrato ao contexto atual (goal e critérios são preservados; o ' +
+          'workflow recomeça na rota para revalidar evidência).',
+      );
     }
     return readiness;
   }

@@ -30,6 +30,8 @@ export interface DriveConfig {
   readonly stallResignalMs: number;
   /** Máximo de iterações do drive antes de block-human. */
   readonly maxIterations: number;
+  /** Máximo de respawns consecutivos de pane morto antes de block-human. */
+  readonly maxRespawnAttempts: number;
   /** Wall-clock máximo (ms) desde startedAt antes de block-human. */
   readonly maxWallClockMs: number;
   /** Quantidade de signal-stall consecutivos que caracteriza stall crônico. */
@@ -45,6 +47,10 @@ export const defaultDriveConfig: DriveConfig = Object.freeze({
   stallMs: 10 * 60_000,
   stallResignalMs: 5 * 60_000,
   maxIterations: 50,
+  // Pane que morre logo após CADA respawn não se cura respawnando de novo
+  // (evidência de campo: 10 respawns "success" em 16min, missão eternamente
+  // blocked). Após o teto, block-human com causa acionável.
+  maxRespawnAttempts: 3,
   maxWallClockMs: 4 * 60 * 60_000, // 4h
   chronicStallCount: 5,
   baseBackoffMs: 1_000,
@@ -98,6 +104,8 @@ export interface DriveState {
    * backoff between recovery attempts — not just a fixed tick interval.
    */
   readonly lastActionAt?: number;
+  /** Kind da última ação aplicada (runtime durável) — detecta loop de respawn. */
+  readonly lastActionKind?: string;
 }
 
 export type DriveAction =
@@ -196,6 +204,24 @@ export function decideDriveAction(
     return { kind: 're-route', reason: 'account or adapter failed' };
   }
 
+  // Loop de respawn: pane que continua morto DEPOIS de respawns sucessivos
+  // não se cura com mais um respawn (evidência de campo: 10 "success" em
+  // 16min, missão eternamente presa). Estado terminal acionável em vez de
+  // churn infinito — o Retomar do rail re-engaja depois que o usuário
+  // resolver a causa (login/credencial do adapter é a mais comum).
+  if (
+    (state.paneDead || state.contextRot) &&
+    state.lastActionKind === 'respawn-fresh-context' &&
+    state.iteration >= config.maxRespawnAttempts
+  ) {
+    return {
+      kind: 'block-human',
+      reason:
+        `pane morre repetidamente após ${state.iteration} respawns — ` +
+        'verifique login/credencial do adapter e use Retomar no rail',
+    };
+  }
+
   if (state.paneDead) {
     return { kind: 'respawn-fresh-context', reason: 'pane dead' };
   }
@@ -275,6 +301,7 @@ export interface DriveStateSignals {
   readonly startedAt?: number;
   readonly stallSignalCount?: number;
   readonly lastActionAt?: number;
+  readonly lastActionKind?: string;
   readonly completionVerified?: boolean;
 }
 
@@ -423,6 +450,9 @@ export function deriveDriveState(input: DriveStateInputs): DriveState {
     iteration: signals?.iteration ?? 0,
     startedAt: signals?.startedAt ?? mission.createdAt,
     stallSignalCount: signals?.stallSignalCount ?? stallFromHandoffs,
+    ...(signals?.lastActionKind !== undefined
+      ? { lastActionKind: signals.lastActionKind }
+      : {}),
     ...(signals?.lastActionAt !== undefined
       ? { lastActionAt: signals.lastActionAt }
       : {}),
