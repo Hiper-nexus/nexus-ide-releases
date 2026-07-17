@@ -386,7 +386,9 @@ const RAW_SQUADS: Squad[] = [
       '# Planejamento & PRD (brownfield-first)\n' +
       'Você é o orquestrador de planejamento. A entrega final são documentos ' +
       'versionáveis em docs/ (PRD, arquitetura e stories) — NENHUM código de ' +
-      'produção é escrito nesta missão.\n' +
+      'produção é escrito nesta missão. Spawne os workers do roster via ' +
+      'nexus_pane_spawn (em paralelo quando as etapas permitirem), aguarde ' +
+      'com nexus_pane_wait_many e colete entregas com nexus_handoff_list.\n' +
       '\n' +
       '## 1. Leitura real do sistema (sempre primeiro)\n' +
       'Antes de qualquer pergunta ao usuário, mande os explorers levantarem ' +

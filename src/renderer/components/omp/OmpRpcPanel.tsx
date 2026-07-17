@@ -6,6 +6,7 @@ import {
   type OmpTranscriptEntry,
 } from '../../state/omp-rpc-store';
 import { useLayoutStore } from '../../state/layout-store';
+import { useToastStore } from '../../state/toast-store';
 import { waitForSession } from '../../terminal/terminal-host';
 
 /**
@@ -454,7 +455,19 @@ export function OmpRpcPanel() {
                   <button
                     type="button"
                     className="omp-btn omp-btn--primary"
-                    onClick={() => void window.nexus.app.openExternal(entry.url)}
+                    onClick={() => {
+                      // openExternal só aceita https; um flow de login que
+                      // pedir http/localhost falharia em silêncio sem isto.
+                      void window.nexus.app.openExternal(entry.url).then((res) => {
+                        if (!res.ok) {
+                          useToastStore.getState().push(
+                            'error',
+                            'Não foi possível abrir a URL',
+                            res.error ?? entry.url,
+                          );
+                        }
+                      });
+                    }}
                   >
                     Abrir no navegador
                   </button>
