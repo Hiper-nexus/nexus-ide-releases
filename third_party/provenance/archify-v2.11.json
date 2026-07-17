@@ -1,0 +1,12 @@
+{
+  "source": "tt-a1i/archify",
+  "upstreamRepository": "https://github.com/tt-a1i/archify",
+  "upstreamVersion": "2.11.0",
+  "license": "MIT",
+  "copyright": "Copyright (c) tt-a1i (based on Cocoon-AI/architecture-diagram-generator, MIT)",
+  "licenseFile": "third_party/licenses/archify-MIT.txt",
+  "importedAt": "2026-07-17",
+  "type": "vendored-verbatim",
+  "nexusPath": "assets/skills/archify",
+  "notes": "Skill de geração de diagramas vendorada por inteiro e sem modificações (exceto remoção de package-lock.json). O diretório carrega o LICENSE upstream; o bundle vira src/main/orch/archify-manifest.ts via scripts/bundle-skills.mjs e o skill-mirror materializa para as CLIs dos panes."
+}

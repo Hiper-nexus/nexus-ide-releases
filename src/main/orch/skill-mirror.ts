@@ -4,6 +4,8 @@ import path from 'node:path';
 import { PONYTAIL_RULES } from './ponytail';
 import { BUILTIN_BRIDGEMIND_SKILLS } from './bridge-mind-skills';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
+import { ARCHIFY_MANIFEST } from './archify-manifest';
+import type { SkillAsset } from './impeccable-manifest';
 
 const GENERATED_PONYTAIL_SKILL = `---
 name: ponytail
@@ -59,30 +61,37 @@ function writeGeneratedSkills(root: string): string {
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill.body);
   }
-  // Impeccable is ~1.8 MB across ~30 files. Rewriting (and base64-decoding) all of
-  // it on every agent spawn is wasteful; materialize it only when it is missing or
-  // stale — bundled SKILL.md differs from the materialized one — which also keeps
-  // it fresh across app updates.
-  const bundledImpeccableSkill = IMPECCABLE_MANIFEST['SKILL.md'];
-  const materializedImpeccableSkill = path.join(root, 'impeccable', 'SKILL.md');
-  const currentImpeccableSkill = (() => {
+  // Bundled multi-file skills (impeccable ~1.8 MB, archify ~600 KB).
+  // Rewriting (and base64-decoding) everything on every agent spawn is
+  // wasteful; materialize only when missing or stale — bundled SKILL.md
+  // differs from the materialized one — which also keeps them fresh across
+  // app updates.
+  materializeManifestSkill(root, 'impeccable', IMPECCABLE_MANIFEST);
+  materializeManifestSkill(root, 'archify', ARCHIFY_MANIFEST);
+  return root;
+}
+
+function materializeManifestSkill(
+  root: string,
+  name: string,
+  manifest: Record<string, SkillAsset>,
+): void {
+  const bundledSkill = manifest['SKILL.md'];
+  const materializedSkill = path.join(root, name, 'SKILL.md');
+  const currentSkill = (() => {
     try {
-      return fs.readFileSync(materializedImpeccableSkill, 'utf8');
+      return fs.readFileSync(materializedSkill, 'utf8');
     } catch {
       return null;
     }
   })();
-  if (
-    !bundledImpeccableSkill ||
-    currentImpeccableSkill !== bundledImpeccableSkill.content
-  ) {
-    for (const [relPath, asset] of Object.entries(IMPECCABLE_MANIFEST)) {
-      const destPath = path.join(root, 'impeccable', relPath);
+  if (!bundledSkill || currentSkill !== bundledSkill.content) {
+    for (const [relPath, asset] of Object.entries(manifest)) {
+      const destPath = path.join(root, name, relPath);
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
       fs.writeFileSync(destPath, Buffer.from(asset.content, asset.encoding));
     }
   }
-  return root;
 }
 
 function readSkillSources(sourceDirs: string[]): Map<string, SkillSource> {
