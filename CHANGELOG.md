@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.19.11 — Rota Livre
+
+Data: 2026-07-17
+
+- **Fim do loop de respawn**: pane que continua morrendo após 3 respawns
+  consecutivos leva a missão a um estado terminal com causa acionável
+  ("verifique login/credencial do adapter e use Retomar no rail") em vez de
+  churnar para sempre — era o bloqueio nº 1 nas missões reais auditadas.
+- **Drift de contexto deixou de ser morte**: nova tool
+  nexus_mission_refreeze_contract re-congela o contrato após mudanças no
+  contexto (.context/, attestations, policy) preservando objetivo, critérios
+  e escopo; o workflow recomeça na rota para revalidar evidência e o rigor
+  nunca é rebaixado. A mensagem de drift agora aponta a cura em vez de um
+  "not ready" vazio.
+
+Com esta release, os sete becos sem saída da família "missão travada"
+mapeados na auditoria de 17/07 estão fechados.
+
 ## 0.19.10 — Máquina Nova
 
 Data: 2026-07-17
