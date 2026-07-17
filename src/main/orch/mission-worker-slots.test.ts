@@ -91,3 +91,22 @@ describe('countLiveMissionWorkerSlots', () => {
     expect(result.live).toBe(1);
   });
 });
+
+describe('isMissionDriverSessionEligible', () => {
+  it('missão parada de sessão anterior NÃO é dirigida (não ressuscita no boot)', async () => {
+    const { isMissionDriverSessionEligible } = await import('./mission-driver-io');
+    const sessionStart = 1_000_000;
+    expect(
+      isMissionDriverSessionEligible(
+        { id: 'm1', updatedAt: sessionStart - 60_000 },
+        sessionStart,
+      ),
+    ).toBe(false);
+    expect(
+      isMissionDriverSessionEligible(
+        { id: 'm2', updatedAt: sessionStart + 1 },
+        sessionStart,
+      ),
+    ).toBe(true);
+  });
+});

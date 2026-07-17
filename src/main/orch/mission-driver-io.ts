@@ -450,6 +450,25 @@ export function createProductionApplyPorts(
   };
 }
 
+/**
+ * Missões antigas NÃO ressuscitam sozinhas no boot (achado de operador: "do
+ * nada o Nexus recuperou uma missão antiga e iniciou"). O reconcile de boot +
+ * modo ativo dava respawn-fresh-context em qualquer missão elegível parada de
+ * sessões passadas. Mesma filosofia do restore-agents-gate: o driver só
+ * dirige missão com ATIVIDADE nesta sessão do app; retomar uma antiga é
+ * decisão explícita do usuário (reabrir/retomar atualiza updatedAt e ela
+ * volta a ser elegível).
+ */
+const driverSessionStartedAt = Date.now();
+const driverSkippedStaleLogged = new Set<string>();
+
+export function isMissionDriverSessionEligible(
+  mission: { id: string; updatedAt: number },
+  sessionStartedAt = driverSessionStartedAt,
+): boolean {
+  return mission.updatedAt >= sessionStartedAt;
+}
+
 export function createDefaultDriveDeps(options: {
   listScopes: () => readonly ProjectExecutionScope[];
   config?: DriveConfig;
@@ -467,6 +486,17 @@ export function createDefaultDriveDeps(options: {
       return suite.missions
         .list('running')
         .filter((mission) => {
+          if (!isMissionDriverSessionEligible(mission)) {
+            const key = driveKey(mission.id, scope);
+            if (!driverSkippedStaleLogged.has(key)) {
+              driverSkippedStaleLogged.add(key);
+              console.info(
+                `[mission-driver] missão ${mission.id} parada de sessão ` +
+                  'anterior — não dirigida; retome-a explicitamente para reativar',
+              );
+            }
+            return false;
+          }
           // Intent-first: driver only scans authorized execution, never human waits.
           const intent = resolveEffectiveIntentState({
             mission,
