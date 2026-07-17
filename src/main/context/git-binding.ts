@@ -24,6 +24,76 @@ function canonicalRoot(scope: ProjectExecutionScope): string {
   return root;
 }
 
+/**
+ * Superfície de evidência do binding: os únicos caminhos que a ingestão de
+ * contexto lê do disco (ver ingestProjectContext — `.context/**` + docs de
+ * raiz). Só AQUI o disco precisa ser idêntico ao HEAD para o corpus congelado
+ * ser honesto. Exigir o checkout INTEIRO limpo criava o deadlock de campo:
+ * WIP alheio em qualquer arquivo → freeze nunca fecha → pane_spawn travado →
+ * limite de workers esgota → missão morta ("círculo que só o terminal do
+ * usuário resolve"). baseSha/headSha/diffHash são todos dados de COMMIT e não
+ * dependem da árvore de trabalho.
+ */
+export const EVIDENCE_PATH_PREFIXES: readonly string[] = Object.freeze([
+  '.context/',
+  'AGENTS.md',
+  'CLAUDE.md',
+  'DESIGN.md',
+  'GEMINI.md',
+]);
+
+function pathAfterSpaces(line: string, spaces: number): string {
+  let index = 0;
+  for (let found = 0; found < spaces; found += 1) {
+    index = line.indexOf(' ', index);
+    if (index === -1) return '';
+    index += 1;
+  }
+  return line.slice(index);
+}
+
+/**
+ * Extrai os caminhos sujos de `git status --porcelain=v2 -z`. Formato -z:
+ * registros separados por NUL, caminhos sem quoting; entradas de rename
+ * ("2 …") carregam o caminho novo no registro e o original no registro
+ * seguinte — ambos contam como sujos.
+ */
+export function dirtyPathsFromPorcelainV2(status: string): string[] {
+  const records = status.split('\0').filter((record) => record.length > 0);
+  const paths: string[] = [];
+  for (let i = 0; i < records.length; i += 1) {
+    const record = records[i];
+    if (record.startsWith('1 ')) {
+      paths.push(pathAfterSpaces(record, 8));
+    } else if (record.startsWith('2 ')) {
+      paths.push(pathAfterSpaces(record, 9));
+      const original = records[i + 1];
+      if (original !== undefined) {
+        paths.push(original);
+        i += 1;
+      }
+    } else if (record.startsWith('u ')) {
+      paths.push(pathAfterSpaces(record, 10));
+    } else if (record.startsWith('? ') || record.startsWith('! ')) {
+      paths.push(record.slice(2));
+    }
+  }
+  return paths.filter((value) => value.length > 0);
+}
+
+/** Caminhos sujos que invalidam a evidência (dentro da superfície). */
+export function blockingEvidencePaths(
+  dirtyPaths: readonly string[],
+): string[] {
+  return dirtyPaths.filter((dirty) =>
+    EVIDENCE_PATH_PREFIXES.some((prefix) =>
+      prefix.endsWith('/')
+        ? dirty === prefix.slice(0, -1) || dirty.startsWith(prefix)
+        : dirty === prefix,
+    ),
+  );
+}
+
 export function inspectGitBinding(
   scope: ProjectExecutionScope,
   baseSha?: string,
@@ -31,10 +101,16 @@ export function inspectGitBinding(
 ): GitBindingSnapshot {
   const root = canonicalRoot(scope);
   const status = git.run(root, [
-    'status', '--porcelain=v2', '--untracked-files=all',
+    'status', '--porcelain=v2', '--untracked-files=all', '-z',
   ]).stdout;
-  if (status.trim().length > 0) {
-    throw new Error('workflow binding requires a clean committed checkout');
+  const blocking = blockingEvidencePaths(dirtyPathsFromPorcelainV2(status));
+  if (blocking.length > 0) {
+    const preview = blocking.slice(0, 5).join(', ');
+    const suffix = blocking.length > 5 ? ` (+${blocking.length - 5})` : '';
+    throw new Error(
+      'workflow binding requires a clean committed checkout of the evidence ' +
+        `surface: ${preview}${suffix}`,
+    );
   }
   const headSha = git.run(root, ['rev-parse', '--verify', 'HEAD^{commit}'])
     .stdout.trim().toLowerCase();
