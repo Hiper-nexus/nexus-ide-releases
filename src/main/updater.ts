@@ -32,6 +32,14 @@ import { createSingleFlight } from './single-flight';
  */
 
 const REPO = 'cleofasvolarehost/nexus-ide';
+/**
+ * Espelho PÚBLICO de releases (só artefatos, sem código): máquinas SEM gh
+ * logado com acesso ao repo privado (instalações de terceiros) atualizam por
+ * aqui via API REST anônima. A receita de release publica nos dois.
+ */
+const PUBLIC_RELEASES_REPO = 'cleofasvolarehost/nexus-ide-releases';
+const PUBLIC_API_RELEASES_URL =
+  `https://api.github.com/repos/${PUBLIC_RELEASES_REPO}/releases?per_page=100`;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BOOT_CHECK_DELAY_MS = 20_000;
 const GH_CHECK_TIMEOUT_MS = 15_000;
@@ -128,6 +136,54 @@ function ghExec(args: string[], timeoutMs: number): Promise<string> {
 
 type GhExecutor = (args: string[], timeoutMs: number) => Promise<string>;
 
+/** GET anônimo na API pública com deadline (mesma disciplina do gh). */
+async function fetchPublicJson(url: string, timeoutMs: number): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: 'application/vnd.github+json',
+        'user-agent': 'NexusIDE-updater',
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`releases públicos: HTTP ${response.status}`);
+    }
+    return await response.text();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Baixa um asset público (redirects seguidos pelo fetch) em stream p/ disco. */
+async function downloadPublicAsset(
+  url: string,
+  destination: string,
+  timeoutMs: number,
+): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: { 'user-agent': 'NexusIDE-updater' },
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`download público: HTTP ${response.status}`);
+    }
+    const { Readable } = await import('node:stream');
+    const { pipeline } = await import('node:stream/promises');
+    await pipeline(
+      Readable.fromWeb(response.body as import('stream/web').ReadableStream),
+      fs.createWriteStream(destination),
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface UpdateManagerDependencies {
   runGh?: GhExecutor;
   runtimeArch?: string;
@@ -137,6 +193,8 @@ export interface UpdateManagerDependencies {
 export class UpdateManager {
   private state: UpdateState;
   private release: ParsedRelease | null = null;
+  /** De onde veio o release ofertado: gh (repo privado) ou espelho público. */
+  private releaseVia: 'gh' | 'public' = 'gh';
   private server: http.Server | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private squirrelWired = false;
@@ -296,15 +354,27 @@ export class UpdateManager {
     }
     this.patch({ phase: 'checking', error: undefined });
     try {
-      const raw = await this.runGh(
-        [
-          'api',
-          '--method',
-          'GET',
-          `repos/${REPO}/releases?per_page=${GH_RELEASES_PER_PAGE}`,
-        ],
-        GH_CHECK_TIMEOUT_MS,
-      );
+      let raw: string;
+      try {
+        raw = await this.runGh(
+          [
+            'api',
+            '--method',
+            'GET',
+            `repos/${REPO}/releases?per_page=${GH_RELEASES_PER_PAGE}`,
+          ],
+          GH_CHECK_TIMEOUT_MS,
+        );
+        this.releaseVia = 'gh';
+      } catch (ghErr) {
+        // Sem gh logado com acesso ao repo privado (máquina de terceiro):
+        // cai para o espelho PÚBLICO de releases via API REST anônima.
+        writeUpdateLog('info', 'check:gh-unavailable-try-public', {
+          message: ghErr instanceof Error ? ghErr.message : String(ghErr),
+        });
+        raw = await fetchPublicJson(PUBLIC_API_RELEASES_URL, GH_CHECK_TIMEOUT_MS);
+        this.releaseVia = 'public';
+      }
       const release = parseGhReleases(
         raw,
         this.state.currentVersion,
@@ -386,21 +456,29 @@ export class UpdateManager {
     this.patch({ phase: 'downloading', error: undefined });
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-update-'));
     try {
-      await this.runGh(
-        [
-          'release',
-          'download',
-          release.tag,
-          '--repo',
-          REPO,
-          '--pattern',
-          release.zipAsset,
-          '--dir',
-          dir,
-          '--clobber',
-        ],
-        GH_DOWNLOAD_TIMEOUT_MS,
-      );
+      if (this.releaseVia === 'public' && release.zipDownloadUrl) {
+        await downloadPublicAsset(
+          release.zipDownloadUrl,
+          path.join(dir, release.zipAsset),
+          GH_DOWNLOAD_TIMEOUT_MS,
+        );
+      } else {
+        await this.runGh(
+          [
+            'release',
+            'download',
+            release.tag,
+            '--repo',
+            REPO,
+            '--pattern',
+            release.zipAsset,
+            '--dir',
+            dir,
+            '--clobber',
+          ],
+          GH_DOWNLOAD_TIMEOUT_MS,
+        );
+      }
       const zipPath = path.join(dir, release.zipAsset);
       if (!fs.existsSync(zipPath)) throw new Error('zip do release não veio');
       const feedUrl = await this.serveLocalFeed(release, zipPath);

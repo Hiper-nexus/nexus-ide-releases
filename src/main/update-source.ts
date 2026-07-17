@@ -35,12 +35,23 @@ interface GhReleaseJson {
   draft?: boolean;
   isPrerelease?: boolean;
   prerelease?: boolean;
-  assets?: Array<{ name?: string; url?: string }>;
+  assets?: Array<{
+    name?: string;
+    url?: string;
+    browser_download_url?: string;
+    browserDownloadUrl?: string;
+  }>;
 }
 
 export interface ParsedRelease extends UpdateAvailableInfo {
   /** Nome exato do asset .zip da arquitetura atual (payload do Squirrel.Mac). */
   zipAsset: string;
+  /**
+   * URL pública direta do asset (browser_download_url) — presente quando o
+   * release veio da API REST; permite download sem gh CLI (fallback público
+   * para máquinas sem gh logado, ex.: instalações de terceiros).
+   */
+  zipDownloadUrl?: string;
 }
 
 const NOTES_MAX_CHARS = 600;
@@ -80,6 +91,11 @@ function parseReleaseCandidate(
       asset.name.endsWith(`darwin-${arch}-${version}.zip`),
   );
   if (!zip?.name) return null;
+  const downloadUrlValue = zip.browser_download_url ?? zip.browserDownloadUrl;
+  const zipDownloadUrl =
+    typeof downloadUrlValue === 'string' && /^https:\/\//.test(downloadUrlValue)
+      ? downloadUrlValue
+      : undefined;
   const notes = typeof json.body === 'string' && json.body.trim()
     ? json.body.trim().slice(0, NOTES_MAX_CHARS)
     : undefined;
@@ -91,6 +107,7 @@ function parseReleaseCandidate(
     version,
     tag,
     zipAsset: zip.name,
+    ...(zipDownloadUrl ? { zipDownloadUrl } : {}),
     ...(publishedAt ? { publishedAt } : {}),
     ...(notes ? { notes } : {}),
   };
