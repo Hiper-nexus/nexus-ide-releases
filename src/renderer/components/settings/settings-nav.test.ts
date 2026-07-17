@@ -1,12 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   SETTINGS_GROUPS,
-  SETTINGS_PRIMARY_GROUPS,
-  SETTINGS_ADVANCED_GROUPS,
   filterSettingsGroups,
-  isSettingsGroupExpanded,
-  isAdvancedSettingsSection,
-  toggleSettingsGroup,
   settingsSectionPillar,
   settingsPrimaryPillarOrder,
 } from './settings-nav';
@@ -21,50 +16,47 @@ describe('SETTINGS_GROUPS', () => {
     expect(ids).toContain('shortcuts');
   });
 
-  test('primary nav is Você · App · Agentes · Sistema with 15 day-to-day entries', () => {
-    const labels = SETTINGS_PRIMARY_GROUPS.map((g) => g.label);
-    expect(labels).toEqual(['Você', 'App', 'Agentes', 'Sistema']);
+  test('nav é PLANA: seções agrupadas por cabeçalho, todas sempre visíveis', () => {
+    // O modelo colapsável ("Mais configurações" → grupo → item) enterrava
+    // seções críticas em três cliques — regressão de operador, não volte.
+    expect(SETTINGS_GROUPS.map((g) => g.label)).toEqual([
+      'Você',
+      'App',
+      'Agentes',
+      'Agentes · catálogo',
+      'Agentes · automação',
+      'Sistema',
+      'Remoto & mobile',
+    ]);
     expect(settingsPrimaryPillarOrder()).toEqual([
       'you',
       'app',
       'agents',
       'system',
     ]);
-    const primaryIds = SETTINGS_PRIMARY_GROUPS.flatMap((g) =>
-      g.items.map((i) => i.id),
-    );
-    expect(primaryIds).toHaveLength(15);
-    // Labs é primário por decisão: o painel de descoberta de flags não pode
-    // ficar atrás do "Avançado" (achado de operador na 0.19).
-    expect(primaryIds).toContain('labs');
-    expect(isAdvancedSettingsSection('labs')).toBe(false);
-    expect(primaryIds).toContain('voice');
-    expect(primaryIds).toContain('appearance');
-    expect(primaryIds).toContain('ranking');
-    expect(primaryIds).toContain('usage-quota');
-    expect(primaryIds).toContain('harness');
-    expect(primaryIds).toContain('mcps');
-    expect(primaryIds).toContain('tools');
-    expect(primaryIds).toContain('media');
-    expect(primaryIds).toContain('diagnostics');
-    expect(primaryIds).not.toContain('agents');
-    expect(isAdvancedSettingsSection('mcps')).toBe(false);
-    expect(isAdvancedSettingsSection('tools')).toBe(false);
-    expect(isAdvancedSettingsSection('media')).toBe(false);
-    expect(isAdvancedSettingsSection('voice')).toBe(false);
   });
 
-  test('primary groups carry emotional story kickers', () => {
-    for (const group of SETTINGS_PRIMARY_GROUPS) {
+  test('Remoto & mobile é seção própria com companion e remote à vista', () => {
+    const remoteGroup = SETTINGS_GROUPS.find(
+      (g) => g.label === 'Remoto & mobile',
+    );
+    expect(remoteGroup).toBeDefined();
+    const ids = remoteGroup?.items.map((i) => i.id);
+    expect(ids).toContain('companion-relay');
+    expect(ids).toContain('remote');
+  });
+
+  test('todo grupo carrega story kicker e pilar', () => {
+    for (const group of SETTINGS_GROUPS) {
       expect(group.story?.length).toBeGreaterThan(8);
       expect(group.pillarId).toBeTruthy();
     }
   });
 
-  test('advanced sections are flagged correctly', () => {
-    expect(isAdvancedSettingsSection('agents')).toBe(true);
-    expect(isAdvancedSettingsSection('appearance')).toBe(false);
-    expect(isAdvancedSettingsSection('system')).toBe(true);
+  test('grupos ficam escaneáveis: nenhum acima de 9 itens', () => {
+    expect(
+      Math.max(...SETTINGS_GROUPS.map((g) => g.items.length)),
+    ).toBeLessThanOrEqual(9);
   });
 
   test('never shows the bare word "Mídia" in two different rows', () => {
@@ -93,6 +85,12 @@ describe('filterSettingsGroups', () => {
     expect(ids).toContain('voice');
   });
 
+  test('"celular" encontra o Companion mobile', () => {
+    const result = filterSettingsGroups(SETTINGS_GROUPS, 'celular');
+    const ids = result.flatMap((g) => g.items.map((i) => i.id));
+    expect(ids).toContain('companion-relay');
+  });
+
   test('matches appearance by pixel subtitle', () => {
     const result = filterSettingsGroups(SETTINGS_GROUPS, 'pixel');
     const ids = result.flatMap((g) => g.items.map((i) => i.id));
@@ -119,32 +117,6 @@ describe('filterSettingsGroups', () => {
   test('returns nothing for a query that matches no section', () => {
     const result = filterSettingsGroups(SETTINGS_GROUPS, 'zzzznotathing');
     expect(result).toEqual([]);
-  });
-});
-
-describe('SETTINGS_ADVANCED_GROUPS', () => {
-  test('holds catalog and system sections in small operational clusters', () => {
-    const ids = SETTINGS_ADVANCED_GROUPS.flatMap((g) => g.items.map((i) => i.id));
-    expect(ids).toContain('llms');
-    expect(ids).toContain('system');
-    expect(ids).not.toContain('mcps');
-    expect(ids).not.toContain('tools');
-    expect(ids).not.toContain('media');
-    expect(SETTINGS_ADVANCED_GROUPS).toHaveLength(4);
-    expect(
-      Math.max(...SETTINGS_ADVANCED_GROUPS.map((g) => g.items.length)),
-    ).toBeLessThanOrEqual(6);
-  });
-
-  test('reveals only a selected or explicitly expanded group', () => {
-    const [system, integrations, catalog] = SETTINGS_ADVANCED_GROUPS;
-    const expanded = toggleSettingsGroup(new Set<string>(), integrations.label);
-
-    expect(isSettingsGroupExpanded(system, 'account', expanded)).toBe(false);
-    expect(isSettingsGroupExpanded(integrations, 'account', expanded)).toBe(true);
-    expect(isSettingsGroupExpanded(catalog, 'agents', new Set())).toBe(true);
-    expect(isSettingsGroupExpanded(system, 'agents', new Set())).toBe(false);
-    expect(toggleSettingsGroup(expanded, integrations.label).size).toBe(0);
   });
 });
 

@@ -9,12 +9,7 @@ import {
 import { createDraftHydrationBarrier } from '../../lib/ui-overlay-policy';
 import {
   SETTINGS_GROUPS,
-  SETTINGS_PRIMARY_GROUPS,
-  SETTINGS_ADVANCED_GROUPS,
   filterSettingsGroups,
-  isAdvancedSettingsSection,
-  isSettingsGroupExpanded,
-  toggleSettingsGroup,
   settingsSectionPillar,
   type NavItem,
   type NavGroup,
@@ -114,61 +109,6 @@ function NavRow({
   );
 }
 
-function AdvancedGroupNav({
-  group,
-  activeSection,
-  expanded,
-  badges,
-  onToggle,
-  onSelect,
-}: {
-  group: NavGroup;
-  activeSection: SettingsSection;
-  expanded: boolean;
-  badges: Partial<Record<SettingsSection, number>>;
-  onToggle: (label: string) => void;
-  onSelect: (id: SettingsSection) => void;
-}) {
-  const groupId = `settings-group-${group.label
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .replace(/\W+/g, '-')
-    .toLowerCase()}`;
-  return (
-    <div className="settings-nav__advanced-block">
-      <button
-        type="button"
-        className="settings-nav__group-toggle"
-        onClick={() => onToggle(group.label)}
-        aria-expanded={expanded}
-        aria-controls={groupId}
-      >
-        <span className="settings-nav__group-toggle-copy">
-          <span>{group.label}</span>
-          {group.story ? (
-            <span className="settings-nav__section-story">{group.story}</span>
-          ) : null}
-        </span>
-        <span className="settings-nav__group-count">{group.items.length}</span>
-        <PixelIcon name="chevron-down" size={11} />
-      </button>
-      {expanded && (
-        <div id={groupId} className="settings-nav__group-items">
-          {group.items.map((item) => (
-            <NavRow
-              key={item.id}
-              item={item}
-              active={activeSection === item.id}
-              badge={badges[item.id]}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function SettingsDrawer() {
   const draftHydrationBarrier = useRef(createDraftHydrationBarrier()).current;
   const open = useSettingsStore((s) => s.drawerOpen);
@@ -186,10 +126,6 @@ export function SettingsDrawer() {
   };
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [query, setQuery] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [expandedAdvancedGroups, setExpandedAdvancedGroups] = useState<
-    Set<string>
-  >(() => new Set());
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -198,18 +134,6 @@ export function SettingsDrawer() {
     () => filterSettingsGroups(SETTINGS_GROUPS, query),
     [query],
   );
-  const primaryGroups = useMemo(
-    () => filterSettingsGroups(SETTINGS_PRIMARY_GROUPS, query),
-    [query],
-  );
-  const advancedGroups = useMemo(
-    () => filterSettingsGroups(SETTINGS_ADVANCED_GROUPS, query),
-    [query],
-  );
-
-  useEffect(() => {
-    if (isAdvancedSettingsSection(section)) setAdvancedOpen(true);
-  }, [section]);
 
   // Section target can change while open (openDrawer('providers') / nav).
   useEffect(() => {
@@ -228,20 +152,15 @@ export function SettingsDrawer() {
     if (wasOpenRef.current) return;
     wasOpenRef.current = true;
     draftHydrationBarrier.markHydrating();
-    const nav = peekEphemeralDraft<{ query: string; advancedOpen: boolean }>(
-      'settings-nav',
-    );
-    if (nav) {
-      setQuery(nav.query);
-      setAdvancedOpen(nav.advancedOpen);
-    }
+    const nav = peekEphemeralDraft<{ query: string }>('settings-nav');
+    if (nav) setQuery(nav.query);
   }, [open, draftHydrationBarrier]);
 
   useEffect(() => {
     if (!open) return;
     if (draftHydrationBarrier.shouldSkipPersist()) return;
-    saveEphemeralDraft('settings-nav', { query, advancedOpen });
-  }, [open, query, advancedOpen, draftHydrationBarrier]);
+    saveEphemeralDraft('settings-nav', { query });
+  }, [open, query, draftHydrationBarrier]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -294,11 +213,6 @@ export function SettingsDrawer() {
     tools: mcpToolCount > 0 ? mcpToolCount : undefined,
     mcps: mcpToolCount > 0 ? 1 : undefined,
   };
-  const toggleAdvancedGroup = (label: string) => {
-    setExpandedAdvancedGroups((expanded) =>
-      toggleSettingsGroup(expanded, label),
-    );
-  };
   const currentSectionTitle = SETTINGS_GROUPS
     .flatMap((group) => group.items)
     .find((item) => item.id === section)?.title;
@@ -347,75 +261,23 @@ export function SettingsDrawer() {
                 aria-label="Buscar nas configurações"
               />
             </div>
-            {searching ? (
-              groups.length === 0 ? (
-                <p className="settings-nav__no-match">Nada encontrado para “{query}”.</p>
-              ) : (
-                groups.map((group) => (
-                  <div key={group.label}>
-                    <NavGroupHeading group={group} />
-                    {group.items.map((item) => (
-                      <NavRow
-                        key={item.id}
-                        item={item}
-                        active={section === item.id}
-                        badge={badges[item.id]}
-                        onSelect={selectSection}
-                      />
-                    ))}
-                  </div>
-                ))
-              )
+            {searching && groups.length === 0 ? (
+              <p className="settings-nav__no-match">Nada encontrado para “{query}”.</p>
             ) : (
-              <>
-                {primaryGroups.map((group) => (
-                  <div key={group.label}>
-                    <NavGroupHeading group={group} />
-                    {group.items.map((item) => (
-                      <NavRow
-                        key={item.id}
-                        item={item}
-                        active={section === item.id}
-                        badge={badges[item.id]}
-                        onSelect={selectSection}
-                      />
-                    ))}
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  className={`settings-nav__advanced ${advancedOpen ? 'settings-nav__advanced--open' : ''}`}
-                  onClick={() => setAdvancedOpen((open) => !open)}
-                  aria-expanded={advancedOpen}
-                >
-                  <span className="settings-nav__advanced-label">
-                    Mais configurações
-                  </span>
-                  <span className="settings-nav__advanced-hint">
-                    sistema · catálogo · automação
-                  </span>
-                  <PixelIcon name="chevron-down" size={12} />
-                </button>
-                {advancedOpen && (
-                  <div className="settings-nav__advanced-groups">
-                    {advancedGroups.map((group) => (
-                      <AdvancedGroupNav
-                        key={group.label}
-                        group={group}
-                        activeSection={section}
-                        expanded={isSettingsGroupExpanded(
-                          group,
-                          section,
-                          expandedAdvancedGroups,
-                        )}
-                        badges={badges}
-                        onToggle={toggleAdvancedGroup}
-                        onSelect={selectSection}
-                      />
-                    ))}
-                  </div>
-                )}
-              </>
+              groups.map((group) => (
+                <div key={group.label}>
+                  <NavGroupHeading group={group} />
+                  {group.items.map((item) => (
+                    <NavRow
+                      key={item.id}
+                      item={item}
+                      active={section === item.id}
+                      badge={badges[item.id]}
+                      onSelect={selectSection}
+                    />
+                  ))}
+                </div>
+              ))
             )}
           </div>
           <div className="settings-nav__footer">

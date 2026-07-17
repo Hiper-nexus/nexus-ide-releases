@@ -1271,8 +1271,6 @@
 
 @media (pointer: coarse) {
   .settings-nav__item,
-  .settings-nav__advanced,
-  .settings-nav__group-toggle,
   .settings-nav__close,
   .settings-btn,
   .settings-input {
