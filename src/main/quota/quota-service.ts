@@ -13,6 +13,7 @@ import {
   type QuotaWindow,
 } from '../../shared/quota-types';
 import type { LimitHit } from '../orch/limit-detector';
+import { providerApiRefutesCooldown } from '../orch/limit-refutation';
 import type { AccountInfo } from '../../shared/account-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 import { buildFleetSnapshot } from './quota-policy';
@@ -110,6 +111,12 @@ export interface QuotaServiceDeps {
     adapterId: string,
     accountId?: string,
   ) => string[] | Promise<string[]>;
+  /**
+   * Limpa o cooldown de uma conta refutado por leitura provider-api fresca e
+   * saudável (resíduo da cascata de limite fantasma). Opcional; produção liga
+   * no account-store.clearCooldown.
+   */
+  clearRefutedCooldown?: (accountId: string, adapterId: string) => void;
   /** Injectable fetch for tests. */
   fetchImpl?: FetchLike;
 }
@@ -421,14 +428,31 @@ export class QuotaService {
     if (windows.length === 0) {
       windows = defaultUnknownWindows(input.adapterId);
     }
+    // Cooldown persistido × leitura provider-api fresca e saudável: o
+    // cooldown é resíduo (cascata fantasma pré-fix ou reset antecipado do
+    // provider) — limpa na conta e já entrega a entry destravada, em vez de
+    // exibir "100% · 10h" numa conta comprovadamente ok.
+    let onCooldown = input.onCooldown;
+    let cooldownUntil = input.cooldownUntil;
+    if (
+      onCooldown &&
+      input.accountId &&
+      this.#deps.clearRefutedCooldown &&
+      api !== undefined &&
+      providerApiRefutesCooldown(api.windows, api.at, input.now)
+    ) {
+      this.#deps.clearRefutedCooldown(input.accountId, input.adapterId);
+      onCooldown = false;
+      cooldownUntil = undefined;
+    }
     return {
       id,
       adapterId: input.adapterId,
       accountId: input.accountId,
       label: input.label,
       installed: input.installed,
-      onCooldown: input.onCooldown,
-      cooldownUntil: input.cooldownUntil,
+      onCooldown,
+      cooldownUntil,
       windows: mergeWindows(defaultUnknownWindows(input.adapterId), windows),
       updatedAt: input.now,
     };

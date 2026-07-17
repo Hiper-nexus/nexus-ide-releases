@@ -99,3 +99,18 @@ describe('quota-from-limit', () => {
     );
   });
 });
+
+  it('rate-limit com cooldown maior que 5h pinta a janela Semanal, não a de 5h', () => {
+    // Caso de campo: "5 Horas 100% · 10h16m" é impossível por definição —
+    // reset além da janela é claim de classe semanal.
+    const now = 5_000_000;
+    const windows = windowsFromLimitHit(
+      { kind: 'rate-limit', reason: 'resets 10h', cooldownMs: 10 * 3600_000 },
+      'claude',
+      now,
+      now,
+    );
+    expect(windows).toHaveLength(1);
+    expect(windows[0].kind).toBe('weekly');
+    expect(windows[0].label).toBe('Semanal');
+  });

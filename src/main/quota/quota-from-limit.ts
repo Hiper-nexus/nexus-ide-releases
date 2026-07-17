@@ -6,6 +6,8 @@ import type { LimitHit } from '../orch/limit-detector';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { exhaustedWindow, mergeWindows, unknownWindow } from './quota-normalize';
 
+const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+
 /**
  * Map a limit hit onto exhausted windows. `hitAt` is when the hit was recorded
  * so `resetsAt = hitAt + cooldownMs` stays stable across rebuilds (not
@@ -35,7 +37,20 @@ export function windowsFromLimitHit(
   }
   if (hit.kind === 'rate-limit') {
     // Majority of cloud LLMs share a rolling ~5h window (Codex, Claude, GLM…).
-    // Long cooldowns (≥4h) and short rate-limits both paint the 5h bar.
+    // Um cooldown MAIOR que a própria janela de 5h é impossível nela — pintar
+    // "5 Horas 100% · 10h16m" mentia (caso de campo da cascata fantasma).
+    // Reset além da janela = claim de classe semanal.
+    if (hit.cooldownMs > FIVE_HOURS_MS) {
+      return [
+        exhaustedWindow({
+          kind: 'weekly',
+          label: 'Semanal',
+          resetsAt,
+          source: 'limit-hit',
+          now,
+        }),
+      ];
+    }
     return [
       exhaustedWindow({
         kind: 'hours',
