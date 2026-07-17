@@ -1,13 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ExternalIssue, ForgePrSummary, PortForwardInfo } from '../../shared/integrations-types';
+import type {
+  ExternalIssue,
+  ForgePrSummary,
+  PortForwardInfo,
+} from '../../shared/integrations-types';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useLayoutStore } from '../state/layout-store';
 import { CloseButton } from './CloseButton';
 import { emitIntegrationsChanged } from '../lib/integrations-events';
 
 /**
- * Sprint A2/B6/C7/C8 — GitHub PR/issues, Linear, port-forward, tokens.
+ * GitHub PR/issues, Linear, port-forward e tokens — modal focado.
+ * Três zonas: Conexões (status + tokens), Ações rápidas (Criar PR, port
+ * forward) e Trabalho (PRs / issues em abas).
  */
+
+type WorkTab = 'prs' | 'github' | 'linear';
+
+function StatusChip({ on, label }: { on: boolean; label: string }) {
+  return (
+    <span className={on ? 'int-chip int-chip--on' : 'int-chip int-chip--off'}>
+      {label}
+    </span>
+  );
+}
+
 export function IntegrationsPanel({
   open,
   onClose,
@@ -37,6 +54,7 @@ export function IntegrationsPanel({
   const [prTitle, setPrTitle] = useState('');
   const [pfPort, setPfPort] = useState('3000');
   const [busy, setBusy] = useState(false);
+  const [workTab, setWorkTab] = useState<WorkTab>('prs');
   // Epoch monotônico: um refresh mais novo invalida o commit de um mais antigo,
   // evitando estado fora de ordem quando dois refreshes correm em paralelo.
   const refreshEpoch = useRef(0);
@@ -90,280 +108,388 @@ export function IntegrationsPanel({
 
   if (!open) return null;
 
+  /** Guarda um token (GitHub/Linear) — mesmo fluxo, fontes diferentes. */
+  function persistToken(
+    value: string,
+    save: (v: string) => Promise<{ ok: boolean; error?: string }>,
+    okMsg: string,
+    clear: () => void,
+  ) {
+    setBusy(true);
+    void save(value.trim())
+      .then((r) => {
+        setNote(r.ok ? okMsg : r.error ?? 'erro');
+        if (r.ok) {
+          clear();
+          emitIntegrationsChanged();
+        }
+        return refresh();
+      })
+      .finally(() => setBusy(false));
+  }
+
   return (
     <div
-      className="int-panel"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Integrações"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
+      className="int-scrim"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
       }}
     >
-      <header className="int-panel__head">
-        <strong>Integrações</strong>
-        <CloseButton onClick={onClose} label="Fechar integrações" />
-      </header>
-      <div className="int-panel__body">
-        <section className="int-panel__sec">
-          <h4>Tokens</h4>
-          {!hasGh && (
-            <p className="int-panel__dim">
-              O “Entrar com GitHub” das Configurações conecta sua conta Nexus —
-              ele NÃO dá acesso à API do GitHub. Para PRs e issues aqui, cole um
-              Personal Access Token (github.com/settings/tokens) — ou rode
-              `gh auth login` num terminal: o Nexus usa a sessão do gh CLI
-              automaticamente.
-            </p>
-          )}
-          <label className="int-panel__field">
-            GitHub PAT {hasGh ? '✓' : '—'}
-            <input
-              type="password"
-              value={ghToken}
-              placeholder="ghp_…"
-              onChange={(e) => setGhToken(e.target.value)}
-            />
-          </label>
-          <button
-            type="button"
-            className="int-panel__btn"
-            disabled={busy || !ghToken.trim()}
-            onClick={() => {
-              setBusy(true);
-              void window.nexus.integrations
-                .setGithubToken(ghToken.trim())
-                .then((r) => {
-                  setNote(r.ok ? 'GitHub token guardado' : r.error ?? 'erro');
-                  if (r.ok) {
-                    setGhToken('');
-                    emitIntegrationsChanged();
-                  }
-                  return refresh();
-                })
-                .finally(() => setBusy(false));
-            }}
-          >
-            Guardar GitHub
-          </button>
-          <label className="int-panel__field">
-            Linear API key {hasLin ? '✓' : '—'}
-            <input
-              type="password"
-              value={linKey}
-              placeholder="lin_api_…"
-              onChange={(e) => setLinKey(e.target.value)}
-            />
-          </label>
-          <button
-            type="button"
-            className="int-panel__btn"
-            disabled={busy || !linKey.trim()}
-            onClick={() => {
-              setBusy(true);
-              void window.nexus.integrations
-                .setLinearKey(linKey.trim())
-                .then((r) => {
-                  setNote(r.ok ? 'Linear key guardada' : r.error ?? 'erro');
-                  if (r.ok) {
-                    setLinKey('');
-                    emitIntegrationsChanged();
-                  }
-                  return refresh();
-                })
-                .finally(() => setBusy(false));
-            }}
-          >
-            Guardar Linear
-          </button>
-        </section>
+      <div
+        className="int-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Integrações"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onClose();
+        }}
+      >
+        <header className="int-panel__head">
+          <strong>Integrações</strong>
+          <CloseButton onClick={onClose} label="Fechar integrações" />
+        </header>
 
-        <section className="int-panel__sec">
-          <h4>Criar PR (GitHub)</h4>
-          {branchReview && (
-            <p className="int-panel__dim int-panel__branch-review">
-              Branch <strong>{branchReview.branch}</strong>:{' '}
-              {branchReview.review ? (
-                <button
-                  type="button"
-                  className="int-panel__link"
-                  onClick={() =>
-                    void window.nexus.app.openExternal(branchReview.review!.url)
-                  }
-                >
-                  PR #{branchReview.review.number} ({branchReview.review.state})
-                </button>
-              ) : (
-                'sem PR aberto ainda'
-              )}
-            </p>
-          )}
-          <input
-            className="int-panel__input"
-            value={prTitle}
-            placeholder="Título do PR"
-            onChange={(e) => setPrTitle(e.target.value)}
-          />
-          <button
-            type="button"
-            className="int-panel__btn int-panel__btn--primary"
-            disabled={busy || !prTitle.trim() || !hasGh}
-            onClick={() => {
-              setBusy(true);
-              void window.nexus.integrations
-                .createPr({ title: prTitle.trim() })
-                .then((r) => {
-                  if (r.ok) {
-                    setNote(`PR #${r.number} criado`);
-                    setPrTitle('');
-                    void window.nexus.app.openExternal(r.url);
-                  } else setNote(r.error);
-                  return refresh();
-                })
-                .finally(() => setBusy(false));
-            }}
-          >
-            Criar PR da branch atual
-          </button>
-          <ul className="int-panel__list">
-            {prs.map((p) => (
-              <li key={p.number}>
-                <button
-                  type="button"
-                  className="int-panel__link"
-                  onClick={() => void window.nexus.app.openExternal(p.url)}
-                >
-                  #{p.number} {p.title}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <div className="int-panel__body">
+          <div className="int-panel__grid">
+            {/* ---- Conexões ---- */}
+            <section className="int-card">
+              <h4 className="int-card__title">Conexões</h4>
 
-        <section className="int-panel__sec">
-          <h4>GitHub Issues</h4>
-          <ul className="int-panel__list">
-            {ghIssues.map((i) => (
-              <li key={i.id}>
-                <button
-                  type="button"
-                  className="int-panel__link"
-                  title={i.url}
-                  onClick={() => {
-                    openAgentic(
-                      `GitHub #${i.number}: ${i.title}\n${i.url}\nLabels: ${i.labels.join(', ') || '—'}`,
-                      'imported-issue',
-                    );
-                    setNote(`Wizard aberto a partir de #${i.number}`);
-                  }}
-                >
-                  #{i.number} {i.title}
-                </button>
-              </li>
-            ))}
-            {hasGh && ghError && (
-              <li className="int-panel__error" role="alert">
-                ⚠ {ghError}
-              </li>
-            )}
-            {hasGh && !ghError && ghIssues.length === 0 && (
-              <li className="int-panel__dim">Nenhuma issue aberta</li>
-            )}
-            {!hasGh && <li className="int-panel__dim">Configure o token GitHub</li>}
-          </ul>
-        </section>
-
-        <section className="int-panel__sec">
-          <h4>Linear</h4>
-          <ul className="int-panel__list">
-            {linIssues.map((i) => (
-              <li key={i.id}>
-                <button
-                  type="button"
-                  className="int-panel__link"
-                  onClick={() => {
-                    openAgentic(
-                      `Linear: ${i.title}\n${i.url}\nEstado: ${i.state}\nLabels: ${i.labels.join(', ') || '—'}`,
-                      'imported-issue',
-                    );
-                    setNote(`Wizard aberto a partir de Linear`);
-                  }}
-                >
-                  {i.title} · {i.state}
-                </button>
-              </li>
-            ))}
-            {hasLin && linError && (
-              <li className="int-panel__error" role="alert">
-                ⚠ {linError}
-              </li>
-            )}
-            {hasLin && !linError && linIssues.length === 0 && (
-              <li className="int-panel__dim">Nenhuma issue aberta</li>
-            )}
-            {!hasLin && <li className="int-panel__dim">Configure a API key Linear</li>}
-          </ul>
-        </section>
-
-        <section className="int-panel__sec">
-          <h4>Port forward → Browser</h4>
-          <div className="int-panel__row">
-            <input
-              className="int-panel__input"
-              value={pfPort}
-              onChange={(e) => setPfPort(e.target.value)}
-              placeholder="porta local (ex 3000)"
-            />
-            <button
-              type="button"
-              className="int-panel__btn"
-              disabled={busy}
-              onClick={() => {
-                const port = Number(pfPort);
-                if (!Number.isFinite(port)) {
-                  setNote('porta inválida');
-                  return;
-                }
-                setBusy(true);
-                void window.nexus.integrations
-                  .startPortForward({
-                    localPort: port,
-                    remoteHost: '127.0.0.1',
-                    remotePort: port,
-                    label: `dev:${port}`,
-                  })
-                  .then((r) => {
-                    if (r.ok) {
-                      setNote(`Forward ${r.info.localUrl}`);
-                      addBrowserPane(r.info.localUrl);
-                      return refresh();
+              <div className="int-conn">
+                <div className="int-conn__head">
+                  <span>GitHub</span>
+                  <StatusChip
+                    on={hasGh}
+                    label={hasGh ? 'conectado' : 'desconectado'}
+                  />
+                </div>
+                {!hasGh && (
+                  <p className="int-panel__dim">
+                    “Entrar com GitHub” nas Configurações conecta sua conta Nexus —
+                    não dá acesso à API. Para PRs e issues, cole um Personal Access
+                    Token (github.com/settings/tokens) ou rode `gh auth login` num
+                    terminal: o Nexus reaproveita a sessão do gh CLI.
+                  </p>
+                )}
+                <div className="int-conn__save">
+                  <input
+                    className="int-panel__input"
+                    type="password"
+                    value={ghToken}
+                    placeholder="ghp_…"
+                    onChange={(e) => setGhToken(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="int-panel__btn int-panel__btn--sm"
+                    disabled={busy || !ghToken.trim()}
+                    onClick={() =>
+                      persistToken(
+                        ghToken,
+                        (v) => window.nexus.integrations.setGithubToken(v),
+                        'GitHub token guardado',
+                        () => setGhToken(''),
+                      )
                     }
-                    setNote(r.error);
-                    return undefined;
-                  })
-                  .finally(() => setBusy(false));
-              }}
-            >
-              Forward + abrir
-            </button>
-          </div>
-          <ul className="int-panel__list">
-            {forwards.map((f) => (
-              <li key={f.id}>
-                {f.localUrl}{' '}
+                  >
+                    Salvar
+                  </button>
+                </div>
+              </div>
+
+              <div className="int-conn">
+                <div className="int-conn__head">
+                  <span>Linear</span>
+                  <StatusChip
+                    on={hasLin}
+                    label={hasLin ? 'conectado' : 'desconectado'}
+                  />
+                </div>
+                <div className="int-conn__save">
+                  <input
+                    className="int-panel__input"
+                    type="password"
+                    value={linKey}
+                    placeholder="lin_api_…"
+                    onChange={(e) => setLinKey(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="int-panel__btn int-panel__btn--sm"
+                    disabled={busy || !linKey.trim()}
+                    onClick={() =>
+                      persistToken(
+                        linKey,
+                        (v) => window.nexus.integrations.setLinearKey(v),
+                        'Linear key guardada',
+                        () => setLinKey(''),
+                      )
+                    }
+                  >
+                    Salvar
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {/* ---- Ações rápidas ---- */}
+            <section className="int-card">
+              <h4 className="int-card__title">Ações rápidas</h4>
+
+              <div className="int-conn">
+                <div className="int-conn__head">
+                  <span>Criar PR</span>
+                </div>
+                {branchReview && (
+                  <p className="int-panel__dim">
+                    Branch <strong>{branchReview.branch}</strong>:{' '}
+                    {branchReview.review ? (
+                      <button
+                        type="button"
+                        className="int-panel__link"
+                        onClick={() =>
+                          void window.nexus.app.openExternal(
+                            branchReview.review!.url,
+                          )
+                        }
+                      >
+                        PR #{branchReview.review.number} ({branchReview.review.state}
+                        )
+                      </button>
+                    ) : (
+                      'sem PR aberto ainda'
+                    )}
+                  </p>
+                )}
+                <input
+                  className="int-panel__input"
+                  value={prTitle}
+                  placeholder="Título do PR"
+                  onChange={(e) => setPrTitle(e.target.value)}
+                />
                 <button
                   type="button"
-                  className="int-panel__link"
+                  className="int-panel__btn int-panel__btn--primary"
+                  disabled={busy || !prTitle.trim() || !hasGh}
                   onClick={() => {
-                    void window.nexus.integrations.closePortForward(f.id).then(refresh);
+                    setBusy(true);
+                    void window.nexus.integrations
+                      .createPr({ title: prTitle.trim() })
+                      .then((r) => {
+                        if (r.ok) {
+                          setNote(`PR #${r.number} criado`);
+                          setPrTitle('');
+                          void window.nexus.app.openExternal(r.url);
+                        } else setNote(r.error);
+                        return refresh();
+                      })
+                      .finally(() => setBusy(false));
                   }}
                 >
-                  fechar
+                  Criar PR da branch atual
                 </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+              </div>
+
+              <div className="int-conn">
+                <div className="int-conn__head">
+                  <span>Port forward → browser</span>
+                </div>
+                <div className="int-panel__row">
+                  <input
+                    className="int-panel__input"
+                    value={pfPort}
+                    onChange={(e) => setPfPort(e.target.value)}
+                    placeholder="porta local (ex 3000)"
+                  />
+                  <button
+                    type="button"
+                    className="int-panel__btn int-panel__btn--sm"
+                    disabled={busy}
+                    onClick={() => {
+                      const port = Number(pfPort);
+                      if (!Number.isFinite(port)) {
+                        setNote('porta inválida');
+                        return;
+                      }
+                      setBusy(true);
+                      void window.nexus.integrations
+                        .startPortForward({
+                          localPort: port,
+                          remoteHost: '127.0.0.1',
+                          remotePort: port,
+                          label: `dev:${port}`,
+                        })
+                        .then((r) => {
+                          if (r.ok) {
+                            setNote(`Forward ${r.info.localUrl}`);
+                            addBrowserPane(r.info.localUrl);
+                            return refresh();
+                          }
+                          setNote(r.error);
+                          return undefined;
+                        })
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    Forward + abrir
+                  </button>
+                </div>
+                {forwards.length > 0 && (
+                  <ul className="int-panel__list">
+                    {forwards.map((f) => (
+                      <li key={f.id}>
+                        {f.localUrl}{' '}
+                        <button
+                          type="button"
+                          className="int-panel__link"
+                          onClick={() => {
+                            void window.nexus.integrations
+                              .closePortForward(f.id)
+                              .then(refresh);
+                          }}
+                        >
+                          fechar
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+          </div>
+
+          {/* ---- Trabalho ---- */}
+          <section className="int-card">
+            <h4 className="int-card__title">Trabalho</h4>
+            <div className="int-tabs" role="tablist" aria-label="Trabalho">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={workTab === 'prs'}
+                className={workTab === 'prs' ? 'int-tab int-tab--active' : 'int-tab'}
+                onClick={() => setWorkTab('prs')}
+              >
+                PRs<span className="int-tab__count">{prs.length}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={workTab === 'github'}
+                className={
+                  workTab === 'github' ? 'int-tab int-tab--active' : 'int-tab'
+                }
+                onClick={() => setWorkTab('github')}
+              >
+                Issues GitHub<span className="int-tab__count">{ghIssues.length}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={workTab === 'linear'}
+                className={
+                  workTab === 'linear' ? 'int-tab int-tab--active' : 'int-tab'
+                }
+                onClick={() => setWorkTab('linear')}
+              >
+                Linear<span className="int-tab__count">{linIssues.length}</span>
+              </button>
+            </div>
+
+            {workTab === 'prs' && (
+              <ul className="int-panel__list" role="tabpanel">
+                {prs.map((p) => (
+                  <li key={p.number}>
+                    <button
+                      type="button"
+                      className="int-panel__link"
+                      onClick={() => void window.nexus.app.openExternal(p.url)}
+                    >
+                      #{p.number} {p.title}
+                    </button>
+                  </li>
+                ))}
+                {hasGh && !ghError && prs.length === 0 && (
+                  <li className="int-panel__dim">Nenhum PR aberto</li>
+                )}
+                {hasGh && ghError && (
+                  <li className="int-panel__error" role="alert">
+                    ⚠ {ghError}
+                  </li>
+                )}
+                {!hasGh && (
+                  <li className="int-panel__dim">Configure o token GitHub</li>
+                )}
+              </ul>
+            )}
+
+            {workTab === 'github' && (
+              <ul className="int-panel__list" role="tabpanel">
+                {ghIssues.map((i) => (
+                  <li key={i.id}>
+                    <button
+                      type="button"
+                      className="int-panel__link"
+                      title={i.url}
+                      onClick={() => {
+                        openAgentic(
+                          `GitHub #${i.number}: ${i.title}\n${i.url}\nLabels: ${i.labels.join(', ') || '—'}`,
+                          'imported-issue',
+                        );
+                        setNote(`Wizard aberto a partir de #${i.number}`);
+                      }}
+                    >
+                      #{i.number} {i.title}
+                    </button>
+                  </li>
+                ))}
+                {hasGh && ghError && (
+                  <li className="int-panel__error" role="alert">
+                    ⚠ {ghError}
+                  </li>
+                )}
+                {hasGh && !ghError && ghIssues.length === 0 && (
+                  <li className="int-panel__dim">Nenhuma issue aberta</li>
+                )}
+                {!hasGh && (
+                  <li className="int-panel__dim">Configure o token GitHub</li>
+                )}
+              </ul>
+            )}
+
+            {workTab === 'linear' && (
+              <ul className="int-panel__list" role="tabpanel">
+                {linIssues.map((i) => (
+                  <li key={i.id}>
+                    <button
+                      type="button"
+                      className="int-panel__link"
+                      onClick={() => {
+                        openAgentic(
+                          `Linear: ${i.title}\n${i.url}\nEstado: ${i.state}\nLabels: ${i.labels.join(', ') || '—'}`,
+                          'imported-issue',
+                        );
+                        setNote(`Wizard aberto a partir de Linear`);
+                      }}
+                    >
+                      {i.title} · {i.state}
+                    </button>
+                  </li>
+                ))}
+                {hasLin && linError && (
+                  <li className="int-panel__error" role="alert">
+                    ⚠ {linError}
+                  </li>
+                )}
+                {hasLin && !linError && linIssues.length === 0 && (
+                  <li className="int-panel__dim">Nenhuma issue aberta</li>
+                )}
+                {!hasLin && (
+                  <li className="int-panel__dim">Configure a API key Linear</li>
+                )}
+              </ul>
+            )}
+          </section>
+        </div>
 
         {note && <p className="int-panel__note">{note}</p>}
       </div>
