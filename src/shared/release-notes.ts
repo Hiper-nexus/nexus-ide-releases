@@ -13,37 +13,42 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.7',
-  date: '2026-07-16',
-  codename: 'Chaves Herdadas',
+  version: '0.19.12',
+  date: '2026-07-17',
+  codename: 'Instala de Verdade',
   summary:
-    'O oh-my-pi nasce funcionando: as API keys que você já guardou no Nexus (GLM, Kimi/Moonshot, DeepSeek, OpenRouter…) são herdadas automaticamente pela sessão do omp — zero login extra para esses providers. Assinaturas (Claude Max, plano Codex) seguem pelo /login do próprio omp: um clique de autorização, por design dos providers.',
+    'Máquina nova fica operacional de verdade: o instalador 1-clique de CLIs cai automaticamente para canais oficiais alternativos quando falta Node ou Homebrew (omp ganhou o instalador oficial omp.sh), e acha o brew/npm mesmo quando o app foi aberto pelo Finder com PATH incompleto. Sem canal utilizável, o resumo diz exatamente o que instalar em vez de falhar em silêncio.',
   highlights: [
     {
-      title: 'omp com suas chaves, sem login',
+      title: 'Instalador de CLIs com cascata de canais',
       detail:
-        'Salvou a key do GLM ou do Kimi no Nexus? A sessão do omp já abre com esses providers ativos — as chaves viajam do vault direto para o processo, com os nomes de env que o omp reconhece.',
+        'Claude cai para o instalador nativo da Anthropic, Codex para o brew, omp para o instalador oficial do projeto — cada CLI tenta os canais oficiais na ordem até um funcionar nesta máquina.',
+    },
+    {
+      title: 'Brew e npm encontrados fora do PATH do app',
+      detail:
+        'App GUI nem sempre herda o PATH do terminal; a instalação agora procura nos diretórios padrão (/opt/homebrew/bin, /usr/local/bin, ~/.local/bin) e executa pelo caminho absoluto.',
     },
   ],
   fixes: [],
 };
 
 export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.6',
-  date: '2026-07-16',
-  codename: 'Pet Obediente',
+  version: '0.19.11',
+  date: '2026-07-17',
+  codename: 'Rota Livre',
   summary:
-    'O pet de desktop deixa de grudar no mouse quando o botão é solto fora da janelinha (fim do arrasto instantâneo via lostpointercapture) e deixa de sumir quando o app entra em fullscreen — o pin de Spaces é re-afirmado e ele volta para a área visível.',
+    'Fim dos becos sem saída de missão: pane que morre 3 vezes seguidas vira estado terminal com causa acionável em vez de churnar para sempre, e drift de contexto pós-freeze ganhou rota de recuperação com a tool de refreeze do contrato — preservando objetivo e critérios.',
   highlights: [
     {
-      title: 'Arrasto do pet confiável',
+      title: 'Fim do loop de respawn',
       detail:
-        'Soltar o mouse em qualquer lugar encerra o arrasto na hora; o watchdog de emergência caiu de 30s para 10s.',
+        'Após 3 respawns consecutivos sem progresso a missão para com diagnóstico claro (verifique login/credencial do adapter e use Retomar no rail).',
     },
     {
-      title: 'Pet presente no fullscreen',
+      title: 'Refreeze de contrato após drift',
       detail:
-        'Entrar/sair do fullscreen nativo re-fixa o pet em todos os Spaces e o reclampa para dentro da tela.',
+        'Mudou o contexto depois do freeze? nexus_mission_refreeze_contract recongela na mesma missão, com piso de risco e ledger auditável.',
     },
   ],
   fixes: [],
