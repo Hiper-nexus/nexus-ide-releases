@@ -234,12 +234,14 @@ describe('mission intent gate', () => {
     ).toBe(false);
   });
 
-  it('denies when step budget is exhausted', () => {
+  it('ledger esgotado não bloqueia tools — steps/tokens são telemetria', () => {
+    // Caso de campo 17/07: o teto sintético travava missão real no bootstrap.
     const exhausted: Mission = {
       ...dispatched,
       intentContract: {
         ...dispatched.intentContract!,
         spentSteps: 200,
+        spentTokens: 999_999,
         budgets: {
           ...dispatched.intentContract!.budgets,
           maxSteps: 200,
@@ -249,8 +251,7 @@ describe('mission intent gate', () => {
     const result = assertMissionIntentAllowsTool('nexus_file_write', {
       mission: exhausted,
     });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe('budget_exhausted');
+    expect(result.ok).toBe(true);
   });
 
   it('denies execution when dispatched state has no approval', () => {

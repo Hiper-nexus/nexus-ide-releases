@@ -345,16 +345,21 @@ describe('budget and parent/child ceilings', () => {
     expect(c.dispatchedAt).toBeDefined();
   });
 
-  it('denies when maxSteps spent', () => {
+  it('steps/tokens são ledger, nunca teto — missão esgotada não bloqueia', () => {
     const base = compileIntentContract({ goal: 'x', intentVersion: 1 });
-    const spent = {
+    // Caso de campo 17/07: contrato "sensível" com 12k tokens sintéticos
+    // esgotados no bootstrap travava a missão inteira.
+    const exhausted = {
       ...base,
-      spentSteps: base.budgets.maxSteps,
+      budgets: { ...base.budgets, executionTokens: 150, maxSteps: 1 },
+      spentSteps: 999,
+      spentTokens: 999_999,
     };
-    expect(assertStepAndTokenBudget(spent).ok).toBe(false);
+    expect(assertStepAndTokenBudget(exhausted).ok).toBe(true);
+    expect(assertStepAndTokenBudget(null).ok).toBe(true);
   });
 
-  it('tracks spentTokens and denies when executionTokens ceiling hit', () => {
+  it('ledger continua contando spend por tool com efeito', () => {
     const base = compileIntentContract({ goal: 'x', intentVersion: 1 });
     expect(estimateEffectfulToolTokens('nexus_file_write')).toBeGreaterThan(0);
     const contract = applyEffectfulSpend(
@@ -368,34 +373,22 @@ describe('budget and parent/child ceilings', () => {
     );
     expect(contract.spentSteps).toBe(1);
     expect(contract.spentTokens).toBeGreaterThan(0);
-    // Force near ceiling then next spend should fail budget check.
-    const nearCap = {
-      ...contract,
-      spentTokens: 150,
-    };
-    expect(assertStepAndTokenBudget(nearCap).ok).toBe(false);
   });
 
-  it('refuses a reservation that would cross the step or token ceiling', () => {
+  it('reserva registra o gasto e nunca nega, mesmo além do teto antigo', () => {
     const base = compileIntentContract({ goal: 'x', intentVersion: 1 });
-    const atLastStep = {
+    const beyondOldCaps = {
       ...base,
-      budgets: { ...base.budgets, maxSteps: 1 },
-      spentSteps: 1,
+      budgets: { ...base.budgets, executionTokens: 150, maxSteps: 1 },
+      spentSteps: 50,
+      spentTokens: 150,
     };
-    expect(reserveEffectfulSpend(atLastStep, 'nexus_file_write')).toMatchObject({
-      ok: false,
-      code: 'budget_exhausted',
-    });
-
-    const nearTokenCap = {
-      ...base,
-      budgets: { ...base.budgets, executionTokens: 150 },
-      spentTokens: 100,
-    };
-    expect(
-      reserveEffectfulSpend(nearTokenCap, 'nexus_file_write'),
-    ).toMatchObject({ ok: false, code: 'budget_exhausted' });
+    const reserved = reserveEffectfulSpend(beyondOldCaps, 'nexus_file_write');
+    expect(reserved.ok).toBe(true);
+    if (reserved.ok) {
+      expect(reserved.contract.spentSteps).toBe(51);
+      expect(reserved.contract.spentTokens).toBeGreaterThan(150);
+    }
   });
 
   it('denies second worker at maxWorkers and strips denied tools on spawn policy', () => {

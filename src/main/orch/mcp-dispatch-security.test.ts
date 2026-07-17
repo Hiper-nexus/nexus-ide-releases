@@ -616,10 +616,14 @@ describe('MCP dispatch effect safety', () => {
     const options: McpDispatchOptions = {
       ...workflowOptions(),
       resolveMissionForIntentGate: () => state,
+      // O teto sintético de steps/tokens saiu do gate de intent (ledger é
+      // telemetria); a serialização de reservas continua sendo do dispatch —
+      // este dep injetado simula QUALQUER reserva que falhe na 2ª chamada
+      // concorrente (ex.: approval_required por mudança de contrato).
       reserveMissionBudget: () => {
         const contract = state.mission.intentContract!;
         if ((contract.spentSteps ?? 0) >= (contract.budgets.maxSteps ?? 500)) {
-          throw new Error('budget_exhausted');
+          throw new Error('budget_exhausted: maxSteps reached');
         }
         state = {
           ...state,
