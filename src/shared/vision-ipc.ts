@@ -73,6 +73,8 @@ export const VISION_CHANNELS = {
   captured: 'vision:captured',
   /** invoke: renderer → main. Checa status da permissão de Screen Recording. */
   permission: 'vision:permission',
+  /** invoke: renderer → main. Abre o painel de Gravação de Tela do SO. */
+  openScreenSettings: 'vision:openScreenSettings',
 } as const;
 
 /** Nó da accessibility tree extraído do DOM. */
@@ -266,6 +268,8 @@ export interface VisionApi {
   ocr(imageBase64: string): Promise<OcrResult>;
   /** Checa status da permissão de Screen Recording. */
   checkPermission(): Promise<ScreenPermissionStatus>;
+  /** Abre o painel de Gravação de Tela dos Ajustes do Sistema (macOS). */
+  openScreenSettings(): Promise<{ ok: boolean; error?: string }>;
   /** Escuta evento de captura concluída. */
   onCaptured(cb: (result: ScreenCaptureMetadata) => void): () => void;
 }

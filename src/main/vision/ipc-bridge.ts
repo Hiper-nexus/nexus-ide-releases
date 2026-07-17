@@ -434,6 +434,23 @@ export function registerVisionIpc(overrides: Partial<VisionIpcDeps> = {}): void 
     assertAuthority(authority);
     return status;
   });
+
+  ipcMain.handle(VISION_CHANNELS.openScreenSettings, async (event) => {
+    requireAuthority(event);
+    if (process.platform !== 'darwin') {
+      return {
+        ok: false,
+        error: 'painel de Gravação de Tela é específico do macOS',
+      };
+    }
+    // Deep link FIXO (nenhum input do renderer) para o painel exato onde o
+    // usuário habilita o NexusIDE — evita a caça manual nos Ajustes.
+    const { shell } = await import('electron');
+    await shell.openExternal(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+    );
+    return { ok: true };
+  });
 }
 
 export function getLastCaptureMetadata(
