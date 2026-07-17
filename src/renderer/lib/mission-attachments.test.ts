@@ -2,12 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   buildMissionAttachmentsContext,
   classifyMissionAttachment,
+  filesFromClipboardData,
+  namePastedMissionFile,
   validateMissionAttachment,
   type MissionAttachment,
 } from './mission-attachments';
 
 function file(name: string, type: string, size = 1000) {
   return { name, type, size };
+}
+
+function realFile(name: string, type: string, body = 'png-bytes'): File {
+  return new File([body], name, { type });
 }
 
 const attachment: MissionAttachment = {
@@ -35,5 +41,49 @@ describe('mission attachments', () => {
   it('builds a bounded context block for the mission agents', () => {
     expect(buildMissionAttachmentsContext([attachment])).toContain('erro.png');
     expect(buildMissionAttachmentsContext([])).toBe('');
+  });
+
+  it('extracts screenshot pastes and ignores text-only clipboard', () => {
+    const shot = realFile('image.png', 'image/png');
+    const files = filesFromClipboardData({
+      items: [
+        {
+          kind: 'file',
+          type: 'image/png',
+          getAsFile: () => shot,
+        },
+        {
+          kind: 'string',
+          type: 'text/plain',
+          getAsFile: () => null,
+        },
+      ],
+    });
+    expect(files).toHaveLength(1);
+    expect(files[0]?.name).toMatch(/^print-.*\.png$/);
+    expect(filesFromClipboardData({ items: [] })).toEqual([]);
+    expect(
+      filesFromClipboardData({
+        items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }],
+      }),
+    ).toEqual([]);
+  });
+
+  it('renames generic clipboard dumps but keeps real filenames', () => {
+    const generic = namePastedMissionFile(realFile('image.png', 'image/png'), 'image');
+    expect(generic.name).toMatch(/^print-.*\.png$/);
+    const blank = namePastedMissionFile(realFile('', 'image/png'), 'image');
+    expect(blank.name).toMatch(/^print-.*\.png$/);
+    const kept = namePastedMissionFile(realFile('stack-trace.png', 'image/png'), 'image');
+    expect(kept.name).toBe('stack-trace.png');
+  });
+
+  it('dedupes the same clipboard file exposed via items and files', () => {
+    const shot = realFile('image.png', 'image/png');
+    const files = filesFromClipboardData({
+      items: [{ kind: 'file', type: 'image/png', getAsFile: () => shot }],
+      files: [shot],
+    });
+    expect(files).toHaveLength(1);
   });
 });
