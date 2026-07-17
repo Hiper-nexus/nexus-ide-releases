@@ -184,6 +184,7 @@ export function loadDriveState(
     : null;
   const iteration = runtime?.attemptCount ?? 0;
   const lastActionAt = runtime?.lastAttemptAt;
+  const lastActionKind = runtime?.lastActionKind;
   let startedAt = runtime?.runStartedAt ?? driveStartedAtMemory.get(key);
   if (startedAt === undefined) {
     startedAt = Date.now();
@@ -248,6 +249,9 @@ export function loadDriveState(
       contextRot,
       completionVerified,
       ...(lastActionAt !== undefined ? { lastActionAt } : {}),
+      ...(lastActionKind !== undefined && lastActionKind !== null
+        ? { lastActionKind }
+        : {}),
     },
   });
 }

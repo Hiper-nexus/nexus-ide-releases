@@ -731,6 +731,29 @@ const freezeTool: McpToolDef = {
   },
 };
 
+const refreezeTool: McpToolDef = {
+  name: 'nexus_mission_refreeze_contract',
+  description:
+    'Re-freeze the mission contract after CONTEXT DRIFT (context revision changed post-freeze). Preserves goal/criteria/scope; rebinds to the current context and Git base; the workflow restarts at the route start so pending evidence is revalidated. Only valid when drift actually happened.',
+  inputSchema: {
+    type: 'object',
+    properties: { missionId: { type: 'string' } },
+    required: ['missionId'],
+  },
+  handler: async (args, ctx) => {
+    if (ctx.role === 'worker') {
+      throw new Error('only an orchestrator can refreeze a contract');
+    }
+    const parsed = z.object({ missionId: z.string().min(1) }).parse(args);
+    assertMission(ctx, parsed.missionId);
+    const service = getContextWorkflowService(ctx.scope);
+    const frozen = service.refreezeContract(parsed.missionId, missionIdentity(ctx));
+    bindContextRevision(ctx, frozen.contract.contextRevision);
+    const autopilot = await drivePrevcAutopilot(ctx, parsed.missionId, false);
+    return { ...service.getMissionWorkflow(parsed.missionId), autopilot };
+  },
+};
+
 const statusTool: McpToolDef = {
   name: 'nexus_workflow_get',
   description: 'Read the frozen mission contract and current computed PREVC stage.',
@@ -1193,6 +1216,7 @@ export function buildContextTools(): McpToolDef[] {
     contextDraftReviewRunTool,
     contextCommitTool,
     freezeTool,
+    refreezeTool,
     statusTool,
     reviewTool,
     sensorTool,

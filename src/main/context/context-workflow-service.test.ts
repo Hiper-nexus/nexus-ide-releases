@@ -655,4 +655,81 @@ describe('native context workflow service', () => {
       .toMatchObject({ fromStage: 'confirmation', toStage: 'complete' });
     expect(service.isMissionDriverComplete('mission-a', stepIds)).toBe(true);
   });
+
+  it('refreezeContract cura drift de contexto preservando goal e resetando a rota', () => {
+    // Beco crítico da auditoria 17/07: contexto derivar após o freeze matava
+    // a missão permanentemente (sem unfreeze). refreeze re-vincula o MESMO
+    // contrato ao contexto/base atuais e o workflow recomeça na rota.
+    const { root, scope, service } = fixture();
+    const author = {
+      id: 'author-a',
+      sessionId: 'author-session',
+      provider: 'codex' as const,
+    };
+    const frozen = service.freezeContract(
+      {
+        missionId: 'mission-a',
+        goal: 'Small isolated behavior change',
+        acceptanceCriteria: [{
+          id: 'works', statement: 'Behavior remains correct',
+          requiredSensorIds: [], invariantRefs: [], requiredArtifactIds: [],
+        }],
+      },
+      author,
+    );
+
+    // Sem drift, refreeze é recusado — não é atalho para reescrever missão.
+    expect(() => service.refreezeContract('mission-a', author)).toThrow(
+      /has not drifted/,
+    );
+
+    // Drift real: doc muda, re-attesta (substituindo a attestation antiga —
+    // duas ativas para o mesmo alvo é blocking) e commita → contextRevision novo.
+    fs.writeFileSync(
+      path.join(root, '.context/docs/architecture.md'),
+      '# architecture\nSegunda revisão da arquitetura.\n',
+    );
+    const attestationsDir = path.join(root, '.context/nexus/attestations');
+    for (const entry of fs.readdirSync(attestationsDir)) {
+      const file = path.join(attestationsDir, entry);
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+        targetPath?: string;
+      };
+      if (parsed.targetPath === '.context/docs/architecture.md') fs.rmSync(file);
+    }
+    writeContextAttestation(scope, createContextAttestation(scope, {
+      targetPath: '.context/docs/architecture.md',
+      targetHash: hashFile(root, '.context/docs/architecture.md'),
+      sources: [{
+        type: 'file',
+        locator: 'package.json',
+        sourceHash: hashFile(root, 'package.json'),
+      }],
+      author: { id: 'context-author', sessionId: 'author:drift', provider: 'codex' },
+      reviewer: { id: 'context-reviewer', sessionId: 'reviewer:drift', provider: 'claude' },
+      reviewedAt: '2026-07-11T12:00:00.000Z',
+      nexusVersion: 'test',
+    }));
+    git(root, 'add', '.context');
+    git(root, 'commit', '-qm', 'context drift');
+
+    const refrozen = service.refreezeContract('mission-a', author);
+    expect(refrozen.contract.contextRevision).not.toBe(
+      frozen.contract.contextRevision,
+    );
+    expect(refrozen.contract.goal).toBe(frozen.contract.goal);
+    expect(refrozen.contract.risk).toBe(frozen.contract.risk);
+    expect(refrozen.contract.contractHash).not.toBe(frozen.contract.contractHash);
+
+    const current = service.getMissionWorkflow('mission-a');
+    expect(current.contract?.contract.contextRevision).toBe(
+      refrozen.contract.contextRevision,
+    );
+    expect(current.workflow?.binding.contractHash).toBe(
+      refrozen.contract.contractHash,
+    );
+    // Revision é estrutural (estágios completados + 1): rota recomeçada = 1.
+    expect(current.workflow?.revision).toBe(1);
+    expect(current.workflow?.completedStages).toEqual([]);
+  });
 });

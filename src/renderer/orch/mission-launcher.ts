@@ -208,7 +208,10 @@ export function buildMissionKickoffPrompt(
       "é bloqueio explícito.\n" +
       "2. **nexus_mission_freeze_contract** com objetivo + critérios. Domínios/símbolos " +
       "vazios são preenchidos pelo motor via blast radius do mapa. O piloto PREVC " +
-      "avança planning/reviews até execution — use nexus_workflow_get, não simule gates.\n" +
+      "avança planning/reviews até execution — use nexus_workflow_get, não simule gates. " +
+      "Se qualquer tool reportar `context drifted after freeze`, chame " +
+      "**nexus_mission_refreeze_contract** (preserva goal/critérios, re-vincula ao " +
+      "contexto atual e o workflow revalida a evidência) e continue — drift não é morte.\n" +
       "3. Registre TODAS as tarefas com nexus_task create (plano sela no 1º worktree). " +
       "Para cada tarefa: **nexus_worktree_create** (ownership é expandido automaticamente " +
       "com imports vizinhos), **nexus_route_task**, **nexus_pane_spawn** com adapter/model/effort " +
