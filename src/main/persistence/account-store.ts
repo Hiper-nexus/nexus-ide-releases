@@ -919,6 +919,41 @@ function upsertCooldownBlock(
 }
 
 /**
+ * Limpa o cooldown GLOBAL de uma conta refutado por evidência (leitura
+ * provider-api fresca e saudável) — resíduo da cascata de limite fantasma.
+ * Blocos escopados (tier:*) ficam: refutação account-wide não desprova um
+ * limite por tier.
+ */
+export function clearCooldown(id: string, note: string): void {
+  const account = accounts.get(id);
+  if (!account) return;
+  const now = Date.now();
+  const globalBlock = cooldownBlocks.get(id)?.get(GLOBAL_SCOPE);
+  const hasLegacyCooldown =
+    account.cooldownUntil !== undefined && account.cooldownUntil > now;
+  const hasActiveBlock =
+    globalBlock !== undefined && globalBlock.blockedUntil > now;
+  if (!hasLegacyCooldown && !hasActiveBlock) return;
+  const nextAccounts = new Map(accounts);
+  nextAccounts.set(id, {
+    ...account,
+    cooldownUntil: undefined,
+    lastError: note,
+  });
+  persistSnapshot(nextAccounts, activeByAdapter, 'cooldown-cleared');
+  if (globalBlock) {
+    // Expira o bloco espelhado em vez de deletar: histórico de reason fica.
+    upsertCooldownBlock(id, GLOBAL_SCOPE, {
+      ...globalBlock,
+      blockedUntil: now,
+      reason: note,
+    });
+  }
+  replaceMap(accounts, nextAccounts);
+  emit();
+}
+
+/**
  * Coloca a conta em cooldown. Sem `scope`: bloco GLOBAL — comportamento
  * legado intacto (cooldownUntil/lastError na linha da conta, last-write-wins)
  * + bloco espelhado com probeAfter. Com `scope` (ex.: 'tier:opus'): a conta

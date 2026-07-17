@@ -51,6 +51,29 @@ const RATE_WINDOW_KINDS: ReadonlySet<QuotaWindowKind> = new Set([
   'session',
 ]);
 
+/**
+ * Refuta um COOLDOWN já persistido (pós-hoc, sem saber o kind do hit que o
+ * criou): leitura provider-api fresca em que TODA janela com ratio conhecido
+ * está claramente saudável. Cobre o resíduo da cascata fantasma — cooldowns
+ * gravados antes do fix ficavam pendurados por horas ("5 Horas 100% ·
+ * 10h16m") mesmo com a conta comprovadamente ok. Conservador: sem leitura
+ * fresca, ou com qualquer janela ≥ REFUTE_HEALTHY_RATIO, o cooldown fica.
+ */
+export function providerApiRefutesCooldown(
+  windows: ReadonlyArray<{ source: string; usedRatio: number | null }>,
+  readAt: number,
+  now: number,
+): boolean {
+  if (!Number.isFinite(readAt) || now - readAt > REFUTE_FRESH_MS) return false;
+  let sawRatio = false;
+  for (const window of windows) {
+    if (window.source !== 'provider-api' || window.usedRatio === null) continue;
+    if (window.usedRatio >= REFUTE_HEALTHY_RATIO) return false;
+    sawRatio = true;
+  }
+  return sawRatio;
+}
+
 export function providerApiRefutesLimit(
   entry: ProviderQuotaEntry | undefined,
   hit: Pick<LimitHit, 'kind' | 'scope'>,

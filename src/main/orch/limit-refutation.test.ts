@@ -3,7 +3,11 @@ import type {
   ProviderQuotaEntry,
   QuotaWindow,
 } from '../../shared/quota-types';
-import { providerApiRefutesLimit, REFUTE_FRESH_MS } from './limit-refutation';
+import {
+  providerApiRefutesCooldown,
+  providerApiRefutesLimit,
+  REFUTE_FRESH_MS,
+} from './limit-refutation';
 
 const NOW = 1_000_000_000;
 
@@ -106,5 +110,42 @@ describe('providerApiRefutesLimit', () => {
 
   it('returns false for an unknown (missing) entry', () => {
     expect(providerApiRefutesLimit(undefined, { kind: 'quota' }, NOW)).toBe(false);
+  });
+});
+
+describe('providerApiRefutesCooldown', () => {
+  it('refuta cooldown persistido quando toda leitura provider-api está saudável', () => {
+    // Resíduo da cascata fantasma: conta em cooldown 10h+ com cota sobrando.
+    const windows = [
+      win({ kind: 'hours', usedRatio: 0.12 }),
+      win({ kind: 'weekly', label: 'Semanal', usedRatio: 0.3 }),
+    ];
+    expect(providerApiRefutesCooldown(windows, NOW - 1000, NOW)).toBe(true);
+  });
+
+  it('NÃO refuta quando alguma janela está perto do teto', () => {
+    const windows = [
+      win({ kind: 'hours', usedRatio: 0.12 }),
+      win({ kind: 'weekly', label: 'Semanal', usedRatio: 0.92 }),
+    ];
+    expect(providerApiRefutesCooldown(windows, NOW - 1000, NOW)).toBe(false);
+  });
+
+  it('NÃO refuta com leitura velha demais', () => {
+    const windows = [win({ usedRatio: 0.1 })];
+    expect(
+      providerApiRefutesCooldown(windows, NOW - REFUTE_FRESH_MS - 1, NOW),
+    ).toBe(false);
+  });
+
+  it('NÃO refuta sem nenhum ratio provider-api conhecido', () => {
+    expect(providerApiRefutesCooldown([], NOW, NOW)).toBe(false);
+    expect(
+      providerApiRefutesCooldown(
+        [win({ source: 'limit-hit', usedRatio: 1 })],
+        NOW,
+        NOW,
+      ),
+    ).toBe(false);
   });
 });

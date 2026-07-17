@@ -172,7 +172,7 @@ import {
   shutdownQuotaService,
 } from "./quota/quota-service";
 import { listProviderSettings } from "./persistence/provider-config-store";
-import { listAccountInfos } from "./persistence/account-store";
+import { clearCooldown, listAccountInfos } from "./persistence/account-store";
 import {
   resolveClaudeToken,
   resolveCodexAuthCandidates,
@@ -465,6 +465,10 @@ function bootstrap(): void {
   initQuotaService({
     listProviders: () => listProviderSettings(),
     listAccounts: () => listAccountInfos(),
+    // Leitura provider-api fresca e saudável refuta cooldown persistido
+    // (resíduo da cascata de limite fantasma) — a conta volta ao pool.
+    clearRefutedCooldown: (accountId) =>
+      clearCooldown(accountId, 'cooldown refutado por leitura provider-api saudável'),
     // Multi-candidate probes (vault → launcher → env → system CLI).
     // Never invents ratios; tries every credential until one yields %.
     resolveClaudeAccessToken: (accountId) => resolveClaudeToken(accountId),
