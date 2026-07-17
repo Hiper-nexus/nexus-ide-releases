@@ -63,6 +63,25 @@ describe('gamification-store on project runtime SQLite', () => {
     ]);
   });
 
+  it('accepts agent_turn events (everyday libre XP path)', () => {
+    const db = manager().open(testProjectScope()).db;
+    initGamificationStore(db);
+    expect(
+      insertXpEvent(
+        db,
+        {
+          kind: 'agent_turn',
+          entityKey: 'agent_turn:claude:1',
+          createdAt: 1,
+        },
+        300,
+      ),
+    ).toBe(true);
+    expect(listXpEvents(db)[0]).toEqual(
+      expect.objectContaining({ kind: 'agent_turn', points: 300 }),
+    );
+  });
+
   it('counts only same live day and effort bucket', () => {
     const db = manager().open(testProjectScope()).db;
     insertXpEvent(db, ev({ entityKey: 'handoff:a', createdAt: 100 }), 1);

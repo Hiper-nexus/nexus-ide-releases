@@ -406,11 +406,13 @@ describe('ProjectGamificationService on scoped runtimes', () => {
     suite.tasks.update(task.id, { status: 'done' });
     service.recordMediaGenerated(executionScope, 'image', null);
     service.recordJarvisAction(executionScope, 'open_terminal', true);
+    service.recordAgentTurn(executionScope, 'claude');
 
     const snapshot = service.snapshot(executionScope);
     expect(snapshot).toEqual(
       expect.objectContaining({
-        powerLevel: 15_500,
+        // 15_500 previous + 300 agent_turn
+        powerLevel: 15_800,
         tier: 'RECRUTA',
         tierFloor: 'RECRUTA',
         nextTierAt: 100_000,
@@ -426,6 +428,10 @@ describe('ProjectGamificationService on scoped runtimes', () => {
     );
     expect(snapshot.counters.deliveries_reviewer).toBe(1);
     expect(snapshot.counters.media_image).toBe(1);
+    expect(snapshot.counters.agent_turn).toBe(1);
+    expect(snapshot.recent?.[0]).toEqual(
+      expect.objectContaining({ kind: 'agent_turn', points: 300 }),
+    );
     expect(snapshot.achievements).toEqual(
       expect.arrayContaining(['primeira-imagem', 'primeiro-comando']),
     );

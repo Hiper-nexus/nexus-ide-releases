@@ -11,7 +11,7 @@ import { useWorkspaceStore } from './workspace-store';
  */
 
 interface GamificationApi {
-  snapshot(): Promise<GamificationSnapshot>;
+  snapshot(options?: { rescan?: boolean }): Promise<GamificationSnapshot>;
   onChanged(cb: (snapshot: GamificationSnapshot) => void): () => void;
 }
 
@@ -34,8 +34,22 @@ export const EMPTY_GAMIFICATION_SNAPSHOT: GamificationSnapshot = {
   skins: [],
   selectedSkin: null,
   counters: {},
+  recent: [],
   ruleVersion: 1,
 };
+
+/** Path compare resiliente a trailing slash (macOS / worktrees). */
+export function sameWorkspaceRoot(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  if (!left || !right) return false;
+  const norm = (value: string) => {
+    const trimmed = value.replace(/\/+$/, '');
+    return trimmed.length > 0 ? trimmed : '/';
+  };
+  return norm(left) === norm(right);
+}
 
 interface GamificationStore {
   snapshot: GamificationSnapshot;
@@ -60,7 +74,8 @@ export const useGamificationStore = create<GamificationStore>((set) => ({
     const requestedWorkspace = getActiveWorkspacePath();
     if (!api || !requestedWorkspace) return;
     try {
-      const snapshot = await api.snapshot();
+      // rescan: true — reconcilia domínio ao abrir perfil / trocar workspace.
+      const snapshot = await api.snapshot({ rescan: true });
       if (getActiveWorkspacePath() === requestedWorkspace) {
         useGamificationStore.getState().receive(snapshot);
       }
@@ -77,13 +92,15 @@ export const useGamificationStore = create<GamificationStore>((set) => ({
 
   receive: (snapshot) => {
     const activeWorkspace = getActiveWorkspacePath();
-    if (
-      !activeWorkspace ||
-      snapshot.rootRealPath !== activeWorkspace
-    ) {
-      return;
-    }
-    set({ snapshot });
+    if (!activeWorkspace || !snapshot.rootRealPath) return;
+    if (!sameWorkspaceRoot(snapshot.rootRealPath, activeWorkspace)) return;
+    // Defensive: older main builds may omit `recent`.
+    set({
+      snapshot: {
+        ...snapshot,
+        recent: Array.isArray(snapshot.recent) ? snapshot.recent : [],
+      },
+    });
   },
   reset: () =>
     set({
@@ -91,9 +108,17 @@ export const useGamificationStore = create<GamificationStore>((set) => ({
       profileOpen: false,
     }),
   setSober: (sober) => set({ sober }),
-  openProfile: () => set({ profileOpen: true }),
+  openProfile: () => {
+    set({ profileOpen: true });
+    // Sempre puxa o read-model fresco (rescan no main) ao abrir o perfil.
+    void useGamificationStore.getState().hydrate();
+  },
   closeProfile: () => set({ profileOpen: false }),
-  toggleProfile: () => set((s) => ({ profileOpen: !s.profileOpen })),
+  toggleProfile: () => {
+    const next = !useGamificationStore.getState().profileOpen;
+    set({ profileOpen: next });
+    if (next) void useGamificationStore.getState().hydrate();
+  },
 }));
 
 /** Montar uma vez no App (junto do useUsageSync) — hydrate + subscribe. */

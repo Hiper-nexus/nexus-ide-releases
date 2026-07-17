@@ -50,6 +50,13 @@ export interface StoredXpEvent extends XpEventInput {
   ruleVersion: number;
 }
 
+/** Últimas batidas de XP para o feed do perfil (endorfina legível). */
+export interface GamificationRecentEvent {
+  kind: XpEventKind;
+  points: number;
+  createdAt: number;
+}
+
 export interface GamificationSnapshot {
   /** Present on main-process snapshots; omitted only by renderer empty state. */
   readonly projectId?: string;
@@ -69,6 +76,8 @@ export interface GamificationSnapshot {
   skins: string[];
   selectedSkin: string | null;
   counters: Record<string, number>;
+  /** Mais recentes primeiro; vazio no empty state do renderer. */
+  recent: GamificationRecentEvent[];
   ruleVersion: number;
 }
 

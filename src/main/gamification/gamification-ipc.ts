@@ -53,13 +53,23 @@ function isRendererStillScoped(
   );
 }
 
+const snapshotOptionsSchema = z
+  .object({
+    rescan: z.boolean().optional(),
+  })
+  .strict()
+  .optional();
+
 /** Every handler derives storage exclusively from its main-owned sender scope. */
 export function registerGamificationIpc(
   service: ProjectGamificationService,
 ): void {
-  ipcMain.handle(GAMIFICATION_CHANNELS.snapshot, (event) => {
+  ipcMain.handle(GAMIFICATION_CHANNELS.snapshot, (event, raw) => {
     const scope = requireRendererWorkspaceScope(event.sender);
-    return service.snapshot(scope);
+    const parsed = snapshotOptionsSchema.safeParse(raw);
+    return service.snapshot(scope, {
+      rescan: parsed.success ? parsed.data?.rescan === true : false,
+    });
   });
 
   ipcMain.handle(GAMIFICATION_CHANNELS.selectSkin, (event, raw) => {

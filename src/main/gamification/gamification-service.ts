@@ -86,7 +86,12 @@ interface ScopeState {
   activated: boolean;
   schemaVerified: boolean;
   changedTimer: ReturnType<typeof setTimeout> | null;
+  /** Throttle de rescan no read-model (snapshot IPC). */
+  lastRescanAt: number;
 }
+
+/** Evita rescan+write a cada hydrate em rajada (workspace switch + open profile). */
+const SNAPSHOT_RESCAN_MIN_MS = 3_000;
 
 interface ScanResult {
   insertedAny: boolean;
@@ -155,8 +160,21 @@ export class ProjectGamificationService {
     );
   }
 
-  snapshot(scope: ProjectExecutionScope): ScopedGamificationSnapshot {
+  /**
+   * Read-model do perfil. Por padrão é só leitura.
+   * `rescan: true` (hydrate/perfil) re-escaneia domínio com throttle e só em
+   * runtime read-write — nunca em respostas de validação IPC inválida.
+   */
+  snapshot(
+    scope: ProjectExecutionScope,
+    options: { rescan?: boolean } = {},
+  ): ScopedGamificationSnapshot {
+    const state = this.#state(scope);
+    const wasActive = state.activated;
     this.#activateScope(scope);
+    if (options.rescan === true && wasActive) {
+      this.#maybeRescanLive(scope);
+    }
     const db = this.#database(scope, false);
     return this.#buildSnapshot(scope, db);
   }
@@ -264,7 +282,8 @@ export class ProjectGamificationService {
       setMeta(db, 'prestige', String(stars));
       setMeta(db, 'prestigeBaseline', String(this.#rawPower(db)));
       setMeta(db, 'tierFloor', 'RECRUTA');
-      return { snapshot: this.#buildSnapshot(scope, db), stars };
+      // Reavalia conquistas (ex.: transcendente) e skins no mesmo write.
+      return { snapshot: this.#computeAndPersistDerived(scope, db), stars };
     })();
     if (result.stars === null) return result.snapshot;
     if (!this.#soberMode(scope)) {
@@ -385,13 +404,29 @@ export class ProjectGamificationService {
     this.#runRetroReplay(runtime.db, suite, state.scope);
     this.#scanAndFinalize(runtime.db, suite, state.scope, false);
     state.activated = true;
+    state.lastRescanAt = this.#now();
     this.#scheduleChangedBroadcast(state.scope);
   }
 
   #scanLive(scope: ProjectExecutionScope): void {
+    const state = this.#state(scope);
+    // Cooldown inclusive em falha — evita martelar hydrate em loop.
+    state.lastRescanAt = this.#now();
     const db = this.#database(scope, true);
     const suite = this.#domainStores.forScope(scope);
     this.#scanAndFinalize(db, suite, scope, false);
+  }
+
+  #maybeRescanLive(scope: ProjectExecutionScope): void {
+    const state = this.#state(scope);
+    if (this.#now() - state.lastRescanAt < SNAPSHOT_RESCAN_MIN_MS) return;
+    try {
+      const runtime = this.#runtimeManager.open(state.scope);
+      if (runtime.mode !== 'read-write') return;
+      this.#scanLive(scope);
+    } catch (error) {
+      console.warn('[gamification] snapshot rescan failed:', error);
+    }
   }
 
   #scanAndFinalize(
@@ -442,7 +477,17 @@ export class ProjectGamificationService {
     const extra = metaJson(db, 'counters_extra', countersSchema, {});
     let extraDirty = false;
 
-    for (const handoff of suite.handoffs.list({ includeDelivered: true })) {
+    const allHandoffs = suite.handoffs.list({ includeDelivered: true });
+    // Index O(n) — evita list(missionId) por missão (N+1 no main thread).
+    const handoffsByMission = new Map<string, typeof allHandoffs>();
+    for (const handoff of allHandoffs) {
+      if (!handoff.missionId) continue;
+      const bucket = handoffsByMission.get(handoff.missionId);
+      if (bucket) bucket.push(handoff);
+      else handoffsByMission.set(handoff.missionId, [handoff]);
+    }
+
+    for (const handoff of allHandoffs) {
       if (
         handoff.status !== 'success' ||
         handoff.evidenceTrust !== 'nexus-trusted'
@@ -468,15 +513,14 @@ export class ProjectGamificationService {
 
     for (const mission of suite.missions.list()) {
       if (mission.status !== 'done') continue;
+      const missionHandoffs = handoffsByMission.get(mission.id) ?? [];
       const greenHandoff = retro
         ? null
-        : suite.handoffs
-            .list({ missionId: mission.id, includeDelivered: true })
-            .find(
-              (handoff) =>
-                handoff.status === 'success' &&
-                handoff.evidenceTrust === 'nexus-trusted',
-            );
+        : missionHandoffs.find(
+            (handoff) =>
+              handoff.status === 'success' &&
+              handoff.evidenceTrust === 'nexus-trusted',
+          );
       const effort = missionEffort(suite, mission.id);
       const costUsd = missionCost(db, mission.id);
       const input: XpEventInput = {
@@ -635,7 +679,8 @@ export class ProjectGamificationService {
   ): ScopedGamificationSnapshot {
     const prestige = metaNumber(db, 'prestige', 0);
     const baseline = metaNumber(db, 'prestigeBaseline', 0);
-    const aggregate = foldAggregate(listXpEvents(db), prestige);
+    const events = listXpEvents(db);
+    const aggregate = foldAggregate(events, prestige);
     const counters = { ...aggregate.counters };
     const extra = metaJson(db, 'counters_extra', countersSchema, {});
     for (const [key, value] of Object.entries(extra)) {
@@ -654,6 +699,15 @@ export class ProjectGamificationService {
       selectedSkinRaw === null || selectedSkinRaw === ''
         ? null
         : z.string().min(1).max(64).parse(selectedSkinRaw);
+    // Mais recentes primeiro — feed do perfil (últimas 12 batidas).
+    const recent = events
+      .slice(-12)
+      .reverse()
+      .map((event) => ({
+        kind: event.kind,
+        points: event.points,
+        createdAt: event.createdAt,
+      }));
     return {
       powerLevel: power,
       tier,
@@ -668,6 +722,7 @@ export class ProjectGamificationService {
       skins: metaJson(db, 'skins', stringListSchema, []),
       selectedSkin,
       counters,
+      recent,
       ruleVersion: RULE_VERSION,
       projectId: scope.projectId,
       checkoutId: scope.checkoutId,
@@ -716,6 +771,7 @@ export class ProjectGamificationService {
       activated: false,
       schemaVerified: false,
       changedTimer: null,
+      lastRescanAt: 0,
     };
     this.#states.set(key, state);
     return state;

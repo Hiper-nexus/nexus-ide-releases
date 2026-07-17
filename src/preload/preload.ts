@@ -1022,7 +1022,8 @@ const api: NexusApi = {
       addListener(quotaChangedListeners, cb),
   },
   gamification: {
-    snapshot: () => ipcRenderer.invoke(GAMIFICATION_CHANNELS.snapshot),
+    snapshot: (options?: { rescan?: boolean }) =>
+      ipcRenderer.invoke(GAMIFICATION_CHANNELS.snapshot, options ?? {}),
     selectSkin: (skin: string | null) =>
       ipcRenderer.invoke(GAMIFICATION_CHANNELS.selectSkin, { skin }),
     exportProfile: () =>

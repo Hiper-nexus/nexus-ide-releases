@@ -806,7 +806,7 @@ export interface NexusApi {
   };
   /** Gamificação power-scaling: XP por entrega, nunca por consumo. */
   gamification: {
-    snapshot(): Promise<GamificationSnapshot>;
+    snapshot(options?: { rescan?: boolean }): Promise<GamificationSnapshot>;
     selectSkin(skin: string | null): Promise<GamificationSnapshot>;
     exportProfile(): Promise<{ ok: boolean; path?: string; error?: string }>;
     importProfile(): Promise<{ ok: boolean; error?: string }>;

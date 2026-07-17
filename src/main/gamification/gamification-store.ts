@@ -7,6 +7,7 @@ import type {
 } from '../../shared/gamification-types';
 import { RULE_VERSION } from './xp-rules';
 
+/** KEEP IN SYNC with shared XpEventKind / BASE_POINTS. */
 const xpEventKindSchema = z.enum([
   'mission_green',
   'mission_done',
@@ -15,6 +16,7 @@ const xpEventKindSchema = z.enum([
   'task_done',
   'media_generated',
   'jarvis_action',
+  'agent_turn',
 ]);
 
 const nullableText = (max: number) => z.string().min(1).max(max).nullable();
