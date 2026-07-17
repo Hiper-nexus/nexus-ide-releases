@@ -156,6 +156,64 @@ describe('Context Doctor', () => {
     expect(report.sensorIds).toEqual(expect.arrayContaining(['typecheck', 'unit']));
   });
 
+  it('sensores typecheck/unit ausentes viram WARNING, não bloqueiam o freeze', () => {
+    const { root, scope } = fixture();
+    write(root, 'PRODUCT-SOURCE.md', '# Fonte\nEscopo, negócio, domínio, arquitetura e testes.');
+    for (const name of [
+      'project-overview',
+      'business-model',
+      'domain-glossary',
+      'architecture',
+      'testing',
+    ]) {
+      write(root, `.context/docs/${name}.md`, `# ${name}\nFonte versionada.`);
+    }
+    ensureContextScaffold(scope);
+    // Substitui o sensors.json por um SEM typecheck/unit (só um sensor custom).
+    write(root, '.context/config/sensors.json', {
+      schemaVersion: 1,
+      sensors: [
+        { id: 'lint', command: ['npm', 'run', 'lint'], timeoutMs: 60_000, network: false },
+      ],
+    });
+    write(root, '.context/nexus/invariants/core.json', {
+      schemaVersion: 1,
+      facts: [
+        {
+          id: 'inv-core',
+          statement: 'Toda mutação valida o escopo do projeto.',
+          claimKey: 'project.scope.required',
+          value: true,
+          kind: 'asserted',
+          domains: ['core'],
+          relatedSymbols: ['ProjectExecutionScope'],
+        },
+      ],
+    });
+    for (const name of [
+      'project-overview',
+      'business-model',
+      'domain-glossary',
+      'architecture',
+      'testing',
+    ]) {
+      attest(root, scope, `.context/docs/${name}.md`, 'PRODUCT-SOURCE.md');
+    }
+    attest(root, scope, '.context/nexus/invariants/core.json', 'PRODUCT-SOURCE.md');
+
+    const report = inspectContextReadiness(scope, {
+      knownSymbols: new Set(['ProjectExecutionScope']),
+    });
+    // A ausência de typecheck/unit NÃO trava o freeze — vira warning.
+    expect(report.ready).toBe(true);
+    expect(report.blockers).not.toContainEqual(
+      expect.objectContaining({ code: 'missing-required-sensors' }),
+    );
+    expect(report.warnings).toContainEqual(
+      expect.objectContaining({ code: 'missing-required-sensors' }),
+    );
+  });
+
   it('warns when only source bytes drift and the reviewed target is identical', () => {
     const { root, scope } = fixture();
     write(root, 'README.md', '# Product v1');

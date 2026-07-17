@@ -425,7 +425,13 @@ export function inspectContextReadiness(
     sensorIds = sensors.data.sensors.map((sensor) => sensor.id).sort();
     const missing = ['typecheck', 'unit'].filter((id) => !sensorIds.includes(id));
     if (missing.length > 0) {
-      blockers.push({ code: 'missing-required-sensors', message: 'Sensores mínimos não foram configurados.', details: missing });
+      // WARNING, não blocker (caso de campo 17/07: "toda hora um limite
+      // diferente"): exigir typecheck E unit trancava o freeze de qualquer
+      // projeto sem exatamente esses dois sensores — e sem freeze, TUDO trava.
+      // Os sensores que existirem seguem rodando no PREVC; o que falta é
+      // recomendado, não obrigatório. Não afeta o contextRevision (o hash usa
+      // o arquivo de sensores como está).
+      warnings.push({ code: 'missing-required-sensors', message: 'Sensores recomendados ausentes (typecheck/unit) — os configurados seguem valendo.', details: missing });
     }
   }
 
