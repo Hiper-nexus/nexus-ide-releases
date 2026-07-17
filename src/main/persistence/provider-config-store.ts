@@ -720,7 +720,7 @@ async function runScriptInstall(scriptUrl: string): Promise<void> {
   try {
     await new Promise<void>((resolve, reject) => {
       execFile(
-        'bash',
+        resolveRunnerPath('bash') ?? 'bash',
         [file],
         { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
         (error) => (error ? reject(error) : resolve()),
@@ -788,6 +788,35 @@ async function warnInvalidBin(
 const PROVISION_OFFER_MARKER = 'provisioning-offer.json';
 
 /**
+ * Diretórios canônicos onde os runners de instalação vivem no macOS/Linux.
+ * App GUI pode ter PATH incompleto (fold de login capturado no boot; brew
+ * instalado depois; máquina onde o fold falhou) — o instalador não pode
+ * declarar "sem Homebrew" com o brew instalado no lugar padrão (caso de
+ * campo: omp/opencode "não instalou nenhuma").
+ */
+const RUNNER_FALLBACK_DIRS = [
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+  '/bin',
+  '/usr/bin',
+  path.join(os.homedir(), '.local', 'bin'),
+];
+
+/** Caminho executável do runner: PATH primeiro, diretórios canônicos depois. */
+export function resolveRunnerPath(runner: string): string | null {
+  if (isBinResolvable(runner)) return runner;
+  for (const dir of RUNNER_FALLBACK_DIRS) {
+    const candidate = path.join(dir, runner);
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // segue para o próximo diretório
+    }
+  }
+  return null;
+}
+
+/**
  * Piloto automático de máquina nova (oferta única por instalação): no
  * primeiro boot com CLIs auto-instaláveis ausentes, UM diálogo nativo lista
  * os comandos EXATOS e oferece instalar tudo em sequência. Mesma doutrina
@@ -825,7 +854,7 @@ export async function maybeOfferFirstRunProvisioning(
     provider,
     selection: selectInstallRecipe(
       cliInstallRecipeCandidates(provider.adapterId),
-      isBinResolvable,
+      (runner) => resolveRunnerPath(runner) !== null,
     ),
   }));
   const lines = selections.map(({ provider, selection }) => {
@@ -872,7 +901,7 @@ export async function maybeOfferFirstRunProvisioning(
       } else {
         await new Promise<void>((resolve, reject) => {
           execFile(
-            recipe.argv[0],
+            resolveRunnerPath(recipe.runner) ?? recipe.argv[0],
             recipe.argv.slice(1),
             { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
             (error) => (error ? reject(error) : resolve()),
@@ -916,7 +945,7 @@ export function registerProviderIpc(): void {
     if (!adapter) return { ok: false, error: 'adapter desconhecido' };
     const selection = selectInstallRecipe(
       cliInstallRecipeCandidates(adapter.id),
-      isBinResolvable,
+      (runner) => resolveRunnerPath(runner) !== null,
     );
     if (!selection) {
       return {
@@ -941,7 +970,7 @@ export function registerProviderIpc(): void {
       } else {
         await new Promise<void>((resolve, reject) => {
           execFile(
-            recipe.argv[0],
+            resolveRunnerPath(recipe.runner) ?? recipe.argv[0],
             recipe.argv.slice(1),
             // brew pode compilar; 15 min é teto honesto para 1ª instalação.
             { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },

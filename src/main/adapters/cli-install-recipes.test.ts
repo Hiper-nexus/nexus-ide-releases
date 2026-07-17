@@ -27,16 +27,17 @@ describe('cli install recipes', () => {
     const platforms: NodeJS.Platform[] = ['darwin', 'linux', 'win32'];
     for (const id of ARGV_IDS) {
       for (const platform of platforms) {
-        const recipe = cliInstallRecipeFor(id, platform);
-        if (!recipe) continue;
-        expect(recipe.kind).toBe('argv');
-        if (recipe.kind !== 'argv') continue;
-        expect(recipe.argv.length).toBeGreaterThanOrEqual(2);
-        for (const word of recipe.argv) {
-          expect(word).not.toMatch(/[;&|<>$`\\\s]/);
+        // Valida TODOS os candidatos (cascata); script-kind é validado no
+        // teste de instaladores oficiais HTTPS.
+        for (const recipe of cliInstallRecipeCandidates(id, platform)) {
+          if (recipe.kind !== 'argv') continue;
+          expect(recipe.argv.length).toBeGreaterThanOrEqual(2);
+          for (const word of recipe.argv) {
+            expect(word).not.toMatch(/[;&|<>$`\\\s]/);
+          }
+          expect(recipe.runner).toBe(recipe.argv[0]);
+          expect(recipe.runnerHint.length).toBeGreaterThan(10);
         }
-        expect(recipe.runner).toBe(recipe.argv[0]);
-        expect(recipe.runnerHint.length).toBeGreaterThan(10);
       }
     }
   });
