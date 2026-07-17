@@ -60,7 +60,9 @@ const TIER_ORDER: GamificationTier[] = TIER_THRESHOLDS.map(
 const EFFORT_RANK: Record<string, number> = { low: 1, medium: 2, high: 3 };
 
 export function scopeKey(scope: ProjectExecutionScope): string {
-  return `${scope.projectId}\0${scope.checkoutId}`;
+  // rootRealPath entra na chave: worktrees do mesmo project/checkout em pastas
+  // distintas não colidem (sameScope exige path idêntico).
+  return `${scope.installationId}\0${scope.projectId}\0${scope.checkoutId}\0${scope.rootRealPath}`;
 }
 
 export function sameScope(

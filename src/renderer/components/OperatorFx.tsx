@@ -4,7 +4,10 @@ import {
   type GamificationSnapshot,
   type GamificationTier,
 } from '../../shared/gamification-types';
-import { useGamificationStore } from '../state/gamification-store';
+import {
+  sameWorkspaceRoot,
+  useGamificationStore,
+} from '../state/gamification-store';
 import { ChosenPetPortrait } from './ChosenPetPortrait';
 import { fmt } from './operator-sprite-data';
 
@@ -83,7 +86,14 @@ export function OperatorFx() {
     // Troca de workspace (reset→hydrate ou outro projeto) re-sincroniza o
     // baseline SEM efeitos — senão o salto de 0 para o poder real dispararia
     // uma celebração falsa. Só comparamos deltas dentro do mesmo escopo.
-    if (before.rootRealPath !== snapshot.rootRealPath) return;
+    // EMPTY local não tem rootRealPath; o primeiro snapshot real só calibra.
+    if (before.rootRealPath && snapshot.rootRealPath) {
+      if (!sameWorkspaceRoot(before.rootRealPath, snapshot.rootRealPath)) {
+        return;
+      }
+    } else if (!before.rootRealPath && snapshot.rootRealPath) {
+      return;
+    }
 
     // Poder subiu → toast "+N".
     const gained = snapshot.powerLevel - before.powerLevel;

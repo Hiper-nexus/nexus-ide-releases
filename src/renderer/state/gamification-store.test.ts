@@ -5,6 +5,7 @@ import type { GamificationSnapshot } from '../../shared/gamification-types';
 import { setActiveWorkspacePath } from './active-workspace';
 import {
   EMPTY_GAMIFICATION_SNAPSHOT,
+  sameWorkspaceRoot,
   useGamificationStore,
 } from './gamification-store';
 
@@ -18,6 +19,7 @@ function snapshot(
     checkoutId: 'main',
     rootRealPath,
     powerLevel,
+    recent: [],
   };
 }
 
@@ -36,6 +38,11 @@ afterEach(() => {
 });
 
 describe('renderer gamification project isolation', () => {
+  it('treats trailing slashes as the same workspace root', () => {
+    expect(sameWorkspaceRoot('/workspace/a', '/workspace/a/')).toBe(true);
+    expect(sameWorkspaceRoot('/workspace/a', '/workspace/b')).toBe(false);
+  });
+
   it('rejects a snapshot from a workspace that is no longer active', () => {
     setActiveWorkspacePath('/workspace/a');
     useGamificationStore.getState().receive(snapshot('/workspace/a', 8_000));
@@ -46,14 +53,39 @@ describe('renderer gamification project isolation', () => {
     useGamificationStore.getState().receive(snapshot('/workspace/a', 9_500));
     expect(useGamificationStore.getState().snapshot.powerLevel).toBe(0);
 
-    useGamificationStore.getState().receive(snapshot('/workspace/b', 1_500));
+    useGamificationStore.getState().receive(snapshot('/workspace/b/', 1_500));
     expect(useGamificationStore.getState().snapshot).toEqual(
       expect.objectContaining({
         projectId: 'project-b',
-        rootRealPath: '/workspace/b',
+        rootRealPath: '/workspace/b/',
         powerLevel: 1_500,
       }),
     );
+  });
+
+  it('hydrates again when the profile is opened', async () => {
+    const snap = snapshot('/workspace/a', 2_400);
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        gamification: {
+          snapshot: vi.fn(async (options?: { rescan?: boolean }) => {
+            expect(options?.rescan).toBe(true);
+            return snap;
+          }),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+        settings: {
+          orchGet: vi.fn(async () => ({ soberMode: false })),
+        },
+      },
+    });
+    setActiveWorkspacePath('/workspace/a');
+    useGamificationStore.getState().openProfile();
+    await vi.waitFor(() => {
+      expect(useGamificationStore.getState().snapshot.powerLevel).toBe(2_400);
+    });
+    expect(useGamificationStore.getState().profileOpen).toBe(true);
   });
 
   it('drops a hydrate response when workspace changes while IPC is pending', async () => {
