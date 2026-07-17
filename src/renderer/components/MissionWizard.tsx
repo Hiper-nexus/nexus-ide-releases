@@ -651,6 +651,17 @@ export function MissionWizard() {
     }
   }
 
+  /**
+   * Atalho "Planejar · PRD": pula direto para a revisão do squad builtin
+   * nexus-plan (achado de operador: a rota via Modo Squad → lista → escolher
+   * era garimpo para a ação mais pedida do fluxo BMAD).
+   */
+  function choosePlanejamento() {
+    setMode('squad');
+    setSquadId('nexus-plan');
+    setStep('squad-review');
+  }
+
   /** Modo Agêntico: intenção → arquiteto monta o time → revisão do roster. */
   async function handleDesignFromIntent() {
     if (designInFlightRef.current || designing || !intent.trim()) return;
@@ -1125,6 +1136,23 @@ export function MissionWizard() {
                   </span>
                   <span className="wizard__mode-cta">Descrever objetivo ›</span>
                 </button>
+                {squads.some((s) => s.id === 'nexus-plan') && (
+                  <button
+                    className="wizard__mode wizard__mode--featured"
+                    onClick={choosePlanejamento}
+                  >
+                    <span className="wizard__mode-badge">Feature nova</span>
+                    <span className="wizard__mode-icon">
+                      <PixelIcon name="board" size={22} />
+                    </span>
+                    <span className="wizard__mode-title">Planejar · PRD</span>
+                    <span className="wizard__mode-desc">
+                      O squad lê seu código, te entrevista e entrega PRD,
+                      arquitetura com diagrama e stories prontas.
+                    </span>
+                    <span className="wizard__mode-cta">Planejar feature ›</span>
+                  </button>
+                )}
               </div>
               <div className="wizard__actions">
                 {hasNewWsStep ? (

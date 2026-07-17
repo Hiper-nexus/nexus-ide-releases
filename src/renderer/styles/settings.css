@@ -1434,7 +1434,9 @@
 
 .quota-window {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 40px auto;
+  /* Colunas FIXAS para % e reset: com `auto` + span condicional, linhas sem
+     reset ("—") esticavam a barra além das outras — cards desalinhados. */
+  grid-template-columns: 72px minmax(0, 1fr) 44px 52px;
   align-items: center;
   gap: 8px;
   font-size: 11px;
@@ -1488,6 +1490,8 @@
 .quota-window__reset {
   font-family: var(--font-mono);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
   color: var(--text-dim);
 }
 
