@@ -172,7 +172,11 @@ import {
   shutdownQuotaService,
 } from "./quota/quota-service";
 import { listProviderSettings } from "./persistence/provider-config-store";
-import { clearCooldown, listAccountInfos } from "./persistence/account-store";
+import {
+  clearCooldown,
+  listAccountInfos,
+  startClaudeSubscriptionFreshness,
+} from "./persistence/account-store";
 import {
   resolveClaudeToken,
   resolveCodexAuthCandidates,
@@ -462,6 +466,10 @@ function bootstrap(): void {
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
   initUsageTelemetry(projectRuntimeManager);
+  // Tokens das contas Claude secundárias renovados em background — spawn e
+  // failover sempre encontram credencial viva no vault (mata o "401 OAuth
+  // access token has expired" em respawn horas depois).
+  startClaudeSubscriptionFreshness();
   initQuotaService({
     listProviders: () => listProviderSettings(),
     listAccounts: () => listAccountInfos(),

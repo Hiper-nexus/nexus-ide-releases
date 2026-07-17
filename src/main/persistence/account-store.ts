@@ -15,6 +15,10 @@ import {
   writeActiveClaudeCredential,
 } from '../adapters/claude-credential';
 import {
+  claudeBlobNeedsRefresh,
+  refreshClaudeOauthBlob,
+} from '../quota/claude-oauth-refresh';
+import {
   captureNativeAuth,
   isFileAuthAdapter,
   managedHomeEnv,
@@ -468,6 +472,20 @@ export function prepareAccountForSpawn(
   }
 
   // Claude (and any future token-env providers).
+  // Conta pinada que É o login nativo do Keychain: NENHUM token env — o pane
+  // usa a linhagem compartilhada, que o CLI refresca sozinho. O env era um
+  // snapshot estático do vault: expirava em horas e o CLI não refresca token
+  // de env → "401 OAuth access token has expired" no respawn de failover
+  // (caso de campo). Env token fica só para contas SECUNDÁRIAS, cuja
+  // linhagem vive apenas no vault (e é renovada pelo freshness sweeper).
+  const nativeEmail = activeClaudeEmail();
+  if (
+    nativeEmail &&
+    account.email &&
+    nativeEmail.trim().toLowerCase() === account.email.trim().toLowerCase()
+  ) {
+    return { ok: true, account, apiKey: null, authEnv: {} };
+  }
   const authEnv = subscriptionAuthEnv(account);
   if (!authEnv) {
     return {
@@ -476,6 +494,68 @@ export function prepareAccountForSpawn(
     };
   }
   return { ok: true, account, apiKey: null, authEnv };
+}
+
+const claudeRefreshInFlight = new Set<string>();
+
+/**
+ * Renova o blob OAuth de uma conta Claude SECUNDÁRIA perto de expirar e grava
+ * o resultado (refresh token rotacionado) de volta no vault. A conta que é o
+ * login nativo do Keychain NUNCA é renovada por aqui — rotacionar a linhagem
+ * compartilhada derrubaria a sessão do CLI real. Best-effort: nunca lança.
+ */
+export async function ensureFreshClaudeSubscription(
+  accountId: string,
+  now = Date.now(),
+  refreshImpl: (
+    blob: string,
+    now: number,
+  ) => Promise<string | null> = refreshClaudeOauthBlob,
+): Promise<boolean> {
+  const account = accounts.get(accountId);
+  if (!account || account.adapterId !== 'claude') return false;
+  const nativeEmail = activeClaudeEmail();
+  if (
+    nativeEmail &&
+    account.email &&
+    nativeEmail.trim().toLowerCase() === account.email.trim().toLowerCase()
+  ) {
+    return false;
+  }
+  const blob = getSecret(CRED_PREFIX + accountId);
+  if (typeof blob !== 'string' || !blob) return false;
+  if (!claudeBlobNeedsRefresh(blob, now)) return false;
+  if (claudeRefreshInFlight.has(accountId)) return false;
+  claudeRefreshInFlight.add(accountId);
+  try {
+    const updated = await refreshImpl(blob, now);
+    if (!updated) return false;
+    setSecret(CRED_PREFIX + accountId, updated);
+    console.info('[accounts] claude oauth renovado para conta', account.label);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    claudeRefreshInFlight.delete(accountId);
+  }
+}
+
+/**
+ * Sweeper de frescor: mantém os tokens das contas Claude secundárias válidos
+ * para que qualquer spawn/failover encontre credencial viva no vault.
+ */
+export function startClaudeSubscriptionFreshness(
+  intervalMs = 15 * 60 * 1000,
+): () => void {
+  const tick = (): void => {
+    for (const account of listAccounts('claude')) {
+      void ensureFreshClaudeSubscription(account.id);
+    }
+  };
+  tick();
+  const timer = setInterval(tick, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 /**

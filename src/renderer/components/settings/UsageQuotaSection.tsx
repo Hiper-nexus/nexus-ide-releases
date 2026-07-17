@@ -73,9 +73,11 @@ function EntryCard({ entry }: { entry: ProviderQuotaEntry }) {
               >
                 {d.percentLabel}
               </span>
-              {w.remainingLabel && (
-                <span className="quota-window__reset">{w.remainingLabel}</span>
-              )}
+              {/* Sempre presente: célula vazia mantém as 4 colunas do grid e
+                  as barras alinhadas entre linhas e entre cards. */}
+              <span className="quota-window__reset">
+                {w.remainingLabel ?? ''}
+              </span>
             </li>
           );
         })}

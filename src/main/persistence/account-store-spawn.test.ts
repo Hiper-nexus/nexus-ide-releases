@@ -5,6 +5,7 @@ import type { Db } from './db';
 const accountDeps = vi.hoisted(() => ({
   secrets: new Map<string, string>(),
   deleteFailures: new Set<string>(),
+  activeEmail: 'operator@example.test' as string | null,
   activeCredential: JSON.stringify({
     claudeAiOauth: {
       accessToken: 'claude-access',
@@ -42,7 +43,7 @@ vi.mock('./secrets-store', () => ({
 }));
 
 vi.mock('../adapters/claude-credential', () => ({
-  activeClaudeEmail: () => 'operator@example.test',
+  activeClaudeEmail: () => accountDeps.activeEmail,
   readActiveClaudeCredential: () => accountDeps.activeCredential,
   writeActiveClaudeCredential: accountDeps.writeActiveCredential,
 }));
@@ -120,6 +121,7 @@ describe('prepareAccountForSpawn', () => {
     initAccountStore(openDb);
     accountDeps.secrets.clear();
     accountDeps.deleteFailures.clear();
+    accountDeps.activeEmail = 'operator@example.test';
     accountDeps.writeActiveCredential.mockReset();
     accountDeps.writeActiveCredential.mockReturnValue(true);
     accountDeps.activeCredential = oauthCredential('claude-access');
@@ -204,9 +206,26 @@ describe('prepareAccountForSpawn', () => {
     });
   });
 
-  it('returns process-scoped OAuth without swapping the global keychain slot', () => {
+  it('conta que É o login nativo do Keychain spawna SEM token env (linhagem única)', () => {
+    // Regressão de campo: o env era um snapshot do vault que expirava em
+    // horas e o CLI não refresca token de env → "401 OAuth access token has
+    // expired" no respawn de failover. A conta nativa usa o Keychain, que o
+    // próprio CLI mantém fresco.
     const account = addActiveClaudeAccount('Claude Max');
     expect(account).not.toBeNull();
+    expect(account?.email).toBe('operator@example.test');
+
+    const result = prepareAccountForSpawn('claude', account!.id);
+
+    expect(result).toMatchObject({ ok: true, account, apiKey: null, authEnv: {} });
+    expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
+  });
+
+  it('conta SECUNDÁRIA recebe OAuth process-scoped sem trocar o slot do keychain', () => {
+    const account = addActiveClaudeAccount('Claude Max');
+    expect(account).not.toBeNull();
+    // O login nativo mudou para outra conta — a do vault vira secundária.
+    accountDeps.activeEmail = 'someone-else@example.test';
 
     const result = prepareAccountForSpawn('claude', account!.id);
 
@@ -228,6 +247,8 @@ describe('prepareAccountForSpawn', () => {
     const personal = addActiveClaudeAccount('Pessoal');
     accountDeps.activeCredential = oauthCredential('oauth-work');
     const work = addActiveClaudeAccount('Trabalho');
+    // Nenhuma das duas é o login nativo atual → ambas process-scoped.
+    accountDeps.activeEmail = 'someone-else@example.test';
 
     const personalSpawn = prepareAccountForSpawn('claude', personal!.id);
     const workSpawn = prepareAccountForSpawn('claude', work!.id);
