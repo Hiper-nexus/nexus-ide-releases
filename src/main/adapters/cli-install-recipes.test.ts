@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cliInstallRecipeCandidates,
   cliInstallRecipeFor,
   describeInstallRecipe,
+  selectInstallRecipe,
 } from './cli-install-recipes';
 
 const ARGV_IDS = [
@@ -58,5 +60,45 @@ describe('cli install recipes', () => {
     for (const id of ['aider', 'glm', 'longcat', 'desconhecido']) {
       expect(cliInstallRecipeFor(id, 'darwin')).toBeNull();
     }
+  });
+});
+
+describe('candidatos em cascata (máquina sem runner primário)', () => {
+  it('claude tem fallback de instalador oficial por script (sem Node/npm)', () => {
+    const candidates = cliInstallRecipeCandidates('claude', 'darwin');
+    expect(candidates.length).toBeGreaterThanOrEqual(2);
+    expect(candidates[0]?.kind).toBe('argv');
+    const fallback = candidates[1];
+    expect(fallback?.kind).toBe('script');
+    if (fallback?.kind === 'script') {
+      expect(fallback.scriptUrl).toBe('https://claude.ai/install.sh');
+    }
+  });
+
+  it('selectInstallRecipe cai para o candidato cujo runner existe', () => {
+    // Caso de campo: "mandei instalar e não instalou nenhuma" — máquina sem
+    // npm; antes o fluxo desistia com a dica do runner primário.
+    const candidates = cliInstallRecipeCandidates('claude', 'darwin');
+    const semNpm = selectInstallRecipe(candidates, (runner) => runner === 'bash');
+    expect(semNpm).toMatchObject({ ok: true });
+    if (semNpm?.ok) expect(semNpm.recipe.kind).toBe('script');
+
+    const comNpm = selectInstallRecipe(candidates, (runner) => runner === 'npm');
+    if (comNpm?.ok) expect(comNpm.recipe.runner).toBe('npm');
+  });
+
+  it('sem nenhum runner, devolve as dicas únicas de todos os canais', () => {
+    const candidates = cliInstallRecipeCandidates('kimi', 'darwin');
+    const nada = selectInstallRecipe(candidates, () => false);
+    expect(nada).toMatchObject({ ok: false });
+    if (nada && !nada.ok) {
+      expect(nada.missingRunnerHints.length).toBeGreaterThanOrEqual(2);
+      expect(nada.missingRunnerHints.join(' ')).toMatch(/Homebrew/);
+      expect(nada.missingRunnerHints.join(' ')).toMatch(/npm/);
+    }
+  });
+
+  it('CLI sem receita devolve null (nunca inventa canal)', () => {
+    expect(selectInstallRecipe(cliInstallRecipeCandidates('glm', 'darwin'), () => true)).toBeNull();
   });
 });

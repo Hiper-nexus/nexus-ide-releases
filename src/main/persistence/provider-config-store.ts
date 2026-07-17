@@ -47,7 +47,9 @@ import {
   refreshAllDiscoveredModels,
 } from '../adapters/model-discovery';
 import {
+  cliInstallRecipeCandidates,
   cliInstallRecipeFor,
+  selectInstallRecipe,
   describeInstallRecipe,
 } from '../adapters/cli-install-recipes';
 import { execFile } from 'node:child_process';
@@ -819,9 +821,18 @@ export async function maybeOfferFirstRunProvisioning(
     writeMarker(false);
     return;
   }
-  const lines = missing.map((provider) => {
-    const recipe = cliInstallRecipeFor(provider.adapterId);
-    return `• ${provider.label}: ${recipe ? describeInstallRecipe(recipe) : '—'}`;
+  const selections = missing.map((provider) => ({
+    provider,
+    selection: selectInstallRecipe(
+      cliInstallRecipeCandidates(provider.adapterId),
+      isBinResolvable,
+    ),
+  }));
+  const lines = selections.map(({ provider, selection }) => {
+    if (!selection) return `• ${provider.label}: —`;
+    return selection.ok
+      ? `• ${provider.label}: ${describeInstallRecipe(selection.recipe)}`
+      : `• ${provider.label}: sem runner (${selection.missingRunnerHints.join(' OU ')})`;
   });
   const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
   const offer = {
@@ -846,13 +857,15 @@ export async function maybeOfferFirstRunProvisioning(
 
   const done: string[] = [];
   const pending: string[] = [];
-  for (const provider of missing) {
-    const recipe = cliInstallRecipeFor(provider.adapterId);
-    if (!recipe) continue;
-    if (!isBinResolvable(recipe.runner)) {
-      pending.push(`${provider.label} — ${recipe.runnerHint}`);
+  for (const { provider, selection } of selections) {
+    if (!selection) continue;
+    if (!selection.ok) {
+      pending.push(
+        `${provider.label} — ${selection.missingRunnerHints.join(' OU ')}`,
+      );
       continue;
     }
+    const recipe = selection.recipe;
     try {
       if (recipe.kind === 'script') {
         await runScriptInstall(recipe.scriptUrl);
@@ -901,8 +914,11 @@ export function registerProviderIpc(): void {
     if (!parsed.success) return { ok: false, error: 'adapter inválido' };
     const adapter = getAdapter(parsed.data.adapterId);
     if (!adapter) return { ok: false, error: 'adapter desconhecido' };
-    const recipe = cliInstallRecipeFor(adapter.id);
-    if (!recipe) {
+    const selection = selectInstallRecipe(
+      cliInstallRecipeCandidates(adapter.id),
+      isBinResolvable,
+    );
+    if (!selection) {
       return {
         ok: false,
         error:
@@ -910,9 +926,10 @@ export function registerProviderIpc(): void {
           'use o site oficial do provider.',
       };
     }
-    if (!isBinResolvable(recipe.runner)) {
-      return { ok: false, error: recipe.runnerHint };
+    if (!selection.ok) {
+      return { ok: false, error: selection.missingRunnerHints.join(' OU: ') };
     }
+    const recipe = selection.recipe;
     const confirmed = await confirmCliInstall(
       adapter.label,
       describeInstallRecipe(recipe),
