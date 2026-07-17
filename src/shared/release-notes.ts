@@ -13,6 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.18',
+  date: '2026-07-17',
+  codename: 'Deixa de Travar',
+  summary:
+    'Auditoria completa das causas de freeze. "Toda hora um limite diferente" tinha raiz numa pilha de gates onde quase tudo exigia contrato congelado. Dois desgates seguros: documentar/planejar (todo_manager, clarify) não exigem mais freeze, e sensores typecheck/unit ausentes viram aviso em vez de bloquear. A integridade de mutação de código fica intacta.',
+  highlights: [
+    {
+      title: 'Documentar e planejar sem trava',
+      detail:
+        'Gerenciar tarefas e perguntar ao usuário vêm antes de congelar contexto — não exigem mais contrato PREVC congelado.',
+    },
+    {
+      title: 'Sensores recomendados, não obrigatórios',
+      detail:
+        'Faltar typecheck/unit vira aviso; o freeze passa e os sensores existentes seguem rodando no PREVC.',
+    },
+  ],
+  fixes: [],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.17',
   date: '2026-07-17',
   codename: 'Missão Destravada',
@@ -28,32 +49,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Mais workers por missão',
       detail:
         'Sensível 3 / normal 4 workers (era 2 / 3). O teto de tokens já era só telemetria; o de workers deixou de sufocar.',
-    },
-  ],
-  fixes: [],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.16',
-  date: '2026-07-17',
-  codename: 'Modelo que Você Escolhe',
-  summary:
-    'O modelo que você seleciona no squad é o modelo que roda. A seleção podia oferecer um id que o CLI não executa (ex.: gpt-5.6 depois de a OpenAI renomear para gpt-5.6-sol/-luna/-terra) e o CLI caía silenciosamente no default. Agora o roteador e o spawn resolvem o modelo contra a lista real do CLI e nunca emitem um fantasma. Também: colar print (⌘V) nas evidências e o Operador vivo (gamificação).',
-  highlights: [
-    {
-      title: 'Modelo fantasma nunca mais',
-      detail:
-        'Roteador e spawn resolvem o id escolhido para a variante real da família (gpt-5.6 → gpt-5.6-sol); vale para roster do squad, route_task e squads salvos.',
-    },
-    {
-      title: 'Colar print nas evidências (⌘V)',
-      detail:
-        'Cole um screenshot direto no compositor de objetivo e ele vira anexo — sem passar pelo Finder.',
-    },
-    {
-      title: 'Operador vivo',
-      detail:
-        'XP por turnos de agente e feedback visual do progresso do operador.',
     },
   ],
   fixes: [],

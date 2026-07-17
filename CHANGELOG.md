@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.19.18 — Deixa de Travar
+
+Data: 2026-07-17
+
+Auditoria completa das causas de freeze — "toda hora um limite diferente" tem
+raiz numa pilha de gates onde quase tudo exige contrato congelado. Dois
+desgates seguros (a integridade de mutação de código fica intacta):
+
+- **Documentar e planejar não travam mais**: gerenciar a lista de tarefas
+  (todo_manager) e perguntar ao usuário (clarify) caíam no bloqueio genérico e
+  exigiam contrato PREVC congelado — o mesmo gate do git push. Não faz sentido:
+  organizar e perguntar vêm ANTES de congelar contexto. Agora rodam livres.
+- **Sensores recomendados viram aviso, não bloqueio**: exigir os sensores
+  typecheck E unit trancava o freeze de qualquer projeto sem exatamente esses
+  dois — e sem freeze, tudo trava. Agora é recomendação; os sensores que
+  existirem seguem rodando.
+
+Somado à 0.19.17 (draft-fantasma destravado + mais workers) e à 0.19.14 (fim do
+teto de tokens), a maquinaria do Nexus para de esbarrar em limite a cada passo.
+
 ## 0.19.17 — Missão Destravada
 
 Data: 2026-07-17
