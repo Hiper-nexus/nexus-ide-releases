@@ -16,6 +16,7 @@ import {
   resetPendingRealtimeAudioOut,
   setRealtimeTurnActive,
   setSuppressRealtimeAudioOut,
+  turnExecution,
 } from './voice-session-state';
 import { logVoiceEvent } from './voice-live-ipc';
 
@@ -52,6 +53,11 @@ export function stopJarvisSpeech(): void {
  * Wake word / PTT stay available so the user can wake her again.
  */
 export async function powerOffJarvis(): Promise<void> {
+  // Invalida TODO token de turno em voo ANTES do teardown: os caminhos de
+  // continuidade (releaseAfterLiveProviderAnswer / follow-ups) checam o token
+  // via canReopen — sem isto, um turno terminando logo após o clique reabria
+  // a escuta e a Jarvis "não desligava".
+  turnExecution.beginTurn();
   stopJarvisSpeech();
   cancelLiveFollowUp();
   setRealtimeTurnActive(false);
