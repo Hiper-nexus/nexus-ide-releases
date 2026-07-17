@@ -43,7 +43,13 @@ describe('built-in squads (invariantes gerais)', () => {
     // O omp é adapter de primeira classe; sem presença no menu dos builtins
     // ele nunca entra em operação (achado de operador: "integrado mas nunca
     // vi em ação"). O Pet Studio fica de fora por design (Codex único).
-    const devSquadIds = ['nexus-fullstack', 'nexus-review', 'review-p0p3', 'nexus-research'];
+    const devSquadIds = [
+      'nexus-fullstack',
+      'nexus-review',
+      'review-p0p3',
+      'nexus-research',
+      'nexus-plan',
+    ];
     for (const id of devSquadIds) {
       const squad = BUILTIN_SQUADS.find((entry) => entry.id === id);
       expect(squad, `squad ${id} ausente`).toBeDefined();

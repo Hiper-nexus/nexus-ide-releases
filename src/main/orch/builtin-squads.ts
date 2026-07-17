@@ -358,15 +358,84 @@ const RAW_SQUADS: Squad[] = [
       '# Research & Arquitetura\n' +
       'Você é o orquestrador. Mande os scouts levantarem o terreno em ' +
       'paralelo, sintetize os achados e peça ao arquiteto um plano de ' +
-      'implementação com trade-offs. Depois passe o plano ao Contrarian ' +
-      'para ele atacar (custos ocultos, riscos, alternativa mais simples) ' +
-      'antes de qualquer código.',
+      'implementação com trade-offs. O Architect DEVE entregar junto um ' +
+      'diagrama de arquitetura gerado com a skill archify (HTML ' +
+      'self-contained salvo em docs/architecture/<slug>.html) cobrindo o ' +
+      'estado atual e o proposto; abra o HTML num pane de browser para o ' +
+      'usuário ver. Depois passe o plano ao Contrarian para ele atacar ' +
+      '(custos ocultos, riscos, alternativa mais simples) antes de ' +
+      'qualquer código.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
       { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'agy', effort: 'medium' },
       { id: 'scout-b', agentName: 'Scout B', category: 'scout', cli: 'grok', effort: 'medium' },
       { id: 'scout-c', agentName: 'Scout C (omp)', category: 'scout', cli: 'omp', effort: 'medium' },
       { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
+      { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },
+    ],
+  },
+  {
+    // Planejamento estilo BMAD adaptado a brownfield: leitura REAL do sistema
+    // antes de qualquer pergunta, interrogatório grilling (uma pergunta por
+    // vez, decisões do usuário), e documentos versionáveis como entrega.
+    id: 'nexus-plan',
+    name: 'Planejamento & PRD',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Planejamento & PRD (brownfield-first)\n' +
+      'Você é o orquestrador de planejamento. A entrega final são documentos ' +
+      'versionáveis em docs/ (PRD, arquitetura e stories) — NENHUM código de ' +
+      'produção é escrito nesta missão.\n' +
+      '\n' +
+      '## 1. Leitura real do sistema (sempre primeiro)\n' +
+      'Antes de qualquer pergunta ao usuário, mande os explorers levantarem ' +
+      'em paralelo o estado REAL do workspace: stack e dependências, módulos ' +
+      'e fronteiras, fluxos críticos, integrações externas, testes e dívidas ' +
+      'aparentes. Fatos se buscam no código — NUNCA pergunte ao usuário o ' +
+      'que o repositório já responde.\n' +
+      '\n' +
+      '## 2. Interrogatório (skill grilling)\n' +
+      'Com o terreno mapeado, entreviste o usuário no rito da skill ' +
+      '`grilling`: UMA pergunta por vez, sempre com a sua recomendação ' +
+      'junto; espere a resposta antes da próxima. Decisões são do usuário; ' +
+      'fatos são do código. Percorra: problema e usuário-alvo, resultado ' +
+      'esperado, escopo IN/OUT, restrições (prazo, plataformas, compliance), ' +
+      'riscos aceitáveis e critérios de sucesso mensuráveis. Não avance ' +
+      'para o PRD sem confirmar entendimento compartilhado.\n' +
+      '\n' +
+      '## 3. PRD\n' +
+      'Peça ao PM o PRD em docs/prd/<slug>.md: contexto, problema, ' +
+      'objetivos mensuráveis, personas, requisitos funcionais numerados ' +
+      '(FR1…) e não-funcionais (NFR1…), escopo negativo (o que NÃO entra), ' +
+      'riscos com mitigação e métricas de sucesso. O PRD referencia os ' +
+      'achados dos explorers — nada de suposição que o código contradiga.\n' +
+      '\n' +
+      '## 4. Arquitetura com diagrama\n' +
+      'Peça ao Architect o plano técnico em docs/architecture/<slug>.md ' +
+      'ancorado no estado atual: componentes tocados, mudanças por módulo, ' +
+      'contratos e migrações, sequenciamento e trade-offs. O Architect DEVE ' +
+      'gerar o diagrama com a skill archify (HTML self-contained em ' +
+      'docs/architecture/<slug>.html) cobrindo estado atual e proposto, e o ' +
+      'HTML deve ser aberto num pane de browser para o usuário ver.\n' +
+      '\n' +
+      '## 5. Shard em stories\n' +
+      'Peça ao PO quebrar PRD+arquitetura em épicos e stories em ' +
+      'docs/stories/<slug>.md: cada story com contexto autossuficiente, ' +
+      'critérios de aceite verificáveis e dependências explícitas — prontas ' +
+      'para virarem missões de implementação uma a uma.\n' +
+      '\n' +
+      '## 6. Validação final\n' +
+      'O Contrarian ataca o pacote inteiro: custos ocultos, alternativa mais ' +
+      'simples, o que quebra em produção. Incorpore o que sobreviver e ' +
+      'finalize com um handoff listando os caminhos de todos os documentos.',
+    agents: [
+      { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
+      { id: 'explorer-a', agentName: 'Explorer A', category: 'scout', cli: 'agy', effort: 'medium' },
+      { id: 'explorer-b', agentName: 'Explorer B (omp)', category: 'scout', cli: 'omp', effort: 'medium' },
+      { id: 'pm', agentName: 'PM', category: 'executor', cli: 'claude', effort: 'high' },
+      { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
+      { id: 'po', agentName: 'PO', category: 'executor', cli: 'codex', effort: 'medium' },
       { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },
     ],
   },
