@@ -13,6 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.17',
+  date: '2026-07-17',
+  codename: 'Missão Destravada',
+  summary:
+    'Dois bloqueios que emperravam missões reais foram removidos: o wedge de draft de contexto órfão (que trancava o pipeline de forma invisível) agora tem escape — o erro traz o ID do bloqueador e a nova tool de supersede libera o alvo; e o teto de workers, calibrado na era do teto de token que já não existe, subiu para não sufocar missões que precisam de 3-4 braços.',
+  highlights: [
+    {
+      title: 'Draft-fantasma se autodestrava',
+      detail:
+        'O propose agora revela o draft órfão que bloqueia o alvo e a tool nexus_context_draft_supersede o libera — sem o pipeline travar sem saída.',
+    },
+    {
+      title: 'Mais workers por missão',
+      detail:
+        'Sensível 3 / normal 4 workers (era 2 / 3). O teto de tokens já era só telemetria; o de workers deixou de sufocar.',
+    },
+  ],
+  fixes: [],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.16',
   date: '2026-07-17',
   codename: 'Modelo que Você Escolhe',
@@ -33,32 +54,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Operador vivo',
       detail:
         'XP por turnos de agente e feedback visual do progresso do operador.',
-    },
-  ],
-  fixes: [],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.15',
-  date: '2026-07-17',
-  codename: 'Login sem Terminal',
-  summary:
-    'O painel OMP·RPC ganhou a seção Contas: todos os provedores de assinatura que o omp suporta (Claude Pro/Max, ChatGPT, Gemini CLI, Copilot…) com status de conexão e login feito inteiro pelo app — a autorização abre no navegador e a credencial grava no cofre do omp. Antes, só zai/glm aparecia e logar exigia rodar `omp auth-broker login` num terminal.',
-  highlights: [
-    {
-      title: 'Login OAuth sem sair do painel',
-      detail:
-        'Conectar → o navegador abre na página do provedor → autorizou, acabou. O fluxo roda no main com cancelamento e timeout, e o segredo da sonda de status nunca toca o heap do Nexus.',
-    },
-    {
-      title: 'Dropdown de modelos atualiza na hora',
-      detail:
-        'Ao concluir o login, os modelos do provedor entram no seletor sem reiniciar a sessão — consumindo seu plano de assinatura, não API key.',
-    },
-    {
-      title: 'Mais API keys do vault chegam ao omp',
-      detail:
-        'OPENAI, GEMINI, XAI, GROQ, CEREBRAS e MISTRAL agora também são injetadas no processo do omp a partir do providers.conf.',
     },
   ],
   fixes: [],

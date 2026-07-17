@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.19.17 — Missão Destravada
+
+Data: 2026-07-17
+
+- **Fim do wedge de draft-fantasma**: um draft de contexto órfão de outra
+  missão trancava o arquivo (índice único por target) mas ficava invisível na
+  lista escopada por missão — sem ID, a missão não conseguia rejeitar, o freeze
+  falhava e o PREVC nem começava. Agora o erro do propose já traz o ID/status/
+  missão do bloqueador, e a nova tool nexus_context_draft_supersede libera o
+  target por caminho — a missão se autodestrava.
+- **Teto de workers menos sufocante**: como o teto de tokens virou só telemetria
+  (0.19.14), o limite real é o nº de workers; os presets antigos (2 na sensível,
+  3 na normal) foram calibrados na era do teto de token e travavam missões que
+  precisavam de mais braços. Agora: sensível 3 workers / 400 passos, normal
+  4 workers / 600 passos (destrutiva segue 1, por segurança).
+
 ## 0.19.16 — Modelo que Você Escolhe
 
 Data: 2026-07-17
