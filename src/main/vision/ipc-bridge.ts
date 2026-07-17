@@ -435,6 +435,14 @@ export function registerVisionIpc(overrides: Partial<VisionIpcDeps> = {}): void 
     return status;
   });
 
+  ipcMain.handle(VISION_CHANNELS.requestPermission, async (event) => {
+    requireAuthority(event);
+    const { requestScreenPermissionRegistration } = await import(
+      './screen-capture'
+    );
+    return requestScreenPermissionRegistration();
+  });
+
   ipcMain.handle(VISION_CHANNELS.openScreenSettings, async (event) => {
     requireAuthority(event);
     if (process.platform !== 'darwin') {

@@ -104,6 +104,27 @@ export function VisionSection() {
     if (!res.ok && res.error) setCaptureStatus(res.error);
   };
 
+  /**
+   * Passo 1 do fluxo guiado: registra o Nexus no TCC (o macOS só LISTA o app
+   * no painel de Gravação de Tela após a primeira tentativa de captura) e
+   * abre o prompt nativo. Depois disso, nos Ajustes é só virar a chave —
+   * sem "+", sem buscar pasta.
+   */
+  const requestScreenPermission = async () => {
+    setCaptureStatus('registrando o Nexus no macOS…');
+    try {
+      const status = await window.nexus.vision.requestPermission();
+      setPermission(status);
+      setCaptureStatus(
+        status === 'granted'
+          ? 'permissão concedida — capture à vontade'
+          : 'Nexus registrado: nos Ajustes, vire a chave do NexusIDE e reabra o app',
+      );
+    } catch (err) {
+      setCaptureStatus(friendlyCaptureError(err));
+    }
+  };
+
   useEffect(() => {
     void refreshPermission();
   }, []);
@@ -158,16 +179,27 @@ export function VisionSection() {
         <button className="settings-btn" type="button" onClick={() => void refreshPermission()}>
           Rechecar permissão
         </button>
+        {permission !== 'granted' && window.nexus.platform === 'darwin' && (
+          <button
+            className="settings-btn settings-btn--primary"
+            type="button"
+            onClick={() => void requestScreenPermission()}
+          >
+            Pedir permissão ao macOS
+          </button>
+        )}
         {permission === 'denied' && window.nexus.platform === 'darwin' && (
           <button className="settings-btn" type="button" onClick={() => void openScreenSettings()}>
             Abrir Ajustes do Sistema
           </button>
         )}
       </div>
-      {permission === 'denied' && (
+      {permission !== 'granted' && window.nexus.platform === 'darwin' && (
         <p className="settings-field__note">
-          Habilite o NexusIDE em Gravação de Tela e depois feche e reabra o
-          app — o macOS só aplica a permissão no próximo start.
+          Fluxo: 1) “Pedir permissão ao macOS” registra o NexusIDE na lista de
+          Gravação de Tela (sem “+” nem buscar pasta); 2) nos Ajustes, vire a
+          chave do NexusIDE; 3) feche e reabra o app — o macOS só aplica a
+          permissão no próximo start.
         </p>
       )}
       {captureStatus && <p className="settings-field__note">{captureStatus}</p>}

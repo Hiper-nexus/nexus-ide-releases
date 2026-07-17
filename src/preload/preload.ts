@@ -1123,6 +1123,8 @@ const api: NexusApi = {
     checkPermission: () => ipcRenderer.invoke(VISION_CHANNELS.permission),
     openScreenSettings: () =>
       ipcRenderer.invoke(VISION_CHANNELS.openScreenSettings),
+    requestPermission: () =>
+      ipcRenderer.invoke(VISION_CHANNELS.requestPermission),
     onCaptured: (cb: (result: ScreenCaptureMetadata) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, result: ScreenCaptureMetadata) => cb(result);
       ipcRenderer.on(VISION_CHANNELS.captured, handler);
