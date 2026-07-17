@@ -11,6 +11,7 @@ import { orchWriteSession } from '../pty/pty-manager';
 import { listAdapterInfos } from '../adapters/adapter-registry';
 import { findAgentInSquad } from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
+import { countLiveMissionWorkerSlots } from './mission-driver-io';
 import { loadModelCatalog, modelCatalogInfo } from '../adapters/model-catalog';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import {
@@ -285,14 +286,18 @@ const paneSpawn: McpToolDef = {
         if (!missionRow?.intentContract) {
           throw new Error('approval_required: current mission contract unavailable');
         }
-        const liveWorkers = suite.missionPanes
-          .list(missionId)
-          .filter((pane) => pane.role === 'worker').length;
+        // Slots contam só workers VIVOS: linha durável de worker morto/fechado
+        // não pode segurar maxWorkers para sempre (deadlock de campo).
+        const workerSlots = countLiveMissionWorkerSlots(
+          ctx.scope,
+          missionId,
+          suite.missionPanes.list(missionId),
+        );
         const policy = reserveWorkerSpawnSlot({
           scope: ctx.scope,
           missionId,
           contract: missionRow.intentContract,
-          currentWorkerCount: liveWorkers,
+          currentWorkerCount: workerSlots.live,
           allowedTools: options.allowedTools,
         });
         if (!policy.ok) {
