@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.19.14 — Sem Freio de Mão
+
+Data: 2026-07-17
+
+- **Fim do teto sintético de tokens**: missões travavam com "12k tokens de
+  execução esgotados" ainda no bootstrap — mas esses tokens eram FICTÍCIOS
+  (100-400 estimados por tool, nunca a conta real do provider). O ledger de
+  steps/tokens vira telemetria pura: registra, nunca bloqueia. Missões já
+  travadas por orçamento destravam sozinhas no próximo passo.
+- Proteções reais permanecem: mission driver (iterações/tempo), PREVC e
+  limite de workers vivos.
+
 ## 0.19.13 — Missão com Nome Próprio
 
 Data: 2026-07-17
