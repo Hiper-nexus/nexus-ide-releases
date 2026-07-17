@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.19.9 — Sem Fantasmas
+
+Data: 2026-07-17
+
+- **Login 401 do Claude morto de vez**: conta pinada que é o login nativo do
+  Keychain spawna sem token env (a linhagem que o CLI mantém fresca); contas
+  secundárias ganham renovação automática do OAuth no vault a cada 15min —
+  respawn de failover nunca mais encontra token expirado.
+- **Cooldown fantasma se auto-limpa**: leitura fresca da API do provider com
+  janelas saudáveis refuta cooldown persistido (resíduo da cascata) e a conta
+  volta ao pool; cooldown maior que 5h agora pinta a barra Semanal — nunca
+  mais "5 Horas 100%" com reset de 10 horas.
+- **Missão antiga não ressuscita sozinha**: o driver só dirige missões com
+  atividade na sessão atual do app; retomar uma antiga voltou a ser decisão
+  sua.
+- **Nova Missão com "Planejar · PRD"**: quarto card pula direto para o squad
+  de planejamento BMAD (lê o código, entrevista, entrega PRD + arquitetura
+  com diagrama + stories).
+- **Updates sem gh CLI**: o updater ganhou fallback para um espelho público
+  de releases via API anônima — máquinas de terceiros atualizam sozinhas
+  (espelho a ativar).
+- **Uso e cotas**: cards com barras, percentuais e resets alinhados.
+
 ## 0.19.8 — Destrava Geral
 
 Data: 2026-07-17
