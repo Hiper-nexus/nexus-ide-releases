@@ -79,53 +79,95 @@ function scriptRecipe(scriptUrl: string): ScriptInstallRecipe {
   });
 }
 
-type PlatformRecipes = Partial<Record<NodeJS.Platform, CliInstallRecipe>>;
+type PlatformRecipes = Partial<
+  Record<NodeJS.Platform, readonly CliInstallRecipe[]>
+>;
 
+/**
+ * CANDIDATOS em cascata por CLI (caso de campo: máquina de vizinho sem
+ * Node/npm — "mandei instalar e não instalou nenhuma"). O instalador escolhe
+ * o primeiro candidato cujo runner existe na máquina; todos os canais são
+ * oficiais e verificados.
+ */
 const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
   claude: {
-    darwin: npmRecipe('@anthropic-ai/claude-code'),
-    linux: npmRecipe('@anthropic-ai/claude-code'),
-    win32: npmRecipe('@anthropic-ai/claude-code'),
+    // Fallback: instalador nativo oficial da Anthropic (docs "Set up Claude
+    // Code") — cobre máquina sem Node E o clássico EACCES do npm -g.
+    darwin: [npmRecipe('@anthropic-ai/claude-code'), scriptRecipe('https://claude.ai/install.sh')],
+    linux: [npmRecipe('@anthropic-ai/claude-code'), scriptRecipe('https://claude.ai/install.sh')],
+    win32: [npmRecipe('@anthropic-ai/claude-code')],
   },
   codex: {
-    darwin: npmRecipe('@openai/codex'),
-    linux: npmRecipe('@openai/codex'),
-    win32: npmRecipe('@openai/codex'),
+    // Fallback: formula oficial no homebrew-core.
+    darwin: [npmRecipe('@openai/codex'), brewRecipe('codex')],
+    linux: [npmRecipe('@openai/codex')],
+    win32: [npmRecipe('@openai/codex')],
   },
   gemini: {
-    darwin: npmRecipe('@google/gemini-cli'),
-    linux: npmRecipe('@google/gemini-cli'),
-    win32: npmRecipe('@google/gemini-cli'),
+    darwin: [npmRecipe('@google/gemini-cli')],
+    linux: [npmRecipe('@google/gemini-cli')],
+    win32: [npmRecipe('@google/gemini-cli')],
   },
   opencode: {
-    darwin: brewRecipe('opencode'),
-    linux: npmRecipe('opencode-ai'),
-    win32: npmRecipe('opencode-ai'),
+    darwin: [brewRecipe('opencode'), npmRecipe('opencode-ai')],
+    linux: [npmRecipe('opencode-ai')],
+    win32: [npmRecipe('opencode-ai')],
   },
   omp: {
-    darwin: brewRecipe('can1357/tap/omp'),
+    darwin: [brewRecipe('can1357/tap/omp')],
   },
   kimi: {
-    darwin: brewRecipe('kimi-code'),
-    linux: npmRecipe('@moonshot-ai/kimi-code'),
-    win32: npmRecipe('@moonshot-ai/kimi-code'),
+    darwin: [brewRecipe('kimi-code'), npmRecipe('@moonshot-ai/kimi-code')],
+    linux: [npmRecipe('@moonshot-ai/kimi-code')],
+    win32: [npmRecipe('@moonshot-ai/kimi-code')],
   },
   grok: {
-    darwin: npmRecipe('@xai-official/grok'),
-    linux: npmRecipe('@xai-official/grok'),
-    win32: npmRecipe('@xai-official/grok'),
+    darwin: [npmRecipe('@xai-official/grok')],
+    linux: [npmRecipe('@xai-official/grok')],
+    win32: [npmRecipe('@xai-official/grok')],
   },
   agy: {
-    darwin: scriptRecipe('https://antigravity.google/cli/install.sh'),
-    linux: scriptRecipe('https://antigravity.google/cli/install.sh'),
+    darwin: [scriptRecipe('https://antigravity.google/cli/install.sh')],
+    linux: [scriptRecipe('https://antigravity.google/cli/install.sh')],
   },
 });
+
+/** Todos os candidatos (ordem de preferência) para a CLI nesta plataforma. */
+export function cliInstallRecipeCandidates(
+  adapterId: string,
+  platform: NodeJS.Platform = process.platform,
+): readonly CliInstallRecipe[] {
+  return RECIPES[adapterId]?.[platform] ?? [];
+}
 
 export function cliInstallRecipeFor(
   adapterId: string,
   platform: NodeJS.Platform = process.platform,
 ): CliInstallRecipe | null {
-  return RECIPES[adapterId]?.[platform] ?? null;
+  return RECIPES[adapterId]?.[platform]?.[0] ?? null;
+}
+
+export type InstallRecipeSelection =
+  | { readonly ok: true; readonly recipe: CliInstallRecipe }
+  | { readonly ok: false; readonly missingRunnerHints: readonly string[] };
+
+/**
+ * Escolhe o primeiro candidato cujo runner existe. Sem nenhum utilizável,
+ * devolve as dicas ÚNICAS (ex.: "instale o Node OU o Homebrew") — o resumo
+ * honesto que faltava quando "instalar" silenciosamente não instalava nada.
+ */
+export function selectInstallRecipe(
+  candidates: readonly CliInstallRecipe[],
+  isRunnerResolvable: (runner: string) => boolean,
+): InstallRecipeSelection | null {
+  if (candidates.length === 0) return null;
+  for (const recipe of candidates) {
+    if (isRunnerResolvable(recipe.runner)) return { ok: true, recipe };
+  }
+  return {
+    ok: false,
+    missingRunnerHints: [...new Set(candidates.map((r) => r.runnerHint))],
+  };
 }
 
 /** Resumo do que será executado — vai no diálogo nativo de confirmação. */
