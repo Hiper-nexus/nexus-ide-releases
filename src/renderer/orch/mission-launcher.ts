@@ -293,6 +293,12 @@ export interface SquadLaunchOptions {
    * without leaving a mission authorized when no provider can launch.
    */
   authorizeDispatch?: () => Promise<void>;
+  /**
+   * Título da missão quando o objetivo do usuário é conhecido (modo agêntico).
+   * Sem ele, a missão herda o nome do squad — errado quando o squad é reusado
+   * de outra missão ("Clone Overclock" numa missão de dashboards).
+   */
+  missionTitle?: string;
 }
 
 export function initialGoalForArmedMission(input: {
@@ -326,7 +332,11 @@ export function buildIntentDispatchKickoffPrompt(input: {
   compactMemoryMarkdown?: string | null;
   /** standard = PREVC code path (default); consult = read-only investigation. */
   lane?: 'standard' | 'consult';
+  /** Título real da missão — sobrepõe o nome do squad no heading quando o
+   * squad foi reusado de outra missão. */
+  missionTitle?: string;
 }): string {
+  const headingTitle = input.missionTitle?.trim() || input.squad.name;
   // The auto-derived criterion is a restated slice of the goal; the goal is
   // already the section above, so repeating it only inflates the kickoff.
   const explicitCriteria = input.acceptanceCriteria.filter(
@@ -344,7 +354,7 @@ export function buildIntentDispatchKickoffPrompt(input: {
   if (lane === 'consult') {
     return [
       input.squad.orchestratorInstructions.trim(),
-      `# Missão de consulta (read-only) — ${input.squad.name}`,
+      `# Missão de consulta (read-only) — ${headingTitle}`,
       `missionId=${input.missionId}`,
       `lane=consult`,
       '',
@@ -369,7 +379,7 @@ export function buildIntentDispatchKickoffPrompt(input: {
   }
   return [
     input.squad.orchestratorInstructions.trim(),
-    `# Missão autorizada — ${input.squad.name}`,
+    `# Missão autorizada — ${headingTitle}`,
     `missionId=${input.missionId}`,
     `lane=standard`,
     '',
@@ -559,7 +569,7 @@ export async function launchSquadMission(
     try {
       useHomeStore.getState().hide();
       const mission = await window.nexus.orch.armMission({
-        title: squad.name,
+        title: options.missionTitle?.trim() || squad.name,
         squadId: squad.id,
       });
       return {
@@ -746,7 +756,7 @@ export async function launchSquadMission(
     }
     const materialized = await materializeSquadMission({
       paneId: orchPane.id,
-      title: squad.name,
+      title: options.missionTitle?.trim() || squad.name,
       squadId: squad.id,
       existingMissionId: options.existingMissionId,
       orchestratorPane: {

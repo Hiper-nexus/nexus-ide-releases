@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdapterInfo } from '../../shared/types';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { DEFAULT_ORCH_SETTINGS } from '../../shared/settings-types';
+import {
+  missionTitleFromGoal,
+  retargetSquadInstructions,
+} from '../../shared/mission-identity';
 import { useOrchStore } from '../state/orch-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import {
@@ -520,16 +524,23 @@ export function MissionWizard() {
   // Load the selected squad into an editable copy. The orchestrator follows the
   // provider selected in Settings; workers stay distributed across the other
   // enabled CLIs.
+  // Rebalance ONLY when the squad itself changes: adapters/providers emitem
+  // onChanged o tempo todo (quota, install-check) e recarregar o roster nesses
+  // eventos descartava a edição do usuário — o modelo escolhido na revisão
+  // (ex.: Fable no orquestrador) voltava silenciosamente ao salvo no squad.
+  const rosterSquadRef = useRef<string | null>(null);
   useEffect(() => {
     const sq = squads.find((s) => s.id === squadId);
+    if (!sq) {
+      rosterSquadRef.current = null;
+      setRoster([]);
+      setRosterSaved(false);
+      return;
+    }
+    if (rosterSquadRef.current === sq.id) return;
+    rosterSquadRef.current = sq.id;
     setRoster(
-      sq
-        ? balanceSquadRosterCli(
-            sq.agents,
-            rosterAdapters,
-            orchestratorAdapterId,
-          )
-        : [],
+      balanceSquadRosterCli(sq.agents, rosterAdapters, orchestratorAdapterId),
     );
     setRosterSaved(false);
   }, [squadId, squads, rosterAdapters, orchestratorAdapterId]);
@@ -791,7 +802,14 @@ export function MissionWizard() {
       if (!(await ensureWorkspaceOpen())) return;
       // Launch with the reviewed roster. Pass all adapters so preflight can
       // explain an unavailable configured provider instead of failing silently.
-      const result = await launchSquadMission(effectiveSquad, adapters);
+      // Agêntico: a missão nasce com o objetivo do usuário como título — nunca
+      // com o nome de um squad reusado de outra missão.
+      const result = await launchSquadMission(effectiveSquad, adapters, {
+        missionTitle:
+          mode === 'agentic' && intent.trim()
+            ? missionTitleFromGoal(intent, selectedSquad.name)
+            : undefined,
+      });
       if (!result.ok) {
         setError(result.error ?? 'Falha ao iniciar o squad.');
         useToastStore
@@ -939,7 +957,20 @@ export function MissionWizard() {
       setError('Contrato de intenção ausente antes do despacho.');
       return false;
     }
-    const effectiveSquad: Squad = { ...selectedSquad, agents: roster };
+    // Squad reusado no agêntico: as instruções salvas ainda abrem com a
+    // missão ANTIGA ("# Missão Clone Overclock…") — retarget para o objetivo
+    // do contrato antes do kickoff, senão o orquestrador recebe duas missões.
+    const effectiveSquad: Squad = {
+      ...selectedSquad,
+      agents: roster,
+      orchestratorInstructions:
+        mode === 'agentic'
+          ? retargetSquadInstructions(
+              selectedSquad.orchestratorInstructions,
+              contract.goal,
+            )
+          : selectedSquad.orchestratorInstructions,
+    };
     const {
       compactMissionContext,
       missionCompactHasProgress,
@@ -952,6 +983,10 @@ export function MissionWizard() {
     const goalPrompt = [
       buildIntentDispatchKickoffPrompt({
         squad: effectiveSquad,
+        missionTitle:
+          mode === 'agentic'
+            ? missionTitleFromGoal(contract.goal, selectedSquad.name)
+            : undefined,
         missionId: planned.id,
         goal: contract.goal,
         acceptanceCriteria: contract.acceptanceCriteria,
@@ -971,6 +1006,10 @@ export function MissionWizard() {
       .join('\n\n');
     const result = await launchSquadMission(effectiveSquad, adapters, {
       existingMissionId: planned.id,
+      missionTitle:
+        mode === 'agentic'
+          ? missionTitleFromGoal(contract.goal, selectedSquad.name)
+          : undefined,
       goalPrompt,
       authorizeDispatch: async () => {
         const approved = await window.nexus.orch.approveMissionIntent({
