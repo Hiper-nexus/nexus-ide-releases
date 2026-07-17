@@ -10,6 +10,7 @@ import {
 import {
   DEFAULT_ROUTING_TABLE,
   classifyTask,
+  resolveRoutableModel,
   routeTask,
   type AdapterAvailability,
 } from './task-router';
@@ -669,3 +670,115 @@ describe('routeTask default catalog path (published eval quality)', () => {
 });
 
 
+
+describe('resolveRoutableModel — modelo real, sem fantasma', () => {
+  it('usa o modelo exato quando o adapter o lista', () => {
+    expect(
+      resolveRoutableModel('gpt-5.6-sol', ['gpt-5.6-sol', 'gpt-5.5']),
+    ).toEqual({ ok: true, model: 'gpt-5.6-sol' });
+  });
+
+  it('mapeia geração renomeada para a 1ª variante de família (gpt-5.6 → gpt-5.6-sol)', () => {
+    // Caso de campo: a tabela pede gpt-5.6, mas o CLI só tem as variantes.
+    expect(
+      resolveRoutableModel('gpt-5.6', ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.5']),
+    ).toEqual({ ok: true, model: 'gpt-5.6-sol' });
+  });
+
+  it('descarta o candidato quando nenhuma variante da família existe', () => {
+    expect(resolveRoutableModel('gpt-5.6', ['gpt-5.5', 'gpt-5.4'])).toEqual({
+      ok: false,
+    });
+  });
+
+  it('sem lista de modelos confia na tabela (não há como validar)', () => {
+    expect(resolveRoutableModel('gpt-5.6', undefined)).toEqual({
+      ok: true,
+      model: 'gpt-5.6',
+    });
+    expect(resolveRoutableModel('gpt-5.6', [])).toEqual({
+      ok: true,
+      model: 'gpt-5.6',
+    });
+  });
+
+  it('sem modelo pedido não impõe modelo (default do adapter)', () => {
+    expect(resolveRoutableModel(undefined, ['gpt-5.5'])).toEqual({
+      ok: true,
+      model: undefined,
+    });
+  });
+});
+
+describe('routeTask nunca emite modelo que o codex instalado não roda', () => {
+  it('roteia hard para a variante real gpt-5.6-sol, não o fantasma gpt-5.6', () => {
+    // Catálogo sem quality: força o caminho da TABELA (a avaliação por
+    // dimensão fica vazia), que é o que este teste exercita.
+    const tableOnlyCatalog = {
+      version: 1,
+      adapters: {
+        codex: {
+          models: [
+            {
+              id: 'gpt-5.6-sol',
+              availability: 'paid' as const,
+              costTier: 'high' as const,
+            },
+          ],
+        },
+      },
+    };
+    const decision = routeTask(
+      'refatorar o motor de orquestração para performance',
+      [
+        {
+          id: 'codex',
+          installed: true,
+          // Espelha o cache real do CLI: sem bare gpt-5.6.
+          models: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4'],
+        },
+      ],
+      DEFAULT_ROUTING_TABLE,
+      'hard',
+      false,
+      tableOnlyCatalog,
+    );
+    expect(decision).not.toBeNull();
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.model).toBe('gpt-5.6-sol');
+  });
+
+  it('mapeia o fantasma gpt-5.6 da tabela para a variante real quando a tabela ainda usa o id antigo', () => {
+    // Robustez: mesmo que a tabela volte a apontar gpt-5.6 (rename futuro),
+    // o roteador resolve para a variante que o CLI realmente lista.
+    const legacyTable = {
+      ...DEFAULT_ROUTING_TABLE,
+      hard: [{ adapterId: 'codex', model: 'gpt-5.6', effort: 'high' }],
+    };
+    const decision = routeTask(
+      'refatorar o motor de orquestração para performance',
+      [
+        {
+          id: 'codex',
+          installed: true,
+          models: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.5'],
+        },
+      ],
+      legacyTable,
+      'hard',
+      false,
+      {
+        version: 1,
+        adapters: {
+          codex: {
+            models: [
+              { id: 'gpt-5.6-sol', availability: 'paid' as const, costTier: 'high' as const },
+            ],
+          },
+        },
+      },
+    );
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.model).toBe('gpt-5.6-sol');
+  });
+})

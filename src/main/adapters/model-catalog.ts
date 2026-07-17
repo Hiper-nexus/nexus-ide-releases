@@ -85,7 +85,6 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     },
     codex: {
       models: [
-        { id: 'gpt-5.6', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.5', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.4', availability: 'paid', costTier: 'medium', source: 'bundled' },
