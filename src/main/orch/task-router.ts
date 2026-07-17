@@ -67,7 +67,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
     { adapterId: 'glm', model: 'glm-5.2', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
-    { adapterId: 'codex', model: 'gpt-5.6', effort: 'high' },
+    { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'high' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'high' },
@@ -76,7 +76,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   critical: [
     { adapterId: 'claude', model: 'claude-fable-5', effort: 'xhigh' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'xhigh' },
-    { adapterId: 'codex', model: 'gpt-5.6', effort: 'xhigh' },
+    { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' },
     { adapterId: 'glm', model: 'glm-5.2', effort: 'xhigh' },
     // Diversidade também no crítico: sem estes, uma máquina sem claude/codex/
     // glm empresta de outro tier e o worker crítico colapsa num só provider.
@@ -232,6 +232,33 @@ function qualityDimension(taskText: string, tier: TaskTier): QualityDimension {
   return tier === 'hard' || tier === 'critical' ? 'reasoning' : 'coding';
 }
 
+/**
+ * Resolve o modelo de um candidato da tabela contra a lista REAL de modelos do
+ * adapter instalado. Motivo de campo (17/07): a tabela pedia `gpt-5.6`, mas a
+ * OpenAI renomeou a geração em variantes (`gpt-5.6-sol`/`-luna`/`-terra`); o
+ * CLI ignorava o modelo fantasma e caía SILENCIOSAMENTE no seu default
+ * (`gpt-5.5`). Agora:
+ *  - modelo exato disponível → usa ele;
+ *  - família disponível (mesmo prefixo de geração, ex.: `gpt-5.6` →
+ *    `gpt-5.6-sol`) → usa a 1ª variante que o CLI lista (a CLI ordena a
+ *    preferida primeiro);
+ *  - nada da família instalado → candidato é DESCARTADO (nunca emite um
+ *    modelo que o adapter não roda);
+ *  - adapter sem lista de modelos → confia na tabela (não há como validar).
+ */
+export function resolveRoutableModel(
+  requested: string | undefined,
+  available: readonly string[] | undefined,
+): { readonly ok: true; readonly model: string | undefined } | { readonly ok: false } {
+  if (!requested) return { ok: true, model: undefined };
+  if (!available || available.length === 0) return { ok: true, model: requested };
+  if (available.includes(requested)) return { ok: true, model: requested };
+  const variant = available.find(
+    (model) => model.startsWith(`${requested}-`) || model.startsWith(`${requested}.`),
+  );
+  return variant ? { ok: true, model: variant } : { ok: false };
+}
+
 function evaluatedCandidates(
   taskText: string,
   tier: TaskTier,
@@ -325,25 +352,23 @@ export function routeTask(
   const skippedRisk: string[] = [];
   for (const candidateTier of searchOrder) {
     const tierCandidates = table[candidateTier]
-      .filter((c) => {
+      .flatMap((c) => {
         const adapter = available.get(c.adapterId);
-        if (!adapter) return false;
-        if (
-          c.model &&
-          adapter.models &&
-          adapter.models.length > 0 &&
-          !adapter.models.includes(c.model)
-        ) {
-          return false;
-        }
-        const info = modelCatalogInfo(modelCatalog, c.adapterId, c.model);
+        if (!adapter) return [];
+        // Resolve o modelo da tabela para um que o adapter REALMENTE roda
+        // (variante de família quando a geração foi renomeada). Sem família
+        // disponível, descarta — nunca cai no default silencioso do CLI.
+        const resolved = resolveRoutableModel(c.model, adapter.models);
+        if (!resolved.ok) return [];
+        const routed: RouteCandidate = { ...c, model: resolved.model };
+        const info = modelCatalogInfo(modelCatalog, routed.adapterId, routed.model);
         if (isModelBlockedForAutoRouting(info)) {
           skippedRisk.push(
-            `${c.adapterId}:${c.model ?? '(default)'} (${info?.availability ?? 'blocked'})`,
+            `${routed.adapterId}:${routed.model ?? '(default)'} (${info?.availability ?? 'blocked'})`,
           );
-          return false;
+          return [];
         }
-        return true;
+        return [routed];
       });
 
     for (const c of tierCandidates) {
