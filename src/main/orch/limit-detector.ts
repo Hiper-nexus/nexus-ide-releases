@@ -11,6 +11,10 @@ import {
 } from '../../vendor/omp/rate-limit/classify';
 import { parseRetryAfterMsFromText } from '../../vendor/omp/rate-limit/retry-after-text';
 import { parseAnthropicModelId } from '../../vendor/omp/catalog/identity';
+import {
+  FAILOVER_HANDOFF_FOOTER,
+  FAILOVER_HANDOFF_HEADER,
+} from '../../shared/failover-handoff';
 
 /**
  * - 'quota': conta/plano esgotado — cooldown longo, pinta a janela Semanal.
@@ -91,7 +95,14 @@ const PATTERNS: Pattern[] = [
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /insufficient[_\s]?quota/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /credit balance is too low/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /quota (?:exceeded|exhausted)/i },
-  { kind: 'quota', cooldownMs: 12 * HOUR, re: /\b402\b|payment required/i },
+  // Error-shaped (like the 429 pattern below): a bare status number only counts
+  // as a limit when framed by http/status/error — never a bare "402" in prose or
+  // in Nexus's own handoff text (which echoes the code back onto the PTY).
+  {
+    kind: 'quota',
+    cooldownMs: 12 * HOUR,
+    re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*)402\b|payment required/i,
+  },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /out of credits|no credits remaining/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /billing[_\s]?hard[_\s]?limit/i },
   { kind: 'quota', cooldownMs: 12 * HOUR, re: /you['’]ve used all of your (?:credits|quota|plan)/i },
@@ -148,8 +159,16 @@ const PATTERNS: Pattern[] = [
     re: /(?:grok|xai).{0,40}(?:rate|usage)\s+limit\s+(?:reached|exceeded|hit)/i,
   },
   { kind: 'rate-limit', cooldownMs: 15 * 60 * 1000, re: /overloaded(?:_error)?/i },
-  // Auth expiry — switching accounts may recover.
-  { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /\b401\b|authentication[_\s]?error/i },
+  // Auth expiry — switching accounts may recover. Error-shaped like 429/402:
+  // a bare "401" must be framed (HTTP 401 / status: 401 / error: 401 / 401
+  // Unauthorized) or carry authentication_error. A naked "401" — as in the
+  // failover handoff pack "hit a provider limit (401 …)" echoed back onto the
+  // PTY, or agent prose about a 401 — must NOT re-arm failover (phantom loop).
+  {
+    kind: 'auth',
+    cooldownMs: 15 * 60 * 1000,
+    re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*)401\b|401\s+unauthorized|authentication[_\s]?error/i,
+  },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /invalid[_\s]?(?:api[_\s]?key|x-api-key)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /oauth token (?:expired|revoked)/i },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:error|failed|unable).{0,40}(?:not logged in|session expired)/i },
@@ -192,7 +211,43 @@ function cooldownForReason(reason: ClassifiedReason): number {
   return backoffMsForReason(reason);
 }
 
-export function detectLimit(text: string): LimitHit | null {
+/**
+ * Excise Nexus's own failover continuity pack before matching.
+ *
+ * The pack is injected into the replacement pane's PTY and echoed back onto
+ * stdout, where this detector re-scans it. It quotes the prior limit reason AND
+ * a scrollback excerpt of the previous terminal — both carry verbatim provider
+ * error text (framed `HTTP 401`, `payment required`, `429`, …) that survives any
+ * per-token regex hardening. Left in place, every replacement account re-fires
+ * failover and the whole fleet cascades into cooldown (the "Limite atingido"
+ * loop, with accounts that still have quota showing 100% from `cooldown`).
+ *
+ * The pack is bounded by stable Nexus markers. Cut header → footer when the
+ * footer has arrived; header → end while it is still streaming (suppress the
+ * dangerous tail until it completes). Real provider output before the header or
+ * after the footer is untouched and still triggers failover.
+ */
+function stripFailoverHandoffPack(text: string): string {
+  let out = text;
+  for (let guard = 0; guard < 8; guard += 1) {
+    const start = out.indexOf(FAILOVER_HANDOFF_HEADER);
+    if (start < 0) break;
+    const footerAt = out.indexOf(
+      FAILOVER_HANDOFF_FOOTER,
+      start + FAILOVER_HANDOFF_HEADER.length,
+    );
+    if (footerAt < 0) {
+      // Pack still streaming — drop from the header to the end of the buffer.
+      out = out.slice(0, start);
+      break;
+    }
+    out = out.slice(0, start) + out.slice(footerAt + FAILOVER_HANDOFF_FOOTER.length);
+  }
+  return out;
+}
+
+export function detectLimit(rawText: string): LimitHit | null {
+  const text = stripFailoverHandoffPack(rawText);
   for (const pattern of PATTERNS) {
     const match = pattern.re.exec(text);
     if (!match) continue;

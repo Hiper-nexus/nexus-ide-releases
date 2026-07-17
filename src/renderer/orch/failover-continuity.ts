@@ -4,6 +4,11 @@
  * so we rehydrate mission intent as a fresh CLI prompt.
  */
 
+import {
+  FAILOVER_HANDOFF_FOOTER,
+  FAILOVER_HANDOFF_HEADER,
+} from '../../shared/failover-handoff';
+
 export interface ContinuityPackInput {
   fromAccountLabel: string;
   toAccountLabel: string;
@@ -32,7 +37,7 @@ function clip(s: string, max: number): string {
 export function buildContinuityPack(input: ContinuityPackInput): string {
   const role = input.role === 'orchestrator' ? 'orchestrator' : 'agent';
   const lines = [
-    `[NEXUS FAILOVER HANDOFF]`,
+    FAILOVER_HANDOFF_HEADER,
     `Account "${input.fromAccountLabel}" hit a provider limit (${clip(input.reason, 160)}).`,
     `You are now running on account "${input.toAccountLabel}" in a NEW provider session.`,
     `Terminal scrollback above is historical context only — the previous conversation id is NOT transferable across accounts.`,
@@ -49,7 +54,7 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
       `Recent terminal excerpt (may be partial):\n"""\n${clip(input.scrollbackExcerpt, MAX_EXCERPT)}\n"""`,
     );
   }
-  lines.push('Execute the next concrete step now.');
+  lines.push(FAILOVER_HANDOFF_FOOTER);
   return lines.join('\n');
 }
 

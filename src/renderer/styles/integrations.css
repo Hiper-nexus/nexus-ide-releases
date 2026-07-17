@@ -53,8 +53,7 @@
   color: var(--accent);
 }
 
-.diff-panel,
-.int-panel {
+.diff-panel {
   position: fixed;
   inset: calc(var(--bar-height) + 8px) 12px 12px 12px;
   z-index: 36;
@@ -65,6 +64,54 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-3, 0 16px 48px rgba(0, 0, 0, 0.45));
   overflow: hidden;
+}
+
+/* Integrações: modal focado sobre um scrim — não mais overlay tela-cheia
+   (5 colunas esparsas num vazio enorme). Largura limitada + centrado. */
+.int-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 36;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--bar-height) + 16px) 16px 16px;
+  background: color-mix(in srgb, #000 55%, transparent);
+  backdrop-filter: blur(2px);
+  animation: int-scrim-in 140ms var(--ease-out-quart, ease);
+}
+
+.int-panel {
+  width: min(920px, 100%);
+  max-height: min(86vh, 760px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3, 0 16px 48px rgba(0, 0, 0, 0.45));
+  overflow: hidden;
+  animation: int-panel-in 160ms var(--ease-out-quart, ease);
+}
+
+@keyframes int-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes int-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .diff-panel__head,
@@ -189,10 +236,12 @@
   padding: 9px 12px;
 }
 
-.int-panel__sec h4 {
-  font-size: 13px;
-  font-weight: 650;
-  margin: 0 0 10px;
+/* Botão inline (Salvar / Forward) — mais curto que o CTA principal. */
+.int-panel__btn--sm {
+  min-height: 38px;
+  padding: 8px 14px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .diff-panel__btn:disabled,
@@ -225,25 +274,134 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px 16px 20px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 16px;
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.int-panel__sec {
+.int-panel__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .int-panel__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.int-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 12px;
-  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  padding: 14px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
 }
 
-.int-panel__sec h4 {
-  margin: 0 0 10px;
-  font-size: 12px;
-  letter-spacing: 0.04em;
+.int-card__title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
+}
+
+/* Um bloco lógico dentro de um card (GitHub, Linear, Criar PR, Port forward). */
+.int-conn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.int-conn__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.int-conn__save {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.int-conn__save .int-panel__input {
+  flex: 1;
+}
+
+/* Status: ● conectado (verde) / ○ desconectado (cinza). */
+.int-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+
+.int-chip::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.int-chip--on {
+  color: var(--ok, oklch(72% 0.17 150));
+}
+
+.int-chip--on::before {
+  background: var(--ok, oklch(72% 0.17 150));
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--ok, oklch(72% 0.17 150)) 22%, transparent);
+}
+
+/* Abas do bloco Trabalho (PRs / Issues GitHub / Linear). */
+.int-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+}
+
+.int-tab {
+  appearance: none;
+  flex: 1;
+  border: none;
+  border-radius: calc(var(--radius-md) - 3px);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.int-tab--active {
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.int-tab__count {
+  opacity: 0.55;
+  margin-left: 5px;
 }
 
 .int-panel__field {
@@ -262,8 +420,13 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 180px;
+  max-height: 220px;
   overflow: auto;
+}
+
+.int-panel__list li {
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 .int-panel__link {
@@ -298,5 +461,10 @@
 @media (prefers-reduced-motion: reduce) {
   .agent-drop {
     transition: none;
+  }
+
+  .int-scrim,
+  .int-panel {
+    animation: none;
   }
 }
