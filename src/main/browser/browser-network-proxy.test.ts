@@ -7,6 +7,7 @@ import type { ProxyConfig } from 'electron';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { assessBrowserUrl } from './url-policy';
 import {
+  describeUpstreamFailure,
   installPinnedBrowserProxy,
   resolvePinnedBrowserTarget,
   startPinnedBrowserProxy,
@@ -352,5 +353,28 @@ describe('pinned browser network proxy', () => {
       'direct://',
     );
     expect(order).toEqual(['proxy', 'connections']);
+  });
+});
+
+describe('describeUpstreamFailure', () => {
+  it('nomeia conexão recusada como falha do DESTINO, não do proxy', () => {
+    // Regressão de campo: preview local morre junto com o pane e o browser
+    // mostrava "proxy unavailable" — o usuário caçava problema no Nexus.
+    const err = Object.assign(new Error('connect ECONNREFUSED'), {
+      code: 'ECONNREFUSED',
+    });
+    expect(describeUpstreamFailure(err)).toMatch(/target server unreachable \(ECONNREFUSED\)/);
+    expect(describeUpstreamFailure(err)).toMatch(/restart the server/);
+  });
+
+  it('timeout de upstream também é falha de destino', () => {
+    expect(
+      describeUpstreamFailure(new Error('browser proxy upstream timeout')),
+    ).toMatch(/ETIMEDOUT/);
+  });
+
+  it('erros internos continuam como proxy unavailable (retorna null)', () => {
+    expect(describeUpstreamFailure(new Error('unexpected'))).toBeNull();
+    expect(describeUpstreamFailure(null)).toBeNull();
   });
 });
