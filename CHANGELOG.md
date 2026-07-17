@@ -4,6 +4,9 @@
 
 Data: 2026-07-17
 
+- **Piloto automático de máquina nova**: no primeiro boot com CLIs
+  ausentes, um diálogo nativo lista os comandos exatos e instala tudo em
+  sequência ao aceitar — do DMG ao cockpit operacional em minutos.
 - **Provisionador de CLIs**: botão único no hub de Providers instala TODAS as
   CLIs ausentes em sequência (instaladores oficiais, uma confirmação nativa
   por CLI mostrando o comando exato) — máquina fresca fica operacional sem
