@@ -783,6 +783,114 @@ async function warnInvalidBin(
   else await dialog.showMessageBox(opts);
 }
 
+const PROVISION_OFFER_MARKER = 'provisioning-offer.json';
+
+/**
+ * Piloto automático de máquina nova (oferta única por instalação): no
+ * primeiro boot com CLIs auto-instaláveis ausentes, UM diálogo nativo lista
+ * os comandos EXATOS e oferece instalar tudo em sequência. Mesma doutrina
+ * SEC#4 do fluxo por-CLI — comandos/URLs visíveis, argv sem shell, receitas
+ * em código. Quem recusar continua com o botão no hub de Providers.
+ */
+export async function maybeOfferFirstRunProvisioning(
+  userDataDir: string,
+): Promise<void> {
+  const markerPath = path.join(userDataDir, PROVISION_OFFER_MARKER);
+  try {
+    if (fs.existsSync(markerPath)) return;
+  } catch {
+    return;
+  }
+  const missing = listProviderSettings().filter(
+    (provider) => !provider.installed && provider.canAutoInstall,
+  );
+  const writeMarker = (accepted: boolean): void => {
+    try {
+      fs.writeFileSync(
+        markerPath,
+        JSON.stringify({ offeredAt: Date.now(), missing: missing.length, accepted }),
+        { mode: 0o600 },
+      );
+    } catch {
+      // Marker é conveniência; falha não pode quebrar o boot.
+    }
+  };
+  if (missing.length === 0) {
+    writeMarker(false);
+    return;
+  }
+  const lines = missing.map((provider) => {
+    const recipe = cliInstallRecipeFor(provider.adapterId);
+    return `• ${provider.label}: ${recipe ? describeInstallRecipe(recipe) : '—'}`;
+  });
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
+  const offer = {
+    type: 'info' as const,
+    buttons: ['Agora não', 'Instalar todas agora'],
+    defaultId: 1,
+    cancelId: 0,
+    title: 'Provisionar máquina nova',
+    message: `${missing.length} CLIs de IA ausentes nesta máquina`,
+    detail:
+      'O NexusIDE pode instalá-las agora pelas fontes oficiais:\n\n' +
+      `${lines.join('\n')}\n\n` +
+      'Cada instalação executa exatamente o comando mostrado (sem shell). ' +
+      'Logins/assinaturas seguem sendo feitos em cada CLI depois.',
+    noLink: true,
+  };
+  const choice = win
+    ? await dialog.showMessageBox(win, offer)
+    : await dialog.showMessageBox(offer);
+  writeMarker(choice.response === 1);
+  if (choice.response !== 1) return;
+
+  const done: string[] = [];
+  const pending: string[] = [];
+  for (const provider of missing) {
+    const recipe = cliInstallRecipeFor(provider.adapterId);
+    if (!recipe) continue;
+    if (!isBinResolvable(recipe.runner)) {
+      pending.push(`${provider.label} — ${recipe.runnerHint}`);
+      continue;
+    }
+    try {
+      if (recipe.kind === 'script') {
+        await runScriptInstall(recipe.scriptUrl);
+      } else {
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            recipe.argv[0],
+            recipe.argv.slice(1),
+            { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
+            (error) => (error ? reject(error) : resolve()),
+          );
+        });
+      }
+      done.push(provider.label);
+    } catch (err) {
+      pending.push(
+        `${provider.label} — ${err instanceof Error ? err.message.slice(0, 120) : 'falhou'}`,
+      );
+    }
+  }
+  broadcast();
+  const summary = {
+    type: 'info' as const,
+    buttons: ['OK'],
+    title: 'Provisionamento concluído',
+    message:
+      done.length > 0
+        ? `Instaladas: ${done.join(', ')}`
+        : 'Nenhuma CLI instalada desta vez',
+    detail:
+      (pending.length > 0 ? `Pendentes:\n${pending.join('\n')}\n\n` : '') +
+      'Próximo passo: faça login em cada CLI quando for usá-la (1x por máquina).',
+    noLink: true,
+  };
+  if (win && !win.isDestroyed()) await dialog.showMessageBox(win, summary);
+  else await dialog.showMessageBox(summary);
+}
+
 export function registerProviderIpc(): void {
   load();
 

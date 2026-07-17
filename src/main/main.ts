@@ -171,7 +171,10 @@ import {
   initQuotaService,
   shutdownQuotaService,
 } from "./quota/quota-service";
-import { listProviderSettings } from "./persistence/provider-config-store";
+import {
+  listProviderSettings,
+  maybeOfferFirstRunProvisioning,
+} from "./persistence/provider-config-store";
 import {
   clearCooldown,
   listAccountInfos,
@@ -470,6 +473,14 @@ function bootstrap(): void {
   // failover sempre encontram credencial viva no vault (mata o "401 OAuth
   // access token has expired" em respawn horas depois).
   startClaudeSubscriptionFreshness();
+  // Piloto automático de máquina nova: oferta única, diálogo nativo com os
+  // comandos exatos, instalação em sequência. Atrasado para não competir com
+  // o primeiro paint.
+  setTimeout(() => {
+    void maybeOfferFirstRunProvisioning(app.getPath("userData")).catch((err) =>
+      console.warn("[provisioning] oferta de primeiro boot falhou:", err),
+    );
+  }, 6_000);
   initQuotaService({
     listProviders: () => listProviderSettings(),
     listAccounts: () => listAccountInfos(),
