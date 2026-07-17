@@ -34,6 +34,28 @@ export function getScreenPermissionStatus(): ScreenPermissionStatus {
   return status as ScreenPermissionStatus;
 }
 
+/**
+ * Registra o Nexus na lista de Gravação de Tela do macOS e dispara o prompt
+ * nativo quando o estado é not-determined. O macOS SÓ lista um app naquele
+ * painel depois da primeira TENTATIVA de captura — e o nosso fluxo checava a
+ * permissão e lançava ANTES de tentar, então o app nunca aparecia e o usuário
+ * caía no calvário do "+" e buscar a pasta (achado de campo em máquina
+ * nova). Uma chamada mínima ao desktopCapturer força o registro no TCC;
+ * depois disso, nos Ajustes é só virar a chave do NexusIDE.
+ */
+export async function requestScreenPermissionRegistration(): Promise<ScreenPermissionStatus> {
+  try {
+    await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 1, height: 1 },
+    });
+  } catch {
+    // A tentativa em si é o objetivo (registro/prompt); falha aqui é normal
+    // quando a permissão ainda não foi concedida.
+  }
+  return getScreenPermissionStatus();
+}
+
 /** Ensure screen recording permission is granted. Throws if denied. */
 export function assertScreenPermission(): void {
   if (process.platform !== 'darwin') return;

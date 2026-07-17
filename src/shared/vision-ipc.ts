@@ -75,6 +75,8 @@ export const VISION_CHANNELS = {
   permission: 'vision:permission',
   /** invoke: renderer → main. Abre o painel de Gravação de Tela do SO. */
   openScreenSettings: 'vision:openScreenSettings',
+  /** invoke: renderer → main. Registra o app no TCC (prompt nativo do macOS). */
+  requestPermission: 'vision:requestPermission',
 } as const;
 
 /** Nó da accessibility tree extraído do DOM. */
@@ -270,6 +272,8 @@ export interface VisionApi {
   checkPermission(): Promise<ScreenPermissionStatus>;
   /** Abre o painel de Gravação de Tela dos Ajustes do Sistema (macOS). */
   openScreenSettings(): Promise<{ ok: boolean; error?: string }>;
+  /** Registra o Nexus na lista de Gravação de Tela (prompt nativo do macOS). */
+  requestPermission(): Promise<ScreenPermissionStatus>;
   /** Escuta evento de captura concluída. */
   onCaptured(cb: (result: ScreenCaptureMetadata) => void): () => void;
 }
