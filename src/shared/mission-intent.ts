@@ -644,29 +644,18 @@ export function assertWorkerBudget(
   return { ok: true };
 }
 
-/** Deny further effectful work when maxSteps or executionTokens are spent. */
+/**
+ * Steps/tokens são LEDGER, não teto. O contrato ainda registra spentSteps e
+ * spentTokens (estimativa sintética — nunca a conta real do provider), mas
+ * nenhum dos dois bloqueia trabalho: caso de campo 17/07 — missão real
+ * travava com "12k tokens esgotados" ainda no bootstrap obrigatório, porque
+ * doctor/draft cobram 400 "tokens" fictícios por chamada. Runaway continua
+ * protegido pelo mission driver (maxIterations/maxWallClock), pelo PREVC e
+ * por maxWorkers — que são limites reais, não contadores inventados.
+ */
 export function assertStepAndTokenBudget(
-  contract: MissionIntentContract | null | undefined,
+  _contract: MissionIntentContract | null | undefined,
 ): BudgetGateResult {
-  if (!contract) return { ok: true };
-  const maxSteps = contract.budgets.maxSteps ?? 500;
-  const spentSteps = contract.spentSteps ?? 0;
-  if (spentSteps >= maxSteps) {
-    return {
-      ok: false,
-      code: 'budget_exhausted',
-      error: `budget_exhausted: maxSteps=${maxSteps} reached`,
-    };
-  }
-  const maxTokens = contract.budgets.executionTokens;
-  const spentTokens = contract.spentTokens ?? 0;
-  if (maxTokens > 0 && spentTokens >= maxTokens) {
-    return {
-      ok: false,
-      code: 'budget_exhausted',
-      error: `budget_exhausted: executionTokens=${maxTokens} reached`,
-    };
-  }
   return { ok: true };
 }
 
@@ -721,31 +710,15 @@ export type EffectfulSpendReservation =
     }
   | { readonly ok: false; readonly code: string; readonly error: string };
 
-/** Reserve the next effect without allowing its estimated cost to overshoot. */
+/**
+ * Registra o próximo efeito no ledger. Nunca nega: os contadores existem para
+ * auditoria/telemetria da missão, não como teto (ver assertStepAndTokenBudget).
+ */
 export function reserveEffectfulSpend(
   contract: MissionIntentContract,
   toolName: string,
 ): EffectfulSpendReservation {
-  const current = assertStepAndTokenBudget(contract);
-  if (!current.ok) return current;
-  const next = applyEffectfulSpend(contract, toolName);
-  const maxSteps = contract.budgets.maxSteps ?? 500;
-  if (next.spentSteps > maxSteps) {
-    return {
-      ok: false,
-      code: 'budget_exhausted',
-      error: `budget_exhausted: maxSteps=${maxSteps} would be exceeded`,
-    };
-  }
-  const maxTokens = contract.budgets.executionTokens;
-  if (maxTokens > 0 && next.spentTokens > maxTokens) {
-    return {
-      ok: false,
-      code: 'budget_exhausted',
-      error: `budget_exhausted: executionTokens=${maxTokens} would be exceeded`,
-    };
-  }
-  return { ok: true, contract: next };
+  return { ok: true, contract: applyEffectfulSpend(contract, toolName) };
 }
 
 /**
