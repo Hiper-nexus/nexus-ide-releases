@@ -111,6 +111,10 @@ import {
   disposeAllOmpRpcSessions,
 } from "./adapters/omp-rpc-ipc";
 import {
+  registerOmpAuthIpc,
+  disposeAllOmpAuthFlows,
+} from "./adapters/omp-auth-ipc";
+import {
   initOrchestration,
   registerOrchIpc,
   registerOrchListener,
@@ -526,6 +530,8 @@ function bootstrap(): void {
   registerPipeIpc(); // also calls initPanePipes()
   // Sessões omp --mode rpc-ui como agentes de primeira classe (sem PTY).
   registerOmpRpcIpc();
+  // Login OAuth de assinaturas do omp (auth-broker) dirigido pelo painel.
+  registerOmpAuthIpc();
   registerRemoteIpc();
   registerIntegrationsIpc();
   // Desktop pet (opt-in): companion flutuante que reage à frota. Depois da
@@ -750,6 +756,7 @@ function shutdown(): Promise<void> {
     stopMacOSDockWatchdog();
     killAllSessions();
     disposeAllOmpRpcSessions();
+    disposeAllOmpAuthFlows();
     shutdownPtyHost();
     await closeAllDesignWritebacks();
     stopRemoteBridge();
