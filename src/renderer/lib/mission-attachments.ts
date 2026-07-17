@@ -36,6 +36,90 @@ export function classifyMissionAttachment(
   return null;
 }
 
+/** Clipboard image names are often blank or generic (`image.png`). */
+const GENERIC_PASTE_NAMES = new Set(['', 'image.png', 'image.jpg', 'image.jpeg', 'blob', 'untitled']);
+
+function extensionForMime(mime: string, kind: MissionAttachmentKind): string {
+  const normalized = mime.toLowerCase();
+  if (normalized === 'image/jpeg') return 'jpg';
+  if (normalized === 'image/png') return 'png';
+  if (normalized === 'image/webp') return 'webp';
+  if (normalized === 'image/gif') return 'gif';
+  if (normalized === 'audio/mpeg') return 'mp3';
+  if (normalized === 'audio/mp4' || normalized === 'audio/x-m4a') return 'm4a';
+  if (normalized === 'audio/wav' || normalized === 'audio/wave') return 'wav';
+  if (normalized === 'audio/webm') return 'webm';
+  return kind === 'image' ? 'png' : 'm4a';
+}
+
+/**
+ * Give pasted screenshots a stable, human name so the list doesn't show
+ * anonymous "image.png" / "anexo" rows.
+ */
+export function namePastedMissionFile(file: File, kind: MissionAttachmentKind): File {
+  const current = file.name.trim().toLowerCase();
+  if (current && !GENERIC_PASTE_NAMES.has(current)) return file;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const prefix = kind === 'image' ? 'print' : 'audio';
+  const ext = extensionForMime(file.type, kind);
+  return new File([file], `${prefix}-${stamp}.${ext}`, {
+    type: file.type || (kind === 'image' ? 'image/png' : 'audio/*'),
+    lastModified: file.lastModified,
+  });
+}
+
+type ClipboardFileSource = {
+  items?: ArrayLike<{
+    kind: string;
+    type: string;
+    getAsFile: () => File | null;
+  }>;
+  files?: ArrayLike<File>;
+};
+
+/**
+ * Extract image/audio files from a paste event.
+ * Screenshots (⌘⇧⌃4 → clipboard → ⌘V) land as image/* items with no path.
+ * Returns [] when the paste is text-only so callers leave the textarea alone.
+ *
+ * Dedupes by name+size+type+lastModified so items/files dual listing and
+ * multi-item paste of the same blob don't double-attach.
+ */
+export function filesFromClipboardData(
+  data: ClipboardFileSource | DataTransfer | null | undefined,
+): File[] {
+  if (!data) return [];
+  const collected: File[] = [];
+  const seen = new Set<string>();
+
+  const pushIfAttachable = (file: File | null | undefined) => {
+    if (!file) return;
+    const kind = classifyMissionAttachment(file);
+    if (!kind) return;
+    const key = `${file.name}\0${file.size}\0${file.type}\0${file.lastModified}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    collected.push(namePastedMissionFile(file, kind));
+  };
+
+  const items = data.items;
+  if (items) {
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (!item || item.kind !== 'file') continue;
+      pushIfAttachable(item.getAsFile());
+    }
+  }
+
+  if (collected.length === 0 && data.files) {
+    for (let index = 0; index < data.files.length; index += 1) {
+      pushIfAttachable(data.files[index]);
+    }
+  }
+
+  return collected;
+}
+
 export function validateMissionAttachment(
   file: Pick<File, 'name' | 'type' | 'size'>,
   current: readonly MissionAttachment[],
