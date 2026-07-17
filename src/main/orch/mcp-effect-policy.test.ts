@@ -13,6 +13,13 @@ describe('MCP effect policy', () => {
     expect(effectPolicyForTool('nexus_security_audit')).toBe('read-only');
   });
 
+  it('planejamento/comunicação não são gateados pelo freeze de contrato', () => {
+    // Caso de campo 17/07: "nem documentar o Nexus deixava". Organizar tarefas
+    // e perguntar ao usuário precede o freeze — não pode exigir contrato.
+    expect(effectPolicyForTool('nexus_todo_manager')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_clarify')).toBe('read-only');
+  });
+
   it('allows only the context and mission bootstrap chain pre-contract', () => {
     expect(effectPolicyForTool('nexus_mission_create')).toBe('bootstrap-authority');
     expect(effectPolicyForTool('nexus_context_doctor')).toBe('bootstrap-authority');

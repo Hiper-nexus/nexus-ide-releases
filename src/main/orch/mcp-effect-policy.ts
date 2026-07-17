@@ -57,6 +57,15 @@ const READ_ONLY_TOOLS = new Set([
   'worktree_get',
   'content_audit',
   'security_audit',
+  // Planejamento/comunicação — NÃO são efeitos de código/contexto e não podem
+  // ser reféns do freeze de contrato (caso de campo 17/07: "nem documentar o
+  // Nexus deixava"). clarify só devolve {question, chips} (zero escrita);
+  // todo_manager escreve apenas na lista de tarefas local, mission-scoped e
+  // reversível (mesma natureza do contador de recall do memory_recall). Um
+  // agente PRECISA organizar/perguntar ANTES de congelar contexto — gatear
+  // isso atrás do freeze cria um deadlock de cerimônia.
+  'clarify',
+  'todo_manager',
 ]);
 
 /**
