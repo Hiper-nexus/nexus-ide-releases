@@ -114,7 +114,10 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     win32: [npmRecipe('opencode-ai')],
   },
   omp: {
-    darwin: [brewRecipe('can1357/tap/omp')],
+    // Fallback: instalador oficial do README do oh-my-pi (omp.sh/install) —
+    // caso de campo: máquina sem Homebrew não conseguia instalar o omp.
+    darwin: [brewRecipe('can1357/tap/omp'), scriptRecipe('https://omp.sh/install')],
+    linux: [scriptRecipe('https://omp.sh/install')],
   },
   kimi: {
     darwin: [brewRecipe('kimi-code'), npmRecipe('@moonshot-ai/kimi-code')],
