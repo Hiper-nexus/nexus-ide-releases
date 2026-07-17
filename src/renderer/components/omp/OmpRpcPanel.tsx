@@ -443,6 +443,23 @@ export function OmpRpcPanel() {
                   {entry.text}
                 </div>
               );
+            case 'open-url':
+              // URL exibida por inteiro (o usuário vê para ONDE vai antes de
+              // clicar); a abertura passa pelo openExternal https-only do main.
+              return (
+                <div key={entry.id} className="omp-line omp-line--notice omp-line--info">
+                  <span className="omp-open-url__label">
+                    O omp pediu para abrir: {entry.url}
+                  </span>{' '}
+                  <button
+                    type="button"
+                    className="omp-btn omp-btn--primary"
+                    onClick={() => void window.nexus.app.openExternal(entry.url)}
+                  >
+                    Abrir no navegador
+                  </button>
+                </div>
+              );
             default:
               return null;
           }

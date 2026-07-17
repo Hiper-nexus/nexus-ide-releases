@@ -809,11 +809,18 @@ export class OmpRpcSession {
         return;
       }
       case 'open_url': {
-        this.push({
-          kind: 'notice',
-          level: 'info',
-          message: `abrir URL solicitado: ${request.url ?? ''}`,
-        });
+        // Um /login OAuth do CLI chega aqui. Virar notice mataria o fluxo (o
+        // navegador nunca abria e o login nunca completava); o renderer mostra
+        // a URL como link clicável que abre via openExternal validado.
+        if (request.url) {
+          this.push({ kind: 'open-url', url: request.url });
+        } else {
+          this.push({
+            kind: 'notice',
+            level: 'warning',
+            message: 'abrir URL solicitado sem URL — pedido ignorado',
+          });
+        }
         return;
       }
       default:

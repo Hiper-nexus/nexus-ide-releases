@@ -459,6 +459,42 @@ describe('correlação de respostas por id', () => {
   });
 });
 
+describe('extension_ui_request — open_url', () => {
+  it('open_url vira push open-url com a URL (fluxo de /login OAuth)', async () => {
+    const harness = createHarness({ approvalPolicy: 'yolo' });
+    await becomeIdle(harness);
+    harness.proc.emitFrame({
+      type: 'extension_ui_request',
+      id: 'ui_url_1',
+      method: 'open_url',
+      url: 'https://auth.example.com/oauth?code=abc',
+    });
+    const openUrl = harness.pushes.find((event) => event.kind === 'open-url');
+    expect(openUrl).toMatchObject({
+      url: 'https://auth.example.com/oauth?code=abc',
+    });
+    // open_url não é aprovação: nada de auto-resposta nem auditoria.
+    expect(harness.audits).toHaveLength(0);
+  });
+
+  it('open_url sem URL vira aviso, nunca um link vazio', async () => {
+    const harness = createHarness({ approvalPolicy: 'yolo' });
+    await becomeIdle(harness);
+    harness.proc.emitFrame({
+      type: 'extension_ui_request',
+      id: 'ui_url_2',
+      method: 'open_url',
+    });
+    expect(
+      harness.pushes.find((event) => event.kind === 'open-url'),
+    ).toBeUndefined();
+    const notice = harness.pushes.find(
+      (event) => event.kind === 'notice' && event.level === 'warning',
+    );
+    expect(notice).toBeDefined();
+  });
+});
+
 describe('extension_ui_request — política yolo', () => {
   it('confirm é auto-aprovado e auditado ANTES da resposta', async () => {
     const harness = createHarness({ approvalPolicy: 'yolo' });
