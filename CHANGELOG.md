@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.19.8 — Destrava Geral
+
+Data: 2026-07-17
+
+- **Fim da cascata de limite fantasma**: o detector de failover não relê mais o
+  próprio continuity pack injetado na conta nova — acabou o efeito dominó que
+  derrubava conta por conta até a frota inteira entrar em cooldown com cota
+  sobrando. Segunda camada: leitura fresca da API do provider refuta limite
+  falso antes de trocar de conta. Painel Integrações virou modal focado.
+- **Terminal fluido**: contextos WebGL alugados por recência de foco (o
+  terminal que você olha renderiza acelerado mesmo com 10+ panes), o zoom e a
+  troca de monitor reajustam a grade na hora, e Alt+roda rola 5x.
+- **Missões destravadas**: o freeze do contrato não trava mais com WIP fora da
+  superfície de evidência (.context/ + docs de raiz); o limite de workers
+  conta só workers VIVOS (worker morto não segura slot para sempre); o erro de
+  contexto chega com remediação por blocker; e o terminal do orquestrador
+  ganhou autoridade para commit, git push e merge.
+- **Oh My Pi operacional**: o /login OAuth completa dentro do painel (botão
+  "Abrir no navegador"), e o omp entrou no roster de todos os squads builtin.
+- **Planejamento estilo BMAD**: squads novos "Planejamento & PRD" (lê o
+  sistema real → entrevista você com a skill grilling → PRD e arquitetura com
+  templates/checklists reais do BMAD → stories) e "Implementação por Stories"
+  (SM → Dev → QA com Definition of Done). Skills archify (diagramas HTML),
+  grilling e bmad-templates embutidas para todas as CLIs.
+- **UI sem garimpo**: configurações numa lista plana com tudo visível
+  (Companion mobile a 1 clique), botão desligar da Jarvis desliga de verdade,
+  browser sem tela branca no load (fundo escuro + barra de progresso) e erros
+  honestos no proxy, nas licenças e no Vision.
+
 ## 0.19.7 — Chaves Herdadas
 
 Data: 2026-07-16
