@@ -38,6 +38,21 @@ describe('built-in squads (invariantes gerais)', () => {
       }
     }
   });
+
+  it('todo squad de desenvolvimento tem pelo menos um agente omp no roster', () => {
+    // O omp é adapter de primeira classe; sem presença no menu dos builtins
+    // ele nunca entra em operação (achado de operador: "integrado mas nunca
+    // vi em ação"). O Pet Studio fica de fora por design (Codex único).
+    const devSquadIds = ['nexus-fullstack', 'nexus-review', 'review-p0p3', 'nexus-research'];
+    for (const id of devSquadIds) {
+      const squad = BUILTIN_SQUADS.find((entry) => entry.id === id);
+      expect(squad, `squad ${id} ausente`).toBeDefined();
+      expect(
+        squad?.agents.some((agent) => agent.cli === 'omp'),
+        `squad ${id} sem agente omp`,
+      ).toBe(true);
+    }
+  });
 });
 
 describe('built-in Review P0–P3 squad', () => {

@@ -268,6 +268,9 @@ const RAW_SQUADS: Squad[] = [
       // de modelos = custo menor e sem sobrecarregar um provedor só.
       { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'codex', effort: 'medium' },
       { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'agy', effort: 'medium' },
+      // Executor generalista no omp: entra no menu para tarefas que cruzam
+      // frente/back ou quando o orquestrador quer paralelizar implementação.
+      { id: 'generalist', agentName: 'Generalist (omp)', category: 'executor', cli: 'omp', effort: 'medium' },
       { id: 'ux', agentName: 'UX Designer', category: 'reviewer', cli: 'claude', effort: 'medium' },
       { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
       { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
@@ -289,6 +292,9 @@ const RAW_SQUADS: Squad[] = [
       { id: 'correctness', agentName: 'Correctness', category: 'reviewer', cli: 'kimi', effort: 'high' },
       { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
       { id: 'performance', agentName: 'Performance', category: 'reviewer', cli: 'agy', effort: 'high' },
+      // Quarto olhar no omp: casos de borda e integrações cross-boundary
+      // (mesma diversidade de modelos dos outros squads).
+      { id: 'edge-cases', agentName: 'Edge Cases (omp)', category: 'reviewer', cli: 'omp', effort: 'high' },
     ],
   },
   {
@@ -359,6 +365,7 @@ const RAW_SQUADS: Squad[] = [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
       { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'agy', effort: 'medium' },
       { id: 'scout-b', agentName: 'Scout B', category: 'scout', cli: 'grok', effort: 'medium' },
+      { id: 'scout-c', agentName: 'Scout C (omp)', category: 'scout', cli: 'omp', effort: 'medium' },
       { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
       { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },
     ],
