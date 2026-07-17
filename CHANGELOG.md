@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.19.10 — Máquina Nova
+
+Data: 2026-07-17
+
+- **Provisionador de CLIs**: botão único no hub de Providers instala TODAS as
+  CLIs ausentes em sequência (instaladores oficiais, uma confirmação nativa
+  por CLI mostrando o comando exato) — máquina fresca fica operacional sem
+  caçar botão por painel.
+- **Permissão de tela sem calvário**: "Pedir permissão ao macOS" registra o
+  NexusIDE na lista de Gravação de Tela na hora (o macOS só lista o app após
+  a primeira tentativa de captura — agora o Nexus tenta por você e o prompt
+  nativo aparece). Nos Ajustes é só virar a chave, sem "+" nem buscar pasta;
+  o fluxo guiado em 3 passos fica na própria tela Vision.
+
 ## 0.19.9 — Sem Fantasmas
 
 Data: 2026-07-17
