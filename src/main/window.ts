@@ -130,7 +130,8 @@ function registerExternalLinkIpc(): void {
     // Packaged: files live at the app.asar root (forge shouldPackageFile).
     // Dev: walk up from app path / cwd.
     const { app } = await import('electron');
-    const { resolveThirdPartyNoticesPath } = await import('./legal-notices-path');
+    const { resolveThirdPartyNoticesPath, materializeOpenableNoticesPath } =
+      await import('./legal-notices-path');
     const found = resolveThirdPartyNoticesPath({
       appPath: app.getAppPath(),
       cwd: process.cwd(),
@@ -138,9 +139,20 @@ function registerExternalLinkIpc(): void {
     if (!found) {
       return { ok: false, error: 'THIRD_PARTY_NOTICES.md não encontrado no pacote' };
     }
-    const err = await shell.openPath(found);
+    let openable: string;
+    try {
+      openable = materializeOpenableNoticesPath(found, app.getPath('temp'));
+    } catch (extractErr) {
+      return {
+        ok: false,
+        error: `falha ao extrair o aviso legal do pacote: ${
+          extractErr instanceof Error ? extractErr.message : String(extractErr)
+        }`,
+      };
+    }
+    const err = await shell.openPath(openable);
     if (err) return { ok: false, error: err };
-    return { ok: true, path: found };
+    return { ok: true, path: openable };
   });
 }
 
