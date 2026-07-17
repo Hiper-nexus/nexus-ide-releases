@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.19.15 — Login sem Terminal
+
+Data: 2026-07-17
+
+- **Login OAuth de assinaturas direto no painel OMP·RPC**: a nova seção
+  Contas lista os provedores que o omp suporta (Claude Pro/Max, ChatGPT,
+  Gemini CLI, Copilot…) com status de conexão e botão Conectar — a URL de
+  autorização abre no navegador pelo app e a credencial grava no cofre do
+  omp, sem abrir terminal. Antes, só `zai/glm` aparecia (única API key
+  herdada do vault) e o login exigia rodar `omp auth-broker login` na mão.
+- **Dropdown de modelos atualiza na hora**: ao concluir o login, o painel
+  re-busca os modelos disponíveis sem reiniciar a sessão.
+- **Mais API keys do vault chegam ao omp**: OPENAI, GEMINI, XAI, GROQ,
+  CEREBRAS e MISTRAL agora são injetadas a partir do providers.conf.
+
 ## 0.19.14 — Sem Freio de Mão
 
 Data: 2026-07-17
