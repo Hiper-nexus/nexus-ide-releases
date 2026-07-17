@@ -137,4 +137,58 @@ describe('ContextDraftStore', () => {
 
     expect(() => store.get('draft-corrupt')).toThrow(/invalid context draft/i);
   });
+
+  it('desemperra o wedge de draft-fantasma: erro traz o ID e supersede libera o target', () => {
+    const runtime = manager();
+    const scope = testProjectScope({ projectId: 'project-wedge', checkoutId: 'checkout-wedge' });
+    let n = 0;
+    const store = new ContextDraftStore(runtime, scope, {
+      now: () => 100 + n,
+      idFactory: () => `draft-wedge-${n++}`,
+    });
+    const target = '.context/docs/testing.md';
+    const blocker = store.propose({
+      targetPath: target,
+      content: '# Testing v1\n',
+      expectedTargetHash: null,
+      sources: [source],
+      author,
+    });
+    expect(store.activeForTarget(target)?.id).toBe(blocker.id);
+
+    // Segundo propose no mesmo target: erro agora carrega o ID acionável.
+    expect(() =>
+      store.propose({
+        targetPath: target,
+        content: '# Testing v2\n',
+        expectedTargetHash: null,
+        sources: [source],
+        author,
+      }),
+    ).toThrow(new RegExp(`already exists.*${blocker.id}`, 's'));
+
+    // Escape: supersede libera o target.
+    const superseded = store.supersedeActiveForTarget(target);
+    expect(superseded?.id).toBe(blocker.id);
+    expect(superseded?.status).toBe('rejected');
+    expect(store.activeForTarget(target)).toBeNull();
+
+    // Agora uma nova proposta passa.
+    const fresh = store.propose({
+      targetPath: target,
+      content: '# Testing v2\n',
+      expectedTargetHash: null,
+      sources: [source],
+      author,
+    });
+    expect(fresh.status).toBe('proposed');
+    expect(store.activeForTarget(target)?.id).toBe(fresh.id);
+  });
+
+  it('supersede num target já livre devolve null (idempotente)', () => {
+    const runtime = manager();
+    const scope = testProjectScope({ projectId: 'project-free', checkoutId: 'checkout-free' });
+    const store = new ContextDraftStore(runtime, scope);
+    expect(store.supersedeActiveForTarget('.context/docs/testing.md')).toBeNull();
+  });
 });
