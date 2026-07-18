@@ -282,7 +282,7 @@ export function MissionRail() {
     }
 
     if (mission.status === 'running') {
-      return `${missionRailResumeCopy(mission.status, liveInGrid).meta ?? 'Retomar'}${handBit}${budgetBit}`;
+      return `${missionRailResumeCopy(mission.status, liveInGrid, mission.intentState).meta ?? 'Retomar'}${handBit}${budgetBit}`;
     }
     if (mission.status === 'blocked') {
       return `Precisa de ti${handBit}${budgetBit}`;
@@ -538,6 +538,7 @@ export function MissionRail() {
                         const resumeCopy = missionRailResumeCopy(
                           m.status,
                           liveInGrid,
+                          m.intentState,
                         );
                         const dotStatus =
                           m.status === 'blocked' || m.status === 'failed'

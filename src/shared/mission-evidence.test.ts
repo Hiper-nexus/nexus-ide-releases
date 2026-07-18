@@ -40,6 +40,22 @@ describe('missionGoalNeedsFutureEvidence', () => {
     ).toBe(false);
   });
 
+  it('does not hold a goal that only references an existing print in a later step', () => {
+    // Real bug report: "em seguida melhore isto. do print." describes an
+    // existing screenshot, it does not promise to send evidence later.
+    expect(
+      missionGoalNeedsFutureEvidence(
+        'preciso de melhorias. atualize o repo. em seguida melhore isto. do print. onde a tela ohmipy ainda mostra instalado errado',
+      ),
+    ).toBe(false);
+  });
+
+  it('does not hold "veja o print e corrija" style objectives', () => {
+    expect(missionGoalNeedsFutureEvidence('Veja o print e corrija o bug da OAuth.')).toBe(
+      false,
+    );
+  });
+
   it('exposes the user-facing wait message', () => {
     expect(MISSION_EVIDENCE_WAIT_MESSAGE).toMatch(/Anexe os prints ou áudios/);
   });

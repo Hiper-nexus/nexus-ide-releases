@@ -151,11 +151,31 @@ export function railStatusDisplay(
 export function missionRailResumeCopy(
   status: MissionStatus,
   liveInGrid: boolean,
+  intentState?: Mission['intentState'],
 ): { meta: string | null; title: string } {
   if (liveInGrid) {
     return {
       meta: null,
       title: 'Missão aberta no grid — clique para focar',
+    };
+  }
+  // Intent-first / agêntico: no panes yet — click reopens the goal wizard.
+  if (
+    intentState === 'awaiting_goal' ||
+    intentState === 'draft' ||
+    intentState === 'intent_compiling' ||
+    intentState === 'ready_to_start' ||
+    intentState === 'awaiting_approval'
+  ) {
+    return {
+      meta:
+        intentState === 'awaiting_goal' || intentState === 'draft'
+          ? 'Definir objetivo'
+          : 'Continuar plano',
+      title:
+        intentState === 'awaiting_goal' || intentState === 'draft'
+          ? 'Sem panes ainda — clique para descrever o objetivo'
+          : 'Plano armado — clique para revisar e começar',
     };
   }
   if (status === 'running') {

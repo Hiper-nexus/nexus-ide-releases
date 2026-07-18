@@ -37,6 +37,15 @@ export class NarrationQueue {
 
   clear(): void {
     this.pending = [];
+    this.activeText = null;
+  }
+
+  /**
+   * Drop pending work and make the active drain exit ASAP. Callers must also
+   * stop playback; this only prevents further queue items from speaking.
+   */
+  halt(): void {
+    this.clear();
   }
 
   dispose(): void {

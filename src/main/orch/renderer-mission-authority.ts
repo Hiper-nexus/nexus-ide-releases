@@ -555,6 +555,28 @@ export class RendererMissionAuthority {
       const approved = transitionIntentState({ from, event: "approve" });
       if (!approved.ok) throw new Error(approved.reason);
       nextState = approved.to;
+    } else if (from === "awaiting_goal" || from === "draft" || from === "legacy") {
+      // Plan step can still surface a compiled contract while the mission shell
+      // is human-waiting (e.g. evidence false-positive, soft-restore, or
+      // prepare-project). Explicit "Começar" with a real goal should dispatch
+      // instead of hard-failing with a cryptic state error.
+      const goal = current.intentContract?.goal?.trim() ?? "";
+      if (!goal || isPrepareProjectPlaceholderGoal(goal)) {
+        throw new Error(
+          "intent_required: descreva o objetivo e compile o plano antes de começar",
+        );
+      }
+      if (
+        missionGoalNeedsFutureEvidence(
+          goal,
+          input.evidenceAttached === true ||
+            current.intentContract?.evidenceAttached === true,
+        )
+      ) {
+        throw new Error(`evidence_required: ${MISSION_EVIDENCE_WAIT_MESSAGE}`);
+      }
+      // Synthetic compile_ok: contract already exists; advance to ready_to_start.
+      nextState = "ready_to_start";
     } else if (from !== "ready_to_start") {
       if (from === "dispatched" || from === "executing") {
         if (!hasCurrentDispatchAuthority(current)) {

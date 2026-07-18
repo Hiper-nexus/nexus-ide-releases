@@ -110,6 +110,11 @@ import {
 } from './live-mute-rescue';
 import { NarrationQueue } from './narration-queue';
 import {
+  isJarvisNarrationHalted,
+  registerNarrationControl,
+  resumeJarvisNarration,
+} from './narration-control';
+import {
   isTrustedPassiveEmbeddedCommand,
   isTrustedPassiveWakeOnly,
   matchPassiveWakeWord,
@@ -305,6 +310,8 @@ export function useVoiceController(): void {
       latestRealtimeUserTranscript = null;
       try {
         markVictory('voiceEnabled');
+        // Power-off halts narration until the user re-engages via wake/PTT.
+        resumeJarvisNarration();
         stopAllPlayback();
         wakeMic.cancelPassiveWake();
         if (wakeMic.isUtteranceActive()) wakeMic.cancelUtterance();
@@ -1121,6 +1128,7 @@ export function useVoiceController(): void {
 
     const narrationQueue = new NarrationQueue({
       canPlay: () =>
+        !isJarvisNarrationHalted() &&
         useVoiceStore.getState().status === 'idle' &&
         !isListening(capture.current) &&
         !realtimeTurnActive &&
@@ -1128,12 +1136,13 @@ export function useVoiceController(): void {
         pendingRealtimeAudioOut.length === 0 &&
         !isLocalAudioAudible(Date.now()),
       play: async (text) => {
-        if (isResponseMuted()) return;
+        if (isResponseMuted() || isJarvisNarrationHalted()) return;
         const storeNarrate = useVoiceStore.getState();
         storeNarrate.setStatus('speaking');
         stopAllPlayback();
         try {
           const spoken = await window.nexus.voice.speak({ text, speakMode: 'full' });
+          if (isJarvisNarrationHalted() || isResponseMuted()) return;
           if (spoken.ok && spoken.mode === 'audio') {
             await playAudioBase64(spoken.audioBase64, spoken.format);
           }
@@ -1145,8 +1154,16 @@ export function useVoiceController(): void {
       },
       onError: (error) => console.warn('[voice] narração falhou:', error),
     });
+    registerNarrationControl({
+      clear: () => narrationQueue.clear(),
+      halt: () => {
+        narrationQueue.clear();
+      },
+    });
     const unsubNarrationState = useVoiceStore.subscribe((state) => {
-      if (state.status === 'idle') narrationQueue.kick();
+      if (state.status === 'idle' && !isJarvisNarrationHalted()) {
+        narrationQueue.kick();
+      }
     });
 
     const onStart = () => {
@@ -1156,6 +1173,8 @@ export function useVoiceController(): void {
         status: useVoiceStore.getState().status,
       });
       if (action === 'ignore') return;
+      // PTT re-engages after power-off the same way wake does.
+      resumeJarvisNarration();
 
       if (action === 'barge-in') {
         // PTT is an explicit gesture, unlike passive wake. Cut both local and
@@ -1225,6 +1244,7 @@ export function useVoiceController(): void {
       clearInterval(statusWatchdogTimer);
       unsubStatusWatchdog();
       unsubNarrationState();
+      registerNarrationControl(null);
       narrationQueue.dispose();
       workNarrationSupervisor.reset();
       unsubInfo();

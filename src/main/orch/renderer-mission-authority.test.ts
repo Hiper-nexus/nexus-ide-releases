@@ -339,6 +339,54 @@ describe("renderer mission authority", () => {
     expect(deps.updateMission).not.toHaveBeenCalled();
   });
 
+  it("dispatches from awaiting_goal when a real goal is already compiled", () => {
+    const waitingWithContract = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_goal" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        goal: "Atualize o repo e corrija o bug do print na tela ohmipy",
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+        evidenceAttached: false,
+      },
+    };
+    deps.getMission.mockReturnValueOnce(waitingWithContract);
+    deps.updateMission.mockImplementationOnce(
+      (_missionId: string, patch: Record<string, unknown>) => ({
+        ...waitingWithContract,
+        ...patch,
+      }),
+    );
+
+    const result = authority.approveIntentFromRenderer(owner, {
+      missionId: mission.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "running",
+      intentState: "dispatched",
+    });
+  });
+
+  it("refuses awaiting_goal start when evidence is still promised", () => {
+    deps.getMission.mockReturnValueOnce({
+      ...approvedMission,
+      intentState: "awaiting_goal" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        goal: "Corrigir bugs que vou apontar na próxima etapa com prints",
+        evidenceAttached: false,
+      },
+    });
+
+    expect(() =>
+      authority.approveIntentFromRenderer(owner, { missionId: mission.id }),
+    ).toThrow(/evidence_required|Anexe os prints ou áudios/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
   it("keeps prepare-project executing until the main-owned warm completes", async () => {
     const preparedMission = {
       ...mission,

@@ -143,6 +143,24 @@ describe('reopenMission soft / multi', () => {
     expect(merged.map((p) => p.id)).toContain('orch-b');
   });
 
+  it('returns intentShell for armed agentic missions without panes', async () => {
+    listMissionPanes.mockResolvedValueOnce([]);
+    const result = await reopenMission({
+      id: 'mission-armed',
+      title: 'preciso de melhorias',
+      description: 'preciso de melhorias no nexus',
+      status: 'pending',
+      intentState: 'awaiting_goal',
+      squadId: 'navalha',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    expect(result).toEqual({ ok: true, panes: 0, intentShell: true });
+    expect(setPanes).not.toHaveBeenCalled();
+  });
+
   it('hard-reopens when forceHard is set', async () => {
     listMissionPanes.mockResolvedValueOnce([
       {

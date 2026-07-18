@@ -362,14 +362,34 @@ export function MissionWizard() {
       setSquadId(presetSquadId);
       setArmedMissionId(storeArmedMissionId);
       // Restore goal if this is the same armed shell we were composing.
-      if (
-        draft?.variant === variant &&
+      // Prefer draft, then the mission's compiled contract / description
+      // (resume from rail "Sem objetivo" after a failed start).
+      const armedSnapshot = useOrchStore
+        .getState()
+        .missions.find((m) => m.id === storeArmedMissionId);
+      const seededGoal =
+        (draft?.variant === variant &&
         draft.armedMissionId === storeArmedMissionId &&
         draft.missionGoal.trim()
-      ) {
-        setMissionGoal(draft.missionGoal);
-        setMissionLane(draft.missionLane);
-        setMissionAttachments(draft.missionAttachments);
+          ? draft.missionGoal
+          : '') ||
+        armedSnapshot?.intentContract?.goal?.trim() ||
+        armedSnapshot?.description?.trim() ||
+        '';
+      if (seededGoal) {
+        setMissionGoal(seededGoal);
+        setMissionLane(
+          draft?.armedMissionId === storeArmedMissionId
+            ? draft.missionLane
+            : armedSnapshot?.intentContract?.lane === 'consult'
+              ? 'consult'
+              : 'standard',
+        );
+        setMissionAttachments(
+          draft?.armedMissionId === storeArmedMissionId
+            ? draft.missionAttachments
+            : [],
+        );
       } else {
         setMissionGoal('');
         setMissionLane('standard');
@@ -867,8 +887,14 @@ export function MissionWizard() {
         source: mode === 'agentic' ? agenticSource : 'typed',
         lane: missionLane,
       });
+      // Prefer main's intentState as source of truth (contract may already be
+      // compiled while the shell stays human-waiting for evidence).
       const waitingForEvidence =
-        missionGoalNeedsFutureEvidence(missionGoal, missionAttachments.length > 0);
+        planned.intentState === 'awaiting_goal' ||
+        missionGoalNeedsFutureEvidence(
+          missionGoal,
+          missionAttachments.length > 0,
+        );
       if (waitingForEvidence) {
         setPlannedMission(null);
         setStep('intent-compose');

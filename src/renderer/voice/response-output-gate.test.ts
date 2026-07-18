@@ -95,6 +95,23 @@ describe('response-output-gate', () => {
     expect(useVoiceStore.getState().note).toContain('desligada');
   });
 
+  it('powerOffJarvis halts the narration queue so idle kick cannot re-speak', async () => {
+    const { registerNarrationControl, isJarvisNarrationHalted, resumeJarvisNarration } =
+      await import('./narration-control');
+    const clear = vi.fn();
+    const halt = vi.fn(() => clear());
+    registerNarrationControl({ clear, halt });
+    resumeJarvisNarration();
+    expect(isJarvisNarrationHalted()).toBe(false);
+
+    await powerOffJarvis();
+
+    expect(halt).toHaveBeenCalled();
+    expect(isJarvisNarrationHalted()).toBe(true);
+    registerNarrationControl(null);
+    resumeJarvisNarration();
+  });
+
   it('powerOffJarvis invalida o token do turno em voo (mata os canReopen)', async () => {
     // Regressão: um turno terminando logo após o clique reabria a escuta via
     // releaseAfterLiveProviderAnswer — a Jarvis "não desligava". O power-off

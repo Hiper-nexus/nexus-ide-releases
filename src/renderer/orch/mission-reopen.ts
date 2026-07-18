@@ -36,6 +36,40 @@ export interface MissionReopenResult {
   soft?: boolean;
   /** True when other live panes were kept (multi-mission). */
   multi?: boolean;
+  /**
+   * Intent-first shell (armed, no orchestrator pane yet). Caller should open
+   * Nova Missão on the goal composer instead of spawning panes.
+   */
+  intentShell?: boolean;
+}
+
+/**
+ * Armed / planned mission with no dispatched workers yet — intentional for
+ * intent-first (agentic) flow. Has no pane composition to restore.
+ */
+export function isIntentFirstMissionShell(mission: Mission): boolean {
+  const state = mission.intentState;
+  if (
+    state === 'awaiting_goal' ||
+    state === 'draft' ||
+    state === 'intent_compiling' ||
+    state === 'ready_to_start' ||
+    state === 'awaiting_approval'
+  ) {
+    return true;
+  }
+  // Pending shell without a recorded dispatch timestamp.
+  if (
+    mission.status === 'pending' &&
+    !mission.intentContract?.dispatchedAt &&
+    state !== 'dispatched' &&
+    state !== 'executing' &&
+    state !== 'validating' &&
+    state !== 'done'
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Live pane ids currently bound to this mission and present in the layout. */
@@ -122,6 +156,11 @@ export async function reopenMission(
     };
   }
   if (specs.length === 0) {
+    // Intent-first / modo agêntico: the shell is armed with 0 panes on purpose.
+    // Reopen means resume the goal wizard, not invent a pane history.
+    if (isIntentFirstMissionShell(mission)) {
+      return { ok: true, panes: 0, intentShell: true };
+    }
     return {
       ok: false,
       error:

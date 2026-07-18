@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.19.19 — Missão Que Começa
+
+Data: 2026-07-18
+
+Correções de produção no fluxo de missão (modo agêntico) e na Jarvis:
+
+- **Começar no agêntico**: falso positivo do gate de evidência ("em seguida…
+  do print") deixava a missão em `awaiting_goal` e o botão Começar falhava com
+  `cannot dispatch from intent state awaiting_goal`. O gate agora exige ação de
+  envio/anexo (ou "com prints"); approveIntent promove contrato já compilado.
+- **Shell Sem objetivo**: clicar em Retomar numa missão intent-first reabre o
+  wizard com o objetivo — em vez do erro "não tem panes registrados".
+- **Power-off da Jarvis**: corta a fila de narração e o áudio em voo; o status
+  idle não reacende a fala até o próximo wake/PTT.
+
 ## 0.19.18 — Deixa de Travar
 
 Data: 2026-07-17

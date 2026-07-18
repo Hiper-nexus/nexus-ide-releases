@@ -190,4 +190,15 @@ describe('missionRailResumeCopy', () => {
       title: 'Retomar esta missão',
     });
   });
+
+  it('labels intent-first shells to reopen the goal wizard', () => {
+    expect(missionRailResumeCopy('pending', false, 'awaiting_goal')).toEqual({
+      meta: 'Definir objetivo',
+      title: 'Sem panes ainda — clique para descrever o objetivo',
+    });
+    expect(missionRailResumeCopy('pending', false, 'ready_to_start')).toEqual({
+      meta: 'Continuar plano',
+      title: 'Plano armado — clique para revisar e começar',
+    });
+  });
 });

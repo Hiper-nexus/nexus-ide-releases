@@ -19,6 +19,7 @@ import {
   turnExecution,
 } from './voice-session-state';
 import { logVoiceEvent } from './voice-live-ipc';
+import { haltJarvisNarration } from './narration-control';
 
 export function isResponseMuted(): boolean {
   return useVoiceStore.getState().responseMuted;
@@ -58,11 +59,15 @@ export async function powerOffJarvis(): Promise<void> {
   // via canReopen — sem isto, um turno terminando logo após o clique reabria
   // a escuta e a Jarvis "não desligava".
   turnExecution.beginTurn();
+  // Halt work-narration BEFORE status→idle: the narration queue kicks on idle
+  // and was the root cause of "desliguei e ela continua falando".
+  haltJarvisNarration();
   stopJarvisSpeech();
   cancelLiveFollowUp();
   setRealtimeTurnActive(false);
   resetPendingRealtimeAudioOut();
-  setSuppressRealtimeAudioOut(false);
+  // Keep Live PCM suppressed through teardown so late chunks cannot speak.
+  setSuppressRealtimeAudioOut(true);
   clearLocalAudioGate();
   livePlayer?.stop();
 
@@ -80,6 +85,11 @@ export async function powerOffJarvis(): Promise<void> {
       // No live owner — classic path only.
     }
   }
+
+  // Final cut after async stop — in-flight TTS may have landed mid-teardown.
+  stopJarvisSpeech();
+  livePlayer?.stop();
+  resetPendingRealtimeAudioOut();
 
   useVoiceStore.getState().setStatus('idle');
   useVoiceStore

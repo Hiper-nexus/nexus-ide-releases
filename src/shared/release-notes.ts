@@ -13,6 +13,38 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.19',
+  date: '2026-07-18',
+  codename: 'Missão Que Começa',
+  summary:
+    'Modo agêntico deixa de travar no Começar: falso positivo de evidência ("em seguida… do print") não prende mais a missão em awaiting_goal; shell Sem objetivo reabre o wizard em vez de erro de panes; power-off da Jarvis corta narração de verdade.',
+  highlights: [
+    {
+      title: 'Começar missão no agêntico',
+      detail:
+        'Objetivos que só citam print existente despacham normalmente; approveIntent promove contrato compilado em vez de falhar com awaiting_goal.',
+    },
+    {
+      title: 'Retomar shell armado',
+      detail:
+        'Missões Na fila / Sem objetivo (intent-first) reabrem Nova Missão com o objetivo pré-preenchido — sem "sem panes registrados".',
+    },
+    {
+      title: 'Jarvis desliga de verdade',
+      detail:
+        'O botão power-off para a fila de narração e o áudio em voo; idle não reacende a fala até o próximo wake/PTT.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Gate de evidência futura mais conservador',
+      detail:
+        'Exige ação de envio/anexo (ou "com prints") — não basta "em seguida" perto de "print".',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.18',
   date: '2026-07-17',
   codename: 'Deixa de Travar',
@@ -32,25 +64,3 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [],
 };
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.17',
-  date: '2026-07-17',
-  codename: 'Missão Destravada',
-  summary:
-    'Dois bloqueios que emperravam missões reais foram removidos: o wedge de draft de contexto órfão (que trancava o pipeline de forma invisível) agora tem escape — o erro traz o ID do bloqueador e a nova tool de supersede libera o alvo; e o teto de workers, calibrado na era do teto de token que já não existe, subiu para não sufocar missões que precisam de 3-4 braços.',
-  highlights: [
-    {
-      title: 'Draft-fantasma se autodestrava',
-      detail:
-        'O propose agora revela o draft órfão que bloqueia o alvo e a tool nexus_context_draft_supersede o libera — sem o pipeline travar sem saída.',
-    },
-    {
-      title: 'Mais workers por missão',
-      detail:
-        'Sensível 3 / normal 4 workers (era 2 / 3). O teto de tokens já era só telemetria; o de workers deixou de sufocar.',
-    },
-  ],
-  fixes: [],
-};
-
