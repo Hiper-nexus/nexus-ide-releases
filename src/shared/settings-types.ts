@@ -142,9 +142,25 @@ export const orchSettingsSchema = z.object({
    * Set false to restore the legacy zero-click kickoff path (rollback).
    */
   intentFirstMissionRuntimeV1: z.boolean().default(true),
+  /**
+   * How Oh My Pi (omp) participates in auto-routing and squad roster sticky:
+   * - `off`: never force; only explicit manual spawn
+   * - `fallback`: late ladder only (legacy)
+   * - `diversity` (default): real multi-CLI share — promote omp when unused
+   * - `prefer`: omp first among eligible medium/hard workers
+   */
+  ompParticipation: z
+    .enum(['off', 'fallback', 'diversity', 'prefer'])
+    .default('diversity'),
+  /**
+   * When true, opening the OMP RPC panel starts a session automatically if
+   * none is active (install/auth failures still surface as startError).
+   */
+  ompRpcAutoStart: z.boolean().default(true),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
+export type OmpParticipation = OrchSettings['ompParticipation'];
 
 /**
  * App-wide voice audio routing. `default` follows the current operating-system

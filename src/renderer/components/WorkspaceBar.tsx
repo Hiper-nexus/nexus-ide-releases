@@ -78,6 +78,8 @@ interface ToolDef {
   icon: PixelIconName;
   title: string;
   active?: boolean;
+  /** Ambient pulse for non-pane agents (OMP RPC). */
+  pulse?: 'idle' | 'busy' | 'needs' | 'error';
   onClick: () => void;
 }
 
@@ -101,6 +103,22 @@ export function WorkspaceBar({
   const toggleOrchPanel = useOrchStore((s) => s.togglePanel);
   const ompPanelOpen = useOmpRpcStore((s) => s.panelOpen);
   const toggleOmpPanel = useOmpRpcStore((s) => s.togglePanel);
+  const ompSessionId = useOmpRpcStore((s) => s.sessionId);
+  const ompSnapshot = useOmpRpcStore((s) => s.snapshot);
+  const ompPendingUi = useOmpRpcStore((s) => s.pendingUi);
+  const ompStartError = useOmpRpcStore((s) => s.startError);
+  const ompStarting = useOmpRpcStore((s) => s.starting);
+  const ompPulse: ToolDef['pulse'] = ompStartError
+    ? 'error'
+    : ompPendingUi.length > 0
+      ? 'needs'
+      : ompStarting ||
+          ompSnapshot?.state === 'busy' ||
+          ompSnapshot?.isStreaming === true
+        ? 'busy'
+        : ompSessionId
+          ? 'idle'
+          : undefined;
   const memoryPanelOpen = useMemoryStore((s) => s.panelOpen);
   const toggleMemoryPanel = useMemoryStore((s) => s.togglePanel);
   const configInventoryOpen = useConfigInventoryStore((s) => s.open);
@@ -310,10 +328,27 @@ export function WorkspaceBar({
     },
     {
       id: 'omp',
-      label: 'OMP RPC',
+      label:
+        ompPulse === 'busy'
+          ? 'OMP · ativo'
+          : ompPulse === 'needs'
+            ? 'OMP · aprovação'
+            : ompPulse === 'error'
+              ? 'OMP · erro'
+              : ompPulse === 'idle'
+                ? 'OMP · pronto'
+                : 'OMP RPC',
       icon: 'agent',
-      title: 'Sessão oh-my-pi nativa via RPC (sem PTY)',
-      active: ompPanelOpen,
+      title:
+        ompPulse === 'busy'
+          ? 'Oh My Pi está executando — abrir painel'
+          : ompPulse === 'needs'
+            ? 'Oh My Pi pede aprovação — abrir painel'
+            : ompPulse === 'error'
+              ? 'Oh My Pi com erro — abrir painel'
+              : 'Sessão oh-my-pi nativa via RPC (sem PTY)',
+      active: ompPanelOpen || Boolean(ompPulse && ompPulse !== 'idle'),
+      pulse: ompPulse,
       onClick: toggleOmpPanel,
     },
     {
@@ -370,12 +405,15 @@ export function WorkspaceBar({
   }
 
   function renderToolBtn(tool: ToolDef, opts?: { menu?: boolean }) {
+    const pulseClass = tool.pulse
+      ? ` workspace-bar__pulse workspace-bar__pulse--${tool.pulse}`
+      : '';
     if (opts?.menu) {
       return (
         <button
           key={tool.id}
           type="button"
-          className={`workspace-bar__menu-item ${tool.active ? 'workspace-bar__menu-item--active' : ''}`}
+          className={`workspace-bar__menu-item ${tool.active ? 'workspace-bar__menu-item--active' : ''}${pulseClass}`}
           title={tool.title}
           onClick={() => {
             activateTool(tool);
@@ -384,6 +422,12 @@ export function WorkspaceBar({
         >
           <PixelIcon name={tool.icon} size={12} />
           <span>{tool.label}</span>
+          {tool.pulse ? (
+            <span
+              className={`workspace-bar__pulse-dot workspace-bar__pulse-dot--${tool.pulse}`}
+              aria-hidden="true"
+            />
+          ) : null}
         </button>
       );
     }
@@ -391,13 +435,19 @@ export function WorkspaceBar({
       <button
         key={tool.id}
         type="button"
-        className={`workspace-bar__btn ${tool.active ? 'workspace-bar__btn--view-active' : ''} ${tool.id === 'view' ? 'workspace-bar__btn--view' : ''}`}
+        className={`workspace-bar__btn ${tool.active ? 'workspace-bar__btn--view-active' : ''} ${tool.id === 'view' ? 'workspace-bar__btn--view' : ''}${pulseClass}`}
         onClick={() => activateTool(tool)}
         title={tool.title}
         aria-label={tool.title}
       >
         <PixelIcon name={tool.icon} />
         {showLabels && <span className="workspace-bar__btn-label">{tool.label}</span>}
+        {tool.pulse ? (
+          <span
+            className={`workspace-bar__pulse-dot workspace-bar__pulse-dot--${tool.pulse}`}
+            aria-hidden="true"
+          />
+        ) : null}
       </button>
     );
   }

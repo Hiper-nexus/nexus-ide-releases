@@ -6,6 +6,7 @@ import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { getOrchSettings } from '../persistence/settings-store';
 import { listAdapterInfos } from '../adapters/adapter-registry';
 import { routeTask } from './task-router';
+import { buildOmpRouteContext } from './omp-roster-policy';
 import {
   getContextWorkflowService,
 } from '../context/context-workflow-registry';
@@ -149,6 +150,11 @@ async function dispatchTask(
       })),
     });
     worktreeCreated = true;
+    const settings = getOrchSettings();
+    const missionUsedAdapters = stores.missionPanes
+      .list(missionId)
+      .map((pane) => pane.adapterId)
+      .filter(Boolean);
     const routed = routeTask(
       `${task.title}\n${decodeTaskScheduleDetail(task.detail).body}`,
       listAdapterInfos().map((adapter) => ({
@@ -159,8 +165,12 @@ async function dispatchTask(
       undefined,
       undefined,
       true,
+      undefined,
+      buildOmpRouteContext({
+        ompParticipation: settings.ompParticipation,
+        missionAdapterIds: missionUsedAdapters,
+      }),
     );
-    const settings = getOrchSettings();
     const adapterId = routed?.adapterId ?? settings.defaultAdapterId;
     await spawnPaneAndMaybePrompt({
       adapterId,

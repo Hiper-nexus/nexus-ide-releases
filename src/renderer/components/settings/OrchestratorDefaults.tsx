@@ -7,13 +7,29 @@ import { ProviderLogo } from '../ProviderLogo';
 
 type OrchestratorDefaultsValue = Pick<
   OrchSettings,
-  'defaultAdapterId' | 'defaultModel' | 'defaultAccountId'
+  | 'defaultAdapterId'
+  | 'defaultModel'
+  | 'defaultAccountId'
+  | 'ompParticipation'
+  | 'ompRpcAutoStart'
 >;
 
 const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
   defaultAdapterId: 'claude',
   defaultModel: '',
   defaultAccountId: '',
+  ompParticipation: 'diversity',
+  ompRpcAutoStart: true,
+};
+
+const OMP_PARTICIPATION_LABELS: Record<
+  OrchSettings['ompParticipation'],
+  string
+> = {
+  off: 'Desligado — só spawn manual',
+  fallback: 'Fallback — último no ladder (legado)',
+  diversity: 'Diversidade — omp cidadão real (recomendado)',
+  prefer: 'Preferir — omp primeiro em medium/hard',
 };
 
 function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
@@ -21,6 +37,8 @@ function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
     defaultAdapterId: settings.defaultAdapterId || 'claude',
     defaultModel: settings.defaultModel,
     defaultAccountId: settings.defaultAccountId,
+    ompParticipation: settings.ompParticipation ?? 'diversity',
+    ompRpcAutoStart: settings.ompRpcAutoStart !== false,
   };
 }
 
@@ -250,6 +268,55 @@ export function OrchestratorDefaults() {
       <p className="settings-field__note">
         Aplicado ao próximo squad. O modelo da receita tem prioridade quando usa
         o mesmo provider.
+      </p>
+
+      <div className="settings-orchestrator__grid settings-orchestrator__grid--omp">
+        <label className="settings-field">
+          Oh My Pi (omp) na frota
+          <select
+            className="settings-input"
+            aria-label="Participação do Oh My Pi no roteamento"
+            value={defaults.ompParticipation}
+            disabled={disabled}
+            onChange={(event) =>
+              void save({
+                ompParticipation: event.target
+                  .value as OrchSettings['ompParticipation'],
+              })
+            }
+          >
+            {(
+              Object.keys(OMP_PARTICIPATION_LABELS) as Array<
+                OrchSettings['ompParticipation']
+              >
+            ).map((mode) => (
+              <option key={mode} value={mode}>
+                {OMP_PARTICIPATION_LABELS[mode]}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="settings-field">
+          Auto-iniciar OMP RPC
+          <select
+            className="settings-input"
+            aria-label="Auto-iniciar OMP RPC ao abrir o painel"
+            value={defaults.ompRpcAutoStart ? 'on' : 'off'}
+            disabled={disabled}
+            onChange={(event) =>
+              void save({ ompRpcAutoStart: event.target.value === 'on' })
+            }
+          >
+            <option value="on">Sim — inicia ao abrir o painel</option>
+            <option value="off">Não — botão manual</option>
+          </select>
+        </label>
+      </div>
+      <p className="settings-field__note">
+        Diversidade faz o omp receber trabalho real em missões e mantém sticky
+        no roster (Reviewer D / Generalist). Desligado volta ao comportamento
+        legado.
       </p>
     </div>
   );

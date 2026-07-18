@@ -13,6 +13,7 @@ import {
   type OmpAuthPushEvent,
 } from '../../shared/omp-auth-types';
 import { getActiveWorkspacePath } from './active-workspace';
+import { useOrchStore } from './orch-store';
 import { claimRightDrawer, registerRightDrawer } from './right-drawer';
 import { useToastStore } from './toast-store';
 
@@ -257,6 +258,13 @@ function applyEvent(event: OmpRpcPushEvent): void {
           },
         ],
       });
+      // Ambient signal when the drawer is closed — otherwise omp "does nothing"
+      // from the operator's point of view. One toast per pending queue wave.
+      if (!get().panelOpen && get().pendingUi.length === 1) {
+        useToastStore
+          .getState()
+          .push('info', 'OMP pede aprovação', event.title || 'Abrir painel OMP RPC');
+      }
       return;
     case 'ui-request-settled':
       set({
@@ -347,8 +355,13 @@ export const useOmpRpcStore = create<OmpRpcUiState>((set, get) => ({
   togglePanel() {
     const panelOpen = !get().panelOpen;
     // Opening this drawer claims the shared right slot, closing the orch panel.
-    if (panelOpen) claimRightDrawer('omp');
-    set({ panelOpen });
+    if (panelOpen) {
+      claimRightDrawer('omp');
+      // Allow auto-start to retry after a previous install/auth failure.
+      set({ panelOpen: true, startError: null });
+      return;
+    }
+    set({ panelOpen: false });
   },
 
   setApprovalPolicy(policy) {
@@ -361,9 +374,16 @@ export const useOmpRpcStore = create<OmpRpcUiState>((set, get) => ({
     ensureSubscription();
     set({ starting: true, startError: null, transcript: [], pendingUi: [] });
     const workspaceRoot = getActiveWorkspacePath() ?? undefined;
+    // Bind active mission when present so host tools (mission_get / handoff)
+    // have real gate context — optional; start still works without it.
+    const missionId = useOrchStore
+      .getState()
+      .missions.find((m) => m.status === 'running' || m.status === 'blocked')
+      ?.id;
     const result = await window.nexus.ompRpc.start({
       workspaceRoot,
       approvalPolicy: get().approvalPolicy,
+      ...(missionId ? { missionId } : {}),
     });
     if (!result.ok || !result.sessionId) {
       set({

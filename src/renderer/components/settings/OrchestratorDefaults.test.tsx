@@ -4,7 +4,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AccountInfo } from '../../../shared/account-types';
 import type { AdapterInfo } from '../../../shared/types';
-import type { OrchSettings } from '../../../shared/settings-types';
+import {
+  DEFAULT_ORCH_SETTINGS,
+  type OrchSettings,
+} from '../../../shared/settings-types';
 import { OrchestratorDefaults } from './OrchestratorDefaults';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -67,23 +70,11 @@ describe('OrchestratorDefaults', () => {
 
   it('configures provider, model and account from the installed MCP-capable inventory', async () => {
     let saved: OrchSettings = {
-      leanCode: true,
-      seniorMode: true,
-      designPro: true,
-      designDirection: 'auto',
-      designVariance: 5,
-      designMotion: 5,
-      designDensity: 5,
-      soberMode: false,
+      ...DEFAULT_ORCH_SETTINGS,
       missionDriverActiveMode: false,
-      agentRestorePolicy: 'ask',
       defaultAdapterId: 'codex',
       defaultModel: 'gpt-5.4',
       defaultAccountId: 'codex-work',
-      doctorAdapterId: 'auto',
-      doctorModel: '',
-      doctorEffort: 'auto',
-      intentFirstMissionRuntimeV1: true,
     };
     const orchSet = vi.fn(async (patch: Partial<OrchSettings>) => {
       saved = { ...saved, ...patch };
@@ -169,23 +160,11 @@ describe('OrchestratorDefaults', () => {
 
   it('keeps an unavailable saved provider visible instead of silently changing it', async () => {
     const saved: OrchSettings = {
-      leanCode: true,
-      seniorMode: true,
-      designPro: true,
-      designDirection: 'auto',
-      designVariance: 5,
-      designMotion: 5,
-      designDensity: 5,
-      soberMode: false,
+      ...DEFAULT_ORCH_SETTINGS,
       missionDriverActiveMode: false,
-      agentRestorePolicy: 'ask',
       defaultAdapterId: 'claude',
       defaultModel: '',
       defaultAccountId: '',
-      doctorAdapterId: 'auto',
-      doctorModel: '',
-      doctorEffort: 'auto',
-      intentFirstMissionRuntimeV1: true,
     };
     Object.defineProperty(window, 'nexus', {
       configurable: true,

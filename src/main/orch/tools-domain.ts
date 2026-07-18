@@ -5,6 +5,8 @@ import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
+import { getOrchSettings } from '../persistence/settings-store';
+import { buildOmpRouteContext } from './omp-roster-policy';
 import { missionStatusSchema } from '../../shared/orch-types';
 import { buildClarify } from '../../shared/clarify';
 import { findAgent, listAgents, saveSquad } from './squad-store';
@@ -882,7 +884,8 @@ const routeTaskTool: McpToolDef = {
     '(trivial|easy|medium|hard|critical) and returns {tier, adapterId, ' +
     'model, effort, reason, alternatives}: pass adapterId/model/effort ' +
     'straight into nexus_pane_spawn. Call it for every delegation and trust the ' +
-    'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook.',
+    'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook. ' +
+    'When spawning a roster agent whose cli is omp, keep adapterId=omp (roster sticky) even if this tool returns another provider.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -901,10 +904,20 @@ const routeTaskTool: McpToolDef = {
         description:
           'adapterIds to skip (rate-limited, not logged in, or just failed)',
       },
+      missionId: {
+        type: 'string',
+        description:
+          'Optional mission id — enables diversity routing (prefer unused CLIs / omp)',
+      },
+      preferAdapters: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional soft prefer list (e.g. ["omp"]) after table rank',
+      },
     },
     required: ['task'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const task = requireStr(args, 'task');
     const tierRaw = str(args, 'tier');
     const tier = TIERS.includes(tierRaw as TaskTier)
@@ -927,9 +940,37 @@ const routeTaskTool: McpToolDef = {
           a.authStrategy !== 'login-needed',
         models: a.models,
       }));
+    const settings = getOrchSettings();
+    const missionId =
+      str(args, 'missionId') ??
+      (typeof ctx.missionId === 'string' ? ctx.missionId : undefined);
+    let missionAdapterIds: string[] | undefined;
+    if (missionId) {
+      try {
+        missionAdapterIds = getProjectDomainStores(ctx.scope)
+          .missionPanes.list(missionId)
+          .map((pane) => pane.adapterId)
+          .filter(Boolean);
+      } catch {
+        missionAdapterIds = undefined;
+      }
+    }
+    const preferAdapters = strArray(args, 'preferAdapters');
     // reserveClaude=true: workers nunca no binário claude OAuth — evita
     // corromper o keychain compartilhado com o orquestrador.
-    const decision = routeTask(task, adapters, undefined, tier, true);
+    const decision = routeTask(
+      task,
+      adapters,
+      undefined,
+      tier,
+      true,
+      undefined,
+      buildOmpRouteContext({
+        ompParticipation: settings.ompParticipation,
+        missionAdapterIds,
+        preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
+      }),
+    );
     if (!decision) throw new Error('no installed adapters to route to');
     // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
     // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).

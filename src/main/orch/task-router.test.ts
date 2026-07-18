@@ -9,14 +9,25 @@ import {
 } from '../adapters/model-catalog';
 import {
   DEFAULT_ROUTING_TABLE,
+  applyOmpParticipation,
   classifyTask,
   resolveRoutableModel,
   routeTask,
   type AdapterAvailability,
+  type RankedRouteEntry,
 } from './task-router';
 
 function adapters(...installed: string[]): AdapterAvailability[] {
-  const all = ['claude', 'codex', 'agy', 'grok', 'kimi', 'glm', 'longcat'];
+  const all = [
+    'claude',
+    'codex',
+    'agy',
+    'grok',
+    'kimi',
+    'glm',
+    'longcat',
+    'omp',
+  ];
   return all.map((id) => ({ id, installed: installed.includes(id) }));
 }
 
@@ -217,6 +228,122 @@ describe('routeTask', () => {
 
   it('returns null when no adapter is installed', () => {
     expect(routeTask('qualquer tarefa', adapters())).toBeNull();
+  });
+
+  it('promotes omp early on medium when installed (not silent last)', () => {
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      adapters('claude', 'codex', 'omp', 'glm'),
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+      true,
+      undefined,
+      { ompParticipation: 'diversity' },
+    );
+    // Table order: glm lead, then omp — with reserveClaude irrelevant for glm.
+    expect(decision!.adapterId).toBe('glm');
+    expect(decision!.alternatives.some((a) => a.adapterId === 'omp')).toBe(true);
+    // omp appears before claude/codex in the ranked order (early ladder).
+    const altIds = [
+      decision!.adapterId,
+      ...decision!.alternatives.map((a) => a.adapterId),
+    ];
+    expect(altIds.indexOf('omp')).toBeLessThan(altIds.indexOf('codex'));
+  });
+
+  it('ompParticipation=off removes omp from auto-routing', () => {
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      adapters('omp', 'codex'),
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+      true,
+      undefined,
+      { ompParticipation: 'off' },
+    );
+    expect(decision!.adapterId).toBe('codex');
+    expect(decision!.reason).toContain('ompParticipation=off');
+  });
+
+  it('ompParticipation=fallback demotes omp after every non-omp candidate', () => {
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      adapters('omp', 'codex', 'glm'),
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+      true,
+      undefined,
+      { ompParticipation: 'fallback' },
+    );
+    expect(decision!.adapterId).not.toBe('omp');
+    const order = [
+      decision!.adapterId,
+      ...decision!.alternatives.map((a) => a.adapterId),
+    ];
+    const firstOmp = order.indexOf('omp');
+    expect(firstOmp).toBeGreaterThan(-1);
+    expect(order.slice(0, firstOmp).every((id) => id !== 'omp')).toBe(true);
+    expect(order.slice(firstOmp).every((id) => id === 'omp')).toBe(true);
+    expect(decision!.reason).toContain('ompParticipation=fallback');
+  });
+
+  it('ompParticipation=prefer picks omp on medium when eligible', () => {
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      adapters('claude', 'codex', 'omp', 'glm'),
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+      true,
+      undefined,
+      { ompParticipation: 'prefer' },
+    );
+    expect(decision!.adapterId).toBe('omp');
+    expect(decision!.reason).toContain('ompParticipation=prefer');
+  });
+
+  it('diversity boosts unused omp to second when mission already used another CLI', () => {
+    const decision = routeTask(
+      'tarefa de complexidade média',
+      adapters('claude', 'codex', 'omp', 'glm'),
+      DEFAULT_ROUTING_TABLE,
+      'medium',
+      true,
+      undefined,
+      {
+        ompParticipation: 'diversity',
+        missionUsedAdapters: new Set(['claude']),
+      },
+    );
+    // Head stays glm (lead); omp boosted to #2.
+    expect(decision!.adapterId).toBe('glm');
+    expect(decision!.alternatives[0]?.adapterId).toBe('omp');
+    expect(decision!.reason).toContain('omp diversity boost');
+  });
+
+  it('does not force omp ahead on security/critical floor', () => {
+    const decision = routeTask(
+      'auditar a segurança da autenticação e dos pagamentos',
+      adapters('claude', 'codex', 'omp'),
+      DEFAULT_ROUTING_TABLE,
+      undefined,
+      true,
+      undefined,
+      { ompParticipation: 'prefer' },
+    );
+    // reserveClaude + security floor: not omp as first.
+    expect(decision!.adapterId).not.toBe('omp');
+  });
+
+  it('applyOmpParticipation prefer reorders ranked entries', () => {
+    const ranked: RankedRouteEntry[] = [
+      { c: { adapterId: 'glm', model: 'glm-5.2' }, fromTier: 'medium' },
+      { c: { adapterId: 'omp', model: 'zai/glm-5' }, fromTier: 'medium' },
+      { c: { adapterId: 'codex', model: 'gpt-5.4' }, fromTier: 'medium' },
+    ];
+    const applied = applyOmpParticipation(ranked, 'medium task', 'medium', {
+      ompParticipation: 'prefer',
+    });
+    expect(applied.ranked[0]?.c.adapterId).toBe('omp');
   });
 
   it('lists the remaining tier candidates as alternatives', () => {

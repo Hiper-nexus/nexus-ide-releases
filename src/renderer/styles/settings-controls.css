@@ -190,6 +190,10 @@
   line-height: 1.45;
 }
 
+.settings-orchestrator__grid--omp {
+  margin-top: 1rem;
+}
+
 .settings-orchestrator__grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

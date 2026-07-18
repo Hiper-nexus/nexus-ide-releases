@@ -388,6 +388,25 @@ export function OmpRpcPanel() {
     if (nearBottom) el.scrollTop = el.scrollHeight;
   }, [transcript]);
 
+  // Auto-start on open (product default): one click to see omp work.
+  // Honors orch.ompRpcAutoStart; skips when a startError is already showing.
+  useEffect(() => {
+    if (!open || sessionId || starting || startError) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const orch = await window.nexus.settings.orchGet();
+        if (cancelled || orch.ompRpcAutoStart === false) return;
+        await start();
+      } catch {
+        // Manual "Iniciar sessão" remains available.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sessionId, starting, startError, start]);
+
   if (!open) return null;
 
   const state = snapshot?.state ?? (starting ? 'spawning' : null);

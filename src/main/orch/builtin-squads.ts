@@ -224,6 +224,10 @@ const REVIEW_P0P3_ORCH_INSTRUCTIONS =
   'reviewer a rodar `git diff -- <path>` (e `git diff --cached -- <path>` ' +
   'no modo uncommitted) nos arquivos designados;\n' +
   '(c) o bloco "Instruções do reviewer" abaixo, INTEIRO e sem alterações.\n' +
+  'OBRIGATÓRIO: se o roster tiver "Reviewer D (omp)" e o adapter omp estiver ' +
+  'instalado, spawne-o no primeiro ciclo com agentName="Reviewer D (omp)" e ' +
+  'adapterId=omp (roster sticky — NÃO substitua por claude/codex/kimi via ' +
+  'route_task). Isso é diversidade real, não slot decorativo.\n' +
   'Aguarde com nexus_pane_wait_many e colete os handoffs com nexus_handoff_list.\n' +
   '\n' +
   '## 4. Instruções do reviewer (repasse este bloco inteiro a cada reviewer)\n' +
@@ -256,7 +260,9 @@ const RAW_SQUADS: Squad[] = [
       'Você é o orquestrador. Quebre a tarefa em frente, back e revisão; ' +
       'delegue cada parte ao worker correspondente via nexus_pane_* e ' +
       'integre os handoffs. O roster é um MENU: spawne só os agentes que a ' +
-      'missão pede. Antes de finalizar: QA roda os testes/o app de verdade e ' +
+      'missão pede — MAS se a missão cruzar frente+back ou pedir paralelismo, ' +
+      'inclua "Generalist (omp)" (cli=omp) e preserve adapterId=omp no spawn. ' +
+      'Antes de finalizar: QA roda os testes/o app de verdade e ' +
       'tenta quebrar a entrega; Security revisa qualquer coisa que toque ' +
       'auth, pagamentos, rede ou dados de usuário; UX Designer critica e ' +
       'refina toda entrega com interface (hierarquia, estados vazios, ' +
@@ -268,8 +274,8 @@ const RAW_SQUADS: Squad[] = [
       // de modelos = custo menor e sem sobrecarregar um provedor só.
       { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'codex', effort: 'medium' },
       { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'agy', effort: 'medium' },
-      // Executor generalista no omp: entra no menu para tarefas que cruzam
-      // frente/back ou quando o orquestrador quer paralelizar implementação.
+      // Executor generalista no omp: sticky roster — spawn com agentName
+      // preserva cli=omp (não sobrescrever com route_task de outra CLI).
       { id: 'generalist', agentName: 'Generalist (omp)', category: 'executor', cli: 'omp', effort: 'medium' },
       { id: 'ux', agentName: 'UX Designer', category: 'reviewer', cli: 'claude', effort: 'medium' },
       { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
@@ -286,7 +292,11 @@ const RAW_SQUADS: Squad[] = [
       '# Code Review\n' +
       'Você é o orquestrador. Envie o diff para os revisores em paralelo ' +
       '(correção, segurança e performance), colete os handoffs e consolide ' +
-      'um veredito único, priorizando os achados por severidade.',
+      'um veredito único, priorizando os achados por severidade.\n' +
+      'OBRIGATÓRIO: no primeiro ciclo, spawne em paralelo o agente ' +
+      '"Edge Cases (omp)" (cli=omp) SE o adapter omp estiver instalado — ' +
+      'use agentName do roster e NÃO troque adapterId para outra CLI. ' +
+      'omp é cidadão de review, não fallback opcional.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
       { id: 'correctness', agentName: 'Correctness', category: 'reviewer', cli: 'kimi', effort: 'high' },

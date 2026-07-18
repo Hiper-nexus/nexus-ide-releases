@@ -91,6 +91,20 @@ describe('orchSettingsSchema', () => {
     expect(DEFAULT_ORCH_SETTINGS.intentFirstMissionRuntimeV1).toBe(true);
     // Ralph coordinates autopilot missions unless the user explicitly opts out.
     expect(DEFAULT_ORCH_SETTINGS.missionDriverActiveMode).toBe(true);
+    // omp is a first-class diversity citizen by default (not silent backup).
+    expect(DEFAULT_ORCH_SETTINGS.ompParticipation).toBe('diversity');
+    expect(DEFAULT_ORCH_SETTINGS.ompRpcAutoStart).toBe(true);
+  });
+
+  it('accepts omp participation modes', () => {
+    for (const mode of ['off', 'fallback', 'diversity', 'prefer'] as const) {
+      expect(
+        orchSettingsSchema.safeParse({ ompParticipation: mode }).success,
+      ).toBe(true);
+    }
+    expect(
+      orchSettingsSchema.safeParse({ ompParticipation: 'always' }).success,
+    ).toBe(false);
   });
 
   it('accepts agent restore policies used on every platform', () => {

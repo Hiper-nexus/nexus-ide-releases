@@ -8,7 +8,10 @@ import {
   waitForIdle,
 } from './pane-registry';
 import { orchWriteSession } from '../pty/pty-manager';
-import { listAdapterInfos } from '../adapters/adapter-registry';
+import {
+  isAdapterInstalled,
+  listAdapterInfos,
+} from '../adapters/adapter-registry';
 import { findAgentInSquad } from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
 import { countLiveMissionWorkerSlots } from './mission-driver-io';
@@ -32,6 +35,8 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { getOrchSettings } from '../persistence/settings-store';
+import { resolveStickyOmpAdapter } from './omp-roster-policy';
 
 /** The 11 pane tools of the embedded MCP server (tool group 1). */
 
@@ -222,12 +227,24 @@ const paneSpawn: McpToolDef = {
       if (ctx.role === 'worker' && role === 'orchestrator') {
         throw new Error('not authorized: workers cannot create orchestrators');
       }
+      // Cost routing still wins for non-omp agents. For roster cli=omp with
+      // ompParticipation ≠ off, stick to omp so "Generalist (omp)" is not a lie
+      // when Maestro blindly forwards a non-omp route_task pick.
+      const sticky = resolveStickyOmpAdapter({
+        rosterCli: agent.cli,
+        requestedAdapterId: str(args, 'adapterId'),
+        requestedModel: str(args, 'model'),
+        rosterModel: agent.model,
+        rosterEffort: agent.effort,
+        requestedEffort: str(args, 'effort'),
+        ompInstalled: isAdapterInstalled('omp'),
+        ompParticipation: getOrchSettings().ompParticipation,
+        defaultOmpModel: defaultModelForAdapter('omp'),
+      });
       options = {
-        // Roteamento de custo: o adapterId vindo do route_task vence o
-        // default do roster — senão o squad inteiro cai num modelo só.
-        adapterId: str(args, 'adapterId') ?? agent.cli,
-        model: str(args, 'model') ?? agent.model,
-        effort: str(args, 'effort') ?? agent.effort,
+        adapterId: sticky.adapterId,
+        model: sticky.model,
+        effort: sticky.effort,
         cwd: str(args, 'cwd'),
         title: str(args, 'title') ?? agent.agentName,
         missionId: requestedMissionId,
