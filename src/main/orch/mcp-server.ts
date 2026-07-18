@@ -30,8 +30,11 @@ import type {
   McpConfirmationHandler,
   McpConfirmationRequest,
 } from './mcp-dispatch';
-import { redactArgs } from '../jarvis/audit-log';
 import { clearSession as clearMcpPermissionSession } from '../jarvis/permissions';
+import {
+  boundedConfirmationArgs,
+  boundedConfirmationLine,
+} from './confirmation-format';
 import { MAX_MCP_PAYLOAD_BYTES } from './mcp-args-validation';
 import { buildToolset } from './tools';
 import { stripAnsi } from './pane-registry';
@@ -83,19 +86,12 @@ import {
  */
 
 const MAX_BODY_BYTES = MAX_MCP_PAYLOAD_BYTES;
-const MAX_CONFIRMATION_ARGUMENTS_CHARS = 6_000;
 
 let server: http.Server | null = null;
 let port = 0;
 let registry: McpRegistry | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
 let httpConfirmationQueue: Promise<void> = Promise.resolve();
-
-function boundedConfirmationArgs(args: Record<string, unknown>): string {
-  const serialized = JSON.stringify(redactArgs(args), null, 2);
-  if (serialized.length <= MAX_CONFIRMATION_ARGUMENTS_CHARS) return serialized;
-  return `${serialized.slice(0, MAX_CONFIRMATION_ARGUMENTS_CHARS)}\n… [truncado]`;
-}
 
 async function showHttpMcpConfirmation(
   request: McpConfirmationRequest,
@@ -114,7 +110,7 @@ async function showHttpMcpConfirmation(
       `Workspace: ${request.workspaceId}\n` +
       `Missão: ${request.missionId ?? 'bootstrap'}\n` +
       `Contexto: ${request.contextRevision ?? 'bootstrap'}\n` +
-      `Motivo: ${request.reason}\n\n` +
+      `Motivo: ${boundedConfirmationLine(request.reason)}\n\n` +
       `Argumentos (segredos ocultos):\n${boundedConfirmationArgs(request.args)}`,
   });
   return result.response === 1;
