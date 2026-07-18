@@ -308,7 +308,8 @@ export async function spawnPaneAndMaybePrompt(
           title: options.title,
           agentName: options.agentName,
           prompt,
-          approvalPolicy: 'safe',
+          // Unattended mission path: audited yolo (safe hangs without UI attach).
+          approvalPolicy: 'yolo',
           allowedTools: options.allowedTools,
         });
         hooks.onPaneCreated?.(rpc.paneId, rpc.sessionId);

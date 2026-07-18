@@ -390,6 +390,8 @@ export function OmpRpcPanel() {
 
   // Auto-start on open (product default): one click to see omp work.
   // Honors orch.ompRpcAutoStart; skips when a startError is already showing.
+  // Intentionally omit `start` from deps — zustand action identity is stable
+  // and including it re-triggers after every start() completion path.
   useEffect(() => {
     if (!open || sessionId || starting || startError) return;
     let cancelled = false;
@@ -405,7 +407,8 @@ export function OmpRpcPanel() {
     return () => {
       cancelled = true;
     };
-  }, [open, sessionId, starting, startError, start]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- start is stable
+  }, [open, sessionId, starting, startError]);
 
   if (!open) return null;
 

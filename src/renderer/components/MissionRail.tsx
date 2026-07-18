@@ -64,7 +64,7 @@ export function MissionRail() {
   const openAgentic = useWizard((s) => s.openForAgentic);
   const openBoard = useOrchStore((s) => s.openBoard);
   const paneStates = useSessionStateStore((s) => s.paneStates);
-  const toggleOmpPanel = useOmpRpcStore((s) => s.togglePanel);
+  const openOmpPanel = useOmpRpcStore((s) => s.openPanel);
   const [extIssues, setExtIssues] = useState<ExternalIssue[]>([]);
   const workspace = useWorkspaceStore((s) => s.current);
   const workspacePath = workspace?.path ?? null;
@@ -88,21 +88,26 @@ export function MissionRail() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // Omp rpc-ui mission workers are not layout panes — poll + event-drive.
+  // Omp rpc-ui mission workers are not layout panes — poll + debounced events.
   useEffect(() => {
     let cancelled = false;
+    let debounce: number | null = null;
     const refresh = () => {
       void window.nexus.ompRpc.listSessions().then((rows) => {
         if (!cancelled) setOmpSessions(rows);
       });
     };
     refresh();
-    const stop = window.nexus.ompRpc.onEvent(() => refresh());
-    const timer = window.setInterval(refresh, 3_000);
+    const stop = window.nexus.ompRpc.onEvent(() => {
+      if (debounce != null) window.clearTimeout(debounce);
+      debounce = window.setTimeout(refresh, 250);
+    });
+    const interval = window.setInterval(refresh, 5_000);
     return () => {
       cancelled = true;
       stop();
-      window.clearInterval(timer);
+      if (debounce != null) window.clearTimeout(debounce);
+      window.clearInterval(interval);
     };
   }, []);
 
@@ -343,7 +348,7 @@ export function MissionRail() {
       ompLiveMissionIds.has(m.id) &&
       livePaneIdsForMission(m.id).length === 0;
     if (ompOnly) {
-      toggleOmpPanel();
+      openOmpPanel();
       setBusy(null);
       return;
     }

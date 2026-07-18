@@ -73,6 +73,8 @@ interface OmpRpcUiState {
   loginFlow: OmpLoginFlowState | null;
 
   togglePanel(): void;
+  /** Open the drawer if closed (never closes). Used by rail/fleet. */
+  openPanel(): void;
   setApprovalPolicy(policy: OmpApprovalPolicy): void;
   start(): Promise<void>;
   refreshModels(): Promise<void>;
@@ -362,6 +364,12 @@ export const useOmpRpcStore = create<OmpRpcUiState>((set, get) => ({
       return;
     }
     set({ panelOpen: false });
+  },
+
+  openPanel() {
+    if (get().panelOpen) return;
+    claimRightDrawer('omp');
+    set({ panelOpen: true, startError: null });
   },
 
   setApprovalPolicy(policy) {

@@ -105,13 +105,23 @@ function hostRegistry(): McpRegistry {
   return registry;
 }
 
-/** Deriva as definições de host tool dos registros MCP existentes. */
+/**
+ * Deriva as definições de host tool dos registros MCP existentes.
+ * When `allowedToolNames` is set, only those names (∩ host catalog) are
+ * advertised via set_host_tools — never advertise tools the gate will deny.
+ */
 export function buildOmpHostToolDefinitions(
   source: McpRegistry = hostRegistry(),
+  allowedToolNames?: readonly string[] | null,
 ): OmpHostToolDefinition[] {
   const byName = new Map(source.tools.map((tool) => [tool.name, tool]));
+  const allow =
+    allowedToolNames == null
+      ? null
+      : new Set(allowedToolNames);
   const defs: OmpHostToolDefinition[] = [];
   for (const name of HOST_TOOL_NAMES) {
+    if (allow && !allow.has(name)) continue;
     const tool = byName.get(name);
     if (!tool) continue;
     defs.push({
@@ -191,12 +201,9 @@ function broadcastOmpEvent(sessionId: string, event: OmpRpcPushEvent): void {
   }
 }
 
-function pushToOwner(hosted: HostedSession, event: OmpRpcPushEvent): void {
-  // Mission workers and multi-window: broadcast so fleet/panel stay in sync.
+function pushEvent(hosted: HostedSession, event: OmpRpcPushEvent): void {
+  // Multi-window + mission workers: one broadcast keeps fleet/rail/panel in sync.
   broadcastOmpEvent(hosted.session.sessionId, event);
-  if (hosted.owner && !hosted.owner.isDestroyed()) {
-    // Already sent via broadcast; no second send needed.
-  }
 }
 
 function requireSession(
@@ -304,16 +311,18 @@ export async function spawnMissionOmpRpcWorker(
   const hostedRef: { current: HostedSession | null } = { current: null };
   let session: OmpRpcSession;
   try {
+    // Mission workers run unattended: yolo + audited auto-approve. `safe` would
+    // hang on extension_ui_request because the panel only mirrors one session.
     session = new OmpRpcSession(
       {
         sessionId,
         workspaceRoot: input.workspaceRoot,
-        approvalPolicy: input.approvalPolicy ?? 'safe',
+        approvalPolicy: input.approvalPolicy ?? 'yolo',
         binPath,
         model,
       },
       {
-        hostTools: buildOmpHostToolDefinitions(),
+        hostTools: buildOmpHostToolDefinitions(hostRegistry(), allowedTools),
         dispatchHostTool: async (toolName, args) => {
           const outcome = await dispatchToolCall(
             'http-mcp',
@@ -346,7 +355,7 @@ export async function spawnMissionOmpRpcWorker(
         },
         onPush: (event) => {
           const hosted = hostedRef.current;
-          if (hosted) pushToOwner(hosted, event);
+          if (hosted) pushEvent(hosted, event);
           if (event.kind === 'exit') disposeSession(sessionId);
         },
       },
@@ -480,7 +489,7 @@ async function startSession(
         },
         onPush: (event) => {
           const hosted = hostedRef.current;
-          if (hosted) pushToOwner(hosted, event);
+          if (hosted) pushEvent(hosted, event);
           if (event.kind === 'exit') disposeSession(sessionId);
         },
       },

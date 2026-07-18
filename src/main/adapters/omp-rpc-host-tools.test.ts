@@ -45,4 +45,39 @@ describe('OMP host tools', () => {
       'nexus_mission_get',
     ]);
   });
+
+  it('never advertises tools outside the gate allowlist', () => {
+    const registry: McpRegistry = {
+      serverName: 'test',
+      serverVersion: '0',
+      tools: [
+        {
+          name: 'nexus_mission_get',
+          description: 'get mission',
+          inputSchema: { type: 'object' },
+          handler: async () => ({}),
+        },
+        {
+          name: 'nexus_file_write',
+          description: 'write',
+          inputSchema: { type: 'object' },
+          handler: async () => ({}),
+        },
+        {
+          name: 'nexus_file_read',
+          description: 'read',
+          inputSchema: { type: 'object' },
+          handler: async () => ({}),
+        },
+      ],
+    };
+    const defs = buildOmpHostToolDefinitions(registry, [
+      'nexus_file_read',
+      'nexus_mission_get',
+    ]);
+    expect(defs.map((d) => d.name).sort()).toEqual([
+      'nexus_file_read',
+      'nexus_mission_get',
+    ]);
+  });
 });

@@ -35,13 +35,14 @@ export function FleetChip() {
   const ompPanelReady = useOmpRpcStore(
     (s) => Boolean(s.sessionId) && s.snapshot?.state === 'idle',
   );
-  const toggleOmp = useOmpRpcStore((s) => s.togglePanel);
+  const openOmp = useOmpRpcStore((s) => s.openPanel);
   const [ompMissionSessions, setOmpMissionSessions] = useState<
     OmpRpcSessionSummary[]
   >([]);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | null = null;
     const refresh = () => {
       void window.nexus.ompRpc.listSessions().then((rows) => {
         if (!cancelled) {
@@ -50,12 +51,17 @@ export function FleetChip() {
       });
     };
     refresh();
-    const stop = window.nexus.ompRpc.onEvent(() => refresh());
-    const timer = window.setInterval(refresh, 4_000);
+    // Debounce event storms (tool deltas) so we don't hammer listSessions.
+    const stop = window.nexus.ompRpc.onEvent(() => {
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(refresh, 250);
+    });
+    const interval = window.setInterval(refresh, 5_000);
     return () => {
       cancelled = true;
       stop();
-      window.clearInterval(timer);
+      if (timer != null) window.clearTimeout(timer);
+      window.clearInterval(interval);
     };
   }, []);
 
@@ -119,7 +125,7 @@ export function FleetChip() {
       aria-label={`Frota: ${label}`}
       onClick={() => {
         if (target) focus(target);
-        else if (openOmpOnClick) toggleOmp();
+        else if (openOmpOnClick) openOmp();
       }}
     >
       {working > 0 && (
