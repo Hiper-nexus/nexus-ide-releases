@@ -31,6 +31,7 @@ import {
   buildOmpAutoSpawnPrompt,
   shouldAutoSpawnOmpCompanion,
 } from './omp-roster-policy';
+import { adapterCircuitBreakers } from './circuit-breaker';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -324,6 +325,8 @@ export async function spawnPaneAndMaybePrompt(
 ): Promise<{ paneId: string; sessionId: string }> {
   const adapter = getAdapter(options.adapterId);
   if (!adapter) throw new Error(`unknown adapter: ${options.adapterId}`);
+  // Circuit half-open / closed only for auto traffic; explicit spawns still try.
+  // Failures below trip the breaker for future routeTask multi-score.
   // Defesa em profundidade contra modelo-fantasma (caso de campo 17/07): a
   // superfície de seleção (dropdown do squad, roster, route_task) podia oferecer
   // um id que o CLI instalado não roda (ex.: `gpt-5.6` depois da OpenAI
@@ -399,8 +402,10 @@ export async function spawnPaneAndMaybePrompt(
           });
         }
         // rpc path already is omp — no companion needed.
+        adapterCircuitBreakers.recordSuccess(options.adapterId);
         return rpc;
       } catch (err) {
+        adapterCircuitBreakers.recordFailure(options.adapterId);
         if (transport === 'rpc') throw err;
         console.warn(
           '[spawn] omp rpc-ui falhou; caindo para PTY:',
@@ -412,8 +417,10 @@ export async function spawnPaneAndMaybePrompt(
 
   const result = await requestPaneSpawn(safeOptions);
   if (!result.ok || !result.paneId || !result.sessionId) {
+    adapterCircuitBreakers.recordFailure(options.adapterId);
     throw new Error(result.error ?? 'pane spawn failed');
   }
+  adapterCircuitBreakers.recordSuccess(options.adapterId);
   hooks.onPaneCreated?.(result.paneId, result.sessionId);
   // Remember the mission's composition so it can be reopened from history.
   if (options.missionId) {

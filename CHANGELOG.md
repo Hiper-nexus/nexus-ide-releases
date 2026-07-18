@@ -1,19 +1,23 @@
 # Changelog
 
-## Unreleased — Oh My Pi zero-friction (vibe coder)
+## Unreleased — Route brain (x-algorithm) + Oh My Pi zero-friction
 
 Data: 2026-07-18
 
-Fecha o gap “omp integrado mas nunca vi ação” e remove atrito humano:
+### Ranking / frota (padrões x-algorithm + grok-build)
 
-- **Default `prefer` + `ompAutoSpawn: true`**: o sistema **chama o omp sozinho**
-  no primeiro worker não-omp da missão — sem abrir painel, sem o Maestro
-  lembrar, sem clique do vibe coder.
-- **Participação** `off|fallback|diversity|prefer`; sticky roster `cli=omp`.
-- **Transporte** `auto` (rpc-ui → PTY); missão usa **yolo auditado**.
-- **Host tools RPC** curadas com gate; MissionRail + Fleet contam omp;
-  warm resolve no boot; painel auto-start se o usuário abrir.
-- Docs: `docs/orchestration.md` § Oh My Pi.
+- **Multi-score re-rank** em missões com histórico: quality + custo + diversity
+  attenuation + omp prefer + circuit open skip.
+- **Circuit breaker** por adapter (closed/open/half-open) no spawn + routing.
+- **Hot cache** de adapters (~5s) com invalidação em `adapters.changed`.
+- Plano mestre F1–F4: `docs/analysis/2026-07-18-master-plan-grok-build-x-algorithm.md`
+  (CoW worktrees, hunks, sandbox, plan mode, bg tasks — próximas fases).
+
+### Oh My Pi
+
+- **Default `prefer` + `ompAutoSpawn: true`**: omp entra sozinho no primeiro
+  worker não-omp da missão.
+- Sticky roster, transporte auto, yolo auditado em mission rpc, Fleet + Rail.
 
 ## 0.19.19 — Missão Que Começa
 

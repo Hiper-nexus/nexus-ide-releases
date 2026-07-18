@@ -5,6 +5,7 @@ import {
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { getOrchSettings } from '../persistence/settings-store';
 import { listAdapterInfos } from '../adapters/adapter-registry';
+import { loadAdaptersHot } from '../adapters/adapter-hot-cache';
 import { routeTask } from './task-router';
 import { buildOmpRouteContext } from './omp-roster-policy';
 import {
@@ -157,7 +158,7 @@ async function dispatchTask(
       .filter(Boolean);
     const routed = routeTask(
       `${task.title}\n${decodeTaskScheduleDetail(task.detail).body}`,
-      listAdapterInfos().map((adapter) => ({
+      loadAdaptersHot(() => listAdapterInfos()).map((adapter) => ({
         id: adapter.id,
         installed: adapter.installed,
         models: adapter.models.list,

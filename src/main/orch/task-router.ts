@@ -14,6 +14,8 @@ import {
   type ModelCatalog,
 } from '../adapters/model-catalog';
 import type { OmpParticipation } from '../../shared/settings-types';
+import { adapterCircuitBreakers } from './circuit-breaker';
+import { multiScoreRerank } from './route-pipeline';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
 
@@ -32,13 +34,20 @@ export type RoutingTable = Record<TaskTier, RouteCandidate[]>;
 export interface RouteContext {
   /** Adapters already used by panes in this mission (diversity boost). */
   missionUsedAdapters?: ReadonlySet<string>;
+  /** How many times each adapter appears in the mission (diversity attenuation). */
+  missionUseCounts?: ReadonlyMap<string, number>;
   /** Soft prefer list (e.g. ['omp']) applied after table rank. */
   preferAdapters?: readonly string[];
   /**
-   * How Oh My Pi participates. Default `diversity` matches product policy.
+   * How Oh My Pi participates. Default `prefer` for zero-friction vibe-coder.
    * Call sites should pass getOrchSettings().ompParticipation.
    */
   ompParticipation?: OmpParticipation;
+  /**
+   * When true (default if mission has history or any circuit open), re-rank
+   * with multi-score (x-algorithm pattern). False preserves pure table order.
+   */
+  multiScore?: boolean;
 }
 
 export type RankedRouteEntry = {
@@ -502,6 +511,31 @@ export function routeTask(
   const ompApplied = applyOmpParticipation(ranked, taskText, tier, context);
   ranked = ompApplied.ranked;
 
+  // x-algorithm multi-score: activate when mission has history, circuit open,
+  // or caller opts in — preserves pure table order on cold first pick.
+  const anyCircuitOpen = ranked.some((r) =>
+    adapterCircuitBreakers.isOpen(r.c.adapterId),
+  );
+  const hasMissionHistory =
+    (context.missionUsedAdapters?.size ?? 0) > 0 ||
+    (context.missionUseCounts?.size ?? 0) > 0;
+  const runMultiScore =
+    context.multiScore === true ||
+    (context.multiScore !== false && (hasMissionHistory || anyCircuitOpen));
+  let multiScoreNote = '';
+  if (runMultiScore && ranked.length > 1) {
+    const scored = multiScoreRerank({
+      ranked,
+      tier,
+      context,
+      modelCatalog,
+      circuitOpen: (id) => adapterCircuitBreakers.isOpen(id),
+      missionUseCounts: context.missionUseCounts,
+    });
+    ranked = scored.ranked;
+    multiScoreNote = scored.note;
+  }
+
   if (ranked.length > 0) {
     let chosen = ranked[0];
     if (reserveClaude && chosen.c.adapterId === 'claude') {
@@ -531,7 +565,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort: pick.effort,
-      reason: `${tier}${borrowed}; ${why}${costNote}${evaluationNote}${riskNote}${ompApplied.note}`,
+      reason: `${tier}${borrowed}; ${why}${costNote}${evaluationNote}${riskNote}${ompApplied.note}${multiScoreNote}`,
       alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
     };
   }

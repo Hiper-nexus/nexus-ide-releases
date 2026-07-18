@@ -27,6 +27,7 @@ import {
   refreshRemoteModelCatalog,
   seedLocalModelCatalogFromPublished,
 } from './model-catalog';
+import { invalidateAdapterHotCache } from './adapter-hot-cache';
 
 const USER_ADAPTER_DIR = path.join(os.homedir(), '.nexus', 'plugins', 'adapters');
 const NEXUS_DIR = path.join(os.homedir(), '.nexus');
@@ -280,6 +281,8 @@ function broadcast(): void {
 
 /** Push the (possibly custom-model-updated) adapter list to the renderer. */
 export function notifyAdaptersChanged(): void {
+  // Thunder-lite: drop hot snapshot so next route_task re-probes install/auth.
+  invalidateAdapterHotCache();
   broadcast();
 }
 

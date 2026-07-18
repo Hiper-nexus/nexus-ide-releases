@@ -74,13 +74,19 @@ export function buildOmpRouteContext(input: {
   missionAdapterIds?: readonly string[];
   preferAdapters?: readonly string[];
 }): RouteContext {
-  const used =
-    input.missionAdapterIds && input.missionAdapterIds.length > 0
-      ? new Set(input.missionAdapterIds)
+  const ids = input.missionAdapterIds ?? [];
+  const used = ids.length > 0 ? new Set(ids) : undefined;
+  const missionUseCounts =
+    ids.length > 0
+      ? ids.reduce((map, id) => {
+          map.set(id, (map.get(id) ?? 0) + 1);
+          return map;
+        }, new Map<string, number>())
       : undefined;
   return {
     ompParticipation: input.ompParticipation,
     missionUsedAdapters: used,
+    missionUseCounts,
     preferAdapters: input.preferAdapters,
   };
 }

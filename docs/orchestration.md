@@ -94,3 +94,20 @@ O adapter `omp` (Oh My Pi) entra na frota de três formas:
 ### Host tools do rpc-ui (gate, não bypass)
 
 `nexus_pane_list`, `nexus_mission_get/list`, `nexus_workflow_get`, `nexus_handoff_list/submit`, `nexus_route_task`, `nexus_file_read/search/write`, `nexus_git_status/diff/log/add/commit`.
+
+## Route pipeline (x-algorithm patterns)
+
+Task routing follows a candidate-pipeline mental model:
+
+1. **Source** — adapters installed (hot-cached ~5s, Thunder-lite)
+2. **Hydrate** — models + catalog quality
+3. **Filter** — capability table + blocked models
+4. **Score** — multi-axis (table rank, quality, cost, mission diversity, omp prefer, circuit)
+5. **Select** — top-1 + alternatives; `reserveClaude` for workers
+6. **Side effects** — `nexus_route_log`, circuit success/failure on spawn
+
+Diversity attenuation: repeated adapters in the same mission lose score  
+(author-diversity idea from X For You algorithm). Circuit breaker opens after  
+repeated spawn failures and is skipped by multi-score when alternatives exist.
+
+Full phased plan: `docs/analysis/2026-07-18-master-plan-grok-build-x-algorithm.md`.
