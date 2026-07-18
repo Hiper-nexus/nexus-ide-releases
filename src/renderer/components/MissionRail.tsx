@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Mission } from '../../shared/orch-types';
+import type { OmpRpcSessionSummary } from '../../shared/omp-rpc-types';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { useOmpRpcStore } from '../state/omp-rpc-store';
 import { livePaneIdsForMission } from '../orch/mission-reopen';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import {
@@ -11,6 +13,11 @@ import {
   railStatusDisplay,
   statusLabel,
 } from '../lib/mission-rail-groups';
+import {
+  missionIdsWithOmpWorkers,
+  ompRailMetaFragment,
+  summarizeOmpMissionActivity,
+} from '../lib/omp-mission-activity';
 import {
   loadCollapsedSections,
   loadPinnedMissionIds,
@@ -57,6 +64,7 @@ export function MissionRail() {
   const openAgentic = useWizard((s) => s.openForAgentic);
   const openBoard = useOrchStore((s) => s.openBoard);
   const paneStates = useSessionStateStore((s) => s.paneStates);
+  const toggleOmpPanel = useOmpRpcStore((s) => s.togglePanel);
   const [extIssues, setExtIssues] = useState<ExternalIssue[]>([]);
   const workspace = useWorkspaceStore((s) => s.current);
   const workspacePath = workspace?.path ?? null;
@@ -71,12 +79,31 @@ export function MissionRail() {
   const [collapsed, setCollapsed] = useState<RailSectionId[]>(() =>
     loadCollapsedSections(),
   );
+  const [ompSessions, setOmpSessions] = useState<OmpRpcSessionSummary[]>([]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
       setElapsedTick((tick) => tick + 1);
     }, 60_000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  // Omp rpc-ui mission workers are not layout panes — poll + event-drive.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      void window.nexus.ompRpc.listSessions().then((rows) => {
+        if (!cancelled) setOmpSessions(rows);
+      });
+    };
+    refresh();
+    const stop = window.nexus.ompRpc.onEvent(() => refresh());
+    const timer = window.setInterval(refresh, 3_000);
+    return () => {
+      cancelled = true;
+      stop();
+      window.clearInterval(timer);
+    };
   }, []);
 
   // Pins e lista só deste path — ao trocar workspace, recarrega pins locais.
@@ -121,15 +148,20 @@ export function MissionRail() {
   // Layout no dep: livePaneIds filtra panes mortos do tree — sem isso, o
   // useMemo ficava stale e missão com terminal vivo sumia do “Em progresso”.
   const layoutRoot = useLayoutStore((s) => s.root);
+  const ompLiveMissionIds = useMemo(
+    () => missionIdsWithOmpWorkers(ompSessions),
+    [ompSessions],
+  );
   const openMissionIds = useMemo(() => {
     const ids = new Set<string>();
     for (const mid of new Set(Object.values(paneMissions))) {
       if (livePaneIdsForMission(mid).length > 0) ids.add(mid);
     }
+    for (const mid of ompLiveMissionIds) ids.add(mid);
     return ids;
     // layoutRoot: reavaliar quando o grid muda (spawn/close/split).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneMissions, layoutRoot]);
+  }, [paneMissions, layoutRoot, ompLiveMissionIds]);
 
   const handoffCountByMission = useMemo(() => {
     const map = new Map<string, number>();
@@ -251,7 +283,7 @@ export function MissionRail() {
       return `Retomar · ${started}${handBit}${budgetBit}`;
     }
 
-    if (liveInGrid) {
+    if (liveInGrid || ompLiveMissionIds.has(mission.id)) {
       const paneIds = Object.entries(paneMissions)
         .filter(([, missionId]) => missionId === mission.id)
         .map(([paneId]) => paneId);
@@ -263,6 +295,8 @@ export function MissionRail() {
       const spawningCount = ids.filter(
         (paneId) => paneStates.get(paneId) === 'spawning',
       ).length;
+      const omp = summarizeOmpMissionActivity(ompSessions, mission.id);
+      const ompBit = ompRailMetaFragment(omp);
       // FALE HUMANO no rail: "pane" é encanamento; a pessoa acompanha AGENTES
       // e há quanto tempo a missão roda.
       const elapsed = humanElapsed(
@@ -270,14 +304,21 @@ export function MissionRail() {
         Date.now(),
       );
       const elapsedBit = elapsed ? ` · ${elapsed}` : '';
-      if (busyCount > 0) {
-        return `${busyCount} agente${busyCount === 1 ? '' : 's'} trabalhando${elapsedBit}${handBit}${budgetBit}`;
+      const ompSuffix = ompBit ? ` · ${ompBit}` : '';
+      if (busyCount > 0 || omp.working > 0) {
+        const agents = busyCount + omp.working;
+        return `${agents} agente${agents === 1 ? '' : 's'} trabalhando${elapsedBit}${ompSuffix}${handBit}${budgetBit}`;
       }
-      if (spawningCount > 0) {
-        return `${spawningCount} agente${spawningCount === 1 ? '' : 's'} iniciando${elapsedBit}${handBit}${budgetBit}`;
+      if (spawningCount > 0 || omp.starting > 0) {
+        const agents = spawningCount + omp.starting;
+        return `${agents} agente${agents === 1 ? '' : 's'} iniciando${elapsedBit}${ompSuffix}${handBit}${budgetBit}`;
       }
-      if (ids.length > 0) {
-        return `${ids.length} agente${ids.length === 1 ? '' : 's'} no grid${elapsedBit}${handBit}${budgetBit}`;
+      if (ids.length > 0 || omp.idle > 0) {
+        const agents = ids.length + omp.idle;
+        return `${agents} agente${agents === 1 ? '' : 's'} no grid${elapsedBit}${ompSuffix}${handBit}${budgetBit}`;
+      }
+      if (ompBit) {
+        return `${ompBit}${elapsedBit}${handBit}${budgetBit}`;
       }
     }
 
@@ -296,6 +337,16 @@ export function MissionRail() {
   function selectMission(m: Mission) {
     setBusy(m.id);
     setNote(null);
+    // Mission-only omp rpc workers have no PTY pane — open the OMP drawer so
+    // the operator can see / approve without a dead reopen.
+    const ompOnly =
+      ompLiveMissionIds.has(m.id) &&
+      livePaneIdsForMission(m.id).length === 0;
+    if (ompOnly) {
+      toggleOmpPanel();
+      setBusy(null);
+      return;
+    }
     void confirmAndReopenMission(m)
       .then((r) => {
         if (!r.ok) setNote(r.error ?? 'Falha ao retomar.');

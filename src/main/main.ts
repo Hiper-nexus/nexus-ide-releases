@@ -110,6 +110,7 @@ import {
   registerOmpRpcIpc,
   disposeAllOmpRpcSessions,
 } from "./adapters/omp-rpc-ipc";
+import { resolveOmpBin } from "./adapters/omp-rpc-service";
 import {
   registerOmpAuthIpc,
   disposeAllOmpAuthFlows,
@@ -530,6 +531,16 @@ function bootstrap(): void {
   registerPipeIpc(); // also calls initPanePipes()
   // Sessões omp --mode rpc-ui como agentes de primeira classe (sem PTY).
   registerOmpRpcIpc();
+  // Warm `omp --version` + path probe so the first panel/mission start is not
+  // the cold PATH/semver handshake (fail closed later if missing).
+  if (!isCurrentProcessSmokeTest()) {
+    void resolveOmpBin().catch((err) => {
+      console.warn(
+        "[omp-rpc] warm resolve falhou (omp ausente ou major incompatível):",
+        err instanceof Error ? err.message : err,
+      );
+    });
+  }
   // Login OAuth de assinaturas do omp (auth-broker) dirigido pelo painel.
   registerOmpAuthIpc();
   registerRemoteIpc();

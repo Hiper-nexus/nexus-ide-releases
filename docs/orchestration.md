@@ -67,3 +67,29 @@ Botão **⛭ Orch** na barra abre o painel com abas Missions / Handoffs / Todos 
 Squads (timeline ao vivo, trilha de auditoria de handoffs, milestones do
 `nexus_todo_manager`, export/import de squads). A tarefa em andamento aparece
 como chip na barra.
+
+## Oh My Pi (omp) — cidadão de primeira classe
+
+O adapter `omp` (Oh My Pi) entra na frota de três formas:
+
+| Superfície | Comportamento |
+|---|---|
+| **Router** (`nexus_route_task` + scheduler) | `orch.ompParticipation`: `off` \| `fallback` \| `diversity` (default) \| `prefer`. Diversity sobe omp no ladder e faz boost quando a missão ainda não usou omp. Security/critical **não** rebaixam claude/codex. |
+| **Roster sticky** | Agente com `cli: omp` (ex.: Reviewer D, Generalist) **permanece** omp no spawn mesmo se o Maestro passar outro `adapterId` do route_task. |
+| **Transporte de missão** | `orch.ompMissionTransport`: `auto` (default) tenta `omp --mode rpc-ui` e cai para PTY; `rpc` força pipes NDJSON; `pty` força terminal com MCP inject completo (`nexusMcp: omp`). |
+
+### RPC panel vs PTY
+
+- **Painel OMP · RPC** (barra): sessão manual/auto-start, badge ambient, toast de aprovação, host tools curadas com gate real.
+- **Mission worker rpc-ui**: `paneId` sintético `omp-rpc:<uuid>`, contado no FleetChip e no MissionRail; clique em missão só-omp abre o drawer OMP.
+- **PTY**: caminho com o conjunto completo de tools Nexus via inject MCP — preferível quando o worker precisa do toolset inteiro.
+
+### Settings (Orquestrador agêntico)
+
+- Participação na frota
+- Auto-iniciar OMP RPC ao abrir o painel
+- Transporte omp em missões
+
+### Host tools do rpc-ui (gate, não bypass)
+
+`nexus_pane_list`, `nexus_mission_get/list`, `nexus_workflow_get`, `nexus_handoff_list/submit`, `nexus_route_task`, `nexus_file_read/search/write`, `nexus_git_status/diff/log/add/commit`.

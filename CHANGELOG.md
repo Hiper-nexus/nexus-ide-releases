@@ -17,6 +17,11 @@ Fecha o gap “omp integrado mas nunca vi ação”:
 - **UX**: badge OMP, auto-start do painel, toast de aprovação, frota conta
   sessões rpc (painel + mission workers), `listSessions` IPC.
 - **Cache** de `omp --version` no processo main.
+- **MissionRail** conta workers omp rpc-ui (missão em progresso sem PTY) e
+  clique em missão só-omp abre o painel OMP.
+- **Warm resolve** no boot do main (PATH + pin major 17) para o 1º start não
+  pagar o handshake frio.
+- Docs: `docs/orchestration.md` § Oh My Pi.
 
 ## 0.19.19 — Missão Que Começa
 
