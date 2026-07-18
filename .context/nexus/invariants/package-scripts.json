@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    {
+      "id": "inv:package-scripts",
+      "statement": "Selected operational scripts from package.json: lint, rebuild, rebuild:electron, rebuild:node, start, start:forge, test, typecheck.",
+      "claimKey": "package.scripts.selected",
+      "value": [
+        "lint",
+        "rebuild",
+        "rebuild:electron",
+        "rebuild:node",
+        "start",
+        "start:forge",
+        "test",
+        "typecheck"
+      ],
+      "kind": "observed",
+      "category": "invariant",
+      "domains": [
+        "repository",
+        "testing"
+      ],
+      "relatedSymbols": [],
+      "confidence": 1
+    }
+  ]
+}

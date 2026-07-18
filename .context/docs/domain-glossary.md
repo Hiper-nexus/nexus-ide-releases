@@ -4,4 +4,4 @@
 
 - **result**: local `const` declared in `scripts/check-node-natives.mjs`, holding the SQLite health-probe row (`database.prepare('select 1 as ok').get()`).
 - **runtimeManager**: local variable declared in `src/main/browser/browser-artifact-store.test.ts` inside the `manager()` helper, holding a `new ProjectRuntimeManager(...)` instance.
-- **ProjectRuntimeManager**: class imported in `src/main/browser/browser-artifact-store.test.ts` from the `../runtime/project-runtime-manager` module path.
+- **ProjectRuntimeManager**: identifier imported by name in `src/main/browser/browser-artifact-store.test.ts` from the `../runtime/project-runtime-manager` module path and instantiated with `new` in that test file.

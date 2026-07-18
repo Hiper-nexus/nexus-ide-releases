@@ -18,5 +18,5 @@
 
 ## Python training assets (`training/wake-ptbr/requirements.txt`)
 
-- The file's header comment states it should be run with CPython 3.11 on macOS arm64 (this is a comment, not an enforced/pinned constraint).
-- Packages (`edge-tts`, `huggingface_hub`, `numpy`, `onnx`, `onnxruntime`, `openwakeword`, `scipy`, `torch`) are used only to produce and validate a candidate ONNX model; the shipped app does not import them.
+- The file's header comment states it should be run with CPython 3.11 on macOS arm64, and that the app itself does not import these packages (they only produce and validate a candidate ONNX).
+- Declared packages: `edge-tts==6.1.12`, `huggingface_hub>=0.24,<1`, `numpy>=1.26,<2`, `onnx>=1.16,<2`, `onnxruntime==1.19.2`, `openwakeword==0.6.0`, `scipy>=1.11,<2`, `torch>=2.5,<2.7` — a mix of exact pins and version ranges.

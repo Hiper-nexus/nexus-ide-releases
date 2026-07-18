@@ -1,8 +1,3 @@
-# Business model
-
-> Source-bound product context copied from `PRODUCT.md`.
-> Independent review must reject any claim not present in that source.
-
 # Product
 
 ## Register
@@ -50,13 +45,13 @@ evocar controle e prontidão (aviônica, mission control), nunca fantasia gamer.
    tipografia e espaçamento, não por caixas e bordas.
 5. **Teclado primeiro.** Power users não caçam botões; atalhos visíveis e
    aprendíveis em contexto.
+6. **Endorfina em toda superfície.** Cada tela do path feliz (boot → launch →
+   home → missão) entrega presença, confirmação ou progresso — pet, kicker,
+   status narrativo, CTA com peso. Contrato em `src/shared/endorphin.ts`.
+   Não é RGB gamer: é o operador sentir que o sistema respondeu com vida.
 
 ## Accessibility & Inclusion
 
 Padrão razoável: contraste AA (≥4.5:1 texto corpo), `prefers-reduced-motion`
 respeitado em toda animação, navegação por teclado nos fluxos principais.
 Sem certificação formal.
-
-## Explicit unknowns
-
-- Revenue, pricing, billing and tenancy rules are not asserted unless the source above states them.
