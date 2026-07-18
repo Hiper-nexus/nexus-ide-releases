@@ -157,10 +157,18 @@ export const orchSettingsSchema = z.object({
    * none is active (install/auth failures still surface as startError).
    */
   ompRpcAutoStart: z.boolean().default(true),
+  /**
+   * How mission/orchestrator spawns of adapter `omp` are hosted:
+   * - `pty` (default): terminal pane with full Nexus MCP inject (most capable)
+   * - `rpc`: `omp --mode rpc-ui` pipes + host tools (deterministic lifecycle)
+   * - `auto`: try rpc first, fall back to pty on bin/protocol failure
+   */
+  ompMissionTransport: z.enum(['pty', 'rpc', 'auto']).default('auto'),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
 export type OmpParticipation = OrchSettings['ompParticipation'];
+export type OmpMissionTransport = OrchSettings['ompMissionTransport'];
 
 /**
  * App-wide voice audio routing. `default` follows the current operating-system

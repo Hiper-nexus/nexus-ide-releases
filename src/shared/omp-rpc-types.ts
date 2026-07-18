@@ -220,6 +220,8 @@ export const OMP_RPC_CHANNELS = {
   listModels: 'ompRpc:listModels',
   respondUi: 'ompRpc:respondUi',
   dispose: 'ompRpc:dispose',
+  /** Live panel + mission rpc-ui sessions (fleet / ops). */
+  listSessions: 'ompRpc:listSessions',
   /** Push main → renderer: `{sessionId, event}` já validado/estreitado. */
   event: 'ompRpc:event',
 } as const;
@@ -433,6 +435,16 @@ export interface OmpRpcGetStateResult {
  * API renderer-facing exposta pelo preload como `window.nexus.ompRpc`.
  * O renderer nunca vê o ipcRenderer cru — só este contrato.
  */
+export interface OmpRpcSessionSummary {
+  sessionId: string;
+  paneId: string;
+  kind: 'panel' | 'mission';
+  title: string;
+  missionId?: string;
+  state: OmpRpcSessionLifecycle;
+  snapshot: OmpRpcStateSnapshot;
+}
+
 export interface OmpRpcApi {
   start(request: OmpRpcStartRequest): Promise<OmpRpcStartResult>;
   prompt(
@@ -448,6 +460,7 @@ export interface OmpRpcApi {
   ): Promise<OmpRpcCommandResult>;
   getState(sessionId: string): Promise<OmpRpcGetStateResult>;
   listModels(sessionId: string): Promise<OmpRpcListModelsResult>;
+  listSessions(): Promise<OmpRpcSessionSummary[]>;
   respondUi(
     sessionId: string,
     requestId: string,

@@ -94,6 +94,7 @@ describe('orchSettingsSchema', () => {
     // omp is a first-class diversity citizen by default (not silent backup).
     expect(DEFAULT_ORCH_SETTINGS.ompParticipation).toBe('diversity');
     expect(DEFAULT_ORCH_SETTINGS.ompRpcAutoStart).toBe(true);
+    expect(DEFAULT_ORCH_SETTINGS.ompMissionTransport).toBe('auto');
   });
 
   it('accepts omp participation modes', () => {

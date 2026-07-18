@@ -1086,6 +1086,7 @@ const api: NexusApi = {
       ipcRenderer.invoke(OMP_RPC_CHANNELS.getState, { sessionId }),
     listModels: (sessionId: string) =>
       ipcRenderer.invoke(OMP_RPC_CHANNELS.listModels, { sessionId }),
+    listSessions: () => ipcRenderer.invoke(OMP_RPC_CHANNELS.listSessions),
     respondUi: (sessionId: string, requestId: string, response: OmpRpcUiResponse) =>
       ipcRenderer.invoke(OMP_RPC_CHANNELS.respondUi, {
         sessionId,

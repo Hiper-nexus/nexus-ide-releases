@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import type { WebContents } from 'electron';
 import {
   OMP_RPC_CHANNELS,
@@ -9,13 +9,16 @@ import {
   ompRpcSessionRefSchema,
   ompRpcSetModelRequestSchema,
   ompRpcStartRequestSchema,
+  type OmpApprovalPolicy,
   type OmpHostToolDefinition,
   type OmpRpcCommandResult,
   type OmpRpcEventEnvelope,
   type OmpRpcGetStateResult,
   type OmpRpcListModelsResult,
   type OmpRpcPushEvent,
+  type OmpRpcSessionLifecycle,
   type OmpRpcStartResult,
+  type OmpRpcStateSnapshot,
 } from '../../shared/omp-rpc-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { auditSuccess } from '../jarvis/audit-log';
@@ -34,21 +37,42 @@ import { getAdapter } from './adapter-registry';
 import {
   OmpRpcSession,
   resolveOmpBin,
+  waitForOmpSessionReady,
   type OmpAutoApprovalRecord,
 } from './omp-rpc-service';
 
 /**
  * IPC do domínio ompRpc: hospeda sessões `omp --mode rpc-ui` como agentes de
  * primeira classe (sem PTY). Cada sessão ganha um token de gate REAL
- * (mintToken) restrito às 3 host tools; host_tool_call passa pelo dispatcher
- * MCP existente — mesmo enforcement de allowlist + auditoria dos panes.
+ * (mintToken) restrito às host tools abaixo; host_tool_call passa pelo
+ * dispatcher MCP existente — mesmo enforcement de allowlist + auditoria.
  */
 
-const HOST_TOOL_NAMES = [
+/**
+ * Host tools exposed to omp via set_host_tools. Keep this a curated worker
+ * surface (not the full 100+ toolset): situational awareness + handoff +
+ * read/write workspace + light git. Destructive mission control stays on PTY
+ * panes with full MCP inject.
+ */
+export const OMP_HOST_TOOL_NAMES = [
   'nexus_pane_list',
   'nexus_mission_get',
+  'nexus_mission_list',
+  'nexus_workflow_get',
+  'nexus_handoff_list',
   'nexus_handoff_submit',
+  'nexus_route_task',
+  'nexus_file_read',
+  'nexus_file_search',
+  'nexus_file_write',
+  'nexus_git_status',
+  'nexus_git_diff',
+  'nexus_git_log',
+  'nexus_git_add',
+  'nexus_git_commit',
 ] as const;
+
+const HOST_TOOL_NAMES = OMP_HOST_TOOL_NAMES;
 
 const MAX_SESSIONS_PER_RENDERER = 4;
 
@@ -56,8 +80,13 @@ interface HostedSession {
   session: OmpRpcSession;
   gateCtx: AgentGateContext;
   gateSessionId: string;
-  owner: WebContents;
+  /** Renderer that started the session (null = mission-side worker). */
+  owner: WebContents | null;
   scope: ProjectExecutionScope;
+  /** Synthetic pane id for mission composition / fleet (`omp-rpc:<uuid>`). */
+  paneId: string;
+  kind: 'panel' | 'mission';
+  title: string;
 }
 
 const sessions = new Map<string, HostedSession>();
@@ -139,20 +168,35 @@ function watchOwner(owner: WebContents): void {
   const onDestroyed = () => {
     ownerCleanup.delete(owner);
     for (const [sessionId, hosted] of [...sessions.entries()]) {
-      if (hosted.owner === owner) disposeSession(sessionId);
+      // Mission workers outlive a single renderer; only dispose panel sessions.
+      if (hosted.owner === owner && hosted.kind === 'panel') {
+        disposeSession(sessionId);
+      }
     }
   };
   ownerCleanup.set(owner, onDestroyed);
   owner.once('destroyed', onDestroyed);
 }
 
+function broadcastOmpEvent(sessionId: string, event: OmpRpcPushEvent): void {
+  const envelope: OmpRpcEventEnvelope = { sessionId, event };
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      try {
+        win.webContents.send(OMP_RPC_CHANNELS.event, envelope);
+      } catch {
+        // Window tearing down — ignore.
+      }
+    }
+  }
+}
+
 function pushToOwner(hosted: HostedSession, event: OmpRpcPushEvent): void {
-  if (hosted.owner.isDestroyed()) return;
-  const envelope: OmpRpcEventEnvelope = {
-    sessionId: hosted.session.sessionId,
-    event,
-  };
-  hosted.owner.send(OMP_RPC_CHANNELS.event, envelope);
+  // Mission workers and multi-window: broadcast so fleet/panel stay in sync.
+  broadcastOmpEvent(hosted.session.sessionId, event);
+  if (hosted.owner && !hosted.owner.isDestroyed()) {
+    // Already sent via broadcast; no second send needed.
+  }
 }
 
 function requireSession(
@@ -162,10 +206,179 @@ function requireSession(
   const parsed = ompRpcSessionRefSchema.safeParse(raw);
   if (!parsed.success) throw new Error('payload inválido');
   const hosted = sessions.get(parsed.data.sessionId);
-  if (!hosted || hosted.owner !== owner) {
+  // Panel sessions are owner-scoped; mission workers are shared (any renderer).
+  if (
+    !hosted ||
+    (hosted.kind === 'panel' && hosted.owner !== owner)
+  ) {
     throw new Error('sessão omp desconhecida para este renderer');
   }
   return hosted;
+}
+
+export interface OmpSessionSummary {
+  sessionId: string;
+  paneId: string;
+  kind: 'panel' | 'mission';
+  title: string;
+  missionId?: string;
+  state: OmpRpcSessionLifecycle;
+  snapshot: OmpRpcStateSnapshot;
+}
+
+/** Live omp rpc-ui sessions for fleet / ops surfaces. */
+export function listOmpRpcSessions(): OmpSessionSummary[] {
+  return [...sessions.values()].map((hosted) => ({
+    sessionId: hosted.session.sessionId,
+    paneId: hosted.paneId,
+    kind: hosted.kind,
+    title: hosted.title,
+    missionId: hosted.gateCtx.missionId,
+    state: hosted.session.state,
+    snapshot: hosted.session.snapshot(),
+  }));
+}
+
+function parseOmpModelRef(
+  model: string | undefined,
+): { provider: string; modelId: string } | undefined {
+  if (!model) return undefined;
+  const slash = model.indexOf('/');
+  if (slash <= 0 || slash === model.length - 1) return undefined;
+  return {
+    provider: model.slice(0, slash),
+    modelId: model.slice(slash + 1),
+  };
+}
+
+export interface MissionOmpWorkerInput {
+  scope: ProjectExecutionScope;
+  workspaceRoot: string;
+  missionId?: string;
+  model?: string;
+  title?: string;
+  agentName?: string;
+  prompt?: string;
+  approvalPolicy?: OmpApprovalPolicy;
+  allowedTools?: string[] | null;
+}
+
+/**
+ * Spawn omp --mode rpc-ui as a mission worker (no PTY). Used when
+ * orch.ompMissionTransport is `rpc` or `auto`.
+ */
+export async function spawnMissionOmpRpcWorker(
+  input: MissionOmpWorkerInput,
+): Promise<{ paneId: string; sessionId: string }> {
+  if (sessions.size >= MAX_SESSIONS_PER_RENDERER * 2) {
+    throw new Error('limite global de sessões omp atingido');
+  }
+  const binPath = (await resolveOmpBin(ompBinName())).binPath;
+  const sessionId = randomUUID();
+  const paneId = `omp-rpc:${sessionId}`;
+  const gateSessionId = `omp-rpc:${sessionId}`;
+  // Gate allowlist ∩ host tools. Null/undefined = full curated host set.
+  // Explicit roster allowlist keeps only tools both sides accept.
+  const hostSet = new Set<string>(HOST_TOOL_NAMES);
+  const allowedTools =
+    input.allowedTools === null || input.allowedTools === undefined
+      ? [...HOST_TOOL_NAMES]
+      : input.allowedTools.filter((name) => hostSet.has(name));
+  const gateCtx = mintToken({
+    label: input.agentName ?? 'omp-rpc-mission',
+    role: 'worker',
+    providerId: 'omp',
+    missionId: input.missionId,
+    scope: input.scope,
+    allowedTools,
+    allowedSkills: [],
+  });
+  try {
+    bindTokenToSession(gateCtx.token, gateSessionId);
+  } catch (err) {
+    releaseSessionByToken(gateCtx.token);
+    throw err;
+  }
+
+  const model = parseOmpModelRef(input.model);
+  const hostedRef: { current: HostedSession | null } = { current: null };
+  let session: OmpRpcSession;
+  try {
+    session = new OmpRpcSession(
+      {
+        sessionId,
+        workspaceRoot: input.workspaceRoot,
+        approvalPolicy: input.approvalPolicy ?? 'safe',
+        binPath,
+        model,
+      },
+      {
+        hostTools: buildOmpHostToolDefinitions(),
+        dispatchHostTool: async (toolName, args) => {
+          const outcome = await dispatchToolCall(
+            'http-mcp',
+            hostRegistry(),
+            toolName,
+            args,
+            gateCtx,
+          );
+          return outcome.ok
+            ? { ok: true, result: outcome.result }
+            : { ok: false, error: outcome.error ?? 'tool negada' };
+        },
+        auditAutoApproval: (record: OmpAutoApprovalRecord) => {
+          auditSuccess(
+            { scope: input.scope, missionId: input.missionId },
+            gateSessionId,
+            'omp_ui_auto_approval',
+            {
+              requestId: record.requestId,
+              method: record.method,
+              title: record.title,
+              decision: record.decision,
+              ...(record.detail ? { detail: record.detail } : {}),
+              policy: 'yolo',
+            },
+            0,
+            false,
+            'http-mcp',
+          );
+        },
+        onPush: (event) => {
+          const hosted = hostedRef.current;
+          if (hosted) pushToOwner(hosted, event);
+          if (event.kind === 'exit') disposeSession(sessionId);
+        },
+      },
+    );
+  } catch (err) {
+    releaseSession(gateSessionId);
+    throw err;
+  }
+
+  if (session.state === 'exited') {
+    releaseSession(gateSessionId);
+    throw new Error('processo omp encerrou durante o spawn');
+  }
+
+  const hosted: HostedSession = {
+    session,
+    gateCtx,
+    gateSessionId,
+    owner: null,
+    scope: input.scope,
+    paneId,
+    kind: 'mission',
+    title: input.title ?? input.agentName ?? 'Oh My Pi',
+  };
+  hostedRef.current = hosted;
+  sessions.set(sessionId, hosted);
+
+  await waitForOmpSessionReady(session);
+  if (input.prompt) {
+    await session.prompt(input.prompt);
+  }
+  return { paneId, sessionId };
 }
 
 function toCommandResult(err: unknown): OmpRpcCommandResult {
@@ -289,6 +502,9 @@ async function startSession(
     gateSessionId,
     owner,
     scope,
+    paneId: `omp-rpc:${sessionId}`,
+    kind: 'panel',
+    title: 'OMP · RPC',
   };
   hostedRef.current = hosted;
   sessions.set(sessionId, hosted);
@@ -300,6 +516,10 @@ export function registerOmpRpcIpc(): void {
   ipcMain.handle(
     OMP_RPC_CHANNELS.start,
     (event, raw): Promise<OmpRpcStartResult> => startSession(event.sender, raw),
+  );
+
+  ipcMain.handle(OMP_RPC_CHANNELS.listSessions, (): OmpSessionSummary[] =>
+    listOmpRpcSessions(),
   );
 
   ipcMain.handle(

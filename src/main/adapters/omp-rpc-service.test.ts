@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
   ompExtensionUiRequestSchema,
@@ -10,6 +10,7 @@ import {
 import {
   OmpRpcSession,
   buildOmpChildEnv,
+  clearOmpBinCache,
   ompControlArgs,
   resolveOmpBin,
   type OmpAutoApprovalRecord,
@@ -275,6 +276,10 @@ describe('argv e env do spawn', () => {
 });
 
 describe('resolveOmpBin', () => {
+  beforeEach(() => {
+    clearOmpBinCache();
+  });
+
   it('valida a versão pinada via omp --version', async () => {
     const exec = vi.fn(
       (

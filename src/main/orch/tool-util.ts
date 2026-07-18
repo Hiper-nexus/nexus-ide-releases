@@ -25,6 +25,7 @@ import {
   ACCEPT_SECOND_OPTION_BY_NUMBER,
   cliPromptAutoResponder,
 } from './cli-prompt-autoresponder';
+import { spawnMissionOmpRpcWorker } from '../adapters/omp-rpc-ipc';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -286,6 +287,58 @@ export async function spawnPaneAndMaybePrompt(
     executionScope: options.executionScope ?? options.scope,
     cwd: resolveCwdForScope(options.executionScope ?? options.scope, options.cwd),
   };
+
+  // Oh My Pi dual transport: rpc-ui for deterministic lifecycle, PTY for full
+  // MCP inject. `auto` prefers rpc and falls back to PTY on failure.
+  if (options.adapterId === 'omp' && options.role !== 'orchestrator') {
+    const transport = getOrchSettings().ompMissionTransport;
+    if (transport === 'rpc' || transport === 'auto') {
+      try {
+        const prompt = options.prompt
+          ? withHandoffContract(options.prompt, adapter, {
+              category: options.agentCategory,
+              hints: [options.title, options.agentName],
+            })
+          : undefined;
+        const rpc = await spawnMissionOmpRpcWorker({
+          scope: options.scope,
+          workspaceRoot: safeOptions.cwd ?? options.scope.rootRealPath,
+          missionId: options.missionId,
+          model: effectiveModel,
+          title: options.title,
+          agentName: options.agentName,
+          prompt,
+          approvalPolicy: 'safe',
+          allowedTools: options.allowedTools,
+        });
+        hooks.onPaneCreated?.(rpc.paneId, rpc.sessionId);
+        if (options.missionId) {
+          getProjectDomainStores(options.scope).missionPanes.record({
+            missionId: options.missionId,
+            adapterId: options.adapterId,
+            model: effectiveModel,
+            effort: options.effort,
+            cwd: safeOptions.cwd,
+            executionScope: safeOptions.executionScope,
+            title: options.title,
+            agentName: options.agentName,
+            role: options.role ?? 'worker',
+            allowedTools: options.allowedTools,
+            allowedSkills: options.allowedSkills,
+            paneId: rpc.paneId,
+          });
+        }
+        return rpc;
+      } catch (err) {
+        if (transport === 'rpc') throw err;
+        console.warn(
+          '[spawn] omp rpc-ui falhou; caindo para PTY:',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+  }
+
   const result = await requestPaneSpawn(safeOptions);
   if (!result.ok || !result.paneId || !result.sessionId) {
     throw new Error(result.error ?? 'pane spawn failed');

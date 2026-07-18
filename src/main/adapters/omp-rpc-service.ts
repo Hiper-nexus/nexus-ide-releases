@@ -191,6 +191,14 @@ function execText(
   });
 }
 
+/** Process-lifetime cache of `omp --version` + path (invalidated on major fail). */
+let ompBinCache: { key: string; value: OmpBinResolution } | null = null;
+
+/** Test seam / force re-probe after install. */
+export function clearOmpBinCache(): void {
+  ompBinCache = null;
+}
+
 /**
  * Resolve o caminho absoluto do `omp` (via PATH de login, como os adapters) e
  * valida a versão pinada com `omp --version` — o frame ready não carrega
@@ -200,6 +208,9 @@ export async function resolveOmpBin(
   bin = 'omp',
   execImpl: ExecFileFn = execFile as unknown as ExecFileFn,
 ): Promise<OmpBinResolution> {
+  const cacheKey = bin;
+  if (ompBinCache?.key === cacheKey) return ompBinCache.value;
+
   let binPath = bin;
   if (!bin.includes('/') && !bin.includes('\\')) {
     const lookup = process.platform === 'win32' ? 'where' : 'which';
@@ -242,7 +253,29 @@ export async function resolveOmpBin(
         'pulando pin de versão',
     );
   }
-  return { binPath, version };
+  const resolved = { binPath, version };
+  ompBinCache = { key: cacheKey, value: resolved };
+  return resolved;
+}
+
+/**
+ * Poll until the session leaves `spawning` (ready/idle/busy) or exits.
+ * Used by mission-side RPC workers before the first prompt.
+ */
+export async function waitForOmpSessionReady(
+  session: { readonly state: OmpRpcSessionLifecycle },
+  timeoutMs = 20_000,
+  sleepMs = 40,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (session.state === 'exited') {
+      throw new Error('processo omp encerrou antes de ficar pronto');
+    }
+    if (session.state !== 'spawning') return;
+    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+  }
+  throw new Error('timeout aguardando omp --mode rpc-ui ficar pronto');
 }
 
 /**

@@ -12,6 +12,7 @@ type OrchestratorDefaultsValue = Pick<
   | 'defaultAccountId'
   | 'ompParticipation'
   | 'ompRpcAutoStart'
+  | 'ompMissionTransport'
 >;
 
 const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
@@ -20,6 +21,7 @@ const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
   defaultAccountId: '',
   ompParticipation: 'diversity',
   ompRpcAutoStart: true,
+  ompMissionTransport: 'auto',
 };
 
 const OMP_PARTICIPATION_LABELS: Record<
@@ -39,6 +41,7 @@ function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
     defaultAccountId: settings.defaultAccountId,
     ompParticipation: settings.ompParticipation ?? 'diversity',
     ompRpcAutoStart: settings.ompRpcAutoStart !== false,
+    ompMissionTransport: settings.ompMissionTransport ?? 'auto',
   };
 }
 
@@ -312,11 +315,31 @@ export function OrchestratorDefaults() {
             <option value="off">Não — botão manual</option>
           </select>
         </label>
+
+        <label className="settings-field">
+          Transporte omp em missões
+          <select
+            className="settings-input"
+            aria-label="Transporte Oh My Pi em missões"
+            value={defaults.ompMissionTransport}
+            disabled={disabled}
+            onChange={(event) =>
+              void save({
+                ompMissionTransport: event.target
+                  .value as OrchSettings['ompMissionTransport'],
+              })
+            }
+          >
+            <option value="auto">Auto — rpc-ui com fallback PTY</option>
+            <option value="rpc">RPC só — omp --mode rpc-ui</option>
+            <option value="pty">PTY — terminal com MCP completo</option>
+          </select>
+        </label>
       </div>
       <p className="settings-field__note">
         Diversidade faz o omp receber trabalho real em missões e mantém sticky
-        no roster (Reviewer D / Generalist). Desligado volta ao comportamento
-        legado.
+        no roster (Reviewer D / Generalist). Auto tenta rpc-ui (estado
+        determinístico) e cai para PTY se o binário falhar.
       </p>
     </div>
   );
