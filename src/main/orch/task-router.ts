@@ -376,10 +376,9 @@ export function applyOmpParticipation(
     };
   }
 
-  // diversity (default): when mission already used another adapter and omp
-  // has not run yet, place omp at index 1 (second pick). On a fresh mission
-  // (no used set / empty), keep table order (omp already early on medium/hard).
-  if (!floor && !ompAlreadyUsed && used && used.size > 0) {
+  // diversity: always keep omp as #2 when eligible (even on the first pick),
+  // so vibe-coder missions get real multi-CLI without waiting for history.
+  if (!floor && !ompAlreadyUsed && participation === 'diversity') {
     if (withoutOmp.length === 0) {
       return { ranked: ompEntries, note: '; omp diversity (only eligible)' };
     }
@@ -387,7 +386,7 @@ export function applyOmpParticipation(
     const tail = withoutOmp.slice(1);
     return {
       ranked: [head, ...ompEntries, ...tail],
-      note: '; omp diversity boost (unused in mission)',
+      note: '; omp diversity boost (#2)',
     };
   }
 

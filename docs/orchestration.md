@@ -74,9 +74,10 @@ O adapter `omp` (Oh My Pi) entra na frota de três formas:
 
 | Superfície | Comportamento |
 |---|---|
-| **Router** (`nexus_route_task` + scheduler) | `orch.ompParticipation`: `off` \| `fallback` \| `diversity` (default) \| `prefer`. Diversity sobe omp no ladder e faz boost quando a missão ainda não usou omp. Security/critical **não** rebaixam claude/codex. |
-| **Roster sticky** | Agente com `cli: omp` (ex.: Reviewer D, Generalist) **permanece** omp no spawn mesmo se o Maestro passar outro `adapterId` do route_task. |
-| **Transporte de missão** | `orch.ompMissionTransport`: `auto` (default) tenta `omp --mode rpc-ui` e cai para PTY; `rpc` força pipes NDJSON; `pty` força terminal com MCP inject completo (`nexusMcp: omp`). |
+| **Router** (`nexus_route_task` + scheduler) | `orch.ompParticipation`: `off` \| `fallback` \| `diversity` \| `prefer` (**default**). Prefer coloca omp primeiro (exceto security/critical). |
+| **Roster sticky** | Agente com `cli: omp` **permanece** omp no spawn mesmo se o Maestro passar outro `adapterId`. |
+| **Auto-spawn** | `orch.ompAutoSpawn` (**default true**): no primeiro worker **não-omp** de uma missão, o sistema spawna sozinho um “Oh My Pi · auto” (yolo auditado, sem UI). |
+| **Transporte** | `orch.ompMissionTransport` `auto` (default): tenta rpc-ui e cai para PTY. |
 
 ### RPC panel vs PTY
 

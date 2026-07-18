@@ -26,6 +26,11 @@ import {
   cliPromptAutoResponder,
 } from './cli-prompt-autoresponder';
 import { spawnMissionOmpRpcWorker } from '../adapters/omp-rpc-ipc';
+import { isAdapterInstalled } from '../adapters/adapter-registry';
+import {
+  buildOmpAutoSpawnPrompt,
+  shouldAutoSpawnOmpCompanion,
+} from './omp-roster-policy';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -161,6 +166,11 @@ export interface SpawnToolOptions {
   scope: AgentGateContext['scope'];
   executionScope?: AgentGateContext['executionScope'];
   readOnly?: boolean;
+  /**
+   * Internal: skip the zero-friction omp companion auto-spawn (used when this
+   * spawn IS the companion, to prevent recursion).
+   */
+  suppressOmpAutoSpawn?: boolean;
 }
 
 /**
@@ -249,6 +259,65 @@ export function withHandoffContract(
   return `${prompt}${charter}${design}${lean}\n\n${contract}`;
 }
 
+/**
+ * Fire-and-forget: after a non-omp worker starts, ensure one Oh My Pi worker
+ * is also running on the mission — no Maestro/human required.
+ */
+function scheduleOmpAutoCompanion(
+  options: SpawnToolOptions,
+  workspaceRoot: string,
+): void {
+  if (options.suppressOmpAutoSpawn) return;
+  if (!options.missionId) return;
+  const settings = getOrchSettings();
+  let missionHasOmp = false;
+  try {
+    missionHasOmp = getProjectDomainStores(options.scope)
+      .missionPanes.list(options.missionId)
+      .some((pane) => pane.adapterId === 'omp');
+  } catch {
+    missionHasOmp = false;
+  }
+  if (
+    !shouldAutoSpawnOmpCompanion({
+      ompParticipation: settings.ompParticipation,
+      ompAutoSpawn: settings.ompAutoSpawn,
+      ompInstalled: isAdapterInstalled('omp'),
+      justSpawnedAdapterId: options.adapterId,
+      missionHasOmp,
+      role: options.role,
+    })
+  ) {
+    return;
+  }
+  const missionId = options.missionId;
+  const prompt = buildOmpAutoSpawnPrompt({
+    missionId,
+    goalHint: options.prompt ?? options.title,
+  });
+  void spawnPaneAndMaybePrompt({
+    adapterId: 'omp',
+    model: getAdapter('omp')?.models.default,
+    effort: 'medium',
+    cwd: workspaceRoot,
+    executionScope: options.executionScope ?? options.scope,
+    scope: options.scope,
+    missionId,
+    agentName: 'Oh My Pi (auto)',
+    title: 'Oh My Pi · auto',
+    role: 'worker',
+    prompt,
+    allowedTools: null,
+    allowedSkills: null,
+    suppressOmpAutoSpawn: true,
+  }).catch((err) => {
+    console.warn(
+      '[spawn] omp auto-companion falhou (missão segue sem ele):',
+      err instanceof Error ? err.message : err,
+    );
+  });
+}
+
 export async function spawnPaneAndMaybePrompt(
   options: SpawnToolOptions,
   hooks: SpawnPaneHooks = {},
@@ -329,6 +398,7 @@ export async function spawnPaneAndMaybePrompt(
             paneId: rpc.paneId,
           });
         }
+        // rpc path already is omp — no companion needed.
         return rpc;
       } catch (err) {
         if (transport === 'rpc') throw err;
@@ -379,6 +449,11 @@ export async function spawnPaneAndMaybePrompt(
           });
     await injectPrompt(result.sessionId, prompt);
   }
+  // Zero-friction: first non-omp mission worker also pulls Oh My Pi online.
+  scheduleOmpAutoCompanion(
+    options,
+    safeOptions.cwd ?? options.scope.rootRealPath,
+  );
   return { paneId: result.paneId, sessionId: result.sessionId };
 }
 

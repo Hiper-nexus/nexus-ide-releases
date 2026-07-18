@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildOmpAutoSpawnPrompt,
   buildOmpRouteContext,
   resolveStickyOmpAdapter,
+  shouldAutoSpawnOmpCompanion,
 } from './omp-roster-policy';
 
 describe('resolveStickyOmpAdapter', () => {
@@ -99,5 +101,62 @@ describe('buildOmpRouteContext', () => {
     expect(ctx.ompParticipation).toBe('diversity');
     expect(ctx.missionUsedAdapters?.has('claude')).toBe(true);
     expect(ctx.preferAdapters).toEqual(['omp']);
+  });
+});
+
+describe('shouldAutoSpawnOmpCompanion', () => {
+  const base = {
+    ompParticipation: 'prefer' as const,
+    ompAutoSpawn: true,
+    ompInstalled: true,
+    justSpawnedAdapterId: 'codex',
+    missionHasOmp: false,
+    role: 'worker' as const,
+  };
+
+  it('spawns companion after first non-omp worker', () => {
+    expect(shouldAutoSpawnOmpCompanion(base)).toBe(true);
+  });
+
+  it('skips when omp already on mission or just spawned', () => {
+    expect(shouldAutoSpawnOmpCompanion({ ...base, missionHasOmp: true })).toBe(
+      false,
+    );
+    expect(
+      shouldAutoSpawnOmpCompanion({ ...base, justSpawnedAdapterId: 'omp' }),
+    ).toBe(false);
+  });
+
+  it('skips when auto-spawn off or participation fallback/off', () => {
+    expect(shouldAutoSpawnOmpCompanion({ ...base, ompAutoSpawn: false })).toBe(
+      false,
+    );
+    expect(
+      shouldAutoSpawnOmpCompanion({ ...base, ompParticipation: 'off' }),
+    ).toBe(false);
+    expect(
+      shouldAutoSpawnOmpCompanion({ ...base, ompParticipation: 'fallback' }),
+    ).toBe(false);
+  });
+
+  it('skips orchestrator role and missing bin', () => {
+    expect(
+      shouldAutoSpawnOmpCompanion({ ...base, role: 'orchestrator' }),
+    ).toBe(false);
+    expect(shouldAutoSpawnOmpCompanion({ ...base, ompInstalled: false })).toBe(
+      false,
+    );
+  });
+});
+
+describe('buildOmpAutoSpawnPrompt', () => {
+  it('includes mission id and autopilot instructions', () => {
+    const prompt = buildOmpAutoSpawnPrompt({
+      missionId: 'm-1',
+      goalHint: 'Corrigir login',
+    });
+    expect(prompt).toContain('missionId=m-1');
+    expect(prompt).toContain('Corrigir login');
+    expect(prompt).toMatch(/handoff/i);
   });
 });

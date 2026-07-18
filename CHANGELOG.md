@@ -1,26 +1,18 @@
 # Changelog
 
-## Unreleased — Oh My Pi cidadão de primeira classe
+## Unreleased — Oh My Pi zero-friction (vibe coder)
 
 Data: 2026-07-18
 
-Fecha o gap “omp integrado mas nunca vi ação”:
+Fecha o gap “omp integrado mas nunca vi ação” e remove atrito humano:
 
-- **Participação na frota** (`orch.ompParticipation`, default `diversity`):
-  ladder com omp cedo, boost por missão, sticky de roster `cli=omp`, modes
-  off/fallback/prefer. Fallback rebaixa omp de verdade (não era no-op).
-- **Transporte de missão** (`orch.ompMissionTransport`, default `auto`): tenta
-  `omp --mode rpc-ui` e cai para PTY se o binário/protocolo falhar; `rpc` e
-  `pty` forçam um caminho.
-- **Host tools RPC expandidas**: mission/workflow/handoff, file read/write,
-  git status/diff/add/commit — gate real, não bypass.
-- **UX**: badge OMP, auto-start do painel, toast de aprovação, frota conta
-  sessões rpc (painel + mission workers), `listSessions` IPC.
-- **Cache** de `omp --version` no processo main.
-- **MissionRail** conta workers omp rpc-ui (missão em progresso sem PTY) e
-  clique em missão só-omp abre o painel OMP.
-- **Warm resolve** no boot do main (PATH + pin major 17) para o 1º start não
-  pagar o handshake frio.
+- **Default `prefer` + `ompAutoSpawn: true`**: o sistema **chama o omp sozinho**
+  no primeiro worker não-omp da missão — sem abrir painel, sem o Maestro
+  lembrar, sem clique do vibe coder.
+- **Participação** `off|fallback|diversity|prefer`; sticky roster `cli=omp`.
+- **Transporte** `auto` (rpc-ui → PTY); missão usa **yolo auditado**.
+- **Host tools RPC** curadas com gate; MissionRail + Fleet contam omp;
+  warm resolve no boot; painel auto-start se o usuário abrir.
 - Docs: `docs/orchestration.md` § Oh My Pi.
 
 ## 0.19.19 — Missão Que Começa

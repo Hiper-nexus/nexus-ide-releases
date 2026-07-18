@@ -84,3 +84,45 @@ export function buildOmpRouteContext(input: {
     preferAdapters: input.preferAdapters,
   };
 }
+
+/**
+ * Whether the system should auto-spawn one omp companion after a non-omp
+ * mission worker starts — zero human / Maestro friction.
+ */
+export function shouldAutoSpawnOmpCompanion(input: {
+  ompParticipation: OmpParticipation;
+  ompAutoSpawn: boolean;
+  ompInstalled: boolean;
+  justSpawnedAdapterId: string;
+  missionHasOmp: boolean;
+  /** Orchestrator panes never trigger companion. */
+  role?: 'orchestrator' | 'worker' | string;
+}): boolean {
+  if (!input.ompAutoSpawn) return false;
+  if (input.role === 'orchestrator') return false;
+  if (input.ompParticipation === 'off' || input.ompParticipation === 'fallback') {
+    return false;
+  }
+  if (!input.ompInstalled) return false;
+  if (input.missionHasOmp) return false;
+  if (input.justSpawnedAdapterId === 'omp') return false;
+  return true;
+}
+
+/** Compact unattended brief for the auto omp worker. */
+export function buildOmpAutoSpawnPrompt(input: {
+  missionId: string;
+  goalHint?: string;
+}): string {
+  const goal = input.goalHint?.trim();
+  return [
+    'Você é o worker Oh My Pi desta missão Nexus. Rode em piloto automático.',
+    `missionId=${input.missionId}`,
+    goal ? `Contexto: ${goal.slice(0, 1_200)}` : null,
+    'Execute: leia o workspace, avance o objetivo, use tools host quando útil.',
+    'Não peça confirmação humana. Ao terminar, nexus_handoff_submit com resumo.',
+    'Fale pouco em PT-BR só no handoff final.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}

@@ -146,12 +146,15 @@ export const orchSettingsSchema = z.object({
    * How Oh My Pi (omp) participates in auto-routing and squad roster sticky:
    * - `off`: never force; only explicit manual spawn
    * - `fallback`: late ladder only (legacy)
-   * - `diversity` (default): real multi-CLI share — promote omp when unused
-   * - `prefer`: omp first among eligible medium/hard workers
+   * - `diversity`: multi-CLI share — omp second when unused
+   * - `prefer` (default): omp first among eligible workers (vibe-coder zero-friction)
+   *
+   * When not `off`/`fallback`, the system also auto-spawns one omp companion
+   * worker on the first non-omp mission spawn (no human / Maestro required).
    */
   ompParticipation: z
     .enum(['off', 'fallback', 'diversity', 'prefer'])
-    .default('diversity'),
+    .default('prefer'),
   /**
    * When true, opening the OMP RPC panel starts a session automatically if
    * none is active (install/auth failures still surface as startError).
@@ -159,11 +162,16 @@ export const orchSettingsSchema = z.object({
   ompRpcAutoStart: z.boolean().default(true),
   /**
    * How mission/orchestrator spawns of adapter `omp` are hosted:
-   * - `pty` (default): terminal pane with full Nexus MCP inject (most capable)
-   * - `rpc`: `omp --mode rpc-ui` pipes + host tools (deterministic lifecycle)
-   * - `auto`: try rpc first, fall back to pty on bin/protocol failure
+   * - `pty`: terminal pane with full Nexus MCP inject
+   * - `rpc`: `omp --mode rpc-ui` pipes + host tools
+   * - `auto` (default): try rpc first, fall back to pty on bin/protocol failure
    */
   ompMissionTransport: z.enum(['pty', 'rpc', 'auto']).default('auto'),
+  /**
+   * Auto-spawn one Oh My Pi worker on missions without human action.
+   * Default true for vibe-coder zero friction; disable only for pure routing demos.
+   */
+  ompAutoSpawn: z.boolean().default(true),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});

@@ -317,7 +317,7 @@ describe('routeTask', () => {
     // Head stays glm (lead); omp boosted to #2.
     expect(decision!.adapterId).toBe('glm');
     expect(decision!.alternatives[0]?.adapterId).toBe('omp');
-    expect(decision!.reason).toContain('omp diversity boost');
+    expect(decision!.reason).toMatch(/omp diversity boost/);
   });
 
   it('does not force omp ahead on security/critical floor', () => {

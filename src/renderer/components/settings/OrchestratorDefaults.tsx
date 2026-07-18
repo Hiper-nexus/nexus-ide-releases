@@ -13,15 +13,17 @@ type OrchestratorDefaultsValue = Pick<
   | 'ompParticipation'
   | 'ompRpcAutoStart'
   | 'ompMissionTransport'
+  | 'ompAutoSpawn'
 >;
 
 const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
   defaultAdapterId: 'claude',
   defaultModel: '',
   defaultAccountId: '',
-  ompParticipation: 'diversity',
+  ompParticipation: 'prefer',
   ompRpcAutoStart: true,
   ompMissionTransport: 'auto',
+  ompAutoSpawn: true,
 };
 
 const OMP_PARTICIPATION_LABELS: Record<
@@ -30,8 +32,8 @@ const OMP_PARTICIPATION_LABELS: Record<
 > = {
   off: 'Desligado — só spawn manual',
   fallback: 'Fallback — último no ladder (legado)',
-  diversity: 'Diversidade — omp cidadão real (recomendado)',
-  prefer: 'Preferir — omp primeiro em medium/hard',
+  diversity: 'Diversidade — omp em 2º quando instalado',
+  prefer: 'Preferir — omp primeiro (recomendado, zero atrito)',
 };
 
 function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
@@ -39,9 +41,10 @@ function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
     defaultAdapterId: settings.defaultAdapterId || 'claude',
     defaultModel: settings.defaultModel,
     defaultAccountId: settings.defaultAccountId,
-    ompParticipation: settings.ompParticipation ?? 'diversity',
+    ompParticipation: settings.ompParticipation ?? 'prefer',
     ompRpcAutoStart: settings.ompRpcAutoStart !== false,
     ompMissionTransport: settings.ompMissionTransport ?? 'auto',
+    ompAutoSpawn: settings.ompAutoSpawn !== false,
   };
 }
 
@@ -335,11 +338,27 @@ export function OrchestratorDefaults() {
             <option value="pty">PTY — terminal com MCP completo</option>
           </select>
         </label>
+
+        <label className="settings-field">
+          Auto-spawn Oh My Pi
+          <select
+            className="settings-input"
+            aria-label="Auto-spawn Oh My Pi em missões"
+            value={defaults.ompAutoSpawn ? 'on' : 'off'}
+            disabled={disabled}
+            onChange={(event) =>
+              void save({ ompAutoSpawn: event.target.value === 'on' })
+            }
+          >
+            <option value="on">Sim — entra sozinho na missão (zero atrito)</option>
+            <option value="off">Não — só via router/roster</option>
+          </select>
+        </label>
       </div>
       <p className="settings-field__note">
-        Diversidade faz o omp receber trabalho real em missões e mantém sticky
-        no roster (Reviewer D / Generalist). Auto tenta rpc-ui (estado
-        determinístico) e cai para PTY se o binário falhar.
+        Preferir + auto-spawn: o sistema chama o omp sozinho no primeiro worker
+        da missão (sem abrir painel nem pedir ao Maestro). Aprovações em missão
+        são yolo auditado. Desligue só se quiser demo de roteamento puro.
       </p>
     </div>
   );
