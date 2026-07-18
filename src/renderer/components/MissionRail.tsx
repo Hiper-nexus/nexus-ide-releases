@@ -33,6 +33,7 @@ import { ActionCard, EmptyState } from './ActionCard';
 import { OperatorHud } from './OperatorHud';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndBlockMission } from '../orch/block-mission';
+import { notifyOrchestratorPlanPromoted } from '../orch/plan-promote-notify';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { INTEGRATIONS_CHANGED_EVENT } from '../lib/integrations-events';
@@ -280,8 +281,23 @@ export function MissionRail() {
     setBusy(m.id);
     setNote(null);
     try {
-      await window.nexus.orch.promotePlanLane({ missionId: m.id });
-      setNote('Plano promovido — lane código (PREVC) ativa.');
+      const updated = await window.nexus.orch.promotePlanLane({
+        missionId: m.id,
+      });
+      const goal =
+        updated.intentContract?.goal?.trim() ||
+        m.intentContract?.goal?.trim() ||
+        m.description ||
+        '';
+      const injected = notifyOrchestratorPlanPromoted({
+        missionId: m.id,
+        goal,
+      });
+      setNote(
+        injected
+          ? 'Plano promovido — PREVC ativo e orquestrador notificado.'
+          : 'Plano promovido — PREVC ativo (sem pane vivo para notificar).',
+      );
     } catch (cause) {
       setNote(
         cause instanceof Error ? cause.message : 'Falha ao promover o plano.',

@@ -10,7 +10,11 @@ import {
   attributeHunks,
   parseUnifiedDiff,
   summarizeAttribution,
+  type HunkSource,
 } from '../../shared/hunk-tracker';
+import { mcpInvoke } from '../services/mcp-bridge';
+import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { CloseButton } from './CloseButton';
 
 type Annotation = { path: string; line: number; body: string; id: string };
@@ -45,6 +49,14 @@ export function DiffAnnotatePanel({
   );
   const [note, setNote] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [hunkSummary, setHunkSummary] = useState<{
+    total: number;
+    agent: number;
+    user: number;
+    external: number;
+    mixed: number;
+    byAgent?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -62,18 +74,21 @@ export function DiffAnnotatePanel({
       setSelected(null);
     }
     setNote(null);
+    setHunkSummary(null);
     setLoading(true);
     setError(null);
     void window.nexus.integrations
       .gitDiff()
-      .then((r) => {
+      .then(async (r) => {
         if (!r.ok) {
           setError(r.error);
           setDiff('');
           return;
         }
-        setDiff(r.diff || '(sem alterações em relação a HEAD)');
+        const nextDiff = r.diff || '(sem alterações em relação a HEAD)';
+        setDiff(nextDiff);
         setBranch(r.branch);
+        await refreshHunkSummary(nextDiff);
       })
       .finally(() => setLoading(false));
   }, [open, draftHydrationBarrier]);
@@ -88,19 +103,60 @@ export function DiffAnnotatePanel({
     });
   }, [open, annotations, draft, selected, draftHydrationBarrier]);
 
+  async function refreshHunkSummary(rawDiff: string): Promise<void> {
+    if (!rawDiff || rawDiff.startsWith('(sem')) {
+      setHunkSummary(null);
+      return;
+    }
+    const local = parseUnifiedDiff(rawDiff);
+    if (local.length === 0) {
+      setHunkSummary(null);
+      return;
+    }
+    // Prefer MCP with missionId so agent path claims refine attribution.
+    const focused = useLayoutStore.getState().focusedPaneId;
+    const paneMissions = useOrchStore.getState().paneMissions;
+    const missionId = focused ? paneMissions[focused] : undefined;
+    if (missionId) {
+      const res = await mcpInvoke('nexus_hunks_analyze', {
+        diff: rawDiff,
+        missionId,
+      });
+      if (res.ok && res.result && typeof res.result === 'object') {
+        const body = res.result as {
+          hunkCount?: number;
+          summary?: Partial<Record<HunkSource, number>>;
+          hunks?: Array<{ agentId?: string; source?: string }>;
+        };
+        const agents = new Map<string, number>();
+        for (const h of body.hunks ?? []) {
+          if (h.source === 'agent' && h.agentId) {
+            agents.set(h.agentId, (agents.get(h.agentId) ?? 0) + 1);
+          }
+        }
+        const byAgent =
+          agents.size > 0
+            ? [...agents.entries()]
+                .map(([id, n]) => `${id}:${n}`)
+                .join(' · ')
+            : undefined;
+        setHunkSummary({
+          total: body.hunkCount ?? local.length,
+          agent: body.summary?.agent ?? 0,
+          user: body.summary?.user ?? 0,
+          external: body.summary?.external ?? local.length,
+          mixed: body.summary?.mixed ?? 0,
+          byAgent,
+        });
+        return;
+      }
+    }
+    const attributed = attributeHunks(local, []);
+    const summary = summarizeAttribution(attributed);
+    setHunkSummary({ total: attributed.length, ...summary });
+  }
+
   const lines = useMemo(() => diff.split('\n'), [diff]);
-  const hunkSummary = useMemo(() => {
-    if (!diff || diff.startsWith('(sem')) return null;
-    const hunks = parseUnifiedDiff(diff);
-    if (hunks.length === 0) return null;
-    // Sem path ownership de panes aqui: classifica tudo external até o MCP
-    // hunks_analyze com missionId refinar — UI ainda mostra contagem de hunks.
-    const attributed = attributeHunks(hunks, []);
-    return {
-      total: attributed.length,
-      ...summarizeAttribution(attributed),
-    };
-  }, [diff]);
 
   if (!open) return null;
 
@@ -168,7 +224,7 @@ export function DiffAnnotatePanel({
               {hunkSummary.external > 0
                 ? ` · externo ${hunkSummary.external}`
                 : ''}
-              . Use <code>nexus_hunks_analyze</code> com missionId para atribuição fina.
+              {hunkSummary.byAgent ? ` (${hunkSummary.byAgent})` : ''}
             </p>
           )}
           <label className="diff-panel__label">

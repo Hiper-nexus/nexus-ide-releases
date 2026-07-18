@@ -235,10 +235,12 @@ describe('prepareAccountForSpawn', () => {
       apiKey: null,
       authEnv: {
         CLAUDE_CODE_OAUTH_TOKEN: 'claude-access',
-        CLAUDE_CODE_OAUTH_REFRESH_TOKEN: 'refresh-claude-access',
         CLAUDE_CODE_OAUTH_SCOPES: 'user:profile user:inference',
       },
     });
+    // Refresh token nunca sai do vault para o env do pane (ver claudeAuthEnvFromBlob).
+    if (!result.ok) throw new Error('expected ok spawn preparation');
+    expect(result.authEnv).not.toHaveProperty('CLAUDE_CODE_OAUTH_REFRESH_TOKEN');
     expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
   });
 
