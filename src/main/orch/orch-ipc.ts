@@ -36,6 +36,10 @@ import {
   runHarnessEnrichWithBrain,
 } from "./harness-enrich";
 import {
+  registerBgTaskEventTarget,
+  unregisterBgTaskEventTarget,
+} from "./bg-task-events";
+import {
   initPaneRegistry,
   registerOrchRenderer,
   resolveBrowserOpen,
@@ -274,11 +278,13 @@ function broadcast(channel: string, payload: unknown): void {
 export function registerOrchListener(wc: WebContents): void {
   listeners.add(wc);
   registerOrchRenderer(wc);
+  registerBgTaskEventTarget(wc);
 }
 
 export function unregisterOrchListener(wc: WebContents): void {
   listeners.delete(wc);
   unregisterOrchRenderer(wc);
+  unregisterBgTaskEventTarget(wc);
 }
 
 /** Boot the whole orchestration domain (stores → registry → MCP server). */
@@ -405,8 +411,8 @@ export function registerOrchIpc(): void {
     // prepare-project is intentionally excluded — only prepareMissionProject IPC.
     contextPolicy: z.enum(["none", "minimal", "on-demand"]).optional(),
     acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
-    /** standard (default) = code PREVC; consult = read-only investigation. */
-    lane: z.enum(["standard", "consult"]).optional(),
+    /** standard | consult | plan (design-only plan.md). */
+    lane: z.enum(["standard", "consult", "plan"]).optional(),
   });
   ipcMain.handle(ORCH_CHANNELS.missionSubmitIntent, (event, raw) => {
     const parsed = missionSubmitIntentSchema.safeParse(raw);
@@ -424,6 +430,18 @@ export function registerOrchIpc(): void {
     const parsed = missionApproveIntentSchema.safeParse(raw);
     if (!parsed.success) throw new Error("invalid mission approve intent payload");
     return requireMissionAuthority().approveIntentFromRenderer(
+      event.sender,
+      parsed.data,
+    );
+  });
+
+  const missionPromotePlanSchema = z.object({
+    missionId: z.string().min(1).max(128),
+  });
+  ipcMain.handle(ORCH_CHANNELS.missionPromotePlanLane, (event, raw) => {
+    const parsed = missionPromotePlanSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("invalid promote plan lane payload");
+    return requireMissionAuthority().promotePlanLaneFromRenderer(
       event.sender,
       parsed.data,
     );

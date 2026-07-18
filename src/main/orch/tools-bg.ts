@@ -13,6 +13,7 @@ import {
   createScopedSandboxHome,
   type SandboxProfile,
 } from '../runtime/process-sandbox';
+import { emitBgTaskEvent } from './bg-task-events';
 
 interface BgTask {
   id: string;
@@ -130,9 +131,27 @@ const bgRun: McpToolDef = {
     proc.stderr?.on('data', (c) => {
       task.stderr = appendCap(task.stderr, c);
     });
+    emitBgTaskEvent({
+      taskId: id,
+      command,
+      status: 'started',
+      exitCode: null,
+      projectId: task.projectId,
+      checkoutId: task.checkoutId,
+      at: task.startedAt,
+    });
     proc.on('close', (code) => {
       task.exitCode = code;
       task.endedAt = Date.now();
+      emitBgTaskEvent({
+        taskId: id,
+        command,
+        status: 'exited',
+        exitCode: code,
+        projectId: task.projectId,
+        checkoutId: task.checkoutId,
+        at: task.endedAt,
+      });
       setTimeout(() => {
         fs.rmSync(sandbox.dir, { recursive: true, force: true });
       }, 50);
@@ -140,6 +159,15 @@ const bgRun: McpToolDef = {
     proc.on('error', () => {
       task.exitCode = -1;
       task.endedAt = Date.now();
+      emitBgTaskEvent({
+        taskId: id,
+        command,
+        status: 'exited',
+        exitCode: -1,
+        projectId: task.projectId,
+        checkoutId: task.checkoutId,
+        at: task.endedAt,
+      });
       fs.rmSync(sandbox.dir, { recursive: true, force: true });
     });
     return {
@@ -230,6 +258,15 @@ const bgKill: McpToolDef = {
     setTimeout(() => {
       if (task.exitCode === null) task.killTree('SIGKILL');
     }, 3_000);
+    emitBgTaskEvent({
+      taskId,
+      command: task.command,
+      status: 'killed',
+      exitCode: task.exitCode,
+      projectId: task.projectId,
+      checkoutId: task.checkoutId,
+      at: Date.now(),
+    });
     return { killed: true, taskId };
   },
 };

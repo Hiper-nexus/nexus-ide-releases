@@ -267,6 +267,29 @@ export function MissionRail() {
     setBusy(null);
   }
 
+  /** Plan mode → standard PREVC (operator approved the design). */
+  async function promotePlan(m: Mission) {
+    const ok = await askConfirm({
+      title: 'Executar o plano?',
+      body:
+        'A missão sai do modo design (só plan.md) e passa a permitir worktrees, ' +
+        'código e shell sob o PREVC. O plan.md permanece no workspace.',
+      confirmLabel: 'Executar plano',
+    });
+    if (!ok) return;
+    setBusy(m.id);
+    setNote(null);
+    try {
+      await window.nexus.orch.promotePlanLane({ missionId: m.id });
+      setNote('Plano promovido — lane código (PREVC) ativa.');
+    } catch (cause) {
+      setNote(
+        cause instanceof Error ? cause.message : 'Falha ao promover o plano.',
+      );
+    }
+    setBusy(null);
+  }
+
   function missionMeta(mission: Mission, liveInGrid: boolean): string {
     const hands = handoffCountByMission.get(mission.id) ?? 0;
     const handBit =
@@ -276,6 +299,12 @@ export function MissionRail() {
       budget.hasContract && budget.label !== '—'
         ? ` · ${budget.label}`
         : '';
+    const laneBit =
+      mission.intentContract?.lane === 'plan'
+        ? ' · plano'
+        : mission.intentContract?.lane === 'consult'
+          ? ' · consulta'
+          : '';
     const started = new Intl.DateTimeFormat('pt-BR', {
       day: '2-digit',
       month: '2-digit',
@@ -285,7 +314,7 @@ export function MissionRail() {
 
     // Status já vai na pill — meta fica operacional (tempo / panes / budget).
     if (mission.status === 'pending' && !liveInGrid) {
-      return `Retomar · ${started}${handBit}${budgetBit}`;
+      return `Retomar · ${started}${laneBit}${handBit}${budgetBit}`;
     }
 
     if (liveInGrid || ompLiveMissionIds.has(mission.id)) {
@@ -328,15 +357,15 @@ export function MissionRail() {
     }
 
     if (mission.status === 'running') {
-      return `${missionRailResumeCopy(mission.status, liveInGrid, mission.intentState).meta ?? 'Retomar'}${handBit}${budgetBit}`;
+      return `${missionRailResumeCopy(mission.status, liveInGrid, mission.intentState).meta ?? 'Retomar'}${laneBit}${handBit}${budgetBit}`;
     }
     if (mission.status === 'blocked') {
-      return `Precisa de ti${handBit}${budgetBit}`;
+      return `Precisa de ti${laneBit}${handBit}${budgetBit}`;
     }
     if (mission.status === 'done' || mission.status === 'failed') {
-      return `${started}${handBit}${budgetBit}`;
+      return `${started}${laneBit}${handBit}${budgetBit}`;
     }
-    return `${statusLabel(mission.status)} · ${started}${handBit}${budgetBit}`;
+    return `${statusLabel(mission.status)} · ${started}${laneBit}${handBit}${budgetBit}`;
   }
 
   function selectMission(m: Mission) {
@@ -644,6 +673,23 @@ export function MissionRail() {
                                 </span>
                               </span>
                             </button>
+                            {m.intentContract?.lane === 'plan' &&
+                              m.status !== 'done' &&
+                              m.status !== 'failed' && (
+                              <button
+                                type="button"
+                                className="mission-rail__block"
+                                disabled={busy !== null}
+                                title="Executar plano — promover lane plan → código PREVC"
+                                aria-label={`Executar plano da missão ${m.title}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void promotePlan(m);
+                                }}
+                              >
+                                <PixelIcon name="mission" size={10} />
+                              </button>
+                            )}
                             {(m.status === 'pending' ||
                               m.status === 'running') && (
                               <button

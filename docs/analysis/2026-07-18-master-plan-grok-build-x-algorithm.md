@@ -162,6 +162,20 @@ Candidate isolation: score(A) não depende do set de concorrentes no batch — d
 
 ---
 
+## 7. Harness Nexus vs grok-build — veredito senior
+
+| Camada Nexus | Papel | Relação com grok-ai / grok-build |
+|--------------|-------|----------------------------------|
+| **Capability harness** (`harness-enrich`, settings Arsenal) | Classifica agents/skills (scout/builder/reviewer) para o Squad Architect | **Não reescrever.** Padrão Overclock/ORCA, não do grok-build. Cargo-cult de plan/bg aqui não agrega. |
+| **Context / PREVC harness** (freeze, sensores, evidence, worktrees) | Autoridade de missão e evidência | **Já é mais forte** que o plan-mode genérico do grok-build. Manter. |
+| **Eval harness** (`src/main/eval`, journal, head-to-head) | Ranking de modelos | Inspirado BridgeBench; **não misturar** com Phoenix do x-algorithm. |
+| **Smoke harness** (packaged functional smoke) | Gate de release | Manter; independente de grok. |
+| **Padrões grok já transplantados** | CoW, plan lane, bg MCP, compaction, sandbox profiles, multi-score route | Vivem em **orch/runtime/tools**, não no “Capability Harness” UI. |
+
+**Conclusão:** não faz sentido “melhorar o harness” para parecer grok. O que faltava era **operator loop** (promote plan → execute, notif de bg, hunks no DiffAnnotate) e **wire** de lane `plan` no submitIntent — feito nesta leva.
+
+---
+
 ## 7. Implementação nesta entrega
 
 Fase 1 (PR-A): código + testes + docs orchestration.

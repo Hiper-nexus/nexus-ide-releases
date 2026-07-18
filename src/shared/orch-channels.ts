@@ -19,6 +19,11 @@ export const ORCH_CHANNELS = {
   missionSubmitIntent: 'orch:missions.submitIntent',
   /** Intent-first: authorize dispatch after plan approval. */
   missionApproveIntent: 'orch:missions.approveIntent',
+  /**
+   * Promote lane=plan → standard after plan.md is ready so PREVC code work
+   * is allowed (operator "Executar plano").
+   */
+  missionPromotePlanLane: 'orch:missions.promotePlanLane',
   /** Bind a live orchestrator pane to an armed mission (no new mission row). */
   missionBindOrchestrator: 'orch:missions.bindOrchestrator',
   /**
@@ -72,4 +77,6 @@ export const ORCH_CHANNELS = {
   handoffsChanged: 'orch:handoffs.changed',
   todosChanged: 'orch:todos.changed',
   squadsChanged: 'orch:squads.changed',
+  /** Background MCP task lifecycle (started / exited / killed). */
+  bgTaskEvent: 'orch:bgTask.event',
 } as const;

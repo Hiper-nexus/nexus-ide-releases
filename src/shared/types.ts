@@ -495,8 +495,8 @@ export interface NexusApi {
       source?: 'typed' | 'voice' | 'imported-issue' | 'automation';
       contextPolicy?: 'none' | 'minimal' | 'on-demand';
       acceptanceCriteria?: string[];
-      /** standard (default) = code PREVC; consult = read-only investigation. */
-      lane?: 'standard' | 'consult';
+      /** standard | consult | plan (design-only plan.md). */
+      lane?: 'standard' | 'consult' | 'plan';
       /** Current print/audio evidence must be present before dispatch. */
       evidenceAttached?: boolean;
     }): Promise<Mission>;
@@ -504,6 +504,8 @@ export interface NexusApi {
       missionId: string;
       evidenceAttached?: boolean;
     }): Promise<Mission>;
+    /** After plan.md is ready: plan lane → standard PREVC. */
+    promotePlanLane(input: { missionId: string }): Promise<Mission>;
     /** Explicit prepare-project while still awaiting a real goal. */
     prepareMissionProject(input: { missionId: string }): Promise<Mission>;
     cancelMissionPreparation(input: {

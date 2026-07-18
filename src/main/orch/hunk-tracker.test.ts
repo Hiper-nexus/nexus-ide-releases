@@ -3,7 +3,7 @@ import {
   attributeHunks,
   parseUnifiedDiff,
   summarizeAttribution,
-} from './hunk-tracker';
+} from '../../shared/hunk-tracker';
 
 const SAMPLE = `diff --git a/src/a.ts b/src/a.ts
 --- a/src/a.ts

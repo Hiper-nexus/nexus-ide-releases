@@ -6,6 +6,11 @@ import {
   saveEphemeralDraft,
 } from '../state/ephemeral-draft-store';
 import { createDraftHydrationBarrier } from '../lib/ui-overlay-policy';
+import {
+  attributeHunks,
+  parseUnifiedDiff,
+  summarizeAttribution,
+} from '../../shared/hunk-tracker';
 import { CloseButton } from './CloseButton';
 
 type Annotation = { path: string; line: number; body: string; id: string };
@@ -84,6 +89,18 @@ export function DiffAnnotatePanel({
   }, [open, annotations, draft, selected, draftHydrationBarrier]);
 
   const lines = useMemo(() => diff.split('\n'), [diff]);
+  const hunkSummary = useMemo(() => {
+    if (!diff || diff.startsWith('(sem')) return null;
+    const hunks = parseUnifiedDiff(diff);
+    if (hunks.length === 0) return null;
+    // Sem path ownership de panes aqui: classifica tudo external até o MCP
+    // hunks_analyze com missionId refinar — UI ainda mostra contagem de hunks.
+    const attributed = attributeHunks(hunks, []);
+    return {
+      total: attributed.length,
+      ...summarizeAttribution(attributed),
+    };
+  }, [diff]);
 
   if (!open) return null;
 
@@ -97,6 +114,9 @@ export function DiffAnnotatePanel({
           <strong>Diff → Agent</strong>
           <span className="diff-panel__meta">
             {branch ? `branch ${branch}` : 'git'} · {annotations.length} nota(s)
+            {hunkSummary
+              ? ` · ${hunkSummary.total} hunk(s)`
+              : ''}
           </span>
         </div>
         <CloseButton onClick={onClose} label="Fechar painel de diff" />
@@ -140,6 +160,17 @@ export function DiffAnnotatePanel({
           })}
         </pre>
         <aside className="diff-panel__side">
+          {hunkSummary && (
+            <p className="diff-panel__sel" style={{ marginBottom: 8 }}>
+              Hunks: {hunkSummary.total}
+              {hunkSummary.agent > 0 ? ` · agente ${hunkSummary.agent}` : ''}
+              {hunkSummary.user > 0 ? ` · você ${hunkSummary.user}` : ''}
+              {hunkSummary.external > 0
+                ? ` · externo ${hunkSummary.external}`
+                : ''}
+              . Use <code>nexus_hunks_analyze</code> com missionId para atribuição fina.
+            </p>
+          )}
           <label className="diff-panel__label">
             Anotar linha
             <span className="diff-panel__sel">

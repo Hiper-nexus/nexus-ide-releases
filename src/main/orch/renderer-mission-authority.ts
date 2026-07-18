@@ -2,6 +2,7 @@ import type { WebContents } from "electron";
 import {
   classifyGoalRisk,
   compileIntentContract,
+  defaultBudgetsForRisk,
   hasCurrentDispatchAuthority,
   isPrepareProjectPlaceholderGoal,
   missionStatusForIntent,
@@ -81,10 +82,10 @@ export interface RendererMissionSubmitIntentInput {
   contextPolicy?: "none" | "minimal" | "on-demand";
   acceptanceCriteria?: string[];
   /**
-   * Delivery lane. `consult` = read-only investigation (no code PREVC).
-   * Default / omitted = standard.
+   * Delivery lane. `consult` = read-only; `plan` = design-only plan.md;
+   * default / omitted = standard PREVC code.
    */
-  lane?: "standard" | "consult";
+  lane?: "standard" | "consult" | "plan";
   /** Set by the renderer only when current print/audio files are attached. */
   evidenceAttached?: boolean;
 }
@@ -331,13 +332,19 @@ export class RendererMissionAuthority {
     let risk: ReturnType<typeof classifyGoalRisk>;
     let updated: Mission | null;
     try {
+      const lane =
+        input.lane === "consult"
+          ? "consult"
+          : input.lane === "plan"
+            ? "plan"
+            : "standard";
       contract = compileIntentContract({
         goal: input.goal,
         source: input.source ?? "typed",
         intentVersion: nextVersion,
         contextPolicy,
         acceptanceCriteria: input.acceptanceCriteria,
-        lane: input.lane === "consult" ? "consult" : "standard",
+        lane,
       });
       const evidenceAttached = input.evidenceAttached === true;
       const needsFutureEvidence = missionGoalNeedsFutureEvidence(
@@ -653,6 +660,75 @@ export class RendererMissionAuthority {
       intentState: nextState,
       intentVersion: contractVersion,
       reason: "user_start",
+    });
+    return updated;
+  }
+
+  /**
+   * Operator action after plan-mode design: upgrade lane plan → standard so
+   * worktrees/shell/code tools are allowed under the same authorized mission.
+   * Keeps goal/acceptance; re-expands budgets for risk; re-stamps dispatch.
+   */
+  promotePlanLaneFromRenderer(
+    owner: WebContents,
+    input: { missionId: string },
+  ): Mission {
+    const scope = requireRendererWorkspaceScope(owner);
+    const missions = this.#stores.forScope(scope).missions;
+    const current = missions.get(input.missionId);
+    if (!current) throw new Error("mission not found");
+    if (current.status === "done" || current.status === "failed") {
+      throw new Error("mission is terminal");
+    }
+    const contract = current.intentContract;
+    if (!contract || contract.lane !== "plan") {
+      throw new Error(
+        "promote_plan: mission is not in plan lane (or has no contract)",
+      );
+    }
+    if (!contract.goal?.trim()) {
+      throw new Error("intent_required: plan mission has empty goal");
+    }
+    const risk = classifyGoalRisk(contract.goal);
+    const nextVersion = (current.intentVersion ?? 0) + 1;
+    const now = Date.now();
+    const nextContract = {
+      ...contract,
+      lane: "standard" as const,
+      intentVersion: nextVersion,
+      risk,
+      budgets: defaultBudgetsForRisk(risk),
+      approvedAt: contract.approvedAt ?? now,
+      dispatchedAt: now,
+      acceptanceCriteria: [...contract.acceptanceCriteria],
+      deniedTools: contract.deniedTools ? [...contract.deniedTools] : undefined,
+    };
+    // Stay dispatched/executing if already working; otherwise ready_to_start
+    // so the operator can press start again with full code authority.
+    const intentState =
+      current.intentState === "dispatched" ||
+      current.intentState === "executing" ||
+      current.intentState === "validating"
+        ? current.intentState
+        : "ready_to_start";
+    const status =
+      missionStatusForIntent(intentState) ??
+      (intentState === "ready_to_start" ? "pending" : current.status);
+    const updated = missions.update(input.missionId, {
+      intentContract: nextContract,
+      intentVersion: nextVersion,
+      intentState,
+      status,
+    });
+    if (!updated) throw new Error("mission not found");
+    bumpMissionPromptIntent(updated.id, nextVersion);
+    emitMissionIntentEvent({
+      name: "plan_approved",
+      missionId: updated.id,
+      squadId: updated.squadId,
+      intentState,
+      intentVersion: nextVersion,
+      reason: "promote_plan_to_standard",
     });
     return updated;
   }

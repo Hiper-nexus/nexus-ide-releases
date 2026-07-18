@@ -369,6 +369,16 @@ const missionsChangedListeners = new Set<(missions: Mission[]) => void>();
 const handoffsChangedListeners = new Set<(handoffs: Handoff[]) => void>();
 const todosChangedListeners = new Set<(lists: TodoList[]) => void>();
 const squadsChangedListeners = new Set<(squads: Squad[]) => void>();
+type BgTaskEventPayload = {
+  taskId: string;
+  command: string;
+  status: 'started' | 'exited' | 'killed';
+  exitCode: number | null;
+  projectId: string;
+  checkoutId: string;
+  at: number;
+};
+const bgTaskEventListeners = new Set<(event: BgTaskEventPayload) => void>();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
   paneSpawnRequestListeners.forEach((cb) => cb(req)),
@@ -395,6 +405,9 @@ ipcRenderer.on(ORCH_CHANNELS.todosChanged, (_e, lists: TodoList[]) =>
 );
 ipcRenderer.on(ORCH_CHANNELS.squadsChanged, (_e, squads: Squad[]) =>
   squadsChangedListeners.forEach((cb) => cb(squads)),
+);
+ipcRenderer.on(ORCH_CHANNELS.bgTaskEvent, (_e, event: BgTaskEventPayload) =>
+  bgTaskEventListeners.forEach((cb) => cb(event)),
 );
 
 const settingsChangedListeners = new Set<(settings: TerminalSettings) => void>();
@@ -756,11 +769,13 @@ const api: NexusApi = {
       /** prepare-project is NOT accepted — use prepareMissionProject. */
       contextPolicy?: 'none' | 'minimal' | 'on-demand';
       acceptanceCriteria?: string[];
-      /** standard (default) = code PREVC; consult = read-only investigation. */
-      lane?: 'standard' | 'consult';
+      /** standard | consult | plan (design-only). */
+      lane?: 'standard' | 'consult' | 'plan';
     }) => ipcRenderer.invoke(ORCH_CHANNELS.missionSubmitIntent, input),
     approveMissionIntent: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionApproveIntent, input),
+    promotePlanLane: (input: { missionId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionPromotePlanLane, input),
     prepareMissionProject: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPrepareProject, input),
     cancelMissionPreparation: (input: { missionId: string }) =>
@@ -837,6 +852,8 @@ const api: NexusApi = {
     onHandoffsChanged: (cb) => addListener(handoffsChangedListeners, cb),
     onTodosChanged: (cb) => addListener(todosChangedListeners, cb),
     onSquadsChanged: (cb) => addListener(squadsChangedListeners, cb),
+    onBgTaskEvent: (cb: (event: BgTaskEventPayload) => void) =>
+      addListener(bgTaskEventListeners, cb),
   },
   remote: {
     bridgeStatus: () => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStatus),
