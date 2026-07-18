@@ -7,6 +7,7 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { listAdapterInfos } from '../adapters/adapter-registry';
 import { loadAdaptersHot } from '../adapters/adapter-hot-cache';
 import { routeTask } from './task-router';
+import { getSquad } from './squad-store';
 import { buildOmpRouteContext } from './omp-roster-policy';
 import {
   getContextWorkflowService,
@@ -156,13 +157,29 @@ async function dispatchTask(
       .list(missionId)
       .map((pane) => pane.adapterId)
       .filter(Boolean);
-    const routed = routeTask(
-      `${task.title}\n${decodeTaskScheduleDetail(task.detail).body}`,
-      loadAdaptersHot(() => listAdapterInfos()).map((adapter) => ({
+    // O squad da missão é autoridade de roteamento, não decoração: sem este
+    // recorte o router ignorava o roster e todo worker caía no
+    // settings.defaultAdapterId (campo: "squad escolhido, codex forçado").
+    // Router continua decidindo tier/effort — mas dentro dos CLIs do squad
+    // quando ao menos um deles está instalado.
+    const squad = mission.squadId ? getSquad(mission.squadId) : null;
+    const squadAgents = (squad?.agents ?? []).filter(
+      (agent) => agent.category !== 'orchestrator',
+    );
+    const squadClis = [...new Set(squadAgents.map((agent) => agent.cli))];
+    const allAdapters = loadAdaptersHot(() => listAdapterInfos()).map(
+      (adapter) => ({
         id: adapter.id,
         installed: adapter.installed,
         models: adapter.models.list,
-      })),
+      }),
+    );
+    const squadAdapters = allAdapters.filter(
+      (adapter) => adapter.installed && squadClis.includes(adapter.id),
+    );
+    const routed = routeTask(
+      `${task.title}\n${decodeTaskScheduleDetail(task.detail).body}`,
+      squadAdapters.length > 0 ? squadAdapters : allAdapters,
       undefined,
       undefined,
       true,
@@ -170,12 +187,21 @@ async function dispatchTask(
       buildOmpRouteContext({
         ompParticipation: settings.ompParticipation,
         missionAdapterIds: missionUsedAdapters,
+        preferAdapters: squadClis.length > 0 ? squadClis : undefined,
       }),
     );
-    const adapterId = routed?.adapterId ?? settings.defaultAdapterId;
+    const adapterId =
+      routed?.adapterId ??
+      squadAdapters[0]?.id ??
+      settings.defaultAdapterId;
+    // Modelo configurado pelo autor do squad vale mais que a escada default do
+    // router; o spawn ainda resolve contra a lista REAL do CLI (anti-fantasma).
+    const squadModel = squadAgents.find(
+      (agent) => agent.cli === adapterId && agent.model,
+    )?.model;
     await spawnPaneAndMaybePrompt({
       adapterId,
-      model: routed?.model ?? (settings.defaultModel || undefined),
+      model: squadModel ?? routed?.model ?? (settings.defaultModel || undefined),
       effort: routed?.effort,
       cwd: worktree.worktreePath,
       executionScope: Object.freeze({ ...scope, rootRealPath: worktree.worktreePath }),

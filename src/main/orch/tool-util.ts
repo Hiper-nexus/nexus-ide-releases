@@ -9,7 +9,7 @@ import {
   type PaneAuthzInfo,
 } from './pane-authz';
 import type { AgentGateContext } from './gate';
-import { orchWriteSession } from '../pty/pty-manager';
+import { getSessionState, orchWriteSession } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import { resolveRoutableModel } from './task-router';
@@ -36,6 +36,8 @@ import { adapterCircuitBreakers } from './circuit-breaker';
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
 const PROMPT_SETTLE_MS = 250;
+/** Janela para provar o submit: sessão ainda idle depois disto → CR comido. */
+const ENTER_RETRY_MS = 400;
 const AGENT_BOOT_TIMEOUT_MS = 20_000;
 /** Max wait for Claude-family bypass/trust menus before typing the mission prompt. */
 const BOOT_PROMPT_HOLD_MS = 5_000;
@@ -131,8 +133,24 @@ export async function injectPrompt(
   if (!orchWriteSession(sessionId, input)) {
     throw new Error('session is gone');
   }
+  await submitEnter(sessionId);
+}
+
+/**
+ * Submit the just-typed prompt. Some interactive CLIs consume the first CR
+ * while leaving the pasted prompt in their editor (notably right after the
+ * boot bypass/trust menus force-accepted by waitOutBootPrompts — the same
+ * modal-transition failure idle-delivery guards against). A bounded second CR
+ * is safe only while the session is still idle; once it turned busy the first
+ * submit is proven and we stop.
+ */
+async function submitEnter(sessionId: string): Promise<void> {
   await delay(PROMPT_SETTLE_MS);
   orchWriteSession(sessionId, '\r');
+  await delay(ENTER_RETRY_MS);
+  if (getSessionState(sessionId) === 'idle') {
+    orchWriteSession(sessionId, '\r');
+  }
 }
 
 /** Type a multi-line prompt as one bracketed-paste transaction. */
@@ -144,8 +162,7 @@ export async function injectPastedPrompt(
   if (!orchWriteSession(sessionId, `\x1b[200~${safePrompt}\x1b[201~`)) {
     throw new Error('session is gone');
   }
-  await delay(PROMPT_SETTLE_MS);
-  orchWriteSession(sessionId, '\r');
+  await submitEnter(sessionId);
 }
 
 export interface SpawnToolOptions {

@@ -8,6 +8,7 @@ const stubs = vi.hoisted(() => ({
     sessionId: 'session-1',
   })),
   writeSession: vi.fn(() => true),
+  sessionState: vi.fn(() => 'busy'),
   missionPanesRecord: vi.fn(),
 }));
 
@@ -18,7 +19,10 @@ vi.mock('./pane-registry', () => ({
   waitForIdle: vi.fn(),
 }));
 vi.mock('./pane-authz', () => ({ authorizePaneAccess: vi.fn() }));
-vi.mock('../pty/pty-manager', () => ({ orchWriteSession: stubs.writeSession }));
+vi.mock('../pty/pty-manager', () => ({
+  orchWriteSession: stubs.writeSession,
+  getSessionState: stubs.sessionState,
+}));
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: vi.fn(() => ({ id: 'codex', quirks: {} })),
 }));
@@ -107,13 +111,23 @@ describe('worker handoff capability contract', () => {
 });
 
 describe('agent prompt injection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    stubs.writeSession.mockReturnValue(true);
+    stubs.sessionState.mockReturnValue('busy');
+  });
+
   it('submits multiline briefs as one bracketed-paste transaction', async () => {
     vi.useFakeTimers();
     try {
+      // First CR leaves the session idle → second CR retries (boot-menu recovery).
+      stubs.sessionState.mockReturnValue('idle');
       const pending = injectPrompt('session-1', 'line one\nline two');
       await vi.advanceTimersByTimeAsync(249);
       expect(stubs.writeSession).toHaveBeenCalledOnce();
       await vi.advanceTimersByTimeAsync(1);
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(2, 'session-1', '\r');
+      await vi.advanceTimersByTimeAsync(400);
       await pending;
 
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
@@ -122,6 +136,20 @@ describe('agent prompt injection', () => {
         '\x1b[200~line one\nline two\x1b[201~',
       );
       expect(stubs.writeSession).toHaveBeenNthCalledWith(2, 'session-1', '\r');
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(3, 'session-1', '\r');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('skips retry Enter once the session turns busy', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('busy');
+      const pending = injectPrompt('session-1', 'go');
+      await vi.advanceTimersByTimeAsync(650);
+      await pending;
+      expect(stubs.writeSession).toHaveBeenCalledTimes(2); // paste + one CR
     } finally {
       vi.useRealTimers();
     }

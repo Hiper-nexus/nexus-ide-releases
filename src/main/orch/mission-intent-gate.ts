@@ -167,7 +167,9 @@ export function assertMissionIntentAllowsTool(
       'memory_retain',
       'memory_recall',
     ]);
-    if (policy !== 'read-only' && !planAllowed.has(canonical)) {
+    // Read-only and mission-control tools already returned above; everything
+    // else in plan lane must be in the bounded design set.
+    if (!planAllowed.has(canonical)) {
       return deny(
         'tool_denied',
         `tool_denied: plan lane only allows design (plan.md / read tools); ` +

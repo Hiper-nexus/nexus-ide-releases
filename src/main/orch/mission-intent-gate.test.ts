@@ -139,6 +139,7 @@ describe('mission intent gate', () => {
         risk: 'normal',
         executionMode: 'autopilot',
         lane: 'plan',
+        contextPolicy: 'on-demand',
         intentVersion: 1,
         approvedAt: 1,
         dispatchedAt: 1,

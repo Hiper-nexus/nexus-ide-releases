@@ -92,6 +92,7 @@ import type {
   PtyStateChangeEvent,
   PaneSessionState,
   AdapterInfo,
+  BgTaskEventPayload,
 } from '../shared/types';
 import type {
   JarvisLiveInterruptEvent,
@@ -369,15 +370,6 @@ const missionsChangedListeners = new Set<(missions: Mission[]) => void>();
 const handoffsChangedListeners = new Set<(handoffs: Handoff[]) => void>();
 const todosChangedListeners = new Set<(lists: TodoList[]) => void>();
 const squadsChangedListeners = new Set<(squads: Squad[]) => void>();
-type BgTaskEventPayload = {
-  taskId: string;
-  command: string;
-  status: 'started' | 'exited' | 'killed';
-  exitCode: number | null;
-  projectId: string;
-  checkoutId: string;
-  at: number;
-};
 const bgTaskEventListeners = new Set<(event: BgTaskEventPayload) => void>();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>

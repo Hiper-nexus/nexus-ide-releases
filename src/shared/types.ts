@@ -206,6 +206,20 @@ export type { ProductApi } from './product-api';
 export type { McpHubSyncApplyInput, McpHubSyncExportToolId } from './mcp-hub-sync-api';
 
 /**
+ * Background MCP task lifecycle event pushed by main (`orch:bgTask.event`).
+ * Shape mirrors `BgTaskEvent` in src/main/orch/bg-task-events.ts.
+ */
+export interface BgTaskEventPayload {
+  readonly taskId: string;
+  readonly command: string;
+  readonly status: 'started' | 'exited' | 'killed';
+  readonly exitCode: number | null;
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly at: number;
+}
+
+/**
  * The typed surface exposed on `window.nexus` by the preload script.
  * The renderer NEVER sees raw ipcRenderer — only this contract.
  */
@@ -634,6 +648,7 @@ export interface NexusApi {
     onHandoffsChanged(cb: (handoffs: Handoff[]) => void): Unsubscribe;
     onTodosChanged(cb: (lists: TodoList[]) => void): Unsubscribe;
     onSquadsChanged(cb: (squads: Squad[]) => void): Unsubscribe;
+    onBgTaskEvent(cb: (event: BgTaskEventPayload) => void): Unsubscribe;
   };
   remote: {
     bridgeStatus(): Promise<RemoteBridgeInfo>;
