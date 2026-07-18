@@ -86,13 +86,16 @@ describe('public ranking', () => {
       suiteRevision: 'fixture',
     });
     expect(parseEvalSource('manual')).toBeNull();
-    const snap = buildPublicRankingFromCatalog(PUBLISHED_MODEL_CATALOG);
-    expect(isPublicModelRankingSnapshot(snap)).toBe(true);
     expect(isPublicModelRankingSnapshot({ schemaVersion: 99, entries: [] })).toBe(
       false,
     );
+    // O catálogo publicado não carrega quality até uma avaliação real ser
+    // publicada: o snapshot derivado do catálogo é válido e vazio (defaults).
+    const snap = buildPublicRankingFromCatalog(PUBLISHED_MODEL_CATALOG);
+    expect(isPublicModelRankingSnapshot(snap)).toBe(true);
+    expect(snap.entries).toEqual([]);
     expect(snap.suiteId).toBe('v1');
-    expect(snap.suiteRevision).toBe('fixture');
+    expect(snap.suiteRevision).toBe('unknown');
   });
 
   it('applyRanksToCatalog preserves non-evaluated models', () => {

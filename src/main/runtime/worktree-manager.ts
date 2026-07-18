@@ -35,9 +35,11 @@ import {
   type WorktreeStateStore,
 } from './worktree-contract';
 import { validateWorktreeStateSnapshot } from './worktree-state';
+import { materializeGitWorktree } from './worktree-cow';
 
 export * from './git-command';
 export * from './worktree-contract';
+export { cowWorktreeAvailable, materializeGitWorktree } from './worktree-cow';
 
 const MAX_CAS_ATTEMPTS = 16;
 
@@ -277,14 +279,14 @@ export class WorktreeManager {
           branchExists,
         );
       }
-      this.#git.run(repository.rootRealPath, [
-        'worktree',
-        'add',
-        '-b',
-        branchRef.slice('refs/heads/'.length),
+      // CoW-aware materialization (APFS clonefile path when enabled; else git).
+      materializeGitWorktree({
+        repositoryRoot: repository.rootRealPath,
         worktreePath,
-        repository.headSha,
-      ]);
+        branchRef,
+        headSha: repository.headSha,
+        git: this.#git,
+      });
       this.#assertWorktree(candidate);
       this.#assertRepositoryUnchanged(repository, true);
       return this.#transition(scopeKey, taskKey, (record) => ({

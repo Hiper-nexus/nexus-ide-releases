@@ -330,8 +330,8 @@ export function buildIntentDispatchKickoffPrompt(input: {
   maxWorkers: number;
   /** Optional compact memory block (mission ledger) — never a full playbook. */
   compactMemoryMarkdown?: string | null;
-  /** standard = PREVC code path (default); consult = read-only investigation. */
-  lane?: 'standard' | 'consult';
+  /** standard = PREVC; consult = read-only; plan = design-only plan.md. */
+  lane?: 'standard' | 'consult' | 'plan';
   /** Título real da missão — sobrepõe o nome do squad no heading quando o
    * squad foi reusado de outra missão. */
   missionTitle?: string;
@@ -373,6 +373,32 @@ export function buildIntentDispatchKickoffPrompt(input: {
       '- Ao concluir, registre um learning note durável (nexus_mission_get / learnings ≥ 40 caracteres) e só então use status=done da lane consult.',
       '- Se o ambiente não estiver pronto ou a consulta não puder começar, use status=blocked com causa. Se a execução falhou, use status=failed. Nunca finja green de código.',
       '- Fale em português claro sobre achados e bloqueios.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (lane === 'plan') {
+    return [
+      input.squad.orchestratorInstructions.trim(),
+      `# Missão de plano (design) — ${headingTitle}`,
+      `missionId=${input.missionId}`,
+      `lane=plan`,
+      '',
+      '## Objetivo (contrato de intenção)',
+      input.goal.trim(),
+      '',
+      '## Critérios de aceite',
+      criteria,
+      ...compact,
+      `## Risco: ${input.risk}`,
+      '',
+      '## CONTRATO PLAN — design antes de código',
+      '- A missão JÁ está despachada. NÃO chame nexus_mission_create.',
+      '- Escreva o plano com nexus_plan_write (ou file_write em plan.md / docs/plan.md apenas).',
+      '- Sem worktrees, terminal, merge, ou edições de código fora do plan.md.',
+      '- Use tools de leitura (code_map, git_status, file_read) para embasar o desenho.',
+      '- Ao terminar o plano, handoff com resumo e deixe o operador aprovar / sair do plan mode.',
+      '- Fale em português claro: contexto, abordagem, arquivos, riscos, verificação.',
     ]
       .filter(Boolean)
       .join('\n');

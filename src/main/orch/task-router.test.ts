@@ -736,7 +736,7 @@ describe('routeTask quality-driven motor (shipped router + real catalog quality)
   });
 });
 
-describe('routeTask default catalog path (published eval quality)', () => {
+describe('routeTask default catalog path (no published eval quality)', () => {
   const tmpDirs: string[] = [];
 
   afterEach(() => {
@@ -747,8 +747,11 @@ describe('routeTask default catalog path (published eval quality)', () => {
     tmpDirs.length = 0;
   });
 
-  it('uses loadModelCatalog quality so security work picks higher-security published model', () => {
-    // Drive the same merge the shipped default argument uses (BUILTIN+PUBLISHED+user).
+  it('falls back to the diversity table when the shipped catalog carries no quality', () => {
+    // Fixture scores foram removidos de resources/model-catalog.json: até uma
+    // avaliação real ser publicada, o catálogo default (BUILTIN + PUBLISHED +
+    // overlay legado do usuário) não tem quality, o coverage gate fica off e
+    // a TABELA de diversidade decide — exatamente o comportamento do gate.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-route-catalog-'));
     tmpDirs.push(dir);
     const file = path.join(dir, 'model-catalog.json');
@@ -769,16 +772,11 @@ describe('routeTask default catalog path (published eval quality)', () => {
     invalidateModelCatalogCache();
     const catalog = loadModelCatalog(file);
 
-    const opusQ = modelCatalogInfo(catalog, 'claude', 'claude-opus-4-8')?.quality;
-    const haikuQ = modelCatalogInfo(catalog, 'claude', 'claude-haiku-4-5')?.quality;
-    // Published eval merge is environment/data-dependent; skip when ranking
-    // artifacts lack quality rows for these model ids.
-    if (!opusQ?.source || !haikuQ?.source) {
-      return;
-    }
-    expect(opusQ.source).toMatch(/^nexus-eval\//);
-    expect(haikuQ.source).toMatch(/^nexus-eval\//);
-    expect(opusQ.security ?? 0).toBeGreaterThan(haikuQ.security ?? 0);
+    // Pré-requisito do teste: sem quality publicada (volta a ter quando uma
+    // avaliação real for publicada — aí este teste deve ser revisto).
+    expect(
+      modelCatalogInfo(catalog, 'claude', 'claude-opus-4-8')?.quality,
+    ).toBeUndefined();
 
     const decision = routeTask(
       'auditar a segurança da autenticação OAuth e tokens de pagamento',
@@ -796,8 +794,9 @@ describe('routeTask default catalog path (published eval quality)', () => {
     );
 
     expect(decision).not.toBeNull();
+    // Tabela hard com só claude instalado: claude-opus-4-8 é o 1º candidato.
     expect(decision!.model).toBe('claude-opus-4-8');
-    expect(decision!.reason).toContain('avaliação Nexus por dimensão');
+    expect(decision!.reason).not.toContain('avaliação Nexus por dimensão');
   });
 });
 

@@ -271,11 +271,47 @@ export function accountKey(account: Account): string | null {
 }
 
 /**
+ * Claude read-back, mirroring readBackFresherAuth for file-backed providers:
+ * the real Claude CLI rotates the refresh token on its own inside the native
+ * "Claude Code-credentials" keychain item, so the vault snapshot goes stale.
+ * When this account IS the current native login, re-capture the keychain blob
+ * into the vault BEFORE any use of the vault snapshot — otherwise the next
+ * materialize clobbers the live native session with a dead credential (the
+ * mid-session logout production bug). Best-effort/fail-safe: an unreadable
+ * keychain or a failed vault write keeps the existing snapshot and never
+ * breaks activate/spawn.
+ */
+function syncClaudeBlobFromKeychainIfNative(account: Account): void {
+  if (account.adapterId !== 'claude' || account.mode !== 'subscription') return;
+  const nativeEmail = activeClaudeEmail();
+  if (
+    !nativeEmail ||
+    !account.email ||
+    nativeEmail.trim().toLowerCase() !== account.email.trim().toLowerCase()
+  ) {
+    return;
+  }
+  const nativeBlob = readActiveClaudeCredential();
+  if (!nativeBlob) return; // Keychain unreadable → keep the vault snapshot.
+  if (getSecret(CRED_PREFIX + account.id) === nativeBlob) return; // In sync.
+  const saved = setSecret(CRED_PREFIX + account.id, nativeBlob);
+  if (!saved.ok) {
+    console.warn(
+      '[accounts] claude keychain read-back persist failed:',
+      saved.error,
+    );
+  }
+}
+
+/**
  * Materialize a subscription credential for the active/global path.
  * Claude → Keychain; file-backed providers → managed home under ~/.nexus.
  */
 export function ensureSubscriptionActive(account: Account): boolean {
   if (account.mode !== 'subscription') return true;
+  // Claude: read the native keychain back into the vault first — writing a
+  // stale snapshot over the CLI-rotated session kills the live login.
+  syncClaudeBlobFromKeychainIfNative(account);
   const blob = getSecret(CRED_PREFIX + account.id);
   if (!blob) return false;
   if (account.adapterId === 'claude') {
@@ -343,6 +379,9 @@ interface ClaudeOauthCredential {
  * Keychain item, so concurrent panes can use different accounts safely.
  */
 function subscriptionAuthEnv(account: Account): Record<string, string> | null {
+  // Same read-back contract as ensureSubscriptionActive: never build an env
+  // from a stale vault snapshot when the native lineage has moved on.
+  syncClaudeBlobFromKeychainIfNative(account);
   const blob = getSecret(CRED_PREFIX + account.id);
   if (!blob) return null;
   return claudeAuthEnvFromBlob(blob as string);
@@ -358,9 +397,18 @@ function claudeAuthEnvFromBlob(blob: string): Record<string, string> | null {
     const env: Record<string, string> = {
       CLAUDE_CODE_OAUTH_TOKEN: oauth.accessToken,
     };
-    if (typeof oauth.refreshToken === 'string' && oauth.refreshToken.length > 0) {
-      env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN = oauth.refreshToken;
-    }
+    // NO CLAUDE_CODE_OAUTH_REFRESH_TOKEN on purpose: a pinned pane must never
+    // rotate the lineage itself. With the native CLI, the freshness sweeper
+    // AND the pane all able to refresh, the rotation-race loser ends with a
+    // consumed refresh token ("401 Invalid authentication credentials") — the
+    // third actor in the mid-session logout production bug. Recovery contract
+    // when this access token expires: the pane 401s → limit-detector applies
+    // the auth-kind cooldown ('auth', 15min — src/main/orch/limit-detector.ts
+    // patterns at :167-176) → failover respawn re-runs prepareAccountForSpawn
+    // (src/main/orch/failover.ts:341), which re-materializes a FRESH env from
+    // the vault — kept renewed by the sweeper for secondary accounts and by
+    // the keychain read-back for the native one. Verified against those
+    // files; no new machinery needed.
     if (Array.isArray(oauth.scopes)) {
       const scopes = oauth.scopes.filter(
         (scope): scope is string => typeof scope === 'string' && scope.length > 0,
@@ -549,6 +597,11 @@ export function startClaudeSubscriptionFreshness(
 ): () => void {
   const tick = (): void => {
     for (const account of listAccounts('claude')) {
+      // Read-back for the native lineage (keychain → vault): the CLI rotates
+      // it on its own. Distinct from the refresh skip in
+      // ensureFreshClaudeSubscription — we never ROTATE the native account,
+      // but we do track its rotation so the vault snapshot stays restorable.
+      syncClaudeBlobFromKeychainIfNative(account);
       void ensureFreshClaudeSubscription(account.id);
     }
   };
@@ -946,6 +999,13 @@ export function activateAccount(id: string): boolean {
   const account = accounts.get(id);
   if (!account) return false;
   requireWritableDb();
+  // Sync the OUTGOING native Claude account (keychain → vault) BEFORE
+  // overwriting the keychain with the target blob below: the CLI has rotated
+  // the native lineage since our snapshot, and only a fresh vault snapshot
+  // makes a later switch back restore a live credential. Order matters.
+  for (const other of accounts.values()) {
+    if (other.id !== id) syncClaudeBlobFromKeychainIfNative(other);
+  }
   // Materialize subscription credential (keychain or managed home).
   if (account.mode === 'subscription' && !ensureSubscriptionActive(account)) {
     return false;

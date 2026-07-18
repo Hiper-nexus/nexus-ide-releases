@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useQuotaStore } from '../../state/quota-store';
+import { useAccountStore } from '../../state/account-store';
 import { useSettingsStore } from '../../state/settings-store';
 import { windowDisplay } from '../../lib/quota-display';
 import type { ProviderQuotaEntry } from '../../../shared/quota-types';
@@ -10,7 +11,14 @@ import { ProviderLogo } from '../ProviderLogo';
  * Unknown ratios render as "—" never fake 0%.
  */
 
-function EntryCard({ entry }: { entry: ProviderQuotaEntry }) {
+function EntryCard({
+  entry,
+  email,
+}: {
+  entry: ProviderQuotaEntry;
+  /** E-mail da conta do vault (entries de CLI nativo não têm conta). */
+  email?: string;
+}) {
   return (
     <li
       className={`quota-entry ${entry.onCooldown ? 'quota-entry--cool' : ''}`}
@@ -28,7 +36,10 @@ function EntryCard({ entry }: { entry: ProviderQuotaEntry }) {
           }`}
           aria-hidden="true"
         />
-        <span className="quota-entry__label">{entry.label}</span>
+        <span className="quota-entry__title">
+          <span className="quota-entry__label">{entry.label}</span>
+          {email && <span className="quota-entry__email">{email}</span>}
+        </span>
         {!entry.installed && (
           <span className="quota-entry__badge">ausente</span>
         )}
@@ -110,6 +121,8 @@ export function UsageQuotaSection() {
   const hydrate = useQuotaStore((s) => s.hydrate);
   const refresh = useQuotaStore((s) => s.refresh);
   const openDrawer = useSettingsStore((s) => s.openDrawer);
+  // Já hidratado no boot via useAccountController (App.tsx) — aqui é só lookup.
+  const accounts = useAccountStore((s) => s.accounts);
   const entries = snapshot.entries;
   const loaded = status === 'ready' && snapshot.updatedAt > 0;
 
@@ -217,7 +230,15 @@ export function UsageQuotaSection() {
       {entries.length > 0 && (
         <ul className="quota-panel__list">
           {entries.map((e) => (
-            <EntryCard key={e.id} entry={e} />
+            <EntryCard
+              key={e.id}
+              entry={e}
+              email={
+                e.accountId
+                  ? accounts.find((a) => a.id === e.accountId)?.email
+                  : undefined
+              }
+            />
           ))}
         </ul>
       )}

@@ -48,6 +48,16 @@ describe('MCP effect policy', () => {
   it('requires execution-stage authority for direct code and command effects', () => {
     expect(effectPolicyForTool('nexus_file_write')).toBe('execution-effect');
     expect(effectPolicyForTool('terminal_run')).toBe('execution-effect');
+    expect(effectPolicyForTool('nexus_plan_write')).toBe('execution-effect');
+    expect(effectPolicyForTool('nexus_bg_run')).toBe('execution-effect');
+  });
+
+  it('classifies plan/bg/hunk observation tools as read-only or mission-control', () => {
+    expect(effectPolicyForTool('nexus_plan_read')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_bg_list')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_bg_wait')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_hunks_analyze')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_bg_kill')).toBe('mission-control');
   });
 
   it('keeps PREVC transitions under workflow authority without human prompts', () => {

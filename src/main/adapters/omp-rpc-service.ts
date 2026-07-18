@@ -1,4 +1,6 @@
 import { execFile, spawn as nodeSpawn } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
 import { buildOmpInheritedKeyEnv } from './omp-provider-keys';
 import { StringDecoder } from 'node:string_decoder';
 import {
@@ -157,8 +159,12 @@ interface PendingUiRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Resolução do binário (mesma doutrina dos adapters: PATH de login já foi
-// dobrado em process.env.PATH pelo path-resolver no bootstrap).
+// Binary resolution — same doctrine as the adapters (isBinInstalled in
+// adapter-registry.ts): fast `which` against process.env.PATH first (the
+// login-shell PATH is folded into it once at bootstrap by path-resolver);
+// on a miss, re-resolve the login-shell PATH LIVE and retry. The live retry
+// matters because the boot-time fold is one-shot: a `brew install` that
+// lands afterwards is invisible to process.env.PATH until the next launch.
 // ---------------------------------------------------------------------------
 
 export interface OmpBinResolution {
@@ -177,18 +183,64 @@ function execText(
   execImpl: ExecFileFn,
   file: string,
   args: string[],
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execImpl(
       file,
       args,
-      { timeout: VERSION_PROBE_TIMEOUT_MS, env: process.env },
+      { timeout: VERSION_PROBE_TIMEOUT_MS, env },
       (err, stdout) => {
         if (err) reject(err);
         else resolve(String(stdout));
       },
     );
   });
+}
+
+/** Well-known install dirs, mirroring COMMON_MAC_LINUX_PATHS in adapter-registry. */
+const COMMON_BIN_DIRS = [
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+  path.join(os.homedir(), '.local', 'bin'),
+  path.join(os.homedir(), '.npm-global', 'bin'),
+];
+
+/**
+ * Resolve the login-shell PATH live — deliberately NOT memoised, so a
+ * `brew install` that just finished is visible on the very next probe.
+ * The shell probe rides the injected execImpl to stay fakeable in tests.
+ */
+async function probeLoginShellPath(execImpl: ExecFileFn): Promise<string> {
+  if (process.platform === 'win32') return process.env.PATH ?? '';
+  const shell = process.env.SHELL ?? '/bin/bash';
+  let resolved = process.env.PATH ?? '';
+  try {
+    const out = await execText(execImpl, shell, ['-l', '-c', 'printf "%s" "$PATH"']);
+    resolved = out.trim() || resolved;
+  } catch {
+    // Heavy profiles timing out must not lock out standard installations.
+  }
+  const parts = resolved.split(path.delimiter).filter(Boolean);
+  for (const dir of COMMON_BIN_DIRS) {
+    if (!parts.includes(dir)) parts.push(dir);
+  }
+  return parts.join(path.delimiter);
+}
+
+/** `which`/`where` lookup: absolute path of the first hit, null on any miss. */
+async function whichBin(
+  execImpl: ExecFileFn,
+  bin: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | null> {
+  const lookup = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    const out = await execText(execImpl, lookup, [bin], env);
+    return out.split('\n').map((line) => line.trim()).find(Boolean) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Process-lifetime cache of `omp --version` + path (invalidated on major fail). */
@@ -212,23 +264,34 @@ export async function resolveOmpBin(
   if (ompBinCache?.key === cacheKey) return ompBinCache.value;
 
   let binPath = bin;
+  // The env that actually located the binary — reused for `omp --version`
+  // so the probe runs against the same PATH that proved the binary exists.
+  let effectiveEnv: NodeJS.ProcessEnv = process.env;
   if (!bin.includes('/') && !bin.includes('\\')) {
-    const lookup = process.platform === 'win32' ? 'where' : 'which';
-    try {
-      const out = await execText(execImpl, lookup, [bin]);
-      const first = out.split('\n').map((line) => line.trim()).find(Boolean);
-      if (!first) throw new Error('empty which output');
-      binPath = first;
-    } catch {
+    let found = await whichBin(execImpl, bin, process.env);
+    if (!found && process.platform !== 'win32') {
+      // Fast lookup missed. The boot-time PATH fold is one-shot, so an omp
+      // installed after launch (fresh Homebrew, new tap) is invisible here —
+      // re-resolve the login-shell PATH live and retry, the same fallback
+      // isBinInstalled() applies to every other adapter.
+      const loginPath = await probeLoginShellPath(execImpl);
+      if (loginPath && loginPath !== (process.env.PATH ?? '')) {
+        const loginEnv = { ...process.env, PATH: loginPath };
+        found = await whichBin(execImpl, bin, loginEnv);
+        if (found) effectiveEnv = loginEnv;
+      }
+    }
+    if (!found) {
       throw new Error(
         `binário "${bin}" não encontrado no PATH — instale com ` +
           'brew install can1357/tap/omp',
       );
     }
+    binPath = found;
   }
   let version: string | null = null;
   try {
-    const out = await execText(execImpl, binPath, ['--version']);
+    const out = await execText(execImpl, binPath, ['--version'], effectiveEnv);
     version = /(\d+)\.(\d+)\.(\d+)/.exec(out)?.[0] ?? null;
   } catch (err) {
     throw new Error(

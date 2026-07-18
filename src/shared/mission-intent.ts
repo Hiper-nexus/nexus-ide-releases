@@ -54,8 +54,10 @@ export type MissionExecutionMode = z.infer<typeof missionExecutionModeSchema>;
  * - consult: read-only investigation (logs, doctor, status) — no worktrees /
  *   multi-worker expectation; completion via learnings note, not fake green
  *   without a consult-lane contract.
+ * - plan: design approach only (grok-build plan-mode idea) — writes limited to
+ *   mission plan.md; no worktree/code/shell mutations until lane upgrades.
  */
-export const missionLaneSchema = z.enum(['standard', 'consult']);
+export const missionLaneSchema = z.enum(['standard', 'consult', 'plan']);
 export type MissionLane = z.infer<typeof missionLaneSchema>;
 
 export const missionContextPolicySchema = z.enum([
@@ -434,12 +436,12 @@ export function compileIntentContract(input: {
       : [`${AUTO_DERIVED_CRITERION_PREFIX} ${goal.slice(0, 200)}`];
   const lane = input.lane ?? 'standard';
   const budgets =
-    lane === 'consult'
+    lane === 'consult' || lane === 'plan'
       ? {
-          planningTokens: 2_000,
-          executionTokens: 4_000,
+          planningTokens: lane === 'plan' ? 8_000 : 2_000,
+          executionTokens: lane === 'plan' ? 6_000 : 4_000,
           maxWorkers: 0,
-          maxSteps: 32,
+          maxSteps: lane === 'plan' ? 64 : 32,
         }
       : defaultBudgetsForRisk(risk);
   return missionIntentContractSchema.parse({
@@ -463,6 +465,24 @@ export function isConsultLane(mission: {
   readonly intentContract?: { readonly lane?: MissionLane | null } | null;
 }): boolean {
   return mission.intentContract?.lane === 'consult';
+}
+
+/** True when the mission is plan-only (design before code). */
+export function isPlanLane(mission: {
+  readonly intentContract?: { readonly lane?: MissionLane | null } | null;
+}): boolean {
+  return mission.intentContract?.lane === 'plan';
+}
+
+/**
+ * Paths a plan-lane agent may write (relative, posix). Everything else is deny.
+ * plan.md lives at the workspace root of the mission checkout.
+ */
+export const PLAN_LANE_WRITABLE_PATHS = ['plan.md', 'docs/plan.md'] as const;
+
+export function isPlanLaneWritablePath(relativePath: string): boolean {
+  const normalized = relativePath.replaceAll('\\', '/').replace(/^\.\//, '');
+  return (PLAN_LANE_WRITABLE_PATHS as readonly string[]).includes(normalized);
 }
 
 /** Minimum durable learning size for consult-lane done (not code PREVC green). */

@@ -157,10 +157,10 @@ export function MissionWizard() {
   const [armedMissionId, setArmedMissionId] = useState<string | null>(null);
   const [missionGoal, setMissionGoal] = useState('');
   const [missionAttachments, setMissionAttachments] = useState<MissionAttachment[]>([]);
-  /** standard = code PREVC; consult = read-only investigation contract. */
-  const [missionLane, setMissionLane] = useState<'standard' | 'consult'>(
-    'standard',
-  );
+  /** standard = code PREVC; consult = read-only; plan = design-only plan.md. */
+  const [missionLane, setMissionLane] = useState<
+    'standard' | 'consult' | 'plan'
+  >('standard');
   const [plannedMission, setPlannedMission] = useState<Mission | null>(null);
   const armedMissionSnapshot = useOrchStore((state) =>
     armedMissionId
@@ -1517,7 +1517,7 @@ export function MissionWizard() {
                     conclusão só com receipts imutáveis.
                   </span>
                 </label>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
                   <input
                     type="radio"
                     name="mission-lane"
@@ -1527,6 +1527,18 @@ export function MissionWizard() {
                   <span>
                     <strong>Consulta (somente leitura)</strong> — logs, status,
                     doctor; sem editar código. Done exige learning durável.
+                  </span>
+                </label>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <input
+                    type="radio"
+                    name="mission-lane"
+                    checked={missionLane === 'plan'}
+                    onChange={() => setMissionLane('plan')}
+                  />
+                  <span>
+                    <strong>Plano (design)</strong> — escreve só plan.md;
+                    sem worktree, shell ou código até sair do plan mode.
                   </span>
                 </label>
               </fieldset>
@@ -1619,7 +1631,9 @@ export function MissionWizard() {
                     <strong>Lane:</strong>{' '}
                     {plannedMission.intentContract.lane === 'consult'
                       ? 'consulta (somente leitura)'
-                      : 'código (PREVC)'}
+                      : plannedMission.intentContract.lane === 'plan'
+                        ? 'plano (design / plan.md)'
+                        : 'código (PREVC)'}
                     {' · '}
                     <strong>Risco:</strong> {plannedMission.intentContract.risk}
                     {' · '}

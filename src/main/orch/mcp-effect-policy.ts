@@ -66,6 +66,11 @@ const READ_ONLY_TOOLS = new Set([
   // isso atrás do freeze cria um deadlock de cerimônia.
   'clarify',
   'todo_manager',
+  // Plan / bg / hunks — observation or bounded local state (handlers enforce).
+  'plan_read',
+  'bg_list',
+  'bg_wait',
+  'hunks_analyze',
 ]);
 
 /**
@@ -125,6 +130,7 @@ const MISSION_CONTROL_TOOLS = new Set([
   'file_close',
   'file_open',
   'terminal_kill',
+  'bg_kill',
 ]);
 
 /**
@@ -150,6 +156,7 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'editor_insert',
   'editor_replace_selection',
   'file_write',
+  'plan_write',
   'git_add',
   'git_branch_create',
   'git_branch_switch',
@@ -158,6 +165,7 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'git_push',
   'image_generate',
   'terminal_run',
+  'bg_run',
   'video_generate',
 ]);
 

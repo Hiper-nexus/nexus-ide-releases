@@ -8,6 +8,7 @@ import { executionScopeFor } from './gate';
 import {
   buildScopedShellPlan,
   createScopedSandboxHome,
+  type SandboxProfile,
 } from '../runtime/process-sandbox';
 
 /**
@@ -133,6 +134,13 @@ const terminalRun: McpToolDef = {
         type: 'object',
         description: 'Extra environment variables',
       },
+      sandboxProfile: {
+        type: 'string',
+        enum: ['workspace-only', 'workspace-net', 'yolo'],
+        description:
+          'Sandbox profile: workspace-only (default, no net on macOS), ' +
+          'workspace-net (path confined + network), yolo (same as net, never host-wide).',
+      },
     },
     required: ['command'],
   },
@@ -142,6 +150,13 @@ const terminalRun: McpToolDef = {
     const cwd = resolveCwdForScope(executionScope, str(args, 'cwd'));
     const timeoutMs = boundedTimeout(args.timeoutMs);
     const env = sanitizeEnv(args.env);
+    const rawProfile = str(args, 'sandboxProfile');
+    const sandboxProfile: SandboxProfile | undefined =
+      rawProfile === 'workspace-only' ||
+      rawProfile === 'workspace-net' ||
+      rawProfile === 'yolo'
+        ? rawProfile
+        : undefined;
 
     return new Promise<{
       exitCode: number | null;
@@ -159,6 +174,7 @@ const terminalRun: McpToolDef = {
           rootRealPath: executionScope.rootRealPath,
           sandboxDir: sandbox.dir,
           env,
+          sandboxProfile,
         });
       } catch (error) {
         fs.rmSync(sandbox.dir, { recursive: true, force: true });

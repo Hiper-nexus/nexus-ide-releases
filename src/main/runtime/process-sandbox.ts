@@ -14,6 +14,38 @@ export interface ScopedSandboxHome {
   tmp: string;
 }
 
+/**
+ * Sandbox profiles (grok-build tool-sandbox idea):
+ * - workspace-only: path confined, network denied (macOS Seatbelt default)
+ * - workspace-net: path confined, network allowed (npm, curl to APIs)
+ * - yolo: same confinement as workspace-net (never escapes checkout); name
+ *   matches operator "full tool" mode, not host-wide root access.
+ */
+export type SandboxProfile = 'workspace-only' | 'workspace-net' | 'yolo';
+
+/**
+ * Explicit profile wins. When omitted:
+ * - macOS / Windows → workspace-only (deny network)
+ * - Linux → workspace-net (bwrap needs host net on many CI runners)
+ */
+export function resolveSandboxProfile(
+  profile: SandboxProfile | undefined,
+  platform: NodeJS.Platform = process.platform,
+): SandboxProfile {
+  if (
+    profile === 'workspace-net' ||
+    profile === 'yolo' ||
+    profile === 'workspace-only'
+  ) {
+    return profile;
+  }
+  return platform === 'linux' ? 'workspace-net' : 'workspace-only';
+}
+
+export function sandboxAllowsNetwork(profile: SandboxProfile): boolean {
+  return profile === 'workspace-net' || profile === 'yolo';
+}
+
 export interface ScopedShellPlanInput {
   platform: NodeJS.Platform;
   command: string;
@@ -21,6 +53,8 @@ export interface ScopedShellPlanInput {
   rootRealPath: string;
   sandboxDir: string;
   env: NodeJS.ProcessEnv;
+  /** Default workspace-only (deny net on macOS). */
+  sandboxProfile?: SandboxProfile;
 }
 
 export interface ScopedShellPlan {
@@ -41,6 +75,7 @@ export interface ScopedExecPlanInput {
   env: NodeJS.ProcessEnv;
   /** Sensors/review commands set this so validation can never mutate code. */
   readOnlyRoot?: boolean;
+  sandboxProfile?: SandboxProfile;
 }
 
 interface NormalizedExecPlanInput {
@@ -51,6 +86,7 @@ interface NormalizedExecPlanInput {
   readonly sandboxDir: string;
   readonly env: NodeJS.ProcessEnv;
   readonly readOnlyRoot: boolean;
+  readonly sandboxProfile: SandboxProfile;
 }
 
 const MACOS_DENIED_READ_ROOTS = [
@@ -180,6 +216,7 @@ function buildMacosProfile(
   sandboxDir: string,
   envPath: string | undefined,
   readOnlyRoot = false,
+  allowNetwork = false,
 ): string {
   const deniedReads = MACOS_DENIED_READ_ROOTS.map(
     (root) => `(subpath ${sbplString(root)})`,
@@ -204,7 +241,8 @@ function buildMacosProfile(
   return [
     '(version 1)',
     '(allow default)',
-    '(deny network*)',
+    // workspace-only denies network; workspace-net / yolo allow it.
+    allowNetwork ? '(allow network*)' : '(deny network*)',
     '(deny file-write*)',
     `(allow file-write* ${allowedWrites})`,
     `(deny file-read* ${deniedReads})`,
@@ -224,6 +262,7 @@ export function buildScopedShellPlan(
     rootRealPath: input.rootRealPath,
     sandboxDir: input.sandboxDir,
     env: input.env,
+    sandboxProfile: input.sandboxProfile,
   });
 }
 
@@ -269,6 +308,10 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
       TEMP: tmp,
     }),
     readOnlyRoot: input.readOnlyRoot === true,
+    sandboxProfile: resolveSandboxProfile(
+      input.sandboxProfile,
+      input.platform,
+    ),
   });
 }
 
@@ -319,16 +362,16 @@ function linuxPlan(
   const maskedRoots = LINUX_MASKED_ROOTS.filter((candidate) =>
     candidate === '/home' || candidate === '/tmp' || fs.existsSync(candidate),
   );
-  // `--unshare-all` then `--share-net`: full isolation except the network
-  // namespace. Nested user namespaces on GitHub-hosted runners cannot create
-  // the loopback interface (`RTM_NEWADDR: Operation not permitted`), which
-  // made every sandboxed agent/terminal command fail in CI. Sharing the host
-  // net keeps the rest of the confinement (user/pid/mount/uts/ipc/cgroup).
+  // `--unshare-all` then optional `--share-net`. Nested user namespaces on
+  // GitHub-hosted runners cannot create loopback without share-net, so the
+  // default for workspace-net/yolo (and Linux CI) keeps host net. workspace-only
+  // omits --share-net for stricter isolation when the profile requests it.
+  const allowNet = sandboxAllowsNetwork(input.sandboxProfile);
   const args = [
     '--die-with-parent',
     '--new-session',
     '--unshare-all',
-    '--share-net',
+    ...(allowNet ? ['--share-net'] : []),
     '--ro-bind', '/', '/',
     '--proc', '/proc',
     '--dev', '/dev',
@@ -378,6 +421,7 @@ function macosPlan(
         input.sandboxDir,
         input.env.PATH,
         input.readOnlyRoot,
+        sandboxAllowsNetwork(input.sandboxProfile),
       ),
       input.executable,
       ...input.args,
@@ -409,7 +453,9 @@ function windowsOciPlan(
   return {
     file: runtimeExecutable,
     args: [
-      'run', '--rm', '--network', 'none', '--read-only',
+      'run', '--rm',
+      '--network', sandboxAllowsNetwork(input.sandboxProfile) ? 'bridge' : 'none',
+      '--read-only',
       '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
       '--pids-limit', '512', '--memory', '4g',
       '--mount', `type=bind,src=${input.rootRealPath},dst=/workspace${input.readOnlyRoot ? ',readonly' : ''}`,

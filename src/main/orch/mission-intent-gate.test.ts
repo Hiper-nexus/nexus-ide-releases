@@ -126,6 +126,66 @@ describe('mission intent gate', () => {
     }
   });
 
+  it('plan lane allows plan writes and denies shell/worktree/code', () => {
+    const plan: Mission = {
+      ...awaitingGoal,
+      intentState: 'dispatched',
+      intentVersion: 1,
+      intentContract: {
+        version: 1,
+        source: 'typed',
+        goal: 'Desenhar a abordagem de auth',
+        acceptanceCriteria: ['plan.md com riscos e verificação'],
+        risk: 'normal',
+        executionMode: 'autopilot',
+        lane: 'plan',
+        intentVersion: 1,
+        approvedAt: 1,
+        dispatchedAt: 1,
+        budgets: {
+          planningTokens: 8000,
+          executionTokens: 6000,
+          maxWorkers: 0,
+          maxSteps: 64,
+        },
+      },
+    };
+
+    expect(
+      assertMissionIntentAllowsTool('nexus_file_read', { mission: plan }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_plan_write', { mission: plan }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_plan_read', { mission: plan }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_file_write', { mission: plan }).ok,
+    ).toBe(true); // path enforced in handler
+    expect(
+      assertMissionIntentAllowsTool('nexus_mission_set_status', {
+        mission: plan,
+      }).ok,
+    ).toBe(true);
+
+    for (const tool of [
+      'nexus_terminal_run',
+      'nexus_bg_run',
+      'nexus_worktree_create',
+      'nexus_pane_spawn',
+      'nexus_merge_task',
+      'nexus_git_commit',
+    ] as const) {
+      const result = assertMissionIntentAllowsTool(tool, { mission: plan });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('tool_denied');
+        expect(result.error).toMatch(/plan lane/i);
+      }
+    }
+  });
+
   it('allows prepare-project warm tools only while awaiting goal', () => {
     const prepare: Mission = {
       ...awaitingGoal,

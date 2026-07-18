@@ -17,13 +17,16 @@ import {
 import { PUBLIC_MODEL_RANKING_SCHEMA_VERSION } from '../../shared/eval-ranking-types';
 
 describe('public ranking read path (IPC payload contract)', () => {
-  it('published catalog quality yields public ranking for UI and landing', () => {
-    // After export-public-ranking.mjs, published catalog carries quality blocks.
-    const entries = publicEntriesFromCatalog(PUBLISHED_MODEL_CATALOG);
-    expect(entries.length).toBeGreaterThanOrEqual(4);
+  it('published catalog without quality yields no entries; offline pipeline is the fallback', () => {
+    // Fixture scores foram removidos de resources/model-catalog.json — o read
+    // path do catálogo fica graciosamente vazio até uma avaliação real ser
+    // publicada; getPublicModelRanking então cai no bundled model-ranking.json
+    // e, por fim, no pipeline offline (ver eval-ipc.ts).
+    expect(publicEntriesFromCatalog(PUBLISHED_MODEL_CATALOG)).toEqual([]);
 
-    const snapshot = buildPublicRankingFromCatalog(PUBLISHED_MODEL_CATALOG);
+    const snapshot = runOfflineEvalV1(PUBLISHED_MODEL_CATALOG).publicRanking;
     expect(snapshot.schemaVersion).toBe(PUBLIC_MODEL_RANKING_SCHEMA_VERSION);
+    expect(snapshot.entries.length).toBeGreaterThan(0);
     expect(snapshot.entries.every((e) => e.source.startsWith('nexus-eval/'))).toBe(
       true,
     );

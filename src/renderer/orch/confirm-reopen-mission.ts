@@ -37,7 +37,11 @@ export function resumeIntentFirstMissionShell(mission: Mission): MissionReopenRe
     intent: goal,
     missionGoal: goal,
     missionLane:
-      mission.intentContract?.lane === 'consult' ? 'consult' : 'standard',
+      mission.intentContract?.lane === 'consult'
+        ? 'consult'
+        : mission.intentContract?.lane === 'plan'
+          ? 'plan'
+          : 'standard',
     squadId,
     armedMissionId: mission.id,
     count: 2,

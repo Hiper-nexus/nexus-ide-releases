@@ -72,6 +72,27 @@ describe('process sandbox', () => {
     expect(profile).not.toContain(JSON.stringify(os.homedir()) + ')');
   });
 
+  it('allows network under workspace-net / yolo Seatbelt profiles', () => {
+    const root = makeDir('nexus-sandbox-root-net');
+    const runtime = makeDir('nexus-sandbox-runtime-net');
+
+    const plan = buildMacosSeatbeltPlan({
+      platform: 'darwin',
+      executable: '/bin/sh',
+      args: ['-c', 'true'],
+      cwd: root,
+      rootRealPath: root,
+      sandboxDir: runtime,
+      env: { PATH: '/usr/bin:/bin', HOME: os.homedir() },
+      sandboxProfile: 'workspace-net',
+    }, '/usr/bin/sandbox-exec');
+
+    expect(plan.args[1]).toContain('(allow network*)');
+    expect(plan.args[1]).not.toContain('(deny network*)');
+    // Still path-confined
+    expect(plan.args[1]).toContain('(deny file-write*)');
+  });
+
   it('fails closed on platforms without a confinement provider', () => {
     const root = makeDir('nexus-sandbox-root');
     const runtime = makeDir('nexus-sandbox-runtime');

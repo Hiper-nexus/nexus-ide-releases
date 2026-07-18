@@ -142,6 +142,23 @@ describe('orientationForKickoff', () => {
     expect(prompt).not.toContain('nexus_merge_task');
     expect(prompt).toMatch(/status=blocked/);
   });
+
+  it('uses plan-mode contract when lane=plan', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-plan',
+      goal: 'Desenhar a migração de auth',
+      acceptanceCriteria: ['plan.md com riscos'],
+      risk: 'normal',
+      maxWorkers: 0,
+      lane: 'plan',
+    });
+    expect(prompt).toContain('lane=plan');
+    expect(prompt).toContain('nexus_plan_write');
+    expect(prompt).toContain('plan.md');
+    expect(prompt).not.toContain('nexus_merge_task');
+    expect(prompt).not.toContain('nexus_mission_freeze_contract');
+  });
 });
 
 describe('intent-first launch continuity', () => {

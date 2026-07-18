@@ -114,21 +114,23 @@ describe('published catalog JSON', () => {
     expect(isModelBlockedForAutoRouting(fable)).toBe(true);
   });
 
-  it('accepts nexus-eval quality blocks on published models', () => {
-    const opus = modelCatalogInfo(
-      PUBLISHED_MODEL_CATALOG,
-      'claude',
-      'claude-opus-4-8',
-    );
-    expect(opus?.quality?.overall).toBeGreaterThan(0);
-    expect(opus?.quality?.overall).toBeLessThanOrEqual(100);
-    expect(opus?.quality?.source).toMatch(/^nexus-eval\//);
-    expect(opus?.quality?.coding).toBeDefined();
-    expect(opus?.quality?.security).toBeDefined();
+  it('keeps any shipped quality block well-formed (no fixture scores)', () => {
+    // Fixture scores were removed from resources/model-catalog.json: quality
+    // only ships again when a REAL nexus-eval run is published. Whenever a
+    // block exists, it must satisfy the safeModels contract.
+    for (const adapter of Object.values(PUBLISHED_MODEL_CATALOG.adapters ?? {})) {
+      for (const model of adapter.models ?? []) {
+        if (!model.quality) continue;
+        expect(model.quality.overall).toBeGreaterThan(0);
+        expect(model.quality.overall).toBeLessThanOrEqual(100);
+        expect(model.quality.source).toMatch(/^nexus-eval\//);
+        expect(Number.isNaN(Date.parse(model.quality.evaluatedAt))).toBe(false);
+      }
+    }
   });
 });
 
-describe('loadModelCatalog published quality layer', () => {
+describe('loadModelCatalog quality merge layer', () => {
   const tmpDirs: string[] = [];
 
   afterEach(() => {
@@ -139,29 +141,89 @@ describe('loadModelCatalog published quality layer', () => {
     tmpDirs.length = 0;
   });
 
-  it('keeps nexus-eval quality when user overlay has cost-only legacy entries', () => {
+  it('keeps nexus-eval quality when a cost-only legacy overlay merges on top', () => {
+    // A regra mora em mergeModelCatalogs: entry de overlay sem quality não
+    // pode apagar a quality da base. Base sintética — o catálogo publicado
+    // não carrega mais notas de fixture.
+    const base = {
+      version: 1,
+      adapters: {
+        claude: {
+          models: [
+            {
+              id: 'claude-opus-4-8',
+              availability: 'paid' as const,
+              costTier: 'high' as const,
+              source: 'nexus-eval',
+              quality: {
+                overall: 61,
+                coding: 63,
+                security: 62,
+                evaluatedAt: '2026-07-11T21:00:00.000Z',
+                source: 'nexus-eval/v1/test',
+              },
+            },
+          ],
+        },
+      },
+    };
+    const legacyOverlay = {
+      adapters: {
+        claude: {
+          models: [
+            {
+              id: 'claude-opus-4-8',
+              availability: 'paid' as const,
+              costTier: 'high' as const,
+              source: 'local',
+            },
+          ],
+        },
+      },
+    };
+
+    const merged = mergeModelCatalogs(base, legacyOverlay);
+    const opus = modelCatalogInfo(merged, 'claude', 'claude-opus-4-8');
+    expect(opus?.source).toBe('local');
+    expect(opus?.quality?.source).toMatch(/^nexus-eval\//);
+    expect(opus?.quality?.overall).toBeGreaterThan(0);
+    expect(opus?.quality?.security).toBeDefined();
+  });
+
+  it('passes well-formed quality through the on-disk normalizer and drops malformed blocks', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-model-catalog-'));
     tmpDirs.push(dir);
     const file = path.join(dir, 'model-catalog.json');
-    // Legacy user catalog: same model ids, no quality — used to blank the motor.
     fs.writeFileSync(
       file,
       JSON.stringify({
         version: 1,
         adapters: {
-          claude: {
+          local: {
             models: [
               {
-                id: 'claude-opus-4-8',
-                availability: 'paid',
-                costTier: 'high',
-                source: 'local',
+                id: 'well-formed',
+                quality: {
+                  overall: 70,
+                  evaluatedAt: '2026-07-11T21:00:00.000Z',
+                  source: 'nexus-eval/v1/test',
+                },
               },
               {
-                id: 'claude-haiku-4-5',
-                availability: 'cheap',
-                costTier: 'low',
-                source: 'local',
+                id: 'bad-source',
+                quality: {
+                  overall: 70,
+                  evaluatedAt: '2026-07-11T21:00:00.000Z',
+                  source: 'manual-scrape',
+                },
+              },
+              {
+                id: 'out-of-range',
+                quality: {
+                  overall: 140,
+                  evaluatedAt: '2026-07-11T21:00:00.000Z',
+                  source: 'nexus-eval/v1/test',
+                },
               },
             ],
           },
@@ -171,11 +233,9 @@ describe('loadModelCatalog published quality layer', () => {
 
     invalidateModelCatalogCache();
     const catalog = loadModelCatalog(file);
-    const opus = modelCatalogInfo(catalog, 'claude', 'claude-opus-4-8');
-    expect(opus?.source).toBe('local');
-    expect(opus?.quality?.source).toMatch(/^nexus-eval\//);
-    expect(opus?.quality?.overall).toBeGreaterThan(0);
-    expect(opus?.quality?.security).toBeDefined();
+    expect(modelCatalogInfo(catalog, 'local', 'well-formed')?.quality?.overall).toBe(70);
+    expect(modelCatalogInfo(catalog, 'local', 'bad-source')?.quality).toBeUndefined();
+    expect(modelCatalogInfo(catalog, 'local', 'out-of-range')?.quality).toBeUndefined();
   });
 });
 

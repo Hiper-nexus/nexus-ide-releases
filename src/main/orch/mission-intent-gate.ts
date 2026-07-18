@@ -153,6 +153,33 @@ export function assertMissionIntentAllowsTool(
     );
   }
 
+  // Plan lane (grok-build plan-mode): read + plan.md writes + status only.
+  // Worktree/merge/shell/code edits stay denied until the operator upgrades lane.
+  if (contract?.lane === 'plan' && canonical !== 'mission_set_status') {
+    const planAllowed = new Set([
+      'file_write', // path-checked in file tool handler
+      'plan_write',
+      'plan_read',
+      'handoff_submit',
+      'handoff_list',
+      'clarify',
+      'todo_manager',
+      'memory_retain',
+      'memory_recall',
+    ]);
+    if (policy !== 'read-only' && !planAllowed.has(canonical)) {
+      return deny(
+        'tool_denied',
+        `tool_denied: plan lane only allows design (plan.md / read tools); ` +
+          `${toolName} is not allowed until the mission leaves plan mode`,
+        ctx,
+        intentState,
+        intentVersion,
+        toolName,
+      );
+    }
+  }
+
   // Step/token budgets after dispatch.
   if (isDispatchAuthorized) {
     const budget = assertStepAndTokenBudget(contract);

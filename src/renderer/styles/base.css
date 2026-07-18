@@ -1933,8 +1933,11 @@ body {
 
 .agent-notif__count {
   position: absolute;
-  top: -5px;
-  right: -4px;
+  /* top não pode ser negativo: a zona de status tem 26px + overflow:hidden e
+     recorta o badge (ele nascia com o topo cortado, colado no glifo do sino).
+     right:-5px pendura o badge na borda direita, fora do glifo de 12px. */
+  top: 0;
+  right: -5px;
   min-width: 14px;
   height: 14px;
   padding: 0 3px;
@@ -2253,4 +2256,21 @@ body {
   .fleet-chip__seg--working .fleet-chip__dot {
     animation: none;
   }
+}
+
+/* ---- Quota panel: e-mail da conta sob o título do card ----
+   Mesmo padrão do subtítulo/meta do AccountSwitcher (10px, --text-dim,
+   ellipsis). */
+.quota-entry__title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.quota-entry__email {
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

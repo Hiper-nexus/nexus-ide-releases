@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import {
   ompExtensionUiRequestSchema,
   ompHostToolCallFrameSchema,
@@ -311,6 +312,93 @@ describe('resolveOmpBin', () => {
     await expect(resolveOmpBin('omp', exec as never)).rejects.toThrow(
       /incompatível/,
     );
+  });
+
+  // Bug NEXUS-UI-BUGS-001 §2: brew install pós-boot não aparece no PATH
+  // herdado — o retry com o PATH do login shell ao vivo precisa achar o omp.
+  it.skipIf(process.platform === 'win32')(
+    'which rápido falha → retenta com o PATH do login shell e usa esse PATH no --version',
+    async () => {
+      // Diretório marcador que SÓ a sonda de login shell devolve: o which
+      // rápido falha de forma determinística, independente do PATH real do
+      // runner de teste.
+      const loginPath = ['/fake-login/bin', '/opt/homebrew/bin'].join(path.delimiter);
+      const calls: Array<{ file: string; args: string[]; envPath?: string }> = [];
+      const exec = vi.fn(
+        (
+          file: string,
+          args: string[],
+          opts: { timeout: number; env?: NodeJS.ProcessEnv },
+          cb: (err: Error | null, stdout: string) => void,
+        ) => {
+          calls.push({ file, args, envPath: opts.env?.PATH });
+          if (args[0] === '--version') {
+            cb(null, 'omp 17.0.0\n');
+          } else if (args[0] === '-l') {
+            cb(null, loginPath);
+          } else if (file === 'which') {
+            if (opts.env?.PATH?.includes('/fake-login/bin')) {
+              cb(null, '/opt/homebrew/bin/omp\n');
+            } else {
+              cb(new Error('which: no omp in path'), '');
+            }
+          } else {
+            cb(new Error(`chamada inesperada: ${file} ${args.join(' ')}`), '');
+          }
+        },
+      );
+      const resolved = await resolveOmpBin('omp', exec as never);
+      expect(resolved.binPath).toBe('/opt/homebrew/bin/omp');
+      expect(resolved.version).toBe('17.0.0');
+      // Duas sondagens: a rápida (PATH do processo) + o retry (login shell).
+      expect(calls.filter((c) => c.file === 'which')).toHaveLength(2);
+      // O --version roda com o PATH efetivo — o que de fato achou o binário.
+      const versionCall = calls.find((c) => c.args[0] === '--version');
+      expect(versionCall?.envPath).toContain('/fake-login/bin');
+    },
+  );
+
+  it('which falha nas duas passadas → erro orientando brew install', async () => {
+    const exec = vi.fn(
+      (
+        _file: string,
+        args: string[],
+        _opts: { timeout: number; env?: NodeJS.ProcessEnv },
+        cb: (err: Error | null, stdout: string) => void,
+      ) => {
+        if (args[0] === '-l') {
+          cb(null, ['/somente-login', '/usr/bin'].join(path.delimiter));
+        } else {
+          cb(new Error('not found'), '');
+        }
+      },
+    );
+    await expect(resolveOmpBin('omp', exec as never)).rejects.toThrow(
+      /brew install can1357\/tap\/omp/,
+    );
+    // Sem binário localizado, nenhuma sonda de versão acontece.
+    const versionCalls = exec.mock.calls.filter(
+      (call) => (call[1] as string[])[0] === '--version',
+    );
+    expect(versionCalls).toHaveLength(0);
+  });
+
+  it('sucesso fica em cache — o segundo resolve não re-sonda', async () => {
+    const exec = vi.fn(
+      (
+        _file: string,
+        args: string[],
+        _opts: { timeout: number },
+        cb: (err: Error | null, stdout: string) => void,
+      ) => {
+        cb(null, args[0] === '--version' ? 'omp 17.0.0\n' : '/opt/homebrew/bin/omp\n');
+      },
+    );
+    const first = await resolveOmpBin('omp', exec as never);
+    const second = await resolveOmpBin('omp', exec as never);
+    expect(second).toEqual(first);
+    // which + --version uma única vez; o segundo resolve veio do cache.
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -15,6 +15,9 @@ import { buildDesignSystemTools } from './tools-design-system';
 import { buildWorkspaceDependencyTools } from './tools-workspace-dependencies';
 import { buildSecurityTools } from './tools-security';
 import { buildMemoryTools } from './tools-memory';
+import { buildBgTools } from './tools-bg';
+import { buildPlanTools } from './tools-plan';
+import { buildHunkTools } from './tools-hunks';
 
 /**
  * The MCP toolset — the orchestration tools in the
@@ -25,7 +28,7 @@ import { buildMemoryTools } from './tools-memory';
  * Groups: panes (10), routing, handoffs, agents, missions, squad/catalog/task,
  * todos, preview/browser, perf, media generation (image/video/audio),
  * files (5), terminal (2), git (10), editor (4), design (1),
- * design systems (3), read-only security audits (2).
+ * design systems (3), read-only security audits (2), bg tasks, plan lane, hunks.
  */
 export function buildToolset(): McpToolDef[] {
   return [
@@ -37,6 +40,9 @@ export function buildToolset(): McpToolDef[] {
     ...buildMediaTools(),
     ...buildFileTools(),
     ...buildTerminalTools(),
+    ...buildBgTools(),
+    ...buildPlanTools(),
+    ...buildHunkTools(),
     ...buildGitTools(),
     ...buildEditorTools(),
     ...buildVisionTools(),

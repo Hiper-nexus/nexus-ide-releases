@@ -9,6 +9,7 @@ import { onHandoffSubmitted } from './idle-delivery';
 import type { McpToolDef } from './mcp-protocol';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { requireStr, str } from './tool-util';
+import { compactText } from './session-compaction';
 
 const handoffSubmitTool: McpToolDef = {
   name: 'nexus_handoff_submit',
@@ -62,13 +63,15 @@ const handoffSubmitTool: McpToolDef = {
     if (!origin.ok) {
       throw new Error(origin.error);
     }
-    const summary = requireStr(args, 'summary').trim();
-    if (summary.length < 20 || /^<.*>$/.test(summary)) {
+    const rawSummary = requireStr(args, 'summary').trim();
+    if (rawSummary.length < 20 || /^<.*>$/.test(rawSummary)) {
       throw new Error(
         'summary inválido: descreva de verdade o que foi feito (mínimo 20 ' +
           'caracteres, sem placeholders como "<resumo...>").',
       );
     }
+    // Cap stored summary so multi-session handoffs stay compact (grok-build idea).
+    const summary = compactText(rawSummary, { maxChars: 4_000 }).text;
     const rawEvidenceIds = args.evidenceIds;
     if (
       rawEvidenceIds !== undefined &&

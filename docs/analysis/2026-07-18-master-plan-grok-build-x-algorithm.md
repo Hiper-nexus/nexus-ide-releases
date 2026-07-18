@@ -13,17 +13,17 @@ Transplantamos **órgãos e padrões**.
 
 | Prioridade | Origem | Entrega | Status |
 |------------|--------|---------|--------|
-| **F1** | x-algorithm | RoutePipeline multi-score + diversity attenuation | **implementar agora** |
-| **F1** | x-algorithm / grok | Circuit breaker por adapter | **implementar agora** |
-| **F1** | x-algorithm Thunder | Hot cache leve (adapter snapshot) | **implementar agora** |
-| **F2** | grok-build | CoW / fast worktrees (APFS clonefile) | planejado |
-| **F2** | grok-build | Hunk tracker (agent vs humano) | planejado |
-| **F2** | grok-build | Tool sandbox Seatbelt/Landlock | planejado |
-| **F3** | grok-build | Plan mode UX (approve/revise) | planejado |
-| **F3** | grok-build | Background tasks MCP (run/wait/kill) | planejado |
-| **F3** | grok-build | Compaction engine multi-session | planejado |
-| **F4** | grok-build | Codebase graph (tree-sitter) | planejado |
-| **F4** | grok-build | Adapter `grok` CLI / ACP | planejado |
+| **F1** | x-algorithm | RoutePipeline multi-score + diversity attenuation | **done** |
+| **F1** | x-algorithm / grok | Circuit breaker por adapter | **done** |
+| **F1** | x-algorithm Thunder | Hot cache leve (adapter snapshot) | **done** |
+| **F2** | grok-build | CoW / fast worktrees (APFS clonefile + git) | **done** |
+| **F2** | grok-build | Hunk tracker (agent vs humano) | **done** |
+| **F2** | grok-build | Tool sandbox profiles (Seatbelt/bwrap) | **done** |
+| **F3** | grok-build | Plan mode UX (lane + gate + wizard) | **done** |
+| **F3** | grok-build | Background tasks MCP (run/wait/kill) | **done** |
+| **F3** | grok-build | Compaction engine multi-session | **done** |
+| **F4** | grok-build | Codebase graph (orientation / code_map) | **done** (existente) |
+| **F4** | grok-build | Adapter `grok` CLI / ACP | **done** (existente) |
 | **F4** | x-algorithm | Phoenix ML ranker treinado | **fora** (sem corpus) |
 
 ---
@@ -131,13 +131,26 @@ Candidate isolation: score(A) não depende do set de concorrentes no batch — d
 
 ## 5. Ordem de PRs
 
-| PR | Escopo |
-|----|--------|
-| **PR-A** | Plan doc + route multi-score + circuit breaker + wire tests |
-| **PR-B** | CoW worktree macOS + fallback |
-| **PR-C** | Hunk tracker + UI |
-| **PR-D** | Sandbox seatbelt profiles |
-| **PR-E** | Plan mode + bg MCP |
+| PR | Escopo | Status |
+|----|--------|--------|
+| **PR-A** | Plan doc + route multi-score + circuit breaker + wire tests | shipped (`379d821`) |
+| **PR-B** | CoW worktree macOS + git fallback + heavy-dir clonefile | this batch |
+| **PR-C** | Hunk tracker MCP (`nexus_hunks_analyze`) | this batch |
+| **PR-D** | Sandbox profiles workspace-only / workspace-net / yolo | this batch |
+| **PR-E** | Plan mode lane + bg MCP + session compaction | this batch |
+
+### Superfícies de produto (F2–F4)
+
+| Feature | Onde |
+|---------|------|
+| CoW worktree | `src/main/runtime/worktree-cow.ts` → `WorktreeManager` |
+| Hunk attribution | `nexus_hunks_analyze` |
+| Sandbox profiles | `process-sandbox.ts` + `nexus_terminal_run.sandboxProfile` |
+| Plan lane | wizard «Tipo de entrega» + gate + `nexus_plan_write/read` |
+| Background tasks | `nexus_bg_run` / `wait` / `kill` / `list` |
+| Compaction | `session-compaction.ts` + handoff summary cap |
+| Code map | `nexus_code_map_*` (orientation service) |
+| Grok adapter | catalog + install recipes + route tables |
 
 ---
 
