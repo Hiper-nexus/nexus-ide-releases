@@ -53,6 +53,9 @@ import {
   writeClaudeFamilyZeroClickSettings,
   writeMcpConfigFile,
 } from './hooks-gen';
+import { handleHookStatusHttp } from './hook-status-endpoint';
+import { resetAgentStatusOnExit } from './agent-status';
+import { codexStatusHookArgs } from './hook-status-config';
 import {
   cleanupAgyMcpConfig,
   cleanupOmpMcpConfig,
@@ -133,6 +136,14 @@ function mcpUrl(): string {
 
 function gateUrl(): string {
   return `http://127.0.0.1:${port}/gate`;
+}
+
+/**
+ * Semantic agent-status ingest (emdash wave 1): same loopback server, same
+ * per-pane bearer as /gate/* — hook commands reference this via $NEXUS_HOOK_URL.
+ */
+function hookStatusUrl(): string {
+  return `http://127.0.0.1:${port}/hook/status`;
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -344,6 +355,8 @@ function installSpawnHook(): void {
       NEXUS_MCP_TOKEN: ctx.token,
       NEXUS_GATE_URL: gateUrl(),
       NEXUS_GATE_TOKEN: ctx.token,
+      // Status hooks inherit this from the PTY env (never written to disk).
+      NEXUS_HOOK_URL: hookStatusUrl(),
     };
     const extraArgs: string[] = [];
     let ephemeralHomeDir: string | null = null;
@@ -403,6 +416,9 @@ function installSpawnHook(): void {
         }
         if (flavor === 'codex') {
           extraArgs.push(...codexMcpArgs(mcpUrl(), ctx.token));
+          // Additive status hooks as per-session -c overrides (emdash wave 1)
+          // — same argv-only channel as the MCP injection, zero disk writes.
+          extraArgs.push(...codexStatusHookArgs());
         } else if (flavor === 'agy') {
           // AGY 1.1 resolves its config through HOME (and newer builds may
           // honor GEMINI_CLI_HOME). Mirror skills first, then overlay both
@@ -539,6 +555,9 @@ function installLegacyParser(): void {
     parser.dropSession(sessionId);
     dedupe.dropSession(sessionId);
     rawTails.delete(sessionId);
+    // PTY died without a stop hook → semantic status resets to idle (kills
+    // the "busy preso" class the 5-minute hook watchdog merely bounds).
+    resetAgentStatusOnExit(sessionId);
     const token = sessionTokens.get(sessionId);
     if (token) {
       sessionTokens.delete(sessionId);
@@ -592,6 +611,11 @@ export function startMcpServer(): Promise<void> {
       const gateMatch = /^\/gate\/([a-z]+)$/.exec(url);
       if (gateMatch && req.method === 'POST') {
         await handleGateRequest(req, res, ctx, gateMatch[1]);
+        return;
+      }
+      // Semantic status hooks (emdash wave 1) — additive, never enforcement.
+      if (url === '/hook/status' && req.method === 'POST') {
+        await handleHookStatusHttp(req, res, ctx);
         return;
       }
       sendJson(res, 404, { error: 'not found' });

@@ -8,6 +8,11 @@ import {
   purgeOwnedSessionRoot,
   type ArtifactPurgeResult,
 } from './ephemeral-artifact-purge';
+import {
+  GROK_STATUS_HOOKS_FILE,
+  grokStatusHooksDocument,
+  mergeKimiStatusHooks,
+} from './hook-status-config';
 import { syncBackOverlayAuth } from './overlay-auth-syncback';
 
 /**
@@ -38,8 +43,10 @@ interface ArtifactSession {
   artifactDir: string;
   /** Real provider home to persist a fresh in-pane login back into. */
   providerHome: string;
-  /** Top-level overlay config file (token-bearing) — never synced back. */
-  configFile: string;
+  /** Top-level overlay config files (token/marker-bearing) — never synced back. */
+  configFiles: readonly string[];
+  /** Basenames excluded from sync-back at ANY depth (e.g. Grok hooks/nexus.json). */
+  syncBackExcludeAnywhere?: ReadonlySet<string>;
 }
 
 const activeArtifactDirs = new Map<string, ArtifactSession>();
@@ -149,6 +156,15 @@ function linkEntry(source: string, target: string, entry: fs.Dirent): void {
     fs.symlinkSync(source, target, 'junction');
     return;
   }
+  linkFile(source, target);
+}
+
+/** Single-file link with the Windows hardlink/copy fallback (see linkEntry). */
+function linkFile(source: string, target: string): void {
+  if (process.platform !== 'win32') {
+    fs.symlinkSync(source, target);
+    return;
+  }
   try {
     fs.linkSync(source, target);
   } catch {
@@ -252,6 +268,10 @@ export function prepareOpenCodeMcpSession(
  * Kimi officially resolves MCP from $KIMI_CODE_HOME/mcp.json. The overlay
  * symlinks all real data and adds only a private, token-free MCP declaration;
  * `bearerTokenEnvVar` reads the already session-scoped Nexus token at runtime.
+ * config.toml is overlaid the same way to carry the additive semantic-status
+ * hooks (emdash wave 1: flat `hooks = [{event, command}]`, marker-separated);
+ * both files stay out of the auth sync-back so they never reach the real
+ * profile.
  */
 export function prepareKimiMcpSession(
   url: string,
@@ -272,7 +292,7 @@ export function prepareKimiMcpSession(
   const serverName = runtimeServerName(token);
 
   try {
-    linkDirectoryEntries(providerHome, artifactDir, new Set(['mcp.json']));
+    linkDirectoryEntries(providerHome, artifactDir, new Set(['mcp.json', 'config.toml']));
     const source = readJsonObject(path.join(providerHome, 'mcp.json'));
     const servers = objectValue(source.mcpServers);
     const merged = {
@@ -290,7 +310,32 @@ export function prepareKimiMcpSession(
       path.join(artifactDir, 'mcp.json'),
       `${JSON.stringify(merged, null, 2)}\n`,
     );
-    activateArtifact(token, { artifactDir, providerHome, configFile: 'mcp.json' });
+    // config.toml carries the additive status hooks. A malformed user config
+    // must not break the spawn: degrade to a plain link (hooks off, MCP on).
+    let tomlMerged: string | null = null;
+    try {
+      const tomlSource = readTomlObject(path.join(providerHome, 'config.toml'));
+      tomlMerged = stringify(mergeKimiStatusHooks(tomlSource), {
+        maxDepth: MAX_GROK_CONFIG_DEPTH,
+      });
+    } catch {
+      const realToml = path.join(providerHome, 'config.toml');
+      if (fs.existsSync(realToml)) {
+        try {
+          linkFile(realToml, path.join(artifactDir, 'config.toml'));
+        } catch {
+          // Best effort — MCP still works without the user config linked in.
+        }
+      }
+    }
+    if (tomlMerged !== null) {
+      writePrivateFileAtomic(path.join(artifactDir, 'config.toml'), tomlMerged);
+    }
+    activateArtifact(token, {
+      artifactDir,
+      providerHome,
+      configFiles: ['mcp.json', 'config.toml'],
+    });
     return {
       env: { KIMI_CODE_HOME: artifactDir },
       extraArgs: [],
@@ -309,6 +354,9 @@ export function prepareKimiMcpSession(
  * rest of the real profile, replacing only config.toml. The config references
  * NEXUS_MCP_TOKEN, already scoped to the spawned process, so no bearer is
  * persisted in either the real profile or the ephemeral overlay.
+ * The additive semantic-status hooks (emdash wave 1) ship as a Nexus-owned
+ * `hooks/nexus.json` inside the overlay — the user's own hooks/ entries are
+ * linked through, and nexus.json never syncs back into the real profile.
  */
 export function prepareGrokMcpSession(
   url: string,
@@ -327,7 +375,11 @@ export function prepareGrokMcpSession(
   const serverName = runtimeServerName(token);
 
   try {
-    linkDirectoryEntries(providerHome, artifactDir, new Set(['config.toml']));
+    linkDirectoryEntries(
+      providerHome,
+      artifactDir,
+      new Set(['config.toml', 'hooks']),
+    );
     const source = readTomlObject(path.join(providerHome, 'config.toml'));
     const servers = objectValue(source.mcp_servers);
     const merged = {
@@ -345,7 +397,24 @@ export function prepareGrokMcpSession(
       path.join(artifactDir, 'config.toml'),
       stringify(merged, { maxDepth: MAX_GROK_CONFIG_DEPTH }),
     );
-    activateArtifact(token, { artifactDir, providerHome, configFile: 'config.toml' });
+    // Status hooks: user entries linked through, Nexus doc written fresh.
+    const overlayHooks = path.join(artifactDir, 'hooks');
+    ensurePrivateDirectory(overlayHooks);
+    linkDirectoryEntries(
+      path.join(providerHome, 'hooks'),
+      overlayHooks,
+      new Set([GROK_STATUS_HOOKS_FILE]),
+    );
+    writePrivateFileAtomic(
+      path.join(overlayHooks, GROK_STATUS_HOOKS_FILE),
+      `${JSON.stringify(grokStatusHooksDocument(), null, 2)}\n`,
+    );
+    activateArtifact(token, {
+      artifactDir,
+      providerHome,
+      configFiles: ['config.toml'],
+      syncBackExcludeAnywhere: new Set([GROK_STATUS_HOOKS_FILE]),
+    });
     return {
       env: { GROK_HOME: artifactDir },
       extraArgs: [],
@@ -370,7 +439,8 @@ export function cleanupCliMcpSession(token: string): void {
     syncBackOverlayAuth(
       session.artifactDir,
       session.providerHome,
-      new Set([session.configFile]),
+      new Set(session.configFiles),
+      session.syncBackExcludeAnywhere,
     );
   } catch {
     // Never let a sync-back failure block teardown.

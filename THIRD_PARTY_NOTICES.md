@@ -217,6 +217,31 @@ License text: `third_party/licenses/oh-my-pi-MIT.txt`. Provenance ledger:
 `third_party/provenance/oh-my-pi-03c48d0.json`. Vendoring policy: pinned copy,
 never a live npm dependency; `src/markit`/mupdf-adjacent code excluded.
 
+## generalaction/emdash (hook protocol harvest — wave 1)
+
+Modules vendored/adapted from
+[`generalaction/emdash`](https://github.com/generalaction/emdash) at commit
+`c1af543f17241769c5cce29ab66cd47442d9d593` (Apache License 2.0,
+Copyright 2026 General Action, Inc.):
+
+- `src/vendor/emdash/hooks/` — canonical hook-event types
+  (`CanonicalHookEvent`), the default hook-event parser, self-silencing hook
+  command builders (curl `|| true` / PowerShell `SilentlyContinue`), native
+  per-CLI hook spec tables and per-flavor `parseHookEvent` mappings
+  (Claude/Codex/Kimi/Grok), plus their corresponding test suites.
+
+The Apache License 2.0 text is shipped next to the vendored code at
+`src/vendor/emdash/hooks/LICENSE.md` and also at
+`third_party/licenses/Apache-2.0.txt`. Per-file provenance (upstream URL,
+original path, SHA-256 of the original file, Nexus destination path, and
+adaptation notes) is recorded in
+`third_party/provenance/emdash-c1af543.json`.
+
+Vendoring policy: pinned copy, never an `@emdash/*` npm dependency. No
+upstream client ids, tokens or endpoints are redistributed — the vendored
+command builders were re-pointed at NexusIDE's own loopback gate
+(`$NEXUS_HOOK_URL` + per-pane bearer) and re-marked `NEXUS_HOOK_STATUS`.
+
 ## DESIGN.md workspace convention (Google Stitch / VoltAgent awesome-design-md)
 
 Design mode reads a `DESIGN.md` file from the project root (the visual

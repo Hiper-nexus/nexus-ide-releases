@@ -98,10 +98,20 @@ describe('prepareKimiMcpSession', () => {
     });
     expect(raw).not.toContain(token);
     expect(fs.readFileSync(realMcp, 'utf8')).toBe(originalMcp);
-    expect(fs.realpathSync(path.join(result.env.KIMI_CODE_HOME, 'config.toml')))
-      .toBe(fs.realpathSync(realConfig));
+    // config.toml is now a PRIVATE merged copy (emdash wave 1 status hooks):
+    // user's own keys survive, Nexus entries carry the marker, the real
+    // profile is never touched and no token lands in either file.
+    const overlayConfig = path.join(result.env.KIMI_CODE_HOME, 'config.toml');
+    const overlayToml = fs.readFileSync(overlayConfig, 'utf8');
+    expect(overlayToml).toContain('default_permission_mode = "manual"');
+    expect(overlayToml).toContain('NEXUS_HOOK_STATUS');
+    expect(overlayToml).not.toContain(token);
+    expect(fs.readFileSync(realConfig, 'utf8')).toBe(
+      'default_permission_mode = "manual"\n',
+    );
     expect(mode(result.artifactDir!)).toBe(0o700);
     expect(mode(overlayMcp)).toBe(0o600);
+    expect(mode(overlayConfig)).toBe(0o600);
 
     cleanupCliMcpSession(token);
     expect(fs.existsSync(result.artifactDir!)).toBe(false);
@@ -170,11 +180,46 @@ describe('prepareGrokMcpSession', () => {
     expect(mode(result.artifactDir!)).toBe(0o700);
     expect(mode(privateConfig)).toBe(0o600);
 
+    // emdash wave 1: the overlay carries a Nexus-owned hooks/nexus.json with
+    // marked, env-only status commands; the real profile never gains it.
+    const hooksDoc = path.join(result.env.GROK_HOME, 'hooks', 'nexus.json');
+    const hooksRaw = fs.readFileSync(hooksDoc, 'utf8');
+    expect(hooksRaw).toContain('NEXUS_HOOK_STATUS');
+    expect(hooksRaw).toContain('$NEXUS_GATE_TOKEN');
+    expect(hooksRaw).not.toContain(token);
+    expect(mode(hooksDoc)).toBe(0o600);
+    expect(fs.existsSync(path.join(grokHome, 'hooks'))).toBe(false);
+
     cleanupCliMcpSession(token);
     expect(fs.existsSync(result.artifactDir!)).toBe(false);
     expect(fs.readFileSync(realConfig, 'utf8')).toBe(originalConfig);
     expect(fs.readFileSync(sessionMarker, 'utf8')).toBe('{"session":true}');
     expect(fs.readFileSync(skillMarker, 'utf8')).toBe('# Keep\n');
+    // Sync-back must not leak the Nexus hooks doc into the real profile.
+    expect(fs.existsSync(path.join(grokHome, 'hooks', 'nexus.json'))).toBe(false);
+  });
+
+  it('links the user\'s own Grok hooks through next to the Nexus doc', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const artifacts = path.join(root, 'artifacts');
+    const grokHome = path.join(home, '.grok');
+    const userHook = path.join(grokHome, 'hooks', 'mine.json');
+    write(userHook, '{"hooks":{}}');
+    const token = 'grok-hooks-link-token';
+    tokens.push(token);
+
+    const result = prepareGrokMcpSession('http://127.0.0.1:4300/mcp', token, {
+      home,
+      artifactRoot: artifacts,
+    });
+
+    expect(
+      fs.realpathSync(path.join(result.env.GROK_HOME, 'hooks', 'mine.json')),
+    ).toBe(fs.realpathSync(userHook));
+    expect(
+      fs.existsSync(path.join(result.env.GROK_HOME, 'hooks', 'nexus.json')),
+    ).toBe(true);
   });
 });
 

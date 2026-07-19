@@ -5,6 +5,7 @@ import {
   CLAUDE_AUTH_IDENTITY_KEYS,
   syncBackClaudeEphemeralAuth,
 } from './overlay-auth-syncback';
+import { mergeClaudeStatusHooks } from './hook-status-config';
 
 /**
  * Client-side half of the dual skill-gate (docs/ARCHITECTURE.md §E.4).
@@ -117,14 +118,27 @@ export const CLAUDE_FAMILY_ZERO_CLICK_SETTINGS = Object.freeze({
   skipWorkflowUsageWarning: true,
 });
 
-/** Flag-settings file so ungated panes also skip the click dialog. */
+/**
+ * Flag-settings file so ungated panes also skip the click dialog. Carries the
+ * additive semantic-status hooks too (emdash wave 1): the same
+ * UserPromptSubmit/Notification/Stop curl commands as the ephemeral HOME —
+ * they authenticate with $NEXUS_GATE_TOKEN from the pane env, so no secret is
+ * written here. Rewritten wholesale per spawn (idempotent).
+ */
 export function writeClaudeFamilyZeroClickSettings(tokenId: string): string {
   const dir = path.join(os.homedir(), '.nexus', 'mcp-configs');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, `${tokenId.slice(0, 12)}.settings.json`);
   fs.writeFileSync(
     file,
-    JSON.stringify(CLAUDE_FAMILY_ZERO_CLICK_SETTINGS, null, 2),
+    JSON.stringify(
+      {
+        ...CLAUDE_FAMILY_ZERO_CLICK_SETTINGS,
+        hooks: mergeClaudeStatusHooks({}),
+      },
+      null,
+      2,
+    ),
     { mode: 0o600 },
   );
   return file;
@@ -159,9 +173,13 @@ export function prepareEphemeralHome(
   fs.writeFileSync(scriptPath, HOOK_SCRIPT, { mode: 0o700 });
 
   // System default: zero-click full-auto acknowledgement (Claude/GLM/Longcat).
+  // The skill-gate hooks below are the enforcement channel and stay exactly as
+  // designed; mergeClaudeStatusHooks only APPENDS the additive semantic-status
+  // hooks (emdash wave 1: UserPromptSubmit/Notification/Stop → /hook/status),
+  // marker-separated and never touching the gate entries.
   const settings = {
     ...CLAUDE_FAMILY_ZERO_CLICK_SETTINGS,
-    hooks: {
+    hooks: mergeClaudeStatusHooks({
       PreToolUse: [
         {
           matcher: '*',
@@ -185,7 +203,7 @@ export function prepareEphemeralHome(
           ],
         },
       ],
-    },
+    }),
   };
   fs.writeFileSync(
     path.join(claudeDir, 'settings.json'),
