@@ -9,6 +9,12 @@
  */
 import type { SshConnectOptions, SshTransport } from '../remote/ssh/ssh-session-manager';
 import { hostKeyVerdict, pinHostKey } from '../remote/ssh/known-hosts';
+import {
+  buildProxiedConnectFragment,
+  type ProxiedConnectFragment,
+  type SshProxySpec,
+} from '../remote/ssh/proxied-connect-config';
+import type { SpawnProcess } from '../../vendor/emdash/ssh/transports';
 
 type Ssh2Client = {
   on(event: string, cb: (...args: unknown[]) => void): void;
@@ -48,10 +54,13 @@ function loadSsh2(): { Client: new () => Ssh2Client } {
   }
 }
 
-export function createSsh2Transport(): SshTransport {
+export function createSsh2Transport(
+  factoryOptions: { proxy?: SshProxySpec; spawnProcess?: SpawnProcess } = {},
+): SshTransport {
   const { Client } = loadSsh2();
   let client: Ssh2Client | null = null;
   let connected = false;
+  let proxyFragment: ProxiedConnectFragment | null = null;
 
   return {
     async connect(options: SshConnectOptions): Promise<void> {
@@ -64,64 +73,84 @@ export function createSsh2Transport(): SshTransport {
         });
         c.on('error', (err: unknown) => {
           connected = false;
+          // A failed proxied connect must not leak the proxy child.
+          proxyFragment?.cleanup();
+          proxyFragment = null;
           reject(err instanceof Error ? err : new Error(String(err)));
         });
         const host = options.host;
         const port = options.port ?? 22;
+        // ssh2 auto-accepts ANY server host key when hostVerifier is absent
+        // (unlike the OpenSSH CLI it reads no known_hosts) — an on-path
+        // attacker could silently impersonate the host and capture the
+        // session/password. Pin the key on first use and reject a CHANGED key
+        // (fail closed). `verify` MUST be called exactly once; returning a
+        // value would make ssh2 call it a second time (client.js:284-286).
+        // Attached to EVERY connect config below — direct or proxied.
+        const hostVerifier = (key: Buffer, verify: (ok: boolean) => void): void => {
+          let assessment: ReturnType<typeof hostKeyVerdict>;
+          try {
+            assessment = hostKeyVerdict(host, port, key);
+          } catch {
+            verify(false);
+            return;
+          }
+          if (assessment.verdict === 'match') {
+            verify(true);
+            return;
+          }
+          if (assessment.verdict === 'mismatch') {
+            // Changed since pinned: possible MITM. Never overridable here.
+            verify(false);
+            return;
+          }
+          // Unknown key → trust-on-first-use. An interactive caller confirms
+          // the fingerprint; without a hook we pin automatically (accept-new).
+          const confirm = options.confirmUnknownHostKey;
+          if (!confirm) {
+            try {
+              pinHostKey(host, port, key);
+              verify(true);
+            } catch {
+              verify(false);
+            }
+            return;
+          }
+          Promise.resolve(
+            confirm({ host, port, fingerprint: assessment.fingerprint }),
+          )
+            .then((accepted) => {
+              if (!accepted) {
+                verify(false);
+                return;
+              }
+              pinHostKey(host, port, key);
+              verify(true);
+            })
+            .catch(() => verify(false));
+        };
         const cfg: Record<string, unknown> = {
           host,
           port,
           username: options.username,
           keepaliveInterval: options.keepaliveIntervalMs ?? 15_000,
-          // ssh2 auto-accepts ANY server host key when hostVerifier is absent
-          // (unlike the OpenSSH CLI it reads no known_hosts) — an on-path
-          // attacker could silently impersonate the host and capture the
-          // session/password. Pin the key on first use and reject a CHANGED key
-          // (fail closed). `verify` MUST be called exactly once; returning a
-          // value would make ssh2 call it a second time (client.js:284-286).
-          hostVerifier: (key: Buffer, verify: (ok: boolean) => void): void => {
-            let assessment: ReturnType<typeof hostKeyVerdict>;
-            try {
-              assessment = hostKeyVerdict(host, port, key);
-            } catch {
-              verify(false);
-              return;
-            }
-            if (assessment.verdict === 'match') {
-              verify(true);
-              return;
-            }
-            if (assessment.verdict === 'mismatch') {
-              // Changed since pinned: possible MITM. Never overridable here.
-              verify(false);
-              return;
-            }
-            // Unknown key → trust-on-first-use. An interactive caller confirms
-            // the fingerprint; without a hook we pin automatically (accept-new).
-            const confirm = options.confirmUnknownHostKey;
-            if (!confirm) {
-              try {
-                pinHostKey(host, port, key);
-                verify(true);
-              } catch {
-                verify(false);
-              }
-              return;
-            }
-            Promise.resolve(
-              confirm({ host, port, fingerprint: assessment.fingerprint }),
-            )
-              .then((accepted) => {
-                if (!accepted) {
-                  verify(false);
-                  return;
-                }
-                pinHostKey(host, port, key);
-                verify(true);
-              })
-              .catch(() => verify(false));
-          },
+          hostVerifier,
         };
+        if (factoryOptions.proxy) {
+          // Vendored emdash proxy transport (ProxyJump/ProxyCommand resolved
+          // from ~/.ssh/config). Upstream emdash connected through these
+          // WITHOUT any hostVerifier; the glue requires one, so the
+          // known-hosts pin for host:port (the FINAL destination, not the
+          // jump host) applies unchanged. ssh2 dials through cfg.sock;
+          // host/port above remain the pin identity.
+          proxyFragment = buildProxiedConnectFragment(
+            factoryOptions.proxy,
+            { host, port, username: options.username, originalHost: options.host },
+            hostVerifier,
+            factoryOptions.spawnProcess,
+          );
+          cfg.sock = proxyFragment.sock;
+        }
         if (options.auth.kind === 'password') {
           cfg.password = options.auth.password;
         } else if (options.auth.kind === 'privateKey') {
@@ -142,6 +171,9 @@ export function createSsh2Transport(): SshTransport {
         // ignore
       }
       client = null;
+      // Reap the proxy child, if any (SIGTERM→SIGKILL; idempotent).
+      proxyFragment?.cleanup();
+      proxyFragment = null;
     },
     isConnected(): boolean {
       return connected;
