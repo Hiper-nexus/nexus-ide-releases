@@ -66,6 +66,14 @@ const READ_ONLY_TOOLS = new Set([
   // isso atrás do freeze cria um deadlock de cerimônia.
   'clarify',
   'todo_manager',
+  // task (nexus_task) gerencia o board de tarefas da missão: escreve apenas
+  // linhas mission-scoped e reversíveis no runtime store — nunca workspace,
+  // git ou dados externos. O enforcement real fica a jusante (worktree/spawn/
+  // merge com authority própria; file/terminal/git com confirmação). Exigir
+  // clique humano em cada list/plan quebrava o piloto automático (caso de
+  // campo 18/07: supervisor bloqueou a missão por "sem tasks/workers"
+  // enquanto o prompt nativo aguardava o operador).
+  'task',
   // Plan / bg / hunks — observation or bounded local state (handlers enforce).
   'plan_read',
   'bg_list',

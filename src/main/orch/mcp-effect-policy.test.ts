@@ -20,6 +20,14 @@ describe('MCP effect policy', () => {
     expect(effectPolicyForTool('nexus_clarify')).toBe('read-only');
   });
 
+  it('board de tarefas roda em piloto automático, sem confirmação humana', () => {
+    // Caso de campo 18/07: cada nexus_task (até action:list) abria prompt
+    // nativo; supervisor bloqueou a missão enquanto o clique não vinha.
+    expect(effectPolicyForTool('nexus_task')).toBe('read-only');
+    expect(requiresHumanConfirmationForTool('nexus_task')).toBe(false);
+    expect(requiresHumanConfirmationForTool('task')).toBe(false);
+  });
+
   it('allows only the context and mission bootstrap chain pre-contract', () => {
     expect(effectPolicyForTool('nexus_mission_create')).toBe('bootstrap-authority');
     expect(effectPolicyForTool('nexus_context_doctor')).toBe('bootstrap-authority');
