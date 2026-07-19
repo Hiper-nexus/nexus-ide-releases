@@ -505,6 +505,62 @@ const RAW_SQUADS: Squad[] = [
       { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
     ],
   },
+  {
+    // Inspired by Kimi Code subagent roles (explore / plan / coder) — host
+    // authority stays Nexus (PREVC + worktrees). Workers are Kimi Code CLI.
+    id: 'kimi-code-cell',
+    name: 'Kimi Code Cell',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Kimi Code Cell\n' +
+      'Você orquestra três papéis no motor Kimi Code (cli=kimi), no espírito ' +
+      'explore → plan → coder. A autoridade de missão é do Nexus (PREVC, ' +
+      'worktrees, handoffs) — não use plan mode interno do Kimi se a missão ' +
+      'já tiver lane=plan no host.\n' +
+      '\n' +
+      '## Fluxo\n' +
+      '1. **Explorer** — só leitura: mapa, greps, git log/diff. Sem editar código.\n' +
+      '2. **Planner** — desenha abordagem (pode escrever só plan.md / docs se a ' +
+      'lane for plan). Entrega riscos, arquivos e verificação.\n' +
+      '3. **Coder** — implementa no worktree; handoff com evidência real.\n' +
+      'Spawne via nexus_pane_spawn com agentName do roster (adapterId=kimi). ' +
+      'Use nexus_route_task só se precisar de motor alternativo; o roster ' +
+      'kimi é sticky.',
+    agents: [
+      {
+        id: 'orch',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+      },
+      {
+        id: 'explorer',
+        agentName: 'Explorer',
+        category: 'scout',
+        cli: 'kimi',
+        effort: 'medium',
+        model: 'kimi-code/kimi-for-coding',
+      },
+      {
+        id: 'planner',
+        agentName: 'Planner',
+        category: 'architect',
+        cli: 'kimi',
+        effort: 'high',
+        model: 'kimi-code/kimi-for-coding',
+      },
+      {
+        id: 'coder',
+        agentName: 'Coder',
+        category: 'executor',
+        cli: 'kimi',
+        effort: 'medium',
+        model: 'kimi-code/kimi-for-coding',
+      },
+    ],
+  },
 ];
 
 /** Built-in squads with the per-role tool allowlists applied (SEC#5). */

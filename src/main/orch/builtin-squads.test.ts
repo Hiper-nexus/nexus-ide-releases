@@ -43,6 +43,7 @@ describe('built-in squads (invariantes gerais)', () => {
     // O omp é adapter de primeira classe; sem presença no menu dos builtins
     // ele nunca entra em operação (achado de operador: "integrado mas nunca
     // vi em ação"). O Pet Studio fica de fora por design (Codex único).
+    // kimi-code-cell is intentionally Kimi-only workers (no omp).
     const devSquadIds = [
       'nexus-fullstack',
       'nexus-review',
@@ -59,6 +60,20 @@ describe('built-in squads (invariantes gerais)', () => {
         `squad ${id} sem agente omp`,
       ).toBe(true);
     }
+  });
+
+  it('kimi-code-cell maps explore/plan/coder roles onto Kimi workers', () => {
+    const squad = BUILTIN_SQUADS.find((entry) => entry.id === 'kimi-code-cell');
+    expect(squad).toBeDefined();
+    expect(squad?.builtin).toBe(true);
+    const byId = Object.fromEntries(
+      (squad?.agents ?? []).map((agent) => [agent.id, agent]),
+    );
+    expect(byId.explorer?.cli).toBe('kimi');
+    expect(byId.explorer?.category).toBe('scout');
+    expect(byId.planner?.cli).toBe('kimi');
+    expect(byId.coder?.cli).toBe('kimi');
+    expect(byId.coder?.category).toBe('executor');
   });
 });
 

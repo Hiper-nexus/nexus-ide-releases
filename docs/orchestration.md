@@ -111,3 +111,20 @@ Diversity attenuation: repeated adapters in the same mission lose score
 repeated spawn failures and is skipped by multi-score when alternatives exist.
 
 Full phased plan: `docs/analysis/2026-07-18-master-plan-grok-build-x-algorithm.md`.
+
+## Kimi Code as a hosted motor
+
+Kimi is a first-class CLI adapter (`bin: kimi`, package
+`@moonshot-ai/kimi-code`), not an embedded Python runtime.
+
+| Surface | Nexus behaviour |
+|---------|-----------------|
+| Interactive pane | `kimi` + optional `-y` via autonomous policy |
+| Headless / eval | `kimi -y --output-format text -p …` |
+| Auth | OAuth managed home or `KIMI_MODEL_*` transient key env |
+| Plan design | Prefer **mission lane=plan** (host) over Kimi `--plan` alone |
+| Explore/plan/coder roles | Builtin squad **Kimi Code Cell** (`kimi-code-cell`) |
+
+Senior analysis of [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli)
+vs what to transplant:  
+`docs/analysis/2026-07-18-analise-senior-kimi-cli-vs-nexus.md`.

@@ -288,9 +288,9 @@ describe('secureAutonomousCliArgs', () => {
   it('allows a yolo-only provider when full-auto was explicitly selected', () => {
     const kimi = adapter({
       id: 'kimi',
-      control: { permission: { modes: {}, yolo: ['--yolo'], default: '' } },
+      control: { permission: { modes: {}, yolo: ['-y'], default: '' } },
     });
-    expect(secureAutonomousCliArgs(kimi, ['--yolo'])).toEqual(['--yolo']);
+    expect(secureAutonomousCliArgs(kimi, ['-y'])).toEqual(['-y']);
   });
 
   it('preserves each built-in provider native yolo flag for writable workers', () => {

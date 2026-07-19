@@ -631,6 +631,19 @@ export function pickAvailable(
   );
 }
 
+/**
+ * Whether `adapterId` has at least one account able to serve a spawn now.
+ * Adapters with no Nexus-managed accounts (omp self-manages auth under
+ * ~/.omp) report available — third-party auth state is not ours to judge.
+ */
+export function hasAvailableAccount(
+  adapterId: string,
+  now = Date.now(),
+): boolean {
+  if (listAccounts(adapterId).length === 0) return true;
+  return pickAvailable(adapterId, null, now) !== null;
+}
+
 /** DELETE oportunista de bloco expirado; nunca falha o caminho de leitura. */
 function deleteCooldownBlockRow(accountId: string, scope: string): void {
   if (!db || readOnly) return;

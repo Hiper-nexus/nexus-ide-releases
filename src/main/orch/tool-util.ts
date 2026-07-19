@@ -27,6 +27,7 @@ import {
 } from './cli-prompt-autoresponder';
 import { spawnMissionOmpRpcWorker } from '../adapters/omp-rpc-ipc';
 import { isAdapterInstalled } from '../adapters/adapter-registry';
+import { hasAvailableAccount } from '../persistence/account-store';
 import {
   buildOmpAutoSpawnPrompt,
   shouldAutoSpawnOmpCompanion,
@@ -301,6 +302,7 @@ function scheduleOmpAutoCompanion(
       ompParticipation: settings.ompParticipation,
       ompAutoSpawn: settings.ompAutoSpawn,
       ompInstalled: isAdapterInstalled('omp'),
+      ompAvailable: hasAvailableAccount('omp'),
       justSpawnedAdapterId: options.adapterId,
       missionHasOmp,
       role: options.role,

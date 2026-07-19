@@ -75,6 +75,22 @@ describe('resolveStickyOmpAdapter', () => {
     expect(result.sticky).toBe(false);
   });
 
+  it('does not sticky when all omp accounts are on cooldown', () => {
+    const result = resolveStickyOmpAdapter({
+      rosterCli: 'omp',
+      requestedAdapterId: 'claude',
+      requestedModel: 'claude-sonnet-5',
+      rosterModel: 'zai/glm-5',
+      rosterEffort: 'high',
+      requestedEffort: undefined,
+      ompInstalled: true,
+      ompAvailable: false,
+      ompParticipation: 'prefer',
+    });
+    expect(result.adapterId).toBe('claude');
+    expect(result.sticky).toBe(false);
+  });
+
   it('does not sticky when omp is not installed', () => {
     const result = resolveStickyOmpAdapter({
       rosterCli: 'omp',
@@ -142,6 +158,9 @@ describe('shouldAutoSpawnOmpCompanion', () => {
   it('skips orchestrator role and missing bin', () => {
     expect(
       shouldAutoSpawnOmpCompanion({ ...base, role: 'orchestrator' }),
+    ).toBe(false);
+    expect(
+      shouldAutoSpawnOmpCompanion({ ...base, ompAvailable: false }),
     ).toBe(false);
     expect(shouldAutoSpawnOmpCompanion({ ...base, ompInstalled: false })).toBe(
       false,

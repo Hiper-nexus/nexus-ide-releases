@@ -14,6 +14,11 @@ export interface StickyOmpInput {
   requestedEffort: string | undefined;
   ompInstalled: boolean;
   ompParticipation: OmpParticipation;
+  /**
+   * False when every Nexus-managed omp account is on an active cooldown.
+   * Absent defaults to available, so existing callers keep their behavior.
+   */
+  ompAvailable?: boolean;
   /** Adapter catalog default when roster has no model. */
   defaultOmpModel?: string;
 }
@@ -31,6 +36,12 @@ export interface StickyOmpResult {
  * is not `off`, keep adapterId=omp even if the orchestrator passed a different
  * route_task adapter. Models from route_task only stick when the requested
  * adapter was already omp.
+ *
+ * Sticky never forces omp without a usable account: with ompAvailable=false
+ * the route_task pick wins. Documented corner — roster=omp with NO route pick:
+ * the base adapter IS omp, so there is no local alternative to fall back to;
+ * the result stays omp and the spawn layer surfaces the real cooldown error
+ * instead of silently rerouting a roster agent the squad declared as omp.
  */
 export function resolveStickyOmpAdapter(input: StickyOmpInput): StickyOmpResult {
   const baseAdapter = input.requestedAdapterId ?? input.rosterCli;
@@ -46,7 +57,11 @@ export function resolveStickyOmpAdapter(input: StickyOmpInput): StickyOmpResult 
     };
   }
 
-  if (input.ompParticipation === 'off' || !input.ompInstalled) {
+  if (
+    input.ompParticipation === 'off' ||
+    !input.ompInstalled ||
+    input.ompAvailable === false
+  ) {
     return {
       adapterId: baseAdapter,
       model: baseModel,
@@ -101,6 +116,11 @@ export function shouldAutoSpawnOmpCompanion(input: {
   ompInstalled: boolean;
   justSpawnedAdapterId: string;
   missionHasOmp: boolean;
+  /**
+   * False when every Nexus-managed omp account is on an active cooldown.
+   * Absent defaults to available, so existing callers keep their behavior.
+   */
+  ompAvailable?: boolean;
   /** Orchestrator panes never trigger companion. */
   role?: 'orchestrator' | 'worker' | string;
 }): boolean {
@@ -112,6 +132,7 @@ export function shouldAutoSpawnOmpCompanion(input: {
   if (!input.ompInstalled) return false;
   if (input.missionHasOmp) return false;
   if (input.justSpawnedAdapterId === 'omp') return false;
+  if (input.ompAvailable === false) return false;
   return true;
 }
 

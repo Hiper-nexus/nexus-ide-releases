@@ -350,6 +350,21 @@ describe('builtin adapters', () => {
     ]);
   });
 
+  it('uses Kimi Code non-interactive prompt mode for headless (not legacy --print)', () => {
+    // Real kimi-code (`kimi --help`): -p is already non-interactive; --print/--quiet
+    // are kimi-cli legacy docs and do not exist on current @moonshot-ai/kimi-code.
+    // -y auto-approves tools so eval/headless workers do not hang on confirmations.
+    expect(builtin('kimi')?.spawn?.headless).toEqual([
+      'kimi',
+      '-y',
+      '--output-format',
+      'text',
+      '-p',
+      '{{PROMPT}}',
+    ]);
+    expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['-y']);
+  });
+
   it.each([
     ['agy', ['--continue'], ['--conversation']],
     ['claude', ['--continue'], ['--resume']],

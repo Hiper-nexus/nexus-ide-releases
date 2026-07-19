@@ -2,7 +2,7 @@
   "kind": "cli-pty",
   "id": "kimi",
   "label": "Kimi",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "icon": "🌙",
   "bin": "kimi",
   "detect": "kimi --version",
@@ -14,7 +14,7 @@
     "method": "api_key",
     "credentialStore": "keychain",
     "envVarFallback": "KIMI_MODEL_API_KEY",
-    "loginHint": "Run `kimi login` for Kimi Code OAuth, or save a Moonshot API key in Nexus."
+    "loginHint": "Run `kimi login` (Kimi Code CLI / @moonshot-ai/kimi-code). Legacy kimi-cli migrates via `kimi migrate`."
   },
   "spawn": {
     "interactive": [
@@ -22,6 +22,9 @@
     ],
     "headless": [
       "kimi",
+      "-y",
+      "--output-format",
+      "text",
       "-p",
       "{{PROMPT}}"
     ],
@@ -97,7 +100,7 @@
       "arg": "",
       "modes": {},
       "yolo": [
-        "--yolo"
+        "-y"
       ],
       "default": ""
     }

@@ -173,6 +173,21 @@ The builtin Aider adapter intentionally uses `nexusMcp:"none"`: current Aider
 does not expose an official MCP client integration. It remains usable as a
 terminal/worker CLI, but is not advertised as a Nexus MCP orchestrator.
 
+### Kimi Code (`kimi`) notes
+
+- **Package:** `@moonshot-ai/kimi-code` (bin `kimi`). Legacy
+  [kimi-cli](https://github.com/MoonshotAI/kimi-cli) is winding down; use
+  `kimi migrate` if upgrading from the old install.
+- **Headless:** `kimi -y --output-format text -p "{{PROMPT}}"` — current
+  Kimi Code has no `--print`/`--quiet` flags (those appear only in older
+  kimi-cli docs). `-p` is already non-interactive; `-y` auto-approves tools
+  so eval/workers do not hang on confirmations.
+- **Interactive yolo:** `-y` / `--yolo`.
+- **Resume:** `--continue` (latest in cwd), `--session` / `-S` (id or picker).
+- **Do not** pass `--add-dir` by default — that expands FS beyond the Nexus
+  checkout isolation.
+- Analysis: `docs/analysis/2026-07-18-analise-senior-kimi-cli-vs-nexus.md`.
+
 ## Overriding a builtin adapter
 
 User adapters with the same `id` as a builtin silently replace it. To tweak

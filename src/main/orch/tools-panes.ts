@@ -36,6 +36,7 @@ import { getContextWorkflowService } from '../context/context-workflow-registry'
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getOrchSettings } from '../persistence/settings-store';
+import { hasAvailableAccount } from '../persistence/account-store';
 import { resolveStickyOmpAdapter } from './omp-roster-policy';
 
 /** The 11 pane tools of the embedded MCP server (tool group 1). */
@@ -238,6 +239,7 @@ const paneSpawn: McpToolDef = {
         rosterEffort: agent.effort,
         requestedEffort: str(args, 'effort'),
         ompInstalled: isAdapterInstalled('omp'),
+        ompAvailable: hasAvailableAccount('omp'),
         ompParticipation: getOrchSettings().ompParticipation,
         defaultOmpModel: defaultModelForAdapter('omp'),
       });
