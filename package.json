@@ -28,6 +28,7 @@
     "rebuild:node": "node scripts/rebuild-node-natives.mjs && node scripts/check-node-natives.mjs",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/check-node-natives.mjs",
     "test": "vitest run",
     "eval:export-ranking": "node --import tsx scripts/export-public-ranking.mjs",
     "eval:benchmark:verify": "node --import tsx scripts/verify-nexus-benchmark.mjs",
