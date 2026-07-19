@@ -25,6 +25,7 @@ const deps = vi.hoisted(() => ({
   listMissionPanes: vi.fn(),
   forScope: vi.fn(),
   orientationEnsure: vi.fn(),
+  resolvePaneActivity: vi.fn(),
 }));
 
 vi.mock("./pane-registry", () => ({
@@ -52,6 +53,10 @@ vi.mock("./gate", () => ({
 
 vi.mock("../context/orientation/orientation-service", () => ({
   tryGetProjectOrientationService: () => ({ ensure: deps.orientationEnsure }),
+}));
+
+vi.mock("./pane-activity-summary", () => ({
+  resolveMissionPaneActivity: deps.resolvePaneActivity,
 }));
 
 import { RendererMissionAuthority } from "./renderer-mission-authority";
@@ -917,9 +922,35 @@ describe("renderer mission authority", () => {
       scope,
       createdAt: 1,
     };
+    // Activity summary rides the persisted-panes channel (zero-LLM harvest).
+    const activity = {
+      title: "review the diff",
+      lastLine: "done",
+      stoppedAt: 123,
+      source: "transcript" as const,
+    };
+    deps.resolvePaneActivity.mockReturnValue(activity);
     deps.listMissionPanes.mockReturnValueOnce([spec]);
     expect(authority.listMissionPanesForRenderer(owner, "mission-a")).toEqual([
-      spec,
+      { ...spec, activity },
+    ]);
+    expect(deps.resolvePaneActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner,
+        scope,
+        paneId: "pane-a",
+        adapterId: "codex",
+        cwd: session.cwd,
+      }),
+    );
+
+    // Resolver failures degrade to null — never break the reopen path.
+    deps.resolvePaneActivity.mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+    deps.listMissionPanes.mockReturnValueOnce([spec]);
+    expect(authority.listMissionPanesForRenderer(owner, "mission-a")).toEqual([
+      { ...spec, activity: null },
     ]);
 
     deps.listMissionPanes.mockReturnValueOnce([

@@ -30,7 +30,12 @@ import {
   type Mission,
   type MissionPaneSpec,
   type MissionPatch,
+  type PaneActivitySummary,
 } from "../../shared/orch-types";
+import {
+  resolveMissionPaneActivity,
+  type MissionPaneActivityInput,
+} from "./pane-activity-summary";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import {
@@ -172,6 +177,9 @@ export class RendererMissionAuthority {
     missionId: string,
   ) => string | undefined;
   readonly #allowImmediateDispatch: (squadId: string) => boolean;
+  readonly #resolvePaneActivity: (
+    input: MissionPaneActivityInput,
+  ) => PaneActivitySummary;
 
   constructor(
     stores: ProjectDomainStoreRegistry,
@@ -184,10 +192,14 @@ export class RendererMissionAuthority {
     allowImmediateDispatch = (squadId: string): boolean =>
       squadId === PET_STUDIO_SQUAD_ID ||
       getOrchSettings().intentFirstMissionRuntimeV1 === false,
+    resolvePaneActivity: (
+      input: MissionPaneActivityInput,
+    ) => PaneActivitySummary = resolveMissionPaneActivity,
   ) {
     this.#stores = stores;
     this.#resolveContextRevision = resolveContextRevision;
     this.#allowImmediateDispatch = allowImmediateDispatch;
+    this.#resolvePaneActivity = resolvePaneActivity;
   }
 
   updateMissionFromRenderer(
@@ -1087,6 +1099,10 @@ export class RendererMissionAuthority {
     }
     return specs.map((spec) => ({
       ...spec,
+      // Activity summary (zero-LLM harvest): computed on demand with a 30s
+      // mtime-invalidated cache; resolution failures degrade to null, never
+      // break the reopen path.
+      activity: this.#safePaneActivity(owner, rendererScope, spec),
       scope: spec.scope ? { ...spec.scope } : undefined,
       allowedTools:
         spec.allowedTools === null
@@ -1101,5 +1117,25 @@ export class RendererMissionAuthority {
             ? [...spec.allowedSkills]
             : undefined,
     }));
+  }
+
+  /** Activity is best-effort metadata: a resolver bug must not break reopen. */
+  #safePaneActivity(
+    owner: WebContents,
+    scope: ProjectExecutionScope,
+    spec: MissionPaneSpec,
+  ): PaneActivitySummary | null {
+    try {
+      return this.#resolvePaneActivity({
+        owner,
+        scope,
+        paneId: spec.paneId,
+        adapterId: spec.adapterId,
+        cwd: spec.cwd,
+        accountId: spec.accountId,
+      });
+    } catch {
+      return null;
+    }
   }
 }
