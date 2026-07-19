@@ -47,8 +47,10 @@ export interface DelegationProgress {
  */
 export function isDelegationSupervisable(progress: DelegationProgress): boolean {
   if (progress.expectedWorkers === 0) return false;
-  // Consult lane is read-only investigation — no worker/worktree expectation.
+  // Consult / plan lanes are not multi-worker PREVC delivery — no worker
+  // recovery SLA. (Squad roster size can still be > 0; lane wins.)
   if (progress.mission.intentContract?.lane === 'consult') return false;
+  if (progress.mission.intentContract?.lane === 'plan') return false;
   if (!['pending', 'running'].includes(progress.mission.status)) return false;
   if (progress.hasBoundOrchestrator === false) return false;
   const intentState = resolveEffectiveIntentState({
@@ -144,9 +146,18 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
   ]);
   for (const mission of suite.missions.list()) {
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
-    const expectedWorkers = squad?.agents.filter(
-      (agent) => agent.category !== 'orchestrator',
-    ).length ?? 0;
+    const lane = mission.intentContract?.lane;
+    const rosterWorkers =
+      squad?.agents.filter((agent) => agent.category !== 'orchestrator')
+        .length ?? 0;
+    // Plan/consult never expect workers; other lanes respect budget cap.
+    const budgetCap = mission.intentContract?.budgets?.maxWorkers;
+    const expectedWorkers =
+      lane === 'consult' || lane === 'plan'
+        ? 0
+        : budgetCap !== undefined
+          ? Math.min(rosterWorkers, Math.max(0, budgetCap))
+          : rosterWorkers;
     const panes = listPaneSnapshots().filter(
       (pane) => pane.missionId === mission.id && liveStates.has(pane.state),
     );

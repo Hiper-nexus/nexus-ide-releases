@@ -34,6 +34,7 @@ import { OperatorHud } from './OperatorHud';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndBlockMission } from '../orch/block-mission';
 import { notifyOrchestratorPlanPromoted } from '../orch/plan-promote-notify';
+import { useToastStore } from '../state/toast-store';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { INTEGRATIONS_CHANGED_EVENT } from '../lib/integrations-events';
@@ -293,11 +294,15 @@ export function MissionRail() {
         missionId: m.id,
         goal,
       });
+      const detail = injected
+        ? 'PREVC ativo; orquestrador notificado para executar o plan.md.'
+        : 'PREVC ativo. Reabra o orquestrador se precisar do kickoff de implementação.';
       setNote(
         injected
           ? 'Plano promovido — PREVC ativo e orquestrador notificado.'
           : 'Plano promovido — PREVC ativo (sem pane vivo para notificar).',
       );
+      useToastStore.getState().push('success', 'Plano → código', detail);
     } catch (cause) {
       setNote(
         cause instanceof Error ? cause.message : 'Falha ao promover o plano.',

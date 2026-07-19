@@ -11,6 +11,8 @@ describe('plan-promote-notify', () => {
     expect(text).toContain('plan.md');
     expect(text).toContain('Migrar auth para OAuth');
     expect(text).toContain('PREVC');
+    expect(text).toContain('nexus_bg_run');
+    expect(text).toContain('worktrees');
   });
 
   it('prefers the mission orchestrator pane', () => {

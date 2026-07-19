@@ -19,7 +19,11 @@ export function buildPlanPromotedKickoff(goal: string): string {
     g ? `Objetivo: ${g}` : '',
     '',
     'A partir de agora podes usar worktrees, file_write, terminal, merge e o PREVC completo.',
-    'Lê plan.md (ou docs/plan.md), regista tarefas e executa. Não fiques em modo design.',
+    '1. Lê plan.md (ou docs/plan.md) com file_read / nexus_plan_read.',
+    '2. Congele o contrato se ainda não estiver frozen (nexus_mission_freeze_contract).',
+    '3. Regista tarefas e despacha specialists (worktrees + route + spawn).',
+    '4. Jobs longos: nexus_bg_run + nexus_bg_wait.',
+    'Não fiques em modo design — a lane já é standard.',
   ]
     .filter(Boolean)
     .join('\n');

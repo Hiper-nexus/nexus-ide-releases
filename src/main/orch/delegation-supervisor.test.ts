@@ -271,6 +271,29 @@ describe('delegation supervisor policy', () => {
     ).toBe(false);
   });
 
+  it('does not supervise plan-lane missions (design-only, no worker SLA)', () => {
+    expect(
+      isDelegationSupervisable({
+        mission: {
+          ...dispatchedEmpty,
+          intentContract: {
+            ...dispatchedEmpty.intentContract!,
+            lane: 'plan',
+            budgets: {
+              ...dispatchedEmpty.intentContract!.budgets,
+              maxWorkers: 0,
+            },
+          },
+        },
+        expectedWorkers: 3,
+        workerPanes: 0,
+        tasks: 0,
+        recoveries: [],
+        hasBoundOrchestrator: true,
+      }),
+    ).toBe(false);
+  });
+
   it('does not interfere with squads that have no workers or terminal missions', () => {
     expect(
       delegationRecoveryStage(
