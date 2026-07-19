@@ -319,6 +319,8 @@ export function MissionWizard() {
       setIntent(d.intent);
       setMissionGoal(d.missionGoal);
       setMissionLane(d.missionLane);
+      // Draft is operator intent — do not overwrite lane with goal heuristics.
+      laneTouchedByUserRef.current = true;
       setCount(d.count);
       setSlots(d.slots);
       setWsPath(d.wsPath || defaultWsPath);
@@ -346,6 +348,7 @@ export function MissionWizard() {
       if (!(draft?.variant === variant && isMissionWizardDraftDirty(draft))) {
         setMissionGoal('');
         setMissionLane('standard');
+        laneTouchedByUserRef.current = false;
         setCount(2);
         setSlots([]);
         setWsPath(defaultWsPath);
@@ -353,6 +356,7 @@ export function MissionWizard() {
       } else {
         setMissionGoal(draft.missionGoal);
         setMissionLane(draft.missionLane);
+        laneTouchedByUserRef.current = true;
         setCount(draft.count);
         setSlots(draft.slots);
         setWsPath(draft.wsPath || defaultWsPath);
@@ -392,13 +396,19 @@ export function MissionWizard() {
         '';
       if (seededGoal) {
         setMissionGoal(seededGoal);
-        setMissionLane(
+        const laneFromDraft =
           draft?.armedMissionId === storeArmedMissionId
             ? draft.missionLane
-            : armedSnapshot?.intentContract?.lane === 'consult'
-              ? 'consult'
-              : 'standard',
-        );
+            : null;
+        const laneFromMission =
+          armedSnapshot?.intentContract?.lane === 'consult'
+            ? 'consult'
+            : armedSnapshot?.intentContract?.lane === 'plan'
+              ? 'plan'
+              : 'standard';
+        setMissionLane(laneFromDraft ?? laneFromMission);
+        // Restored shell / draft owns the lane — no auto-suggest override.
+        laneTouchedByUserRef.current = true;
         setMissionAttachments(
           draft?.armedMissionId === storeArmedMissionId
             ? draft.missionAttachments
@@ -407,6 +417,7 @@ export function MissionWizard() {
       } else {
         setMissionGoal('');
         setMissionLane('standard');
+        laneTouchedByUserRef.current = false;
         setMissionAttachments([]);
       }
       setStep('intent-compose');

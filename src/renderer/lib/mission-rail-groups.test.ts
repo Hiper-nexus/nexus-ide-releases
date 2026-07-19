@@ -160,6 +160,22 @@ describe('railStatusDisplay', () => {
       'Concluída',
     );
   });
+
+  it('surfaces plan and consult lanes so promote/consult are glanceable', () => {
+    expect(railStatusDisplay('running', false, 'dispatched', 'plan').label).toBe(
+      'Em plano',
+    );
+    expect(railStatusDisplay('running', true, 'dispatched', 'plan').label).toBe(
+      'Plano ao vivo',
+    );
+    expect(
+      railStatusDisplay('running', false, 'dispatched', 'consult').label,
+    ).toBe('Consulta');
+    // Terminal still wins over lane.
+    expect(railStatusDisplay('done', false, 'dispatched', 'plan').label).toBe(
+      'Concluída',
+    );
+  });
 });
 
 describe('missionRailResumeCopy', () => {
@@ -168,6 +184,16 @@ describe('missionRailResumeCopy', () => {
       meta: 'Retomar panes salvos',
       title: 'Panes salvos — clique para retomar',
     });
+  });
+
+  it('points plan-lane missions at the promote control', () => {
+    expect(missionRailResumeCopy('running', false, 'dispatched', 'plan')).toEqual(
+      {
+        meta: '▶ Executar plano',
+        title:
+          'Lane plan (só plan.md) — clique ▶ para promover a código PREVC',
+      },
+    );
   });
 
   it('keeps a live mission focused on its existing grid panes', () => {

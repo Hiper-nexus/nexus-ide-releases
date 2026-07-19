@@ -631,15 +631,18 @@ export function MissionRail() {
                       {section.missions.map((m) => {
                         const liveInGrid = openMissionIds.has(m.id);
                         const pinned = pinnedIds.includes(m.id);
+                        const lane = m.intentContract?.lane ?? null;
                         const statusUi = railStatusDisplay(
                           m.status,
                           liveInGrid,
                           m.intentState,
+                          lane,
                         );
                         const resumeCopy = missionRailResumeCopy(
                           m.status,
                           liveInGrid,
                           m.intentState,
+                          lane,
                         );
                         const dotStatus =
                           m.status === 'blocked' || m.status === 'failed'

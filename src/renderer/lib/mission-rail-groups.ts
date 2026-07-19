@@ -106,8 +106,14 @@ export function railStatusDisplay(
   status: MissionStatus,
   liveInGrid: boolean,
   intentState?: Mission['intentState'],
+  /** Delivery lane — plan mode needs a glanceable pill so ▶ promote is obvious. */
+  lane?: 'standard' | 'consult' | 'plan' | null,
 ): { label: string; tone: RailStatusTone } {
-  if (liveInGrid) return { label: 'Ao vivo', tone: 'live' };
+  if (liveInGrid) {
+    if (lane === 'plan') return { label: 'Plano ao vivo', tone: 'live' };
+    if (lane === 'consult') return { label: 'Consulta ao vivo', tone: 'live' };
+    return { label: 'Ao vivo', tone: 'live' };
+  }
   // Terminal outcomes are authoritative. A stale intent snapshot must never
   // make a failed or completed mission look ready for dispatch again.
   // Persisted legacy rows may still carry terminal labels even though the
@@ -132,6 +138,9 @@ export function railStatusDisplay(
     default:
       break;
   }
+  // After intent shells: plan/consult lanes are not "Em curso" de código.
+  if (lane === 'plan') return { label: 'Em plano', tone: 'running' };
+  if (lane === 'consult') return { label: 'Consulta', tone: 'running' };
   switch (status) {
     case 'running':
       return { label: 'Em curso', tone: 'running' };
@@ -152,11 +161,28 @@ export function missionRailResumeCopy(
   status: MissionStatus,
   liveInGrid: boolean,
   intentState?: Mission['intentState'],
+  lane?: 'standard' | 'consult' | 'plan' | null,
 ): { meta: string | null; title: string } {
   if (liveInGrid) {
     return {
       meta: null,
-      title: 'Missão aberta no grid — clique para focar',
+      title:
+        lane === 'plan'
+          ? 'Missão em plan mode no grid — ▶ no rail promove para PREVC'
+          : 'Missão aberta no grid — clique para focar',
+    };
+  }
+  if (
+    lane === 'plan' &&
+    status !== 'done' &&
+    status !== 'failed' &&
+    intentState !== 'awaiting_goal' &&
+    intentState !== 'draft'
+  ) {
+    return {
+      meta: '▶ Executar plano',
+      title:
+        'Lane plan (só plan.md) — clique ▶ para promover a código PREVC',
     };
   }
   // Intent-first / agêntico: no panes yet — click reopens the goal wizard.

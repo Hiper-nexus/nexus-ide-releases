@@ -45,6 +45,7 @@ vi.mock('../adapters/managed-credentials', async () => {
 
 import {
   addAccount,
+  hasAvailableAccount,
   initAccountStore,
   isAccountBlockedForScope,
   pickAvailable,
@@ -339,5 +340,32 @@ describe('restauração automática ao expirar', () => {
       { scope: 'tier:fable' },
     );
     expect(pick.account?.id).toBe(a.id);
+  });
+});
+
+describe('hasAvailableAccount (gate de spawn quota-aware)', () => {
+  it('adapter sem contas Nexus reporta disponível (auth de terceiro não é nossa)', () => {
+    // omp autogerencia auth em ~/.omp: zero contas gerenciadas ≠ indisponível.
+    expect(hasAvailableAccount('omp')).toBe(true);
+    expect(hasAvailableAccount('claude')).toBe(true);
+  });
+
+  it('conta única com cooldown global vigente → indisponível', () => {
+    const a = addAcct('a');
+    setCooldown(a.id, NOW + MINUTE, 'quota');
+    expect(hasAvailableAccount('claude', NOW)).toBe(false);
+  });
+
+  it('cooldown global expirado → disponível de novo', () => {
+    const a = addAcct('a');
+    setCooldown(a.id, NOW + MINUTE, 'quota');
+    expect(hasAvailableAccount('claude', NOW + MINUTE + 1)).toBe(true);
+  });
+
+  it('uma conta livre entre duas → disponível', () => {
+    const a = addAcct('a');
+    addAcct('b');
+    setCooldown(a.id, NOW + MINUTE, 'quota');
+    expect(hasAvailableAccount('claude', NOW)).toBe(true);
   });
 });
