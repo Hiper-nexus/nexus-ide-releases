@@ -303,8 +303,7 @@ const fileWrite: McpToolDef = {
     // Plan lane (grok-build plan-mode): only plan.md / docs/plan.md.
     // Fail-closed: store miss with a missionId still cannot open arbitrary writes.
     if (ctx.missionId) {
-      let mission: { intentContract?: { lane?: string | null } | null } | null =
-        null;
+      let mission: Parameters<typeof isPlanLane>[0] | null = null;
       try {
         mission = getProjectDomainStores(ctx.scope).missions.get(ctx.missionId);
       } catch {

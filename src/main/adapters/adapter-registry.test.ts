@@ -161,7 +161,7 @@ describe('builtin adapters', () => {
         resumeIdArgs?: string[];
         sessionIdArg?: string;
       };
-      control?: { permission?: { safe?: string[] } };
+      control?: { permission?: { safe?: string[]; yolo?: string[] } };
     } | undefined;
 
   it('all builtins pass schema validation', () => {

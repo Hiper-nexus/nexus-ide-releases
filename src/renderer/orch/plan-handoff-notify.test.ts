@@ -35,6 +35,7 @@ function mission(id: string, lane: 'plan' | 'standard'): Mission {
       risk: 'normal',
       executionMode: 'autopilot',
       lane,
+      contextPolicy: 'on-demand',
       intentVersion: 1,
       budgets: {
         planningTokens: 1000,
