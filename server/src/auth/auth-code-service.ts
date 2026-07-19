@@ -26,13 +26,18 @@ export async function consumeAuthCode(
     isNull(authCodes.usedAt),
     gt(authCodes.expiresAt, at),
   ];
-  // If a challenge was stored, the verifier must hash to it (S256).
+  // Fail-closed (anti-downgrade): a code issued WITH a challenge can ONLY be
+  // exchanged with the matching verifier. Omitting the verifier must NOT bypass
+  // the check — it only matches codes issued WITHOUT a challenge (legacy clients
+  // during rolling deploy).
   if (codeVerifier) {
     const derivedChallenge = crypto
       .createHash('sha256')
       .update(codeVerifier)
       .digest('base64url');
     conditions.push(eq(authCodes.codeChallenge, derivedChallenge));
+  } else {
+    conditions.push(isNull(authCodes.codeChallenge));
   }
   const [row] = await db
     .update(authCodes)

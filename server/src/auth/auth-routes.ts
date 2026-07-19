@@ -26,6 +26,10 @@ const CODE_TTL = 60 * 1000;
 const LIVE_TEAM_SUBSCRIPTIONS = ['active', 'trialing', 'past_due'];
 /** Nonce do desktop: mesmo conjunto seguro do deep link, com teto. */
 const APP_STATE_RE = /^[A-Za-z0-9._~-]{1,128}$/;
+/** PKCE S256 challenge: sempre 43 chars base64url (RFC 7636 §4.2). */
+const CODE_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
+/** PKCE verifier: 43–128 chars de [A-Za-z0-9._~-] (RFC 7636 §4.1). */
+const CODE_VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 
 function isProvider(p: string): p is Provider {
   return p === 'github' || p === 'google';
@@ -54,8 +58,15 @@ export function buildAuthRouter(deps: AuthDeps): Router {
     }
     // M11: the desktop MAY send its own PKCE code_challenge so the deep-link
     // auth-code is bound to the initiating client (not just any app that
-    // intercepts the custom-scheme callback).
-    const codeChallenge = String(req.query.code_challenge ?? '') || undefined;
+    // intercepts the custom-scheme callback). Valida o formato S256 (43 chars
+    // base64url) e rejeita lixo (ex.: array via ?code_challenge=a&code_challenge=b)
+    // antes de gravar no banco.
+    const rawChallenge = req.query.code_challenge;
+    const codeChallenge =
+      typeof rawChallenge === 'string' && rawChallenge !== '' ? rawChallenge : undefined;
+    if (codeChallenge && !CODE_CHALLENGE_RE.test(codeChallenge)) {
+      return res.status(400).json({ ok: false, error: 'code_challenge inválido' });
+    }
     const state = newToken();
     const { verifier, challenge } = makePkce();
     await db.insert(oauthStates).values({
@@ -103,6 +114,9 @@ export function buildAuthRouter(deps: AuthDeps): Router {
     const body = req.body as { code?: string; code_verifier?: string };
     const code = String(body.code ?? '');
     const codeVerifier = body.code_verifier ? String(body.code_verifier) : undefined;
+    if (codeVerifier && !CODE_VERIFIER_RE.test(codeVerifier)) {
+      return res.status(400).json({ ok: false, error: 'code_verifier inválido' });
+    }
     const consumed = await consumeAuthCode(db, code, now, codeVerifier); // atômico, single-use
     if (!consumed) {
       return res.status(400).json({ ok: false, error: 'code inválido' });

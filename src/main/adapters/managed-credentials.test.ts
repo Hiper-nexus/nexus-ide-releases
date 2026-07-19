@@ -10,6 +10,9 @@ import {
   managedHomePath,
   materializeManagedHome,
   removeManagedHome,
+  scrubManagedSessionAuth,
+  setManagedAuthPersister,
+  trackManagedSession,
 } from './managed-credentials';
 
 const tempRoots: string[] = [];
@@ -174,5 +177,32 @@ describe('managed-credentials', () => {
       { home, systemHome: null },
     );
     expect(fs.readFileSync(authPath, 'utf8')).toBe(fresher);
+  });
+
+  it('scrub respeita refcount: 2 sessões da mesma conta só apagam no último exit', () => {
+    // O persister é chamado imediatamente ANTES do scrub, e só quando o refcount
+    // da conta zera — logo, o timing das chamadas prova a guarda de refcount.
+    const persisted: string[] = [];
+    setManagedAuthPersister((adapterId, accountId) =>
+      persisted.push(`${adapterId}:${accountId}`),
+    );
+    try {
+      trackManagedSession('s1', 'codex', 'acct-ref');
+      trackManagedSession('s2', 'codex', 'acct-ref');
+
+      // Primeira saída: outra sessão da mesma conta ainda viva → sem scrub.
+      scrubManagedSessionAuth('s1');
+      expect(persisted).toEqual([]);
+
+      // Segunda (última) saída: persiste fresher e scrub roda uma única vez.
+      scrubManagedSessionAuth('s2');
+      expect(persisted).toEqual(['codex:acct-ref']);
+
+      // Idempotente: sessão desconhecida não dispara nada.
+      scrubManagedSessionAuth('s1');
+      expect(persisted).toEqual(['codex:acct-ref']);
+    } finally {
+      setManagedAuthPersister(null);
+    }
   });
 });

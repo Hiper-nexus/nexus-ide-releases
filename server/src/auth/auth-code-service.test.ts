@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import crypto from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import * as schema from '../db/schema';
@@ -26,6 +27,29 @@ async function seed(db: Db, code: string, expiresAt: Date): Promise<string> {
   return a.id;
 }
 
+function challengeOf(verifier: string): string {
+  return crypto.createHash('sha256').update(verifier).digest('base64url');
+}
+
+async function seedWithChallenge(
+  db: Db,
+  code: string,
+  challenge: string,
+  expiresAt: Date,
+): Promise<string> {
+  const [a] = await db
+    .insert(schema.accounts)
+    .values({ email: 'pkce@y.com' })
+    .returning({ id: schema.accounts.id });
+  await db.insert(schema.authCodes).values({
+    codeHash: hashToken(code),
+    accountId: a.id,
+    expiresAt,
+    codeChallenge: challenge,
+  });
+  return a.id;
+}
+
 describe('consumeAuthCode', () => {
   it('code válido consome uma vez e retorna a conta', async () => {
     const db = await makeTestDb();
@@ -49,5 +73,31 @@ describe('consumeAuthCode', () => {
       consumeAuthCode(db, 'corrida'),
     ]);
     expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('PKCE fail-closed: code COM challenge não resgata sem verifier (anti-downgrade)', async () => {
+    const db = await makeTestDb();
+    const verifier = 'v'.repeat(43);
+    const acc = await seedWithChallenge(
+      db,
+      'cpkce',
+      challengeOf(verifier),
+      new Date(Date.now() + 60_000),
+    );
+    // Omitir o verifier NÃO pode consumir um code emitido COM challenge —
+    // esse é o downgrade trivial que o fail-closed bloqueia.
+    expect(await consumeAuthCode(db, 'cpkce')).toBeNull();
+    // Verifier errado também não casa.
+    expect(await consumeAuthCode(db, 'cpkce', Date.now, 'w'.repeat(43))).toBeNull();
+    // Verifier correto consome.
+    expect(await consumeAuthCode(db, 'cpkce', Date.now, verifier)).toEqual({
+      accountId: acc,
+    });
+  });
+
+  it('PKCE: code SEM challenge resgata sem verifier (cliente legado em rolling deploy)', async () => {
+    const db = await makeTestDb();
+    const acc = await seed(db, 'clegacy', new Date(Date.now() + 60_000));
+    expect(await consumeAuthCode(db, 'clegacy')).toEqual({ accountId: acc });
   });
 });

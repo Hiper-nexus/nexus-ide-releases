@@ -13,12 +13,23 @@ import type { NextFunction, Request, Response } from 'express';
 /**
  * Pluggable store for rate-limit counters. Implement this interface with a
  * shared backend (Redis, Postgres) for horizontal scaling.
+ *
+ * A API é uma ÚNICA operação atômica `tryAcquire` (registrar + decidir), não
+ * `count()` seguido de `hit()` — check-then-act estoura o limite sob
+ * concorrência em qualquer store compartilhado entre instâncias. O retorno pode
+ * ser síncrono (memória) ou uma Promise (Redis: INCR+EXPIRE / Postgres).
  */
 export interface RateLimitStore {
-  /** Record a hit for `key` at timestamp `nowMs`. */
-  hit(key: string, nowMs: number): void;
-  /** Count hits for `key` within the sliding window ending at `nowMs`. */
-  count(key: string, windowMs: number, nowMs: number): number;
+  /**
+   * Registra a tentativa e decide, numa única operação atômica, se ela cabe na
+   * janela. Retorna true se permitida (e já contabilizada), false se bloqueada.
+   */
+  tryAcquire(
+    key: string,
+    windowMs: number,
+    max: number,
+    nowMs: number,
+  ): boolean | Promise<boolean>;
   /** Periodic cleanup of expired entries (no-op for TTL-based stores). */
   sweep?(nowMs: number, windowMs: number): void;
   /** Diagnostic: number of tracked keys. */
@@ -29,16 +40,17 @@ export interface RateLimitStore {
 export class MemoryRateLimitStore implements RateLimitStore {
   private hits = new Map<string, number[]>();
 
-  hit(key: string, nowMs: number): void {
-    const arr = this.hits.get(key) ?? [];
-    arr.push(nowMs);
-    this.hits.set(key, arr);
-  }
-
-  count(key: string, windowMs: number, nowMs: number): number {
-    const arr = (this.hits.get(key) ?? []).filter((ts) => nowMs - ts < windowMs);
-    this.hits.set(key, arr);
-    return arr.length;
+  tryAcquire(key: string, windowMs: number, max: number, nowMs: number): boolean {
+    // Poda + decisão + registro numa operação só (sem check-then-act): a
+    // tentativa só é gravada se couber na janela.
+    const live = (this.hits.get(key) ?? []).filter((ts) => nowMs - ts < windowMs);
+    if (live.length >= max) {
+      this.hits.set(key, live);
+      return false;
+    }
+    live.push(nowMs);
+    this.hits.set(key, live);
+    return true;
   }
 
   sweep(nowMs: number, windowMs: number): void {
@@ -82,12 +94,26 @@ export function rateLimit(opts: {
     if (++calls % sweepEvery === 0 && store.sweep) {
       store.sweep(t, opts.windowMs);
     }
-    if (store.count(ip, opts.windowMs, t) >= opts.max) {
-      res.status(429).json({ ok: false, error: 'rate limited' });
+    const decision = store.tryAcquire(ip, opts.windowMs, opts.max, t);
+    // Store síncrono (memória): decide no mesmo tick — mantém o contrato atual.
+    if (typeof decision === 'boolean') {
+      if (!decision) {
+        res.status(429).json({ ok: false, error: 'rate limited' });
+        return;
+      }
+      next();
       return;
     }
-    store.hit(ip, t);
-    next();
+    // Store assíncrono (Redis/Postgres): aguarda a decisão atômica.
+    decision
+      .then((ok) => {
+        if (!ok) {
+          res.status(429).json({ ok: false, error: 'rate limited' });
+          return;
+        }
+        next();
+      })
+      .catch(next);
   }) as RateLimiter;
   handler.bucketCount = () => store.size();
   return handler;

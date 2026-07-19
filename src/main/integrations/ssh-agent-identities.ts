@@ -1,5 +1,8 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Enumerate the public-key identities currently loaded in the user's SSH agent
@@ -10,25 +13,33 @@ import { createHash } from 'node:crypto';
  * allowing signing with the wrong key. Callers now use this list as the
  * allowlist so only identities the user actually loaded are offered.
  *
+ * Assíncrono: um `ssh-add -L` contra um agente lento/travado (ex.: agente
+ * remoto via SSH_AUTH_SOCK) pode levar até o timeout de 5 s — com execFileSync
+ * isso congelava o main process inteiro (UI). O fluxo de conexão já é async.
+ *
  * Returns an empty array when no agent is running or no keys are loaded
  * (fail-closed: the session manager rejects an empty allowlist).
  */
-export function enumerateSshAgentFingerprints(): string[] {
+export async function enumerateSshAgentFingerprints(): Promise<string[]> {
   let output: string;
   try {
-    output = execFileSync('ssh-add', ['-L'], {
+    ({ stdout: output } = await execFileAsync('ssh-add', ['-L'], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 5_000,
-    });
+    }));
   } catch {
-    // No agent running, or no identities loaded.
+    // No agent running, or no identities loaded (ssh-add exits non-zero).
     return [];
   }
+  return parseAgentIdentities(output);
+}
+
+/** Parse puro do `ssh-add -L` → fingerprints SHA256 (testável sem agente). */
+export function parseAgentIdentities(output: string): string[] {
   const fingerprints: string[] = [];
   for (const line of output.split('\n')) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('The agent has no identities')) continue;
+    if (!trimmed) continue;
     // Format: "<key-type> <base64-blob> <comment>"
     const parts = trimmed.split(/\s+/);
     if (parts.length < 2) continue;

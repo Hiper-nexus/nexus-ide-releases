@@ -29,7 +29,7 @@ describe('registerBillingIpc', () => {
     electronMock.handlers.clear();
     billingDeps.apiFetch.mockResolvedValue({
       status: 200,
-      json: { ok: true, data: { url: 'https://checkout.example/session' } },
+      json: { ok: true, data: { url: 'https://checkout.stripe.com/session' } },
     });
     const mod = await import('./billing-ipc');
     mod.registerBillingIpc({
@@ -51,7 +51,7 @@ describe('registerBillingIpc', () => {
       body: { plan: 'pro' },
     });
     expect(electronMock.openExternal).toHaveBeenCalledWith(
-      'https://checkout.example/session',
+      'https://checkout.stripe.com/session',
     );
     expect(billingDeps.startCheckoutPolling).toHaveBeenCalledTimes(1);
   });
@@ -73,5 +73,37 @@ describe('registerBillingIpc', () => {
 
     expect(result).toEqual({ ok: false, error: 'plano inválido' });
     expect(billingDeps.apiFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'javascript:alert(1)',
+    'file:///etc/passwd',
+    'http://insecure.example/checkout',
+    'https://evil.example/checkout',
+  ])('recusa URL de checkout sem https: %s', async (url) => {
+    billingDeps.apiFetch.mockResolvedValue({
+      status: 200,
+      json: { ok: true, data: { url } },
+    });
+    const handler = electronMock.handlers.get(BILLING_CHANNELS.checkout);
+
+    const result = await handler?.(null, { plan: 'pro' });
+
+    expect(result).toEqual({ ok: false, error: 'URL de checkout inválida' });
+    expect(electronMock.openExternal).not.toHaveBeenCalled();
+    expect(billingDeps.startCheckoutPolling).not.toHaveBeenCalled();
+  });
+
+  it('recusa URL de portal sem https:', async () => {
+    billingDeps.apiFetch.mockResolvedValue({
+      status: 200,
+      json: { ok: true, data: { url: 'javascript:alert(1)' } },
+    });
+    const handler = electronMock.handlers.get(BILLING_CHANNELS.portal);
+
+    const result = await handler?.(null);
+
+    expect(result).toEqual({ ok: false, error: 'URL do portal inválida' });
+    expect(electronMock.openExternal).not.toHaveBeenCalled();
   });
 });

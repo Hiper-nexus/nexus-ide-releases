@@ -16,6 +16,37 @@ import {
  * pelo backend autenticado; licença assinada é verificada e gravada localmente.
  */
 
+/**
+ * Hosts válidos para checkout/portal. O backend devolve a URL direta da sessão
+ * Stripe (billing-routes retorna `session.url`), então só hosts do Stripe são
+ * legítimos. Defesa em profundidade: um backend comprometido pode devolver
+ * https://evil.example — a allowlist de hostname bloqueia (LOW hardening).
+ */
+const BILLING_HOST_SUFFIXES = ['.stripe.com', '.stripe.link'];
+
+function isAllowedBillingHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return BILLING_HOST_SUFFIXES.some(
+    (suffix) => h === suffix.slice(1) || h.endsWith(suffix),
+  );
+}
+
+/**
+ * Mesma validação do handler WINDOW_CHANNELS.openExternal: só https:. Além do
+ * protocolo, exige host do Stripe (checkout/portal). Impede que um backend
+ * comprometido abra file://, javascript:, ou https://evil.example.
+ */
+function assertHttpsUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:') return null;
+    if (!isAllowedBillingHost(url.hostname)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 const LICENSE_FILE = path.join(os.homedir(), '.nexus', 'license.json');
 
 interface BillingIpcDeps {
@@ -239,7 +270,11 @@ export function registerBillingIpc(overrides?: Partial<BillingIpcDeps>): void {
           : body?.error ?? 'backend indisponível — tente de novo',
       };
     }
-    void deps.openExternal(body.data.url);
+    const safeCheckoutUrl = assertHttpsUrl(body.data.url);
+    if (!safeCheckoutUrl) {
+      return { ok: false, error: 'URL de checkout inválida' };
+    }
+    void deps.openExternal(safeCheckoutUrl);
     deps.startCheckoutPolling();
     return { ok: true };
   });
@@ -256,7 +291,11 @@ export function registerBillingIpc(overrides?: Partial<BillingIpcDeps>): void {
           : body?.error ?? 'backend indisponível',
       };
     }
-    void deps.openExternal(body.data.url);
+    const safePortalUrl = assertHttpsUrl(body.data.url);
+    if (!safePortalUrl) {
+      return { ok: false, error: 'URL do portal inválida' };
+    }
+    void deps.openExternal(safePortalUrl);
     return { ok: true };
   });
 }

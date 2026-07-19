@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow } from 'electron';
+import { confirmNativeAction } from './native-confirm';
 
 /**
  * Deep link `nexus://` + document open. O parser é PURO e valida com rigor
@@ -137,40 +138,30 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
 
 /** Diálogo nativo (não-forjável) confirmando abertura de um caminho externo. */
 function confirmOpenPath(target: string, win?: BrowserWindow): boolean {
-  const opts = {
-    type: 'warning' as const,
-    buttons: ['Cancelar', 'Abrir'],
-    defaultId: 0,
-    cancelId: 0,
-    title: 'Abrir pasta externa?',
-    message: 'Um link pediu para o NexusIDE abrir este caminho:',
-    detail: `${target}\n\nAbra apenas se você reconhece e confia na origem.`,
-    noLink: true,
-  };
-  const res = win
-    ? dialog.showMessageBoxSync(win, opts)
-    : dialog.showMessageBoxSync(opts);
-  return res === 1;
+  return confirmNativeAction(
+    {
+      title: 'Abrir pasta externa?',
+      message: 'Um link pediu para o NexusIDE abrir este caminho:',
+      detail: `${target}\n\nAbra apenas se você reconhece e confia na origem.`,
+      confirmLabel: 'Abrir',
+    },
+    win,
+  );
 }
 
 /** L2: Native (non-forgeable) dialog confirming a license deep-link apply. */
 function confirmLicenseApply(win?: BrowserWindow | null): boolean {
-  const opts = {
-    type: 'warning' as const,
-    buttons: ['Cancelar', 'Aplicar licença'],
-    defaultId: 0,
-    cancelId: 0,
-    title: 'Aplicar licença?',
-    message: 'Um link externo pediu para aplicar uma licença ao NexusIDE.',
-    detail:
-      'Isso pode alterar seu plano e recursos disponíveis. ' +
-      'Aplique apenas se você esperava este link (ex.: veio do seu e-mail de compra).',
-    noLink: true,
-  };
-  const res = win
-    ? dialog.showMessageBoxSync(win, opts)
-    : dialog.showMessageBoxSync(opts);
-  return res === 1;
+  return confirmNativeAction(
+    {
+      title: 'Aplicar licença?',
+      message: 'Um link externo pediu para aplicar uma licença ao NexusIDE.',
+      detail:
+        'Isso pode alterar seu plano e recursos disponíveis. ' +
+        'Aplique apenas se você esperava este link (ex.: veio do seu e-mail de compra).',
+      confirmLabel: 'Aplicar licença',
+    },
+    win,
+  );
 }
 
 /**

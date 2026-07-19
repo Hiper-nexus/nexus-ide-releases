@@ -52,6 +52,28 @@ describe('remote security negatives (D8)', () => {
     ).rejects.toThrow(/empty agent identity/);
   });
 
+  it('rejects wildcard agent identity allowlist (H3)', async () => {
+    const cap = createRemoteHostCapability({
+      kind: 'ssh',
+      hostId: 'h',
+      displayName: 'h',
+      scope,
+      paired: true,
+    });
+    const manager = createSshSessionManager();
+    await expect(
+      manager.connect(
+        cap,
+        {
+          host: 'h',
+          username: 'u',
+          auth: { kind: 'agent', allowedFingerprints: ['*'] },
+        },
+        createMockSshTransport(),
+      ),
+    ).rejects.toThrow(/wildcard identity allowlist rejected/);
+  });
+
   it('FS write denied without authz; traversal denied', async () => {
     const cap = createRemoteHostCapability({
       kind: 'ssh',

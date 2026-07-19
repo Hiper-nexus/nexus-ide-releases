@@ -650,6 +650,29 @@ interface ManagedSessionEntry {
 
 const managedSessionRegistry = new Map<string, ManagedSessionEntry>();
 
+/**
+ * Refcount de sessões vivas por conta gerenciada (adapter:accountId). Dois panes
+ * na MESMA conta compartilham o auth.json materializado — o primeiro a sair NÃO
+ * pode apagar o arquivo debaixo do CLI ainda vivo no segundo pane.
+ */
+const liveSessionsByAccount = new Map<string, number>();
+
+function accountKey(entry: ManagedSessionEntry): string {
+  return `${entry.adapterId}:${entry.accountId}`;
+}
+
+/**
+ * Callback opcional (registrado pelo account-store, dono do vault) para
+ * persistir tokens renovados pelo CLI ANTES de destruir a única cópia fresca do
+ * auth.json. Mantém a camada de segredos fora deste módulo (sem import circular).
+ */
+type FresherAuthPersister = (adapterId: FileAuthAdapterId, accountId: string) => void;
+let persistFresherCallback: FresherAuthPersister | null = null;
+
+export function setManagedAuthPersister(fn: FresherAuthPersister | null): void {
+  persistFresherCallback = fn;
+}
+
 /** Register a PTY session as consuming a managed account's auth. */
 export function trackManagedSession(
   sessionId: string,
@@ -657,13 +680,36 @@ export function trackManagedSession(
   accountId: string,
 ): void {
   managedSessionRegistry.set(sessionId, { adapterId, accountId });
+  const key = accountKey({ adapterId, accountId });
+  liveSessionsByAccount.set(key, (liveSessionsByAccount.get(key) ?? 0) + 1);
 }
 
-/** Scrub the auth file for a session that just exited (idempotent). */
+/**
+ * Scrub the auth file for a session that just exited (idempotent). Só apaga o
+ * auth.json quando NÃO resta nenhuma outra sessão viva da mesma conta; antes de
+ * apagar, persiste no vault um token eventualmente renovado pelo CLI (read-back),
+ * senão o refresh feito durante a sessão seria perdido junto com o arquivo.
+ */
 export function scrubManagedSessionAuth(sessionId: string): void {
   const entry = managedSessionRegistry.get(sessionId);
   if (!entry) return;
   managedSessionRegistry.delete(sessionId);
+  const key = accountKey(entry);
+  const remaining = (liveSessionsByAccount.get(key) ?? 1) - 1;
+  if (remaining > 0) {
+    // Outra sessão da MESMA conta ainda usa o auth.json — não apaga.
+    liveSessionsByAccount.set(key, remaining);
+    return;
+  }
+  liveSessionsByAccount.delete(key);
+  // Persiste token renovado pelo CLI ANTES de destruir a única cópia fresca.
+  if (persistFresherCallback) {
+    try {
+      persistFresherCallback(entry.adapterId, entry.accountId);
+    } catch {
+      // Best-effort: falha de vault não impede o scrub de segurança.
+    }
+  }
   scrubManagedAuth(entry.adapterId, entry.accountId);
 }
 

@@ -1,8 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 
 /**
  * Claude Code subscription credential swap (macOS) — ported from the
@@ -40,39 +39,36 @@ export function readActiveClaudeCredential(): string | null {
 /** Restore a saved credential blob into the active Claude keychain service.
  *
  * M3 mitigation: the secret is NEVER passed via argv (visible in `ps auxww`).
- * Instead we write it to a 0600 temp file, then a short-lived `sh` reads the
- * file and feeds the value to `security add-generic-password -w`. The secret
- * travels only through an env var (not enumerable by other users on macOS)
- * and a 0600 temp file that is unlinked immediately after use.
+ * We drive `security` in interactive mode (`-i`), feeding the whole
+ * `add-generic-password` command through STDIN — stdin is not enumerable by
+ * other users, unlike argv. No temp file touches the filesystem either.
+ * The interactive parser is line-oriented, so a blob containing a newline would
+ * be malformed for `-w` storage; we refuse it rather than silently corrupt
+ * (the old `$(cat …)` approach also stripped trailing newlines via command
+ * substitution — a silent-corruption bug this version eliminates).
  */
 export function writeActiveClaudeCredential(blob: string): boolean {
   if (!isMac() || !blob) return false;
-  const tmpFile = path.join(
-    os.tmpdir(),
-    `nexus-claude-cred-${crypto.randomBytes(8).toString('hex')}`,
-  );
+  if (blob.includes('\n') || blob.includes('\r')) {
+    console.warn('[claude-credential] credential blob contains newline; refusing');
+    return false;
+  }
+  // Quoting for security's interactive parser: double-quoted, escaping \ and ".
+  const q = (s: string) => `"${s.replace(/([\\"])/g, '\\$1')}"`;
+  const cmd = `add-generic-password -U -s ${q(CLAUDE_KEYCHAIN_SERVICE)} -a ${q(os.userInfo().username)} -w ${q(blob)}\n`;
   try {
-    fs.writeFileSync(tmpFile, blob, { mode: 0o600 });
-    // The shell reads the secret from the temp file; neither the shell's argv
-    // nor security's argv ever contains the credential value.
-    execFileSync(
-      '/bin/sh',
-      [
-        '-c',
-        `security add-generic-password -U -s "$1" -a "$2" -w "$(cat "$3")"`,
-        '--',
-        CLAUDE_KEYCHAIN_SERVICE,
-        os.userInfo().username,
-        tmpFile,
-      ],
-      { stdio: 'ignore' },
-    );
+    const res = spawnSync('security', ['-i'], {
+      input: cmd,
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    if (res.status !== 0) {
+      console.warn('[claude-credential] failed to restore credential (status %d)', res.status);
+      return false;
+    }
     return true;
   } catch (err) {
     console.warn('[claude-credential] failed to restore credential:', err);
     return false;
-  } finally {
-    try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
   }
 }
 

@@ -25,6 +25,7 @@ import {
   materializeManagedHome,
   readBackFresherAuth,
   removeManagedHome,
+  setManagedAuthPersister,
   type FileAuthAdapterId,
 } from '../adapters/managed-credentials';
 import { chooseAccount } from './account-select';
@@ -150,9 +151,29 @@ CREATE TABLE IF NOT EXISTS account_cooldown_blocks (
   PRIMARY KEY (account_id, block_scope)
 );`;
 
+/**
+ * Read-back do token renovado pelo CLI para o vault, chamado pelo scrub de
+ * sessão gerenciada (M1) ANTES de apagar o auth.json. Se o CLI rotacionou o
+ * refresh token durante a sessão, o arquivo no disco é mais fresco que o
+ * snapshot do vault — sem este read-back o scrub destruiria a única cópia viva
+ * e a conta seria forçada a relogar. Best-effort: nunca lança.
+ */
+function persistFresherManagedAuth(
+  adapterId: FileAuthAdapterId,
+  accountId: string,
+): void {
+  const blob = getSecret(CRED_PREFIX + accountId);
+  if (!blob) return;
+  const fresher = readBackFresherAuth(adapterId, accountId, blob);
+  if (fresher) setSecret(CRED_PREFIX + accountId, fresher);
+}
+
 export function initAccountStore(database: Db | null): void {
   db = database;
   readOnly = true;
+  // Registra o read-back de tokens renovados para o scrub de sessão gerenciada
+  // (M1): antes de apagar o auth.json no exit, o vault recebe o token fresco.
+  setManagedAuthPersister(persistFresherManagedAuth);
   if (!database) return;
 
   const hydratedAccounts = new Map<string, Account>();

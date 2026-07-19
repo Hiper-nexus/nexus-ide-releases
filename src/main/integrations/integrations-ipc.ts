@@ -429,7 +429,7 @@ export function registerIntegrationsIpc(): void {
           host: sshDefaults?.host ?? parsed.data.host,
           port: sshDefaults?.port,
           username: parsed.data.username,
-          auth: { kind: 'agent', allowedFingerprints: enumerateSshAgentFingerprints() },
+          auth: { kind: 'agent', allowedFingerprints: await enumerateSshAgentFingerprints() },
           // Trust-on-first-use: show the SHA256 host-key fingerprint in a native
           // (non-forgeable) dialog before pinning it. A changed key is rejected
           // by the transport regardless — this hook only gates the first sight.

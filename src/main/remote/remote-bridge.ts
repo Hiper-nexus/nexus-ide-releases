@@ -543,6 +543,16 @@ export type AuthedBridgeCommand = {
 };
 
 /**
+ * H5: serialização dos diálogos de confirmação. Um dispositivo pareado
+ * malicioso pode disparar N RPCs destrutivos concorrentes; sem guarda, isso
+ * empilha N diálogos nativos (dialog-storm → fadiga de confirmação → misclick
+ * em "Permitir" — o exato ataque do modelo de ameaça). Um diálogo por vez:
+ * pedidos concorrentes são NEGADOS (fail-closed), não enfileirados.
+ */
+let confirmDialogInFlight = false;
+const CONFIRM_DIALOG_TIMEOUT_MS = 60_000;
+
+/**
  * H5: Show a native (non-forgeable) desktop dialog asking the user to confirm
  * a destructive mobile RPC. The confirmation comes from the DESKTOP user, not
  * from a client-sent boolean — a compromised/malicious mobile client cannot
@@ -552,6 +562,11 @@ async function confirmDestructiveMobileRpc(
   rpcType: string,
   scope: ProjectExecutionScope,
 ): Promise<boolean> {
+  if (confirmDialogInFlight) {
+    // Outro diálogo já aberto: nega (fail-closed) em vez de enfileirar.
+    console.warn('[remote-bridge] destructive confirm already in flight — denying');
+    return false;
+  }
   // Lazy require: electron is not available in unit-test environments.
   // Fail-closed: when electron is absent, deny the operation.
   let BrowserWindow: typeof import('electron').BrowserWindow | undefined;
@@ -568,26 +583,42 @@ async function confirmDestructiveMobileRpc(
     console.warn('[remote-bridge] electron unavailable — denying destructive mobile RPC');
     return false;
   }
-  const win = BrowserWindow.getAllWindows().find(
-    (w) => !w.isDestroyed() && w.isVisible(),
-  );
-  const opts = {
-    type: 'warning' as const,
-    buttons: ['Negar', 'Permitir'],
-    defaultId: 0,
-    cancelId: 0,
-    title: 'Ação remota destrutiva',
-    message: `Um dispositivo remoto quer executar: ${rpcType}`,
-    detail:
-      `Workspace: ${scope.rootRealPath}\n\n` +
-      'Esta é uma operação destrutiva enviada por um dispositivo pareado. ' +
-      'Permita apenas se você a iniciou conscientemente.',
-    noLink: true,
-  };
-  const result = win
-    ? await dialog.showMessageBox(win, opts)
-    : await dialog.showMessageBox(opts);
-  return result.response === 1;
+  confirmDialogInFlight = true;
+  try {
+    const win = BrowserWindow.getAllWindows().find(
+      (w) => !w.isDestroyed() && w.isVisible(),
+    );
+    const opts = {
+      type: 'warning' as const,
+      buttons: ['Negar', 'Permitir'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Ação remota destrutiva',
+      message: `Um dispositivo remoto quer executar: ${rpcType}`,
+      detail:
+        `Workspace: ${scope.rootRealPath}\n\n` +
+        'Esta é uma operação destrutiva enviada por um dispositivo pareado. ' +
+        'Permita apenas se você a iniciou conscientemente.',
+      noLink: true,
+    };
+    const shown = win
+      ? dialog.showMessageBox(win, opts)
+      : dialog.showMessageBox(opts);
+    // Auto-nega após o timeout para não segurar o RPC indefinidamente se o
+    // diálogo ficar órfão (sem janela visível / usuário ausente).
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<{ response: number }>((resolve) => {
+      timer = setTimeout(() => resolve({ response: 0 }), CONFIRM_DIALOG_TIMEOUT_MS);
+    });
+    try {
+      const result = await Promise.race([shown, timeout]);
+      return result.response === 1;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  } finally {
+    confirmDialogInFlight = false;
+  }
 }
 
 /**
