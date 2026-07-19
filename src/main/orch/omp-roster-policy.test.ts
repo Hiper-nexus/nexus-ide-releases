@@ -105,6 +105,59 @@ describe('resolveStickyOmpAdapter', () => {
     expect(result.adapterId).toBe('claude');
     expect(result.sticky).toBe(false);
   });
+
+  it('does not force omp without a usable account — the route pick wins', () => {
+    const result = resolveStickyOmpAdapter({
+      rosterCli: 'omp',
+      requestedAdapterId: 'claude',
+      requestedModel: 'claude-sonnet-5',
+      rosterModel: 'zai/glm-5',
+      rosterEffort: 'high',
+      requestedEffort: undefined,
+      ompInstalled: true,
+      ompParticipation: 'diversity',
+      ompAvailable: false,
+    });
+    expect(result.adapterId).toBe('claude');
+    expect(result.model).toBe('claude-sonnet-5');
+    expect(result.sticky).toBe(false);
+  });
+
+  it('keeps the omp base when roster is omp, no route pick and omp unavailable (documented corner)', () => {
+    const result = resolveStickyOmpAdapter({
+      rosterCli: 'omp',
+      requestedAdapterId: undefined,
+      requestedModel: undefined,
+      rosterModel: 'zai/glm-5',
+      rosterEffort: 'medium',
+      requestedEffort: undefined,
+      ompInstalled: true,
+      ompParticipation: 'prefer',
+      ompAvailable: false,
+    });
+    // No local alternative: the base adapter IS omp, so the result stays omp
+    // and the spawn layer surfaces the real cooldown error.
+    expect(result.adapterId).toBe('omp');
+    expect(result.sticky).toBe(false);
+  });
+
+  it('still forces omp when ompAvailable is true', () => {
+    const result = resolveStickyOmpAdapter({
+      rosterCli: 'omp',
+      requestedAdapterId: 'claude',
+      requestedModel: 'claude-sonnet-5',
+      rosterModel: 'zai/glm-5',
+      rosterEffort: 'high',
+      requestedEffort: 'high',
+      ompInstalled: true,
+      ompParticipation: 'diversity',
+      defaultOmpModel: 'zai/glm-5',
+      ompAvailable: true,
+    });
+    expect(result.adapterId).toBe('omp');
+    expect(result.model).toBe('zai/glm-5');
+    expect(result.sticky).toBe(true);
+  });
 });
 
 describe('buildOmpRouteContext', () => {
@@ -159,11 +212,20 @@ describe('shouldAutoSpawnOmpCompanion', () => {
     expect(
       shouldAutoSpawnOmpCompanion({ ...base, role: 'orchestrator' }),
     ).toBe(false);
+    expect(shouldAutoSpawnOmpCompanion({ ...base, ompInstalled: false })).toBe(
+      false,
+    );
+  });
+
+  it('skips when omp has no usable account, even with prefer+autoSpawn+installed', () => {
     expect(
       shouldAutoSpawnOmpCompanion({ ...base, ompAvailable: false }),
     ).toBe(false);
-    expect(shouldAutoSpawnOmpCompanion({ ...base, ompInstalled: false })).toBe(
-      false,
+  });
+
+  it('still spawns when ompAvailable is true (absent field is unchanged)', () => {
+    expect(shouldAutoSpawnOmpCompanion({ ...base, ompAvailable: true })).toBe(
+      true,
     );
   });
 });
