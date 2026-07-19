@@ -50,7 +50,7 @@ export interface ProviderSettingsInfo {
   adapterId: string;
   label: string;
   icon: string;
-  kind: 'cli-pty' | 'api-provider';
+  kind: 'cli-pty' | 'cli-rpc' | 'api-provider';
   enabled: boolean;
   installed: boolean;
   /** True quando há receita de instalação 1-clique para esta plataforma. */
@@ -92,6 +92,10 @@ export interface ProviderSettingsInfo {
   supportsVerbose: boolean;
   /** User-added custom models (removable in the UI). `models` already merges them. */
   customModels: string[];
+  /** True when the active key comes from the plaintext launcher providers.conf
+   * fallback (L4) — NOT from the encrypted vault. The UI should warn the user
+   * that this key is stored in cleartext on disk. */
+  plaintextKeyFallback?: boolean;
 }
 
 export const setKeySchema = z.object({

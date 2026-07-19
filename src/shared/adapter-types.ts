@@ -5,9 +5,10 @@ import { z } from 'zod';
  * These are shared between main (validates JSON files) and renderer (receives
  * the trimmed AdapterInfo over IPC).
  *
- * Two adapter kinds:
+ * Three adapter kinds:
  *  - cli-pty  : spawns a real PTY (interactive TUI agents — Claude, aider …)
  *  - api-provider : HTTP client (future chat pane — GLM, fugu …)
+ *  - cli-rpc  : hosted NDJSON RPC session (no PTY — omp --mode rpc-ui panes)
  */
 
 const installSchema = z.object({
@@ -177,13 +178,40 @@ export const apiProviderAdapterSchema = z.object({
   quirks: z.record(z.string(), z.unknown()).default({}),
 });
 
+/**
+ * cli-rpc: an agent CLI hosted over a structured RPC channel (NDJSON pipes),
+ * never a PTY. Carries only the common discovery fields — every PTY-only
+ * concern (spawn argv, prompt injection, stateParsing idle timeouts, quirks)
+ * is deliberately absent: lifecycle is derived from protocol events
+ * (agent_start/agent_end), install/detect mirror the sibling cli-pty adapter.
+ * The actual spawn is routed in main (pty-ipc → omp-rpc hosted session).
+ */
+export const cliRpcAdapterSchema = z.object({
+  kind: z.literal('cli-rpc'),
+  id: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9-]+$/, 'id must be lowercase alphanumeric with hyphens'),
+  label: z.string().min(1).max(128),
+  version: z.string().min(1),
+  icon: z.string().max(8).default('🔌'),
+  bin: z.string().min(1),
+  detect: z.string().min(1),
+  install: installSchema,
+  auth: authSchema,
+  models: modelsConfigSchema,
+});
+
 export const adapterSchema = z.discriminatedUnion('kind', [
   cliPtyAdapterSchema,
   apiProviderAdapterSchema,
+  cliRpcAdapterSchema,
 ]);
 
 export type CliPtyAdapter = z.infer<typeof cliPtyAdapterSchema>;
 export type ApiProviderAdapter = z.infer<typeof apiProviderAdapterSchema>;
+export type CliRpcAdapter = z.infer<typeof cliRpcAdapterSchema>;
 export type Adapter = z.infer<typeof adapterSchema>;
 
 type NexusMcpQuirks = {
@@ -258,7 +286,7 @@ export function resolvePlaceholders(
  */
 export interface AdapterInfo {
   id: string;
-  kind: 'cli-pty' | 'api-provider';
+  kind: 'cli-pty' | 'api-provider' | 'cli-rpc';
   label: string;
   icon: string;
   models: { list: string[]; default: string; info?: ModelInfoMap };

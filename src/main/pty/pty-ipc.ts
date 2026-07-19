@@ -24,8 +24,19 @@ import {
 } from "./pty-manager";
 import { createRealPtyHost } from "./pty-host-client";
 import { getAdapter, isAdapterInstalled } from "../adapters/adapter-registry";
+import type { CliRpcAdapter } from "../../shared/adapter-types";
+import {
+  acknowledgeOmpRpcPaneOutput,
+  isOmpRpcPaneOwnedBy,
+  killOmpRpcPane,
+  recoverOmpRpcPaneOutput,
+  spawnOmpRpcPane,
+  writeOmpRpcPaneInput,
+} from "../adapters/omp-rpc-ipc";
 import { prepareProviderSpawn } from "../persistence/provider-config-store";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
+import { trackManagedSession } from "../adapters/managed-credentials";
+import { isFileAuthAdapter } from "../adapters/managed-credentials";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
   attachOrchMeta,
@@ -132,6 +143,99 @@ function bindMissionLaunchAuthority(
 }
 
 /**
+ * cli-rpc agent spawn: mirrors the cli-pty authority pipeline exactly
+ * (pending claim → persisted pane → scope resolution → mission binding) but
+ * hosts the session over RPC pipes instead of a PTY. Sibling block so the
+ * PTY path stays byte-for-byte untouched.
+ */
+async function spawnCliRpcAgentPane(
+  sender: WebContents,
+  req: import("zod").infer<typeof spawnRequestSchema>,
+  adapter: CliRpcAdapter,
+): Promise<SpawnResult> {
+  if (!isAdapterInstalled(adapter.id)) {
+    return {
+      ok: false,
+      error: `${adapter.label} not found. Install: ${adapter.install.command}`,
+    };
+  }
+  try {
+    const pending = req.orchRequestId
+      ? claimPendingSpawnMeta(req.orchRequestId, sender)
+      : null;
+    const persistedPane =
+      (req.resume || req.restorePersistedAuthority) && req.paneId
+        ? findPersistedPane(sender, req.paneId)
+        : null;
+    if (persistedPane && persistedPane.adapterId !== adapter.id) {
+      throw new Error(
+        "persisted pane adapter does not match spawn request",
+      );
+    }
+    const squads = listSquads();
+    const knownLegacySquadRequest = Boolean(
+      req.orchRequestId &&
+        isKnownLegacySquadSpawnRequest(req.orchRequestId, squads),
+    );
+    const orchRequestId =
+      req.orchRequestId && !pending && !persistedPane && !knownLegacySquadRequest
+        ? undefined
+        : req.orchRequestId;
+    const needsActiveScope = !pending?.scope && !persistedPane?.scope;
+    const trustedUserScope = needsActiveScope
+      ? requireRendererWorkspaceScope(sender)
+      : null;
+    const authority = bindMissionLaunchAuthority(
+      bindSpawnAuthority({
+        requestId: orchRequestId,
+        pending,
+        squads,
+        persistedPane,
+        trustedUserScope,
+        requestedCwd: req.cwd,
+      }),
+      req.missionId,
+    );
+    const spawned = await spawnOmpRpcPane({
+      owner: sender,
+      scope: authority.scope,
+      workspaceRoot: authority.cwd,
+      paneId: req.paneId,
+      model: req.model,
+      missionId: authority.context?.missionId ?? req.missionId,
+    });
+    if (!spawned.ok) throw new Error(spawned.error);
+    const { sessionId } = spawned;
+    if (
+      authority.source === "pending" &&
+      (!req.orchRequestId ||
+        !bindPendingSpawnSession(req.orchRequestId, sender, sessionId))
+    ) {
+      killOmpRpcPane(sessionId);
+      throw new Error(
+        "orchestration request could not bind spawned RPC session",
+      );
+    }
+    attachSessionScope(sessionId, authority.scope);
+    if (persistedPane && req.paneId) {
+      attachOrchMeta(sender, req.paneId, {
+        missionId: persistedPane.missionId,
+        agentName: persistedPane.agentName,
+        role: persistedPane.role,
+        scope: persistedPane.scope,
+        executionScope: persistedPane.executionScope,
+        allowedTools: persistedPane.allowedTools,
+        allowedSkills: persistedPane.allowedSkills,
+      });
+    }
+    return { ok: true, sessionId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "failed to spawn agent";
+    return { ok: false, error: message };
+  }
+}
+
+/**
  * Registers the PTY IPC surface. Every handler validates its payload with zod
  * before touching the PTY manager. The `spawn` handler dispatches to either the
  * shell or agent path based on the request kind.
@@ -141,7 +245,10 @@ export function registerPtyIpc(): void {
   // loads in the main process — docs/ARCHITECTURE.md §B.2).
   setPtyHost(createRealPtyHost());
 
-  ipcMain.handle(PTY_CHANNELS.spawn, (event, raw): SpawnResult => {
+  // Sync for every legacy path (the account/PTY tests assert plain objects);
+  // the cli-rpc branch returns a Promise, which ipcMain.handle awaits either
+  // way — and the renderer's invoke always receives a promise regardless.
+  ipcMain.handle(PTY_CHANNELS.spawn, (event, raw): SpawnResult | Promise<SpawnResult> => {
     const parsed = spawnRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return { ok: false, error: "invalid spawn request" };
@@ -155,6 +262,11 @@ export function registerPtyIpc(): void {
       const adapter = getAdapter(req.adapterId);
       if (!adapter) {
         return { ok: false, error: `unknown adapter: ${req.adapterId}` };
+      }
+      // cli-rpc: hosted over NDJSON pipes (omp --mode rpc-ui), no PTY. Same
+      // authority pipeline; the pane streams via the normal PTY data channel.
+      if (adapter.kind === "cli-rpc") {
+        return spawnCliRpcAgentPane(event.sender, req, adapter);
       }
       if (adapter.kind !== "cli-pty") {
         return {
@@ -236,6 +348,10 @@ export function registerPtyIpc(): void {
           overrides,
           authority,
         );
+        // M1: track managed-account sessions so auth.json is scrubbed on exit.
+        if (req.accountId && isFileAuthAdapter(adapter.id)) {
+          trackManagedSession(sessionId, adapter.id, req.accountId);
+        }
         if (
           authority.source === "pending" &&
           (!req.orchRequestId ||
@@ -316,6 +432,12 @@ export function registerPtyIpc(): void {
   ipcMain.on(PTY_CHANNELS.write, (event, raw) => {
     const parsed = writeSchema.safeParse(raw);
     if (parsed.success) {
+      if (
+        isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender) &&
+        writeOmpRpcPaneInput(parsed.data.sessionId, parsed.data.data)
+      ) {
+        return;
+      }
       writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
     }
   });
@@ -323,6 +445,12 @@ export function registerPtyIpc(): void {
   ipcMain.handle(PTY_CHANNELS.writeConfirmed, (event, raw): boolean => {
     const parsed = writeSchema.safeParse(raw);
     if (!parsed.success) return false;
+    if (
+      isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender) &&
+      writeOmpRpcPaneInput(parsed.data.sessionId, parsed.data.data)
+    ) {
+      return true;
+    }
     return writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
   });
 
@@ -341,6 +469,10 @@ export function registerPtyIpc(): void {
   ipcMain.on(PTY_CHANNELS.kill, (event, raw) => {
     const parsed = killSchema.safeParse(raw);
     if (parsed.success) {
+      if (isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender)) {
+        killOmpRpcPane(parsed.data.sessionId);
+        return;
+      }
       killSession(event.sender, parsed.data.sessionId);
     }
   });
@@ -348,6 +480,7 @@ export function registerPtyIpc(): void {
   ipcMain.on(PTY_CHANNELS.acknowledge, (event, raw) => {
     const parsed = ptyAcknowledgeSchema.safeParse(raw);
     if (parsed.success) {
+      if (acknowledgeOmpRpcPaneOutput(parsed.data.sessionId)) return;
       acknowledgeSessionOutput(
         event.sender,
         parsed.data.sessionId,
@@ -359,6 +492,12 @@ export function registerPtyIpc(): void {
   ipcMain.handle(PTY_CHANNELS.recover, (event, raw) => {
     const parsed = ptyRecoverSchema.safeParse(raw);
     if (!parsed.success) return [];
+    if (isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender)) {
+      return recoverOmpRpcPaneOutput(
+        parsed.data.sessionId,
+        parsed.data.afterSequence,
+      );
+    }
     return recoverSessionOutput(
       event.sender,
       parsed.data.sessionId,

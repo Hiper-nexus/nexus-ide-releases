@@ -183,10 +183,14 @@ describe('builtin adapters', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('all builtins are cli-pty kind', () => {
+  it('all builtins declare a known adapter kind', () => {
+    const kinds = new Set(['cli-pty', 'cli-rpc', 'api-provider']);
     for (const raw of BUILTIN_ADAPTERS) {
-      expect((raw as { kind?: string }).kind).toBe('cli-pty');
+      expect(kinds.has((raw as { kind?: string }).kind ?? '')).toBe(true);
     }
+    // Only omp-rpc is hosted over RPC pipes today; everything else is a PTY CLI.
+    const byKind = BUILTIN_ADAPTERS.map((raw) => (raw as { kind?: string }).kind);
+    expect(byKind.filter((kind) => kind === 'cli-rpc')).toEqual(['cli-rpc']);
   });
 
   it('declares Nexus MCP capability once, leaving only Aider worker-only', () => {

@@ -54,14 +54,18 @@ function selectRoutes(
   authorProviders: readonly string[],
 ): readonly ReviewerRoute[] {
   const required = contract.reviewerPolicy.minimumReviewers;
+  // cli-rpc adapters carry no PTY quirks block; mcpAutoload only exists on cli-pty.
+  const isMcpAutoload = (adapterId: string): boolean => {
+    const candidate = getAdapter(adapterId);
+    return candidate?.kind === 'cli-pty' && candidate.quirks.mcpAutoload === true;
+  };
   const providers = listProviderSettings().filter(
     (provider) =>
       provider.enabled &&
       provider.installed &&
       provider.authStrategy !== 'login-needed' &&
       provider.kind === 'cli-pty' &&
-      (provider.adapterId === 'codex' ||
-        getAdapter(provider.adapterId)?.quirks.mcpAutoload === true),
+      (provider.adapterId === 'codex' || isMcpAutoload(provider.adapterId)),
   );
   const selected: ReviewerRoute[] = [];
   const excluded = new Set<string>(authorProviders);

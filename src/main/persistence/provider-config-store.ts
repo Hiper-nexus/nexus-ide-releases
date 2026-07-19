@@ -589,10 +589,11 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
   const adapter = getAdapter(adapterId);
   if (!adapter) return null;
   const cfg = configFor(adapterId);
-  const detectedBin = adapter.kind === 'cli-pty' ? adapter.bin : adapter.endpoint;
+  // cli-rpc shares the CLI binary surface with cli-pty (same `bin`, no endpoint).
+  const detectedBin = adapter.kind !== 'api-provider' ? adapter.bin : adapter.endpoint;
   const effectiveBin = cfg.binPath || detectedBin;
   const installed =
-    adapter.kind === 'cli-pty' ? isBinResolvable(effectiveBin) : true;
+    adapter.kind !== 'api-provider' ? isBinResolvable(effectiveBin) : true;
   const custom = getCustomModels(adapterId).filter(
     (m) => !adapter.models.list.includes(m),
   );
@@ -651,6 +652,11 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     efforts: adapter.kind === 'cli-pty' ? availableEfforts(adapter) : [],
     verbose: cfg.verbose,
     supportsVerbose: adapter.kind === 'cli-pty' ? supportsVerbose(adapter) : false,
+    // L4: true when the key comes from the plaintext launcher providers.conf
+    // (not the encrypted vault). The UI should warn about cleartext storage.
+    plaintextKeyFallback: !hasCachedSecret(adapterId) && !hasSecret(adapterId)
+      ? resolveApiKeyWithoutVault(adapterId) !== null
+      : false,
   };
 }
 

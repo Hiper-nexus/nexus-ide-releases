@@ -175,10 +175,11 @@ function resolveIdleTimeoutMs(adapter: Adapter): number {
 
 /** Build a trimmed AdapterInfo safe to send to the renderer. */
 function toAdapterInfo(adapter: Adapter, installed: boolean): AdapterInfo {
+  // cli-rpc shares the CLI install/auth surface with cli-pty (same binary).
   const installCommand =
-    adapter.kind === 'cli-pty' ? adapter.install.command : '';
+    adapter.kind !== 'api-provider' ? adapter.install.command : '';
   const loginHint =
-    adapter.kind === 'cli-pty' ? adapter.auth.loginHint : undefined;
+    adapter.kind !== 'api-provider' ? adapter.auth.loginHint : undefined;
   // Merge user-added custom models so a CLI's newest models (added by hand)
   // appear everywhere the adapter's models show.
   const custom = getCustomModels(adapter.id).filter(
@@ -224,7 +225,7 @@ const WATCH_DEBOUNCE_MS = 100;
 function refreshInstalledCache(): void {
   const next = new Map<string, boolean>();
   for (const [id, adapter] of registry) {
-    const bin = adapter.kind === 'cli-pty' ? adapter.bin : null;
+    const bin = adapter.kind !== 'api-provider' ? adapter.bin : null;
     next.set(id, bin ? isBinInstalled(bin) : true);
   }
   installedCache = next;
@@ -388,6 +389,8 @@ export function primaryKeyEnvVar(adapter: Adapter): string | null {
   if (adapter.auth.method === 'oauth' || adapter.auth.method === 'subscription') {
     return null;
   }
+  // cli-rpc declares no env passthrough block (no PTY spawn env to inject).
+  if (adapter.kind === 'cli-rpc') return adapter.auth.envVarFallback ?? null;
   return adapter.auth.envVarFallback ?? adapter.env.passthrough[0] ?? null;
 }
 

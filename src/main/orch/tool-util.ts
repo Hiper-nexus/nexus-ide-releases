@@ -343,8 +343,21 @@ export async function spawnPaneAndMaybePrompt(
   options: SpawnToolOptions,
   hooks: SpawnPaneHooks = {},
 ): Promise<{ paneId: string; sessionId: string }> {
-  const adapter = getAdapter(options.adapterId);
-  if (!adapter) throw new Error(`unknown adapter: ${options.adapterId}`);
+  // The cli-rpc adapter IS the omp rpc transport: normalize to `omp` BEFORE
+  // resolving anything else so the rest of the path (models, handoff
+  // contract, transport branch) only ever sees the cli-pty omp adapter.
+  // Grid-form RPC panes spawn via the renderer IPC route (pty-ipc), not here.
+  if (options.adapterId === 'omp-rpc') {
+    options = { ...options, adapterId: 'omp' };
+  }
+  const resolvedAdapter = getAdapter(options.adapterId);
+  if (!resolvedAdapter) throw new Error(`unknown adapter: ${options.adapterId}`);
+  if (resolvedAdapter.kind !== 'cli-pty') {
+    // spawnPaneAndMaybePrompt only ever spawns terminal panes; api-provider
+    // adapters have no pane representation and cli-rpc was normalized above.
+    throw new Error(`adapter ${options.adapterId} is not spawnable as a pane`);
+  }
+  const adapter = resolvedAdapter;
   // Pre-spawn credential probe (Overclock F-256 harvest): a spawn with a
   // missing credential used to surface as a dead pane or a mute login TUI.
   // Fail here — before any pane exists — with a typed, actionable error.

@@ -103,7 +103,7 @@ export interface IndependentProviderSnapshot {
   readonly adapterId: string;
   readonly enabled: boolean;
   readonly installed: boolean;
-  readonly kind: 'cli-pty' | 'api-provider';
+  readonly kind: 'cli-pty' | 'cli-rpc' | 'api-provider';
   /** When present, login-needed providers do not count toward independent quorum. */
   readonly authStrategy?: 'subscription' | 'api-key' | 'login-needed' | string;
   /** True only when Nexus can enforce a read-only reviewer for this adapter. */

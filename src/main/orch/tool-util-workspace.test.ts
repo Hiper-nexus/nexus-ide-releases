@@ -24,7 +24,7 @@ vi.mock('../pty/pty-manager', () => ({
   getSessionState: stubs.sessionState,
 }));
 vi.mock('../adapters/adapter-registry', () => ({
-  getAdapter: vi.fn(() => ({ id: 'codex', quirks: {} })),
+  getAdapter: vi.fn(() => ({ id: 'codex', kind: 'cli-pty', quirks: {} })),
 }));
 // Keep the spawn path independent of the host's real credential state.
 vi.mock('../pty/pre-spawn-probe', () => ({ assertPreSpawnProbe: vi.fn() }));

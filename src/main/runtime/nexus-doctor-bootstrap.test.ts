@@ -53,6 +53,7 @@ function provider(overrides: Partial<ProviderSettingsInfo> = {}): ProviderSettin
     verbose: false,
     supportsVerbose: false,
     customModels: [],
+    plaintextKeyFallback: false,
     ...overrides,
   };
 }
