@@ -809,6 +809,12 @@ app.on("before-quit", (event) => {
     })
   ) {
     event.preventDefault();
+    // Quit pode chegar com o app em segundo plano (Dock → Encerrar) ou com a
+    // janela fora do palco (Stage Manager/minimizada). Sem roubar o foco, o
+    // prompt nasce ATRÁS dos outros apps — e como quitPromptOpen engole os
+    // quits seguintes, o app parece se recusar a encerrar (caso de campo
+    // 18/07). Sempre trazer o app (e o prompt pendente) à frente.
+    app.focus({ steal: true });
     if (quitPromptOpen) return;
     quitPromptOpen = true;
     const options = {
@@ -824,11 +830,10 @@ app.on("before-quit", (event) => {
       cancelId: 0,
       noLink: true,
     };
-    const focused = BrowserWindow.getFocusedWindow();
-    const prompt = focused
-      ? dialog.showMessageBox(focused, options)
-      : dialog.showMessageBox(options);
-    void prompt
+    // App-modal sempre: um sheet ancorado numa janela minimizada ou fora do
+    // palco fica invisível e o quit trava sem feedback.
+    void dialog
+      .showMessageBox(options)
       .then(({ response }) => {
         quitPromptOpen = false;
         if (response !== 1) return;
@@ -842,12 +847,21 @@ app.on("before-quit", (event) => {
   }
   if (!shutdownComplete) {
     event.preventDefault();
+    // shutdown() aguarda cleanups async (design write-backs, hook server);
+    // um deles pendurado deixaria o app vivo para sempre após o usuário já
+    // ter confirmado a saída. Teto duro: depois dele, sair de qualquer jeito.
+    const forceExit = setTimeout(() => {
+      console.error("[main] shutdown timed out — forcing exit");
+      app.exit(1);
+    }, 10_000);
     void shutdown()
       .then(() => {
+        clearTimeout(forceExit);
         authorizeAppQuit();
         app.quit();
       })
       .catch((error) => {
+        clearTimeout(forceExit);
         console.error("[main] shutdown failed:", error);
         app.exit(1);
       });
