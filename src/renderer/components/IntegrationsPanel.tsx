@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type {
   ExternalIssue,
   ForgePrSummary,
+  GitHubDeviceCodePayload,
   PortForwardInfo,
 } from '../../shared/integrations-types';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
@@ -38,6 +39,11 @@ export function IntegrationsPanel({
   const [hasLin, setHasLin] = useState(false);
   const [ghToken, setGhToken] = useState('');
   const [linKey, setLinKey] = useState('');
+  // Device Flow: opção oculta enquanto não há OAuth App clientId registrado
+  // (dfAvailable=false); dfHint explica como habilitar.
+  const [dfAvailable, setDfAvailable] = useState(false);
+  const [dfHint, setDfHint] = useState<string | null>(null);
+  const [deviceCode, setDeviceCode] = useState<GitHubDeviceCodePayload | null>(null);
   const [prs, setPrs] = useState<ForgePrSummary[]>([]);
   const [branchReview, setBranchReviewState] = useState<{
     branch: string;
@@ -62,15 +68,18 @@ export function IntegrationsPanel({
   async function refresh() {
     const epoch = ++refreshEpoch.current;
     const live = () => epoch === refreshEpoch.current;
-    const [g, l, pf] = await Promise.all([
+    const [g, l, pf, df] = await Promise.all([
       window.nexus.integrations.hasGithubToken(),
       window.nexus.integrations.hasLinearKey(),
       window.nexus.integrations.listPortForwards(),
+      window.nexus.integrations.githubDeviceFlowStatus(),
     ]);
     if (!live()) return;
     setHasGh(g);
     setHasLin(l);
     setForwards(pf);
+    setDfAvailable(df.available);
+    setDfHint(df.hint ?? null);
     if (g) {
       const pr = await window.nexus.integrations.listPrs();
       const issues = await window.nexus.integrations.listGithubIssues({ limit: 15 });
@@ -105,6 +114,44 @@ export function IntegrationsPanel({
     // refresh usa refs/setters estáveis; roda ao abrir.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Device Flow: o main empurra o user_code assim que o GitHub o emite.
+  useEffect(() => {
+    if (!open) return;
+    const offCode = window.nexus.integrations.onGithubDeviceCode((p) => setDeviceCode(p));
+    const offErr = window.nexus.integrations.onGithubAuthError((p) =>
+      setNote(p.message ?? p.error),
+    );
+    return () => {
+      offCode();
+      offErr();
+    };
+  }, [open]);
+
+  function startDeviceFlow() {
+    setBusy(true);
+    setNote(null);
+    void window.nexus.integrations
+      .startGithubDeviceFlow()
+      .then((r) => {
+        if (r.ok) {
+          setNote(`GitHub conectado como ${r.user.login}`);
+          emitIntegrationsChanged();
+        } else if (r.error !== 'Auth cancelled') {
+          setNote(r.error);
+        }
+        return refresh();
+      })
+      .finally(() => {
+        setDeviceCode(null);
+        setBusy(false);
+      });
+  }
+
+  function cancelDeviceFlow() {
+    void window.nexus.integrations.cancelGithubDeviceFlow();
+    setDeviceCode(null);
+  }
 
   if (!open) return null;
 
@@ -170,6 +217,46 @@ export function IntegrationsPanel({
                     Token (github.com/settings/tokens) ou rode `gh auth login` num
                     terminal: o Nexus reaproveita a sessão do gh CLI.
                   </p>
+                )}
+                {!hasGh && deviceCode && (
+                  <div>
+                    <p className="int-panel__dim">
+                      Abra{' '}
+                      <button
+                        type="button"
+                        className="int-panel__link"
+                        onClick={() =>
+                          void window.nexus.app.openExternal(deviceCode.verificationUri)
+                        }
+                      >
+                        {deviceCode.verificationUri}
+                      </button>{' '}
+                      e digite o código:
+                    </p>
+                    <p className="int-panel__note" role="status">
+                      <strong>{deviceCode.userCode}</strong>
+                    </p>
+                    <button
+                      type="button"
+                      className="int-panel__btn int-panel__btn--sm"
+                      onClick={cancelDeviceFlow}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                )}
+                {!hasGh && !deviceCode && dfAvailable && (
+                  <button
+                    type="button"
+                    className="int-panel__btn int-panel__btn--sm"
+                    disabled={busy}
+                    onClick={startDeviceFlow}
+                  >
+                    Entrar com GitHub (navegador)
+                  </button>
+                )}
+                {!hasGh && !dfAvailable && dfHint && (
+                  <p className="int-panel__dim">{dfHint}</p>
                 )}
                 <div className="int-conn__save">
                   <input

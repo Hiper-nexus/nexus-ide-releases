@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { gitDefaultBranch, gitPushCurrentBranch } from './git-workspace';
+import { gitBranchPushState, gitDefaultBranch, gitPushCurrentBranch } from './git-workspace';
 
 function run(cwd: string, args: string[]): string {
   const r = spawnSync('git', args, {
@@ -115,5 +115,75 @@ describe('gitDefaultBranch / gitPushCurrentBranch (real git)', () => {
     const result = gitPushCurrentBranch(noRemote, 'main');
     expect(result.ok).toBe(false);
     fs.rmSync(noRemote, { recursive: true, force: true });
+  });
+});
+
+describe('gitBranchPushState (real git)', () => {
+  let origin: string;
+  let clone: string;
+
+  beforeEach(() => {
+    origin = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-origin-'));
+    run(origin, ['init', '--bare', '-b', 'trunk']);
+
+    clone = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-clone-'));
+    run(clone, ['clone', origin, '.']);
+    run(clone, ['config', 'user.name', 'Nexus Push Test']);
+    run(clone, ['config', 'user.email', 'push-test@nexus.local']);
+    fs.writeFileSync(path.join(clone, 'README.md'), '# push\n');
+    run(clone, ['add', 'README.md']);
+    run(clone, ['commit', '-m', 'init']);
+    run(clone, ['push', '-u', 'origin', 'trunk']);
+    run(origin, ['symbolic-ref', 'HEAD', 'refs/heads/trunk']);
+    run(clone, ['remote', 'set-head', 'origin', '-a']);
+  });
+
+  afterEach(() => {
+    fs.rmSync(origin, { recursive: true, force: true });
+    fs.rmSync(clone, { recursive: true, force: true });
+  });
+
+  it('reports a never-pushed branch as not on remote', () => {
+    run(clone, ['checkout', '-b', 'feature/new']);
+    expect(gitBranchPushState(clone, 'feature/new')).toEqual({
+      isOnRemote: false,
+      aheadCount: 0,
+    });
+  });
+
+  it('reports a pushed branch as on remote with zero ahead', () => {
+    run(clone, ['checkout', '-b', 'feature/x']);
+    fs.writeFileSync(path.join(clone, 'f.txt'), 'work\n');
+    run(clone, ['add', 'f.txt']);
+    run(clone, ['commit', '-m', 'work']);
+    // Raw helper push — the hardened runner refuses the local file: transport.
+    run(clone, ['push', '-u', 'origin', 'feature/x']);
+    expect(gitBranchPushState(clone, 'feature/x')).toEqual({
+      isOnRemote: true,
+      aheadCount: 0,
+    });
+  });
+
+  it('counts ahead commits after the branch is on remote', () => {
+    run(clone, ['checkout', '-b', 'feature/y']);
+    run(clone, ['push', '-u', 'origin', 'feature/y']);
+    fs.writeFileSync(path.join(clone, 'g.txt'), 'more\n');
+    run(clone, ['add', 'g.txt']);
+    run(clone, ['commit', '-m', 'more']);
+    expect(gitBranchPushState(clone, 'feature/y')).toEqual({
+      isOnRemote: true,
+      aheadCount: 1,
+    });
+  });
+
+  it('treats unsafe branch names as not on remote (push path validates later)', () => {
+    expect(gitBranchPushState(clone, '--force')).toEqual({
+      isOnRemote: false,
+      aheadCount: 0,
+    });
+    expect(gitBranchPushState(clone, 'a:refs/heads/b')).toEqual({
+      isOnRemote: false,
+      aheadCount: 0,
+    });
   });
 });

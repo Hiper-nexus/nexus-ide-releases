@@ -4,6 +4,11 @@
  */
 import { z } from 'zod';
 import { assertSafeGitPathspec } from './git-scm';
+import type { GitHubApiError } from '../vendor/emdash/github/github-api-errors';
+
+// Typed GitHub failure taxonomy (vendored from emdash) — carried over IPC as
+// `githubError` alongside the legacy printable `error` string.
+export type { GitHubApiError } from '../vendor/emdash/github/github-api-errors';
 
 export type {
   GitCommitResult,
@@ -44,12 +49,20 @@ export const INTEGRATIONS_CHANNELS = {
   gitFileDiff: 'integrations:git.fileDiff',
   setGithubToken: 'integrations:github.setToken',
   hasGithubToken: 'integrations:github.hasToken',
+  githubDeviceFlowStatus: 'integrations:github.deviceFlowStatus',
+  githubDeviceFlowStart: 'integrations:github.deviceFlowStart',
+  githubDeviceFlowCancel: 'integrations:github.deviceFlowCancel',
   hasLinearKey: 'integrations:linear.hasKey',
   sshPortForward: 'integrations:ssh.portForward',
   sshPortForwardList: 'integrations:ssh.portForwardList',
   sshPortForwardClose: 'integrations:ssh.portForwardClose',
   remoteWorktreeCreate: 'integrations:remote.worktreeCreate',
 } as const;
+
+/** Main→renderer event: device-flow user code is ready to show. */
+export const GITHUB_DEVICE_CODE_CHANNEL = 'integrations:github.deviceCode';
+/** Main→renderer event: asynchronous device-flow/auth failure. */
+export const GITHUB_AUTH_ERROR_CHANNEL = 'integrations:github.authError';
 
 export type ForgePrSummary = {
   number: number;
@@ -90,6 +103,50 @@ export type CreatePrRequest = {
 
 export type CreatePrResult =
   | { ok: true; url: string; number: number }
+  | { ok: false; error: string; githubError?: GitHubApiError };
+
+/**
+ * List results never collapse an error into an empty list: failures carry the
+ * printable `error` plus the typed `githubError` when the GitHub layer
+ * classified one.
+ */
+export type ListPrsResult =
+  | { ok: true; prs: ForgePrSummary[] }
+  | { ok: false; error: string; githubError?: GitHubApiError };
+
+export type ListIssuesResult =
+  | { ok: true; issues: ExternalIssue[] }
+  | { ok: false; error: string; githubError?: GitHubApiError };
+
+export type BranchReviewResult =
+  | { ok: true; branch: string; review: ForgePrSummary | null }
+  | { ok: false; error: string; githubError?: GitHubApiError };
+
+/** Payload of GITHUB_DEVICE_CODE_CHANNEL (main → renderer). */
+export type GitHubDeviceCodePayload = {
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  interval: number;
+};
+
+/** Payload of GITHUB_AUTH_ERROR_CHANNEL (main → renderer). */
+export type GitHubAuthErrorPayload = {
+  error: string;
+  message?: string;
+};
+
+/**
+ * Device Flow availability: without a registered OAuth App client id the
+ * renderer keeps the browser-login option hidden and shows `hint` instead.
+ */
+export type GitHubDeviceFlowStatus = {
+  available: boolean;
+  hint?: string;
+};
+
+export type GitHubDeviceFlowIpcResult =
+  | { ok: true; user: { login: string; avatarUrl: string } }
   | { ok: false; error: string };
 
 export type PortForwardRequest = {

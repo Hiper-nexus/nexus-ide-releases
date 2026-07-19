@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { listGithubIssues, createGithubPr } from './github-api';
+import { listGithubIssues, listGithubPulls, createGithubPr } from './github-api';
 
 describe('github-api', () => {
   it('lists issues excluding pull_request entries', async () => {
@@ -49,5 +49,68 @@ describe('github-api', () => {
       http,
     );
     expect(r).toEqual({ ok: true, url: 'https://github.com/o/r/pull/9', number: 9 });
+  });
+
+  it('maps a SAML 403 into a typed sso_required error (never a silent empty list)', async () => {
+    const http = {
+      getJson: vi.fn(async () => ({
+        status: 403,
+        body: { message: 'Resource protected by organization SAML enforcement.' },
+        headers: {
+          'x-github-sso': 'required; url=https://github.com/orgs/acme/sso?authorization_request=1',
+        },
+      })),
+      postJson: vi.fn(),
+    };
+    const r = await listGithubPulls('tok', 'acme', 'repo', http);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.githubError).toEqual({
+      type: 'sso_required',
+      host: 'github.com',
+      status: 403,
+      ssoUrl: 'https://github.com/orgs/acme/sso?authorization_request=1',
+      message: 'Resource protected by organization SAML enforcement.',
+    });
+    expect(r.error).toContain('Authorize SSO');
+  });
+
+  it('maps a transport throw into host_unreachable', async () => {
+    const http = {
+      getJson: vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      }),
+      postJson: vi.fn(),
+    };
+    const r = await listGithubIssues('tok', 'o', 'r', { limit: 5, state: 'open' }, http);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.githubError).toEqual({
+      type: 'host_unreachable',
+      host: 'github.com',
+      reason: 'fetch failed',
+    });
+  });
+
+  it('create PR failure carries the typed error from the forge provider', async () => {
+    const http = {
+      getJson: vi.fn(),
+      postJson: vi.fn(async () => ({
+        status: 404,
+        body: { message: 'Not Found' },
+        headers: {},
+      })),
+    };
+    const r = await createGithubPr(
+      'tok',
+      'o',
+      'r',
+      { title: 't', body: '', sourceBranch: 'a', targetBranch: 'main' },
+      http,
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.githubError?.type).toBe('not_found');
+    expect(r.error).toContain('does not have access');
   });
 });

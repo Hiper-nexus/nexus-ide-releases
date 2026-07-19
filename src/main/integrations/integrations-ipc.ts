@@ -24,8 +24,18 @@ import {
   listGithubIssues,
   listGithubPulls,
 } from './github-api';
+import {
+  GITHUB_DEVICE_FLOW_SCOPES,
+  GITHUB_DEVICE_FLOW_UNAVAILABLE_HINT,
+  createFetchDeviceAuth,
+  getGithubAuthenticatedUser,
+  resolveGithubOauthClientId,
+} from './github-device-auth';
+import { GitHubDeviceFlowService } from '../../vendor/emdash/github/github-device-flow';
+import { getIntegrationsSettings } from '../persistence/settings-store';
 import { listLinearIssues } from './linear-api';
 import {
+  gitBranchPushState,
   gitCommitMessage,
   gitCurrentBranch,
   gitDefaultBranch,
@@ -65,6 +75,8 @@ import {
 } from './port-forward';
 import { createSsh2Transport, remoteWorktreeCreate } from './ssh2-transport';
 import { createSshSessionManager } from '../remote/ssh/ssh-session-manager';
+import { resolveSshConnectDefaults } from '../remote/ssh/ssh-config-service';
+import type { SshProxySpec } from '../remote/ssh/proxied-connect-config';
 import { createRemoteHostCapability } from '../remote/remote-capability';
 
 /** Token da forge do remote atual (vault/env + sessão gh/glab). */
@@ -86,9 +98,62 @@ function workspaceCwd(event: Electron.IpcMainInvokeEvent): string {
   return scope.rootRealPath;
 }
 
+/** The single in-flight device flow (one browser login at a time). */
+let activeDeviceFlow: GitHubDeviceFlowService | null = null;
+
+function githubDeviceFlowClientId(): string | null {
+  return resolveGithubOauthClientId(process.env, getIntegrationsSettings());
+}
+
+function deviceFlowUnavailable(): { ok: false; error: string } {
+  return { ok: false, error: GITHUB_DEVICE_FLOW_UNAVAILABLE_HINT };
+}
+
 export function registerIntegrationsIpc(): void {
   ipcMain.handle(INTEGRATIONS_CHANNELS.hasGithubToken, () => hasGithubToken());
   ipcMain.handle(INTEGRATIONS_CHANNELS.hasLinearKey, () => hasLinearKey());
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.githubDeviceFlowStatus, () => {
+    if (githubDeviceFlowClientId()) return { available: true };
+    return { available: false, hint: GITHUB_DEVICE_FLOW_UNAVAILABLE_HINT };
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.githubDeviceFlowStart, async (event) => {
+    const clientId = githubDeviceFlowClientId();
+    if (!clientId) return deviceFlowUnavailable();
+    activeDeviceFlow?.cancel();
+    const service = new GitHubDeviceFlowService({
+      // Same encrypted vault slot the PAT flow uses (token-vault).
+      storeToken: (token) => setGithubToken(token),
+      identityClient: { getAuthenticatedUser: (token) => getGithubAuthenticatedUser(token) },
+      events: {
+        emit: (channel, payload) => {
+          if (typeof channel === 'string' && !event.sender.isDestroyed()) {
+            event.sender.send(channel, payload);
+          }
+        },
+      },
+      createDeviceAuth: createFetchDeviceAuth,
+      config: { clientId, scopes: [...GITHUB_DEVICE_FLOW_SCOPES] },
+    });
+    activeDeviceFlow = service;
+    try {
+      const result = await service.start();
+      if (!result.success) return { ok: false, error: result.error };
+      return {
+        ok: true,
+        user: { login: result.user.login, avatarUrl: result.user.avatar_url },
+      };
+    } finally {
+      if (activeDeviceFlow === service) activeDeviceFlow = null;
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.githubDeviceFlowCancel, () => {
+    activeDeviceFlow?.cancel();
+    activeDeviceFlow = null;
+    return { ok: true };
+  });
 
   ipcMain.handle(INTEGRATIONS_CHANNELS.setGithubToken, (_e, raw) => {
     const parsed = setTokenSchema.safeParse(raw);
@@ -216,14 +281,17 @@ export function registerIntegrationsIpc(): void {
         reason: 'Criar PR/MR pelo painel de integrações',
         expiresAt: Date.now() + 2 * 60_000,
       };
-      // Regras de PR (no-self-target + push-antes-de-criar) vivem na função
-      // pura orchestratePrCreation, testada em pr-orchestration.test.ts.
+      // Regras de PR (no-self-target + push gate needsPush = !isOnRemote ||
+      // aheadCount > 0) vivem na função pura orchestratePrCreation, testada
+      // em pr-orchestration.test.ts.
       return orchestratePrCreation(
         { sourceBranch: parsed.data.sourceBranch, targetBranch: parsed.data.targetBranch },
         {
           currentBranch: () => gitCurrentBranch(cwd),
           defaultBranch: () => gitDefaultBranch(cwd),
+          branchPushState: (branch) => gitBranchPushState(cwd, branch),
           push: (branch) => gitPushCurrentBranch(cwd, branch),
+          host: forge.host,
           createPr: async ({ sourceBranch, targetBranch }) => {
             const result = await provider.createReview(
               repo,
@@ -238,7 +306,7 @@ export function registerIntegrationsIpc(): void {
             );
             return result.ok
               ? { ok: true, url: result.url, number: result.number }
-              : { ok: false, error: result.reason };
+              : { ok: false, error: result.reason, githubError: result.apiError };
           },
         },
       );
@@ -268,7 +336,9 @@ export function registerIntegrationsIpc(): void {
         { owner: forge.owner, name: forge.name, host: forge.host },
         branch,
       );
-      if (!result.ok) return { ok: false, error: result.reason };
+      if (!result.ok) {
+        return { ok: false, error: result.reason, githubError: result.apiError };
+      }
       return { ok: true, branch, review: result.review };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -331,7 +401,19 @@ export function registerIntegrationsIpc(): void {
     // Scope must exist (project open); remote path is explicit.
     getRendererWorkspaceScope(event.sender);
     try {
-      const transport = createSsh2Transport();
+      // When `host` is a ~/.ssh/config alias, apply the effective OpenSSH
+      // settings (hostname/port/ProxyJump/ProxyCommand) resolved via the
+      // vendored ssh -G resolver. A non-alias host is NEVER rewritten, and
+      // the explicit username always wins. Host key verification is
+      // unaffected: the transport pins the RESOLVED host:port in the
+      // known-hosts vault either way.
+      const sshDefaults = await resolveSshConnectDefaults(parsed.data.host);
+      const proxy: SshProxySpec | undefined = sshDefaults?.proxyJump
+        ? { kind: 'jump', jumpSpec: sshDefaults.proxyJump }
+        : sshDefaults?.proxyCommand
+          ? { kind: 'command', command: sshDefaults.proxyCommand }
+          : undefined;
+      const transport = createSsh2Transport({ proxy });
       const mgr = createSshSessionManager();
       const cap = createRemoteHostCapability({
         kind: 'ssh',
@@ -343,7 +425,8 @@ export function registerIntegrationsIpc(): void {
       const session = await mgr.connect(
         cap,
         {
-          host: parsed.data.host,
+          host: sshDefaults?.host ?? parsed.data.host,
+          port: sshDefaults?.port,
           username: parsed.data.username,
           auth: { kind: 'agent', allowedFingerprints: ['*'] },
           // Trust-on-first-use: show the SHA256 host-key fingerprint in a native

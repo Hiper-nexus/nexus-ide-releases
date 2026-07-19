@@ -1,7 +1,10 @@
 // Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: lean interface without
-// ORCA hosted-review monolith; external writes require ForgeAuthorization + audit.
+// ORCA hosted-review monolith; external writes require ForgeAuthorization + audit;
+// failure results may carry a typed provider apiError (GitHub: GitHubApiError).
+
+import type { GitHubApiError } from '../../vendor/emdash/github/github-api-errors';
 
 export type ForgeProviderId =
   | 'github'
@@ -50,7 +53,12 @@ export type ForgeCreateReviewInput = {
 
 export type ForgeCreateReviewResult =
   | { readonly ok: true; readonly url: string; readonly number: number }
-  | { readonly ok: false; readonly reason: string };
+  | {
+      readonly ok: false;
+      readonly reason: string;
+      /** Typed provider failure detail (set by the GitHub provider). */
+      readonly apiError?: GitHubApiError;
+    };
 
 /** Read-side review summary (PR/MR) for a branch. */
 export type ForgeReviewInfo = {
@@ -65,7 +73,12 @@ export type ForgeReviewInfo = {
 export type ForgeGetReviewForBranchResult =
   | { readonly ok: true; readonly review: ForgeReviewInfo }
   | { readonly ok: true; readonly review: null }
-  | { readonly ok: false; readonly reason: string };
+  | {
+      readonly ok: false;
+      readonly reason: string;
+      /** Typed provider failure detail (set by the GitHub provider). */
+      readonly apiError?: GitHubApiError;
+    };
 
 export type ForgeProvider = {
   readonly id: ForgeProviderId;

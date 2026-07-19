@@ -5,6 +5,7 @@ import { ipcMain } from 'electron';
 import type { WebContents } from 'electron';
 import {
   DEFAULT_AUDIO_SETTINGS,
+  DEFAULT_INTEGRATIONS_SETTINGS,
   DEFAULT_ORCH_SETTINGS,
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_UI_SETTINGS,
@@ -12,6 +13,7 @@ import {
   SETTINGS_CHANNELS,
   audioSettingsPatchSchema,
   audioSettingsSchema,
+  integrationsSettingsSchema,
   orchSettingsSchema,
   terminalSettingsPatchSchema,
   terminalSettingsSchema,
@@ -19,6 +21,7 @@ import {
   uiSettingsSchema,
   visionSettingsSchema,
   type AudioSettings,
+  type IntegrationsSettings,
   type OrchSettings,
   type TerminalSettings,
   type UiSettings,
@@ -44,6 +47,7 @@ let orchSettings: OrchSettings = DEFAULT_ORCH_SETTINGS;
 let audioSettings: AudioSettings = DEFAULT_AUDIO_SETTINGS;
 let visionSettings: VisionSettings = DEFAULT_VISION_SETTINGS;
 let uiSettings: UiSettings = DEFAULT_UI_SETTINGS;
+let integrationsSettings: IntegrationsSettings = DEFAULT_INTEGRATIONS_SETTINGS;
 const listeners = new Set<WebContents>();
 const audioListeners = new Set<WebContents>();
 const uiListeners = new Set<WebContents>();
@@ -77,6 +81,10 @@ function load(): void {
     if (visionParsed.success) visionSettings = visionParsed.data;
     const uiParsed = uiSettingsSchema.safeParse(raw?.ui ?? {});
     if (uiParsed.success) uiSettings = uiParsed.data;
+    const integrationsParsed = integrationsSettingsSchema.safeParse(
+      raw?.integrations ?? {},
+    );
+    if (integrationsParsed.success) integrationsSettings = integrationsParsed.data;
   } catch {
     // Missing/corrupt file — keep defaults.
   }
@@ -88,6 +96,7 @@ interface SettingsSnapshot {
   audio: AudioSettings;
   vision: VisionSettings;
   ui: UiSettings;
+  integrations: IntegrationsSettings;
 }
 
 function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
@@ -97,6 +106,7 @@ function snapshot(overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
     audio: audioSettings,
     vision: visionSettings,
     ui: uiSettings,
+    integrations: integrationsSettings,
     ...overrides,
   };
 }
@@ -148,6 +158,10 @@ export function getVisionSettings(): VisionSettings {
 
 export function getUiSettings(): UiSettings {
   return uiSettings;
+}
+
+export function getIntegrationsSettings(): IntegrationsSettings {
+  return integrationsSettings;
 }
 
 export function setVisionSettingsPatch(

@@ -3,7 +3,15 @@
  */
 import type { IpcRenderer } from 'electron';
 import type { IntegrationsApi } from '../shared/integrations-api';
-import { INTEGRATIONS_CHANNELS } from '../shared/integrations-types';
+import {
+  GITHUB_AUTH_ERROR_CHANNEL,
+  GITHUB_DEVICE_CODE_CHANNEL,
+  INTEGRATIONS_CHANNELS,
+} from '../shared/integrations-types';
+import type {
+  GitHubAuthErrorPayload,
+  GitHubDeviceCodePayload,
+} from '../shared/integrations-types';
 
 export function createIntegrationsBridge(ipcRenderer: IpcRenderer): IntegrationsApi {
   return {
@@ -13,6 +21,26 @@ export function createIntegrationsBridge(ipcRenderer: IpcRenderer): Integrations
       ipcRenderer.invoke(INTEGRATIONS_CHANNELS.setGithubToken, { token }),
     setLinearKey: (token: string) =>
       ipcRenderer.invoke(INTEGRATIONS_CHANNELS.linearSetKey, { token }),
+    githubDeviceFlowStatus: () =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.githubDeviceFlowStatus),
+    startGithubDeviceFlow: () =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.githubDeviceFlowStart),
+    cancelGithubDeviceFlow: () =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.githubDeviceFlowCancel),
+    onGithubDeviceCode: (cb) => {
+      const listener = (_event: unknown, payload: GitHubDeviceCodePayload) => cb(payload);
+      ipcRenderer.on(GITHUB_DEVICE_CODE_CHANNEL, listener);
+      return () => {
+        ipcRenderer.removeListener(GITHUB_DEVICE_CODE_CHANNEL, listener);
+      };
+    },
+    onGithubAuthError: (cb) => {
+      const listener = (_event: unknown, payload: GitHubAuthErrorPayload) => cb(payload);
+      ipcRenderer.on(GITHUB_AUTH_ERROR_CHANNEL, listener);
+      return () => {
+        ipcRenderer.removeListener(GITHUB_AUTH_ERROR_CHANNEL, listener);
+      };
+    },
     gitDiff: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitDiff),
     gitStatus: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitStatus),
     gitStage: (paths: string[]) =>

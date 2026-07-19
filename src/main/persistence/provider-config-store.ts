@@ -305,7 +305,8 @@ function resolveApiKey(adapterId: string, upstream?: string): string | null {
   return null;
 }
 
-function hasRuntimeKey(adapterId: string): boolean {
+/** Exported for the pre-spawn credential probe (pty/pre-spawn-probe.ts). */
+export function hasRuntimeKey(adapterId: string): boolean {
   // Provider readiness is queried during boot. Do not decrypt the vault here:
   // on macOS that crosses into SecItemCopyMatching and can block Electron's
   // main thread while the Keychain session is locked or stale. Presence in

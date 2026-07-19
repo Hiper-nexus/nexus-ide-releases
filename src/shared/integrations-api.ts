@@ -9,6 +9,16 @@ import type {
   GitMutateResult,
   GitStatusResult,
 } from './git-scm';
+import type {
+  BranchReviewResult,
+  CreatePrResult,
+  GitHubAuthErrorPayload,
+  GitHubDeviceCodePayload,
+  GitHubDeviceFlowIpcResult,
+  GitHubDeviceFlowStatus,
+  ListIssuesResult,
+  ListPrsResult,
+} from './integrations-types';
 
 /** Structured status plus legacy LF `status` string for older callers. */
 export type IntegrationsGitStatus =
@@ -20,6 +30,14 @@ export interface IntegrationsApi {
   hasLinearKey(): Promise<boolean>;
   setGithubToken(token: string): Promise<{ ok: boolean; error?: string }>;
   setLinearKey(token: string): Promise<{ ok: boolean; error?: string }>;
+  /** Device Flow availability — without a clientId the UI keeps the option hidden. */
+  githubDeviceFlowStatus(): Promise<GitHubDeviceFlowStatus>;
+  startGithubDeviceFlow(): Promise<GitHubDeviceFlowIpcResult>;
+  cancelGithubDeviceFlow(): Promise<{ ok: boolean }>;
+  /** Main pushes the device code here once GitHub issues it. */
+  onGithubDeviceCode(cb: (payload: GitHubDeviceCodePayload) => void): () => void;
+  /** Async auth failures (e.g. mid-flow errors) surface here. */
+  onGithubAuthError(cb: (payload: GitHubAuthErrorPayload) => void): () => void;
   gitDiff(): Promise<
     | { ok: true; diff: string; branch: string | null; remote: string | null }
     | { ok: false; error: string }
@@ -40,72 +58,17 @@ export interface IntegrationsApi {
     sourceBranch?: string;
     targetBranch?: string;
     draft?: boolean;
-  }): Promise<{ ok: true; url: string; number: number } | { ok: false; error: string }>;
-  listPrs(): Promise<
-    | {
-        ok: true;
-        prs: Array<{
-          number: number;
-          title: string;
-          url: string;
-          state: string;
-          sourceBranch: string;
-          targetBranch: string;
-        }>;
-      }
-    | { ok: false; error: string }
-  >;
+  }): Promise<CreatePrResult>;
+  listPrs(): Promise<ListPrsResult>;
   /** PR/MR aberto para a branch atual (null quando não existe). */
-  branchReview(): Promise<
-    | {
-        ok: true;
-        branch: string;
-        review: {
-          number: number;
-          url: string;
-          title: string;
-          state: string;
-          sourceBranch: string;
-          targetBranch: string;
-        } | null;
-      }
-    | { ok: false; error: string }
-  >;
+  branchReview(): Promise<BranchReviewResult>;
   listGithubIssues(opts?: {
     limit?: number;
     state?: 'open' | 'closed' | 'all';
-  }): Promise<
-    | {
-        ok: true;
-        issues: Array<{
-          id: string;
-          provider: 'github' | 'linear';
-          number?: number;
-          title: string;
-          url: string;
-          state: string;
-          labels: string[];
-        }>;
-      }
-    | { ok: false; error: string }
-  >;
+  }): Promise<ListIssuesResult>;
   listLinearIssues(opts?: {
     limit?: number;
-  }): Promise<
-    | {
-        ok: true;
-        issues: Array<{
-          id: string;
-          provider: 'github' | 'linear';
-          number?: number;
-          title: string;
-          url: string;
-          state: string;
-          labels: string[];
-        }>;
-      }
-    | { ok: false; error: string }
-  >;
+  }): Promise<ListIssuesResult>;
   startPortForward(req: {
     localPort: number;
     remoteHost?: string;

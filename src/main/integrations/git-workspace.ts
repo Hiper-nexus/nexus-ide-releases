@@ -122,6 +122,37 @@ export function gitPushCurrentBranch(cwd: string, branch: string): GitMutateResu
   return { ok: true };
 }
 
+/**
+ * Remote-sync view of a branch for the PR push gate (emdash pattern:
+ * needsPush = !isOnRemote || aheadCount > 0). Invalid/unknown branch names
+ * report "not on remote" so the gate falls back to the (validating) push.
+ */
+export function gitBranchPushState(
+  cwd: string,
+  branch: string,
+): { isOnRemote: boolean; aheadCount: number } {
+  const name = branch.trim();
+  if (
+    !name ||
+    name === 'HEAD' ||
+    !SAFE_BRANCH_NAME.test(name) ||
+    name.startsWith('-') ||
+    name.includes('..')
+  ) {
+    return { isOnRemote: false, aheadCount: 0 };
+  }
+  const probe = git(cwd, [
+    'rev-parse',
+    '--verify',
+    '--quiet',
+    `refs/remotes/origin/${name}`,
+  ]);
+  if (!probe.ok) return { isOnRemote: false, aheadCount: 0 };
+  const ahead = git(cwd, ['rev-list', '--count', `origin/${name}..${name}`]);
+  const aheadCount = ahead.ok ? Number.parseInt(ahead.stdout.trim(), 10) || 0 : 0;
+  return { isOnRemote: true, aheadCount };
+}
+
 export function gitDiff(cwd: string, staged = false): { ok: true; diff: string } | { ok: false; error: string } {
   const unsafe = refuseUnsafeConfig(cwd);
   if (unsafe) return { ok: false, error: unsafe };

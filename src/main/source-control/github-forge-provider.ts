@@ -1,7 +1,8 @@
 // Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: GitHub adapter with
-// mandatory ForgeAuthorization + audit log; HTTP transport injected; get PR for branch.
+// mandatory ForgeAuthorization + audit log; HTTP transport injected; get PR for
+// branch; failures classified into the typed GitHubApiError taxonomy (emdash).
 
 import type {
   ForgeCreateReviewResult,
@@ -13,17 +14,28 @@ import {
   assertForgeWriteAuthorized,
   recordForgeAudit,
 } from './forge-provider';
+import {
+  classifyGitHubApiError,
+  githubApiErrorMessage,
+} from '../../vendor/emdash/github/github-api-errors';
+
+export type GitHubHttpResponse = {
+  status: number;
+  body: unknown;
+  /** Lowercased response headers — needed to classify SSO/rate-limit. */
+  headers?: Record<string, string>;
+};
 
 export type GitHubHttp = {
   postJson: (
     url: string,
     body: unknown,
     headers: Record<string, string>,
-  ) => Promise<{ status: number; body: unknown }>;
+  ) => Promise<GitHubHttpResponse>;
   getJson: (
     url: string,
     headers: Record<string, string>,
-  ) => Promise<{ status: number; body: unknown }>;
+  ) => Promise<GitHubHttpResponse>;
 };
 
 export type GitHubForgeOptions = {
@@ -37,6 +49,19 @@ function authHeaders(token: string): Record<string, string> {
     Authorization: `Bearer ${token}`,
     Accept: 'application/vnd.github+json',
     'Content-Type': 'application/json',
+  };
+}
+
+/** Shape a non-2xx response the way the emdash classifier expects. */
+function httpFailure(res: GitHubHttpResponse): {
+  status: number;
+  headers?: Record<string, string>;
+  response: { headers?: Record<string, string>; data: unknown };
+} {
+  return {
+    status: res.status,
+    headers: res.headers,
+    response: { headers: res.headers, data: res.body },
   };
 }
 
@@ -92,7 +117,16 @@ export function createGitHubForgeProvider(options: GitHubForgeOptions): ForgePro
         actor: auth.grantedBy,
         detail: `API status ${response.status}`,
       });
-      return { ok: false, reason: `http-${response.status}` };
+      const apiError = classifyGitHubApiError(httpFailure(response), {
+        host: repo.host,
+        nameWithOwner: `${repo.owner}/${repo.name}`,
+        fallback: `GitHub create PR HTTP ${response.status}`,
+      });
+      return {
+        ok: false,
+        reason: githubApiErrorMessage(apiError),
+        apiError,
+      };
     },
     async getReviewForBranch(repo, branch): Promise<ForgeGetReviewForBranchResult> {
       // GitHub: GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open
@@ -102,7 +136,12 @@ export function createGitHubForgeProvider(options: GitHubForgeOptions): ForgePro
         `?head=${encodeURIComponent(head)}&state=open&per_page=1`;
       const response = await options.http.getJson(url, authHeaders(options.token));
       if (response.status < 200 || response.status >= 300) {
-        return { ok: false, reason: `http-${response.status}` };
+        const apiError = classifyGitHubApiError(httpFailure(response), {
+          host: repo.host,
+          nameWithOwner: `${repo.owner}/${repo.name}`,
+          fallback: `GitHub get PR for branch HTTP ${response.status}`,
+        });
+        return { ok: false, reason: githubApiErrorMessage(apiError), apiError };
       }
       const list = Array.isArray(response.body) ? response.body : [];
       if (list.length === 0) {

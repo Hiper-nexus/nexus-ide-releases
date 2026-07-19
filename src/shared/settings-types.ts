@@ -222,6 +222,18 @@ export const uiSettingsPatchSchema = z.object({
 });
 export type UiSettingsPatch = z.infer<typeof uiSettingsPatchSchema>;
 
+/**
+ * Integrações externas (forges/trackers). `githubOauthClientId` habilita a
+ * opção de login GitHub via Device Flow; a env NEXUS_GITHUB_OAUTH_CLIENT_ID
+ * tem precedência (override de dev). Sem clientId a opção fica oculta na UI.
+ */
+export const integrationsSettingsSchema = z.object({
+  githubOauthClientId: z.string().max(256).default(''),
+});
+export type IntegrationsSettings = z.infer<typeof integrationsSettingsSchema>;
+export const DEFAULT_INTEGRATIONS_SETTINGS: IntegrationsSettings =
+  integrationsSettingsSchema.parse({});
+
 export const SETTINGS_CHANNELS = {
   get: 'settings:get',
   set: 'settings:set',
