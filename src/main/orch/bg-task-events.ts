@@ -3,6 +3,7 @@
  * Renderers subscribe via orch IPC; main tools push here on exit/kill.
  */
 import type { WebContents } from 'electron';
+import { ORCH_CHANNELS } from '../../shared/orch-channels';
 
 export interface BgTaskEvent {
   readonly taskId: string;
@@ -43,7 +44,7 @@ export function emitBgTaskEvent(event: BgTaskEvent): void {
   for (const wc of webContents) {
     if (wc.isDestroyed() || wc.isCrashed()) continue;
     try {
-      wc.send('orch:bgTask.event', event); // channel: ORCH_CHANNELS.bgTaskEvent
+      wc.send(ORCH_CHANNELS.bgTaskEvent, event);
     } catch {
       // frame disposed
     }

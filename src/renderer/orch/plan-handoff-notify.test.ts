@@ -48,10 +48,14 @@ function mission(id: string, lane: 'plan' | 'standard'): Mission {
 }
 
 describe('detectNewPlanHandoffs', () => {
-  it('skips full rehydrate (empty prev + non-empty next) to avoid toast storms', () => {
+  it('allows the first real handoff when prev is empty (session after seed)', () => {
+    // Bridge primes with seedSeenHandoffIds; detect itself must not swallow
+    // the first live delivery of the session.
     const next = [handoff({ id: 'h1', missionId: 'm-plan' })];
     const missions = [mission('m-plan', 'plan')];
-    expect(detectNewPlanHandoffs([], next, missions)).toEqual([]);
+    expect(detectNewPlanHandoffs([], next, missions)).toEqual([
+      { missionId: 'm-plan', title: 'M m-plan', handoffId: 'h1' },
+    ]);
   });
 
   it('flags new success handoffs only for plan-lane missions', () => {

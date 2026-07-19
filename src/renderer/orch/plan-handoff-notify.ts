@@ -23,8 +23,9 @@ export function detectNewPlanHandoffs(
   next: readonly Handoff[],
   missions: readonly Mission[],
 ): PlanHandoffReady[] {
-  // Seed / rehydrate: empty prev means full snapshot — never treat as "new".
-  if (prev.length === 0 && next.length > 0) return [];
+  // Caller must prime the handoff list once (bridge seed) so the first real
+  // handoff of a session is not mistaken for a full rehydrate snapshot.
+  // Empty prev + single new id is a legitimate first delivery — do not skip.
   const prevIds = new Set(prev.map((h) => h.id));
   const planMissions = new Map(
     missions

@@ -27,10 +27,16 @@ const planWrite: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const content = str(args, 'content') ?? '';
+    if (content.trim().length < 20) {
+      throw new Error('plan content too short (min 20 characters of real plan text)');
+    }
     if (content.length > 200_000) {
       throw new Error('plan content too large (max 200KB)');
     }
-    const rel = (str(args, 'path') ?? 'plan.md').replaceAll('\\', '/');
+    const rel = (str(args, 'path') ?? 'plan.md').replaceAll('\\', '/').replace(/^\.\//, '');
+    if (rel.includes('..') || path.isAbsolute(rel)) {
+      throw new Error('plan path must be relative plan.md or docs/plan.md');
+    }
     if (!isPlanLaneWritablePath(rel)) {
       throw new Error(
         `plan writes only allowed to plan.md or docs/plan.md (got ${rel})`,

@@ -180,6 +180,9 @@ export function useOrchBridge(): void {
   }, [hydrate, workspaceHydrated, workspacePath]);
 
   useEffect(() => {
+    // First handoffs/missions payloads are snapshots — do not treat as live events.
+    let handoffsPrimed = false;
+
     const un = [
       window.nexus.orch.onPaneSpawnRequest((req) => {
         void (async () => {
@@ -306,6 +309,15 @@ export function useOrchBridge(): void {
       }),
       window.nexus.orch.onHandoffsChanged((handoffs: Handoff[]) => {
         const prev = useOrchStore.getState().handoffs;
+        // First payload after subscribe is a snapshot — mark ids seen, no toasts.
+        if (!handoffsPrimed) {
+          handoffsPrimed = true;
+          usePlanLaneMetricsStore
+            .getState()
+            .seedSeenHandoffIds(handoffs.map((h) => h.id));
+          useOrchStore.getState().setHandoffs(handoffs);
+          return;
+        }
         const missions = useOrchStore.getState().missions;
         const ready = detectNewPlanHandoffs(prev, handoffs, missions);
         if (ready.length > 0) notifyPlanHandoffsReady(ready);

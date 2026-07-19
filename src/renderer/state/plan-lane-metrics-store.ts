@@ -74,6 +74,11 @@ interface PlanLaneMetricsStore extends PlanLaneMetrics {
   notePlanPromoted(): void;
   /** @returns true if this handoff id was new (should toast) */
   notePlanHandoffReady(handoffId: string): boolean;
+  /**
+   * Mark handoff ids as already seen without bumping counters — used when
+   * seeding the bridge so rehydrate does not toast historical plan deliveries.
+   */
+  seedSeenHandoffIds(handoffIds: readonly string[]): void;
 }
 
 export const usePlanLaneMetricsStore = create<PlanLaneMetricsStore>((set, get) => ({
@@ -116,6 +121,25 @@ export const usePlanLaneMetricsStore = create<PlanLaneMetricsStore>((set, get) =
     persist(next);
     set(next);
     return true;
+  },
+  seedSeenHandoffIds: (handoffIds) => {
+    if (handoffIds.length === 0) return;
+    const state = get();
+    let seen = state.seenPlanHandoffIds;
+    let changed = false;
+    for (const id of handoffIds) {
+      if (!id || seen.includes(id)) continue;
+      seen = pushSeen(seen, id);
+      changed = true;
+    }
+    if (!changed) return;
+    const next: PlanLaneMetrics = {
+      ...state,
+      seenPlanHandoffIds: seen,
+      updatedAt: Date.now(),
+    };
+    persist(next);
+    set(next);
   },
 }));
 
