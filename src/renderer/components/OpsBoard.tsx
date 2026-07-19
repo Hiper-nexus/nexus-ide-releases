@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { usePanelZ } from '../lib/panel-stack';
 import type { Mission, MissionStatus } from '../../shared/orch-types';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
@@ -39,6 +40,7 @@ interface DragState {
 
 export function OpsBoard() {
   const open = useOrchStore((s) => s.boardOpen);
+  const { zIndex: stackZ, bringToFront } = usePanelZ('ops-board', open);
   const closeBoard = useOrchStore((s) => s.closeBoard);
   const missions = useOrchStore((s) => s.missions);
   const squads = useOrchStore((s) => s.squads);
@@ -118,7 +120,12 @@ export function OpsBoard() {
   }
 
   return (
-    <section className="ops-board" aria-label="Ops Board — pipeline de missões">
+    <section
+      className="ops-board"
+      aria-label="Ops Board — pipeline de missões"
+      style={{ zIndex: stackZ }}
+      onMouseDownCapture={bringToFront}
+    >
       <header className="ops-board__head">
         <span className="ops-board__mark" aria-hidden="true">
           <NexusMark size={13} />

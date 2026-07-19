@@ -5,6 +5,7 @@ import {
   type OmpPendingUiRequest,
   type OmpTranscriptEntry,
 } from '../../state/omp-rpc-store';
+import { usePanelZ } from '../../lib/panel-stack';
 import { useLayoutStore } from '../../state/layout-store';
 import { useToastStore } from '../../state/toast-store';
 import { waitForSession } from '../../terminal/terminal-host';
@@ -361,6 +362,7 @@ function ApprovalDialog({ request }: { request: OmpPendingUiRequest }) {
 
 export function OmpRpcPanel() {
   const open = useOmpRpcStore((s) => s.panelOpen);
+  const { zIndex: stackZ, bringToFront } = usePanelZ('omp-rpc', open);
   const toggle = useOmpRpcStore((s) => s.togglePanel);
   const sessionId = useOmpRpcStore((s) => s.sessionId);
   const starting = useOmpRpcStore((s) => s.starting);
@@ -427,7 +429,12 @@ export function OmpRpcPanel() {
   };
 
   return (
-    <aside className="omp-panel" aria-label="Sessão oh-my-pi (RPC)">
+    <aside
+      className="omp-panel"
+      aria-label="Sessão oh-my-pi (RPC)"
+      style={{ zIndex: stackZ }}
+      onMouseDownCapture={bringToFront}
+    >
       <header className="omp-panel__header">
         <span className="omp-panel__mark" aria-hidden="true">π</span>
         <span className="omp-panel__title">OMP · RPC</span>

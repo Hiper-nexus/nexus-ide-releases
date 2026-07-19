@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { usePanelZ } from '../lib/panel-stack';
 import { sendAnnotationsToAgent } from '../lib/agent-attach';
 import {
   clearEphemeralDraft,
@@ -37,6 +38,7 @@ export function DiffAnnotatePanel({
   open: boolean;
   onClose: () => void;
 }) {
+  const { zIndex: stackZ, bringToFront } = usePanelZ('diff', open);
   const draftHydrationBarrier = useRef(createDraftHydrationBarrier()).current;
   const [diff, setDiff] = useState('');
   const [branch, setBranch] = useState<string | null>(null);
@@ -176,7 +178,13 @@ export function DiffAnnotatePanel({
   let hunkNewLine = 0;
 
   return (
-    <div className="diff-panel" role="dialog" aria-label="Diff e anotações">
+    <div
+      className="diff-panel"
+      role="dialog"
+      aria-label="Diff e anotações"
+      style={{ zIndex: stackZ }}
+      onMouseDownCapture={bringToFront}
+    >
       <header className="diff-panel__head">
         <div>
           <strong>Diff → Agent</strong>

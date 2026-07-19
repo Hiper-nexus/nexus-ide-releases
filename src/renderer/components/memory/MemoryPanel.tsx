@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { usePanelZ } from '../../lib/panel-stack';
 import {
   MEMORY_KIND_LABELS,
   MEMORY_UI_KINDS,
@@ -158,6 +159,7 @@ function MemoryHitRow({
 
 export function MemoryPanel() {
   const panelOpen = useMemoryStore((s) => s.panelOpen);
+  const { zIndex: stackZ, bringToFront } = usePanelZ('memory', panelOpen);
   const enabled = useMemoryStore((s) => s.enabled);
   const stats = useMemoryStore((s) => s.stats);
   const query = useMemoryStore((s) => s.query);
@@ -238,7 +240,12 @@ export function MemoryPanel() {
   if (!panelOpen) return null;
 
   return (
-    <aside className="memory-panel" aria-label="Memória do workspace">
+    <aside
+      className="memory-panel"
+      aria-label="Memória do workspace"
+      style={{ zIndex: stackZ }}
+      onMouseDownCapture={bringToFront}
+    >
       <header className="memory-panel__header">
         <span className="memory-panel__title">Memória</span>
         {enabled === true && totalActive !== null && (

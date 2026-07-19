@@ -1,4 +1,5 @@
 import type { FileNode } from '../../shared/files-types';
+import { usePanelZ } from '../lib/panel-stack';
 import { useFilesStore } from '../state/files-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { PixelIcon } from './PixelIcon';
@@ -112,6 +113,7 @@ function Editor() {
 
 export function FilesPanel() {
   const open = useFilesStore((s) => s.open);
+  const { zIndex: stackZ, bringToFront } = usePanelZ('files', open);
   const closePanel = useFilesStore((s) => s.closePanel);
   const root = useFilesStore((s) => s.children['']);
   const workspace = useWorkspaceStore((s) => s.current);
@@ -119,7 +121,12 @@ export function FilesPanel() {
   if (!open) return null;
 
   return (
-    <aside className="files" aria-label="Arquivos do workspace">
+    <aside
+      className="files"
+      aria-label="Arquivos do workspace"
+      style={{ zIndex: stackZ }}
+      onMouseDownCapture={bringToFront}
+    >
       <header className="files__header">
         <span className="files__title">
           FILES{workspace ? ` · ${workspace.name}` : ''}

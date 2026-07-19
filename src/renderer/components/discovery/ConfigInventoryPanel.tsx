@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { usePanelZ } from '../../lib/panel-stack';
 import { EmptyState } from '../ActionCard';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import { useConfigInventoryStore } from '../../state/config-inventory-store';
@@ -136,6 +137,7 @@ export function ConfigInventoryToggle({ className }: { className?: string }) {
 
 export function ConfigInventoryPanel() {
   const open = useConfigInventoryStore((s) => s.open);
+  const { zIndex: stackZ, bringToFront } = usePanelZ('config-inv', open);
   const close = useConfigInventoryStore((s) => s.close);
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
@@ -175,6 +177,8 @@ export function ConfigInventoryPanel() {
     <aside
       ref={asideRef}
       className="config-inv"
+      style={{ zIndex: stackZ }}
+      onMouseDownCapture={bringToFront}
       aria-label="Inventário de configs do workspace"
       tabIndex={-1}
       onKeyDown={(e) => {

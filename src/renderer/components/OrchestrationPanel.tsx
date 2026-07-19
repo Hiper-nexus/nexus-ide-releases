@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { usePanelZ } from '../lib/panel-stack';
 import type {
   Handoff,
   Mission,
@@ -265,6 +266,7 @@ function SquadRow({
 
 export function OrchestrationPanel() {
   const panelOpen = useOrchStore((s) => s.panelOpen);
+  const { zIndex: stackZ, bringToFront } = usePanelZ('orch', panelOpen);
   const togglePanel = useOrchStore((s) => s.togglePanel);
   const missions = useOrchStore((s) => s.missions);
   const handoffs = useOrchStore((s) => s.handoffs);
@@ -342,7 +344,12 @@ export function OrchestrationPanel() {
   }
 
   return (
-    <aside className="orch-panel" aria-label="Orquestração">
+    <aside
+      className="orch-panel"
+      aria-label="Orquestração"
+      style={{ zIndex: stackZ }}
+      onMouseDownCapture={bringToFront}
+    >
       <header className="orch-panel__header">
         <span className="orch-panel__title">Orquestração</span>
         <span className="orch-panel__mcp">
