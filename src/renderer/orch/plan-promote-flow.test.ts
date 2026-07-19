@@ -14,6 +14,11 @@ vi.mock('../state/confirm-store', () => ({
 }));
 vi.mock('../state/plan-lane-metrics-store', () => ({
   bumpPlanLaneMetric: mocks.bump,
+  usePlanLaneMetricsStore: {
+    getState: () => ({
+      notePlanPromoted: mocks.bump,
+    }),
+  },
 }));
 vi.mock('../state/toast-store', () => ({
   useToastStore: {
@@ -80,12 +85,33 @@ describe('promotePlanMissionToExecution', () => {
     });
     expect(mocks.askConfirm).not.toHaveBeenCalled();
     expect(result.ok).toBe(true);
-    expect(mocks.bump).toHaveBeenCalledWith('planPromoted');
+    expect(mocks.bump).toHaveBeenCalled();
     expect(mocks.push).toHaveBeenCalledWith(
       'success',
       'Plano → código',
       expect.stringContaining('PREVC'),
     );
+  });
+
+  it('rejects concurrent promote of the same mission', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    mocks.promotePlanLane.mockImplementation(async () => {
+      await gate;
+      return {
+        ...planMission(),
+        intentContract: { ...planMission().intentContract!, lane: 'standard' },
+      };
+    });
+    const m = planMission();
+    const a = promotePlanMissionToExecution(m, { skipConfirm: true });
+    const b = await promotePlanMissionToExecution(m, { skipConfirm: true });
+    expect(b.ok).toBe(false);
+    expect(b.error).toMatch(/em curso/i);
+    release();
+    await a;
   });
 
   it('returns cancelled when operator declines confirm', async () => {

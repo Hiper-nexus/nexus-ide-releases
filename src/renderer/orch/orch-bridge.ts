@@ -29,7 +29,6 @@ import {
 } from './plan-handoff-notify';
 import type { Handoff } from '../../shared/orch-types';
 import {
-  bumpPlanLaneMetric,
   newlyDispatchedPlanMissionIds,
   usePlanLaneMetricsStore,
 } from '../state/plan-lane-metrics-store';
@@ -279,8 +278,9 @@ export function useOrchBridge(): void {
           prev.map((m) => [m.id, m.intentContract?.lane] as const),
         );
         useOrchStore.getState().setMissions(missions);
-        // Plan-lane adoption metric (local only).
-        for (const _id of newlyDispatchedPlanMissionIds(
+        // Plan-lane adoption metric (local only; seen-id dedupe + empty-prev skip).
+        const metrics = usePlanLaneMetricsStore.getState();
+        for (const id of newlyDispatchedPlanMissionIds(
           prevLanes,
           missions.map((m) => ({
             id: m.id,
@@ -288,7 +288,7 @@ export function useOrchBridge(): void {
             lane: m.intentContract?.lane,
           })),
         )) {
-          bumpPlanLaneMetric('planDispatched');
+          metrics.notePlanDispatched(id);
         }
         // Vincula o pane do ORQUESTRADOR à missão dele (via sessionId): sem
         // isto a missão nova nunca constava como aberta — o rail oferecia

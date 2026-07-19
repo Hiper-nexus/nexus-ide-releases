@@ -48,9 +48,16 @@ function mission(id: string, lane: 'plan' | 'standard'): Mission {
 }
 
 describe('detectNewPlanHandoffs', () => {
+  it('skips full rehydrate (empty prev + non-empty next) to avoid toast storms', () => {
+    const next = [handoff({ id: 'h1', missionId: 'm-plan' })];
+    const missions = [mission('m-plan', 'plan')];
+    expect(detectNewPlanHandoffs([], next, missions)).toEqual([]);
+  });
+
   it('flags new success handoffs only for plan-lane missions', () => {
-    const prev: Handoff[] = [];
+    const prev = [handoff({ id: 'h0', missionId: 'm-other' })];
     const next = [
+      handoff({ id: 'h0', missionId: 'm-other' }),
       handoff({ id: 'h1', missionId: 'm-plan' }),
       handoff({ id: 'h2', missionId: 'm-std' }),
       handoff({ id: 'h3', missionId: 'm-plan', status: 'failed' }),

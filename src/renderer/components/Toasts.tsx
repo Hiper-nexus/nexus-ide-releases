@@ -27,7 +27,8 @@ export function Toasts() {
               <button
                 type="button"
                 className="toast__action"
-                onClick={() => {
+                onClick={(e) => {
+                  e.currentTarget.disabled = true;
                   const run = t.action!.onClick();
                   dismiss(t.id);
                   void Promise.resolve(run).catch(() => {

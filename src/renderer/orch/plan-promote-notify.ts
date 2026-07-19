@@ -110,7 +110,8 @@ export async function ensureOrchestratorAfterPlanPromote(input: {
     ) {
       return 'reopened';
     }
-    return reopened.soft ? 'reopened' : 'none';
+    // Panes restored but inject still failed — do not claim success as reopened.
+    return 'none';
   } catch {
     return 'none';
   }

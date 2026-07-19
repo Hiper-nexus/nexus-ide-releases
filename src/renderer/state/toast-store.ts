@@ -38,6 +38,7 @@ interface ToastStore {
 let nextId = 1;
 const TTL_MS = 7000;
 const ACTION_TTL_MS = 20_000;
+const ttlTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 export const useToastStore = create<ToastStore>((set, get) => ({
   toasts: [],
@@ -58,7 +59,15 @@ export const useToastStore = create<ToastStore>((set, get) => ({
     const ttl =
       opts.ttlMs ??
       (opts.action ? ACTION_TTL_MS : TTL_MS);
-    setTimeout(() => get().dismiss(id), ttl);
+    const timer = setTimeout(() => get().dismiss(id), ttl);
+    ttlTimers.set(id, timer);
   },
-  dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  dismiss: (id) => {
+    const timer = ttlTimers.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      ttlTimers.delete(id);
+    }
+    set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+  },
 }));

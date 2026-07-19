@@ -3,7 +3,7 @@
  * promote — one-click toast action runs the same path as MissionRail ▶.
  */
 import type { Handoff, Mission } from '../../shared/orch-types';
-import { bumpPlanLaneMetric } from '../state/plan-lane-metrics-store';
+import { usePlanLaneMetricsStore } from '../state/plan-lane-metrics-store';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { promotePlanMissionToExecution } from './plan-promote-flow';
@@ -23,6 +23,8 @@ export function detectNewPlanHandoffs(
   next: readonly Handoff[],
   missions: readonly Mission[],
 ): PlanHandoffReady[] {
+  // Seed / rehydrate: empty prev means full snapshot — never treat as "new".
+  if (prev.length === 0 && next.length > 0) return [];
   const prevIds = new Set(prev.map((h) => h.id));
   const planMissions = new Map(
     missions
@@ -45,12 +47,14 @@ export function detectNewPlanHandoffs(
   return out;
 }
 
-/** Toast with one-click promote + metric. */
+/** Toast with one-click promote + metric (deduped by handoff id). */
 export function notifyPlanHandoffsReady(
   ready: readonly PlanHandoffReady[],
 ): void {
+  const metrics = usePlanLaneMetricsStore.getState();
   for (const item of ready) {
-    bumpPlanLaneMetric('planHandoffReady');
+    // First-time handoff id only — survives reload (no toast storm).
+    if (!metrics.notePlanHandoffReady(item.handoffId)) continue;
     const missionId = item.missionId;
     useToastStore.getState().push('info', 'Plano pronto', {
       detail: `"${item.title}" — promover para código PREVC.`,
@@ -65,6 +69,12 @@ export function notifyPlanHandoffsReady(
             useToastStore
               .getState()
               .push('warn', 'Plano', 'Missão já não está na lista.');
+            return;
+          }
+          if (mission.intentContract?.lane !== 'plan') {
+            useToastStore
+              .getState()
+              .push('info', 'Plano', 'Esta missão já saiu do plan mode.');
             return;
           }
           // Toast click is the confirm — skip second dialog.
