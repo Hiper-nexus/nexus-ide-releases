@@ -233,3 +233,22 @@ Desenho Nexus-native da wave 1 (divergências deliberadas, mesmo espírito do HO
 | — | NÃO vendorar | wire/workspace-server (imaturo), ACP, registry 34 providers (SDKs pesados), pr-sync-engine inteiro (drizzle-acoplado), worktree-lifecycle (duplica o nosso), MobX/Monaco glue | — |
 
 Gap deles que NÃO trazemos: sem host-key verification no SSH; telemetria default-on em prod; sandbox renderer off. Segredos/clientIds deles jamais entram na cópia.
+
+---
+
+## 11. Execução das waves W2–W4 + colheitas Overclock + decisões (19/07 madrugada)
+
+Tudo commitado na main nesta rodada:
+
+- **W2 — GitHub** (`fcd7cba`): Device Flow OAuth (vendor `github-device-flow.ts` + service `integrations/github-device-auth.ts`; clientId por setting/env, sem clientId a opção fica oculta — **ativar exige registrar a OAuth App do Nexus no GitHub**); taxonomia de erros tipados (sso/rate-limit+resetAt/forbidden/unreachable) até a UI; gate push→PR (push antes do create, branch default real). 88 testes de integrations.
+- **W4 — SSH** (`86ae1a7`): transports ProxyJump, parser `~/.ssh/config` (Include + cycle-guard), `ssh -G`, client-proxy resiliente, port-forward IPv4/IPv6 — **sempre com nosso hostVerifier obrigatório** (upstream não verificava; `proxied-connect-config` é fail-closed). Próximos passos registrados no relatório da wave (connection manager com reconnect, remote-shell-profile, auth completa).
+- **D1 — cards de atividade** (`0a4b857`): `pane-activity-summary` (1ª msg real do transcript claude/codex + última linha significativa + stoppedAt; cache 30s/mtime; nunca lança), servido em `activity` dos pane specs. **Follow-up**: consumir `activity` nos cards quando a refatoração da UI assentar (a lane paralela está mexendo nesses componentes).
+- **D2 — probe + login-stuck** (`9980e3d`): probe pré-spawn tipado (<50ms, erro acionável em vez de pane morta); watchdog de login-stuck por flavor (ring buffer, tick 5s, 2×15s, nunca destrutivo, evento stuck/recovered ao renderer).
+- **P1 — fixture rotulado** (`d3f1c4b`): ranking público marca `estimate:true` + badge "estimativa" para fontes fixture (catálogo, bundled, offline) — nunca posa de auditoria real.
+- **P2 — floor fail-closed** (`f223f7f`): classificação incerta → security floor LIGADO (omp não passa claude/codex por falta de keyword).
+
+**W3 — pty registry: NÃO implementado por já estar coberto.** Verificação em código: o protocolo Orca já dá sequência por chunk + high-water contíguo + dedup + buffer fora-de-ordem no preload (`preload.ts:159-204`) e, crucial, **recovery pull imediato** (`PTY_CHANNELS.recover` → `recoverSessionOutput`, pty-ipc.ts:359 → pty-manager.ts:883) com replay do ring buffer de 256KB/sessão (pane-registry). É exatamente o desenho que Overclock v1.2 acabou de construir e que o emdash tem no `LiveLog/LiveFollower`. A race de subscribe já é coberta por gap→resync. Sobraria só o batching de 16ms (perf, sem dor atual) — adiado até haver evidência de custo.
+
+**P3 — `kind: "cli-rpc"` no adapter registry: fica para missão dedicada.** É a forma grid do B1 (omp-RPC como pane): mudança de schema zod + spawn por pipes no caminho de panes + picker/lifecycle. Grande demais para uma madrugada com lane paralela quente; spec completa em §6 P2.10.
+
+**Guard de processo entregue junto** (`4c8600e`): `pretest` com `check-node-natives.mjs` — fim das corridas de suíte com 270 falhas espúrias de ABI (mensagem orienta `rebuild:node`).
