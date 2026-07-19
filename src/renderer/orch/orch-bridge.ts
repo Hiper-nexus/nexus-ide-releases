@@ -23,6 +23,16 @@ import {
 } from '../terminal/terminal-host';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { initAgentNotificationBridge } from './agent-notification-bridge';
+import {
+  detectNewPlanHandoffs,
+  notifyPlanHandoffsReady,
+} from './plan-handoff-notify';
+import type { Handoff } from '../../shared/orch-types';
+import {
+  bumpPlanLaneMetric,
+  newlyDispatchedPlanMissionIds,
+  usePlanLaneMetricsStore,
+} from '../state/plan-lane-metrics-store';
 
 /**
  * Renderer half of the orchestration bridge:
@@ -264,7 +274,22 @@ export function useOrchBridge(): void {
       }),
 
       window.nexus.orch.onMissionsChanged((missions) => {
+        const prev = useOrchStore.getState().missions;
+        const prevLanes = new Map(
+          prev.map((m) => [m.id, m.intentContract?.lane] as const),
+        );
         useOrchStore.getState().setMissions(missions);
+        // Plan-lane adoption metric (local only).
+        for (const _id of newlyDispatchedPlanMissionIds(
+          prevLanes,
+          missions.map((m) => ({
+            id: m.id,
+            status: m.status,
+            lane: m.intentContract?.lane,
+          })),
+        )) {
+          bumpPlanLaneMetric('planDispatched');
+        }
         // Vincula o pane do ORQUESTRADOR à missão dele (via sessionId): sem
         // isto a missão nova nunca constava como aberta — o rail oferecia
         // "retomar" na missão viva e o clique matava/respawnava ela mesma.
@@ -279,9 +304,13 @@ export function useOrchBridge(): void {
           }
         }
       }),
-      window.nexus.orch.onHandoffsChanged((handoffs) =>
-        useOrchStore.getState().setHandoffs(handoffs),
-      ),
+      window.nexus.orch.onHandoffsChanged((handoffs: Handoff[]) => {
+        const prev = useOrchStore.getState().handoffs;
+        const missions = useOrchStore.getState().missions;
+        const ready = detectNewPlanHandoffs(prev, handoffs, missions);
+        if (ready.length > 0) notifyPlanHandoffsReady(ready);
+        useOrchStore.getState().setHandoffs(handoffs);
+      }),
       window.nexus.orch.onTodosChanged((lists) =>
         useOrchStore.getState().setTodoLists(lists),
       ),
@@ -311,6 +340,7 @@ export function useOrchBridge(): void {
     // Inbox de notificações de agentes: transições busy→idle sustentado /
     // exited viram itens no sininho da workspace bar (fora do state-store).
     const stopNotifBridge = initAgentNotificationBridge();
+    usePlanLaneMetricsStore.getState().hydrate();
     window.nexus.orch.syncPanes(snapshotPanes());
 
     return () => {

@@ -1,7 +1,9 @@
 /**
  * After the operator promotes lane plan → standard, tell the live
  * orchestrator that design mode is over and PREVC code tools are open.
+ * If no live pane, soft-focus / reopen mission panes then inject.
  */
+import type { Mission } from '../../shared/orch-types';
 import type { PaneModel } from '../../shared/types';
 import { listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
@@ -10,6 +12,7 @@ import {
   getPaneSessionId,
   submitPromptToPane,
 } from '../terminal/terminal-host';
+import { reopenMission } from './mission-reopen';
 
 export function buildPlanPromotedKickoff(goal: string): string {
   const g = goal.trim().slice(0, 400);
@@ -72,5 +75,43 @@ export function notifyOrchestratorPlanPromoted(input: {
   );
   if (!paneId) return false;
   if (!getPaneSessionId(paneId)) return false;
+  useLayoutStore.getState().focus(paneId);
   return submitPromptToPane(paneId, buildPlanPromotedKickoff(input.goal));
+}
+
+export type PlanPromoteNotifyResult = 'injected' | 'reopened' | 'none';
+
+/**
+ * Inject kickoff if orch is live; otherwise reopen mission panes and focus,
+ * then inject when a session is available.
+ */
+export async function ensureOrchestratorAfterPlanPromote(input: {
+  mission: Mission;
+  goal: string;
+}): Promise<PlanPromoteNotifyResult> {
+  if (
+    notifyOrchestratorPlanPromoted({
+      missionId: input.mission.id,
+      goal: input.goal,
+    })
+  ) {
+    return 'injected';
+  }
+  try {
+    const reopened = await reopenMission(input.mission);
+    if (!reopened.ok || (reopened.panes ?? 0) === 0) return 'none';
+    // Soft reopen focuses immediately; hard reopen may need a tick for PTY.
+    await new Promise((r) => setTimeout(r, 400));
+    if (
+      notifyOrchestratorPlanPromoted({
+        missionId: input.mission.id,
+        goal: input.goal,
+      })
+    ) {
+      return 'reopened';
+    }
+    return reopened.soft ? 'reopened' : 'none';
+  } catch {
+    return 'none';
+  }
 }

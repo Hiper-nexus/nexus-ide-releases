@@ -33,8 +33,12 @@ import { ActionCard, EmptyState } from './ActionCard';
 import { OperatorHud } from './OperatorHud';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndBlockMission } from '../orch/block-mission';
-import { notifyOrchestratorPlanPromoted } from '../orch/plan-promote-notify';
+import { ensureOrchestratorAfterPlanPromote } from '../orch/plan-promote-notify';
 import { useToastStore } from '../state/toast-store';
+import {
+  bumpPlanLaneMetric,
+  usePlanLaneMetricsStore,
+} from '../state/plan-lane-metrics-store';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { INTEGRATIONS_CHANGED_EVENT } from '../lib/integrations-events';
@@ -67,6 +71,12 @@ export function MissionRail() {
   const openBoard = useOrchStore((s) => s.openBoard);
   const paneStates = useSessionStateStore((s) => s.paneStates);
   const openOmpPanel = useOmpRpcStore((s) => s.openPanel);
+  const planMetricsLabel = usePlanLaneMetricsStore((s) => {
+    if (s.planDispatched + s.planPromoted + s.planHandoffReady === 0) {
+      return null;
+    }
+    return `plan ${s.planDispatched}→${s.planPromoted} (h:${s.planHandoffReady})`;
+  });
   const [extIssues, setExtIssues] = useState<ExternalIssue[]>([]);
   const workspace = useWorkspaceStore((s) => s.current);
   const workspacePath = workspace?.path ?? null;
@@ -88,6 +98,10 @@ export function MissionRail() {
       setElapsedTick((tick) => tick + 1);
     }, 60_000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    usePlanLaneMetricsStore.getState().hydrate();
   }, []);
 
   // Omp rpc-ui mission workers are not layout panes — poll + debounced events.
@@ -290,17 +304,21 @@ export function MissionRail() {
         m.intentContract?.goal?.trim() ||
         m.description ||
         '';
-      const injected = notifyOrchestratorPlanPromoted({
-        missionId: m.id,
+      bumpPlanLaneMetric('planPromoted');
+      const result = await ensureOrchestratorAfterPlanPromote({
+        mission: updated,
         goal,
       });
-      const detail = injected
-        ? 'PREVC ativo; orquestrador notificado para executar o plan.md.'
-        : 'PREVC ativo. Reabra o orquestrador se precisar do kickoff de implementação.';
+      const detail =
+        result === 'injected'
+          ? 'PREVC ativo; orquestrador focado e notificado.'
+          : result === 'reopened'
+            ? 'PREVC ativo; panes reabertos e orquestrador notificado.'
+            : 'PREVC ativo. Sem pane vivo — reabra a missão se precisar do kickoff.';
       setNote(
-        injected
-          ? 'Plano promovido — PREVC ativo e orquestrador notificado.'
-          : 'Plano promovido — PREVC ativo (sem pane vivo para notificar).',
+        result === 'none'
+          ? 'Plano promovido — PREVC ativo (sem pane para notificar).'
+          : 'Plano promovido — PREVC ativo e orquestrador notificado.',
       );
       useToastStore.getState().push('success', 'Plano → código', detail);
     } catch (cause) {
@@ -496,6 +514,16 @@ export function MissionRail() {
                 >
                   <span className="mission-rail__chip-value">
                     {workspaceBudget.shortLabel}
+                  </span>
+                </span>
+              )}
+              {planMetricsLabel && (
+                <span
+                  className="mission-rail__chip mission-rail__chip--muted"
+                  title="Métricas locais: missões plan despachadas → promovidas (handoffs de plano)"
+                >
+                  <span className="mission-rail__chip-value">
+                    {planMetricsLabel}
                   </span>
                 </span>
               )}
