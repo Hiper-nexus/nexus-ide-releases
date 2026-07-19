@@ -1364,6 +1364,23 @@
 .toast__body { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .toast__title { font-size: 12.5px; font-weight: 600; }
 .toast__detail { font-size: 11px; color: var(--text-dim); line-height: 1.45; }
+.toast__action {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--accent-cyan, #3dd6c6);
+  color: var(--bg, #0d1117);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toast__action:hover { filter: brightness(1.08); }
+.toast__action:focus-visible {
+  outline: 2px solid var(--accent-cyan, #3dd6c6);
+  outline-offset: 2px;
+}
 .toast__close {
   display: inline-flex; align-items: center; justify-content: center;
   background: transparent; border: none; color: var(--text-dim);

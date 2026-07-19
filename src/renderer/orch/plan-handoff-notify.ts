@@ -1,10 +1,12 @@
 /**
  * When a plan-lane mission receives a new handoff, nudge the operator to
- * promote (▶ Executar plano) — closes the design → code loop without polling.
+ * promote — one-click toast action runs the same path as MissionRail ▶.
  */
 import type { Handoff, Mission } from '../../shared/orch-types';
 import { bumpPlanLaneMetric } from '../state/plan-lane-metrics-store';
+import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
+import { promotePlanMissionToExecution } from './plan-promote-flow';
 
 export interface PlanHandoffReady {
   missionId: string;
@@ -43,16 +45,32 @@ export function detectNewPlanHandoffs(
   return out;
 }
 
-/** Toast + metric; idempotent per call site (caller dedupes by handoff id). */
+/** Toast with one-click promote + metric. */
 export function notifyPlanHandoffsReady(
   ready: readonly PlanHandoffReady[],
 ): void {
   for (const item of ready) {
     bumpPlanLaneMetric('planHandoffReady');
-    useToastStore.getState().push(
-      'info',
-      'Plano pronto',
-      `"${item.title}" — clique ▶ Executar plano no MissionRail para ir a código PREVC.`,
-    );
+    const missionId = item.missionId;
+    useToastStore.getState().push('info', 'Plano pronto', {
+      detail: `"${item.title}" — promover para código PREVC.`,
+      ttlMs: 25_000,
+      action: {
+        label: 'Executar plano',
+        onClick: async () => {
+          const mission = useOrchStore
+            .getState()
+            .missions.find((m) => m.id === missionId);
+          if (!mission) {
+            useToastStore
+              .getState()
+              .push('warn', 'Plano', 'Missão já não está na lista.');
+            return;
+          }
+          // Toast click is the confirm — skip second dialog.
+          await promotePlanMissionToExecution(mission, { skipConfirm: true });
+        },
+      },
+    });
   }
 }

@@ -23,6 +23,21 @@ export function Toasts() {
           <div className="toast__body">
             <span className="toast__title">{t.title}</span>
             {t.detail && <span className="toast__detail">{t.detail}</span>}
+            {t.action && (
+              <button
+                type="button"
+                className="toast__action"
+                onClick={() => {
+                  const run = t.action!.onClick();
+                  dismiss(t.id);
+                  void Promise.resolve(run).catch(() => {
+                    // action surfaces its own error toast
+                  });
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
           <button
             className="toast__close"

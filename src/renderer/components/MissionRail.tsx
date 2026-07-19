@@ -33,10 +33,8 @@ import { ActionCard, EmptyState } from './ActionCard';
 import { OperatorHud } from './OperatorHud';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndBlockMission } from '../orch/block-mission';
-import { ensureOrchestratorAfterPlanPromote } from '../orch/plan-promote-notify';
-import { useToastStore } from '../state/toast-store';
+import { promotePlanMissionToExecution } from '../orch/plan-promote-flow';
 import {
-  bumpPlanLaneMetric,
   usePlanLaneMetricsStore,
 } from '../state/plan-lane-metrics-store';
 import { AgentDropZone } from './AgentDropZone';
@@ -285,46 +283,21 @@ export function MissionRail() {
 
   /** Plan mode → standard PREVC (operator approved the design). */
   async function promotePlan(m: Mission) {
-    const ok = await askConfirm({
-      title: 'Executar o plano?',
-      body:
-        'A missão sai do modo design (só plan.md) e passa a permitir worktrees, ' +
-        'código e shell sob o PREVC. O plan.md permanece no workspace.',
-      confirmLabel: 'Executar plano',
-    });
-    if (!ok) return;
     setBusy(m.id);
     setNote(null);
-    try {
-      const updated = await window.nexus.orch.promotePlanLane({
-        missionId: m.id,
-      });
-      const goal =
-        updated.intentContract?.goal?.trim() ||
-        m.intentContract?.goal?.trim() ||
-        m.description ||
-        '';
-      bumpPlanLaneMetric('planPromoted');
-      const result = await ensureOrchestratorAfterPlanPromote({
-        mission: updated,
-        goal,
-      });
-      const detail =
-        result === 'injected'
-          ? 'PREVC ativo; orquestrador focado e notificado.'
-          : result === 'reopened'
-            ? 'PREVC ativo; panes reabertos e orquestrador notificado.'
-            : 'PREVC ativo. Sem pane vivo — reabra a missão se precisar do kickoff.';
+    const result = await promotePlanMissionToExecution(m);
+    if (result.cancelled) {
+      setBusy(null);
+      return;
+    }
+    if (result.ok) {
       setNote(
-        result === 'none'
+        result.detail?.includes('Sem pane')
           ? 'Plano promovido — PREVC ativo (sem pane para notificar).'
           : 'Plano promovido — PREVC ativo e orquestrador notificado.',
       );
-      useToastStore.getState().push('success', 'Plano → código', detail);
-    } catch (cause) {
-      setNote(
-        cause instanceof Error ? cause.message : 'Falha ao promover o plano.',
-      );
+    } else if (result.error) {
+      setNote(result.error);
     }
     setBusy(null);
   }
