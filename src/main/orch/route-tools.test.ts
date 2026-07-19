@@ -4,11 +4,21 @@ import { testProjectScope } from './__tests__/scope-fixture';
 
 const mocks = vi.hoisted(() => ({
   listProviderSettings: vi.fn(),
+  hasAvailableAccount: vi.fn(),
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
   listProviderSettings: mocks.listProviderSettings,
 }));
+
+// Real store underneath (untouched exports stay intact); only the spawn-gate
+// predicate is driven per-test to simulate adapters fully on cooldown.
+vi.mock('../persistence/account-store', async () => {
+  const actual = await vi.importActual<typeof import('../persistence/account-store')>(
+    '../persistence/account-store',
+  );
+  return { ...actual, hasAvailableAccount: mocks.hasAvailableAccount };
+});
 
 import { buildDomainTools } from './tools-domain';
 import { clearRouteProvenance, hasRecentRouteMatch } from './route-provenance';
@@ -40,6 +50,8 @@ beforeEach(() => {
   clearRouteProvenance();
   clearRouteLog();
   mocks.listProviderSettings.mockReset();
+  mocks.hasAvailableAccount.mockReset();
+  mocks.hasAvailableAccount.mockReturnValue(true);
 });
 
 describe('nexus_route_task wiring', () => {
@@ -68,6 +80,60 @@ describe('nexus_route_task wiring', () => {
     await expect(
       tool('nexus_route_task').handler({ task: 'x' }, context()),
     ).rejects.toThrow(/no installed adapters/);
+  });
+});
+
+describe('nexus_route_task quota auto-exclude', () => {
+  const kimiProvider = {
+    adapterId: 'kimi',
+    enabled: true,
+    installed: true,
+    authStrategy: 'oauth',
+    models: ['kimi-code/kimi-for-coding'],
+  };
+  const codexProvider = {
+    adapterId: 'codex',
+    enabled: true,
+    installed: true,
+    authStrategy: 'oauth',
+    models: ['gpt-5.5'],
+  };
+
+  it('adapter com todas as contas em cooldown some do ranked e das alternativas', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider, codexProvider]);
+    const natural = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { adapterId: string };
+
+    // Todas as contas do vencedor natural entram em cooldown → re-rota.
+    mocks.hasAvailableAccount.mockImplementation(
+      (id: string) => id !== natural.adapterId,
+    );
+    const rerouted = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { adapterId: string; alternatives: Array<{ adapterId: string }> };
+
+    expect(rerouted.adapterId).not.toBe(natural.adapterId);
+    expect(rerouted.alternatives.map((a) => a.adapterId)).not.toContain(
+      natural.adapterId,
+    );
+  });
+
+  it('fail-safe: auto-exclude que esvaziaria a rota é revertido e registrado no reason/log', async () => {
+    mocks.listProviderSettings.mockReturnValue([kimiProvider]);
+    mocks.hasAvailableAccount.mockReturnValue(false);
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { adapterId: string; reason: string };
+
+    // Sem o fail-safe não haveria candidato algum; com ele a rota volta e o
+    // spawn enxerga o cooldown real da conta.
+    expect(decision.adapterId).toBe('kimi');
+    expect(decision.reason).toMatch(/cooling/);
+    expect(recentRouteLog()[0].reason).toMatch(/cooling/);
   });
 });
 
