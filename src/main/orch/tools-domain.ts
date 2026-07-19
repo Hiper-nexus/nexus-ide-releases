@@ -6,6 +6,7 @@ import { routeTask, type TaskTier } from './task-router';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { getOrchSettings } from '../persistence/settings-store';
+import { hasAvailableAccount } from '../persistence/account-store';
 import { buildOmpRouteContext } from './omp-roster-policy';
 import { missionStatusSchema } from '../../shared/orch-types';
 import { buildClarify } from '../../shared/clarify';
@@ -926,20 +927,41 @@ const routeTaskTool: McpToolDef = {
     // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
     // acabou de estourar cota/quebrar, em vez de insistir nela.
     const excluded = new Set(strArray(args, 'exclude'));
-    const adapters = listProviderSettings()
-      // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
-      // mantinha o gate de cobertura do task-router sempre falso, matando a
-      // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.
-      .filter((a) => a.adapterId !== 'shell')
-      .map((a) => ({
+    // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
+    // mantinha o gate de cobertura do task-router sempre falso, matando a
+    // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.
+    const providers = listProviderSettings().filter(
+      (a) => a.adapterId !== 'shell',
+    );
+    // Quota-aware auto-exclude: an adapter whose Nexus-managed accounts are
+    // ALL on an active cooldown is treated as excluded, so routing no longer
+    // depends on the orchestrator remembering to pass `exclude` (prompt-hope).
+    // Adapters with no Nexus accounts report available (hasAvailableAccount →
+    // true — third-party auth state is not ours to judge) and are never
+    // affected; only a fully-cooling account pool leaves the route.
+    const quotaExcluded = providers
+      .map((a) => a.adapterId)
+      .filter((id) => !excluded.has(id) && !hasAvailableAccount(id));
+    const buildAdapters = (skip: ReadonlySet<string>) =>
+      providers.map((a) => ({
         id: a.adapterId,
         installed:
-          !excluded.has(a.adapterId) &&
+          !skip.has(a.adapterId) &&
           a.enabled &&
           a.installed &&
           a.authStrategy !== 'login-needed',
         models: a.models,
       }));
+    let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));
+    let quotaFallbackNote = '';
+    if (quotaExcluded.length > 0 && !adapters.some((a) => a.installed)) {
+      // Fail-safe (same pattern as applyOmpParticipation): the auto-exclude
+      // emptied the routable pool → revert to the caller-provided list. A
+      // spawn on a cooling account surfaces the real cooldown error; no route
+      // at all would hide it.
+      adapters = buildAdapters(excluded);
+      quotaFallbackNote = `; quota auto-exclude reverted, all candidates cooling: ${quotaExcluded.join(',')}`;
+    }
     const settings = getOrchSettings();
     const missionId =
       str(args, 'missionId') ??
@@ -958,7 +980,7 @@ const routeTaskTool: McpToolDef = {
     const preferAdapters = strArray(args, 'preferAdapters');
     // reserveClaude=true: workers nunca no binário claude OAuth — evita
     // corromper o keychain compartilhado com o orquestrador.
-    const decision = routeTask(
+    let decision = routeTask(
       task,
       adapters,
       undefined,
@@ -972,6 +994,13 @@ const routeTaskTool: McpToolDef = {
       }),
     );
     if (!decision) throw new Error('no installed adapters to route to');
+    // Fail-safe: append note without mutating a frozen/shared decision object.
+    if (quotaFallbackNote) {
+      decision = {
+        ...decision,
+        reason: `${decision.reason}${quotaFallbackNote}`,
+      };
+    }
     // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
     // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).
     recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });

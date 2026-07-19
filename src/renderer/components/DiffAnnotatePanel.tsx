@@ -60,6 +60,7 @@ export function DiffAnnotatePanel({
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     draftHydrationBarrier.markHydrating();
     const saved = peekEphemeralDraft<DiffAnnotateDraft>('diff-annotate');
     if (saved) {
@@ -80,6 +81,7 @@ export function DiffAnnotatePanel({
     void window.nexus.integrations
       .gitDiff()
       .then(async (r) => {
+        if (cancelled) return;
         if (!r.ok) {
           setError(r.error);
           setDiff('');
@@ -88,9 +90,14 @@ export function DiffAnnotatePanel({
         const nextDiff = r.diff || '(sem alterações em relação a HEAD)';
         setDiff(nextDiff);
         setBranch(r.branch);
-        await refreshHunkSummary(nextDiff);
+        await refreshHunkSummary(nextDiff, () => cancelled);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open, draftHydrationBarrier]);
 
   useEffect(() => {
@@ -103,14 +110,17 @@ export function DiffAnnotatePanel({
     });
   }, [open, annotations, draft, selected, draftHydrationBarrier]);
 
-  async function refreshHunkSummary(rawDiff: string): Promise<void> {
+  async function refreshHunkSummary(
+    rawDiff: string,
+    isCancelled: () => boolean = () => false,
+  ): Promise<void> {
     if (!rawDiff || rawDiff.startsWith('(sem')) {
-      setHunkSummary(null);
+      if (!isCancelled()) setHunkSummary(null);
       return;
     }
     const local = parseUnifiedDiff(rawDiff);
     if (local.length === 0) {
-      setHunkSummary(null);
+      if (!isCancelled()) setHunkSummary(null);
       return;
     }
     // Prefer MCP with missionId so agent path claims refine attribution.
@@ -122,6 +132,7 @@ export function DiffAnnotatePanel({
         diff: rawDiff,
         missionId,
       });
+      if (isCancelled()) return;
       if (res.ok && res.result && typeof res.result === 'object') {
         const body = res.result as {
           hunkCount?: number;
@@ -151,6 +162,7 @@ export function DiffAnnotatePanel({
         return;
       }
     }
+    if (isCancelled()) return;
     const attributed = attributeHunks(local, []);
     const summary = summarizeAttribution(attributed);
     setHunkSummary({ total: attributed.length, ...summary });

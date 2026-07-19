@@ -301,29 +301,21 @@ const fileWrite: McpToolDef = {
     const content = requireStr(args, 'content');
     const encoding = str(args, 'encoding') ?? 'utf-8';
     // Plan lane (grok-build plan-mode): only plan.md / docs/plan.md.
+    // Fail-closed: store miss with a missionId still cannot open arbitrary writes.
     if (ctx.missionId) {
+      let mission: { intentContract?: { lane?: string | null } | null } | null =
+        null;
       try {
-        const mission = getProjectDomainStores(ctx.scope).missions.get(
-          ctx.missionId,
-        );
-        if (
-          mission &&
-          isPlanLane(mission) &&
-          !isPlanLaneWritablePath(relativePath)
-        ) {
+        mission = getProjectDomainStores(ctx.scope).missions.get(ctx.missionId);
+      } catch {
+        mission = null;
+      }
+      if (mission && isPlanLane(mission)) {
+        if (!isPlanLaneWritablePath(relativePath)) {
           throw new Error(
             `plan lane denies write to ${relativePath}; only plan.md or docs/plan.md`,
           );
         }
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message.startsWith('plan lane denies')
-        ) {
-          throw error;
-        }
-        // Mission store miss must not open unrestricted writes; re-check path
-        // if caller already passed intent gate with plan lane.
       }
     }
     const result = writeWorkspaceTextFile(

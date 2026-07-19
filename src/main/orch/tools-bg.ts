@@ -32,6 +32,25 @@ interface BgTask {
 const bgTasks = new Map<string, BgTask>();
 let bgCounter = 0;
 const OUTPUT_CAP = 512 * 1024;
+/** Soft cap so exited tasks cannot grow unbounded in a long-lived main process. */
+const BG_TASK_MAP_MAX = 64;
+const BG_TASK_RETAIN_MS = 10 * 60_000;
+
+function pruneBgTasks(now = Date.now()): void {
+  for (const [id, task] of bgTasks) {
+    if (task.exitCode === null) continue;
+    const ended = task.endedAt ?? task.startedAt;
+    if (now - ended > BG_TASK_RETAIN_MS) bgTasks.delete(id);
+  }
+  if (bgTasks.size <= BG_TASK_MAP_MAX) return;
+  const exited = [...bgTasks.entries()]
+    .filter(([, t]) => t.exitCode !== null)
+    .sort((a, b) => (a[1].endedAt ?? 0) - (b[1].endedAt ?? 0));
+  while (bgTasks.size > BG_TASK_MAP_MAX && exited.length > 0) {
+    const [id] = exited.shift()!;
+    bgTasks.delete(id);
+  }
+}
 
 function signalTree(proc: ChildProcess, signal: NodeJS.Signals): void {
   if (proc.pid === undefined) return;
@@ -124,6 +143,7 @@ const bgRun: McpToolDef = {
       endedAt: null,
       killTree: (signal) => signalTree(proc, signal),
     };
+    pruneBgTasks();
     bgTasks.set(id, task);
     proc.stdout?.on('data', (c) => {
       task.stdout = appendCap(task.stdout, c);
@@ -152,6 +172,7 @@ const bgRun: McpToolDef = {
         checkoutId: task.checkoutId,
         at: task.endedAt,
       });
+      pruneBgTasks();
       setTimeout(() => {
         fs.rmSync(sandbox.dir, { recursive: true, force: true });
       }, 50);
@@ -168,6 +189,7 @@ const bgRun: McpToolDef = {
         checkoutId: task.checkoutId,
         at: task.endedAt,
       });
+      pruneBgTasks();
       fs.rmSync(sandbox.dir, { recursive: true, force: true });
     });
     return {

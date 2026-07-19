@@ -155,20 +155,14 @@ export function assertMissionIntentAllowsTool(
 
   // Plan lane (grok-build plan-mode): read + plan.md writes + status only.
   // Worktree/merge/shell/code edits stay denied until the operator upgrades lane.
+  // Read-only / mission-control already returned above (file_read, plan_read, …).
   if (contract?.lane === 'plan' && canonical !== 'mission_set_status') {
     const planAllowed = new Set([
       'file_write', // path-checked in file tool handler
       'plan_write',
-      'plan_read',
       'handoff_submit',
-      'handoff_list',
-      'clarify',
-      'todo_manager',
-      'memory_retain',
-      'memory_recall',
+      'memory_retain', // bootstrap-authority elsewhere; allowed here for design notes
     ]);
-    // Read-only and mission-control tools already returned above; everything
-    // else in plan lane must be in the bounded design set.
     if (!planAllowed.has(canonical)) {
       return deny(
         'tool_denied',
@@ -179,6 +173,11 @@ export function assertMissionIntentAllowsTool(
         intentVersion,
         toolName,
       );
+    }
+    // Narrow plan-side writes that must not re-enter bootstrap/dispatch gates.
+    // file_write / plan_write / handoff_submit still need dispatch + origin below.
+    if (canonical === 'memory_retain') {
+      return { ok: true, intentState, intentVersion };
     }
   }
 

@@ -165,6 +165,9 @@ describe('mission intent gate', () => {
       assertMissionIntentAllowsTool('nexus_file_write', { mission: plan }).ok,
     ).toBe(true); // path enforced in handler
     expect(
+      assertMissionIntentAllowsTool('nexus_memory_retain', { mission: plan }).ok,
+    ).toBe(true);
+    expect(
       assertMissionIntentAllowsTool('nexus_mission_set_status', {
         mission: plan,
       }).ok,
