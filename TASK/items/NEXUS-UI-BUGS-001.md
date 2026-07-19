@@ -243,7 +243,7 @@ mostrar o e-mail).
 | 2 | omp "não instalado" | ✅ CORRIGIDO | commit `fb41d33` — `resolveOmpBin` re-resolve login-shell PATH ao vivo (mesmo fallback de `isBinInstalled`) |
 | 5 | Badge do sino | ✅ CORRIGIDO | commit `fb41d33` — `top:0; right:-5px` (top negativo era recortado pelo overflow da zona de status) |
 | 7 | E-mail no painel de cotas | ✅ CORRIGIDO | commit `fb41d33` — `EntryCard` recebe e exibe `email` |
-| 6 | Toolbar cortando botões | ⏳ ABERTO | Hardening por container-query já existia antes dos prints (`f592846`, 14/07) e não bastou. Precisa repro AO VIVO: reproduzir a largura exata do pane dos prints e inspecionar qual chip (`#pane-id`, `toolbar__state`, `CostBadge`) vaza. Não fechar sem isso. |
+| 6 | Toolbar cortando botões | ✅ CORRIGIDO | Repro em harness Playwright (CSS real + DOM real, 12 larguras 300-760px): `.toolbar__meta` (flex-grow) esmagava `.toolbar__actions` e o `overflow:hidden` cortava botões AO MEIO em todas as densidades ("Reiniciar" vazando 44px em 520px); chips rígidos (state/custo/devserver) cortados pela metade em 460-700px, faixa onde nenhuma container query acertava. Fix: actions vira `flex:0 0 auto` (density JS já poda conteúdo), meta ganha wrap+linha única clipada (`row-gap:160px; max-height:26px` — chip que não cabe some INTEIRO), threshold de `icons` sobe 520→580. Pós-fix: 12/12 larguras sem corte parcial. |
 
 **Extras encontrados e corrigidos no decorrer (commit `c722766`):**
 - Enter não enviado no boot do pane: `injectPrompt` agora re-envia CR uma vez se a

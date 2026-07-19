@@ -954,7 +954,12 @@ body {
   overflow: hidden;
 }
 
-/* Identidade do pane: encolhe primeiro (title/badges), nunca o botão Fechar. */
+/* Identidade do pane: encolhe primeiro (title/badges), nunca o botão Fechar.
+   Wrap + linha única clipada: chip que não cabe pula para uma "linha 2"
+   empurrada para fora do clip pelo row-gap e some INTEIRO — antes o
+   overflow:hidden cortava state/custo/devserver pela metade em 460-700px
+   (prints do item 6, NEXUS-UI-BUGS-001), faixa onde nenhum breakpoint
+   de container query acertava o conteúdo real. */
 .toolbar__meta {
   display: flex;
   align-items: center;
@@ -962,16 +967,19 @@ body {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  flex-wrap: wrap;
+  row-gap: 160px;
+  max-height: 26px;
 }
 
+/* Rígido de propósito: quem poda o conteúdo é o density JS + container
+   queries. Com 0 1 auto o meta (flex-grow) esmagava este container e o
+   overflow:hidden cortava botões ao meio em TODAS as densidades. */
 .toolbar__actions {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 55%;
-  overflow: hidden;
+  flex: 0 0 auto;
 }
 
 /* Pin de fechar — sempre no canto direito, legível mesmo em pane estreito. */

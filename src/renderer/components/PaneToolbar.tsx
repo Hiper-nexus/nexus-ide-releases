@@ -167,7 +167,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       // Fechar era empurrado para fora (overflow do .pane). Compact cedo.
       const w = entries[0]?.contentRect.width ?? 500;
       if (w < 360) setDensity('compact');
-      else if (w < 520) setDensity('icons');
+      else if (w < 580) setDensity('icons');
       else setDensity('full');
     });
     ro.observe(el);
