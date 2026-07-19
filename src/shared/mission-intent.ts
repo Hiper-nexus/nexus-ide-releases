@@ -485,6 +485,35 @@ export function isPlanLaneWritablePath(relativePath: string): boolean {
   return (PLAN_LANE_WRITABLE_PATHS as readonly string[]).includes(normalized);
 }
 
+/**
+ * Soft lane suggestion from goal text for the mission wizard autopilot.
+ * Returns null when the goal is neutral (keep standard). Never forces a lane
+ * after the operator has manually picked one (wizard owns that).
+ *
+ * Order: consult (investigation) before plan (design-only), so "consultar
+ * logs para planejar" leans consult unless implement/fix signals dominate.
+ */
+export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
+  const g = goal.trim();
+  if (g.length < 8) return null;
+  const implement =
+    /\b(implementar|implementa[cç][aã]o|codar|escrever\s+c[oó]digo|fix(ar)?\s|corrigir|bug|feature|refator|merge|worktree|testes?\s+e\s+c[oó]digo)\b/i.test(
+      g,
+    );
+  if (implement) return null;
+  const consult =
+    /\b(consultar|consulta\b|somente\s+leitura|read-?only|ler\s+logs?|status\s+de|investigar|diagn[oó]stico|doctor|o\s+que\s+est[aá]\s+acontecendo)\b/i.test(
+      g,
+    );
+  if (consult) return 'consult';
+  const plan =
+    /\b(planejar|planejamento|plano\s+de|arquitet(ura|ar)|desenhar|design\s+(da|do|de|system)|escrever\s+(o\s+)?prd|especificar\s+abordagem|documentar\s+arquitetura|s[oó]\s+o\s+plano|sem\s+c[oó]digo)\b/i.test(
+      g,
+    );
+  if (plan) return 'plan';
+  return null;
+}
+
 /** Minimum durable learning size for consult-lane done (not code PREVC green). */
 export const CONSULT_DONE_MIN_LEARNING_CHARS = 40;
 

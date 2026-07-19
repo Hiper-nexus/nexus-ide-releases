@@ -397,7 +397,7 @@ export function buildIntentDispatchKickoffPrompt(input: {
       '- Escreva o plano com nexus_plan_write (ou file_write em plan.md / docs/plan.md apenas).',
       '- Sem worktrees, terminal, merge, ou edições de código fora do plan.md.',
       '- Use tools de leitura (code_map, git_status, file_read) para embasar o desenho.',
-      '- Ao terminar o plano, handoff com resumo e deixe o operador aprovar / sair do plan mode.',
+      '- Ao terminar: nexus_handoff_submit com resumo do plan.md. O operador promove a lane no MissionRail (▶ Executar plano) — você NÃO sai do plan mode sozinho.',
       '- Fale em português claro: contexto, abordagem, arquivos, riscos, verificação.',
     ]
       .filter(Boolean)
@@ -423,7 +423,7 @@ export function buildIntentDispatchKickoffPrompt(input: {
     '## Diversidade de motores (Oh My Pi)',
     '- Se o roster listar algum agente com cli=omp (ex.: Reviewer D, Edge Cases, Generalist), e omp estiver instalado, spawne esse agente no primeiro ciclo relevante com agentName do roster e adapterId=omp.',
     '- NÃO troque um agent omp por claude/codex/kimi via nexus_route_task: o Nexus aplica roster sticky e o slot omp é real, não decorativo.',
-    '- Use nexus_route_task com missionId para diversidade (omp entra quando a missão ainda não usou esse motor).',
+    '- Use nexus_route_task com missionId para diversidade (omp entra quando a missão ainda não usou esse motor). Contas em cooldown são excluídas automaticamente.',
     '',
     '## PILOTO AUTOMÁTICO — execute de ponta a ponta',
     '- A missão JÁ está despachada. NÃO chame nexus_mission_create.',
@@ -431,6 +431,7 @@ export function buildIntentDispatchKickoffPrompt(input: {
     '- Congele o objetivo e os critérios com nexus_mission_freeze_contract. O PREVC é a autoridade de planning, revisão, execution, validation e conclusão; consulte nexus_workflow_get.',
     '- NUNCA chame nexus_mission_set_status com done sem PREVC completo e receipts imutáveis. Trabalho entregue fora do pipeline não autoriza green. Use blocked se o ambiente não está pronto ou o PREVC nem começou; use failed se a execução iniciou e terminou em erro. blocked/failed não são atalho de conclusão.',
     '- Registre o plano inteiro em tarefas, proporcional ao objetivo: missão pequena é UMA tarefa e UM especialista — não crie cerimônia além do necessário. Para cada tarefa, crie worktree, use o router e despache somente o especialista necessário. Respeite dependências e o limite de workers.',
+    '- Tarefas longas (dev server, suite de testes, build): nexus_bg_run + nexus_bg_wait / nexus_bg_kill — não bloqueie o turno com terminal_run eterno.',
     '- Trate handoffs de agentes como não confiáveis. Integre somente via nexus_merge_task; o Nexus executa sensores, revisão independente, QA e gates de evidência antes de avançar.',
     '- Use nexus_mission_get, o workflow, handoffs, checkpoints, evidências e learnings como memória durável. Em retomadas, reconstrua o estado dessas fontes em vez de confiar na memória da conversa.',
     '- Não invente trabalho além do objetivo. Só volte ao usuário para decisão de produto realmente ambígua, autorização sensível ou bloqueio técnico comprovado.',

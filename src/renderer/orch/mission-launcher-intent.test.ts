@@ -156,8 +156,23 @@ describe('orientationForKickoff', () => {
     expect(prompt).toContain('lane=plan');
     expect(prompt).toContain('nexus_plan_write');
     expect(prompt).toContain('plan.md');
+    expect(prompt).toContain('Executar plano');
     expect(prompt).not.toContain('nexus_merge_task');
     expect(prompt).not.toContain('nexus_mission_freeze_contract');
+  });
+
+  it('standard kickoff tells the pilot to use bg tools for long tasks', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-std',
+      goal: 'Corrigir o login',
+      acceptanceCriteria: ['testes verdes'],
+      risk: 'normal',
+      maxWorkers: 2,
+      lane: 'standard',
+    });
+    expect(prompt).toContain('nexus_bg_run');
+    expect(prompt).toContain('nexus_bg_wait');
   });
 });
 

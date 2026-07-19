@@ -41,6 +41,7 @@ import {
   missionGoalNeedsFutureEvidence,
   MISSION_EVIDENCE_WAIT_MESSAGE,
 } from '../../shared/mission-evidence';
+import { suggestMissionLaneFromGoal } from '../../shared/mission-intent';
 
 /**
  * "Novo workspace" / "Nova Missão" wizard — the full flow:
@@ -161,6 +162,8 @@ export function MissionWizard() {
   const [missionLane, setMissionLane] = useState<
     'standard' | 'consult' | 'plan'
   >('standard');
+  /** Once the operator touches the lane radios, stop auto-suggest from goal text. */
+  const laneTouchedByUserRef = useRef(false);
   const [plannedMission, setPlannedMission] = useState<Mission | null>(null);
   const armedMissionSnapshot = useOrchStore((state) =>
     armedMissionId
@@ -177,6 +180,17 @@ export function MissionWizard() {
   // Suppress the broadcast-driven jump to the plan step while this wizard is
   // already dispatching the freshly compiled goal (one-click start).
   const autoDispatchingRef = useRef(false);
+
+  const suggestedLane = useMemo(
+    () => suggestMissionLaneFromGoal(missionGoal),
+    [missionGoal],
+  );
+
+  // Autopilot lane: suggest consult/plan from goal wording until the user picks.
+  useEffect(() => {
+    if (laneTouchedByUserRef.current) return;
+    setMissionLane(suggestedLane ?? 'standard');
+  }, [suggestedLane]);
   // Modo Agêntico: intenção em linguagem natural + estado do arquiteto.
   const [intent, setIntent] = useState('');
   const [designing, setDesigning] = useState(false);
@@ -1505,12 +1519,28 @@ export function MissionWizard() {
                 }}
               >
                 <legend style={{ padding: '0 4px' }}>Tipo de entrega</legend>
+                {!laneTouchedByUserRef.current && suggestedLane && (
+                    <p
+                      className="wizard__mode-desc"
+                      style={{ marginBottom: 8, color: 'var(--accent-cyan)' }}
+                      role="status"
+                    >
+                      Sugerido pelo objetivo:{' '}
+                      {suggestedLane === 'plan'
+                        ? 'Plano (design)'
+                        : 'Consulta (somente leitura)'}
+                      . Pode mudar abaixo.
+                    </p>
+                  )}
                 <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
                   <input
                     type="radio"
                     name="mission-lane"
                     checked={missionLane === 'standard'}
-                    onChange={() => setMissionLane('standard')}
+                    onChange={() => {
+                      laneTouchedByUserRef.current = true;
+                      setMissionLane('standard');
+                    }}
                   />
                   <span>
                     <strong>Código (PREVC)</strong> — worktrees, workers e
@@ -1522,7 +1552,10 @@ export function MissionWizard() {
                     type="radio"
                     name="mission-lane"
                     checked={missionLane === 'consult'}
-                    onChange={() => setMissionLane('consult')}
+                    onChange={() => {
+                      laneTouchedByUserRef.current = true;
+                      setMissionLane('consult');
+                    }}
                   />
                   <span>
                     <strong>Consulta (somente leitura)</strong> — logs, status,
@@ -1534,7 +1567,10 @@ export function MissionWizard() {
                     type="radio"
                     name="mission-lane"
                     checked={missionLane === 'plan'}
-                    onChange={() => setMissionLane('plan')}
+                    onChange={() => {
+                      laneTouchedByUserRef.current = true;
+                      setMissionLane('plan');
+                    }}
                   />
                   <span>
                     <strong>Plano (design)</strong> — escreve só plan.md;
