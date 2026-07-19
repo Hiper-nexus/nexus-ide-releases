@@ -168,7 +168,8 @@ describe('queued narrations', () => {
     expect(source).toContain('new NarrationQueue');
     expect(source).toContain('workNarrationSupervisor.accept(event');
     expect(source).toContain('narrationQueue.enqueue(event.text)');
-    expect(source).toContain("if (state.status === 'idle') narrationQueue.kick()");
+    expect(source).toContain("if (state.status === 'idle' && !isJarvisNarrationHalted())");
+    expect(source).toContain('narrationQueue.kick()');
     expect(source).not.toContain('narração pulada (ocupado)');
   });
 });

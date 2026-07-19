@@ -63,6 +63,10 @@ function setNexusApi(adapters: AdapterInfo[] = ADAPTERS): void {
       orch: {
         removeMission: vi.fn(async () => ({ removed: true })),
       },
+      ompRpc: {
+        listSessions: vi.fn(async () => []),
+        onEvent: vi.fn(() => () => {}),
+      },
     },
   });
 }
