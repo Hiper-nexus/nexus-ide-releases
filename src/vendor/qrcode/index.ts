@@ -9,13 +9,11 @@
  * — validated to round-trip through opencv's QR decoder for real LAN URLs.
  */
 
-// The vendored files are untyped CommonJS; the wrapper is the typed surface.
+// O bundle ESM é gerado dos fontes CJS por scripts/vendor-qrcode-esm.mjs —
+// o dev server do vite não tolera CJS cru em src/ ("require is not defined").
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-expect-error vendored untyped CJS (node-qrcode core)
-import * as QRCodeCore from './core/qrcode.js';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-expect-error vendored untyped CJS (node-qrcode svg renderer)
-import * as SvgRenderer from './renderer/svg-tag.js';
+// @ts-expect-error bundle ESM gerado, sem tipos
+import { QRCodeCore, SvgRenderer } from './bundle.mjs';
 
 interface QrData {
   modules: { size: number; data: Uint8Array };

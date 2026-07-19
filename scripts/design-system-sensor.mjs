@@ -56,7 +56,9 @@ const TOKEN_PATTERNS = [
   { kind: 'color', regex: /hsl\([^)]+\)/gi },
   { kind: 'font', regex: /font-family[:\s]+([^;\n]+)/gi },
   { kind: 'spacing', regex: /\b(\d+px|\d+rem|\d+em)\b/gi },
-  { kind: 'custom-property', regex: /--[a-z0-9_-]+/gi },
+  // 1+ chars após '--': exclui o '---' de tabelas markdown no DESIGN.md sem
+  // perder props legítimas de 1 char (ex.: --a/--t/--d do cost-operator.css).
+  { kind: 'custom-property', regex: /--[a-z0-9](?:[a-z0-9_-]+)?/gi },
 ];
 
 function sha256(value) {
@@ -77,11 +79,27 @@ function findDesignMd(root) {
 }
 
 function globToRegex(pattern) {
-  const source = pattern
-    .replace(/\*\*\//g, '(?:.*/)?')
-    .replace(/\./g, '\\.')
-    .replace(/\*/g, '[^/]*');
-  return new RegExp(`^${source}$`, 'i');
+  // Single-pass: replaces encadeadas reprocessavam o texto inserido (o '*' do
+  // '(?:.*/)?' virava '[^/]*'), e '**/*.css' nunca casava — o sensor achava
+  // 0 style files e reportava falsos positivos contra o DESIGN.md.
+  let out = '';
+  let i = 0;
+  while (i < pattern.length) {
+    if (pattern.startsWith('**/', i)) {
+      out += '(?:.*/)?';
+      i += 3;
+    } else if (pattern[i] === '*') {
+      out += '[^/]*';
+      i += 1;
+    } else if (pattern[i] === '.') {
+      out += '\\.';
+      i += 1;
+    } else {
+      out += pattern[i].replace(/[()+?^${}[\]|\\]/g, '\\$&');
+      i += 1;
+    }
+  }
+  return new RegExp(`^${out}$`, 'i');
 }
 
 const STYLE_FILE_REGEXES = STYLE_GLOBS.map(globToRegex);
