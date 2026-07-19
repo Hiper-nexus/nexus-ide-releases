@@ -50,6 +50,7 @@ function planMission(): Mission {
       executionMode: 'autopilot',
       lane: 'plan',
       intentVersion: 1,
+      contextPolicy: 'on-demand',
       budgets: {
         planningTokens: 8000,
         executionTokens: 6000,
@@ -71,12 +72,11 @@ describe('promotePlanMissionToExecution', () => {
         lane: 'standard',
       },
     });
-    // @ts-expect-error test stub
     globalThis.window = {
       nexus: {
         orch: { promotePlanLane: mocks.promotePlanLane },
       },
-    };
+    } as unknown as Window & typeof globalThis;
   });
 
   it('skips confirm when skipConfirm is true', async () => {
