@@ -31,8 +31,12 @@ import {
 } from '../orch/gate';
 import { dispatchToolCall } from '../orch/mcp-dispatch';
 import type { McpRegistry } from '../orch/mcp-protocol';
+import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { buildToolset } from '../orch/tools';
-import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import {
+  getRendererWorkspaceScope,
+  requireRendererWorkspaceScope,
+} from '../persistence/renderer-workspace-scope';
 import { getAdapter } from './adapter-registry';
 import {
   OmpRpcSession,
@@ -188,22 +192,41 @@ function watchOwner(owner: WebContents): void {
   owner.once('destroyed', onDestroyed);
 }
 
-function broadcastOmpEvent(sessionId: string, event: OmpRpcPushEvent): void {
-  const envelope: OmpRpcEventEnvelope = { sessionId, event };
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      try {
-        win.webContents.send(OMP_RPC_CHANNELS.event, envelope);
-      } catch {
-        // Window tearing down — ignore.
-      }
-    }
+function sendOmpEvent(wc: WebContents, envelope: OmpRpcEventEnvelope): void {
+  if (wc.isDestroyed()) return;
+  try {
+    wc.send(OMP_RPC_CHANNELS.event, envelope);
+  } catch {
+    // Window tearing down — ignore.
   }
 }
 
+/**
+ * Push routing (hardening): envelopes carry message deltas — real session
+ * CONTENT — so they must stay inside the session trust boundary instead of
+ * hitting every window of every project.
+ * - panel sessions → only the owning renderer (mirrors requireSession, which
+ *   is owner-scoped for panel kind);
+ * - mission workers → only windows bound to the same project scope, so
+ *   fleet/rail/panel of sibling windows stay in sync while foreign projects
+ *   and scope-less auxiliary windows never receive a byte.
+ */
 function pushEvent(hosted: HostedSession, event: OmpRpcPushEvent): void {
-  // Multi-window + mission workers: one broadcast keeps fleet/rail/panel in sync.
-  broadcastOmpEvent(hosted.session.sessionId, event);
+  const envelope: OmpRpcEventEnvelope = {
+    sessionId: hosted.session.sessionId,
+    event,
+  };
+  if (hosted.kind === 'panel') {
+    if (hosted.owner) sendOmpEvent(hosted.owner, envelope);
+    return;
+  }
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    const rendererScope = getRendererWorkspaceScope(win.webContents);
+    if (rendererScope && sameProjectScope(rendererScope, hosted.scope)) {
+      sendOmpEvent(win.webContents, envelope);
+    }
+  }
 }
 
 function requireSession(
@@ -246,12 +269,22 @@ export function listOmpRpcSessions(): OmpSessionSummary[] {
   }));
 }
 
+/**
+ * Fail-loud parse: a non-empty malformed ref must never fall through to the
+ * omp default silently (same "phantom model" class the PTY path fights via
+ * resolveRoutableModel). `undefined`/empty = not specified → the omp default
+ * is a legitimate choice and stays `undefined`.
+ */
 function parseOmpModelRef(
   model: string | undefined,
 ): { provider: string; modelId: string } | undefined {
   if (!model) return undefined;
   const slash = model.indexOf('/');
-  if (slash <= 0 || slash === model.length - 1) return undefined;
+  if (slash <= 0 || slash === model.length - 1) {
+    throw new Error(
+      `modelo omp malformado: "${model}" (formato esperado: provider/modelId)`,
+    );
+  }
   return {
     provider: model.slice(0, slash),
     modelId: model.slice(slash + 1),
@@ -277,6 +310,9 @@ export interface MissionOmpWorkerInput {
 export async function spawnMissionOmpRpcWorker(
   input: MissionOmpWorkerInput,
 ): Promise<{ paneId: string; sessionId: string }> {
+  // Validate before minting any gate token: a malformed model ref throws
+  // here, so the spawn fails loud with a clear message and leaks nothing.
+  const model = parseOmpModelRef(input.model);
   if (sessions.size >= MAX_SESSIONS_PER_RENDERER * 2) {
     throw new Error('limite global de sessões omp atingido');
   }
@@ -307,7 +343,6 @@ export async function spawnMissionOmpRpcWorker(
     throw err;
   }
 
-  const model = parseOmpModelRef(input.model);
   const hostedRef: { current: HostedSession | null } = { current: null };
   let session: OmpRpcSession;
   try {
