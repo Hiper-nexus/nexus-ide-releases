@@ -349,3 +349,96 @@ describe('R4 — parseOmpModelRef fail-loud (via spawnMissionOmpRpcWorker)', () 
     expect(h.releaseSessionByToken).not.toHaveBeenCalled();
   });
 });
+
+describe('R1b — controle e listagem de sessões escopados por projeto', () => {
+  it('renderer de projeto estranho NÃO controla sessão mission (prompt/abort negados)', async () => {
+    registerOmpRpcIpc();
+    const { sessionId } = await spawnMissionOmpRpcWorker(missionInput);
+    const session = lastSession();
+    const promptSpy = vi.spyOn(session, 'prompt');
+
+    const foreign = fakeWebContents(41);
+    bindScope(foreign, scopeB);
+    const prompt = ipcHandler(OMP_RPC_CHANNELS.prompt);
+    const denied = (await prompt(
+      { sender: foreign },
+      { sessionId, message: 'rode algo' },
+    )) as { ok: boolean; error?: string };
+
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toMatch(/fora do escopo deste projeto/);
+    expect(promptSpy).not.toHaveBeenCalled();
+  });
+
+  it('renderer do MESMO projeto controla a sessão mission normalmente', async () => {
+    registerOmpRpcIpc();
+    const { sessionId } = await spawnMissionOmpRpcWorker(missionInput);
+
+    const sibling = fakeWebContents(42);
+    bindScope(sibling, scopeA);
+    const prompt = ipcHandler(OMP_RPC_CHANNELS.prompt);
+    const allowed = (await prompt(
+      { sender: sibling },
+      { sessionId, message: 'rode algo' },
+    )) as { ok: boolean; error?: string };
+
+    expect(allowed.ok).toBe(true);
+  });
+
+  it('renderer sem escopo bound não controla sessão mission', async () => {
+    registerOmpRpcIpc();
+    const { sessionId } = await spawnMissionOmpRpcWorker(missionInput);
+
+    const scopeless = fakeWebContents(43);
+    const abort = ipcHandler(OMP_RPC_CHANNELS.abort);
+    const denied = (await abort(
+      { sender: scopeless },
+      { sessionId },
+    )) as { ok: boolean; error?: string };
+
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toMatch(/fora do escopo deste projeto/);
+  });
+
+  it('listSessions filtra: panel só para o owner, mission só para o mesmo projeto', async () => {
+    const owner = fakeWebContents(44);
+    bindScope(owner, scopeA);
+    h.getAllWindows.mockReturnValue([fakeWindow(owner)]);
+
+    registerOmpRpcIpc();
+    const start = ipcHandler(OMP_RPC_CHANNELS.start);
+    const panel = (await start(
+      { sender: owner },
+      { approvalPolicy: 'safe' },
+    )) as OmpRpcStartResult;
+    expect(panel.ok).toBe(true);
+    const { sessionId: missionSessionId } = await spawnMissionOmpRpcWorker(
+      missionInput,
+    );
+
+    const listSessions = ipcHandler(OMP_RPC_CHANNELS.listSessions);
+
+    // Projeto estranho: não vê nada.
+    const foreign = fakeWebContents(45);
+    bindScope(foreign, scopeB);
+    expect(listSessions({ sender: foreign }, null)).toEqual([]);
+
+    // Mesmo projeto (não-owner): vê a mission, não a panel alheia.
+    const sibling = fakeWebContents(46);
+    bindScope(sibling, scopeA);
+    const siblingRows = listSessions({ sender: sibling }, null) as {
+      sessionId: string;
+      kind: string;
+    }[];
+    expect(siblingRows.map((r) => r.sessionId)).toEqual([missionSessionId]);
+    expect(siblingRows[0]?.kind).toBe('mission');
+
+    // Owner: vê as duas.
+    const ownerRows = listSessions({ sender: owner }, null) as {
+      sessionId: string;
+    }[];
+    expect(ownerRows.map((r) => r.sessionId).sort()).toEqual(
+      [panel.sessionId, missionSessionId].sort(),
+    );
+  });
+});

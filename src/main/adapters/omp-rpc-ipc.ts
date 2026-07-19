@@ -236,12 +236,20 @@ function requireSession(
   const parsed = ompRpcSessionRefSchema.safeParse(raw);
   if (!parsed.success) throw new Error('payload inválido');
   const hosted = sessions.get(parsed.data.sessionId);
-  // Panel sessions are owner-scoped; mission workers are shared (any renderer).
-  if (
-    !hosted ||
-    (hosted.kind === 'panel' && hosted.owner !== owner)
-  ) {
+  if (!hosted) {
     throw new Error('sessão omp desconhecida para este renderer');
+  }
+  // Panel sessions are owner-scoped; mission workers are project-scoped: a
+  // renderer may only drive a mission session whose scope matches its own
+  // (mirrors pushEvent, which streams only to same-project windows).
+  if (hosted.kind === 'panel' && hosted.owner !== owner) {
+    throw new Error('sessão omp desconhecida para este renderer');
+  }
+  if (hosted.kind === 'mission') {
+    const rendererScope = getRendererWorkspaceScope(owner);
+    if (!rendererScope || !sameProjectScope(rendererScope, hosted.scope)) {
+      throw new Error('sessão omp de missão fora do escopo deste projeto');
+    }
   }
   return hosted;
 }
@@ -257,16 +265,25 @@ export interface OmpSessionSummary {
 }
 
 /** Live omp rpc-ui sessions for fleet / ops surfaces. */
-export function listOmpRpcSessions(): OmpSessionSummary[] {
-  return [...sessions.values()].map((hosted) => ({
-    sessionId: hosted.session.sessionId,
-    paneId: hosted.paneId,
-    kind: hosted.kind,
-    title: hosted.title,
-    missionId: hosted.gateCtx.missionId,
-    state: hosted.session.state,
-    snapshot: hosted.session.snapshot(),
-  }));
+export function listOmpRpcSessions(owner?: WebContents): OmpSessionSummary[] {
+  const rendererScope = owner ? getRendererWorkspaceScope(owner) : null;
+  return [...sessions.values()]
+    .filter((hosted) => {
+      if (!owner) return true;
+      // Same trust boundary as requireSession/pushEvent: panel → owning
+      // renderer only; mission → same-project windows only.
+      if (hosted.kind === 'panel') return hosted.owner === owner;
+      return rendererScope !== null && sameProjectScope(rendererScope, hosted.scope);
+    })
+    .map((hosted) => ({
+      sessionId: hosted.session.sessionId,
+      paneId: hosted.paneId,
+      kind: hosted.kind,
+      title: hosted.title,
+      missionId: hosted.gateCtx.missionId,
+      state: hosted.session.state,
+      snapshot: hosted.session.snapshot(),
+    }));
 }
 
 /**
@@ -562,8 +579,8 @@ export function registerOmpRpcIpc(): void {
     (event, raw): Promise<OmpRpcStartResult> => startSession(event.sender, raw),
   );
 
-  ipcMain.handle(OMP_RPC_CHANNELS.listSessions, (): OmpSessionSummary[] =>
-    listOmpRpcSessions(),
+  ipcMain.handle(OMP_RPC_CHANNELS.listSessions, (event): OmpSessionSummary[] =>
+    listOmpRpcSessions(event.sender),
   );
 
   ipcMain.handle(
