@@ -334,15 +334,83 @@ describe('routeTask', () => {
     expect(decision!.adapterId).not.toBe('omp');
   });
 
+  describe('security floor fail-closed on uncertainty', () => {
+    const ranked: RankedRouteEntry[] = [
+      { c: { adapterId: 'glm', model: 'glm-5.2' }, fromTier: 'medium' },
+      { c: { adapterId: 'omp', model: 'zai/glm-5' }, fromTier: 'medium' },
+      { c: { adapterId: 'codex', model: 'gpt-5.4' }, fromTier: 'medium' },
+    ];
+
+    it('stays ON when no keyword of any dimension matches (omp not promoted)', () => {
+      // Opaque brief: no frontend/security regex, no classifyTask bucket →
+      // floor ON, so prefer cannot pull omp ahead of the table lead.
+      const applied = applyOmpParticipation(
+        ranked,
+        'implementar o módulo de relatórios trimestrais',
+        'medium',
+        { ompParticipation: 'prefer' },
+      );
+      expect(applied.ranked[0]?.c.adapterId).toBe('glm');
+      expect(applied.note).not.toContain('ompParticipation=prefer');
+    });
+
+    it('stays OFF for a positively classified non-security task (current behavior)', () => {
+      // Hard-bucket keywords (refatorar/parser) prove the task is routine
+      // engineering → floor released, prefer promotes omp as before.
+      const applied = applyOmpParticipation(
+        ranked,
+        'refatorar o parser de relatórios',
+        'medium',
+        { ompParticipation: 'prefer' },
+      );
+      expect(applied.ranked[0]?.c.adapterId).toBe('omp');
+      expect(applied.note).toContain('ompParticipation=prefer');
+    });
+
+    it('stays ON for security keywords (unit view of the e2e case above)', () => {
+      const applied = applyOmpParticipation(
+        ranked,
+        'revisar o fluxo de autenticação OAuth',
+        'medium',
+        { ompParticipation: 'prefer' },
+      );
+      expect(applied.ranked[0]?.c.adapterId).toBe('glm');
+    });
+
+    it('routeTask: opaque brief with prefer keeps the table lead instead of omp', () => {
+      // The original hole: a sensitive-but-keywordless task fell to medium
+      // and prefer pushed omp ahead of claude/codex. Now the floor closes.
+      // (9 words, no keyword of any bucket: medium with zero signals.)
+      const decision = routeTask(
+        'implementar o módulo de relatórios trimestrais do painel administrativo geral',
+        adapters('claude', 'codex', 'omp', 'glm'),
+        DEFAULT_ROUTING_TABLE,
+        undefined,
+        true,
+        undefined,
+        { ompParticipation: 'prefer' },
+      );
+      expect(decision!.tier).toBe('medium');
+      expect(decision!.adapterId).toBe('glm');
+      expect(decision!.reason).not.toContain('ompParticipation=prefer');
+    });
+  });
+
   it('applyOmpParticipation prefer reorders ranked entries', () => {
     const ranked: RankedRouteEntry[] = [
       { c: { adapterId: 'glm', model: 'glm-5.2' }, fromTier: 'medium' },
       { c: { adapterId: 'omp', model: 'zai/glm-5' }, fromTier: 'medium' },
       { c: { adapterId: 'codex', model: 'gpt-5.4' }, fromTier: 'medium' },
     ];
-    const applied = applyOmpParticipation(ranked, 'medium task', 'medium', {
-      ompParticipation: 'prefer',
-    });
+    // Task with a non-security keyword signal: floor stays off, prefer reorders.
+    const applied = applyOmpParticipation(
+      ranked,
+      'refactor the parser module',
+      'medium',
+      {
+        ompParticipation: 'prefer',
+      },
+    );
     expect(applied.ranked[0]?.c.adapterId).toBe('omp');
   });
 

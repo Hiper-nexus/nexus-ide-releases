@@ -260,11 +260,16 @@ export interface RouteDecision {
 
 type QualityDimension = 'coding' | 'reasoning' | 'frontend' | 'security';
 
+const FRONTEND_DIMENSION_RE =
+  /\b(frontend|landing|website|interface|ui|ux|css|design|responsive|acessibilidade)\b/i;
+const SECURITY_DIMENSION_RE =
+  /\b(security|seguran|auth|oauth|permission|token|secret|payment|pagamento|billing)\b/i;
+
 function qualityDimension(taskText: string, tier: TaskTier): QualityDimension {
-  if (/\b(frontend|landing|website|interface|ui|ux|css|design|responsive|acessibilidade)\b/i.test(taskText)) {
+  if (FRONTEND_DIMENSION_RE.test(taskText)) {
     return 'frontend';
   }
-  if (/\b(security|seguran|auth|oauth|permission|token|secret|payment|pagamento|billing)\b/i.test(taskText)) {
+  if (SECURITY_DIMENSION_RE.test(taskText)) {
     return 'security';
   }
   return tier === 'hard' || tier === 'critical' ? 'reasoning' : 'coding';
@@ -328,11 +333,34 @@ function evaluatedCandidates(
 }
 
 /**
+ * True when keyword classification found NO signal of any dimension: neither
+ * the frontend/security regexes nor any classifyTask bucket (critical, hard,
+ * easy, trivial) matched. An opaque brief we cannot prove is routine.
+ */
+function classificationUncertain(taskText: string): boolean {
+  if (
+    FRONTEND_DIMENSION_RE.test(taskText) ||
+    SECURITY_DIMENSION_RE.test(taskText)
+  ) {
+    return false;
+  }
+  return classifyTask(taskText).signals.length === 0;
+}
+
+/**
  * Security/critical floor: do not force omp ahead of claude/codex when those
  * are available. Diversity still keeps omp in the ladder later.
+ *
+ * Fail-closed on uncertainty: when keyword classification finds no signal of
+ * ANY dimension (an opaque brief), the floor stays ON — omp is not promoted
+ * ahead of claude/codex. Only a task positively classified in a non-security
+ * dimension releases the floor. Cost tiers and other dimensions are untouched.
  */
 function securityFloorActive(taskText: string, tier: TaskTier): boolean {
-  return qualityDimension(taskText, tier) === 'security' || tier === 'critical';
+  if (qualityDimension(taskText, tier) === 'security' || tier === 'critical') {
+    return true;
+  }
+  return classificationUncertain(taskText);
 }
 
 /**
