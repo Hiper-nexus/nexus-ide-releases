@@ -32,6 +32,41 @@ export function parseEvalSource(
   return { suiteId: m[1]!, suiteRevision: m[2] ?? 'unknown' };
 }
 
+/**
+ * Suite revisions produced by the offline fixture pipeline — estimates, never
+ * real audits. A future live evaluation ships a run id (git-ish) instead and
+ * never matches this set.
+ */
+const FIXTURE_SUITE_REVISIONS: ReadonlySet<string> = new Set([
+  'fixture',
+  'offline-fixture',
+]);
+
+/** Public badge copy stamped on fixture-derived entries (UI copy is pt-BR). */
+export const FIXTURE_ESTIMATE_SOURCE_LABEL = 'estimativa (fixture)';
+
+/** True when the nexus-eval source names an offline fixture revision. */
+export function isFixtureEvalSource(source: string): boolean {
+  const parsed = parseEvalSource(source);
+  return parsed !== null && FIXTURE_SUITE_REVISIONS.has(parsed.suiteRevision);
+}
+
+/**
+ * Stamp the estimate mark on fixture-derived entries (idempotent). Real-audit
+ * entries pass through untouched, so a future live evaluation never carries
+ * the mark.
+ */
+export function withFixtureEstimateMark(
+  entry: PublicModelRankingEntry,
+): PublicModelRankingEntry {
+  if (!isFixtureEvalSource(entry.source)) return entry;
+  return {
+    ...entry,
+    estimate: true,
+    sourceLabel: entry.sourceLabel ?? FIXTURE_ESTIMATE_SOURCE_LABEL,
+  };
+}
+
 export function latestEvaluatedAt(
   entries: readonly PublicModelRankingEntry[],
 ): string | undefined {
@@ -124,11 +159,13 @@ export function buildPublicRankingSnapshot(input: {
     suiteId: input.suiteId,
     suiteRevision: input.suiteRevision,
     description: PUBLIC_DESCRIPTION,
-    entries: input.entries.map((e, i) => ({
-      ...e,
-      overall: clampScore(e.overall),
-      rank: e.rank ?? i + 1,
-    })),
+    entries: input.entries.map((e, i) =>
+      withFixtureEstimateMark({
+        ...e,
+        overall: clampScore(e.overall),
+        rank: e.rank ?? i + 1,
+      }),
+    ),
   };
 }
 
@@ -177,6 +214,12 @@ export function isPublicModelRankingSnapshot(
   if (!Array.isArray(o.entries)) return false;
   return o.entries.every((e) => {
     if (!e || typeof e !== 'object') return false;
+    // Optional estimate mark (schema v1 extension): type-checked when present,
+    // absent on pre-mark payloads — both shapes stay valid.
+    if (e.estimate !== undefined && typeof e.estimate !== 'boolean') return false;
+    if (e.sourceLabel !== undefined && typeof e.sourceLabel !== 'string') {
+      return false;
+    }
     return (
       typeof e.id === 'string' &&
       typeof e.adapterId === 'string' &&

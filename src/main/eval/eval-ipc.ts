@@ -16,6 +16,7 @@ import { runOfflineEvalV1 } from './eval-pipeline';
 import {
   buildPublicRankingFromCatalog,
   isPublicModelRankingSnapshot,
+  withFixtureEstimateMark,
 } from './public-ranking';
 
 function resolveBundledRankingPath(): string | null {
@@ -50,7 +51,10 @@ function loadBundledPublicRanking(): PublicModelRankingSnapshot | null {
   if (!file) return null;
   try {
     const raw: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return isPublicModelRankingSnapshot(raw) ? raw : null;
+    if (!isPublicModelRankingSnapshot(raw)) return null;
+    // Bundled files predating the estimate mark get stamped on load, so the
+    // served payload never lets fixture scores pose as a real audit.
+    return { ...raw, entries: raw.entries.map(withFixtureEstimateMark) };
   } catch {
     return null;
   }

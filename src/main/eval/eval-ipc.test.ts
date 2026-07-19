@@ -4,6 +4,8 @@
  * and the catalog/normalizer path that IPC depends on.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   mergeModelCatalogs,
@@ -11,7 +13,10 @@ import {
 } from '../adapters/model-catalog';
 import { runOfflineEvalV1 } from './eval-pipeline';
 import {
+  FIXTURE_ESTIMATE_SOURCE_LABEL,
   buildPublicRankingFromCatalog,
+  isFixtureEvalSource,
+  isPublicModelRankingSnapshot,
   publicEntriesFromCatalog,
 } from './public-ranking';
 import { PUBLIC_MODEL_RANKING_SCHEMA_VERSION } from '../../shared/eval-ranking-types';
@@ -37,10 +42,29 @@ describe('public ranking read path (IPC payload contract)', () => {
       expect(e.adapterId.length).toBeGreaterThan(0);
       expect(e.evaluatedAt).toBeTruthy();
       expect(e.rank).toBeGreaterThan(0);
+      // 3rd-level fallback (offline fixtures) serves the estimate mark
+      // explicitly — fixture scores never pose as a real audit.
+      expect(e.estimate).toBe(true);
+      expect(e.sourceLabel).toBe(FIXTURE_ESTIMATE_SOURCE_LABEL);
     }
     // Must not require auth material
     const raw = JSON.stringify(snapshot);
     expect(raw).not.toMatch(/sk-|apiKey|password|Bearer /i);
+  });
+
+  it('bundled resources/model-ranking.json (2nd fallback) is valid and fully stamped', () => {
+    // The shipped file the IPC handler serves when the live catalog is empty:
+    // every entry is fixture-derived and must carry the estimate mark on disk.
+    const file = path.join(process.cwd(), 'resources', 'model-ranking.json');
+    const raw: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(isPublicModelRankingSnapshot(raw)).toBe(true);
+    if (!isPublicModelRankingSnapshot(raw)) return; // narrow for TS
+    expect(raw.entries.length).toBeGreaterThan(0);
+    for (const e of raw.entries) {
+      expect(isFixtureEvalSource(e.source)).toBe(true);
+      expect(e.estimate).toBe(true);
+      expect(e.sourceLabel).toBe(FIXTURE_ESTIMATE_SOURCE_LABEL);
+    }
   });
 
   it('offline pipeline + merge matches catalog-derived ranking shape', () => {

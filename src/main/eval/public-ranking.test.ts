@@ -10,11 +10,14 @@ import { applyRanksToCatalog, applyVerifiedBenchmarkRunToCatalog } from './catal
 import { benchmarkManifestHash, benchmarkRunId, evidenceHash, type BenchmarkRunManifest } from './benchmark-contract';
 import { runOfflineEvalV1 } from './eval-pipeline';
 import {
+  FIXTURE_ESTIMATE_SOURCE_LABEL,
   buildPublicRankingFromCatalog,
   buildPublicRankingFromRanks,
+  isFixtureEvalSource,
   isPublicModelRankingSnapshot,
   parseEvalSource,
   publicEntriesFromCatalog,
+  withFixtureEstimateMark,
 } from './public-ranking';
 import { rankAllModels } from './ranker';
 import {
@@ -52,9 +55,93 @@ describe('public ranking', () => {
       source: expect.stringMatching(/^nexus-eval\//),
       rank: 1,
     });
+    // Fixture-derived entries are stamped as estimates, never as a real audit.
+    expect(first.estimate).toBe(true);
+    expect(first.sourceLabel).toBe(FIXTURE_ESTIMATE_SOURCE_LABEL);
+    expect(snap.entries.every((e) => e.estimate === true)).toBe(true);
     const json = JSON.stringify(snap);
     expect(json).not.toMatch(/api[_-]?key|secret|password|token/i);
     expect(json).not.toContain(os.homedir());
+  });
+
+  it('never stamps the estimate mark on real-audit revisions', () => {
+    // A future live evaluation ships a run-id revision: no estimate mark,
+    // no sourceLabel — the badge stays off.
+    const ranks = rankAllModels(V1_FIXTURE_BUNDLES, {
+      suiteId: V1_SUITE_ID,
+      suiteRevision: 'run-2026-07-18',
+      evaluatedAt: V1_EVALUATED_AT,
+    });
+    const snap = buildPublicRankingFromRanks(
+      ranks,
+      V1_SUITE_ID,
+      'run-2026-07-18',
+      V1_EVALUATED_AT,
+    );
+    expect(snap.entries.length).toBeGreaterThan(0);
+    expect(snap.entries.every((e) => e.estimate === undefined)).toBe(true);
+    expect(snap.entries.every((e) => e.sourceLabel === undefined)).toBe(true);
+  });
+
+  it('withFixtureEstimateMark is idempotent and leaves real entries untouched', () => {
+    const base = {
+      id: 'claude/claude-opus-4-8',
+      adapterId: 'claude',
+      modelId: 'claude-opus-4-8',
+      overall: 61,
+      evaluatedAt: V1_EVALUATED_AT,
+      source: 'nexus-eval/v1/run-2026-07-18',
+    };
+    // Real audit: pass-through (same reference, no mark).
+    expect(withFixtureEstimateMark(base)).toBe(base);
+
+    const once = withFixtureEstimateMark({
+      ...base,
+      source: 'nexus-eval/v1/fixture',
+    });
+    expect(once.estimate).toBe(true);
+    expect(once.sourceLabel).toBe(FIXTURE_ESTIMATE_SOURCE_LABEL);
+    // Idempotent: re-stamping never duplicates or rewrites the label.
+    expect(withFixtureEstimateMark(once)).toEqual(once);
+    // A pre-existing custom label is preserved.
+    expect(
+      withFixtureEstimateMark({ ...once, sourceLabel: 'custom' }).sourceLabel,
+    ).toBe('custom');
+  });
+
+  it('fixture source detection + snapshot validator stay backward-compatible', () => {
+    expect(isFixtureEvalSource('nexus-eval/v1/fixture')).toBe(true);
+    expect(isFixtureEvalSource('nexus-eval/v1/offline-fixture')).toBe(true);
+    expect(isFixtureEvalSource('nexus-eval/v1/run-2026-07-18')).toBe(false);
+    expect(isFixtureEvalSource('manual')).toBe(false);
+
+    const ranks = rankAllModels(V1_FIXTURE_BUNDLES, {
+      suiteId: V1_SUITE_ID,
+      suiteRevision: V1_SUITE_REVISION,
+      evaluatedAt: V1_EVALUATED_AT,
+    });
+    const marked = buildPublicRankingFromRanks(
+      ranks,
+      V1_SUITE_ID,
+      V1_SUITE_REVISION,
+      V1_EVALUATED_AT,
+    );
+    expect(isPublicModelRankingSnapshot(marked)).toBe(true);
+
+    // Pre-mark payloads (shipped before this field existed) stay valid.
+    const legacy = JSON.parse(JSON.stringify(marked)) as typeof marked;
+    for (const e of legacy.entries) {
+      delete e.estimate;
+      delete e.sourceLabel;
+    }
+    expect(isPublicModelRankingSnapshot(legacy)).toBe(true);
+
+    // Wrong-typed marks are rejected.
+    const tampered = JSON.parse(JSON.stringify(marked)) as {
+      entries: Array<{ estimate: unknown }>;
+    };
+    tampered.entries[0]!.estimate = 'yes';
+    expect(isPublicModelRankingSnapshot(tampered)).toBe(false);
   });
 
   it('loads quality through catalog merge and rebuilds public entries', () => {

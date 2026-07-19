@@ -10,6 +10,7 @@ import {
   type SortKey,
   costEfficiency,
   costLabel,
+  estimateBadge,
   formatEvalTime,
   gridRingPath,
   pickForDimension,
@@ -82,6 +83,7 @@ function RaceChart({
         const width = score === null ? 0 : (score / max) * 100;
         const live = installed.has(entry.adapterId);
         const active = entry.id === selectedId;
+        const estimate = estimateBadge(entry);
         return (
           <button
             key={entry.id}
@@ -110,6 +112,12 @@ function RaceChart({
                   <span className="rank-race__live"> · live</span>
                 ) : (
                   <span className="rank-race__missing"> · off-machine</span>
+                )}
+                {estimate !== null && (
+                  <span className="rank-estimate" title="scores de fixture offline, não auditoria real">
+                    {' '}
+                    · {estimate}
+                  </span>
                 )}
               </span>
             </span>
@@ -513,7 +521,14 @@ export function ModelRankingSection() {
                 })}
               </div>
               <p className="rank-ops__foot">
-                fonte {selected.source} · conf{' '}
+                fonte {selected.source}
+                {estimateBadge(selected) !== null && (
+                  <span className="rank-estimate">
+                    {' '}
+                    · {estimateBadge(selected)}
+                  </span>
+                )}{' '}
+                · conf{' '}
                 {selected.confidence !== undefined
                   ? `${Math.round(selected.confidence * 100)}%`
                   : '—'}{' '}

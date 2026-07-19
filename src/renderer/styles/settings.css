@@ -1859,6 +1859,12 @@
   color: var(--warn, #e0af68);
 }
 
+/* Fixture-estimate badge: amber, so offline scores never look audited. */
+.rank-estimate {
+  color: var(--warn, #e0af68);
+  font-weight: 600;
+}
+
 .rank-race__track {
   position: relative;
   height: 10px;

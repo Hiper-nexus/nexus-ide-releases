@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PublicModelRankingEntry } from '../../../shared/eval-ranking-types';
 import {
   costEfficiency,
+  estimateBadge,
   pickForDimension,
   pickValue,
   radarPoints,
@@ -119,6 +120,33 @@ describe('ranking-view', () => {
     // coding sort ignores quota map path for non-overall keys
     const byCoding = sortEntriesWithQuota(pack, 'coding', quota);
     expect(byCoding[0]!.modelId).toBe(sortEntries(pack, 'coding')[0]!.modelId);
+  });
+
+  it('estimateBadge surfaces the fixture mark and stays null for real audits', () => {
+    const fixture = entry({
+      id: 'f/opus',
+      modelId: 'opus',
+      estimate: true,
+      sourceLabel: 'estimativa (fixture)',
+    });
+    expect(estimateBadge(fixture)).toBe('estimativa (fixture)');
+    // Mark without label falls back to the bare badge copy.
+    expect(
+      estimateBadge(entry({ id: 'f/bare', modelId: 'bare', estimate: true })),
+    ).toBe('estimativa');
+    // Real audits: no mark (or explicit false) → no badge.
+    expect(
+      estimateBadge(
+        entry({
+          id: 'r/opus',
+          modelId: 'opus-real',
+          source: 'nexus-eval/v1/run-2026-07-18',
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      estimateBadge(entry({ id: 'r/false', modelId: 'f', estimate: false })),
+    ).toBeNull();
   });
 });
 

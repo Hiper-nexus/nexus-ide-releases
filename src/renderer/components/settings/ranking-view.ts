@@ -191,6 +191,15 @@ export function formatEvalTime(iso: string): string {
   return new Date(ms).toLocaleString();
 }
 
+/**
+ * Badge copy when the entry is a fixture estimate, null for real audits.
+ * Falls back to a bare 'estimativa' when the payload lacks sourceLabel.
+ */
+export function estimateBadge(entry: PublicModelRankingEntry): string | null {
+  if (entry.estimate !== true) return null;
+  return entry.sourceLabel ?? 'estimativa';
+}
+
 export function costLabel(entry: PublicModelRankingEntry): string {
   if (entry.costTier) return entry.costTier;
   if (entry.availability) return entry.availability;

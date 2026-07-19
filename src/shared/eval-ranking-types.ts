@@ -38,6 +38,14 @@ export interface PublicModelRankingEntry {
   /** 0..1 confidence from case count. */
   confidence?: number;
   rank?: number;
+  /**
+   * True when scores come from offline fixtures, not a real benchmark audit.
+   * Fixture-derived entries must never pose as audited results; a future real
+   * evaluation (source revision != fixture) never carries this mark.
+   */
+  estimate?: boolean;
+  /** Human-readable source label for the UI badge (e.g. 'estimativa (fixture)'). */
+  sourceLabel?: string;
 }
 
 export interface PublicModelRankingSnapshot {
