@@ -87,6 +87,13 @@ function focusMainWindow(): BrowserWindow | undefined {
 function defaultHandler(link: DeepLink, trusted: boolean): void {
   const win = focusMainWindow();
   if (link.kind === 'license') {
+    // L2: license deep-links mutate the entitlement — require a native
+    // (non-forgeable) confirmation when the link comes from an untrusted
+    // source (browser / URL), just like nexus://open.
+    if (!trusted && !confirmLicenseApply(win)) {
+      console.warn('[deep-link] licença recusada pelo usuário');
+      return;
+    }
     // Lazy require: billing-ipc importa electron; mantém deep-link testável.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const billing = require('./persistence/billing-ipc') as typeof import('./persistence/billing-ipc');
@@ -138,6 +145,26 @@ function confirmOpenPath(target: string, win?: BrowserWindow): boolean {
     title: 'Abrir pasta externa?',
     message: 'Um link pediu para o NexusIDE abrir este caminho:',
     detail: `${target}\n\nAbra apenas se você reconhece e confia na origem.`,
+    noLink: true,
+  };
+  const res = win
+    ? dialog.showMessageBoxSync(win, opts)
+    : dialog.showMessageBoxSync(opts);
+  return res === 1;
+}
+
+/** L2: Native (non-forgeable) dialog confirming a license deep-link apply. */
+function confirmLicenseApply(win?: BrowserWindow | null): boolean {
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['Cancelar', 'Aplicar licença'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Aplicar licença?',
+    message: 'Um link externo pediu para aplicar uma licença ao NexusIDE.',
+    detail:
+      'Isso pode alterar seu plano e recursos disponíveis. ' +
+      'Aplique apenas se você esperava este link (ex.: veio do seu e-mail de compra).',
     noLink: true,
   };
   const res = win

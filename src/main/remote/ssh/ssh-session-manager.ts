@@ -8,6 +8,7 @@
 
 import type { RemoteHostCapability } from '../remote-capability';
 import { remoteCapabilityGrantsAgentForce } from '../remote-capability';
+import { identityAllowlistIsWildcard } from './ssh-identity-filter';
 
 export type SshAuthMethod =
   | { readonly kind: 'password'; readonly password: string }
@@ -97,6 +98,12 @@ export function createSshSessionManager(): SshSessionManager {
       }
       if (options.auth.kind === 'agent' && options.auth.allowedFingerprints.length === 0) {
         throw new Error('ssh-session-manager: empty agent identity allowlist');
+      }
+      // H3: reject the wildcard `['*']` — offering every agent identity to an
+      // arbitrary host leaks all public keys and allows signing with the wrong
+      // key. Callers must pin specific fingerprints (fail-closed).
+      if (options.auth.kind === 'agent' && identityAllowlistIsWildcard(options.auth.allowedFingerprints)) {
+        throw new Error('ssh-session-manager: wildcard identity allowlist rejected (H3)');
       }
       // Production transport is injected (ssh2 via createSsh2Transport).
       await transport.connect(options);

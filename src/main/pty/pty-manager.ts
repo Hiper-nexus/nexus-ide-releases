@@ -23,6 +23,7 @@ import {
   cleanupShellIntegrationPaths,
   shellIntegrationSpawnArgs,
 } from "../terminal/shell-integration-env";
+import { scrubManagedSessionAuth } from "../adapters/managed-credentials";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -534,6 +535,8 @@ function finalizeSession(
   if (s.shellIntegrationCleanup.length > 0) {
     cleanupShellIntegrationPaths(s.shellIntegrationCleanup);
   }
+  // M1: scrub plaintext auth.json from the managed home now that the CLI exited.
+  scrubManagedSessionAuth(sessionId);
   if (canSend(s.wc)) {
     s.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
   }

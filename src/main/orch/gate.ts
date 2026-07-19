@@ -60,6 +60,7 @@ const REQUIRES_EXPLICIT_ALLOW = new Set([
   "remote_tmux_list",
   "remote_bridge_status",
   "agent_spec_write",
+  "catalog_install",
 ]);
 
 const ORCHESTRATOR_DENIED_TOOLS = new Set([

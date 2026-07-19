@@ -83,6 +83,8 @@ export const oauthStates = pgTable('oauth_states', {
   /** Nonce gerado pelo DESKTOP ao iniciar o login; volta no deep link como
    * ?state= e o app só aceita se casar com o fluxo pendente (anti-CSRF). */
   appState: text('app_state').notNull(),
+  /** PKCE code_challenge from the desktop client (M11) — carried into auth_codes. */
+  codeChallenge: text('code_challenge'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   expiresAt: timestamp('expires_at').notNull(),
 });
@@ -95,6 +97,8 @@ export const authCodes = pgTable('auth_codes', {
   usedAt: timestamp('used_at'),
   expiresAt: timestamp('expires_at').notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
+  /** PKCE code_challenge bound to the desktop client that initiated the login (M11). */
+  codeChallenge: text('code_challenge'),
 });
 
 export const teams = pgTable('teams', {
@@ -293,13 +297,15 @@ CREATE TABLE refresh_tokens (
 CREATE TABLE oauth_states (
   state text PRIMARY KEY, provider provider NOT NULL,
   code_verifier text NOT NULL, app_state text NOT NULL,
+  code_challenge text,
   created_at timestamp NOT NULL DEFAULT now(),
   expires_at timestamp NOT NULL);
 CREATE TABLE auth_codes (
   code_hash text PRIMARY KEY,
   account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   used_at timestamp, expires_at timestamp NOT NULL,
-  created_at timestamp NOT NULL DEFAULT now());
+  created_at timestamp NOT NULL DEFAULT now(),
+  code_challenge text);
 CREATE TYPE owner_type AS ENUM ('account','team');
 CREATE TYPE team_role AS ENUM ('owner','member');
 CREATE TABLE teams (

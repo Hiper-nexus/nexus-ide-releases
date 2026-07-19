@@ -15,6 +15,8 @@ const PENDING_TTL_MS = 10 * 60 * 1000;
 interface PendingLogin {
   nonce: string;
   expiresAt: number;
+  /** PKCE verifier for the auth-code exchange (M11). */
+  codeVerifier: string;
 }
 
 let pending: PendingLogin | null = null;
@@ -59,9 +61,18 @@ export function beginLogin(
 ): { ok: boolean } {
   const now = deps.now ?? Date.now;
   const nonce = crypto.randomBytes(24).toString('base64url');
-  pending = { nonce, expiresAt: now() + PENDING_TTL_MS };
+  // M11: generate a PKCE pair so the auth-code exchange is bound to THIS
+  // desktop instance — a malicious app intercepting the deep-link code cannot
+  // exchange it without the verifier that never leaves this process.
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto
+    .createHash('sha256')
+    .update(codeVerifier)
+    .digest('base64url');
+  pending = { nonce, expiresAt: now() + PENDING_TTL_MS, codeVerifier };
+  const params = new URLSearchParams({ app_state: nonce, code_challenge: codeChallenge });
   deps.openExternal(
-    `${deps.backendUrl}/v1/auth/${provider}?app_state=${nonce}`,
+    `${deps.backendUrl}/v1/auth/${provider}?${params.toString()}`,
   );
   return { ok: true };
 }
@@ -81,13 +92,14 @@ export async function exchangeAuthCode(
   if (!state || state !== pending.nonce) {
     return { ok: false, error: 'state não confere com o login pendente' };
   }
+  const codeVerifier = pending.codeVerifier;
   pending = null; // nonce é single-use: consome ANTES da rede (anti-replay)
 
   try {
     const res = await deps.fetchFn(`${deps.backendUrl}/v1/auth/exchange`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, code_verifier: codeVerifier }),
     });
     if (!res.ok) return { ok: false, error: `exchange HTTP ${res.status}` };
     const json = (await res.json()) as {

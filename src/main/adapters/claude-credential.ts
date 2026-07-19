@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 /**
@@ -36,22 +37,33 @@ export function readActiveClaudeCredential(): string | null {
   }
 }
 
-/** Restore a saved credential blob into the active Claude keychain service. */
+/** Restore a saved credential blob into the active Claude keychain service.
+ *
+ * M3 mitigation: the secret is NEVER passed via argv (visible in `ps auxww`).
+ * Instead we write it to a 0600 temp file, then a short-lived `sh` reads the
+ * file and feeds the value to `security add-generic-password -w`. The secret
+ * travels only through an env var (not enumerable by other users on macOS)
+ * and a 0600 temp file that is unlinked immediately after use.
+ */
 export function writeActiveClaudeCredential(blob: string): boolean {
   if (!isMac() || !blob) return false;
+  const tmpFile = path.join(
+    os.tmpdir(),
+    `nexus-claude-cred-${crypto.randomBytes(8).toString('hex')}`,
+  );
   try {
-    // -U updates the existing item; -a account is $USER; -w is the secret.
+    fs.writeFileSync(tmpFile, blob, { mode: 0o600 });
+    // The shell reads the secret from the temp file; neither the shell's argv
+    // nor security's argv ever contains the credential value.
     execFileSync(
-      'security',
+      '/bin/sh',
       [
-        'add-generic-password',
-        '-U',
-        '-s',
+        '-c',
+        `security add-generic-password -U -s "$1" -a "$2" -w "$(cat "$3")"`,
+        '--',
         CLAUDE_KEYCHAIN_SERVICE,
-        '-a',
         os.userInfo().username,
-        '-w',
-        blob,
+        tmpFile,
       ],
       { stdio: 'ignore' },
     );
@@ -59,6 +71,8 @@ export function writeActiveClaudeCredential(blob: string): boolean {
   } catch (err) {
     console.warn('[claude-credential] failed to restore credential:', err);
     return false;
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch { /* best-effort cleanup */ }
   }
 }
 

@@ -52,10 +52,15 @@ export function buildAuthRouter(deps: AuthDeps): Router {
     if (!APP_STATE_RE.test(appState)) {
       return res.status(400).json({ ok: false, error: 'app_state obrigatório' });
     }
+    // M11: the desktop MAY send its own PKCE code_challenge so the deep-link
+    // auth-code is bound to the initiating client (not just any app that
+    // intercepts the custom-scheme callback).
+    const codeChallenge = String(req.query.code_challenge ?? '') || undefined;
     const state = newToken();
     const { verifier, challenge } = makePkce();
     await db.insert(oauthStates).values({
       state, provider: p, codeVerifier: verifier, appState,
+      codeChallenge,
       expiresAt: new Date(now() + STATE_TTL),
     });
     res.redirect(authorizeUrl(p, {
@@ -85,6 +90,9 @@ export function buildAuthRouter(deps: AuthDeps): Router {
     await db.insert(authCodes).values({
       codeHash: hashToken(rawCode), accountId,
       expiresAt: new Date(now() + CODE_TTL),
+      // M11: carry the desktop's code_challenge (stored at login initiation)
+      // so the exchange endpoint can verify the matching code_verifier.
+      codeChallenge: st.codeChallenge ?? undefined,
     });
     // Devolve o nonce do desktop: o app rejeita o deep link se não casar
     // com o login pendente que ele mesmo iniciou.
@@ -92,8 +100,10 @@ export function buildAuthRouter(deps: AuthDeps): Router {
   }));
 
   r.post('/auth/exchange', authLimit, ah(async (req, res) => {
-    const code = String((req.body as { code?: string }).code ?? '');
-    const consumed = await consumeAuthCode(db, code, now); // atômico, single-use
+    const body = req.body as { code?: string; code_verifier?: string };
+    const code = String(body.code ?? '');
+    const codeVerifier = body.code_verifier ? String(body.code_verifier) : undefined;
+    const consumed = await consumeAuthCode(db, code, now, codeVerifier); // atômico, single-use
     if (!consumed) {
       return res.status(400).json({ ok: false, error: 'code inválido' });
     }

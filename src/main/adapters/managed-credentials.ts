@@ -613,6 +613,60 @@ export function removeManagedHome(
   }
 }
 
+/**
+ * M1 mitigation: scrub the plaintext auth.json from a managed home after the
+ * CLI pane that consumed it exits. The vault (safeStorage/Keychain) keeps the
+ * encrypted copy; the plaintext materialization is ephemeral — it exists only
+ * while the CLI process is alive. On next spawn, materializeManagedHome
+ * re-creates it from the vault.
+ *
+ * This drastically reduces the window during which a same-user agent/skill can
+ * `cat` the auth file and exfiltrate OAuth tokens.
+ */
+export function scrubManagedAuth(
+  adapterId: FileAuthAdapterId,
+  accountId: string,
+  options: { home?: string; authRelativePath?: string } = {},
+): void {
+  try {
+    const managedHome = managedHomePath(adapterId, accountId, options.home);
+    const authPath = authTargetPath(adapterId, managedHome, options.authRelativePath);
+    fs.unlinkSync(authPath);
+  } catch {
+    // Best-effort: file may already be gone or never written.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Session → managed-account tracker (M1 ephemeral lifecycle).
+// The PTY layer registers which adapter/account a session uses; on session exit
+// the auth file is scrubbed.
+// ---------------------------------------------------------------------------
+
+interface ManagedSessionEntry {
+  adapterId: FileAuthAdapterId;
+  accountId: string;
+}
+
+const managedSessionRegistry = new Map<string, ManagedSessionEntry>();
+
+/** Register a PTY session as consuming a managed account's auth. */
+export function trackManagedSession(
+  sessionId: string,
+  adapterId: FileAuthAdapterId,
+  accountId: string,
+): void {
+  managedSessionRegistry.set(sessionId, { adapterId, accountId });
+}
+
+/** Scrub the auth file for a session that just exited (idempotent). */
+export function scrubManagedSessionAuth(sessionId: string): void {
+  const entry = managedSessionRegistry.get(sessionId);
+  if (!entry) return;
+  managedSessionRegistry.delete(sessionId);
+  scrubManagedAuth(entry.adapterId, entry.accountId);
+}
+
 /** Whether a native (unmanaged) subscription session is present for the adapter. */
 export function hasNativeFileAuth(adapterId: string, home = os.homedir()): boolean {
   return captureNativeAuth(adapterId, home) !== null;

@@ -543,6 +543,54 @@ export type AuthedBridgeCommand = {
 };
 
 /**
+ * H5: Show a native (non-forgeable) desktop dialog asking the user to confirm
+ * a destructive mobile RPC. The confirmation comes from the DESKTOP user, not
+ * from a client-sent boolean — a compromised/malicious mobile client cannot
+ * forge this.
+ */
+async function confirmDestructiveMobileRpc(
+  rpcType: string,
+  scope: ProjectExecutionScope,
+): Promise<boolean> {
+  // Lazy require: electron is not available in unit-test environments.
+  // Fail-closed: when electron is absent, deny the operation.
+  let BrowserWindow: typeof import('electron').BrowserWindow | undefined;
+  let dialog: typeof import('electron').dialog | undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const electron = require('electron') as typeof import('electron');
+    BrowserWindow = electron.BrowserWindow;
+    dialog = electron.dialog;
+  } catch {
+    // Electron not available at all.
+  }
+  if (!BrowserWindow || !dialog) {
+    console.warn('[remote-bridge] electron unavailable — denying destructive mobile RPC');
+    return false;
+  }
+  const win = BrowserWindow.getAllWindows().find(
+    (w) => !w.isDestroyed() && w.isVisible(),
+  );
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['Negar', 'Permitir'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Ação remota destrutiva',
+    message: `Um dispositivo remoto quer executar: ${rpcType}`,
+    detail:
+      `Workspace: ${scope.rootRealPath}\n\n` +
+      'Esta é uma operação destrutiva enviada por um dispositivo pareado. ' +
+      'Permita apenas se você a iniciou conscientemente.',
+    noLink: true,
+  };
+  const result = win
+    ? await dialog.showMessageBox(win, opts)
+    : await dialog.showMessageBox(opts);
+  return result.response === 1;
+}
+
+/**
  * Dispatch autenticado da bridge. Exportado para o transporte relay do
  * companion (companion-relay-transport) reutilizar o MESMO caminho de RPC —
  * a mobile-companion-policy continua sendo a autoridade aqui dentro.
@@ -556,18 +604,27 @@ export async function handleAuthedMessage(
   pushTarget?: WebSocket,
 ) {
   // Defesa em profundidade do companion mobile: RPCs modelados pela política
-  // passam pelo gate (destrutivos exigem confirmação do device; mission.complete
-  // é sempre negado do mobile). Frames de controle não-modelados (resize/close)
-  // seguem com a sua autorização por-pane existente.
+  // passam pelo gate (destrutivos exigem confirmação do DESKTOP via diálogo
+  // nativo — nunca um booleano enviado pelo próprio cliente, que seria
+  // forjável). mission.complete é sempre negado do mobile.
   const rpcKind = mobileRpcKindForBridgeType(msg.type);
   if (rpcKind) {
     const decision = authorizeMobileRpc({
       kind: rpcKind,
       deviceActive: true, // a mensagem já passou pela autenticação da bridge
-      deviceConfirmed: msg.confirm === true,
+      deviceConfirmed: false, // H5: never trust client-sent boolean
     });
     if (!decision.allowed) {
-      throw new Error(`not authorized: ${decision.reason}`);
+      // If the RPC was denied only because it needs confirmation, prompt the
+      // DESKTOP user with a native (non-forgeable) dialog instead.
+      if (decision.reason === 'destructive-confirmation-required') {
+        const granted = await confirmDestructiveMobileRpc(msg.type, scope);
+        if (!granted) {
+          throw new Error('not authorized: destructive operation denied by desktop user');
+        }
+      } else {
+        throw new Error(`not authorized: ${decision.reason}`);
+      }
     }
   }
   switch (msg.type) {
