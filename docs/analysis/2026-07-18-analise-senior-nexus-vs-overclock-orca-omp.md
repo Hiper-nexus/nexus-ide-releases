@@ -175,3 +175,61 @@ Trabalho executado em lanes paralelas (esta sessão + sessão omp concorrente). 
 - ✅ `operational-surfaces.test.tsx`: mock de `window.nexus` ganhou `ompRpc.listSessions/onEvent` (MissionRail agora lista sessões RPC — a mudança de código veio sem o mock).
 - ✅ `voice-wake-order.test.ts`: assertion de fonte atualizada para o guard atual (`!isJarvisNarrationHalted()`, do commit 7e06e36) — comportamento de retry-on-idle preservado, só a forma mudou.
 - ⚠️ **Risco de processo (multi-sessão)**: a suíte "explodiu" (266 falhas `ERR_DLOPEN_FAILED`) porque outra sessão rodou o fluxo de app (`rebuild:electron`) entre duas corridas — os nativos (`better-sqlite3` etc.) ficam ping-pongando entre ABI de Electron e de Node. Vale um guard: `check-node-natives.mjs` como pre-test no CI local, ou envvar `npm test` que falha cedo com mensagem clara ("rode npm run rebuild:node") em vez de 266 falhas espúrias.
+
+---
+
+## 9. Adendo 2 — Overclock v1.2.0 (teardown do instalado, 18/07 noite)
+
+A v1.2 **fechou o código** (V8 bytecode via bytenode, sem `src/` nem sourcemaps — resposta direta a teardowns como o nosso da v1.1.0; método: análise do constant pool). Eles também estão nos estudando: a skill `oc-design-dna` bundleada cita "Open Design (`nexu-io/open-design`)".
+
+### Onde eles avançaram (e o que colher)
+
+1. **Soft-status normalizado por hooks nativos (a maior lição)** — um script único `soft-status.mjs` instalado nas 6 CLIs (cada uma no seu dialeto: Claude `settings.json`, Gemini `hooks.json`, Codex TOML com `trusted_hash=sha256:`, Kimi/Grok TOML) gravando `overclock-soft-status.json` com eventos canônicos (`pre_tool_use` ⇒ busy real; `stop`/`notification` ⇒ idle/aguardando), fundidos em 2 eventos ao renderer (hard/soft). **Ataca nossa fragilidade #1** (idle/busy por timeout 800ms + hooks best-effort). Nós JÁ temos a infra de hooks (`hooks-gen.ts`); o delta é a normalização cross-flavor + a semântica de fusão + fallback gracioso por CLI (falha de instalação vira log, não quebra). → **P1 imediato.**
+2. **xterm headless no processo servidor como verdade do terminal** + `readSerialized` (resync total em reload) + seq por pane **persistida** (`pane-seq.json`). Nosso sequenciamento vive no preload com recovery de chunks; o modelo deles (renderer = view burra, estado autoritativo no server) é mais robusto a crash/reload/reconnect. → **P2 alto** (temos o protocolo de stream do Orca como base; o delta é SerializeAddon no main + seq durável).
+3. **tmux como camada de durabilidade** (`overclock_<id>` + metadata `@ovc_*`, scan de adoção no boot, `startKey` anti-PID-reuse, janitor com leases): panes sobrevivem a crash do app inteiro. Nós re-spawnamos do zero. → **P2 médio** — avaliar contra nosso modelo de containment (Seatbelt) antes; o janitor/startKey são colhíveis independentemente.
+4. **Cards de pane com atividade real, zero LLM**: 1ª `user_message` do transcript nativo de cada CLI + última linha significativa + mtime. Já temos acesso aos transcripts (discovery B4). → **P1 barato e visível.**
+5. **Probe de credencial pré-spawn + watchdog de TUI presa** (`--device-auth` direto, marker + leader socket, recheck sobre o tail do pane — fix do "Signing in eterno" do Grok). Generaliza o padrão do nosso T2 para qualquer CLI/qualquer prompt travado; complementa o stall-watchdog (que cobre busy-silêncio, não login-stuck). → **P1/P2.**
+6. **Hardening de adapters**: system prompt por ARQUIVO em vez de argv (`--append-system-prompt-file` — evita E2BIG), trust pre-seed por pane (pula first-run dialogs em homes gerenciados), version floor de CLI com cache por mtime. → **P2** (verificar o que já fazemos; copiar o que faltar).
+7. **codexChatProxy** (proxy local que emula a Responses API e destrava o Codex CLI para qualquer provider) — esperto, mas de valor menor para nós (usamos a CLI nativa de cada provider). → **P3.**
+8. **Segurança deles é catch-up, não referência**: licença Ed25519 offline-first com SPKI no cliente + grace period é o desenho certo (referência para quando monetizarmos — temos `docs/billing-stripe.md`); mas a "build verification" usa **chave privada embutida no bundle** (anti-lição: se assinarmos chamadas, chave por instalação com TOFU, nunca segredo de fábrica). Panes deles seguem **sem sandbox de OS** — nossa vantagem estrutural intacta. Release lock = lição de CI para o nosso `make:release`.
+
+### Multi-CLI como orquestrador: eles alcançaram o que já temos
+
+O FEAT flagship deles (Grok/Kimi/Gemini/Codex como workers E orquestradores, system-prompt/skills/tools em todas as CLIs) é o nosso desenho desde sempre (adapters declarativos + injeção MCP por flavor + `orchestratorCapable`). A validação é forte: convergiram para o mesmo modelo (MCP host local + config por flavor + envelope de prompt idêntico). O colhível aqui são os **detalhes de wiring** (itens 1 e 6 acima), não a arquitetura.
+
+### Jarvis deles × nosso
+
+Nosso Jarvis segue superior (wake-word, full-duplex, política de eco, pt-BR nativo — conclusão mantida). Colhível do deles:
+- **Ops por voz com ack** (`restore_panes` + `ackId`/`waitForAck`: "Pedi pra restaurar" → "Restaurado") — padrão de confirmação falada que torna ação de voz confiável. → P1 para o nosso modo agêntico.
+- **`synthesizePaneTail`** — sintetiza o tail do pane em fala ("o que esse pane está fazendo"). Casa com o item 4 e alimenta o "qual agente precisa de mim". → P1/P2.
+- Soft-status (item 1) como fonte de verdade para respostas de estado do Jarvis. → vem junto do item 1.
+
+### Ordem sugerida de colheita
+
+**(1) soft-status normalizado → (4) cards de atividade → (5) probe pré-spawn + watchdog de login-stuck → (2) xterm headless no main → (6) hardening de adapters → (3) tmux (avaliação) → (7)/(8) quando couber.**
+
+---
+
+## 10. Adendo 3 — emdash (generalaction/emdash, Apache-2.0, pin `c1af543`)
+
+Mapa das 3 frentes (repo clonado em `/tmp/emdash-src`, monorepo Nx/pnpm, Electron + better-sqlite3 + zod v4 — stack quase idêntica à nossa). Licença Apache-2.0 = vendoring OK (preservar LICENSE.md + notices; policy igual Orca, sem dependência viva).
+
+### A grande peça: hook protocol = o soft-status com código pronto e testes
+
+O emdash implementa EXATAMENTE a lição #1 do Overclock v1.2, em Apache-2.0: hooks **declarativos no config nativo de cada CLI** (Claude `settings.local.json`, Codex TOML, etc.), comandos de uma linha auto-silenciosos (curl `|| true` / PowerShell `SilentlyContinue` — nunca bloqueiam a CLI), reescritos a cada spawn (resolve "config limpo no meio da task"), marker p/ separar hooks do app dos do usuário, e normalização para eventos canônicos (`status{start|stop|error|notification}`, `notificationType: permission_prompt|idle_prompt|…`). Redução para UI: `start→working`, `stop→completed`, `notification→awaiting-input`, `resetToIdle` quando o PTY morre sem hook de stop, fallback `input-submitted` para CLIs sem hook nativo, som/toast só em transição. Fontes: `packages/core/src/agents/plugins/{helpers/hooks.ts,hook-config.ts,helpers/parse-hook-event.ts,capabilities/hooks-types.ts}` + `apps/emdash-desktop/src/main/core/agent-hooks/hook-server.ts`. **Ataca nossa fragilidade #1 (timeout 800ms + hooks best-effort).**
+
+Desenho Nexus-native da wave 1 (divergências deliberadas, mesmo espírito do HOME-overlay do omp): (a) o endpoint `/hook` entra no NOSSO servidor loopback existente (gate/MCP com bearer por pane) em vez de um 2º servidor HTTP com token próprio; (b) nossos hooks `.mjs` de skill-gate (enforcement, fail-closed) **permanecem** — o canal de status é ADITIVO, não substitui enforcement; (c) timeout 800ms degrada para fallback quando não há hook nativo.
+
+### Restante do mapa de colheita (waves seguintes)
+
+| # | Peça | Origem | Valor/Esforço |
+|---|---|---|---|
+| W2 | GitHub Device Flow OAuth + taxonomia de erros + gate push→PR | `main/core/github/services/github-device-flow-service.ts`, `pull-requests/pr-sync-errors.ts`, padrão de `create-pr-modal.tsx` | Ataca P1.8 (GitHub "quebrado por cima") / 1-2d. ⚠️ registrar OAuth App própria |
+| W3 | pty-session registry (batch 16ms + ring 64KB + subscribe atômico) | `main/core/pty/pty-session-registry.ts` | Robustez de stream (lição Overclock #2, versão IPC local) / ½-1d |
+| W4 | SSH stack (relay remoto) + `IdentityFilteredAgent` (peça rara) | `main/core/ssh/{lifecycle,connect,config,transport}/` | Remote-ops aberto / médio. **Corrigir: eles não verificam host key** |
+| W5 | Spawn hardening (quoting Win/POSIX, kill de árvore) + `pty-env` allowlist + `AGENT_ENV_VARS` | `main/core/pty/pty-spawn-platform.ts`, `pty-env.ts` | 1-2d, parcial já coberto pelo nosso baseChildEnv |
+| W6 | Telemetria opt-in com allowlist anti-PII + heartbeat crash-detection | `main/lib/telemetry.ts`, `shared/telemetry.ts` | P3.17 / baixo (trocar PostHog por buffer local) |
+| W7 | Micro-padrões: KV namespaced, versioned JSON column (upgrade chain na leitura), migrations bundling, resume-fallback 3s | `main/db/{kv,initialize,versioned-column}.ts`, runtime | baixo |
+| — | NÃO vendorar | wire/workspace-server (imaturo), ACP, registry 34 providers (SDKs pesados), pr-sync-engine inteiro (drizzle-acoplado), worktree-lifecycle (duplica o nosso), MobX/Monaco glue | — |
+
+Gap deles que NÃO trazemos: sem host-key verification no SSH; telemetria default-on em prod; sandbox renderer off. Segredos/clientIds deles jamais entram na cópia.
