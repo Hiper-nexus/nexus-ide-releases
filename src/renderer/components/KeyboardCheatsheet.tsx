@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useCheatsheetStore } from '../state/cheatsheet-store';
 import { PixelIcon } from './PixelIcon';
+import { formatShortcut } from '../lib/platform';
 
 /**
  * Cheatsheet de atalhos (⌘/): a resposta da heurística "ajuda no contexto" —
@@ -11,20 +12,20 @@ const GROUPS: Array<{ title: string; keys: Array<[string, string]> }> = [
   {
     title: 'Comando',
     keys: [
-      ['⌘K', 'Command palette: panes, missões e ações'],
-      ['⌘N', 'Nova missão'],
-      ['⌘B', 'Painel de operações (pipeline)'],
-      ['⌘,', 'Configurações'],
-      ['⌘/', 'Este cheatsheet'],
+      [formatShortcut('mod', 'K'), 'Command palette: panes, missões e ações'],
+      [formatShortcut('mod', 'N'), 'Nova missão'],
+      [formatShortcut('mod', 'B'), 'Painel de operações (pipeline)'],
+      [formatShortcut('mod', ','), 'Configurações'],
+      [formatShortcut('mod', '/'), 'Este cheatsheet'],
     ],
   },
   {
     title: 'Frota',
     keys: [
-      ['⌘1-9', 'Focar o N-ésimo pane'],
-      ['⌘D', 'Dividir o pane à direita'],
-      ['⇧⌘D', 'Dividir o pane abaixo'],
-      ['⌘W', 'Fechar o pane focado'],
+      [formatShortcut('mod', '1-9'), 'Focar o N-ésimo pane'],
+      [formatShortcut('mod', 'D'), 'Dividir o pane à direita'],
+      [formatShortcut('mod', 'shift', 'D'), 'Dividir o pane abaixo'],
+      [formatShortcut('mod', 'W'), 'Fechar o pane focado'],
       ['duplo-clique', 'Renomear o pane (no título)'],
     ],
   },
@@ -33,7 +34,7 @@ const GROUPS: Array<{ title: string; keys: Array<[string, string]> }> = [
     keys: [
       ['Esc', 'Fechar overlay/dialog em foco'],
       ['F', 'Centralizar o canvas (modo canvas)'],
-      ['⇧⌘O', 'Perfil do Operador'],
+      [formatShortcut('mod', 'shift', 'O'), 'Perfil do Operador'],
     ],
   },
 ];

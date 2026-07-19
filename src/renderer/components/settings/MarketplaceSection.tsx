@@ -122,6 +122,7 @@ export function MarketplaceSection() {
           onClick={() => void loadIndex(true)}
           disabled={loading}
           title="Atualizar o cache do catálogo"
+          aria-label="Atualizar o cache do catálogo"
         >
           ⟳
         </button>

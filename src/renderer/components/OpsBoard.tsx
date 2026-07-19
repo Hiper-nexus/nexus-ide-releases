@@ -19,6 +19,7 @@ import {
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { listPanes } from '../lib/split-tree';
+import { formatShortcut } from '../lib/platform';
 import {
   AgentAvatar,
   resolveAgentCategory,
@@ -134,7 +135,7 @@ export function OpsBoard() {
           <h2 className="ops-board__title">Ops Board</h2>
           <span className="ops-board__sub">
             {missions.length} miss{missions.length === 1 ? 'ão' : 'ões'} · arraste para planejar
-            · ⌘B fecha
+            · {formatShortcut('mod', 'B')} fecha
           </span>
         </div>
         <span className="ops-board__spacer" />
@@ -304,6 +305,7 @@ export function OpsBoard() {
                                       className="ops-board__agent-focus"
                                       key={agent.key}
                                       title={`Focar ${agent.label}`}
+                                      aria-label={`Focar ${agent.label}`}
                                       onMouseDown={(event) => event.stopPropagation()}
                                       onDragStart={(event) => event.stopPropagation()}
                                       onClick={() => {

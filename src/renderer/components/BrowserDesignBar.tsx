@@ -426,6 +426,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
               className={`browser-bar__btn ${stylesOpen ? 'design-bar__toggle--on' : ''}`}
               aria-pressed={Boolean(stylesOpen)}
               title="Estilos do elemento (sidebar)"
+            aria-label="Estilos do elemento (sidebar)"
               onClick={onToggleStyles}
             >
               ≡
@@ -468,6 +469,7 @@ export function BrowserDesignBar({ paneId, stylesOpen, onToggleStyles }: Props) 
           className={`browser-bar__btn design-bar__annotations-badge ${trayOpen ? 'design-bar__toggle--on' : ''}`}
           aria-pressed={trayOpen}
           title="Anotações fixadas nesta página (sobrevivem ao modo Design; somem ao navegar)"
+          aria-label={`Anotações fixadas nesta página (${annotations.length})`}
           onClick={() => setTrayOpen((open) => !open)}
         >
           📝 {annotations.length}

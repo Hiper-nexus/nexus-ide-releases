@@ -70,14 +70,14 @@
   letter-spacing: -0.01em;
 }
 .ops-board__sub {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-dim);
 }
 .ops-board__spacer {
   flex: 1;
 }
 .ops-board__new {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--bg);
   background: var(--accent);
@@ -183,7 +183,7 @@
   background: var(--state-failed);
 }
 .ops-board__col-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -193,7 +193,7 @@
   margin-left: auto;
   min-width: 18px;
   text-align: center;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
   background: var(--bg-elevated);
@@ -244,7 +244,7 @@
   margin-bottom: var(--space-2);
 }
 .ops-board__badge {
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -387,7 +387,7 @@
   gap: var(--space-2);
   padding: var(--space-5) var(--space-2);
   opacity: 0.5;
-  font-size: 11px;
+  font-size: var(--text-xs);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -580,48 +580,60 @@
   outline-offset: 1px;
 }
 
-.toolbar__btn:active {
-  background: var(--accent-strong) !important;
-  color: var(--text) !important;
+/* Estados :active abaixo NÃO usam !important: este arquivo é importado depois
+   de base/panels/home-deck/rail-onboarding (ver global.css), então o :active
+   vence o :hover de mesma especificidade pela ordem da cascata. Onde o hover
+   concorrente tem especificidade maior, o seletor foi reforçado. */
+/* :not(:disabled) empata com `.toolbar__menu-item.toolbar__btn--close:hover`
+   (0,3,0) da base.css; a ordem de importação decide a favor daqui. */
+.toolbar__btn:active:not(:disabled) {
+  background: var(--accent-strong);
+  color: var(--text);
 }
 
 .workspace-bar__btn:active {
-  background: var(--accent-strong) !important;
-  border-color: var(--accent) !important;
+  background: var(--accent-strong);
+  border-color: var(--accent);
 }
 
+/* A classe dupla empata com `.workspace-bar__ws-btn:hover` (0,2,0) da
+   panels.css — sem ela, o hover roubaria o destaque do workspace ativo. */
 .workspace-bar__ws-btn:active,
-.workspace-bar__ws-btn--active {
-  background: var(--accent-strong) !important;
-  color: var(--text) !important;
-  border-color: var(--accent) !important;
+.workspace-bar__ws-btn.workspace-bar__ws-btn--active {
+  background: var(--accent-strong);
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .home-deck__btn:active {
-  background: var(--accent-strong) !important;
-  border-color: var(--accent) !important;
+  background: var(--accent-strong);
+  border-color: var(--accent);
 }
 
 .home-deck__squad:active {
-  background: var(--accent-strong) !important;
-  border-color: var(--accent) !important;
+  background: var(--accent-strong);
+  border-color: var(--accent);
 }
 
 .home-deck__dismiss:active {
-  color: var(--accent) !important;
+  color: var(--accent);
 }
 
 .home-deck__close:active,
 .mission-rail__remove:active,
 .ops-board__close:active {
-  background: var(--accent-soft) !important;
-  border-color: var(--accent) !important;
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .mission-rail__new:active {
-  background: var(--accent-strong) !important;
+  background: var(--accent-strong);
 }
 
+/* !important mantido de propósito: o concorrente
+   `.activity-rail__section--queue .mission-rail__item--idle:hover:not(:disabled)`
+   (rail-onboarding.css) tem especificidade (0,4,0) — maior que qualquer
+   reforço razoável deste seletor sem acoplar à estrutura da rail. */
 .mission-rail__item:active {
   background: var(--accent-soft) !important;
   border-color: var(--accent) !important;

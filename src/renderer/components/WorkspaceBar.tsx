@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useOmpRpcStore } from '../state/omp-rpc-store';
@@ -12,6 +12,7 @@ import { useFilesStore } from '../state/files-store';
 import { CostSummary } from './CostBadge';
 import { QuotaChip } from './QuotaChip';
 import { listPanes } from '../lib/split-tree';
+import { formatShortcut } from '../lib/platform';
 import { VoiceButton } from './VoiceButton';
 import { VisionIndicator } from './VisionIndicator';
 import { NexusMark } from './NexusMark';
@@ -59,17 +60,29 @@ function densityFromWidth(width: number): BarDensity {
   return 'full';
 }
 
-function useBarDensity(): BarDensity {
+function useBarDensity(): { density: BarDensity; barRef: RefObject<HTMLElement | null> } {
   const [density, setDensity] = useState<BarDensity>(() =>
     typeof window === 'undefined' ? 'full' : densityFromWidth(window.innerWidth),
   );
+  const barRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const onResize = () => setDensity(densityFromWidth(window.innerWidth));
     onResize();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  return density;
+  // Guarda de overflow real: a faixa por innerWidth não sabe quantos chips
+  // existem (cota, custo, conta, update…). Se o conteúdo transbordar a barra,
+  // desce um degrau até caber. Sobe de volta só via resize (faixa da janela),
+  // o que evita oscilação layout→medida→layout.
+  useLayoutEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    if (el.scrollWidth > el.clientWidth + 2) {
+      setDensity((d) => (d === 'full' ? 'icons' : d === 'icons' ? 'compact' : d));
+    }
+  });
+  return { density, barRef };
 }
 
 interface ToolDef {
@@ -143,7 +156,7 @@ export function WorkspaceBar({
     return null;
   });
 
-  const density = useBarDensity();
+  const { density, barRef } = useBarDensity();
   const showLabels = density === 'full';
   const compact = density === 'compact';
   const restartAdapterId = useAccountStore((s) => s.restartAdapterId);
@@ -281,7 +294,7 @@ export function WorkspaceBar({
       id: 'terminal',
       label: 'Terminal',
       icon: 'terminal',
-      title: `Abrir um terminal shell novo (${paneCount} pane${paneCount === 1 ? '' : 's'} aberto${paneCount === 1 ? '' : 's'} · ⌘D divide o pane focado)`,
+      title: `Abrir um terminal shell novo (${paneCount} pane${paneCount === 1 ? '' : 's'} aberto${paneCount === 1 ? '' : 's'} · ${formatShortcut('mod', 'D')} divide o pane focado)`,
       onClick: addShellPane,
     },
     {
@@ -314,7 +327,7 @@ export function WorkspaceBar({
       id: 'board',
       label: 'Painel',
       icon: 'board',
-      title: 'Painel de operações — pipeline de missões (⌘B)',
+      title: `Painel de operações — pipeline de missões (${formatShortcut('mod', 'B')})`,
       active: opsBoardOpen,
       onClick: toggleOpsBoard,
     },
@@ -386,7 +399,7 @@ export function WorkspaceBar({
       id: 'apps',
       label: 'GitHub',
       icon: 'bolt',
-      title: 'GitHub (PRs, issues), Linear e port forward — também no ⌘K',
+      title: `GitHub (PRs, issues), Linear e port forward — também no ${formatShortcut('mod', 'K')}`,
       onClick: onOpenIntegrations,
     });
   }
@@ -454,6 +467,7 @@ export function WorkspaceBar({
 
   return (
     <header
+      ref={barRef}
       className={`workspace-bar workspace-bar--${density}`}
       data-density={density}
     >
@@ -508,16 +522,6 @@ export function WorkspaceBar({
                 </div>
               )}
             </div>
-            <button
-              type="button"
-              className="workspace-bar__new-workspace"
-              title="Criar e abrir um novo workspace"
-              aria-label="Novo workspace"
-              onClick={openNewWorkspace}
-            >
-              <PixelIcon name="plus" size={12} />
-              <span>Novo workspace</span>
-            </button>
           </>
         ) : (
           <span className="workspace-bar__name">NexusIDE</span>
@@ -548,7 +552,7 @@ export function WorkspaceBar({
           <button
             className="workspace-bar__btn workspace-bar__btn--primary"
             onClick={openWizard}
-            title="Nova missão neste workspace (⌘N)"
+            title={`Nova missão neste workspace (${formatShortcut('mod', 'N')})`}
             aria-label="Nova missão neste workspace"
           >
             <PixelIcon name="plus" />
@@ -757,7 +761,7 @@ export function WorkspaceBar({
               setUpdateOpen(false);
               toggleSettings();
             }}
-            title="Conta, plano, módulos e catálogo (⌘,)"
+            title={`Conta, plano, módulos e catálogo (${formatShortcut('mod', ',')})`}
             aria-label="Configurações"
           >
             <PixelIcon name="config" />

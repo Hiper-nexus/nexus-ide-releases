@@ -214,6 +214,7 @@ function CustomModels({ provider }: { provider: ProviderSettingsInfo }) {
                 className="prov__model-chip-x"
                 onClick={() => void removeModel(provider.adapterId, m)}
                 title="Remover"
+                aria-label={`Remover modelo ${m}`}
               >
                 ✕
               </button>

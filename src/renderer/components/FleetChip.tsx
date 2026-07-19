@@ -7,7 +7,7 @@ import { FLEET_SEG_LABEL } from '../../shared/pane-session-view';
 import type { OmpRpcSessionSummary } from '../../shared/omp-rpc-types';
 
 /**
- * Rollup da frota: "3 trab · 2 ok · 1 x" num relance.
+ * Rollup da frota: "3 trabalhando · 2 prontos · 1 morto" num relance.
  * Clique foca quem precisa de atenção — morto primeiro, depois ocupado.
  * Conta panes PTY + sessões omp rpc-ui (painel e mission workers).
  */

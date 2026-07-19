@@ -24,6 +24,7 @@ import { AgentAvatar, resolveAgentCategory } from './AgentAvatar';
 import { ProviderLogo } from './ProviderLogo';
 import { CommandBlockMenu } from './CommandBlockMenu';
 import { paneSessionView } from '../../shared/pane-session-view';
+import { formatShortcut } from '../lib/platform';
 
 interface Props {
   pane: PaneModel;
@@ -281,7 +282,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         id: 'split-right',
         label: 'À direita',
         detail: 'Cria um novo pane ao lado (não copia o terminal)',
-        shortcut: '⌘D',
+        shortcut: formatShortcut('mod', 'D'),
         icon: 'split-right',
         run: () => split(pane.id, 'row'),
       });
@@ -289,7 +290,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         id: 'split-down',
         label: 'Abaixo',
         detail: 'Cria um novo pane abaixo (não copia o terminal)',
-        shortcut: '⌘⇧D',
+        shortcut: formatShortcut('mod', 'shift', 'D'),
         icon: 'split-down',
         run: () => split(pane.id, 'column'),
       });
@@ -301,8 +302,8 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const closeAction: ToolbarAction = {
     id: 'close',
     label: 'Fechar',
-    detail: 'Fecha este pane (⌘W)',
-    shortcut: '⌘W',
+    detail: `Fecha este pane (${formatShortcut('mod', 'W')})`,
+    shortcut: formatShortcut('mod', 'W'),
     icon: 'close',
     danger: true,
     primary: true,
@@ -491,7 +492,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         className="toolbar__close nodrag"
         aria-label="Fechar este pane"
         data-tip={closeAction.detail}
-        title="Fechar pane (⌘W)"
+        title={`Fechar pane (${formatShortcut('mod', 'W')})`}
         onClick={(e) => {
           e.stopPropagation();
           closeAction.run();

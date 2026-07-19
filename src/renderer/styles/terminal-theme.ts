@@ -3,11 +3,11 @@ import type { TerminalThemeId } from '../../shared/settings-types';
 
 /** Terminal palette tuned to the NexusIDE deep-navy shell.
     background/cursor casados com os tokens da UI (--bg #0a0e15, --accent
-    ciano #45d7ff) — hex-drift entre shell e terminal é regressão. */
+    ciano #3dd9ff) — hex-drift entre shell e terminal é regressão. */
 export const TERMINAL_THEME: ITheme = {
   background: '#0a0e15',
   foreground: '#d7dfec',
-  cursor: '#45d7ff',
+  cursor: '#3dd9ff',
   cursorAccent: '#0a0e15',
   selectionBackground: '#2a3a5c',
   black: '#0b0e14',

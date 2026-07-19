@@ -26,6 +26,7 @@ import {
   providerOption,
 } from './voice-settings-helpers';
 import { createDraftHydrationBarrier } from '../lib/ui-overlay-policy';
+import { isMac } from '../lib/platform';
 
 type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 
@@ -118,7 +119,9 @@ function comboFromKeyboardEvent(
   const hasStrongMod = e.metaKey || e.ctrlKey || e.altKey;
   if (!isFKey && !hasStrongMod) {
     return {
-      hint: 'Combine com ⌘, ⌃ ou ⌥ (ex.: ⌘⇧Space) — ou use uma tecla F sozinha (ex.: F6).',
+      hint: isMac()
+        ? 'Combine com ⌘, ⌃ ou ⌥ (ex.: ⌘⇧Space) — ou use uma tecla F sozinha (ex.: F6).'
+        : 'Combine com Ctrl ou Alt (ex.: Ctrl+Shift+Space) — ou use uma tecla F sozinha (ex.: F6).',
     };
   }
   return { accel: [...mods, key].join('+'), key };

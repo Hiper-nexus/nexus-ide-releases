@@ -192,7 +192,7 @@ function setHostSession(
 }
 
 const DEFAULT_FONT_STACK =
-  'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, monospace';
+  '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Monaco, monospace';
 
 // Live user settings (theme/font/shell) pushed in by the settings controller.
 // New terminals read them at build time; applyTerminalSettings restyles the

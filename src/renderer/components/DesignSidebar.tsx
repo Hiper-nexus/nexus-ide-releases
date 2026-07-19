@@ -290,6 +290,7 @@ export function DesignSidebar({ paneId }: Props) {
                       className="design-sidebar__revert"
                       disabled={writeback.authorityReady !== true}
                       title="Mover para cima/esquerda entre os irmãos"
+                      aria-label="Mover elemento para cima"
                       onClick={() =>
                         void applyWriteback({ kind: 'move', nexusId, direction: 'up' })
                       }
@@ -302,6 +303,7 @@ export function DesignSidebar({ paneId }: Props) {
                       className="design-sidebar__revert"
                       disabled={writeback.authorityReady !== true}
                       title="Mover para baixo/direita entre os irmãos"
+                      aria-label="Mover elemento para baixo"
                       onClick={() =>
                         void applyWriteback({ kind: 'move', nexusId, direction: 'down' })
                       }
@@ -314,6 +316,7 @@ export function DesignSidebar({ paneId }: Props) {
                       className="design-sidebar__revert"
                       disabled={writeback.authorityReady !== true}
                       title="Duplicar o elemento"
+                      aria-label="Duplicar o elemento"
                       onClick={() =>
                         void applyWriteback({ kind: 'duplicate', nexusId })
                       }
@@ -326,6 +329,7 @@ export function DesignSidebar({ paneId }: Props) {
                       className="design-sidebar__revert"
                       disabled={writeback.authorityReady !== true}
                       title="Excluir o elemento"
+                      aria-label="Excluir o elemento"
                       onClick={() => void applyWriteback({ kind: 'delete', nexusId })}
                     >
                       🗑
@@ -367,6 +371,7 @@ export function DesignSidebar({ paneId }: Props) {
                   data-testid="design-wb-stop"
                   className="design-sidebar__revert"
                   title="Encerra a sessão e limpa os IDs efêmeros dos arquivos"
+                  aria-label="Parar write-back"
                   disabled={!writebackBinding || writeback.authorityReady !== true}
                   onClick={() =>
                     void runWriteback(

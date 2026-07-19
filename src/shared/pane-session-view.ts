@@ -47,10 +47,13 @@ export function paneSessionView(state: PaneSessionState): PaneSessionView {
   return { state, ...VIEWS[state] };
 }
 
-/** Labels curtos da frota (WorkspaceBar). */
+/** Labels da frota (WorkspaceBar). Palavra inteira — "1 zzz"/"3 trab" era
+   críptico para quem não decorou o vocabulário. Se a barra apertar, a
+   guarda de overflow da WorkspaceBar desce a densidade (não o chip, que
+   continua legível). Espelha o aria-label do FleetChip. */
 export const FLEET_SEG_LABEL = {
-  working: 'trab',
-  ready: 'ok',
-  sleeping: 'zzz',
-  down: 'x',
+  working: 'trabalhando',
+  ready: 'pronto',
+  sleeping: 'dormindo',
+  down: 'morto',
 } as const;

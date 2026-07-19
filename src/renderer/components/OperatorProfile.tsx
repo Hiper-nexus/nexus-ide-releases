@@ -12,6 +12,7 @@ import {
 import { useGamificationStore } from '../state/gamification-store';
 import { ChosenPetPortrait } from './ChosenPetPortrait';
 import { fmt } from './operator-sprite-data';
+import { formatShortcut } from '../lib/platform';
 
 /**
  * Perfil de Operador — cockpit gamificado vivo:
@@ -438,7 +439,8 @@ export function OperatorProfile() {
             Modo sóbrio (oculta HUD e celebrações; o XP continua)
           </label>
           <span className="operator-profile__hint">
-            Reabra este perfil a qualquer momento com ⌘⇧O (Ctrl+Shift+O). O XP
+            Reabra este perfil a qualquer momento com{' '}
+            {formatShortcut('mod', 'shift', 'O')}. O XP
             é por checkout do projeto — cada pasta tem sua jornada.
           </span>
           {ioMessage && (

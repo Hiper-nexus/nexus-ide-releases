@@ -14,6 +14,7 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { launchGreeting } from '../../shared/endorphin';
 import { EndorphinPresence } from './EndorphinPresence';
+import { formatShortcut } from '../lib/platform';
 
 /**
  * Progressive onboarding: Início → Layout → Agentes → Lançar.
@@ -248,7 +249,7 @@ export function ProgressiveOnboarding({
             >
               <PixelIcon name="terminal" size={12} />
               <span>Abrir um terminal só</span>
-              <kbd className="prog-onb__kbd">⌘N</kbd>
+              <kbd className="prog-onb__kbd">{formatShortcut('mod', 'N')}</kbd>
             </button>
             <button
               type="button"

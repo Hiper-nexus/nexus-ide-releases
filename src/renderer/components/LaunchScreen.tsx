@@ -13,6 +13,7 @@ import { NexusMark } from './NexusMark';
 import { PixelIcon } from './PixelIcon';
 import { ProgressiveOnboarding } from './ProgressiveOnboarding';
 import { useProductFlags } from '../lib/use-product-flags';
+import { formatShortcut } from '../lib/platform';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 
 /**
@@ -303,7 +304,7 @@ export function LaunchScreen() {
             {mostRecent && (
               <button className="launch__secondary" onClick={openWizard} disabled={busy}>
                 <PixelIcon name="plus" size={12} />
-                Novo workspace <kbd>⌘O</kbd>
+                Novo workspace <kbd>{formatShortcut('mod', 'O')}</kbd>
               </button>
             )}
           </div>
@@ -388,7 +389,7 @@ export function LaunchScreen() {
           )}
           <footer className="launch__footer">
             <span>Selecione um workspace para restaurar o contexto.</span>
-            <kbd>⌘,</kbd> configurações
+            <kbd>{formatShortcut('mod', ',')}</kbd> configurações
           </footer>
         </section>
       </main>

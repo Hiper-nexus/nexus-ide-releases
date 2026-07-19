@@ -12,6 +12,28 @@
   font-display: swap;
 }
 
+/* Inter (variável, OFL) — família única de UI em mac/Windows/Linux. Sem ela
+   o stack caía em SF Pro no mac e outra fonte em Win/Linux: mesmo produto,
+   três renders. Local para funcionar offline. */
+@font-face {
+  font-family: 'Inter';
+  src: url('./fonts/Inter.var.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* JetBrains Mono (variável, OFL) — mono de UI (badges, atalhos, dados) E a
+   primeira do stack do xterm (terminal-host DEFAULT_FONT_STACK): terminal
+   idêntico nos 3 OSs. A paleta do xterm continua própria (terminal-theme). */
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./fonts/JetBrainsMono.var.ttf') format('truetype');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* Cockpit: azul-negro profundo com um acento ciano operacional. A doutrina
      de cor é aviônica — ciano = vivo/interativo, verde = nominal/pronto,
@@ -25,7 +47,7 @@
   /* Secondary text. Mantido ≥5:1 sobre --bg e --bg-elevated (WCAG AA para
      meta/detail/empty-state). Não baixar. */
   --text-dim: #8a94aa;
-  --accent: #45d7ff;
+  --accent: #3dd9ff;
   /* Tinta sobre superfícies sólidas de acento (CTA). Um token, não #hex solto:
      temas claros trocam para branco via ui-theme.ts. */
   --accent-ink: #051019;
@@ -47,9 +69,9 @@
   --radius: 8px;
   --bar-height: 44px;
   --toolbar-height: 28px;
-  --font-ui: ui-sans-serif, -apple-system, "SF Pro Text", Segoe UI, system-ui,
-    sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --font-ui: 'Inter', ui-sans-serif, -apple-system, "SF Pro Text", Segoe UI,
+    system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, "SF Mono", Menlo, monospace;
   /* Fonte bitmap (VT323) — superfícies retrô usam direto; o modo pixel
      ([data-theme-pixel="on"]) promove para --font-ui. VT323 é condensada:
      nunca usar abaixo de 12px. */
@@ -149,7 +171,22 @@ body,
 }
 
 body {
-  background: var(--bg);
+  /* Atmosfera de cockpit: um respiro de acento no alto (a "luz" da sala de
+     controle) e um contra-luz frio no canto oposto, ambos a ~5% — dimensão
+     sem virar decoração. Segue o tema via color-mix do --accent/--design. */
+  background:
+    radial-gradient(
+      1100px 480px at 50% -12%,
+      color-mix(in srgb, var(--accent) 7%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      900px 560px at 88% 112%,
+      color-mix(in srgb, var(--design) 5%, transparent),
+      transparent 58%
+    ),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
@@ -293,6 +330,13 @@ body {
   z-index: var(--z-app-chrome);
 }
 
+/* Win/Linux usam titlebar NATIVA (window.ts: titleBarStyle default fora do
+   darwin) — os 84px dos traffic lights seriam espaço morto na barra. */
+[data-platform='windows'] .workspace-bar,
+[data-platform='linux'] .workspace-bar {
+  padding-left: 10px;
+}
+
 .workspace-bar__brand {
   display: flex;
   align-items: center;
@@ -355,44 +399,9 @@ body {
   line-height: 1;
 }
 
-/* Criar workspace é uma decisão de navegação primária: não fica escondida
-   apenas no menu do nome do projeto. O acento suave preserva a hierarquia
-   abaixo de “Nova missão”, mas torna a ação reconhecível de imediato. */
-.workspace-bar__new-workspace {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;
-  min-height: 28px;
-  padding: 5px 9px;
-  border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border-strong));
-  border-radius: var(--radius-md);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-}
-
-.workspace-bar__new-workspace:hover {
-  background: color-mix(in srgb, var(--accent) 22%, var(--bg-elevated));
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-.workspace-bar__new-workspace:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.workspace-bar__new-workspace:active {
-  background: var(--accent-strong);
-  border-color: var(--accent);
-  color: var(--text);
-}
+/* “Novo workspace” mora no menu ▾ da marca: dois botões "Novo …" lado a lado
+   (workspace × missão) confundiam quem chegava — a ação diária é a missão,
+   trocar de workspace é raro. O menu da marca segue como caminho descobrível. */
 
 /* (.workspace-bar__tag removida — classe morta: nenhum componente a renderiza.
    A identidade VT323 agora aparece no default em .toolbar__badge, eyebrows e
@@ -889,6 +898,7 @@ body {
 
 /* ---- Pane ---- */
 .pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -917,6 +927,37 @@ body {
 .pane--state-busy:not(.pane--focused) {
   border-color: color-mix(in srgb, var(--state-running) 55%, var(--border));
   box-shadow: 0 0 12px -8px var(--accent-glow);
+}
+
+/* Anel respirante de "trabalhando": o glifo de 10px na toolbar não basta para
+   ler a frota de longe. Opacity-only (compositor) — NUNCA animar box-shadow
+   aqui: repinta o canvas do xterm e lê como flicker (ver nota acima). */
+.pane--state-busy::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: var(--radius);
+  opacity: 0.25;
+  animation: pane-breathe 2.6s var(--ease-out-quart) infinite;
+  pointer-events: none;
+}
+
+@keyframes pane-breathe {
+  0%,
+  100% {
+    opacity: 0.12;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane--state-busy::after {
+    animation: none;
+    opacity: 0.3;
+  }
 }
 
 .pane--state-exited:not(.pane--focused) {

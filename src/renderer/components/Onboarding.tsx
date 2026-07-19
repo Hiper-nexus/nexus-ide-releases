@@ -52,6 +52,17 @@ export function Onboarding() {
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const visible = loaded && !state.completed && !state.skipped;
 
+  // Auto-install: a 1ª CLI ausente com instalador automático vira o CTA
+  // primário — nunca um botão disabled como primeiro frame (critique P2).
+  const [autoInstallable, setAutoInstallable] = useState<{
+    adapterId: string;
+    label: string;
+  } | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  /** Label da CLI instalada com sucesso nesta sessão de onboarding. */
+  const [installDone, setInstallDone] = useState<string | null>(null);
+
   useEffect(() => {
     if (!visible) return;
     void window.nexus.adapters.list().then(setAdapters);
@@ -71,6 +82,63 @@ export function Onboarding() {
   useEffect(() => {
     if (installed.length > 0) markVictory('cliDetected');
   }, [installed.length, markVictory]);
+
+  // Sem CLI detectada: descobre se alguma tem instalador automático — o CTA
+  // primário passa a ser "Instalar …" (ação) em vez de um disabled parado.
+  useEffect(() => {
+    if (!visible || installed.length > 0) return;
+    let cancelled = false;
+    void window.nexus.providers
+      .list()
+      .then((list) => {
+        if (cancelled) return;
+        const candidate = list.find((p) => !p.installed && p.canAutoInstall);
+        setAutoInstallable(
+          candidate
+            ? { adapterId: candidate.adapterId, label: candidate.label }
+            : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAutoInstallable(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, installed.length]);
+
+  async function handleAutoInstall() {
+    if (!autoInstallable || installing) return;
+    setInstalling(true);
+    setInstallError(null);
+    try {
+      const result = await window.nexus.providers.installCli(
+        autoInstallable.adapterId,
+      );
+      if (result.ok) {
+        // O cache de adapters do main só re-escaneia a cada ~5min, então NÃO
+        // dá para esperar adapters.onChanged confirmar a instalação: marca
+        // o sucesso otimista e o CTA vira "Começar a operar" já.
+        setInstallDone(autoInstallable.label);
+        setAutoInstallable(null);
+      } else {
+        setInstallError(result.error ?? 'instalação falhou');
+      }
+    } catch (err) {
+      setInstallError(
+        err instanceof Error ? err.message : 'instalação falhou',
+      );
+    } finally {
+      setInstalling(false);
+    }
+  }
+
+  /** Abre o bloco "Instalar mais CLIs" quando não há instalador automático. */
+  function expandInstallHelp() {
+    const details = document.querySelector<HTMLDetailsElement>('.onb__missing');
+    if (details && !details.open) details.open = true;
+    details?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
 
   useEffect(() => {
     if (!visible) return;
@@ -169,15 +237,43 @@ export function Onboarding() {
           <button className="onb__skip" onClick={skip}>
             Pular
           </button>
-          <button
-            className="onb__cta"
-            onClick={complete}
-            disabled={installed.length === 0}
-            title={installed.length === 0 ? 'Instale ao menos uma CLI de IA para começar' : 'Ir para o deck'}
-          >
-            {installed.length === 0 ? 'Instale uma CLI para começar' : 'Começar a operar ▸'}
-          </button>
+          {installed.length > 0 || installDone ? (
+            <button
+              className="onb__cta"
+              onClick={complete}
+              title="Ir para o deck"
+            >
+              Começar a operar ▸
+            </button>
+          ) : autoInstallable ? (
+            <button
+              className="onb__cta"
+              onClick={() => void handleAutoInstall()}
+              disabled={installing}
+              title="Instala pela fonte oficial — uma confirmação mostra o comando exato antes"
+            >
+              {installing ? 'Instalando…' : `Instalar ${autoInstallable.label}`}
+            </button>
+          ) : missing.length > 0 ? (
+            <button
+              className="onb__cta"
+              onClick={expandInstallHelp}
+              title="Ver os comandos de instalação de cada CLI"
+            >
+              Ver como instalar
+            </button>
+          ) : null}
         </footer>
+        {installDone && installed.length === 0 && (
+          <p className="onb__install-done" role="status">
+            ✓ {installDone} instalada — o login acontece no primeiro uso.
+          </p>
+        )}
+        {installError && (
+          <p className="onb__install-error" role="alert">
+            ⚠ {installError} — tente pelo comando em “Instalar mais CLIs”.
+          </p>
+        )}
       </div>
     </div>
   );

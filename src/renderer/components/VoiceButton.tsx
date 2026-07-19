@@ -1,5 +1,6 @@
 import { useVoiceStore } from '../voice/voice-store';
 import { requestJarvisWake } from '../voice/manual-wake';
+import { isMac } from '../lib/platform';
 
 /**
  * WorkspaceBar voice control: a mic pill showing whether voice is armed, the
@@ -111,7 +112,7 @@ export function VoiceButton() {
       onContextMenu={handleContextMenu}
       title={
         info
-          ? `${responseMuted ? 'Clique para abrir os controles e ativar o áudio' : 'Clique para acordar a Jarvis'} · ⌥/⌘ clique para ajustes · Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${responseMuted ? ' · respostas mudas' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
+          ? `${responseMuted ? 'Clique para abrir os controles e ativar o áudio' : 'Clique para acordar a Jarvis'} · ${isMac() ? '⌥/⌘' : 'Alt/Ctrl'} clique para ajustes · Push-to-talk: ${info.shortcut} (${info.hotkeyMode}) · STT ${stt} · TTS ${tts}${liveOn ? ' · Jarvis Live' : ''}${responseMuted ? ' · respostas mudas' : ''}${wakeBlocked ? ` · wake preso pelo PID ${wakeBlockedPid}` : ''}`
           : 'Voice pipeline'
       }
     >

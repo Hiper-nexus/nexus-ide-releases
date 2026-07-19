@@ -1,0 +1,32 @@
+{
+  "source": "google/fonts (Inter, JetBrains Mono)",
+  "upstreamRepository": "https://github.com/google/fonts",
+  "license": "OFL-1.1",
+  "licenseFile": "third_party/licenses/OFL-1.1.txt",
+  "importedAt": "2026-07-19",
+  "headerPolicy": "Fontes binárias servidas localmente em src/renderer/styles/fonts/ para uso offline no Electron; mesma política da VT323 já existente.",
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/google/fonts/blob/main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf",
+      "originalSha256": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031",
+      "nexusPath": "src/renderer/styles/fonts/Inter.var.ttf",
+      "license": "OFL-1.1",
+      "copyright": "Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)",
+      "type": "copied",
+      "changeSummary": "Fonte variável de UI (pesos 100-900, eixo opsz). Garante o mesmo render de interface em macOS, Windows e Linux (antes o stack dependia de SF Pro, ausente fora do mac).",
+      "importDate": "2026-07-19",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/google/fonts/blob/main/ofl/jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf",
+      "originalSha256": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+      "nexusPath": "src/renderer/styles/fonts/JetBrainsMono.var.ttf",
+      "license": "OFL-1.1",
+      "copyright": "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)",
+      "type": "copied",
+      "changeSummary": "Fonte mono variável de UI (pesos 100-800) para badges, atalhos e dados; paridade cross-platform.",
+      "importDate": "2026-07-19",
+      "status": "imported"
+    }
+  ]
+}

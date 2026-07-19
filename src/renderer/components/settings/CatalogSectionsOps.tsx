@@ -11,6 +11,7 @@ import { useLayoutStore } from '../../state/layout-store';
 import { askConfirm } from '../../state/confirm-store';
 import { QrCode } from '../QrCode';
 import { waitForSession } from '../../terminal/terminal-host';
+import { formatShortcut } from '../../lib/platform';
 
 /**
  * Seções "operacionais" do catálogo — Recipes (lint/overlay), Atalhos e
@@ -246,9 +247,9 @@ export function RecipesSection() {
 }
 
 const SHORTCUTS: Array<{ keys: string; action: string }> = [
-  { keys: '⌘D', action: 'Split à direita' },
-  { keys: '⌘⇧D', action: 'Split abaixo' },
-  { keys: '⌘W', action: 'Fechar pane focado' },
+  { keys: formatShortcut('mod', 'D'), action: 'Split à direita' },
+  { keys: formatShortcut('mod', 'shift', 'D'), action: 'Split abaixo' },
+  { keys: formatShortcut('mod', 'W'), action: 'Fechar pane focado' },
   { keys: 'clique', action: 'Focar pane' },
   { keys: '⬡ Canvas', action: 'Alternar grid ↔ canvas (barra)' },
   { keys: '☾ / ☀', action: 'Dormir/acordar pane' },

@@ -26,6 +26,7 @@ import {
   togglePinnedMissionId,
   type RailSectionId,
 } from '../lib/mission-rail-prefs';
+import { formatShortcut } from '../lib/platform';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useLayoutStore } from '../state/layout-store';
 import { PixelIcon } from './PixelIcon';
@@ -431,7 +432,7 @@ export function MissionRail() {
           <button
             type="button"
             className="mission-rail__new mission-rail__new--primary mission-rail__new--story"
-            title="Nova missão neste workspace (⌘N)"
+            title={`Nova missão neste workspace (${formatShortcut('mod', 'N')})`}
             aria-label="Nova missão neste workspace"
             onClick={openMissionWizard}
           >
@@ -440,7 +441,7 @@ export function MissionRail() {
           <button
             type="button"
             className="mission-rail__board-btn"
-            title="Painel de operações (⌘B)"
+            title={`Painel de operações (${formatShortcut('mod', 'B')})`}
             aria-label="Abrir painel de operações"
             onClick={openBoard}
           >

@@ -3,6 +3,7 @@ import { usePanelZ } from '../lib/panel-stack';
 import { useFilesStore } from '../state/files-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { PixelIcon } from './PixelIcon';
+import { formatShortcut } from '../lib/platform';
 
 /**
  * FILES tab — a workspace file explorer with a lazy tree and an inline text
@@ -81,7 +82,7 @@ function Editor() {
           onClick={() => void save()}
           disabled={!file.dirty || saving || file.tooLarge || file.binary}
         >
-          {saving ? 'Salvando…' : 'Salvar (⌘S)'}
+          {saving ? 'Salvando…' : `Salvar (${formatShortcut('mod', 'S')})`}
         </button>
       </div>
       {file.error && <p className="files-editor__error">{file.error}</p>}

@@ -1494,6 +1494,24 @@
 .onb__cta:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 .onb__cta:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Erro do auto-install do CTA primário (sem CLI detectada): alerta inline
+   logo abaixo do footer, não toast — o contexto é a decisão em curso. */
+.onb__install-error {
+  margin: 10px 0 0;
+  font-size: var(--text-sm);
+  color: var(--danger);
+  text-align: right;
+}
+
+/* Confirmação otimista do auto-install (o cache de adapters do main demora
+   minutos para re-escanear — o feedback não pode esperar por ele). */
+.onb__install-done {
+  margin: 10px 0 0;
+  font-size: var(--text-sm);
+  color: var(--ok);
+  text-align: right;
+}
+
 /* OperatorHud realocado da bar para o rodapé do rail (dieta da bar): a
    gamificação vive junto da conta, fora da zona de sinal operacional. */
 .activity-rail__footer {

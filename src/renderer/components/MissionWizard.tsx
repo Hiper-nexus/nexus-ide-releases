@@ -49,7 +49,7 @@ import { suggestMissionLaneFromGoal } from '../../shared/mission-intent';
  *                                 → Squad: SQUAD → REVISAR
  *                                 → Agêntico: OBJETIVO → REVISAR
  * Copy, step breadcrumb, mode cards and the squad list (ORIGINALS + YOUR
- * SQUADS with "orq + N workers") drive the mission setup. No modo Agêntico o
+ * SQUADS with "orquestrador + N agentes") drive the mission setup. No modo Agêntico o
  * usuário descreve o objetivo, o Squad Architect monta o time sob medida e o
  * wizard cai direto na revisão do roster para disparar.
  */
@@ -100,7 +100,9 @@ function StepsBar({ steps, current }: { steps: Step[]; current: Step }) {
 function workerCount(squad: Squad): string {
   const workers = squad.agents.filter((a) => a.category !== 'orchestrator').length;
   const hasOrch = squad.agents.some((a) => a.category === 'orchestrator');
-  return hasOrch ? `orq + ${workers} worker${workers === 1 ? '' : 's'}` : `${workers} agentes`;
+  return hasOrch
+    ? `orquestrador + ${workers} agente${workers === 1 ? '' : 's'}`
+    : `${workers} agentes`;
 }
 
 /** FALE HUMANO also applies to the wizard: never leak queue jargon in the UI. */

@@ -10,6 +10,7 @@ import { useVoiceStore } from '../voice/voice-store';
 import { useSettingsStore } from '../state/settings-store';
 import { listPanes } from '../lib/split-tree';
 import { isMissingModelKeyError } from '../lib/credential-errors';
+import { formatShortcut } from '../lib/platform';
 import { PixelIcon } from './PixelIcon';
 import { AgentAvatar } from './AgentAvatar';
 import { EndorphinPresence } from './EndorphinPresence';
@@ -30,7 +31,9 @@ import {
 function workerCount(squad: Squad): string {
   const workers = squad.agents.filter((a) => a.category !== 'orchestrator').length;
   const hasOrch = squad.agents.some((a) => a.category === 'orchestrator');
-  return hasOrch ? `orq + ${workers} worker${workers === 1 ? '' : 's'}` : `${workers} agentes`;
+  return hasOrch
+    ? `orquestrador + ${workers} agente${workers === 1 ? '' : 's'}`
+    : `${workers} agentes`;
 }
 
 export function HomeDeck() {
@@ -285,9 +288,9 @@ export function HomeDeck() {
         <footer className="home-deck__foot">
           <span className="home-deck__keys">
             {viewKind === 'canvas' ? (
-              <><kbd>⌘K</kbd> comandos · <kbd>F</kbd> centralizar · arraste panes</>
+              <><kbd>{formatShortcut('mod', 'K')}</kbd> comandos · <kbd>F</kbd> centralizar · arraste panes</>
             ) : (
-              <><kbd>⌘K</kbd> comandos · <kbd>⌘N</kbd> missão · <kbd>⌘D</kbd> dividir · <kbd>⌘1-9</kbd> focar</>
+              <><kbd>{formatShortcut('mod', 'K')}</kbd> comandos · <kbd>{formatShortcut('mod', 'N')}</kbd> missão · <kbd>{formatShortcut('mod', 'D')}</kbd> dividir · <kbd>{formatShortcut('mod', '1-9')}</kbd> focar</>
             )}
           </span>
           <button className="home-deck__dismiss" onClick={hide}>

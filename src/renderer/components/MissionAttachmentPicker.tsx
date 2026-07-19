@@ -7,6 +7,7 @@ import {
   validateMissionAttachment,
   type MissionAttachment,
 } from '../lib/mission-attachments';
+import { formatShortcut } from '../lib/platform';
 
 type MissionAttachmentPickerProps = {
   attachments: readonly MissionAttachment[];
@@ -14,11 +15,7 @@ type MissionAttachmentPickerProps = {
   disabled?: boolean;
 };
 
-const PASTE_SHORTCUT =
-  typeof navigator !== 'undefined' &&
-  /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent)
-    ? '⌘V'
-    : 'Ctrl+V';
+const PASTE_SHORTCUT = formatShortcut('mod', 'V');
 
 export function MissionAttachmentPicker({
   attachments,

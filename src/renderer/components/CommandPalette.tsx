@@ -11,6 +11,7 @@ import { useHomeStore } from '../state/home-store';
 import { useIntegrationsStore } from '../state/integrations-store';
 import { listPanes } from '../lib/split-tree';
 import { filterPaletteActions } from '../lib/command-palette-filter';
+import { formatShortcut } from '../lib/platform';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
@@ -56,7 +57,7 @@ export function CommandPalette() {
         group: 'Panes',
         label: `Focar: ${pane.title || pane.kind}`,
         icon: pane.kind === 'browser' ? 'browser' : 'terminal',
-        hint: index < 9 ? `⌘${index + 1}` : undefined,
+        hint: index < 9 ? formatShortcut('mod', String(index + 1)) : undefined,
         keywords: `pane foco ${pane.adapterId ?? ''} ${state ?? ''}`,
         run: () => layout.focus(pane.id),
       });
@@ -88,7 +89,7 @@ export function CommandPalette() {
       'Nova missão',
       'mission',
       () => useMissionWizardStore.getState().openForMission(),
-      '⌘N',
+      formatShortcut('mod', 'N'),
       'wizard squad',
     );
     tool('terminal', 'Abrir terminal', 'terminal', () => layout.addShellPane(), '', 'shell novo');
@@ -114,7 +115,7 @@ export function CommandPalette() {
       'Painel de operações',
       'board',
       () => useOrchStore.getState().toggleBoard(),
-      '⌘B',
+      formatShortcut('mod', 'B'),
       'ops pipeline kanban',
     );
     tool(
@@ -146,7 +147,7 @@ export function CommandPalette() {
       'Configurações',
       'config',
       () => useSettingsStore.getState().openDrawer(),
-      '⌘,',
+      formatShortcut('mod', ','),
       'settings preferencias',
     );
     tool(
@@ -154,7 +155,7 @@ export function CommandPalette() {
       'Atalhos do teclado',
       'key',
       () => useCheatsheetStore.getState().toggle(),
-      '⌘/',
+      formatShortcut('mod', '/'),
       'ajuda help teclas shortcuts',
     );
 

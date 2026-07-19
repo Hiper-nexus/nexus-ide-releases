@@ -38,7 +38,7 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     // com o valor de base.css:root.
     textDim: '#8a94aa',
     // Ciano operacional: o que está VIVO (agente ativo, ação primária).
-    accent: '#45d7ff',
+    accent: '#3dd9ff',
     accentInk: '#051019',
     danger: '#ff7a90',
   },
@@ -109,6 +109,12 @@ export function applyUiTheme(themeId: TerminalThemeId): void {
     root.style.removeProperty(cssVar);
   }
   root.dataset.theme = themeId;
+  // Plataforma exposta ao CSS: padding dos traffic lights só faz sentido no
+  // mac (hiddenInset); win/linux têm titlebar nativa (default) e o espaço é
+  // desperdiçado. Barato setar aqui — applyUiTheme roda no boot e no reload.
+  const p = window.nexus?.platform;
+  root.dataset.platform =
+    p === 'darwin' ? 'mac' : p === 'win32' ? 'windows' : 'linux';
 }
 
 /**
