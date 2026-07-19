@@ -26,6 +26,8 @@ vi.mock('../pty/pty-manager', () => ({
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: vi.fn(() => ({ id: 'codex', quirks: {} })),
 }));
+// Keep the spawn path independent of the host's real credential state.
+vi.mock('../pty/pre-spawn-probe', () => ({ assertPreSpawnProbe: vi.fn() }));
 vi.mock('./mission-pane-store', () => ({ recordMissionPane: vi.fn() }));
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: vi.fn(() => ({

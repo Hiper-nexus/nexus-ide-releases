@@ -93,6 +93,7 @@ import type {
   PaneSessionState,
   AdapterInfo,
   BgTaskEventPayload,
+  PaneLoginStuckEvent,
 } from '../shared/types';
 import type {
   JarvisLiveInterruptEvent,
@@ -371,6 +372,7 @@ const handoffsChangedListeners = new Set<(handoffs: Handoff[]) => void>();
 const todosChangedListeners = new Set<(lists: TodoList[]) => void>();
 const squadsChangedListeners = new Set<(squads: Squad[]) => void>();
 const bgTaskEventListeners = new Set<(event: BgTaskEventPayload) => void>();
+const paneLoginStuckListeners = new Set<(event: PaneLoginStuckEvent) => void>();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
   paneSpawnRequestListeners.forEach((cb) => cb(req)),
@@ -400,6 +402,9 @@ ipcRenderer.on(ORCH_CHANNELS.squadsChanged, (_e, squads: Squad[]) =>
 );
 ipcRenderer.on(ORCH_CHANNELS.bgTaskEvent, (_e, event: BgTaskEventPayload) =>
   bgTaskEventListeners.forEach((cb) => cb(event)),
+);
+ipcRenderer.on(ORCH_CHANNELS.paneLoginStuck, (_e, event: PaneLoginStuckEvent) =>
+  paneLoginStuckListeners.forEach((cb) => cb(event)),
 );
 
 const settingsChangedListeners = new Set<(settings: TerminalSettings) => void>();
@@ -846,6 +851,8 @@ const api: NexusApi = {
     onSquadsChanged: (cb) => addListener(squadsChangedListeners, cb),
     onBgTaskEvent: (cb: (event: BgTaskEventPayload) => void) =>
       addListener(bgTaskEventListeners, cb),
+    onPaneLoginStuck: (cb: (event: PaneLoginStuckEvent) => void) =>
+      addListener(paneLoginStuckListeners, cb),
   },
   remote: {
     bridgeStatus: () => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStatus),

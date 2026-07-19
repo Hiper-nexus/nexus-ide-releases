@@ -332,6 +332,23 @@ export interface TaskRecord {
 }
 
 /**
+ * Zero-LLM activity summary of one pane (Overclock harvest): the first user
+ * message of the CLI's native transcript, the last significant output line
+ * and when the session stopped. `source` says where `lastLine` came from —
+ * the live/recent PTY tail buffer, the on-disk transcript, or nothing found.
+ */
+export const paneActivitySummarySchema = z.object({
+  /** First real user message (transcript), capped at 140 chars. */
+  title: z.string().max(1024).nullable(),
+  /** Last significant line (tail preferred, transcript fallback), ≤140 chars. */
+  lastLine: z.string().max(1024).nullable(),
+  /** epoch ms when the session last wrote / stopped (transcript mtime). */
+  stoppedAt: z.number().int().nonnegative().nullable(),
+  source: z.enum(['transcript', 'tail', 'none']),
+});
+export type PaneActivitySummary = z.infer<typeof paneActivitySummarySchema>;
+
+/**
  * Recorded composition of a mission: one entry per pane that took part in it
  * (orchestrator + every worker spawned with that missionId). Persisted so a
  * mission can be reopened from history with its panes restored — the CLIs
@@ -364,6 +381,11 @@ export interface MissionPaneSpec {
    */
   paneId?: string;
   createdAt: number;
+  /**
+   * Activity summary attached on read (orch:missions.panes) — never persisted;
+   * computed on demand from the pane tail/transcript with a short cache.
+   */
+  activity?: PaneActivitySummary | null;
 }
 
 export type PaneRuntimeState =

@@ -79,4 +79,6 @@ export const ORCH_CHANNELS = {
   squadsChanged: 'orch:squads.changed',
   /** Background MCP task lifecycle (started / exited / killed). */
   bgTaskEvent: 'orch:bgTask.event',
+  /** Login-stuck watchdog: pane stuck on a CLI login screen (or recovered). */
+  paneLoginStuck: 'orch:pane.loginStuck',
 } as const;

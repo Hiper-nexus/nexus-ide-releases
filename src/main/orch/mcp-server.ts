@@ -55,6 +55,7 @@ import {
 } from './hooks-gen';
 import { handleHookStatusHttp } from './hook-status-endpoint';
 import { resetAgentStatusOnExit } from './agent-status';
+import { installLoginStuckWatchdog } from './login-stuck-watchdog';
 import { codexStatusHookArgs } from './hook-status-config';
 import {
   cleanupAgyMcpConfig,
@@ -595,6 +596,9 @@ export function startMcpServer(): Promise<void> {
   };
   installSpawnHook();
   installLegacyParser();
+  // Login-stuck watchdog (F-256): tails come from the pane-registry ring
+  // buffer on a 5s tick — never per-chunk, never destructive.
+  installLoginStuckWatchdog();
 
   server = http.createServer((req, res) => {
     void (async () => {

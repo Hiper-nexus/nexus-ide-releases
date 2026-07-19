@@ -597,6 +597,15 @@ export function readSessionOutput(sessionId: string, lines = 200): string {
   return allLines.slice(Math.max(0, allLines.length - lines)).join("\n");
 }
 
+/**
+ * Exit timestamp (epoch ms) of a dead session whose output buffer is still
+ * retained (EXITED_BUFFER_TTL_MS window); null for live/unknown sessions.
+ */
+export function sessionOutputExitedAt(sessionId: string): number | null {
+  const buffer = buffers.get(sessionId);
+  return buffer?.exited ? (buffer.exitedAt ?? null) : null;
+}
+
 /** Resolve when the session goes idle (or exits / times out). */
 export function waitForIdle(
   sessionId: string,

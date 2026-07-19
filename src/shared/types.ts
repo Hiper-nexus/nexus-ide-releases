@@ -220,6 +220,25 @@ export interface BgTaskEventPayload {
 }
 
 /**
+ * Login-stuck watchdog event pushed by main (`orch:pane.loginStuck`). Shape
+ * mirrors the event built in src/main/orch/login-stuck-watchdog.ts.
+ * `stuck:false` is the recovery edge (login screen left / real progress) —
+ * the watchdog NEVER kills or respawns the pane; it only reports state so the
+ * UI can offer the adapter's login flow (`canOpenLogin`).
+ */
+export interface PaneLoginStuckEvent {
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly adapterId: string;
+  readonly stuck: boolean;
+  /** Label of the curated heuristic pattern that matched ('' on recovery). */
+  readonly pattern: string;
+  /** True when the adapter has an interactive login flow the UI can offer. */
+  readonly canOpenLogin: boolean;
+  readonly at: number;
+}
+
+/**
  * The typed surface exposed on `window.nexus` by the preload script.
  * The renderer NEVER sees raw ipcRenderer — only this contract.
  */
@@ -649,6 +668,7 @@ export interface NexusApi {
     onTodosChanged(cb: (lists: TodoList[]) => void): Unsubscribe;
     onSquadsChanged(cb: (squads: Squad[]) => void): Unsubscribe;
     onBgTaskEvent(cb: (event: BgTaskEventPayload) => void): Unsubscribe;
+    onPaneLoginStuck(cb: (event: PaneLoginStuckEvent) => void): Unsubscribe;
   };
   remote: {
     bridgeStatus(): Promise<RemoteBridgeInfo>;

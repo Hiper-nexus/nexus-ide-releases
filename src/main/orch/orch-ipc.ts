@@ -40,6 +40,10 @@ import {
   unregisterBgTaskEventTarget,
 } from "./bg-task-events";
 import {
+  registerLoginStuckTarget,
+  unregisterLoginStuckTarget,
+} from "./login-stuck-watchdog";
+import {
   initPaneRegistry,
   registerOrchRenderer,
   resolveBrowserOpen,
@@ -279,12 +283,14 @@ export function registerOrchListener(wc: WebContents): void {
   listeners.add(wc);
   registerOrchRenderer(wc);
   registerBgTaskEventTarget(wc);
+  registerLoginStuckTarget(wc);
 }
 
 export function unregisterOrchListener(wc: WebContents): void {
   listeners.delete(wc);
   unregisterOrchRenderer(wc);
   unregisterBgTaskEventTarget(wc);
+  unregisterLoginStuckTarget(wc);
 }
 
 /** Boot the whole orchestration domain (stores → registry → MCP server). */

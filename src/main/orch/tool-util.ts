@@ -33,6 +33,7 @@ import {
   shouldAutoSpawnOmpCompanion,
 } from './omp-roster-policy';
 import { adapterCircuitBreakers } from './circuit-breaker';
+import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -344,6 +345,11 @@ export async function spawnPaneAndMaybePrompt(
 ): Promise<{ paneId: string; sessionId: string }> {
   const adapter = getAdapter(options.adapterId);
   if (!adapter) throw new Error(`unknown adapter: ${options.adapterId}`);
+  // Pre-spawn credential probe (Overclock F-256 harvest): a spawn with a
+  // missing credential used to surface as a dead pane or a mute login TUI.
+  // Fail here — before any pane exists — with a typed, actionable error.
+  // Cheap (<50ms, no network) and never judges what it cannot prove.
+  await assertPreSpawnProbe(options.adapterId);
   // Circuit half-open / closed only for auto traffic; explicit spawns still try.
   // Failures below trip the breaker for future routeTask multi-score.
   // Defesa em profundidade contra modelo-fantasma (caso de campo 17/07): a
