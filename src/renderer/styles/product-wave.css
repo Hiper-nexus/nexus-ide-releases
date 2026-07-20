@@ -1059,3 +1059,150 @@
 .product-pane select.product-pane__input {
   max-width: 100%;
 }
+
+/* Marketplace como tab standalone do painel contextual: a seção reutilizada
+   do settings usa classes próprias; garante scroll e largura no painel. */
+.product-pane--marketplace {
+  overflow-y: auto;
+}
+
+.product-pane--marketplace .settings-list {
+  padding-bottom: var(--space-4);
+}
+
+/* Editor com gutter de números de linha (contextual panel). */
+.editor-code {
+  display: flex;
+  flex: 1;
+  min-height: 200px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.editor-code__gutter {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  user-select: none;
+  text-align: right;
+}
+
+.editor-code__line-no {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 0 8px;
+  color: var(--text-dim);
+}
+
+.editor-code__textarea {
+  flex: 1;
+  border: none !important;
+  border-radius: 0 !important;
+  resize: none;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.editor-code__status {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 4px 2px;
+}
+
+.editor-code__dirty {
+  color: var(--warn, #e0af68);
+  font-weight: 600;
+}
+
+/* Fan-out compare — outputs dos agentes lado a lado. */
+.fanout {
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-2);
+}
+
+.fanout__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-2);
+}
+
+.fanout__title {
+  font-weight: 600;
+}
+
+.fanout__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-2);
+}
+
+.fanout__card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-dim);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.fanout__card--ok { border-left-color: var(--ok); }
+.fanout__card--running { border-left-color: var(--accent); }
+.fanout__card--warn { border-left-color: var(--warn); }
+.fanout__card--failed { border-left-color: var(--danger); }
+.fanout__card--idle { border-left-color: var(--text-dim); }
+
+.fanout__card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.fanout__agent {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fanout__status {
+  font-size: 9px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+.fanout__summary {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

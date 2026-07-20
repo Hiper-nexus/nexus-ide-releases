@@ -1,4 +1,4 @@
-export type MissionAttachmentKind = 'image' | 'audio';
+export type MissionAttachmentKind = 'image' | 'audio' | 'file';
 
 export type MissionAttachment = {
   id: string;
@@ -17,6 +17,8 @@ export const MISSION_ATTACHMENT_LIMITS = {
 
 const IMAGE_EXTENSIONS = /\.(avif|gif|heic|jpeg|jpg|png|webp)$/i;
 const AUDIO_EXTENSIONS = /\.(aac|flac|m4a|mp3|ogg|wav|webm)$/i;
+const TEXT_EXTENSIONS =
+  /\.(c|cc|cpp|cs|css|csv|go|html?|java|js|json|jsx|md|mdx|php|py|rb|rs|sh|sql|svelte|toml|ts|tsx|txt|vue|ya?ml)$/i;
 let attachmentSequence = 0;
 
 function fileName(file: Pick<File, 'name'>): string {
@@ -32,6 +34,9 @@ export function classifyMissionAttachment(
   }
   if (mime.startsWith('audio/') || AUDIO_EXTENSIONS.test(fileName(file))) {
     return 'audio';
+  }
+  if (mime.startsWith('text/') || TEXT_EXTENSIONS.test(fileName(file))) {
+    return 'file';
   }
   return null;
 }
@@ -49,7 +54,9 @@ function extensionForMime(mime: string, kind: MissionAttachmentKind): string {
   if (normalized === 'audio/mp4' || normalized === 'audio/x-m4a') return 'm4a';
   if (normalized === 'audio/wav' || normalized === 'audio/wave') return 'wav';
   if (normalized === 'audio/webm') return 'webm';
-  return kind === 'image' ? 'png' : 'm4a';
+  if (kind === 'image') return 'png';
+  if (kind === 'audio') return 'm4a';
+  return 'txt';
 }
 
 /**
@@ -125,7 +132,7 @@ export function validateMissionAttachment(
   current: readonly MissionAttachment[],
 ): string | null {
   const kind = classifyMissionAttachment(file);
-  if (!kind) return 'Use uma imagem (print) ou um arquivo de áudio.';
+  if (!kind) return 'Use uma imagem, um áudio ou um arquivo de código/texto.';
   if (current.length >= MISSION_ATTACHMENT_LIMITS.maxCount) {
     return `Você pode anexar no máximo ${MISSION_ATTACHMENT_LIMITS.maxCount} arquivos.`;
   }
@@ -182,12 +189,34 @@ export function buildMissionAttachmentsContext(
   attachments: readonly MissionAttachment[],
 ): string {
   if (attachments.length === 0) return '';
+  const labelFor = (kind: MissionAttachmentKind): string =>
+    kind === 'image' ? 'print' : kind === 'audio' ? 'áudio' : 'arquivo';
   return [
     '## Evidências anexadas pelo usuário',
-    'Consulte estes arquivos durante a missão. Eles podem conter prints de erro ou gravações de áudio relevantes ao objetivo:',
-    ...attachments.map(
-      (attachment) =>
-        `- ${attachment.kind === 'image' ? 'print' : 'áudio'}: ${attachment.path}`,
-    ),
+    'Consulte estes arquivos durante a missão. Eles podem conter prints de erro, gravações de áudio ou arquivos de código relevantes ao objetivo:',
+    ...attachments.map((attachment) => `- ${labelFor(attachment.kind)}: ${attachment.path}`),
   ].join('\n');
+}
+
+/**
+ * Global drop intake: files dropped anywhere on the app shell (outside the
+ * attachment picker's own drop zone) are parked here, then the wizard opens
+ * and the picker consumes them on mount. Bridges the window-level drop event
+ * to the picker without prop-drilling through the wizard.
+ */
+let pendingDroppedFiles: File[] = [];
+
+export function enqueueDroppedFiles(files: File[]): void {
+  pendingDroppedFiles = pendingDroppedFiles.concat(files);
+}
+
+export function consumeDroppedFiles(): File[] {
+  const files = pendingDroppedFiles;
+  pendingDroppedFiles = [];
+  return files;
+}
+
+/** Discard unconsumed drops (wizard closed before the picker mounted). */
+export function clearDroppedFiles(): void {
+  pendingDroppedFiles = [];
 }

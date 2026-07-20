@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Nexus Companion",
+    "slug": "nexus-companion",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "nexus-companion",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.nexus.companion"
+    },
+    "android": {
+      "package": "dev.nexus.companion"
+    },
+    "plugins": []
+  }
+}

@@ -9,6 +9,7 @@ export const CONTEXTUAL_TABS = [
   'editor',
   'git',
   'skills',
+  'marketplace',
   'memory',
   'mission',
   'handoff',
@@ -20,7 +21,7 @@ export type ContextualTab = (typeof CONTEXTUAL_TABS)[number];
 export const contextualPanelStateSchema = z
   .object({
     visible: z.boolean().default(true),
-    activeTab: z.enum(CONTEXTUAL_TABS).default('editor'),
+    activeTab: z.enum(CONTEXTUAL_TABS).default('mission'),
     widthPx: z.number().int().min(200).max(900).default(360),
     /** Per-workspace tab persistence key = workspace id */
     workspaceId: z.string().min(1).max(128).optional(),
@@ -56,6 +57,11 @@ export const CONTEXTUAL_TAB_COPY: Record<
     title: 'Skills',
     empty: 'Nenhuma skill no catálogo. Importe ou crie em skills do projeto.',
     loading: 'Carregando skills…',
+  },
+  marketplace: {
+    title: 'Marketplace',
+    empty: 'Catálogo de agents e skills. Instale em 1 clique.',
+    loading: 'Carregando catálogo…',
   },
   memory: {
     title: 'Memória',

@@ -74,16 +74,24 @@ import { useVoiceStore } from './voice/voice-store';
 import { UpdateNotifier } from './components/UpdateModal';
 import { requestPaneClose } from './terminal/pane-close-guard';
 import { NexusMark } from './components/NexusMark';
+import { PixelIcon } from './components/PixelIcon';
 import { ModeLauncher } from './components/ModeLauncher';
 import { ContextualPanel } from './components/ContextualPanel';
 import {
   EditorPanelBody,
+  MarketplacePanelBody,
   McpHubPanelBody,
   MemoryPanelBody,
   SearchPanelBody,
   SkillsPanelBody,
 } from './components/product/ProductPanelBodies';
+import {
+  clearDroppedFiles,
+  enqueueDroppedFiles,
+  filesFromClipboardData,
+} from './lib/mission-attachments';
 import { MissionJournalPanel } from './components/product/MissionJournalPanel';
+import { FanoutComparePanel } from './components/FanoutComparePanel';
 import { GitPanelBody } from './components/GitPanelBody';
 import type { LAUNCHER_MODES } from '../shared/progressive-onboarding';
 import type { ContextualTab } from '../shared/contextual-panel';
@@ -126,6 +134,7 @@ export function App() {
   // handoff no switch, senão o backlog do novo workspace seria "celebrado".
   const endorphinWorkspaceKey = useOrchStore((s) => s.boundWorkspacePath ?? '∅');
   const [diffOpen, setDiffOpen] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
   const integrationsOpen = useIntegrationsStore((s) => s.open);
   const mediaStudioOpen = useMediaStudioStore((s) => s.open);
   const onboardingVisible = useOnboardingStore(
@@ -249,6 +258,14 @@ export function App() {
         useCheatsheetStore.getState().toggle();
         return;
       }
+      // ⌘⇧N — quick mission: cai direto no objetivo do Modo Agêntico, pulando
+      // a seleção de modo. Para tarefas de uma linha ("roda esse teste").
+      if (e.key.toLowerCase() === 'n' && e.shiftKey && !e.altKey) {
+        if (!useWorkspaceStore.getState().current) return;
+        e.preventDefault();
+        useMissionWizardStore.getState().openForAgentic();
+        return;
+      }
       // ⌘N — nova missão (a ação primária merece o atalho primário).
       if (e.key.toLowerCase() === 'n' && !e.shiftKey && !e.altKey) {
         if (!useWorkspaceStore.getState().current) return;
@@ -282,6 +299,49 @@ export function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Global file drop: arrastou arquivo do Finder sobre o app → solte para
+  // anexar à missão. O picker de anexos tem a própria dropzone; quando o
+  // wizard está aberto ele é o alvo natural e o overlay global fica oculto.
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (!useMissionWizardStore.getState().open) setDropActive(true);
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (e.relatedTarget === null) setDropActive(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setDropActive(false);
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.closest('.mission-attachments')) return;
+      if (useMissionWizardStore.getState().open) return;
+      if (!useWorkspaceStore.getState().current) return;
+      const files = filesFromClipboardData(e.dataTransfer);
+      if (files.length === 0) return;
+      enqueueDroppedFiles(files);
+      useMissionWizardStore.getState().openForAgentic();
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
+
+  // Se o wizard fechar antes do picker montar (Esc rápido), descarta os drops
+  // pendentes para não anexarem à próxima missão aberta sem relação.
+  useEffect(() => {
+    if (!missionWizardOpen) clearDroppedFiles();
+  }, [missionWizardOpen]);
 
   useEffect(() => {
     setBrowserPaneSuppression('modal-overlay', suppressBrowserPanes);
@@ -407,10 +467,35 @@ export function App() {
     id: (typeof LAUNCHER_MODES)[number]['id'],
   ): ContextualTab => {
     if (id === 'skills') return 'skills';
+    if (id === 'marketplace') return 'marketplace';
     if (id === 'memory') return 'memory';
     if (id === 'missions' || id === 'swarm') return 'mission';
-    if (id === 'terminal') return 'search';
+    // Activity stream é a superfície default: modo Terminal abre na aba Missão.
+    if (id === 'terminal') return 'mission';
     return 'editor';
+  };
+
+  /** Tabs relevantes por modo — as demais ficam ocultas (auto-hide). */
+  const relevantTabsForMode = (
+    id: (typeof LAUNCHER_MODES)[number]['id'],
+  ): readonly ContextualTab[] | undefined => {
+    switch (id) {
+      case 'terminal':
+        return ['mission', 'search', 'editor', 'git', 'browser'];
+      case 'missions':
+      case 'swarm':
+        return ['mission', 'handoff', 'git', 'search'];
+      case 'board':
+        return ['mission', 'handoff'];
+      case 'memory':
+        return ['memory', 'mission'];
+      case 'skills':
+        return ['skills', 'marketplace'];
+      case 'marketplace':
+        return ['marketplace', 'skills'];
+      default:
+        return undefined;
+    }
   };
 
   const onModeSelect = (id: (typeof LAUNCHER_MODES)[number]['id']) => {
@@ -455,14 +540,21 @@ export function App() {
           flagEnabled={productFlags[FEATURE_FLAG_IDS.contextualPanel] !== false}
           workspaceId={currentWorkspace?.path}
           activeTab={ctxTabForMode(launcherMode)}
+          relevantTabs={relevantTabsForMode(launcherMode)}
           initial={{ visible: true }}
           children={{
             search: <SearchPanelBody />,
             skills: <SkillsPanelBody />,
+            marketplace: <MarketplacePanelBody />,
             editor: <EditorPanelBody />,
             browser: <McpHubPanelBody />,
             memory: <MemoryPanelBody />,
-            mission: <MissionJournalPanel />,
+            mission: (
+              <>
+                <FanoutComparePanel />
+                <MissionJournalPanel />
+              </>
+            ),
             git: <GitPanelBody />,
           }}
         />
@@ -490,6 +582,14 @@ export function App() {
       <KeyboardCheatsheet />
       <ConfirmDialog />
       <Toasts />
+      {dropActive && (
+        <div className="global-drop-overlay" role="status" aria-live="polite">
+          <div className="global-drop-overlay__inner">
+            <PixelIcon name="files" size={20} />
+            <span>Solte para anexar à missão</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -29,6 +29,7 @@ import {
 import { formatShortcut } from '../lib/platform';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useLayoutStore } from '../state/layout-store';
+import { useGitScmStore } from '../state/git-scm-store';
 import { PixelIcon } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
 import { OperatorHud } from './OperatorHud';
@@ -79,6 +80,10 @@ export function MissionRail() {
   const [extIssues, setExtIssues] = useState<ExternalIssue[]>([]);
   const workspace = useWorkspaceStore((s) => s.current);
   const workspacePath = workspace?.path ?? null;
+  const gitBranch = useGitScmStore((s) => s.branch);
+  const gitDirtyCount = useGitScmStore(
+    (s) => s.staged.length + s.unstaged.length + s.untracked.length,
+  );
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -131,6 +136,8 @@ export function MissionRail() {
     setPinnedIds(loadPinnedMissionIds(workspacePath));
     setQuery('');
     setNote(null);
+    useGitScmStore.getState().reset();
+    if (workspacePath) void useGitScmStore.getState().refresh();
   }, [workspacePath]);
 
   const [issuesRefreshKey, setIssuesRefreshKey] = useState(0);
@@ -456,6 +463,24 @@ export function MissionRail() {
             </span>
           ) : (
             <>
+              {gitBranch && (
+                <span
+                  className="mission-rail__chip mission-rail__chip--branch"
+                  title={`Worktree em ${gitBranch}${
+                    gitDirtyCount > 0
+                      ? ` · ${gitDirtyCount} alteração(ões) pendente(s)`
+                      : ' · limpo'
+                  }`}
+                >
+                  <PixelIcon name="files" size={10} />
+                  <span className="mission-rail__chip-value">{gitBranch}</span>
+                  {gitDirtyCount > 0 && (
+                    <span className="mission-rail__chip-label">
+                      {gitDirtyCount}△
+                    </span>
+                  )}
+                </span>
+              )}
               <span
                 className="mission-rail__chip"
                 title="Missões em progresso ou bloqueadas neste workspace"

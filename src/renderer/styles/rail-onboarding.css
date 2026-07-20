@@ -902,6 +902,29 @@
   letter-spacing: -0.02em;
 }
 
+.mission-rail__chip--branch {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--accent);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.mission-rail__chip--branch .mission-rail__chip-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.mission-rail__chip--branch .mission-rail__chip-label {
+  color: var(--warn, #e0af68);
+}
+
 .mission-rail__chip--warn {
   border-color: color-mix(in srgb, var(--warning, #e0af68) 45%, var(--border));
   color: var(--warning, #e0af68);

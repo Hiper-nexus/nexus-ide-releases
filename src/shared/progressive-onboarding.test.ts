@@ -27,7 +27,7 @@ describe('progressive onboarding contracts', () => {
     expect(summary).not.toMatch(/com agentes/);
   });
 
-  it('exposes all launcher modes for Terminal/Missões/Enxame/Board/Memória/Skills', () => {
+  it('exposes all launcher modes for Terminal/Missões/Enxame/Board/Memória/Skills/Marketplace', () => {
     const ids = LAUNCHER_MODES.map((m) => m.id);
     expect(ids).toEqual([
       'terminal',
@@ -36,6 +36,7 @@ describe('progressive onboarding contracts', () => {
       'board',
       'memory',
       'skills',
+      'marketplace',
     ]);
     expect(LAUNCHER_MODES.map((m) => m.label)).toEqual([
       'Terminal',
@@ -44,6 +45,7 @@ describe('progressive onboarding contracts', () => {
       'Board',
       'Memória',
       'Skills',
+      'Marketplace',
     ]);
   });
 

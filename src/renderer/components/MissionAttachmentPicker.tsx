@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { PixelIcon } from './PixelIcon';
 import {
+  consumeDroppedFiles,
   filesFromClipboardData,
   formatMissionAttachmentSize,
   stageMissionAttachment,
@@ -91,6 +92,14 @@ export function MissionAttachmentPicker({
     return () => window.removeEventListener('paste', handlePaste, true);
   }, []);
 
+  // Files dropped anywhere on the shell are parked by the global drop handler
+  // (App.tsx) which then opens the wizard; pick them up on mount.
+  useEffect(() => {
+    const dropped = consumeDroppedFiles();
+    if (dropped.length > 0) void addFiles(dropped);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount
+  }, []);
+
   function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
     void addFiles(event.currentTarget.files ?? []);
     event.currentTarget.value = '';
@@ -164,7 +173,15 @@ export function MissionAttachmentPicker({
           {attachments.map((attachment) => (
             <li key={attachment.id} className="mission-attachments__item">
               <span className="mission-attachments__kind" aria-hidden="true">
-                <PixelIcon name={attachment.kind === 'image' ? 'vision' : 'mic'} />
+                <PixelIcon
+                  name={
+                    attachment.kind === 'image'
+                      ? 'vision'
+                      : attachment.kind === 'audio'
+                        ? 'mic'
+                        : 'files'
+                  }
+                />
               </span>
               <span className="mission-attachments__file">
                 <strong title={attachment.name}>{attachment.name}</strong>
@@ -192,7 +209,7 @@ export function MissionAttachmentPicker({
       )}
       {!dragActive && attachments.length === 0 && (
         <p className="mission-attachments__empty">
-          PNG, JPG, WEBP, MP3, M4A, WAV — cole o print ({PASTE_SHORTCUT}) ou
+          PNG, JPG, MP3, WAV, TS, PY, MD… — cole o print ({PASTE_SHORTCUT}) ou
           arraste o arquivo.
         </p>
       )}

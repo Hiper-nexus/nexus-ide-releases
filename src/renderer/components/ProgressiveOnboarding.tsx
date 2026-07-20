@@ -384,5 +384,6 @@ function mapLauncherToWork(
   id: (typeof LAUNCHER_MODES)[number]['id'],
 ): WorkMode {
   if (id === 'terminal') return 'terminal-only';
+  if (id === 'marketplace') return 'skills';
   return id;
 }

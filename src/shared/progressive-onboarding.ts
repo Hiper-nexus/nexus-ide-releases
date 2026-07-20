@@ -76,6 +76,11 @@ export const LAUNCHER_MODES = [
     label: 'Skills',
     description: 'Catálogo de skills',
   },
+  {
+    id: 'marketplace' as const,
+    label: 'Marketplace',
+    description: 'Catálogo de agents e skills — instalar em 1 clique',
+  },
 ];
 
 export function previewLaunchSummary(plan: ProgressiveLaunch): string {

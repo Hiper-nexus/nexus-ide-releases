@@ -2,9 +2,10 @@
  * Contextual-panel tab bodies for product wave: Search, Skills, Memory, Editor.
  * Uses window.nexus.product / searchMixer IPC. Fail-soft when API missing.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { McpAcrossToolsReport } from '../../../shared/mcp-across-tools';
 import { McpAcrossToolsMatrix } from '../McpAcrossToolsMatrix';
+import { MarketplaceSection } from '../settings/MarketplaceSection';
 import {
   exportToolsFromPlan,
   McpAcrossSyncControls,
@@ -142,6 +143,14 @@ export function SkillsPanelBody() {
   );
 }
 
+export function MarketplacePanelBody() {
+  return (
+    <div className="product-pane product-pane--marketplace" data-testid="product-marketplace">
+      <MarketplaceSection />
+    </div>
+  );
+}
+
 export function MemoryPanelBody() {
   const [notes, setNotes] = useState<
     Array<{ id: string; title: string; body: string; kind?: string }>
@@ -227,6 +236,57 @@ export function EditorPanelBody() {
   const [contentHash, setContentHash] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [cursor, setCursor] = useState({ line: 1, col: 1 });
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const gutterRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * WCAG 2.1.2 (no keyboard trap): Tab normally indents, which would trap
+   * focus. Escape arms a one-shot so the following Tab moves focus out —
+   * the WAI-ARIA recommended escape hatch for editors.
+   */
+  const escArmedRef = useRef(false);
+
+  const lineCount = useMemo(() => content.split('\n').length, [content]);
+
+  const updateCursor = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const upTo = el.value.slice(0, el.selectionStart);
+    const line = upTo.split('\n').length;
+    const col = el.selectionStart - upTo.lastIndexOf('\n');
+    setCursor({ line, col });
+  };
+
+  const syncGutter = () => {
+    if (gutterRef.current && textareaRef.current) {
+      gutterRef.current.scrollTop = textareaRef.current.scrollTop;
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Escape') {
+      escArmedRef.current = true;
+      return;
+    }
+    if (e.key !== 'Tab') {
+      escArmedRef.current = false;
+      return;
+    }
+    if (escArmedRef.current) {
+      escArmedRef.current = false;
+      return;
+    }
+    e.preventDefault();
+    const el = e.currentTarget;
+    const { selectionStart, selectionEnd, value } = el;
+    const next = value.slice(0, selectionStart) + '  ' + value.slice(selectionEnd);
+    setContent(next);
+    setDirty(true);
+    requestAnimationFrame(() => {
+      el.selectionStart = el.selectionEnd = selectionStart + 2;
+      updateCursor();
+    });
+  };
 
   const open = async () => {
     if (!relPath.trim()) return;
@@ -252,6 +312,7 @@ export function EditorPanelBody() {
       setContent(doc.content ?? '');
       setContentHash(doc.contentHash ?? null);
       setDirty(false);
+      setCursor({ line: 1, col: 1 });
       setStatus(`Aberto ${doc.path ?? relPath}`);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'falha ao abrir');
@@ -284,6 +345,7 @@ export function EditorPanelBody() {
           className="product-pane__input"
           value={relPath}
           onChange={(e) => setRelPath(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && void open()}
           placeholder="caminho/relativo.ts"
           aria-label="Caminho relativo"
         />
@@ -300,16 +362,40 @@ export function EditorPanelBody() {
         </button>
       </div>
       {status && <p className="product-pane__meta">{status}</p>}
-      <textarea
-        className="product-pane__textarea product-pane__textarea--editor"
-        value={content}
-        onChange={(e) => {
-          setContent(e.target.value);
-          setDirty(true);
-        }}
-        spellCheck={false}
-        aria-label="Conteúdo do editor"
-      />
+      <div className="editor-code">
+        <div className="editor-code__gutter" ref={gutterRef} aria-hidden="true">
+          {Array.from({ length: lineCount }, (_, i) => (
+            <span key={i} className="editor-code__line-no">
+              {i + 1}
+            </span>
+          ))}
+        </div>
+        <textarea
+          ref={textareaRef}
+          className="product-pane__textarea product-pane__textarea--editor editor-code__textarea"
+          value={content}
+          onChange={(e) => {
+            setContent(e.target.value);
+            setDirty(true);
+            updateCursor();
+          }}
+          onKeyDown={handleKeyDown}
+          onScroll={syncGutter}
+          onSelect={updateCursor}
+          onClick={updateCursor}
+          spellCheck={false}
+          wrap="off"
+          aria-label="Conteúdo do editor"
+        />
+      </div>
+      <div className="editor-code__status" aria-live="polite">
+        <span>
+          Ln {cursor.line}, Col {cursor.col}
+        </span>
+        <span>{lineCount} linhas</span>
+        <span>{content.length} chars</span>
+        {dirty && <span className="editor-code__dirty">não salvo</span>}
+      </div>
     </div>
   );
 }

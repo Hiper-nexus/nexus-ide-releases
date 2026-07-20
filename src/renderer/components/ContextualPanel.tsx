@@ -24,6 +24,12 @@ export interface ContextualPanelProps {
   readonly children?: Partial<Record<ContextualTab, React.ReactNode>>;
   /** Inject storage for tests; defaults to localStorage when available. */
   readonly storage?: KeyValueStorage | null;
+  /**
+   * Tabs relevant to the active launcher mode. When provided, irrelevant tabs
+   * are hidden to reduce clutter; the active tab always stays visible so the
+   * user never loses their current context.
+   */
+  readonly relevantTabs?: readonly ContextualTab[];
 }
 
 function initialState(
@@ -57,6 +63,7 @@ export function ContextualPanel({
   onStateChange,
   children,
   storage: storageProp,
+  relevantTabs,
 }: ContextualPanelProps) {
   const storage =
     storageProp === undefined ? browserLocalStorage() : storageProp;
@@ -132,6 +139,11 @@ export function ContextualPanel({
 
   const copy = CONTEXTUAL_TAB_COPY[state.activeTab];
   const body = children?.[state.activeTab];
+  const visibleTabs = relevantTabs
+    ? CONTEXTUAL_TABS.filter(
+        (tab) => tab === state.activeTab || relevantTabs.includes(tab),
+      )
+    : CONTEXTUAL_TABS;
 
   return (
     <aside
@@ -141,7 +153,7 @@ export function ContextualPanel({
       aria-label="Painel contextual"
     >
       <div className="ctx-panel__tabs" role="tablist" aria-label="Abas do painel">
-        {CONTEXTUAL_TABS.map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab}
             type="button"
