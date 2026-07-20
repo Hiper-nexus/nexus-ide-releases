@@ -1,7 +1,11 @@
 import path from 'node:path';
 import { z } from 'zod';
 import type { ProjectExecutionScope } from '../../shared/types';
-import type { MediaUsageTotals } from '../../shared/media-types';
+import type {
+  MediaArtifactInfo,
+  MediaKind,
+  MediaUsageTotals,
+} from '../../shared/media-types';
 import {
   ScopedStoreBinding,
   ScopedStoreCorruptionError,
@@ -141,6 +145,48 @@ export class ScopedMediaUsageStore {
 
   totals(): MediaUsageTotals {
     return this.#totals();
+  }
+
+  /** Newest-first artifact list for the Estúdio de Mídia gallery. */
+  listRecent(limit = 50): MediaArtifactInfo[] {
+    const capped = Math.max(1, Math.min(200, Math.trunc(limit)));
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT id, media_type, provider, storage_key, metadata_json,
+                created_at
+         FROM media_artifacts
+         ORDER BY created_at DESC, rowid DESC
+         LIMIT ?`,
+      )
+      .all(capped) as Array<{
+      id: string;
+      media_type: string;
+      provider: string;
+      storage_key: string;
+      metadata_json: string;
+      created_at: number;
+    }>;
+    return rows.map((row) => {
+      let metadata: MediaMetadata;
+      try {
+        metadata = mediaMetadataSchema.parse(JSON.parse(row.metadata_json));
+      } catch (error) {
+        throw new ScopedStoreCorruptionError('media artifact metadata', {
+          cause: error,
+        });
+      }
+      return {
+        id: row.id,
+        kind: row.media_type as MediaKind,
+        provider: row.provider,
+        model: metadata.model,
+        storageKey: row.storage_key,
+        costUsd: metadata.estimatedCostUsd,
+        durationMs: metadata.durationMs,
+        createdAt: row.created_at,
+      };
+    });
   }
 
   totalsByMission(rawMissionId: string): MediaUsageTotals {

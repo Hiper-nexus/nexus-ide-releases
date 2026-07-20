@@ -73,28 +73,41 @@ const SEEDREAM5_ASPECTS = new Set([
   '21:9',
 ]);
 
-/** Timeout on a long-running Replicate/Google media job (image or video). */
+/**
+ * Timeout on a long-running Replicate/Google media job (image or video).
+ * `recoverable` controls whether the message promises resume via recoverJobId
+ * — only video jobs are persisted, so only they may advertise recovery.
+ */
 export class MediaJobTimeoutError extends Error {
   readonly jobId: string;
   readonly provider: string;
+  readonly recoverable: boolean;
 
-  constructor(provider: string, jobId: string) {
+  constructor(provider: string, jobId: string, recoverable = true) {
     super(
-      `${provider}: timeout esperando job ${jobId} — chame de novo com ` +
-        `recoverJobId="${jobId}" para retomar sem pagar duas vezes`,
+      recoverable
+        ? `${provider}: timeout esperando job ${jobId} — chame de novo com ` +
+            `recoverJobId="${jobId}" para retomar sem pagar duas vezes`
+        : `${provider}: timeout esperando job ${jobId} — a prediction pode ` +
+            'ter completado no provider; reenvie a geração',
     );
     this.name = 'MediaJobTimeoutError';
     this.jobId = jobId;
     this.provider = provider;
+    this.recoverable = recoverable;
   }
 }
 
-/** @deprecated alias — prefer MediaJobTimeoutError */
-export class MediaVideoTimeoutError extends MediaJobTimeoutError {
-  constructor(provider: string, jobId: string) {
-    super(provider, jobId);
-    this.name = 'MediaVideoTimeoutError';
+/** Local abort (mission preempt / Estúdio cancel button) — not an error. */
+export class MediaAbortError extends Error {
+  constructor() {
+    super('geração de mídia cancelada');
+    this.name = 'MediaAbortError';
   }
+}
+
+export function throwIfMediaAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new MediaAbortError();
 }
 
 export interface ImageRequest {
@@ -118,6 +131,8 @@ export interface ImageRequest {
    * (Official/Replicate schema — not 4K on 5.0 Pro.)
    */
   size?: string;
+  /** Aborted on mission preempt / Estúdio cancel — polling stops early. */
+  signal?: AbortSignal;
 }
 
 export interface VideoRequest {
@@ -140,6 +155,8 @@ export interface VideoRequest {
   referenceImagePaths?: string[];
   /** Resume a timed-out prediction without resubmitting. */
   recoverJobId?: string;
+  /** Aborted on mission preempt / Estúdio cancel — polling stops early. */
+  signal?: AbortSignal;
 }
 
 export interface AudioRequest {
@@ -149,6 +166,8 @@ export interface AudioRequest {
   voiceId?: string;
   outPath?: string;
   baseDir: string;
+  /** Aborted on mission preempt — checked before the provider call. */
+  signal?: AbortSignal;
 }
 
 function requireKey(def: MediaProviderDef, deps: MediaDeps): string {
@@ -411,6 +430,9 @@ async function replicateImage(
     deps,
     created,
     def.id,
+    // Image jobs are never persisted — recovery is video-only, so the
+    // timeout message must not promise a recoverJobId that cannot work.
+    { recoverable: false, signal: req.signal },
   );
   return downloadProviderAsset(url, 'replicate-image', {
     fetchFn: deps.fetchFn,
@@ -424,6 +446,7 @@ export async function generateImage(
   deps: MediaDeps = defaultMediaDeps(),
 ): Promise<MediaGenerationResult> {
   const startedAt = deps.now();
+  throwIfMediaAborted(req.signal);
   const def = resolveMediaProvider(
     'image',
     req.provider,
@@ -436,17 +459,27 @@ export async function generateImage(
   const image = req.imagePath
     ? readMediaInput(req.imagePath, req.baseDir)
     : undefined;
-  const seedreamCap =
+
+  // Extra reference images are Seedream-only (image_input array). Reading
+  // them for other providers was wasted I/O that silently dropped the
+  // capability request — fail loud instead (same contract as the model
+  // whitelist).
+  const extraRefPaths = req.referenceImagePaths ?? [];
+  if (extraRefPaths.length > 0 && def.id !== 'replicate-image') {
+    throw new Error(
+      `referenceImagePaths só é suportado em replicate-image (Seedream); ` +
+        `${def.id} aceita apenas imagePath (1 imagem de edição)`,
+    );
+  }
+  const seedreamImages =
     def.id === 'replicate-image'
-      ? MAX_SEEDREAM_REFERENCE_IMAGES
-      : MAX_REFERENCE_IMAGES;
-  const extraRefs = (req.referenceImagePaths ?? [])
-    .slice(0, seedreamCap)
-    .map((p) => readMediaInput(p, req.baseDir));
-  const seedreamImages = [
-    ...(image ? [image] : []),
-    ...extraRefs,
-  ].slice(0, seedreamCap);
+      ? [
+          ...(image ? [image] : []),
+          ...extraRefPaths
+            .slice(0, MAX_SEEDREAM_REFERENCE_IMAGES)
+            .map((p) => readMediaInput(p, req.baseDir)),
+        ].slice(0, MAX_SEEDREAM_REFERENCE_IMAGES)
+      : [];
 
   let data: Buffer;
   if (def.id === 'google-image') {
@@ -569,6 +602,7 @@ async function pollReplicatePrediction(
   deps: MediaDeps,
   initial?: { status?: string; output?: string | string[]; error?: string },
   providerLabel: string = 'replicate-video',
+  opts: { recoverable?: boolean; signal?: AbortSignal } = {},
 ): Promise<string> {
   let prediction = {
     id: jobId,
@@ -581,6 +615,7 @@ async function pollReplicatePrediction(
     prediction.status !== 'succeeded' && poll < REPLICATE_MAX_POLLS;
     poll += 1
   ) {
+    throwIfMediaAborted(opts.signal);
     if (prediction.status === 'failed' || prediction.status === 'canceled') {
       throw new Error(
         `${providerLabel}: prediction ${prediction.status} — ${prediction.error ?? 'sem causa'}`,
@@ -595,7 +630,11 @@ async function pollReplicatePrediction(
     prediction = (await res.json()) as typeof prediction;
   }
   if (prediction.status !== 'succeeded') {
-    throw new MediaJobTimeoutError(providerLabel, jobId);
+    throw new MediaJobTimeoutError(
+      providerLabel,
+      jobId,
+      opts.recoverable ?? true,
+    );
   }
   const url = Array.isArray(prediction.output)
     ? prediction.output[0]
@@ -631,6 +670,7 @@ async function generateVideoReplicate(
         deps,
         undefined,
         def.id,
+        { signal: req.signal },
       );
       const data = await downloadProviderAsset(url, 'replicate-video', {
         fetchFn: deps.fetchFn,
@@ -650,6 +690,10 @@ async function generateVideoReplicate(
       }, saved.jobId);
     } catch (err) {
       if (err instanceof MediaJobTimeoutError) throw err;
+      if (err instanceof MediaJobTimeoutError) throw err;
+      // Abort ≠ failure: the provider job keeps running and stays
+      // recoverable via recoverJobId — leave the record 'pending'.
+      if (err instanceof MediaAbortError) throw err;
       saveVideoJob(req.baseDir, { ...saved, status: 'failed' });
       throw err;
     }
@@ -725,6 +769,7 @@ async function generateVideoReplicate(
       deps,
       created,
       def.id,
+      { signal: req.signal },
     );
     const data = await downloadProviderAsset(url, 'replicate-video', {
       fetchFn: deps.fetchFn,
@@ -738,6 +783,9 @@ async function generateVideoReplicate(
     }, created.id);
   } catch (err) {
     if (err instanceof MediaJobTimeoutError) throw err;
+    // Abort ≠ failure: the provider job keeps running and stays
+    // recoverable via recoverJobId — leave the record 'pending'.
+    if (err instanceof MediaAbortError) throw err;
     saveVideoJob(req.baseDir, { ...jobRecord, status: 'failed' });
     throw err;
   }
@@ -813,6 +861,7 @@ async function pollGoogleVeoOperation(
   operationName: string,
   key: string,
   deps: MediaDeps,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   // operation.name is like "operations/xyz" — poll relative to GEMINI_BASE.
   const pollPath = operationName.startsWith('http')
@@ -821,6 +870,7 @@ async function pollGoogleVeoOperation(
 
   let body: Record<string, unknown> = {};
   for (let poll = 0; poll < GOOGLE_VIDEO_MAX_POLLS; poll += 1) {
+    throwIfMediaAborted(signal);
     if (poll > 0) await deps.sleep(GOOGLE_VIDEO_POLL_MS);
     const res = await deps.fetchFn(pollPath, {
       headers: { 'x-goog-api-key': key },
@@ -886,7 +936,12 @@ async function generateVideoGoogle(
       );
     }
     try {
-      const done = await pollGoogleVeoOperation(saved.pollTarget, key, deps);
+      const done = await pollGoogleVeoOperation(
+        saved.pollTarget,
+        key,
+        deps,
+        req.signal,
+      );
       const extracted = extractGoogleVeoVideo(done);
       const data = await downloadGoogleVeoBytes(extracted, key, deps);
       const dest = resolveOutPath(
@@ -902,6 +957,10 @@ async function generateVideoGoogle(
       }, saved.jobId);
     } catch (err) {
       if (err instanceof MediaJobTimeoutError) throw err;
+      if (err instanceof MediaJobTimeoutError) throw err;
+      // Abort ≠ failure: the provider job keeps running and stays
+      // recoverable via recoverJobId — leave the record 'pending'.
+      if (err instanceof MediaAbortError) throw err;
       saveVideoJob(req.baseDir, { ...saved, status: 'failed' });
       throw err;
     }
@@ -956,7 +1015,12 @@ async function generateVideoGoogle(
   saveVideoJob(req.baseDir, jobRecord);
 
   try {
-    const done = await pollGoogleVeoOperation(started.name, key, deps);
+    const done = await pollGoogleVeoOperation(
+      started.name,
+      key,
+      deps,
+      req.signal,
+    );
     const extracted = extractGoogleVeoVideo(done);
     const data = await downloadGoogleVeoBytes(extracted, key, deps);
     writeMediaOutput(outPath, req.baseDir, data);
@@ -966,6 +1030,9 @@ async function generateVideoGoogle(
     }, started.name);
   } catch (err) {
     if (err instanceof MediaJobTimeoutError) throw err;
+    // Abort ≠ failure: the provider job keeps running and stays
+    // recoverable via recoverJobId — leave the record 'pending'.
+    if (err instanceof MediaAbortError) throw err;
     saveVideoJob(req.baseDir, { ...jobRecord, status: 'failed' });
     throw err;
   }
@@ -976,6 +1043,7 @@ export async function generateVideo(
   deps: MediaDeps = defaultMediaDeps(),
 ): Promise<MediaGenerationResult> {
   const startedAt = deps.now();
+  throwIfMediaAborted(req.signal);
 
   // recoverJobId may imply provider from the saved job.
   let providerId = req.provider;
@@ -1009,6 +1077,7 @@ export async function generateAudio(
   deps: MediaDeps = defaultMediaDeps(),
 ): Promise<MediaGenerationResult> {
   const startedAt = deps.now();
+  throwIfMediaAborted(req.signal);
   const def = resolveMediaProvider('audio', req.provider, (d) =>
     Boolean(deps.getKey(d)),
   );

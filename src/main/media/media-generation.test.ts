@@ -410,12 +410,8 @@ describe('generateVideo', () => {
   });
 
   it('replicate: timeout inclui recoverJobId e persiste o job', async () => {
-    // Create + 90 failed polls of "processing" would be huge; force one
-    // create then status that never succeeds by emptying the queue mid-poll.
-    // Instead: create returns id, first poll still processing, then throw via
-    // custom deps with limited responses that keep processing until max polls
-    // is hit — too many. Unit-test MediaVideoTimeoutError path by mocking
-    // poll count is expensive. Simpler: save job, recover path succeeds.
+    // Polling 90× até o timeout é custoso; o caminho de recovery é coberto
+    // aqui: job salvo + recoverJobId retoma sem recriar a prediction.
     const { deps, calls } = fakeDeps([
       { json: { id: 'pred-recover', status: 'starting' } },
       {
@@ -678,5 +674,126 @@ describe('generateAudio', () => {
     expect(calls[0].url).toContain('/v1/text-to-speech/');
     const headers = calls[0].init?.headers as Record<string, string>;
     expect(headers['xi-api-key']).toBe('test-key');
+  });
+});
+
+describe('estimateCost — vídeo/imagem nunca invisível a $0', () => {
+  it('replicate-video estima por segundo com fallback sensato', () => {
+    const def = findMediaProvider('replicate-video')!;
+    expect(def.estimateCost({ model: 'google/veo-3.1', seconds: 10 })).toBe(4);
+    // modelo sem tabela → fallback por segundo × default 5s
+    expect(def.estimateCost({ model: 'kwaivgi/kling-v2.1' })).toBe(0.25);
+  });
+
+  it('google-video estima por segundo (default 8s)', () => {
+    const def = findMediaProvider('google-video')!;
+    expect(
+      def.estimateCost({ model: 'veo-3.1-generate-preview', seconds: 8 }),
+    ).toBe(3.2);
+    expect(
+      def.estimateCost({ model: 'veo-2.0-generate-001', seconds: 8 }),
+    ).toBe(2.8);
+  });
+
+  it('replicate-image (Seedream) tem estimativa flat por modelo', () => {
+    const def = findMediaProvider('replicate-image')!;
+    expect(def.estimateCost({ model: 'bytedance/seedream-5-pro' })).toBe(0.04);
+    expect(def.estimateCost({ model: 'bytedance/seedream-3' })).toBe(0.03);
+  });
+});
+
+describe('MediaJobTimeoutError — hint de recovery só quando recuperável', () => {
+  it('vídeo (default) promete recoverJobId', () => {
+    const err = new MediaJobTimeoutError('replicate-video', 'job-1');
+    expect(err.recoverable).toBe(true);
+    expect(err.message).toContain('recoverJobId="job-1"');
+  });
+
+  it('imagem não promete recoverJobId (job nunca é persistido)', () => {
+    const err = new MediaJobTimeoutError('replicate-image', 'job-2', false);
+    expect(err.recoverable).toBe(false);
+    expect(err.message).not.toContain('recoverJobId=');
+    expect(err.message).toContain('job-2');
+  });
+});
+
+describe('generateImage — referenceImagePaths fail-loud fora do Seedream', () => {
+  it('google-image rejeita refs extras em vez de descartar em silêncio', async () => {
+    const { deps } = fakeDeps([]);
+    await expect(
+      generateImage(
+        {
+          prompt: 'x',
+          baseDir: dir,
+          provider: 'google-image',
+          referenceImagePaths: ['a.png'],
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/referenceImagePaths só é suportado em replicate-image/);
+  });
+
+  it('openai-image idem', async () => {
+    const { deps } = fakeDeps([]);
+    await expect(
+      generateImage(
+        {
+          prompt: 'x',
+          baseDir: dir,
+          provider: 'openai-image',
+          referenceImagePaths: ['a.png', 'b.png'],
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/referenceImagePaths só é suportado em replicate-image/);
+  });
+});
+
+describe('cancelamento (AbortSignal)', () => {
+  it('generateImage aborta antes de chamar o provider', async () => {
+    const { deps, calls } = fakeDeps([]);
+    await expect(
+      generateImage(
+        { prompt: 'x', baseDir: dir, signal: AbortSignal.abort() },
+        deps,
+      ),
+    ).rejects.toThrow(/cancelada/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('generateVideo para de pollar quando abortado e NÃO marca o job failed', async () => {
+    const controller = new AbortController();
+    const { deps } = fakeDeps([
+      { json: { id: 'pred-abort', status: 'starting' } },
+      { json: { id: 'pred-abort', status: 'processing' } },
+    ]);
+    // aborta durante o primeiro sleep do poll loop
+    deps.sleep = async () => {
+      controller.abort();
+    };
+    await expect(
+      generateVideo(
+        {
+          prompt: 'x',
+          baseDir: dir,
+          provider: 'replicate-video',
+          signal: controller.signal,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/cancelada/);
+    // abort ≠ failure: o job segue pendente e recuperável
+    expect(getVideoJob(dir, 'pred-abort')?.status).toBe('pending');
+  });
+
+  it('generateAudio aborta antes do TTS', async () => {
+    const { deps, calls } = fakeDeps([]);
+    await expect(
+      generateAudio(
+        { text: 'x', baseDir: dir, signal: AbortSignal.abort() },
+        deps,
+      ),
+    ).rejects.toThrow(/cancelada/);
+    expect(calls).toHaveLength(0);
   });
 });

@@ -54,7 +54,8 @@ const imageGenerateTool: McpToolDef = {
     'seedream, seedream-5-pro, seedream5-0-pro, seedream-lite). ' +
     'Seedream aspectRatio: match_input_image|1:1|4:3|3:4|16:9|9:16|3:2|2:3|21:9. ' +
     'Seedream size: 1K|2K only (default 2K). imagePath + ' +
-    'referenceImagePaths[] → image_input (1–10 refs). ' +
+    'referenceImagePaths[] → image_input (1–10 refs, Seedream ONLY — ' +
+    'google/openai-image accept just imagePath). ' +
     'Paths stay in the open workspace. Missing key → STOP and report ' +
     '"configure o provider em Settings → Mídia".',
   inputSchema: {
@@ -78,7 +79,7 @@ const imageGenerateTool: McpToolDef = {
     required: ['prompt'],
   },
   requiresConfirm: true,
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const result = await generateImage({
       prompt: requireStr(args, 'prompt'),
       provider: str(args, 'provider'),
@@ -89,6 +90,7 @@ const imageGenerateTool: McpToolDef = {
       aspectRatio: str(args, 'aspectRatio'),
       size: str(args, 'size'),
       baseDir: baseDirFor(ctx),
+      signal: invocation?.signal,
     });
     await recordMediaUsage(result, ctx);
     return result;
@@ -132,7 +134,7 @@ const videoGenerateTool: McpToolDef = {
     required: [],
   },
   requiresConfirm: true,
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const recoverJobId = str(args, 'recoverJobId');
     const prompt = str(args, 'prompt');
     if (!recoverJobId && !prompt) {
@@ -152,6 +154,7 @@ const videoGenerateTool: McpToolDef = {
         referenceImagePaths: strArray(args, 'referenceImagePaths'),
         recoverJobId,
         baseDir: baseDirFor(ctx),
+        signal: invocation?.signal,
       });
       await recordMediaUsage(result, ctx);
       return result;
@@ -189,7 +192,7 @@ const audioGenerateTool: McpToolDef = {
     required: ['text'],
   },
   requiresConfirm: true,
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const result = await generateAudio({
       text: requireStr(args, 'text'),
       provider: str(args, 'provider'),
@@ -197,6 +200,7 @@ const audioGenerateTool: McpToolDef = {
       voiceId: str(args, 'voiceId'),
       outPath: str(args, 'outPath'),
       baseDir: baseDirFor(ctx),
+      signal: invocation?.signal,
     });
     await recordMediaUsage(result, ctx);
     return result;

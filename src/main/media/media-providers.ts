@@ -32,6 +32,59 @@ export interface MediaProviderDef {
   }): number | null;
 }
 
+/**
+ * Rough per-unit estimates (USD) from public list prices, 2026-07. Provider
+ * billing is authoritative — these exist so cost totals never read $0 for the
+ * most expensive kind (video). Update when pricing changes.
+ */
+const SEEDREAM_IMAGE_USD: Record<string, number> = {
+  'bytedance/seedream-5-pro': 0.04,
+  'bytedance/seedream-5-lite': 0.02,
+  'bytedance/seedream-4.5': 0.035,
+  'bytedance/seedream-4': 0.03,
+  'bytedance/seedream-3': 0.03,
+};
+
+/** Per-second-of-video rough estimates. */
+const REPLICATE_VIDEO_USD_PER_SEC: Record<string, number> = {
+  'bytedance/seedance-2.0': 0.12,
+  'bytedance/seedance-2.0-fast': 0.06,
+  'bytedance/seedance-2.0-mini': 0.04,
+  'google/veo-3.1': 0.4,
+  'google/veo-3.1-fast': 0.15,
+  'google/veo-3.1-lite': 0.1,
+  'kwaivgi/kling-v3-video': 0.09,
+  'kwaivgi/kling-v3-omni-video': 0.12,
+  'kwaivgi/kling-v2.5-turbo-pro': 0.07,
+  'kwaivgi/kling-v2.1': 0.05,
+  'minimax/hailuo-2.3': 0.05,
+  'wan-video/wan-2.5-i2v': 0.05,
+  'openai/sora-2': 0.1,
+  'openai/sora-2-pro': 0.3,
+  'runwayml/gen-4.5': 0.05,
+  'luma/ray-3.2': 0.06,
+};
+
+/** Per-second rough estimates for native Veo (Google AI Studio billing). */
+const GOOGLE_VIDEO_USD_PER_SEC: Record<string, number> = {
+  'veo-3.1-generate-preview': 0.4,
+  'veo-3.1-fast-generate-preview': 0.15,
+  'veo-3.1-lite-generate-preview': 0.1,
+  'veo-2.0-generate-001': 0.35,
+};
+
+function perSecondEstimate(
+  table: Record<string, number>,
+  fallbackPerSec: number,
+  fallbackSeconds: number,
+): MediaProviderDef['estimateCost'] {
+  return ({ model, seconds }) => {
+    const secs = seconds && seconds > 0 ? seconds : fallbackSeconds;
+    const perSec = table[model] ?? fallbackPerSec;
+    return Number((perSec * secs).toFixed(4));
+  };
+}
+
 export const MEDIA_PROVIDERS: MediaProviderDef[] = [
   {
     id: 'google-image',
@@ -67,7 +120,8 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
       'bytedance/seedream-4',
       'bytedance/seedream-3',
     ],
-    estimateCost: () => null,
+    estimateCost: ({ model }) =>
+      SEEDREAM_IMAGE_USD[model] ?? 0.035,
   },
   {
     id: 'replicate-video',
@@ -100,7 +154,7 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
       'runwayml/gen-4.5',
       'luma/ray-3.2',
     ],
-    estimateCost: () => null,
+    estimateCost: perSecondEstimate(REPLICATE_VIDEO_USD_PER_SEC, 0.1, 5),
   },
   {
     id: 'google-video',
@@ -114,7 +168,7 @@ export const MEDIA_PROVIDERS: MediaProviderDef[] = [
       'veo-3.1-lite-generate-preview',
       'veo-2.0-generate-001',
     ],
-    estimateCost: () => null,
+    estimateCost: perSecondEstimate(GOOGLE_VIDEO_USD_PER_SEC, 0.3, 8),
   },
   {
     id: 'elevenlabs',

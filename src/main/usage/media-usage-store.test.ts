@@ -238,3 +238,31 @@ describe.skipIf(!sqliteAvailable)('ScopedMediaUsageStore', () => {
     ).toThrow(/read-only/i);
   });
 });
+
+describe.skipIf(!sqliteAvailable)('ScopedMediaUsageStore.listRecent', () => {
+  it('retorna artefatos parseados, mais novos primeiro, com cap', () => {
+    const { baseDir, scope } = fixture();
+    const runtimeManager = manager(baseDir);
+    const store = createScopedMediaUsageStore(runtimeManager, scope);
+    for (let i = 0; i < 3; i += 1) {
+      store.record({
+        kind: i === 2 ? 'video' : 'image',
+        provider: 'replicate-video',
+        model: `model-${i}`,
+        storageKey: `file-${i}.mp4`,
+        sha256: String(i).repeat(64).slice(0, 64),
+        costUsd: i === 1 ? null : 0.5,
+        durationMs: 100 + i,
+      });
+    }
+    const list = store.listRecent(10);
+    expect(list).toHaveLength(3);
+    expect(list[0].storageKey).toBe('file-2.mp4');
+    expect(list[0].kind).toBe('video');
+    expect(list[0].model).toBe('model-2');
+    expect(list[0].costUsd).toBe(0.5);
+    expect(list[1].costUsd).toBeNull();
+    expect(list[2].durationMs).toBe(100);
+    expect(store.listRecent(2)).toHaveLength(2);
+  });
+});
