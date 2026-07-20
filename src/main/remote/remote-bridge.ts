@@ -610,9 +610,14 @@ async function confirmDestructiveMobileRpc(
   // no órfão. Amarre o ciclo de vida do flag ao diálogo, não ao race — efeito
   // colateral desejável: após auto-deny, novos RPCs seguem negados (fail-closed)
   // até o usuário dispensar o órfão.
-  void shown.finally(() => {
-    confirmDialogInFlight = false;
-  });
+  void shown
+    .finally(() => {
+      confirmDialogInFlight = false;
+    })
+    .catch(() => {
+      // showMessageBox rejeitou (janela morta etc.) — o finally acima já rearmou
+      // o flag; este catch só evita um unhandledRejection na cadeia derivada.
+    });
   // Auto-nega após o timeout para não segurar o RPC indefinidamente se o
   // diálogo ficar órfão (sem janela visível / usuário ausente).
   let timer: ReturnType<typeof setTimeout> | undefined;
