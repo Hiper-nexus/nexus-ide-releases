@@ -39,7 +39,11 @@ export function parseAgentIdentities(output: string): string[] {
   const fingerprints: string[] = [];
   for (const line of output.split('\n')) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    // "The agent has no identities" nunca chega aqui no fluxo real (ssh-add sai
+    // com status ≠ 0 → catch), mas o parser é puro/exportado: se alimentado com
+    // essa linha, 'agent' decodificaria como base64 e fabricaria um fingerprint
+    // bogus — uma allowlist não-vazia FALSA que driblaria o fail-closed.
+    if (!trimmed || trimmed.startsWith('The agent has no identities')) continue;
     // Format: "<key-type> <base64-blob> <comment>"
     const parts = trimmed.split(/\s+/);
     if (parts.length < 2) continue;

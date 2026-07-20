@@ -59,9 +59,14 @@ export function buildAuthRouter(deps: AuthDeps): Router {
     // M11: the desktop MAY send its own PKCE code_challenge so the deep-link
     // auth-code is bound to the initiating client (not just any app that
     // intercepts the custom-scheme callback). Valida o formato S256 (43 chars
-    // base64url) e rejeita lixo (ex.: array via ?code_challenge=a&code_challenge=b)
-    // antes de gravar no banco.
+    // base64url) e rejeita lixo antes de gravar no banco.
     const rawChallenge = req.query.code_challenge;
+    // Array (?code_challenge=a&code_challenge=b) ou tipo não-string: REJEITA em
+    // vez de degradar silenciosamente para "sem challenge" — degradar perderia
+    // o binding PKCE sem avisar o cliente.
+    if (rawChallenge !== undefined && typeof rawChallenge !== 'string') {
+      return res.status(400).json({ ok: false, error: 'code_challenge inválido' });
+    }
     const codeChallenge =
       typeof rawChallenge === 'string' && rawChallenge !== '' ? rawChallenge : undefined;
     if (codeChallenge && !CODE_CHALLENGE_RE.test(codeChallenge)) {

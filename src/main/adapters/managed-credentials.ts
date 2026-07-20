@@ -679,6 +679,10 @@ export function trackManagedSession(
   adapterId: FileAuthAdapterId,
   accountId: string,
 ): void {
+  // Guarda defensiva: re-track do mesmo sessionId não pode incrementar o
+  // refcount de novo (senão o auth.json nunca mais seria removido — perda
+  // silenciosa da garantia M1). Callers atuais trackeiam uma vez por spawn.
+  if (managedSessionRegistry.has(sessionId)) return;
   managedSessionRegistry.set(sessionId, { adapterId, accountId });
   const key = accountKey({ adapterId, accountId });
   liveSessionsByAccount.set(key, (liveSessionsByAccount.get(key) ?? 0) + 1);

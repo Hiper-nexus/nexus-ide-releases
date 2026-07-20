@@ -584,40 +584,46 @@ async function confirmDestructiveMobileRpc(
     return false;
   }
   confirmDialogInFlight = true;
-  try {
-    const win = BrowserWindow.getAllWindows().find(
-      (w) => !w.isDestroyed() && w.isVisible(),
-    );
-    const opts = {
-      type: 'warning' as const,
-      buttons: ['Negar', 'Permitir'],
-      defaultId: 0,
-      cancelId: 0,
-      title: 'Ação remota destrutiva',
-      message: `Um dispositivo remoto quer executar: ${rpcType}`,
-      detail:
-        `Workspace: ${scope.rootRealPath}\n\n` +
-        'Esta é uma operação destrutiva enviada por um dispositivo pareado. ' +
-        'Permita apenas se você a iniciou conscientemente.',
-      noLink: true,
-    };
-    const shown = win
-      ? dialog.showMessageBox(win, opts)
-      : dialog.showMessageBox(opts);
-    // Auto-nega após o timeout para não segurar o RPC indefinidamente se o
-    // diálogo ficar órfão (sem janela visível / usuário ausente).
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<{ response: number }>((resolve) => {
-      timer = setTimeout(() => resolve({ response: 0 }), CONFIRM_DIALOG_TIMEOUT_MS);
-    });
-    try {
-      const result = await Promise.race([shown, timeout]);
-      return result.response === 1;
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  } finally {
+  const win = BrowserWindow.getAllWindows().find(
+    (w) => !w.isDestroyed() && w.isVisible(),
+  );
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['Negar', 'Permitir'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Ação remota destrutiva',
+    message: `Um dispositivo remoto quer executar: ${rpcType}`,
+    detail:
+      `Workspace: ${scope.rootRealPath}\n\n` +
+      'Esta é uma operação destrutiva enviada por um dispositivo pareado. ' +
+      'Permita apenas se você a iniciou conscientemente.',
+    noLink: true,
+  };
+  const shown = win
+    ? dialog.showMessageBox(win, opts)
+    : dialog.showMessageBox(opts);
+  // O flag só rearma quando o diálogo REAL fecha. Um `showMessageBox` pendente
+  // NÃO pode ser fechado programaticamente pelo Electron: se o timeout disparar
+  // primeiro, rearmar com o órfão ainda na tela permitiria empilhar um novo
+  // diálogo por cima (dialog-storm lento) e tornaria ambíguo um clique tardio
+  // no órfão. Amarre o ciclo de vida do flag ao diálogo, não ao race — efeito
+  // colateral desejável: após auto-deny, novos RPCs seguem negados (fail-closed)
+  // até o usuário dispensar o órfão.
+  void shown.finally(() => {
     confirmDialogInFlight = false;
+  });
+  // Auto-nega após o timeout para não segurar o RPC indefinidamente se o
+  // diálogo ficar órfão (sem janela visível / usuário ausente).
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<{ response: number }>((resolve) => {
+    timer = setTimeout(() => resolve({ response: 0 }), CONFIRM_DIALOG_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([shown, timeout]);
+    return result.response === 1;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

@@ -18,11 +18,11 @@ import {
 
 /**
  * Hosts válidos para checkout/portal. O backend devolve a URL direta da sessão
- * Stripe (billing-routes retorna `session.url`), então só hosts do Stripe são
- * legítimos. Defesa em profundidade: um backend comprometido pode devolver
- * https://evil.example — a allowlist de hostname bloqueia (LOW hardening).
+ * Stripe (billing-routes retorna `session.url`), que vive em `*.stripe.com` —
+ * só esse sufixo é legítimo. Não incluímos `.stripe.link`: sem um fluxo concreto
+ * que o exija, cada sufixo extra é superfície de allowlist desnecessária.
  */
-const BILLING_HOST_SUFFIXES = ['.stripe.com', '.stripe.link'];
+const BILLING_HOST_SUFFIXES = ['.stripe.com'];
 
 function isAllowedBillingHost(hostname: string): boolean {
   const h = hostname.toLowerCase();

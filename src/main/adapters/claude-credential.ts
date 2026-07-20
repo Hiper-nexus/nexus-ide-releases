@@ -56,6 +56,16 @@ export function writeActiveClaudeCredential(blob: string): boolean {
   // Quoting for security's interactive parser: double-quoted, escaping \ and ".
   const q = (s: string) => `"${s.replace(/([\\"])/g, '\\$1')}"`;
   const cmd = `add-generic-password -U -s ${q(CLAUDE_KEYCHAIN_SERVICE)} -a ${q(os.userInfo().username)} -w ${q(blob)}\n`;
+  // O parser interativo do `security` lê a linha num buffer fixo (~4 KiB). Uma
+  // linha maior é DIVIDIDA: a primeira metade EXECUTA `add-generic-password -U`
+  // com o blob TRUNCADO (sobrescrevendo a credencial viva) e o resto vira um
+  // comando inválido que faz o `security` sair com erro — ou seja, a função
+  // retornaria false mas o login real já teria sido corrompido. Recusa acima do
+  // limite seguro (blobs Claude atuais ficam bem abaixo de 2 KiB).
+  if (Buffer.byteLength(cmd, 'utf8') > 3500) {
+    console.warn('[claude-credential] credential blob too large for security -i; refusing');
+    return false;
+  }
   try {
     const res = spawnSync('security', ['-i'], {
       input: cmd,
