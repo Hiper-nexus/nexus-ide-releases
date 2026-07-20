@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/media-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { openExternalFromAnchor } from '../../lib/open-external';
+import { useMediaStudioStore } from '../../state/media-studio-store';
 import { ActionCard } from '../ActionCard';
 
 /**
@@ -195,6 +196,17 @@ export function MediaSection() {
           Carregando providers de mídia…
         </p>
       )}
+
+      <div className="action-card-row">
+        <ActionCard
+          icon="vision"
+          title="Abrir Estúdio de Mídia"
+          subtitle="Gere imagens e vídeos sem agente"
+          variant="primary"
+          size="sm"
+          onClick={() => useMediaStudioStore.getState().show()}
+        />
+      </div>
 
       {!loading && providers.length === 0 && (
         <p className="arsenal-empty">

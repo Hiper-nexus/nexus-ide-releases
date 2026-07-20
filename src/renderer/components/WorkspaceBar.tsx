@@ -100,9 +100,11 @@ interface ToolDef {
 export function WorkspaceBar({
   onOpenDiff,
   onOpenIntegrations,
+  onOpenMediaStudio,
 }: {
   onOpenDiff?: () => void;
   onOpenIntegrations?: () => void;
+  onOpenMediaStudio?: () => void;
 } = {}) {
   const root = useLayoutStore((s) => s.root);
   const viewKind = useLayoutStore((s) => s.viewKind);
@@ -401,6 +403,15 @@ export function WorkspaceBar({
       icon: 'bolt',
       title: `GitHub (PRs, issues), Linear e port forward — também no ${formatShortcut('mod', 'K')}`,
       onClick: onOpenIntegrations,
+    });
+  }
+  if (onOpenMediaStudio) {
+    secondaryTools.push({
+      id: 'media',
+      label: 'Criar mídia',
+      icon: 'vision',
+      title: 'Estúdio de Mídia — gere imagens e vídeos com IA, sem agente',
+      onClick: onOpenMediaStudio,
     });
   }
   // Achado de operador: enterrado no ⋯, o GitHub lia como "não existe" mesmo

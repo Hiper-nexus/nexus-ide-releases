@@ -97,8 +97,11 @@ import type { UsageSnapshot } from './usage-types';
 import type { PublicModelRankingSnapshot } from './eval-ranking-types';
 import type { GamificationSnapshot } from './gamification-types';
 import type {
+  MediaArtifactInfo,
   MediaProviderId,
   MediaProviderInfo,
+  MediaStudioRequest,
+  MediaStudioResponse,
   MediaUsageTotals,
 } from './media-types';
 import type { NotesApi } from './note-types';
@@ -887,6 +890,16 @@ export interface NexusApi {
       key: string,
     ): Promise<{ ok: boolean; error?: string }>;
     usageTotals(): Promise<MediaUsageTotals>;
+    /** Estúdio de Mídia: gera imagem/vídeo a partir do prompt (longo). */
+    generate(req: MediaStudioRequest): Promise<MediaStudioResponse>;
+    cancelGenerate(clientJobId: string): Promise<{ ok: boolean }>;
+    listArtifacts(): Promise<MediaArtifactInfo[]>;
+    revealArtifact(
+      storageKey: string,
+    ): Promise<{ ok: boolean; error?: string }>;
+    readArtifactDataUrl(
+      storageKey: string,
+    ): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   };
   notes: NotesApi;
   /** Sessões oh-my-pi via RPC nativo (omp --mode rpc-ui, sem PTY). */

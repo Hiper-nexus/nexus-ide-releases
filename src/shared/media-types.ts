@@ -7,13 +7,21 @@
 
 export type MediaKind = 'image' | 'video' | 'audio';
 
-export type MediaProviderId =
-  | 'google-image'
-  | 'openai-image'
-  | 'replicate-image'
-  | 'replicate-video'
-  | 'google-video'
-  | 'elevenlabs';
+/**
+ * Single source of truth for provider ids — the zod enum in media-ipc.ts and
+ * the MediaProviderId type both derive from this list, so adding a provider
+ * touches exactly one place.
+ */
+export const MEDIA_PROVIDER_IDS = [
+  'google-image',
+  'openai-image',
+  'replicate-image',
+  'replicate-video',
+  'google-video',
+  'elevenlabs',
+] as const;
+
+export type MediaProviderId = (typeof MEDIA_PROVIDER_IDS)[number];
 
 export interface MediaProviderInfo {
   id: MediaProviderId;
@@ -48,8 +56,54 @@ export interface MediaUsageTotals {
   costUsd: number;
 }
 
+/** A recorded generation, newest first — powers the Estúdio gallery. */
+export interface MediaArtifactInfo {
+  id: string;
+  kind: MediaKind;
+  provider: string;
+  model: string;
+  /** Project-relative POSIX path of the generated file. */
+  storageKey: string;
+  costUsd: number | null;
+  durationMs: number;
+  createdAt: number;
+}
+
+/**
+ * Estúdio de Mídia (renderer) → main. Prompt-driven generation for layman
+ * users: the panel picks friendly defaults; everything lands in the open
+ * workspace and is accounted like agent-driven generations.
+ */
+export interface MediaStudioRequest {
+  kind: 'image' | 'video';
+  prompt: string;
+  providerId?: MediaProviderId;
+  model?: string;
+  aspectRatio?: string;
+  /** Seedream image size: 1K | 2K. */
+  size?: string;
+  /** Video only. */
+  durationSeconds?: number;
+  resolution?: string;
+  /** Workspace image for image-to-image / first-frame (optional). */
+  imagePath?: string;
+  /** Video only: resume a timed-out job without paying twice. */
+  recoverJobId?: string;
+  /** Renderer-generated id so media:cancelGenerate can abort the wait. */
+  clientJobId: string;
+}
+
+export type MediaStudioResponse =
+  | MediaGenerationResult
+  | { ok: false; error: string; recoverJobId?: string; canceled?: boolean };
+
 export const MEDIA_CHANNELS = {
   listProviders: 'media:listProviders',
   setKey: 'media:setKey',
   usageTotals: 'media:usageTotals',
+  generate: 'media:generate',
+  cancelGenerate: 'media:cancelGenerate',
+  listArtifacts: 'media:listArtifacts',
+  revealArtifact: 'media:revealArtifact',
+  readArtifactDataUrl: 'media:readArtifactDataUrl',
 } as const;

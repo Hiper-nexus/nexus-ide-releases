@@ -33,6 +33,7 @@ import { FilesPanel } from './components/FilesPanel';
 import { OpsBoard } from './components/OpsBoard';
 import { DiffAnnotatePanel } from './components/DiffAnnotatePanel';
 import { IntegrationsPanel } from './components/IntegrationsPanel';
+import { MediaStudioPanel } from './components/MediaStudioPanel';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
 import { initDevServerStore } from './state/dev-server-store';
@@ -44,6 +45,7 @@ import { useProviderController } from './state/provider-store';
 import { useMissionWizardStore } from './state/mission-wizard-store';
 import { useHomeStore } from './state/home-store';
 import { useIntegrationsStore } from './state/integrations-store';
+import { useMediaStudioStore } from './state/media-studio-store';
 import { reconcileHosts } from './terminal/terminal-host';
 import {
   gateRestoredAgents,
@@ -125,6 +127,7 @@ export function App() {
   const endorphinWorkspaceKey = useOrchStore((s) => s.boundWorkspacePath ?? '∅');
   const [diffOpen, setDiffOpen] = useState(false);
   const integrationsOpen = useIntegrationsStore((s) => s.open);
+  const mediaStudioOpen = useMediaStudioStore((s) => s.open);
   const onboardingVisible = useOnboardingStore(
     (s) => s.loaded && !s.state.completed && !s.state.skipped,
   );
@@ -143,6 +146,7 @@ export function App() {
     opsBoardOpen ||
     diffOpen ||
     integrationsOpen ||
+    mediaStudioOpen ||
     onboardingVisible ||
     operatorProfileOpen ||
     paletteOpen ||
@@ -430,6 +434,7 @@ export function App() {
       <WorkspaceBar
         onOpenDiff={() => setDiffOpen(true)}
         onOpenIntegrations={() => useIntegrationsStore.getState().show()}
+        onOpenMediaStudio={() => useMediaStudioStore.getState().show()}
       />
       <ModeLauncher activeId={launcherMode} onSelect={onModeSelect} />
       {/*
@@ -467,6 +472,10 @@ export function App() {
       <IntegrationsPanel
         open={integrationsOpen}
         onClose={() => useIntegrationsStore.getState().hide()}
+      />
+      <MediaStudioPanel
+        open={mediaStudioOpen}
+        onClose={() => useMediaStudioStore.getState().hide()}
       />
       {!suppressBrowserPanes && <VoiceHud />}
       <VoiceSettings />

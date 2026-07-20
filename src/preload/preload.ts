@@ -59,7 +59,10 @@ import { QUOTA_CHANNELS } from '../shared/quota-types';
 import type { QuotaFleetSnapshot } from '../shared/quota-types';
 import { EVAL_RANKING_CHANNELS } from '../shared/eval-ranking-types';
 import { MEDIA_CHANNELS } from '../shared/media-types';
-import type { MediaProviderId } from '../shared/media-types';
+import type {
+  MediaProviderId,
+  MediaStudioRequest,
+} from '../shared/media-types';
 import { GAMIFICATION_CHANNELS } from '../shared/gamification-types';
 import type { GamificationSnapshot } from '../shared/gamification-types';
 import { BILLING_CHANNELS } from '../shared/billing-types';
@@ -1080,6 +1083,15 @@ const api: NexusApi = {
     setKey: (providerId: MediaProviderId, key: string) =>
       ipcRenderer.invoke(MEDIA_CHANNELS.setKey, { providerId, key }),
     usageTotals: () => ipcRenderer.invoke(MEDIA_CHANNELS.usageTotals),
+    generate: (req: MediaStudioRequest) =>
+      ipcRenderer.invoke(MEDIA_CHANNELS.generate, req),
+    cancelGenerate: (clientJobId: string) =>
+      ipcRenderer.invoke(MEDIA_CHANNELS.cancelGenerate, { clientJobId }),
+    listArtifacts: () => ipcRenderer.invoke(MEDIA_CHANNELS.listArtifacts),
+    revealArtifact: (storageKey: string) =>
+      ipcRenderer.invoke(MEDIA_CHANNELS.revealArtifact, { storageKey }),
+    readArtifactDataUrl: (storageKey: string) =>
+      ipcRenderer.invoke(MEDIA_CHANNELS.readArtifactDataUrl, { storageKey }),
   },
   notes: {
     list: (workspacePath: string) =>
