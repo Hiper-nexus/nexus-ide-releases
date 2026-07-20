@@ -19,6 +19,20 @@ Data: 2026-07-18
   worker não-omp da missão.
 - Sticky roster, transporte auto, yolo auditado em mission rpc, Fleet + Rail.
 
+## 0.19.20 — Sci-Fi de Verdade
+
+Data: 2026-07-19
+
+- **UI sci-fi refinada** com paridade de renderização mac/win/linux.
+- **GitHub Device Flow OAuth** com erros tipados + gate push→PR (emdash W2).
+- **Stack SSH colhida do emdash**: ProxyJump, `ssh -G`, proxy resiliente,
+  port-forward — host key sempre nossa.
+- **Cards de pane com atividade real**, zero LLM (colheita Overclock).
+- **Security floor fail-closed** no router: na dúvida o tier sobe.
+- **Probe de credencial pré-spawn** + watchdog de login-stuck (Overclock F-256).
+- Ranking público rotula fixture como estimativa; renderer volta a montar no
+  dev (QR vendor vira bundle ESM).
+
 ## 0.19.19 — Missão Que Começa
 
 Data: 2026-07-18
