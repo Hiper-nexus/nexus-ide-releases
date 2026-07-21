@@ -241,10 +241,15 @@ function inspectProjectManifest(
     findings.push(
       finding(
         'project-manifest',
-        'blocker',
+        // Não é blocker: a identidade provisória (digest do caminho real) é
+        // tolerada por todo o runtime — missões, freeze de contrato e stores
+        // funcionam sem o manifest. Ele só importa para identidade portátil
+        // multi-PC. Marcá-lo como blocker fazia missões/agentes tratarem um
+        // arquivo opcional como pré-condição e travarem o bootstrap.
+        'warning',
         'missing-project-manifest',
-        'Arquivo .nexus/project.json ausente; identidade multi-PC fica provisória.',
-        `Gere .nexus/project.json com schemaVersion ${PROJECT_MANIFEST_VERSION}, projectId UUID e prova de origin/linhagem Git.`,
+        'Arquivo .nexus/project.json ausente; identidade multi-PC fica provisória (não bloqueia missões nem o freeze de contrato).',
+        `Opcional, para identidade portátil entre máquinas: gere .nexus/project.json com schemaVersion ${PROJECT_MANIFEST_VERSION}, projectId UUID e prova de origin/linhagem Git.`,
       ),
     );
     return findings;

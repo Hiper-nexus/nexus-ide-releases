@@ -1,5 +1,6 @@
 import {
   getPaneAuthzInfo,
+  requestPaneClose,
   requestPaneSpawn,
   waitForIdle,
 } from './pane-registry';
@@ -21,10 +22,7 @@ import { composeDesignCharter } from './design-profile';
 import { getOrchSettings } from '../persistence/settings-store';
 import { resolveCwdForScope } from './workspace-path';
 import { canUseNexusMcp } from './cli-mcp-inject';
-import {
-  ACCEPT_SECOND_OPTION_BY_NUMBER,
-  cliPromptAutoResponder,
-} from './cli-prompt-autoresponder';
+import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { spawnMissionOmpRpcWorker } from '../adapters/omp-rpc-ipc';
 import { isAdapterInstalled } from '../adapters/adapter-registry';
 import { hasAvailableAccount } from '../persistence/account-store';
@@ -43,6 +41,14 @@ const ENTER_RETRY_MS = 400;
 const AGENT_BOOT_TIMEOUT_MS = 20_000;
 /** Max wait for Claude-family bypass/trust menus before typing the mission prompt. */
 const BOOT_PROMPT_HOLD_MS = 5_000;
+/**
+ * After a brief is typed, the session must report busy within this window.
+ * A still-idle session means a dialog with no autoresponder signature ate the
+ * paste — re-deliver instead of letting the pane sit idle (every watchdog is
+ * blind to idle panes: stall needs busy, login-stuck needs a busy transition).
+ */
+const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
+const PROMPT_ACCEPTANCE_POLL_MS = 200;
 const UNSAFE_TERMINAL_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
 
 export function delay(ms: number): Promise<void> {
@@ -165,6 +171,37 @@ export async function injectPastedPrompt(
     throw new Error('session is gone');
   }
   await submitEnter(sessionId);
+}
+
+/** Resolve true quando a sessão vira busy (CLI aceitou o brief e começou um turn). */
+async function waitForBusy(sessionId: string, windowMs: number): Promise<boolean> {
+  const deadline = Date.now() + windowMs;
+  for (;;) {
+    const state = getSessionState(sessionId);
+    if (state === 'busy') return true;
+    if (state === null) return false;
+    if (Date.now() >= deadline) return false;
+    await delay(PROMPT_ACCEPTANCE_POLL_MS);
+  }
+}
+
+/**
+ * Type a brief into an agent pane and PROVE it was accepted: after the paste,
+ * the session must turn busy within the acceptance window, else we run the
+ * boot-prompt gauntlet again and re-deliver once. Fire-and-forget injection
+ * let boot dialogs without an autoresponder signature swallow briefs whole —
+ * the pane then sat idle forever and no watchdog could see it.
+ */
+export async function deliverAgentPrompt(
+  sessionId: string,
+  prompt: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await waitOutBootPrompts(sessionId);
+    await injectPrompt(sessionId, prompt);
+    if (await waitForBusy(sessionId, PROMPT_ACCEPTANCE_WINDOW_MS)) return;
+  }
+  throw new Error('agent pane did not start after prompt delivery');
 }
 
 export interface SpawnToolOptions {
@@ -481,10 +518,7 @@ export async function spawnPaneAndMaybePrompt(
   }
   if (options.prompt) {
     // Let the CLI finish booting before typing (first idle or timeout).
-    await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
-    // Claude / GLM / Longcat can still paint the Bypass Permissions menu after
-    // "idle" (static TUI). Never type the mission brief into that dialog.
-    await waitOutBootPrompts(result.sessionId);
+    const boot = await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
     const prompt =
       options.role === 'orchestrator'
         ? options.prompt
@@ -492,7 +526,23 @@ export async function spawnPaneAndMaybePrompt(
             category: options.agentCategory,
             hints: [options.title, options.agentName],
           });
-    await injectPrompt(result.sessionId, prompt);
+    try {
+      if (boot === 'exited') {
+        throw new Error('agent session exited during boot');
+      }
+      // 'idle' or 'timeout' (slow boot): deliver and prove acceptance —
+      // a swallowed brief used to leave a zombie worker no watchdog can see.
+      await deliverAgentPrompt(result.sessionId, prompt);
+    } catch (error) {
+      // Never leave a mute zombie pane occupying a mission worker slot; the
+      // durable mission_panes row stays so the driver can respawn from it.
+      try {
+        requestPaneClose(result.paneId);
+      } catch {
+        // best effort — the original error matters more
+      }
+      throw error;
+    }
   }
   // Zero-friction: first non-omp mission worker also pulls Oh My Pi online.
   scheduleOmpAutoCompanion(
@@ -522,10 +572,12 @@ export async function waitOutBootPrompts(
 
   const forced = cliPromptAutoResponder.forceAcceptResponse(sessionId);
   if (forced) {
-    orchWriteSession(sessionId, forced);
-    await delay(120);
-    // Some Claude Code builds ignore Down+Enter on the numbered menu.
-    orchWriteSession(sessionId, ACCEPT_SECOND_OPTION_BY_NUMBER);
+    orchWriteSession(sessionId, forced.response);
+    if (forced.fallbackResponse) {
+      await delay(120);
+      // Some Claude Code builds ignore the primary keys on numbered menus.
+      orchWriteSession(sessionId, forced.fallbackResponse);
+    }
   }
   const settleDeadline = Date.now() + 600;
   while (

@@ -122,9 +122,12 @@ export function inspectIndependentProviders(
     ? []
     : [doctorFinding(
         'independent-providers',
-        'blocker',
+        // Warning: um único provedor confinável já destrava o quorum de review
+        // (basta 1 reviewer de provider diferente do autor); o mínimo maior é
+        // preferência do Review Council, não pré-condição de missão/freeze.
+        'warning',
         'insufficient-independent-providers',
-        `Apenas ${ids.length} provedor(es) independente(s); mínimo ${minRequired} para high/critical.`,
+        `Apenas ${ids.length} provedor(es) independente(s); recomendado ${minRequired} para o Review Council em risco high/critical.`,
         'Instale/autentique provedores CLI adicionais de vendors distintos para o Review Council.',
         ids,
       )];

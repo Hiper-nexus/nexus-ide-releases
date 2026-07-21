@@ -58,6 +58,17 @@ let untapExit: (() => void) | null = null;
 let unsubscribeScopeChanges: (() => void) | null = null;
 
 const MAX_DELIVERY_SUMMARY = 4000;
+/**
+ * Após o CR de submit, a sessão tem esta janela para virar busy (prova de que
+ * o TUI aceitou o handoff). Sem essa prova o handoff NÃO é marcado como
+ * submitted: um modal que engoliu o paste deixava o handoff entregue para
+ * sempre (markSubmitted é durável e o replay só olha não-entregues).
+ */
+const SUBMIT_ACCEPTANCE_WINDOW_MS = 12_000;
+const SUBMIT_ACCEPTANCE_POLL_MS = 250;
+/** Quantas re-entregas automáticas por handoff antes de esperar o replay de rebinding. */
+const MAX_AUTOMATIC_REQUEUES = 1;
+const requeueAttempts = new Map<string, number>();
 
 function ownerKey(owner: OwnedPaneAuthzInfo['owner']): number {
   const existing = ownerKeys.get(owner);
@@ -164,9 +175,6 @@ function scheduleEnter(authority: DeliveryAuthority, handoffId: string): void {
     if (isCurrentAuthority(authority)) {
       const submitted = orchWriteSession(authority.sessionId, '\r');
       if (submitted) {
-        // `delivered` means the complete prompt was submitted to the live TUI,
-        // not merely painted into its input buffer.
-        getProjectDomainStores(authority.scope).handoffs.markSubmitted(handoffId);
         // Some interactive CLIs consume the first CR while leaving the pasted
         // prompt in their editor (notably after resume/modal transitions). A
         // bounded second CR is safe only while the exact session is still
@@ -179,6 +187,9 @@ function scheduleEnter(authority: DeliveryAuthority, handoffId: string): void {
             orchWriteSession(authority.sessionId, '\r');
           }
           pendingEnters.delete(pending);
+          // `delivered` só vira `submitted` (durável) depois da prova de
+          // aceite; sem ela o handoff fica 'queued' e pode ser re-entregue.
+          void verifySubmitAccepted(authority, handoffId);
         }, 400);
         return;
       }
@@ -187,6 +198,38 @@ function scheduleEnter(authority: DeliveryAuthority, handoffId: string): void {
   }, 150);
   pending = { authority, handoffId, timer };
   pendingEnters.add(pending);
+}
+
+/**
+ * Prova de aceite do submit: a sessão deve virar busy dentro da janela. Se um
+ * modal sem assinatura engoliu o handoff, ele permanece 'queued' no SQLite e
+ * é re-enfileirado uma vez; falhas seguintes aguardam o replay de rebinding
+ * (redeliverPendingHandoffs) em vez de desaparecer silenciosamente.
+ */
+async function verifySubmitAccepted(
+  authority: DeliveryAuthority,
+  handoffId: string,
+): Promise<void> {
+  const deadline = Date.now() + SUBMIT_ACCEPTANCE_WINDOW_MS;
+  for (;;) {
+    if (!isCurrentAuthority(authority)) return;
+    const state = getSessionState(authority.sessionId);
+    if (state === 'busy') {
+      requeueAttempts.delete(handoffId);
+      getProjectDomainStores(authority.scope).handoffs.markSubmitted(handoffId);
+      return;
+    }
+    if (state === null) return; // sessão morreu — a fila durável cobre o replay
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, SUBMIT_ACCEPTANCE_POLL_MS));
+  }
+  const attempts = (requeueAttempts.get(handoffId) ?? 0) + 1;
+  requeueAttempts.set(handoffId, attempts);
+  if (attempts > MAX_AUTOMATIC_REQUEUES) return;
+  const handoff = getProjectDomainStores(authority.scope).handoffs.get(handoffId);
+  if (handoff && handoff.deliveryState === 'queued') {
+    onHandoffSubmitted(handoff, authority.scope);
+  }
 }
 
 function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {

@@ -74,10 +74,13 @@ function missingRequiredSensors(
     ? []
     : [doctorFinding(
         'sensors',
-        'blocker',
+        // Warning, não blocker: o Context Doctor rebaixou typecheck/unit
+        // ausentes em 17/07 ("trancava o freeze") — sensores recomendados
+        // degradam a validação, mas não impedem missão nem freeze.
+        'warning',
         'missing-required-sensors',
-        'Sensores mínimos não configurados.',
-        'Adicione os sensores obrigatórios em .context/config/sensors.json.',
+        'Sensores mínimos não configurados (typecheck/unit) — validação pré-freeze fica degradada, sem bloquear missões.',
+        'Adicione os sensores recomendados em .context/config/sensors.json.',
         missing,
       )];
 }

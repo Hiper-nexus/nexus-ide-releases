@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACCEPT_DEFAULT_PROMPT_RESPONSE,
+  ACCEPT_FIRST_OPTION_BY_NUMBER,
+  ACCEPT_SECOND_OPTION_BY_NUMBER,
   ACCEPT_SECOND_PROMPT_RESPONSE,
   BUILTIN_PROMPT_SIGNATURES,
   CliPromptAutoResponder,
@@ -60,6 +62,23 @@ in Bypass Permissions mode.
   2. Yes, I accept
 
 Enter to confirm · Esc to cancel
+`;
+
+/**
+ * Claude Code workspace trust dialog (also GLM/LongCat). Isolated third-party
+ * homes carry no per-project trust, so the first spawn per cwd shows this.
+ * Option 1 is the safe accept — Down+Enter here would pick "No, exit".
+ */
+const CLAUDE_TRUST_PROMPT = `
+Do you trust the files in this folder?
+
+/Users/cleofasrocha/dev/radarbi
+
+Claude Code may read files in this folder. Reading unknown files may lead to
+malicious behavior. Claude will not execute commands without your approval.
+
+› 1. Yes, proceed
+  2. No, exit
 `;
 
 function signature(name: string) {
@@ -180,9 +199,43 @@ describe('CLI prompt autoresponder', () => {
       'WARNING: Claude Code running in Bypass Permissions mode\n',
     );
     expect(responder.shouldDeferInjection('session-glm')).toBe(true);
-    expect(responder.forceAcceptResponse('session-glm')).toBe(
-      ACCEPT_SECOND_PROMPT_RESPONSE,
-    );
+    expect(responder.forceAcceptResponse('session-glm')).toEqual({
+      response: ACCEPT_SECOND_PROMPT_RESPONSE,
+      fallbackResponse: ACCEPT_SECOND_OPTION_BY_NUMBER,
+    });
     expect(responder.shouldDeferInjection('session-glm')).toBe(true);
+  });
+
+  it('recognizes and accepts the Claude-family workspace trust dialog', () => {
+    expect(
+      matchesPromptSignature(
+        CLAUDE_TRUST_PROMPT,
+        signature('claude-workspace-trust'),
+      ),
+    ).toBe(true);
+
+    for (const adapterId of ['claude', 'glm', 'longcat'] as const) {
+      const responder = new CliPromptAutoResponder();
+      responder.bind(`session-${adapterId}`, adapterId);
+      expect(responder.observe(`session-${adapterId}`, CLAUDE_TRUST_PROMPT)).toBe(
+        ACCEPT_FIRST_OPTION_BY_NUMBER,
+      );
+      expect(responder.observe(`session-${adapterId}`, CLAUDE_TRUST_PROMPT)).toBeNull();
+    }
+  });
+
+  it('defers injection on the trust banner and force-accepts with option 1 (never Down+Enter)', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-glm', 'glm');
+    expect(
+      responder.observe('session-glm', 'Do you trust the files in this folder?\n'),
+    ).toBeNull();
+    expect(responder.shouldDeferInjection('session-glm')).toBe(true);
+
+    // Regression guard: the generic force-accept used to be Down+Enter, which
+    // on this menu selects "No, exit" and kills the CLI session.
+    expect(responder.forceAcceptResponse('session-glm')).toEqual({
+      response: ACCEPT_FIRST_OPTION_BY_NUMBER,
+    });
   });
 });

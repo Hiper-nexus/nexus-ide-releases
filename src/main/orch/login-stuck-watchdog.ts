@@ -286,12 +286,18 @@ function emitLoginStuck(event: PaneLoginStuckEvent): void {
 /**
  * `canOpenLogin`: the UI may offer "abrir login" only for adapters with an
  * interactive login flow (oauth / device_code / subscription); pure api_key
- * adapters are pointed at Settings › Providers instead.
+ * adapters are pointed at Settings › Providers instead. Note: codex, kimi and
+ * grok declare api_key (env var works) but ALSO ship an interactive OAuth
+ * login (`codex login`, `kimi login`, `grok login`) — the loginHint names it
+ * as a backtick-quoted command, which is what we detect here.
  */
 function canOpenLogin(adapterId: string): boolean {
   const adapter = getAdapter(adapterId);
   if (!adapter || adapter.kind !== 'cli-pty') return false;
-  return adapter.auth.method !== 'api_key' && adapter.auth.method !== 'none';
+  if (adapter.auth.method !== 'api_key' && adapter.auth.method !== 'none') {
+    return true;
+  }
+  return /`[a-z][\w.-]* login`/i.test(adapter.auth.loginHint ?? '');
 }
 
 /**

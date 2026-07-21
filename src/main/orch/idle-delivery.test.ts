@@ -249,7 +249,7 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
-  it('marks delivered only after Enter reaches the current orchestrator', async () => {
+  it('marks submitted only after the TUI proves acceptance (session busy)', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     authorizeTarget(scope);
@@ -261,7 +261,36 @@ describe('idle delivery authority and lifecycle', () => {
     await vi.advanceTimersByTimeAsync(150);
 
     expect(ptyMocks.writes).toHaveBeenLastCalledWith('orchestrator-session', '\r');
+    // Sem prova de aceite (sessão segue idle — possível modal), nada é marcado.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(storeMocks.delivered).toEqual([]);
+
+    // Aceite: o TUI vira busy → markSubmitted na próxima verificação.
+    ptyMocks.state = 'busy';
+    await vi.advanceTimersByTimeAsync(300);
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('requeues once a handoff swallowed without acceptance instead of losing it', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await vi.advanceTimersByTimeAsync(150);
+    const deliveries = () =>
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes('completed the requested work'),
+      );
+    expect(deliveries()).toHaveLength(1);
+
+    // Janela de aceite estoura sem busy: não marca submitted e re-entrega 1×.
+    await vi.advanceTimersByTimeAsync(13_000);
+    expect(storeMocks.delivered).toEqual([]);
+    expect(deliveries()).toHaveLength(2);
     delivery.shutdownIdleDelivery();
   });
 
@@ -313,6 +342,9 @@ describe('idle delivery authority and lifecycle', () => {
       'orchestrator-session',
       expect.stringContaining('completed the requested work'),
     );
+    // Submitted só após a prova de aceite (sessão vira busy).
+    ptyMocks.state = 'busy';
+    await vi.advanceTimersByTimeAsync(700);
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-persisted' }]);
     delivery.shutdownIdleDelivery();
   });

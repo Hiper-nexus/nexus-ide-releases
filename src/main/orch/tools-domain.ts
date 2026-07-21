@@ -162,7 +162,10 @@ const missionCreateTool: McpToolDef = {
         missionId: mission.id,
         adapterId: orchPane.adapterId,
         model: orchPane.model,
-        title: orchPane.title,
+        // Sem `title` de propósito: o título do registry é mutável (o próprio
+        // CLI o reescreve via OSC escapes) e gravá-lo na chave de dedup do
+        // store faz um re-record futuro falhar com "pane id already belongs
+        // to another mission pane". O fallback do store (adapterId) é estável.
         role: 'orchestrator',
         paneId: orchPane.paneId,
         allowedTools: ctx.allowedTools,

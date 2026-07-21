@@ -43,6 +43,8 @@ const paneDeps = vi.hoisted(() => ({
     title: string;
     kind: 'cli-agent';
     state: 'busy' | 'idle' | 'exited' | 'hibernated';
+    agentName?: string;
+    adapterId?: string;
   }>,
 }));
 
@@ -60,6 +62,7 @@ import {
   CONTEXT_DRAFT_REVIEW_TOOLS,
   CliContextDraftReviewer,
   DEFAULT_CONTEXT_DRAFT_REVIEW_TIMEOUT_MS,
+  contextDraftReviewerAgentName,
   contextDraftReviewerPaneTitle,
   selectIndependentContextReviewerRoute,
 } from './cli-context-draft-reviewer';
@@ -352,7 +355,7 @@ describe('CLI context draft reviewer', () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it('does not duplicate a preserved reviewer pane on the next Doctor pass', async () => {
+  it('closes a preserved reviewer pane whose session is gone instead of spawning a duplicate', async () => {
     const scope = testProjectScope();
     const draft = proposedDraft();
     paneDeps.snapshots.push({
@@ -363,9 +366,12 @@ describe('CLI context draft reviewer', () => {
       state: 'idle',
     });
     const spawn = vi.fn();
+    const close = vi.fn(() => true);
     const reviewer = new CliContextDraftReviewer({
       readDraft: () => draft,
       listPanes: () => paneDeps.snapshots,
+      sessionState: () => null,
+      close,
       spawn,
     });
 
@@ -373,6 +379,118 @@ describe('CLI context draft reviewer', () => {
       /preserved reviewer pane/i,
     );
     expect(spawn).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledWith('pane-preserved');
+  });
+
+  it('recovers a title-drifted reviewer pane matched by agentName and resumes the review', async () => {
+    const scope = testProjectScope();
+    const draft = proposedDraft();
+    const approved = reviewedDraft('approved', {
+      id: contextDraftReviewerAgentName('glm', draft.id),
+      sessionId: 'session-preserved',
+      provider: 'glm',
+    });
+    paneDeps.snapshots.push({
+      paneId: 'pane-preserved',
+      sessionId: 'session-preserved',
+      // OSC title escapes overwrote the original context-review-* title.
+      title: 'glm — working',
+      kind: 'cli-agent',
+      state: 'idle',
+      agentName: contextDraftReviewerAgentName('glm', draft.id),
+      adapterId: 'glm',
+    });
+    const spawn = vi.fn();
+    const deliverPrompt = vi.fn(async (_sessionId: string, _prompt: string) => undefined);
+    let reads = 0;
+    const reviewer = new CliContextDraftReviewer({
+      readDraft: () => {
+        reads += 1;
+        // First read (initial) is proposed; the re-delivered reviewer approves.
+        return reads === 1 ? draft : approved;
+      },
+      listPanes: () => paneDeps.snapshots,
+      sessionState: () => 'idle',
+      deliverPrompt,
+      close: vi.fn(() => true),
+      spawn,
+      timeoutMs: 50,
+      pollIntervalMs: 10,
+    });
+
+    const result = await reviewer.run({ scope, draftId: draft.id });
+    expect(result.status).toBe('approved');
+    expect(spawn).not.toHaveBeenCalled();
+    expect(deliverPrompt).toHaveBeenCalledOnce();
+    expect(deliverPrompt.mock.calls[0]?.[1]).toContain(draft.id);
+  });
+
+  it('resumes polling without re-delivering when the preserved reviewer is still busy', async () => {
+    const scope = testProjectScope();
+    const draft = proposedDraft();
+    const approved = reviewedDraft('approved', {
+      id: contextDraftReviewerAgentName('glm', draft.id),
+      sessionId: 'session-preserved',
+      provider: 'glm',
+    });
+    paneDeps.snapshots.push({
+      paneId: 'pane-preserved',
+      sessionId: 'session-preserved',
+      title: contextDraftReviewerPaneTitle(draft.id),
+      kind: 'cli-agent',
+      state: 'busy',
+      agentName: contextDraftReviewerAgentName('glm', draft.id),
+      adapterId: 'glm',
+    });
+    const deliverPrompt = vi.fn(async () => undefined);
+    let reads = 0;
+    const reviewer = new CliContextDraftReviewer({
+      readDraft: () => {
+        reads += 1;
+        return reads === 1 ? draft : approved;
+      },
+      listPanes: () => paneDeps.snapshots,
+      sessionState: () => 'busy',
+      deliverPrompt,
+      close: vi.fn(() => true),
+      spawn: vi.fn(),
+      timeoutMs: 50,
+      pollIntervalMs: 10,
+    });
+
+    const result = await reviewer.run({ scope, draftId: draft.id });
+    expect(result.status).toBe('approved');
+    expect(deliverPrompt).not.toHaveBeenCalled();
+  });
+
+  it('closes the preserved pane when it refuses the re-delivered brief', async () => {
+    const scope = testProjectScope();
+    const draft = proposedDraft();
+    paneDeps.snapshots.push({
+      paneId: 'pane-preserved',
+      sessionId: 'session-preserved',
+      title: contextDraftReviewerPaneTitle(draft.id),
+      kind: 'cli-agent',
+      state: 'idle',
+      agentName: contextDraftReviewerAgentName('glm', draft.id),
+      adapterId: 'glm',
+    });
+    const close = vi.fn(() => true);
+    const reviewer = new CliContextDraftReviewer({
+      readDraft: () => draft,
+      listPanes: () => paneDeps.snapshots,
+      sessionState: () => 'idle',
+      deliverPrompt: async () => {
+        throw new Error('context draft reviewer did not start after prompt delivery');
+      },
+      close,
+      spawn: vi.fn(),
+    });
+
+    await expect(reviewer.run({ scope, draftId: draft.id })).rejects.toThrow(
+      /did not accept the review brief/i,
+    );
+    expect(close).toHaveBeenCalledWith('pane-preserved');
   });
 
   it('closes a partially initialized reviewer pane before failing', async () => {

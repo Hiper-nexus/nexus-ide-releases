@@ -12,15 +12,16 @@ import {
   requestPaneSpawn,
   waitForIdle,
 } from '../orch/pane-registry';
+import { getSessionState } from '../pty/pty-manager';
 import { routeTask } from '../orch/task-router';
 import {
-  injectPrompt,
-  waitOutBootPrompts,
+  deliverAgentPrompt,
   type SpawnToolOptions,
 } from '../orch/tool-util';
 import { resolveCwdForScope } from '../orch/workspace-path';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { secureAutonomousCliArgs } from '../pty/autonomous-cli-policy';
+import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
 import { getContextKnowledgeService } from './context-workflow-registry';
 import type { ContextDraftRecord } from './context-draft-store';
 
@@ -84,6 +85,10 @@ export interface CliContextDraftReviewerDependencies {
   ) => MaybePromise<ContextDraftRecord | null>;
   readonly close?: (paneId: string) => MaybePromise<boolean | void>;
   readonly listPanes?: () => readonly PaneSnapshot[];
+  /** Live PTY state of a session; null when the session is gone. */
+  readonly sessionState?: (sessionId: string) => string | null;
+  /** Deliver the review brief and prove the session started working on it. */
+  readonly deliverPrompt?: (sessionId: string, prompt: string) => Promise<void>;
   readonly clock?: () => number;
   readonly poll?: (delayMs: number) => Promise<void>;
   readonly timeoutMs?: number;
@@ -118,9 +123,49 @@ function sameProvider(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
+function reviewerSuffixFor(draftId: string): string {
+  return createHash('sha256')
+    .update(draftIdSchema.parse(draftId))
+    .digest('hex')
+    .slice(0, 12);
+}
+
 export function contextDraftReviewerPaneTitle(draftId: string): string {
-  const suffix = createHash('sha256').update(draftIdSchema.parse(draftId)).digest('hex').slice(0, 12);
-  return `context-review-${suffix}`;
+  return `context-review-${reviewerSuffixFor(draftId)}`;
+}
+
+/**
+ * Stable identity of a draft's reviewer pane. The pane TITLE is mutable —
+ * Claude-family CLIs rewrite it via OSC title escapes — so recovery lookups
+ * must key on the agentName, which the renderer mirrors untouched.
+ */
+export function contextDraftReviewerAgentName(
+  adapterId: string,
+  draftId: string,
+): string {
+  return `context-reviewer-${adapterId}-${reviewerSuffixFor(draftId)}`;
+}
+
+function isContextDraftReviewerPane(
+  pane: PaneSnapshot,
+  draftId: string,
+): boolean {
+  if (pane.title === contextDraftReviewerPaneTitle(draftId)) return true;
+  return parseReviewerAdapterId(pane.agentName, draftId) !== null;
+}
+
+/** Adapter id encoded in `context-reviewer-<adapter>-<suffix>`; null if not ours. */
+function parseReviewerAdapterId(
+  agentName: string | undefined,
+  draftId: string,
+): string | null {
+  if (!agentName) return null;
+  const suffix = `-${reviewerSuffixFor(draftId)}`;
+  if (!agentName.startsWith('context-reviewer-') || !agentName.endsWith(suffix)) {
+    return null;
+  }
+  const adapterId = agentName.slice('context-reviewer-'.length, -suffix.length);
+  return adapterId.length > 0 ? adapterId : null;
 }
 
 /** Select one installed provider whose native effects can be confined read-only. */
@@ -200,11 +245,23 @@ export function buildContextDraftReviewerPrompt(
   ].join('\n');
 }
 
+/**
+ * Type the review brief into the reviewer pane and PROVE it landed (shared
+ * acceptance-verified delivery). A pasted brief can be swallowed by a boot
+ * dialog that has no autoresponder signature; without the acceptance check
+ * the reviewer sits idle while the poll loop burns the whole review timeout
+ * and the mission prompt queue stays busy.
+ */
+export const deliverReviewerPrompt = deliverAgentPrompt;
+
 async function spawnContextDraftReviewerPane(
   options: SpawnToolOptions,
 ): Promise<{ paneId: string; sessionId: string }> {
   const { prompt, ...requested } = options;
   const executionScope = options.executionScope ?? options.scope;
+  // Same typed credential probe as mission spawns: a reviewer without auth
+  // used to surface only as an idle pane after the full spawn+boot wait.
+  await assertPreSpawnProbe(options.adapterId);
   const result = await requestPaneSpawn({
     ...requested,
     executionScope,
@@ -230,9 +287,12 @@ async function spawnContextDraftReviewerPane(
   }
   try {
     if (prompt) {
-      await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
-      await waitOutBootPrompts(result.sessionId);
-      await injectPrompt(result.sessionId, prompt);
+      const boot = await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
+      if (boot === 'exited') {
+        throw new Error('context draft reviewer session exited during boot');
+      }
+      // 'idle' or 'timeout' (slow first boot): deliver and verify acceptance.
+      await deliverReviewerPrompt(result.sessionId, prompt);
     }
     return { paneId: partialPaneId, sessionId: result.sessionId };
   } catch (error) {
@@ -303,6 +363,8 @@ export class CliContextDraftReviewer {
   readonly #readDraft: NonNullable<CliContextDraftReviewerDependencies['readDraft']>;
   readonly #close: NonNullable<CliContextDraftReviewerDependencies['close']>;
   readonly #listPanes: NonNullable<CliContextDraftReviewerDependencies['listPanes']>;
+  readonly #sessionState: NonNullable<CliContextDraftReviewerDependencies['sessionState']>;
+  readonly #deliverPrompt: NonNullable<CliContextDraftReviewerDependencies['deliverPrompt']>;
   readonly #clock: NonNullable<CliContextDraftReviewerDependencies['clock']>;
   readonly #poll: NonNullable<CliContextDraftReviewerDependencies['poll']>;
   readonly #timeoutMs: number;
@@ -316,6 +378,8 @@ export class CliContextDraftReviewer {
     this.#readDraft = dependencies.readDraft ?? defaultReadDraft;
     this.#close = dependencies.close ?? requestPaneClose;
     this.#listPanes = dependencies.listPanes ?? listPaneSnapshots;
+    this.#sessionState = dependencies.sessionState ?? getSessionState;
+    this.#deliverPrompt = dependencies.deliverPrompt ?? deliverReviewerPrompt;
     this.#clock = dependencies.clock ?? Date.now;
     this.#poll = dependencies.poll ?? sleep;
     this.#timeoutMs = boundedPositiveInteger(
@@ -380,14 +444,15 @@ export class CliContextDraftReviewer {
       throw new Error('context draft has an invalid content hash');
     }
 
-    const paneTitle = contextDraftReviewerPaneTitle(initial.id);
+    // A previous pass may have preserved its reviewer pane (timeout/failure).
+    // The pane title is mutable (OSC escapes), so match the stable agentName
+    // too — and RECOVER the pane instead of erroring forever or piling up
+    // duplicate reviewers on every Doctor pass.
     const preservedReviewer = this.#listPanes().find(
-      (pane) => pane.title === paneTitle && pane.state !== 'exited',
+      (pane) => pane.state !== 'exited' && isContextDraftReviewerPane(pane, draftId),
     );
     if (preservedReviewer) {
-      throw new Error(
-        `preserved reviewer pane is still recoverable: ${preservedReviewer.paneId}`,
-      );
+      return this.#resumePreservedReview(preservedReviewer, scope, initial);
     }
 
     const selected = await this.#selectRoute(initial.author.provider, initial);
@@ -401,40 +466,132 @@ export class CliContextDraftReviewer {
       throw new Error('context draft review requires a different provider');
     }
 
-    const reviewerSuffix = paneTitle.replace('context-review-', '');
-    const agentName = `context-reviewer-${route.adapterId}-${reviewerSuffix}`;
+    const paneTitle = contextDraftReviewerPaneTitle(initial.id);
+    const agentName = contextDraftReviewerAgentName(route.adapterId, initial.id);
+    const spawned = await this.#spawn({
+      adapterId: route.adapterId,
+      model: route.model,
+      effort: route.effort,
+      cwd: scope.rootRealPath,
+      title: paneTitle,
+      ...(initial.missionId ? { missionId: initial.missionId } : {}),
+      agentName,
+      allowedTools: [...CONTEXT_DRAFT_REVIEW_TOOLS],
+      allowedSkills: [],
+      role: 'worker',
+      readOnly: true,
+      prompt: buildContextDraftReviewerPrompt(initial.id, initial.contentHash),
+      scope,
+      executionScope: scope,
+    });
+    const paneId =
+      typeof spawned.paneId === 'string' && spawned.paneId.trim()
+        ? spawned.paneId
+        : null;
+    if (!paneId) {
+      throw new Error('context draft reviewer spawn returned no pane id');
+    }
+    const sessionId =
+      typeof spawned.sessionId === 'string' && spawned.sessionId.trim()
+        ? spawned.sessionId
+        : null;
+    return this.#awaitOutcome({
+      scope,
+      initial,
+      route,
+      agentName,
+      paneId,
+      sessionId,
+    });
+  }
+
+  /**
+   * A preserved reviewer pane is recovery evidence, not a dead end. Reuse it:
+   * if its session is unreachable the pane is garbage — close it so the next
+   * pass spawns a fresh reviewer; if it sits idle the original brief never
+   * landed, so deliver it again; if it is busy, just resume polling.
+   */
+  async #resumePreservedReview(
+    pane: PaneSnapshot,
+    scope: ProjectExecutionScope,
+    initial: ContextDraftRecord,
+  ): Promise<ContextDraftRecord> {
+    const closeStale = async (reason: string): Promise<never> => {
+      let closed: boolean | void = false;
+      try {
+        closed = await this.#close(pane.paneId);
+      } catch {
+        closed = false;
+      }
+      if (closed === false) {
+        throw new Error(
+          `failed to close stale context draft reviewer pane: ${pane.paneId}`,
+        );
+      }
+      throw new Error(
+        `preserved reviewer pane ${pane.paneId} ${reason}; closed it so the next Doctor pass spawns a fresh reviewer`,
+      );
+    };
+
+    const adapterId =
+      pane.adapterId ?? parseReviewerAdapterId(pane.agentName, initial.id);
+    if (!adapterId) {
+      return closeStale('has no identifiable reviewer adapter');
+    }
+    if (sameProvider(adapterId, initial.author.provider)) {
+      return closeStale(`runs the author provider (${adapterId})`);
+    }
+    if (!pane.sessionId) {
+      return closeStale('has no live session');
+    }
+    const state = this.#sessionState(pane.sessionId);
+    if (state === null || state === 'exited') {
+      return closeStale('session is no longer reachable');
+    }
+
+    const route = Object.freeze(routeSchema.parse({ adapterId }));
+    const agentName =
+      pane.agentName ?? contextDraftReviewerAgentName(adapterId, initial.id);
+    if (state === 'idle') {
+      try {
+        await this.#deliverPrompt(
+          pane.sessionId,
+          buildContextDraftReviewerPrompt(initial.id, initial.contentHash),
+        );
+      } catch (error) {
+        return closeStale(
+          `did not accept the review brief: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return this.#awaitOutcome({
+      scope,
+      initial,
+      route,
+      agentName,
+      paneId: pane.paneId,
+      sessionId: pane.sessionId,
+    });
+  }
+
+  async #awaitOutcome(args: {
+    readonly scope: ProjectExecutionScope;
+    readonly initial: ContextDraftRecord;
+    readonly route: ContextDraftReviewerRoute;
+    readonly agentName: string;
+    readonly paneId: string;
+    readonly sessionId: string | null;
+  }): Promise<ContextDraftRecord> {
+    const { scope, initial, route, agentName, paneId, sessionId } = args;
+    const draftId = initial.id;
     const startedAt = this.#timestamp();
     const maximumPolls = Math.ceil(this.#timeoutMs / this.#pollIntervalMs) + 1;
-    let paneId: string | null = null;
-    let sessionId: string | null = null;
     let reviewCompleted = false;
     let lastObservedAt = startedAt;
     try {
-      const spawned = await this.#spawn({
-        adapterId: route.adapterId,
-        model: route.model,
-        effort: route.effort,
-        cwd: scope.rootRealPath,
-        title: paneTitle,
-        ...(initial.missionId ? { missionId: initial.missionId } : {}),
-        agentName,
-        allowedTools: [...CONTEXT_DRAFT_REVIEW_TOOLS],
-        allowedSkills: [],
-        role: 'worker',
-        readOnly: true,
-        prompt: buildContextDraftReviewerPrompt(initial.id, initial.contentHash),
-        scope,
-        executionScope: scope,
-      });
-      if (typeof spawned.paneId !== 'string' || !spawned.paneId.trim()) {
-        throw new Error('context draft reviewer spawn returned no pane id');
-      }
-      paneId = spawned.paneId;
-      if (typeof spawned.sessionId !== 'string' || !spawned.sessionId.trim()) {
+      if (!sessionId) {
         throw new Error('context draft reviewer spawn returned no session id');
       }
-      sessionId = spawned.sessionId;
-
       for (let pollCount = 0; pollCount <= maximumPolls; pollCount += 1) {
         const observedAt = this.#timestamp();
         if (observedAt < lastObservedAt) {
@@ -442,7 +599,9 @@ export class CliContextDraftReviewer {
         }
         lastObservedAt = observedAt;
         if (observedAt - startedAt >= this.#timeoutMs) {
-          throw new Error('context draft review timed out');
+          throw new Error(
+            'context draft review timed out; reviewer pane preserved — call nexus_context_doctor again to resume it',
+          );
         }
         const current = await this.#readDraft(scope, draftId);
         if (!current) throw new Error('context draft disappeared during review');
@@ -453,15 +612,19 @@ export class CliContextDraftReviewer {
           return current;
         }
         if (pollCount === maximumPolls) {
-          throw new Error('context draft review timed out');
+          throw new Error(
+            'context draft review timed out; reviewer pane preserved — call nexus_context_doctor again to resume it',
+          );
         }
         await this.#poll(this.#pollIntervalMs);
       }
-      throw new Error('context draft review timed out');
+      throw new Error(
+        'context draft review timed out; reviewer pane preserved — call nexus_context_doctor again to resume it',
+      );
     } finally {
       // Successful transient reviewers are removed. A fully started reviewer
       // that times out or fails stays visible so its transcript/session can be
-      // inspected and recovered, matching mission-pane recovery semantics.
+      // inspected and recovered (the next Doctor pass resumes it in place).
       // Partially initialized panes are still cleaned up because they cannot
       // own a recoverable provider session.
       if (paneId && (reviewCompleted || !sessionId)) {

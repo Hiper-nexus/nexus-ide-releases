@@ -320,13 +320,19 @@ describe('inspectNexusReadiness', () => {
     expect(codes).toEqual(
       expect.arrayContaining([
         'git-unavailable',
-        'missing-project-manifest',
         'runtime-unavailable',
         'missing-business-context',
         'missing-sensors-config',
-        'insufficient-independent-providers',
         'lease-backend-unconfigured',
       ]),
+    );
+    // Manifest ausente e quorum abaixo do ideal do Council são avisos —
+    // identidade provisória e 1 revisor independente já destravam missões.
+    expect(report.warnings).toContainEqual(
+      expect.objectContaining({ code: 'missing-project-manifest' }),
+    );
+    expect(report.warnings).toContainEqual(
+      expect.objectContaining({ code: 'insufficient-independent-providers' }),
     );
     expect(report.remediation.length).toBeGreaterThan(0);
     expect(report.remediation.every((step) => step.length > 0)).toBe(true);
@@ -336,7 +342,7 @@ describe('inspectNexusReadiness', () => {
     }
   });
 
-  it('blocks provisional identity because it is not portable across computers', () => {
+  it('warns on provisional identity without blocking missions or contract freeze', () => {
     const root = makeRoot();
     write(root, '.context/config/sensors.json', {
       schemaVersion: 1,
@@ -360,8 +366,11 @@ describe('inspectNexusReadiness', () => {
         candidate === '/usr/bin/sandbox-exec' || fs.existsSync(candidate),
     });
 
-    expect(report.ready).toBe(false);
-    expect(report.blockers).toContainEqual(
+    expect(report.ready).toBe(true);
+    expect(report.blockers).not.toContainEqual(
+      expect.objectContaining({ code: 'missing-project-manifest' }),
+    );
+    expect(report.warnings).toContainEqual(
       expect.objectContaining({ code: 'missing-project-manifest' }),
     );
   });
@@ -469,7 +478,7 @@ describe('inspectNexusReadiness', () => {
     );
   });
 
-  it('requires three enforceable providers for critical author-plus-two-reviewer quorum', () => {
+  it('warns (not blocks) when enforceable providers fall below the Council ideal', () => {
     const root = makeRoot();
     const providers = criticalProviders();
     const report = inspectNexusReadiness({
@@ -480,8 +489,13 @@ describe('inspectNexusReadiness', () => {
       })),
     });
 
-    expect(report.ready).toBe(false);
-    expect(report.blockers).toContainEqual(
+    // 2 provedores confináveis: quorum de review independente existe (basta 1
+    // ≠ autor); abaixo do ideal do Review Council vira warning, não blocker.
+    expect(report.ready).toBe(true);
+    expect(report.blockers).not.toContainEqual(
+      expect.objectContaining({ code: 'insufficient-independent-providers' }),
+    );
+    expect(report.warnings).toContainEqual(
       expect.objectContaining({ code: 'insufficient-independent-providers' }),
     );
   });

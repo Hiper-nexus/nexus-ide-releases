@@ -13,6 +13,16 @@ interface PromptSignature {
   name: string;
   phrases: readonly string[];
   response: string;
+  /**
+   * Sent ~120ms after `response` by the force-accept path when a TUI build
+   * ignores the primary keys. Must select the SAME option as `response`.
+   */
+  fallbackResponse?: string;
+  /**
+   * Banner-only hold: start deferring injection as soon as this phrase is
+   * visible, before the menu options finish painting.
+   */
+  earlyPhrase?: string;
 }
 
 export const ACCEPT_DEFAULT_PROMPT_RESPONSE = '\r';
@@ -20,6 +30,8 @@ export const ACCEPT_DEFAULT_PROMPT_RESPONSE = '\r';
 export const ACCEPT_SECOND_PROMPT_RESPONSE = '\x1b[B\r';
 /** Fallback when Down+Enter is ignored (some Claude Code TUI builds). */
 export const ACCEPT_SECOND_OPTION_BY_NUMBER = '2\r';
+/** Pick the first numbered option explicitly (Claude-family workspace trust). */
+export const ACCEPT_FIRST_OPTION_BY_NUMBER = '1\r';
 
 /**
  * Claude Code 2.1.x (and Claude-family shells: glm/longcat) show this disclaimer
@@ -36,6 +48,26 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
       '2. yes, i accept',
     ],
     response: ACCEPT_SECOND_PROMPT_RESPONSE,
+    fallbackResponse: ACCEPT_SECOND_OPTION_BY_NUMBER,
+    earlyPhrase: 'claude code running in bypass permissions mode',
+  },
+  {
+    // Claude-family workspace trust ("Do you trust the files in this
+    // folder?"). Isolated third-party homes (GLM/LongCat under
+    // ~/.nexus/homes/<id>) carry no per-project trust, so the FIRST spawn in
+    // every project cwd hits this dialog; unanswered it stays up forever and
+    // the mission/review brief is pasted into the modal and swallowed.
+    // Option 1 is "Yes, proceed" — never force the default-accept here:
+    // Down+Enter would pick "No, exit" and kill the session.
+    adapterIds: ['claude', 'glm', 'longcat'],
+    name: 'claude-workspace-trust',
+    phrases: [
+      'do you trust the files in this folder?',
+      'yes, proceed',
+      'no, exit',
+    ],
+    response: ACCEPT_FIRST_OPTION_BY_NUMBER,
+    earlyPhrase: 'do you trust the files in this folder?',
   },
   {
     adapterIds: ['agy'],
@@ -125,6 +157,28 @@ export class CliPromptAutoResponder {
   }
 
   /**
+   * The signature currently holding injection: full phrase match, or early
+   * hold as soon as a known banner is visible (options may still be painting).
+   */
+  private pendingMatch(
+    sessionId: string,
+    now: number,
+  ): PromptSignature | null {
+    const signatures = this.watchingSignatures(sessionId, now);
+    if (!signatures) return null;
+    const buffer = normalizePromptText(this.buffers.get(sessionId) ?? '');
+    if (!buffer) return null;
+    return (
+      signatures.find(
+        (signature) =>
+          matchesPromptSignature(buffer, signature) ||
+          (signature.earlyPhrase !== undefined &&
+            buffer.includes(signature.earlyPhrase)),
+      ) ?? null
+    );
+  }
+
+  /**
    * Hold nexus prompt injection while a known interactive boot menu is on
    * screen or we just auto-accepted one (TUI still leaving the dialog).
    */
@@ -134,30 +188,30 @@ export class CliPromptAutoResponder {
       if (now < settleUntil) return true;
       this.settlingUntil.delete(sessionId);
     }
-    const signatures = this.watchingSignatures(sessionId, now);
-    if (!signatures) return false;
-    const buffer = normalizePromptText(this.buffers.get(sessionId) ?? '');
-    if (!buffer) return false;
-    // Full signature match, or early hold as soon as the Claude-family bypass
-    // banner is visible (options may still be painting).
-    return signatures.some(
-      (signature) =>
-        matchesPromptSignature(buffer, signature) ||
-        (signature.name === 'claude-bypass-acknowledgement' &&
-          buffer.includes('claude code running in bypass permissions mode')),
-    );
+    return this.pendingMatch(sessionId, now) !== null;
   }
 
   /**
-   * Keys to force-dismiss a still-visible Claude-family bypass menu when the
-   * normal observe path did not fire before inject timeout.
+   * Keys to force-dismiss a still-visible boot menu when the normal observe
+   * path did not fire before inject timeout. Returns the matched signature's
+   * own response (plus its same-option fallback) — never a blind Down+Enter,
+   * which picks "No, exit" on menus whose safe option is the first one.
    */
-  forceAcceptResponse(sessionId: string, now = Date.now()): string | null {
-    if (!this.shouldDeferInjection(sessionId, now)) return null;
-    // Prefer Down+Enter; settle so callers wait before typing the mission brief.
+  forceAcceptResponse(
+    sessionId: string,
+    now = Date.now(),
+  ): { response: string; fallbackResponse?: string } | null {
+    const match = this.pendingMatch(sessionId, now);
+    if (!match) return null;
+    // Settle so callers wait before typing the mission brief.
     this.unbind(sessionId);
     this.settlingUntil.set(sessionId, now + SETTLE_AFTER_ACCEPT_MS);
-    return ACCEPT_SECOND_PROMPT_RESPONSE;
+    return {
+      response: match.response,
+      ...(match.fallbackResponse !== undefined
+        ? { fallbackResponse: match.fallbackResponse }
+        : {}),
+    };
   }
 
   clear(): void {
