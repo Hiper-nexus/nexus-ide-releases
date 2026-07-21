@@ -37,7 +37,7 @@ Distribuição horária dos STTs pagos: 01h (72), 02h (27), 03h (12), 09h (55), 
 
 ## 2. Cruzamento com Overclock (`.overclock-app/messages.db`)
 
-O banco **não contém voz**: é um ledger de telemetria de custo dos agentes CLI (3.461 chamadas, US$ 192,46 em 10 dias, 98% de cache hit, uso madrugadamente automatizado — Codex 87% do volume, Claude US$ 0,34/chamada no fable-5). `activity_log_v2` existe no schema e **nunca foi usada**; `task_id` é coluna morta.
+O banco **não contém voz**: é um ledger de telemetria de custo dos agentes CLI. No snapshot inicial desta análise, antes da rotação observada mais tarde, havia 3.461 chamadas, US$ 192,46 em 10 dias, 98% de cache hit e uso madrugadamente automatizado — Codex 87% do volume, Claude US$ 0,34/chamada no fable-5. `activity_log_v2` existia no schema e estava vazia; `task_id` não tinha valores preenchidos. Esses totais são um snapshot histórico, não um contador persistente.
 
 **O que dá para pegar de melhor:**
 
@@ -110,7 +110,7 @@ Os três `liveProviderMuteDegraded` consumiram o teto antigo integralmente: 6.04
 
 ### Overclock instalado revalidado
 
-A instalação atual é **Overclock 1.2.0**. O `messages.db` permanece com 3.461 chamadas e US$ 192,46, última escrita em 19/jul; `activity_log_v2` continua vazia e `task_id` continua sem uma linha preenchida. A colheita válida segue sendo a disciplina de contabilizar uso, não o storage incompleto. Não foi encontrado um motor de voz inspecionável novo na 1.2.0: o sidecar está compilado em bytecode (`index.jsc`) e o banco continua contendo telemetria de agentes, não eventos de voz.
+A instalação atual é **Overclock 1.2.0**. O snapshot inicial do `messages.db` tinha 3.461 chamadas/US$ 192,46; na revalidação pós-commit, em `2026-07-20T21:36:57-03:00`, o mesmo caminho já havia sido rotacionado/resetado e retornava **32 linhas/US$ 0,404745**, com eventos datados de 9/jul. `activity_log_v2` seguia vazia e `task_id` sem valores. A mudança confirma que esse banco não serve como série histórica durável sem snapshots externos; a colheita válida é a disciplina de contabilizar uso, não presumir persistência do storage. Não foi encontrado um motor de voz inspecionável novo na 1.2.0: o sidecar está compilado em bytecode (`index.jsc`) e o banco contém telemetria de agentes, não eventos de voz.
 
 ### Validação
 
