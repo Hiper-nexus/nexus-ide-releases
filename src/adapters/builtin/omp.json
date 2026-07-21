@@ -13,7 +13,7 @@
   "auth": {
     "method": "oauth",
     "credentialStore": "keychain",
-    "loginHint": "Run `omp` and use /login for Anthropic/OpenAI/Gemini OAuth, or set provider API keys via omp settings."
+    "loginHint": "Use Contas in the OMP · RPC panel or run `omp auth-broker login` to connect any supported provider."
   },
   "spawn": {
     "interactive": [

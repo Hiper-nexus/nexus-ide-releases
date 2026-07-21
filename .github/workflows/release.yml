@@ -1,9 +1,9 @@
 name: Release macOS + Linux/Windows preview gates
 
 on:
-  push:
-    tags:
-      - 'v[0-9]*.[0-9]*.[0-9]*'
+  # Local release is the default while hosted Actions credits are unavailable.
+  # Keeping only explicit dispatch prevents a tag push from consuming runners;
+  # the same audited pipeline remains available when intentionally requested.
   workflow_dispatch:
     inputs:
       release_tag:

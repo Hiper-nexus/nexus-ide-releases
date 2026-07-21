@@ -13,21 +13,58 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.23',
+  date: '2026-07-21',
+  codename: 'Piloto Automático Real',
+  summary:
+    'Orquestração com prova de aceite por evento, recuperação automática de reviewers, OMP multiprovider sem falso bloqueio e notificações responsivas.',
+  highlights: [
+    {
+      title: 'Entrega sem duplicação',
+      detail:
+        'Prompts e handoffs capturam até turnos muito rápidos pela borda idle→busy, sem depender de polling tardio.',
+    },
+    {
+      title: 'Recuperação autônoma',
+      detail:
+        'Reviewer preservado inválido é fechado e substituído na mesma passagem do Doctor.',
+    },
+    {
+      title: 'OMP e AGY alinhados ao runtime',
+      detail:
+        'O cofre multiprovider do OMP deixa de ser bloqueado pelo Nexus e o catálogo AGY acompanha os modelos realmente publicados pelo CLI.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Quorum independente honesto',
+      detail:
+        'Um provider bloqueia review cruzado; dois liberam a missão e providers adicionais permanecem recomendados.',
+    },
+    {
+      title: 'Inbox responsivo',
+      detail:
+        'Notificações permanecem inteiras e roláveis em janelas estreitas ou baixas.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.22',
   date: '2026-07-21',
   codename: 'Jarvis Operacional + Fluxo Rápido',
   summary:
-    'Jarvis Live mais responsiva e recuperável, wake passivo protegido contra TV/ambiente e nove melhorias de operação inspiradas na paridade Orca/Overclock, incluindo fan-out e companion mobile.',
+    'Jarvis Live mais responsiva e recuperável, wake passivo protegido contra TV/ambiente e melhorias de operação inspiradas na paridade Orca/Overclock.',
   highlights: [
     {
       title: 'Jarvis Live sem estados presos',
       detail:
-        'Drenagem de PCM, follow-up e watchdog agora encerram ou recuperam o turno completo antes de liberar a interface.',
+        'Drenagem de PCM, follow-up e watchdog encerram ou recuperam o turno antes de liberar a interface.',
     },
     {
       title: 'Wake passivo resistente a ambiente',
       detail:
-        'TV e áudio contínuo são barrados localmente por assinatura forcedByMax e backoff de até 60 segundos, sem loop de STT.',
+        'TV e áudio contínuo são barrados localmente, sem loop de STT.',
     },
     {
       title: 'Missões com menos atrito',
@@ -39,49 +76,12 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Fallback Live mudo mais rápido',
       detail:
-        'O prazo antes de degradar para Classic caiu de seis para 3,5 segundos, preservando margem para respostas saudáveis.',
+        'O prazo antes de degradar para Classic caiu de seis para 3,5 segundos.',
     },
     {
       title: 'Companion e superfícies coerentes',
       detail:
-        'Tabs se adaptam ao modo atual, comparação fica escopada por missão e o scaffold mobile compartilha o contrato operacional.',
-    },
-  ],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.21',
-  date: '2026-07-20',
-  codename: 'Estúdio Seguro',
-  summary:
-    'Estúdio de Mídia para imagem e vídeo, OMP cli-rpc como pane de primeira classe e hardening de auth, credenciais e acesso remoto após três rodadas de revisão.',
-  highlights: [
-    {
-      title: 'Estúdio de Mídia operacional',
-      detail:
-        'Geração de imagem e vídeo ganhou uma superfície para usuário final, cancelamento e custo de vídeo visível.',
-    },
-    {
-      title: 'OMP cli-rpc no grid',
-      detail:
-        'O runtime OMP por RPC passa a funcionar como pane de primeira classe junto aos demais agentes.',
-    },
-    {
-      title: 'Segurança revisada em profundidade',
-      detail:
-        'Auth, credenciais e acesso remoto receberam hardening em três passes de revisão.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Motor de mídia previsível',
-      detail:
-        'Timeout de imagem agora representa o prazo real e referências ausentes falham explicitamente.',
-    },
-    {
-      title: 'Achados críticos e altos encerrados',
-      detail:
-        'As correções das auditorias de segurança reduziram os achados residuais para severidade baixa.',
+        'Tabs, comparação por missão e scaffold mobile compartilham o contrato operacional.',
     },
   ],
 };

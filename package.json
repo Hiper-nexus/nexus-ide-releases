@@ -1,7 +1,7 @@
 {
   "name": "nexus-ide",
   "productName": "NexusIDE",
-  "version": "0.19.22",
+  "version": "0.19.23",
   "description": "Terminal IDE multi-agente: grid de panes de terminal com PTYs reais, base para adapters de CLIs de IA e orquestração de squads.",
   "main": ".vite/build/main.js",
   "author": "NexusIDE",
@@ -96,6 +96,7 @@
   },
   "overrides": {
     "@electron/node-gyp": "10.2.0-electron.1",
+    "fast-uri": "3.1.4",
     "tar": "^7.5.19",
     "tmp": "^0.2.7",
     "@esbuild-kit/core-utils": {

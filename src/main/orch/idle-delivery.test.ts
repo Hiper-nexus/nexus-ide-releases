@@ -265,10 +265,58 @@ describe('idle delivery authority and lifecycle', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(storeMocks.delivered).toEqual([]);
 
-    // Aceite: o TUI vira busy → markSubmitted na próxima verificação.
+    // Aceite: o evento busy é a prova, sem polling que possa perder a borda.
     ptyMocks.state = 'busy';
-    await vi.advanceTimersByTimeAsync(300);
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('does not treat unrelated busy activity before Enter as submit proof', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([]);
+
+    ptyMocks.state = 'idle';
+    await vi.advanceTimersByTimeAsync(150);
+    expect(ptyMocks.writes).toHaveBeenLastCalledWith('orchestrator-session', '\r');
+    expect(storeMocks.delivered).toEqual([]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('captures a fast busy→idle turn during the Enter retry window without duplicating', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(1);
+
+    // Turno curtíssimo: termina antes dos 400 ms do retry. O polling antigo
+    // nunca via busy e reentregava o mesmo handoff.
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await vi.advanceTimersByTimeAsync(13_000);
+
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(1);
+    expect(
+      ptyMocks.writes.mock.calls.filter((call) =>
+        String(call[1]).includes('completed the requested work'),
+      ),
+    ).toHaveLength(1);
     delivery.shutdownIdleDelivery();
   });
 
@@ -320,6 +368,7 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.onHandoffSubmitted(handoff(), scope);
     await vi.advanceTimersByTimeAsync(150);
     ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
     await vi.advanceTimersByTimeAsync(400);
 
     expect(ptyMocks.writes.mock.calls.filter((call) => call[1] === '\r')).toHaveLength(1);
@@ -344,7 +393,7 @@ describe('idle delivery authority and lifecycle', () => {
     );
     // Submitted só após a prova de aceite (sessão vira busy).
     ptyMocks.state = 'busy';
-    await vi.advanceTimersByTimeAsync(700);
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-persisted' }]);
     delivery.shutdownIdleDelivery();
   });

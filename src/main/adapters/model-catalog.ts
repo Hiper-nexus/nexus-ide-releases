@@ -112,10 +112,13 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     agy: {
+      default: 'gemini-3.6-flash-high',
       models: [
         { id: 'gemini-3.6-flash-low', availability: 'free', costTier: 'free', source: 'bundled' },
+        { id: 'gemini-3.6-flash-medium', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.6-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.5-flash-low', availability: 'free', costTier: 'free', source: 'bundled' },
+        { id: 'gemini-3.5-flash-medium', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.5-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.1-pro-high', availability: 'paid', costTier: 'medium', source: 'bundled' },
       ],

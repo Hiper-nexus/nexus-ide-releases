@@ -2094,6 +2094,8 @@ body {
   margin: 0;
   padding: 6px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 4px;

@@ -2,7 +2,10 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentNotifications } from './AgentNotifications';
+import {
+  AgentNotifications,
+  notificationPanelPlacement,
+} from './AgentNotifications';
 import { useAgentNotificationStore } from '../state/agent-notification-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
@@ -17,6 +20,7 @@ const PANE = {
   adapterId: 'claude',
   agentName: 'Claude',
 };
+const mountedRoots: Root[] = [];
 
 function seedPane(present: boolean): void {
   useLayoutStore.setState({
@@ -47,6 +51,7 @@ function mount(): { host: HTMLDivElement; root: Root } {
   document.body.appendChild(host);
   const root = createRoot(host);
   act(() => root.render(<AgentNotifications />));
+  mountedRoots.push(root);
   return { host, root };
 }
 
@@ -60,6 +65,9 @@ describe('AgentNotifications', () => {
   });
 
   afterEach(() => {
+    act(() => {
+      for (const root of mountedRoots.splice(0)) root.unmount();
+    });
     document.body.innerHTML = '';
     vi.restoreAllMocks();
   });
@@ -81,6 +89,26 @@ describe('AgentNotifications', () => {
     expect(
       host.querySelector('.agent-notif__bell')?.getAttribute('aria-label'),
     ).toContain('12 não lidas');
+  });
+
+  it('clamps the panel inside a narrow viewport when the bell is near the left edge', () => {
+    expect(
+      notificationPanelPlacement({
+        anchor: { top: 20, right: 44, bottom: 46 },
+        panelWidth: 296,
+        viewport: { top: 0, left: 0, width: 320, height: 600 },
+      }),
+    ).toEqual({ top: 54, left: 8, maxHeight: 420 });
+  });
+
+  it('flips above the bell when a short viewport has more room there', () => {
+    expect(
+      notificationPanelPlacement({
+        anchor: { top: 260, right: 390, bottom: 286 },
+        panelWidth: 360,
+        viewport: { top: 0, left: 0, width: 400, height: 320 },
+      }),
+    ).toEqual({ top: 28, left: 30, maxHeight: 224 });
   });
 
   it('opens on bell click and closes on ×, restoring focus to the bell', () => {

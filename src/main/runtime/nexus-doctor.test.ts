@@ -326,12 +326,12 @@ describe('inspectNexusReadiness', () => {
         'lease-backend-unconfigured',
       ]),
     );
-    // Manifest ausente e quorum abaixo do ideal do Council são avisos —
-    // identidade provisória e 1 revisor independente já destravam missões.
+    // Manifest ausente é provisório; um único provider, porém, não consegue
+    // separar autor e reviewer entre vendors e permanece blocker.
     expect(report.warnings).toContainEqual(
       expect.objectContaining({ code: 'missing-project-manifest' }),
     );
-    expect(report.warnings).toContainEqual(
+    expect(report.blockers).toContainEqual(
       expect.objectContaining({ code: 'insufficient-independent-providers' }),
     );
     expect(report.remediation.length).toBeGreaterThan(0);
@@ -496,6 +496,19 @@ describe('inspectNexusReadiness', () => {
       expect.objectContaining({ code: 'insufficient-independent-providers' }),
     );
     expect(report.warnings).toContainEqual(
+      expect.objectContaining({ code: 'insufficient-independent-providers' }),
+    );
+  });
+
+  it('blocks when only one provider exists because independent review is impossible', () => {
+    const root = makeRoot();
+    const report = inspectNexusReadiness({
+      ...baseOptions(root),
+      listProviders: () => criticalProviders().slice(0, 1),
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.blockers).toContainEqual(
       expect.objectContaining({ code: 'insufficient-independent-providers' }),
     );
   });

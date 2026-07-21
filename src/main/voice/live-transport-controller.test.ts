@@ -182,7 +182,11 @@ describe('LiveTransportController', () => {
     vi.doUnmock('./voice-secrets');
     vi.doUnmock('./jarvis-memory');
     vi.doUnmock('../jarvis/realtime/factory');
-  }, 10_000);
+  // This case resets and imports the full realtime graph. Under the complete
+  // suite (OCR + server integration workers in parallel), cold transform can
+  // legitimately exceed Vitest's 10 s default even though onStart resolves
+  // immediately once loaded.
+  }, 30_000);
 
   it('falls back from a failed OpenAI realtime provider to Gemini Live', async () => {
     vi.resetModules();

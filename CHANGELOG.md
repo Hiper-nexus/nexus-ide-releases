@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.19.23 — Piloto Automático Real
+
+Data: 2026-07-21
+
+### Orquestração autônoma e recuperação
+
+- **Entrega com prova por evento**: prompts e handoffs observam toda a borda
+  `idle → busy`, inclusive turnos que terminam em menos de 400 ms, eliminando
+  reenvios e trabalho duplicado causados pelo polling tardio.
+- **Reviewer se recupera na mesma passagem**: panes preservados mortos,
+  incompatíveis ou que recusam o brief são fechados e substituídos
+  automaticamente, sem exigir uma segunda execução do Doctor.
+- **Quorum honesto**: um único provider continua bloqueando review
+  independente; dois providers liberam autor + reviewer e o terceiro vira
+  recomendação do Review Council.
+
+### Providers e modelos
+
+- **OMP sem falso bloqueio de login**: o Nexus deixa o cofre multiprovider do
+  próprio OMP decidir a autenticação e permite iniciar o terminal/painel para
+  usar qualquer conta já conectada ou abrir o fluxo de login.
+- **AGY 3.6 alinhado ao CLI real**: default publicado em
+  `gemini-3.6-flash-high`, variantes medium incluídas e id inexistente do
+  Sonnet removido; tarefas leves passam a usar 3.6 Flash.
+
+### Interface e qualidade
+
+- **Notificações responsivas**: o inbox fica contido nas quatro bordas em
+  janelas estreitas/baixas, inverte para cima quando necessário e mantém
+  rolagem interna sem recortar conteúdo.
+- **Gate completo de release**: 5.929/5.929 testes da aplicação, 152/152 do
+  servidor, typechecks e smoke do artefato aprovados em Node 22; auditoria npm
+  zerada antes da assinatura, notarização e verificação macOS.
+- **Sem consumo automático de Actions**: tags não disparam runners hospedados;
+  o pipeline remoto permanece disponível apenas por dispatch explícito.
+
 ## Unreleased — Route brain (x-algorithm) + Oh My Pi zero-friction
 
 Data: 2026-07-18

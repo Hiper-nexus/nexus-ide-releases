@@ -224,6 +224,25 @@ describe('builtin adapters', () => {
     expect(aider?.quirks?.altScreen).toBe(false);
   });
 
+  it('ships the model ids reported by the current AGY CLI', () => {
+    const agy = BUILTIN_ADAPTERS.find(
+      (adapter) => (adapter as { id?: string }).id === 'agy',
+    ) as { models?: { default?: string; list?: string[] } } | undefined;
+    const models = agy?.models?.list ?? [];
+
+    expect(agy?.models?.default).toBe('gemini-3.6-flash-high');
+    expect(models).toEqual(
+      expect.arrayContaining([
+        'gemini-3.6-flash-high',
+        'gemini-3.6-flash-medium',
+        'gemini-3.6-flash-low',
+        'gemini-3.5-flash-medium',
+        'claude-sonnet-4-6',
+      ]),
+    );
+    expect(models).not.toContain('claude-sonnet-4-6-thinking');
+  });
+
   it('agy yolo flag matches the installed Antigravity CLI', () => {
     const agy = BUILTIN_ADAPTERS.find(
       (a) => (a as { id?: string }).id === 'agy',

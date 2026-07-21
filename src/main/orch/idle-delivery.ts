@@ -47,6 +47,8 @@ interface PendingEnter {
   readonly handoffId: string;
   readonly timer: ReturnType<typeof setTimeout>;
   retryTimer?: ReturnType<typeof setTimeout>;
+  acceptanceTimer?: ReturnType<typeof setTimeout>;
+  submitStarted?: boolean;
 }
 
 const queues = new Map<string, QueuedHandoff[]>();
@@ -65,7 +67,6 @@ const MAX_DELIVERY_SUMMARY = 4000;
  * sempre (markSubmitted é durável e o replay só olha não-entregues).
  */
 const SUBMIT_ACCEPTANCE_WINDOW_MS = 12_000;
-const SUBMIT_ACCEPTANCE_POLL_MS = 250;
 /** Quantas re-entregas automáticas por handoff antes de esperar o replay de rebinding. */
 const MAX_AUTOMATIC_REQUEUES = 1;
 const requeueAttempts = new Map<string, number>();
@@ -169,12 +170,61 @@ function isCurrentAuthority(authority: DeliveryAuthority): boolean {
   );
 }
 
+function clearPendingEnter(pending: PendingEnter): void {
+  clearTimeout(pending.timer);
+  if (pending.retryTimer) clearTimeout(pending.retryTimer);
+  if (pending.acceptanceTimer) clearTimeout(pending.acceptanceTimer);
+  pendingEnters.delete(pending);
+}
+
+function acceptPendingEnters(sessionId: string): void {
+  for (const pending of [...pendingEnters]) {
+    if (pending.authority.sessionId !== sessionId) continue;
+    // A busy edge before the delayed Enter belongs to other session activity;
+    // it is not proof that this handoff was submitted.
+    if (!pending.submitStarted) continue;
+    if (!isCurrentAuthority(pending.authority)) {
+      clearPendingEnter(pending);
+      continue;
+    }
+    requeueAttempts.delete(pending.handoffId);
+    getProjectDomainStores(pending.authority.scope).handoffs.markSubmitted(
+      pending.handoffId,
+    );
+    clearPendingEnter(pending);
+  }
+}
+
+function handleSubmitNotAccepted(pending: PendingEnter): void {
+  clearPendingEnter(pending);
+  if (!isCurrentAuthority(pending.authority)) return;
+  const attempts = (requeueAttempts.get(pending.handoffId) ?? 0) + 1;
+  requeueAttempts.set(pending.handoffId, attempts);
+  if (attempts > MAX_AUTOMATIC_REQUEUES) return;
+  const handoff = getProjectDomainStores(pending.authority.scope).handoffs.get(
+    pending.handoffId,
+  );
+  if (handoff?.deliveryState === 'queued') {
+    onHandoffSubmitted(handoff, pending.authority.scope);
+  }
+}
+
 function scheduleEnter(authority: DeliveryAuthority, handoffId: string): void {
   let pending: PendingEnter;
   const timer = setTimeout(() => {
     if (isCurrentAuthority(authority)) {
+      // Arm before write(): test transports and very fast CLIs can publish the
+      // busy edge synchronously while the CR is being written.
+      pending.submitStarted = true;
       const submitted = orchWriteSession(authority.sessionId, '\r');
       if (submitted) {
+        // A test/fake transport may publish busy synchronously from write().
+        // The busy tap already finalized and removed this pending delivery.
+        if (!pendingEnters.has(pending)) return;
+        pending.acceptanceTimer = setTimeout(
+          () => handleSubmitNotAccepted(pending),
+          SUBMIT_ACCEPTANCE_WINDOW_MS,
+        );
         // Some interactive CLIs consume the first CR while leaving the pasted
         // prompt in their editor (notably after resume/modal transitions). A
         // bounded second CR is safe only while the exact session is still
@@ -186,50 +236,14 @@ function scheduleEnter(authority: DeliveryAuthority, handoffId: string): void {
           ) {
             orchWriteSession(authority.sessionId, '\r');
           }
-          pendingEnters.delete(pending);
-          // `delivered` só vira `submitted` (durável) depois da prova de
-          // aceite; sem ela o handoff fica 'queued' e pode ser re-entregue.
-          void verifySubmitAccepted(authority, handoffId);
         }, 400);
         return;
       }
     }
-    pendingEnters.delete(pending);
+    clearPendingEnter(pending);
   }, 150);
   pending = { authority, handoffId, timer };
   pendingEnters.add(pending);
-}
-
-/**
- * Prova de aceite do submit: a sessão deve virar busy dentro da janela. Se um
- * modal sem assinatura engoliu o handoff, ele permanece 'queued' no SQLite e
- * é re-enfileirado uma vez; falhas seguintes aguardam o replay de rebinding
- * (redeliverPendingHandoffs) em vez de desaparecer silenciosamente.
- */
-async function verifySubmitAccepted(
-  authority: DeliveryAuthority,
-  handoffId: string,
-): Promise<void> {
-  const deadline = Date.now() + SUBMIT_ACCEPTANCE_WINDOW_MS;
-  for (;;) {
-    if (!isCurrentAuthority(authority)) return;
-    const state = getSessionState(authority.sessionId);
-    if (state === 'busy') {
-      requeueAttempts.delete(handoffId);
-      getProjectDomainStores(authority.scope).handoffs.markSubmitted(handoffId);
-      return;
-    }
-    if (state === null) return; // sessão morreu — a fila durável cobre o replay
-    if (Date.now() >= deadline) break;
-    await new Promise((resolve) => setTimeout(resolve, SUBMIT_ACCEPTANCE_POLL_MS));
-  }
-  const attempts = (requeueAttempts.get(handoffId) ?? 0) + 1;
-  requeueAttempts.set(handoffId, attempts);
-  if (attempts > MAX_AUTOMATIC_REQUEUES) return;
-  const handoff = getProjectDomainStores(authority.scope).handoffs.get(handoffId);
-  if (handoff && handoff.deliveryState === 'queued') {
-    onHandoffSubmitted(handoff, authority.scope);
-  }
 }
 
 function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
@@ -267,6 +281,7 @@ function flushQueue(sessionId: string): void {
 export function initIdleDelivery(): void {
   if (untapState) return;
   untapState = tapSessionState((sessionId, state) => {
+    if (state === 'busy') acceptPendingEnters(sessionId);
     if (state === 'idle') flushQueue(sessionId);
   });
   untapExit = tapSessionExit((sessionId) => {
@@ -275,9 +290,7 @@ export function initIdleDelivery(): void {
     }
     for (const pending of [...pendingEnters]) {
       if (pending.authority.sessionId !== sessionId) continue;
-      clearTimeout(pending.timer);
-      if (pending.retryTimer) clearTimeout(pending.retryTimer);
-      pendingEnters.delete(pending);
+      clearPendingEnter(pending);
     }
   });
   unsubscribeScopeChanges = onRendererWorkspaceScopeChange(
@@ -299,9 +312,7 @@ export function initIdleDelivery(): void {
         ) {
           continue;
         }
-        clearTimeout(pending.timer);
-        if (pending.retryTimer) clearTimeout(pending.retryTimer);
-        pendingEnters.delete(pending);
+        clearPendingEnter(pending);
       }
     },
   );
@@ -315,11 +326,8 @@ export function shutdownIdleDelivery(): void {
   untapExit = null;
   unsubscribeScopeChanges = null;
   queues.clear();
-  for (const pending of pendingEnters) {
-    clearTimeout(pending.timer);
-    if (pending.retryTimer) clearTimeout(pending.retryTimer);
-  }
-  pendingEnters.clear();
+  for (const pending of [...pendingEnters]) clearPendingEnter(pending);
+  requeueAttempts.clear();
 }
 
 /** Resolve the exact owner/scope/mission authority for the orchestrator. */

@@ -116,15 +116,24 @@ export function inspectIndependentProviders(
       'no-independent-providers',
       'Nenhum provedor CLI instalado, habilitado, autenticado e confinável para review independente.',
       'Instale e autentique três CLIs distintos para suportar autor + dois reviewers em risco critical.',
+      )];
+  }
+  if (ids.length === 1) {
+    return [doctorFinding(
+      'independent-providers',
+      'blocker',
+      'insufficient-independent-providers',
+      'Apenas um provedor confinável; não há como garantir autor e reviewer de vendors distintos.',
+      'Instale/autentique ao menos dois provedores CLI distintos para review independente.',
+      ids,
     )];
   }
   return ids.length >= minRequired
     ? []
     : [doctorFinding(
         'independent-providers',
-        // Warning: um único provedor confinável já destrava o quorum de review
-        // (basta 1 reviewer de provider diferente do autor); o mínimo maior é
-        // preferência do Review Council, não pré-condição de missão/freeze.
+        // Dois provedores confináveis já permitem autor + reviewer diferente;
+        // acima disso, o mínimo maior é preferência do Review Council.
         'warning',
         'insufficient-independent-providers',
         `Apenas ${ids.length} provedor(es) independente(s); recomendado ${minRequired} para o Review Council em risco high/critical.`,

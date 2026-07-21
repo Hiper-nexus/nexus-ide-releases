@@ -452,7 +452,15 @@ export class CliContextDraftReviewer {
       (pane) => pane.state !== 'exited' && isContextDraftReviewerPane(pane, draftId),
     );
     if (preservedReviewer) {
-      return this.#resumePreservedReview(preservedReviewer, scope, initial);
+      const resumed = await this.#resumePreservedReview(
+        preservedReviewer,
+        scope,
+        initial,
+      );
+      if (resumed) return resumed;
+      // Stale/unusable pane was closed. Continue this same Doctor pass and
+      // spawn a fresh reviewer; requiring another user invocation is not
+      // autonomous recovery.
     }
 
     const selected = await this.#selectRoute(initial.author.provider, initial);
@@ -515,8 +523,8 @@ export class CliContextDraftReviewer {
     pane: PaneSnapshot,
     scope: ProjectExecutionScope,
     initial: ContextDraftRecord,
-  ): Promise<ContextDraftRecord> {
-    const closeStale = async (reason: string): Promise<never> => {
+  ): Promise<ContextDraftRecord | null> {
+    const closeStale = async (): Promise<null> => {
       let closed: boolean | void = false;
       try {
         closed = await this.#close(pane.paneId);
@@ -528,25 +536,23 @@ export class CliContextDraftReviewer {
           `failed to close stale context draft reviewer pane: ${pane.paneId}`,
         );
       }
-      throw new Error(
-        `preserved reviewer pane ${pane.paneId} ${reason}; closed it so the next Doctor pass spawns a fresh reviewer`,
-      );
+      return null;
     };
 
     const adapterId =
       pane.adapterId ?? parseReviewerAdapterId(pane.agentName, initial.id);
     if (!adapterId) {
-      return closeStale('has no identifiable reviewer adapter');
+      return closeStale();
     }
     if (sameProvider(adapterId, initial.author.provider)) {
-      return closeStale(`runs the author provider (${adapterId})`);
+      return closeStale();
     }
     if (!pane.sessionId) {
-      return closeStale('has no live session');
+      return closeStale();
     }
     const state = this.#sessionState(pane.sessionId);
     if (state === null || state === 'exited') {
-      return closeStale('session is no longer reachable');
+      return closeStale();
     }
 
     const route = Object.freeze(routeSchema.parse({ adapterId }));
@@ -558,10 +564,8 @@ export class CliContextDraftReviewer {
           pane.sessionId,
           buildContextDraftReviewerPrompt(initial.id, initial.contentHash),
         );
-      } catch (error) {
-        return closeStale(
-          `did not accept the review brief: ${error instanceof Error ? error.message : String(error)}`,
-        );
+      } catch {
+        return closeStale();
       }
     }
     return this.#awaitOutcome({

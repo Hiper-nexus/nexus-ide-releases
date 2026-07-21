@@ -145,7 +145,7 @@
       ]
     },
     "agy": {
-      "default": "gemini-3.1-pro-high",
+      "default": "gemini-3.6-flash-high",
       "models": [
         {
           "id": "gemini-3.6-flash-low",
@@ -160,6 +160,12 @@
           "source": "remote"
         },
         {
+          "id": "gemini-3.6-flash-medium",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
           "id": "gemini-3.5-flash-low",
           "availability": "free",
           "costTier": "free",
@@ -167,6 +173,12 @@
         },
         {
           "id": "gemini-3.5-flash-high",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.5-flash-medium",
           "availability": "cheap",
           "costTier": "low",
           "source": "remote"
