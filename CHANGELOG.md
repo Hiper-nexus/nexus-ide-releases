@@ -19,6 +19,18 @@ Data: 2026-07-18
   worker não-omp da missão.
 - Sticky roster, transporte auto, yolo auditado em mission rpc, Fleet + Rail.
 
+## 0.19.21 — Estúdio Seguro
+
+Data: 2026-07-20
+
+- **Estúdio de Mídia** para geração de imagem e vídeo com fluxo acessível ao
+  usuário final, referências fail-loud, cancelamento e custo de vídeo exposto.
+- **OMP cli-rpc como pane de primeira classe** no grid, preservando o modelo
+  operacional dos demais agentes.
+- **Hardening de auth, credenciais e acesso remoto** após três rodadas de
+  revisão, reduzindo os achados de severidade crítica/alta para baixa.
+- **Timeout de imagem honesto** e cancelamento consistente no motor de mídia.
+
 ## 0.19.20 — Sci-Fi de Verdade
 
 Data: 2026-07-19

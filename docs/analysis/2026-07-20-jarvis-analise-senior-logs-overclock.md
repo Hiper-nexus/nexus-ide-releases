@@ -81,3 +81,40 @@ O audit de 13/07 (Jarvis > ClockVoice) se mantém: não há nada de pipeline de 
 ## 5. Veredito
 
 O "não opera legal" era, em primeiro lugar, **economia quebrada do wake passivo**: o assistente gastava STT pago transcrevendo TV a cada 10 s, 24/7, com flood de log que mascarava os eventos reais. A correção é estrutural (assinatura de ambiente + escada honesta), não cosmética — e segura porque o trilho acústico, que separa TV de wake real com margem de 20×, nunca é afetado.
+
+## 6. Follow-up operacional após `c100c97`
+
+Uma segunda revisão leu os **5.081 eventos** do log completo, reabriu os caminhos de continuidade Live e auditou exatamente os dois commits mais recentes:
+
+- `c100c97`: mudança da Jarvis que propagou `forcedByMax`, criou a assinatura de ambiente contínuo e estendeu o backoff do STT passivo;
+- `a1a289b`: pacote de paridade visual/operacional com Orca/Overclock. Não alterou o motor da Jarvis; mudou App, painel contextual, rail, anexos, fan-out, estilos e scaffold mobile.
+
+O log termina em `2026-07-20T23:46:33.572Z`, antes de `c100c97`. Portanto, ele prova a causa e o baseline, mas **ainda não prova em runtime** a taxa pós-correção do wake passivo. Essa distinção evita declarar sucesso com telemetria anterior ao código.
+
+### Causa dos quatro `statusWatchdog`
+
+Os quatro incidentes eram todos `speaking` sem áudio restante (7,1–10,9 s). A causa encontrada fica em `live-followup.ts`: depois que a fila WebAudio drenava, retornos por `busy`, Live indisponível/erro, turno superado ou `armFollowUp=false` podiam deixar o HUD em `speaking`. O watchdog esperava 6 s e mudava apenas a aparência para `idle`; captura, autorização do turno e callbacks tardios continuavam vivos.
+
+Correções deste follow-up:
+
+1. espera de início tardio e drenagem de PCM virou um contrato testável (`drained | superseded | timeout`);
+2. continuidade bloqueada volta a `idle` imediatamente depois da drenagem e limpa a autoridade de follow-up;
+3. caminho sem follow-up também acompanha a fila e encerra `speaking`, em vez de depender do watchdog;
+4. fila Live que nunca drena tem teto de 45 s, é interrompida e libera a voz;
+5. watchdog agora é recuperação real: invalida deadline/turno/transcript, cancela continuidade e captura, descarta PCM tardio, limpa gates e interrompe o provider antes de expor `idle`;
+6. o log do watchdog ganhou snapshot de captura, owner, turno realtime, fila Live e áudio local para tornar uma reincidência diagnosticável.
+
+### Fallback mudo Live → Classic
+
+Os três `liveProviderMuteDegraded` consumiram o teto antigo integralmente: 6.045 ms, 6.024 ms e 6.015 ms. Nenhum recebeu áudio tardio. Respostas saudáveis já tinham evidência de PCM/tool antes dessa fronteira. O deadline passou para **3.500 ms**, preservando margem de rede e removendo 2,5 s de silêncio garantido antes de o Classic começar. Isso reduz o caso observado wake→primeiro áudio de ~11,9 s para uma estimativa de ~9,4 s sem mexer no caminho Live saudável (mediana observada: 2,9 s).
+
+### Overclock instalado revalidado
+
+A instalação atual é **Overclock 1.2.0**. O `messages.db` permanece com 3.461 chamadas e US$ 192,46, última escrita em 19/jul; `activity_log_v2` continua vazia e `task_id` continua sem uma linha preenchida. A colheita válida segue sendo a disciplina de contabilizar uso, não o storage incompleto. Não foi encontrado um motor de voz inspecionável novo na 1.2.0: o sidecar está compilado em bytecode (`index.jsc`) e o banco continua contendo telemetria de agentes, não eventos de voz.
+
+### Validação
+
+- baseline antes das novas mudanças: typecheck limpo; **941 testes aprovados** e 9 ignorados na seleção completa de voz;
+- após as mudanças: typecheck limpo, **51 testes focados aprovados** e a suíte integral com **5.914/5.914 testes aprovados**;
+- pacote Electron arm64 construído com a toolchain exigida (Node 22.23.1) e smoke funcional aprovado: renderer montado, 20 probes, 128 tools e 11 adapters;
+- a suíte integral expôs uma lacuna herdada do release `268c4cc`: somente o pacote raiz/lock tinham sido promovidos para `0.19.21`. `server/package.json`, changelog e notas internas foram sincronizados com a release já tagueada.

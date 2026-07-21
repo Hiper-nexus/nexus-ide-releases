@@ -72,4 +72,19 @@ describe('wiring do watchdog no voice-controller (follow-up 3iii)', () => {
     expect(busyIdx).toBeGreaterThan(tickIdx);
     expect(idleIdx).toBeGreaterThan(busyIdx);
   });
+
+  it('invalida turno, captura e áudio tardio antes de expor idle', () => {
+    const tickIdx = source.indexOf("statusWatchdogAction(watchedStatus, stuckMs) === 'force-idle'");
+    const busyIdx = source.indexOf('busy.current = false;', tickIdx);
+    const recoveryBlock = source.slice(tickIdx, busyIdx);
+
+    expect(recoveryBlock).toContain('passiveWakeDeadline.invalidate()');
+    expect(recoveryBlock).toContain('cancelLiveFollowUp()');
+    expect(recoveryBlock).toContain('realtimeTranscriptWaiter.supersede()');
+    expect(recoveryBlock).toContain('turnExecution.beginTurn()');
+    expect(recoveryBlock).toContain('setRealtimeTurnActive(false)');
+    expect(recoveryBlock).toContain('setDropRealtimeAudioOut(true)');
+    expect(recoveryBlock).toContain('capture.current?.stop()');
+    expect(recoveryBlock).toContain("stopAllPlayback('status-watchdog')");
+  });
 });

@@ -5,7 +5,14 @@ export const MAX_CONSECUTIVE_RESCUES = 2;
  */
 export const MIN_USABLE_LIVE_MIC_FRAMES = 2;
 export const INSUFFICIENT_LIVE_MIC_FRAMES_TRANSCRIPT_WAIT_MS = 800;
-export const LIVE_RESCUE_RESPONSE_TIMEOUT_MS = 6_000;
+/**
+ * Evidence window after a final transcript/rescue. Runtime logs (19–20 Jul)
+ * showed every healthy provider response producing audio/tool evidence before
+ * this boundary, while all three silent turns consumed the former 6s ceiling
+ * in full before Classic even started. Keep a network-jitter margin without
+ * adding 2.5s of guaranteed silence to the fallback path.
+ */
+export const LIVE_RESCUE_RESPONSE_TIMEOUT_MS = 3_500;
 const LIVE_RESCUE_POLL_MS = 50;
 
 let consecutiveRescues = 0;

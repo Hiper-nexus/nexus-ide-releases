@@ -54,6 +54,48 @@ export const REPLY_RAW_SPEECH_RMS = 0.008;
 export const REPLY_FOLLOWUP_SILENCE_MS = 1_200;
 export const REPLY_FOLLOWUP_MIN_LISTEN_MS = 1_400;
 export const REPLY_FOLLOWUP_MAX_MS = 28_000;
+export const LIVE_AUDIO_START_GRACE_MS = 3_000;
+export const LIVE_AUDIO_DRAIN_MAX_MS = 45_000;
+const LIVE_AUDIO_DRAIN_THRESHOLD_MS = 80;
+const LIVE_AUDIO_POLL_MS = 50;
+
+export type LivePlaybackDrainOutcome = 'drained' | 'superseded' | 'timeout';
+
+/**
+ * Waits for late provider PCM and then for the scheduled WebAudio tail to
+ * drain. Kept pure/injectable because this boundary is where a provider reply
+ * and the renderer clock most often race.
+ */
+export async function waitForLivePlaybackDrain(opts: {
+  remainingMs: () => number;
+  isCurrent: () => boolean;
+  audioAlreadyDrained?: boolean;
+  now?: () => number;
+  delay?: (ms: number) => Promise<void>;
+  startGraceMs?: number;
+  maxDrainMs?: number;
+}): Promise<LivePlaybackDrainOutcome> {
+  const now = opts.now ?? Date.now;
+  const wait = opts.delay ?? delay;
+
+  if (!opts.audioAlreadyDrained) {
+    const audioStartDeadline = now() + (opts.startGraceMs ?? LIVE_AUDIO_START_GRACE_MS);
+    while (now() < audioStartDeadline) {
+      if (!opts.isCurrent()) return 'superseded';
+      if (opts.remainingMs() > LIVE_AUDIO_DRAIN_THRESHOLD_MS) break;
+      await wait(LIVE_AUDIO_POLL_MS);
+    }
+  }
+
+  const drainStartedAt = now();
+  while (now() - drainStartedAt < (opts.maxDrainMs ?? LIVE_AUDIO_DRAIN_MAX_MS)) {
+    if (!opts.isCurrent()) return 'superseded';
+    const remaining = opts.remainingMs();
+    if (remaining <= LIVE_AUDIO_DRAIN_THRESHOLD_MS) return 'drained';
+    await wait(Math.min(250, Math.max(LIVE_AUDIO_POLL_MS, remaining)));
+  }
+  return opts.isCurrent() ? 'timeout' : 'superseded';
+}
 
 export function buildReplyAutoStop(autoStop: AutoStopOptions): AutoStopOptions {
   return {
@@ -114,35 +156,51 @@ export async function reopenLiveFollowUpListening(opts: LiveFollowUpOptions): Pr
     audioAlreadyDrained,
   } = opts;
   const armedAt = followUpGeneration;
-
-  if (!audioAlreadyDrained) {
-    // Chunks often arrive a beat AFTER liveProviderAnswer. Wait briefly for the
-    // playback queue to fill before treating remainingMs===0 as "done speaking".
-    const audioStartDeadline = Date.now() + 3_000;
-    while (Date.now() < audioStartDeadline) {
-      if (!shouldContinueLiveFollowUp(armedAt, canReopen)) return;
-      if ((livePlayer?.remainingMs() ?? 0) > 80) break;
-      await delay(50);
+  const drainOutcome = await waitForLivePlaybackDrain({
+    remainingMs: () => livePlayer?.remainingMs() ?? 0,
+    isCurrent: () => shouldContinueLiveFollowUp(armedAt, canReopen),
+    audioAlreadyDrained,
+  });
+  if (drainOutcome === 'superseded') return;
+  if (drainOutcome === 'timeout') {
+    logVoiceEvent('warn', 'jarvis.livePlaybackDrainTimeout', 'fila Live não drenou; liberando voz', {
+      remainingMs: livePlayer?.remainingMs() ?? 0,
+    });
+    followUpAuthority.clear();
+    livePlayer?.stop();
+    if (useVoiceStore.getState().status === 'speaking') {
+      useVoiceStore.getState().setStatus('idle');
     }
-
-    const started = Date.now();
-    const maxWaitMs = 45_000;
-    while (Date.now() - started < maxWaitMs) {
-      if (!shouldContinueLiveFollowUp(armedAt, canReopen)) return;
-      const remaining = livePlayer?.remainingMs() ?? 0;
-      if (remaining <= 80) break;
-      await delay(Math.min(250, remaining));
-    }
+    return;
   }
   await delay(450);
 
   if (!shouldContinueLiveFollowUp(armedAt, canReopen)) return;
-  if (busy.current || wakeOpenInProgress) return;
-  if (!isJarvisLiveEnabled()) return;
   const info = useVoiceStore.getState().info;
-  if (!canAttemptRealtime(info)) return;
   const liveState = useVoiceStore.getState().liveState;
-  if (liveState?.status === 'error') return;
+  const blockReason = busy.current
+    ? 'busy'
+    : wakeOpenInProgress
+      ? 'wake-opening'
+      : !isJarvisLiveEnabled()
+        ? 'live-disabled'
+        : !canAttemptRealtime(info)
+          ? 'realtime-unavailable'
+          : liveState?.status === 'error'
+            ? 'live-error'
+            : null;
+  if (blockReason) {
+    // The audio already drained and this exact turn is still current. Leaving
+    // `speaking` here forced the status watchdog to recover six seconds later.
+    if (useVoiceStore.getState().status === 'speaking') {
+      useVoiceStore.getState().setStatus('idle');
+    }
+    followUpAuthority.clear();
+    logVoiceEvent('info', 'jarvis.liveFollowUpBlocked', 'continuidade não pôde reabrir', {
+      reason: blockReason,
+    });
+    return;
+  }
 
   logVoiceEvent('info', 'jarvis.liveFollowUpArm', 'reabrindo escuta Live (continuidade)', {
     remainingMs: livePlayer?.remainingMs() ?? 0,
@@ -179,6 +237,29 @@ export function releaseAfterLiveProviderAnswer(opts: LiveFollowUpOptions & {
   if (!shouldArmLiveFollowUp(opts.armFollowUp)) {
     logVoiceEvent('info', 'jarvis.liveFollowUpSkipped', 'continuidade não armada neste turno', {
       reason: opts.followUpSkipReason ?? 'turn-owned-before-audio',
+    });
+    // Provider PCM may still be audible. Settle to idle only after the queue
+    // drains; otherwise this path remains `speaking` until the watchdog fires.
+    const releasedAt = followUpGeneration;
+    void waitForLivePlaybackDrain({
+      remainingMs: () => livePlayer?.remainingMs() ?? 0,
+      isCurrent: () => followUpGeneration === releasedAt,
+      audioAlreadyDrained: opts.audioAlreadyDrained,
+    }).then((outcome) => {
+      if (outcome === 'superseded') return;
+      if (outcome === 'timeout') {
+        logVoiceEvent('warn', 'jarvis.livePlaybackDrainTimeout', 'fila Live não drenou sem follow-up', {
+          remainingMs: livePlayer?.remainingMs() ?? 0,
+        });
+        livePlayer?.stop();
+      }
+      if (
+        followUpGeneration === releasedAt &&
+        useVoiceStore.getState().status === 'speaking' &&
+        (livePlayer?.remainingMs() ?? 0) <= LIVE_AUDIO_DRAIN_THRESHOLD_MS
+      ) {
+        useVoiceStore.getState().setStatus('idle');
+      }
     });
     return;
   }

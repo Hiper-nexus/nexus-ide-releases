@@ -917,10 +917,44 @@ export function useVoiceController(): void {
 
       const stuckMs = Date.now() - watchedStatusAt;
       if (statusWatchdogAction(watchedStatus, stuckMs) === 'force-idle') {
+        const captureWasActive = capture.current?.isCapturing() === true;
+        const wakeUtteranceWasActive = wakeMic.isUtteranceActive();
         logVoiceEvent('warn', 'voice.statusWatchdog', 'status preso — forçando idle', {
           status: watchedStatus,
           stuckMs,
+          captureActive: captureWasActive,
+          wakeUtteranceActive: wakeUtteranceWasActive,
+          realtimeTurnActive,
+          turnOwner: turnExecution.owner,
+          liveRemainingMs: livePlayer?.remainingMs() ?? 0,
+          pendingLiveChunks: pendingRealtimeAudioOut.length,
+          localAudioAudible: isLocalAudioAudible(Date.now()),
         });
+        // A visual reset alone leaves late STT/brain/provider work free to land
+        // inside the next turn. Invalidate every turn-scoped authority first,
+        // then tear down capture/audio before exposing idle again.
+        passiveWakeDeadline.invalidate();
+        cancelLiveFollowUp();
+        realtimeTranscriptWaiter.supersede();
+        turnExecution.beginTurn();
+        setPendingLiveStartSettle(null);
+        setFinishRealtimeCapture(null);
+        setRealtimeTurnActive(false);
+        setSuppressRealtimeAudioOut(true);
+        setDropRealtimeAudioOut(true);
+        resetPendingRealtimeAudioOut();
+        clearLocalAudioGate();
+        if (wakeUtteranceWasActive) wakeMic.cancelUtterance();
+        if (captureWasActive) {
+          void capture.current?.stop().catch((error) => {
+            logVoiceEvent('error', 'voice.statusWatchdogCaptureStopFailed', errMsg(error));
+          });
+        }
+        livePlayer?.stop();
+        stopAllPlayback('status-watchdog');
+        if (watchedStatus !== 'speaking') {
+          void window.nexus.voice.liveInterrupt('status-watchdog').catch(() => {});
+        }
         busy.current = false;
         useVoiceStore.getState().setStatus('idle');
       }

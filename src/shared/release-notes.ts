@@ -13,6 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.21',
+  date: '2026-07-20',
+  codename: 'Estúdio Seguro',
+  summary:
+    'Estúdio de Mídia para imagem e vídeo, OMP cli-rpc como pane de primeira classe e hardening de auth, credenciais e acesso remoto após três rodadas de revisão.',
+  highlights: [
+    {
+      title: 'Estúdio de Mídia operacional',
+      detail:
+        'Geração de imagem e vídeo ganhou uma superfície para usuário final, cancelamento e custo de vídeo visível.',
+    },
+    {
+      title: 'OMP cli-rpc no grid',
+      detail:
+        'O runtime OMP por RPC passa a funcionar como pane de primeira classe junto aos demais agentes.',
+    },
+    {
+      title: 'Segurança revisada em profundidade',
+      detail:
+        'Auth, credenciais e acesso remoto receberam hardening em três passes de revisão.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Motor de mídia previsível',
+      detail:
+        'Timeout de imagem agora representa o prazo real e referências ausentes falham explicitamente.',
+    },
+    {
+      title: 'Achados críticos e altos encerrados',
+      detail:
+        'As correções das auditorias de segurança reduziram os achados residuais para severidade baixa.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.20',
   date: '2026-07-19',
   codename: 'Sci-Fi de Verdade',
@@ -45,38 +82,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Credencial probada antes do spawn',
       detail:
         'Probe pré-spawn + watchdog de login-stuck evitam panes presos em tela de login (Overclock F-256).',
-    },
-  ],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.19',
-  date: '2026-07-18',
-  codename: 'Missão Que Começa',
-  summary:
-    'Modo agêntico deixa de travar no Começar: falso positivo de evidência ("em seguida… do print") não prende mais a missão em awaiting_goal; shell Sem objetivo reabre o wizard em vez de erro de panes; power-off da Jarvis corta narração de verdade.',
-  highlights: [
-    {
-      title: 'Começar missão no agêntico',
-      detail:
-        'Objetivos que só citam print existente despacham normalmente; approveIntent promove contrato compilado em vez de falhar com awaiting_goal.',
-    },
-    {
-      title: 'Retomar shell armado',
-      detail:
-        'Missões Na fila / Sem objetivo (intent-first) reabrem Nova Missão com o objetivo pré-preenchido — sem "sem panes registrados".',
-    },
-    {
-      title: 'Jarvis desliga de verdade',
-      detail:
-        'O botão power-off para a fila de narração e o áudio em voo; idle não reacende a fala até o próximo wake/PTT.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Gate de evidência futura mais conservador',
-      detail:
-        'Exige ação de envio/anexo (ou "com prints") — não basta "em seguida" perto de "print".',
     },
   ],
 };

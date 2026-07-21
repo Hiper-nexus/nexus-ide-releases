@@ -7,6 +7,7 @@ import {
   liveFollowUpGeneration,
   shouldArmLiveFollowUp,
   shouldContinueLiveFollowUp,
+  waitForLivePlaybackDrain,
 } from './live-followup';
 
 describe('live follow-up continuity helpers', () => {
@@ -50,5 +51,51 @@ describe('live follow-up continuity helpers', () => {
       maxMs: Math.max(base.maxMs ?? 0, 28_000),
       rawSpeechRms: REPLY_RAW_SPEECH_RMS,
     });
+  });
+
+  it('waits for a late PCM start and then for the Live queue to drain', async () => {
+    let now = 0;
+    let remainingMs = 0;
+    await expect(
+      waitForLivePlaybackDrain({
+        remainingMs: () => remainingMs,
+        isCurrent: () => true,
+        now: () => now,
+        delay: async (ms) => {
+          now += ms;
+          if (now >= 100 && now < 500) remainingMs = 400;
+          if (now >= 500) remainingMs = 0;
+        },
+        startGraceMs: 1_000,
+        maxDrainMs: 2_000,
+      }),
+    ).resolves.toBe('drained');
+    expect(now).toBeGreaterThanOrEqual(500);
+  });
+
+  it('does not settle playback from a superseded turn', async () => {
+    await expect(
+      waitForLivePlaybackDrain({
+        remainingMs: () => 500,
+        isCurrent: () => false,
+        delay: async () => {},
+      }),
+    ).resolves.toBe('superseded');
+  });
+
+  it('bounds a Live queue that never drains', async () => {
+    let now = 0;
+    await expect(
+      waitForLivePlaybackDrain({
+        remainingMs: () => 500,
+        isCurrent: () => true,
+        audioAlreadyDrained: true,
+        now: () => now,
+        delay: async (ms) => {
+          now += ms;
+        },
+        maxDrainMs: 500,
+      }),
+    ).resolves.toBe('timeout');
   });
 });

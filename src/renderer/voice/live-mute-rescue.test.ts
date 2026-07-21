@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   hasInsufficientLiveMicFrames,
+  LIVE_RESCUE_RESPONSE_TIMEOUT_MS,
   liveMuteRescueCount,
   markLiveMuteRescueAttempt,
   markLiveMicFrameOffered,
@@ -18,6 +19,10 @@ beforeEach(() => {
 });
 
 describe('live mute rescue', () => {
+  it('keeps mute fallback inside an interactive latency budget', () => {
+    expect(LIVE_RESCUE_RESPONSE_TIMEOUT_MS).toBe(3_500);
+  });
+
   it('treats zero or one socket frame as insufficient Live capture', () => {
     expect(hasInsufficientLiveMicFrames(0)).toBe(true);
     expect(hasInsufficientLiveMicFrames(1)).toBe(true);
