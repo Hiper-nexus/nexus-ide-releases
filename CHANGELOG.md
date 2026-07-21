@@ -19,6 +19,42 @@ Data: 2026-07-18
   worker não-omp da missão.
 - Sticky roster, transporte auto, yolo auditado em mission rpc, Fleet + Rail.
 
+## 0.19.22 — Jarvis Operacional + Fluxo Rápido
+
+Data: 2026-07-21
+
+### Jarvis realtime e voz passiva
+
+- **Continuidade Live sem travar em `speaking`**: a fila de PCM tardia agora
+  tem drenagem testável, supersessão segura e timeout; follow-up bloqueado volta
+  a `idle` assim que o áudio termina.
+- **Watchdog operacional de verdade**: uma fase presa invalida turno, transcript
+  e deadlines, cancela captura/follow-up, descarta PCM tardio, limpa gates e
+  interrompe o provider antes de liberar a interface.
+- **Fallback mudo mais rápido**: Live → Classic passa de 6 s para 3,5 s sem
+  alterar o caminho Live saudável.
+- **TV/ambiente não alimenta STT para sempre**: assinatura de áudio contínuo com
+  `forcedByMax`, verdicts observáveis e backoff 3/6/10/20/40/60 s barram o loop
+  passivo localmente; pausas humanas e wake aceito resetam o estado.
+
+### Operação, missões e paridade Orca/Overclock
+
+- **Drop global de arquivo/código** abre o wizard agêntico com o anexo; `⌘⇧N`
+  entra direto no objetivo da missão.
+- **Painel contextual orientado à atividade**: Missão é a aba inicial e o
+  marketplace ganhou superfície própria no launcher/painel.
+- **Mission Rail mais operacional**: chip de branch Git, alterações pendentes e
+  comparação fan-out dos agentes lado a lado, escopada por missão.
+- **Editor e navegação refinados**: gutter de linhas, Tab com dois espaços e
+  escape acessível, barra de status e auto-hide de tabs irrelevantes.
+- **Companion mobile**: scaffold Expo com contrato/API inicial em `mobile/`.
+
+### Qualidade da release
+
+- Metadados internos, servidor, lockfile e changelog sincronizados em `0.19.22`.
+- Análise de 5.081 eventos da Jarvis e snapshot rotativo do Overclock
+  documentados sem apresentar telemetria anterior como prova pós-correção.
+
 ## 0.19.21 — Estúdio Seguro
 
 Data: 2026-07-20

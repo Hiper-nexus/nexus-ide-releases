@@ -13,6 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.22',
+  date: '2026-07-21',
+  codename: 'Jarvis Operacional + Fluxo Rápido',
+  summary:
+    'Jarvis Live mais responsiva e recuperável, wake passivo protegido contra TV/ambiente e nove melhorias de operação inspiradas na paridade Orca/Overclock, incluindo fan-out e companion mobile.',
+  highlights: [
+    {
+      title: 'Jarvis Live sem estados presos',
+      detail:
+        'Drenagem de PCM, follow-up e watchdog agora encerram ou recuperam o turno completo antes de liberar a interface.',
+    },
+    {
+      title: 'Wake passivo resistente a ambiente',
+      detail:
+        'TV e áudio contínuo são barrados localmente por assinatura forcedByMax e backoff de até 60 segundos, sem loop de STT.',
+    },
+    {
+      title: 'Missões com menos atrito',
+      detail:
+        'Drop de arquivos, atalho de missão, activity stream, marketplace, status Git, fan-out e editor refinado encurtam o fluxo operacional.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Fallback Live mudo mais rápido',
+      detail:
+        'O prazo antes de degradar para Classic caiu de seis para 3,5 segundos, preservando margem para respostas saudáveis.',
+    },
+    {
+      title: 'Companion e superfícies coerentes',
+      detail:
+        'Tabs se adaptam ao modo atual, comparação fica escopada por missão e o scaffold mobile compartilha o contrato operacional.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.21',
   date: '2026-07-20',
   codename: 'Estúdio Seguro',
@@ -45,43 +82,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Achados críticos e altos encerrados',
       detail:
         'As correções das auditorias de segurança reduziram os achados residuais para severidade baixa.',
-    },
-  ],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.20',
-  date: '2026-07-19',
-  codename: 'Sci-Fi de Verdade',
-  summary:
-    'Redesign sci-fi da interface com paridade mac/win/linux, GitHub Device Flow com gate de push→PR, stack SSH colhida do emdash (ProxyJump, port-forward resiliente), security floor do router fail-closed e cards de pane com atividade real — zero LLM.',
-  highlights: [
-    {
-      title: 'UI sci-fi refinada e multiplataforma',
-      detail:
-        'Redesign visual completo com paridade de renderização entre macOS, Windows e Linux.',
-    },
-    {
-      title: 'GitHub Device Flow com gate push→PR',
-      detail:
-        'OAuth por device code com erros tipados; push vira PR com gate explícito (emdash W2).',
-    },
-    {
-      title: 'Panes com atividade real, zero LLM',
-      detail:
-        'Cards de pane mostram atividade real do terminal sem custo de modelo (colheita Overclock).',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Security floor fail-closed',
-      detail:
-        'Classificação incerta de modelo liga o security floor — na dúvida o tier sobe, nunca desce.',
-    },
-    {
-      title: 'Credencial probada antes do spawn',
-      detail:
-        'Probe pré-spawn + watchdog de login-stuck evitam panes presos em tela de login (Overclock F-256).',
     },
   ],
 };
