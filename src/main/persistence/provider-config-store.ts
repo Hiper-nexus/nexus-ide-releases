@@ -357,7 +357,7 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
     };
   }
 
-  if (adapter.kind === 'cli-pty') {
+  if (adapter.kind === 'cli-pty' || adapter.kind === 'cli-rpc') {
     const effectiveBin = cfg.binPath || adapter.bin;
     if (!isBinResolvable(effectiveBin)) {
       return {
@@ -379,6 +379,14 @@ export function providerReadiness(adapterId: string): ProviderReadiness {
 
   const decision = authDecision(adapterId);
   if (decision.strategy === 'login-needed') {
+    // OMP is a multi-provider broker with its own credential vault. Nexus
+    // cannot reduce that vault to one adapter key synchronously, and blocking
+    // here prevents both `/login` and the OMP Accounts panel from ever
+    // starting. The OMP runtime remains the source of truth and reports a
+    // provider-specific auth error when no usable credential exists.
+    if (adapterId === 'omp' || adapterId === 'omp-rpc') {
+      return { ready: true, reason: 'ready' };
+    }
     return {
       ready: false,
       reason:

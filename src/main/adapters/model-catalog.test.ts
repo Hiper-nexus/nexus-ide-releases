@@ -128,6 +128,20 @@ describe('published catalog JSON', () => {
       }
     }
   });
+
+  it('keeps the AGY published default aligned with its current 3.6 family', () => {
+    const agy = PUBLISHED_MODEL_CATALOG.adapters?.agy;
+    const ids = agy?.models?.map((model) => model.id) ?? [];
+
+    expect(agy?.default).toBe('gemini-3.6-flash-high');
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        'gemini-3.6-flash-high',
+        'gemini-3.6-flash-medium',
+        'gemini-3.6-flash-low',
+      ]),
+    );
+  });
 });
 
 describe('loadModelCatalog quality merge layer', () => {

@@ -10,7 +10,12 @@ import {
   type PaneAuthzInfo,
 } from './pane-authz';
 import type { AgentGateContext } from './gate';
-import { getSessionState, orchWriteSession } from '../pty/pty-manager';
+import {
+  getSessionState,
+  orchWriteSession,
+  tapSessionExit,
+  tapSessionState,
+} from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import { resolveRoutableModel } from './task-router';
@@ -48,7 +53,6 @@ const BOOT_PROMPT_HOLD_MS = 5_000;
  * blind to idle panes: stall needs busy, login-stuck needs a busy transition).
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
-const PROMPT_ACCEPTANCE_POLL_MS = 200;
 const UNSAFE_TERMINAL_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
 
 export function delay(ms: number): Promise<void> {
@@ -153,11 +157,19 @@ export async function injectPrompt(
  * submit is proven and we stop.
  */
 async function submitEnter(sessionId: string): Promise<void> {
-  await delay(PROMPT_SETTLE_MS);
-  orchWriteSession(sessionId, '\r');
-  await delay(ENTER_RETRY_MS);
-  if (getSessionState(sessionId) === 'idle') {
+  let observedBusy = getSessionState(sessionId) === 'busy';
+  const untapState = tapSessionState((changedSessionId, state) => {
+    if (changedSessionId === sessionId && state === 'busy') observedBusy = true;
+  });
+  try {
+    await delay(PROMPT_SETTLE_MS);
     orchWriteSession(sessionId, '\r');
+    await delay(ENTER_RETRY_MS);
+    if (!observedBusy && getSessionState(sessionId) === 'idle') {
+      orchWriteSession(sessionId, '\r');
+    }
+  } finally {
+    untapState();
   }
 }
 
@@ -173,15 +185,50 @@ export async function injectPastedPrompt(
   await submitEnter(sessionId);
 }
 
-/** Resolve true quando a sessão vira busy (CLI aceitou o brief e começou um turn). */
-async function waitForBusy(sessionId: string, windowMs: number): Promise<boolean> {
-  const deadline = Date.now() + windowMs;
-  for (;;) {
-    const state = getSessionState(sessionId);
-    if (state === 'busy') return true;
-    if (state === null) return false;
-    if (Date.now() >= deadline) return false;
-    await delay(PROMPT_ACCEPTANCE_POLL_MS);
+/**
+ * Execute one prompt injection while observing the complete idle→busy edge.
+ * The observer is armed BEFORE submitEnter's 400 ms retry delay: polling only
+ * after injectPrompt returned missed fast turns that became busy and idle
+ * inside that delay, then re-sent an already completed prompt.
+ */
+async function injectWithBusyProof(
+  sessionId: string,
+  prompt: string,
+  windowMs: number,
+): Promise<boolean> {
+  let observedBusy = false;
+  let sessionExited = false;
+  let settle: ((accepted: boolean) => void) | null = null;
+  const untapState = tapSessionState((changedSessionId, state) => {
+    if (changedSessionId !== sessionId || state !== 'busy') return;
+    observedBusy = true;
+    settle?.(true);
+  });
+  const untapExit = tapSessionExit((exitedSessionId) => {
+    if (exitedSessionId !== sessionId) return;
+    sessionExited = true;
+    settle?.(false);
+  });
+
+  try {
+    await injectPrompt(sessionId, prompt);
+    if (observedBusy || getSessionState(sessionId) === 'busy') return true;
+    if (sessionExited || getSessionState(sessionId) === null) return false;
+    return await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        settle = null;
+        resolve(false);
+      }, windowMs);
+      settle = (accepted) => {
+        clearTimeout(timer);
+        settle = null;
+        resolve(accepted);
+      };
+    });
+  } finally {
+    settle = null;
+    untapState();
+    untapExit();
   }
 }
 
@@ -198,8 +245,9 @@ export async function deliverAgentPrompt(
 ): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await waitOutBootPrompts(sessionId);
-    await injectPrompt(sessionId, prompt);
-    if (await waitForBusy(sessionId, PROMPT_ACCEPTANCE_WINDOW_MS)) return;
+    if (await injectWithBusyProof(sessionId, prompt, PROMPT_ACCEPTANCE_WINDOW_MS)) {
+      return;
+    }
   }
   throw new Error('agent pane did not start after prompt delivery');
 }

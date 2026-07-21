@@ -39,6 +39,75 @@ function kindIcon(kind: AgentNotificationKind): string {
   return '×';
 }
 
+const PANEL_VIEWPORT_GUTTER = 8;
+const PANEL_MAX_HEIGHT = 420;
+const PANEL_MAX_VIEWPORT_RATIO = 0.7;
+
+export interface NotificationPanelPlacementInput {
+  anchor: Pick<DOMRect, 'top' | 'right' | 'bottom'>;
+  panelWidth: number;
+  viewport: { top: number; left: number; width: number; height: number };
+}
+
+export interface NotificationPanelPlacement {
+  top: number;
+  left: number;
+  maxHeight: number;
+}
+
+/**
+ * Keep the fixed inbox inside the visible viewport even when compact chrome
+ * moves the bell close to the left edge. It prefers opening below the bell,
+ * but flips above when that is the only side with useful vertical room.
+ */
+export function notificationPanelPlacement({
+  anchor,
+  panelWidth,
+  viewport,
+}: NotificationPanelPlacementInput): NotificationPanelPlacement {
+  const viewportRight = viewport.left + viewport.width;
+  const viewportBottom = viewport.top + viewport.height;
+  const minLeft = viewport.left + PANEL_VIEWPORT_GUTTER;
+  const maxLeft = Math.max(
+    minLeft,
+    viewportRight - panelWidth - PANEL_VIEWPORT_GUTTER,
+  );
+  const left = Math.min(
+    maxLeft,
+    Math.max(minLeft, anchor.right - panelWidth),
+  );
+
+  const desiredHeight = Math.min(
+    PANEL_MAX_HEIGHT,
+    Math.floor(viewport.height * PANEL_MAX_VIEWPORT_RATIO),
+  );
+  const belowTop = anchor.bottom + PANEL_VIEWPORT_GUTTER;
+  const belowSpace = Math.max(
+    0,
+    viewportBottom - PANEL_VIEWPORT_GUTTER - belowTop,
+  );
+  const aboveBottom = anchor.top - PANEL_VIEWPORT_GUTTER;
+  const aboveSpace = Math.max(
+    0,
+    aboveBottom - (viewport.top + PANEL_VIEWPORT_GUTTER),
+  );
+
+  if (belowSpace >= desiredHeight || belowSpace >= aboveSpace) {
+    return {
+      top: belowTop,
+      left,
+      maxHeight: Math.min(desiredHeight, belowSpace),
+    };
+  }
+
+  const maxHeight = Math.min(desiredHeight, aboveSpace);
+  return {
+    top: aboveBottom - maxHeight,
+    left,
+    maxHeight,
+  };
+}
+
 function NotificationRow({
   item,
   now,
@@ -139,9 +208,8 @@ export function AgentNotifications() {
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const restoreFocusRef = useRef(true);
   const [now, setNow] = useState(() => Date.now());
-  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(
-    null,
-  );
+  const [placement, setPlacement] =
+    useState<NotificationPanelPlacement | null>(null);
 
   const unread = useMemo(() => countUnread(items), [items]);
 
@@ -175,25 +243,48 @@ export function AgentNotifications() {
     return () => clearInterval(t);
   }, [open]);
 
-  // Posição fixed ancorada ao sino; recalcula em resize (e fecha em scroll do
-  // conteúdo, que invalidaria a âncora).
+  // Posição fixed ancorada ao sino e contida no viewport visível. Em janelas
+  // compactas o sino pode ficar perto da borda esquerda; ancorar só por
+  // `right` empurrava metade do painel para fora da janela.
   useLayoutEffect(() => {
     if (!open) {
-      setAnchor(null);
+      setPlacement(null);
       return undefined;
     }
     const compute = () => {
       const r = rootRef.current?.getBoundingClientRect();
       if (r) {
-        setAnchor({
-          top: Math.round(r.bottom + 8),
-          right: Math.max(8, Math.round(window.innerWidth - r.right)),
+        const visual = window.visualViewport;
+        const viewport = {
+          top: visual?.offsetTop ?? 0,
+          left: visual?.offsetLeft ?? 0,
+          width: visual?.width ?? window.innerWidth,
+          height: visual?.height ?? window.innerHeight,
+        };
+        const panelWidth =
+          panelRef.current?.getBoundingClientRect().width ??
+          Math.min(360, Math.max(0, viewport.width - 24));
+        const next = notificationPanelPlacement({
+          anchor: r,
+          panelWidth,
+          viewport,
+        });
+        setPlacement({
+          top: Math.round(next.top),
+          left: Math.round(next.left),
+          maxHeight: Math.floor(next.maxHeight),
         });
       }
     };
     compute();
     window.addEventListener('resize', compute);
-    return () => window.removeEventListener('resize', compute);
+    window.visualViewport?.addEventListener('resize', compute);
+    window.visualViewport?.addEventListener('scroll', compute);
+    return () => {
+      window.removeEventListener('resize', compute);
+      window.visualViewport?.removeEventListener('resize', compute);
+      window.visualViewport?.removeEventListener('scroll', compute);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -299,8 +390,14 @@ export function AgentNotifications() {
           role="dialog"
           aria-label="Notificações de agentes"
           style={
-            anchor
-              ? { position: 'fixed', top: anchor.top, right: anchor.right }
+            placement
+              ? {
+                  position: 'fixed',
+                  top: placement.top,
+                  left: placement.left,
+                  right: 'auto',
+                  maxHeight: placement.maxHeight,
+                }
               : undefined
           }
         >

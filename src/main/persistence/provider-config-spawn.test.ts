@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnDeps = vi.hoisted(() => ({
   prepareAccount: vi.fn(),
-  runtimeKey: vi.fn(() => 'sk-global-other-account'),
+  runtimeKey: vi.fn<() => string | null>(() => 'sk-global-other-account'),
   subscriptionAuthed: vi.fn(() => true),
   resolveAuthStrategy: vi.fn(() => ({
     strategy: 'subscription',
@@ -51,6 +51,16 @@ const kimiAdapter = {
   },
 };
 
+const ompAdapter = {
+  ...claudeAdapter,
+  id: 'omp',
+  label: 'Oh My Pi',
+  bin: 'omp',
+  install: { command: 'brew install can1357/tap/omp' },
+  auth: { method: 'oauth', loginHint: 'omp auth-broker login' },
+  env: { passthrough: [] },
+};
+
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [], getFocusedWindow: () => null },
   dialog: { showMessageBox: vi.fn() },
@@ -59,9 +69,15 @@ vi.mock('electron', () => ({
 
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: (id: string) =>
-    id === 'claude' ? claudeAdapter : id === 'kimi' ? kimiAdapter : null,
+    id === 'claude'
+      ? claudeAdapter
+      : id === 'kimi'
+        ? kimiAdapter
+        : id === 'omp'
+          ? ompAdapter
+          : null,
   isBinResolvable: () => true,
-  listAdapters: () => [claudeAdapter, kimiAdapter],
+  listAdapters: () => [claudeAdapter, kimiAdapter, ompAdapter],
   notifyAdaptersChanged: vi.fn(),
   primaryKeyEnvVar: (adapter: typeof claudeAdapter | typeof kimiAdapter) =>
     'envVarFallback' in adapter.auth
@@ -119,7 +135,10 @@ vi.mock('./account-store', () => ({
   prepareAccountForSpawn: spawnDeps.prepareAccount,
 }));
 
-import { prepareProviderSpawn } from './provider-config-store';
+import {
+  prepareProviderSpawn,
+  providerReadiness,
+} from './provider-config-store';
 
 describe('prepareProviderSpawn with a pane-pinned account', () => {
   beforeEach(() => {
@@ -134,6 +153,19 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.listAccounts.mockReturnValue([]);
     spawnDeps.getActiveAccount.mockReset();
     spawnDeps.ensureSubscriptionActive.mockReturnValue(true);
+  });
+
+  it('does not block OMP before its own multi-provider auth broker can start', () => {
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'login-needed',
+      injectKey: false,
+      suppressKeyEnv: false,
+    });
+
+    expect(providerReadiness('omp')).toEqual({ ready: true, reason: 'ready' });
+    expect(prepareProviderSpawn('omp')).toMatchObject({ ok: true });
   });
 
   it('keeps the native Claude session authoritative for unpinned panes', () => {

@@ -9,19 +9,36 @@ const stubs = vi.hoisted(() => ({
   })),
   writeSession: vi.fn(() => true),
   sessionState: vi.fn(() => 'busy'),
+  stateTaps: [] as Array<(sessionId: string, state: string) => void>,
+  exitTaps: [] as Array<(sessionId: string) => void>,
   missionPanesRecord: vi.fn(),
 }));
 
 vi.mock('./workspace-path', () => ({ resolveCwdForScope: stubs.resolveCwdForScope }));
 vi.mock('./pane-registry', () => ({
   getPaneAuthzInfo: vi.fn(),
+  requestPaneClose: vi.fn(() => true),
   requestPaneSpawn: stubs.requestPaneSpawn,
-  waitForIdle: vi.fn(),
+  waitForIdle: vi.fn(async () => 'idle'),
 }));
 vi.mock('./pane-authz', () => ({ authorizePaneAccess: vi.fn() }));
 vi.mock('../pty/pty-manager', () => ({
   orchWriteSession: stubs.writeSession,
   getSessionState: stubs.sessionState,
+  tapSessionState: vi.fn((tap: (sessionId: string, state: string) => void) => {
+    stubs.stateTaps.push(tap);
+    return () => {
+      const index = stubs.stateTaps.indexOf(tap);
+      if (index >= 0) stubs.stateTaps.splice(index, 1);
+    };
+  }),
+  tapSessionExit: vi.fn((tap: (sessionId: string) => void) => {
+    stubs.exitTaps.push(tap);
+    return () => {
+      const index = stubs.exitTaps.indexOf(tap);
+      if (index >= 0) stubs.exitTaps.splice(index, 1);
+    };
+  }),
 }));
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: vi.fn(() => ({ id: 'codex', kind: 'cli-pty', quirks: {} })),
@@ -42,7 +59,12 @@ vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: vi.fn(() => ({ leanCode: false, seniorMode: false, designPro: false })),
 }));
 
-import { injectPrompt, spawnPaneAndMaybePrompt, withHandoffContract } from './tool-util';
+import {
+  deliverAgentPrompt,
+  injectPrompt,
+  spawnPaneAndMaybePrompt,
+  withHandoffContract,
+} from './tool-util';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const scope = testProjectScope();
@@ -50,6 +72,8 @@ const scope = testProjectScope();
 describe('agent pane workspace confinement', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    stubs.stateTaps.length = 0;
+    stubs.exitTaps.length = 0;
     stubs.resolveCwdForScope.mockReturnValue('/workspace');
   });
 
@@ -152,6 +176,28 @@ describe('agent prompt injection', () => {
       await vi.advanceTimersByTimeAsync(650);
       await pending;
       expect(stubs.writeSession).toHaveBeenCalledTimes(2); // paste + one CR
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not duplicate a prompt when a fast busy→idle turn finishes during submit', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      const pending = deliverAgentPrompt('session-1', 'quick task');
+      await vi.advanceTimersByTimeAsync(250);
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(2, 'session-1', '\r');
+
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
+      stubs.sessionState.mockReturnValue('idle');
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'idle');
+      await vi.advanceTimersByTimeAsync(400);
+      await pending;
+
+      expect(stubs.writeSession).toHaveBeenCalledTimes(2); // prompt + one CR
+      expect(stubs.stateTaps).toHaveLength(0);
+      expect(stubs.exitTaps).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }
