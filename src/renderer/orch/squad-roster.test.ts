@@ -79,7 +79,7 @@ describe('balanceSquadRosterCli', () => {
     expect(balanced[0].model).toBeUndefined();
     expect(balanced.slice(1).map((item) => item.model)).toEqual([
       undefined,
-      'gemini-3.5-flash-high',
+      'gemini-3.6-flash-high',
       'grok-4.5',
       undefined,
     ]);

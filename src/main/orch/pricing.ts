@@ -25,6 +25,7 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   claude: { inputPerM: 3, outputPerM: 15 },
   'gpt-5-mini': { inputPerM: 0.25, outputPerM: 2 },
   'gpt-5': { inputPerM: 1.25, outputPerM: 10 },
+  'gemini-3.6-flash': { inputPerM: 1.5, outputPerM: 7.5 },
   'gemini-flash': { inputPerM: 0.3, outputPerM: 2.5 },
   gemini: { inputPerM: 1.25, outputPerM: 10 },
   mimo: { inputPerM: 0.2, outputPerM: 0.6 },

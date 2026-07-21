@@ -13,7 +13,7 @@ describe('squad model defaults', () => {
 
   it('fills only an empty model and preserves a manual choice', () => {
     expect(applySquadModelDefault({ cli: 'grok' }).model).toBe('grok-4.5');
-    expect(applySquadModelDefault({ cli: 'agy' }).model).toBe('gemini-3.5-flash-high');
+    expect(applySquadModelDefault({ cli: 'agy' }).model).toBe('gemini-3.6-flash-high');
     expect(applySquadModelDefault({ cli: 'grok', model: 'grok-4.1' }).model).toBe(
       'grok-4.1',
     );

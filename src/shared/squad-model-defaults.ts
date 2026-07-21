@@ -1,7 +1,7 @@
 /** Product defaults for newly created or provider-switched squad agents. */
 export const SQUAD_MODEL_DEFAULTS = {
   grok: 'grok-4.5',
-  gemini: 'gemini-3.5-flash-high',
+  gemini: 'gemini-3.6-flash-high',
 } as const;
 
 export function defaultSquadModelForAdapter(adapterId: string): string | undefined {
