@@ -105,6 +105,9 @@ export interface PassiveWakeUtterance extends CaptureResult {
   preRoll: Float32Array[];
   rawSpeechMs: number;
   rawMaxRms: number;
+  /** True quando o VAD fechou o clip por estouro de janela (áudio contínuo),
+   * não por silêncio — assinatura de ambiente/TV usada pelo admission gate. */
+  forcedByMax?: boolean;
 }
 
 export class WakeMic {
@@ -452,6 +455,7 @@ export class WakeMic {
       preRoll: handoffFrames,
       rawSpeechMs: sample.speechMs,
       rawMaxRms: sample.maxRawRms,
+      forcedByMax: sample.forcedByMax === true,
     };
     this.log('info', 'wake.passiveSample', 'frase VAD enviada ao STT de wake', {
       durationSec: Number(durationSec.toFixed(2)),

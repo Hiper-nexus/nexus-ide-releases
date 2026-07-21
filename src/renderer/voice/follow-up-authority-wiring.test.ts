@@ -73,7 +73,7 @@ describe('follow-up authority wiring', () => {
 
 describe('passive STT admission wiring', () => {
   it('gates locally before transcription and backs off rejected ambient audio', () => {
-    expect(controller).toContain('passiveWakeAdmission.shouldTranscribe');
+    expect(controller).toContain('passiveWakeAdmission.admit');
     expect(controller).toContain("'wake.passiveLocalRejected'");
     expect(controller).toContain('passiveWakeAdmission.reject');
     expect(controller).toContain('passiveWakeAdmission.accept');

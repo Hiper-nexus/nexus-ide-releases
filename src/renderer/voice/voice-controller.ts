@@ -549,10 +549,16 @@ export function useVoiceController(): void {
       const info = useVoiceStore.getState().info;
       if (!info?.enabled || !info.wakeWordEnabled || info.routing !== 'jarvis') return;
       const admissionNow = Date.now();
-      if (!passiveWakeAdmission.shouldTranscribe(utterance, admissionNow)) {
+      const admissionVerdict = passiveWakeAdmission.admit(utterance, admissionNow);
+      if (!admissionVerdict.admit) {
         logVoiceEvent('info', 'wake.passiveLocalRejected', 'clip ambiente bloqueado antes do STT', {
+          reason: admissionVerdict.reason,
           rawSpeechMs: Math.round(utterance.rawSpeechMs),
           peakRms: Number(utterance.rawMaxRms.toFixed(4)),
+          forcedByMax: utterance.forcedByMax === true,
+          ...(admissionVerdict.backoffRemainingMs
+            ? { backoffRemainingMs: Math.round(admissionVerdict.backoffRemainingMs) }
+            : {}),
         });
         return;
       }
