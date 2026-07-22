@@ -74,7 +74,7 @@ function OmpAccountsSection() {
         <span aria-hidden="true">{collapsed ? '▸' : '▾'}</span>
         Contas
         {authProvidersLoading ? (
-          <span className="omp-accounts__status">· sondando…</span>
+          <span className="omp-accounts__status">· verificando…</span>
         ) : null}
       </button>
       {collapsed ? null : (
@@ -431,13 +431,15 @@ export function OmpRpcPanel() {
   return (
     <aside
       className="omp-panel"
-      aria-label="Sessão oh-my-pi (RPC)"
+      aria-label="Sessão do Oh My Pi"
       style={{ zIndex: stackZ }}
       onMouseDownCapture={bringToFront}
     >
       <header className="omp-panel__header">
         <span className="omp-panel__mark" aria-hidden="true">π</span>
-        <span className="omp-panel__title">OMP · RPC</span>
+        <span className="omp-panel__title">
+          Oh My Pi <span className="omp-panel__protocol">RPC</span>
+        </span>
         {state ? (
           <span className={`omp-state omp-state--${state}`}>
             <span className="omp-state__dot" aria-hidden="true" />
@@ -456,8 +458,12 @@ export function OmpRpcPanel() {
               : ''}
           </span>
         ) : (
-          <span className="omp-badge" title="Aprovações pedem confirmação">
-            SAFE
+          <span
+            className="omp-badge"
+            title="Modo seguro: ações sensíveis pedem sua confirmação"
+            aria-label="Modo seguro: ações sensíveis pedem confirmação"
+          >
+            CONFIRMA
           </span>
         )}
         <button
@@ -475,7 +481,7 @@ export function OmpRpcPanel() {
           <>
             <select
               className="omp-select"
-              aria-label="Modelo"
+              aria-label="Modelo do Oh My Pi"
               value={modelValue}
               onChange={(e) => {
                 const [provider, ...rest] = e.target.value.split('/');
@@ -484,6 +490,11 @@ export function OmpRpcPanel() {
                 }
               }}
             >
+              {!modelValue ? (
+                <option value="" disabled>
+                  Modelo automático
+                </option>
+              ) : null}
               {modelValue && !models.some((m) => `${m.provider}/${m.id}` === modelValue) ? (
                 <option value={modelValue}>{modelValue}</option>
               ) : null}
@@ -579,8 +590,8 @@ export function OmpRpcPanel() {
       <div className="omp-panel__body" ref={bodyRef}>
         {transcript.length === 0 ? (
           <p className="omp-panel__empty">
-            Sessão nativa do oh-my-pi por NDJSON — sem PTY, sem scraping.
-            Inicie e mande o primeiro prompt.
+            Oh My Pi pronto. Envie um objetivo abaixo; suas contas e as
+            ferramentas do Nexus já estão conectadas.
           </p>
         ) : null}
         {transcript.map((entry) => {
@@ -659,8 +670,8 @@ export function OmpRpcPanel() {
           rows={2}
           placeholder={
             streaming
-              ? 'Agente executando — Enter enfileira (follow-up)…'
-              : 'Prompt para o omp… (Enter envia)'
+              ? 'Agente executando — Enter agenda o próximo pedido…'
+              : 'Peça algo ao Oh My Pi… (Enter envia)'
           }
           value={draft}
           disabled={!sessionId}
@@ -680,7 +691,7 @@ export function OmpRpcPanel() {
               onClick={() => submit('steer')}
               disabled={!draft.trim()}
             >
-              Steer
+              Redirecionar
             </button>
             <button
               type="button"
@@ -688,7 +699,7 @@ export function OmpRpcPanel() {
               onClick={() => submit('followUp')}
               disabled={!draft.trim()}
             >
-              Follow-up
+              Próximo pedido
             </button>
             <button
               type="button"

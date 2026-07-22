@@ -380,7 +380,13 @@ export function MissionRail() {
       return `${missionRailResumeCopy(mission.status, liveInGrid, mission.intentState).meta ?? 'Retomar'}${laneBit}${handBit}${budgetBit}`;
     }
     if (mission.status === 'blocked') {
-      return `Precisa de ti${laneBit}${handBit}${budgetBit}`;
+      return `${
+        missionRailResumeCopy(
+          mission.status,
+          liveInGrid,
+          mission.intentState,
+        ).meta ?? 'Clique para retomar'
+      }${laneBit}${handBit}${budgetBit}`;
     }
     if (mission.status === 'done' || mission.status === 'failed') {
       return `${started}${laneBit}${handBit}${budgetBit}`;

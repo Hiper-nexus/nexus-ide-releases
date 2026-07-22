@@ -37,6 +37,7 @@ import {
 } from './omp-roster-policy';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
+import { OmpAutoCompanionSingleFlight } from './omp-auto-companion-single-flight';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -54,6 +55,7 @@ const BOOT_PROMPT_HOLD_MS = 5_000;
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
 const UNSAFE_TERMINAL_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
+const ompAutoCompanionFlights = new OmpAutoCompanionSingleFlight();
 
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -401,27 +403,38 @@ function scheduleOmpAutoCompanion(
     missionId,
     goalHint: options.prompt ?? options.title,
   });
-  void spawnPaneAndMaybePrompt({
-    adapterId: 'omp',
-    model: getAdapter('omp')?.models.default,
-    effort: 'medium',
-    cwd: workspaceRoot,
-    executionScope: options.executionScope ?? options.scope,
-    scope: options.scope,
+  const missionKey = [
+    options.scope.projectId,
+    options.scope.checkoutId,
     missionId,
-    agentName: 'Oh My Pi (auto)',
-    title: 'Oh My Pi · auto',
-    role: 'worker',
-    prompt,
-    allowedTools: null,
-    allowedSkills: null,
-    suppressOmpAutoSpawn: true,
-  }).catch((err) => {
-    console.warn(
-      '[spawn] omp auto-companion falhou (missão segue sem ele):',
-      err instanceof Error ? err.message : err,
-    );
-  });
+  ].join(':');
+  ompAutoCompanionFlights.start(
+    missionKey,
+    async () => {
+      await spawnPaneAndMaybePrompt({
+        adapterId: 'omp',
+        model: getAdapter('omp')?.models.default,
+        effort: 'medium',
+        cwd: workspaceRoot,
+        executionScope: options.executionScope ?? options.scope,
+        scope: options.scope,
+        missionId,
+        agentName: 'Oh My Pi (auto)',
+        title: 'Oh My Pi · auto',
+        role: 'worker',
+        prompt,
+        allowedTools: null,
+        allowedSkills: null,
+        suppressOmpAutoSpawn: true,
+      });
+    },
+    (err) => {
+      console.warn(
+        '[spawn] omp auto-companion falhou (missão segue sem ele):',
+        err instanceof Error ? err.message : err,
+      );
+    },
+  );
 }
 
 export async function spawnPaneAndMaybePrompt(

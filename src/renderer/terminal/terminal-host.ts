@@ -22,6 +22,7 @@ import {
   flushTerminalOutput,
   writeTerminalOutput,
 } from './terminal-output-scheduler';
+import { TerminalInputVisibilityController } from './terminal-input-visibility';
 import {
   submitPromptToPane as submitPanePrompt,
   submitPromptToPaneConfirmed as submitPanePromptConfirmed,
@@ -56,8 +57,8 @@ interface Host {
   spawnStarted: boolean;
   hibernated: boolean;
   disposed: boolean;
-  /** True while the viewport should keep following parsed PTY output. */
-  followOutput: boolean;
+  /** Keeps the live composer visible and repairs missed interactive paints. */
+  inputVisibility: TerminalInputVisibilityController;
   cleanups: Array<() => void>;
   /** Live WebGL addon while this host holds a lease from the pool. */
   webgl?: WebglAddon;
@@ -122,6 +123,14 @@ function registerWebglLease(paneId: string, host: Host): void {
           webglPool.notifyLost(paneId);
           if (host.webgl === webgl) host.webgl = undefined;
           webgl.dispose();
+          // A lost context can freeze the last canvas frame after xterm has
+          // already parsed newer PTY bytes. Repaint on the fallback renderer;
+          // the next focus/input can safely request a fresh lease without an
+          // eager context-loss/recreate loop on unstable GPUs.
+          requestAnimationFrame(() => {
+            if (host.disposed || !host.opened) return;
+            host.inputVisibility.repaintNow();
+          });
         });
         host.term.loadAddon(webgl);
         host.webgl = webgl;
@@ -411,9 +420,7 @@ function startSpawn(
             foreground: focused,
             latencySensitive: focused,
             onParsed: () => {
-              if (!host.disposed && host.followOutput) {
-                host.term.scrollToBottom();
-              }
+              if (!host.disposed) host.inputVisibility.onOutputParsed();
             },
           });
         }),
@@ -509,6 +516,11 @@ function startSpawn(
         host.cleanups.push(() => clearTimeout(continuationTimer));
       }
       const input = host.term.onData((data) => {
+        // xterm does not locally echo: the PTY/TUI sends the visible composer
+        // back. Return to live output before the key leaves the renderer.
+        host.inputVisibility.onUserInput();
+        if (host.opened) webglPool.touch(pane.id);
+        flushTerminalOutput(host.term);
         if (host.sessionId) window.nexus.pty.write(host.sessionId, data);
       });
       host.cleanups.push(() => input.dispose());
@@ -613,6 +625,10 @@ function createShellHost(pane: PaneModel): Host {
   element.className = 'term-host';
 
   const { term, fit, search, serialize } = buildTerminal('shell');
+  const inputVisibility = new TerminalInputVisibilityController({
+    term,
+    classList: element.classList,
+  });
 
   const host: Host = {
     element,
@@ -627,7 +643,7 @@ function createShellHost(pane: PaneModel): Host {
     spawnStarted: false,
     hibernated: false,
     disposed: false,
-    followOutput: true,
+    inputVisibility,
     cleanups: [],
   };
 
@@ -638,11 +654,14 @@ function createShellHost(pane: PaneModel): Host {
     useLayoutStore.getState().setTitle(pane.id, title),
   );
   term.onScroll((viewportY) => {
-    host.followOutput = viewportY >= host.term.buffer.active.baseY;
+    host.inputVisibility.onScroll(viewportY, host.term.buffer.active.baseY);
   });
-  element.addEventListener('mousedown', () =>
-    useLayoutStore.getState().focus(pane.id),
-  );
+  element.addEventListener('mousedown', () => {
+    useLayoutStore.getState().focus(pane.id);
+    // Clicking an already-focused pane produces no store transition. Touch
+    // the renderer explicitly so a recovered context cannot remain stale.
+    focusHost(pane.id);
+  });
   wireInteractions(host);
   return host;
 }
@@ -654,6 +673,10 @@ function createCliAgentHost(pane: PaneModel): Host {
   element.className = 'term-host term-host--agent';
 
   const { term, fit, search, serialize } = buildTerminal('cli-agent');
+  const inputVisibility = new TerminalInputVisibilityController({
+    term,
+    classList: element.classList,
+  });
 
   const host: Host = {
     element,
@@ -668,7 +691,7 @@ function createCliAgentHost(pane: PaneModel): Host {
     spawnStarted: false,
     hibernated: false,
     disposed: false,
-    followOutput: true,
+    inputVisibility,
     cleanups: [],
   };
 
@@ -679,11 +702,12 @@ function createCliAgentHost(pane: PaneModel): Host {
     useLayoutStore.getState().setTitle(pane.id, title),
   );
   term.onScroll((viewportY) => {
-    host.followOutput = viewportY >= host.term.buffer.active.baseY;
+    host.inputVisibility.onScroll(viewportY, host.term.buffer.active.baseY);
   });
-  element.addEventListener('mousedown', () =>
-    useLayoutStore.getState().focus(pane.id),
-  );
+  element.addEventListener('mousedown', () => {
+    useLayoutStore.getState().focus(pane.id);
+    focusHost(pane.id);
+  });
   wireInteractions(host, true);
 
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
@@ -726,6 +750,24 @@ async function injectSavedBlob(host: Host, file: File): Promise<void> {
  */
 function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
   const { element, term } = host;
+
+  // Native wheel scrolling can update xterm's viewport without emitting an
+  // onScroll notification on some Chromium/compositor paths. Sample the
+  // authoritative buffer after the wheel frame so the history cue and the
+  // next-input jump never depend on that notification alone.
+  element.addEventListener(
+    'wheel',
+    () => {
+      requestAnimationFrame(() => {
+        if (host.disposed) return;
+        host.inputVisibility.onScroll(
+          term.buffer.active.viewportY,
+          term.buffer.active.baseY,
+        );
+      });
+    },
+    { passive: true },
+  );
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
@@ -822,9 +864,9 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
   if (!host.opened) {
     host.term.open(host.element);
     if (pane.terminalScrollback) {
-      host.followOutput = true;
+      host.inputVisibility.follow();
       host.term.write(pane.terminalScrollback, () => {
-        if (host.disposed || !host.followOutput) return;
+        if (host.disposed || !host.inputVisibility.isFollowing) return;
         host.term.scrollToBottom();
         try {
           host.term.refresh(0, Math.max(0, host.term.rows - 1));
@@ -839,6 +881,9 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
 
   try {
     host.fit.fit();
+    if (host.sessionId) {
+      window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
+    }
   } catch {
     // Slot not measurable yet; the ResizeObserver will retry.
   }
@@ -975,6 +1020,7 @@ export function focusHost(paneId: string): void {
   // Promote any background backlog immediately so the focused pane is not
   // stuck behind the cooperative drain of other hidden panes.
   flushTerminalOutput(host.term);
+  host.inputVisibility.repaintNow();
   host.term.focus();
 }
 
@@ -999,6 +1045,7 @@ export function scrollPaneToBottom(paneId: string, sendJumpKey = false): void {
   const host = hosts.get(paneId);
   if (!host || host.disposed || !host.opened) return;
   flushTerminalOutput(host.term);
+  host.inputVisibility.follow();
   host.term.scrollToBottom();
   if (sendJumpKey && host.sessionId) {
     window.nexus.pty.write(host.sessionId, '\x1b[1;5F');
@@ -1277,6 +1324,12 @@ export async function respawnMissionPaneFresh(
  * the focused pane. Returns false when the pane has no live session.
  */
 export function writeToPane(paneId: string, data: string): boolean {
+  const host = hosts.get(paneId);
+  if (host && !host.disposed) {
+    host.inputVisibility.onUserInput();
+    if (host.opened) webglPool.touch(paneId);
+    flushTerminalOutput(host.term);
+  }
   const sessionId = getPaneSessionId(paneId);
   if (!sessionId) return false;
   window.nexus.pty.write(sessionId, data);
@@ -1289,6 +1342,8 @@ export function writeToPane(paneId: string, data: string): boolean {
  * multiline composer.
  */
 export function submitPromptToPane(paneId: string, text: string): boolean {
+  const host = hosts.get(paneId);
+  if (host && !host.disposed) host.inputVisibility.onUserInput();
   return submitPanePrompt(paneId, text, {
     getSessionId: getPaneSessionId,
     write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
@@ -1304,6 +1359,8 @@ export function submitPromptToPaneConfirmed(
   text: string,
   expectedSessionId: string,
 ): Promise<boolean> {
+  const host = hosts.get(paneId);
+  if (host && !host.disposed) host.inputVisibility.onUserInput();
   return submitPanePromptConfirmed(paneId, text, expectedSessionId, {
     getSessionId: getPaneSessionId,
     write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
@@ -1315,6 +1372,7 @@ export function submitPromptToPaneConfirmed(
 
 function disposeHost(host: Host, paneId: string): void {
   host.disposed = true;
+  host.inputVisibility.dispose();
   webglPool.unregister(paneId);
   host.ro.disconnect();
   host.cleanups.forEach((fn) => fn());

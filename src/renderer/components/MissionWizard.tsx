@@ -35,6 +35,7 @@ import { balanceSquadRosterCli } from '../orch/squad-roster';
 import { CloseButton } from './CloseButton';
 import { MissionWizardReview } from './MissionWizardReview';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
+import { MissionModePicker } from './MissionModePicker';
 import { PixelIcon } from './PixelIcon';
 import type { Mission } from '../../shared/orch-types';
 import {
@@ -1179,73 +1180,13 @@ export function MissionWizard() {
               <p className="wizard__mode-desc" style={{ marginTop: -6, marginBottom: 4 }}>
                 Escolha o caminho. Pode mudar depois — o Nexus guarda o contexto da pasta.
               </p>
-              <div className="wizard__modes wizard__modes--featured">
-                <button
-                  className={`wizard__mode wizard__mode--featured ${mode === 'libre' ? 'wizard__mode--active' : ''}`}
-                  onClick={() => chooseMode('libre')}
-                >
-                  <span className="wizard__mode-badge wizard__mode-badge--rec">
-                    Recomendado
-                  </span>
-                  <span className="wizard__mode-icon">
-                    <PixelIcon name="terminal" size={22} />
-                  </span>
-                  <span className="wizard__mode-title">Modo Livre</span>
-                  <span className="wizard__mode-desc">
-                    Grade de terminais e providers — o dia a dia, com ou sem IA.
-                  </span>
-                  <span className="wizard__mode-cta">Continuar ›</span>
-                </button>
-                <button
-                  className={`wizard__mode wizard__mode--featured ${mode === 'squad' ? 'wizard__mode--active' : ''}`}
-                  onClick={() => chooseMode('squad')}
-                  disabled={squads.length === 0}
-                >
-                  <span className="wizard__mode-badge">Avançado</span>
-                  <span className="wizard__mode-icon">
-                    <PixelIcon name="users" size={22} />
-                  </span>
-                  <span className="wizard__mode-title">Modo Squad</span>
-                  <span className="wizard__mode-desc">
-                    Time pronto (preset) no mesmo objetivo — planejar e executar em paralelo.
-                    {squads.length === 0 && ' (nenhum squad salvo)'}
-                  </span>
-                  <span className="wizard__mode-cta">Montar squad ›</span>
-                </button>
-                <button
-                  className={`wizard__mode wizard__mode--featured ${mode === 'agentic' ? 'wizard__mode--active' : ''}`}
-                  onClick={() => chooseMode('agentic')}
-                >
-                  <span className="wizard__mode-badge wizard__mode-badge--ai">
-                    IA monta o time
-                  </span>
-                  <span className="wizard__mode-icon">
-                    <PixelIcon name="bolt" size={22} />
-                  </span>
-                  <span className="wizard__mode-title">Modo Agêntico</span>
-                  <span className="wizard__mode-desc">
-                    Descreva o objetivo — a IA desenha o roster e dispara a missão.
-                  </span>
-                  <span className="wizard__mode-cta">Descrever objetivo ›</span>
-                </button>
-                {squads.some((s) => s.id === 'nexus-plan') && (
-                  <button
-                    className="wizard__mode wizard__mode--featured"
-                    onClick={choosePlanejamento}
-                  >
-                    <span className="wizard__mode-badge">Feature nova</span>
-                    <span className="wizard__mode-icon">
-                      <PixelIcon name="board" size={22} />
-                    </span>
-                    <span className="wizard__mode-title">Planejar · PRD</span>
-                    <span className="wizard__mode-desc">
-                      O squad lê seu código, te entrevista e entrega PRD,
-                      arquitetura com diagrama e stories prontas.
-                    </span>
-                    <span className="wizard__mode-cta">Planejar feature ›</span>
-                  </button>
-                )}
-              </div>
+              <MissionModePicker
+                selectedMode={mode}
+                squadCount={squads.length}
+                hasPlanningSquad={squads.some((s) => s.id === 'nexus-plan')}
+                onChooseMode={chooseMode}
+                onChoosePlanning={choosePlanejamento}
+              />
               <div className="wizard__actions">
                 {hasNewWsStep ? (
                   <button className="wizard__btn" onClick={() => setStep('new-ws')}>
@@ -1277,9 +1218,9 @@ export function MissionWizard() {
                 autoFocus
               />
               <p className="wizard__hint-sm">
-                O arquiteto lê seu objetivo + a stack do workspace e monta o
-                time sob medida (QA, security e UX entram quando o objetivo
-                pede). Você revisa o roster antes de disparar.
+                O Nexus lê seu objetivo e o projeto, monta a equipe certa e
+                inclui revisão, segurança ou UX quando necessário. Você confere
+                os agentes antes de começar.
               </p>
               <MissionAttachmentPicker
                 attachments={missionAttachments}
@@ -1300,11 +1241,11 @@ export function MissionWizard() {
                     disabled={designing || !intent.trim()}
                   >
                     {designing ? (
-                      'Montando o time…'
+                      'Preparando missão…'
                     ) : (
                       <>
                         <PixelIcon name="bolt" />
-                        Montar time
+                        Preparar missão
                       </>
                     )}
                   </button>

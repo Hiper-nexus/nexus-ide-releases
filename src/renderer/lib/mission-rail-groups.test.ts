@@ -205,7 +205,7 @@ describe('missionRailResumeCopy', () => {
 
   it('labels a blocked mission for retry', () => {
     expect(missionRailResumeCopy('blocked', false)).toEqual({
-      meta: null,
+      meta: 'Clique para retomar',
       title: 'Missão travada — clique para retomar',
     });
   });

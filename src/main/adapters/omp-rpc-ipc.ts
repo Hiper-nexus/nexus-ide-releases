@@ -437,9 +437,16 @@ export async function spawnMissionOmpRpcWorker(
   hostedRef.current = hosted;
   sessions.set(sessionId, hosted);
 
-  await waitForOmpSessionReady(session);
-  if (input.prompt) {
-    await session.prompt(input.prompt);
+  try {
+    await waitForOmpSessionReady(session);
+    if (input.prompt) {
+      await session.prompt(input.prompt);
+    }
+  } catch (err) {
+    // A failed readiness/prompt transaction is not a live worker. Tear down
+    // the child and its gate token so retries do not leak fleet slots.
+    disposeSession(sessionId);
+    throw err;
   }
   return { paneId, sessionId };
 }

@@ -113,6 +113,7 @@ vi.mock('./adapter-registry', () => ({ getAdapter: h.getAdapter }));
 
 import {
   disposeAllOmpRpcSessions,
+  listOmpRpcSessions,
   registerOmpRpcIpc,
   spawnMissionOmpRpcWorker,
 } from './omp-rpc-ipc';
@@ -347,6 +348,35 @@ describe('R4 — parseOmpModelRef fail-loud (via spawnMissionOmpRpcWorker)', () 
     expect(h.FakeOmpRpcSession.instances).toHaveLength(0);
     expect(h.releaseSession).not.toHaveBeenCalled();
     expect(h.releaseSessionByToken).not.toHaveBeenCalled();
+  });
+});
+
+describe('mission spawn transaction cleanup', () => {
+  it('disposes the process and releases the gate when readiness fails', async () => {
+    h.waitForOmpSessionReady.mockRejectedValueOnce(new Error('omp boot timeout'));
+
+    await expect(spawnMissionOmpRpcWorker(missionInput)).rejects.toThrow(
+      'omp boot timeout',
+    );
+
+    expect(lastSession().disposed).toBe(true);
+    expect(listOmpRpcSessions()).toEqual([]);
+    expect(h.releaseSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes the process and releases the gate when the initial prompt fails', async () => {
+    const prompt = vi
+      .spyOn(h.FakeOmpRpcSession.prototype, 'prompt')
+      .mockRejectedValueOnce(new Error('prompt rejected'));
+
+    await expect(
+      spawnMissionOmpRpcWorker({ ...missionInput, prompt: 'execute' }),
+    ).rejects.toThrow('prompt rejected');
+
+    expect(prompt).toHaveBeenCalledWith('execute');
+    expect(lastSession().disposed).toBe(true);
+    expect(listOmpRpcSessions()).toEqual([]);
+    expect(h.releaseSession).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -499,13 +499,29 @@ export function WorkspaceBar({
                   setMoreOpen(false);
                 }}
               >
-                <span className="workspace-bar__name">{workspace.name}</span>
+                <PixelIcon name="files" size={12} />
+                <span className="workspace-bar__context-copy">
+                  <span className="workspace-bar__context-label">
+                    Workspace ativo
+                  </span>
+                  <span className="workspace-bar__name">{workspace.name}</span>
+                </span>
                 <span className="workspace-bar__name-caret" aria-hidden="true">
                   ▾
                 </span>
               </button>
               {wsMenuOpen && (
                 <div className="workspace-bar__menu" role="menu">
+                  <div className="workspace-bar__menu-heading">
+                    {workspace.name}
+                    <span
+                      className="workspace-bar__menu-heading-meta workspace-bar__workspace-path"
+                      title={workspace.path}
+                    >
+                      {workspace.path}
+                    </span>
+                  </div>
+                  <div className="workspace-bar__menu-sep" />
                   <button
                     type="button"
                     className="workspace-bar__menu-item"
@@ -535,8 +551,20 @@ export function WorkspaceBar({
             </div>
           </>
         ) : (
-          <span className="workspace-bar__name">NexusIDE</span>
+          <span className="workspace-bar__name">Nenhum workspace</span>
         )}
+        <button
+          type="button"
+          className="workspace-bar__new-workspace"
+          title="Criar ou abrir outro workspace"
+          aria-label="Novo workspace"
+          onClick={openNewWorkspace}
+        >
+          <PixelIcon name="plus" size={11} />
+          <span className="workspace-bar__new-workspace-label">
+            Novo workspace
+          </span>
+        </button>
       </div>
 
       <div className="workspace-bar__actions">

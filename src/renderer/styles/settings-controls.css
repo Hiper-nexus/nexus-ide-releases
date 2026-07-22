@@ -200,10 +200,19 @@
   gap: 14px;
 }
 
+/* Four long OMP values need readable rows instead of four truncated selects. */
+.settings-orchestrator__grid.settings-orchestrator__grid--omp {
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+}
+
 @media (max-width: 720px) {
   .settings-audio__head,
   .settings-orchestrator__head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .settings-orchestrator__grid.settings-orchestrator__grid--omp {
+    grid-template-columns: 1fr;
   }
 }

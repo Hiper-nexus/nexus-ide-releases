@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.19.24 — Terminal ao Vivo
+
+Data: 2026-07-21
+
+### Terminal fluido e confiável
+
+- **Digitação visível em tempo real**: toda tecla devolve o pane ao trecho ao
+  vivo antes de chegar ao PTY; o eco do shell/composer da CLI é repintado no
+  mesmo frame, sem depender de Enter para aparecer.
+- **Recuperação do renderer**: perda de contexto WebGL cai para o renderer de
+  fallback com repaint imediato; foco, backlog e dimensões do PTY são
+  sincronizados ao reabrir ou mover o pane.
+- **Histórico explícito**: ao rolar para trás, o terminal sinaliza o estado e
+  informa que digitar retorna ao fluxo ao vivo.
+
+### Contexto e facilidade de uso
+
+- **Workspace inequívoco**: a barra mostra `WORKSPACE ATIVO`, nome e caminho
+  completo no seletor; `Novo workspace` permanece visível em todas as telas.
+- **Piloto automático primeiro**: o modo recomendado é apresentado antes do
+  controle manual, explica que o Nexus monta, executa, revisa e testa o time e
+  troca jargão interno por ações claras como `Preparar missão`.
+- **HUD e bloqueios acionáveis**: Jarvis inicia compacto e missões bloqueadas
+  indicam como retomar o trabalho.
+- **Oh My Pi legível**: painel, modelo automático, confirmações e estado vazio
+  deixam de expor detalhes de transporte como NDJSON/PTTY ao vibe coder.
+
+### Orquestração e qualidade
+
+- **OMP single-flight por missão**: workers concorrentes não duplicam o
+  auto-companion antes de sua persistência ficar visível.
+- **Spawn sem vazamento**: falha ao aguardar readiness ou enviar o primeiro
+  prompt encerra processo, gate e slot da frota.
+- **Configuração responsiva**: controles do OMP usam duas colunas legíveis e
+  caem para uma coluna em janelas estreitas.
+- **Validação local**: suíte integral, typecheck, build macOS, assinatura,
+  notarização e verificação de artefatos executados manualmente, sem Actions.
+
 ## 0.19.23 — Piloto Automático Real
 
 Data: 2026-07-21

@@ -40,7 +40,7 @@ function wizardVisibleActions(
       return ['Escolher pasta', 'Continuar'];
     case 'mode':
     case null:
-      return ['Modo Livre', 'Modo Squad', 'Modo Agêntico'];
+      return ['Piloto automático', 'Modo Livre', 'Modo Squad'];
     case 'libre-count':
       return ['1 pane', '2 panes', '3 panes', '4 panes', '6 panes'];
     case 'libre-slots':
@@ -48,7 +48,7 @@ function wizardVisibleActions(
     case 'squad-select':
       return [...squadNames.slice(0, 6), 'Voltar'];
     case 'agentic-intent':
-      return ['Montar time', 'Voltar'];
+      return ['Preparar missão', 'Voltar'];
     case 'squad-review':
       return ['Iniciar Squad', 'Salvar', 'Voltar'];
     case 'intent-compose':

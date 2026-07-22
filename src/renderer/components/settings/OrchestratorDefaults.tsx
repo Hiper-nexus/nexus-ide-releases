@@ -154,9 +154,9 @@ export function OrchestratorDefaults() {
             />
           )}
           <div>
-            <h4 className="settings-orchestrator__title">Orquestrador agêntico</h4>
+            <h4 className="settings-orchestrator__title">Piloto automático</h4>
             <p className="settings-orchestrator__summary">
-              Escolha o CLI que coordena o squad, seu modelo e sua conta.
+              Escolha quem coordena as missões, com qual modelo e conta.
             </p>
           </div>
         </div>

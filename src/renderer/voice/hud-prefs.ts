@@ -30,7 +30,9 @@ export const HUD_MAX_WIDTH = 480;
 export const HUD_EDGE_MARGIN = 8;
 
 export const DEFAULT_HUD_PREFS: HudPrefs = {
-  mode: 'expanded',
+  // Keep the workspace readable on first run. The compact pill still exposes
+  // Jarvis state and expands with one click; saved user preferences win.
+  mode: 'mini',
   corner: 'br',
   dx: 20,
   dy: 20,

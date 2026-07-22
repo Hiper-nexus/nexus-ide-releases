@@ -212,7 +212,7 @@ export function missionRailResumeCopy(
   }
   if (status === 'blocked') {
     return {
-      meta: null,
+      meta: 'Clique para retomar',
       title: 'Missão travada — clique para retomar',
     };
   }

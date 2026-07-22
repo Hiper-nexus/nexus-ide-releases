@@ -107,6 +107,7 @@ describe('hud-prefs', () => {
   });
 
   it('volta aos defaults com storage vazio ou JSON inválido', () => {
+    expect(DEFAULT_HUD_PREFS.mode).toBe('mini');
     expect(loadHudPrefs(fakeStorage())).toEqual(DEFAULT_HUD_PREFS);
     expect(
       loadHudPrefs(fakeStorage({ 'nexus.voiceHud': '{{{ lixo' })),

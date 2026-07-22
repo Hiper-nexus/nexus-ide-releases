@@ -13,6 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.24',
+  date: '2026-07-21',
+  codename: 'Terminal ao Vivo',
+  summary:
+    'Terminal com digitação visível em tempo real, workspace inequívoco e piloto automático mais simples, seguro e confiável.',
+  highlights: [
+    {
+      title: 'Digitação sempre visível',
+      detail:
+        'Ao digitar, o terminal volta ao trecho ao vivo, prioriza a saída interativa e repinta o composer sem esperar Enter.',
+    },
+    {
+      title: 'Workspace sem ambiguidade',
+      detail:
+        'A barra identifica o workspace ativo, mostra o caminho completo no seletor e mantém Novo workspace sempre acessível.',
+    },
+    {
+      title: 'Piloto automático primeiro',
+      detail:
+        'O fluxo recomendado monta, executa, revisa e testa o trabalho; objetivo, controles e Oh My Pi usam linguagem mais direta.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Renderer de terminal recuperável',
+      detail:
+        'Perda de contexto WebGL força fallback repintado, foco recupera backlog e resize sincroniza PTY e viewport imediatamente.',
+    },
+    {
+      title: 'OMP sem duplicação nem vazamento',
+      detail:
+        'Auto-companion usa single-flight por missão e falhas de readiness ou prompt inicial encerram a sessão incompleta.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.23',
   date: '2026-07-21',
   codename: 'Piloto Automático Real',
@@ -45,43 +82,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Inbox responsivo',
       detail:
         'Notificações permanecem inteiras e roláveis em janelas estreitas ou baixas.',
-    },
-  ],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.22',
-  date: '2026-07-21',
-  codename: 'Jarvis Operacional + Fluxo Rápido',
-  summary:
-    'Jarvis Live mais responsiva e recuperável, wake passivo protegido contra TV/ambiente e melhorias de operação inspiradas na paridade Orca/Overclock.',
-  highlights: [
-    {
-      title: 'Jarvis Live sem estados presos',
-      detail:
-        'Drenagem de PCM, follow-up e watchdog encerram ou recuperam o turno antes de liberar a interface.',
-    },
-    {
-      title: 'Wake passivo resistente a ambiente',
-      detail:
-        'TV e áudio contínuo são barrados localmente, sem loop de STT.',
-    },
-    {
-      title: 'Missões com menos atrito',
-      detail:
-        'Drop de arquivos, atalho de missão, activity stream, marketplace, status Git, fan-out e editor refinado encurtam o fluxo operacional.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Fallback Live mudo mais rápido',
-      detail:
-        'O prazo antes de degradar para Classic caiu de seis para 3,5 segundos.',
-    },
-    {
-      title: 'Companion e superfícies coerentes',
-      detail:
-        'Tabs, comparação por missão e scaffold mobile compartilham o contrato operacional.',
     },
   ],
 };
