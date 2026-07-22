@@ -61,9 +61,12 @@ vi.mock('../orch/task-router', () => ({
 import {
   CONTEXT_DRAFT_REVIEW_TOOLS,
   CliContextDraftReviewer,
+  CONTEXT_DRAFT_REVIEW_UNAVAILABLE_MESSAGE,
   DEFAULT_CONTEXT_DRAFT_REVIEW_TIMEOUT_MS,
+  MAX_CONTEXT_DRAFT_REVIEW_PANE_RESUMES,
   contextDraftReviewerAgentName,
   contextDraftReviewerPaneTitle,
+  resetContextDraftReviewResumeLedger,
   selectIndependentContextReviewerRoute,
 } from './cli-context-draft-reviewer';
 
@@ -126,6 +129,7 @@ beforeEach(() => {
   selectionDeps.providers.length = 0;
   selectionDeps.adapters.clear();
   paneDeps.snapshots.length = 0;
+  resetContextDraftReviewResumeLedger();
 });
 
 describe('CLI context draft reviewer', () => {
@@ -533,5 +537,72 @@ describe('CLI context draft reviewer', () => {
     ).rejects.toThrow(/no session id/i);
     expect(close).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledWith('pane-partial');
+  });
+
+  it('caps preserved-pane resumes and routes the draft to human approval', async () => {
+    const scope = testProjectScope({ rootRealPath: '/checkout-cap' });
+    const draft = proposedDraft({ id: 'context-draft-cap' });
+    let now = 100;
+    const close = vi.fn(() => true);
+    const spawn = vi.fn(async () => ({
+      paneId: 'pane-cap',
+      sessionId: 'session-cap',
+    }));
+    // Each Doctor pass builds a fresh reviewer instance; the resume ledger is
+    // module state, exactly like production.
+    const makeReviewer = () =>
+      new CliContextDraftReviewer({
+        selectRoute: () => ({ adapterId: 'glm' }),
+        spawn,
+        readDraft: () => draft,
+        listPanes: () => paneDeps.snapshots,
+        sessionState: () => 'busy',
+        close,
+        clock: () => now,
+        poll: async () => {
+          now += 25;
+        },
+        timeoutMs: 50,
+        pollIntervalMs: 10,
+      });
+
+    // Pass 1: fresh spawn burns the timeout; the pane is preserved.
+    await expect(
+      makeReviewer().run({ scope, draftId: draft.id }),
+    ).rejects.toThrow(/timed out/i);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
+
+    paneDeps.snapshots.push({
+      paneId: 'pane-cap',
+      sessionId: 'session-cap',
+      title: contextDraftReviewerPaneTitle(draft.id),
+      kind: 'cli-agent',
+      state: 'busy',
+      agentName: contextDraftReviewerAgentName('glm', draft.id),
+      adapterId: 'glm',
+    });
+
+    // Passes 2-3: the preserved pane is resumed (up to the cap) and never votes.
+    for (let pass = 0; pass < MAX_CONTEXT_DRAFT_REVIEW_PANE_RESUMES; pass += 1) {
+      await expect(
+        makeReviewer().run({ scope, draftId: draft.id }),
+      ).rejects.toThrow(/timed out/i);
+    }
+    expect(spawn).toHaveBeenCalledTimes(1);
+
+    // Pass 4: resume cap exceeded — the pane is closed and the draft leaves
+    // the auto-review cycle pointing at the human approval path.
+    await expect(
+      makeReviewer().run({ scope, draftId: draft.id }),
+    ).rejects.toThrow(new RegExp(CONTEXT_DRAFT_REVIEW_UNAVAILABLE_MESSAGE, 'i'));
+    expect(close).toHaveBeenCalledWith('pane-cap');
+
+    // Pass 5: even with the pane gone, no fresh reviewer is spawned.
+    paneDeps.snapshots.length = 0;
+    const attempt = makeReviewer().run({ scope, draftId: draft.id });
+    await expect(attempt).rejects.toThrow(/auto-review unavailable/i);
+    await expect(attempt).rejects.toThrow(/Nexus UI/);
+    expect(spawn).toHaveBeenCalledTimes(1);
   });
 });

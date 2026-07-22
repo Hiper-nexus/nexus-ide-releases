@@ -92,6 +92,68 @@ describe('mission creation authority', () => {
     expect(setStatus).not.toHaveBeenCalled();
   });
 
+  it('allows ops-lane done with a durable note (no PREVC green required)', async () => {
+    const setStatus = vi.fn((id: string, status: string) => ({
+      id,
+      status,
+    }));
+    const appendLearning = vi.fn();
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: 'mission-existing',
+          status: 'running',
+          learnings: '',
+          milestones: [],
+          intentContract: { lane: 'ops' },
+        }),
+        setStatus,
+        appendLearning,
+      },
+    });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+    });
+
+    const result = await missionSetStatusTool().handler(
+      {
+        missionId: 'mission-existing',
+        status: 'done',
+        note: 'Backup tar.gz gerado na VPS e landing page publicada no nginx.',
+      },
+      context('orchestrator'),
+    );
+
+    expect(result).toMatchObject({ id: 'mission-existing', status: 'done' });
+    expect(setStatus).toHaveBeenCalledWith('mission-existing', 'done');
+    expect(appendLearning).toHaveBeenCalledOnce();
+  });
+
+  it('rejects ops-lane done without a durable note', async () => {
+    const setStatus = vi.fn();
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: 'mission-existing',
+          status: 'running',
+          learnings: '',
+          milestones: [],
+          intentContract: { lane: 'ops' },
+        }),
+        setStatus,
+      },
+    });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+    });
+
+    await expect(missionSetStatusTool().handler(
+      { missionId: 'mission-existing', status: 'done', note: 'ok' },
+      context('orchestrator'),
+    )).rejects.toThrow(/ops-lane done requires a durable note/i);
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
   it('does not regress a completed mission through the MCP status tool', async () => {
     const setStatus = vi.fn();
     mocks.getProjectDomainStores.mockReturnValue({

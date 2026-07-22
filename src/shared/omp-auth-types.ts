@@ -17,6 +17,8 @@ export const OMP_AUTH_CHANNELS = {
   listProviders: 'ompAuth:listProviders',
   login: 'ompAuth:login',
   cancelLogin: 'ompAuth:cancelLogin',
+  /** Reabre/foca a janela in-app de autorização do fluxo ativo. */
+  openAuthWindow: 'ompAuth:openAuthWindow',
   /** Push main → renderer: `{flowId, event}` já validado/estreitado. */
   event: 'ompAuth:event',
 } as const;
@@ -120,5 +122,7 @@ export interface OmpAuthApi {
   listProviders(): Promise<OmpAuthListResult>;
   login(providerId: string): Promise<OmpAuthLoginResult>;
   cancelLogin(): Promise<OmpAuthCommandResult>;
+  /** Reabre/foca a janela in-app de autorização (URL é autoridade do main). */
+  openAuthWindow(): Promise<OmpAuthCommandResult>;
   onEvent(cb: (envelope: OmpAuthEventEnvelope) => void): () => void;
 }

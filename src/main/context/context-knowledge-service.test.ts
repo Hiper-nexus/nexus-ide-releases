@@ -6,9 +6,10 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { ensureContextScaffold } from './context-doctor';
+import { ensureContextScaffold, inspectContextReadiness } from './context-doctor';
 import { inspectContextAttestations } from './context-attestation';
 import { ContextKnowledgeService } from './context-knowledge-service';
+import { buildProjectSymbolIndex } from './symbol-index';
 
 let baseDir = '';
 const roots: string[] = [];
@@ -226,6 +227,67 @@ describe('ContextKnowledgeService autonomous authority workflow', () => {
       reviewer: { id: 'other-agent', sessionId: 'other-session', provider: author.provider },
       rationale: 'Same provider.',
     })).toThrow(/provider/i);
+  });
+
+  it('satisfies readiness with the human operator as the independent reviewer', () => {
+    const { root, scope, service } = fixture();
+    write(root, 'README.md', '# Product source\nBilling, scope, architecture and tests.\n');
+    const sourceHash = hash(fs.readFileSync(path.join(root, 'README.md')));
+    // The same identity the context-draft IPC approves with: the human user
+    // is independent of the agent author (different id/session/provider).
+    const human = Object.freeze({
+      id: 'user:local-operator',
+      sessionId: 'human-ui-context-review',
+      provider: 'human',
+    });
+    const targets = [
+      ['.context/docs/project-overview.md', '# Project\nProject overview.\n'],
+      ['.context/docs/business-model.md', '# Business\nUsage billing.\n'],
+      ['.context/docs/domain-glossary.md', '# Glossary\nAccount is a customer.\n'],
+      ['.context/docs/architecture.md', '# Architecture\nScoped runtime.\n'],
+      ['.context/docs/testing.md', '# Testing\nUnit and integration tests.\n'],
+      ['.context/nexus/invariants/core.json', JSON.stringify({
+        schemaVersion: 1,
+        facts: [{
+          id: 'scope-required',
+          statement: 'Every mutation is project scoped.',
+          claimKey: 'project.scope.required',
+          value: true,
+          kind: 'asserted',
+          domains: ['core'],
+          relatedSymbols: [],
+        }],
+      })],
+    ] as const;
+
+    for (const [targetPath, content] of targets) {
+      const draft = service.propose({
+        targetPath,
+        content,
+        expectedTargetHash: null,
+        sources: [{ type: 'file', locator: 'README.md', sourceHash }],
+      }, author);
+      service.review(draft.id, {
+        decision: 'approve',
+        reviewer: human,
+        rationale: 'Reviewed and approved by the human operator in the Nexus UI.',
+      });
+      const applied = service.apply(draft.id);
+      expect(applied.attestation.reviewer.provider).toBe('human');
+    }
+
+    const inspection = inspectContextAttestations(scope);
+    expect(inspection.diagnostics).toEqual([]);
+    expect(inspection.attestations).toHaveLength(targets.length);
+    expect(
+      inspection.attestations.every((item) => item.reviewer.provider === 'human'),
+    ).toBe(true);
+
+    const readiness = inspectContextReadiness(scope, {
+      knownSymbols: buildProjectSymbolIndex(scope).symbols,
+    });
+    expect(readiness.blockers).toEqual([]);
+    expect(readiness.ready).toBe(true);
   });
 
   it('commits only the complete reviewed context set and records the portable commit', () => {

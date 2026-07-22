@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   hasCurrentDispatchAuthority,
   reserveEffectfulSpend,
+  type MissionLane,
 } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { requiresConfirmation, confirmationReason } from '../jarvis/guardrails';
@@ -37,6 +38,7 @@ import {
   enqueueMissionPrompt,
   getMissionPromptAbortSignal,
   getMissionPromptQueue,
+  peekMissionPromptQueue,
   startMissionPrompt,
 } from './mission-prompt-queue-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -252,6 +254,7 @@ function bindEffectAuthority(
   toolName: string,
   args: Readonly<Record<string, unknown>>,
   resolver: WorkflowAuthorityResolver,
+  missionLane?: MissionLane | null,
 ): string | undefined {
   const policy = effectPolicyForTool(toolName);
   if (
@@ -289,6 +292,15 @@ function bindEffectAuthority(
     throw new Error(
       'mission effect blocked: projectId, checkoutId, missionId and contextRevision are required',
     );
+  }
+  // Ops lane (infra/ops): no PREVC frozen contract exists to bind. The intent
+  // gate (always consulted for effectful mission-bound tools) already enforced
+  // the ops allowlist + dispatch authority; other lanes stay fail-closed.
+  if (
+    missionLane === 'ops' &&
+    (policy === 'execution-effect' || policy === 'mission-effect')
+  ) {
+    return ctx.contextRevision;
   }
   const authority = resolver(ctx.scope, ctx.missionId);
   bindContextRevision(ctx, authority.contextRevision);
@@ -489,6 +501,19 @@ export async function dispatchToolCall(
     );
   };
 
+  // Lane for bindEffectAuthority: resolved fresh from the same mission store
+  // as the intent gate. Unknown/error → undefined, which keeps the fail-closed
+  // frozen-contract path (only an explicit 'ops' lane skips PREVC binding).
+  const missionLaneForEffectAuthority = (): MissionLane | undefined => {
+    if (!ctx.missionId || !isEffectfulTool(tool.name)) return undefined;
+    try {
+      return resolveMission(ctx.scope, ctx.missionId)?.mission.intentContract
+        ?.lane;
+    } catch {
+      return undefined;
+    }
+  };
+
   // First check avoids asking for confirmation when authority is already stale.
   const initialIntent = checkMissionIntent();
   if (!initialIntent.ok) return denyIntentCheck(initialIntent.error);
@@ -500,6 +525,7 @@ export async function dispatchToolCall(
       tool.name,
       args,
       options.resolveWorkflowAuthority ?? resolveProductionWorkflowAuthority,
+      missionLaneForEffectAuthority(),
     );
     auditContext = {
       scope: ctx.scope,
@@ -646,6 +672,7 @@ export async function dispatchToolCall(
       tool.name,
       args,
       options.resolveWorkflowAuthority ?? resolveProductionWorkflowAuthority,
+      missionLaneForEffectAuthority(),
     );
     auditContext = {
       scope: ctx.scope,
@@ -728,15 +755,28 @@ export async function dispatchToolCall(
           (entry) => entry.id === item.id && entry.status === 'executing',
         );
         if (!executing) {
+          // Retry join: when the executing slot already runs the SAME tool,
+          // skip the queue and run the handler directly — the flight dedup
+          // (e.g. contextDoctorFlights in tools-context) joins the in-flight
+          // promise, and doctor/map/scaffold handlers are idempotent anyway.
+          // Freeze is NOT idempotent, so a duplicate freeze keeps the
+          // fail-safe prompt_queue_busy deny, as does a different tool.
+          const current = peekMissionPromptQueue(ctx.missionId).executing;
+          const joinable =
+            current?.body === tool.name && !/mission_freeze/i.test(tool.name);
           cancelMissionPrompt(ctx.missionId, item.id);
-          return {
-            ok: false,
-            tool: tool.name,
-            denied: true,
-            error: 'prompt_queue_busy',
-          };
+          if (!joinable) {
+            return {
+              ok: false,
+              tool: tool.name,
+              denied: true,
+              error: 'prompt_queue_busy',
+            };
+          }
+          queuePromptId = null;
+        } else {
+          queueSignal = getMissionPromptAbortSignal(ctx.missionId, item.id);
         }
-        queueSignal = getMissionPromptAbortSignal(ctx.missionId, item.id);
       } else if (item?.status === 'cancelled') {
         return {
           ok: false,

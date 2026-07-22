@@ -1,4 +1,5 @@
 import type { Mission, MissionStatus } from '../../shared/orch-types';
+import type { MissionLane } from '../../shared/mission-intent';
 import type { RailSectionId } from './mission-rail-prefs';
 
 export interface RailSection {
@@ -107,11 +108,12 @@ export function railStatusDisplay(
   liveInGrid: boolean,
   intentState?: Mission['intentState'],
   /** Delivery lane — plan mode needs a glanceable pill so ▶ promote is obvious. */
-  lane?: 'standard' | 'consult' | 'plan' | null,
+  lane?: MissionLane | null,
 ): { label: string; tone: RailStatusTone } {
   if (liveInGrid) {
     if (lane === 'plan') return { label: 'Plano ao vivo', tone: 'live' };
     if (lane === 'consult') return { label: 'Consulta ao vivo', tone: 'live' };
+    if (lane === 'ops') return { label: 'Operação ao vivo', tone: 'live' };
     return { label: 'Ao vivo', tone: 'live' };
   }
   // Terminal outcomes are authoritative. A stale intent snapshot must never
@@ -138,9 +140,10 @@ export function railStatusDisplay(
     default:
       break;
   }
-  // After intent shells: plan/consult lanes are not "Em curso" de código.
+  // After intent shells: plan/consult/ops lanes are not "Em curso" de código.
   if (lane === 'plan') return { label: 'Em plano', tone: 'running' };
   if (lane === 'consult') return { label: 'Consulta', tone: 'running' };
+  if (lane === 'ops') return { label: 'Operação', tone: 'running' };
   switch (status) {
     case 'running':
       return { label: 'Em curso', tone: 'running' };
@@ -161,7 +164,7 @@ export function missionRailResumeCopy(
   status: MissionStatus,
   liveInGrid: boolean,
   intentState?: Mission['intentState'],
-  lane?: 'standard' | 'consult' | 'plan' | null,
+  lane?: MissionLane | null,
 ): { meta: string | null; title: string } {
   if (liveInGrid) {
     return {

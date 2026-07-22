@@ -15,6 +15,7 @@ import {
   readMicPermission,
 } from './ops-format';
 import { DoctorEngineSettings } from './DoctorEngineSettings';
+import { ContextDraftsSection } from './ContextDraftsSection';
 
 function useDiagnosticsSnapshot() {
   const [micPermission, setMicPermission] =
@@ -108,6 +109,8 @@ export function DiagnosticsSection() {
       </p>
 
       <DoctorEngineSettings />
+
+      <ContextDraftsSection />
 
       <div className="ops-metric-grid">
         <MetricTile

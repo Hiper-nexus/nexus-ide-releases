@@ -190,6 +190,106 @@ describe('mission intent gate', () => {
     }
   });
 
+  it('ops lane allows shell/browser effects but denies repo code mutations', () => {
+    const ops: Mission = {
+      ...dispatched,
+      description: 'Fazer backup na VPS e subir a landing page',
+      intentContract: {
+        ...dispatched.intentContract!,
+        goal: 'Fazer backup na VPS e subir a landing page',
+        lane: 'ops',
+        budgets: {
+          planningTokens: 1200,
+          executionTokens: 8000,
+          maxWorkers: 0,
+          maxSteps: 200,
+        },
+      },
+    };
+
+    // Read-only / mission-control pass as in any lane.
+    expect(
+      assertMissionIntentAllowsTool('nexus_git_status', { mission: ops }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_file_read', { mission: ops }).ok,
+    ).toBe(true);
+
+    // Execution effects allowed once dispatch authority exists.
+    expect(
+      assertMissionIntentAllowsTool('nexus_terminal_run', { mission: ops }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_bg_run', { mission: ops }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_browser_navigate', { mission: ops })
+        .ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_image_generate', { mission: ops })
+        .ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_memory_retain', { mission: ops }).ok,
+    ).toBe(true);
+    expect(
+      assertMissionIntentAllowsTool('nexus_mission_set_status', {
+        mission: ops,
+      }).ok,
+    ).toBe(true);
+
+    // Repo code mutations / delegation denied with a clear message.
+    for (const tool of [
+      'nexus_editor_apply_patch',
+      'nexus_file_write',
+      'nexus_plan_write',
+      'nexus_git_add',
+      'nexus_git_commit',
+      'nexus_git_branch_create',
+      'nexus_worktree_create',
+      'nexus_merge_task',
+      'nexus_pane_spawn',
+      'nexus_mission_freeze_contract',
+    ] as const) {
+      const result = assertMissionIntentAllowsTool(tool, { mission: ops });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('tool_denied');
+        expect(result.error).toMatch(/lane ops não altera código do repo/i);
+      }
+    }
+  });
+
+  it('ops lane still requires dispatch authority for execution effects', () => {
+    const unapprovedOps: Mission = {
+      ...dispatched,
+      intentContract: {
+        ...dispatched.intentContract!,
+        lane: 'ops',
+        approvedAt: undefined,
+        budgets: {
+          ...dispatched.intentContract!.budgets,
+          maxWorkers: 0,
+        },
+      },
+    };
+
+    const result = assertMissionIntentAllowsTool('nexus_terminal_run', {
+      mission: unapprovedOps,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('dispatch_required');
+    }
+    // Read-only still passes without dispatch authority.
+    expect(
+      assertMissionIntentAllowsTool('nexus_git_status', {
+        mission: unapprovedOps,
+      }).ok,
+    ).toBe(true);
+  });
+
   it('allows prepare-project warm tools only while awaiting goal', () => {
     const prepare: Mission = {
       ...awaitingGoal,

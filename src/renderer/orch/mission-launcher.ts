@@ -204,7 +204,8 @@ export function buildMissionKickoffPrompt(
       "de outro provider, roda review→apply→commit sozinho (sem auto-aprovação). " +
       "Leia phase/autopilotHint/appliedDraftIds. Se restarem drafts propostos, " +
       "chame nexus_context_doctor novamente; não abra draft_review_run em paralelo. " +
-      "Se quorumAvailable=false, peça configuração de outro provider. Nunca invente regra de negócio; ambiguidade sem fonte " +
+      "Se quorumAvailable=false, peça ao usuário para revisar e aprovar os drafts de contexto na UI " +
+      "(a aprovação humana vale como revisão independente) — ou configure outro provider. Nunca invente regra de negócio; ambiguidade sem fonte " +
       "é bloqueio explícito.\n" +
       "2. **nexus_mission_freeze_contract** com objetivo + critérios. Domínios/símbolos " +
       "vazios são preenchidos pelo motor via blast radius do mapa. O piloto PREVC " +
@@ -330,8 +331,8 @@ export function buildIntentDispatchKickoffPrompt(input: {
   maxWorkers: number;
   /** Optional compact memory block (mission ledger) — never a full playbook. */
   compactMemoryMarkdown?: string | null;
-  /** standard = PREVC; consult = read-only; plan = design-only plan.md. */
-  lane?: 'standard' | 'consult' | 'plan';
+  /** standard = PREVC; consult = read-only; plan = design-only plan.md; ops = infra sem PREVC. */
+  lane?: 'standard' | 'consult' | 'plan' | 'ops';
   /** Título real da missão — sobrepõe o nome do squad no heading quando o
    * squad foi reusado de outra missão. */
   missionTitle?: string;
@@ -399,6 +400,32 @@ export function buildIntentDispatchKickoffPrompt(input: {
       '- Use tools de leitura (code_map, git_status, file_read) para embasar o desenho.',
       '- Ao terminar: nexus_handoff_submit com resumo do plan.md. O operador promove a lane no MissionRail (▶ Executar plano) — você NÃO sai do plan mode sozinho.',
       '- Fale em português claro: contexto, abordagem, arquivos, riscos, verificação.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (lane === 'ops') {
+    return [
+      input.squad.orchestratorInstructions.trim(),
+      `# Missão de operação (infra) — ${headingTitle}`,
+      `missionId=${input.missionId}`,
+      `lane=ops`,
+      '',
+      '## Objetivo (contrato de intenção)',
+      input.goal.trim(),
+      '',
+      '## Critérios de aceite',
+      criteria,
+      ...compact,
+      `## Risco: ${input.risk}`,
+      '',
+      '## CONTRATO OPS — infra/operação sem PREVC de código',
+      '- A missão JÁ está despachada. NÃO chame nexus_mission_create nem nexus_mission_freeze_contract — esta lane NÃO usa contrato PREVC congelado.',
+      '- Execute a operação direto no orquestrador com nexus_terminal_run / nexus_bg_run (SSH, deploy, backup, DNS, subir/pausar app) e tools de browser/mídia quando preciso.',
+      '- Esta lane NÃO altera código do repo: sem editor/file_write, git add/commit/branch, worktree, merge ou spawn de workers. Se o objetivo exigir mudança de código, use status=blocked explicando que a missão precisa ser reaberta como standard.',
+      '- Tarefas longas (deploy, backup): nexus_bg_run + nexus_bg_wait / nexus_bg_kill — não bloqueie o turno com terminal_run eterno.',
+      '- Ao concluir, registre uma nota durável do que foi executado (≥ 40 caracteres via note=… em nexus_mission_set_status) e só então use status=done. Se o ambiente não estiver pronto, use status=blocked com causa; se falhou, status=failed.',
+      '- Fale em português claro sobre o que foi executado e o resultado.',
     ]
       .filter(Boolean)
       .join('\n');

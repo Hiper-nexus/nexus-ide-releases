@@ -41,6 +41,12 @@ import { WORKSPACE_CHANNELS } from '../shared/workspace-types';
 import type { WorkspaceState } from '../shared/workspace-types';
 import { ORIENTATION_CHANNELS } from '../shared/orientation-types';
 import type { OrientationSnapshot } from '../shared/orientation-types';
+import { CONTEXT_DRAFT_CHANNELS } from '../shared/context-draft-types';
+import type {
+  ApproveContextDraftInput,
+  ApproveContextDraftResult,
+  PendingContextDraft,
+} from '../shared/context-draft-types';
 import { PROVIDER_CHANNELS } from '../shared/provider-settings-types';
 import type { ProviderSettingsInfo } from '../shared/provider-settings-types';
 import { FILES_CHANNELS } from '../shared/files-types';
@@ -769,8 +775,8 @@ const api: NexusApi = {
       /** prepare-project is NOT accepted — use prepareMissionProject. */
       contextPolicy?: 'none' | 'minimal' | 'on-demand';
       acceptanceCriteria?: string[];
-      /** standard | consult | plan (design-only). */
-      lane?: 'standard' | 'consult' | 'plan';
+      /** standard | consult | plan (design-only) | ops (infra, sem PREVC). */
+      lane?: 'standard' | 'consult' | 'plan' | 'ops';
     }) => ipcRenderer.invoke(ORCH_CHANNELS.missionSubmitIntent, input),
     approveMissionIntent: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionApproveIntent, input),
@@ -907,6 +913,14 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORIENTATION_CHANNELS.ensure),
     refresh: (): Promise<OrientationSnapshot | null> =>
       ipcRenderer.invoke(ORIENTATION_CHANNELS.refresh),
+  },
+  contextDrafts: {
+    listProposed: (): Promise<PendingContextDraft[]> =>
+      ipcRenderer.invoke(CONTEXT_DRAFT_CHANNELS.listProposed),
+    approve: (
+      input: ApproveContextDraftInput,
+    ): Promise<ApproveContextDraftResult> =>
+      ipcRenderer.invoke(CONTEXT_DRAFT_CHANNELS.approve, input),
   },
   providers: {
     list: () => ipcRenderer.invoke(PROVIDER_CHANNELS.list),
@@ -1130,6 +1144,7 @@ const api: NexusApi = {
     login: (providerId: string) =>
       ipcRenderer.invoke(OMP_AUTH_CHANNELS.login, { providerId }),
     cancelLogin: () => ipcRenderer.invoke(OMP_AUTH_CHANNELS.cancelLogin),
+    openAuthWindow: () => ipcRenderer.invoke(OMP_AUTH_CHANNELS.openAuthWindow),
     onEvent: (cb) => addListener(ompAuthEventListeners, cb),
   },
   pipes: {

@@ -15,7 +15,48 @@ import {
 
 const queues = new Map<string, MissionPromptQueueState>();
 const promptAbortControllers = new Map<string, AbortController>();
+const executingWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
 const MAX_TERMINAL_HISTORY = 128;
+const DEFAULT_EXECUTING_WATCHDOG_MS = 10 * 60 * 1000;
+
+/**
+ * Watchdog budget for an executing slot. A handler that never settles must
+ * not deadlock the whole mission queue: when the timer fires and the item is
+ * still executing, the slot is force-completed as failed.
+ */
+function executingWatchdogMs(): number {
+  const raw = process.env.MISSION_PROMPT_EXECUTING_WATCHDOG_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_EXECUTING_WATCHDOG_MS;
+}
+
+function clearExecutingWatchdog(key: string): void {
+  const timer = executingWatchdogs.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    executingWatchdogs.delete(key);
+  }
+}
+
+function scheduleExecutingWatchdog(missionId: string, promptId: string): void {
+  const key = controllerKey(missionId, promptId);
+  clearExecutingWatchdog(key);
+  const timer = setTimeout(() => {
+    executingWatchdogs.delete(key);
+    const stuck = getMissionPromptQueue(missionId).items.find(
+      (item) => item.id === promptId && item.status === 'executing',
+    );
+    if (!stuck) return;
+    console.warn(
+      `[mission-prompt-queue] executing watchdog fired for ${missionId}/${promptId}; force-completing as failed`,
+    );
+    completeMissionPrompt(missionId, promptId, false);
+  }, executingWatchdogMs());
+  timer.unref();
+  executingWatchdogs.set(key, timer);
+}
 
 function storeResult(
   missionId: string,
@@ -35,7 +76,9 @@ function abortCancelledPrompts(
   cancelledIds: readonly string[],
 ): void {
   for (const id of cancelledIds) {
-    promptAbortControllers.get(controllerKey(missionId, id))?.abort();
+    const key = controllerKey(missionId, id);
+    promptAbortControllers.get(key)?.abort();
+    clearExecutingWatchdog(key);
   }
 }
 
@@ -91,6 +134,7 @@ export function startMissionPrompt(
     if (!promptAbortControllers.has(key)) {
       promptAbortControllers.set(key, new AbortController());
     }
+    scheduleExecutingWatchdog(missionId, id);
   }
   return stored;
 }
@@ -107,6 +151,7 @@ export function completeMissionPrompt(
   });
   const stored = storeResult(missionId, result);
   promptAbortControllers.delete(controllerKey(missionId, id));
+  clearExecutingWatchdog(controllerKey(missionId, id));
   return stored;
 }
 
@@ -160,6 +205,9 @@ export function deleteMissionPromptQueue(missionId: string): void {
     controller.abort();
     promptAbortControllers.delete(key);
   }
+  for (const key of [...executingWatchdogs.keys()]) {
+    if (key.startsWith(prefix)) clearExecutingWatchdog(key);
+  }
 }
 
 /** Test / shutdown helper. */
@@ -168,5 +216,9 @@ export function resetMissionPromptQueues(): void {
     controller.abort();
   }
   promptAbortControllers.clear();
+  for (const timer of executingWatchdogs.values()) {
+    clearTimeout(timer);
+  }
+  executingWatchdogs.clear();
   queues.clear();
 }

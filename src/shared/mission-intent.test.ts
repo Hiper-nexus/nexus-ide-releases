@@ -14,6 +14,7 @@ import {
   estimateEffectfulToolTokens,
   isConsultLane,
   canCompleteConsultLane,
+  canCompleteOpsLane,
   hasApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   isAutoDerivedCriterion,
@@ -258,6 +259,30 @@ describe('compileIntentContract', () => {
     expect(
       canCompleteConsultLane({
         note: 'Resumo: 3 deploys falharam por timeout no build step de TypeScript.',
+      }),
+    ).toBe(true);
+  });
+
+  it('builds an ops-lane contract with real budgets but zero workers', () => {
+    const ops = compileIntentContract({
+      goal: 'Fazer backup na VPS e subir a landing page',
+      intentVersion: 1,
+      lane: 'ops',
+    });
+    expect(ops.lane).toBe('ops');
+    // Delegation is denied in the ops lane — workers are never expected.
+    expect(ops.budgets.maxWorkers).toBe(0);
+    expect(ops.budgets.maxSteps).toBeGreaterThan(32);
+    expect(canCompleteOpsLane({ note: 'curto' })).toBe(false);
+    expect(
+      canCompleteOpsLane({
+        note: 'Backup tar.gz gerado na VPS e landing page publicada no nginx.',
+      }),
+    ).toBe(true);
+    expect(
+      canCompleteOpsLane({
+        learnings: 'Backup ok.',
+        note: 'Landing page publicada e DNS propagado com sucesso.',
       }),
     ).toBe(true);
   });

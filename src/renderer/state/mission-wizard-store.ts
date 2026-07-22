@@ -35,7 +35,7 @@ export interface MissionWizardDraft {
   mode: WizardMode | null;
   intent: string;
   missionGoal: string;
-  missionLane: 'standard' | 'consult' | 'plan';
+  missionLane: 'standard' | 'consult' | 'plan' | 'ops';
   squadId: string;
   armedMissionId: string | null;
   count: number;

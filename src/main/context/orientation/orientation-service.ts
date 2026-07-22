@@ -176,8 +176,25 @@ export class ProjectOrientationService {
     }
     // Force rebuild: wait for any in-flight build so we never double-write cache.
     if (inflight && options.force) {
+      // Bound the wait: a stuck previous build must not deadlock a forced
+      // rebuild (the .finally below only removes the inflight entry when it is
+      // the same promise, so proceeding while it still runs is safe).
+      let timedOut = false;
       try {
-        await awaitWithSignal(inflight, options.signal);
+        await awaitWithSignal(
+          Promise.race([
+            inflight,
+            sleep(options.waitMs ?? 10_000).then(() => {
+              timedOut = true;
+            }),
+          ]),
+          options.signal,
+        );
+        if (timedOut) {
+          console.warn(
+            '[orientation] previous build still in flight after wait; proceeding with forced rebuild',
+          );
+        }
       } catch (error) {
         if (isAbortError(error)) throw error;
         // previous build failed; continue with forced rebuild

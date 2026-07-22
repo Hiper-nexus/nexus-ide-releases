@@ -43,7 +43,7 @@ import {
 } from './tool-util';
 import { buildHandoffTools } from './tools-handoff';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
-import { canCompleteConsultLane } from '../../shared/mission-intent';
+import { canCompleteConsultLane, canCompleteOpsLane } from '../../shared/mission-intent';
 import { emitPlannedTasksWithContract } from './mission-scheduler';
 import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
 
@@ -220,8 +220,8 @@ const missionSetStatusTool: McpToolDef = {
     'done is ONLY for full PREVC completion with immutable step receipts — never a shortcut. ' +
     'Use blocked when the environment is not ready or PREVC never started (work may still ' +
     'have been delivered outside the pipeline). Use failed when execution started and ended in error. ' +
-    'Optional note: required for durable blocked/failed justification; for lane=consult done, ' +
-    'note (or existing learnings) must be ≥40 chars (consult is not code PREVC green).',
+    'Optional note: required for durable blocked/failed justification; for lane=consult/ops done, ' +
+    'note (or existing learnings) must be ≥40 chars (consult/ops are not code PREVC green).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -274,6 +274,18 @@ const missionSetStatusTool: McpToolDef = {
           throw new Error(
             'consult-lane done requires a durable learning note (≥40 chars) via note=… ' +
               'or existing learnings. This is not a code PREVC completion.',
+          );
+        } else if (
+          lane === 'ops' &&
+          canCompleteOpsLane({ learnings: current.learnings, note })
+        ) {
+          // Ops lane: allow done with a durable note of what was executed —
+          // ops completion is not a code-change PREVC green either.
+        } else if (lane === 'ops') {
+          throw new Error(
+            'ops-lane done requires a durable note (≥40 chars) via note=… ' +
+              'or existing learnings describing what was executed. ' +
+              'This is not a code PREVC completion.',
           );
         } else {
           throw new Error(

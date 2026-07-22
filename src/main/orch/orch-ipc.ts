@@ -417,8 +417,8 @@ export function registerOrchIpc(): void {
     // prepare-project is intentionally excluded — only prepareMissionProject IPC.
     contextPolicy: z.enum(["none", "minimal", "on-demand"]).optional(),
     acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32).optional(),
-    /** standard | consult | plan (design-only plan.md). */
-    lane: z.enum(["standard", "consult", "plan"]).optional(),
+    /** standard | consult | plan (design-only plan.md) | ops (infra, sem PREVC). */
+    lane: z.enum(["standard", "consult", "plan", "ops"]).optional(),
   });
   ipcMain.handle(ORCH_CHANNELS.missionSubmitIntent, (event, raw) => {
     const parsed = missionSubmitIntentSchema.safeParse(raw);

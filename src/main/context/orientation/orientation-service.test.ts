@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../../shared/types';
 import {
   ProjectOrientationService,
@@ -157,5 +157,47 @@ describe('ProjectOrientationService P0', () => {
     })).rejects.toMatchObject({ name: 'AbortError' });
     expect(service.get(scope)).toBeNull();
     expect(readOrientationCache(cacheRoot, scope)).toBeNull();
+  });
+
+  it('force rebuild proceeds after waitMs when the previous build never settles', async () => {
+    // Fake only setTimeout: sleep() is controllable while the build's real
+    // setImmediate yields stay pending (the test never leaves its macrotask
+    // before the second ensure is queued), so the first build never settles.
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-orient-')));
+      const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-orient-cache-'));
+      roots.push(root, cacheRoot);
+      write(root, 'src/index.ts', 'export const boot = true;\n');
+      const service = new ProjectOrientationService({ cacheRoot, includeContextSummary: false });
+      const scope = scopeFor(root);
+
+      const first = await service.ensure(scope, {
+        reason: 'workspace-open', force: true, waitMs: 0,
+      });
+      expect(first.status).toBe('building');
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const second = service.ensure(scope, {
+        reason: 'pre-kickoff', force: true, waitMs: 1_000,
+      });
+
+      // waitMs expires before the stuck build: warn and keep going.
+      vi.advanceTimersByTime(1_000);
+      // Flush the promise chain (race -> awaitWithSignal -> warn) fully.
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('previous build still in flight'),
+      );
+
+      // The forced rebuild is itself bounded by waitMs and resolves.
+      vi.advanceTimersByTime(1_000);
+      await expect(second).resolves.toMatchObject({
+        status: expect.stringMatching(/building|ready|partial/),
+      });
+      warnSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

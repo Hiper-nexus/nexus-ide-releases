@@ -56,8 +56,12 @@ export type MissionExecutionMode = z.infer<typeof missionExecutionModeSchema>;
  *   without a consult-lane contract.
  * - plan: design approach only (grok-build plan-mode idea) — writes limited to
  *   mission plan.md; no worktree/code/shell mutations until lane upgrades.
+ * - ops: infra/operation work (SSH, deploy, backup, DNS, subir/pausar app) —
+ *   shell/browser/media execution effects after dispatch authority, WITHOUT a
+ *   frozen PREVC contract; repo code mutations (editor/file_write/git/
+ *   worktree/merge/delegation) stay denied — reopen as standard for those.
  */
-export const missionLaneSchema = z.enum(['standard', 'consult', 'plan']);
+export const missionLaneSchema = z.enum(['standard', 'consult', 'plan', 'ops']);
 export type MissionLane = z.infer<typeof missionLaneSchema>;
 
 export const missionContextPolicySchema = z.enum([
@@ -443,7 +447,11 @@ export function compileIntentContract(input: {
           maxWorkers: 0,
           maxSteps: lane === 'plan' ? 64 : 32,
         }
-      : defaultBudgetsForRisk(risk);
+      : lane === 'ops'
+        ? // Ops executa direto no orquestrador (shell/browser) — delegação é
+          // negada no intent gate, então workers nunca são esperados.
+          { ...defaultBudgetsForRisk(risk), maxWorkers: 0 }
+        : defaultBudgetsForRisk(risk);
   return missionIntentContractSchema.parse({
     version: 1,
     source: input.source ?? 'typed',
@@ -490,8 +498,9 @@ export function isPlanLaneWritablePath(relativePath: string): boolean {
  * Returns null when the goal is neutral (keep standard). Never forces a lane
  * after the operator has manually picked one (wizard owns that).
  *
- * Order: consult (investigation) before plan (design-only), so "consultar
- * logs para planejar" leans consult unless implement/fix signals dominate.
+ * Order: implement signals win first (never suggest a lane for code work —
+ * this is also the guard that keeps "subir" from catching "subir código/PR"),
+ * then consult (investigation), then plan (design-only), then ops (infra).
  */
 export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
   const g = goal.trim();
@@ -511,6 +520,11 @@ export function suggestMissionLaneFromGoal(goal: string): MissionLane | null {
       g,
     );
   if (plan) return 'plan';
+  const ops =
+    /\b(deploy|backups?|ssh|vps|servidor(es)?|landing\s*page|dns|subir|pausar|migrar|restart(ar)?|publicar)\b/i.test(
+      g,
+    );
+  if (ops) return 'ops';
   return null;
 }
 
@@ -532,6 +546,18 @@ export function canCompleteConsultLane(input: {
       ? learnings.length + 2 + note.length
       : learnings.length + note.length;
   return combined >= CONSULT_DONE_MIN_LEARNING_CHARS;
+}
+
+/**
+ * Ops-lane done mirrors consult-lane: allowed only with a durable note of what
+ * was executed (learnings and/or the status note), never a silent green
+ * shortcut — ops completion is not code PREVC green either.
+ */
+export function canCompleteOpsLane(input: {
+  readonly learnings?: string | null;
+  readonly note?: string | null;
+}): boolean {
+  return canCompleteConsultLane(input);
 }
 
 /** True when the mission has a user-approved dispatch contract. */

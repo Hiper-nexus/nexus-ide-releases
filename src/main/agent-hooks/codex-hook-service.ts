@@ -4,6 +4,7 @@
 // installer only (no full TOML trust matrix / WSL remote); paths under user
 // home; never authorizes evidence (§12.4).
 
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -11,6 +12,11 @@ import type {
   AgentHookInstallStatus,
 } from '../../shared/agent-hook-types';
 import type { ManagedAgentHookService } from './managed-agent-hook-controls';
+import {
+  codexHookTrustEntries,
+  mergeCodexHookTrustState,
+  stripCodexHookTrustState,
+} from './codex-hook-trust';
 import {
   buildManagedCommandHook,
   createManagedCommandMatcher,
@@ -39,6 +45,10 @@ export type CodexHookServicePaths = {
 
 function getConfigPath(home: string): string {
   return join(home, '.codex', 'hooks.json');
+}
+
+function getConfigTomlPath(home: string): string {
+  return join(home, '.codex', 'config.toml');
 }
 
 function getScriptFileName(): string {
@@ -171,6 +181,50 @@ export function createCodexHookService(
     };
   };
 
+  // Codex >= 0.129 gates unmanaged hooks behind a TUI review ("N hooks need
+  // review before they run") — fatal for orchestrated pane boot. Seed the
+  // trust state the review would have written ([hooks.state."<key>"]
+  // trusted_hash) for the hooks WE just installed. Best-effort: a failure
+  // here must never break install/remove — without trusted_hash codex just
+  // shows the review prompt, i.e. today's behavior.
+  const seedCodexHookTrust = (
+    configPath: string,
+    config: HooksConfig,
+    command: string,
+  ): void => {
+    try {
+      const entries = codexHookTrustEntries(configPath, config, command);
+      if (entries.length === 0) return;
+      const tomlPath = getConfigTomlPath(home);
+      const existing = existsSync(tomlPath)
+        ? readFileSync(tomlPath, 'utf-8')
+        : '';
+      // Textual merge preserves the user's comments/formatting; mode 0o600
+      // applies only when the file is created (existing modes are kept).
+      writeFileSync(tomlPath, mergeCodexHookTrustState(existing, entries), {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+    } catch (err) {
+      console.warn('[codex-hook-service] failed to seed hook trust state', err);
+    }
+  };
+
+  const clearCodexHookTrust = (keys: string[]): void => {
+    if (keys.length === 0) return;
+    try {
+      const tomlPath = getConfigTomlPath(home);
+      if (!existsSync(tomlPath)) return;
+      const existing = readFileSync(tomlPath, 'utf-8');
+      const next = stripCodexHookTrustState(existing, keys);
+      if (next !== existing) {
+        writeFileSync(tomlPath, next, { encoding: 'utf-8' });
+      }
+    } catch (err) {
+      console.warn('[codex-hook-service] failed to clear hook trust state', err);
+    }
+  };
+
   return {
     install(): void {
       const configPath = getConfigPath(home);
@@ -183,9 +237,11 @@ export function createCodexHookService(
       const next = applyManagedHooks(config, command, scriptFileName);
       writeManagedScript(scriptPath, buildManagedScriptBody());
       writeHooksJson(configPath, next);
+      seedCodexHookTrust(configPath, next, command);
     },
     remove(): AgentHookInstallStatus {
       const configPath = getConfigPath(home);
+      const scriptPath = getSharedManagedScriptPath(scriptFileName, home);
       const config = readHooksJson(configPath);
       if (!config) {
         return {
@@ -196,8 +252,15 @@ export function createCodexHookService(
           detail: 'Could not parse Codex hooks.json',
         };
       }
+      // Trust keys are indexed by group/handler position — compute them from
+      // the hooks.json content BEFORE the managed groups are stripped.
+      const command = getManagedCommand(scriptPath);
+      const trustKeys = codexHookTrustEntries(configPath, config, command).map(
+        (entry) => entry.key,
+      );
       const { config: next, changed } = stripManagedHooks(config, scriptFileName);
       if (changed) writeHooksJson(configPath, next);
+      clearCodexHookTrust(trustKeys);
       return getStatus();
     },
     getStatus,

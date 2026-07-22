@@ -24,6 +24,11 @@ import type {
   PetPrefs,
 } from './pet-types';
 import type { OrientationSnapshot } from './orientation-types';
+import type {
+  ApproveContextDraftInput,
+  ApproveContextDraftResult,
+  PendingContextDraft,
+} from './context-draft-types';
 import type { UpdateState } from './update-ipc';
 import type {
   VoiceRuntimeInfo,
@@ -531,8 +536,8 @@ export interface NexusApi {
       source?: 'typed' | 'voice' | 'imported-issue' | 'automation';
       contextPolicy?: 'none' | 'minimal' | 'on-demand';
       acceptanceCriteria?: string[];
-      /** standard | consult | plan (design-only plan.md). */
-      lane?: 'standard' | 'consult' | 'plan';
+      /** standard | consult | plan (design-only plan.md) | ops (infra, sem PREVC). */
+      lane?: 'standard' | 'consult' | 'plan' | 'ops';
       /** Current print/audio evidence must be present before dispatch. */
       evidenceAttached?: boolean;
     }): Promise<Mission>;
@@ -721,6 +726,12 @@ export interface NexusApi {
     get(): Promise<OrientationSnapshot | null>;
     ensure(): Promise<OrientationSnapshot | null>;
     refresh(): Promise<OrientationSnapshot | null>;
+  };
+  /** Human-in-the-loop review of source-bound context drafts (the user is an
+   *  independent reviewer when no second CLI provider exists). */
+  contextDrafts: {
+    listProposed(): Promise<PendingContextDraft[]>;
+    approve(input: ApproveContextDraftInput): Promise<ApproveContextDraftResult>;
   };
   providers: {
     list(): Promise<ProviderSettingsInfo[]>;

@@ -37,4 +37,37 @@ describe('suggestMissionLaneFromGoal', () => {
       ),
     ).toBeNull();
   });
+
+  it('suggests ops for infra/operation wording', () => {
+    expect(
+      suggestMissionLaneFromGoal('Fazer backup na VPS e subir a landing page'),
+    ).toBe('ops');
+    expect(
+      suggestMissionLaneFromGoal('Configurar o DNS e publicar a landing page'),
+    ).toBe('ops');
+    expect(
+      suggestMissionLaneFromGoal('Restartar o servidor e pausar o app'),
+    ).toBe('ops');
+    expect(
+      suggestMissionLaneFromGoal('Migrar o app para outra VPS via SSH'),
+    ).toBe('ops');
+  });
+
+  it('does not suggest ops when implement signals dominate', () => {
+    expect(
+      suggestMissionLaneFromGoal('Corrigir bug e fazer deploy'),
+    ).toBeNull();
+  });
+
+  it('keeps consult/plan precedence over ops wording', () => {
+    expect(
+      suggestMissionLaneFromGoal('Investigar o que está acontecendo no deploy'),
+    ).toBe('consult');
+  });
+
+  it('returns null for neutral goals', () => {
+    expect(
+      suggestMissionLaneFromGoal('Organizar a semana do time de produto'),
+    ).toBeNull();
+  });
 });

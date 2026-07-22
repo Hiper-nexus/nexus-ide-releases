@@ -2,6 +2,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import type { ContextAttestationActor } from './context-attestation';
 import {
   CliContextDraftReviewer,
+  CONTEXT_DRAFT_REVIEW_UNAVAILABLE_MESSAGE,
   selectIndependentContextReviewerRoute,
 } from './cli-context-draft-reviewer';
 import type { ContextDraftRecord } from './context-draft-store';
@@ -135,6 +136,17 @@ function invariantsGuidance(
   return blocked ? ` ${STRUCTURED_INVARIANTS_HINT}` : '';
 }
 
+/**
+ * O humano É um revisor independente sancionado (é independente do agente
+ * autor): quando o quorum de providers falha — ou o auto-review desiste — o
+ * caminho principal passa a ser a aprovação na UI, não "instale outro CLI".
+ */
+const HUMAN_CONTEXT_REVIEW_HINT =
+  'Ask the user to review and approve the pending context draft(s) in the ' +
+  'Nexus UI (Context drafts panel in Settings) — human approval counts as ' +
+  'the independent review. Alternative: install/auth a second CLI provider, ' +
+  'then nexus_context_draft_review_run on each draftId.';
+
 function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>): string {
   if (result.blockingError) {
     return (
@@ -149,10 +161,20 @@ function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>)
   if (result.readiness.ready) {
     return 'Context ready. Freeze the mission contract next (or nexus_context_commit if applied drafts remain).';
   }
+  const autoReviewUnavailable = result.draftOutcomes.some(
+    (outcome) => outcome.error?.includes(CONTEXT_DRAFT_REVIEW_UNAVAILABLE_MESSAGE),
+  );
+  if (autoReviewUnavailable) {
+    return (
+      'Autonomous independent review gave up: the reviewer pane never decided ' +
+      'after repeated resumed passes. ' +
+      HUMAN_CONTEXT_REVIEW_HINT
+    );
+  }
   if (!result.quorumAvailable && result.proposedDraftIds.length > 0) {
     return (
       'Drafts proposed from the code map, but independent reviewer quorum is unavailable. ' +
-      'Install/auth a second CLI provider, then nexus_context_draft_review_run on each draftId.'
+      HUMAN_CONTEXT_REVIEW_HINT
     );
   }
   const hasPendingAutoReview = result.draftOutcomes.some(

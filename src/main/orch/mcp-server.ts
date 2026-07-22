@@ -57,6 +57,7 @@ import { handleHookStatusHttp } from './hook-status-endpoint';
 import { resetAgentStatusOnExit } from './agent-status';
 import { installLoginStuckWatchdog } from './login-stuck-watchdog';
 import { codexStatusHookArgs } from './hook-status-config';
+import { codexHookTrustBypassArgs } from './codex-cli-version';
 import {
   cleanupAgyMcpConfig,
   cleanupOmpMcpConfig,
@@ -420,6 +421,13 @@ function installSpawnHook(): void {
           // Additive status hooks as per-session -c overrides (emdash wave 1)
           // — same argv-only channel as the MCP injection, zero disk writes.
           extraArgs.push(...codexStatusHookArgs());
+          // Codex >= 0.129 requires interactive review of untrusted hooks —
+          // fatal for orchestrated boot. The -c hooks.* above have no on-disk
+          // identity that could be pre-trusted via config.toml hooks.state,
+          // so bypass trust: Nexus IS the automation that vets these hook
+          // sources (it writes them). Version-gated (>= 0.134): unknown flag
+          // on older codex would break the spawn; unresolved version omits.
+          extraArgs.push(...codexHookTrustBypassArgs(adapter.bin));
         } else if (flavor === 'agy') {
           // AGY 1.1 resolves its config through HOME (and newer builds may
           // honor GEMINI_CLI_HOME). Mirror skills first, then overlay both

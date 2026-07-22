@@ -132,23 +132,24 @@ Fazer `resolveOmpBin` reusar a mesma lógica de `isBinInstalled`/`resolveRunnerP
 
 ---
 
-## 3. [NÃO É BUG DO NEXUS] "Close Window" da página OAuth não fecha a aba
+## 3. [RESOLVIDO] "Close Window" da página OAuth não fecha a aba
 
 **Sintoma**: após login OAuth (ex.: `omp auth-broker login`), a página abre no
 navegador padrão do sistema com "Authentication Successful" + botão "Close Window";
 clicar não fecha a aba.
 
-**Achado**: grep por `"Close Window"` / `"Authentication Successful"` **não bate** em
-nenhum lugar de `src/`, `server/`, `companion/`, `shared/` — essa página é renderizada
-pelo **subprocesso externo** (`omp auth-broker login` ou o provider da CLI), não pelo
-Nexus. O Nexus só abre a URL via `openExternal` (https-only) no navegador padrão do
-sistema (`src/renderer/components/omp/OmpRpcPanel.tsx:100-111`).
+**Achado original**: a página é renderizada pelo subprocesso externo
+(`omp auth-broker login`), não pelo Nexus; todo browser bloqueia `window.close()`
+numa aba que não foi aberta via `window.open()` de script.
 
-Todo browser moderno bloqueia `window.close()` numa aba que não foi aberta via
-`window.open()` de script (proteção de segurança do próprio browser) — comportamento
-esperado, página não é editável pelo Nexus. Login já é detectado independente do
-fechamento da aba: o processo `omp auth-broker` sai com `code 0` e empurra o evento
-`done` (`src/main/adapters/omp-auth.ts:163-176`). É só estética, sem ação recomendada.
+**Fix (implementado)**: o fluxo não depende mais do navegador do sistema. Ao
+receber `awaiting-auth`, o main abre uma **janela in-app endurecida**
+(`src/main/adapters/omp-auth-window.ts`: sessão efêmera, sandbox, sem popups,
+navegação https/loopback-only) que **fecha sozinha** quando o fluxo termina
+(`done` com delay de 1,5 s para a página de sucesso ser perceptível; `error`/
+cancel imediato). O botão do painel virou "Reabrir janela de autorização"
+(com fallback para o navegador do sistema se a janela falhar). Testes:
+`omp-auth-window.test.ts` + `omp-auth-ipc.test.ts`.
 
 ---
 

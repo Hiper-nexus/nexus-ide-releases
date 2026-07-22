@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.19.25 — Piloto Automático de Verdade
+
+Data: 2026-07-22
+
+### Execução sem travas
+
+- **Lane `ops` (Operação/infra)**: missões de operação — backup em VPS, deploy,
+  landing page, DNS, SSH — executam terminal/browser direto, sem exigir o
+  contrato PREVC de arquitetura. Mantidos: aprovação de intenção pelo usuário,
+  confirmação por ação perigosa, auditoria fail-closed. Edição de código, git e
+  worktrees seguem negados nessa lane; o wizard sugere `Operação (infra)`
+  automaticamente para goals de infra.
+- **Fila de bootstrap destravada**: retry da mesma ferramenta (`context_doctor`)
+  faz *join* na execução em voo em vez de morrer com `prompt_queue_busy`;
+  watchdog de 10 min libera slot preso; awaits de orientation ganharam bound —
+  uma missão nunca mais deadlocka esperando o mapa do projeto.
+- **Bootstrap converge sem segundo provider**: o usuário vira o revisor
+  independente — nova seção em Diagnóstico lista os rascunhos de contexto com
+  `Revisar e aprovar contexto` (atestação registrada como revisor humano);
+  reviewer pane que nunca vota morre após 2 tentativas em vez de loopar para
+  sempre, e os hints apontam para a aprovação humana.
+
+### Panes que sobem direto
+
+- **Codex sem "hooks need review"**: o instalador dos hooks de status agora
+  pré-semeia `trusted_hash` no `~/.codex/config.toml` (hash idêntico ao do
+  codex-rs, validado ao vivo no codex 0.145 via `hooks/list`), e o spawn usa
+  `--dangerously-bypass-hook-trust` em codex ≥ 0.134 para os hooks per-session.
+  Panes Codex não abrem mais na tela de review de hooks.
+- **Login OMP sem aba fantasma**: a autorização OAuth do oh-my-pi abre em
+  janela in-app endurecida (sessão efêmera, sandbox, navegação https/loopback)
+  que abre e fecha sozinha — fim da aba "Authentication Successful" pendurada
+  no navegador.
+
+### Qualidade
+
+- **Validação local**: suíte integral (6.009 testes), typecheck e revisão
+  sênior dos pontos de relaxamento (lane ops fail-closed por padrão, trust
+  seeding cirúrgico preservando o config.toml do usuário).
+
 ## 0.19.24 — Terminal ao Vivo
 
 Data: 2026-07-21

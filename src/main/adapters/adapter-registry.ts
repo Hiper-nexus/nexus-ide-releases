@@ -110,7 +110,7 @@ const COMMON_MAC_LINUX_PATHS = [
 ];
 
 let _loginShellPath: string | null = null;
-function resolveLoginShellPath(): string {
+export function resolveLoginShellPath(): string {
   if (_loginShellPath !== null) return _loginShellPath;
   if (process.platform === 'win32') {
     _loginShellPath = process.env.PATH ?? '';

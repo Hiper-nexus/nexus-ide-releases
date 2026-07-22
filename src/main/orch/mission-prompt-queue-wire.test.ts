@@ -3,8 +3,9 @@
  * Production wire: prepare-project and bootstrap enqueue use the real
  * registry start/complete path (not pure reduce alone).
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  bumpMissionPromptIntent,
   completeMissionPrompt,
   deleteMissionPromptQueue,
   getMissionPromptAbortSignal,
@@ -116,5 +117,89 @@ describe('mission prompt queue production wire', () => {
 
     expect(signal?.aborted).toBe(true);
     expect(getMissionPromptQueue('m-removed').items).toEqual([]);
+  });
+});
+
+describe('mission prompt queue executing watchdog', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    process.env.MISSION_PROMPT_EXECUTING_WATCHDOG_MS = '1000';
+    resetMissionPromptQueues();
+  });
+
+  afterEach(() => {
+    delete process.env.MISSION_PROMPT_EXECUTING_WATCHDOG_MS;
+    resetMissionPromptQueues();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('force-completes a stuck executing slot as failed', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    enqueueMissionPrompt({
+      missionId: 'm-stuck',
+      kind: 'bootstrap',
+      body: 'nexus_context_doctor',
+      intentVersion: 1,
+      source: 'system',
+      id: 'stuck-1',
+    });
+    startMissionPrompt('m-stuck', 'stuck-1');
+    expect(peekMissionPromptQueue('m-stuck').executing?.id).toBe('stuck-1');
+
+    vi.advanceTimersByTime(1000);
+
+    expect(
+      getMissionPromptQueue('m-stuck').items.find((i) => i.id === 'stuck-1')
+        ?.status,
+    ).toBe('failed');
+    expect(peekMissionPromptQueue('m-stuck').executing).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('executing watchdog'),
+    );
+  });
+
+  it('does not fire after a normal complete', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    enqueueMissionPrompt({
+      missionId: 'm-ok',
+      kind: 'bootstrap',
+      body: 'nexus_code_map_refresh',
+      intentVersion: 1,
+      source: 'system',
+      id: 'ok-1',
+    });
+    startMissionPrompt('m-ok', 'ok-1');
+    completeMissionPrompt('m-ok', 'ok-1', true);
+
+    vi.advanceTimersByTime(10_000);
+
+    expect(
+      getMissionPromptQueue('m-ok').items.find((i) => i.id === 'ok-1')?.status,
+    ).toBe('delivered');
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('clears the watchdog when an executing item is preempted', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    enqueueMissionPrompt({
+      missionId: 'm-preempted',
+      kind: 'bootstrap',
+      body: 'nexus_context_doctor',
+      intentVersion: 1,
+      source: 'system',
+      id: 'preempted-1',
+    });
+    startMissionPrompt('m-preempted', 'preempted-1');
+    bumpMissionPromptIntent('m-preempted', 2);
+    expect(
+      getMissionPromptQueue('m-preempted').items.find(
+        (i) => i.id === 'preempted-1',
+      )?.status,
+    ).toBe('cancelled');
+
+    vi.advanceTimersByTime(10_000);
+
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });

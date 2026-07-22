@@ -181,6 +181,40 @@ export function assertMissionIntentAllowsTool(
     }
   }
 
+  // Ops lane: infra/operation work (SSH, deploy, backup, DNS) — shell/browser/
+  // media execution effects run WITHOUT a frozen PREVC contract, but repo code
+  // mutations (editor/file_write/git/worktree/merge/delegation) stay denied.
+  // Read-only / mission-control already returned above; the allowed execution
+  // effects still require dispatch authority in the final check below.
+  if (contract?.lane === 'ops' && canonical !== 'mission_set_status') {
+    const opsAllowed = new Set([
+      'terminal_run',
+      'bg_run',
+      'browser_navigate',
+      'browser_click',
+      'browser_fill',
+      'audio_generate',
+      'image_generate',
+      'video_generate',
+      'memory_retain', // bootstrap-authority elsewhere; allowed here for ops notes
+    ]);
+    if (!opsAllowed.has(canonical)) {
+      return deny(
+        'tool_denied',
+        `tool_denied: lane ops não altera código do repo; ${toolName} não é ` +
+          'permitida (reabra a missão como standard)',
+        ctx,
+        intentState,
+        intentVersion,
+        toolName,
+      );
+    }
+    // Narrow ops-side write that must not re-enter bootstrap/dispatch gates.
+    if (canonical === 'memory_retain') {
+      return { ok: true, intentState, intentVersion };
+    }
+  }
+
   // Step/token budgets after dispatch.
   if (isDispatchAuthorized) {
     const budget = assertStepAndTokenBudget(contract);

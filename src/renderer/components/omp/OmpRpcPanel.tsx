@@ -82,7 +82,7 @@ function OmpAccountsSection() {
           {loginFlow ? (
             <div className="omp-auth-flow" aria-live="polite">
               <div className="omp-auth-flow__title">
-                Autorize no navegador: {flowProvider?.name ?? loginFlow.providerId}
+                Autorize na janela que abriu: {flowProvider?.name ?? loginFlow.providerId}
               </div>
               {loginFlow.url ? (
                 <>
@@ -96,22 +96,28 @@ function OmpAccountsSection() {
                       onClick={() => {
                         const url = loginFlow.url;
                         if (!url) return;
-                        // openExternal só aceita https (mesma guarda do open-url
-                        // do transcript) — a URL vem validada do main.
-                        void window.nexus.app.openExternal(url).then((res) => {
-                          if (!res.ok) {
-                            useToastStore
-                              .getState()
-                              .push(
-                                'error',
-                                'Não foi possível abrir a URL',
-                                res.error ?? url,
-                              );
-                          }
-                        });
+                        // A janela in-app abre sozinha no awaiting-auth e
+                        // fecha sozinha no done/error — este botão só
+                        // reabre/foca. Fallback: navegador do sistema.
+                        void window.nexus.ompAuth
+                          .openAuthWindow()
+                          .then((res) => {
+                            if (res.ok) return;
+                            return window.nexus.app.openExternal(url).then((ext) => {
+                              if (!ext.ok) {
+                                useToastStore
+                                  .getState()
+                                  .push(
+                                    'error',
+                                    'Não foi possível abrir a URL',
+                                    ext.error ?? url,
+                                  );
+                              }
+                            });
+                          });
                       }}
                     >
-                      Abrir no navegador
+                      Reabrir janela de autorização
                     </button>
                   </div>
                 </>

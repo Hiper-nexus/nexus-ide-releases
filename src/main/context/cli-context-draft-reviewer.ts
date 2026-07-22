@@ -33,6 +33,27 @@ const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const reviewFlights = new Map<string, Promise<ContextDraftRecord>>();
 const reviewQueues = new Map<string, Promise<void>>();
 
+/**
+ * Cap on preserved-pane resumes per draft. A reviewer pane that never votes
+ * used to be resumed on every Doctor pass FOREVER — each pass burned the full
+ * review timeout and got the same silent pane back (cross-call loop). After
+ * MAX_CONTEXT_DRAFT_REVIEW_PANE_RESUMES resumed passes without a verdict the
+ * pane is closed and the draft leaves the auto-review cycle: human approval
+ * in the Nexus UI becomes the sanctioned independent review. In-memory like
+ * the pane preservation itself — preserved panes die with the app anyway.
+ */
+export const MAX_CONTEXT_DRAFT_REVIEW_PANE_RESUMES = 2;
+export const CONTEXT_DRAFT_REVIEW_UNAVAILABLE_MESSAGE =
+  'context draft auto-review unavailable';
+const preservedPaneResumes = new Map<string, number>();
+const autoReviewUnavailableDrafts = new Set<string>();
+
+/** Test hook: the resume ledger is process state, like the preserved panes. */
+export function resetContextDraftReviewResumeLedger(): void {
+  preservedPaneResumes.clear();
+  autoReviewUnavailableDrafts.clear();
+}
+
 const draftIdSchema = z
   .string()
   .trim()
@@ -121,6 +142,27 @@ function defaultReadDraft(
 
 function sameProvider(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function autoReviewKey(scope: ProjectExecutionScope, draftId: string): string {
+  return [
+    scope.installationId,
+    scope.projectId,
+    scope.checkoutId,
+    scope.rootRealPath,
+    draftId,
+  ].join('\0');
+}
+
+function contextDraftReviewUnavailableError(draftId: string): string {
+  return (
+    `${CONTEXT_DRAFT_REVIEW_UNAVAILABLE_MESSAGE}: the reviewer pane never ` +
+    `decided draft ${draftId} after ${MAX_CONTEXT_DRAFT_REVIEW_PANE_RESUMES} ` +
+    'resumed passes, so the pane was closed and the draft left the ' +
+    'auto-review cycle. Ask the user to review and approve this context ' +
+    'draft in the Nexus UI (human approval is the independent review), or ' +
+    'fix the reviewer provider and propose again.'
+  );
 }
 
 function reviewerSuffixFor(draftId: string): string {
@@ -397,13 +439,7 @@ export class CliContextDraftReviewer {
   async run(input: RunCliContextDraftReviewInput): Promise<ContextDraftRecord> {
     const scope = projectExecutionScopeSchema.parse({ ...input.scope });
     const draftId = draftIdSchema.parse(input.draftId);
-    const key = [
-      scope.installationId,
-      scope.projectId,
-      scope.checkoutId,
-      scope.rootRealPath,
-      draftId,
-    ].join('\0');
+    const key = autoReviewKey(scope, draftId);
     const existing = reviewFlights.get(key);
     if (existing) return existing;
     const scopeKey = [
@@ -442,6 +478,11 @@ export class CliContextDraftReviewer {
     }
     if (!HASH_PATTERN.test(initial.contentHash)) {
       throw new Error('context draft has an invalid content hash');
+    }
+    // The draft exhausted its preserved-pane resumes: do not spawn yet another
+    // silent reviewer — the human approval path owns this draft now.
+    if (autoReviewUnavailableDrafts.has(autoReviewKey(scope, draftId))) {
+      throw new Error(contextDraftReviewUnavailableError(draftId));
     }
 
     // A previous pass may have preserved its reviewer pane (timeout/failure).
@@ -554,6 +595,19 @@ export class CliContextDraftReviewer {
     if (state === null || state === 'exited') {
       return closeStale();
     }
+
+    // Resume cap: a pane that already survived
+    // MAX_CONTEXT_DRAFT_REVIEW_PANE_RESUMES resumed passes without voting is
+    // not recovery evidence anymore — it is the infinite-loop bug. Close it
+    // and take the draft out of the auto-review cycle for this app run.
+    const resumeKey = autoReviewKey(scope, initial.id);
+    const resumed = preservedPaneResumes.get(resumeKey) ?? 0;
+    if (resumed >= MAX_CONTEXT_DRAFT_REVIEW_PANE_RESUMES) {
+      await closeStale();
+      autoReviewUnavailableDrafts.add(resumeKey);
+      throw new Error(contextDraftReviewUnavailableError(initial.id));
+    }
+    preservedPaneResumes.set(resumeKey, resumed + 1);
 
     const route = Object.freeze(routeSchema.parse({ adapterId }));
     const agentName =

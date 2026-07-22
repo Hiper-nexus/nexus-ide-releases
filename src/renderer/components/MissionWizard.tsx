@@ -161,9 +161,9 @@ export function MissionWizard() {
   const [armedMissionId, setArmedMissionId] = useState<string | null>(null);
   const [missionGoal, setMissionGoal] = useState('');
   const [missionAttachments, setMissionAttachments] = useState<MissionAttachment[]>([]);
-  /** standard = code PREVC; consult = read-only; plan = design-only plan.md. */
+  /** standard = code PREVC; consult = read-only; plan = design-only plan.md; ops = infra sem PREVC. */
   const [missionLane, setMissionLane] = useState<
-    'standard' | 'consult' | 'plan'
+    'standard' | 'consult' | 'plan' | 'ops'
   >('standard');
   /** Once the operator touches the lane radios, stop auto-suggest from goal text. */
   const laneTouchedByUserRef = useRef(false);
@@ -189,7 +189,7 @@ export function MissionWizard() {
     [missionGoal],
   );
 
-  // Autopilot lane: suggest consult/plan from goal wording until the user picks.
+  // Autopilot lane: suggest consult/plan/ops from goal wording until the user picks.
   useEffect(() => {
     if (laneTouchedByUserRef.current) return;
     setMissionLane(suggestedLane ?? 'standard');
@@ -408,7 +408,9 @@ export function MissionWizard() {
             ? 'consult'
             : armedSnapshot?.intentContract?.lane === 'plan'
               ? 'plan'
-              : 'standard';
+              : armedSnapshot?.intentContract?.lane === 'ops'
+                ? 'ops'
+                : 'standard';
         setMissionLane(laneFromDraft ?? laneFromMission);
         // Restored shell / draft owns the lane — no auto-suggest override.
         laneTouchedByUserRef.current = true;
@@ -1482,7 +1484,9 @@ export function MissionWizard() {
                       Sugerido pelo objetivo:{' '}
                       {suggestedLane === 'plan'
                         ? 'Plano (design)'
-                        : 'Consulta (somente leitura)'}
+                        : suggestedLane === 'ops'
+                          ? 'Operação (infra)'
+                          : 'Consulta (somente leitura)'}
                       . Pode mudar abaixo.
                     </p>
                   )}
@@ -1516,7 +1520,7 @@ export function MissionWizard() {
                     doctor; sem editar código. Done exige learning durável.
                   </span>
                 </label>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
                   <input
                     type="radio"
                     name="mission-lane"
@@ -1529,6 +1533,21 @@ export function MissionWizard() {
                   <span>
                     <strong>Plano (design)</strong> — escreve só plan.md;
                     sem worktree, shell ou código até sair do plan mode.
+                  </span>
+                </label>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <input
+                    type="radio"
+                    name="mission-lane"
+                    checked={missionLane === 'ops'}
+                    onChange={() => {
+                      laneTouchedByUserRef.current = true;
+                      setMissionLane('ops');
+                    }}
+                  />
+                  <span>
+                    <strong>Operação (infra)</strong> — executa comandos, deploy
+                    e SSH sem exigir contexto PREVC; não altera código do repo.
                   </span>
                 </label>
               </fieldset>
@@ -1623,7 +1642,9 @@ export function MissionWizard() {
                       ? 'consulta (somente leitura)'
                       : plannedMission.intentContract.lane === 'plan'
                         ? 'plano (design / plan.md)'
-                        : 'código (PREVC)'}
+                        : plannedMission.intentContract.lane === 'ops'
+                          ? 'operação (infra, sem PREVC)'
+                          : 'código (PREVC)'}
                     {' · '}
                     <strong>Risco:</strong> {plannedMission.intentContract.risk}
                     {' · '}

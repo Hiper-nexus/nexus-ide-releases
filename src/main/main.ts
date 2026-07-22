@@ -209,6 +209,7 @@ import {
 } from "./persistence/workspace-store";
 import { configureProjectOrientationService } from "./context/orientation/orientation-service";
 import { registerOrientationIpc } from "./context/orientation/orientation-ipc";
+import { registerContextDraftIpc } from "./context/context-draft-ipc";
 import { resolveProjectExecutionScope } from "./persistence/project-identity";
 import {
   registerProviderIpc,
@@ -462,6 +463,7 @@ function bootstrap(): void {
     () => getWorkspaceState().current?.path ?? null,
   );
   registerOrientationIpc();
+  registerContextDraftIpc();
   registerProviderIpc();
   registerFilesIpc();
   registerAccountIpc();

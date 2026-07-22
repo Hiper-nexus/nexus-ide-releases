@@ -88,9 +88,10 @@ export interface RendererMissionSubmitIntentInput {
   acceptanceCriteria?: string[];
   /**
    * Delivery lane. `consult` = read-only; `plan` = design-only plan.md;
+   * `ops` = infra/shell sem PREVC congelado (não altera código do repo);
    * default / omitted = standard PREVC code.
    */
-  lane?: "standard" | "consult" | "plan";
+  lane?: "standard" | "consult" | "plan" | "ops";
   /** Set by the renderer only when current print/audio files are attached. */
   evidenceAttached?: boolean;
 }
@@ -349,7 +350,9 @@ export class RendererMissionAuthority {
           ? "consult"
           : input.lane === "plan"
             ? "plan"
-            : "standard";
+            : input.lane === "ops"
+              ? "ops"
+              : "standard";
       contract = compileIntentContract({
         goal: input.goal,
         source: input.source ?? "typed",
@@ -510,6 +513,7 @@ export class RendererMissionAuthority {
         reason: "pre-kickoff",
         force: true,
         signal,
+        waitMs: 8_000,
       });
       if (signal?.aborted) throw new Error("intent_preempted");
       completeMissionPrompt(updated.id, item.id, true);

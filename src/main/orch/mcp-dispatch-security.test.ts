@@ -105,6 +105,27 @@ function dispatchedMissionFixture(): NonNullable<
   };
 }
 
+function opsMissionFixture(): NonNullable<
+  ReturnType<IntentGateMissionResolver>
+> {
+  const base = dispatchedMissionFixture();
+  return {
+    ...base,
+    mission: {
+      ...base.mission,
+      intentContract: {
+        ...base.mission.intentContract!,
+        goal: 'fazer backup na VPS e subir a landing page',
+        lane: 'ops' as const,
+        budgets: {
+          ...base.mission.intentContract!.budgets,
+          maxWorkers: 0,
+        },
+      },
+    },
+  };
+}
+
 function workflowOptions(
   options: Pick<McpDispatchOptions, 'confirm'> = {},
 ): McpDispatchOptions {
@@ -752,6 +773,108 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
+  it('ops lane runs execution effects without a frozen PREVC contract', async () => {
+    const handler = vi.fn(async () => ({ exitCode: 0 }));
+    const resolveWorkflowAuthority = vi.fn(() => {
+      throw new Error(
+        'mission effect blocked until context and contract are frozen',
+      );
+    });
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_terminal_run',
+        description: 'terminal',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_terminal_run',
+      { command: 'ssh vps "tar czf /backups/www.tgz /var/www"' },
+      missionContext(),
+      {
+        confirm: async () => true,
+        resolveWorkflowAuthority,
+        resolveMissionForIntentGate: (_scope, missionId) =>
+          missionId === TEST_MISSION_ID ? opsMissionFixture() : null,
+        reserveMissionBudget: () => undefined,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(handler).toHaveBeenCalledOnce();
+    // Ops lane never resolves the production workflow authority (no PREVC).
+    expect(resolveWorkflowAuthority).not.toHaveBeenCalled();
+  });
+
+  it('standard lane stays fail-closed without a frozen contract', async () => {
+    const handler = vi.fn(async () => ({ exitCode: 0 }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_terminal_run',
+        description: 'terminal',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_terminal_run',
+      { command: 'npm test' },
+      missionContext(),
+      {
+        confirm: async () => true,
+        resolveWorkflowAuthority: () => {
+          throw new Error(
+            'mission effect blocked until context and contract are frozen',
+          );
+        },
+        resolveMissionForIntentGate: (_scope, missionId) =>
+          missionId === TEST_MISSION_ID ? dispatchedMissionFixture() : null,
+        reserveMissionBudget: () => undefined,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining(
+        'blocked until context and contract are frozen',
+      ),
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('ops lane still denies repo code mutations at the intent gate', async () => {
+    const handler = vi.fn(async () => ({ bytes: 1 }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_file_write',
+        description: 'write',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_file_write',
+      { path: 'src/a.ts', content: 'x' },
+      missionContext(),
+      {
+        confirm: async () => true,
+        resolveWorkflowAuthority: () => ({
+          contextRevision: TEST_CONTEXT_REVISION,
+          assertExecutionEffectAllowed: () => undefined,
+        }),
+        resolveMissionForIntentGate: (_scope, missionId) =>
+          missionId === TEST_MISSION_ID ? opsMissionFixture() : null,
+        reserveMissionBudget: () => undefined,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining('lane ops'),
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('binds PREVC effects to the frozen context without a human prompt', async () => {
     const handler = vi.fn(async (_args, ctx) => ({
       contextRevision: ctx.contextRevision,
@@ -1161,5 +1284,129 @@ describe('MCP dispatch effect safety', () => {
     const entries = readAuditLog(auditContext);
     expect(entries.map((entry) => entry.result)).toEqual(['intent', 'error']);
     expect(entries[1].invocation_id).toBe(entries[0].invocation_id);
+  });
+
+  it('joins a same-tool warm bootstrap retry instead of denying prompt_queue_busy', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    const handler = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) await firstGate;
+      return { checked: true };
+    });
+    const registry = registryWith({
+      name: 'nexus_context_doctor',
+      description: 'idempotent context check',
+      inputSchema: { type: 'object', properties: {} },
+      handler,
+    });
+
+    const first = dispatchToolCall(
+      'http-mcp', registry, 'nexus_context_doctor', {},
+      orchestratorMissionContext(), workflowOptions(),
+    );
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+
+    // Retry do MESMO tool: faz join (segue direto para o handler) em vez de
+    // cancelar com prompt_queue_busy.
+    const second = await dispatchToolCall(
+      'http-mcp', registry, 'nexus_context_doctor', {},
+      orchestratorMissionContext(), workflowOptions(),
+    );
+
+    expect(second).toMatchObject({ ok: true });
+    expect(handler).toHaveBeenCalledTimes(2);
+    releaseFirst();
+    await expect(first).resolves.toMatchObject({ ok: true });
+  });
+
+  it('still denies a different warm tool while the bootstrap slot is busy', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const doctorHandler = vi.fn(async () => {
+      await firstGate;
+      return { checked: true };
+    });
+    const mapHandler = vi.fn(async () => ({ refreshed: true }));
+
+    const first = dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_context_doctor',
+        description: 'idempotent context check',
+        inputSchema: { type: 'object', properties: {} },
+        handler: doctorHandler,
+      }),
+      'nexus_context_doctor',
+      {},
+      orchestratorMissionContext(),
+      workflowOptions(),
+    );
+    await vi.waitFor(() => expect(doctorHandler).toHaveBeenCalledTimes(1));
+
+    const second = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_code_map_refresh',
+        description: 'warm orientation',
+        inputSchema: { type: 'object', properties: {} },
+        handler: mapHandler,
+      }),
+      'nexus_code_map_refresh',
+      {},
+      orchestratorMissionContext(),
+      workflowOptions(),
+    );
+
+    expect(second).toMatchObject({
+      ok: false,
+      denied: true,
+      error: 'prompt_queue_busy',
+    });
+    expect(mapHandler).not.toHaveBeenCalled();
+    releaseFirst();
+    await expect(first).resolves.toMatchObject({ ok: true });
+  });
+
+  it('still denies a duplicate freeze while freeze is executing (not idempotent)', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const handler = vi.fn(async () => {
+      await firstGate;
+      return { frozen: true };
+    });
+    const registry = registryWith({
+      name: 'nexus_mission_freeze_contract',
+      description: 'freeze the mission contract',
+      inputSchema: { type: 'object', properties: {} },
+      handler,
+    });
+
+    const first = dispatchToolCall(
+      'http-mcp', registry, 'nexus_mission_freeze_contract', {},
+      orchestratorMissionContext(), workflowOptions(),
+    );
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+
+    const second = await dispatchToolCall(
+      'http-mcp', registry, 'nexus_mission_freeze_contract', {},
+      orchestratorMissionContext(), workflowOptions(),
+    );
+
+    expect(second).toMatchObject({
+      ok: false,
+      denied: true,
+      error: 'prompt_queue_busy',
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await expect(first).resolves.toMatchObject({ ok: true });
   });
 });

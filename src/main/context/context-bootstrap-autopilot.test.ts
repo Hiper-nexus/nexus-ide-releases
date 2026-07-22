@@ -82,6 +82,10 @@ vi.mock('./cli-context-draft-reviewer', () => ({
   },
   selectIndependentContextReviewerRoute: (provider: string) =>
     mocks.selectQuorum(provider),
+  // Keep in sync with cli-context-draft-reviewer.ts — importing the real
+  // module would drag the whole pane/pty tree into this unit test.
+  CONTEXT_DRAFT_REVIEW_UNAVAILABLE_MESSAGE:
+    'context draft auto-review unavailable',
 }));
 
 import { runContextBootstrapAutopilot } from './context-bootstrap-autopilot';
@@ -432,6 +436,41 @@ describe('runContextBootstrapAutopilot', () => {
     expect(result.quorumAvailable).toBe(false);
     expect(mocks.reviewerRun).not.toHaveBeenCalled();
     expect(result.autopilotHint).toMatch(/quorum/i);
+    // Sem 2º provider, o caminho principal é a aprovação humana na UI.
+    expect(result.autopilotHint).toMatch(/human approval/i);
+    expect(result.autopilotHint).toMatch(/Nexus UI/i);
+  });
+
+  it('routes drafts to human approval when autonomous review gives up', async () => {
+    mocks.inspectReadiness.mockReturnValue(mocks.readiness);
+    mocks.proposals = [
+      {
+        targetPath: '.context/docs/architecture.md',
+        content: '# Architecture\nObserved layout.\n',
+        sources: [{ type: 'file', locator: 'package.json', sourceHash: 'b'.repeat(64) }],
+        rationale: 'arch',
+      },
+    ];
+    mocks.propose.mockReturnValue(draft('draft-stuck', 'proposed'));
+    mocks.reviewerRun.mockRejectedValue(new Error(
+      'context draft auto-review unavailable: the reviewer pane never decided',
+    ));
+    mocks.selectQuorum.mockReturnValue({ adapterId: 'claude' });
+    mocks.ensure.mockResolvedValue({ docs: { hasContextScaffold: true }, status: 'ready' });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+      createReviewer: () => ({ run: mocks.reviewerRun }),
+    });
+
+    expect(result.draftOutcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ draftId: 'draft-stuck', status: 'review-failed' }),
+    ]));
+    expect(result.autopilotHint).toMatch(/gave up/i);
+    expect(result.autopilotHint).toMatch(/human approval/i);
+    expect(result.autopilotHint).toMatch(/Nexus UI/i);
   });
 
   it('runs independent review, applies, and commits when ready', async () => {

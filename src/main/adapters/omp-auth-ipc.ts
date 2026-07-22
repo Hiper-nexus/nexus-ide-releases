@@ -14,6 +14,12 @@ import {
   type OmpAuthPushEvent,
 } from '../../shared/omp-auth-types';
 import { OmpLoginFlow, parseAuthBrokerList } from './omp-auth';
+import {
+  closeOmpAuthWindow,
+  disposeOmpAuthWindow,
+  openOmpAuthWindow,
+  OMP_AUTH_WINDOW_CLOSE_ON_DONE_DELAY_MS,
+} from './omp-auth-window';
 import { buildOmpChildEnv, resolveOmpBin } from './omp-rpc-service';
 
 /**
@@ -45,6 +51,8 @@ const PREFERRED_PROVIDER_ORDER = [
 interface HostedFlow {
   flowId: string;
   flow: OmpLoginFlow;
+  /** URL OAuth do `awaiting-auth` — o main é a autoridade sobre ela. */
+  authUrl?: string;
 }
 
 /** Um fluxo de login por renderer (single-flight). */
@@ -238,7 +246,19 @@ async function startLogin(
           const envelope: OmpAuthEventEnvelope = { flowId, event };
           owner.send(OMP_AUTH_CHANNELS.event, envelope);
         }
+        if (event.phase === 'awaiting-auth') {
+          // Abre a janela in-app assim que a URL existe (o botão do painel
+          // vira só reabrir/focar). Ela fecha sozinha no done/error — a aba
+          // de browser externa ficava pendurada para sempre.
+          const hostedFlow = hostedRef.current;
+          if (hostedFlow) hostedFlow.authUrl = event.url;
+          openOmpAuthWindow(event.url);
+          return;
+        }
         if (event.phase === 'done' || event.phase === 'error') {
+          closeOmpAuthWindow(
+            event.phase === 'done' ? OMP_AUTH_WINDOW_CLOSE_ON_DONE_DELAY_MS : 0,
+          );
           const hosted = hostedRef.current;
           if (hosted) finishFlow(owner, hosted);
         }
@@ -269,6 +289,16 @@ export function registerOmpAuthIpc(): void {
     hosted.flow.cancel();
     return { ok: true };
   });
+
+  // Reabrir/focar a janela de autorização (ex.: usuário fechou sem querer).
+  // A URL vem do fluxo hospedado no main — o renderer nunca injeta URL aqui.
+  ipcMain.handle(OMP_AUTH_CHANNELS.openAuthWindow, (event): OmpAuthCommandResult => {
+    const hosted = activeFlows.get(event.sender);
+    if (!hosted?.authUrl) {
+      return { ok: false, error: 'nenhuma autorização pendente neste painel' };
+    }
+    return openOmpAuthWindow(hosted.authUrl);
+  });
 }
 
 /** Encerramento do app: mata qualquer fluxo de login pendurado. */
@@ -277,4 +307,5 @@ export function disposeAllOmpAuthFlows(): void {
     activeFlows.delete(owner);
     hosted.flow.cancel();
   }
+  disposeOmpAuthWindow();
 }
