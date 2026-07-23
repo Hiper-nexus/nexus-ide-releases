@@ -1,4 +1,5 @@
 import type { CliPtyAdapter } from '../../shared/adapter-types';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import type { SpawnAuthoritySource } from '../orch/spawn-authority';
 
 const CLAUDE_MUTATING_NATIVE_TOOLS = [
@@ -170,7 +171,19 @@ export function secureAutonomousCliArgs(
   const permission = adapter.control?.permission;
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
   const safeArgs = permission?.safe ?? [];
-  const requestedFullAuto = requestedFullAutoSequence(adapter, currentArgs);
+  // Release-gate workers run in disposable worktrees. Without YOLO they stall
+  // on Codex project-trust / approval prompts and fail as "awaiting operator
+  // input" before any handoff can exist.
+  const releaseGateFullAuto =
+    isCurrentProcessRealMissionE2E() &&
+    adapter.id === 'codex' &&
+    (permission?.yolo?.length ?? 0) > 0
+      ? permission!.yolo
+      : [];
+  const requestedFullAuto =
+    releaseGateFullAuto.length > 0
+      ? releaseGateFullAuto
+      : requestedFullAutoSequence(adapter, currentArgs);
 
   /*
    * Read-only is an authority boundary, not a provider preference. Resolve it

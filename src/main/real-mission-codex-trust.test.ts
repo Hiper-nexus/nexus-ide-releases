@@ -27,23 +27,19 @@ afterEach(() => {
 });
 
 describe('real mission Codex trust fixture', () => {
-  it('trusts the disposable tree and disables approval prompts', () => {
+  it('trusts the disposable tree roots used by scratch + worktrees', () => {
     const userData = makeUserData();
     const workspace = path.join(userData, 'real-mission-workspace-test');
     fs.mkdirSync(workspace, { mode: 0o700 });
 
     const configPath = stageRealMissionCodexTrust(userData, workspace);
     const config = parse(fs.readFileSync(configPath, 'utf8')) as {
-      approval_policy?: string;
-      sandbox_mode?: string;
       projects?: Record<string, { trust_level?: string }>;
     };
     const canonicalUserData = fs.realpathSync(userData);
     const canonicalWorkspace = fs.realpathSync(workspace);
     const projectRuntime = path.join(canonicalUserData, 'project-runtime');
 
-    expect(config.approval_policy).toBe('never');
-    expect(config.sandbox_mode).toBe('danger-full-access');
     expect(config.projects?.[canonicalUserData]?.trust_level).toBe('trusted');
     expect(config.projects?.[canonicalWorkspace]?.trust_level).toBe('trusted');
     expect(config.projects?.[projectRuntime]?.trust_level).toBe('trusted');

@@ -44,12 +44,12 @@ export function stageRealMissionCodexTrust(
     // Worker dispatch uses isolated worktrees under project-runtime/. Trusting
     // only the scratch workspace leaves the worker on Codex's "trust this
     // project?" modal → pane not injectable → "awaiting operator input" and
-    // dispatch blocked without handoff. Approve the whole disposable tree and
-    // force never/danger-full-access so boot prompts cannot stall the gate.
+    // dispatch blocked without handoff. Trust the disposable tree roots that
+    // contain every later worktree path. Keep approval defaults alone here —
+    // overriding approval_policy/sandbox_mode in config broke kickoff idle
+    // detection in the release gate.
     const projectRuntime = path.join(canonicalUserData, 'project-runtime');
     const config = stringify({
-      approval_policy: 'never',
-      sandbox_mode: 'danger-full-access',
       projects: {
         [canonicalUserData]: {
           trust_level: 'trusted',
