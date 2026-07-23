@@ -43,7 +43,7 @@ export function makeValidRealMissionEvidence({
     panes: [
       {
         role: 'orchestrator',
-        adapterId: 'codex',
+        adapterId: 'claude',
         agentRef: 'e2e-orchestrator',
         sessionId: 'session-orch',
       },

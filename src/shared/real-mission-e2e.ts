@@ -18,8 +18,11 @@ export const REAL_MISSION_E2E_CHANNELS = Object.freeze({
 export const REAL_MISSION_E2E_SQUAD_ID = 'nexus-real-mission-e2e';
 export const REAL_MISSION_E2E_ORCHESTRATOR_ID = 'e2e-orchestrator';
 export const REAL_MISSION_E2E_ORCHESTRATOR_NAME = 'E2E Orquestrador';
+/** Claude orchestrates; Codex only executes (matches product + Overclock observation). */
+export const REAL_MISSION_E2E_ORCHESTRATOR_CLI = 'claude';
 export const REAL_MISSION_E2E_WORKER_ID = 'e2e-worker';
 export const REAL_MISSION_E2E_WORKER_NAME = 'E2E Worker';
+export const REAL_MISSION_E2E_WORKER_CLI = 'codex';
 export const REAL_MISSION_E2E_RESULT_FILE = 'resultado.txt';
 export const REAL_MISSION_E2E_RESULT_CONTENT = 'nexus-real-mission-e2e-ok\n';
 export const REAL_MISSION_E2E_CTA =
@@ -29,10 +32,10 @@ const REAL_MISSION_E2E_RENDERER_FAILURE_PREFIX = 'renderer-failed:';
 export const REAL_MISSION_E2E_GOAL =
   'Delegue a um worker do roster a criação de resultado.txt com o conteúdo exato ' +
   '"nexus-real-mission-e2e-ok\\n", integre o commit local pelo motor Nexus e conclua ' +
-  'somente após receber o handoff. O orquestrador não pode editar nem commitar o arquivo.';
+  'somente após receber o handoff. O orquestrador Claude não pode editar nem commitar o arquivo.';
 
 export const REAL_MISSION_E2E_ACCEPTANCE_CRITERIA = Object.freeze([
-  'Um worker Codex do roster, e não o orquestrador, cria resultado.txt.',
+  'Um worker Codex do roster, e não o orquestrador Claude, cria resultado.txt.',
   'resultado.txt contém exatamente nexus-real-mission-e2e-ok seguido de newline.',
   'O worker faz um commit local no worktree e envia nexus_handoff_submit com status success.',
   'O motor Nexus aceita o handoff, integra o commit e marca a missão done sem atalho manual.',
@@ -81,19 +84,20 @@ export function createRealMissionE2EPlanTasks(): readonly Readonly<{
 
 export const REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS = [
   '# Release gate E2E real',
-  'Você é somente o orquestrador. É PROIBIDO criar, editar, adicionar ou commitar resultado.txt.',
-  'Use exatamente um worker do roster (e2e-worker).',
-  'PRIMEIRA ação de ferramenta: uma ÚNICA chamada nativa a nexus_task (NÃO use a tool exec, ' +
-    'NÃO use Promise.all, NÃO leia missão/workflow/handoffs antes).',
-  'Payload exato da plan:',
+  'Você é o orquestrador Claude. É PROIBIDO criar, editar, adicionar ou commitar resultado.txt.',
+  'Não use Bash/Edit/Write/NotebookEdit/Task nativos para o arquivo de resultado.',
+  'Use exatamente um worker do roster: e2e-worker (Codex executor).',
+  'O plano é selado pelo main Nexus na subida da missão. Se o plano já existir, NÃO replaneje.',
+  'Se precisar planejar (só se o board estiver vazio), chame UMA vez a tool MCP ' +
+    'mcp__nexus__nexus_task (ou nexus_task) com action=plan e este payload:',
   '  action=plan',
   `  tasks=[{id:${REAL_MISSION_E2E_PLANNER_TASK_ID}, agentRef:${REAL_MISSION_E2E_WORKER_ID}, ` +
     'category:executor, executionMode:isolated_worktree, ' +
     `ownership.files:["${REAL_MISSION_E2E_RESULT_FILE}"], dependsOn:[]}]`,
   `No detail: ${REAL_MISSION_E2E_WORKER_TASK_DETAIL}`,
-  'Se o plano já existir (main selou), NÃO replaneje: só acompanhe handoffs.',
-  'Depois do plano, não spawne worker manualmente: o scheduler durável do main reserva a rota e spawna.',
-  'Aguarde o handoff automático. Leia nexus_handoff_list e chame nexus_handoff_ack quando ele for entregue.',
+  'Não spawne worker manualmente: o scheduler durável do main reserva a rota e spawna o Codex.',
+  'Aguarde o handoff automático. Use mcp__nexus__nexus_handoff_list / nexus_handoff_list e ' +
+    'mcp__nexus__nexus_handoff_ack / nexus_handoff_ack quando ele for entregue.',
   'Não use nexus_mission_update para forçar done: integração, receipts e conclusão pertencem ao motor Nexus.',
 ].join('\n');
 
@@ -109,10 +113,8 @@ export function createRealMissionE2ESquadFixture(): Squad {
         id: REAL_MISSION_E2E_ORCHESTRATOR_ID,
         agentName: REAL_MISSION_E2E_ORCHESTRATOR_NAME,
         category: 'orchestrator',
-        cli: 'codex',
-        // Medium: high-effort Codex often invents exec+Promise.all MCP batches
-        // that hang; the gate seals the plan in main regardless.
-        effort: 'medium',
+        // Claude is the only reliable orchestrator CLI in practice; Codex is executor-only.
+        cli: REAL_MISSION_E2E_ORCHESTRATOR_CLI,
         allowedSkills: [],
         allowedTools: null,
       },
@@ -120,7 +122,7 @@ export function createRealMissionE2ESquadFixture(): Squad {
         id: REAL_MISSION_E2E_WORKER_ID,
         agentName: REAL_MISSION_E2E_WORKER_NAME,
         category: 'executor',
-        cli: 'codex',
+        cli: REAL_MISSION_E2E_WORKER_CLI,
         effort: 'medium',
         allowedSkills: [],
         allowedTools: [],
@@ -402,13 +404,13 @@ export const realMissionE2EEvidenceSchema = z
       (pane) =>
         pane.role === 'orchestrator' &&
         pane.agentRef === REAL_MISSION_E2E_ORCHESTRATOR_ID &&
-        pane.adapterId === 'codex',
+        pane.adapterId === REAL_MISSION_E2E_ORCHESTRATOR_CLI,
     );
     const workers = evidence.panes.filter(
       (pane) =>
         pane.role === 'worker' &&
         pane.agentRef === REAL_MISSION_E2E_WORKER_ID &&
-        pane.adapterId === 'codex',
+        pane.adapterId === REAL_MISSION_E2E_WORKER_CLI,
     );
     const pass =
       evidence.failure === null &&

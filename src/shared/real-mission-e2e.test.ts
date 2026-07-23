@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
+  REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_CTA,
   REAL_MISSION_E2E_FLAG,
+  REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_ORCHESTRATOR_ID,
   REAL_MISSION_E2E_SQUAD_ID,
   REAL_MISSION_E2E_WORKER_ID,
@@ -51,7 +53,7 @@ function validPassEvidence(): Record<string, unknown> {
         role: 'orchestrator',
         paneId: 'pane-orch',
         sessionId: 'session-orch',
-        adapterId: 'codex',
+        adapterId: 'claude',
         agentRef: REAL_MISSION_E2E_ORCHESTRATOR_ID,
         workerIncarnationId: null,
         ptySpawnedAt: 11,
@@ -198,7 +200,7 @@ describe('real mission E2E closed receipts', () => {
         {
           id: REAL_MISSION_E2E_ORCHESTRATOR_ID,
           category: 'orchestrator',
-          cli: 'codex',
+          cli: 'claude',
           allowedTools: null,
         },
         {
@@ -210,12 +212,13 @@ describe('real mission E2E closed receipts', () => {
       ],
     });
     expect(fixture.orchestratorInstructions).toContain(
-      'PRIMEIRA ação de ferramenta: uma ÚNICA chamada nativa a nexus_task',
+      'orquestrador Claude',
     );
     expect(fixture.orchestratorInstructions).toContain(
-      'NÃO use Promise.all',
+      'mcp__nexus__nexus_task',
     );
     expect(fixture.orchestratorInstructions).toContain('e2e-worker');
+    expect(fixture.orchestratorInstructions).toContain('Codex');
   });
 
   it('arms observation only for the exact sealed pre-approval fixture', () => {
@@ -228,20 +231,12 @@ describe('real mission E2E closed receipts', () => {
       intentContract: {
         version: 1,
         source: 'automation',
-        goal:
-          'Delegue a um worker do roster a criação de resultado.txt com o conteúdo exato ' +
-          '"nexus-real-mission-e2e-ok\\n", integre o commit local pelo motor Nexus e conclua ' +
-          'somente após receber o handoff. O orquestrador não pode editar nem commitar o arquivo.',
+        goal: REAL_MISSION_E2E_GOAL,
         executionMode: 'autopilot',
         lane: 'standard',
         contextPolicy: 'minimal',
         intentVersion: 1,
-        acceptanceCriteria: [
-          'Um worker Codex do roster, e não o orquestrador, cria resultado.txt.',
-          'resultado.txt contém exatamente nexus-real-mission-e2e-ok seguido de newline.',
-          'O worker faz um commit local no worktree e envia nexus_handoff_submit com status success.',
-          'O motor Nexus aceita o handoff, integra o commit e marca a missão done sem atalho manual.',
-        ],
+        acceptanceCriteria: [...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA],
       },
     } as const;
 
