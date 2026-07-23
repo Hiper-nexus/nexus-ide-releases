@@ -55,7 +55,12 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toContain('nexus_mission_freeze_contract');
     expect(prompt).toContain('nexus_merge_task');
     expect(prompt).toContain('PREVC');
-    expect(prompt).toContain('NUNCA chame nexus_mission_set_status com done sem PREVC');
+    // PREVC degrada, nunca bloqueia: freeze é best-effort em segundo plano.
+    expect(prompt).toContain('EXECUTE a tarefa diretamente');
+    expect(prompt).toMatch(/best-effort em segundo plano/i);
+    expect(prompt).toContain('NUNCA pause ou bloqueie a execução');
+    expect(prompt).toMatch(/status=done: com contrato congelado, exige PREVC completo/);
+    expect(prompt).toMatch(/Sem contrato congelado, exige nota durável/);
     expect(prompt).toMatch(/Use blocked/);
     expect(prompt).toMatch(/use failed/i);
     expect(prompt).toMatch(/revis[aã]o independente/i);

@@ -1458,7 +1458,9 @@ export class ContextWorkflowService {
  * furado por um executor que escrevesse via patch. Parseamos com o mesmo
  * `Patch.parse` do applier para não divergir do que de fato aterrissa em disco.
  */
-function mutationTargetPaths(args: Readonly<Record<string, unknown>>): string[] {
+export function mutationTargetPaths(
+  args: Readonly<Record<string, unknown>>,
+): string[] {
   const paths: string[] = [];
   if (typeof args.path === 'string') paths.push(args.path);
   if (typeof args.patch === 'string') {

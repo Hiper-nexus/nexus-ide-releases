@@ -217,11 +217,14 @@ const missionSetStatusTool: McpToolDef = {
   name: 'nexus_mission_set_status',
   description:
     'Update a mission status (pending|running|blocked|done|failed). ' +
-    'done is ONLY for full PREVC completion with immutable step receipts — never a shortcut. ' +
-    'Use blocked when the environment is not ready or PREVC never started (work may still ' +
+    'done is ONLY for real completion — never a shortcut. With a frozen PREVC contract, ' +
+    'done requires the complete workflow and immutable step receipts; without a frozen ' +
+    'contract (PREVC degrades, never blocks), done is accepted in any lane with a durable ' +
+    'note (or existing learnings) ≥40 chars describing what was delivered. ' +
+    'Use blocked when the environment is not ready (work may still ' +
     'have been delivered outside the pipeline). Use failed when execution started and ended in error. ' +
-    'Optional note: required for durable blocked/failed justification; for lane=consult/ops done, ' +
-    'note (or existing learnings) must be ≥40 chars (consult/ops are not code PREVC green).',
+    'Optional note: required for durable blocked/failed justification and for done without ' +
+    'a frozen PREVC contract (consult/ops are not code PREVC green).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -264,9 +267,27 @@ const missionSetStatusTool: McpToolDef = {
         current.milestones.map((milestone) => milestone.id),
       )) {
         const lane = current.intentContract?.lane ?? 'standard';
-        if (
+        const hasFrozenContract = Boolean(
+          workflow.getMissionWorkflow(missionId).contract,
+        );
+        const hasDurableNote =
+          lane === 'consult'
+            ? canCompleteConsultLane({ learnings: current.learnings, note })
+            : canCompleteOpsLane({ learnings: current.learnings, note });
+        if (!hasFrozenContract) {
+          // Sem contrato congelado o PREVC degrada em vez de bloquear: done é
+          // aceito em QUALQUER lane com nota durável do que foi entregue —
+          // nunca como verde silencioso.
+          if (!hasDurableNote) {
+            throw new Error(
+              'mission done without a frozen PREVC contract requires a durable note (≥40 chars) ' +
+                'via note=… or existing learnings describing what was delivered. ' +
+                'This is not a code PREVC completion.',
+            );
+          }
+        } else if (
           lane === 'consult' &&
-          canCompleteConsultLane({ learnings: current.learnings, note })
+          hasDurableNote
         ) {
           // Consult lane: allow done when a durable learning note exists —
           // not a code-change PREVC green. Standard missions still hard-require PREVC.
@@ -277,7 +298,7 @@ const missionSetStatusTool: McpToolDef = {
           );
         } else if (
           lane === 'ops' &&
-          canCompleteOpsLane({ learnings: current.learnings, note })
+          hasDurableNote
         ) {
           // Ops lane: allow done with a durable note of what was executed —
           // ops completion is not a code-change PREVC green either.

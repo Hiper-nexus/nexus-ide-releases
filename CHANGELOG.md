@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.19.26 — Piloto Automático sem Modal
+
+Data: 2026-07-22
+
+### Autopilot de verdade
+
+- **Missão aprovada = autorização**: aprovar a missão (objetivo/plano) autoriza
+  a execução inteira — o agente não para mais em modal de confirmação a cada
+  comando (o stall de minutos por ação acabou). Deploy, SSH, edição de código
+  e browser fluem direto, tudo auditado.
+- **Piso de segurança mantido**: comandos destrutivos (`rm -rf`, `dd`,
+  `mkfs`…) sempre pedem confirmação humana, mesmo com missão aprovada; ações
+  fora de missão aprovada seguem com confirmação.
+- **PREVC funciona sem limitar**: sem contrato congelado a missão executa
+  normalmente (apenas `.context/` protegido); com contrato, todas as regras
+  PREVC (stage, drift, receipts) continuam valendo. Tarefas mistas de
+  infra + código funcionam — restrições de lane são opção avançada, nunca
+  padrão.
+
+### Wizard sem jargão
+
+- **Fluxo único**: objetivo + lançar. Os "tipos de entrega" saíram da tela
+  principal e viraram `Opções avançadas` colapsadas, em linguagem simples,
+  com `Sem restrições (recomendado)` como default — a sugestão automática por
+  objetivo nunca restringe a missão por conta própria.
+- **Kickoff anti-travamento**: o orquestrador é instruído a executar direto e
+  tratar freeze/bootstrap PREVC como best-effort em segundo plano, nunca como
+  pré-condição.
+
+### Qualidade
+
+- **Validação local**: suíte integral e typecheck; testes de confirmação
+  reescritos para o novo contrato (autopilot sem modal, destrutivo sempre
+  confirma, revalidação pós-confirmação preservada no caminho com modal).
+
 ## 0.19.25 — Piloto Automático de Verdade
 
 Data: 2026-07-22

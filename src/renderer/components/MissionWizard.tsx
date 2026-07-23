@@ -161,12 +161,18 @@ export function MissionWizard() {
   const [armedMissionId, setArmedMissionId] = useState<string | null>(null);
   const [missionGoal, setMissionGoal] = useState('');
   const [missionAttachments, setMissionAttachments] = useState<MissionAttachment[]>([]);
-  /** standard = code PREVC; consult = read-only; plan = design-only plan.md; ops = infra sem PREVC. */
+  /** standard = sem restrições (default); consult = read-only; plan = design-only plan.md; ops = infra sem código. */
   const [missionLane, setMissionLane] = useState<
     'standard' | 'consult' | 'plan' | 'ops'
   >('standard');
   /** Once the operator touches the lane radios, stop auto-suggest from goal text. */
   const laneTouchedByUserRef = useRef(false);
+  /**
+   * Restrições de lane moram na seção "Opções avançadas" (colapsada por
+   * padrão). A sugestão por objetivo só preenche a escolha lá dentro — fora
+   * dela a lane é sempre standard (sem restrições), nunca restringe por default.
+   */
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [plannedMission, setPlannedMission] = useState<Mission | null>(null);
   const armedMissionSnapshot = useOrchStore((state) =>
     armedMissionId
@@ -189,11 +195,12 @@ export function MissionWizard() {
     [missionGoal],
   );
 
-  // Autopilot lane: suggest consult/plan/ops from goal wording until the user picks.
+  // Lane suggestion: only applies INSIDE the advanced section. With the
+  // section collapsed the lane stays standard — the default never restricts.
   useEffect(() => {
     if (laneTouchedByUserRef.current) return;
-    setMissionLane(suggestedLane ?? 'standard');
-  }, [suggestedLane]);
+    setMissionLane(advancedOpen ? suggestedLane ?? 'standard' : 'standard');
+  }, [suggestedLane, advancedOpen]);
   // Modo Agêntico: intenção em linguagem natural + estado do arquiteto.
   const [intent, setIntent] = useState('');
   const [designing, setDesigning] = useState(false);
@@ -1464,93 +1471,103 @@ export function MissionWizard() {
                     despachar especialistas enquanto os prints/áudios não chegarem.
                   </p>
                 )}
-              <fieldset
-                className="wizard__mode-desc"
-                style={{
-                  marginTop: 12,
-                  marginBottom: 4,
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  padding: '10px 12px',
-                }}
-              >
-                <legend style={{ padding: '0 4px' }}>Tipo de entrega</legend>
-                {!laneTouchedByUserRef.current && suggestedLane && (
-                    <p
-                      className="wizard__mode-desc"
-                      style={{ marginBottom: 8, color: 'var(--accent-cyan)' }}
-                      role="status"
-                    >
-                      Sugerido pelo objetivo:{' '}
-                      {suggestedLane === 'plan'
-                        ? 'Plano (design)'
-                        : suggestedLane === 'ops'
-                          ? 'Operação (infra)'
-                          : 'Consulta (somente leitura)'}
-                      . Pode mudar abaixo.
-                    </p>
-                  )}
-                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
-                  <input
-                    type="radio"
-                    name="mission-lane"
-                    checked={missionLane === 'standard'}
-                    onChange={() => {
-                      laneTouchedByUserRef.current = true;
-                      setMissionLane('standard');
+              <div style={{ marginTop: 12, marginBottom: 4 }}>
+                <button
+                  type="button"
+                  className="wizard__btn wizard__btn--ghost"
+                  aria-expanded={advancedOpen}
+                  onClick={() => setAdvancedOpen((open) => !open)}
+                >
+                  {advancedOpen ? '▾' : '▸'} Opções avançadas
+                </button>
+                {advancedOpen && (
+                  <fieldset
+                    className="wizard__mode-desc"
+                    style={{
+                      marginTop: 8,
+                      border: '1px solid var(--border)',
+                      borderRadius: 8,
+                      padding: '10px 12px',
                     }}
-                  />
-                  <span>
-                    <strong>Código (PREVC)</strong> — worktrees, workers e
-                    conclusão só com receipts imutáveis.
-                  </span>
-                </label>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
-                  <input
-                    type="radio"
-                    name="mission-lane"
-                    checked={missionLane === 'consult'}
-                    onChange={() => {
-                      laneTouchedByUserRef.current = true;
-                      setMissionLane('consult');
-                    }}
-                  />
-                  <span>
-                    <strong>Consulta (somente leitura)</strong> — logs, status,
-                    doctor; sem editar código. Done exige learning durável.
-                  </span>
-                </label>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
-                  <input
-                    type="radio"
-                    name="mission-lane"
-                    checked={missionLane === 'plan'}
-                    onChange={() => {
-                      laneTouchedByUserRef.current = true;
-                      setMissionLane('plan');
-                    }}
-                  />
-                  <span>
-                    <strong>Plano (design)</strong> — escreve só plan.md;
-                    sem worktree, shell ou código até sair do plan mode.
-                  </span>
-                </label>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                  <input
-                    type="radio"
-                    name="mission-lane"
-                    checked={missionLane === 'ops'}
-                    onChange={() => {
-                      laneTouchedByUserRef.current = true;
-                      setMissionLane('ops');
-                    }}
-                  />
-                  <span>
-                    <strong>Operação (infra)</strong> — executa comandos, deploy
-                    e SSH sem exigir contexto PREVC; não altera código do repo.
-                  </span>
-                </label>
-              </fieldset>
+                  >
+                    <legend style={{ padding: '0 4px' }}>
+                      Restringir o que o Nexus pode fazer
+                    </legend>
+                    {!laneTouchedByUserRef.current && suggestedLane && (
+                        <p
+                          className="wizard__mode-desc"
+                          style={{ marginBottom: 8, color: 'var(--accent-cyan)' }}
+                          role="status"
+                        >
+                          Sugerido pelo objetivo:{' '}
+                          {suggestedLane === 'plan'
+                            ? 'Só planejar'
+                            : suggestedLane === 'ops'
+                              ? 'Só infra'
+                              : 'Só pesquisar'}
+                          . Pode mudar abaixo.
+                        </p>
+                      )}
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
+                      <input
+                        type="radio"
+                        name="mission-lane"
+                        checked={missionLane === 'standard'}
+                        onChange={() => {
+                          laneTouchedByUserRef.current = true;
+                          setMissionLane('standard');
+                        }}
+                      />
+                      <span>
+                        <strong>Sem restrições (recomendado)</strong> — o Nexus
+                        executa tudo: código, terminal, deploy.
+                      </span>
+                    </label>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
+                      <input
+                        type="radio"
+                        name="mission-lane"
+                        checked={missionLane === 'consult'}
+                        onChange={() => {
+                          laneTouchedByUserRef.current = true;
+                          setMissionLane('consult');
+                        }}
+                      />
+                      <span>
+                        <strong>Só pesquisar (não muda nada)</strong>
+                      </span>
+                    </label>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 8 }}>
+                      <input
+                        type="radio"
+                        name="mission-lane"
+                        checked={missionLane === 'plan'}
+                        onChange={() => {
+                          laneTouchedByUserRef.current = true;
+                          setMissionLane('plan');
+                        }}
+                      />
+                      <span>
+                        <strong>Só planejar (escreve apenas o plano)</strong>
+                      </span>
+                    </label>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      <input
+                        type="radio"
+                        name="mission-lane"
+                        checked={missionLane === 'ops'}
+                        onChange={() => {
+                          laneTouchedByUserRef.current = true;
+                          setMissionLane('ops');
+                        }}
+                      />
+                      <span>
+                        <strong>Só infra (não edita código do projeto)</strong>
+                      </span>
+                    </label>
+                  </fieldset>
+                )}
+              </div>
               <div
                 className="wizard__mode-desc"
                 style={{ marginTop: 12, marginBottom: 8 }}
@@ -1639,12 +1656,12 @@ export function MissionWizard() {
                   <p className="wizard__mode-desc">
                     <strong>Lane:</strong>{' '}
                     {plannedMission.intentContract.lane === 'consult'
-                      ? 'consulta (somente leitura)'
+                      ? 'só pesquisar (não muda nada)'
                       : plannedMission.intentContract.lane === 'plan'
-                        ? 'plano (design / plan.md)'
+                        ? 'só planejar (apenas o plano)'
                         : plannedMission.intentContract.lane === 'ops'
-                          ? 'operação (infra, sem PREVC)'
-                          : 'código (PREVC)'}
+                          ? 'só infra (não edita código)'
+                          : 'sem restrições'}
                     {' · '}
                     <strong>Risco:</strong> {plannedMission.intentContract.risk}
                     {' · '}

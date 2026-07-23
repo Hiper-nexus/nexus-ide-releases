@@ -22,6 +22,29 @@ import {
   resetMissionPromptQueues,
 } from './mission-prompt-queue-registry';
 
+/**
+ * Production workflow authority seam: the real PREVC registry is not booted in
+ * this file, so the default mimics an uninitialized registry. Individual tests
+ * override it to exercise the permissive (no frozen contract) and frozen
+ * branches of the production resolver.
+ */
+const workflowRegistryMocks = vi.hoisted(() => ({
+  getContextWorkflowService: vi.fn((): unknown => {
+    throw new Error('context workflow service is not initialized');
+  }),
+}));
+
+vi.mock('../context/context-workflow-registry', async (importOriginal) => {
+  const original =
+    await importOriginal<
+      typeof import('../context/context-workflow-registry')
+    >();
+  return {
+    ...original,
+    getContextWorkflowService: workflowRegistryMocks.getContextWorkflowService,
+  };
+});
+
 const testDir = path.join(os.tmpdir(), 'nexus-mcp-dispatch-security');
 const auditScope = testProjectScope({ rootRealPath: testDir });
 const auditContext = { scope: auditScope } as const;
@@ -160,6 +183,10 @@ describe('MCP dispatch effect safety', () => {
   beforeEach(() => {
     configureAuditLogRuntime(auditManager);
     clearAuditLogForTests(auditContext);
+    workflowRegistryMocks.getContextWorkflowService.mockReset();
+    workflowRegistryMocks.getContextWorkflowService.mockImplementation(() => {
+      throw new Error('context workflow service is not initialized');
+    });
     auditManager.open(auditScope).db.prepare(
       `INSERT OR IGNORE INTO missions
          (id, title, description, status, milestones_json, created_at, updated_at)
@@ -175,7 +202,7 @@ describe('MCP dispatch effect safety', () => {
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('requires a fresh approval for every effectful invocation with identical state', async () => {
+  it('skips per-action confirmation for an approved mission (autopilot)', async () => {
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const confirm = vi.fn(async () => true);
     const registry = registryWith({
@@ -185,7 +212,7 @@ describe('MCP dispatch effect safety', () => {
       handler,
     });
     const context = missionContext();
-    const args = { command: 'npm test' };
+    const args = { command: 'ssh vps "hostname && uptime"' };
 
     const first = await dispatchToolCall(
       'http-mcp',
@@ -207,7 +234,75 @@ describe('MCP dispatch effect safety', () => {
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
     expect(handler).toHaveBeenCalledTimes(2);
-    expect(confirm).toHaveBeenCalledTimes(2);
+    // A aprovação da missão é a autorização: nada de modal por ação.
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('still requires confirmation for destructive commands in an approved mission', async () => {
+    const handler = vi.fn(async () => ({ exitCode: 0 }));
+    const confirm = vi.fn(async () => false);
+    const registry = registryWith({
+      name: 'nexus_terminal_run',
+      description: 'terminal',
+      inputSchema: { type: 'object', properties: {} },
+      handler,
+    });
+
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registry,
+      'nexus_terminal_run',
+      { command: 'rm -rf ~/projeto' },
+      missionContext(),
+      workflowOptions({ confirm }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('user_denied');
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('denies at the intent gate (no modal) when the mission has no current approval', async () => {
+    const handler = vi.fn(async () => ({ exitCode: 0 }));
+    const confirm = vi.fn(async () => true);
+    const registry = registryWith({
+      name: 'nexus_terminal_run',
+      description: 'terminal',
+      inputSchema: { type: 'object', properties: {} },
+      handler,
+    });
+    const options = workflowOptions({ confirm });
+    options.resolveMissionForIntentGate = (_scope, missionId) => {
+      if (missionId !== TEST_MISSION_ID) return null;
+      const fixture = dispatchedMissionFixture();
+      return {
+        ...fixture,
+        mission: {
+          ...fixture.mission,
+          intentContract: {
+            ...fixture.mission.intentContract!,
+            approvedAt: undefined,
+          },
+        },
+      };
+    };
+
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registry,
+      'nexus_terminal_run',
+      { command: 'npm test' },
+      missionContext(),
+      options,
+    );
+
+    // Sem aprovação corrente, o intent gate nega antes de qualquer confirmação.
+    expect(result.ok).toBe(false);
+    expect(result.denied).toBe(true);
+    expect(String(result.error)).toMatch(/dispatch_required|approval_required/);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('blocks an unbound user effect before confirmation or handler execution', async () => {
@@ -485,13 +580,15 @@ describe('MCP dispatch effect safety', () => {
     const result = await dispatchToolCall(
       'http-mcp',
       registryWith({
-        name: 'nexus_file_write',
-        description: 'write',
+        name: 'nexus_terminal_run',
+        description: 'terminal',
         inputSchema: { type: 'object', properties: {} },
         handler,
       }),
-      'nexus_file_write',
-      { path: 'src/a.ts', content: 'x' },
+      'nexus_terminal_run',
+      // Comando destrutivo: mesmo com missão aprovada o modal dispara — é o
+      // caminho onde a revalidação pós-confirmação continua existindo.
+      { command: 'rm -rf /tmp/nexus-revalidate-intent' },
       missionContext(),
       {
         ...workflowOptions(),
@@ -532,7 +629,7 @@ describe('MCP dispatch effect safety', () => {
         handler,
       }),
       'nexus_terminal_run',
-      { command: 'npm test' },
+      { command: 'rm -rf /tmp/nexus-revalidate-revision' },
       missionContext(TEST_CONTEXT_REVISION),
       {
         ...workflowOptions(),
@@ -774,12 +871,12 @@ describe('MCP dispatch effect safety', () => {
   });
 
   it('ops lane runs execution effects without a frozen PREVC contract', async () => {
-    const handler = vi.fn(async () => ({ exitCode: 0 }));
-    const resolveWorkflowAuthority = vi.fn(() => {
-      throw new Error(
-        'mission effect blocked until context and contract are frozen',
-      );
+    // PREVC degrada, não bloqueia: sem contrato congelado a autoridade de
+    // produção é permissiva e a lane ops executa normalmente.
+    workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
     });
+    const handler = vi.fn(async () => ({ exitCode: 0 }));
     const result = await dispatchToolCall(
       'http-mcp',
       registryWith({
@@ -793,7 +890,6 @@ describe('MCP dispatch effect safety', () => {
       missionContext(),
       {
         confirm: async () => true,
-        resolveWorkflowAuthority,
         resolveMissionForIntentGate: (_scope, missionId) =>
           missionId === TEST_MISSION_ID ? opsMissionFixture() : null,
         reserveMissionBudget: () => undefined,
@@ -802,11 +898,12 @@ describe('MCP dispatch effect safety', () => {
 
     expect(result).toMatchObject({ ok: true });
     expect(handler).toHaveBeenCalledOnce();
-    // Ops lane never resolves the production workflow authority (no PREVC).
-    expect(resolveWorkflowAuthority).not.toHaveBeenCalled();
   });
 
-  it('standard lane stays fail-closed without a frozen contract', async () => {
+  it('standard lane executes without a frozen contract (PREVC degrades, never blocks)', async () => {
+    workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const result = await dispatchToolCall(
       'http-mcp',
@@ -821,11 +918,62 @@ describe('MCP dispatch effect safety', () => {
       missionContext(),
       {
         confirm: async () => true,
-        resolveWorkflowAuthority: () => {
-          throw new Error(
-            'mission effect blocked until context and contract are frozen',
-          );
-        },
+        resolveMissionForIntentGate: (_scope, missionId) =>
+          missionId === TEST_MISSION_ID ? dispatchedMissionFixture() : null,
+        reserveMissionBudget: () => undefined,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('file_write executes without a frozen contract', async () => {
+    workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+    const handler = vi.fn(async () => ({ bytes: 1 }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_file_write',
+        description: 'write',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_file_write',
+      { path: 'src/a.ts', content: 'x' },
+      missionContext(),
+      {
+        confirm: async () => true,
+        resolveMissionForIntentGate: (_scope, missionId) =>
+          missionId === TEST_MISSION_ID ? dispatchedMissionFixture() : null,
+        reserveMissionBudget: () => undefined,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('keeps .context/ read-only without a frozen contract (path target)', async () => {
+    workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+    const handler = vi.fn(async () => ({ bytes: 1 }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_file_write',
+        description: 'write',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_file_write',
+      { path: '.context/config/policy.json', content: 'x' },
+      missionContext(),
+      {
+        confirm: async () => true,
         resolveMissionForIntentGate: (_scope, missionId) =>
           missionId === TEST_MISSION_ID ? dispatchedMissionFixture() : null,
         reserveMissionBudget: () => undefined,
@@ -836,7 +984,82 @@ describe('MCP dispatch effect safety', () => {
       ok: false,
       denied: true,
       error: expect.stringContaining(
-        'blocked until context and contract are frozen',
+        'versioned context authority is read-only to executors',
+      ),
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('keeps .context/ read-only without a frozen contract (hashline patch target)', async () => {
+    workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+    const handler = vi.fn(async () => ({ ok: true }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_editor_apply_patch',
+        description: 'hashline patch',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_editor_apply_patch',
+      { patch: '[.context/config/policy.json#1a2b]\nINS.TAIL:\n+{}\n' },
+      missionContext(),
+      {
+        confirm: async () => true,
+        resolveMissionForIntentGate: (_scope, missionId) =>
+          missionId === TEST_MISSION_ID ? dispatchedMissionFixture() : null,
+        reserveMissionBudget: () => undefined,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining(
+        'versioned context authority is read-only to executors',
+      ),
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('frozen contract outside the execution stage still blocks execution effects', async () => {
+    // Com contrato congelado o PREVC funciona como antes: stage errado bloqueia.
+    workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
+      getMissionWorkflow: () => ({
+        contract: { contract: { contextRevision: TEST_CONTEXT_REVISION } },
+        workflow: { stage: 'planning' },
+      }),
+      assertMutationAllowed: () => {
+        throw new Error('code mutation blocked during workflow stage planning');
+      },
+    });
+    const handler = vi.fn(async () => ({ bytes: 1 }));
+    const result = await dispatchToolCall(
+      'http-mcp',
+      registryWith({
+        name: 'nexus_file_write',
+        description: 'write',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }),
+      'nexus_file_write',
+      { path: 'src/a.ts', content: 'x' },
+      missionContext(),
+      {
+        confirm: async () => true,
+        resolveMissionForIntentGate: (_scope, missionId) =>
+          missionId === TEST_MISSION_ID ? dispatchedMissionFixture() : null,
+        reserveMissionBudget: () => undefined,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining(
+        'code mutation blocked during workflow stage planning',
       ),
     });
     expect(handler).not.toHaveBeenCalled();

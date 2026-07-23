@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import {
+  hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   reserveEffectfulSpend,
-  type MissionLane,
 } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { requiresConfirmation, confirmationReason } from '../jarvis/guardrails';
+import {
+  isDestructive,
+  requiresConfirmation,
+  confirmationReason,
+} from '../jarvis/guardrails';
 import {
   auditDenied,
   auditError,
@@ -31,6 +35,7 @@ import {
 import { validateToolArgs } from './mcp-args-validation';
 import type { McpRegistry, McpToolDef } from './mcp-protocol';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
+import { mutationTargetPaths } from '../context/context-workflow-service';
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
 import {
   cancelMissionPrompt,
@@ -108,7 +113,11 @@ export type MissionBudgetReserver = (
 ) => void;
 
 export interface WorkflowEffectAuthority {
-  readonly contextRevision: string;
+  /**
+   * Frozen PREVC revision to bind. Undefined when the mission runs without a
+   * frozen contract (permissive degradation) — nothing to bind in that case.
+   */
+  readonly contextRevision: string | undefined;
   assertExecutionEffectAllowed(
     toolName: string,
     args: Readonly<Record<string, unknown>>,
@@ -129,7 +138,25 @@ function resolveProductionWorkflowAuthority(
   const service = getContextWorkflowService(scope);
   const stored = service.getMissionWorkflow(missionId).contract;
   if (!stored) {
-    throw new Error('mission effect blocked until context and contract are frozen');
+    // Decisão de produto: o PREVC FUNCIONA mas NÃO LIMITA. Sem contrato
+    // congelado a missão executa com autoridade permissiva — o portão degrada
+    // em vez de bloquear. O único invariante mantido é de maquinário (invisível
+    // ao usuário): o executor nunca escreve na autoridade versionada `.context/`.
+    return Object.freeze({
+      contextRevision: undefined,
+      assertExecutionEffectAllowed: (
+        _toolName: string,
+        args: Readonly<Record<string, unknown>>,
+      ) => {
+        for (const candidate of mutationTargetPaths(args)) {
+          if (candidate === '.context' || candidate.startsWith('.context/')) {
+            throw new Error(
+              'versioned context authority is read-only to executors',
+            );
+          }
+        }
+      },
+    });
   }
   return Object.freeze({
     contextRevision: stored.contract.contextRevision,
@@ -237,6 +264,21 @@ function needsConfirmation(
   return requiresConfirmation(toolName, args);
 }
 
+/**
+ * Piso de segurança que NENHUMA aprovação de missão cobre: comandos
+ * destrutivos locais (rm -rf, dd, mkfs…) sempre pedem confirmação humana.
+ * Deploy/SSH/recon remoto NÃO é destrutivo — é o trabalho da missão.
+ */
+function isDestructiveEffect(
+  toolName: string,
+  args: Readonly<Record<string, unknown>>,
+): boolean {
+  const canonical = canonicalToolName(toolName);
+  if (canonical !== 'terminal_run' && canonical !== 'bg_run') return false;
+  const command = typeof args.command === 'string' ? args.command : '';
+  return command.length > 0 && isDestructive(command);
+}
+
 function resolveDispatchTool(
   registry: McpRegistry,
   name: string,
@@ -254,7 +296,6 @@ function bindEffectAuthority(
   toolName: string,
   args: Readonly<Record<string, unknown>>,
   resolver: WorkflowAuthorityResolver,
-  missionLane?: MissionLane | null,
 ): string | undefined {
   const policy = effectPolicyForTool(toolName);
   if (
@@ -293,17 +334,12 @@ function bindEffectAuthority(
       'mission effect blocked: projectId, checkoutId, missionId and contextRevision are required',
     );
   }
-  // Ops lane (infra/ops): no PREVC frozen contract exists to bind. The intent
-  // gate (always consulted for effectful mission-bound tools) already enforced
-  // the ops allowlist + dispatch authority; other lanes stay fail-closed.
-  if (
-    missionLane === 'ops' &&
-    (policy === 'execution-effect' || policy === 'mission-effect')
-  ) {
-    return ctx.contextRevision;
-  }
   const authority = resolver(ctx.scope, ctx.missionId);
-  bindContextRevision(ctx, authority.contextRevision);
+  // Sem contrato congelado a autoridade permissiva não traz revision para
+  // vincular — a execução segue sem bind (PREVC degrada, não bloqueia).
+  if (authority.contextRevision) {
+    bindContextRevision(ctx, authority.contextRevision);
+  }
   if (policy === 'execution-effect') {
     authority.assertExecutionEffectAllowed(toolName, args);
   }
@@ -501,19 +537,6 @@ export async function dispatchToolCall(
     );
   };
 
-  // Lane for bindEffectAuthority: resolved fresh from the same mission store
-  // as the intent gate. Unknown/error → undefined, which keeps the fail-closed
-  // frozen-contract path (only an explicit 'ops' lane skips PREVC binding).
-  const missionLaneForEffectAuthority = (): MissionLane | undefined => {
-    if (!ctx.missionId || !isEffectfulTool(tool.name)) return undefined;
-    try {
-      return resolveMission(ctx.scope, ctx.missionId)?.mission.intentContract
-        ?.lane;
-    } catch {
-      return undefined;
-    }
-  };
-
   // First check avoids asking for confirmation when authority is already stale.
   const initialIntent = checkMissionIntent();
   if (!initialIntent.ok) return denyIntentCheck(initialIntent.error);
@@ -525,7 +548,6 @@ export async function dispatchToolCall(
       tool.name,
       args,
       options.resolveWorkflowAuthority ?? resolveProductionWorkflowAuthority,
-      missionLaneForEffectAuthority(),
     );
     auditContext = {
       scope: ctx.scope,
@@ -559,6 +581,20 @@ export async function dispatchToolCall(
     const workspaceId = ctx.scope.rootRealPath;
     const scope = permissionScopeForTool(sessionId, ctx.scope, tool.name, args);
     userAuthorized = consumePermission(scope);
+    // Piloto automático: a aprovação da missão (intent contract corrente) É a
+    // autorização — o agente não para em modal a cada ação (foi o stall de
+    // minutos por comando). O modal permanece para: ferramentas sem missão,
+    // missões sem aprovação corrente e comandos destrutivos (piso de
+    // segurança contra perda de dados). Tudo segue auditado (userAuthorized).
+    if (
+      !userAuthorized &&
+      initialIntent.ok &&
+      initialIntent.resolved &&
+      hasCurrentApprovedDispatchContract(initialIntent.resolved.mission) &&
+      !isDestructiveEffect(tool.name, args)
+    ) {
+      userAuthorized = true;
+    }
     if (!userAuthorized) {
       const reason = confirmationReason(tool.name, args);
       if (options.confirm) {
@@ -672,7 +708,6 @@ export async function dispatchToolCall(
       tool.name,
       args,
       options.resolveWorkflowAuthority ?? resolveProductionWorkflowAuthority,
-      missionLaneForEffectAuthority(),
     );
     auditContext = {
       scope: ctx.scope,

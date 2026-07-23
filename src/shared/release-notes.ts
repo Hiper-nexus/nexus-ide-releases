@@ -13,75 +13,75 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.24',
-  date: '2026-07-21',
-  codename: 'Terminal ao Vivo',
+  version: '0.19.26',
+  date: '2026-07-22',
+  codename: 'Piloto Automático sem Modal',
   summary:
-    'Terminal com digitação visível em tempo real, workspace inequívoco e piloto automático mais simples, seguro e confiável.',
+    'Aprovar a missão autoriza a execução inteira: o agente não para em modal a cada comando, o PREVC garante sem bloquear e o wizard virou fluxo único sem jargão.',
   highlights: [
     {
-      title: 'Digitação sempre visível',
+      title: 'Execução sem interrupção',
       detail:
-        'Ao digitar, o terminal volta ao trecho ao vivo, prioriza a saída interativa e repinta o composer sem esperar Enter.',
+        'A aprovação da missão é a autorização — deploy, SSH, edição de código e browser fluem direto, tudo auditado; só comandos destrutivos pedem confirmação.',
     },
     {
-      title: 'Workspace sem ambiguidade',
+      title: 'PREVC que garante sem limitar',
       detail:
-        'A barra identifica o workspace ativo, mostra o caminho completo no seletor e mantém Novo workspace sempre acessível.',
+        'Sem contrato congelado a missão executa normalmente; com contrato, stage, drift e receipts continuam valendo. Tarefas mistas de infra + código funcionam.',
     },
     {
-      title: 'Piloto automático primeiro',
+      title: 'Wizard fluxo único',
       detail:
-        'O fluxo recomendado monta, executa, revisa e testa o trabalho; objetivo, controles e Oh My Pi usam linguagem mais direta.',
+        'Objetivo + lançar. Tipos de entrega viraram Opções avançadas colapsadas, em linguagem simples, com Sem restrições como padrão.',
     },
   ],
   fixes: [
     {
-      title: 'Renderer de terminal recuperável',
+      title: 'Fim do stall de confirmação',
       detail:
-        'Perda de contexto WebGL força fallback repintado, foco recupera backlog e resize sincroniza PTY e viewport imediatamente.',
+        'O agente não fica mais minutos parado esperando clique em modal a cada ação — a autorização vem da missão aprovada, com auditoria fail-closed.',
     },
     {
-      title: 'OMP sem duplicação nem vazamento',
+      title: 'Kickoff anti-travamento',
       detail:
-        'Auto-companion usa single-flight por missão e falhas de readiness ou prompt inicial encerram a sessão incompleta.',
+        'O orquestrador executa direto e trata freeze/bootstrap PREVC como best-effort em segundo plano, nunca como pré-condição.',
     },
   ],
 };
 
 export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.23',
-  date: '2026-07-21',
-  codename: 'Piloto Automático Real',
+  version: '0.19.25',
+  date: '2026-07-22',
+  codename: 'Piloto Automático de Verdade',
   summary:
-    'Orquestração com prova de aceite por evento, recuperação automática de reviewers, OMP multiprovider sem falso bloqueio e notificações responsivas.',
+    'Lane ops para infra sem PREVC, fila de bootstrap destravada, bootstrap convergente sem segundo provider, panes Codex sem review de hooks e login OMP sem aba fantasma.',
   highlights: [
     {
-      title: 'Entrega sem duplicação',
+      title: 'Lane ops (Operação/infra)',
       detail:
-        'Prompts e handoffs capturam até turnos muito rápidos pela borda idle→busy, sem depender de polling tardio.',
+        'Missões de deploy, backup e SSH executam terminal/browser sem exigir contexto PREVC, com aprovação de intenção e auditoria mantidas.',
     },
     {
-      title: 'Recuperação autônoma',
+      title: 'Bootstrap destravado',
       detail:
-        'Reviewer preservado inválido é fechado e substituído na mesma passagem do Doctor.',
+        'Retry faz join em vez de prompt_queue_busy, watchdog libera slot preso e o usuário aprova o contexto pela UI — sem depender de segundo provider.',
     },
     {
-      title: 'OMP e AGY alinhados ao runtime',
+      title: 'Panes Codex sobem direto',
       detail:
-        'O cofre multiprovider do OMP deixa de ser bloqueado pelo Nexus e o catálogo AGY acompanha os modelos realmente publicados pelo CLI.',
+        'Hooks de status pré-confiados via trusted_hash no config.toml e bypass com guard de versão — sem a tela "hooks need review".',
     },
   ],
   fixes: [
     {
-      title: 'Quorum independente honesto',
+      title: 'Login OMP sem aba fantasma',
       detail:
-        'Um provider bloqueia review cruzado; dois liberam a missão e providers adicionais permanecem recomendados.',
+        'Autorização OAuth em janela in-app endurecida que abre e fecha sozinha.',
     },
     {
-      title: 'Inbox responsivo',
+      title: 'Fila sem deadlock',
       detail:
-        'Notificações permanecem inteiras e roláveis em janelas estreitas ou baixas.',
+        'Awaits de orientation com bound e watchdog de 10 min no slot executing — missão nunca mais trava esperando o mapa do projeto.',
     },
   ],
 };

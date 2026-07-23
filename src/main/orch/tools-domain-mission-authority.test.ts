@@ -83,12 +83,82 @@ describe('mission creation authority', () => {
     });
     mocks.getContextWorkflowService.mockReturnValue({
       isMissionDriverComplete: () => false,
+      // Contrato PREVC congelado: as exigências PREVC permanecem intactas.
+      getMissionWorkflow: () => ({
+        contract: { contract: { contextRevision: 'rev' } },
+        workflow: { stage: 'execution' },
+      }),
     });
 
     await expect(missionSetStatusTool().handler(
       { missionId: 'mission-existing', status: 'done' },
       context('orchestrator'),
     )).rejects.toThrow(/immutable step receipts/i);
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('allows standard-lane done with a durable note when no contract is frozen', async () => {
+    const setStatus = vi.fn((id: string, status: string) => ({
+      id,
+      status,
+    }));
+    const appendLearning = vi.fn();
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: 'mission-existing',
+          status: 'running',
+          learnings: '',
+          milestones: [],
+          intentContract: { lane: 'standard' },
+        }),
+        setStatus,
+        appendLearning,
+      },
+    });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+      // PREVC degrada: sem contrato congelado, done fecha com nota durável.
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+
+    const result = await missionSetStatusTool().handler(
+      {
+        missionId: 'mission-existing',
+        status: 'done',
+        note: 'Form de login corrigido e validado manualmente no navegador.',
+      },
+      context('orchestrator'),
+    );
+
+    expect(result).toMatchObject({ id: 'mission-existing', status: 'done' });
+    expect(setStatus).toHaveBeenCalledWith('mission-existing', 'done');
+    expect(appendLearning).toHaveBeenCalledOnce();
+  });
+
+  it('rejects standard-lane done without a durable note when no contract is frozen', async () => {
+    const setStatus = vi.fn();
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: 'mission-existing',
+          status: 'running',
+          learnings: '',
+          milestones: [],
+          intentContract: { lane: 'standard' },
+        }),
+        setStatus,
+      },
+    });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+
+    await expect(missionSetStatusTool().handler(
+      { missionId: 'mission-existing', status: 'done', note: 'ok' },
+      context('orchestrator'),
+    )).rejects.toThrow(/without a frozen PREVC contract requires a durable note/i);
     expect(setStatus).not.toHaveBeenCalled();
   });
 
@@ -113,6 +183,7 @@ describe('mission creation authority', () => {
     });
     mocks.getContextWorkflowService.mockReturnValue({
       isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
     });
 
     const result = await missionSetStatusTool().handler(
@@ -145,12 +216,13 @@ describe('mission creation authority', () => {
     });
     mocks.getContextWorkflowService.mockReturnValue({
       isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
     });
 
     await expect(missionSetStatusTool().handler(
       { missionId: 'mission-existing', status: 'done', note: 'ok' },
       context('orchestrator'),
-    )).rejects.toThrow(/ops-lane done requires a durable note/i);
+    )).rejects.toThrow(/requires a durable note/i);
     expect(setStatus).not.toHaveBeenCalled();
   });
 

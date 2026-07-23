@@ -232,7 +232,7 @@ describe('handleMcpMessage', () => {
       missionCtx(),
       req('tools/call', {
         name: 'nexus_terminal_run',
-        arguments: { command: 'echo no-ui' },
+        arguments: { command: 'rm -rf /tmp/nexus-no-ui' },
       }),
       workflowOptions(),
     );
@@ -274,7 +274,7 @@ describe('handleMcpMessage', () => {
       missionCtx(),
       req('tools/call', {
         name: 'nexus_terminal_run',
-        arguments: { command: 'npm test' },
+        arguments: { command: 'rm -rf /tmp/nexus-approved' },
       }),
       workflowOptions(confirm),
     );
@@ -288,8 +288,8 @@ describe('handleMcpMessage', () => {
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
       source: 'http-mcp',
       toolName: 'nexus_terminal_run',
-      args: { command: 'npm test' },
-      reason: 'run command: npm test',
+      args: { command: 'rm -rf /tmp/nexus-approved' },
+      reason: 'destructive command: rm -rf /tmp/nexus-approved',
       agentLabel: 'test',
     }));
     const auditEntries = readAuditLog(auditContext);
@@ -344,8 +344,8 @@ describe('handleMcpMessage', () => {
   it('keeps a confirmation-required HTTP MCP tool blocked when the user denies', async () => {
     let executed = false;
     const destructive: McpToolDef = {
-      name: 'nexus_file_write',
-      description: 'write',
+      name: 'nexus_terminal_run',
+      description: 'terminal',
       inputSchema: { type: 'object', properties: {} },
       handler: async () => {
         executed = true;
@@ -361,8 +361,8 @@ describe('handleMcpMessage', () => {
       registry,
       missionCtx(),
       req('tools/call', {
-        name: 'nexus_file_write',
-        arguments: { path: 'src/a.ts', content: 'secret' },
+        name: 'nexus_terminal_run',
+        arguments: { command: 'rm -rf /tmp/nexus-denied' },
       }),
       workflowOptions(async () => false),
     );
@@ -376,7 +376,7 @@ describe('handleMcpMessage', () => {
     expect(executed).toBe(false);
     expect(readAuditLog(auditContext)[0]).toMatchObject({
       source: 'http-mcp',
-      tool: 'nexus_file_write',
+      tool: 'nexus_terminal_run',
       result: 'denied',
       error: expect.stringContaining('user_denied'),
     });
