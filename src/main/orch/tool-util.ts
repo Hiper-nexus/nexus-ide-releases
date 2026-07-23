@@ -52,6 +52,7 @@ import {
   assertMcpInvocationCurrent,
   type McpToolInvocation,
 } from './mcp-protocol';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -265,6 +266,14 @@ async function injectWithBusyProof(
   let settle: ((accepted: boolean) => void) | null = null;
   const maybeAccept = () => {
     if (observedBusy && observedOutput) settle?.(true);
+    // Release gate: Codex can stay in silent reasoning for seconds after busy
+    // without PTY output; do not kill a live worker that already accepted work.
+    else if (
+      observedBusy &&
+      isCurrentProcessRealMissionE2E()
+    ) {
+      settle?.(true);
+    }
   };
   const untapState = tapSessionState((changedSessionId, state) => {
     if (changedSessionId !== sessionId || !submitted || state !== 'busy') return;
