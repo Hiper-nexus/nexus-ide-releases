@@ -209,6 +209,12 @@ describe('real mission E2E closed receipts', () => {
         },
       ],
     });
+    expect(fixture.orchestratorInstructions).toContain(
+      'Chame nexus_task action=plan imediatamente como sua primeira chamada Nexus.',
+    );
+    expect(fixture.orchestratorInstructions).toContain(
+      'Não agrupe chamadas Nexus em Promise.all.',
+    );
   });
 
   it('arms observation only for the exact sealed pre-approval fixture', () => {

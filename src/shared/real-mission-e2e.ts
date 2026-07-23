@@ -42,6 +42,9 @@ export const REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS = [
   '# Release gate E2E real',
   'Você é somente o orquestrador. É PROIBIDO criar, editar, adicionar ou commitar resultado.txt.',
   'Use exatamente um worker do roster. Primeiro sele um plano imutável com nexus_task:',
+  'Chame nexus_task action=plan imediatamente como sua primeira chamada Nexus. ' +
+    'Não consulte missão, workflow ou handoffs antes do plano. ' +
+    'Não agrupe chamadas Nexus em Promise.all.',
   '- action: plan',
   '- uma task com id resultado-worker, agentRef e2e-worker, category executor',
   '- executionMode isolated_worktree',
