@@ -37,14 +37,42 @@ describe('path-resolver CLI binary resolution', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it('includes ~/.kimi-code/bin among curated fallbacks', () => {
+  it('includes vendor install dirs among curated fallbacks', () => {
     const home = tmp;
     const dirs = commonCliBinDirs(home);
     expect(dirs).toContain(path.join(home, '.kimi-code', 'bin'));
+    expect(dirs).toContain(path.join(home, '.grok', 'bin'));
     expect(dirs).toContain(path.join(home, '.local', 'bin'));
     expect(dirs).toContain(path.join(home, '.volta', 'bin'));
     expect(dirs).toContain(path.join(home, '.bun', 'bin'));
     expect(dirs).toContain('/opt/homebrew/bin');
+  });
+
+  it('finds CLIs under the real account home even when $HOME is isolated', () => {
+    // Mirrors real-mission E2E: disposable HOME, CLIs only in the real home.
+    const isolated = path.join(tmp, 'isolated-home');
+    fs.mkdirSync(isolated, { recursive: true });
+    const realLocal = path.join(tmp, '.local', 'bin');
+    fs.mkdirSync(realLocal, { recursive: true });
+    const claude = path.join(realLocal, 'claude');
+    fs.writeFileSync(claude, '#!/bin/sh\necho claude\n', { mode: 0o755 });
+
+    const finderPath = '/usr/bin:/bin:/usr/sbin:/sbin';
+    const effective = buildEffectivePath({
+      processPath: finderPath,
+      loginPath: '',
+      home: tmp, // real account home (userInfo), not $HOME
+    });
+    const hit = resolveCliBinary('claude', {
+      processPath: finderPath,
+      effectivePath: effective,
+      home: tmp,
+    });
+    expect(hit?.binPath).toBe(claude);
+    // Isolated HOME would have been empty — prove we did not need it.
+    expect(fs.existsSync(path.join(isolated, '.local', 'bin', 'claude'))).toBe(
+      false,
+    );
   });
 
   it('lookupInPath finds an executable on a minimal PATH', () => {

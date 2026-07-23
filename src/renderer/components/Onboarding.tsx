@@ -70,7 +70,20 @@ export function Onboarding() {
 
   useEffect(() => {
     if (!visible) return;
-    void window.nexus.adapters.list().then(setAdapters);
+    // Re-fold PATH + re-probe absolute bins so Finder/isolated-HOME launches
+    // still see claude/kimi/grok under the real account home.
+    const load = async () => {
+      try {
+        if (typeof window.nexus.adapters.rescan === 'function') {
+          setAdapters(await window.nexus.adapters.rescan());
+          return;
+        }
+      } catch {
+        // Fall through to list().
+      }
+      setAdapters(await window.nexus.adapters.list());
+    };
+    void load();
     const unsub = window.nexus.adapters.onChanged(setAdapters);
     return unsub;
   }, [visible]);

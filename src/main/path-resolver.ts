@@ -32,15 +32,40 @@ export interface CliBinaryResolution {
 }
 
 /**
+ * Real OS account home — NOT process.env.HOME.
+ *
+ * Disposable runs (real-mission E2E, some smoke harnesses) rewrite HOME to a
+ * private temp dir so the child cannot touch the operator profile. `os.homedir()`
+ * follows $HOME and would then look for CLIs under /tmp/.../home/.local/bin
+ * (empty), reporting only Homebrew tools as installed. `userInfo().homedir`
+ * comes from the passwd database and still points at the real user home where
+ * claude/kimi/grok/agy actually live.
+ */
+export function realUserHome(): string {
+  try {
+    const info = os.userInfo();
+    if (info?.homedir && path.isAbsolute(info.homedir)) return info.homedir;
+  } catch {
+    // getpwuid can fail in some sandboxes — fall through.
+  }
+  return os.homedir();
+}
+
+/**
  * Curated install dirs unioned when shell resolution misses them.
  * Order matters when the login shell probe fails: vendor CLI installers
- * (Kimi Code, etc.) come before generic ~/.local/bin, which may hold a
+ * (Kimi Code, Grok, etc.) come before generic ~/.local/bin, which may hold a
  * different package with the same bare name (e.g. legacy kimi-cli via uv).
  */
-export function commonCliBinDirs(home = os.homedir()): string[] {
+export function commonCliBinDirs(home = realUserHome()): string[] {
   return [
     // Vendor-specific official installers first.
     path.join(home, '.kimi-code', 'bin'),
+    path.join(home, '.grok', 'bin'),
+    path.join(home, '.claude', 'bin'),
+    path.join(home, '.codex', 'bin'),
+    path.join(home, '.hermes', 'node', 'bin'),
+    path.join(home, '.local', 'share', 'claude', 'versions'),
     // Package managers / version managers.
     '/opt/homebrew/bin',
     '/opt/homebrew/sbin',
@@ -75,17 +100,28 @@ function existingDirs(dirs: readonly string[]): string[] {
 /** Ask the user's login+interactive shell for its PATH. Empty string on failure. */
 export function probeLoginShellPath(
   exec: typeof execFileSync = execFileSync,
+  home = realUserHome(),
 ): string {
   if (process.platform === 'win32') return process.env.PATH ?? '';
   const shell = process.env.SHELL || '/bin/zsh';
   try {
-    // -l login (sources .zprofile), -i interactive (sources .zshrc where users
-    // usually export PATH), -c command. Sentinel-wrapped so we can extract the
-    // value even if the interactive shell prints a banner/prompt.
+    // Force the real account home so isolated $HOME (E2E/smoke) still sources
+    // the operator's .zprofile/.zshrc where nvm/homebrew PATH exports live.
+    // -l login, -i interactive. Sentinel-wrapped against banner/prompt noise.
     const out = exec(
       shell,
       ['-lic', `printf '%s%s%s' '${START}' "$PATH" '${END}'`],
-      { encoding: 'utf8', timeout: RESOLVE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] },
+      {
+        encoding: 'utf8',
+        timeout: RESOLVE_TIMEOUT_MS,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: {
+          ...process.env,
+          HOME: home,
+          USER: process.env.USER ?? path.basename(home),
+          LOGNAME: process.env.LOGNAME ?? path.basename(home),
+        },
+      },
     );
     if (!out.includes(START) || !out.includes(END)) return '';
     return out.slice(out.indexOf(START) + START.length, out.indexOf(END));
@@ -106,9 +142,12 @@ export function buildEffectivePath(options: {
   loginPath?: string;
   home?: string;
 } = {}): string {
+  const home = options.home ?? realUserHome();
   const processPath = options.processPath ?? process.env.PATH ?? '';
   const loginPath =
-    options.loginPath !== undefined ? options.loginPath : probeLoginShellPath();
+    options.loginPath !== undefined
+      ? options.loginPath
+      : probeLoginShellPath(execFileSync, home);
   const parts = new Set<string>();
   for (const dir of processPath.split(path.delimiter)) {
     if (dir) parts.add(dir);
@@ -116,7 +155,7 @@ export function buildEffectivePath(options: {
   for (const dir of loginPath.split(path.delimiter)) {
     if (dir) parts.add(dir);
   }
-  for (const dir of existingDirs(commonCliBinDirs(options.home))) {
+  for (const dir of existingDirs(commonCliBinDirs(home))) {
     parts.add(dir);
   }
   return [...parts].join(path.delimiter);
@@ -247,7 +286,7 @@ export function resolveCliBinary(
 
   if (path.isAbsolute(trimmed) || trimmed.startsWith('~/')) {
     const absolute = trimmed.startsWith('~/')
-      ? path.join(options.home ?? os.homedir(), trimmed.slice(2))
+      ? path.join(options.home ?? realUserHome(), trimmed.slice(2))
       : trimmed;
     if (!isExecutableFile(absolute)) return null;
     return {
@@ -288,7 +327,7 @@ export function resolveCliBinary(
   const fromEffective = lookupInPath(trimmed, effective);
   if (!fromEffective) return null;
 
-  const home = options.home ?? os.homedir();
+  const home = options.home ?? realUserHome();
   return {
     binPath: fromEffective,
     effectivePath: effective,
