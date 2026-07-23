@@ -47,6 +47,7 @@ import {
   isExactRealMissionE2ESquadFixture,
   persistRealMissionE2ESquadFixture,
 } from './real-mission-e2e-fixture';
+import { stageRealMissionCodexTrust } from './real-mission-codex-trust';
 
 const DONE_SETTLE_MS = 20_000;
 const OBSERVE_INTERVAL_MS = 500;
@@ -862,7 +863,9 @@ export function initRealMissionE2E(): void {
   }
 
   try {
-    scratch = setupScratchRepository(app.getPath('userData'));
+    const userData = app.getPath('userData');
+    scratch = setupScratchRepository(userData);
+    stageRealMissionCodexTrust(userData, scratch.workspacePath);
   } catch {
     app.whenReady().then(() => finish('setup-failed'));
     return;
