@@ -33,6 +33,7 @@ import {
   setRealMissionE2ESchedulerReconcile,
   setRealMissionE2ESchedulerTick,
 } from '../real-mission-e2e-scheduler-tick';
+import { realMissionE2EMergeValidationDeps } from '../real-mission-e2e-prevc';
 import {
   spawnPaneAndMaybePrompt,
 } from './tool-util';
@@ -720,7 +721,12 @@ async function mergeCompletedTask(
     };
     assertCurrentMergeAuthority();
     const service = getContextWorkflowService(scope);
-    const validator = new MergeValidationCoordinator(service);
+    // Release-gate e2e freezes a real PREVC contract; merge validation deps
+    // only specialize independent review transport (same ReviewCouncil path).
+    const validator = new MergeValidationCoordinator(
+      service,
+      realMissionE2EMergeValidationDeps(),
+    );
     await requireWorktreeRuntimeRegistry().enqueue({
       scope,
       missionId,

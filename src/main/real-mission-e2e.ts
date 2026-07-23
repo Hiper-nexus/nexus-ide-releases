@@ -49,6 +49,10 @@ import {
 } from './real-mission-e2e-fixture';
 import { sealRealMissionE2EPlanIfNeeded } from './real-mission-e2e-plan';
 import { advanceRealMissionE2EMainOwnedChain } from './real-mission-e2e-main-owned';
+import {
+  freezeRealMissionE2EPrevCIfNeeded,
+  stageRealMissionE2EContextCorpus,
+} from './real-mission-e2e-prevc';
 import { stageRealMissionCodexTrust } from './real-mission-codex-trust';
 
 const DONE_SETTLE_MS = 20_000;
@@ -157,7 +161,10 @@ function setupScratchRepository(userData: string): ScratchRepository {
     '.nexus/\n',
     { encoding: 'utf8', mode: PRIVATE_FILE_MODE },
   );
-  runGit(workspacePath, ['add', '--', 'README.md', '.gitignore']);
+  // Operational PREVC corpus before the single baseline commit so evidence
+  // remains initial+merge (commitCount === 2).
+  stageRealMissionE2EContextCorpus(workspacePath);
+  runGit(workspacePath, ['add', '--', 'README.md', '.gitignore', '.context', 'package.json']);
   runGit(workspacePath, [
     'commit',
     '--quiet',
@@ -246,6 +253,7 @@ class RealMissionObserver {
   readonly #physicalPty = new Map<string, PhysicalPtyCapture>();
   #kickoffProven = false;
   #planSealAttempted = false;
+  #prevcFreezeAttempted = false;
   #mainOwnedLastReason: string | null = null;
   #changedBeforeWorker = false;
   #workerObserved = false;
@@ -590,6 +598,47 @@ class RealMissionObserver {
     }
   }
 
+  /** Freeze a real PREVC contract before main-owned worker/merge work. */
+  #maybeFreezePrevC(): void {
+    if (this.#stopped || !this.#kickoffProven) return;
+    try {
+      const result = freezeRealMissionE2EPrevCIfNeeded(
+        this.#suite,
+        this.#missionId,
+        this.#suite.scope,
+      );
+      if (result.frozen) {
+        this.#prevcFreezeAttempted = true;
+        console.log(
+          `[real-mission] PHASE phase=prevc-frozen mission=${this.#missionId}`,
+        );
+        return;
+      }
+      if (
+        result.reason === 'already-frozen' ||
+        result.reason === 'kickoff-pending' ||
+        result.reason === 'gate-context-unavailable' ||
+        result.reason.startsWith('status-')
+      ) {
+        return;
+      }
+      if (!this.#prevcFreezeAttempted && result.reason.startsWith('freeze-failed')) {
+        this.#prevcFreezeAttempted = true;
+        console.error(
+          `[real-mission] PREVC freeze failed: ${result.reason}`,
+        );
+      }
+    } catch (error) {
+      if (!this.#prevcFreezeAttempted) {
+        this.#prevcFreezeAttempted = true;
+        console.error(
+          '[real-mission] PREVC freeze threw:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+  }
+
   /**
    * Product-owned executor + delivery path. CLIs do not orchestrate inside
    * Nexus; after kickoff + plan the main process finishes durable receipts.
@@ -724,6 +773,7 @@ class RealMissionObserver {
       return;
     }
     this.#maybeSealMainOwnedPlan();
+    this.#maybeFreezePrevC();
     this.#maybeAdvanceMainOwnedChain();
     this.#backfillPhysicalFromKickoff();
     const dispatches = this.#suite.taskDispatches.list(this.#missionId);
