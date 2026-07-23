@@ -13,7 +13,10 @@ import {
 import type { ProjectExecutionScope } from '../shared/types';
 import type { ProjectDomainStoreSuite } from './orch/project-domain-store-registry';
 import { requireWorktreeRuntimeRegistry } from './runtime/worktree-runtime-registry';
-import { requestRealMissionE2ESchedulerTick } from './real-mission-e2e-scheduler-tick';
+import {
+  reconcileRealMissionE2EScheduler,
+  requestRealMissionE2ESchedulerTick,
+} from './real-mission-e2e-scheduler-tick';
 
 /**
  * Main-owned release-gate completion.
@@ -228,12 +231,26 @@ export function advanceRealMissionE2EMainOwnedChain(
     return deliveryStep;
   }
 
-  // Handoff ready / merging: nudge the durable scheduler to merge + complete.
-  const needsTick = suite.taskDispatches
+  // Handoff ready / merging: force one full scheduler pass so merge + done
+  // are not lost to a fire-and-forget tick that races process exit.
+  const needsMerge = suite.taskDispatches
     .list(missionId)
     .some((dispatch) =>
-      ['handoff_ready', 'merging', 'completed'].includes(dispatch.state),
+      ['handoff_ready', 'merging'].includes(dispatch.state),
     );
+  if (needsMerge) {
+    void reconcileRealMissionE2EScheduler().catch((error) => {
+      console.warn(
+        '[real-mission] main-owned scheduler reconcile failed:',
+        error instanceof Error ? error.message : error,
+      );
+    });
+    return { advanced: true, reason: 'scheduler-reconcile' };
+  }
+
+  const needsTick = suite.taskDispatches
+    .list(missionId)
+    .some((dispatch) => dispatch.state === 'completed');
   if (needsTick) {
     requestRealMissionE2ESchedulerTick();
     return { advanced: true, reason: 'scheduler-tick' };

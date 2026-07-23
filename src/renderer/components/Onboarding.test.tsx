@@ -186,7 +186,7 @@ describe('Onboarding — CTA nunca disabled (critique P2)', () => {
         },
       },
       complete: () => {
-        void complete({ completed: true });
+        void complete();
         useOnboardingStore.setState({
           state: {
             completed: true,

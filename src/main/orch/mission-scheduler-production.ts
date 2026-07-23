@@ -29,7 +29,10 @@ import {
   INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER,
 } from '../runtime/worktree-manager';
 import { trustRealMissionCodexProjectPath } from '../real-mission-codex-trust';
-import { setRealMissionE2ESchedulerTick } from '../real-mission-e2e-scheduler-tick';
+import {
+  setRealMissionE2ESchedulerReconcile,
+  setRealMissionE2ESchedulerTick,
+} from '../real-mission-e2e-scheduler-tick';
 import {
   spawnPaneAndMaybePrompt,
 } from './tool-util';
@@ -892,6 +895,7 @@ export function configureMissionScheduler(options: MissionSchedulerOptions): voi
   configured = options;
   // Wire release-gate main-owned completion without a static import cycle.
   setRealMissionE2ESchedulerTick(requestMissionSchedulerTick);
+  setRealMissionE2ESchedulerReconcile(reconcileMissionScheduler);
   unsubscribe = requireProjectDomainStoreRegistry().onChange((_scope, store) => {
     if (
       store === 'tasks' ||
@@ -926,6 +930,7 @@ export function disposeMissionScheduler(): void {
   configured = null;
   externalReconcileRequest = null;
   setRealMissionE2ESchedulerTick(null);
+  setRealMissionE2ESchedulerReconcile(null);
   states.clear();
   merging.clear();
 }

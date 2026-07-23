@@ -13,6 +13,7 @@ import {
 
 const isCurrentProcessRealMissionE2E = vi.fn(() => true);
 const requestMissionSchedulerTick = vi.fn();
+const reconcileMissionScheduler = vi.fn(async () => undefined);
 const requireWorktreeRuntimeRegistry = vi.fn();
 
 vi.mock('../shared/real-mission-e2e', async (importOriginal) => {
@@ -27,7 +28,10 @@ vi.mock('./runtime/worktree-runtime-registry', () => ({
   requireWorktreeRuntimeRegistry: () => requireWorktreeRuntimeRegistry(),
 }));
 
-import { setRealMissionE2ESchedulerTick } from './real-mission-e2e-scheduler-tick';
+import {
+  setRealMissionE2ESchedulerReconcile,
+  setRealMissionE2ESchedulerTick,
+} from './real-mission-e2e-scheduler-tick';
 import { advanceRealMissionE2EMainOwnedChain } from './real-mission-e2e-main-owned';
 
 const scope = {
@@ -118,7 +122,9 @@ describe('advanceRealMissionE2EMainOwnedChain', () => {
   beforeEach(() => {
     isCurrentProcessRealMissionE2E.mockReturnValue(true);
     requestMissionSchedulerTick.mockReset();
+    reconcileMissionScheduler.mockReset();
     setRealMissionE2ESchedulerTick(() => requestMissionSchedulerTick());
+    setRealMissionE2ESchedulerReconcile(() => reconcileMissionScheduler());
     worktreePath = fs.mkdtempSync(
       path.join(os.tmpdir(), 'nexus-main-owned-wt-'),
     );
@@ -140,6 +146,7 @@ describe('advanceRealMissionE2EMainOwnedChain', () => {
 
   afterEach(() => {
     setRealMissionE2ESchedulerTick(null);
+    setRealMissionE2ESchedulerReconcile(null);
     fs.rmSync(worktreePath, { recursive: true, force: true });
     vi.clearAllMocks();
   });
@@ -237,5 +244,40 @@ describe('advanceRealMissionE2EMainOwnedChain', () => {
     );
     expect(acceptDeliveryAttempt).toHaveBeenCalled();
     expect(requestMissionSchedulerTick).toHaveBeenCalled();
+  });
+
+  it('reconciles the scheduler when dispatch is already handoff_ready', async () => {
+    const { suite } = suiteHarness({
+      dispatches: [
+        {
+          state: 'handoff_ready',
+          agentRef: REAL_MISSION_E2E_WORKER_ID,
+          taskId: 'task-hashed-worker',
+          executionMode: 'isolated_worktree',
+          sessionId: 'worker-session',
+          workerIncarnationId: 'inc-1',
+          handoffId: 'handoff-existing',
+        },
+      ],
+      handoffs: [
+        {
+          id: 'handoff-existing',
+          status: 'success',
+          deliveryState: 'submitted',
+          sessionId: 'worker-session',
+          workerIncarnationId: 'inc-1',
+        },
+      ],
+    });
+
+    const result = advanceRealMissionE2EMainOwnedChain(
+      suite,
+      'mission-e2e',
+      scope,
+    );
+    expect(result).toEqual({ advanced: true, reason: 'scheduler-reconcile' });
+    await vi.waitFor(() => {
+      expect(reconcileMissionScheduler).toHaveBeenCalled();
+    });
   });
 });

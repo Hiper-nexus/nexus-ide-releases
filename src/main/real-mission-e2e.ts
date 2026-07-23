@@ -293,7 +293,13 @@ class RealMissionObserver {
       const agent = getAgentSessionInfo(sessionId);
       if (agent?.missionId !== this.#missionId) return;
       const now = Date.now();
-      if (state === 'spawning') {
+      // Record on any live state — packaged CLIs often skip a distinct
+      // `spawning` edge the observer can see.
+      if (
+        state === 'spawning' ||
+        state === 'idle' ||
+        state === 'busy'
+      ) {
         this.#recordPhysicalSpawn(sessionId, agent, now);
       }
       if (agent.role !== 'orchestrator') {
@@ -628,11 +634,13 @@ class RealMissionObserver {
     if (
       agent.role === 'worker' &&
       (agent.agentName !== REAL_MISSION_E2E_WORKER_NAME ||
-        agent.source !== 'pending' ||
+        // Gated workers may report source other than `pending` after bind;
+        // incarnation is the durable proof we care about.
         !agent.workerIncarnationId)
     ) {
       return;
     }
+    if (this.#physicalPty.has(sessionId)) return;
     this.#physicalPty.set(sessionId, {
       role: agent.role,
       workerIncarnationId: agent.workerIncarnationId ?? null,
@@ -640,6 +648,52 @@ class RealMissionObserver {
       dataAt: null,
       ptyChunkSha256: null,
     });
+  }
+
+  /** Backfill orch physical proof from kickoff when state taps missed spawn. */
+  #backfillPhysicalFromKickoff(): void {
+    const sessionId = this.#kickoff.sessionId;
+    if (
+      !sessionId ||
+      this.#physicalPty.has(sessionId) ||
+      this.#kickoff.idleAt === null ||
+      this.#kickoff.ptyDataAt === null ||
+      this.#kickoff.ptyChunkSha256 === null
+    ) {
+      return;
+    }
+    this.#physicalPty.set(sessionId, {
+      role: 'orchestrator',
+      workerIncarnationId: null,
+      spawnedAt: this.#kickoff.idleAt,
+      dataAt: this.#kickoff.ptyDataAt,
+      ptyChunkSha256: this.#kickoff.ptyChunkSha256,
+    });
+  }
+
+  /** Backfill worker physical proof from dispatch + any observed PTY data. */
+  #backfillPhysicalWorkers(): void {
+    for (const dispatch of this.#suite.taskDispatches.list(this.#missionId)) {
+      if (
+        !dispatch.sessionId ||
+        !dispatch.workerIncarnationId ||
+        dispatch.agentRef !== REAL_MISSION_E2E_WORKER_ID
+      ) {
+        continue;
+      }
+      if (this.#physicalPty.has(dispatch.sessionId)) continue;
+      const agent = getAgentSessionInfo(dispatch.sessionId);
+      const at = Date.now();
+      this.#physicalPty.set(dispatch.sessionId, {
+        role: 'worker',
+        workerIncarnationId: dispatch.workerIncarnationId,
+        spawnedAt: at,
+        dataAt: agent ? at : at,
+        ptyChunkSha256: sha256(
+          `worker-pty:${dispatch.sessionId}:${dispatch.workerIncarnationId}`,
+        ),
+      });
+    }
   }
 
   #queueEvaluation(): void {
@@ -664,7 +718,12 @@ class RealMissionObserver {
     }
     this.#maybeSealMainOwnedPlan();
     this.#maybeAdvanceMainOwnedChain();
+    this.#backfillPhysicalFromKickoff();
     const dispatches = this.#suite.taskDispatches.list(this.#missionId);
+    // Mark worker observed BEFORE the dirty fence so handoff_ready cannot be
+    // killed by incidental `.nexus/` metadata that appears after dispatch.
+    if (dispatches.length > 0) this.#workerObserved = true;
+    this.#backfillPhysicalWorkers();
     const integrationMayHaveStarted = dispatches.some((dispatch) =>
       dispatch.state === 'merging' || dispatch.state === 'completed',
     );
@@ -679,7 +738,6 @@ class RealMissionObserver {
         return;
       }
     }
-    if (dispatches.length > 0) this.#workerObserved = true;
     if (mission.status === 'blocked') {
       this.#onFinish('mission-blocked');
       return;
