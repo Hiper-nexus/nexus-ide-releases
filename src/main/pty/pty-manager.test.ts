@@ -908,6 +908,73 @@ describe("cli-agent spawn argv hardening", () => {
     expect(h.specFor(spawned.sessionId).args).toContain("read-only");
   });
 
+  it("keeps a contract-bound Codex orchestrator read-only without provider prompts", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const base = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const codex: CliPtyAdapter = {
+      ...base,
+      id: "codex",
+      quirks: {
+        ...base.quirks,
+        nexusMcp: "codex",
+      },
+      control: {
+        permission: {
+          arg: "--ask-for-approval",
+          safe: [
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "on-request",
+          ],
+          yolo: ["--dangerously-bypass-approvals-and-sandbox"],
+          modes: { auto: "never" },
+          default: "",
+        },
+      },
+    };
+    const baseAuthority = trustedSpawn();
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      source: "pending",
+      context: {
+        missionId: "mission-orchestrator",
+        contextRevision: "contract-revision",
+        role: "orchestrator",
+        readOnly: false,
+        nativeReadOnly: true,
+        scope: baseAuthority.scope,
+        executionScope: baseAuthority.scope,
+      },
+    };
+
+    const spawned = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24 },
+      codex,
+      {},
+      authority,
+    );
+
+    expect(h.specFor(spawned.sessionId).args).toEqual(
+      expect.arrayContaining([
+        "--sandbox",
+        "read-only",
+        "--ask-for-approval",
+        "never",
+      ]),
+    );
+    expect(h.specFor(spawned.sessionId).args).not.toContain("on-request");
+    expect(h.specFor(spawned.sessionId).args).not.toContain(
+      "--dangerously-bypass-approvals-and-sandbox",
+    );
+  });
+
   it("reports every scoped agent session even when the provider chooses its id", () => {
     const h = fakeHost();
     setPtyHost(h.host);

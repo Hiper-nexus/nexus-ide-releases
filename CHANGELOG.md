@@ -32,6 +32,9 @@ Data: 2026-07-23
 - **Modelo padrão sem falso bloqueio**: o bootstrap valida o modelo solicitado
   e selado, não o alias normalizado pelo provider, evitando bloquear a missão
   quando o runtime aprovado usa o modelo padrão.
+- **MCP autônomo sob confinamento nativo**: orquestradores Codex vinculados ao
+  contrato continuam com filesystem nativo read-only, mas não abrem uma
+  segunda confirmação do provider para chamar as tools Nexus já auditadas.
 
 ### Segurança e release
 

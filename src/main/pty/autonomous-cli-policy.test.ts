@@ -166,6 +166,47 @@ describe('secureAutonomousCliArgs', () => {
     );
   });
 
+  it('keeps Codex read-only while allowing unattended audited MCP orchestration', () => {
+    const codex = adapter({
+      id: 'codex',
+      quirks: {
+        altScreen: false,
+        requiresNoAutoUpdate: false,
+        mcpAutoload: false,
+        nexusMcp: 'codex',
+      },
+      control: {
+        permission: {
+          arg: '--ask-for-approval',
+          safe: [
+            '--sandbox',
+            'workspace-write',
+            '--ask-for-approval',
+            'on-request',
+          ],
+          yolo: ['--dangerously-bypass-approvals-and-sandbox'],
+          modes: { auto: 'never' },
+          default: '',
+        },
+      },
+    });
+
+    const args = secureAutonomousCliArgs(codex, [], true, {
+      unattendedNexusMcp: true,
+    });
+
+    expect(args).toEqual([
+      '--sandbox',
+      'read-only',
+      '--ask-for-approval',
+      'never',
+    ]);
+    expect(args).not.toContain('on-request');
+    expect(args).not.toContain(
+      '--dangerously-bypass-approvals-and-sandbox',
+    );
+  });
+
   it('rejects reviewer providers without enforceable read-only confinement', () => {
     expect(() => secureAutonomousCliArgs(adapter({
       id: 'agy',

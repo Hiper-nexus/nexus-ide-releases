@@ -19,6 +19,15 @@ export interface NativeEffectAuthority {
   readonly nativeReadOnly?: boolean;
 }
 
+export interface AutonomousCliPolicyOptions {
+  /**
+   * Permit an already mission-bound orchestrator to use audited Nexus MCP
+   * without a second provider prompt while native filesystem access remains
+   * read-only.
+   */
+  readonly unattendedNexusMcp?: boolean;
+}
+
 /**
  * Autoridade nativa de escrita:
  * - worker vinculado a contrato congelado (contextRevision) — como sempre;
@@ -79,6 +88,19 @@ function appendOnce(args: string[], sequence: readonly string[]): void {
     sequence.every((value, offset) => args[index + offset] === value),
   );
   if (!alreadyPresent) args.push(...sequence);
+}
+
+function removeFlagValuePairs(args: string[], flag: string): string[] {
+  const result: string[] = [];
+  for (let index = 0; index < args.length; ) {
+    if (args[index] === flag && args[index + 1] !== undefined) {
+      index += 2;
+      continue;
+    }
+    result.push(args[index]!);
+    index += 1;
+  }
+  return result;
 }
 
 function declaresEnforceableReadOnly(
@@ -143,6 +165,7 @@ export function secureAutonomousCliArgs(
   adapter: CliPtyAdapter,
   currentArgs: readonly string[],
   readOnly = false,
+  options: AutonomousCliPolicyOptions = {},
 ): string[] {
   const permission = adapter.control?.permission;
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
@@ -186,6 +209,21 @@ export function secureAutonomousCliArgs(
       ]);
       readOnlyArgs = removeSequence(readOnlyArgs, ['--sandbox', 'read-only']);
       appendOnce(readOnlyArgs, ['--sandbox', 'read-only']);
+
+      if (options.unattendedNexusMcp) {
+        const approvalFlag = permission?.arg;
+        const automaticApprovalMode = permission?.modes.auto;
+        if (
+          approvalFlag !== '--ask-for-approval' ||
+          automaticApprovalMode !== 'never'
+        ) {
+          throw new Error(
+            'Codex adapter does not declare unattended audited MCP approval',
+          );
+        }
+        readOnlyArgs = removeFlagValuePairs(readOnlyArgs, approvalFlag);
+        appendOnce(readOnlyArgs, [approvalFlag, automaticApprovalMode]);
+      }
     }
 
     if (claudeToolConfinement) {

@@ -892,10 +892,19 @@ export function spawnAgentSession(
     readOnly: authority.context?.readOnly,
     nativeReadOnly: authority.context?.nativeReadOnly,
   });
+  const unattendedNexusMcp = Boolean(
+    adapter.id === "codex" &&
+      authority.context?.role === "orchestrator" &&
+      authority.context.missionId &&
+      authority.context.contextRevision &&
+      authority.context.readOnly !== true &&
+      authority.context.nativeReadOnly === true,
+  );
   args = secureAutonomousCliArgs(
     adapter,
     args,
     nativeReadOnly,
+    { unattendedNexusMcp },
   );
 
   const idleMs =

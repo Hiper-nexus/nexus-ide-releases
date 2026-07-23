@@ -44,7 +44,7 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Aprovação compacta e bootstrap correto',
       detail:
-        'A confirmação nativa mantém ações visíveis em telas pequenas e o modelo padrão aprovado deixa de ser confundido com o alias normalizado pelo provider.',
+        'A confirmação nativa mantém ações visíveis em telas pequenas; o bootstrap respeita o modelo padrão aprovado e o orquestrador Codex usa MCP auditado sem uma segunda confirmação invisível.',
     },
     {
       title: 'Release fail-closed',
