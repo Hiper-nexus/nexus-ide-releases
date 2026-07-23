@@ -48,6 +48,7 @@ import {
   persistRealMissionE2ESquadFixture,
 } from './real-mission-e2e-fixture';
 import { sealRealMissionE2EPlanIfNeeded } from './real-mission-e2e-plan';
+import { advanceRealMissionE2EMainOwnedChain } from './real-mission-e2e-main-owned';
 import { stageRealMissionCodexTrust } from './real-mission-codex-trust';
 
 const DONE_SETTLE_MS = 20_000;
@@ -238,6 +239,7 @@ class RealMissionObserver {
   readonly #physicalPty = new Map<string, PhysicalPtyCapture>();
   #kickoffProven = false;
   #planSealAttempted = false;
+  #mainOwnedLastReason: string | null = null;
   #changedBeforeWorker = false;
   #workerObserved = false;
   #doneSeenAt: number | null = null;
@@ -575,6 +577,35 @@ class RealMissionObserver {
     }
   }
 
+  /**
+   * Product-owned executor + delivery path. CLIs do not orchestrate inside
+   * Nexus; after kickoff + plan the main process finishes durable receipts.
+   */
+  #maybeAdvanceMainOwnedChain(): void {
+    if (this.#stopped || !this.#kickoffProven) return;
+    try {
+      const result = advanceRealMissionE2EMainOwnedChain(
+        this.#suite,
+        this.#missionId,
+        this.#suite.scope,
+      );
+      if (
+        result.advanced &&
+        result.reason !== this.#mainOwnedLastReason
+      ) {
+        this.#mainOwnedLastReason = result.reason;
+        console.log(
+          `[real-mission] PHASE phase=main-owned-advance reason=${result.reason}`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        '[real-mission] main-owned chain failed:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
   #recordPhysicalSpawn(
     sessionId: string,
     agent: NonNullable<ReturnType<typeof getAgentSessionInfo>>,
@@ -632,6 +663,7 @@ class RealMissionObserver {
       return;
     }
     this.#maybeSealMainOwnedPlan();
+    this.#maybeAdvanceMainOwnedChain();
     const dispatches = this.#suite.taskDispatches.list(this.#missionId);
     const integrationMayHaveStarted = dispatches.some((dispatch) =>
       dispatch.state === 'merging' || dispatch.state === 'completed',

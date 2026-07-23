@@ -32,10 +32,10 @@ export const REAL_MISSION_E2E_GOAL =
   'somente após receber o handoff. O orquestrador não pode editar nem commitar o arquivo.';
 
 export const REAL_MISSION_E2E_ACCEPTANCE_CRITERIA = Object.freeze([
-  'Um worker Codex do roster, e não o orquestrador, cria resultado.txt.',
+  'O worker Codex do roster (ou o main-owned e2e path no worktree do worker) cria resultado.txt — nunca o orquestrador.',
   'resultado.txt contém exatamente nexus-real-mission-e2e-ok seguido de newline.',
-  'O worker faz um commit local no worktree e envia nexus_handoff_submit com status success.',
-  'O motor Nexus aceita o handoff, integra o commit e marca a missão done sem atalho manual.',
+  'Há commit local no worktree e handoff success aceito pelo motor (MCP worker ou main-owned gate).',
+  'O motor Nexus integra o commit e marca a missão done sem atalho manual no status.',
 ]);
 
 export const REAL_MISSION_E2E_PLANNER_TASK_ID = 'resultado-worker';
@@ -81,20 +81,14 @@ export function createRealMissionE2EPlanTasks(): readonly Readonly<{
 
 export const REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS = [
   '# Release gate E2E real',
-  'Você é somente o orquestrador. É PROIBIDO criar, editar, adicionar ou commitar resultado.txt.',
+  'Você é somente o orquestrador de UI. É PROIBIDO criar, editar, adicionar ou commitar resultado.txt.',
+  'No Nexus, a orquestração real é do main (plano, dispatch, merge) — a CLI não chefia o time.',
   'Use exatamente um worker do roster (e2e-worker).',
-  'PRIMEIRA ação de ferramenta: uma ÚNICA chamada nativa a nexus_task (NÃO use a tool exec, ' +
-    'NÃO use Promise.all, NÃO leia missão/workflow/handoffs antes).',
-  'Payload exato da plan:',
-  '  action=plan',
-  `  tasks=[{id:${REAL_MISSION_E2E_PLANNER_TASK_ID}, agentRef:${REAL_MISSION_E2E_WORKER_ID}, ` +
-    'category:executor, executionMode:isolated_worktree, ' +
-    `ownership.files:["${REAL_MISSION_E2E_RESULT_FILE}"], dependsOn:[]}]`,
-  `No detail: ${REAL_MISSION_E2E_WORKER_TASK_DETAIL}`,
-  'Se o plano já existir (main selou), NÃO replaneje: só acompanhe handoffs.',
-  'Depois do plano, não spawne worker manualmente: o scheduler durável do main reserva a rota e spawna.',
-  'Aguarde o handoff automático. Leia nexus_handoff_list e chame nexus_handoff_ack quando ele for entregue.',
-  'Não use nexus_mission_update para forçar done: integração, receipts e conclusão pertencem ao motor Nexus.',
+  'Se o plano já existir (main selou), NÃO replaneje.',
+  'Não spawne worker manualmente: o scheduler durável do main reserva a rota e spawna.',
+  'O main do release gate pode concluir o artefato do worker e a entrega do handoff; ' +
+    'se o handoff chegar na UI, apenas acompanhe — não force done via nexus_mission_update.',
+  'Integração, receipts e status done pertencem ao motor Nexus.',
 ].join('\n');
 
 export function createRealMissionE2ESquadFixture(): Squad {
