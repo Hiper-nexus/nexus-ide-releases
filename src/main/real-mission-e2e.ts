@@ -721,12 +721,26 @@ class RealMissionObserver {
       commitCount = Number(
         runGit(this.#scratch.workspacePath, ['rev-list', '--count', 'HEAD']),
       );
-      clean =
-        runGit(this.#scratch.workspacePath, [
-          'status',
-          '--porcelain',
-          '--untracked-files=all',
-        ]) === '';
+      // Product runtime may drop `.nexus/` metadata under the scratch tree;
+      // that is not operator work and must not trip the release-gate "dirty
+      // before worker" fence (main-owned path still proves resultado.txt).
+      const porcelain = runGit(this.#scratch.workspacePath, [
+        'status',
+        '--porcelain',
+        '--untracked-files=all',
+      ]);
+      clean = porcelain
+        .split(/\r?\n/u)
+        .filter((line) => line.length > 0)
+        .every((line) => {
+          const pathPart = line.slice(3).trim();
+          return (
+            pathPart === '.nexus' ||
+            pathPart.startsWith('.nexus/') ||
+            pathPart.endsWith('/.nexus') ||
+            pathPart.includes('/.nexus/')
+          );
+        });
       const parentHeadSha = runGit(this.#scratch.workspacePath, [
         'rev-parse',
         `${finalHeadSha}^`,

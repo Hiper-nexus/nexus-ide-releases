@@ -101,6 +101,20 @@ export function Onboarding() {
     if (installed.length > 0) markVictory('cliDetected');
   }, [installed.length, markVictory]);
 
+  /**
+   * Activation-first (Overclock lesson): once a real mission + handoff already
+   * happened, the welcome modal must not keep covering the mission field.
+   * Victories alone used to leave the user stuck on "Começar a operar" while
+   * toasts said the fleet was already in the field.
+   */
+  const missionAlreadyLive =
+    state.victories.firstMission !== undefined &&
+    state.victories.firstHandoff !== undefined;
+  useEffect(() => {
+    if (!visible || !missionAlreadyLive) return;
+    complete();
+  }, [visible, missionAlreadyLive, complete]);
+
   // Sem CLI detectada: descobre se alguma tem instalador automático — o CTA
   // primário passa a ser "Instalar …" (ação) em vez de um disabled parado.
   useEffect(() => {
@@ -259,9 +273,15 @@ export function Onboarding() {
             <button
               className="onb__cta"
               onClick={complete}
-              title="Ir para o deck"
+              title={
+                missionAlreadyLive
+                  ? 'Missão já em andamento — abrir o deck'
+                  : 'Ir para o deck'
+              }
             >
-              Começar a operar ▸
+              {missionAlreadyLive
+                ? 'Ir para a missão ▸'
+                : 'Começar a operar ▸'}
             </button>
           ) : autoInstallable ? (
             <button

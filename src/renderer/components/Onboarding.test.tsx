@@ -146,6 +146,67 @@ describe('Onboarding — CTA nunca disabled (critique P2)', () => {
     act(() => root.unmount());
   });
 
+  it('fecha sozinho quando missão e handoff já aconteceram (não cobre o campo)', async () => {
+    const complete = vi.fn(async () => ({
+      completed: true,
+      skipped: false,
+      victories: {
+        firstMission: 1,
+        firstHandoff: 2,
+        cliDetected: 3,
+      },
+    }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        adapters: {
+          list: vi.fn(async () => [
+            { ...MISSING_ADAPTER, installed: true, id: 'codex', label: 'Codex' },
+          ]),
+          onChanged: vi.fn(() => () => {}),
+        },
+        providers: {
+          list: vi.fn(async () => []),
+          installCli: vi.fn(),
+        },
+        onboarding: {
+          set: complete,
+        },
+      },
+    });
+    useOnboardingStore.setState({
+      loaded: true,
+      state: {
+        completed: false,
+        skipped: false,
+        victories: {
+          cliDetected: 1,
+          firstMission: 2,
+          firstHandoff: 3,
+        },
+      },
+      complete: () => {
+        void complete({ completed: true });
+        useOnboardingStore.setState({
+          state: {
+            completed: true,
+            skipped: false,
+            victories: {
+              cliDetected: 1,
+              firstMission: 2,
+              firstHandoff: 3,
+            },
+          },
+        });
+      },
+    });
+    const { host, root } = mountOnboarding();
+    await act(async () => {});
+    // Modal must not keep covering the mission field once fleet is live.
+    expect(host.querySelector('.onb')).toBeNull();
+    act(() => root.unmount());
+  });
+
   it('mantém Copiar legível, acessível e confirma a cópia do comando', async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, 'clipboard', {
