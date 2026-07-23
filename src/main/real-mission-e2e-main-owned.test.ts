@@ -4,7 +4,6 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  REAL_MISSION_E2E_PLANNER_TASK_ID,
   REAL_MISSION_E2E_RESULT_CONTENT,
   REAL_MISSION_E2E_RESULT_FILE,
   REAL_MISSION_E2E_SQUAD_ID,
@@ -46,7 +45,7 @@ function makeWorktree(worktreePath: string) {
       status: 'ready',
       worktreePath,
       missionId: 'mission-e2e',
-      taskId: REAL_MISSION_E2E_PLANNER_TASK_ID,
+      taskId: 'task-hashed-worker',
     })),
   };
 }
@@ -160,7 +159,8 @@ describe('advanceRealMissionE2EMainOwnedChain', () => {
         {
           state: 'running',
           agentRef: REAL_MISSION_E2E_WORKER_ID,
-          taskId: REAL_MISSION_E2E_PLANNER_TASK_ID,
+          taskId: 'task-hashed-worker',
+          executionMode: 'isolated_worktree',
           sessionId: 'worker-session',
           workerIncarnationId: 'inc-1',
           handoffId: null,
@@ -204,7 +204,8 @@ describe('advanceRealMissionE2EMainOwnedChain', () => {
           {
             state: 'handoff_ready',
             agentRef: REAL_MISSION_E2E_WORKER_ID,
-            taskId: REAL_MISSION_E2E_PLANNER_TASK_ID,
+            taskId: 'task-hashed-worker',
+            executionMode: 'isolated_worktree',
             sessionId: 'worker-session',
             workerIncarnationId: 'inc-1',
             handoffId: 'handoff-existing',

@@ -4,7 +4,6 @@ import path from 'node:path';
 
 import {
   isCurrentProcessRealMissionE2E,
-  REAL_MISSION_E2E_PLANNER_TASK_ID,
   REAL_MISSION_E2E_RESULT_CONTENT,
   REAL_MISSION_E2E_RESULT_FILE,
   REAL_MISSION_E2E_SQUAD_ID,
@@ -83,13 +82,15 @@ function completeRunningWorkerIfNeeded(
   scope: ProjectExecutionScope,
   missionId: string,
 ): MainOwnedAdvanceResult {
+  // Durable task ids are hashed at plan seal time; the planner id
+  // (`resultado-worker`) is NOT the task_dispatch_queue.task_id.
   const dispatch = suite.taskDispatches
     .list(missionId)
     .find(
       (row) =>
         row.state === 'running' &&
         row.agentRef === REAL_MISSION_E2E_WORKER_ID &&
-        row.taskId === REAL_MISSION_E2E_PLANNER_TASK_ID &&
+        row.executionMode === 'isolated_worktree' &&
         typeof row.sessionId === 'string' &&
         typeof row.workerIncarnationId === 'string',
     );
