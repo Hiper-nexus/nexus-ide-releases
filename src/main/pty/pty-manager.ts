@@ -896,7 +896,6 @@ export function spawnAgentSession(
     adapter.id === "codex" &&
       authority.context?.role === "orchestrator" &&
       authority.context.missionId &&
-      authority.context.contextRevision &&
       authority.context.readOnly !== true &&
       authority.context.nativeReadOnly === true,
   );

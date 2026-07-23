@@ -908,7 +908,7 @@ describe("cli-agent spawn argv hardening", () => {
     expect(h.specFor(spawned.sessionId).args).toContain("read-only");
   });
 
-  it("keeps a contract-bound Codex orchestrator read-only without provider prompts", () => {
+  it("keeps an approved pre-freeze Codex orchestrator read-only without provider prompts", () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const base = makeAdapter({
@@ -944,7 +944,6 @@ describe("cli-agent spawn argv hardening", () => {
       source: "pending",
       context: {
         missionId: "mission-orchestrator",
-        contextRevision: "contract-revision",
         role: "orchestrator",
         readOnly: false,
         nativeReadOnly: true,

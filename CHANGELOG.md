@@ -32,9 +32,10 @@ Data: 2026-07-23
 - **Modelo padrão sem falso bloqueio**: o bootstrap valida o modelo solicitado
   e selado, não o alias normalizado pelo provider, evitando bloquear a missão
   quando o runtime aprovado usa o modelo padrão.
-- **MCP autônomo sob confinamento nativo**: orquestradores Codex vinculados ao
-  contrato continuam com filesystem nativo read-only, mas não abrem uma
-  segunda confirmação do provider para chamar as tools Nexus já auditadas.
+- **MCP autônomo sob confinamento nativo**: orquestradores Codex de uma missão
+  aprovada continuam com filesystem nativo read-only, inclusive antes do
+  freeze PREVC, mas não abrem uma segunda confirmação do provider para chamar
+  as tools Nexus já auditadas.
 - **Gate Codex sem falso aceite**: a missão empacotada prepara a confiança
   somente para seu repositório descartável e canônico, em HOME isolado e
   privado, evitando que a tela inicial de confiança consuma o primeiro kickoff.
