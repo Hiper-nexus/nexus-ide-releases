@@ -140,27 +140,15 @@ export function realMissionEnvironment(baseEnv, userData, codexBinary) {
   };
 }
 
-function ensureTrustedBinDirectory(userData) {
+function stageTrustedCodexLauncher(codexBinary, userData) {
   const directory = path.join(path.resolve(userData), 'trusted-bin');
   fs.mkdirSync(directory, {
     recursive: true,
     mode: PRIVATE_DIRECTORY_MODE,
   });
   fs.chmodSync(directory, PRIVATE_DIRECTORY_MODE);
-  return directory;
-}
-
-function stageTrustedCodexLauncher(codexBinary, userData) {
-  const directory = ensureTrustedBinDirectory(userData);
   const launcher = path.join(directory, 'codex');
   fs.symlinkSync(path.resolve(codexBinary), launcher, 'file');
-  return launcher;
-}
-
-function stageTrustedClaudeLauncher(claudeBinary, userData) {
-  const directory = ensureTrustedBinDirectory(userData);
-  const launcher = path.join(directory, 'claude');
-  fs.symlinkSync(path.resolve(claudeBinary), launcher, 'file');
   return launcher;
 }
 
@@ -354,96 +342,6 @@ export function assertCodexReady({
   };
 }
 
-/**
- * Claude orchestrator readiness. OAuth lives in the login keychain (not
- * isolated HOME), so version/auth probes use the operator environment.
- */
-export function resolveTrustedClaudeBinary({
-  environment = process.env,
-  resolveCommand = defaultResolveCommand,
-  home = os.homedir(),
-} = {}) {
-  let unresolved = resolveCommand('claude', environment);
-  if (typeof unresolved !== 'string' || !path.isAbsolute(unresolved)) {
-    // Operator installs often live outside a slim process PATH (e.g. ~/.local/bin).
-    const candidates = [
-      path.join(home, '.local', 'bin', 'claude'),
-      path.join(home, '.claude', 'bin', 'claude'),
-      '/opt/homebrew/bin/claude',
-      '/usr/local/bin/claude',
-    ];
-    unresolved =
-      candidates.find((candidate) => {
-        try {
-          return fs.existsSync(candidate);
-        } catch {
-          return false;
-        }
-      }) ?? '';
-  }
-  if (typeof unresolved !== 'string' || !path.isAbsolute(unresolved)) {
-    throw new Error('claude CLI was not found at an absolute path');
-  }
-  const binary = fs.realpathSync(unresolved);
-  const stat = fs.statSync(binary);
-  if (
-    !stat.isFile() ||
-    (stat.mode & 0o111) === 0 ||
-    (stat.mode & 0o022) !== 0
-  ) {
-    throw new Error('refusing an untrusted or writable claude CLI binary');
-  }
-  if (
-    typeof process.getuid === 'function' &&
-    stat.uid !== process.getuid() &&
-    stat.uid !== 0
-  ) {
-    throw new Error('refusing a claude CLI binary owned by another user');
-  }
-  return binary;
-}
-
-export function assertClaudeReady({
-  run = spawnSync,
-  environment = process.env,
-  claudeBinary,
-} = {}) {
-  if (typeof claudeBinary !== 'string' || !path.isAbsolute(claudeBinary)) {
-    throw new Error('trusted absolute claude CLI path is required');
-  }
-  const version = run(claudeBinary, ['--version'], {
-    encoding: 'utf8',
-    env: environment,
-    shell: false,
-    timeout: 15_000,
-  });
-  const versionText = `${version.stdout ?? ''}\n${version.stderr ?? ''}`.trim();
-  if (version.status !== 0 || !/\d+\.\d+\.\d+/u.test(versionText)) {
-    throw new Error('claude CLI is not installed or executable');
-  }
-  const auth = run(claudeBinary, ['auth', 'status'], {
-    encoding: 'utf8',
-    env: environment,
-    shell: false,
-    timeout: 30_000,
-  });
-  let loggedIn = false;
-  try {
-    const parsed = JSON.parse((auth.stdout ?? '').trim() || '{}');
-    loggedIn = parsed?.loggedIn === true;
-  } catch {
-    loggedIn = false;
-  }
-  if (auth.status !== 0 || !loggedIn) {
-    throw new Error('claude CLI is not authenticated (orchestrator requires Claude login)');
-  }
-  return {
-    installed: true,
-    authenticated: true,
-    version: versionText.slice(0, 64),
-  };
-}
-
 function assertNoSecretFields(value, pathParts = []) {
   if (Array.isArray(value)) {
     value.forEach((item, index) =>
@@ -515,7 +413,7 @@ export function assertRealMissionPassEvidence(raw) {
     panes.filter(
       (pane) =>
         pane?.role === 'orchestrator' &&
-        pane?.adapterId === 'claude' &&
+        pane?.adapterId === 'codex' &&
         pane?.agentRef === 'e2e-orchestrator',
     ).length === 1 &&
     panes.some(
@@ -856,27 +754,17 @@ export async function runPackagedRealMission(
 
   try {
     const sourceCodexHome = path.join(realHome, '.codex');
-    // Resolve CLIs against the operator environment (real PATH / login shell),
-    // not the disposable HOME PATH — same pattern as codex trust staging.
     const codexBinary = resolveTrustedCodexBinary({ environment });
-    const claudeBinary = resolveTrustedClaudeBinary({ environment });
     stageTrustedCodexLauncher(codexBinary, userData);
-    stageTrustedClaudeLauncher(claudeBinary, userData);
     const isolatedEnvironment = realMissionEnvironment(
       environment,
       userData,
       codexBinary,
     );
     stageCodexAuthentication(sourceCodexHome, isolatedEnvironment.HOME);
-    // Worker (Codex) auth is file-staged into disposable HOME.
     assertCodexReady({
       environment: isolatedEnvironment,
       codexBinary,
-    });
-    // Orchestrator (Claude) OAuth is keychain-backed — probe with operator env.
-    assertClaudeReady({
-      environment,
-      claudeBinary,
     });
     const result = await waitForChild(target, userData, {
       timeoutMs,

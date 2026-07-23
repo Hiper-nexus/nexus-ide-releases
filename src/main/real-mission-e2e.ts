@@ -10,14 +10,12 @@ import {
   REAL_MISSION_E2E_CHANNELS,
   REAL_MISSION_E2E_CTA,
   REAL_MISSION_E2E_EVIDENCE_FILE,
-  REAL_MISSION_E2E_ORCHESTRATOR_CLI,
   REAL_MISSION_E2E_ORCHESTRATOR_ID,
   REAL_MISSION_E2E_ORCHESTRATOR_NAME,
   REAL_MISSION_E2E_RESULT_CONTENT,
   REAL_MISSION_E2E_RESULT_FILE,
   REAL_MISSION_E2E_SQUAD_ID,
   REAL_MISSION_E2E_TIMEOUT_MS,
-  REAL_MISSION_E2E_WORKER_CLI,
   REAL_MISSION_E2E_WORKER_ID,
   REAL_MISSION_E2E_WORKER_NAME,
   isCurrentProcessRealMissionE2E,
@@ -193,11 +191,11 @@ function validateHarnessSquad(): boolean {
 }
 
 function validateHarnessCodexAdapter(): boolean {
-  const adapter = getAdapter(REAL_MISSION_E2E_WORKER_CLI);
+  const adapter = getAdapter('codex');
   if (!adapter || adapter.kind !== 'cli-pty') return false;
   const permission = adapter.control.permission;
   return (
-    adapter.id === REAL_MISSION_E2E_WORKER_CLI &&
+    adapter.id === 'codex' &&
     adapter.bin === 'codex' &&
     adapter.auth.method === 'api_key' &&
     adapter.auth.envVarFallback === 'OPENAI_API_KEY' &&
@@ -222,31 +220,6 @@ function validateHarnessCodexAdapter(): boolean {
         'on-request',
       ])
   );
-}
-
-/** Claude orchestrator: MCP autoload + YOLO flags for unattended Nexus tools. */
-function validateHarnessClaudeAdapter(): boolean {
-  const adapter = getAdapter(REAL_MISSION_E2E_ORCHESTRATOR_CLI);
-  if (!adapter || adapter.kind !== 'cli-pty') return false;
-  const permission = adapter.control.permission;
-  return (
-    adapter.id === REAL_MISSION_E2E_ORCHESTRATOR_CLI &&
-    adapter.bin === 'claude' &&
-    adapter.spawn.ptyRequired &&
-    adapter.promptInjection.method === 'arg' &&
-    adapter.quirks.mcpAutoload === true &&
-    adapter.quirks.nexusMcp === 'autoload' &&
-    permission?.arg === '--permission-mode' &&
-    JSON.stringify(permission.yolo) ===
-      JSON.stringify([
-        '--allow-dangerously-skip-permissions',
-        '--dangerously-skip-permissions',
-      ])
-  );
-}
-
-function validateHarnessAdapters(): boolean {
-  return validateHarnessClaudeAdapter() && validateHarnessCodexAdapter();
 }
 
 class RealMissionObserver {
@@ -458,7 +431,7 @@ class RealMissionObserver {
           reservation.decision.adapterId === dispatch.adapterId &&
           reservation.decision.model === dispatch.model &&
           reservation.decision.effort === dispatch.effort &&
-          dispatch.adapterId === REAL_MISSION_E2E_WORKER_CLI &&
+          dispatch.adapterId === 'codex' &&
           dispatch.agentRef === REAL_MISSION_E2E_WORKER_ID &&
           dispatch.agentCategory === 'executor' &&
           dispatch.executionMode === 'isolated_worktree',
@@ -609,6 +582,7 @@ class RealMissionObserver {
   ): void {
     if (
       agent.sessionId !== sessionId ||
+      agent.adapterId !== 'codex' ||
       agent.squadId !== REAL_MISSION_E2E_SQUAD_ID ||
       (agent.role !== 'orchestrator' && agent.role !== 'worker')
     ) {
@@ -616,15 +590,13 @@ class RealMissionObserver {
     }
     if (
       agent.role === 'orchestrator' &&
-      (agent.adapterId !== REAL_MISSION_E2E_ORCHESTRATOR_CLI ||
-        agent.agentName !== REAL_MISSION_E2E_ORCHESTRATOR_NAME)
+      agent.agentName !== REAL_MISSION_E2E_ORCHESTRATOR_NAME
     ) {
       return;
     }
     if (
       agent.role === 'worker' &&
-      (agent.adapterId !== REAL_MISSION_E2E_WORKER_CLI ||
-        agent.agentName !== REAL_MISSION_E2E_WORKER_NAME ||
+      (agent.agentName !== REAL_MISSION_E2E_WORKER_NAME ||
         agent.source !== 'pending' ||
         !agent.workerIncarnationId)
     ) {
@@ -1037,7 +1009,7 @@ export function initRealMissionE2E(): void {
     if (
       !isRealMissionE2EPreApprovalMission(mission) ||
       !validateHarnessSquad() ||
-      !validateHarnessAdapters()
+      !validateHarnessCodexAdapter()
     ) {
       finish('observer-invalid');
       throw new Error('real mission contract is not the sealed release fixture');
