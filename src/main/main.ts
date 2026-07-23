@@ -18,6 +18,7 @@ import {
   isCurrentProcessSmokeTest,
   shouldUseUserDataOverride,
 } from "./smoke-core";
+import { isCurrentProcessRealMissionE2E } from "../shared/real-mission-e2e";
 import { shouldCreateWindowOnActivate } from "./app-lifecycle";
 import {
   startMacOSDockWatchdog,
@@ -28,13 +29,16 @@ import {
 // bootstrap (after ready), before the first BrowserWindow is created.
 registerRendererProtocolScheme(protocol);
 
-// Sandbox de userData para dev/smoke: redireciona SQLite, layout, sessões e o
-// single-instance lock para um diretório isolado. Em app empacotado só vale
-// para `--smoke-test`; launches normais nunca obedecem env override.
+// Sandbox de userData para dev/testes explícitos: redireciona SQLite, layout,
+// sessões e o single-instance lock. Launches normais empacotados nunca
+// obedecem o override.
 const userDataOverride = process.env.NEXUS_USER_DATA_DIR;
 if (
   userDataOverride &&
-  shouldUseUserDataOverride(app.isPackaged, process.argv, userDataOverride)
+  (
+    shouldUseUserDataOverride(app.isPackaged, process.argv, userDataOverride) ||
+    isCurrentProcessRealMissionE2E()
+  )
 ) {
   app.setPath("userData", userDataOverride);
 }
@@ -165,8 +169,6 @@ import {
 import {
   configureMissionScheduler,
   disposeMissionScheduler,
-  startMissionSchedulerLoop,
-  stopMissionSchedulerLoop,
 } from './orch/mission-scheduler-production';
 import {
   initUsageTelemetry,
@@ -273,8 +275,6 @@ import {
   configureMissionDriver,
   defaultDriveConfig,
   disposeMissionDriverIo,
-  startMissionDriverLoop,
-  stopMissionDriverLoop,
 } from "./orch/mission-driver-io";
 import { createHttpCronBackendFromEnvironment } from "./orch/http-cron-backend";
 import {
@@ -285,6 +285,7 @@ import { wireDeepLinks, consumeLaunchDeepLink } from "./deep-link";
 import { initAutoUpdater } from "./updater";
 import { stopRemoteBridge } from "./remote/remote-bridge";
 import { initSmokeTest } from "./smoke-test";
+import { initRealMissionE2E } from "./real-mission-e2e";
 import {
   disposeAgentAwakeService,
   getAgentAwakeService,
@@ -479,15 +480,19 @@ function bootstrap(): void {
   // Tokens das contas Claude secundárias renovados em background — spawn e
   // failover sempre encontram credencial viva no vault (mata o "401 OAuth
   // access token has expired" em respawn horas depois).
-  startClaudeSubscriptionFreshness();
+  if (!isAutomatedReleaseTest()) {
+    startClaudeSubscriptionFreshness();
+  }
   // Piloto automático de máquina nova: oferta única, diálogo nativo com os
   // comandos exatos, instalação em sequência. Atrasado para não competir com
   // o primeiro paint.
-  setTimeout(() => {
-    void maybeOfferFirstRunProvisioning(app.getPath("userData")).catch((err) =>
-      console.warn("[provisioning] oferta de primeiro boot falhou:", err),
-    );
-  }, 6_000);
+  if (!isAutomatedReleaseTest()) {
+    setTimeout(() => {
+      void maybeOfferFirstRunProvisioning(app.getPath("userData")).catch((err) =>
+        console.warn("[provisioning] oferta de primeiro boot falhou:", err),
+      );
+    }, 6_000);
+  }
   initQuotaService({
     listProviders: () => listProviderSettings(),
     listAccounts: () => listAccountInfos(),
@@ -526,7 +531,7 @@ function bootstrap(): void {
   // Packaged smoke must prove the app can boot without touching the user's
   // real Keychain. License sync is useful in normal launches, but it can block
   // inside SecItemCopyMatching — window already open above.
-  if (!isCurrentProcessSmokeTest()) {
+  if (!isAutomatedReleaseTest()) {
     syncLicenseOnBoot();
   }
   registerOnboardingIpc();
@@ -535,10 +540,10 @@ function bootstrap(): void {
   registerOmpRpcIpc();
   // Warm `omp --version` + path probe so the first panel/mission start is not
   // the cold PATH/semver handshake (fail closed later if missing).
-  if (!isCurrentProcessSmokeTest()) {
+  if (!isAutomatedReleaseTest()) {
     void resolveOmpBin().catch((err) => {
       console.warn(
-        "[omp-rpc] warm resolve falhou (omp ausente ou major incompatível):",
+        "[omp-rpc] warm resolve falhou (omp ausente ou versão RPC incompatível):",
         err instanceof Error ? err.message : err,
       );
     });
@@ -555,9 +560,6 @@ function bootstrap(): void {
   // Gamificação SÓ depois: o retro replay precisa dos stores orch hidratados
   // (senão a estreia gravaria replayDone com zero eventos).
   void initOrchestration()
-    .then(() => {
-      startMissionSchedulerLoop();
-    })
     .then(() => gamificationService.start())
     .catch((err) => {
       console.warn("[nexus] orchestration failed to start:", err);
@@ -565,16 +567,19 @@ function bootstrap(): void {
     });
   // Cron: squads/agentes agendados (tick 60s, skip-if-stale).
   startCronLoop();
-  // Mission driver active loop (tick 30s, budgeted apply). Spec 2026-07-13-mission-driver.
-  startMissionDriverLoop();
   // Deep link nexus:// vindo no lançamento a frio (após a janela existir) +
   // auto-updater (opt-in por ambiente; no-op sem servidor configurado).
   consumeLaunchDeepLink();
   initAutoUpdater({
-    networkEnabled: !isCurrentProcessSmokeTest(),
+    networkEnabled: !isAutomatedReleaseTest(),
   });
 }
 
+function isAutomatedReleaseTest(): boolean {
+  return isCurrentProcessSmokeTest() || isCurrentProcessRealMissionE2E();
+}
+
+initRealMissionE2E();
 initSmokeTest();
 
 // Single-instance + protocolo nexus:// precisam ser registrados ANTES do
@@ -586,7 +591,14 @@ if (!wireDeepLinks()) {
     // No service initialization belongs before this call. Some macOS APIs
     // (notably Keychain-backed providers) can block the Electron main thread;
     // the native window/Dock item must already exist before touching them.
-    createMainWindow();
+    const mainWindow = createMainWindow();
+    if (!mainWindow) {
+      // createMainWindow reports the native error. Do not continue bootstrap:
+      // it can create auxiliary renderer windows, which must never load after
+      // the main-session CSP precondition failed.
+      app.quit();
+      return;
+    }
     startMacOSDockWatchdog();
 
     // Agent awake: prevent sleep while provider hooks report working.
@@ -617,7 +629,7 @@ if (!wireDeepLinks()) {
     // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
     // Nexus), so we NEVER install on launch without consent — register only, then
     // prompt once and install/remove per the persisted decision (option A).
-    if (!isCurrentProcessSmokeTest()) {
+    if (!isAutomatedReleaseTest()) {
       try {
         const userDataPath = app.getPath("userData");
         configureAgentRuntimeUserDataPath(userDataPath);
@@ -690,7 +702,7 @@ if (!wireDeepLinks()) {
     // mic access for a real TCC entry — but NEVER block window open on the
     // dialog (agent/background launches hung forever waiting for a hidden
     // prompt; bootstrap() must run so the user sees the app).
-    if (process.platform === "darwin" && !isCurrentProcessSmokeTest()) {
+    if (process.platform === "darwin" && !isAutomatedReleaseTest()) {
       void systemPreferences.askForMediaAccess("microphone").catch(() => {});
     }
   });
@@ -767,26 +779,26 @@ function shutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     stopMacOSDockWatchdog();
+    // Quiesce every orchestration participant and await its real settlement
+    // before destroying PTY/OMP services or the project stores it can touch.
+    await stopCronLoop();
+    await closeAllDesignWritebacks();
+    await closeOrchestration();
     killAllSessions();
     disposeAllOmpRpcSessions();
     disposeAllOmpAuthFlows();
     shutdownPtyHost();
-    await closeAllDesignWritebacks();
     stopRemoteBridge();
     configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});
     disposeAgentAwakeService();
-    closeOrchestration();
     closeAdapterRegistry();
     closeVoiceIpc();
     shutdownUsageTelemetry();
     shutdownQuotaService();
     shutdownGamificationService();
-    stopCronLoop();
     disposeCronRuntime();
-    stopMissionDriverLoop();
     disposeMissionDriverIo();
-    stopMissionSchedulerLoop();
     disposeMissionScheduler();
     disposeSyncRuntime();
     disposeNexusDoctorRuntime();
@@ -807,7 +819,7 @@ app.on("before-quit", (event) => {
     closeNeedsConfirmation({
       sessionCount: summary.total,
       authorized: isAppQuitAuthorized(),
-      smokeTest: isCurrentProcessSmokeTest(),
+      smokeTest: isAutomatedReleaseTest(),
     })
   ) {
     event.preventDefault();

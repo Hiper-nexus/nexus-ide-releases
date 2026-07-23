@@ -17,12 +17,15 @@
     "start": "node scripts/dev-start.mjs",
     "package": "electron-forge package",
     "smoke:package": "node scripts/smoke-packaged-app.mjs",
+    "smoke:omp-rpc": "node --import tsx scripts/smoke-omp-rpc.mjs",
+    "e2e:real-mission": "node scripts/release-candidate-gate.mjs",
+    "release:security": "node scripts/release-security-gate.mjs",
+    "release:candidate": "node scripts/release-candidate-gate.mjs",
+    "release:publish": "node scripts/publish-release.mjs",
     "premake": "node scripts/bundle-skills.mjs && node scripts/check-build-node.mjs && npm run typecheck && npm run rebuild:electron",
     "postmake": "npm run rebuild:node",
     "make": "electron-forge make",
-    "premake:release": "npm run premake",
-    "make:release": "electron-forge make",
-    "postmake:release": "npm run postmake",
+    "make:release": "node scripts/make-release.mjs",
     "rebuild": "npm run rebuild:electron",
     "rebuild:electron": "electron-rebuild -f -s -w @lydell/node-pty -w better-sqlite3 -w onnxruntime-node",
     "rebuild:node": "node scripts/rebuild-node-natives.mjs && node scripts/check-node-natives.mjs",
@@ -38,6 +41,9 @@
     "node": ">=22.12.0 <23"
   },
   "packageManager": "npm@12.0.0",
+  "nexusRelease": {
+    "node": "22.23.1"
+  },
   "dependencies": {
     "@babel/parser": "^7.28.0",
     "@babel/types": "^7.28.0",
@@ -61,6 +67,7 @@
     "selfsigned": "^5.5.0",
     "smol-toml": "^1.7.0",
     "tesseract.js": "^7.0.0",
+    "typescript": "^6.0.3",
     "ws": "^8.21.0",
     "zod": "^4.4.3",
     "zustand": "^5.0.14"
@@ -90,7 +97,6 @@
     "drizzle-orm": "^0.45.2",
     "electron": "^43.0.0",
     "jsdom": "^29.1.1",
-    "typescript": "^6.0.3",
     "vite": "^8.1.3",
     "vitest": "^3.2.6"
   },

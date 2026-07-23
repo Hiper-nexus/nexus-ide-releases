@@ -1,4 +1,7 @@
-import type { McpToolDef } from './mcp-protocol';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolDef,
+} from './mcp-protocol';
 import {
   captureBrowserScreenshot,
   clickBrowserElement,
@@ -13,7 +16,7 @@ import {
 } from '../browser/browser-manager';
 import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { listPreviews, startPreview, stopPreview } from './preview-server';
-import { requestBrowserPane } from './pane-registry';
+import { requestBrowserPane, requestPaneClose } from './pane-registry';
 import { authorizePaneRef, num, requireStr, str, strArray } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor } from './gate';
@@ -29,12 +32,12 @@ const previewStartTool: McpToolDef = {
     properties: { dir: { type: 'string' } },
     required: ['dir'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const dir = requireStr(args, 'dir');
     const executionScope = executionScopeFor(ctx);
     const workspaceDir = resolveCwdForScope(executionScope, dir);
     try {
-      return await startPreview(workspaceDir, executionScope);
+      return await startPreview(workspaceDir, executionScope, invocation);
     } catch (err) {
       throw new Error(
         `preview falhou para ${workspaceDir}: ${err instanceof Error ? err.message : String(err)}`,
@@ -69,7 +72,7 @@ const browserOpenTool: McpToolDef = {
     properties: { url: { type: 'string' }, title: { type: 'string' } },
     required: ['url'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     if (ctx.role === 'worker') {
       throw new Error('not authorized: workers cannot open browser panes');
     }
@@ -87,11 +90,26 @@ const browserOpenTool: McpToolDef = {
     if (!result.ok || !result.paneId) {
       throw new Error(result.error ?? 'browser open failed');
     }
-    const state = await loadBrowser(result.paneId, url, {
-      scope: ctx.scope,
-      privateAccessConfirmed: true,
-    });
-    return { ok: true, paneId: result.paneId, state };
+    try {
+      assertMcpInvocationCurrent(invocation);
+      const state = await loadBrowser(result.paneId, url, {
+        scope: ctx.scope,
+        privateAccessConfirmed: true,
+        signal: invocation?.signal,
+        assertCurrentAuthority: invocation?.assertCurrentAuthority,
+      });
+      assertMcpInvocationCurrent(invocation);
+      return { ok: true, paneId: result.paneId, state };
+    } catch (error) {
+      const closed = await requestPaneClose(result.paneId);
+      if (!closed) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; ` +
+          `browser pane ${result.paneId} could not be closed after authority loss`,
+        );
+      }
+      throw error;
+    }
   },
 };
 
@@ -106,12 +124,14 @@ const browserNavigateTool: McpToolDef = {
     properties: { paneId: { type: 'string' }, url: { type: 'string' } },
     required: ['paneId', 'url'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
     return loadBrowser(paneId, requireStr(args, 'url'), {
       scope: ctx.scope,
       privateAccessConfirmed: true,
+      signal: invocation?.signal,
+      assertCurrentAuthority: invocation?.assertCurrentAuthority,
     });
   },
 };
@@ -124,10 +144,13 @@ const browserScreenshotTool: McpToolDef = {
     properties: { paneId: { type: 'string' } },
     required: ['paneId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'read');
-    return captureBrowserScreenshot(paneId, ctx.scope, ctx.missionId);
+    return captureBrowserScreenshot(paneId, ctx.scope, ctx.missionId, {
+      signal: invocation?.signal,
+      assertCurrentAuthority: invocation?.assertCurrentAuthority,
+    });
   },
 };
 

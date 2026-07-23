@@ -1,14 +1,18 @@
+import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
 import {
   classifyGoalRisk,
   compileIntentContract,
   defaultBudgetsForRisk,
+  hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   isPrepareProjectPlaceholderGoal,
   missionStatusForIntent,
   PREPARE_PROJECT_PLACEHOLDER_GOAL,
   synthesizeImmediateDispatchContract,
   transitionIntentState,
+  type MissionAttachmentSnapshot,
+  type MissionOrchestratorRuntimeSnapshot,
   type MissionIntentSource,
 } from "../../shared/mission-intent";
 import {
@@ -28,9 +32,11 @@ import {
 import {
   normalizeMilestones,
   type Mission,
+  type MissionOrchestratorBootstrapResult,
   type MissionPaneSpec,
   type MissionPatch,
   type PaneActivitySummary,
+  type Squad,
 } from "../../shared/orch-types";
 import {
   resolveMissionPaneActivity,
@@ -43,6 +49,7 @@ import {
   consumeMissionOrchestratorGrant,
   getOwnedAgentSessionInfo,
   hasMissionOrchestratorGrant,
+  orchTerminateSession,
   rollbackOwnedAgentSessionMission,
   type OwnedAgentSessionInfo,
 } from "../pty/pty-manager";
@@ -52,14 +59,36 @@ import {
   rollbackSessionAuthorityMission,
 } from "./gate";
 import { attachOrchMeta, findPaneOwnedBy } from "./pane-registry";
-import type { ProjectDomainStoreRegistry } from "./project-domain-store-registry";
+import type {
+  ProjectDomainStoreRegistry,
+  ProjectDomainStoreSuite,
+} from "./project-domain-store-registry";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { emitMissionIntentEvent } from "./mission-intent-events";
 import { getOrchSettings } from "../persistence/settings-store";
 import { tryGetProjectOrientationService } from "../context/orientation/orientation-service";
+import {
+  snapshotDroppedAttachmentPaths,
+  validateDroppedAttachmentPaths,
+} from "../persistence/dropped-files";
+import { getSquad } from "./squad-store";
+import {
+  snapshotSquadAuthority,
+  squadAuthorityReviewStrings,
+  type SquadAuthoritySnapshot,
+} from "./squad-authority-snapshot";
+import {
+  canonicalMissionOrchestratorRuntime,
+  missionOrchestratorRuntimeReviewStrings,
+  resolveProductionMissionOrchestratorRuntime,
+  sameMissionOrchestratorRuntime,
+  type ResolvedMissionOrchestratorRuntime,
+} from "./mission-orchestrator-runtime";
+import { resolveMissionPaneAuthoritySeal } from "./mission-pane-authority";
 
 export interface RendererMissionCreateInput {
   title: string;
+  goal?: string;
   squadId: string;
   orchestratorPane: {
     paneId: string;
@@ -100,6 +129,129 @@ export interface RendererMissionApproveIntentInput {
   missionId: string;
   /** Rechecked at the final pre-pane dispatch boundary. */
   evidenceAttached?: boolean;
+  /** Renderer candidates; main canonicalizes and validates before persistence. */
+  attachmentPaths?: string[];
+}
+
+export interface RendererMissionAuthorityCandidate {
+  readonly missionId: string;
+  readonly title: string;
+  readonly goal: string;
+  readonly lane: "standard" | "consult" | "plan" | "ops";
+  readonly risk: "normal" | "sensitive" | "destructive";
+  readonly executionMode: "manual" | "assisted" | "autopilot";
+  readonly contextPolicy: "none" | "minimal" | "on-demand" | "prepare-project";
+  readonly acceptanceCriteria: readonly string[];
+  readonly deniedTools: readonly string[];
+  readonly evidenceAttached: boolean;
+  readonly attachmentPaths: readonly string[];
+  readonly attachmentSnapshots: readonly MissionAttachmentSnapshot[];
+  readonly squad: SquadAuthoritySnapshot;
+  readonly orchestratorRuntime: MissionOrchestratorRuntimeSnapshot;
+  readonly intentVersion: number;
+  readonly budgets: {
+    readonly planningTokens: number;
+    readonly executionTokens: number;
+    readonly maxWorkers: number;
+    readonly maxSteps?: number;
+  };
+  /** Hash of the exact durable intent/status snapshot shown to the operator. */
+  readonly fence: string;
+}
+
+export interface RendererMissionLifecycleCandidate {
+  readonly missionId: string;
+  readonly title: string;
+  readonly fromStatus: Mission["status"];
+  readonly toStatus: "blocked" | "failed";
+  readonly description: string;
+  readonly fence: string;
+}
+
+interface MissionApprovalFenceInput {
+  readonly evidenceAttached: boolean;
+  readonly attachmentPaths: readonly string[];
+  readonly attachmentSnapshots: readonly MissionAttachmentSnapshot[];
+  readonly squadRevisionHash: string;
+  readonly orchestratorRuntime: MissionOrchestratorRuntimeSnapshot;
+}
+
+const MAX_NATIVE_MISSION_REVIEW_CHARS = 6_000;
+const INVISIBLE_AUTHORITY_TEXT =
+  /[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/;
+
+function assertNativeMissionReviewable(values: readonly string[]): void {
+  if (values.some((value) => INVISIBLE_AUTHORITY_TEXT.test(value))) {
+    throw new Error(
+      "approval_review_unsafe: objective contains invisible control characters",
+    );
+  }
+  const total = values.reduce((sum, value) => sum + value.length, 0);
+  if (total > MAX_NATIVE_MISSION_REVIEW_CHARS) {
+    throw new Error(
+      `approval_review_too_large: reduce objective/criteria metadata below ${MAX_NATIVE_MISSION_REVIEW_CHARS} characters before approval`,
+    );
+  }
+}
+
+function assertMissionAuthorityTitle(title: string): void {
+  if (/\r|\n/.test(title) || INVISIBLE_AUTHORITY_TEXT.test(title)) {
+    throw new Error(
+      "approval_review_unsafe: mission title must be one visible line",
+    );
+  }
+}
+
+function attachmentSnapshotReviewStrings(
+  snapshots: readonly MissionAttachmentSnapshot[],
+): string[] {
+  return snapshots.map(
+    (snapshot) => `${snapshot.path}\nSHA-256 ${snapshot.sha256}\n${snapshot.size} bytes`,
+  );
+}
+
+function assertAttachmentSnapshotPaths(
+  paths: readonly string[],
+  snapshots: readonly MissionAttachmentSnapshot[],
+): void {
+  if (
+    snapshots.length !== paths.length ||
+    snapshots.some((snapshot, index) => snapshot.path !== paths[index])
+  ) {
+    throw new Error('attachment snapshot does not match canonical attachment paths');
+  }
+}
+
+function missionAuthorityFence(
+  mission: Mission,
+  approval?: MissionApprovalFenceInput,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        id: mission.id,
+        title: mission.title,
+        description: mission.description,
+        milestones: mission.milestones,
+        status: mission.status,
+        intentState: mission.intentState ?? null,
+        intentVersion: mission.intentVersion ?? 0,
+        intentContract: mission.intentContract ?? null,
+        approval: approval ?? null,
+      }),
+    )
+    .digest("hex");
+}
+
+function rendererMissionUpdateFence(
+  mission: Mission,
+  patch: MissionPatch,
+): string {
+  return createHash("sha256")
+    .update(missionAuthorityFence(mission))
+    .update("\0")
+    .update(JSON.stringify(patch))
+    .digest("hex");
 }
 
 function sameScope(
@@ -167,6 +319,8 @@ function matchesPersistedRuntime(
     info.model === spec.model &&
     info.accountId === spec.accountId &&
     info.effort === spec.effort &&
+    info.workerIncarnationId === spec.workerIncarnationId &&
+    (info.readOnly === true) === (spec.readOnly === true) &&
     Boolean(spec.scope && sameScope(info.scope, spec.scope))
   );
 }
@@ -181,6 +335,21 @@ export class RendererMissionAuthority {
   readonly #resolvePaneActivity: (
     input: MissionPaneActivityInput,
   ) => PaneActivitySummary;
+  readonly #validateAttachmentPaths: (
+    paths: readonly string[] | undefined,
+  ) => string[] | undefined;
+  readonly #snapshotAttachmentPaths: (
+    paths: readonly string[] | undefined,
+  ) => MissionAttachmentSnapshot[] | undefined;
+  readonly #requestMissionOrchestratorBootstrap: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => Promise<MissionOrchestratorBootstrapResult>;
+  readonly #resolveSquad: (squadId: string) => Squad | null;
+  readonly #resolveOrchestratorRuntime: (
+    squad: Squad,
+    orchestrator: Squad["agents"][number],
+  ) => ResolvedMissionOrchestratorRuntime;
 
   constructor(
     stores: ProjectDomainStoreRegistry,
@@ -196,17 +365,76 @@ export class RendererMissionAuthority {
     resolvePaneActivity: (
       input: MissionPaneActivityInput,
     ) => PaneActivitySummary = resolveMissionPaneActivity,
+    validateAttachmentPaths: (
+      paths: readonly string[] | undefined,
+    ) => string[] | undefined = validateDroppedAttachmentPaths,
+    requestMissionOrchestratorBootstrap: (
+      scope: ProjectExecutionScope,
+      missionId: string,
+    ) => Promise<MissionOrchestratorBootstrapResult> = async () => {
+      throw new Error("main-owned mission bootstrap is not configured");
+    },
+    resolveSquad: (squadId: string) => Squad | null = getSquad,
+    resolveOrchestratorRuntime: (
+      squad: Squad,
+      orchestrator: Squad["agents"][number],
+    ) => ResolvedMissionOrchestratorRuntime =
+      resolveProductionMissionOrchestratorRuntime,
+    snapshotAttachmentPaths: (
+      paths: readonly string[] | undefined,
+    ) => MissionAttachmentSnapshot[] | undefined = snapshotDroppedAttachmentPaths,
   ) {
     this.#stores = stores;
     this.#resolveContextRevision = resolveContextRevision;
     this.#allowImmediateDispatch = allowImmediateDispatch;
     this.#resolvePaneActivity = resolvePaneActivity;
+    this.#validateAttachmentPaths = validateAttachmentPaths;
+    this.#requestMissionOrchestratorBootstrap =
+      requestMissionOrchestratorBootstrap;
+    this.#resolveSquad = resolveSquad;
+    this.#resolveOrchestratorRuntime = resolveOrchestratorRuntime;
+    this.#snapshotAttachmentPaths = snapshotAttachmentPaths;
+  }
+
+  #attachmentsForApproval(
+    paths: readonly string[] | undefined,
+  ): {
+    readonly present: boolean;
+    readonly paths: string[];
+    readonly snapshots: MissionAttachmentSnapshot[];
+  } {
+    const canonical = paths === undefined
+      ? []
+      : this.#validateAttachmentPaths(paths) ?? [];
+    const snapshots = paths === undefined
+      ? []
+      : this.#snapshotAttachmentPaths(canonical) ?? [];
+    assertAttachmentSnapshotPaths(canonical, snapshots);
+    return {
+      present: paths !== undefined,
+      paths: [...canonical],
+      snapshots: snapshots.map((snapshot) => ({ ...snapshot })),
+    };
+  }
+
+  #runtimeForSquad(squad: Squad): MissionOrchestratorRuntimeSnapshot {
+    const orchestrator =
+      squad.agents.find((agent) => agent.category === "orchestrator") ?? null;
+    if (!orchestrator) {
+      throw new Error(
+        "squad_required: saved squad has no explicit orchestrator runtime",
+      );
+    }
+    return canonicalMissionOrchestratorRuntime(
+      this.#resolveOrchestratorRuntime(squad, orchestrator),
+    );
   }
 
   updateMissionFromRenderer(
     owner: WebContents,
     missionId: string,
     patch: MissionPatch,
+    expectedFence?: string,
   ): Mission | null {
     if (patch.status === "done") {
       throw new Error(
@@ -251,12 +479,146 @@ export class RendererMissionAuthority {
       throw new Error("completed missions are immutable");
     }
     if (
+      patch.title !== undefined &&
+      patch.title !== current.title &&
+      hasCurrentApprovedDispatchContract(current)
+    ) {
+      throw new Error(
+        "approved mission title is immutable because it is part of the canonical kickoff",
+      );
+    }
+    if (patch.status !== undefined && patch.status !== current.status) {
+      if (patch.status !== "blocked" && patch.status !== "failed") {
+        throw new Error(
+          "mission lifecycle promotion/reopen is main-owned; use the explicit resume flow",
+        );
+      }
+      if (current.status === "blocked" || current.status === "failed") {
+        throw new Error("blocked/failed mission lifecycle is immutable until explicit resume");
+      }
+      if (
+        expectedFence === undefined ||
+        rendererMissionUpdateFence(current, patch) !== expectedFence
+      ) {
+        throw new Error(
+          "mission_lifecycle_stale: native confirmation is missing or mission changed",
+        );
+      }
+    }
+    if (
+      patch.milestones &&
+      current.intentContract
+    ) {
+      throw new Error(
+        "mission milestones are derived from the intent contract and main-owned",
+      );
+    }
+    if (
       patch.milestones &&
       current.milestones.some((milestone) => milestone.status === "done")
     ) {
       throw new Error("completed mission milestones are immutable");
     }
     return missions.update(missionId, patch);
+  }
+
+  missionLifecycleCandidateFromRenderer(
+    owner: WebContents,
+    missionId: string,
+    patch: MissionPatch,
+  ): RendererMissionLifecycleCandidate {
+    const scope = requireRendererWorkspaceScope(owner);
+    const current = this.#stores.forScope(scope).missions.get(missionId);
+    if (!current) throw new Error("mission not found");
+    if (patch.status !== "blocked" && patch.status !== "failed") {
+      throw new Error("only blocked/failed demotion can request native confirmation");
+    }
+    if (
+      current.status === "done" ||
+      current.status === "blocked" ||
+      current.status === "failed"
+    ) {
+      throw new Error("mission is terminal or already blocked");
+    }
+    if (
+      patch.intentState !== undefined ||
+      patch.intentContract !== undefined ||
+      patch.intentVersion !== undefined
+    ) {
+      throw new Error("intent fields are only mutable via intent authority APIs");
+    }
+    const description = patch.description ?? current.description;
+    assertMissionAuthorityTitle(patch.title ?? current.title);
+    assertNativeMissionReviewable([patch.title ?? current.title, description]);
+    return Object.freeze({
+      missionId: current.id,
+      title: current.title,
+      fromStatus: current.status,
+      toStatus: patch.status,
+      description,
+      fence: rendererMissionUpdateFence(current, patch),
+    });
+  }
+
+  /**
+   * Renderer deletion is intentionally limited to an empty, never-dispatched
+   * draft. Running/terminal missions and any row with durable activity keep
+   * their audit/dispatch/handoff chain forever; the UI can hide/archive them
+   * in a future schema, but it cannot cascade-delete those receipts today.
+   */
+  missionRemovalCandidateFromRenderer(
+    owner: WebContents,
+    missionId: string,
+  ): { missionId: string; title: string } | null {
+    const candidate = this.#removableMission(owner, missionId);
+    return candidate
+      ? { missionId: candidate.mission.id, title: candidate.mission.title }
+      : null;
+  }
+
+  removeMissionFromRenderer(owner: WebContents, missionId: string): boolean {
+    const candidate = this.#removableMission(owner, missionId);
+    if (!candidate) return false;
+    return candidate.suite.missions.remove(candidate.mission.id);
+  }
+
+  #removableMission(
+    owner: WebContents,
+    missionId: string,
+  ): { suite: ProjectDomainStoreSuite; mission: Mission } | null {
+    const scope = requireRendererWorkspaceScope(owner);
+    const suite = this.#stores.forScope(scope);
+    const mission = suite.missions.get(missionId);
+    if (!mission) return null;
+    const activeIntent =
+      mission.intentState === "dispatched" ||
+      mission.intentState === "executing" ||
+      mission.intentState === "validating" ||
+      mission.intentState === "done" ||
+      mission.intentState === "blocked_user" ||
+      mission.intentState === "blocked_technical";
+    if (
+      mission.status !== "pending" ||
+      activeIntent ||
+      mission.orchestratorSessionId !== undefined
+    ) {
+      throw new Error(
+        "missão ativa/terminal é preservada: remoção não pode apagar receipts duráveis",
+      );
+    }
+    const hasDurableActivity =
+      suite.missionPanes.list(mission.id).length > 0 ||
+      suite.handoffs.list({
+        missionId: mission.id,
+        includeDelivered: true,
+      }).length > 0 ||
+      suite.tasks.list(mission.id).length > 0;
+    if (hasDurableActivity) {
+      throw new Error(
+        "missão com atividade durável é preservada: panes, handoffs, tasks e receipts não podem ser apagados",
+      );
+    }
+    return { suite, mission };
   }
 
   /**
@@ -323,8 +685,9 @@ export class RendererMissionAuthority {
     // The synchronous compiler is the queue consumer for goal prompts. Mark
     // that delivery explicitly so snapshots never expose already-compiled
     // goals as permanently queued work.
-    bumpMissionPromptIntent(current.id, nextVersion);
+    bumpMissionPromptIntent(scope, current.id, nextVersion);
     const queued = enqueueMissionPrompt({
+      scope,
       missionId: current.id,
       kind: input.source === "voice" ? "voice_goal" : "user_goal",
       body: input.goal,
@@ -335,9 +698,9 @@ export class RendererMissionAuthority {
     if (!prompt || prompt.status !== "queued") {
       throw new Error("intent prompt was preempted before compilation");
     }
-    const started = startMissionPrompt(current.id, prompt.id);
+    const started = startMissionPrompt(scope, current.id, prompt.id);
     if (started.state.executingId !== prompt.id) {
-      cancelMissionPrompt(current.id, prompt.id);
+      cancelMissionPrompt(scope, current.id, prompt.id);
       throw new Error("intent prompt queue is busy");
     }
 
@@ -394,9 +757,9 @@ export class RendererMissionAuthority {
           : {}),
       });
       if (!updated) throw new Error("mission not found");
-      completeMissionPrompt(current.id, prompt.id, true);
+      completeMissionPrompt(scope, current.id, prompt.id, true);
     } catch (error) {
-      completeMissionPrompt(current.id, prompt.id, false);
+      completeMissionPrompt(scope, current.id, prompt.id, false);
       throw error;
     }
 
@@ -483,6 +846,7 @@ export class RendererMissionAuthority {
     // Production queue: preflight/bootstrap under prepare-project is trackable
     // and cancelled if the user submits a newer intentVersion.
     const queued = enqueueMissionPrompt({
+      scope,
       missionId: updated.id,
       kind: "preflight",
       body: "prepare-project: aquecer mapa local",
@@ -493,19 +857,19 @@ export class RendererMissionAuthority {
     if (!item || item.status !== "queued") {
       throw new Error("project preparation was preempted by a newer intent");
     }
-    const started = startMissionPrompt(updated.id, item.id);
+    const started = startMissionPrompt(scope, updated.id, item.id);
     const isExecuting = started.state.items.some(
       (entry) => entry.id === item.id && entry.status === "executing",
     );
     if (!isExecuting) {
-      cancelMissionPrompt(updated.id, item.id);
+      cancelMissionPrompt(scope, updated.id, item.id);
       throw new Error("project preparation queue is busy");
     }
 
-    const signal = getMissionPromptAbortSignal(updated.id, item.id);
+    const signal = getMissionPromptAbortSignal(scope, updated.id, item.id);
     const orientation = tryGetProjectOrientationService();
     if (!orientation) {
-      completeMissionPrompt(updated.id, item.id, false);
+      completeMissionPrompt(scope, updated.id, item.id, false);
       throw new Error("project preparation is unavailable");
     }
     try {
@@ -516,9 +880,9 @@ export class RendererMissionAuthority {
         waitMs: 8_000,
       });
       if (signal?.aborted) throw new Error("intent_preempted");
-      completeMissionPrompt(updated.id, item.id, true);
+      completeMissionPrompt(scope, updated.id, item.id, true);
     } catch (error) {
-      completeMissionPrompt(updated.id, item.id, false);
+      completeMissionPrompt(scope, updated.id, item.id, false);
       if (signal?.aborted) {
         throw new Error("project preparation was cancelled by a newer intent");
       }
@@ -535,13 +899,13 @@ export class RendererMissionAuthority {
     const scope = requireRendererWorkspaceScope(owner);
     const mission = this.#stores.forScope(scope).missions.get(input.missionId);
     if (!mission) throw new Error("mission not found");
-    const queue = peekMissionPromptQueue(input.missionId);
+    const queue = peekMissionPromptQueue(scope, input.missionId);
     const preparation = [queue.executing, ...queue.queued].find(
       (item) =>
         item?.kind === "preflight" && item.body.startsWith("prepare-project:"),
     );
     if (!preparation) return { cancelled: false };
-    const result = cancelMissionPrompt(input.missionId, preparation.id);
+    const result = cancelMissionPrompt(scope, input.missionId, preparation.id);
     return { cancelled: result.cancelledIds.includes(preparation.id) };
   }
 
@@ -549,12 +913,94 @@ export class RendererMissionAuthority {
     const scope = requireRendererWorkspaceScope(owner);
     const mission = this.#stores.forScope(scope).missions.get(input.missionId);
     if (!mission) throw new Error("mission not found");
-    return peekMissionPromptQueue(input.missionId);
+    return peekMissionPromptQueue(scope, input.missionId);
+  }
+
+  missionApprovalCandidateFromRenderer(
+    owner: WebContents,
+    input: RendererMissionApproveIntentInput,
+  ): RendererMissionAuthorityCandidate {
+    const scope = requireRendererWorkspaceScope(owner);
+    const current = this.#stores.forScope(scope).missions.get(input.missionId);
+    if (!current) throw new Error("mission not found");
+    if (current.status === "done" || current.status === "failed") {
+      throw new Error("mission is terminal");
+    }
+    const contract = current.intentContract;
+    if (!contract?.goal?.trim() || isPrepareProjectPlaceholderGoal(contract.goal)) {
+      throw new Error("intent_required: compile a real goal before approval");
+    }
+    if (contract.intentVersion !== current.intentVersion) {
+      throw new Error("stale_intent: contract intent version does not match the mission");
+    }
+    const requestedAttachmentPaths =
+      input.attachmentPaths === undefined
+        ? contract.attachmentPaths
+        : this.#validateAttachmentPaths(input.attachmentPaths);
+    const attachments = this.#attachmentsForApproval(requestedAttachmentPaths);
+    const attachmentPaths = attachments.paths;
+    const evidenceAttached =
+      (input.evidenceAttached === undefined
+        ? contract.evidenceAttached === true
+        : input.evidenceAttached === true) || attachmentPaths.length > 0;
+    if (missionGoalNeedsFutureEvidence(contract.goal, evidenceAttached)) {
+      throw new Error(`evidence_required: ${MISSION_EVIDENCE_WAIT_MESSAGE}`);
+    }
+    assertMissionAuthorityTitle(current.title);
+    const acceptanceCriteria = [...contract.acceptanceCriteria];
+    const deniedTools = contract.deniedTools ? [...contract.deniedTools] : [];
+    const reviewedAttachments = [...attachmentPaths];
+    const reviewedAttachmentSnapshots = attachments.snapshots;
+    const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
+    if (!squad) {
+      throw new Error("squad_required: saved squad is unavailable for approval");
+    }
+    const squadSnapshot = snapshotSquadAuthority(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(squad);
+    assertNativeMissionReviewable([
+      current.title,
+      contract.goal,
+      ...acceptanceCriteria,
+      ...deniedTools,
+      ...reviewedAttachments,
+      ...attachmentSnapshotReviewStrings(reviewedAttachmentSnapshots),
+      ...squadAuthorityReviewStrings(squadSnapshot),
+      ...missionOrchestratorRuntimeReviewStrings(orchestratorRuntime),
+    ]);
+    const approvalSnapshot = {
+      evidenceAttached,
+      attachmentPaths: reviewedAttachments,
+      attachmentSnapshots: reviewedAttachmentSnapshots,
+      squadRevisionHash: squadSnapshot.hash,
+      orchestratorRuntime,
+    };
+    return Object.freeze({
+      missionId: current.id,
+      title: current.title,
+      goal: contract.goal,
+      lane: contract.lane ?? "standard",
+      risk: contract.risk,
+      executionMode: contract.executionMode,
+      contextPolicy: contract.contextPolicy,
+      acceptanceCriteria: Object.freeze(acceptanceCriteria),
+      deniedTools: Object.freeze(deniedTools),
+      evidenceAttached,
+      attachmentPaths: Object.freeze(reviewedAttachments),
+      attachmentSnapshots: Object.freeze(
+        reviewedAttachmentSnapshots.map((snapshot) => Object.freeze({ ...snapshot })),
+      ),
+      squad: squadSnapshot,
+      orchestratorRuntime: Object.freeze({ ...orchestratorRuntime }),
+      intentVersion: current.intentVersion ?? contract.intentVersion,
+      budgets: Object.freeze({ ...contract.budgets }),
+      fence: missionAuthorityFence(current, approvalSnapshot),
+    });
   }
 
   approveIntentFromRenderer(
     owner: WebContents,
     input: RendererMissionApproveIntentInput,
+    expectedFence?: string,
   ): Mission {
     const scope = requireRendererWorkspaceScope(owner);
     const missions = this.#stores.forScope(scope).missions;
@@ -569,6 +1015,39 @@ export class RendererMissionAuthority {
     ) {
       throw new Error(
         "stale_intent: contract intent version does not match the mission",
+      );
+    }
+    const requestedAttachmentPaths =
+      input.attachmentPaths === undefined
+        ? current.intentContract?.attachmentPaths
+          ? [...current.intentContract.attachmentPaths]
+          : undefined
+        : this.#validateAttachmentPaths(input.attachmentPaths);
+    const attachments = this.#attachmentsForApproval(requestedAttachmentPaths);
+    const attachmentPaths = attachments.paths;
+    const evidenceAttached =
+      (input.evidenceAttached === undefined
+        ? current.intentContract?.evidenceAttached === true
+        : input.evidenceAttached === true) ||
+      attachmentPaths.length > 0;
+    const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
+    if (!squad) {
+      throw new Error("squad_required: saved squad is unavailable for approval");
+    }
+    const squadSnapshot = snapshotSquadAuthority(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(squad);
+    if (
+      expectedFence !== undefined &&
+      missionAuthorityFence(current, {
+        evidenceAttached,
+        attachmentPaths,
+        attachmentSnapshots: attachments.snapshots,
+        squadRevisionHash: squadSnapshot.hash,
+        orchestratorRuntime,
+      }) !== expectedFence
+    ) {
+      throw new Error(
+        "approval_stale: mission intent, attachments, squad or runtime changed while native confirmation was open",
       );
     }
 
@@ -592,8 +1071,7 @@ export class RendererMissionAuthority {
       if (
         missionGoalNeedsFutureEvidence(
           goal,
-          input.evidenceAttached === true ||
-            current.intentContract?.evidenceAttached === true,
+          evidenceAttached,
         )
       ) {
         throw new Error(`evidence_required: ${MISSION_EVIDENCE_WAIT_MESSAGE}`);
@@ -605,6 +1083,17 @@ export class RendererMissionAuthority {
         if (!hasCurrentDispatchAuthority(current)) {
           throw new Error("approval_required: current intent is not authorized");
         }
+        if (
+          !sameMissionOrchestratorRuntime(
+            current.intentContract?.orchestratorRuntime,
+            orchestratorRuntime,
+          )
+        ) {
+          throw new Error(
+            "approval_required: orchestrator runtime changed; revise and approve again",
+          );
+        }
+        this.#continueMainOwnedBootstrap(scope, current.id);
         return current;
       }
       throw new Error(
@@ -631,7 +1120,7 @@ export class RendererMissionAuthority {
     if (
       missionGoalNeedsFutureEvidence(
         current.intentContract.goal,
-        input.evidenceAttached === true,
+        evidenceAttached,
       )
     ) {
       throw new Error(`evidence_required: ${MISSION_EVIDENCE_WAIT_MESSAGE}`);
@@ -645,7 +1134,15 @@ export class RendererMissionAuthority {
     );
     const contract = {
       ...current.intentContract,
-      evidenceAttached: input.evidenceAttached === true,
+      evidenceAttached,
+      ...(attachments.present
+        ? {
+            attachmentPaths: [...attachmentPaths],
+            attachmentSnapshots: attachments.snapshots.map((snapshot) => ({
+              ...snapshot,
+            })),
+          }
+        : {}),
       intentVersion: contractVersion,
       approvedAt,
       dispatchedAt: approvedAt,
@@ -654,6 +1151,8 @@ export class RendererMissionAuthority {
       deniedTools: current.intentContract.deniedTools
         ? [...current.intentContract.deniedTools]
         : undefined,
+      squadRevisionHash: squadSnapshot.hash,
+      orchestratorRuntime: { ...orchestratorRuntime },
     };
     const status = missionStatusForIntent(nextState) ?? "running";
     const updated = missions.update(input.missionId, {
@@ -661,13 +1160,16 @@ export class RendererMissionAuthority {
       intentState: nextState,
       intentVersion: contractVersion,
       intentContract: contract,
+      milestones: normalizeMilestones(
+        current.intentContract.acceptanceCriteria,
+      ),
     });
     if (!updated) throw new Error("mission not found");
 
     // Preempt any stale preflight/bootstrap queued for a prior intentVersion.
     // The goal itself was synchronously delivered by submitIntentFromRenderer;
     // approval must not enqueue a duplicate prompt.
-    bumpMissionPromptIntent(updated.id, contractVersion);
+    bumpMissionPromptIntent(scope, updated.id, contractVersion);
 
     emitMissionIntentEvent({
       name: "plan_approved",
@@ -677,7 +1179,33 @@ export class RendererMissionAuthority {
       intentVersion: contractVersion,
       reason: "user_start",
     });
+    this.#continueMainOwnedBootstrap(scope, updated.id);
     return updated;
+  }
+
+  #continueMainOwnedBootstrap(
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ): void {
+    try {
+      void this.#requestMissionOrchestratorBootstrap(scope, missionId).catch(
+        (error) => {
+          // Production bootstrap turns every expected/physical failure into a
+          // durable blocked mission with one CTA. This guard only prevents an
+          // injected or catastrophic rejection from escaping the IPC handler;
+          // the coordinator will retry the still-running durable mission.
+          console.warn(
+            `[mission-authority] bootstrap request failed for ${missionId}:`,
+            error,
+          );
+        },
+      );
+    } catch (error) {
+      console.warn(
+        `[mission-authority] bootstrap request failed for ${missionId}:`,
+        error,
+      );
+    }
   }
 
   /**
@@ -685,9 +1213,79 @@ export class RendererMissionAuthority {
    * worktrees/shell/code tools are allowed under the same authorized mission.
    * Keeps goal/acceptance; re-expands budgets for risk; re-stamps dispatch.
    */
+  planPromotionCandidateFromRenderer(
+    owner: WebContents,
+    input: { missionId: string },
+  ): RendererMissionAuthorityCandidate {
+    const scope = requireRendererWorkspaceScope(owner);
+    const current = this.#stores.forScope(scope).missions.get(input.missionId);
+    if (!current) throw new Error("mission not found");
+    if (current.status === "done" || current.status === "failed") {
+      throw new Error("mission is terminal");
+    }
+    const contract = current.intentContract;
+    if (!contract || contract.lane !== "plan") {
+      throw new Error(
+        "promote_plan: mission is not in plan lane (or has no contract)",
+      );
+    }
+    if (!contract.goal?.trim()) {
+      throw new Error("intent_required: plan mission has empty goal");
+    }
+    const risk = classifyGoalRisk(contract.goal);
+    assertMissionAuthorityTitle(current.title);
+    const acceptanceCriteria = [...contract.acceptanceCriteria];
+    const deniedTools = contract.deniedTools ? [...contract.deniedTools] : [];
+    const attachments = this.#attachmentsForApproval(contract.attachmentPaths);
+    const attachmentPaths = attachments.paths;
+    const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
+    if (!squad) {
+      throw new Error("squad_required: saved squad is unavailable for promotion");
+    }
+    const squadSnapshot = snapshotSquadAuthority(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(squad);
+    assertNativeMissionReviewable([
+      contract.goal,
+      ...acceptanceCriteria,
+      ...deniedTools,
+      ...attachmentPaths,
+      ...attachmentSnapshotReviewStrings(attachments.snapshots),
+      ...squadAuthorityReviewStrings(squadSnapshot),
+      ...missionOrchestratorRuntimeReviewStrings(orchestratorRuntime),
+    ]);
+    return Object.freeze({
+      missionId: current.id,
+      title: current.title,
+      goal: contract.goal,
+      lane: "plan",
+      risk,
+      executionMode: contract.executionMode,
+      contextPolicy: contract.contextPolicy,
+      acceptanceCriteria: Object.freeze(acceptanceCriteria),
+      deniedTools: Object.freeze(deniedTools),
+      evidenceAttached: contract.evidenceAttached === true,
+      attachmentPaths: Object.freeze(attachmentPaths),
+      attachmentSnapshots: Object.freeze(
+        attachments.snapshots.map((snapshot) => Object.freeze({ ...snapshot })),
+      ),
+      squad: squadSnapshot,
+      orchestratorRuntime: Object.freeze({ ...orchestratorRuntime }),
+      intentVersion: current.intentVersion ?? contract.intentVersion,
+      budgets: Object.freeze({ ...defaultBudgetsForRisk(risk) }),
+      fence: missionAuthorityFence(current, {
+        evidenceAttached: contract.evidenceAttached === true,
+        attachmentPaths,
+        attachmentSnapshots: attachments.snapshots,
+        squadRevisionHash: squadSnapshot.hash,
+        orchestratorRuntime,
+      }),
+    });
+  }
+
   promotePlanLaneFromRenderer(
     owner: WebContents,
     input: { missionId: string },
+    expectedFence?: string,
   ): Mission {
     const scope = requireRendererWorkspaceScope(owner);
     const missions = this.#stores.forScope(scope).missions;
@@ -705,6 +1303,27 @@ export class RendererMissionAuthority {
     if (!contract.goal?.trim()) {
       throw new Error("intent_required: plan mission has empty goal");
     }
+    const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
+    if (!squad) {
+      throw new Error("squad_required: saved squad is unavailable for promotion");
+    }
+    const squadSnapshot = snapshotSquadAuthority(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(squad);
+    const attachments = this.#attachmentsForApproval(contract.attachmentPaths);
+    if (
+      expectedFence !== undefined &&
+      missionAuthorityFence(current, {
+        evidenceAttached: contract.evidenceAttached === true,
+        attachmentPaths: contract.attachmentPaths ?? [],
+        attachmentSnapshots: attachments.snapshots,
+        squadRevisionHash: squadSnapshot.hash,
+        orchestratorRuntime,
+      }) !== expectedFence
+    ) {
+      throw new Error(
+        "promotion_stale: mission, saved squad or runtime changed while native confirmation was open",
+      );
+    }
     const risk = classifyGoalRisk(contract.goal);
     const nextVersion = (current.intentVersion ?? 0) + 1;
     const now = Date.now();
@@ -718,6 +1337,14 @@ export class RendererMissionAuthority {
       dispatchedAt: now,
       acceptanceCriteria: [...contract.acceptanceCriteria],
       deniedTools: contract.deniedTools ? [...contract.deniedTools] : undefined,
+      attachmentPaths: contract.attachmentPaths
+        ? [...contract.attachmentPaths]
+        : undefined,
+      attachmentSnapshots: attachments.present
+        ? attachments.snapshots.map((snapshot) => ({ ...snapshot }))
+        : undefined,
+      squadRevisionHash: squadSnapshot.hash,
+      orchestratorRuntime: { ...orchestratorRuntime },
     };
     // Stay dispatched/executing if already working; otherwise ready_to_start
     // so the operator can press start again with full code authority.
@@ -735,9 +1362,10 @@ export class RendererMissionAuthority {
       intentVersion: nextVersion,
       intentState,
       status,
+      milestones: normalizeMilestones(contract.acceptanceCriteria),
     });
     if (!updated) throw new Error("mission not found");
-    bumpMissionPromptIntent(updated.id, nextVersion);
+    bumpMissionPromptIntent(scope, updated.id, nextVersion);
     emitMissionIntentEvent({
       name: "plan_approved",
       missionId: updated.id,
@@ -784,6 +1412,15 @@ export class RendererMissionAuthority {
         `approval_required: current intent must be approved and dispatched before binding (state=${intentState})`,
       );
     }
+    const savedSquad = this.#resolveSquad(input.squadId);
+    const authoritySeal = savedSquad
+      ? resolveMissionPaneAuthoritySeal(granted.scope, existing, savedSquad)
+      : null;
+    if (!authoritySeal) {
+      throw new Error(
+        "mission pane authority seal is unavailable for the current revision",
+      );
+    }
 
     let gateBound = false;
     let sessionBound = false;
@@ -804,6 +1441,7 @@ export class RendererMissionAuthority {
         role: "orchestrator",
         allowedTools: granted.allowedTools,
         allowedSkills: granted.allowedSkills,
+        authoritySeal,
       });
       recordedPaneId = priorPane ? null : recordedPane.id;
       gateBound = restoreSessionAuthority(owned.sessionId, {
@@ -898,6 +1536,18 @@ export class RendererMissionAuthority {
       throw new Error("pane has no main-owned orchestrator promotion grant");
     }
     const granted = owned.info;
+    if (granted.immediateMissionTitle !== input.title.trim()) {
+      void orchTerminateSession(owned.sessionId);
+      throw new Error(
+        "immediate mission goal does not match the native-confirmed grant",
+      );
+    }
+    if (granted.immediateMissionGoal !== (input.goal ?? input.title).trim()) {
+      void orchTerminateSession(owned.sessionId);
+      throw new Error(
+        "immediate mission goal does not match the native-confirmed grant",
+      );
+    }
 
     const suite = this.#stores.forScope(granted.scope);
     const missionStore = suite.missions;
@@ -909,11 +1559,24 @@ export class RendererMissionAuthority {
       // Immediate execution shell (forceLegacy / pet-studio): still dispatched,
       // but with a real approved contract so the MCP gate can authorize workers.
       const now = Date.now();
-      const legacyContract = synthesizeImmediateDispatchContract({
-        title: input.title,
-        intentVersion: 1,
-        now,
-      });
+      const savedSquad = this.#resolveSquad(input.squadId);
+      if (!savedSquad) {
+        throw new Error("immediate mission requires the exact saved squad");
+      }
+      assertMissionAuthorityTitle(input.title);
+      const legacyContract = {
+        ...synthesizeImmediateDispatchContract({
+          title: input.title,
+          goal: input.goal,
+          intentVersion: 1,
+          now,
+          profile:
+            input.squadId === PET_STUDIO_SQUAD_ID
+              ? 'pet-studio'
+              : 'standard',
+        }),
+        squadRevisionHash: snapshotSquadAuthority(savedSquad).hash,
+      };
       mission = missionStore.create({
         title: input.title,
         squadId: granted.squadId,
@@ -923,6 +1586,23 @@ export class RendererMissionAuthority {
         intentVersion: 1,
         intentContract: legacyContract,
       });
+      const authorizedMission = missionStore.update(mission.id, {
+        status: "running",
+      });
+      if (!authorizedMission) {
+        throw new Error("failed to publish authorized mission lifecycle");
+      }
+      mission = authorizedMission;
+      const authoritySeal = resolveMissionPaneAuthoritySeal(
+        granted.scope,
+        mission,
+        savedSquad,
+      );
+      if (!authoritySeal) {
+        throw new Error(
+          "immediate mission pane authority seal could not be created",
+        );
+      }
       paneStore.record({
         missionId: mission.id,
         paneId: owned.paneId,
@@ -936,6 +1616,7 @@ export class RendererMissionAuthority {
         role: "orchestrator",
         allowedTools: granted.allowedTools,
         allowedSkills: granted.allowedSkills,
+        authoritySeal,
       });
       gateBound = restoreSessionAuthority(owned.sessionId, {
         missionId: mission.id,
@@ -970,6 +1651,7 @@ export class RendererMissionAuthority {
         }
         missionStore.remove(mission.id);
       }
+      void orchTerminateSession(owned.sessionId);
       throw error;
     }
     if (!mission) throw new Error("mission creation did not produce a record");
@@ -1015,8 +1697,10 @@ export class RendererMissionAuthority {
         contextRevision,
         role: spec.role,
         agentName: spec.agentName,
+        workerIncarnationId: spec.workerIncarnationId,
         allowedTools: spec.allowedTools,
         allowedSkills: spec.allowedSkills,
+        ...(spec.readOnly === true ? { readOnly: true } : {}),
       })
     ) {
       return false;
@@ -1025,10 +1709,12 @@ export class RendererMissionAuthority {
       missionId: spec.missionId,
       contextRevision,
       agentName: spec.agentName,
+      workerIncarnationId: spec.workerIncarnationId,
       role: spec.role,
       scope: owned.info.scope,
       allowedTools: spec.allowedTools,
       allowedSkills: spec.allowedSkills,
+      ...(spec.readOnly === true ? { readOnly: true } : {}),
     });
     return true;
   }
@@ -1063,7 +1749,7 @@ export class RendererMissionAuthority {
       owned.info.role === "orchestrator" &&
       hasMatchingGateContext(sessionId, owned.info, missionId)
     ) {
-      return mission;
+      return missionStore.rebindOrchestratorSession(missionId, sessionId);
     }
     const spec = paneStore.findByPaneId(owned.paneId);
     if (
@@ -1074,7 +1760,7 @@ export class RendererMissionAuthority {
     ) {
       return null;
     }
-    return missionStore.setOrchestratorSession(missionId, sessionId);
+    return missionStore.rebindOrchestratorSession(missionId, sessionId);
   }
 
   listMissionPanesForRenderer(

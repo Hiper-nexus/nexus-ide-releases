@@ -21,6 +21,7 @@ import { resolveMediaOutputPath } from './media-path-policy';
 import { createScopedMediaUsageStore } from '../usage/media-usage-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import { sameProjectScope } from '../orch/project-scoped-broadcast';
 
 /**
  * Lazy require: media-usage-recorder pulls in usage-service/gamification
@@ -101,13 +102,11 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
     return setMediaKey(parsed.data.providerId, parsed.data.key);
   });
 
-  ipcMain.handle(
-    MEDIA_CHANNELS.usageTotals,
-    (event): MediaUsageTotals =>
-      createScopedMediaUsageStore(
-        runtimeManager,
-        requireRendererWorkspaceScope(event.sender),
-      ).totals(),
+  ipcMain.handle(MEDIA_CHANNELS.usageTotals, (event): MediaUsageTotals =>
+    createScopedMediaUsageStore(
+      runtimeManager,
+      requireRendererWorkspaceScope(event.sender),
+    ).totals(),
   );
 
   ipcMain.handle(
@@ -120,6 +119,20 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
       const controller = new AbortController();
       const jobKey = studioJobKey(event.sender.id, req.clientJobId);
       studioJobs.set(jobKey, controller);
+      const assertStudioAuthority = (): void => {
+        if (controller.signal.aborted) throw new MediaAbortError();
+        try {
+          const current = requireRendererWorkspaceScope(event.sender);
+          if (!sameProjectScope(current, scope)) {
+            controller.abort();
+            throw new MediaAbortError();
+          }
+        } catch (error) {
+          controller.abort();
+          if (error instanceof MediaAbortError) throw error;
+          throw new MediaAbortError();
+        }
+      };
       try {
         const baseDir = scope.rootRealPath;
         const result =
@@ -133,6 +146,7 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
                 imagePath: req.imagePath,
                 baseDir,
                 signal: controller.signal,
+                assertCurrentAuthority: assertStudioAuthority,
               })
             : await generateVideo({
                 prompt: req.prompt,
@@ -145,12 +159,22 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
                 recoverJobId: req.recoverJobId,
                 baseDir,
                 signal: controller.signal,
+                assertCurrentAuthority: assertStudioAuthority,
               });
-        await recordStudioUsage(result, {
-          agentName: 'media-studio',
-          label: 'Estúdio de Mídia',
-          scope,
-        });
+        assertStudioAuthority();
+        await recordStudioUsage(
+          result,
+          {
+            agentName: 'media-studio',
+            label: 'Estúdio de Mídia',
+            scope,
+          },
+          {
+            signal: controller.signal,
+            assertCurrentAuthority: assertStudioAuthority,
+          },
+        );
+        assertStudioAuthority();
         return result;
       } catch (err) {
         if (err instanceof MediaAbortError) {
@@ -184,13 +208,11 @@ export function registerMediaIpc(runtimeManager: ProjectRuntimeManager): void {
     return { ok: true };
   });
 
-  ipcMain.handle(
-    MEDIA_CHANNELS.listArtifacts,
-    (event): MediaArtifactInfo[] =>
-      createScopedMediaUsageStore(
-        runtimeManager,
-        requireRendererWorkspaceScope(event.sender),
-      ).listRecent(60),
+  ipcMain.handle(MEDIA_CHANNELS.listArtifacts, (event): MediaArtifactInfo[] =>
+    createScopedMediaUsageStore(
+      runtimeManager,
+      requireRendererWorkspaceScope(event.sender),
+    ).listRecent(60),
   );
 
   ipcMain.handle(MEDIA_CHANNELS.revealArtifact, (event, raw) => {

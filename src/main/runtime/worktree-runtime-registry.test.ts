@@ -147,4 +147,167 @@ describe('project worktree runtime registry', () => {
       record.taskId,
     )?.status).toBe('failed');
   });
+
+  it('recovers an exact materialized reserved worktree after process restart', () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const record = registry.create({
+      scope,
+      missionId: 'mission-reserved-ready',
+      taskId: 'task-reserved-ready',
+      workerId: 'worker-reserved-ready',
+      ownership: { files: ['owned.txt'], symbols: [], domains: ['core'] },
+    });
+    const runtime = registry.forScope(scope);
+    const key = runtime.worktrees.scopeKey(scope);
+    const snapshot = runtime.worktreeState.read(key);
+    expect(runtime.worktreeState.compareAndSwap(
+      key,
+      snapshot.revision,
+      snapshot.records.map((candidate) =>
+        candidate.taskKey === record.taskKey
+          ? { ...candidate, status: 'reserved' as const }
+          : candidate,
+      ),
+    )).toBe(true);
+
+    manager.close(scope);
+    const reopened = new WorktreeRuntimeRegistry(manager);
+    expect(reopened.get(
+      scope,
+      record.missionId,
+      record.taskId,
+    )).toMatchObject({
+      status: 'ready',
+      baseSha: record.baseSha,
+      branchRef: record.branchRef,
+      worktreePath: record.worktreePath,
+    });
+  });
+
+  it('fails an ambiguous reserved worktree after restart without deleting it and stays idempotent', () => {
+    const { scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const record = registry.create({
+      scope,
+      missionId: 'mission-reserved-ambiguous',
+      taskId: 'task-reserved-ambiguous',
+      workerId: 'worker-reserved-ambiguous',
+      ownership: { files: ['owned.txt'], symbols: [], domains: ['core'] },
+    });
+    const runtime = registry.forScope(scope);
+    const key = runtime.worktrees.scopeKey(scope);
+    const snapshot = runtime.worktreeState.read(key);
+    expect(runtime.worktreeState.compareAndSwap(
+      key,
+      snapshot.revision,
+      snapshot.records.map((candidate) =>
+        candidate.taskKey === record.taskKey
+          ? { ...candidate, status: 'reserved' as const }
+          : candidate,
+      ),
+    )).toBe(true);
+    fs.writeFileSync(
+      path.join(record.worktreePath, 'unproven-after-crash.txt'),
+      'must not be trusted or deleted\n',
+    );
+
+    manager.close(scope);
+    const reopened = new WorktreeRuntimeRegistry(manager);
+    const failed = reopened.get(scope, record.missionId, record.taskId);
+    expect(failed).toMatchObject({
+      status: 'failed',
+      failureReason: expect.stringMatching(/reserved|clean|reconcil/i),
+    });
+    expect(fs.existsSync(record.worktreePath)).toBe(true);
+    expect(fs.existsSync(
+      path.join(record.worktreePath, 'unproven-after-crash.txt'),
+    )).toBe(true);
+    const revisionAfterRecovery = reopened
+      .forScope(scope)
+      .worktreeState.read(key)
+      .revision;
+
+    manager.close(scope);
+    const replay = new WorktreeRuntimeRegistry(manager);
+    expect(replay.get(scope, record.missionId, record.taskId)?.status).toBe(
+      'failed',
+    );
+    expect(replay.forScope(scope).worktreeState.read(key).revision).toBe(
+      revisionAfterRecovery,
+    );
+  });
+
+  it('fails a reservation interrupted before materialization without recreating artifacts', () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const record = registry.create({
+      scope,
+      missionId: 'mission-reserved-empty',
+      taskId: 'task-reserved-empty',
+      workerId: 'worker-reserved-empty',
+      ownership: { files: ['owned.txt'], symbols: [], domains: ['core'] },
+    });
+    const runtime = registry.forScope(scope);
+    const key = runtime.worktrees.scopeKey(scope);
+    const snapshot = runtime.worktreeState.read(key);
+    expect(runtime.worktreeState.compareAndSwap(
+      key,
+      snapshot.revision,
+      snapshot.records.map((candidate) =>
+        candidate.taskKey === record.taskKey
+          ? { ...candidate, status: 'reserved' as const }
+          : candidate,
+      ),
+    )).toBe(true);
+    git(root, 'worktree', 'remove', record.worktreePath);
+    git(root, 'update-ref', '-d', record.branchRef);
+
+    manager.close(scope);
+    const reopened = new WorktreeRuntimeRegistry(manager);
+    expect(reopened.get(scope, record.missionId, record.taskId)).toMatchObject({
+      status: 'failed',
+      failureReason: expect.stringMatching(/reserved|reconcil/i),
+    });
+    expect(fs.existsSync(record.worktreePath)).toBe(false);
+    expect(() =>
+      git(root, 'show-ref', '--verify', '--quiet', record.branchRef),
+    ).toThrow();
+  });
+
+  it('never promotes a reserved worktree after the integration base advances', () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const record = registry.create({
+      scope,
+      missionId: 'mission-reserved-stale-base',
+      taskId: 'task-reserved-stale-base',
+      workerId: 'worker-reserved-stale-base',
+      ownership: { files: ['owned.txt'], symbols: [], domains: ['core'] },
+    });
+    const runtime = registry.forScope(scope);
+    const key = runtime.worktrees.scopeKey(scope);
+    const snapshot = runtime.worktreeState.read(key);
+    expect(runtime.worktreeState.compareAndSwap(
+      key,
+      snapshot.revision,
+      snapshot.records.map((candidate) =>
+        candidate.taskKey === record.taskKey
+          ? { ...candidate, status: 'reserved' as const }
+          : candidate,
+      ),
+    )).toBe(true);
+    fs.writeFileSync(path.join(root, 'advanced.txt'), 'new integration head\n');
+    git(root, 'add', 'advanced.txt');
+    git(root, 'commit', '-qm', 'advance integration base');
+
+    manager.close(scope);
+    const reopened = new WorktreeRuntimeRegistry(manager);
+    expect(reopened.get(scope, record.missionId, record.taskId)).toMatchObject({
+      status: 'failed',
+      failureReason: expect.stringMatching(/primary checkout changed|frozen/i),
+    });
+    expect(fs.existsSync(record.worktreePath)).toBe(true);
+    expect(git(record.worktreePath, 'rev-parse', 'HEAD')).toBe(record.baseSha);
+  });
 });

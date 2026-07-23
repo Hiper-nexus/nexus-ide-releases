@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { squadSchema, squadsFileSchema } from '../../shared/orch-types';
@@ -15,6 +16,10 @@ import {
   PersistenceUnavailableError,
   readOnlyPersistenceError,
 } from '../persistence/persistence-error';
+import {
+  snapshotSquadAuthority,
+  type SquadAuthoritySnapshot,
+} from './squad-authority-snapshot';
 
 /**
  * Squad store. SQLite is authoritative. The in-memory map is a read cache that
@@ -36,6 +41,134 @@ const squads = new Map<string, Squad>();
 const hub = new ChangeHub();
 let db: Db | null = null;
 let readOnly = true;
+const preparedSquadSaves = new WeakSet<object>();
+const preparedSquadImports = new WeakSet<object>();
+
+export const MAX_SQUADS_IMPORT_BYTES = 1024 * 1024;
+const MANAGED_SQUAD_IDS = new Set(BUILTIN_SQUADS.map((squad) => squad.id));
+
+export interface SquadTargetExpectation {
+  readonly id: string;
+  readonly exists: boolean;
+  readonly canonicalSha256: string | null;
+}
+
+export interface PreparedSquadSave {
+  readonly squad: Squad;
+  readonly snapshot: SquadAuthoritySnapshot;
+  readonly canonicalJson: string;
+  readonly canonicalSha256: string;
+  readonly expectedTarget: SquadTargetExpectation;
+}
+
+export interface PreparedSquadsImport {
+  readonly rawSha256: string;
+  readonly canonicalSha256: string;
+  readonly canonicalJson: string;
+  readonly squads: readonly Squad[];
+  readonly snapshots: readonly SquadAuthoritySnapshot[];
+  readonly squadCount: number;
+  readonly agentCount: number;
+  readonly targetIds: readonly string[];
+  readonly expectedTargets: readonly SquadTargetExpectation[];
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function canonicalSquadJson(squad: Squad): string {
+  return JSON.stringify(squad);
+}
+
+function currentTargetExpectation(id: string): SquadTargetExpectation {
+  const current = squads.get(id);
+  return Object.freeze({
+    id,
+    exists: current !== undefined,
+    canonicalSha256: current ? sha256(canonicalSquadJson(current)) : null,
+  });
+}
+
+function normalizeUserSquad(squad: Squad): Squad {
+  return {
+    ...squad,
+    builtin: false,
+    agents: withAllowlists(squad.agents),
+  };
+}
+
+function assertManagedSavePolicy(parsed: Squad): Squad {
+  if (parsed.id === PET_STUDIO_SQUAD_ID) {
+    // Pet Studio is app-managed and repaired to the immutable canonical
+    // definition. No renderer/user bytes can influence its executable roster.
+    return PET_STUDIO_SQUAD;
+  }
+  if (parsed.builtin || MANAGED_SQUAD_IDS.has(parsed.id)) {
+    throw new Error(
+      'managed built-in squads cannot be saved through the user store',
+    );
+  }
+  const existing = squads.get(parsed.id);
+  if (existing?.builtin) {
+    throw new Error(
+      'managed built-in squads cannot be saved through the user store',
+    );
+  }
+  return normalizeUserSquad(parsed);
+}
+
+function assertExpectedTargetUnchanged(
+  expected: SquadTargetExpectation,
+): void {
+  const current = currentTargetExpectation(expected.id);
+  if (
+    current.exists !== expected.exists ||
+    current.canonicalSha256 !== expected.canonicalSha256
+  ) {
+    throw new Error(
+      `squad CAS changed for ${expected.id}; prepare and review again`,
+    );
+  }
+}
+
+function assertPreparedSaveIntegrity(candidate: PreparedSquadSave): void {
+  const canonicalJson = canonicalSquadJson(candidate.squad);
+  if (
+    canonicalJson !== candidate.canonicalJson ||
+    sha256(canonicalJson) !== candidate.canonicalSha256 ||
+    snapshotSquadAuthority(candidate.squad).hash !== candidate.snapshot.hash
+  ) {
+    throw new Error('prepared squad save candidate changed after review');
+  }
+}
+
+function assertPreparedImportIntegrity(candidate: PreparedSquadsImport): void {
+  const canonicalJson = JSON.stringify({ squads: candidate.squads }, null, 2);
+  if (
+    candidate.squadCount !== candidate.squads.length ||
+    candidate.agentCount !==
+      candidate.squads.reduce((count, squad) => count + squad.agents.length, 0) ||
+    canonicalJson !== candidate.canonicalJson ||
+    sha256(canonicalJson) !== candidate.canonicalSha256 ||
+    candidate.targetIds.length !== candidate.squads.length ||
+    candidate.expectedTargets.length !== candidate.squads.length ||
+    candidate.snapshots.length !== candidate.squads.length
+  ) {
+    throw new Error('prepared squads import candidate changed after review');
+  }
+  for (const [index, squad] of candidate.squads.entries()) {
+    if (
+      squad.id !== candidate.targetIds[index] ||
+      squad.id !== candidate.expectedTargets[index]?.id ||
+      MANAGED_SQUAD_IDS.has(squad.id) ||
+      squad.builtin ||
+      snapshotSquadAuthority(squad).hash !== candidate.snapshots[index]?.hash
+    ) {
+      throw new Error('prepared squads import candidate changed after review');
+    }
+  }
+}
 
 function replaceSquadCache(next: ReadonlyMap<string, Squad>): void {
   squads.clear();
@@ -86,7 +219,7 @@ function migrateFromDiskIfEmpty(): void {
   for (const candidate of MIGRATION_CANDIDATES) {
     try {
       const json = fs.readFileSync(candidate, 'utf8');
-      const count = importSquadsJson(json);
+      const count = importLegacySquadsJson(json);
       if (count > 0) {
         console.log(`[orch] migrated ${count} squad(s) from ${candidate}`);
         return;
@@ -218,16 +351,11 @@ function syncBuiltins(): void {
   for (const squad of BUILTIN_SQUADS) {
     const parsed = squadSchema.safeParse(squad);
     if (!parsed.success) continue;
-    const existing = squads.get(parsed.data.id);
-    if (
-      squad.id === PET_STUDIO_SQUAD_ID ||
-      !existing ||
-      existing.builtin
-    ) {
-      persist(parsed.data, 'built-in sync');
-      squads.set(parsed.data.id, parsed.data);
-      refreshed += 1;
-    }
+    // Every id in BUILTIN_SQUADS is app-managed regardless of a historical
+    // row's mutable `builtin` bit. Repair old poisoned/custom takeover rows.
+    persist(parsed.data, 'built-in sync');
+    squads.set(parsed.data.id, parsed.data);
+    refreshed += 1;
   }
   if (refreshed > 0) console.log(`[orch] built-in squads sincronizados: ${refreshed}`);
 }
@@ -235,10 +363,7 @@ function syncBuiltins(): void {
 function ensureBuiltinsReadable(): void {
   for (const squad of BUILTIN_SQUADS) {
     const parsed = squadSchema.safeParse(squad);
-    if (
-      parsed.success &&
-      (parsed.data.id === PET_STUDIO_SQUAD_ID || !squads.has(parsed.data.id))
-    ) {
+    if (parsed.success) {
       squads.set(parsed.data.id, parsed.data);
     }
   }
@@ -282,25 +407,64 @@ export function getSquad(id: string): Squad | null {
   return squads.get(id) ?? null;
 }
 
-/** Validate and save a squad (create or replace). Returns the saved squad. */
-export function saveSquad(raw: unknown): Squad {
+/**
+ * Normalize the exact executable squad and capture its current target CAS.
+ * This phase is read-only: callers may show `snapshot`/`canonicalJson` in a
+ * native confirmation without creating a review-to-execution gap.
+ */
+export function prepareSquadSave(raw: unknown): PreparedSquadSave {
   const parsed = squadSchema.parse(raw);
-  // Normalize workers' allowlists with the same canonical rule the built-ins
-  // use (withAllowlists): every persisted worker gets a non-null `allowedTools`
-  // so it passes the wizard's fire-gate (validateWorkerToolScopes). Custom and
-  // architect-generated squads (designSquad → saveSquad) both funnel here.
-  const squad: Squad = parsed.id === PET_STUDIO_SQUAD_ID
-    ? PET_STUDIO_SQUAD
-    : { ...parsed, agents: withAllowlists(parsed.agents) };
-  persist(squad, 'save');
-  squads.set(squad.id, squad);
+  const squad = assertManagedSavePolicy(parsed);
+  const canonicalJson = canonicalSquadJson(squad);
+  const candidate = Object.freeze({
+    squad,
+    snapshot: snapshotSquadAuthority(squad),
+    canonicalJson,
+    canonicalSha256: sha256(canonicalJson),
+    expectedTarget: currentTargetExpectation(squad.id),
+  });
+  preparedSquadSaves.add(candidate);
+  return candidate;
+}
+
+/** Persist a previously prepared squad exactly once, guarded by its CAS. */
+export function applyPreparedSquadSave(
+  candidate: PreparedSquadSave,
+): Squad {
+  if (!preparedSquadSaves.delete(candidate)) {
+    throw new Error('squad save candidate was not prepared or was already used');
+  }
+  assertPreparedSaveIntegrity(candidate);
+  assertExpectedTargetUnchanged(candidate.expectedTarget);
+  // Re-evaluate managed ownership at the write boundary. A forged/stale
+  // candidate cannot turn a later app-managed id into user-owned content.
+  const exact =
+    candidate.squad.id === PET_STUDIO_SQUAD_ID
+      ? PET_STUDIO_SQUAD
+      : candidate.squad;
+  if (
+    exact.id !== PET_STUDIO_SQUAD_ID &&
+    (exact.builtin || MANAGED_SQUAD_IDS.has(exact.id))
+  ) {
+    throw new Error(
+      'managed built-in squads cannot be saved through the user store',
+    );
+  }
+  persist(exact, 'save');
+  squads.set(exact.id, exact);
   hub.emit();
-  return squad;
+  return exact;
+}
+
+/** Validate, normalize and synchronously save a squad. */
+export function saveSquad(raw: unknown): Squad {
+  return applyPreparedSquadSave(prepareSquadSave(raw));
 }
 
 export function deleteSquad(id: string): boolean {
-  if (id === PET_STUDIO_SQUAD_ID) return false;
-  if (!squads.has(id)) return false;
+  if (MANAGED_SQUAD_IDS.has(id)) return false;
+  const current = squads.get(id);
+  if (!current || current.builtin) return false;
   const database = requireWritableDb();
   try {
     database.prepare('DELETE FROM squads WHERE id = ?').run(id);
@@ -351,24 +515,73 @@ export function exportSquadsJson(): string {
   return JSON.stringify({ squads: listSquads() }, null, 2);
 }
 
-/** Import a squads file. Returns how many were saved. */
-export function importSquadsJson(json: string): number {
-  const parsed = squadsFileSchema.parse(JSON.parse(json));
-  const importedSquads = parsed.squads.map(
-    (squad): Squad =>
-      squad.id === PET_STUDIO_SQUAD_ID
-        ? PET_STUDIO_SQUAD
-        : {
-            ...squad,
-            agents: withAllowlists(squad.agents),
-          },
-  );
-  if (importedSquads.length === 0) return 0;
+/**
+ * Parse and normalize an import without mutating SQLite or the read cache.
+ * Raw and canonical hashes let the IPC boundary bind both the selected bytes
+ * and the exact executable definitions shown to the operator.
+ */
+export function prepareSquadsImport(
+  raw: string | Buffer,
+): PreparedSquadsImport {
+  const byteLength =
+    typeof raw === 'string' ? Buffer.byteLength(raw, 'utf8') : raw.byteLength;
+  if (byteLength > MAX_SQUADS_IMPORT_BYTES) {
+    throw new Error('squads import exceeds the 1 MiB limit');
+  }
+  const rawText =
+    typeof raw === 'string'
+      ? raw
+      : new TextDecoder('utf-8', { fatal: true }).decode(raw);
+  const parsed = squadsFileSchema.parse(JSON.parse(rawText));
+  for (const squad of parsed.squads) {
+    if (MANAGED_SQUAD_IDS.has(squad.id)) {
+      throw new Error(
+        `managed built-in squad id is reserved and cannot be imported: ${squad.id}`,
+      );
+    }
+  }
+  const importedSquads = parsed.squads.map(normalizeUserSquad);
+  const canonicalJson = JSON.stringify({ squads: importedSquads }, null, 2);
+  const candidate = Object.freeze({
+    rawSha256: sha256(
+      typeof raw === 'string' ? Buffer.from(raw, 'utf8') : raw,
+    ),
+    canonicalSha256: sha256(canonicalJson),
+    canonicalJson,
+    squads: Object.freeze(importedSquads),
+    snapshots: Object.freeze(importedSquads.map(snapshotSquadAuthority)),
+    squadCount: importedSquads.length,
+    agentCount: importedSquads.reduce(
+      (count, squad) => count + squad.agents.length,
+      0,
+    ),
+    targetIds: Object.freeze(importedSquads.map((squad) => squad.id)),
+    expectedTargets: Object.freeze(
+      importedSquads.map((squad) => currentTargetExpectation(squad.id)),
+    ),
+  });
+  preparedSquadImports.add(candidate);
+  return candidate;
+}
 
+/** CAS-check and atomically apply every squad in a prepared import. */
+export function applyPreparedSquadsImport(
+  candidate: PreparedSquadsImport,
+): number {
+  if (!preparedSquadImports.delete(candidate)) {
+    throw new Error(
+      'squads import candidate was not prepared or was already used',
+    );
+  }
+  assertPreparedImportIntegrity(candidate);
+  for (const expected of candidate.expectedTargets) {
+    assertExpectedTargetUnchanged(expected);
+  }
+  if (candidate.squads.length === 0) return 0;
   const database = requireWritableDb();
   try {
     database.exec('BEGIN IMMEDIATE');
-    for (const squad of importedSquads) writeSquad(database, squad);
+    for (const squad of candidate.squads) writeSquad(database, squad);
     database.exec('COMMIT');
   } catch (error) {
     try {
@@ -379,7 +592,30 @@ export function importSquadsJson(json: string): number {
     failPersistence('import', error);
   }
 
-  for (const squad of importedSquads) squads.set(squad.id, squad);
+  for (const squad of candidate.squads) squads.set(squad.id, squad);
   hub.emit();
-  return importedSquads.length;
+  return candidate.squads.length;
+}
+
+/** Compatibility funnel for trusted internal callers and first-run migration. */
+export function importSquadsJson(json: string): number {
+  return applyPreparedSquadsImport(prepareSquadsImport(json));
+}
+
+/**
+ * Trusted first-run migration only. Old exports commonly contain copies of
+ * Nexus managed squads; ignore those rows and recover the remaining custom
+ * definitions through the same normalized, atomic public apply path.
+ */
+export function importLegacySquadsJson(json: string): number {
+  if (Buffer.byteLength(json, 'utf8') > MAX_SQUADS_IMPORT_BYTES) {
+    throw new Error('legacy squads import exceeds the 1 MiB limit');
+  }
+  const parsed = squadsFileSchema.parse(JSON.parse(json));
+  const customs = parsed.squads.filter(
+    (squad) => !MANAGED_SQUAD_IDS.has(squad.id),
+  );
+  return applyPreparedSquadsImport(
+    prepareSquadsImport(JSON.stringify({ squads: customs })),
+  );
 }

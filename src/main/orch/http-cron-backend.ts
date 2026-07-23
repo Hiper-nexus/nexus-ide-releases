@@ -15,6 +15,7 @@ import {
   portableScheduleIdSchema,
   type PortableCronDefinition,
   type PortableCronScheduleBackend,
+  type PortableCronScheduleRequestOptions,
   type PublishPortableScheduleResult,
 } from './portable-cron-definition';
 
@@ -183,7 +184,10 @@ export class HttpCronBackend
     return response.status === 200 && parsed.success && parsed.data.data.released;
   }
 
-  async list(projectId: string) {
+  async list(
+    projectId: string,
+    options?: PortableCronScheduleRequestOptions,
+  ) {
     const project = portableProjectIdSchema.parse(projectId);
     const response = await this.#request(
       `/v1/cron/projects/${encodeURIComponent(project)}/schedules`,
@@ -191,6 +195,7 @@ export class HttpCronBackend
         method: 'GET',
         timeoutMs: this.#timeoutMs,
         maxResponseBytes: this.#maxResponseBytes,
+        signal: options?.signal,
       },
     );
     const parsed = listEnvelopeSchema.safeParse(response.json);
@@ -204,6 +209,7 @@ export class HttpCronBackend
     scheduleId: string,
     expectedVersion: number,
     definition: PortableCronDefinition,
+    options?: PortableCronScheduleRequestOptions,
   ): Promise<PublishPortableScheduleResult> {
     const project = portableProjectIdSchema.parse(projectId);
     const schedule = portableScheduleIdSchema.parse(scheduleId);
@@ -216,6 +222,7 @@ export class HttpCronBackend
         body: { expectedVersion: version, definition: portable },
         timeoutMs: this.#timeoutMs,
         maxResponseBytes: this.#maxResponseBytes,
+        signal: options?.signal,
       },
     );
     const success = publishEnvelopeSchema.safeParse(response.json);

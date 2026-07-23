@@ -4,10 +4,9 @@
 // See third_party/licenses/orca-MIT.txt.
 
 import {
-  encodeTerminalStreamFrame,
-  TerminalStreamOpcode,
-  type TerminalStreamFrame,
-} from '../../../shared/terminal-stream-protocol';
+  type TerminalResumeResult,
+} from './remote-reconnect';
+import { TerminalStreamSession } from '../terminal-stream-session';
 import type { SshSession } from './ssh-session-manager';
 
 export type RemotePtyHandle = {
@@ -18,28 +17,35 @@ export type RemotePtyHandle = {
   /** Subscribe to encoded terminal-stream frames (Output). */
   onFrame(cb: (frame: Uint8Array) => void): void;
   getLastSeq(): number;
+  resumeAfter(clientLastSeq: number): TerminalResumeResult;
 };
 
 export async function openRemotePty(
   session: SshSession,
-  options: { streamId: number; cols: number; rows: number },
+  options: {
+    streamId: number;
+    cols: number;
+    rows: number;
+    replay?: {
+      maxFrames?: number;
+      maxBytes?: number;
+    };
+  },
 ): Promise<RemotePtyHandle> {
   if (!session.transport.openPty) {
     throw new Error('remote-pty: transport does not support PTY');
   }
   const pty = await session.transport.openPty(options.cols, options.rows);
-  let seq = 0;
+  const stream = new TerminalStreamSession({
+    streamId: options.streamId,
+    maxBufferedFrames: options.replay?.maxFrames,
+    maxBufferedBytes: options.replay?.maxBytes,
+  });
   let frameCb: ((frame: Uint8Array) => void) | null = null;
 
   pty.onData((data) => {
-    seq += 1;
-    const frame: TerminalStreamFrame = {
-      opcode: TerminalStreamOpcode.Output,
-      streamId: options.streamId,
-      seq,
-      payload: new TextEncoder().encode(data),
-    };
-    frameCb?.(encodeTerminalStreamFrame(frame));
+    const frame = stream.encodeOutput(new TextEncoder().encode(data));
+    frameCb?.(frame);
   });
 
   return {
@@ -49,14 +55,10 @@ export async function openRemotePty(
     },
     resize(cols, rows) {
       pty.resize(cols, rows);
-      seq += 1;
-      const frame: TerminalStreamFrame = {
-        opcode: TerminalStreamOpcode.Resized,
-        streamId: options.streamId,
-        seq,
-        payload: new TextEncoder().encode(JSON.stringify({ cols, rows })),
-      };
-      frameCb?.(encodeTerminalStreamFrame(frame));
+      const frame = stream.encodeResized(
+        new TextEncoder().encode(JSON.stringify({ cols, rows })),
+      );
+      frameCb?.(frame);
     },
     close() {
       pty.close();
@@ -66,7 +68,10 @@ export async function openRemotePty(
       frameCb = cb;
     },
     getLastSeq() {
-      return seq;
+      return stream.lastEncodedSeq;
+    },
+    resumeAfter(clientLastSeq) {
+      return stream.resumeAfter(clientLastSeq);
     },
   };
 }

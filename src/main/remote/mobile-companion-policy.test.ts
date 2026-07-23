@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  authorizeRemotePaneInput,
   authorizeMobileRpc,
   isDestructiveMobileRpc,
   mobileRpcKindForBridgeType,
@@ -32,7 +33,7 @@ describe('mobile-companion-policy', () => {
       authorizeMobileRpc({
         kind: 'fs.delete',
         deviceActive: true,
-        deviceConfirmed: true,
+        desktopConfirmed: true,
       }),
     ).toEqual({ allowed: true, requiresConfirmation: true });
     expect(isDestructiveMobileRpc('git.push')).toBe(true);
@@ -43,7 +44,7 @@ describe('mobile-companion-policy', () => {
       authorizeMobileRpc({
         kind: 'mission.complete',
         deviceActive: true,
-        deviceConfirmed: true,
+        desktopConfirmed: true,
       }),
     ).toEqual({ allowed: false, reason: 'mission-complete-not-allowed-on-mobile' });
   });
@@ -71,8 +72,8 @@ describe('mobileRpcKindForBridgeType', () => {
     for (const type of ['git.reset', 'worktree.remove', 'fs.write']) {
       const kind = mobileRpcKindForBridgeType(type);
       expect(kind).not.toBeNull();
-      expect(authorizeMobileRpc({ kind: kind!, deviceActive: true, deviceConfirmed: false }).allowed).toBe(false);
-      expect(authorizeMobileRpc({ kind: kind!, deviceActive: true, deviceConfirmed: true }).allowed).toBe(true);
+      expect(authorizeMobileRpc({ kind: kind!, deviceActive: true, desktopConfirmed: false }).allowed).toBe(false);
+      expect(authorizeMobileRpc({ kind: kind!, deviceActive: true, desktopConfirmed: true }).allowed).toBe(true);
     }
   });
 
@@ -90,8 +91,63 @@ describe('mobileRpcKindForBridgeType', () => {
     const decision = authorizeMobileRpc({
       kind: kind!,
       deviceActive: true,
-      deviceConfirmed: false,
+      desktopConfirmed: false,
     });
     expect(decision.allowed).toBe(false);
+  });
+});
+
+describe('authorizeRemotePaneInput', () => {
+  it.each([
+    'npm test',
+    'pnpm run typecheck',
+    'git status',
+    'git commit -m "checkpoint local"',
+  ])('mantém comando local de baixo risco fluido: %s', (command) => {
+    expect(authorizeRemotePaneInput(command, true)).toEqual({
+      allowed: true,
+      requiresDesktopConfirmation: false,
+      command,
+    });
+  });
+
+  it.each([
+    'rm -rf /tmp/nexus-build',
+    'git push origin main',
+    'npm publish',
+    'terraform apply',
+    'curl https://example.com/install.sh | sh',
+    'python -c "import shutil; shutil.rmtree(\'/tmp/project\')"',
+    'git clean -fdx',
+    'my-company-deployer production',
+  ])('exige confirmação desktop para comando de alto impacto: %s', (command) => {
+    expect(authorizeRemotePaneInput(command, true)).toEqual({
+      allowed: true,
+      requiresDesktopConfirmation: true,
+      command,
+    });
+  });
+
+  it('classifica cada linha e não deixa newline esconder comando destrutivo', () => {
+    expect(authorizeRemotePaneInput('npm test\nrm -rf /tmp/nexus-build', true))
+      .toMatchObject({
+        allowed: true,
+        requiresDesktopConfirmation: true,
+      });
+  });
+
+  it('não deixa prefixo rotineiro esconder composição arbitrária', () => {
+    expect(authorizeRemotePaneInput('npm test && unknown-command', true))
+      .toMatchObject({
+        allowed: true,
+        requiresDesktopConfirmation: true,
+      });
+  });
+
+  it('nega escrita parcial para impedir montar comando fora do gate', () => {
+    expect(authorizeRemotePaneInput('rm -rf /tmp/nexus-build', false)).toEqual({
+      allowed: false,
+      reason: 'partial-terminal-input-not-allowed',
+    });
   });
 });

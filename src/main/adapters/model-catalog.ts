@@ -380,6 +380,20 @@ export function isModelBlockedForAutoRouting(
   return info?.availability === 'api-only' || info?.availability === 'deprecated';
 }
 
+/**
+ * Only measured/published Nexus evaluations may influence automatic rank.
+ * `fixture` scores exercise catalog plumbing and may ship in dev/test
+ * overlays, but they are not evidence about model quality.
+ */
+export function hasAuthoritativeModelQuality(
+  info: ModelCatalogEntryInfo | null | undefined,
+): boolean {
+  const quality = info?.quality;
+  if (!quality) return false;
+  const sourceSegments = quality.source.toLowerCase().split(/[\/._-]+/);
+  return !sourceSegments.includes('fixture');
+}
+
 export function modelRoutingRank(info: ModelCatalogEntryInfo | null | undefined): number {
   if (!info) return COST_RANK.unknown;
   if (isModelBlockedForAutoRouting(info)) return Number.POSITIVE_INFINITY;

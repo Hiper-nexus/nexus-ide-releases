@@ -248,8 +248,218 @@ const REVIEW_P0P3_ORCH_INSTRUCTIONS =
   'Nexus fazer o parse tipado (parseReviewFindings). Sem esse JSON o ' +
   'resultado do review é inutilizável.\n';
 
+const OUTCOME_PACK_COMMON =
+  '\n\n## Operação segura\n' +
+  'Transforme o contrato de resultado em tarefas com donos, dependências e ' +
+  'critérios de aceite antes de spawnar. Use apenas agentes do roster, preserve ' +
+  'a CLI de cada nome e mantenha escrita em um único worktree por tarefa. ' +
+  'Cada worker entrega um handoff com arquivos alterados e provas executadas. ' +
+  'O implementador nunca aprova o próprio trabalho: QA e Reviewer verificam ' +
+  'o resultado de forma independente. Não marque a missão como concluída/done ' +
+  'sem handoffs aceitos e evidência real dos critérios de aceite; se algo ' +
+  'essencial não puder ser provado, bloqueie com uma ação clara para o usuário.\n' +
+  '\n' +
+  '## Fechamento\n' +
+  'O roster oferece um reviewer P0–P3, mas presença no roster ou neste prompt ' +
+  'não prova execução automática. Só registre esse review como realizado ' +
+  'quando ele existir no plano controlado pelo Nexus e houver handoff aceito; ' +
+  'caso contrário, declare a revisão P0–P3 automática como indisponível. O ' +
+  'handoff final explica em linguagem humana: o que ficou pronto, como foi ' +
+  'provado, riscos restantes e onde encontrar os artefatos.\n';
+
 const RAW_SQUADS: Squad[] = [
   PET_STUDIO_SQUAD,
+  {
+    id: 'outcome-landing-page',
+    name: 'Landing Page',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Landing Page\n' +
+      'Você conduz uma entrega de landing page utilizável, não um mock solto.\n' +
+      '\n' +
+      '## Contrato de resultado\n' +
+      'Entregue a página integrada ao projeto existente, responsiva nas larguras ' +
+      'previstas, com hierarquia visual clara, conteúdo coerente com o objetivo ' +
+      'e um caminho de conversão funcional. Preserve o design system e a stack ' +
+      'do workspace; não troque framework ou infraestrutura por conveniência.\n' +
+      '\n' +
+      'Critérios de aceite mínimos:\n' +
+      '- a rota abre no app real sem erro de console impeditivo;\n' +
+      '- CTA e navegação principal funcionam, inclusive por teclado;\n' +
+      '- estados mobile e desktop foram observados em execução real;\n' +
+      '- build, testes relevantes e checagens de acessibilidade do projeto passam;\n' +
+      '- o handoff inclui caminhos, comandos e evidência visual quando houver UI.\n' +
+      OUTCOME_PACK_COMMON,
+    agents: [
+      {
+        id: 'orch',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+      },
+      {
+        id: 'frontend',
+        agentName: 'Frontend',
+        category: 'executor',
+        cli: 'codex',
+        effort: 'medium',
+      },
+      {
+        id: 'ux-content',
+        agentName: 'UX & Conteúdo',
+        category: 'architect',
+        cli: 'agy',
+        effort: 'medium',
+      },
+      {
+        id: 'qa-accessibility',
+        agentName: 'QA & Acessibilidade',
+        category: 'reviewer',
+        cli: 'grok',
+        effort: 'medium',
+      },
+      {
+        id: 'final-review',
+        agentName: 'Reviewer P0–P3 (omp)',
+        category: 'reviewer',
+        cli: 'omp',
+        effort: 'high',
+      },
+    ],
+  },
+  {
+    id: 'outcome-bug-fix',
+    name: 'Bug Fix',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Bug Fix\n' +
+      'Você conduz a correção completa de um defeito, da reprodução à prova ' +
+      'contra regressão. Não trate sintoma como causa-raiz.\n' +
+      '\n' +
+      '## Contrato de resultado\n' +
+      'Entregue uma reprodução determinística ou evidência equivalente, uma ' +
+      'explicação curta da causa-raiz, a menor correção segura e um teste de ' +
+      'regressão que falha no comportamento anterior e passa com a correção.\n' +
+      '\n' +
+      'Critérios de aceite mínimos:\n' +
+      '- o caso reportado foi reproduzido antes de editar ou a impossibilidade foi documentada;\n' +
+      '- o patch corrige a causa-raiz sem ampliar escopo sem necessidade;\n' +
+      '- um teste ou prova repetível protege o caminho corrigido;\n' +
+      '- testes vizinhos e typecheck/build relevantes continuam verdes;\n' +
+      '- o handoff registra reprodução, causa, arquivos e comandos de validação.\n' +
+      OUTCOME_PACK_COMMON,
+    agents: [
+      {
+        id: 'orch',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+      },
+      {
+        id: 'investigator',
+        agentName: 'Investigador',
+        category: 'scout',
+        cli: 'agy',
+        effort: 'medium',
+      },
+      {
+        id: 'fixer',
+        agentName: 'Implementador',
+        category: 'executor',
+        cli: 'codex',
+        effort: 'medium',
+      },
+      {
+        id: 'regression-qa',
+        agentName: 'QA de Regressão',
+        category: 'reviewer',
+        cli: 'grok',
+        effort: 'medium',
+      },
+      {
+        id: 'final-review',
+        agentName: 'Reviewer P0–P3 (omp)',
+        category: 'reviewer',
+        cli: 'omp',
+        effort: 'high',
+      },
+    ],
+  },
+  {
+    id: 'outcome-store',
+    name: 'Loja',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Loja\n' +
+      'Você conduz uma entrega de comércio eletrônico navegável e verificável. ' +
+      'Prefira integrar serviços já adotados pelo workspace.\n' +
+      '\n' +
+      '## Contrato de resultado\n' +
+      'Entregue catálogo, detalhe de produto, carrinho persistente no escopo ' +
+      'pedido e um checkout coerente com a integração aprovada. Pagamento real, ' +
+      'alteração de preço, uso de segredo/credencial ou acesso a dados do cliente ' +
+      'são superfícies sensíveis: exigem autorização explícita e nunca entram em ' +
+      'logs, prompts, fixtures ou commits. Sem autorização, use apenas sandbox ' +
+      'documentado e não alegue que produção foi validada.\n' +
+      '\n' +
+      'Critérios de aceite mínimos:\n' +
+      '- catálogo, produto e carrinho funcionam no app real nos estados vazio e preenchido;\n' +
+      '- totais e transições de checkout têm testes nos limites relevantes;\n' +
+      '- falhas de rede/pagamento apresentam recuperação sem duplicar pedido;\n' +
+      '- nenhuma credencial ou dado do cliente aparece em artefatos do repositório;\n' +
+      '- build, testes, revisão de segurança e prova do fluxo aprovado passam;\n' +
+      '- o handoff separa claramente sandbox validado de qualquer passo ainda pendente em produção.\n' +
+      OUTCOME_PACK_COMMON,
+    agents: [
+      {
+        id: 'orch',
+        agentName: 'Maestro',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+      },
+      {
+        id: 'storefront',
+        agentName: 'Storefront',
+        category: 'executor',
+        cli: 'codex',
+        effort: 'medium',
+      },
+      {
+        id: 'commerce-backend',
+        agentName: 'Catálogo & Pedidos',
+        category: 'executor',
+        cli: 'agy',
+        effort: 'medium',
+      },
+      {
+        id: 'security',
+        agentName: 'Segurança de Pagamento',
+        category: 'reviewer',
+        cli: 'kimi',
+        effort: 'high',
+      },
+      {
+        id: 'checkout-qa',
+        agentName: 'QA de Checkout',
+        category: 'reviewer',
+        cli: 'grok',
+        effort: 'high',
+      },
+      {
+        id: 'final-review',
+        agentName: 'Reviewer P0–P3 (omp)',
+        category: 'reviewer',
+        cli: 'omp',
+        effort: 'high',
+      },
+    ],
+  },
   {
     id: 'nexus-fullstack',
     name: 'Full-Stack',

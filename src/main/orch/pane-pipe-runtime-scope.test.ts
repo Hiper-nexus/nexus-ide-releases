@@ -23,6 +23,14 @@ const scopeMocks = vi.hoisted(() => ({
 
 const idMocks = vi.hoisted(() => ({ counter: 0 }));
 
+const semanticMocks = vi.hoisted(() => ({
+  injectable: new Map<string, boolean>(),
+  taps: [] as Array<(entry: {
+    sessionId: string;
+    status: 'idle' | 'completed' | 'awaiting-input' | 'working';
+  }) => void>,
+}));
+
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: vi.fn(
     (sessionId: string) => ptyMocks.states.get(sessionId) ?? 'busy',
@@ -48,6 +56,19 @@ vi.mock('../persistence/renderer-workspace-scope', () => ({
   getRendererWorkspaceScope: vi.fn(
     (owner: { id: number }) => scopeMocks.byOwner.get(owner.id) ?? null,
   ),
+}));
+
+vi.mock('./agent-status', () => ({
+  isSessionInjectableIdle: vi.fn((sessionId: string) =>
+    (ptyMocks.states.get(sessionId) ?? 'busy') === 'idle' &&
+    semanticMocks.injectable.get(sessionId) !== false),
+  tapAgentSemanticStatus: vi.fn((tap: (entry: {
+    sessionId: string;
+    status: 'idle' | 'completed' | 'awaiting-input' | 'working';
+  }) => void) => {
+    semanticMocks.taps.push(tap);
+    return () => undefined;
+  }),
 }));
 
 vi.mock('./pane-registry', () => ({
@@ -107,6 +128,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   ptyMocks.states.clear();
   ptyMocks.writes.mockClear();
+  semanticMocks.injectable.clear();
   paneMocks.byOwner.clear();
   paneMocks.bySession.clear();
   paneMocks.version += 1;
@@ -125,6 +147,26 @@ afterEach(() => {
 });
 
 describe('pane pipe runtime project partitions', () => {
+  it('queues automatic pipe input until the target is semantically injectable', async () => {
+    const scope = testProjectScope();
+    const owner = renderer(99);
+    owners.push({ owner, scope });
+    scopeMocks.byOwner.set(owner.id, scope);
+    authorizePane({ owner, scope, paneId: 'source', sessionId: 'source-wait' });
+    authorizePane({ owner, scope, paneId: 'target', sessionId: 'target-wait' });
+    ptyMocks.states.set('target-wait', 'idle');
+    semanticMocks.injectable.set('target-wait', false);
+    expect(addPipe(owner, scope, 'source', 'target', 'stream')).not.toBeNull();
+
+    ptyMocks.dataTaps[0]('source-wait', 'must wait\n');
+    await vi.advanceTimersByTimeAsync(200);
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+
+    semanticMocks.injectable.set('target-wait', true);
+    semanticMocks.taps[0]({ sessionId: 'target-wait', status: 'completed' });
+    expect(ptyMocks.writes).toHaveBeenCalledWith('target-wait', 'must wait\r');
+  });
+
   it('routes colliding pane ids only inside the exact owner and scope', async () => {
     const scopeA = testProjectScope();
     const scopeB = testProjectScope({
@@ -142,6 +184,8 @@ describe('pane pipe runtime project partitions', () => {
     authorizePane({ owner: ownerA, scope: scopeA, paneId: 'target', sessionId: 'target-a' });
     authorizePane({ owner: ownerB, scope: scopeB, paneId: 'source', sessionId: 'source-b' });
     authorizePane({ owner: ownerB, scope: scopeB, paneId: 'target', sessionId: 'target-b' });
+    ptyMocks.states.set('target-a', 'idle');
+    ptyMocks.states.set('target-b', 'idle');
 
     expect(addPipe(ownerA, scopeA, 'source', 'target', 'stream')).not.toBeNull();
     expect(addPipe(ownerB, scopeB, 'source', 'target', 'stream')).not.toBeNull();

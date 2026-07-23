@@ -7,11 +7,11 @@ import {
 } from './progressive-onboarding';
 
 describe('progressive onboarding contracts', () => {
-  it('defaults to open-without-AI terminal-only (no agent/MCP required)', () => {
+  it('defaults to the mission-first path and keeps terminal-only explicit', () => {
     const plan = progressiveLaunchSchema.parse({});
-    expect(plan.openWithoutAi).toBe(true);
-    expect(plan.mode).toBe('terminal-only');
-    expect(plan.agentDistribution).toBe('none');
+    expect(plan.openWithoutAi).toBe(false);
+    expect(plan.mode).toBe('missions');
+    expect(plan.agentDistribution).toBe('one-of-each');
     expect(plan.paneCount).toBe(1);
   });
 

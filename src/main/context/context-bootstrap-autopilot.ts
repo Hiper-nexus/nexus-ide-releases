@@ -425,6 +425,9 @@ export async function runContextBootstrapAutopilot(
         const reviewed = await reviewer.run({
           scope: options.scope,
           draftId,
+          ...(options.signal
+            ? { invocation: { signal: options.signal } }
+            : {}),
         });
         throwIfBootstrapAborted(options.signal);
         if (reviewed.status === 'approved' || reviewed.status === 'applied') {
@@ -508,7 +511,13 @@ export async function runContextBootstrapAutopilot(
           status: next.status,
           autoReviewable: true,
         });
-        const reviewed = await reviewer.run({ scope: options.scope, draftId: next.id });
+        const reviewed = await reviewer.run({
+          scope: options.scope,
+          draftId: next.id,
+          ...(options.signal
+            ? { invocation: { signal: options.signal } }
+            : {}),
+        });
         throwIfBootstrapAborted(options.signal);
         if (reviewed.status === 'approved' || reviewed.status === 'applied') {
           const applied = reviewed.status === 'applied'

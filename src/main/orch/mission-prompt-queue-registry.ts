@@ -1,5 +1,5 @@
 /**
- * Process-wide mission prompt queues (main process).
+ * Process-wide, project-execution-scoped mission prompt queues (main process).
  * Renderer/voice call through IPC or shared reduce helpers for tests.
  */
 import {
@@ -12,6 +12,7 @@ import {
   type MissionPromptQueueState,
   type PromptQueueReduceResult,
 } from '../../shared/mission-prompt-queue';
+import type { ProjectExecutionScope } from '../../shared/types';
 
 const queues = new Map<string, MissionPromptQueueState>();
 const promptAbortControllers = new Map<string, AbortController>();
@@ -40,60 +41,91 @@ function clearExecutingWatchdog(key: string): void {
   }
 }
 
-function scheduleExecutingWatchdog(missionId: string, promptId: string): void {
-  const key = controllerKey(missionId, promptId);
+function scheduleExecutingWatchdog(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  promptId: string,
+): void {
+  const key = controllerKey(scope, missionId, promptId);
   clearExecutingWatchdog(key);
   const timer = setTimeout(() => {
     executingWatchdogs.delete(key);
-    const stuck = getMissionPromptQueue(missionId).items.find(
+    const stuck = getMissionPromptQueue(scope, missionId).items.find(
       (item) => item.id === promptId && item.status === 'executing',
     );
     if (!stuck) return;
     console.warn(
       `[mission-prompt-queue] executing watchdog fired for ${missionId}/${promptId}; force-completing as failed`,
     );
-    completeMissionPrompt(missionId, promptId, false);
+    completeMissionPrompt(scope, missionId, promptId, false);
   }, executingWatchdogMs());
   timer.unref();
   executingWatchdogs.set(key, timer);
 }
 
 function storeResult(
+  scope: ProjectExecutionScope,
   missionId: string,
   result: PromptQueueReduceResult,
 ): PromptQueueReduceResult {
   const state = prunePromptQueueHistory(result.state, MAX_TERMINAL_HISTORY);
-  queues.set(missionId, state);
+  queues.set(queueKey(scope, missionId), state);
   return state === result.state ? result : { ...result, state };
 }
 
-function controllerKey(missionId: string, promptId: string): string {
-  return `${missionId}\0${promptId}`;
+function queueKey(scope: ProjectExecutionScope, missionId: string): string {
+  return JSON.stringify([
+    scope.installationId,
+    scope.projectId,
+    scope.checkoutId,
+    scope.rootRealPath,
+    missionId,
+  ]);
+}
+
+function controllerPrefix(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): string {
+  const scopedQueueKey = queueKey(scope, missionId);
+  return `${scopedQueueKey.length}:${scopedQueueKey}`;
+}
+
+function controllerKey(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  promptId: string,
+): string {
+  return `${controllerPrefix(scope, missionId)}${promptId}`;
 }
 
 function abortCancelledPrompts(
+  scope: ProjectExecutionScope,
   missionId: string,
   cancelledIds: readonly string[],
 ): void {
   for (const id of cancelledIds) {
-    const key = controllerKey(missionId, id);
+    const key = controllerKey(scope, missionId, id);
     promptAbortControllers.get(key)?.abort();
     clearExecutingWatchdog(key);
   }
 }
 
 export function getMissionPromptQueue(
+  scope: ProjectExecutionScope,
   missionId: string,
 ): MissionPromptQueueState {
-  let state = queues.get(missionId);
+  const key = queueKey(scope, missionId);
+  let state = queues.get(key);
   if (!state) {
     state = createEmptyPromptQueue(missionId);
-    queues.set(missionId, state);
+    queues.set(key, state);
   }
   return state;
 }
 
 export function enqueueMissionPrompt(input: {
+  readonly scope: ProjectExecutionScope;
   readonly missionId: string;
   readonly kind: MissionPromptKind;
   readonly body: string;
@@ -102,7 +134,7 @@ export function enqueueMissionPrompt(input: {
   readonly now?: number;
   readonly id?: string;
 }): PromptQueueReduceResult {
-  const prev = getMissionPromptQueue(input.missionId);
+  const prev = getMissionPromptQueue(input.scope, input.missionId);
   const result = reducePromptQueue(prev, {
     type: 'enqueue',
     kind: input.kind,
@@ -112,94 +144,108 @@ export function enqueueMissionPrompt(input: {
     now: input.now,
     id: input.id,
   });
-  const stored = storeResult(input.missionId, result);
-  abortCancelledPrompts(input.missionId, result.cancelledIds);
+  const stored = storeResult(input.scope, input.missionId, result);
+  abortCancelledPrompts(input.scope, input.missionId, result.cancelledIds);
   return stored;
 }
 
 export function startMissionPrompt(
+  scope: ProjectExecutionScope,
   missionId: string,
   id: string,
 ): PromptQueueReduceResult {
-  const result = reducePromptQueue(getMissionPromptQueue(missionId), {
+  const result = reducePromptQueue(getMissionPromptQueue(scope, missionId), {
     type: 'start',
     id,
   });
-  const stored = storeResult(missionId, result);
+  const stored = storeResult(scope, missionId, result);
   const started = stored.state.items.find(
     (item) => item.id === id && item.status === 'executing',
   );
   if (started) {
-    const key = controllerKey(missionId, id);
+    const key = controllerKey(scope, missionId, id);
     if (!promptAbortControllers.has(key)) {
       promptAbortControllers.set(key, new AbortController());
     }
-    scheduleExecutingWatchdog(missionId, id);
+    scheduleExecutingWatchdog(scope, missionId, id);
   }
   return stored;
 }
 
 export function completeMissionPrompt(
+  scope: ProjectExecutionScope,
   missionId: string,
   id: string,
   ok: boolean,
 ): PromptQueueReduceResult {
-  const result = reducePromptQueue(getMissionPromptQueue(missionId), {
+  const result = reducePromptQueue(getMissionPromptQueue(scope, missionId), {
     type: 'complete',
     id,
     ok,
   });
-  const stored = storeResult(missionId, result);
-  promptAbortControllers.delete(controllerKey(missionId, id));
-  clearExecutingWatchdog(controllerKey(missionId, id));
+  const stored = storeResult(scope, missionId, result);
+  promptAbortControllers.delete(controllerKey(scope, missionId, id));
+  clearExecutingWatchdog(controllerKey(scope, missionId, id));
   return stored;
 }
 
 export function cancelMissionPrompt(
+  scope: ProjectExecutionScope,
   missionId: string,
   id: string,
 ): PromptQueueReduceResult {
-  const result = reducePromptQueue(getMissionPromptQueue(missionId), {
+  const result = reducePromptQueue(getMissionPromptQueue(scope, missionId), {
     type: 'cancel',
     id,
   });
-  const stored = storeResult(missionId, result);
-  abortCancelledPrompts(missionId, result.cancelledIds);
+  const stored = storeResult(scope, missionId, result);
+  abortCancelledPrompts(scope, missionId, result.cancelledIds);
   return stored;
 }
 
 export function bumpMissionPromptIntent(
+  scope: ProjectExecutionScope,
   missionId: string,
   intentVersion: number,
 ): PromptQueueReduceResult {
-  const result = reducePromptQueue(getMissionPromptQueue(missionId), {
+  const result = reducePromptQueue(getMissionPromptQueue(scope, missionId), {
     type: 'bump_intent',
     intentVersion,
   });
-  const stored = storeResult(missionId, result);
-  abortCancelledPrompts(missionId, result.cancelledIds);
+  const stored = storeResult(scope, missionId, result);
+  abortCancelledPrompts(scope, missionId, result.cancelledIds);
   return stored;
 }
 
 export function getMissionPromptAbortSignal(
+  scope: ProjectExecutionScope,
   missionId: string,
   id: string,
 ): AbortSignal | undefined {
-  return promptAbortControllers.get(controllerKey(missionId, id))?.signal;
+  return promptAbortControllers.get(controllerKey(scope, missionId, id))?.signal;
 }
 
-export function peekMissionPromptQueue(missionId: string) {
-  return promptQueueSnapshot(getMissionPromptQueue(missionId));
+export function peekMissionPromptQueue(
+  scope: ProjectExecutionScope,
+  missionId: string,
+) {
+  return promptQueueSnapshot(getMissionPromptQueue(scope, missionId));
 }
 
-export function takeNextMissionPrompt(missionId: string) {
-  const state = getMissionPromptQueue(missionId);
+export function takeNextMissionPrompt(
+  scope: ProjectExecutionScope,
+  missionId: string,
+) {
+  const state = getMissionPromptQueue(scope, missionId);
   return nextDeliverablePrompt(state);
 }
 
-export function deleteMissionPromptQueue(missionId: string): void {
-  queues.delete(missionId);
-  const prefix = `${missionId}\0`;
+export function deleteMissionPromptQueue(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): void {
+  queues.delete(queueKey(scope, missionId));
+  const prefix = controllerPrefix(scope, missionId);
   for (const [key, controller] of promptAbortControllers) {
     if (!key.startsWith(prefix)) continue;
     controller.abort();

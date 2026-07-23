@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolInvocation,
+} from './mcp-protocol';
 
 /**
  * Preview server local (benchmark §7): serve um diretório estático (build de
@@ -160,7 +164,9 @@ function serve(root: string, req: http.IncomingMessage, res: http.ServerResponse
 export async function startPreview(
   dir: string,
   scope: PreviewScope,
+  invocation?: McpToolInvocation,
 ): Promise<PreviewStartResult> {
+  assertMcpInvocationCurrent(invocation);
   const root = fs.realpathSync.native(path.resolve(dir));
   const stat = fs.statSync(root); // lança se não existe — o caller traduz
   if (!stat.isDirectory()) throw new Error(`não é um diretório: ${root}`);
@@ -169,6 +175,7 @@ export async function startPreview(
   const existingId = previewIdByKey.get(key);
   const existing = existingId ? runningById.get(existingId) : undefined;
   if (existing) {
+    assertMcpInvocationCurrent(invocation);
     return {
       id: existing.id,
       url: `http://127.0.0.1:${existing.port}/`,
@@ -180,7 +187,7 @@ export async function startPreview(
   const pending = startingByKey.get(key);
   if (pending) return pending;
 
-  const starting = createPreview(root, key, scope);
+  const starting = createPreview(root, key, scope, invocation);
   startingByKey.set(key, starting);
   try {
     return await starting;
@@ -193,12 +200,53 @@ async function createPreview(
   root: string,
   key: string,
   scope: PreviewScope,
+  invocation?: McpToolInvocation,
 ): Promise<PreviewStartResult> {
   const server = http.createServer((req, res) => serve(root, req, res));
   await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve());
+    let settled = false;
+    const cleanup = () => {
+      invocation?.signal?.removeEventListener('abort', onAbort);
+      server.off('error', onError);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try {
+        server.close();
+      } catch {
+        // A listener revoked before bind has no physical server to close.
+      }
+      reject(error);
+    };
+    const onAbort = () => fail(new Error('session_authority_revoked'));
+    const onError = (error: Error) => fail(error);
+    invocation?.signal?.addEventListener('abort', onAbort, { once: true });
+    server.once('error', onError);
+    try {
+      assertMcpInvocationCurrent(invocation);
+      server.listen(0, '127.0.0.1', () => {
+        try {
+          assertMcpInvocationCurrent(invocation);
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve();
+        } catch (error) {
+          fail(error);
+        }
+      });
+    } catch (error) {
+      fail(error);
+    }
   });
+  try {
+    assertMcpInvocationCurrent(invocation);
+  } catch (error) {
+    server.close();
+    throw error;
+  }
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : 0;
   const id = `preview-${randomUUID()}`;

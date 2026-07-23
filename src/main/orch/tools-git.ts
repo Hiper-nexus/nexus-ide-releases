@@ -1,4 +1,4 @@
-import type { McpToolDef } from './mcp-protocol';
+import type { McpToolDef, McpToolInvocation } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -18,13 +18,22 @@ const gitRunner = new ProcessGitRunner();
 function gitExec(
   args: readonly string[],
   cwd: string,
+  signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string }> {
+  assertInvocationLive(signal);
   assertSafeLocalGitConfig(gitRunner, cwd);
+  assertInvocationLive(signal);
   const result = gitRunner.run(cwd, args);
   return Promise.resolve({
     stdout: result.stdout.trim(),
     stderr: result.stderr.trim(),
   });
+}
+
+function assertInvocationLive(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new Error('session_authority_revoked');
 }
 
 function resolveCwd(
@@ -114,8 +123,14 @@ function assertSafeRemoteUrl(value: string): void {
 async function assertSafeConfiguredRemote(
   cwd: string,
   remote: string,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const { stdout } = await gitExec(['remote', 'get-url', remote], cwd);
+  const { stdout } = await gitExec(
+    ['remote', 'get-url', remote],
+    cwd,
+    signal,
+  );
+  assertInvocationLive(signal);
   assertSafeRemoteUrl(stdout);
 }
 
@@ -172,10 +187,14 @@ function countStatusLines(output: string, predicate: (line: string) => boolean):
   return output.split('\n').filter((line) => line && predicate(line)).length;
 }
 
-async function getUntrackedFileCount(cwd: string): Promise<number> {
+async function getUntrackedFileCount(
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<number> {
   const { stdout } = await gitExec(
     ['status', '--porcelain=v1', '--untracked-files=normal'],
     cwd,
+    signal,
   );
   return countStatusLines(stdout, (line) => line.startsWith('?? '));
 }
@@ -196,17 +215,22 @@ function blockedGitSync(
  * overwrites tracked local work. The only mutation allowed is a verified
  * fast-forward to the current origin upstream.
  */
-async function syncRepository(cwd: string): Promise<GitSyncResult> {
+async function syncRepository(
+  cwd: string,
+  invocation?: McpToolInvocation,
+): Promise<GitSyncResult> {
+  const signal = invocation?.signal;
   const { stdout: branchOutput } = await gitExec(
     ['rev-parse', '--abbrev-ref', 'HEAD'],
     cwd,
+    signal,
   );
   const branch = branchOutput.trim();
   if (!branch || branch === 'HEAD') {
     return blockedGitSync(
       cwd,
       'HEAD',
-      await getUntrackedFileCount(cwd),
+      await getUntrackedFileCount(cwd, signal),
       'o checkout está em HEAD destacado; escolha uma branch antes de sincronizar',
     );
   }
@@ -214,8 +238,9 @@ async function syncRepository(cwd: string): Promise<GitSyncResult> {
   const { stdout: trackedStatus } = await gitExec(
     ['status', '--porcelain=v1', '--untracked-files=no'],
     cwd,
+    signal,
   );
-  const untrackedFiles = await getUntrackedFileCount(cwd);
+  const untrackedFiles = await getUntrackedFileCount(cwd, signal);
   if (trackedStatus) {
     return blockedGitSync(
       cwd,
@@ -230,6 +255,7 @@ async function syncRepository(cwd: string): Promise<GitSyncResult> {
     ({ stdout: upstream } = await gitExec(
       ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
       cwd,
+      signal,
     ));
   } catch {
     return blockedGitSync(
@@ -250,12 +276,14 @@ async function syncRepository(cwd: string): Promise<GitSyncResult> {
     );
   }
 
-  await assertSafeConfiguredRemote(cwd, 'origin');
-  await gitExec(['fetch', '--prune', 'origin'], cwd);
+  await assertSafeConfiguredRemote(cwd, 'origin', signal);
+  assertInvocationLive(signal);
+  await gitExec(['fetch', '--prune', 'origin'], cwd, signal);
 
   const { stdout: divergence } = await gitExec(
     ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'],
     cwd,
+    signal,
   );
   const [aheadRaw, behindRaw] = divergence.trim().split(/\s+/);
   const ahead = Number.parseInt(aheadRaw ?? '', 10);
@@ -288,6 +316,7 @@ async function syncRepository(cwd: string): Promise<GitSyncResult> {
   const { stdout: finalTrackedStatus } = await gitExec(
     ['status', '--porcelain=v1', '--untracked-files=no'],
     cwd,
+    signal,
   );
   if (finalTrackedStatus) {
     return blockedGitSync(
@@ -300,7 +329,8 @@ async function syncRepository(cwd: string): Promise<GitSyncResult> {
   }
 
   try {
-    await gitExec(['merge', '--ff-only', '@{upstream}'], cwd);
+    assertInvocationLive(signal);
+    await gitExec(['merge', '--ff-only', '@{upstream}'], cwd, signal);
   } catch {
     return blockedGitSync(
       cwd,
@@ -335,9 +365,9 @@ const gitSync: McpToolDef = {
       },
     },
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
-    return syncRepository(cwd);
+    return syncRepository(cwd, invocation);
   },
 };
 
@@ -360,13 +390,17 @@ const gitAdd: McpToolDef = {
       },
     },
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const paths = Array.isArray(args.paths) && args.paths.length > 0
       ? args.paths.filter((p): p is string => typeof p === 'string')
       : ['.'];
     paths.forEach(assertSafeGitPathspec);
-    const { stdout } = await gitExec(['add', '--', ...paths], cwd);
+    const { stdout } = await gitExec(
+      ['add', '--', ...paths],
+      cwd,
+      invocation?.signal,
+    );
     return { cwd, staged: paths, output: stdout || 'ok' };
   },
 };
@@ -390,10 +424,14 @@ const gitCommit: McpToolDef = {
     },
     required: ['message'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const message = requireStr(args, 'message');
-    const { stdout } = await gitExec(['commit', '-m', message], cwd);
+    const { stdout } = await gitExec(
+      ['commit', '-m', message],
+      cwd,
+      invocation?.signal,
+    );
     return { cwd, output: stdout };
   },
 };
@@ -421,16 +459,17 @@ const gitPush: McpToolDef = {
       },
     },
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const remote = str(args, 'remote') ?? 'origin';
     const branch = str(args, 'branch');
     assertSafePushArg(remote, 'remote');
     if (branch) assertSafePushBranch(branch);
-    await assertSafeConfiguredRemote(cwd, remote);
+    await assertSafeConfiguredRemote(cwd, remote, invocation?.signal);
+    assertInvocationLive(invocation?.signal);
     const cmdArgs = ['push', remote];
     if (branch) cmdArgs.push(branch);
-    const { stdout } = await gitExec(cmdArgs, cwd);
+    const { stdout } = await gitExec(cmdArgs, cwd, invocation?.signal);
     return { cwd, remote, branch: branch || 'current', output: stdout };
   },
 };
@@ -461,18 +500,19 @@ const gitPull: McpToolDef = {
       },
     },
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const remote = str(args, 'remote') ?? 'origin';
     const branch = str(args, 'branch');
     assertSafeGitName(remote, 'remote');
     if (branch) assertSafeGitName(branch, 'branch');
-    await assertSafeConfiguredRemote(cwd, remote);
+    await assertSafeConfiguredRemote(cwd, remote, invocation?.signal);
+    assertInvocationLive(invocation?.signal);
     const cmdArgs = ['pull'];
     if (args.rebase === true) cmdArgs.push('--rebase');
     cmdArgs.push(remote);
     if (branch) cmdArgs.push(branch);
-    const { stdout } = await gitExec(cmdArgs, cwd);
+    const { stdout } = await gitExec(cmdArgs, cwd, invocation?.signal);
     return { cwd, output: stdout };
   },
 };
@@ -577,11 +617,15 @@ const gitBranchCreate: McpToolDef = {
     },
     required: ['name'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const name = requireStr(args, 'name');
     assertSafeGitName(name, 'branch');
-    const { stdout } = await gitExec(['branch', name], cwd);
+    const { stdout } = await gitExec(
+      ['branch', name],
+      cwd,
+      invocation?.signal,
+    );
     return { cwd, branch: name, output: stdout || 'created' };
   },
 };
@@ -605,11 +649,15 @@ const gitBranchSwitch: McpToolDef = {
     },
     required: ['name'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
     const name = requireStr(args, 'name');
     assertSafeGitName(name, 'branch');
-    const { stdout } = await gitExec(['checkout', name], cwd);
+    const { stdout } = await gitExec(
+      ['checkout', name],
+      cwd,
+      invocation?.signal,
+    );
     return { cwd, branch: name, output: stdout };
   },
 };

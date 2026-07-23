@@ -42,7 +42,7 @@ export function RecipesSection() {
     let cancelled = false;
     setLoading(true);
     void window.nexus.orch
-      .getRecipeOverlay(workspace?.path)
+      .getRecipeOverlay()
       .then((result) => {
         if (!cancelled) {
           setOverlay(result);
@@ -68,7 +68,6 @@ export function RecipesSection() {
 
   async function saveStacks() {
     await window.nexus.orch.saveCatalogOverlay({
-      workspacePath: workspace?.path,
       stacks: manualStacks
         .split(',')
         .map((s) => s.trim())

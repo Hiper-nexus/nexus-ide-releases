@@ -213,7 +213,6 @@ function ToolCard({ entry }: { entry: Extract<OmpTranscriptEntry, { kind: 'tool'
 
 function ApprovalDialog({ request }: { request: OmpPendingUiRequest }) {
   const respondUi = useOmpRpcStore((s) => s.respondUi);
-  const [text, setText] = useState('');
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const messageId = useId();
 
@@ -232,7 +231,7 @@ function ApprovalDialog({ request }: { request: OmpPendingUiRequest }) {
         ),
       ).filter((el) => el.offsetParent !== null || el === document.activeElement);
 
-    // Foco inicial no primeiro alvo acionável (Permitir/Negar/opção/textarea).
+    // Foco inicial no primeiro alvo acionável (sempre a saída segura).
     const initial = focusable();
     (initial[0] ?? node).focus();
 
@@ -296,15 +295,11 @@ function ApprovalDialog({ request }: { request: OmpPendingUiRequest }) {
           {request.message}
         </div>
       ) : null}
+      <div className="omp-approval__message">
+        Aprovações positivas são bloqueadas neste painel somente leitura.
+      </div>
       {request.method === 'confirm' ? (
         <div className="omp-approval__actions">
-          <button
-            type="button"
-            className="omp-btn omp-btn--primary"
-            onClick={() => void respondUi(request.requestId, { confirmed: true })}
-          >
-            Permitir
-          </button>
           <button
             type="button"
             className="omp-btn"
@@ -316,16 +311,6 @@ function ApprovalDialog({ request }: { request: OmpPendingUiRequest }) {
       ) : null}
       {request.method === 'select' ? (
         <div className="omp-approval__actions omp-approval__actions--stack">
-          {(request.options ?? []).map((option) => (
-            <button
-              key={option}
-              type="button"
-              className="omp-btn"
-              onClick={() => void respondUi(request.requestId, { value: option })}
-            >
-              {option}
-            </button>
-          ))}
           <button
             type="button"
             className="omp-btn omp-btn--dim"
@@ -337,29 +322,13 @@ function ApprovalDialog({ request }: { request: OmpPendingUiRequest }) {
       ) : null}
       {request.method === 'input' || request.method === 'editor' ? (
         <div className="omp-approval__actions omp-approval__actions--stack">
-          <textarea
-            className="omp-approval__input"
-            rows={request.method === 'editor' ? 4 : 1}
-            placeholder={request.placeholder ?? ''}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <div className="omp-approval__actions">
-            <button
-              type="button"
-              className="omp-btn omp-btn--primary"
-              onClick={() => void respondUi(request.requestId, { value: text })}
-            >
-              Enviar
-            </button>
-            <button
-              type="button"
-              className="omp-btn"
-              onClick={() => void respondUi(request.requestId, { cancelled: true })}
-            >
-              Cancelar
-            </button>
-          </div>
+          <button
+            type="button"
+            className="omp-btn"
+            onClick={() => void respondUi(request.requestId, { cancelled: true })}
+          >
+            Cancelar
+          </button>
         </div>
       ) : null}
     </div>
@@ -374,8 +343,6 @@ export function OmpRpcPanel() {
   const starting = useOmpRpcStore((s) => s.starting);
   const startError = useOmpRpcStore((s) => s.startError);
   const snapshot = useOmpRpcStore((s) => s.snapshot);
-  const approvalPolicy = useOmpRpcStore((s) => s.approvalPolicy);
-  const setApprovalPolicy = useOmpRpcStore((s) => s.setApprovalPolicy);
   const transcript = useOmpRpcStore((s) => s.transcript);
   const models = useOmpRpcStore((s) => s.models);
   const pendingUi = useOmpRpcStore((s) => s.pendingUi);
@@ -453,25 +420,13 @@ export function OmpRpcPanel() {
           </span>
         ) : null}
         <span className="omp-panel__spacer" />
-        {approvalPolicy === 'yolo' ? (
-          <span
-            className="omp-badge omp-badge--auto"
-            title="Aprovações automáticas auditadas"
-          >
-            AUTO
-            {snapshot && snapshot.autoApprovals > 0
-              ? ` ×${snapshot.autoApprovals}`
-              : ''}
-          </span>
-        ) : (
-          <span
-            className="omp-badge"
-            title="Modo seguro: ações sensíveis pedem sua confirmação"
-            aria-label="Modo seguro: ações sensíveis pedem confirmação"
-          >
-            CONFIRMA
-          </span>
-        )}
+        <span
+          className="omp-badge"
+          title="Modo seguro e somente leitura: aprovações positivas não saem do renderer"
+          aria-label="Modo seguro e somente leitura"
+        >
+          SOMENTE LEITURA
+        </span>
         <button
           type="button"
           className="omp-panel__close"
@@ -531,19 +486,9 @@ export function OmpRpcPanel() {
           </>
         ) : (
           <>
-            <label className="omp-policy">
-              <span>Aprovações</span>
-              <select
-                className="omp-select"
-                value={approvalPolicy}
-                onChange={(e) =>
-                  setApprovalPolicy(e.target.value === 'yolo' ? 'yolo' : 'safe')
-                }
-              >
-                <option value="safe">safe — pedir confirmação</option>
-                <option value="yolo">yolo — auto (auditado)</option>
-              </select>
-            </label>
+            <span className="omp-policy">
+              Painel seguro · host tools somente leitura
+            </span>
             <button
               type="button"
               className="omp-btn omp-btn--primary"

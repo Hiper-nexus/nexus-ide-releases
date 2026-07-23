@@ -26,6 +26,7 @@ import {
 export type CronOccurrenceDisposition =
   | 'completed'
   | 'fire-failed'
+  | 'interrupted'
   | 'already-recorded'
   | 'lease-held'
   | 'lease-conflict'
@@ -33,6 +34,7 @@ export type CronOccurrenceDisposition =
   | 'backend-unavailable'
   | 'lease-lost'
   | 'persistence-unavailable'
+  | 'authority-invalid'
   | 'invalid-scope';
 
 export interface CronOccurrenceResult {
@@ -59,6 +61,14 @@ export interface CronExecutionCoordinatorOptions {
   readonly runtimeManager: ProjectRuntimeManager;
   readonly leaseBackend?: LeaseBackend;
   readonly resolveScope?: (job: CronJob) => ProjectExecutionScope;
+  /**
+   * Validates durable execution authority before any local receipt or remote
+   * lease is acquired. The physical fire boundary revalidates independently.
+   */
+  readonly preflight?: (
+    job: CronJob,
+    scope: ProjectExecutionScope,
+  ) => void;
   readonly now?: () => number;
   readonly leaseTtlMs?: number;
   readonly staleMs?: number;
@@ -190,6 +200,10 @@ export class CronExecutionCoordinator implements CronOccurrenceExecutor {
   readonly #runtimeManager: ProjectRuntimeManager;
   readonly #leaseBackend: LeaseBackend | undefined;
   readonly #resolveScope: (job: CronJob) => ProjectExecutionScope;
+  readonly #preflight: (
+    job: CronJob,
+    scope: ProjectExecutionScope,
+  ) => void;
   readonly #now: () => number;
   readonly #leaseTtlMs: number;
   readonly #occurrenceFenceTtlMs: number;
@@ -200,6 +214,7 @@ export class CronExecutionCoordinator implements CronOccurrenceExecutor {
     this.#runtimeManager = options.runtimeManager;
     this.#leaseBackend = options.leaseBackend;
     this.#resolveScope = options.resolveScope ?? defaultResolveScope;
+    this.#preflight = options.preflight ?? (() => {});
     this.#now = options.now ?? Date.now;
     this.#leaseTtlMs = durationSchema.parse(options.leaseTtlMs ?? 90_000);
     this.#staleMs = durationSchema.parse(options.staleMs ?? CRON_STALE_MS);
@@ -232,14 +247,51 @@ export class CronExecutionCoordinator implements CronOccurrenceExecutor {
       });
     }
 
+    try {
+      this.#preflight(job, scope);
+    } catch (error) {
+      return immutableResult({
+        fired: false,
+        disposition: 'authority-invalid',
+        error:
+          `${errorMessage(error)} ` +
+          'CTA: Recrie a agenda neste dispositivo para revisar a autorização.',
+      });
+    }
+
     const mode = executionMode(job);
     const state = new CronExecutionStateStore(this.#runtimeManager, scope);
     try {
       const existing = state.read(job.id);
-      if (existing && existing.scheduledFor >= scheduledFor) {
+      if (existing && existing.scheduledFor > scheduledFor) {
         return immutableResult({
           fired: false,
           disposition: 'already-recorded',
+          ...(existing.error ? { error: existing.error } : {}),
+        });
+      }
+      if (existing?.scheduledFor === scheduledFor) {
+        if (existing.status === 'started') {
+          const interrupted =
+            'A ocorrência foi interrompida antes de comprovar a publicação ' +
+            'da missão. CTA: Revise a agenda e execute a ocorrência manualmente.';
+          state.finish(
+            job.id,
+            scheduledFor,
+            'failed',
+            interrupted,
+            this.#validNow(),
+          );
+          return immutableResult({
+            fired: false,
+            disposition: 'interrupted',
+            error: interrupted,
+          });
+        }
+        return immutableResult({
+          fired: false,
+          disposition: 'already-recorded',
+          ...(existing.error ? { error: existing.error } : {}),
         });
       }
     } catch (error) {

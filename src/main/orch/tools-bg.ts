@@ -2,7 +2,10 @@
  * Background process MCP tools — grok-build background-tasks pattern,
  * built on the existing sandboxed terminal runner.
  */
-import type { McpToolDef } from './mcp-protocol';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolDef,
+} from './mcp-protocol';
 import { requireStr, str } from './tool-util';
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
@@ -14,19 +17,31 @@ import {
   type SandboxProfile,
 } from '../runtime/process-sandbox';
 import { emitBgTaskEvent } from './bg-task-events';
+import { sameProjectScope } from './project-scoped-broadcast';
+import type { ProjectExecutionScope } from '../../shared/types';
 
 interface BgTask {
   id: string;
   command: string;
   proc: ChildProcess;
-  projectId: string;
-  checkoutId: string;
+  scope: Readonly<ProjectExecutionScope>;
+  ownerToken: string;
+  ownerSessionId: string | null;
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  state: 'running' | 'terminating' | 'exited';
+  authorityRevoked: boolean;
+  terminationRequested: boolean;
+  finalized: boolean;
   startedAt: number;
   endedAt: number | null;
   killTree: (signal: NodeJS.Signals) => void;
+  forceKillTimer: NodeJS.Timeout | null;
+  detachOutputListeners: () => void;
+  detachAbortListener: () => void;
+  physicalExit: Promise<void>;
+  resolvePhysicalExit: () => void;
 }
 
 const bgTasks = new Map<string, BgTask>();
@@ -38,13 +53,13 @@ const BG_TASK_RETAIN_MS = 10 * 60_000;
 
 function pruneBgTasks(now = Date.now()): void {
   for (const [id, task] of bgTasks) {
-    if (task.exitCode === null) continue;
+    if (task.state !== 'exited') continue;
     const ended = task.endedAt ?? task.startedAt;
     if (now - ended > BG_TASK_RETAIN_MS) bgTasks.delete(id);
   }
   if (bgTasks.size <= BG_TASK_MAP_MAX) return;
   const exited = [...bgTasks.entries()]
-    .filter(([, t]) => t.exitCode !== null)
+    .filter(([, t]) => t.state === 'exited')
     .sort((a, b) => (a[1].endedAt ?? 0) - (b[1].endedAt ?? 0));
   while (bgTasks.size > BG_TASK_MAP_MAX && exited.length > 0) {
     const [id] = exited.shift()!;
@@ -72,6 +87,63 @@ function appendCap(prev: string, chunk: Buffer | string): string {
   return `${next.slice(0, OUTPUT_CAP)}\n...[TRUNCATED]`;
 }
 
+function isSameTaskOwner(
+  task: BgTask,
+  ctx: { token: string; sessionId?: string },
+): boolean {
+  return (
+    task.ownerToken === ctx.token &&
+    task.ownerSessionId === (ctx.sessionId ?? null)
+  );
+}
+
+function isSameTaskScope(
+  task: BgTask,
+  ctx: {
+    scope: ProjectExecutionScope;
+    executionScope?: ProjectExecutionScope;
+  },
+): boolean {
+  return sameProjectScope(task.scope, executionScopeFor(ctx));
+}
+
+function requestTaskTermination(task: BgTask, revoked: boolean): void {
+  if (task.state === 'exited') return;
+  task.authorityRevoked ||= revoked;
+  task.state = 'terminating';
+  if (revoked) task.detachOutputListeners();
+  if (task.terminationRequested) return;
+  task.terminationRequested = true;
+  task.killTree('SIGTERM');
+  task.forceKillTimer = setTimeout(() => {
+    if (task.state !== 'exited') task.killTree('SIGKILL');
+  }, 3_000);
+  task.forceKillTimer.unref?.();
+}
+
+async function waitForTaskTeardown(task: BgTask): Promise<void> {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    await Promise.race([
+      task.physicalExit,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                'session_authority_revoked; physical process exit not proven',
+              ),
+            ),
+          5_000,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 const bgRun: McpToolDef = {
   name: 'nexus_bg_run',
   description:
@@ -90,7 +162,8 @@ const bgRun: McpToolDef = {
     },
     required: ['command'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const executionScope = executionScopeFor(ctx);
     const command = requireStr(args, 'command');
     const cwd = resolveCwdForScope(executionScope, str(args, 'cwd'));
@@ -123,74 +196,142 @@ const bgRun: McpToolDef = {
       fs.rmSync(sandbox.dir, { recursive: true, force: true });
       throw error;
     }
-    const proc = spawn(plan.file, plan.args, {
-      cwd: plan.cwd,
-      env: plan.env,
-      detached: plan.detached,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    let proc: ChildProcess;
+    try {
+      // Linearization point after all path/sandbox preparation.
+      assertMcpInvocationCurrent(invocation);
+      proc = spawn(plan.file, plan.args, {
+        cwd: plan.cwd,
+        env: plan.env,
+        detached: plan.detached,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      throw error;
+    }
     const id = `bg-${++bgCounter}`;
+    let resolvePhysicalExit!: () => void;
+    const physicalExit = new Promise<void>((resolve) => {
+      resolvePhysicalExit = resolve;
+    });
     const task: BgTask = {
       id,
       command,
       proc,
-      projectId: ctx.scope.projectId,
-      checkoutId: ctx.scope.checkoutId,
+      scope: Object.freeze({ ...executionScope }),
+      ownerToken: ctx.token,
+      ownerSessionId: ctx.sessionId ?? null,
       stdout: '',
       stderr: '',
       exitCode: null,
+      state: 'running',
+      authorityRevoked: false,
+      terminationRequested: false,
+      finalized: false,
       startedAt: Date.now(),
       endedAt: null,
       killTree: (signal) => signalTree(proc, signal),
+      forceKillTimer: null,
+      detachOutputListeners: () => {},
+      detachAbortListener: () => {},
+      physicalExit,
+      resolvePhysicalExit,
     };
+    const onStdout = (chunk: Buffer | string) => {
+      if (!task.authorityRevoked) {
+        task.stdout = appendCap(task.stdout, chunk);
+      }
+    };
+    const onStderr = (chunk: Buffer | string) => {
+      if (!task.authorityRevoked) {
+        task.stderr = appendCap(task.stderr, chunk);
+      }
+    };
+    task.detachOutputListeners = () => {
+      proc.stdout?.removeListener('data', onStdout);
+      proc.stderr?.removeListener('data', onStderr);
+    };
+    const onAuthorityRevoked = () => {
+      requestTaskTermination(task, true);
+    };
+    task.detachAbortListener = () => {
+      invocation?.signal?.removeEventListener(
+        'abort',
+        onAuthorityRevoked,
+      );
+    };
+    const finalize = (code: number | null, error = false) => {
+      if (task.finalized) return;
+      task.finalized = true;
+      // A shell may close after daemonizing a child. Keep the detached group
+      // under Nexus ownership until every descendant receives termination.
+      task.killTree(task.terminationRequested ? 'SIGKILL' : 'SIGTERM');
+      task.state = 'exited';
+      task.exitCode = error ? -1 : code;
+      task.endedAt = Date.now();
+      if (task.forceKillTimer) clearTimeout(task.forceKillTimer);
+      task.detachAbortListener();
+      task.detachOutputListeners();
+      task.resolvePhysicalExit();
+      emitBgTaskEvent({
+        taskId: id,
+        command,
+        status: 'exited',
+        exitCode: task.exitCode,
+        projectId: task.scope.projectId,
+        checkoutId: task.scope.checkoutId,
+        scope: task.scope,
+        at: task.endedAt,
+      });
+      pruneBgTasks();
+      try {
+        fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        console.warn('[bg-task] sandbox cleanup failed:', cleanupError);
+      }
+    };
+
     pruneBgTasks();
     bgTasks.set(id, task);
-    proc.stdout?.on('data', (c) => {
-      task.stdout = appendCap(task.stdout, c);
-    });
-    proc.stderr?.on('data', (c) => {
-      task.stderr = appendCap(task.stderr, c);
-    });
+    proc.stdout?.on('data', onStdout);
+    proc.stderr?.on('data', onStderr);
+    proc.once('close', (code) => finalize(code));
+    proc.once('error', () => finalize(null, true));
+    invocation?.signal?.addEventListener(
+      'abort',
+      onAuthorityRevoked,
+      { once: true },
+    );
+    if (invocation?.signal?.aborted) onAuthorityRevoked();
+
+    // Yield one microtask so a revocation racing the spawn cannot receive an
+    // operational task id. The task stays internally owned until close/error.
+    await Promise.resolve();
+    try {
+      assertMcpInvocationCurrent(invocation);
+    } catch {
+      onAuthorityRevoked();
+      await waitForTaskTeardown(task);
+      throw new Error('session_authority_revoked');
+    }
+    if (task.authorityRevoked) {
+      await waitForTaskTeardown(task);
+      throw new Error('session_authority_revoked');
+    }
+    if (task.state === 'exited') {
+      throw new Error('background process exited before start confirmation');
+    }
+
     emitBgTaskEvent({
       taskId: id,
       command,
       status: 'started',
       exitCode: null,
-      projectId: task.projectId,
-      checkoutId: task.checkoutId,
+      projectId: task.scope.projectId,
+      checkoutId: task.scope.checkoutId,
+      scope: task.scope,
       at: task.startedAt,
-    });
-    proc.on('close', (code) => {
-      task.exitCode = code;
-      task.endedAt = Date.now();
-      emitBgTaskEvent({
-        taskId: id,
-        command,
-        status: 'exited',
-        exitCode: code,
-        projectId: task.projectId,
-        checkoutId: task.checkoutId,
-        at: task.endedAt,
-      });
-      pruneBgTasks();
-      setTimeout(() => {
-        fs.rmSync(sandbox.dir, { recursive: true, force: true });
-      }, 50);
-    });
-    proc.on('error', () => {
-      task.exitCode = -1;
-      task.endedAt = Date.now();
-      emitBgTaskEvent({
-        taskId: id,
-        command,
-        status: 'exited',
-        exitCode: -1,
-        projectId: task.projectId,
-        checkoutId: task.checkoutId,
-        at: task.endedAt,
-      });
-      pruneBgTasks();
-      fs.rmSync(sandbox.dir, { recursive: true, force: true });
     });
     return {
       taskId: id,
@@ -220,35 +361,47 @@ const bgWait: McpToolDef = {
     if (!task) {
       return { ok: false, error: `unknown taskId ${taskId}` };
     }
-    if (
-      task.projectId !== ctx.scope.projectId ||
-      task.checkoutId !== ctx.scope.checkoutId
-    ) {
+    if (!isSameTaskScope(task, ctx)) {
       return { ok: false, error: 'task belongs to another project scope' };
+    }
+    if (!isSameTaskOwner(task, ctx)) {
+      return {
+        ok: false,
+        error: 'task belongs to another MCP session authority',
+      };
+    }
+    if (task.authorityRevoked) {
+      return { ok: false, error: 'session_authority_revoked' };
     }
     const timeoutMs =
       typeof args.timeoutMs === 'number' && Number.isFinite(args.timeoutMs)
         ? Math.min(Math.max(0, Math.floor(args.timeoutMs)), 120_000)
         : 0;
-    if (timeoutMs > 0 && task.exitCode === null) {
+    if (timeoutMs > 0 && task.state !== 'exited') {
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, timeoutMs);
-        const onClose = () => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
+          task.proc.removeListener('close', finish);
+          task.proc.removeListener('error', finish);
           resolve();
         };
-        task.proc.once('close', onClose);
-        if (task.exitCode !== null) {
-          clearTimeout(timer);
-          resolve();
-        }
+        const timer = setTimeout(finish, timeoutMs);
+        task.proc.once('close', finish);
+        task.proc.once('error', finish);
+        if (task.state === 'exited') finish();
       });
+    }
+    if (task.authorityRevoked) {
+      return { ok: false, error: 'session_authority_revoked' };
     }
     return {
       ok: true,
       taskId: task.id,
       command: task.command,
-      status: task.exitCode === null ? 'running' : 'exited',
+      status: task.state === 'exited' ? 'exited' : 'running',
       exitCode: task.exitCode,
       stdout: task.stdout,
       stderr: task.stderr,
@@ -266,27 +419,33 @@ const bgKill: McpToolDef = {
     properties: { taskId: { type: 'string' } },
     required: ['taskId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const taskId = requireStr(args, 'taskId');
     const task = bgTasks.get(taskId);
     if (!task) return { killed: false, reason: 'not found' };
-    if (
-      task.projectId !== ctx.scope.projectId ||
-      task.checkoutId !== ctx.scope.checkoutId
-    ) {
+    if (!isSameTaskScope(task, ctx)) {
       return { killed: false, reason: 'wrong scope' };
     }
-    task.killTree('SIGTERM');
-    setTimeout(() => {
-      if (task.exitCode === null) task.killTree('SIGKILL');
-    }, 3_000);
+    if (!isSameTaskOwner(task, ctx)) {
+      return { killed: false, reason: 'another MCP session authority owns task' };
+    }
+    if (task.authorityRevoked) {
+      return { killed: false, reason: 'session_authority_revoked' };
+    }
+    if (task.state === 'exited') {
+      return { killed: false, reason: 'task already exited' };
+    }
+    assertMcpInvocationCurrent(invocation);
+    requestTaskTermination(task, false);
     emitBgTaskEvent({
       taskId,
       command: task.command,
       status: 'killed',
       exitCode: task.exitCode,
-      projectId: task.projectId,
-      checkoutId: task.checkoutId,
+      projectId: task.scope.projectId,
+      checkoutId: task.scope.checkoutId,
+      scope: task.scope,
       at: Date.now(),
     });
     return { killed: true, taskId };
@@ -301,13 +460,14 @@ const bgList: McpToolDef = {
     const tasks = [...bgTasks.values()]
       .filter(
         (t) =>
-          t.projectId === ctx.scope.projectId &&
-          t.checkoutId === ctx.scope.checkoutId,
+          isSameTaskScope(t, ctx) &&
+          isSameTaskOwner(t, ctx) &&
+          !t.authorityRevoked,
       )
       .map((t) => ({
         taskId: t.id,
         command: t.command.slice(0, 200),
-        status: t.exitCode === null ? 'running' : 'exited',
+        status: t.state === 'exited' ? 'exited' : 'running',
         exitCode: t.exitCode,
         startedAt: t.startedAt,
       }));

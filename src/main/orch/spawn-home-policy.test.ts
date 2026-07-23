@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 import {
   isThirdPartyClaudeFamily,
+  requiresSpawnGate,
   shouldUseEphemeralHome,
 } from './spawn-home-policy';
 
@@ -33,6 +34,24 @@ describe('shouldUseEphemeralHome', () => {
   it('honra ephemeralHome apenas em adapters que carregam MCP por arquivo', () => {
     expect(shouldUseEphemeralHome(adapter(true, true), false)).toBe(true);
     expect(shouldUseEphemeralHome(adapter(false, true), false)).toBe(false);
+  });
+});
+
+describe('requiresSpawnGate', () => {
+  it('always gates an orchestrator even with open MCP/skill allowlists', () => {
+    expect(requiresSpawnGate({
+      role: 'orchestrator',
+      allowedTools: null,
+      allowedSkills: null,
+    })).toBe(true);
+  });
+
+  it('keeps an ordinary open user pane ungated', () => {
+    expect(requiresSpawnGate({
+      role: 'user',
+      allowedTools: null,
+      allowedSkills: null,
+    })).toBe(false);
   });
 });
 

@@ -39,6 +39,8 @@ export interface PaneAuthzInfo {
   /** Frozen PREVC revision restored by main; never renderer-authored. */
   contextRevision?: string;
   role?: 'orchestrator' | 'worker';
+  /** Exact physical worker generation; absent for orchestrators. */
+  workerIncarnationId?: string;
   scope?: ProjectExecutionScope;
   /** Narrower worktree authority used by mission workers, when present. */
   executionScope?: ProjectExecutionScope;

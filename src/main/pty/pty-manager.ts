@@ -5,6 +5,8 @@ import type { WebContents } from "electron";
 import { PTY_CHANNELS } from "../../shared/channels";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
 import type { ProjectExecutionScope } from "../../shared/types";
+import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
+import type { MissionPaneAuthoritySeal } from "../../shared/orch-types";
 import type { CliPtyAdapter } from "../../shared/adapter-types";
 import { resolvePlaceholders } from "../../shared/adapter-types";
 import type { BoundSpawnAuthority } from "../orch/spawn-authority";
@@ -39,7 +41,12 @@ import { scrubManagedSessionAuth } from "../adapters/managed-credentials";
 
 interface Session {
   proc: PtyProcHandle;
-  wc: WebContents;
+  /**
+   * Renderer currently presenting this session. Mission agents may be
+   * headless (`null`): the main coordinator remains their lifecycle owner and
+   * a later renderer can adopt the same PTY without restarting the provider.
+   */
+  wc: WebContents | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
   idleTimeoutMs: number;
   state: PaneSessionState;
@@ -52,6 +59,8 @@ interface Session {
   /** Main-owned identity for cli-agent panes; never sourced from pane sync. */
   agent: OwnedAgentSessionInfo | null;
   missionOrchestratorGrantAvailable: boolean;
+  missionOrchestratorGrantExpiresAt: number | null;
+  missionOrchestratorGrantTimer: ReturnType<typeof setTimeout> | null;
   outputSequence: number;
   acknowledgedSequence: number;
   replay: Array<{ sequence: number; data: string }>;
@@ -64,6 +73,8 @@ export interface OwnedAgentSessionInfo {
   paneId?: string;
   adapterId: string;
   model?: string;
+  /** Exact main-sealed model request before adapter alias normalization. */
+  requestedModel?: string;
   accountId?: string;
   effort?: string;
   cwd: string;
@@ -73,12 +84,40 @@ export interface OwnedAgentSessionInfo {
   missionId?: string;
   squadId?: string;
   agentName?: string;
+  immediateMissionTitle?: string;
+  immediateMissionGoal?: string;
+  workerIncarnationId?: string;
+  readOnly: boolean;
+  /**
+   * Provider-native mutation confinement. This is independent from `readOnly`,
+   * which scopes the Nexus MCP surface and would otherwise prevent a
+   * delegate-only orchestrator from spawning audited workers.
+   */
+  nativeReadOnly?: boolean;
   allowedTools: string[] | null;
   allowedSkills: string[] | null;
+  authoritySeal?: MissionPaneAuthoritySeal;
 }
 
 const sessions = new Map<string, Session>();
+interface PhysicalTerminationFlight {
+  readonly sessionId: string;
+  readonly session: Session;
+  readonly exited: Promise<void>;
+  readonly resolveExited: () => void;
+  rootExit:
+    | { readonly exitCode: number; readonly signal?: number }
+    | null;
+  physicalTreeProven: boolean;
+  revocationPublished: boolean;
+  attempt: Promise<boolean> | null;
+}
+const physicalTerminationFlights = new Map<
+  string,
+  PhysicalTerminationFlight
+>();
 let counter = 0;
+const MISSION_ORCHESTRATOR_GRANT_TTL_MS = 120_000;
 
 let ptyHost: PtyHost | null = null;
 let agentHookEndpointPath: string | null = null;
@@ -124,11 +163,20 @@ export type SessionStateTap = (
   sessionId: string,
   state: PaneSessionState,
 ) => void;
-export type SessionExitTap = (sessionId: string) => void;
+export type SessionExitTap = (
+  sessionId: string,
+  agent: OwnedAgentSessionInfo | null,
+) => void;
+/** Logical authority revocation starts before physical PTY exit is proven. */
+export type SessionTerminationTap = (
+  sessionId: string,
+  agent: OwnedAgentSessionInfo | null,
+) => void;
 
 const dataTaps = new Set<SessionDataTap>();
 const stateTaps = new Set<SessionStateTap>();
 const exitTaps = new Set<SessionExitTap>();
+const terminationTaps = new Set<SessionTerminationTap>();
 
 export function tapSessionData(cb: SessionDataTap): () => void {
   dataTaps.add(cb);
@@ -143,6 +191,16 @@ export function tapSessionState(cb: SessionStateTap): () => void {
 export function tapSessionExit(cb: SessionExitTap): () => void {
   exitTaps.add(cb);
   return () => exitTaps.delete(cb);
+}
+
+export function tapSessionTermination(cb: SessionTerminationTap): () => void {
+  terminationTaps.add(cb);
+  return () => terminationTaps.delete(cb);
+}
+
+/** Route a non-PTY process exit through the same orchestration lifecycle. */
+export function publishExternalSessionExit(sessionId: string): void {
+  fireTaps(exitTaps, sessionId, null);
 }
 
 function fireTaps<T extends (...args: never[]) => void>(
@@ -413,12 +471,12 @@ export function agentEnv(adapter: CliPtyAdapter): NodeJS.ProcessEnv {
  * renderer still reports false, and send() would then log "Render frame was
  * disposed". Such late events are silently dropped, never crash the main process.
  */
-function canSend(wc: WebContents): boolean {
-  return !wc.isDestroyed() && !wc.isCrashed();
+function canSend(wc: WebContents | null): wc is WebContents {
+  return Boolean(wc && !wc.isDestroyed() && !wc.isCrashed());
 }
 
 function emitStateChange(
-  wc: WebContents,
+  wc: WebContents | null,
   sessionId: string,
   state: PaneSessionState,
 ): void {
@@ -483,6 +541,11 @@ function onSessionData(
   sessionId: string,
   data: string,
 ): void {
+  if (physicalTerminationFlights.get(sessionId)?.session === session) {
+    // Authority is already revoked and physical teardown is in flight. Late
+    // bytes from the old provider must not drive UI state, hooks or handoffs.
+    return;
+  }
   session.outputSequence += 1;
   const event = { sessionId, data, sequence: session.outputSequence };
   session.replay.push({ sequence: event.sequence, data });
@@ -529,9 +592,26 @@ function finalizeSession(
 ): void {
   const s = sessions.get(sessionId);
   if (!s) return;
+  const pendingTermination = physicalTerminationFlights.get(sessionId);
+  if (
+    pendingTermination?.session === s &&
+    !pendingTermination.physicalTreeProven
+  ) {
+    pendingTermination.rootExit ??= {
+      exitCode,
+      ...(signal === undefined ? {} : { signal }),
+    };
+    pendingTermination.resolveExited();
+    // Root exit alone does not release the agent/worktree exclusivity: a
+    // captured detached descendant may still hold write authority.
+    return;
+  }
   sessions.delete(sessionId);
   if (s.idleTimer) clearTimeout(s.idleTimer);
   if (s.hookBusyTimer) clearTimeout(s.hookBusyTimer);
+  if (s.missionOrchestratorGrantTimer) {
+    clearTimeout(s.missionOrchestratorGrantTimer);
+  }
   if (s.shellIntegrationCleanup.length > 0) {
     cleanupShellIntegrationPaths(s.shellIntegrationCleanup);
   }
@@ -540,7 +620,16 @@ function finalizeSession(
   if (canSend(s.wc)) {
     s.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
   }
-  fireTaps(exitTaps, sessionId);
+  fireTaps(
+    exitTaps,
+    sessionId,
+    s.agent ? cloneAgentInfo(s.agent) : null,
+  );
+  const termination = physicalTerminationFlights.get(sessionId);
+  if (termination?.session === s) {
+    physicalTerminationFlights.delete(sessionId);
+    termination.resolveExited();
+  }
 }
 
 export interface SpawnedSession {
@@ -589,6 +678,8 @@ export function spawnSession(
       cwd,
       agent: null,
       missionOrchestratorGrantAvailable: false,
+      missionOrchestratorGrantExpiresAt: null,
+      missionOrchestratorGrantTimer: null,
       outputSequence: 0,
       acknowledgedSequence: 0,
       replay: [],
@@ -629,15 +720,38 @@ function normalizeAgentModel(adapter: CliPtyAdapter, model: string): string {
   return model;
 }
 
+function assertExclusiveOrchestratorProcessAvailable(
+  adapter: CliPtyAdapter,
+  authority: BoundSpawnAuthority,
+): void {
+  if (authority.context?.role !== "orchestrator") return;
+  const family = sharedAgentAuthFamily(adapter.id);
+  if (!family) return;
+  const conflict = [...sessions.values()]
+    .map((session) => session.agent)
+    .find(
+      (agent) =>
+        agent?.role === "orchestrator" &&
+        sharedAgentAuthFamily(agent.adapterId) === family,
+    );
+  if (conflict) {
+    throw new Error(
+      `exclusive auth family ${family} already has a live orchestrator ` +
+        `(${conflict.sessionId}); physical exit proof is required before spawn`,
+    );
+  }
+}
+
 /** Spawn a cli-agent PTY from a validated adapter. */
 export function spawnAgentSession(
-  wc: WebContents,
+  wc: WebContents | null,
   req: SpawnRequest,
   adapter: CliPtyAdapter,
   overrides: AgentSpawnOverrides = {},
   authority: BoundSpawnAuthority,
 ): SpawnedSession {
   const cwd = requireTrustedAgentCwd(authority);
+  assertExclusiveOrchestratorProcessAvailable(adapter, authority);
   const model = normalizeAgentModel(
     adapter,
     req.model ?? overrides.defaultModel ?? adapter.models.default,
@@ -675,23 +789,49 @@ export function spawnAgentSession(
   // Cross-account failover must spawn fresh + inject a continuity pack instead.
   let resumeMode: SpawnedSession['resumeMode'];
   if (req.resume) {
-    const captured =
-      !req.resumeLatestOnly && req.paneId && adapter.spawn.resumeIdArgs?.length
-        ? (resumeSessionLookup?.(
-            authority.scope,
-            req.paneId,
-            adapter.id,
-            req.accountId,
-          ) ?? null)
-        : null;
-    if (captured) {
-      args.push(...adapter.spawn.resumeIdArgs!, captured);
-      resumeMode = 'exact';
-    } else if (adapter.spawn.resumeArgs.length > 0) {
-      args.push(...adapter.spawn.resumeArgs);
-      resumeMode = 'latest';
+    if (authority.source === "persisted-pane") {
+      if (
+        req.resumeLatestOnly ||
+        !req.paneId ||
+        !adapter.spawn.resumeIdArgs?.length
+      ) {
+        throw new Error(
+          "exact main-owned provider session is required for persisted mission resume",
+        );
+      }
+      const captured =
+        resumeSessionLookup?.(
+          authority.scope,
+          req.paneId,
+          adapter.id,
+          req.accountId,
+        ) ?? null;
+      if (!captured) {
+        throw new Error(
+          "exact main-owned provider session is unavailable for persisted mission resume",
+        );
+      }
+      args.push(...adapter.spawn.resumeIdArgs, captured);
+      resumeMode = "exact";
     } else {
-      resumeMode = 'unsupported';
+      const captured =
+        !req.resumeLatestOnly && req.paneId && adapter.spawn.resumeIdArgs?.length
+          ? (resumeSessionLookup?.(
+              authority.scope,
+              req.paneId,
+              adapter.id,
+              req.accountId,
+            ) ?? null)
+          : null;
+      if (captured) {
+        args.push(...adapter.spawn.resumeIdArgs!, captured);
+        resumeMode = "exact";
+      } else if (adapter.spawn.resumeArgs.length > 0) {
+        args.push(...adapter.spawn.resumeArgs);
+        resumeMode = "latest";
+      } else {
+        resumeMode = "unsupported";
+      }
     }
   }
 
@@ -745,15 +885,17 @@ export function spawnAgentSession(
   // Adapter-enforced argv is included before the autonomous policy. The final
   // policy removes inherited YOLO/bypass flags and is therefore the last word.
   args.push(...adapter.spawn.extraArgs);
+  const nativeReadOnly = requiresReadOnlyNativeAuthority({
+    source: authority.source,
+    role: authority.context?.role,
+    contextRevision: authority.context?.contextRevision,
+    readOnly: authority.context?.readOnly,
+    nativeReadOnly: authority.context?.nativeReadOnly,
+  });
   args = secureAutonomousCliArgs(
     adapter,
     args,
-    requiresReadOnlyNativeAuthority({
-      source: authority.source,
-      role: authority.context?.role,
-      contextRevision: authority.context?.contextRevision,
-      readOnly: authority.context?.readOnly,
-    }),
+    nativeReadOnly,
   );
 
   const idleMs =
@@ -786,6 +928,10 @@ export function spawnAgentSession(
     decoration?.onSpawnFailed?.();
     throw err;
   }
+  const missionOrchestratorGrantAvailable =
+    authority.source === "legacy-squad" &&
+    authority.context?.role === "orchestrator" &&
+    Boolean(authority.context.squadId);
   session = {
     proc,
     wc,
@@ -799,6 +945,7 @@ export function spawnAgentSession(
       paneId: req.paneId,
       adapterId: adapter.id,
       model: model || undefined,
+      requestedModel: req.model,
       accountId: req.accountId,
       effort: req.effort,
       cwd,
@@ -808,6 +955,11 @@ export function spawnAgentSession(
       missionId: authority.context?.missionId,
       squadId: authority.context?.squadId,
       agentName: authority.context?.agentName,
+      immediateMissionTitle: authority.context?.immediateMissionTitle,
+      immediateMissionGoal: authority.context?.immediateMissionGoal,
+      workerIncarnationId: authority.context?.workerIncarnationId,
+      readOnly: authority.context?.readOnly === true,
+      nativeReadOnly,
       allowedTools:
         authority.context?.allowedTools === null ||
         authority.context?.allowedTools === undefined
@@ -818,17 +970,38 @@ export function spawnAgentSession(
         authority.context?.allowedSkills === undefined
           ? null
           : [...authority.context.allowedSkills],
+      authoritySeal: authority.context?.authoritySeal
+        ? Object.freeze({ ...authority.context.authoritySeal })
+        : undefined,
     },
-    missionOrchestratorGrantAvailable:
-      authority.source === "legacy-squad" &&
-      authority.context?.role === "orchestrator" &&
-      Boolean(authority.context.squadId),
+    missionOrchestratorGrantAvailable,
+    missionOrchestratorGrantExpiresAt: missionOrchestratorGrantAvailable
+      ? Date.now() + MISSION_ORCHESTRATOR_GRANT_TTL_MS
+      : null,
+    missionOrchestratorGrantTimer: null,
     outputSequence: 0,
     acknowledgedSequence: 0,
     replay: [],
     shellIntegrationCleanup: [],
   };
   sessions.set(sessionId, session);
+  if (missionOrchestratorGrantAvailable) {
+    session.missionOrchestratorGrantTimer = setTimeout(() => {
+      const live = sessions.get(sessionId);
+      if (
+        live !== session ||
+        !live.missionOrchestratorGrantAvailable ||
+        live.agent?.missionId
+      ) {
+        return;
+      }
+      live.missionOrchestratorGrantAvailable = false;
+      live.missionOrchestratorGrantExpiresAt = null;
+      live.missionOrchestratorGrantTimer = null;
+      void orchTerminateSession(sessionId);
+    }, MISSION_ORCHESTRATOR_GRANT_TTL_MS);
+    session.missionOrchestratorGrantTimer.unref?.();
+  }
   emitStateChange(wc, sessionId, "spawning");
   decoration?.onSpawned?.(sessionId);
   if (sessionDictationHook) {
@@ -848,6 +1021,143 @@ export function spawnAgentSession(
   return { sessionId, ...(resumeMode ? { resumeMode } : {}) };
 }
 
+/**
+ * Spawn a physical mission PTY under main-process ownership. This is the
+ * renderer-independent lane used by the orchestration coordinator when no
+ * pane grid is alive. It deliberately accepts only an already-bound mission
+ * authority and stable pane identity; direct/user sessions stay renderer
+ * owned.
+ */
+export function spawnMainOwnedAgentSession(
+  req: SpawnRequest,
+  adapter: CliPtyAdapter,
+  overrides: AgentSpawnOverrides,
+  authority: BoundSpawnAuthority,
+): SpawnedSession {
+  if (
+    req.kind !== "cli-agent" ||
+    !req.paneId ||
+    !authority.context?.missionId ||
+    (authority.context.role !== "orchestrator" &&
+      authority.context.role !== "worker")
+  ) {
+    throw new Error(
+      "main-owned PTY spawn requires a stable mission pane authority",
+    );
+  }
+  return spawnAgentSession(null, req, adapter, overrides, authority);
+}
+
+export interface MainOwnedAgentSessionClaim {
+  readonly paneId: string;
+  readonly adapterId: string;
+  readonly missionId: string;
+  readonly role: "orchestrator" | "worker";
+  readonly workerIncarnationId?: string;
+  readonly model?: string;
+  readonly accountId?: string;
+  readonly effort?: string;
+  readonly cwd: string;
+  readonly agentName?: string;
+  readonly readOnly: boolean;
+  readonly nativeReadOnly: boolean;
+  readonly allowedTools: readonly string[] | null;
+  readonly allowedSkills: readonly string[] | null;
+  readonly authoritySeal?: MissionPaneAuthoritySeal;
+  readonly scope: Readonly<ProjectExecutionScope>;
+}
+
+export interface AdoptedMainOwnedAgentSession {
+  readonly sessionId: string;
+  readonly state: PaneSessionState;
+}
+
+function sameSessionScope(
+  left: Readonly<ProjectExecutionScope>,
+  right: Readonly<ProjectExecutionScope>,
+): boolean {
+  return (
+    left.installationId === right.installationId &&
+    left.projectId === right.projectId &&
+    left.checkoutId === right.checkoutId &&
+    left.rootRealPath === right.rootRealPath
+  );
+}
+
+function sameOptionalList(
+  left: readonly string[] | null,
+  right: readonly string[] | null,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameAuthoritySeal(
+  left: MissionPaneAuthoritySeal | undefined,
+  right: MissionPaneAuthoritySeal | undefined,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * Transfer presentation ownership of one headless mission PTY to a renderer.
+ * Every identity field comes from persisted/main-owned authority at the IPC
+ * boundary. A guessed pane id, cross-project renderer, or already-owned
+ * session cannot be adopted.
+ */
+export function adoptMainOwnedAgentSession(
+  wc: WebContents,
+  claim: MainOwnedAgentSessionClaim,
+): AdoptedMainOwnedAgentSession | null {
+  const matches = [...sessions.entries()].filter(([, session]) => {
+    const info = session.agent;
+    return (
+      session.wc === null &&
+      info?.paneId === claim.paneId &&
+      info.adapterId === claim.adapterId &&
+      info.missionId === claim.missionId &&
+      info.role === claim.role &&
+      info.workerIncarnationId === claim.workerIncarnationId &&
+      info.requestedModel === claim.model &&
+      info.accountId === claim.accountId &&
+      info.effort === claim.effort &&
+      info.cwd === claim.cwd &&
+      info.agentName === claim.agentName &&
+      info.readOnly === claim.readOnly &&
+      info.nativeReadOnly === claim.nativeReadOnly &&
+      sameOptionalList(info.allowedTools, claim.allowedTools) &&
+      sameOptionalList(info.allowedSkills, claim.allowedSkills) &&
+      sameAuthoritySeal(info.authoritySeal, claim.authoritySeal) &&
+      sameSessionScope(info.scope, claim.scope)
+    );
+  });
+  if (matches.length !== 1) return null;
+  const [sessionId, session] = matches[0]!;
+  session.wc = wc;
+  if (canSend(wc)) {
+    wc.send(PTY_CHANNELS.stateChange, { sessionId, state: session.state });
+  }
+  return Object.freeze({ sessionId, state: session.state });
+}
+
+/** Revoke renderer presentation ownership while preserving a mission PTY. */
+export function detachOwnedMissionAgentSession(
+  wc: WebContents,
+  sessionId: string,
+): boolean {
+  const session = ownedSession(wc, sessionId);
+  const info = session?.agent;
+  if (
+    !session ||
+    !info?.missionId ||
+    info.role === "user" ||
+    info.source === "direct-user"
+  ) {
+    return false;
+  }
+  session.wc = null;
+  return true;
+}
+
 function ownedSession(wc: WebContents, sessionId: string): Session | null {
   const session = sessions.get(sessionId);
   if (!session || session.wc !== wc) return null;
@@ -860,6 +1170,9 @@ function cloneAgentInfo(info: OwnedAgentSessionInfo): OwnedAgentSessionInfo {
     scope: Object.freeze({ ...info.scope }),
     allowedTools: info.allowedTools === null ? null : [...info.allowedTools],
     allowedSkills: info.allowedSkills === null ? null : [...info.allowedSkills],
+    authoritySeal: info.authoritySeal
+      ? Object.freeze({ ...info.authoritySeal })
+      : undefined,
   };
 }
 
@@ -909,26 +1222,68 @@ export function getAgentSessionInfo(sessionId: string): OwnedAgentSessionInfo | 
   return info ? cloneAgentInfo(info) : null;
 }
 
+/** Main-owned physical inventory; renderer layout visibility is irrelevant. */
+export function listAgentSessionsForPane(
+  paneId: string,
+): OwnedAgentSessionInfo[] {
+  return [...sessions.values()]
+    .map((session) => session.agent)
+    .filter(
+      (info): info is OwnedAgentSessionInfo =>
+        Boolean(info && info.paneId === paneId),
+    )
+    .map(cloneAgentInfo);
+}
+
+/** Complete main-owned physical agent inventory, including detached sessions. */
+export function listAgentSessions(): OwnedAgentSessionInfo[] {
+  return [...sessions.values()]
+    .map((session) => session.agent)
+    .filter(
+      (info): info is OwnedAgentSessionInfo => Boolean(info),
+    )
+    .map(cloneAgentInfo);
+}
+
 /** Consume the single main-owned grant attached to an initial squad spawn. */
+function hasLiveMissionOrchestratorGrant(
+  session: Session | null,
+  squadId: string,
+): session is Session & { agent: OwnedAgentSessionInfo } {
+  const info = session?.agent;
+  if (
+    !session ||
+    !info ||
+    !session.missionOrchestratorGrantAvailable ||
+    session.missionOrchestratorGrantExpiresAt === null ||
+    info.source !== "legacy-squad" ||
+    info.role !== "orchestrator" ||
+    info.squadId !== squadId
+  ) {
+    return false;
+  }
+  if (session.missionOrchestratorGrantExpiresAt <= Date.now()) {
+    session.missionOrchestratorGrantAvailable = false;
+    session.missionOrchestratorGrantExpiresAt = null;
+    return false;
+  }
+  return true;
+}
+
 export function consumeMissionOrchestratorGrant(
   wc: WebContents,
   sessionId: string,
   squadId: string,
 ): OwnedAgentSessionInfo | null {
   const session = ownedSession(wc, sessionId);
-  const info = session?.agent;
-  if (
-    !session ||
-    !info ||
-    !session.missionOrchestratorGrantAvailable ||
-    info.source !== "legacy-squad" ||
-    info.role !== "orchestrator" ||
-    info.squadId !== squadId
-  ) {
-    return null;
-  }
+  if (!hasLiveMissionOrchestratorGrant(session, squadId)) return null;
   session.missionOrchestratorGrantAvailable = false;
-  return cloneAgentInfo(info);
+  session.missionOrchestratorGrantExpiresAt = null;
+  if (session.missionOrchestratorGrantTimer) {
+    clearTimeout(session.missionOrchestratorGrantTimer);
+    session.missionOrchestratorGrantTimer = null;
+  }
+  return cloneAgentInfo(session.agent);
 }
 
 export function hasMissionOrchestratorGrant(
@@ -937,13 +1292,7 @@ export function hasMissionOrchestratorGrant(
   squadId: string,
 ): boolean {
   const session = ownedSession(wc, sessionId);
-  const info = session?.agent;
-  return Boolean(
-    session?.missionOrchestratorGrantAvailable &&
-    info?.source === "legacy-squad" &&
-    info.role === "orchestrator" &&
-    info.squadId === squadId,
-  );
+  return hasLiveMissionOrchestratorGrant(session, squadId);
 }
 
 export function bindOwnedAgentSessionMission(
@@ -974,6 +1323,16 @@ export function rollbackOwnedAgentSessionMission(
 }
 
 function destroySession(sessionId: string, session: Session): void {
+  if (physicalTerminationFlights.get(sessionId)?.session === session) {
+    // Never let an older fire-and-forget close path manufacture an exit while
+    // the authority-critical lane is waiting for the host's real exit event.
+    try {
+      session.proc.kill("SIGKILL");
+    } catch {
+      // The host exit/host-down event remains the only physical proof.
+    }
+    return;
+  }
   finalizeSession(sessionId, 0);
   try {
     session.proc.kill();
@@ -989,6 +1348,19 @@ export function writeSession(
 ): boolean {
   const session = ownedSession(wc, sessionId);
   if (!session) return false;
+  if (physicalTerminationFlights.get(sessionId)?.session === session) {
+    return false;
+  }
+  if (
+    session.agent &&
+    session.agent.role !== "user" &&
+    session.agent.source !== "direct-user"
+  ) {
+    // Renderer ownership is presentation authority only for orchestrated
+    // agents. Kickoff, handoff and operator actions must enter through an
+    // explicit main-owned lane (orchWriteSession), never raw terminal IPC.
+    return false;
+  }
   // User wrote input → re-arm the idle timer if applicable.
   if (session.state === "idle") {
     session.state = "busy";
@@ -1021,12 +1393,34 @@ export function resizeSession(
 export function killSession(wc: WebContents, sessionId: string): void {
   const session = ownedSession(wc, sessionId);
   if (!session) return;
+  if (
+    session.agent &&
+    session.agent.role !== "user" &&
+    session.agent.source !== "direct-user"
+  ) {
+    // A renderer may close its visual leaf, but mission process lifecycle is
+    // owned by the coordinator and explicit main-process control APIs.
+    return;
+  }
   destroySession(sessionId, session);
 }
 
 export function killSessionsFor(wc: WebContents): void {
   for (const [id, session] of sessions) {
-    if (session.wc === wc) destroySession(id, session);
+    if (session.wc !== wc) continue;
+    const info = session.agent;
+    if (
+      info?.missionId &&
+      info.role !== "user" &&
+      info.source !== "direct-user"
+    ) {
+      // Renderer lifetime is presentation, not mission-process authority.
+      // Keep the PTY and its replay buffer alive for the coordinator; a new
+      // renderer may later adopt it through the sealed persisted pane.
+      session.wc = null;
+      continue;
+    }
+    destroySession(id, session);
   }
 }
 
@@ -1055,10 +1449,17 @@ export function killAllSessions(): void {
  * idle handoff delivery, voice→orchestrator routing). Bypasses WebContents
  * ownership — the caller is the main process itself, not a renderer.
  */
-export function orchWriteSession(sessionId: string, data: string): boolean {
+export function orchWriteSession(
+  sessionId: string,
+  data: string,
+  options: { readonly markInputBusy?: boolean } = {},
+): boolean {
   const session = sessions.get(sessionId);
   if (!session) return false;
-  if (session.state === "idle") {
+  if (physicalTerminationFlights.get(sessionId)?.session === session) {
+    return false;
+  }
+  if (options.markInputBusy !== false && session.state === "idle") {
     session.state = "busy";
     emitStateChange(session.wc, sessionId, "busy");
   }
@@ -1089,6 +1490,140 @@ export function orchKillSession(sessionId: string): boolean {
   if (!session) return false;
   destroySession(sessionId, session);
   return true;
+}
+
+export interface OrchTerminateSessionOptions {
+  /** Grace window after SIGTERM. */
+  readonly termTimeoutMs?: number;
+  /** Final window after SIGKILL. A false result remains fail-closed. */
+  readonly killTimeoutMs?: number;
+}
+
+function boundedTerminationTimeout(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || value < 0 || value > 30_000) {
+    throw new Error("invalid PTY termination timeout");
+  }
+  return value;
+}
+
+async function exitsWithin(
+  exited: Promise<void>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      exited.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function drivePhysicalTermination(
+  flight: PhysicalTerminationFlight,
+  options: OrchTerminateSessionOptions,
+): Promise<boolean> {
+  const termTimeoutMs = boundedTerminationTimeout(
+    options.termTimeoutMs,
+    1_500,
+  );
+  const killTimeoutMs = boundedTerminationTimeout(
+    options.killTimeoutMs,
+    1_500,
+  );
+  try {
+    const proof = await flight.session.proc.terminate({
+      termTimeoutMs,
+      killTimeoutMs,
+    });
+    if (!proof.ok || !proof.rootExited || !proof.descendantsExited) {
+      return false;
+    }
+    // Host posts the root exit and termination proof on the same ordered port,
+    // but retain a bounded main-side fence against a broken/forged host result.
+    if (!(await exitsWithin(flight.exited, killTimeoutMs))) return false;
+    const rootExit = flight.rootExit;
+    if (!rootExit) return false;
+    flight.physicalTreeProven = true;
+    finalizeSession(
+      flight.sessionId,
+      rootExit.exitCode,
+      rootExit.signal,
+    );
+    return sessions.get(flight.sessionId) !== flight.session;
+  } catch {
+    // A missing/broken process-inventory lane is never physical exit proof.
+    return false;
+  }
+}
+
+/**
+ * Authority-critical, main-owned termination. Unlike `orchKillSession`, this
+ * keeps the session registered and inert until the isolated PTY host reports
+ * its actual root exit AND a bounded identity-fenced descendant inventory.
+ * Callers MUST await `true` before spawning or adopting a replacement process.
+ */
+export function orchTerminateSession(
+  sessionId: string,
+  options: OrchTerminateSessionOptions = {},
+): Promise<boolean> {
+  const session = sessions.get(sessionId);
+  if (!session) return Promise.resolve(true);
+  const existing = physicalTerminationFlights.get(sessionId);
+  if (existing?.session === session && existing.attempt) {
+    return existing.attempt;
+  }
+  let resolveExited!: () => void;
+  const flight =
+    existing?.session === session
+      ? existing
+      : {
+          sessionId,
+          session,
+          exited: new Promise<void>((resolve) => {
+            resolveExited = resolve;
+          }),
+          resolveExited: () => resolveExited(),
+          rootExit: null,
+          physicalTreeProven: false,
+          revocationPublished: false,
+          attempt: null,
+        };
+  physicalTerminationFlights.set(sessionId, flight);
+  if (!flight.revocationPublished) {
+    flight.revocationPublished = true;
+    fireTaps(
+      terminationTaps,
+      sessionId,
+      session.agent ? cloneAgentInfo(session.agent) : null,
+    );
+  }
+  // A termination listener is not expected to drive the PTY, but preserve
+  // single-flight semantics even if one does so synchronously.
+  if (flight.attempt) return flight.attempt;
+  const attempt = drivePhysicalTermination(flight, options).finally(
+    () => {
+      // A stubborn process stays registered/inert and may be retried by the
+      // trailing reconciler. Only finalizeSession removes the flight.
+      if (
+        physicalTerminationFlights.get(sessionId) === flight &&
+        flight.attempt === attempt
+      ) {
+        flight.attempt = null;
+      }
+    },
+  );
+  flight.attempt = attempt;
+  return attempt;
 }
 
 /** Current lifecycle state of a session, or null if it is gone. */

@@ -12,7 +12,10 @@ import { ensureContextScaffold } from '../context/context-doctor';
 import { getContextKnowledgeService } from '../context/context-workflow-registry';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import type { AgentGateContext } from './gate';
-import { buildDesignSystemTools } from './tools-design-system';
+import {
+  buildDesignSystemTools,
+  type DesignSystemToolOptions,
+} from './tools-design-system';
 
 const stubs = vi.hoisted(() => ({
   searchKits: vi.fn(),
@@ -81,8 +84,11 @@ function context(
   };
 }
 
-function tool(name: string) {
-  const found = buildDesignSystemTools().find((candidate) => candidate.name === name);
+function tool(
+  name: string,
+  options: DesignSystemToolOptions = { assertCurrentAuthority: () => {} },
+) {
+  const found = buildDesignSystemTools(options).find((candidate) => candidate.name === name);
   if (!found) throw new Error(`missing tool ${name}`);
   return found;
 }
@@ -232,6 +238,35 @@ describe('nexus_design_system_import', () => {
     expect(result.status).toBe('proposed');
   });
 
+  it('writes no evidence or draft when workspace authority changes during getKit', async () => {
+    let resolveKit!: (kit: ReturnType<typeof kitDetail>) => void;
+    stubs.getKit.mockReturnValue(
+      new Promise((resolve) => {
+        resolveKit = resolve;
+      }),
+    );
+    let live = true;
+    const importTool = tool('nexus_design_system_import', {
+      assertCurrentAuthority: () => {
+        if (!live) throw new Error('renderer workspace authority changed');
+      },
+    });
+
+    const pending = importTool.handler(
+      { identifier: 'acme/clean' },
+      context('codex', 'session-revoked'),
+    );
+    expect(stubs.getKit).toHaveBeenCalledTimes(1);
+    live = false;
+    resolveKit(kitDetail());
+
+    await expect(pending).rejects.toThrow(/workspace authority changed/i);
+    expect(
+      fs.existsSync(path.join(root, '.context', 'nexus', 'evidence', 'designmd-ai')),
+    ).toBe(false);
+    expect(getContextKnowledgeService(scope).list({ status: 'proposed' })).toEqual([]);
+  });
+
   it('rejects import by workers', async () => {
     await expect(tool('nexus_design_system_import').handler({
       identifier: 'acme/clean',
@@ -286,6 +321,42 @@ describe('nexus_design_system_publish', () => {
       slug: 'myteam/published',
       name: 'Published Kit',
     }, context('codex', 'worker-session', 'worker'))).rejects.toThrow(/workers cannot publish/);
+  });
+
+  it('propagates cancellation and rejects a publish response after authority revocation', async () => {
+    fs.mkdirSync(path.join(root, '.context', 'docs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.context', 'docs', 'design-system.md'),
+      '# DESIGN.md\n',
+    );
+    let resolvePublish!: (value: ReturnType<typeof kitDetail>) => void;
+    stubs.publishKit.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePublish = resolve;
+      }),
+    );
+    const controller = new AbortController();
+    let current = true;
+    const pending = tool('nexus_design_system_publish').handler(
+      { slug: 'team/revoked', name: 'Revoked' },
+      context('codex', 'revoked-publisher'),
+      {
+        signal: controller.signal,
+        assertCurrentAuthority: () => {
+          if (!current) throw new Error('session_authority_revoked');
+        },
+      },
+    );
+    await vi.waitFor(() => expect(stubs.publishKit).toHaveBeenCalledOnce());
+    expect(stubs.publishKit).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'team/revoked' }),
+      { signal: controller.signal },
+    );
+    current = false;
+    controller.abort();
+    resolvePublish(kitDetail());
+
+    await expect(pending).rejects.toThrow('session_authority_revoked');
   });
 
   it('reads frontmatter defaults from the DESIGN.md', async () => {

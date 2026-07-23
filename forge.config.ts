@@ -19,6 +19,7 @@ import type { WindowsSignOptions } from '@electron/packager';
 import { pruneNativePayload } from './build/prune-native-payload';
 import { removeUnusedMacPrivacyDescriptions } from './build/macos-info-plist';
 import {
+  assertMacPublishReleaseEnvironment,
   createMacSignOptions,
   isAppleReleaseSigning,
 } from './build/mac-signing';
@@ -84,41 +85,19 @@ export function shouldPackageFile(file: string): boolean {
   );
 }
 
-type MacNotarizeCredentials =
-  | { readonly keychainProfile: string }
-  | {
-      readonly appleId: string;
-      readonly appleIdPassword: string;
-      readonly teamId: string;
-    };
+type MacNotarizeCredentials = { readonly keychainProfile: string };
 
 type NotarizeArtifact = (
   options: { readonly appPath: string } & MacNotarizeCredentials,
 ) => Promise<void>;
 
-function requiredAppleValue(
-  environment: NodeJS.ProcessEnv,
-  name: 'APPLE_ID' | 'APPLE_APP_SPECIFIC_PASSWORD' | 'APPLE_TEAM_ID',
-): string {
-  const value = environment[name]?.trim();
-  if (!value) throw new Error(`${name} is required for macOS notarization.`);
-  return value;
-}
-
 export function createMacNotarizeCredentials(
   environment: NodeJS.ProcessEnv,
 ): MacNotarizeCredentials | undefined {
   if (!isAppleReleaseSigning(environment.APPLE_TEAM_ID)) return undefined;
-  const keychainProfile = environment.APPLE_KEYCHAIN_PROFILE?.trim();
-  if (keychainProfile) return { keychainProfile };
-  return {
-    appleId: requiredAppleValue(environment, 'APPLE_ID'),
-    appleIdPassword: requiredAppleValue(
-      environment,
-      'APPLE_APP_SPECIFIC_PASSWORD',
-    ),
-    teamId: requiredAppleValue(environment, 'APPLE_TEAM_ID'),
-  };
+  const { keychainProfile } =
+    assertMacPublishReleaseEnvironment(environment);
+  return { keychainProfile };
 }
 
 export function createMacDmgMakerConfig(
@@ -366,10 +345,9 @@ const config: ForgeConfig = {
     // Code signing always runs so extendInfo changes are bound into the app
     // signature. Without Apple credentials this is ad-hoc (`identity: '-'`):
     // good for local validation, still not distributable through Gatekeeper.
-    // Notarization activates ONLY when the build machine exports the Apple
-    // credentials (APPLE_TEAM_ID present).
-    // Release builds must export: APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD,
-    // APPLE_TEAM_ID (see build/notarize.md).
+    // Notarization activates ONLY through the explicit local publish target.
+    // Release builds require NEXUS_MAC_PUBLISH_RELEASE=1, the exact Team ID and
+    // the exact "nexus-notary" keychain profile (see build/notarize.md).
     // Developer ID releases use hardened runtime. A local ad-hoc signature has
     // no stable Team ID, so hardened library validation would reject Electron's
     // own frameworks at dyld time; keep it off only for that non-distributable
@@ -378,10 +356,8 @@ const config: ForgeConfig = {
     ...(windowsSignOptions ? { windowsSign: windowsSignOptions } : {}),
     ...(macNotarizeCredentials
       ? {
-          // Prefer a stored notarytool keychain profile (APPLE_KEYCHAIN_PROFILE)
-          // for local builds — no app-specific password in plaintext/env. CI,
-          // which has no profile but exports the Apple credentials as secrets,
-          // falls back to the appleId/password/teamId trio unchanged.
+          // Publication is local-only and keychain-backed. Environment
+          // passwords and CI fallbacks are deliberately not supported.
           osxNotarize: macNotarizeCredentials,
         }
       : {}),

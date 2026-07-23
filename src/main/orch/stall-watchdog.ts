@@ -179,6 +179,14 @@ function recordActivity(sessionId: string, now: number = Date.now()): void {
 
 export function initStallWatchdog(): void {
   if (scanTimer) return;
+  prepareStallWatchdog();
+  scanTimer = setInterval(() => reconcileStallWatchdog(), STALL_SCAN_MS);
+  scanTimer.unref?.();
+}
+
+/** Install PTY/scope observers without creating an independent scan loop. */
+export function prepareStallWatchdog(): void {
+  if (untapData || untapState || untapExit || unsubscribeScopeChanges) return;
   untapData = tapSessionData((sessionId) => {
     recordActivity(sessionId);
     // Voltou a falar: re-arma o alerta para um eventual novo travamento.
@@ -207,14 +215,15 @@ export function initStallWatchdog(): void {
       }
     },
   );
-  scanTimer = setInterval(() => {
-    try {
-      scan();
-    } catch (error) {
-      console.warn('[watchdog] scan failed:', error);
-    }
-  }, STALL_SCAN_MS);
-  scanTimer.unref?.();
+}
+
+/** One main-coordinator scan. */
+export function reconcileStallWatchdog(now: number = Date.now()): void {
+  try {
+    scan(now);
+  } catch (error) {
+    console.warn('[watchdog] scan failed:', error);
+  }
 }
 
 export function shutdownStallWatchdog(): void {

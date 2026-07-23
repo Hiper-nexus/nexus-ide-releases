@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import type { McpToolDef } from './mcp-protocol';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolDef,
+} from './mcp-protocol';
 import type { AgentGateContext } from './gate';
+import { isCurrentGateContext } from './gate';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getContextKnowledgeService } from '../context/context-workflow-registry';
 import type { ContextAttestationSource } from '../context/context-attestation';
@@ -139,12 +143,14 @@ function prefixedDesignMdContent(
   ].join('\n');
 }
 
-async function writeEvidence(
+function writeEvidence(
   ctx: AgentGateContext,
   identifierValue: string,
   kit: { name: string; author: string; url: string; license: string; slug: string; content: string },
-): Promise<ContextAttestationSource> {
+  assertCurrentAuthority: () => void,
+): ContextAttestationSource {
   const relativePath = evidencePath(identifierValue);
+  assertCurrentAuthority();
   ensureWorkspaceDirectory(ctx.scope, EVIDENCE_DIR);
   const evidence = {
     schemaVersion: 1,
@@ -153,7 +159,9 @@ async function writeEvidence(
     ...kit,
   };
   const json = `${JSON.stringify(evidence, null, 2)}\n`;
+  assertCurrentAuthority();
   writeWorkspaceTextFile(ctx.scope, relativePath, json);
+  assertCurrentAuthority();
   return {
     type: 'connector',
     locator: relativePath,
@@ -248,7 +256,28 @@ const designSystemGetTool: McpToolDef = {
   },
 };
 
-const designSystemImportTool: McpToolDef = {
+export interface DesignSystemToolOptions {
+  /** Renderer IPC supplies a live-scope fence; MCP defaults to bearer identity. */
+  readonly assertCurrentAuthority?: (ctx: AgentGateContext) => void;
+}
+
+function assertDesignSystemAuthority(
+  ctx: AgentGateContext,
+  options: DesignSystemToolOptions,
+): void {
+  if (options.assertCurrentAuthority) {
+    options.assertCurrentAuthority(ctx);
+    return;
+  }
+  if (!isCurrentGateContext(ctx)) {
+    throw new Error('design system authority revoked');
+  }
+}
+
+function designSystemImportTool(
+  options: DesignSystemToolOptions,
+): McpToolDef {
+  return {
   name: 'nexus_design_system_import',
   description:
     'Import a DESIGN.md from designmd.ai as a proposed ContextDraft. ' +
@@ -273,7 +302,12 @@ const designSystemImportTool: McpToolDef = {
     },
     required: ['identifier'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    const assertCurrentAuthority = (): void => {
+      assertMcpInvocationCurrent(invocation);
+      assertDesignSystemAuthority(ctx, options);
+    };
+    assertCurrentAuthority();
     if (ctx.role === 'worker') {
       throw new Error('workers cannot propose context authority drafts');
     }
@@ -284,6 +318,7 @@ const designSystemImportTool: McpToolDef = {
     if (missionId) assertMission(ctx, missionId);
 
     const kit = await createDesignMdApiClient().getKit(identifierValue);
+    assertCurrentAuthority();
 
     if (kit.license === 'cc-by-sa' || kit.license === 'proprietary') {
       throw new DesignMdLicenseError(
@@ -292,14 +327,14 @@ const designSystemImportTool: McpToolDef = {
       );
     }
 
-    const source = await writeEvidence(ctx, identifierValue, {
+    const source = writeEvidence(ctx, identifierValue, {
       name: kit.name,
       author: kit.author,
       url: kit.url,
       license: kit.license,
       slug: kit.slug,
       content: kit.content,
-    });
+    }, assertCurrentAuthority);
 
     const content = prefixedDesignMdContent(
       {
@@ -312,6 +347,7 @@ const designSystemImportTool: McpToolDef = {
       kit.content,
     );
 
+    assertCurrentAuthority();
     const draft = getContextKnowledgeService(ctx.scope).propose({
       missionId,
       targetPath,
@@ -319,6 +355,7 @@ const designSystemImportTool: McpToolDef = {
       expectedTargetHash: expectedTargetHash(ctx, targetPath),
       sources: [source],
     }, missionIdentity(ctx));
+    assertCurrentAuthority();
 
     return {
       draftId: draft.id,
@@ -327,7 +364,8 @@ const designSystemImportTool: McpToolDef = {
       evidencePath: source.locator,
     };
   },
-};
+  };
+}
 
 const designSystemPublishTool: McpToolDef = {
   name: 'nexus_design_system_publish',
@@ -356,7 +394,7 @@ const designSystemPublishTool: McpToolDef = {
       },
     },
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     if (ctx.role === 'worker') {
       throw new Error('workers cannot publish design systems');
     }
@@ -370,14 +408,20 @@ const designSystemPublishTool: McpToolDef = {
     const tags = requestedTags.length > 0 ? requestedTags : (frontmatter.tags ?? []);
     const license = str(args, 'license') ?? frontmatter.license ?? 'mit';
 
-    const published = await createDesignMdApiClient().publishKit({
+    assertMcpInvocationCurrent(invocation);
+    const publishInput = {
       slug,
       name,
       description,
       tags,
       license,
       content: file.content,
-    });
+    };
+    const client = createDesignMdApiClient();
+    const published = invocation?.signal
+      ? await client.publishKit(publishInput, { signal: invocation.signal })
+      : await client.publishKit(publishInput);
+    assertMcpInvocationCurrent(invocation);
 
     return {
       slug: published.slug,
@@ -388,11 +432,13 @@ const designSystemPublishTool: McpToolDef = {
   },
 };
 
-export function buildDesignSystemTools(): McpToolDef[] {
+export function buildDesignSystemTools(
+  options: DesignSystemToolOptions = {},
+): McpToolDef[] {
   return [
     designSystemSearchTool,
     designSystemGetTool,
-    designSystemImportTool,
+    designSystemImportTool(options),
     designSystemPublishTool,
   ];
 }

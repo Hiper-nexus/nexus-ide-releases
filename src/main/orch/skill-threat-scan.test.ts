@@ -93,6 +93,7 @@ describe('scanComponentFiles', () => {
     ]);
     expect(result.blocked).toBe(true);
     expect(result.blockReason).toContain('SKILL.md');
+    expect(result.warnings).toContainEqual(expect.stringMatching(/binário/));
   });
 
   it('returns warnings without blocking for lower-confidence signals', () => {

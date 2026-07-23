@@ -1,4 +1,7 @@
-import type { McpToolDef } from './mcp-protocol';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolDef,
+} from './mcp-protocol';
 import type { PaneSnapshot } from '../../shared/orch-types';
 import {
   listPaneSnapshots,
@@ -28,11 +31,16 @@ import {
   strArray,
   type SpawnToolOptions,
 } from './tool-util';
-import { canonicalToolName, type AgentGateContext } from './gate';
+import {
+  assertCurrentMissionOrchestratorSession,
+  canonicalToolName,
+  type AgentGateContext,
+} from './gate';
 import { applyWorkerSpawnPolicy } from '../../shared/mission-intent';
 import type { MissionIntentContract } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
+import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getOrchSettings } from '../persistence/settings-store';
@@ -187,8 +195,9 @@ const paneSpawn: McpToolDef = {
   description:
     'Open a new terminal pane running an AI CLI. Provide agentName (a squad ' +
     'agent — inherits allowlists/title) and ALSO adapterId/model/effort from ' +
-    'nexus_route_task: the explicit adapterId/model WIN over the roster ' +
-    'defaults (cost routing). Optional prompt is typed into the CLI once it ' +
+    'nexus_route_task: in a running mission, pass its routeReservationId too. ' +
+    'The explicit adapterId/model WIN over non-sticky roster defaults (cost routing). ' +
+    'Optional prompt is typed into the CLI once it ' +
     'boots. Returns {paneId, sessionId}.',
   inputSchema: {
     type: 'object',
@@ -205,14 +214,21 @@ const paneSpawn: McpToolDef = {
       cwd: { type: 'string' },
       title: { type: 'string' },
       missionId: { type: 'string' },
+      routeReservationId: {
+        type: 'string',
+        description: 'Durable one-shot reservation returned by nexus_route_task',
+      },
       taskId: { type: 'string' },
       prompt: { type: 'string' },
     },
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const agentRef = str(args, 'agentName');
+    const routeReservationId = str(args, 'routeReservationId');
     let options: SpawnToolOptions;
     let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
+    let rosterRouteAuthorized = false;
     if (agentRef) {
       const requestedMissionId = childMissionId(ctx, str(args, 'missionId'));
       const mission = requestedMissionId
@@ -231,18 +247,31 @@ const paneSpawn: McpToolDef = {
       // Cost routing still wins for non-omp agents. For roster cli=omp with
       // ompParticipation ≠ off, stick to omp so "Generalist (omp)" is not a lie
       // when Maestro blindly forwards a non-omp route_task pick.
+      const requestedAdapterId = str(args, 'adapterId');
+      const requestedModel = str(args, 'model');
+      const requestedEffort = str(args, 'effort');
       const sticky = resolveStickyOmpAdapter({
         rosterCli: agent.cli,
-        requestedAdapterId: str(args, 'adapterId'),
-        requestedModel: str(args, 'model'),
+        requestedAdapterId,
+        requestedModel,
         rosterModel: agent.model,
         rosterEffort: agent.effort,
-        requestedEffort: str(args, 'effort'),
+        requestedEffort,
         ompInstalled: isAdapterInstalled('omp'),
         ompAvailable: hasAvailableAccount('omp'),
         ompParticipation: getOrchSettings().ompParticipation,
         defaultOmpModel: defaultModelForAdapter('omp'),
       });
+      const noRouteOverride =
+        requestedAdapterId === undefined &&
+        requestedModel === undefined &&
+        requestedEffort === undefined;
+      rosterRouteAuthorized =
+        noRouteOverride ||
+        sticky.sticky ||
+        (sticky.adapterId === agent.cli &&
+          sticky.model === agent.model &&
+          sticky.effort === agent.effort);
       options = {
         adapterId: sticky.adapterId,
         model: sticky.model,
@@ -270,12 +299,14 @@ const paneSpawn: McpToolDef = {
       // Omitir o model NÃO contorna o gate: sem model explícito, o que roda é
       // o default do adapter — é ele que precisa passar na checagem.
       const gateModel = adHocModel ?? defaultModelForAdapter(adHocAdapterId);
-      const gateError = adHocSpawnGateError(
-        adHocAdapterId,
-        gateModel,
-        modelCatalogInfo(loadModelCatalog(), adHocAdapterId, gateModel),
-      );
-      if (gateError) throw new Error(gateError);
+      if (!routeReservationId) {
+        const gateError = adHocSpawnGateError(
+          adHocAdapterId,
+          gateModel,
+          modelCatalogInfo(loadModelCatalog(), adHocAdapterId, gateModel),
+        );
+        if (gateError) throw new Error(gateError);
+      }
       options = {
         adapterId: adHocAdapterId,
         model: adHocModel,
@@ -296,12 +327,74 @@ const paneSpawn: McpToolDef = {
     }
     let releaseWorkerSlot: (() => void) | undefined;
     let spawnedWorkerPaneId: string | undefined;
+    let consumeReservedRoute: (() => void) | undefined;
     try {
+      let missionSuite: ReturnType<typeof getProjectDomainStores> | undefined;
+      let missionRow: ReturnType<
+        ReturnType<typeof getProjectDomainStores>['missions']['get']
+      > = null;
+      if (options.missionId) {
+        missionSuite = getProjectDomainStores(ctx.scope);
+        missionRow = missionSuite.missions.get(options.missionId);
+        if (!missionRow) {
+          throw new Error(`mission not found: ${options.missionId}`);
+        }
+        if (ctx.role === 'orchestrator') {
+          assertCurrentMissionOrchestratorSession(ctx, missionRow);
+        }
+        if (
+          missionRow.status === 'running' &&
+          options.role === 'orchestrator'
+        ) {
+          throw new Error(
+            'orchestrator_spawn_forbidden: o orquestrador de uma missão running ' +
+              'é materializado exclusivamente pelo bootstrap main-owned; use ' +
+              '“Retomar missão” para recuperar a sessão vinculada',
+          );
+        }
+        if (
+          options.role === 'worker' &&
+          isTaskQueueManagedMission(missionSuite, options.missionId)
+        ) {
+          throw new Error(
+            'task_dispatcher_authority: workers de uma missão planejada só podem ser ' +
+              'criados pelo dispatcher durável do main; aguarde o Nexus despachar a task',
+          );
+        }
+        if (missionRow.status === 'running' && !rosterRouteAuthorized) {
+          if (!routeReservationId) {
+            throw new Error(
+              'route_reservation_required: missão em execução exige routeReservationId válido; ' +
+                'chame nexus_route_task e repasse routeReservationId/adapterId/model/effort, ' +
+                'ou use agentName sem substituir a rota sticky do roster',
+            );
+          }
+          const expectedRoute = {
+            reservationId: routeReservationId,
+            missionId: options.missionId,
+            adapterId: options.adapterId,
+            ...(options.model ? { model: options.model } : {}),
+            ...(options.effort ? { effort: options.effort } : {}),
+          };
+          missionSuite.missions.assertRouteReservation(expectedRoute);
+          if (!ctx.sessionId) {
+            throw new Error(
+              'route_reservation_session_required: a reserva só pode ser consumida ' +
+                'por uma sessão PTY vinculada ao agente; reabra o orquestrador e roteie novamente',
+            );
+          }
+          consumeReservedRoute = () => {
+            missionSuite!.missions.consumeRouteReservation(
+              expectedRoute,
+              ctx.sessionId!,
+            );
+          };
+        }
+      }
       if (options.role === 'worker' && options.missionId) {
         const missionId = options.missionId;
         // Enforce maxWorkers + parent deny attenuation (intent contract teeth).
-        const suite = getProjectDomainStores(ctx.scope);
-        const missionRow = suite.missions.get(missionId);
+        const suite = missionSuite!;
         if (!missionRow?.intentContract) {
           throw new Error('approval_required: current mission contract unavailable');
         }
@@ -384,6 +477,12 @@ const paneSpawn: McpToolDef = {
           };
         }
       }
+      // Everything above may consult durable/worktree/provider state. Recheck
+      // the exact bearer/intent after preparation, then linearize reservation
+      // consumption and physical spawn without trusting the original call.
+      assertMcpInvocationCurrent(invocation);
+      consumeReservedRoute?.();
+      assertMcpInvocationCurrent(invocation);
       const spawned = await spawnPaneAndMaybePrompt(options, {
         // Capture the PTY identity before missionPanes.record(). If that
         // durable write fails, the finally block must retain the reservation
@@ -391,6 +490,7 @@ const paneSpawn: McpToolDef = {
         onPaneCreated: (paneId) => {
           spawnedWorkerPaneId = paneId;
         },
+        invocation,
       });
       return {
         ...spawned,
@@ -538,13 +638,15 @@ const paneWrite: McpToolDef = {
     },
     required: ['paneId', 'text'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'write');
     const text = typeof args.text === 'string' ? args.text : '';
     if (args.submit === false) {
+      assertMcpInvocationCurrent(invocation);
       orchWriteSession(sessionId, text);
     } else {
-      await injectPrompt(sessionId, text);
+      await injectPrompt(sessionId, text, invocation);
     }
     return { ok: true };
   },
@@ -573,10 +675,13 @@ const paneWriteMany: McpToolDef = {
     },
     required: ['writes'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const writes = Array.isArray(args.writes) ? args.writes : [];
     const results: Array<{ paneId: string; ok: boolean; error?: string }> = [];
     for (const raw of writes) {
+      // Do not turn a revoked batch into N best-effort writes. Every iteration
+      // revalidates outside the per-item error wrapper so revocation stops it.
+      assertMcpInvocationCurrent(invocation);
       const write = raw as { paneId?: string; text?: string; submit?: boolean };
       if (typeof write.paneId !== 'string' || typeof write.text !== 'string') {
         results.push({
@@ -589,9 +694,10 @@ const paneWriteMany: McpToolDef = {
       try {
         const sessionId = authorizedSessionIdOf(ctx, write.paneId, 'write');
         if (write.submit === false) {
+          assertMcpInvocationCurrent(invocation);
           orchWriteSession(sessionId, write.text);
         } else {
-          await injectPrompt(sessionId, write.text);
+          await injectPrompt(sessionId, write.text, invocation);
         }
         results.push({ paneId: write.paneId, ok: true });
       } catch (err) {
@@ -616,7 +722,7 @@ const paneClose: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const info = authorizePaneRef(ctx, requireStr(args, 'paneId'), 'close');
-    if (!requestPaneClose(info.paneId)) {
+    if (!(await requestPaneClose(info.paneId))) {
       throw new Error('no renderer window available');
     }
     return { ok: true };

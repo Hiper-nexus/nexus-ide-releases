@@ -304,7 +304,9 @@ function canOpenLogin(adapterId: string): boolean {
  * Install the watchdog on the orchestration session taps. Called once from
  * the MCP server boot. Returns a disposer (tests / shutdown).
  */
-export function installLoginStuckWatchdog(): () => void {
+export function installLoginStuckWatchdog(
+  options: { readonly autoTick?: boolean } = {},
+): () => void {
   if (activeWatchdog) return () => {};
   const watchdog = createLoginStuckWatchdog({
     now: () => Date.now(),
@@ -323,14 +325,21 @@ export function installLoginStuckWatchdog(): () => void {
     watchdog.trackSession(sessionId, info.paneId, info.adapterId);
   });
   const untapExit = tapSessionExit((sessionId) => watchdog.dropSession(sessionId));
-  const timer = setInterval(() => watchdog.tick(), LOGIN_STUCK_TICK_MS);
-  timer.unref?.();
+  const timer = options.autoTick === false
+    ? null
+    : setInterval(() => watchdog.tick(), LOGIN_STUCK_TICK_MS);
+  timer?.unref?.();
   return () => {
     untapState();
     untapExit();
-    clearInterval(timer);
+    if (timer) clearInterval(timer);
     if (activeWatchdog === watchdog) activeWatchdog = null;
   };
+}
+
+/** One pass for the main-owned orchestration coordinator. */
+export function reconcileLoginStuckWatchdog(): void {
+  activeWatchdog?.tick();
 }
 
 /** Queryable stuck state for a pane (null when fine or not installed). */

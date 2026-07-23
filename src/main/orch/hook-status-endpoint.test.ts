@@ -169,7 +169,7 @@ describe('POST /hook/status — valid events drive the semantic reducer', () => 
   it('unknown event types parse to ignore → 200 without touching status', async () => {
     await boot();
 
-    const res = await postHook({ event: 'tool-use', flavor: 'claude' });
+    const res = await postHook({ event: 'mystery', flavor: 'claude' });
 
     const json = (await res.json()) as Record<string, unknown>;
     expect(res.status).toBe(200);

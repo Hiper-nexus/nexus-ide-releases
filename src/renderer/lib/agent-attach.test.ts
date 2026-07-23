@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   annotationsToAgentPrompt,
+  resolveReviewMissionId,
   resolveReviewTargetPaneId,
 } from './agent-attach';
 
@@ -107,5 +108,17 @@ describe('resolveReviewTargetPaneId', () => {
         isPaneLive: (paneId) => paneId === 'p-worker-b',
       }),
     ).toBeNull();
+  });
+});
+
+describe('resolveReviewMissionId', () => {
+  it('binds durable feedback to the exact target pane mission', () => {
+    expect(
+      resolveReviewMissionId('p-orch-b', {
+        'p-orch': 'mission-a',
+        'p-orch-b': 'mission-b',
+      }),
+    ).toBe('mission-b');
+    expect(resolveReviewMissionId('solo', {})).toBeNull();
   });
 });

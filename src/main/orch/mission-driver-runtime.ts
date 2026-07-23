@@ -295,6 +295,7 @@ let runningConfig: DriveConfig | null = null;
 let ticking = false;
 let rerunRequested = false;
 let heartbeatCounter = 0;
+let externalReconcileRequest: (() => boolean) | null = null;
 
 export function configureMissionDriverRuntime(options: {
   deps: DriveDeps;
@@ -364,9 +365,30 @@ function scheduleDriveTick(deps: DriveDeps, config: DriveConfig): void {
  * event arriving during a tick schedules exactly one trailing reconciliation.
  */
 export function requestMissionDriverTick(): boolean {
+  if (externalReconcileRequest) return externalReconcileRequest();
   if (!timer || !runningDeps || !runningConfig) return false;
   scheduleDriveTick(runningDeps, runningConfig);
   return true;
+}
+
+/**
+ * Production coordinator hook. When installed, all store/pane wakes are
+ * coalesced by the single orchestration reconciler instead of this module's
+ * legacy interval shell.
+ */
+export function setMissionDriverReconcileRequest(
+  request: (() => boolean) | null,
+): void {
+  externalReconcileRequest = request;
+}
+
+/** One coordinator-owned pass; domain decision/apply logic stays unchanged. */
+export async function reconcileMissionDriver(): Promise<DriveTickResult | null> {
+  const deps = configuredDeps;
+  if (!deps) return null;
+  const result = await runDriveTick(deps, configuredConfig);
+  reportLoopResult(result, configuredConfig);
+  return result;
 }
 
 /** Inicia o loop (idempotente). Requer configure prévio. Timer .unref(). */
@@ -407,6 +429,7 @@ export function stopMissionDriverLoop(): void {
 
 export function disposeMissionDriverRuntime(): void {
   stopMissionDriverLoop();
+  externalReconcileRequest = null;
   configuredDeps = null;
   configuredConfig = defaultDriveConfig;
   heartbeatCounter = 0;

@@ -14,6 +14,7 @@ import {
   evaluateStop,
   getContext,
   getContextBySession,
+  isCurrentGateContext,
   isSkillAllowed,
   isHookToolAllowed,
   mintToken,
@@ -30,6 +31,8 @@ import type {
   McpConfirmationHandler,
   McpConfirmationRequest,
 } from './mcp-dispatch';
+import { McpConfirmationScheduler } from './mcp-confirmation-scheduler';
+import { isHookMcpToolAllowedForReadOnlyContext } from './mcp-effect-policy';
 import { clearSession as clearMcpPermissionSession } from '../jarvis/permissions';
 import {
   boundedConfirmationArgs,
@@ -55,7 +58,7 @@ import {
 } from './hooks-gen';
 import { handleHookStatusHttp } from './hook-status-endpoint';
 import { resetAgentStatusOnExit } from './agent-status';
-import { installLoginStuckWatchdog } from './login-stuck-watchdog';
+import { installMcpSessionTerminationRevocation } from './mcp-session-revocation';
 import { codexStatusHookArgs } from './hook-status-config';
 import { codexHookTrustBypassArgs } from './codex-cli-version';
 import {
@@ -77,6 +80,7 @@ import {
 import { ensureSkillsForCli } from './skill-mirror';
 import {
   isThirdPartyClaudeFamily,
+  requiresSpawnGate,
   shouldUseEphemeralHome,
 } from './spawn-home-policy';
 
@@ -96,7 +100,7 @@ let server: http.Server | null = null;
 let port = 0;
 let registry: McpRegistry | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
-let httpConfirmationQueue: Promise<void> = Promise.resolve();
+let disposeTerminationRevocation: (() => void) | null = null;
 
 async function showHttpMcpConfirmation(
   request: McpConfirmationRequest,
@@ -121,16 +125,12 @@ async function showHttpMcpConfirmation(
   return result.response === 1;
 }
 
-const confirmHttpMcpTool: McpConfirmationHandler = (request) => {
-  const pending = httpConfirmationQueue.then(() =>
-    showHttpMcpConfirmation(request),
-  );
-  httpConfirmationQueue = pending.then(
-    () => undefined,
-    () => undefined,
-  );
-  return pending;
-};
+let httpConfirmationScheduler = new McpConfirmationScheduler(
+  showHttpMcpConfirmation,
+);
+
+const confirmHttpMcpTool: McpConfirmationHandler = (request) =>
+  httpConfirmationScheduler.enqueue(request);
 
 function mcpUrl(): string {
   return `http://127.0.0.1:${port}/mcp`;
@@ -221,6 +221,10 @@ async function handleMcpRequest(
   const responses = [];
   for (const message of messages) {
     if (!isJsonRpcRequest(message)) continue;
+    if (!isCurrentGateContext(ctx)) {
+      sendJson(res, 401, { error: 'session authority was revoked' });
+      return;
+    }
     if (
       message.method === 'tools/call' &&
       ctx.role === 'orchestrator' &&
@@ -259,6 +263,10 @@ async function handleGateRequest(
   } catch {
     // Empty/invalid body — treat as a bare event.
   }
+  if (!isCurrentGateContext(ctx)) {
+    sendJson(res, 401, { error: 'session authority was revoked' });
+    return;
+  }
   switch (event) {
     case 'pretool': {
       const toolName = body.toolName ?? '';
@@ -282,12 +290,22 @@ async function handleGateRequest(
         });
         return;
       }
-      const allow = isHookToolAllowed(ctx.allowedTools, toolName, ctx.role);
+      const allowlisted = isHookToolAllowed(
+        ctx.allowedTools,
+        toolName,
+        ctx.role,
+      );
+      const readOnlyAllowed =
+        !ctx.readOnly ||
+        isHookMcpToolAllowedForReadOnlyContext(toolName);
+      const allow = allowlisted && readOnlyAllowed;
       sendJson(res, 200, {
         allow,
         reason: allow
           ? undefined
-          : `tool "${toolName}" is outside this agent's allowlist`,
+          : !allowlisted
+            ? `tool "${toolName}" is outside this agent's allowlist`
+            : `read-only authority denied tool "${toolName}"`,
       });
       return;
     }
@@ -300,7 +318,10 @@ async function handleGateRequest(
         hasTrustedHandoff = Boolean(
           ctx.sessionId &&
           getProjectDomainStores(ctx.scope).handoffs
-            .hasTrustedFromSession(ctx.sessionId),
+            .hasTrustedFromSession(
+              ctx.sessionId,
+              ctx.workerIncarnationId,
+            ),
         );
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -335,13 +356,12 @@ function buildMcpConfig(token: string): object {
 function installSpawnHook(): void {
   setAgentSpawnHook((adapter, _req, authority, preparedEnv) => {
     const meta = authority.context;
-    const gated =
-      (meta?.allowedTools ?? null) !== null ||
-      (meta?.allowedSkills ?? null) !== null;
+    const gated = requiresSpawnGate(meta);
     const ctx = mintToken({
       label: meta?.agentName ?? adapter.label,
       role: meta?.role ?? 'user',
       missionId: meta?.missionId,
+      workerIncarnationId: meta?.workerIncarnationId,
       contextRevision: meta?.contextRevision,
       agentName: meta?.agentName,
       providerId: adapter.id,
@@ -527,6 +547,7 @@ function installLegacyParser(): void {
       artifacts: payload.artifacts,
       missionId: ctx.missionId,
       sessionId,
+      workerIncarnationId: ctx.workerIncarnationId,
       fromAgent: ctx.agentName ?? ctx.label ?? 'legacy',
     });
     if (handoff.evidenceTrust === 'nexus-trusted') {
@@ -581,6 +602,10 @@ function installLegacyParser(): void {
 }
 
 export function startMcpServer(): Promise<void> {
+  httpConfirmationScheduler.close();
+  httpConfirmationScheduler = new McpConfirmationScheduler(
+    showHttpMcpConfirmation,
+  );
   const staleAgy = purgeStaleAgyMcpConfigs();
   const staleCli = purgeStaleCliMcpSessions();
   const removedArtifacts = staleAgy.removed + staleCli.removed;
@@ -604,10 +629,8 @@ export function startMcpServer(): Promise<void> {
   };
   installSpawnHook();
   installLegacyParser();
-  // Login-stuck watchdog (F-256): tails come from the pane-registry ring
-  // buffer on a 5s tick — never per-chunk, never destructive.
-  installLoginStuckWatchdog();
-
+  disposeTerminationRevocation?.();
+  disposeTerminationRevocation = installMcpSessionTerminationRevocation();
   server = http.createServer((req, res) => {
     void (async () => {
       const url = req.url ?? '';
@@ -652,6 +675,9 @@ export function startMcpServer(): Promise<void> {
 
 export function stopMcpServer(): void {
   setAgentSpawnHook(null);
+  disposeTerminationRevocation?.();
+  disposeTerminationRevocation = null;
+  httpConfirmationScheduler.close();
   cliPromptAutoResponder.clear();
   for (const token of sessionTokens.values()) {
     cleanupAgyMcpConfig(token);

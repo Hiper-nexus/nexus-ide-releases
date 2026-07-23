@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +12,6 @@ import type {
 } from '../../shared/remote-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { writeJsonAtomic } from '../util/atomic-write';
-import { REMOTE_CLIENT_HTML } from './remote-client-page';
 import {
   getPaneAuthzInfo,
   listVisiblePaneSnapshots,
@@ -37,9 +36,24 @@ import {
 } from './remote-terminal-streams';
 import { TerminalStreamOpcode } from '../../shared/terminal-stream-protocol';
 import {
+  authorizeRemotePaneInput,
   authorizeMobileRpc,
   mobileRpcKindForBridgeType,
 } from './mobile-companion-policy';
+import { requestRemoteDesktopConfirmation } from './remote-desktop-confirmation';
+import {
+  parseRemoteDeviceIdentity,
+  verifyRemoteDeviceSignature,
+} from './remote-device-authority';
+import {
+  countRemoteDeviceTokens,
+  findRemoteDeviceToken,
+  issueRemoteDeviceToken,
+  remoteDeviceTokenExists,
+  revokeRemoteDeviceTokens,
+  type RemoteDeviceTokenRecord,
+} from './remote-device-token-store';
+import { serveRemoteClientPage } from './remote-client-server';
 
 interface TlsRecord {
   key: string;
@@ -48,31 +62,26 @@ interface TlsRecord {
   hosts: string[];
 }
 
-interface TokenRecord {
-  id: string;
-  hash: string;
-  createdAt: number;
-  expiresAt: number;
-  projectId: string;
-  checkoutId: string;
-}
-
-interface TokenFile {
-  tokens: TokenRecord[];
-}
-
 interface AuthenticatedClient {
   tokenId: string;
+  deviceId: string;
   expiresAt: number;
   expiryTimer: ReturnType<typeof setTimeout>;
   scope: ProjectExecutionScope;
 }
 
+interface AuthenticationChallenge {
+  id: string;
+  challenge: string;
+  tokenId: string;
+  deviceId: string;
+  expiresAt: number;
+}
+
 const ROOT = path.join(os.homedir(), '.nexus', 'remote-bridge');
 const TLS_FILE = path.join(ROOT, 'tls.json');
-const TOKENS_FILE = path.join(ROOT, 'tokens.json');
-const DEFAULT_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PAIRING_TTL_MS = 5 * 60 * 1000;
+const AUTH_CHALLENGE_TTL_MS = 30_000;
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const MAX_CLIENTS = 16;
 const UNAUTH_TIMEOUT_MS = 15_000;
@@ -86,16 +95,6 @@ const PAIRING_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const PAIRING_LEN = 8;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
-function resolveTokenTtlMs(): number {
-  if (process.env.NODE_ENV !== 'test') return DEFAULT_TOKEN_TTL_MS;
-  const configured = Number(process.env.NEXUS_REMOTE_TOKEN_TTL_MS);
-  return Number.isSafeInteger(configured) && configured >= 100
-    ? configured
-    : DEFAULT_TOKEN_TTL_MS;
-}
-
-const TOKEN_TTL_MS = resolveTokenTtlMs();
-
 let server: https.Server | null = null;
 let wss: WebSocketServer | null = null;
 let port: number | null = null;
@@ -106,18 +105,14 @@ const pairingFailuresByIp = new Map<
   { count: number; lockedUntil: number }
 >();
 let pairing = makePairing();
-let tokenCache: TokenRecord[] | null = null;
 let activeBridgeScope: ProjectExecutionScope | null = null;
 const clients = new Set<WebSocket>();
 const authenticatedClients = new Map<WebSocket, AuthenticatedClient>();
+const authenticationChallenges = new Map<WebSocket, AuthenticationChallenge>();
 const rate = new Map<string, { count: number; resetAt: number }>();
 
 function ensureRoot(): void {
   fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 });
-}
-
-function sha256Hex(value: string): string {
-  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 function randomCode(): string {
@@ -131,6 +126,11 @@ function randomCode(): string {
 function makePairing(): { code: string; expiresAt: number } {
   pairingFailuresByIp.clear();
   return { code: randomCode(), expiresAt: Date.now() + PAIRING_TTL_MS };
+}
+
+function invalidatePairing(): void {
+  pairingFailuresByIp.clear();
+  pairing = { code: '', expiresAt: 0 };
 }
 
 /** Ms remaining on an IP's pairing lockout, or 0 if not locked. */
@@ -151,79 +151,15 @@ function recordPairingFailure(ip: string): void {
 }
 
 function pairingCode(): { code: string; expiresAt: number } {
-  if (Date.now() >= pairing.expiresAt) pairing = makePairing();
+  if (pairing.code && pairing.expiresAt <= Date.now()) invalidatePairing();
   return pairing;
-}
-
-function loadTokens(): TokenRecord[] {
-  if (tokenCache) return tokenCache;
-  try {
-    const raw = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf8')) as TokenFile;
-    tokenCache = (raw.tokens ?? []).filter(
-      (token) =>
-        typeof token.projectId === 'string' &&
-        typeof token.checkoutId === 'string',
-    );
-  } catch {
-    tokenCache = [];
-  }
-  return tokenCache;
-}
-
-/** Live, non-expired tokens; prunes expired records through to disk once. */
-function readTokens(): TokenRecord[] {
-  const all = loadTokens();
-  const live = all.filter((token) => token.expiresAt > Date.now());
-  if (live.length !== all.length) writeTokens(live);
-  return live;
-}
-
-function writeTokens(tokens: TokenRecord[]): void {
-  ensureRoot();
-  writeJsonAtomic(TOKENS_FILE, { tokens });
-  tokenCache = tokens;
-}
-
-function issueToken(
-  scope: ProjectExecutionScope,
-): { token: string; expiresAt: number; record: TokenRecord } {
-  const token = crypto.randomBytes(32).toString('base64url');
-  const expiresAt = Date.now() + TOKEN_TTL_MS;
-  const record = {
-    id: crypto.randomUUID(),
-    hash: sha256Hex(token),
-    createdAt: Date.now(),
-    expiresAt,
-    projectId: scope.projectId,
-    checkoutId: scope.checkoutId,
-  };
-  writeTokens([...readTokens(), record]);
-  return { token, expiresAt, record };
-}
-
-function findValidToken(
-  token: string,
-  scope: ProjectExecutionScope,
-): TokenRecord | undefined {
-  if (!token) return undefined;
-  const hash = sha256Hex(token);
-  const right = Buffer.from(hash, 'hex');
-  return readTokens().find((record) => {
-    if (
-      record.projectId !== scope.projectId ||
-      record.checkoutId !== scope.checkoutId
-    ) {
-      return false;
-    }
-    const left = Buffer.from(record.hash, 'hex');
-    return left.length === right.length && crypto.timingSafeEqual(left, right);
-  });
 }
 
 function clearAuthenticatedClient(ws: WebSocket): void {
   const current = authenticatedClients.get(ws);
   if (current) clearTimeout(current.expiryTimer);
   authenticatedClients.delete(ws);
+  authenticationChallenges.delete(ws);
 }
 
 function closeAuthenticatedClient(ws: WebSocket, reason: string): void {
@@ -236,6 +172,7 @@ function closeAuthenticatedClient(ws: WebSocket, reason: string): void {
 function scheduleExpiry(
   ws: WebSocket,
   tokenId: string,
+  deviceId: string,
   expiresAt: number,
   scope: ProjectExecutionScope,
 ): void {
@@ -247,11 +184,12 @@ function scheduleExpiry(
   const expiryTimer = setTimeout(() => {
     const current = authenticatedClients.get(ws);
     if (!current || current.tokenId !== tokenId) return;
-    scheduleExpiry(ws, tokenId, expiresAt, current.scope);
+    scheduleExpiry(ws, tokenId, deviceId, expiresAt, current.scope);
   }, Math.min(remaining, MAX_TIMER_DELAY_MS));
   expiryTimer.unref?.();
   authenticatedClients.set(ws, {
     tokenId,
+    deviceId,
     expiresAt,
     expiryTimer,
     scope: Object.freeze({ ...scope }),
@@ -260,11 +198,11 @@ function scheduleExpiry(
 
 function authenticateClient(
   ws: WebSocket,
-  token: TokenRecord,
+  token: RemoteDeviceTokenRecord,
   scope: ProjectExecutionScope,
 ): void {
   clearAuthenticatedClient(ws);
-  scheduleExpiry(ws, token.id, token.expiresAt, scope);
+  scheduleExpiry(ws, token.id, token.deviceId, token.expiresAt, scope);
 }
 
 function isClientAuthenticated(ws: WebSocket): boolean {
@@ -274,12 +212,11 @@ function isClientAuthenticated(ws: WebSocket): boolean {
     closeAuthenticatedClient(ws, 'token expired');
     return false;
   }
-  const tokenStillExists = readTokens().some(
-    (token) =>
-      token.id === current.tokenId &&
-      token.projectId === current.scope.projectId &&
-      token.checkoutId === current.scope.checkoutId,
-  );
+  const tokenStillExists = remoteDeviceTokenExists({
+    tokenId: current.tokenId,
+    deviceId: current.deviceId,
+    scope: current.scope,
+  });
   if (!tokenStillExists) {
     closeAuthenticatedClient(ws, 'tokens revoked');
     return false;
@@ -449,7 +386,7 @@ function certFingerprint256(certPem: string): string {
   try {
     return new crypto.X509Certificate(certPem).fingerprint256;
   } catch {
-    return sha256Hex(certPem);
+    return crypto.createHash('sha256').update(certPem).digest('hex');
   }
 }
 
@@ -542,94 +479,18 @@ export type AuthedBridgeCommand = {
   [key: string]: unknown;
 };
 
-/**
- * H5: serialização dos diálogos de confirmação. Um dispositivo pareado
- * malicioso pode disparar N RPCs destrutivos concorrentes; sem guarda, isso
- * empilha N diálogos nativos (dialog-storm → fadiga de confirmação → misclick
- * em "Permitir" — o exato ataque do modelo de ameaça). Um diálogo por vez:
- * pedidos concorrentes são NEGADOS (fail-closed), não enfileirados.
- */
-let confirmDialogInFlight = false;
-const CONFIRM_DIALOG_TIMEOUT_MS = 60_000;
-
-/**
- * H5: Show a native (non-forgeable) desktop dialog asking the user to confirm
- * a destructive mobile RPC. The confirmation comes from the DESKTOP user, not
- * from a client-sent boolean — a compromised/malicious mobile client cannot
- * forge this.
- */
 async function confirmDestructiveMobileRpc(
   rpcType: string,
   scope: ProjectExecutionScope,
+  confirmationSessionId: string,
 ): Promise<boolean> {
-  if (confirmDialogInFlight) {
-    // Outro diálogo já aberto: nega (fail-closed) em vez de enfileirar.
-    console.warn('[remote-bridge] destructive confirm already in flight — denying');
-    return false;
-  }
-  // Lazy require: electron is not available in unit-test environments.
-  // Fail-closed: when electron is absent, deny the operation.
-  let BrowserWindow: typeof import('electron').BrowserWindow | undefined;
-  let dialog: typeof import('electron').dialog | undefined;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const electron = require('electron') as typeof import('electron');
-    BrowserWindow = electron.BrowserWindow;
-    dialog = electron.dialog;
-  } catch {
-    // Electron not available at all.
-  }
-  if (!BrowserWindow || !dialog) {
-    console.warn('[remote-bridge] electron unavailable — denying destructive mobile RPC');
-    return false;
-  }
-  confirmDialogInFlight = true;
-  const win = BrowserWindow.getAllWindows().find(
-    (w) => !w.isDestroyed() && w.isVisible(),
-  );
-  const opts = {
-    type: 'warning' as const,
-    buttons: ['Negar', 'Permitir'],
-    defaultId: 0,
-    cancelId: 0,
-    title: 'Ação remota destrutiva',
-    message: `Um dispositivo remoto quer executar: ${rpcType}`,
-    detail:
-      `Workspace: ${scope.rootRealPath}\n\n` +
-      'Esta é uma operação destrutiva enviada por um dispositivo pareado. ' +
-      'Permita apenas se você a iniciou conscientemente.',
-    noLink: true,
-  };
-  const shown = win
-    ? dialog.showMessageBox(win, opts)
-    : dialog.showMessageBox(opts);
-  // O flag só rearma quando o diálogo REAL fecha. Um `showMessageBox` pendente
-  // NÃO pode ser fechado programaticamente pelo Electron: se o timeout disparar
-  // primeiro, rearmar com o órfão ainda na tela permitiria empilhar um novo
-  // diálogo por cima (dialog-storm lento) e tornaria ambíguo um clique tardio
-  // no órfão. Amarre o ciclo de vida do flag ao diálogo, não ao race — efeito
-  // colateral desejável: após auto-deny, novos RPCs seguem negados (fail-closed)
-  // até o usuário dispensar o órfão.
-  void shown
-    .finally(() => {
-      confirmDialogInFlight = false;
-    })
-    .catch(() => {
-      // showMessageBox rejeitou (janela morta etc.) — o finally acima já rearmou
-      // o flag; este catch só evita um unhandledRejection na cadeia derivada.
-    });
-  // Auto-nega após o timeout para não segurar o RPC indefinidamente se o
-  // diálogo ficar órfão (sem janela visível / usuário ausente).
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<{ response: number }>((resolve) => {
-    timer = setTimeout(() => resolve({ response: 0 }), CONFIRM_DIALOG_TIMEOUT_MS);
+  return requestRemoteDesktopConfirmation({
+    confirmationSessionId,
+    scope,
+    toolName: rpcType,
+    reason: 'operação destrutiva solicitada por dispositivo remoto',
+    args: { operation: rpcType },
   });
-  try {
-    const result = await Promise.race([shown, timeout]);
-    return result.response === 1;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 /**
@@ -644,6 +505,7 @@ export async function handleAuthedMessage(
   // also subscribes it to real-time output pushes. Relay/other callers keep the
   // request/response contract unchanged.
   pushTarget?: WebSocket,
+  confirmationSessionId = `remote:${scope.projectId}:${scope.checkoutId}`,
 ) {
   // Defesa em profundidade do companion mobile: RPCs modelados pela política
   // passam pelo gate (destrutivos exigem confirmação do DESKTOP via diálogo
@@ -654,13 +516,17 @@ export async function handleAuthedMessage(
     const decision = authorizeMobileRpc({
       kind: rpcKind,
       deviceActive: true, // a mensagem já passou pela autenticação da bridge
-      deviceConfirmed: false, // H5: never trust client-sent boolean
+      desktopConfirmed: false, // H5: never trust a client-sent boolean
     });
     if (!decision.allowed) {
       // If the RPC was denied only because it needs confirmation, prompt the
       // DESKTOP user with a native (non-forgeable) dialog instead.
       if (decision.reason === 'destructive-confirmation-required') {
-        const granted = await confirmDestructiveMobileRpc(msg.type, scope);
+        const granted = await confirmDestructiveMobileRpc(
+          msg.type,
+          scope,
+          confirmationSessionId,
+        );
         if (!granted) {
           throw new Error('not authorized: destructive operation denied by desktop user');
         }
@@ -684,7 +550,25 @@ export async function handleAuthedMessage(
     case 'pane.input': {
       const data = typeof msg.data === 'string' ? msg.data : '';
       if (!data || data.length > 8192) throw new Error('invalid input');
-      const text = msg.submit === false ? data : `${data}\n`;
+      const inputDecision = authorizeRemotePaneInput(data, msg.submit !== false);
+      if (!inputDecision.allowed) {
+        throw new Error(`not authorized: ${inputDecision.reason}`);
+      }
+      if (inputDecision.requiresDesktopConfirmation) {
+        const granted = await requestRemoteDesktopConfirmation({
+          confirmationSessionId,
+          scope,
+          toolName: 'remote_pane_input',
+          reason: 'comando destrutivo, remoto, de deploy ou publicação',
+          args: { command: inputDecision.command, paneId: msg.paneId },
+        });
+        if (!granted) {
+          throw new Error(
+            'not authorized: desktop confirmation required or denied',
+          );
+        }
+      }
+      const text = `${inputDecision.command}\n`;
       const sessionId = sessionIdOf(msg.paneId, scope, 'write');
       const ok = orchWriteSession(sessionId, text);
       // Keep stream session alive for resume; optional echo frame for clients
@@ -728,12 +612,12 @@ export async function handleAuthedMessage(
         received.frame.opcode === TerminalStreamOpcode.Input &&
         received.text
       ) {
-        if (received.text.length > 8192) throw new Error('invalid input');
-        return {
-          ok: orchWriteSession(sessionId, received.text),
-          resumeFromSeq: received.resumeFromSeq,
-          opcode: received.frame.opcode,
-        };
+        // Binary terminal frames are a raw keystream. Classifying each frame
+        // is bypassable by splitting `rm -rf` across frames, so remote writes
+        // must use pane.input's complete-command authority boundary.
+        throw new Error(
+          'not authorized: raw terminal input is disabled; use pane.input',
+        );
       }
       return {
         ok: true,
@@ -763,7 +647,7 @@ export async function handleAuthedMessage(
       if (!pane) throw new Error('pane not found');
       const decision = authorizePaneAccess(remoteCaller(scope), pane, 'close');
       if (!decision.allow) throw new Error(`not authorized: ${decision.reason}`);
-      return { ok: requestPaneClose(pane.paneId) };
+      return { ok: await requestPaneClose(pane.paneId) };
     }
     case 'mission.list':
       // Keep array shape for backward compatibility (older mobile clients).
@@ -803,8 +687,9 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
   }
   // Cross-site WebSocket-hijacking defense: a browser sends an Origin header, so
   // only same-origin browser pages (the served thin-client) are accepted. Native
-  // apps send no Origin and are unaffected. Auth is a bearer token in the message
-  // (not an ambient cookie), so this is defense-in-depth against pre-auth reach.
+  // apps send no Origin and are unaffected. Auth uses an explicit device-bound
+  // token + proof in messages (never an ambient cookie), so this remains
+  // defense-in-depth against pre-auth reach.
   const origin = req.headers.origin;
   if (typeof origin === 'string' && origin.length > 0) {
     const host = req.headers.host;
@@ -860,6 +745,11 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
       if (msg.type === 'pair') {
         const scope = activeBridgeScope;
         if (!scope) throw new Error('bridge project scope is unavailable');
+        const identity = parseRemoteDeviceIdentity({
+          deviceId: msg.deviceId,
+          publicKey: msg.devicePublicKey,
+        });
+        if (!identity) throw new Error('device identity required');
         if (pairingLockRemaining(ip) > 0) {
           throw new Error('too many attempts; try again later');
         }
@@ -877,15 +767,62 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
           recordPairingFailure(ip);
           throw new Error('invalid pairing code');
         }
+        if (
+          !verifyRemoteDeviceSignature({
+            publicKey: identity.publicKey,
+            challenge: `nexus-remote-pair-v1:${current.code}`,
+            signature: msg.deviceProof,
+          })
+        ) {
+          throw new Error('invalid device proof');
+        }
         pairingFailuresByIp.delete(ip);
-        const issued = issueToken(scope);
+        const issued = issueRemoteDeviceToken(
+          scope,
+          identity.deviceId,
+          identity.publicKey,
+        );
         authenticateClient(ws, issued.record, scope);
         clearTimeout(unauthTimer);
-        pairing = makePairing();
+        // The desktop-issued code is a one-device approval. Successful use
+        // consumes it; adding another device requires an explicit rotate.
+        invalidatePairing();
         send(ws, {
           id: msg.id,
           ok: true,
-          result: { token: issued.token, expiresAt: issued.expiresAt },
+          result: {
+            token: issued.token,
+            expiresAt: issued.expiresAt,
+            deviceKeyFingerprint: issued.record.deviceKeyFingerprint,
+          },
+        });
+        return;
+      }
+      if (msg.type === 'auth.challenge') {
+        const scope = activeBridgeScope;
+        if (!scope) throw new Error('bridge project scope is unavailable');
+        const token = typeof msg.token === 'string' ? msg.token : '';
+        const deviceId = typeof msg.deviceId === 'string' ? msg.deviceId : '';
+        const record = findRemoteDeviceToken(token, scope, deviceId);
+        if (!record) throw new Error('invalid token or device');
+        const challenge: AuthenticationChallenge = {
+          id: crypto.randomUUID(),
+          challenge: `nexus-remote-auth-v1:${crypto
+            .randomBytes(32)
+            .toString('base64url')}`,
+          tokenId: record.id,
+          deviceId,
+          expiresAt: Date.now() + AUTH_CHALLENGE_TTL_MS,
+        };
+        authenticationChallenges.set(ws, challenge);
+        send(ws, {
+          id: msg.id,
+          ok: true,
+          result: {
+            challengeId: challenge.id,
+            challenge: challenge.challenge,
+            expiresAt: challenge.expiresAt,
+          },
         });
         return;
       }
@@ -893,8 +830,29 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
         const scope = activeBridgeScope;
         if (!scope) throw new Error('bridge project scope is unavailable');
         const token = typeof msg.token === 'string' ? msg.token : '';
-        const record = findValidToken(token, scope);
-        if (!record) throw new Error('invalid token');
+        const deviceId = typeof msg.deviceId === 'string' ? msg.deviceId : '';
+        const challengeId =
+          typeof msg.challengeId === 'string' ? msg.challengeId : '';
+        const challenge = authenticationChallenges.get(ws);
+        // Single-use even on malformed proof: retries must request a fresh
+        // challenge, preventing replay/oracle behavior.
+        authenticationChallenges.delete(ws);
+        const record = findRemoteDeviceToken(token, scope, deviceId);
+        if (
+          !record ||
+          !challenge ||
+          challenge.id !== challengeId ||
+          challenge.tokenId !== record.id ||
+          challenge.deviceId !== deviceId ||
+          challenge.expiresAt < Date.now() ||
+          !verifyRemoteDeviceSignature({
+            publicKey: record.devicePublicKey,
+            challenge: challenge.challenge,
+            signature: msg.signature,
+          })
+        ) {
+          throw new Error('invalid device authentication');
+        }
         authenticateClient(ws, record, scope);
         clearTimeout(unauthTimer);
         send(ws, { id: msg.id, ok: true, result: { ok: true } });
@@ -903,7 +861,12 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
       if (!isClientAuthenticated(ws)) throw new Error('auth required');
       const authenticated = authenticatedClients.get(ws);
       if (!authenticated) throw new Error('auth required');
-      const result = await handleAuthedMessage(msg, authenticated.scope, ws);
+      const result = await handleAuthedMessage(
+        msg,
+        authenticated.scope,
+        ws,
+        `remote-device:${authenticated.tokenId}`,
+      );
       send(ws, { id: msg.id, ok: true, result });
     } catch (err) {
       send(ws, {
@@ -913,30 +876,6 @@ function onConnection(ws: WebSocket, req: IncomingMessage) {
       });
     }
   });
-}
-
-/**
- * Serve o thin client mobile na raiz (GET /). Auth continua no WebSocket
- * (pareamento por código → token); a página é só o cliente. Qualquer outra
- * rota é 404 — nenhum estado é exposto por HTTP.
- */
-function serveClientPage(req: IncomingMessage, res: ServerResponse): void {
-  if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
-    res.writeHead(200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-      // Sem inline eval; scripts/estilos inline próprios da página; conexão só
-      // ao mesmo host (o WSS da bridge).
-      'Content-Security-Policy':
-        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
-        "connect-src wss: 'self'; base-uri 'none'; form-action 'none'",
-    });
-    res.end(REMOTE_CLIENT_HTML);
-    return;
-  }
-  res.writeHead(404, { 'Content-Type': 'text/plain' });
-  res.end('not found');
 }
 
 export async function startRemoteBridge(
@@ -949,12 +888,18 @@ export async function startRemoteBridge(
     return getRemoteBridgeInfo(scope);
   }
   activeBridgeScope = Object.freeze({ ...scope });
+  // Starting the bridge is the desktop user's explicit issuance/approval of
+  // one pairing code. Expiry/consumption never auto-mints another code.
+  pairing = makePairing();
   const tls = await ensureTls();
   // Default seguro: só localhost. Expor na LAN (0.0.0.0/::) exige pedido
   // explícito do usuário — a bridge controla PTYs reais.
   const host = req.host ?? '127.0.0.1';
   await new Promise<void>((resolve, reject) => {
-    server = https.createServer({ key: tls.key, cert: tls.cert }, serveClientPage);
+    server = https.createServer(
+      { key: tls.key, cert: tls.cert },
+      serveRemoteClientPage,
+    );
     wss = new WebSocketServer({ server, maxPayload: MAX_MESSAGE_BYTES });
     wss.on('connection', onConnection);
     wss.on('error', (err) => console.warn('[remote-bridge] wss error:', err));
@@ -983,7 +928,7 @@ export function stopRemoteBridge(scope?: ProjectExecutionScope): RemoteBridgeInf
   server = null;
   port = null;
   boundHost = null;
-  pairing = makePairing();
+  invalidatePairing();
   activeBridgeScope = null;
   return getRemoteBridgeInfo();
 }
@@ -997,15 +942,7 @@ export function rotateRemotePairing(scope?: ProjectExecutionScope): RemoteBridge
 export function revokeRemoteTokens(scope?: ProjectExecutionScope): RemoteBridgeInfo {
   if (scope && activeBridgeScope) assertBridgeScope(scope);
   const target = scope ?? activeBridgeScope;
-  writeTokens(
-    target
-      ? readTokens().filter(
-          (token) =>
-            token.projectId !== target.projectId ||
-            token.checkoutId !== target.checkoutId,
-        )
-      : [],
-  );
+  revokeRemoteDeviceTokens(target ?? undefined);
   closeAllAuthenticatedClients('tokens revoked');
   return getRemoteBridgeInfo(scope);
 }
@@ -1046,18 +983,16 @@ export function getRemoteBridgeInfo(
 ): RemoteBridgeInfo {
   if (scope && activeBridgeScope) assertBridgeScope(scope);
   const current = pairingCode();
+  const pairingAvailable =
+    current.code.length === PAIRING_LEN && current.expiresAt > Date.now();
   const tokenScope = scope ?? activeBridgeScope;
   return {
     running: Boolean(server && port),
     port: port ?? undefined,
     urls: port ? localUrls(port) : [],
-    pairingCode: current.code,
-    pairingExpiresAt: current.expiresAt,
-    tokenCount: tokenScope
-      ? readTokens().filter((token) =>
-          sameScopeCoordinates(token, tokenScope),
-        ).length
-      : 0,
+    pairingCode: pairingAvailable ? current.code : undefined,
+    pairingExpiresAt: pairingAvailable ? current.expiresAt : undefined,
+    tokenCount: countRemoteDeviceTokens(tokenScope ?? undefined),
     clientCount: clients.size,
     certFingerprint: tlsRecord?.fingerprint,
   };

@@ -54,6 +54,8 @@ import {
   missionRailEmptyBeat,
 } from '../../shared/endorphin';
 import { EndorphinPresence } from './EndorphinPresence';
+import { missionRouteDisplay } from '../lib/mission-route-display';
+import { MissionClarifyCards } from './MissionClarifyCards';
 
 /**
  * Activity Rail — missões **deste workspace** apenas:
@@ -319,6 +321,8 @@ export function MissionRail() {
       budget.hasContract && budget.label !== '—'
         ? ` · ${budget.label}`
         : '';
+    const route = missionRouteDisplay(mission.latestRoute);
+    const routeBit = route ? ` · ${route.meta}` : '';
     const laneBit =
       mission.intentContract?.lane === 'plan'
         ? ' · plano'
@@ -334,7 +338,7 @@ export function MissionRail() {
 
     // Status já vai na pill — meta fica operacional (tempo / panes / budget).
     if (mission.status === 'pending' && !liveInGrid) {
-      return `Retomar · ${started}${laneBit}${handBit}${budgetBit}`;
+      return `Retomar · ${started}${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
 
     if (liveInGrid || ompLiveMissionIds.has(mission.id)) {
@@ -361,23 +365,23 @@ export function MissionRail() {
       const ompSuffix = ompBit ? ` · ${ompBit}` : '';
       if (busyCount > 0 || omp.working > 0) {
         const agents = busyCount + omp.working;
-        return `${agents} agente${agents === 1 ? '' : 's'} trabalhando${elapsedBit}${ompSuffix}${handBit}${budgetBit}`;
+        return `${agents} agente${agents === 1 ? '' : 's'} trabalhando${elapsedBit}${ompSuffix}${handBit}${budgetBit}${routeBit}`;
       }
       if (spawningCount > 0 || omp.starting > 0) {
         const agents = spawningCount + omp.starting;
-        return `${agents} agente${agents === 1 ? '' : 's'} iniciando${elapsedBit}${ompSuffix}${handBit}${budgetBit}`;
+        return `${agents} agente${agents === 1 ? '' : 's'} iniciando${elapsedBit}${ompSuffix}${handBit}${budgetBit}${routeBit}`;
       }
       if (ids.length > 0 || omp.idle > 0) {
         const agents = ids.length + omp.idle;
-        return `${agents} agente${agents === 1 ? '' : 's'} no grid${elapsedBit}${ompSuffix}${handBit}${budgetBit}`;
+        return `${agents} agente${agents === 1 ? '' : 's'} no grid${elapsedBit}${ompSuffix}${handBit}${budgetBit}${routeBit}`;
       }
       if (ompBit) {
-        return `${ompBit}${elapsedBit}${handBit}${budgetBit}`;
+        return `${ompBit}${elapsedBit}${handBit}${budgetBit}${routeBit}`;
       }
     }
 
     if (mission.status === 'running') {
-      return `${missionRailResumeCopy(mission.status, liveInGrid, mission.intentState).meta ?? 'Retomar'}${laneBit}${handBit}${budgetBit}`;
+      return `${missionRailResumeCopy(mission.status, liveInGrid, mission.intentState).meta ?? 'Retomar'}${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
     if (mission.status === 'blocked') {
       return `${
@@ -386,12 +390,12 @@ export function MissionRail() {
           liveInGrid,
           mission.intentState,
         ).meta ?? 'Clique para retomar'
-      }${laneBit}${handBit}${budgetBit}`;
+      }${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
     if (mission.status === 'done' || mission.status === 'failed') {
-      return `${started}${laneBit}${handBit}${budgetBit}`;
+      return `${started}${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
-    return `${statusLabel(mission.status)} · ${started}${laneBit}${handBit}${budgetBit}`;
+    return `${statusLabel(mission.status)} · ${started}${laneBit}${handBit}${budgetBit}${routeBit}`;
   }
 
   function selectMission(m: Mission) {
@@ -557,6 +561,7 @@ export function MissionRail() {
       </div>
 
       <div className="activity-rail__body">
+        <MissionClarifyCards missions={missions} handoffs={handoffs} />
         {extIssues.length > 0 && (
           <section className="activity-rail__section activity-rail__section--issues">
             <div className="activity-rail__section-head activity-rail__section-head--static">
@@ -682,6 +687,7 @@ export function MissionRail() {
                           m.intentState,
                           lane,
                         );
+                        const routeDisplay = missionRouteDisplay(m.latestRoute);
                         const dotStatus =
                           m.status === 'blocked' || m.status === 'failed'
                             ? m.status
@@ -699,7 +705,9 @@ export function MissionRail() {
                               disabled={busy !== null}
                               aria-current={liveInGrid ? 'true' : undefined}
                               aria-label={`${m.title}. ${statusUi.label}. ${resumeCopy.title}`}
-                              title={`${m.title}\n${resumeCopy.title}`}
+                              title={`${m.title}\n${resumeCopy.title}${
+                                routeDisplay ? `\n${routeDisplay.title}` : ''
+                              }`}
                               onClick={() => selectMission(m)}
                             >
                               <span

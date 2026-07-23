@@ -246,8 +246,154 @@ function stripFailoverHandoffPack(text: string): string {
   return out;
 }
 
+interface MarkdownFence {
+  marker: '`' | '~';
+  length: number;
+}
+
+const BLOCKQUOTE_LINE = /^[ \t]{0,3}(?:>[ \t]?)+/;
+const FENCE_LINE = /^[ \t]{0,3}(`{3,}|~{3,})(.*)$/;
+const LOG_OUTPUT_LABEL =
+  /^(?:(?:logs?|log output)|output(?: log| excerpt)?|(?:terminal|command|console) output|stdout|stderr|sa[ií]da(?: (?:do|de) (?:log|terminal|comando|console))?|trecho (?:do|de) (?:log|sa[ií]da))$/i;
+
+function isFenceClose(line: string, fence: MarkdownFence): boolean {
+  const match = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+  return Boolean(
+    match &&
+      match[1][0] === fence.marker &&
+      match[1].length >= fence.length,
+  );
+}
+
+function hasLaterFenceClose(
+  lines: readonly string[],
+  openerIndex: number,
+  fence: MarkdownFence,
+): boolean {
+  for (let index = openerIndex + 1; index < lines.length; index += 1) {
+    if (isFenceClose(lines[index], fence)) return true;
+  }
+  return false;
+}
+
+/**
+ * Remove spans delimitados por backticks numa linha, preservando a prosa ao
+ * redor. Um delimitador sem par é mantido: no PTY ele pode ser saída real, e
+ * não há evidência suficiente para silenciar o restante da janela.
+ */
+function stripInlineCodeSpans(line: string): string {
+  let out = '';
+  let cursor = 0;
+  while (cursor < line.length) {
+    if (line[cursor] !== '`') {
+      out += line[cursor];
+      cursor += 1;
+      continue;
+    }
+
+    let openerEnd = cursor;
+    while (line[openerEnd] === '`') openerEnd += 1;
+    const delimiter = line.slice(cursor, openerEnd);
+    let searchAt = openerEnd;
+    let closeAt = -1;
+    while (searchAt < line.length) {
+      const candidate = line.indexOf(delimiter, searchAt);
+      if (candidate < 0) break;
+      const beforeIsBacktick = candidate > 0 && line[candidate - 1] === '`';
+      const afterIsBacktick =
+        candidate + delimiter.length < line.length &&
+        line[candidate + delimiter.length] === '`';
+      if (!beforeIsBacktick && !afterIsBacktick) {
+        closeAt = candidate;
+        break;
+      }
+      searchAt = candidate + delimiter.length;
+    }
+
+    if (closeAt < 0) {
+      out += delimiter;
+      cursor = openerEnd;
+      continue;
+    }
+
+    const spanEnd = closeAt + delimiter.length;
+    out += ' '.repeat(spanEnd - cursor);
+    cursor = spanEnd;
+  }
+  return out;
+}
+
+function isLabeledHistoricalOutput(line: string): boolean {
+  let candidate = line
+    .replace(/^[ \t]{0,3}(?:(?:[-*+]|\d+[.)])[ \t]+)?/, '')
+    .trimStart();
+
+  // Aceita rótulos de prosa como `**Output:**`, `_Saída do log_:`, sem
+  // transformar qualquer bullet com `Error:` em histórico.
+  const emphasized = /^([*_]{1,2})([^*_]{1,80})\1/.exec(candidate);
+  if (emphasized) {
+    candidate = emphasized[2] + candidate.slice(emphasized[0].length);
+  }
+  const separatorAt = candidate.search(/\s*[:=-]\s*/);
+  if (separatorAt < 0) return false;
+  return LOG_OUTPUT_LABEL.test(candidate.slice(0, separatorAt).trim());
+}
+
+/**
+ * PTY é um stream misto: além da resposta viva do provider, contém Markdown
+ * escrito pelo agente, documentação e logs históricos colados. Esses trechos
+ * não têm autoridade operacional para disparar failover.
+ *
+ * A remoção é deliberadamente limitada a estruturas inequívocas:
+ * blockquotes, code fences cujo opener está na janela, inline code fechado e
+ * linhas explicitamente rotuladas como log/output. Texto fora delas permanece
+ * intacto; assim um erro real depois de uma citação continua detectável. Não
+ * inferimos que a janela começou dentro de um fence, pois essa heurística
+ * poderia apagar um sinal real após o fechamento que ficou sem opener.
+ */
+function stripQuotedDiagnosticExamples(text: string): string {
+  const lines = text.split(/\r?\n/);
+  let fence: MarkdownFence | null = null;
+
+  return lines
+    .map((line, lineIndex) => {
+      if (fence) {
+        if (isFenceClose(line, fence)) fence = null;
+        return '';
+      }
+
+      if (BLOCKQUOTE_LINE.test(line)) return '';
+
+      const fenceMatch = FENCE_LINE.exec(line);
+      if (fenceMatch) {
+        const delimiter = fenceMatch[1];
+        const candidate: MarkdownFence = {
+          marker: delimiter[0] as MarkdownFence['marker'],
+          length: delimiter.length,
+        };
+        const info = fenceMatch[2].trim();
+        const validInfo =
+          candidate.marker === '~' || !info.includes(candidate.marker);
+        const unambiguousOpener =
+          validInfo &&
+          (info.length > 0 ||
+            hasLaterFenceClose(lines, lineIndex, candidate));
+        if (unambiguousOpener) {
+          fence = candidate;
+          return '';
+        }
+      }
+
+      if (isLabeledHistoricalOutput(line)) return '';
+      return stripInlineCodeSpans(line);
+    })
+    .join('\n');
+}
+
 export function detectLimit(rawText: string): LimitHit | null {
-  const text = stripFailoverHandoffPack(rawText);
+  const text = stripQuotedDiagnosticExamples(
+    stripFailoverHandoffPack(rawText),
+  );
   for (const pattern of PATTERNS) {
     const match = pattern.re.exec(text);
     if (!match) continue;

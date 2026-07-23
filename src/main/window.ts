@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
-import type { IpcMainEvent, WebContents } from 'electron';
+import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { WINDOW_CHANNELS } from '../shared/channels';
 import { killSessionsFor, liveSessionSummary } from './pty/pty-manager';
 import { closeNeedsConfirmation, isAppQuitAuthorized } from './close-authorization';
@@ -79,6 +79,7 @@ function buildCsp(devServerUrl: string | undefined): string {
       "object-src 'none'",
       "base-uri 'self'",
       "frame-src 'none'",
+      "frame-ancestors 'none'",
     ].join('; ');
   }
 
@@ -93,30 +94,106 @@ function buildCsp(devServerUrl: string | undefined): string {
     "object-src 'none'",
     "base-uri 'self'",
     "frame-src 'none'",
+    "frame-ancestors 'none'",
   ].join('; ');
+}
+
+interface TrustedMainWindowRecord {
+  window: BrowserWindow;
+  rendererUrl: string;
+}
+
+const trustedMainWindows = new WeakMap<WebContents, TrustedMainWindowRecord>();
+
+function isExpectedRendererLocation(currentRaw: string, expectedRaw: string): boolean {
+  try {
+    const current = new URL(currentRaw);
+    const expected = new URL(expectedRaw);
+    return (
+      current.username === '' &&
+      current.password === '' &&
+      expected.username === '' &&
+      expected.password === '' &&
+      current.protocol === expected.protocol &&
+      current.host === expected.host
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Binds external-link authority to this exact main-window WebContents.
+ * Auxiliary BrowserWindows (pet, OAuth and embedded browser surfaces) never
+ * enter this registry, even if one of them can forge the renderer URL.
+ */
+export function bindTrustedMainWindow(
+  window: BrowserWindow,
+  rendererUrl: string,
+): void {
+  const contents = window.webContents;
+  trustedMainWindows.set(contents, { window, rendererUrl });
+  contents.once('destroyed', () => {
+    const current = trustedMainWindows.get(contents);
+    if (current?.window === window) trustedMainWindows.delete(contents);
+  });
+}
+
+function isLiveTrustedMainWindowSender(
+  event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>,
+): boolean {
+  const sender = event.sender;
+  const trusted = trustedMainWindows.get(sender);
+  if (!trusted) return false;
+  try {
+    if (
+      trusted.window.isDestroyed() ||
+      sender.isDestroyed() ||
+      sender.isCrashed() ||
+      trusted.window.webContents !== sender ||
+      event.senderFrame !== sender.mainFrame
+    ) {
+      return false;
+    }
+    return isExpectedRendererLocation(sender.getURL(), trusted.rendererUrl);
+  } catch {
+    // Electron getters can throw while a BrowserWindow/WebContents is dying.
+    return false;
+  }
+}
+
+export function handleOpenExternalRequest(
+  event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>,
+  raw: unknown,
+): { ok: boolean; error?: string } {
+  if (!isLiveTrustedMainWindowSender(event)) {
+    return { ok: false, error: 'renderer não autorizado' };
+  }
+  if (typeof raw !== 'string' || raw.length > 2_048) {
+    return { ok: false, error: 'URL inválida' };
+  }
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:') {
+      return { ok: false, error: 'protocolo não permitido' };
+    }
+    void shell.openExternal(url.toString());
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'URL inválida' };
+  }
 }
 
 let externalLinkIpcRegistered = false;
 
-function registerExternalLinkIpc(): void {
+export function registerExternalLinkIpc(): void {
   if (externalLinkIpcRegistered) return;
   externalLinkIpcRegistered = true;
-  ipcMain.handle(WINDOW_CHANNELS.openExternal, (_event, raw: unknown) => {
-    if (typeof raw !== 'string' || raw.length > 2_048) {
-      return { ok: false, error: 'URL inválida' };
+  ipcMain.handle(WINDOW_CHANNELS.openExternal, handleOpenExternalRequest);
+  ipcMain.handle(WINDOW_CHANNELS.authLogin, (event, provider: unknown) => {
+    if (!isLiveTrustedMainWindowSender(event)) {
+      return { ok: false, error: 'renderer não autorizado' };
     }
-    try {
-      const url = new URL(raw);
-      if (url.protocol !== 'https:') {
-        return { ok: false, error: 'protocolo não permitido' };
-      }
-      void shell.openExternal(url.toString());
-      return { ok: true };
-    } catch {
-      return { ok: false, error: 'URL inválida' };
-    }
-  });
-  ipcMain.handle(WINDOW_CHANNELS.authLogin, (_event, provider: unknown) => {
     if (provider !== 'github' && provider !== 'google') {
       return { ok: false, error: 'provider inválido' };
     }
@@ -126,7 +203,10 @@ function registerExternalLinkIpc(): void {
     const { beginLogin } = require('./auth-client') as typeof import('./auth-client');
     return beginLogin(provider);
   });
-  ipcMain.handle(WINDOW_CHANNELS.openLegalNotices, async () => {
+  ipcMain.handle(WINDOW_CHANNELS.openLegalNotices, async (event) => {
+    if (!isLiveTrustedMainWindowSender(event)) {
+      return { ok: false, error: 'renderer não autorizado' };
+    }
     // Packaged: files live at the app.asar root (forge shouldPackageFile).
     // Dev: walk up from app path / cwd.
     const { app } = await import('electron');
@@ -164,17 +244,22 @@ let cspRegistered = false;
  * `createMainWindow` roda de novo no `activate` do macOS e registrar outro
  * handler substituiria/duplicaria o anterior.
  */
-function registerCsp(devServerUrl: string | undefined): void {
+export function registerCsp(devServerUrl: string | undefined): void {
   if (cspRegistered) return;
-  cspRegistered = true;
+  // Build before installing so an invalid dev-server URL cannot defer the
+  // failure until the first response, after renderer loading has begun.
+  const policy = buildCsp(devServerUrl);
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [buildCsp(devServerUrl)],
+        'Content-Security-Policy': [policy],
       },
     });
   });
+  // Set only after Electron accepted the hook. A failed registration must be
+  // retryable and must never make a later window believe CSP is installed.
+  cspRegistered = true;
 }
 
 export function ensureMacDockPresence(): void {
@@ -183,7 +268,7 @@ export function ensureMacDockPresence(): void {
   reassertMacOSDockPresence();
 }
 
-export function createMainWindow(): BrowserWindow {
+export function createMainWindow(): BrowserWindow | null {
   const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
   const rendererUrl = devServerUrl ?? RENDERER_PROTOCOL_ENTRY_URL;
 
@@ -191,6 +276,25 @@ export function createMainWindow(): BrowserWindow {
   // window exists. This keeps launches from helpers/deep links visible in the
   // Dock instead of inheriting an accessory/background-only policy.
   ensureMacDockPresence();
+
+  // CSP is a renderer precondition, not an optional integration. Register it
+  // before constructing the BrowserWindow so a damaged Electron session can
+  // never load or expose an unprotected renderer.
+  try {
+    registerCsp(devServerUrl);
+  } catch (error) {
+    console.error('[window] CSP registration failed — renderer blocked:', error);
+    try {
+      dialog.showErrorBox(
+        'NexusIDE bloqueou a inicialização',
+        'A política de segurança da interface (CSP) não pôde ser instalada. ' +
+          'O Nexus não carregará o renderer sem essa proteção. Reinicie o app.',
+      );
+    } catch {
+      // The renderer remains blocked even if the native error surface failed.
+    }
+    return null;
+  }
 
   const win = new BrowserWindow({
     width: 1280,
@@ -225,15 +329,14 @@ export function createMainWindow(): BrowserWindow {
   // Final presence check once the renderer has actually loaded.
   win.webContents.once('did-finish-load', ensureMacDockPresence);
 
-  // The native window is the availability boundary: integrations must not be
-  // able to prevent the Dock item from existing. Register optional IPC/CSP
-  // surfaces after BrowserWindow construction and degrade visibly if one is
-  // unavailable during a damaged or partially migrated launch.
+  bindTrustedMainWindow(win, rendererUrl);
+
+  // External-link/auth/legal IPC remains an optional native integration. It is
+  // deliberately separate from the fail-closed CSP precondition above.
   try {
     registerExternalLinkIpc();
-    registerCsp(devServerUrl);
   } catch (error) {
-    console.error('[window] optional window integrations failed:', error);
+    console.error('[window] optional external-link IPC failed:', error);
   }
 
   // Block in-app navigation and new windows — the renderer only ever loads our

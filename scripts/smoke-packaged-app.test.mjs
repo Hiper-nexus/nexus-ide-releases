@@ -11,6 +11,7 @@ import {
   assertFunctionalMarker,
   assertPackagedMainBundleBootable,
   inspectPackagedLegalArtifacts,
+  inspectPackagedMainBundle,
   inspectPackagedWakeModel,
   assertNativeArtifactsPresent,
   assertNoNativeLoadFailure,
@@ -304,6 +305,25 @@ describe('proofs: renderer, functional, marker, natives', () => {
     );
 
     expect(() => assertPackagedMainBundleBootable(healthy)).not.toThrow();
+  });
+
+  it('inspects the hashed main declared by package.json when the legacy path is absent', async () => {
+    const source = makeTemp('nexus-smoke-main-source-');
+    const resources = makeTemp('nexus-smoke-main-resources-');
+    fs.mkdirSync(path.join(source, '.vite', 'build'), { recursive: true });
+    fs.writeFileSync(
+      path.join(source, 'package.json'),
+      JSON.stringify({ main: '.vite/build/main-hashed.js' }),
+    );
+    fs.writeFileSync(
+      path.join(source, '.vite', 'build', 'main-hashed.js'),
+      'const req=(0,node_module.createRequire)({}.url);req.resolve("asset");',
+    );
+    await createPackage(source, path.join(resources, 'app.asar'));
+
+    expect(() => inspectPackagedMainBundle(resources)).toThrow(
+      /createRequire.*undefined.*import\.meta\.url/iu,
+    );
   });
 
   it('resolves the main bundle when Forge nests the Vite output under app', () => {

@@ -18,9 +18,14 @@ import {
   deliverAgentPrompt,
   type SpawnToolOptions,
 } from '../orch/tool-util';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolInvocation,
+} from '../orch/mcp-protocol';
 import { resolveCwdForScope } from '../orch/workspace-path';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { secureAutonomousCliArgs } from '../pty/autonomous-cli-policy';
+import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
 import { getContextKnowledgeService } from './context-workflow-registry';
 import type { ContextDraftRecord } from './context-draft-store';
@@ -87,6 +92,7 @@ export interface ContextDraftReviewerRoute {
 export interface RunCliContextDraftReviewInput {
   readonly scope: ProjectExecutionScope;
   readonly draftId: string;
+  readonly invocation?: McpToolInvocation;
 }
 
 type MaybePromise<T> = T | Promise<T>;
@@ -99,6 +105,7 @@ export interface CliContextDraftReviewerDependencies {
   /** A custom spawn must tear down any pane it allocates before rejecting. */
   readonly spawn?: (
     options: SpawnToolOptions,
+    invocation?: McpToolInvocation,
   ) => Promise<{ paneId: string; sessionId: string }>;
   readonly readDraft?: (
     scope: ProjectExecutionScope,
@@ -109,7 +116,11 @@ export interface CliContextDraftReviewerDependencies {
   /** Live PTY state of a session; null when the session is gone. */
   readonly sessionState?: (sessionId: string) => string | null;
   /** Deliver the review brief and prove the session started working on it. */
-  readonly deliverPrompt?: (sessionId: string, prompt: string) => Promise<void>;
+  readonly deliverPrompt?: (
+    sessionId: string,
+    prompt: string,
+    invocation?: McpToolInvocation,
+  ) => Promise<void>;
   readonly clock?: () => number;
   readonly poll?: (delayMs: number) => Promise<void>;
   readonly timeoutMs?: number;
@@ -192,8 +203,17 @@ function isContextDraftReviewerPane(
   pane: PaneSnapshot,
   draftId: string,
 ): boolean {
-  if (pane.title === contextDraftReviewerPaneTitle(draftId)) return true;
-  return parseReviewerAdapterId(pane.agentName, draftId) !== null;
+  if (parseReviewerAdapterId(pane.agentName, draftId) !== null) return true;
+  // Legacy rows may predate agentName persistence. Accept their title only
+  // after the caller has already proved exact scope/mission confinement and
+  // only for a read-only worker CLI pane.
+  return (
+    !pane.agentName &&
+    pane.kind === 'cli-agent' &&
+    pane.role === 'worker' &&
+    pane.readOnly === true &&
+    pane.title === contextDraftReviewerPaneTitle(draftId)
+  );
 }
 
 /** Adapter id encoded in `context-reviewer-<adapter>-<suffix>`; null if not ours. */
@@ -298,16 +318,20 @@ export const deliverReviewerPrompt = deliverAgentPrompt;
 
 async function spawnContextDraftReviewerPane(
   options: SpawnToolOptions,
+  invocation?: McpToolInvocation,
 ): Promise<{ paneId: string; sessionId: string }> {
+  assertMcpInvocationCurrent(invocation);
   const { prompt, ...requested } = options;
   const executionScope = options.executionScope ?? options.scope;
   // Same typed credential probe as mission spawns: a reviewer without auth
   // used to surface only as an idle pane after the full spawn+boot wait.
   await assertPreSpawnProbe(options.adapterId);
+  assertMcpInvocationCurrent(invocation);
   const result = await requestPaneSpawn({
     ...requested,
     executionScope,
     cwd: resolveCwdForScope(executionScope, options.cwd),
+    ...(invocation?.signal ? { abortSignal: invocation.signal } : {}),
   });
   const partialPaneId =
     typeof result.paneId === 'string' && result.paneId.trim()
@@ -317,7 +341,7 @@ async function spawnContextDraftReviewerPane(
     if (partialPaneId) {
       let closed = false;
       try {
-        closed = requestPaneClose(partialPaneId);
+        closed = await requestPaneClose(partialPaneId);
       } catch {
         closed = false;
       }
@@ -328,19 +352,22 @@ async function spawnContextDraftReviewerPane(
     throw new Error(result.error ?? 'context draft reviewer pane spawn failed');
   }
   try {
+    assertMcpInvocationCurrent(invocation);
     if (prompt) {
       const boot = await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
+      assertMcpInvocationCurrent(invocation);
       if (boot === 'exited') {
         throw new Error('context draft reviewer session exited during boot');
       }
       // 'idle' or 'timeout' (slow first boot): deliver and verify acceptance.
-      await deliverReviewerPrompt(result.sessionId, prompt);
+      await deliverReviewerPrompt(result.sessionId, prompt, invocation);
+      assertMcpInvocationCurrent(invocation);
     }
     return { paneId: partialPaneId, sessionId: result.sessionId };
   } catch (error) {
     let closed = false;
     try {
-      closed = requestPaneClose(partialPaneId);
+      closed = await requestPaneClose(partialPaneId);
     } catch {
       closed = false;
     }
@@ -437,11 +464,16 @@ export class CliContextDraftReviewer {
   }
 
   async run(input: RunCliContextDraftReviewInput): Promise<ContextDraftRecord> {
+    assertMcpInvocationCurrent(input.invocation);
     const scope = projectExecutionScopeSchema.parse({ ...input.scope });
     const draftId = draftIdSchema.parse(input.draftId);
     const key = autoReviewKey(scope, draftId);
     const existing = reviewFlights.get(key);
-    if (existing) return existing;
+    if (existing) {
+      const joined = await existing;
+      assertMcpInvocationCurrent(input.invocation);
+      return joined;
+    }
     const scopeKey = [
       scope.installationId,
       scope.projectId,
@@ -451,7 +483,13 @@ export class CliContextDraftReviewer {
     const previous = reviewQueues.get(scopeKey) ?? Promise.resolve();
     const flight = previous
       .catch(() => undefined)
-      .then(() => this.#execute({ scope, draftId }))
+      .then(() =>
+        this.#execute({
+          scope,
+          draftId,
+          invocation: input.invocation,
+        }),
+      )
       .finally(() => {
         if (reviewFlights.get(key) === flight) reviewFlights.delete(key);
       });
@@ -468,9 +506,11 @@ export class CliContextDraftReviewer {
   }
 
   async #execute(input: RunCliContextDraftReviewInput): Promise<ContextDraftRecord> {
+    assertMcpInvocationCurrent(input.invocation);
     const scope = Object.freeze(projectExecutionScopeSchema.parse({ ...input.scope }));
     const draftId = draftIdSchema.parse(input.draftId);
     const initial = await this.#readDraft(scope, draftId);
+    assertMcpInvocationCurrent(input.invocation);
     if (!initial) throw new Error('context draft not found');
     if (initial.id !== draftId) throw new Error('context draft reader returned another draft');
     if (initial.status !== 'proposed' || initial.reviewer !== null) {
@@ -490,14 +530,21 @@ export class CliContextDraftReviewer {
     // too — and RECOVER the pane instead of erroring forever or piling up
     // duplicate reviewers on every Doctor pass.
     const preservedReviewer = this.#listPanes().find(
-      (pane) => pane.state !== 'exited' && isContextDraftReviewerPane(pane, draftId),
+      (pane) =>
+        pane.state !== 'exited' &&
+        pane.scope !== undefined &&
+        sameProjectScope(pane.scope, scope) &&
+        (pane.missionId ?? null) === (initial.missionId ?? null) &&
+        isContextDraftReviewerPane(pane, draftId),
     );
     if (preservedReviewer) {
       const resumed = await this.#resumePreservedReview(
         preservedReviewer,
         scope,
         initial,
+        input.invocation,
       );
+      assertMcpInvocationCurrent(input.invocation);
       if (resumed) return resumed;
       // Stale/unusable pane was closed. Continue this same Doctor pass and
       // spawn a fresh reviewer; requiring another user invocation is not
@@ -505,6 +552,7 @@ export class CliContextDraftReviewer {
     }
 
     const selected = await this.#selectRoute(initial.author.provider, initial);
+    assertMcpInvocationCurrent(input.invocation);
     if (!selected) {
       throw new Error(
         'independent context draft review quorum unavailable: need 1, found 0',
@@ -517,22 +565,26 @@ export class CliContextDraftReviewer {
 
     const paneTitle = contextDraftReviewerPaneTitle(initial.id);
     const agentName = contextDraftReviewerAgentName(route.adapterId, initial.id);
-    const spawned = await this.#spawn({
-      adapterId: route.adapterId,
-      model: route.model,
-      effort: route.effort,
-      cwd: scope.rootRealPath,
-      title: paneTitle,
-      ...(initial.missionId ? { missionId: initial.missionId } : {}),
-      agentName,
-      allowedTools: [...CONTEXT_DRAFT_REVIEW_TOOLS],
-      allowedSkills: [],
-      role: 'worker',
-      readOnly: true,
-      prompt: buildContextDraftReviewerPrompt(initial.id, initial.contentHash),
-      scope,
-      executionScope: scope,
-    });
+    assertMcpInvocationCurrent(input.invocation);
+    const spawned = await this.#spawn(
+      {
+        adapterId: route.adapterId,
+        model: route.model,
+        effort: route.effort,
+        cwd: scope.rootRealPath,
+        title: paneTitle,
+        ...(initial.missionId ? { missionId: initial.missionId } : {}),
+        agentName,
+        allowedTools: [...CONTEXT_DRAFT_REVIEW_TOOLS],
+        allowedSkills: [],
+        role: 'worker',
+        readOnly: true,
+        prompt: buildContextDraftReviewerPrompt(initial.id, initial.contentHash),
+        scope,
+        executionScope: scope,
+      },
+      input.invocation,
+    );
     const paneId =
       typeof spawned.paneId === 'string' && spawned.paneId.trim()
         ? spawned.paneId
@@ -544,6 +596,18 @@ export class CliContextDraftReviewer {
       typeof spawned.sessionId === 'string' && spawned.sessionId.trim()
         ? spawned.sessionId
         : null;
+    try {
+      assertMcpInvocationCurrent(input.invocation);
+    } catch (error) {
+      const closed = await this.#close(paneId);
+      if (closed === false) {
+        throw new Error(
+          `failed to close revoked context draft reviewer pane: ${paneId}`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
     return this.#awaitOutcome({
       scope,
       initial,
@@ -551,6 +615,7 @@ export class CliContextDraftReviewer {
       agentName,
       paneId,
       sessionId,
+      invocation: input.invocation,
     });
   }
 
@@ -564,7 +629,9 @@ export class CliContextDraftReviewer {
     pane: PaneSnapshot,
     scope: ProjectExecutionScope,
     initial: ContextDraftRecord,
+    invocation?: McpToolInvocation,
   ): Promise<ContextDraftRecord | null> {
+    assertMcpInvocationCurrent(invocation);
     const closeStale = async (): Promise<null> => {
       let closed: boolean | void = false;
       try {
@@ -577,6 +644,7 @@ export class CliContextDraftReviewer {
           `failed to close stale context draft reviewer pane: ${pane.paneId}`,
         );
       }
+      assertMcpInvocationCurrent(invocation);
       return null;
     };
 
@@ -617,7 +685,9 @@ export class CliContextDraftReviewer {
         await this.#deliverPrompt(
           pane.sessionId,
           buildContextDraftReviewerPrompt(initial.id, initial.contentHash),
+          invocation,
         );
+        assertMcpInvocationCurrent(invocation);
       } catch {
         return closeStale();
       }
@@ -629,6 +699,7 @@ export class CliContextDraftReviewer {
       agentName,
       paneId: pane.paneId,
       sessionId: pane.sessionId,
+      invocation,
     });
   }
 
@@ -639,18 +710,29 @@ export class CliContextDraftReviewer {
     readonly agentName: string;
     readonly paneId: string;
     readonly sessionId: string | null;
+    readonly invocation?: McpToolInvocation;
   }): Promise<ContextDraftRecord> {
-    const { scope, initial, route, agentName, paneId, sessionId } = args;
+    const {
+      scope,
+      initial,
+      route,
+      agentName,
+      paneId,
+      sessionId,
+      invocation,
+    } = args;
     const draftId = initial.id;
     const startedAt = this.#timestamp();
     const maximumPolls = Math.ceil(this.#timeoutMs / this.#pollIntervalMs) + 1;
     let reviewCompleted = false;
+    let authorityLost = false;
     let lastObservedAt = startedAt;
     try {
       if (!sessionId) {
         throw new Error('context draft reviewer spawn returned no session id');
       }
       for (let pollCount = 0; pollCount <= maximumPolls; pollCount += 1) {
+        assertMcpInvocationCurrent(invocation);
         const observedAt = this.#timestamp();
         if (observedAt < lastObservedAt) {
           throw new Error('context draft review clock moved backwards');
@@ -662,6 +744,7 @@ export class CliContextDraftReviewer {
           );
         }
         const current = await this.#readDraft(scope, draftId);
+        assertMcpInvocationCurrent(invocation);
         if (!current) throw new Error('context draft disappeared during review');
         assertStableDraft(initial, current);
         if (current.status !== 'proposed') {
@@ -675,17 +758,25 @@ export class CliContextDraftReviewer {
           );
         }
         await this.#poll(this.#pollIntervalMs);
+        assertMcpInvocationCurrent(invocation);
       }
       throw new Error(
         'context draft review timed out; reviewer pane preserved — call nexus_context_doctor again to resume it',
       );
+    } catch (error) {
+      try {
+        assertMcpInvocationCurrent(invocation);
+      } catch {
+        authorityLost = true;
+      }
+      throw error;
     } finally {
       // Successful transient reviewers are removed. A fully started reviewer
       // that times out or fails stays visible so its transcript/session can be
       // inspected and recovered (the next Doctor pass resumes it in place).
       // Partially initialized panes are still cleaned up because they cannot
       // own a recoverable provider session.
-      if (paneId && (reviewCompleted || !sessionId)) {
+      if (paneId && (reviewCompleted || !sessionId || authorityLost)) {
         const closed = await this.#close(paneId);
         if (closed === false) {
           throw new Error(`failed to close context draft reviewer pane: ${paneId}`);

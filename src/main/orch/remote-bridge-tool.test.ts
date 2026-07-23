@@ -74,4 +74,19 @@ describe('remote bridge MCP tool boundary', () => {
     expect(result).not.toHaveProperty('pairingCode');
     expect(result).not.toHaveProperty('pairingExpiresAt');
   });
+
+  it('stops a bridge that finished starting after caller revocation', async () => {
+    const controller = new AbortController();
+    mocks.startRemoteBridge.mockImplementationOnce(async () => {
+      controller.abort();
+      return bridgeInfo;
+    });
+
+    await expect(
+      runRemoteBridgeToolAction('start', 4242, scope, {
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/session_authority_revoked/);
+    expect(mocks.stopRemoteBridge).toHaveBeenCalledWith(scope);
+  });
 });

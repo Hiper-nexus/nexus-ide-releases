@@ -69,4 +69,27 @@ describe("hashline file ops", () => {
 		expect(result.sections[0]?.fileHash).toBe(computeFileHash("one\nTWO\nthree\n"));
 		expect(snapshots.head(DEST)?.hash).toBe(result.sections[0]?.fileHash);
 	});
+
+	it("revalidates between move legs and reports the partial destination explicitly", async () => {
+		const fs = new InMemoryFilesystem([[PATH, CONTENT]]);
+		const snapshots = new InMemorySnapshotStore();
+		const tag = snapshots.record(PATH, CONTENT);
+		let authorityChecks = 0;
+		const patcher = new Patcher({
+			fs,
+			snapshots,
+			assertCurrentAuthority: () => {
+				authorityChecks += 1;
+				if (authorityChecks === 2) throw new Error("session_authority_revoked");
+			},
+		});
+
+		await expect(patcher.apply(Patch.parse(`[${PATH}#${tag}]\nMV ${DEST}`))).rejects.toThrow(
+			/effectMayHaveCommitted: move destination.*source.*not removed/,
+		);
+		expect(authorityChecks).toBe(2);
+		expect(fs.get(PATH)).toBe(CONTENT);
+		expect(fs.get(DEST)).toBe(CONTENT);
+		expect(snapshots.byHash(PATH, tag)?.text).toBe(CONTENT);
+	});
 });

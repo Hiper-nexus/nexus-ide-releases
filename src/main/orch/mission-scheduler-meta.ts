@@ -13,6 +13,10 @@ export interface TaskScheduleMeta {
   readonly ownership: ScheduleOwnership;
   readonly merged: boolean;
   readonly parallelEligible?: boolean;
+  /** Canonical squad agent id frozen by the plan receipt. */
+  readonly agentRef?: string;
+  readonly agentCategory?: 'executor' | 'reviewer' | 'scout' | 'architect';
+  readonly executionMode?: 'isolated_worktree' | 'read_only';
 }
 
 export function encodeTaskScheduleDetail(
@@ -30,6 +34,9 @@ export function encodeTaskScheduleDetail(
     ...(meta.parallelEligible !== undefined
       ? { parallelEligible: meta.parallelEligible }
       : {}),
+    ...(meta.agentRef ? { agentRef: meta.agentRef } : {}),
+    ...(meta.agentCategory ? { agentCategory: meta.agentCategory } : {}),
+    ...(meta.executionMode ? { executionMode: meta.executionMode } : {}),
   };
   return `${META_PREFIX}${JSON.stringify(payload)}${META_SEP}${body}`;
 }
@@ -57,6 +64,9 @@ export function decodeTaskScheduleDetail(detail: string): {
       };
       merged?: unknown;
       parallelEligible?: unknown;
+      agentRef?: unknown;
+      agentCategory?: unknown;
+      executionMode?: unknown;
     };
     const files = Array.isArray(parsed.ownership?.files)
       ? parsed.ownership!.files.filter((f): f is string => typeof f === 'string')
@@ -87,6 +97,22 @@ export function decodeTaskScheduleDetail(detail: string): {
         parallelEligible:
           typeof parsed.parallelEligible === 'boolean'
             ? parsed.parallelEligible
+            : undefined,
+        agentRef:
+          typeof parsed.agentRef === 'string' && parsed.agentRef.length > 0
+            ? parsed.agentRef
+            : undefined,
+        agentCategory:
+          parsed.agentCategory === 'executor' ||
+          parsed.agentCategory === 'reviewer' ||
+          parsed.agentCategory === 'scout' ||
+          parsed.agentCategory === 'architect'
+            ? parsed.agentCategory
+            : undefined,
+        executionMode:
+          parsed.executionMode === 'isolated_worktree' ||
+          parsed.executionMode === 'read_only'
+            ? parsed.executionMode
             : undefined,
       },
     };

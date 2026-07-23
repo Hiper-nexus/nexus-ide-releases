@@ -121,6 +121,7 @@ export function assertMissionIntentAllowsTool(
   const isCurrentContract =
     intentVersion > 0 && contract?.intentVersion === intentVersion;
   const isDispatchAuthorized =
+    ctx.mission.status === 'running' &&
     hasCurrentApprovedDispatchContract(ctx.mission);
 
   if (policy === 'read-only' || policy === 'mission-control') {

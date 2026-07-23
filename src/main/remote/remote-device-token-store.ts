@@ -1,0 +1,172 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { writeJsonAtomic } from '../util/atomic-write';
+import {
+  parseRemoteDeviceIdentity,
+  remoteDeviceKeyFingerprint,
+  type RemoteDevicePublicKey,
+} from './remote-device-authority';
+
+export interface RemoteDeviceTokenRecord {
+  readonly id: string;
+  readonly hash: string;
+  readonly createdAt: number;
+  readonly expiresAt: number;
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly deviceId: string;
+  readonly devicePublicKey: RemoteDevicePublicKey;
+  readonly deviceKeyFingerprint: string;
+}
+
+interface TokenFile {
+  readonly tokens: RemoteDeviceTokenRecord[];
+}
+
+const TOKENS_FILE = path.join(
+  os.homedir(),
+  '.nexus',
+  'remote-bridge',
+  'tokens.json',
+);
+const DEFAULT_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function resolveTokenTtlMs(): number {
+  if (process.env.NODE_ENV !== 'test') return DEFAULT_TOKEN_TTL_MS;
+  const configured = Number(process.env.NEXUS_REMOTE_TOKEN_TTL_MS);
+  return Number.isSafeInteger(configured) && configured >= 100
+    ? configured
+    : DEFAULT_TOKEN_TTL_MS;
+}
+
+const TOKEN_TTL_MS = resolveTokenTtlMs();
+let tokenCache: RemoteDeviceTokenRecord[] | null = null;
+
+function sha256Hex(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function writeTokens(tokens: RemoteDeviceTokenRecord[]): void {
+  writeJsonAtomic(TOKENS_FILE, { tokens });
+  tokenCache = tokens;
+}
+
+function loadTokens(): RemoteDeviceTokenRecord[] {
+  if (tokenCache) return tokenCache;
+  try {
+    const raw = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf8')) as TokenFile;
+    tokenCache = (raw.tokens ?? []).filter(
+      (token) =>
+        typeof token.id === 'string' &&
+        typeof token.hash === 'string' &&
+        Number.isFinite(token.expiresAt) &&
+        typeof token.projectId === 'string' &&
+        typeof token.checkoutId === 'string' &&
+        typeof token.deviceId === 'string' &&
+        typeof token.deviceKeyFingerprint === 'string' &&
+        parseRemoteDeviceIdentity({
+          deviceId: token.deviceId,
+          publicKey: token.devicePublicKey,
+        }) !== null,
+    );
+  } catch {
+    tokenCache = [];
+  }
+  return tokenCache;
+}
+
+function readLiveTokens(): RemoteDeviceTokenRecord[] {
+  const all = loadTokens();
+  const live = all.filter((token) => token.expiresAt > Date.now());
+  if (live.length !== all.length) writeTokens(live);
+  return live;
+}
+
+export function issueRemoteDeviceToken(
+  scope: ProjectExecutionScope,
+  deviceId: string,
+  devicePublicKey: RemoteDevicePublicKey,
+): {
+  readonly token: string;
+  readonly expiresAt: number;
+  readonly record: RemoteDeviceTokenRecord;
+} {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = Date.now() + TOKEN_TTL_MS;
+  const record: RemoteDeviceTokenRecord = {
+    id: crypto.randomUUID(),
+    hash: sha256Hex(token),
+    createdAt: Date.now(),
+    expiresAt,
+    projectId: scope.projectId,
+    checkoutId: scope.checkoutId,
+    deviceId,
+    devicePublicKey,
+    deviceKeyFingerprint: remoteDeviceKeyFingerprint(devicePublicKey),
+  };
+  writeTokens([...readLiveTokens(), record]);
+  return { token, expiresAt, record };
+}
+
+export function findRemoteDeviceToken(
+  token: string,
+  scope: ProjectExecutionScope,
+  deviceId: string,
+): RemoteDeviceTokenRecord | undefined {
+  if (!token || !deviceId) return undefined;
+  const hash = sha256Hex(token);
+  const right = Buffer.from(hash, 'hex');
+  return readLiveTokens().find((record) => {
+    if (
+      record.projectId !== scope.projectId ||
+      record.checkoutId !== scope.checkoutId ||
+      record.deviceId !== deviceId
+    ) {
+      return false;
+    }
+    const left = Buffer.from(record.hash, 'hex');
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
+  });
+}
+
+export function remoteDeviceTokenExists(input: {
+  readonly tokenId: string;
+  readonly deviceId: string;
+  readonly scope: ProjectExecutionScope;
+}): boolean {
+  return readLiveTokens().some(
+    (token) =>
+      token.id === input.tokenId &&
+      token.deviceId === input.deviceId &&
+      token.projectId === input.scope.projectId &&
+      token.checkoutId === input.scope.checkoutId,
+  );
+}
+
+export function revokeRemoteDeviceTokens(
+  scope?: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): void {
+  writeTokens(
+    scope
+      ? readLiveTokens().filter(
+          (token) =>
+            token.projectId !== scope.projectId ||
+            token.checkoutId !== scope.checkoutId,
+        )
+      : [],
+  );
+}
+
+export function countRemoteDeviceTokens(
+  scope?: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+): number {
+  if (!scope) return 0;
+  return readLiveTokens().filter(
+    (token) =>
+      token.projectId === scope.projectId &&
+      token.checkoutId === scope.checkoutId,
+  ).length;
+}

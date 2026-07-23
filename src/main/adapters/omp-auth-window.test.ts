@@ -3,6 +3,7 @@ import type { BrowserWindow } from 'electron';
 import {
   closeOmpAuthWindow,
   disposeOmpAuthWindow,
+  installOmpAuthNavigationGuards,
   isAllowedOmpAuthUrl,
   openOmpAuthWindow,
   OMP_AUTH_WINDOW_CLOSE_ON_DONE_DELAY_MS,
@@ -63,6 +64,40 @@ describe('isAllowedOmpAuthUrl', () => {
     expect(isAllowedOmpAuthUrl('file:///etc/passwd')).toBe(false);
     expect(isAllowedOmpAuthUrl('data:text/html,<h1>x</h1>')).toBe(false);
     expect(isAllowedOmpAuthUrl('not a url')).toBe(false);
+  });
+});
+
+describe('installOmpAuthNavigationGuards', () => {
+  it('aplica a mesma allowlist a navegação direta e redirect HTTP 30x', () => {
+    const listeners = new Map<
+      string,
+      (event: { preventDefault: () => void }, target: string) => void
+    >();
+    const win = {
+      webContents: {
+        on: vi.fn(
+          (
+            event: string,
+            listener: (event: { preventDefault: () => void }, target: string) => void,
+          ) => listeners.set(event, listener),
+        ),
+      },
+    };
+
+    installOmpAuthNavigationGuards(win as unknown as BrowserWindow);
+
+    expect(listeners.has('will-navigate')).toBe(true);
+    expect(listeners.has('will-redirect')).toBe(true);
+
+    for (const eventName of ['will-navigate', 'will-redirect']) {
+      const blocked = { preventDefault: vi.fn() };
+      listeners.get(eventName)?.(blocked, 'file:///Users/example/.ssh/id_rsa');
+      expect(blocked.preventDefault).toHaveBeenCalledTimes(1);
+
+      const allowed = { preventDefault: vi.fn() };
+      listeners.get(eventName)?.(allowed, 'https://accounts.example.test/oauth');
+      expect(allowed.preventDefault).not.toHaveBeenCalled();
+    }
   });
 });
 

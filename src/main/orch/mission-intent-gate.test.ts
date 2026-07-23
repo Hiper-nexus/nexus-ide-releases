@@ -129,6 +129,7 @@ describe('mission intent gate', () => {
   it('plan lane allows plan writes and denies shell/worktree/code', () => {
     const plan: Mission = {
       ...awaitingGoal,
+      status: 'running',
       intentState: 'dispatched',
       intentVersion: 1,
       intentContract: {

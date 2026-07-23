@@ -4,8 +4,11 @@ import type {
   QuotaWindow,
 } from '../../shared/quota-types';
 import {
+  hasFreshProviderApiWindowForLimit,
+  longCooldownNeedsFreshProviderApi,
   providerApiRefutesCooldown,
   providerApiRefutesLimit,
+  LONG_COOLDOWN_MIN_MS,
   REFUTE_FRESH_MS,
 } from './limit-refutation';
 
@@ -110,6 +113,109 @@ describe('providerApiRefutesLimit', () => {
 
   it('returns false for an unknown (missing) entry', () => {
     expect(providerApiRefutesLimit(undefined, { kind: 'quota' }, NOW)).toBe(false);
+  });
+});
+
+describe('provider-api authority for long cooldowns', () => {
+  it('requires provider-api for long usage cooldowns, but preserves auth/transient and short backoff', () => {
+    expect(
+      longCooldownNeedsFreshProviderApi({
+        kind: 'quota',
+        cooldownMs: 12 * 60 * 60 * 1000,
+      }),
+    ).toBe(true);
+    expect(
+      longCooldownNeedsFreshProviderApi({
+        kind: 'rate-limit',
+        cooldownMs: LONG_COOLDOWN_MIN_MS,
+      }),
+    ).toBe(true);
+    expect(
+      longCooldownNeedsFreshProviderApi({
+        kind: 'rate-limit',
+        cooldownMs: LONG_COOLDOWN_MIN_MS - 1,
+      }),
+    ).toBe(false);
+    expect(
+      longCooldownNeedsFreshProviderApi({
+        kind: 'auth',
+        cooldownMs: 12 * 60 * 60 * 1000,
+      }),
+    ).toBe(false);
+    expect(
+      longCooldownNeedsFreshProviderApi({
+        kind: 'transient',
+        cooldownMs: 12 * 60 * 60 * 1000,
+      }),
+    ).toBe(false);
+  });
+
+  it('accepts only a fresh, matching provider-api window as authority', () => {
+    const rateEntry = entry({
+      windows: [win({ kind: 'hours', usedRatio: 0.92 })],
+    });
+    expect(
+      hasFreshProviderApiWindowForLimit(
+        rateEntry,
+        { kind: 'rate-limit' },
+        NOW,
+      ),
+    ).toBe(true);
+    expect(
+      hasFreshProviderApiWindowForLimit(
+        {
+          ...rateEntry,
+          updatedAt: NOW - REFUTE_FRESH_MS - 1,
+        },
+        { kind: 'rate-limit' },
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      hasFreshProviderApiWindowForLimit(
+        entry({
+          windows: [
+            win({ kind: 'hours', source: 'limit-hit', usedRatio: 1 }),
+          ],
+        }),
+        { kind: 'rate-limit' },
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      hasFreshProviderApiWindowForLimit(
+        entry({
+          windows: [win({ kind: 'weekly', usedRatio: 0.99 })],
+        }),
+        { kind: 'rate-limit' },
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      hasFreshProviderApiWindowForLimit(
+        entry({
+          windows: [win({ kind: 'weekly', usedRatio: 0.99 })],
+        }),
+        { kind: 'quota' },
+        NOW,
+      ),
+    ).toBe(true);
+    expect(
+      hasFreshProviderApiWindowForLimit(
+        entry({
+          windows: [win({ kind: 'weekly', usedRatio: null })],
+        }),
+        { kind: 'quota' },
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      hasFreshProviderApiWindowForLimit(
+        undefined,
+        { kind: 'quota' },
+        NOW,
+      ),
+    ).toBe(false);
   });
 });
 

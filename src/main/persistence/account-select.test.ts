@@ -59,5 +59,21 @@ describe('chooseAccount (failover selection)', () => {
     const chosen = chooseAccount(accounts, null, null, NOW, scores);
     expect(chosen?.id).toBe('b');
   });
-});
 
+  it('preempts an active account only when measured quota proves another is freer', () => {
+    const accounts = [acct('a', 1), acct('b', 2)];
+    const scores = new Map([
+      ['a', 0.15],
+      ['b', 0.9],
+    ]);
+    const chosen = chooseAccount(accounts, 'a', null, NOW, scores);
+    expect(chosen?.id).toBe('b');
+  });
+
+  it('keeps operator intent when the active account has no measured quota', () => {
+    const accounts = [acct('a', 1), acct('b', 2)];
+    const scores = new Map([['b', 0.9]]);
+    const chosen = chooseAccount(accounts, 'a', null, NOW, scores);
+    expect(chosen?.id).toBe('a');
+  });
+});

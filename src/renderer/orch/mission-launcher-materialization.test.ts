@@ -29,19 +29,18 @@ describe('materializeSquadMission', () => {
   });
 
   it('só confirma após persistir a missão vinculada ao pane concreto', async () => {
-    const mission = {
+    const runningMission = {
       id: 'mission-pet',
       title: 'Pet Hatch',
       description: '',
-      status: 'pending' as const,
+      status: 'running' as const,
       milestones: [],
       learnings: '',
       createdAt: 1,
       updatedAt: 1,
     };
-    const createMission = vi.fn(async () => mission);
-    const runningMission = { ...mission, status: 'running' as const };
-    const updateMission = vi.fn(async () => runningMission);
+    const createMission = vi.fn(async () => runningMission);
+    const updateMission = vi.fn();
     const result = await materializeSquadMission(input, {
       waitForSession: async () => 'session-1',
       createMission,
@@ -54,6 +53,6 @@ describe('materializeSquadMission', () => {
       squadId: 'pet-squad',
       orchestratorPane: input.orchestratorPane,
     });
-    expect(updateMission).toHaveBeenCalledWith('mission-pet', { status: 'running' });
+    expect(updateMission).not.toHaveBeenCalled();
   });
 });

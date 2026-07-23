@@ -26,6 +26,10 @@ import {
   extractCompleteLines,
   sanitizeForInjection,
 } from './pane-pipe-core';
+import {
+  isSessionInjectableIdle,
+  tapAgentSemanticStatus,
+} from './agent-status';
 
 /**
  * Pane pipes are runtime resources owned by one renderer and one immutable
@@ -257,6 +261,7 @@ function flushQueue(partition: PipePartition, pipeId: string): void {
     partition.outQueues.delete(pipeId);
     return;
   }
+  if (!isSessionInjectableIdle(targetSessionId)) return;
 
   const batch = queue.splice(0, MAX_LINES_PER_FLUSH);
   let delivered = 0;
@@ -343,7 +348,9 @@ function scheduleSubmit(
       ? resolveEndpoint(partition, livePipe.target)
       : null;
     if (target?.sessionId === targetSessionId) {
-      orchWriteSession(targetSessionId, '\r');
+      if (isSessionInjectableIdle(targetSessionId)) {
+        orchWriteSession(targetSessionId, '\r');
+      }
     }
   }, SUBMIT_ENTER_DELAY_MS);
   partition.submitTimers.set(pipeId, { sessionId: targetSessionId, timer });
@@ -364,6 +371,7 @@ function deliverIdle(
     sourceSessionId,
   );
   if (!targetSessionId) return;
+  if (!isSessionInjectableIdle(targetSessionId)) return;
 
   const tail = readSessionOutput(sourceSessionId, IDLE_TAIL_LINES);
   const text = sanitizeForInjection(
@@ -466,6 +474,25 @@ export function initPanePipes(): void {
         partition.idleDirty.has(scopedPipe.pipe.id)
       ) {
         tryDeliverIdle(partition, scopedPipe);
+      }
+    }
+  });
+
+  tapAgentSemanticStatus((entry) => {
+    if (
+      (entry.status !== 'idle' && entry.status !== 'completed') ||
+      !isSessionInjectableIdle(entry.sessionId)
+    ) return;
+    for (const byScope of partitionsByOwner.values()) {
+      for (const partition of byScope.values()) {
+        for (const [pipeId, scopedPipe] of partition.pipes) {
+          const target = resolveEndpoint(partition, scopedPipe.target);
+          if (target?.sessionId !== entry.sessionId) continue;
+          if (scopedPipe.pipe.mode === 'stream') flushQueue(partition, pipeId);
+          else if (partition.idleDirty.has(pipeId)) {
+            tryDeliverIdle(partition, scopedPipe);
+          }
+        }
       }
     }
   });

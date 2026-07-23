@@ -190,6 +190,18 @@ describe('confirmationReason', () => {
     expect(reason).toContain('destructive');
   });
 
+  it('makes cron consent explicitly authorize future automatic missions', () => {
+    const reason = confirmationReason('nexus_cron', {
+      action: 'create',
+      name: 'Nightly',
+      schedule: '0 0 * * *',
+      agentName: 'Builder',
+    });
+    expect(reason).toMatch(/missões futuras.*automaticamente/i);
+    expect(reason).toContain('Nightly');
+    expect(reason).toContain('Builder');
+  });
+
   it('never includes browser fill text in the confirmation reason', () => {
     const reason = confirmationReason('nexus_browser_fill', {
       paneId: 'browser-1',

@@ -119,24 +119,40 @@ describe('smoke isolation', () => {
     expect(shouldInitializeManagedAgentHooks(['/path/NexusIDE'])).toBe(true);
   });
 
-  it('keeps the hook server and consent dialog behind the smoke guard in main', () => {
+  it('keeps hooks behind the combined smoke and real-mission E2E guard', () => {
     const mainSource = readFileSync(new URL('./main.ts', import.meta.url), 'utf8');
     const hookSection = mainSource.indexOf('// Gap A:');
-    const guardStart = mainSource.indexOf('if (!isCurrentProcessSmokeTest()) {', hookSection);
+    const guardStart = mainSource.indexOf('if (!isAutomatedReleaseTest()) {', hookSection);
     const guardEnd = mainSource.indexOf('// Gap B:', guardStart);
     const guardedBlock = mainSource.slice(guardStart, guardEnd);
+    const helperStart = mainSource.indexOf(
+      'function isAutomatedReleaseTest(): boolean {',
+    );
+    const helperEnd = mainSource.indexOf(
+      '\n}\n\ninitRealMissionE2E();',
+      helperStart,
+    );
+    const helperBlock = mainSource.slice(helperStart, helperEnd);
 
     expect(guardStart).toBeGreaterThan(-1);
     expect(guardEnd).toBeGreaterThan(guardStart);
     expect(guardedBlock).toContain('await startAgentHookHttpServer');
     expect(guardedBlock).toContain('resolveManagedHookConsent');
+    expect(helperStart).toBeGreaterThan(-1);
+    expect(helperEnd).toBeGreaterThan(helperStart);
+    expect(helperBlock).toMatch(
+      /return\s+isCurrentProcessSmokeTest\(\)\s*\|\|\s*isCurrentProcessRealMissionE2E\(\)/,
+    );
   });
 
   it('bootstraps the desktop window before optional hooks can delay launch', () => {
     const mainSource = readFileSync(new URL('./main.ts', import.meta.url), 'utf8');
     const readyStart = mainSource.indexOf('app.whenReady().then(async () => {');
     const hookSection = mainSource.indexOf('// Gap A:', readyStart);
-    const createWindowAtReady = mainSource.indexOf('    createMainWindow();', readyStart);
+    const createWindowAtReady = mainSource.indexOf(
+      '    const mainWindow = createMainWindow();',
+      readyStart,
+    );
     const bootstrapBeforeHooks = mainSource.indexOf('    bootstrap();', readyStart);
     const awakeInit = mainSource.indexOf('    getAgentAwakeService();', readyStart);
 

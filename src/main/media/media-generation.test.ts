@@ -117,7 +117,9 @@ describe('resolveMediaProvider / resolveMediaModel', () => {
 
 describe('generateImage', () => {
   it('rejeita input/output fora do workspace antes de chamar o provider', async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-media-outside-'));
+    const outside = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'nexus-media-outside-'),
+    );
     const outsideFile = path.join(outside, 'private.png');
     fs.writeFileSync(outsideFile, 'private');
     fs.symlinkSync(outsideFile, path.join(dir, 'escape.png'));
@@ -172,7 +174,9 @@ describe('generateImage', () => {
 
   it('google-image: erro claro quando a resposta não tem imagem', async () => {
     const { deps } = fakeDeps([
-      { json: { candidates: [{ content: { parts: [{ text: 'bloqueado' }] } }] } },
+      {
+        json: { candidates: [{ content: { parts: [{ text: 'bloqueado' }] } }] },
+      },
     ]);
     await expect(
       generateImage({ prompt: 'x', baseDir: dir }, deps),
@@ -481,9 +485,8 @@ describe('generateVideo', () => {
               generatedSamples: [
                 {
                   video: {
-                    bytesBase64Encoded: Buffer.from('veo-bytes').toString(
-                      'base64',
-                    ),
+                    bytesBase64Encoded:
+                      Buffer.from('veo-bytes').toString('base64'),
                   },
                 },
               ],
@@ -537,7 +540,12 @@ describe('generateVideo', () => {
 describe('seedream (Seedream 5.0 Pro image)', () => {
   it('monta input com size 2K e aspect_ratio oficiais', () => {
     const input = seedreamInput(
-      { prompt: 'hero portrait', baseDir: dir, aspectRatio: '9:16', size: '2K' },
+      {
+        prompt: 'hero portrait',
+        baseDir: dir,
+        aspectRatio: '9:16',
+        size: '2K',
+      },
       'bytedance/seedream-5-pro',
     );
     expect(input.prompt).toBe('hero portrait');
@@ -795,5 +803,78 @@ describe('cancelamento (AbortSignal)', () => {
       ),
     ).rejects.toThrow(/cancelada/);
     expect(calls).toHaveLength(0);
+  });
+
+  it('revogação após resposta do provider impede publicar imagem', async () => {
+    const { deps, calls } = fakeDeps([
+      {
+        json: {
+          candidates: [
+            {
+              content: {
+                parts: [{ inlineData: { data: PNG_B64 } }],
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const providerFetch = deps.fetchFn;
+    let current = true;
+    deps.fetchFn = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const response = await providerFetch(url, init);
+      current = false;
+      return response;
+    }) as typeof fetch;
+
+    await expect(
+      generateImage(
+        {
+          prompt: 'x',
+          baseDir: dir,
+          outPath: 'revoked.png',
+          assertCurrentAuthority: () => {
+            if (!current) throw new Error('session_authority_revoked');
+          },
+        },
+        deps,
+      ),
+    ).rejects.toThrow('session_authority_revoked');
+    expect(calls).toHaveLength(1);
+    expect(fs.existsSync(path.join(dir, 'revoked.png'))).toBe(false);
+  });
+
+  it('revogação após submit preserva job remoto pendente sem output', async () => {
+    const { deps, calls } = fakeDeps([
+      { json: { id: 'pred-revoked', status: 'starting' } },
+    ]);
+    const providerFetch = deps.fetchFn;
+    let current = true;
+    deps.fetchFn = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      const response = await providerFetch(url, init);
+      current = false;
+      return response;
+    }) as typeof fetch;
+
+    await expect(
+      generateVideo(
+        {
+          prompt: 'x',
+          baseDir: dir,
+          outPath: 'revoked.mp4',
+          provider: 'replicate-video',
+          assertCurrentAuthority: () => {
+            if (!current) throw new Error('session_authority_revoked');
+          },
+        },
+        deps,
+      ),
+    ).rejects.toThrow('session_authority_revoked');
+    expect(calls).toHaveLength(1);
+    expect(getVideoJob(dir, 'pred-revoked')).toMatchObject({
+      status: 'pending',
+      provider: 'replicate-video',
+    });
+    expect(fs.existsSync(path.join(dir, 'revoked.mp4'))).toBe(false);
   });
 });

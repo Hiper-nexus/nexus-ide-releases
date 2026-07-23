@@ -10,6 +10,18 @@ import { notifyMediaGenerated } from './usage-service';
 
 const MAX_MEDIA_BYTES = 8 * 1024 * 1024 * 1024;
 
+export interface MediaUsageAuthority {
+  readonly signal?: AbortSignal;
+  readonly assertCurrentAuthority?: () => void;
+}
+
+function assertMediaUsageAuthority(authority?: MediaUsageAuthority): void {
+  authority?.assertCurrentAuthority?.();
+  if (authority?.signal?.aborted) {
+    throw new Error('session_authority_revoked');
+  }
+}
+
 function isInside(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return (
@@ -23,8 +35,11 @@ function isInside(root: string, candidate: string): boolean {
 async function inspectGeneratedFile(
   scope: ProjectExecutionScope,
   candidate: string,
+  authority?: MediaUsageAuthority,
 ): Promise<{ storageKey: string; sha256: string }> {
+  assertMediaUsageAuthority(authority);
   const root = await fs.promises.realpath(scope.rootRealPath);
+  assertMediaUsageAuthority(authority);
   if (root !== scope.rootRealPath) {
     throw new Error('project root identity changed before media accounting');
   }
@@ -40,12 +55,15 @@ async function inspectGeneratedFile(
     resolved,
     fs.constants.O_RDONLY | noFollow,
   );
+  assertMediaUsageAuthority(authority);
   try {
     const stat = await handle.stat();
+    assertMediaUsageAuthority(authority);
     if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_MEDIA_BYTES) {
       throw new Error('generated media is not a safe regular file');
     }
     const pathStat = await fs.promises.lstat(resolved);
+    assertMediaUsageAuthority(authority);
     if (
       pathStat.isSymbolicLink() ||
       !pathStat.isFile() ||
@@ -55,6 +73,7 @@ async function inspectGeneratedFile(
       throw new Error('generated media changed after its descriptor opened');
     }
     const real = await fs.promises.realpath(resolved);
+    assertMediaUsageAuthority(authority);
     if (!isInside(root, real) || real !== resolved) {
       throw new Error('generated media path changed during accounting');
     }
@@ -62,12 +81,14 @@ async function inspectGeneratedFile(
     const buffer = Buffer.allocUnsafe(1024 * 1024);
     let position = 0;
     while (position < stat.size) {
+      assertMediaUsageAuthority(authority);
       const { bytesRead } = await handle.read(
         buffer,
         0,
         Math.min(buffer.length, stat.size - position),
         position,
       );
+      assertMediaUsageAuthority(authority);
       if (bytesRead <= 0) {
         throw new Error('generated media ended while hashing');
       }
@@ -89,13 +110,18 @@ async function inspectGeneratedFile(
  */
 export async function recordMediaUsage(
   result: MediaGenerationResult,
-  ctx: Pick<
-    AgentGateContext,
-    'missionId' | 'agentName' | 'label' | 'scope'
-  >,
+  ctx: Pick<AgentGateContext, 'missionId' | 'agentName' | 'label' | 'scope'>,
+  authority?: MediaUsageAuthority,
 ): Promise<string> {
-  const inspected = await inspectGeneratedFile(ctx.scope, result.path);
+  assertMediaUsageAuthority(authority);
+  const inspected = await inspectGeneratedFile(
+    ctx.scope,
+    result.path,
+    authority,
+  );
+  assertMediaUsageAuthority(authority);
   const stores = requireProjectUsageStores(ctx.scope);
+  assertMediaUsageAuthority(authority);
   const id = stores.media.record({
     kind: result.kind,
     provider: result.provider,

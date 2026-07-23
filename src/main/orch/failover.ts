@@ -17,7 +17,11 @@ import {
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
 import { detectLimit, tierScopeFromModelId, type LimitHit } from './limit-detector';
-import { providerApiRefutesLimit } from './limit-refutation';
+import {
+  hasFreshProviderApiWindowForLimit,
+  longCooldownNeedsFreshProviderApi,
+  providerApiRefutesLimit,
+} from './limit-refutation';
 import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import {
   getAccount,
@@ -576,13 +580,16 @@ function handleChunk(sessionId: string, data: string, now: number): void {
   const pinned = pane.accountId ? getAccount(pane.accountId) : null;
   const current =
     pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
+  const quotaEntry = current
+    ? quotaEntryFor(adapterId, current.id)
+    : undefined;
 
   // Second-layer defense: a fresh, authoritative provider-api reading can
   // refute a PTY-scraped limit. If the account is demonstrably healthy, the
   // terminal signal is untrusted (echoed handoff/prose/logs) — do not cool it
   // down or switch. Source-isolation in detectLimit already drops Nexus's own
   // pack; this also catches false positives from the surrounding output.
-  if (current && providerApiRefutesLimit(quotaEntryFor(adapterId, current.id), hit, now)) {
+  if (current && providerApiRefutesLimit(quotaEntry, hit, now)) {
     console.info(
       '[failover]',
       JSON.stringify({
@@ -592,6 +599,29 @@ function handleChunk(sessionId: string, data: string, now: number): void {
         reason: hit.reason,
         switched: false,
         suppressed: 'provider-api-healthy',
+      }),
+    );
+    return;
+  }
+
+  // A PTY is an untrusted mixed stream (provider output + quoted logs + agent
+  // prose). It may trigger short recovery, auth rotation, or transient backoff,
+  // but it cannot be the sole authority for a 1h/5h/12h usage quarantine.
+  // Keep the rejected signal observable without poisoning quota UI/cooldowns.
+  if (
+    longCooldownNeedsFreshProviderApi(hit) &&
+    !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now)
+  ) {
+    console.info(
+      '[failover]',
+      JSON.stringify({
+        paneId: pane.paneId,
+        adapterId,
+        fromAccountId: current?.id ?? null,
+        reason: hit.reason,
+        cooldownMs: hit.cooldownMs,
+        switched: false,
+        suppressed: 'provider-api-required-for-long-cooldown',
       }),
     );
     return;

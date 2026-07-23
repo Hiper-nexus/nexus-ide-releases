@@ -14,6 +14,14 @@ const paneMocks = vi.hoisted(() => ({
   authorities: new Map<string, unknown>(),
 }));
 
+const semanticMocks = vi.hoisted(() => ({
+  injectable: true,
+  taps: [] as Array<(entry: {
+    sessionId: string;
+    status: 'idle' | 'completed' | 'awaiting-input' | 'working';
+  }) => void>,
+}));
+
 const scopeMocks = vi.hoisted(() => ({
   scopesByOwner: new Map<number, ProjectExecutionScope>(),
   listeners: [] as Array<
@@ -26,9 +34,26 @@ const scopeMocks = vi.hoisted(() => ({
 }));
 
 const storeMocks = vi.hoisted(() => ({
-  missions: new Map<string, { orchestratorSessionId?: string }>(),
+  missions: new Map<
+    string,
+    { orchestratorSessionId?: string; status?: string; description?: string }
+  >(),
+  missionUpdates: [] as Array<{
+    scope: ProjectExecutionScope;
+    id: string;
+    patch: { status?: string; description?: string };
+  }>,
   handoffs: new Map<string, Handoff>(),
   delivered: [] as Array<{ scope: ProjectExecutionScope; id: string }>,
+  deliveryAttempts: new Map<string, {
+    id: string;
+    handoffId: string;
+    missionId: string;
+    orchestratorSessionId: string;
+    attemptNo: number;
+    state: 'reserved' | 'pasted' | 'accepted' | 'failed';
+  }>(),
+  nextAttemptId: 1,
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -56,6 +81,25 @@ vi.mock('./pane-registry', () => ({
   getOwnedPaneAuthzInfoBySession: vi.fn(
     (ref: string) => paneMocks.authorities.get(ref) ?? null,
   ),
+  getPaneRuntimeAuthorityBySession: vi.fn(
+    (ref: string) => paneMocks.authorities.get(ref) ?? null,
+  ),
+}));
+
+vi.mock('./agent-status', () => ({
+  isSessionInjectableIdle: vi.fn(
+    () => ptyMocks.state === 'idle' && semanticMocks.injectable,
+  ),
+  tapAgentSemanticStatus: vi.fn((tap: (entry: {
+    sessionId: string;
+    status: 'idle' | 'completed' | 'awaiting-input' | 'working';
+  }) => void) => {
+    semanticMocks.taps.push(tap);
+    return () => {
+      const index = semanticMocks.taps.indexOf(tap);
+      if (index >= 0) semanticMocks.taps.splice(index, 1);
+    };
+  }),
 }));
 
 vi.mock('../persistence/renderer-workspace-scope', () => ({
@@ -85,11 +129,76 @@ vi.mock('./project-domain-store-registry', () => ({
       get: (id: string) =>
         storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:${id}`) ??
         null,
+      update: (id: string, patch: { status?: string; description?: string }) => {
+        storeMocks.missionUpdates.push({ scope, id, patch });
+        const key = `${scope.projectId}:${scope.checkoutId}:${id}`;
+        const current = storeMocks.missions.get(key);
+        if (!current) return null;
+        const next = { ...current, ...patch };
+        storeMocks.missions.set(key, next);
+        return next;
+      },
     },
     handoffs: {
       get: (id: string) =>
         storeMocks.handoffs.get(id) ?? handoff({ id }),
       markSubmitted: (id: string) => storeMocks.delivered.push({ scope, id }),
+      reserveDeliveryAttempt: ({
+        handoffId,
+        missionId,
+        orchestratorSessionId,
+        maxAttempts,
+      }: {
+        handoffId: string;
+        missionId: string;
+        orchestratorSessionId: string;
+        maxAttempts: number;
+      }) => {
+        for (const attempt of storeMocks.deliveryAttempts.values()) {
+          if (
+            attempt.handoffId === handoffId &&
+            (attempt.state === 'reserved' || attempt.state === 'pasted')
+          ) attempt.state = 'failed';
+        }
+        const attemptNo = [...storeMocks.deliveryAttempts.values()]
+          .filter((attempt) => attempt.handoffId === handoffId).length + 1;
+        if (attemptNo > maxAttempts) {
+          throw new Error('handoff delivery attempt budget exhausted');
+        }
+        const attempt = {
+          id: `attempt-${storeMocks.nextAttemptId++}`,
+          handoffId,
+          missionId,
+          orchestratorSessionId,
+          attemptNo,
+          state: 'reserved' as const,
+        };
+        storeMocks.deliveryAttempts.set(attempt.id, attempt);
+        return attempt;
+      },
+      markDeliveryAttemptPasted: ({ attemptId }: { attemptId: string }) => {
+        const attempt = storeMocks.deliveryAttempts.get(attemptId)!;
+        attempt.state = 'pasted';
+        return attempt;
+      },
+      failDeliveryAttempt: ({ attemptId }: { attemptId: string }) => {
+        const attempt = storeMocks.deliveryAttempts.get(attemptId);
+        if (!attempt || (attempt.state !== 'reserved' && attempt.state !== 'pasted')) {
+          return false;
+        }
+        attempt.state = 'failed';
+        return true;
+      },
+      acceptDeliveryAttempt: ({
+        attemptId,
+        handoffId,
+      }: { attemptId: string; handoffId: string }) => {
+        const attempt = storeMocks.deliveryAttempts.get(attemptId);
+        if (!attempt || attempt.state !== 'pasted') return false;
+        attempt.state = 'accepted';
+        storeMocks.delivered.push({ scope, id: handoffId });
+        return true;
+      },
       list: ({ missionId }: { missionId?: string }) =>
         [...storeMocks.handoffs.values()].filter(
           (item) => !item.delivered && (!missionId || item.missionId === missionId),
@@ -123,7 +232,11 @@ function authorizeTarget(
 ): void {
   storeMocks.missions.set(
     `${scope.projectId}:${scope.checkoutId}:mission-a`,
-    { orchestratorSessionId: 'orchestrator-session' },
+    {
+      orchestratorSessionId: 'orchestrator-session',
+      status: 'running',
+      description: 'Objetivo original',
+    },
   );
   paneMocks.authorities.set('orchestrator-session', {
     owner,
@@ -137,19 +250,45 @@ function authorizeTarget(
   scopeMocks.scopesByOwner.set(owner.id, scope);
 }
 
+function authorizeMainOwnedTarget(scope: ProjectExecutionScope): void {
+  storeMocks.missions.set(
+    `${scope.projectId}:${scope.checkoutId}:mission-a`,
+    {
+      orchestratorSessionId: 'orchestrator-session',
+      status: 'running',
+      description: 'Objetivo original',
+    },
+  );
+  paneMocks.authorities.set('orchestrator-session', {
+    owner: null,
+    paneId: 'orchestrator-pane',
+    sessionId: 'orchestrator-session',
+    kind: 'cli-agent',
+    missionId: 'mission-a',
+    role: 'orchestrator',
+    scope,
+  });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.resetModules();
   ptyMocks.state = 'busy';
-  ptyMocks.writes.mockClear();
+  ptyMocks.writes.mockReset();
+  ptyMocks.writes.mockReturnValue(true);
   ptyMocks.stateTaps.length = 0;
   ptyMocks.exitTaps.length = 0;
   paneMocks.authorities.clear();
+  semanticMocks.injectable = true;
+  semanticMocks.taps.length = 0;
   scopeMocks.scopesByOwner.clear();
   scopeMocks.listeners.length = 0;
   storeMocks.missions.clear();
+  storeMocks.missionUpdates.length = 0;
   storeMocks.handoffs.clear();
   storeMocks.delivered.length = 0;
+  storeMocks.deliveryAttempts.clear();
+  storeMocks.nextAttemptId = 1;
 });
 
 afterEach(() => {
@@ -158,6 +297,56 @@ afterEach(() => {
 });
 
 describe('idle delivery authority and lifecycle', () => {
+  it('does not paste or submit while an idle-looking permission prompt is active', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    semanticMocks.injectable = false;
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+
+    semanticMocks.injectable = true;
+    semanticMocks.taps[0]({
+      sessionId: 'orchestrator-session',
+      status: 'completed',
+    });
+    expect(ptyMocks.writes).toHaveBeenCalledTimes(1);
+    expect(ptyMocks.writes).not.toHaveBeenCalledWith(
+      'orchestrator-session',
+      '\r',
+      { markInputBusy: false },
+    );
+    await vi.advanceTimersByTimeAsync(150);
+    expect(ptyMocks.writes).toHaveBeenLastCalledWith(
+      'orchestrator-session',
+      '\r',
+      { markInputBusy: false },
+    );
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('delivers to a main-owned orchestrator while no renderer is alive', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeMainOwnedTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+
+    expect(ptyMocks.writes).toHaveBeenCalledWith(
+      'orchestrator-session',
+      expect.stringContaining('handoff_id=handoff-a'),
+      { markInputBusy: false },
+    );
+    delivery.shutdownIdleDelivery();
+  });
+
   it('labels success as an untrusted worker report that cannot complete a mission', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
@@ -172,6 +361,7 @@ describe('idle delivery authority and lifecycle', () => {
       expect.stringMatching(
         /reported_status=success.*claim_trust=untrusted.*evidence=unverified.*does_not_complete_mission/i,
       ),
+      { markInputBusy: false },
     );
     delivery.shutdownIdleDelivery();
   });
@@ -197,6 +387,7 @@ describe('idle delivery authority and lifecycle', () => {
       expect.stringMatching(
         /from=nexus-delegation-supervisor.*claim_trust=system.*evidence=nexus_system/i,
       ),
+      { markInputBusy: false },
     );
     expect(ptyMocks.writes.mock.calls[0][1]).not.toMatch(/claim_trust=untrusted/);
     delivery.shutdownIdleDelivery();
@@ -220,11 +411,13 @@ describe('idle delivery authority and lifecycle', () => {
         evidenceTrust: 'stale',
       }),
     );
+    ptyMocks.state = 'idle';
     ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
 
     expect(ptyMocks.writes).toHaveBeenCalledWith(
       'orchestrator-session',
       expect.stringMatching(/evidence=stale.*does_not_complete_mission/i),
+      { markInputBusy: false },
     );
     delivery.shutdownIdleDelivery();
   });
@@ -260,7 +453,11 @@ describe('idle delivery authority and lifecycle', () => {
     expect(storeMocks.delivered).toEqual([]);
     await vi.advanceTimersByTimeAsync(150);
 
-    expect(ptyMocks.writes).toHaveBeenLastCalledWith('orchestrator-session', '\r');
+    expect(ptyMocks.writes).toHaveBeenLastCalledWith(
+      'orchestrator-session',
+      '\r',
+      { markInputBusy: false },
+    );
     // Sem prova de aceite (sessão segue idle — possível modal), nada é marcado.
     await vi.advanceTimersByTimeAsync(1_000);
     expect(storeMocks.delivered).toEqual([]);
@@ -286,7 +483,11 @@ describe('idle delivery authority and lifecycle', () => {
 
     ptyMocks.state = 'idle';
     await vi.advanceTimersByTimeAsync(150);
-    expect(ptyMocks.writes).toHaveBeenLastCalledWith('orchestrator-session', '\r');
+    expect(ptyMocks.writes).toHaveBeenLastCalledWith(
+      'orchestrator-session',
+      '\r',
+      { markInputBusy: false },
+    );
     expect(storeMocks.delivered).toEqual([]);
     delivery.shutdownIdleDelivery();
   });
@@ -320,6 +521,43 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
+  it('serializa dois handoffs no mesmo idle e exige uma borda busy para cada um', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    const first = handoff({ id: 'handoff-first', summary: 'primeira entrega completa' });
+    const second = handoff({ id: 'handoff-second', summary: 'segunda entrega completa' });
+    storeMocks.handoffs.set(first.id, first);
+    storeMocks.handoffs.set(second.id, second);
+    delivery.onHandoffSubmitted(first, scope);
+    delivery.onHandoffSubmitted(second, scope);
+
+    expect(ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes('handoff_id=handoff-'),
+    )).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(150);
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-first' }]);
+
+    ptyMocks.state = 'idle';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'idle');
+    expect(ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes('handoff_id=handoff-'),
+    )).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(150);
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([
+      { scope, id: 'handoff-first' },
+      { scope, id: 'handoff-second' },
+    ]);
+    delivery.shutdownIdleDelivery();
+  });
+
   it('requeues once a handoff swallowed without acceptance instead of losing it', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
@@ -339,6 +577,85 @@ describe('idle delivery authority and lifecycle', () => {
     await vi.advanceTimersByTimeAsync(13_000);
     expect(storeMocks.delivered).toEqual([]);
     expect(deliveries()).toHaveLength(2);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('persists paste write failure and consumes the bounded retry instead of losing the handoff', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    ptyMocks.writes.mockImplementationOnce(() => false).mockReturnValue(true);
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+
+    const attempts = [...storeMocks.deliveryAttempts.values()];
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({ attemptNo: 1, state: 'failed' });
+    expect(attempts[1]).toMatchObject({ attemptNo: 2, state: 'reserved' });
+    expect(ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes('handoff_id=handoff-a'),
+    )).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(150);
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('persists Enter write failure and requeues once before accepting the second attempt', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    let enterWrites = 0;
+    ptyMocks.writes.mockImplementation((_sessionId, data) => {
+      if (data !== '\r') return true;
+      enterWrites += 1;
+      return enterWrites > 1;
+    });
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await vi.advanceTimersByTimeAsync(300);
+
+    const attempts = [...storeMocks.deliveryAttempts.values()];
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({ attemptNo: 1, state: 'failed' });
+    expect(attempts[1]).toMatchObject({ attemptNo: 2, state: 'pasted' });
+    ptyMocks.state = 'busy';
+    ptyMocks.stateTaps[0]('orchestrator-session', 'busy');
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('bloqueia com sinal durável após a reentrega limitada também não ser aceita', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await vi.advanceTimersByTimeAsync(25_000);
+
+    const deliveries = ptyMocks.writes.mock.calls.filter((call) =>
+      String(call[1]).includes('completed the requested work'),
+    );
+    expect(deliveries).toHaveLength(2);
+    expect(storeMocks.delivered).toEqual([]);
+    expect(storeMocks.missionUpdates).toEqual([
+      {
+        scope,
+        id: 'mission-a',
+        patch: expect.objectContaining({
+          status: 'blocked',
+          description: expect.stringMatching(/Handoff não entregue.*Reabrir/s),
+        }),
+      },
+    ]);
     delivery.shutdownIdleDelivery();
   });
 
@@ -390,6 +707,7 @@ describe('idle delivery authority and lifecycle', () => {
     expect(ptyMocks.writes).toHaveBeenCalledWith(
       'orchestrator-session',
       expect.stringContaining('completed the requested work'),
+      { markInputBusy: false },
     );
     // Submitted só após a prova de aceite (sessão vira busy).
     ptyMocks.state = 'busy';

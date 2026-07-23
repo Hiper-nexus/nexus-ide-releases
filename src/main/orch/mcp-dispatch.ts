@@ -6,8 +6,6 @@ import {
 } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
-  isDestructive,
-  requiresConfirmation,
   confirmationReason,
 } from '../jarvis/guardrails';
 import {
@@ -16,21 +14,22 @@ import {
   auditIntent,
   auditSuccess,
   ensureAuditLogWritable,
-  type AuditSource,
 } from '../jarvis/audit-log';
 import {
   consumePermission,
-  type PermissionScope,
 } from '../jarvis/permissions';
 import {
   bindContextRevision,
   canonicalToolName,
+  gateContextAbortSignal,
+  isCurrentGateContext,
   isToolAllowedForRole,
   type AgentGateContext,
 } from './gate';
 import {
   effectPolicyForTool,
   isEffectfulTool,
+  isToolAllowedForReadOnlyContext,
 } from './mcp-effect-policy';
 import { validateToolArgs } from './mcp-args-validation';
 import type { McpRegistry, McpToolDef } from './mcp-protocol';
@@ -47,89 +46,36 @@ import {
   startMissionPrompt,
 } from './mission-prompt-queue-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import {
+  normalizeDispatchSessionId,
+  permissionScopeForTool,
+  type IntentGateMissionResolver,
+  type McpDispatchOptions,
+  type McpDispatchSource,
+  type ToolDispatchResult,
+  type WorkflowAuthorityResolver,
+  type WorkflowEffectAuthority,
+} from './mcp-dispatch-contract';
+import {
+  RENDERER_EXACT_CONSENT_TOOLS,
+  isDestructiveEffect,
+  requiresPerActionConsent,
+  requiresToolConfirmation,
+} from './mcp-consent-policy';
 
-export type McpDispatchSource = AuditSource;
-
-export interface ToolDispatchResult {
-  ok: boolean;
-  tool: string;
-  result?: unknown;
-  error?: string;
-  denied?: boolean;
-  requiredConfirmation?: boolean;
-  confirmationReason?: string;
-  userAuthorized?: boolean;
-  /** True when a failed dispatch started a high-impact handler. Never retry blindly. */
-  effectMayHaveCommitted?: boolean;
-}
-
-export interface McpConfirmationRequest {
-  source: McpDispatchSource;
-  sessionId: string;
-  workspaceId: string;
-  projectId: string;
-  checkoutId: string;
-  missionId?: string;
-  contextRevision?: string;
-  toolName: string;
-  args: Record<string, unknown>;
-  reason: string;
-  agentLabel: string;
-}
-
-export type McpConfirmationHandler = (
-  request: McpConfirmationRequest,
-) => Promise<boolean>;
-
-export interface IntentGateMissionResolver {
-  (
-    scope: ProjectExecutionScope,
-    missionId: string,
-  ): {
-    mission: import('../../shared/orch-types').Mission;
-    taskCount: number;
-    workerPaneCount: number;
-  } | null;
-}
-
-export interface McpDispatchOptions {
-  confirm?: McpConfirmationHandler;
-  /** Internal seam for isolated dispatch tests; production uses PREVC. */
-  resolveWorkflowAuthority?: WorkflowAuthorityResolver;
-  /**
-   * Internal seam for intent-gate tests. Production resolves via project
-   * domain stores. Missing mission always fails closed for effectful tools.
-   */
-  resolveMissionForIntentGate?: IntentGateMissionResolver;
-  /** Internal seam; production reserves synchronously in the scoped store. */
-  reserveMissionBudget?: MissionBudgetReserver;
-}
-
-export type MissionBudgetReserver = (
-  scope: ProjectExecutionScope,
-  missionId: string,
-  toolName: string,
-  expectedIntentVersion: number,
-) => void;
-
-export interface WorkflowEffectAuthority {
-  /**
-   * Frozen PREVC revision to bind. Undefined when the mission runs without a
-   * frozen contract (permissive degradation) — nothing to bind in that case.
-   */
-  readonly contextRevision: string | undefined;
-  assertExecutionEffectAllowed(
-    toolName: string,
-    args: Readonly<Record<string, unknown>>,
-  ): void;
-}
-
-export type WorkflowAuthorityResolver = (
-  scope: ProjectExecutionScope,
-  missionId: string,
-) => WorkflowEffectAuthority;
-
-const RENDERER_SESSION_ID = 'jarvis-renderer';
+export {
+  normalizeDispatchSessionId,
+  permissionScopeForTool,
+  type IntentGateMissionResolver,
+  type McpConfirmationHandler,
+  type McpConfirmationRequest,
+  type McpDispatchOptions,
+  type McpDispatchSource,
+  type MissionBudgetReserver,
+  type ToolDispatchResult,
+  type WorkflowAuthorityResolver,
+  type WorkflowEffectAuthority,
+} from './mcp-dispatch-contract';
 
 function resolveProductionWorkflowAuthority(
   scope: ProjectExecutionScope,
@@ -165,28 +111,6 @@ function resolveProductionWorkflowAuthority(
       args: Readonly<Record<string, unknown>>,
     ) => service.assertMutationAllowed(missionId, toolName, args),
   });
-}
-
-function normalizeSessionId(source: McpDispatchSource, ctx: AgentGateContext): string {
-  if (source === 'ipc-renderer') return RENDERER_SESSION_ID;
-  if (source === 'jarvis-voice') return 'jarvis-voice';
-  return ctx.sessionId ?? `http:${ctx.token.slice(0, 16)}`;
-}
-
-export function permissionScopeForTool(
-  sessionId: string,
-  projectScope: ProjectExecutionScope,
-  toolName: string,
-  args: Record<string, unknown>,
-): PermissionScope {
-  return {
-    sessionId,
-    workspaceId: projectScope.rootRealPath,
-    projectId: projectScope.projectId,
-    checkoutId: projectScope.checkoutId,
-    toolName,
-    args,
-  };
 }
 
 function auditUnavailableResult(
@@ -257,28 +181,6 @@ function writeAudit(
   }
 }
 
-function needsConfirmation(
-  toolName: string,
-  args: Record<string, unknown>,
-): boolean {
-  return requiresConfirmation(toolName, args);
-}
-
-/**
- * Piso de segurança que NENHUMA aprovação de missão cobre: comandos
- * destrutivos locais (rm -rf, dd, mkfs…) sempre pedem confirmação humana.
- * Deploy/SSH/recon remoto NÃO é destrutivo — é o trabalho da missão.
- */
-function isDestructiveEffect(
-  toolName: string,
-  args: Readonly<Record<string, unknown>>,
-): boolean {
-  const canonical = canonicalToolName(toolName);
-  if (canonical !== 'terminal_run' && canonical !== 'bg_run') return false;
-  const command = typeof args.command === 'string' ? args.command : '';
-  return command.length > 0 && isDestructive(command);
-}
-
 function resolveDispatchTool(
   registry: McpRegistry,
   name: string,
@@ -296,14 +198,17 @@ function bindEffectAuthority(
   toolName: string,
   args: Readonly<Record<string, unknown>>,
   resolver: WorkflowAuthorityResolver,
-): string | undefined {
+): {
+  readonly contextRevision: string | undefined;
+  readonly workflowAuthority?: WorkflowEffectAuthority;
+} {
   const policy = effectPolicyForTool(toolName);
   if (
     policy === 'read-only' ||
     policy === 'bootstrap-authority' ||
     policy === 'handoff-authority'
   ) {
-    return ctx.contextRevision;
+    return { contextRevision: ctx.contextRevision };
   }
   if (policy === 'delegation-authority') {
     if (ctx.role !== 'orchestrator' || !ctx.missionId) {
@@ -311,7 +216,7 @@ function bindEffectAuthority(
         'delegation authority requires an orchestrator bound to a mission',
       );
     }
-    return ctx.contextRevision;
+    return { contextRevision: ctx.contextRevision };
   }
   if (policy === 'renderer-authorized-effect') {
     if (source !== 'ipc-renderer' || ctx.role !== 'user') {
@@ -319,7 +224,7 @@ function bindEffectAuthority(
         'renderer-authorized effect requires renderer user authority',
       );
     }
-    return ctx.contextRevision;
+    return { contextRevision: ctx.contextRevision };
   }
   if (policy === 'routine-local-operation') {
     if (source !== 'ipc-renderer' || ctx.role !== 'user') {
@@ -327,7 +232,7 @@ function bindEffectAuthority(
         'routine local operation requires renderer user authority',
       );
     }
-    return ctx.contextRevision;
+    return { contextRevision: ctx.contextRevision };
   }
   if (!ctx.missionId) {
     throw new Error(
@@ -339,11 +244,18 @@ function bindEffectAuthority(
   // vincular — a execução segue sem bind (PREVC degrada, não bloqueia).
   if (authority.contextRevision) {
     bindContextRevision(ctx, authority.contextRevision);
+  } else if (ctx.contextRevision) {
+    throw new Error(
+      'workflow_authority_revoked: frozen context contract is no longer current',
+    );
   }
   if (policy === 'execution-effect') {
     authority.assertExecutionEffectAllowed(toolName, args);
   }
-  return ctx.contextRevision;
+  return {
+    contextRevision: authority.contextRevision,
+    workflowAuthority: authority,
+  };
 }
 
 export async function dispatchToolCall(
@@ -355,7 +267,18 @@ export async function dispatchToolCall(
   options: McpDispatchOptions = {},
 ): Promise<ToolDispatchResult> {
   const startMs = Date.now();
-  const sessionId = normalizeSessionId(source, ctx);
+  const sessionId = normalizeDispatchSessionId(source, ctx);
+  const hasCurrentBearerAuthority = () =>
+    (source !== 'http-mcp' || isCurrentGateContext(ctx)) &&
+    (options.assertCurrentCaller?.() ?? true);
+  if (!hasCurrentBearerAuthority()) {
+    return {
+      ok: false,
+      tool: toolName,
+      denied: true,
+      error: 'session_authority_revoked',
+    };
+  }
   let auditContext = {
     scope: ctx.scope,
     missionId: ctx.missionId,
@@ -420,6 +343,32 @@ export async function dispatchToolCall(
     const reason =
       `tool "${tool.name}" is outside this agent's allowlist ` +
       `(agent: ${ctx.label})`;
+    const auditFailure = writeAudit(
+      () =>
+        auditDenied(
+          auditContext,
+          sessionId,
+          tool.name,
+          args,
+          Date.now() - startMs,
+          reason,
+          source,
+        ),
+      tool.name,
+    );
+    if (auditFailure) return auditFailure;
+    return {
+      ok: false,
+      tool: tool.name,
+      denied: true,
+      error: reason,
+    };
+  }
+
+  if (ctx.readOnly && !isToolAllowedForReadOnlyContext(tool.name)) {
+    const reason =
+      `read-only authority denied tool "${tool.name}": workspace, process, ` +
+      `delegation, and external effects are unavailable (agent: ${ctx.label})`;
     const auditFailure = writeAudit(
       () =>
         auditDenied(
@@ -542,7 +491,7 @@ export async function dispatchToolCall(
   if (!initialIntent.ok) return denyIntentCheck(initialIntent.error);
 
   try {
-    const contextRevision = bindEffectAuthority(
+    const boundAuthority = bindEffectAuthority(
       source,
       ctx,
       tool.name,
@@ -552,7 +501,7 @@ export async function dispatchToolCall(
     auditContext = {
       scope: ctx.scope,
       missionId: ctx.missionId,
-      contextRevision,
+      contextRevision: boundAuthority.contextRevision,
     };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
@@ -573,7 +522,38 @@ export async function dispatchToolCall(
     return { ok: false, tool: tool.name, denied: true, error: reason };
   }
 
-  const confirmationRequired = needsConfirmation(tool.name, args);
+  if (RENDERER_EXACT_CONSENT_TOOLS.has(canonicalToolName(tool.name))) {
+    const exactConsentSurface =
+      canonicalToolName(tool.name) === 'catalog_install'
+        ? 'Marketplace para revisar commit, digest e alertas'
+        : canonicalToolName(tool.name) === 'squad_save'
+          ? 'editor de squads para revisar o JSON normalizado e o fingerprint'
+          : 'editor de agentes para revisar o conteúdo integral e o fingerprint';
+    const error =
+      'renderer_exact_confirmation_required: use a superfície nativa do ' +
+      exactConsentSurface;
+    const auditFailure = writeAudit(
+      () =>
+        auditDenied(
+          auditContext,
+          sessionId,
+          tool.name,
+          args,
+          Date.now() - startMs,
+          error,
+          source,
+        ),
+      tool.name,
+    );
+    return auditFailure ?? {
+      ok: false,
+      tool: tool.name,
+      denied: true,
+      error,
+    };
+  }
+
+  const confirmationRequired = requiresToolConfirmation(tool.name, args);
   const effectful = isEffectfulTool(tool.name);
   let userAuthorized = false;
 
@@ -591,7 +571,8 @@ export async function dispatchToolCall(
       initialIntent.ok &&
       initialIntent.resolved &&
       hasCurrentApprovedDispatchContract(initialIntent.resolved.mission) &&
-      !isDestructiveEffect(tool.name, args)
+      !isDestructiveEffect(tool.name, args) &&
+      !requiresPerActionConsent(tool.name, args)
     ) {
       userAuthorized = true;
     }
@@ -701,8 +682,10 @@ export async function dispatchToolCall(
 
   // Confirmation can outlive the intent or frozen workflow revision. Rebind
   // both authorities immediately before reserving budget and starting effects.
+  let boundWorkflowAuthority: WorkflowEffectAuthority | undefined;
+  let boundWorkflowRevision: string | undefined;
   try {
-    const contextRevision = bindEffectAuthority(
+    const boundAuthority = bindEffectAuthority(
       source,
       ctx,
       tool.name,
@@ -712,8 +695,10 @@ export async function dispatchToolCall(
     auditContext = {
       scope: ctx.scope,
       missionId: ctx.missionId,
-      contextRevision,
+      contextRevision: boundAuthority.contextRevision,
     };
+    boundWorkflowAuthority = boundAuthority.workflowAuthority;
+    boundWorkflowRevision = boundAuthority.contextRevision;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     return denyIntentCheck(reason);
@@ -721,29 +706,6 @@ export async function dispatchToolCall(
 
   const finalIntent = checkMissionIntent();
   if (!finalIntent.ok) return denyIntentCheck(finalIntent.error);
-
-  if (
-    effectful &&
-    ctx.missionId &&
-    finalIntent.resolved &&
-    hasCurrentDispatchAuthority(finalIntent.resolved.mission)
-  ) {
-    try {
-      (options.reserveMissionBudget ?? reserveProductionMissionBudget)(
-        ctx.scope,
-        ctx.missionId,
-        tool.name,
-        finalIntent.resolved.mission.intentVersion ?? 0,
-      );
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.warn('[mcp-dispatch] mission budget reservation failed (deny):', err);
-      const error = /^(budget_exhausted|approval_required):/.test(detail)
-        ? detail
-        : 'budget_reservation_unavailable';
-      return denyIntentCheck(error);
-    }
-  }
 
   const invocationId = effectful ? randomUUID() : undefined;
   if (invocationId) {
@@ -764,6 +726,87 @@ export async function dispatchToolCall(
     if (auditFailure) return auditFailure;
   }
 
+  // Once an effect intent exists, every exit path must append exactly one
+  // correlated terminal outcome. In particular, queue arbitration and bearer
+  // revocation happen after auditIntent but before/after the handler and used
+  // to leave an orphan `intent` record behind.
+  let outcomeAuditWritten = false;
+  const writeOutcomeAudit = (
+    outcome: 'success' | 'error',
+    error: string | undefined,
+    effectStarted: boolean,
+  ): ToolDispatchResult | null => {
+    if (outcomeAuditWritten) return null;
+    outcomeAuditWritten = true;
+    return writeAudit(
+      () => {
+        if (outcome === 'success') {
+          auditSuccess(
+            auditContext,
+            sessionId,
+            tool.name,
+            args,
+            Date.now() - startMs,
+            userAuthorized,
+            source,
+            invocationId,
+          );
+          return;
+        }
+        auditError(
+          auditContext,
+          sessionId,
+          tool.name,
+          args,
+          Date.now() - startMs,
+          error ?? 'tool dispatch failed',
+          userAuthorized,
+          source,
+          invocationId,
+        );
+      },
+      tool.name,
+      effectStarted,
+    );
+  };
+
+  const denyAfterIntent = (error: string): ToolDispatchResult => {
+    const auditFailure = writeOutcomeAudit('error', error, false);
+    return auditFailure ?? {
+      ok: false,
+      tool: tool.name,
+      denied: true,
+      error,
+    };
+  };
+
+  // Persist the correlated effect intent before charging mission budget. If
+  // the audit INSERT fails, the reservation callback is never reached, so a
+  // consumed step can never become invisible. A reservation failure is then
+  // closed by the same invocation's terminal error record.
+  if (
+    effectful &&
+    ctx.missionId &&
+    finalIntent.resolved &&
+    hasCurrentDispatchAuthority(finalIntent.resolved.mission)
+  ) {
+    try {
+      (options.reserveMissionBudget ?? reserveProductionMissionBudget)(
+        ctx.scope,
+        ctx.missionId,
+        tool.name,
+        finalIntent.resolved.mission.intentVersion ?? 0,
+      );
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.warn('[mcp-dispatch] mission budget reservation failed (deny):', err);
+      const error = /^(budget_exhausted|approval_required):/.test(detail)
+        ? detail
+        : 'budget_reservation_unavailable';
+      return denyAfterIntent(error);
+    }
+  }
+
   // Track only warm/bootstrap tools on the prompt queue (not mission_create /
   // set_status). Newer intentVersion preempts in-flight doctor/map work.
   let queuePromptId: string | null = null;
@@ -776,6 +819,7 @@ export async function dispatchToolCall(
     try {
       const intentVersion = finalIntent.resolved?.mission.intentVersion ?? 1;
       const enq = enqueueMissionPrompt({
+        scope: ctx.scope,
         missionId: ctx.missionId,
         kind: 'bootstrap',
         body: tool.name,
@@ -785,7 +829,7 @@ export async function dispatchToolCall(
       const item = enq.state.items.at(-1);
       if (item && item.status === 'queued') {
         queuePromptId = item.id;
-        const started = startMissionPrompt(ctx.missionId, item.id);
+        const started = startMissionPrompt(ctx.scope, ctx.missionId, item.id);
         const executing = started.state.items.find(
           (entry) => entry.id === item.id && entry.status === 'executing',
         );
@@ -796,79 +840,123 @@ export async function dispatchToolCall(
           // promise, and doctor/map/scaffold handlers are idempotent anyway.
           // Freeze is NOT idempotent, so a duplicate freeze keeps the
           // fail-safe prompt_queue_busy deny, as does a different tool.
-          const current = peekMissionPromptQueue(ctx.missionId).executing;
+          const current = peekMissionPromptQueue(
+            ctx.scope,
+            ctx.missionId,
+          ).executing;
           const joinable =
             current?.body === tool.name && !/mission_freeze/i.test(tool.name);
-          cancelMissionPrompt(ctx.missionId, item.id);
+          cancelMissionPrompt(ctx.scope, ctx.missionId, item.id);
           if (!joinable) {
-            return {
-              ok: false,
-              tool: tool.name,
-              denied: true,
-              error: 'prompt_queue_busy',
-            };
+            return denyAfterIntent('prompt_queue_busy');
           }
           queuePromptId = null;
         } else {
-          queueSignal = getMissionPromptAbortSignal(ctx.missionId, item.id);
+          queueSignal = getMissionPromptAbortSignal(
+            ctx.scope,
+            ctx.missionId,
+            item.id,
+          );
         }
       } else if (item?.status === 'cancelled') {
-        return {
-          ok: false,
-          tool: tool.name,
-          denied: true,
-          error: 'intent_preempted: bootstrap cancelled by newer user intent',
-        };
+        return denyAfterIntent(
+          'intent_preempted: bootstrap cancelled by newer user intent',
+        );
       }
     } catch (err) {
       console.warn('[mcp-dispatch] prompt queue unavailable (deny):', err);
-      return {
-        ok: false,
-        tool: tool.name,
-        denied: true,
-        error: 'prompt_queue_unavailable',
-      };
+      return denyAfterIntent('prompt_queue_unavailable');
     }
   }
 
+  let handlerStarted = false;
   try {
     // If preempted after start (race with user submit), abort before handler.
     if (queuePromptId && ctx.missionId) {
-      const current = getMissionPromptQueue(ctx.missionId).items.find(
+      const current = getMissionPromptQueue(ctx.scope, ctx.missionId).items.find(
         (entry) => entry.id === queuePromptId,
       );
       if (current?.status === 'cancelled') {
-        return {
-          ok: false,
-          tool: tool.name,
-          denied: true,
-          error: 'intent_preempted: bootstrap cancelled by newer user intent',
-        };
+        return denyAfterIntent(
+          'intent_preempted: bootstrap cancelled by newer user intent',
+        );
       }
     }
 
-    const result = await tool.handler(args, ctx, { signal: queueSignal });
-    if (queueSignal?.aborted) {
-      throw new Error('intent_preempted: bootstrap cancelled by newer user intent');
+    if (!hasCurrentBearerAuthority()) {
+      if (queuePromptId && ctx.missionId) {
+        completeMissionPrompt(ctx.scope, ctx.missionId, queuePromptId, false);
+      }
+      return denyAfterIntent('session_authority_revoked');
     }
+    const gateSignal =
+      source === 'http-mcp' ? gateContextAbortSignal(ctx) : undefined;
+    if (source === 'http-mcp' && !gateSignal) {
+      if (queuePromptId && ctx.missionId) {
+        completeMissionPrompt(ctx.scope, ctx.missionId, queuePromptId, false);
+      }
+      return denyAfterIntent('session_authority_revoked');
+    }
+    const invocationSignals = [
+      queueSignal,
+      gateSignal,
+      options.callerSignal,
+    ].filter((signal): signal is AbortSignal => Boolean(signal));
+    const invocationSignal =
+      invocationSignals.length > 1
+        ? AbortSignal.any(invocationSignals)
+        : invocationSignals[0];
+    const assertCurrentAuthority = (): void => {
+      if (!hasCurrentBearerAuthority() || gateSignal?.aborted || options.callerSignal?.aborted) {
+        throw new Error('session_authority_revoked');
+      }
+      if (queueSignal?.aborted) {
+        throw new Error(
+          'intent_preempted: bootstrap cancelled by newer user intent',
+        );
+      }
+      const currentIntent = checkMissionIntent();
+      if (!currentIntent.ok) throw new Error(currentIntent.error);
+      if (boundWorkflowAuthority && ctx.missionId) {
+        const currentWorkflowAuthority = (
+          options.resolveWorkflowAuthority ?? resolveProductionWorkflowAuthority
+        )(ctx.scope, ctx.missionId);
+        if (currentWorkflowAuthority.contextRevision !== boundWorkflowRevision) {
+          throw new Error(
+            'workflow_authority_revoked: context revision changed during tool execution',
+          );
+        }
+        if (effectPolicy === 'execution-effect') {
+          currentWorkflowAuthority.assertExecutionEffectAllowed(tool.name, args);
+        }
+      }
+    };
+    assertCurrentAuthority();
+    handlerStarted = true;
+    const exactUserConsent =
+      userAuthorized && requiresPerActionConsent(tool.name, args)
+        ? Object.freeze({
+            toolName: canonicalToolName(tool.name),
+            action:
+              typeof args.action === 'string'
+                ? args.action.trim().toLowerCase()
+                : 'invoke',
+            grantedAt: Date.now(),
+            receiptId: invocationId!,
+          })
+        : undefined;
+    const result = await tool.handler(args, ctx, {
+      signal: invocationSignal,
+      assertCurrentAuthority,
+      ...(exactUserConsent ? { exactUserConsent } : {}),
+    });
+    // The handler may have awaited an OS/network boundary without performing
+    // its own final checkpoint. Revalidate centrally before reporting success.
+    assertCurrentAuthority();
     if (queuePromptId && ctx.missionId) {
-      completeMissionPrompt(ctx.missionId, queuePromptId, true);
+      completeMissionPrompt(ctx.scope, ctx.missionId, queuePromptId, true);
     }
-    const auditFailure = writeAudit(
-      () =>
-        auditSuccess(
-          auditContext,
-          sessionId,
-          tool.name,
-          args,
-          Date.now() - startMs,
-          userAuthorized,
-          source,
-          invocationId,
-        ),
-      tool.name,
-      effectful,
-    );
+    const auditFailure = writeOutcomeAudit('success', undefined, effectful);
     if (auditFailure) return auditFailure;
     return {
       ok: true,
@@ -878,36 +966,33 @@ export async function dispatchToolCall(
     };
   } catch (err) {
     if (queuePromptId && ctx.missionId) {
-      completeMissionPrompt(ctx.missionId, queuePromptId, false);
+      completeMissionPrompt(ctx.scope, ctx.missionId, queuePromptId, false);
     }
-    const errorMsg = queueSignal?.aborted
-      ? 'intent_preempted: bootstrap cancelled by newer user intent'
-      : err instanceof Error
-        ? err.message
-        : String(err);
-    const auditFailure = writeAudit(
-      () =>
-        auditError(
-          auditContext,
-          sessionId,
-          tool.name,
-          args,
-          Date.now() - startMs,
-          errorMsg,
-          userAuthorized,
-          source,
-          invocationId,
-        ),
-      tool.name,
-      effectful,
+    const authorityRevoked =
+      !hasCurrentBearerAuthority() ||
+      gateContextAbortSignal(ctx)?.aborted === true ||
+      options.callerSignal?.aborted === true;
+    const errorMsg = authorityRevoked
+      ? 'session_authority_revoked'
+      : queueSignal?.aborted
+        ? 'intent_preempted: bootstrap cancelled by newer user intent'
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    const effectMayHaveCommitted = effectful && handlerStarted;
+    const auditFailure = writeOutcomeAudit(
+      'error',
+      errorMsg,
+      effectMayHaveCommitted,
     );
     if (auditFailure) return auditFailure;
     return {
       ok: false,
       tool: tool.name,
       error: errorMsg,
+      denied: authorityRevoked || undefined,
       userAuthorized,
-      effectMayHaveCommitted: effectful,
+      effectMayHaveCommitted: effectMayHaveCommitted || undefined,
     };
   }
 }

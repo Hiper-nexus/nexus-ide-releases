@@ -17,6 +17,29 @@ const REQUIRED_FUSES = [
   'OnlyLoadAppFromAsar is Enabled',
   'GrantFileProtocolExtraPrivileges is Disabled',
 ];
+const RELEASE_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+);
+
+export function buildFusesReadInvocation(appPath, root = RELEASE_ROOT) {
+  return {
+    command: process.execPath,
+    args: [
+      path.join(
+        path.resolve(root),
+        'node_modules',
+        '@electron',
+        'fuses',
+        'dist',
+        'bin.js',
+      ),
+      'read',
+      '--app',
+      appPath,
+    ],
+  };
+}
 
 function exactlyOne(paths, extension, label) {
   const matches = paths.filter((candidate) =>
@@ -39,6 +62,8 @@ export function assertReleaseArtifacts(paths) {
 export function parseCodesignMetadata(output) {
   const authorities = [];
   let teamIdentifier = '';
+  let secureTimestamp = '';
+  let signedTime = '';
   for (const line of output.split(/\r?\n/u)) {
     if (line.startsWith('Authority=')) {
       authorities.push(line.slice('Authority='.length).trim());
@@ -46,8 +71,14 @@ export function parseCodesignMetadata(output) {
     if (line.startsWith('TeamIdentifier=')) {
       teamIdentifier = line.slice('TeamIdentifier='.length).trim();
     }
+    if (line.startsWith('Timestamp=')) {
+      secureTimestamp = line.slice('Timestamp='.length).trim();
+    }
+    if (line.startsWith('Signed Time=')) {
+      signedTime = line.slice('Signed Time='.length).trim();
+    }
   }
-  return { authorities, teamIdentifier };
+  return { authorities, teamIdentifier, secureTimestamp, signedTime };
 }
 
 export function assertSignatureMetadata(metadata, teamId, identityName) {
@@ -60,6 +91,14 @@ export function assertSignatureMetadata(metadata, teamId, identityName) {
   if (metadata.authorities[0] !== expectedAuthority) {
     throw new Error(
       `codesign Authority mismatch: expected ${expectedAuthority}, got ${metadata.authorities[0] || '<missing>'}`,
+    );
+  }
+  if (!metadata.secureTimestamp) {
+    throw new Error(
+      'codesign secure Timestamp is missing' +
+        (metadata.signedTime
+          ? '; Signed Time is not a secure timestamp'
+          : ''),
     );
   }
 }
@@ -104,6 +143,38 @@ export function assertPackagedSmokeOutput(output) {
     if (!output.includes(proof)) {
       throw new Error(`artifact smoke lacked ${proof} proof`);
     }
+  }
+}
+
+export function parseLipoArchitectures(output) {
+  return [...new Set(
+    String(output)
+      .trim()
+      .split(/\s+/u)
+      .filter((value) => value === 'arm64' || value === 'x86_64'),
+  )].sort();
+}
+
+export function assertMatchingReleaseArchitectures(
+  dmgArchitectures,
+  zipArchitectures,
+  expectedArchitecture,
+) {
+  const dmg = [...dmgArchitectures].sort();
+  const zip = [...zipArchitectures].sort();
+  if (JSON.stringify(dmg) !== JSON.stringify(zip)) {
+    throw new Error(
+      `DMG and ZIP architecture mismatch: DMG=${dmg.join(',')} ZIP=${zip.join(',')}`,
+    );
+  }
+  if (
+    dmg.length !== 1 ||
+    dmg[0] !== expectedArchitecture
+  ) {
+    throw new Error(
+      `release is single-architecture for this host: expected only ` +
+        `${expectedArchitecture}, got ${dmg.join(',') || '<none>'}`,
+    );
   }
 }
 
@@ -200,12 +271,24 @@ function assertExactEntitlements(binaryPath, appPath) {
   }
 }
 
-async function verifyMachOBinaries(appPath, signing) {
+async function verifyMachOBinaries(appPath, signing, expectedArchitecture) {
   const files = await collectRegularFiles(appPath);
   let count = 0;
   for (const candidate of files) {
     const fileType = runChecked('/usr/bin/file', ['-b', candidate]).stdout;
     if (!fileType.includes('Mach-O')) continue;
+    const architectures = parseLipoArchitectures(
+      runChecked('/usr/bin/lipo', ['-archs', candidate]).stdout,
+    );
+    if (
+      architectures.length !== 1 ||
+      architectures[0] !== expectedArchitecture
+    ) {
+      throw new Error(
+        `Mach-O architecture mismatch for ${candidate}: expected only ` +
+          `${expectedArchitecture}, got ${architectures.join(',') || '<none>'}`,
+      );
+    }
     count += 1;
     runChecked('/usr/bin/codesign', [
       '--verify', '--strict', '--verbose=2', candidate,
@@ -244,11 +327,10 @@ async function verifyApp(appPath, expected, signing) {
     '--assess', '--type', 'execute', '--verbose=2', appPath,
   ]);
   runChecked('/usr/bin/xcrun', ['stapler', 'validate', appPath]);
-  await verifyMachOBinaries(appPath, signing);
+  await verifyMachOBinaries(appPath, signing, expected.architecture);
 
-  const fuses = runChecked('/usr/bin/env', [
-    'npx', '--no-install', '@electron/fuses', 'read', '--app', appPath,
-  ]).combined;
+  const fuseRead = buildFusesReadInvocation(appPath);
+  const fuses = runChecked(fuseRead.command, fuseRead.args).combined;
   for (const required of REQUIRED_FUSES) {
     if (!fuses.includes(required)) {
       throw new Error(`required Electron fuse missing: ${required}`);
@@ -260,6 +342,15 @@ async function verifyApp(appPath, expected, signing) {
     path.join(scriptDir, 'smoke-packaged-app.mjs'), '--app', appPath,
   ]).combined;
   assertPackagedSmokeOutput(smoke);
+  const mainExecutable = path.join(
+    appPath,
+    'Contents',
+    'MacOS',
+    'nexus-ide',
+  );
+  return parseLipoArchitectures(
+    runChecked('/usr/bin/lipo', ['-archs', mainExecutable]).stdout,
+  );
 }
 
 function verifyDmgContainer(dmgPath, signing) {
@@ -293,7 +384,13 @@ function parseArgs(args) {
   return values;
 }
 
-function assertConfiguration({ version, teamId, identityName, bundleId }) {
+function assertConfiguration({
+  version,
+  teamId,
+  identityName,
+  bundleId,
+  architecture,
+}) {
   if (!/^\d+\.\d+\.\d+$/u.test(version)) {
     throw new Error(`invalid release version: ${version || '<missing>'}`);
   }
@@ -306,6 +403,9 @@ function assertConfiguration({ version, teamId, identityName, bundleId }) {
   if (bundleId !== DEFAULT_BUNDLE_ID) {
     throw new Error(`unexpected bundle ID configuration: ${bundleId}`);
   }
+  if (architecture !== 'arm64' && architecture !== 'x86_64') {
+    throw new Error(`invalid release architecture: ${architecture}`);
+  }
 }
 
 async function main() {
@@ -317,6 +417,9 @@ async function main() {
   const expected = {
     version: args.version ?? '',
     bundleId: args['bundle-id'] ?? DEFAULT_BUNDLE_ID,
+    architecture:
+      args.arch ??
+      (process.arch === 'x64' ? 'x86_64' : process.arch),
   };
   const signing = {
     teamId: args['team-id'] ?? process.env.APPLE_TEAM_ID ?? '',
@@ -341,9 +444,22 @@ async function main() {
       '-mountpoint', mountPoint, artifacts.dmg,
     ]);
     isMounted = true;
-    await verifyApp(await findSingleApp(mountPoint), expected, signing);
+    const dmgArchitectures = await verifyApp(
+      await findSingleApp(mountPoint),
+      expected,
+      signing,
+    );
     runChecked('/usr/bin/ditto', ['-x', '-k', artifacts.zip, zipRoot]);
-    await verifyApp(await findSingleApp(zipRoot), expected, signing);
+    const zipArchitectures = await verifyApp(
+      await findSingleApp(zipRoot),
+      expected,
+      signing,
+    );
+    assertMatchingReleaseArchitectures(
+      dmgArchitectures,
+      zipArchitectures,
+      expected.architecture,
+    );
   } finally {
     if (isMounted) {
       try {

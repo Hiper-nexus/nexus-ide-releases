@@ -51,6 +51,7 @@ const costSnapshot = (totalUsd: number) => ({
 
 const usageSnapshot = (turns: number) => ({
   byPane: {},
+  byAccount: {},
   global: { costUsd: 0, inputTokens: 0, outputTokens: 0, turns },
   media: { generations: 0, costUsd: 0 },
 });

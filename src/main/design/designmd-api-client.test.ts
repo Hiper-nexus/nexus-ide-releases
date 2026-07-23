@@ -300,4 +300,35 @@ describe('DesignMdApiClient', () => {
     expect(body.slug).toBe('acme/clean');
     expect(body.content).toBe('# DESIGN.md\n\nUse a 4pt grid.');
   });
+
+  it('aborts an in-flight publish when caller authority is revoked', async () => {
+    const fetchFn = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            'abort',
+            () => {
+              const error = new Error('aborted');
+              error.name = 'AbortError';
+              reject(error);
+            },
+            { once: true },
+          );
+        }),
+    );
+    const d = deps({ fetchFn });
+    const controller = new AbortController();
+    const pending = new DesignMdApiClient(d).publishKit(
+      {
+        slug: 'acme/revoked',
+        name: 'Revoked Kit',
+        content: '# DESIGN.md\n',
+      },
+      { signal: controller.signal },
+    );
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+    controller.abort();
+
+    await expect(pending).rejects.toThrow(/request failed.*aborted/i);
+  });
 });

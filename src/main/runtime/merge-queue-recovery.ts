@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
+  MergeAuthorityRevokedError,
   MergeCasError,
   MergeQueueStateError,
   MergeRetryRequiredError,
@@ -328,6 +329,7 @@ export class MergeQueueRecovery {
     }
     let evidenceIds = entry.evidenceIds;
     try {
+      this.#assertCurrentAuthority(input);
       this.#assertTaskUnchanged(input, attempt.prepared);
       this.#assertIntegration(
         attempt.prepared.record,
@@ -335,7 +337,8 @@ export class MergeQueueRecovery {
         'primary checkout no longer matches the approved candidate',
       );
       if (attempt.mode !== 'finalization') {
-        const decision = await input.validate(Object.freeze({
+        this.#assertCurrentAuthority(input);
+        const pendingDecision = input.validate(Object.freeze({
           phase: 'post-integration',
           scope: Object.freeze({ ...input.scope }),
           missionId: input.missionId,
@@ -348,6 +351,12 @@ export class MergeQueueRecovery {
           diffHash,
           changedFiles: Object.freeze([...attempt.prepared.changedFiles]),
         }));
+        const decision =
+          pendingDecision &&
+          typeof (pendingDecision as PromiseLike<unknown>).then === 'function'
+            ? await pendingDecision
+            : (pendingDecision as Awaited<typeof pendingDecision>);
+        this.#assertCurrentAuthority(input);
         evidenceIds = Object.freeze([
           ...new Set([
             ...evidenceIds,
@@ -355,12 +364,14 @@ export class MergeQueueRecovery {
           ]),
         ]);
       }
+      this.#assertCurrentAuthority(input);
       this.#assertTaskUnchanged(input, attempt.prepared);
       this.#assertIntegration(
         attempt.prepared.record,
         candidateSha,
         'post-integration retry changed the integrated checkout',
       );
+      this.#assertCurrentAuthority(input);
       this.#worktrees.finalizeRecoveredIntegration(
         input.scope,
         input.missionId,
@@ -377,7 +388,15 @@ export class MergeQueueRecovery {
         diffHash,
         evidenceIds,
       });
-      await input.finalize?.(result);
+      this.#assertCurrentAuthority(input);
+      const finalization = input.finalize?.(result);
+      if (
+        finalization &&
+        typeof (finalization as PromiseLike<void>).then === 'function'
+      ) {
+        await finalization;
+      }
+      this.#assertCurrentAuthority(input);
       this.#state.complete(
         attempt.claimed,
         candidateSha,
@@ -408,6 +427,15 @@ export class MergeQueueRecovery {
             : [],
       });
       throw error;
+    }
+  }
+
+  #assertCurrentAuthority(input: RetryMergeInput): void {
+    if (!input.assertCurrentAuthority) return;
+    try {
+      input.assertCurrentAuthority();
+    } catch (error) {
+      throw new MergeAuthorityRevokedError(error);
     }
   }
 

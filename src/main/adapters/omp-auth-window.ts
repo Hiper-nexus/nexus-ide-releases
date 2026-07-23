@@ -49,6 +49,23 @@ export function isAllowedOmpAuthUrl(raw: string): boolean {
   }
 }
 
+/**
+ * Electron emits HTTP 30x hops through `will-redirect`, independently from
+ * page/user navigations (`will-navigate`). Both edges must share the exact
+ * same fail-closed URL policy or a remote OAuth endpoint could redirect around
+ * the scheme/loopback guard.
+ */
+export function installOmpAuthNavigationGuards(win: BrowserWindow): void {
+  const blockDisallowed = (
+    event: { preventDefault(): void },
+    target: string,
+  ): void => {
+    if (!isAllowedOmpAuthUrl(target)) event.preventDefault();
+  };
+  win.webContents.on('will-navigate', blockDisallowed);
+  win.webContents.on('will-redirect', blockDisallowed);
+}
+
 function defaultCreateWindow(url: string): BrowserWindow {
   const win = new BrowserWindow({
     width: AUTH_WINDOW_WIDTH,
@@ -66,9 +83,7 @@ function defaultCreateWindow(url: string): BrowserWindow {
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.webContents.on('will-navigate', (event, target) => {
-    if (!isAllowedOmpAuthUrl(target)) event.preventDefault();
-  });
+  installOmpAuthNavigationGuards(win);
   win.webContents.session.setPermissionRequestHandler(
     (_webContents, _permission, callback) => callback(false),
   );

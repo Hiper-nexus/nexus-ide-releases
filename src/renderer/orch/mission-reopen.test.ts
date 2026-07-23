@@ -8,6 +8,12 @@ const killConflictingOrchestrators = vi.fn(
   (_id?: string) => [] as string[],
 );
 const listMissionPanes = vi.fn();
+const terminalMocks = vi.hoisted(() => ({
+  waitForSession: vi.fn(
+    async (paneId: string): Promise<string | null> => `session-${paneId}`,
+  ),
+  getPaneSessionId: vi.fn((paneId: string) => `session-${paneId}`),
+}));
 
 let layoutPanes: Array<{
   id: string;
@@ -48,8 +54,8 @@ vi.mock('../state/active-workspace', () => ({
 
 vi.mock('../terminal/terminal-host', () => ({
   markResumeOnSpawn: vi.fn(),
-  waitForSession: vi.fn(async () => null),
-  getPaneSessionId: vi.fn(() => null),
+  waitForSession: terminalMocks.waitForSession,
+  getPaneSessionId: terminalMocks.getPaneSessionId,
 }));
 
 vi.mock('./mission-launcher', async () => {
@@ -77,11 +83,17 @@ describe('reopenMission soft / multi', () => {
     ];
     paneMissions = { 'live-1': 'mission-live' };
     killConflictingOrchestrators.mockReturnValue([]);
+    terminalMocks.waitForSession.mockImplementation(
+      async (paneId: string) => `session-${paneId}`,
+    );
+    terminalMocks.getPaneSessionId.mockImplementation(
+      (paneId: string) => `session-${paneId}`,
+    );
     vi.stubGlobal('window', {
       nexus: {
         orch: {
           listMissionPanes,
-          rebindMissionOrchestrator: vi.fn(),
+          rebindMissionOrchestrator: vi.fn(async () => ({ ok: true })),
         },
         pty: { kill: vi.fn() },
       },
@@ -105,7 +117,14 @@ describe('reopenMission soft / multi', () => {
       createdAt: 1,
       updatedAt: 2,
     });
-    expect(result).toEqual({ ok: true, panes: 1, soft: true });
+    expect(result).toMatchObject({
+      ok: true,
+      panes: 1,
+      soft: true,
+      sessionIds: ['session-live-1'],
+      ackId: expect.stringMatching(/^mission-reopen:/),
+      ackedAt: expect.any(Number),
+    });
     expect(focus).toHaveBeenCalledWith('live-1');
     expect(killLiveAgents).not.toHaveBeenCalled();
     expect(listMissionPanes).not.toHaveBeenCalled();
@@ -141,6 +160,130 @@ describe('reopenMission soft / multi', () => {
     const merged = setPanes.mock.calls[0]![0] as Array<{ id: string }>;
     expect(merged.map((p) => p.id)).toContain('live-1');
     expect(merged.map((p) => p.id)).toContain('orch-b');
+    expect(result).toMatchObject({
+      sessionIds: ['session-orch-b'],
+      ackId: expect.stringMatching(/^mission-reopen:/),
+      ackedAt: expect.any(Number),
+    });
+    expect(window.nexus.orch.rebindMissionOrchestrator).toHaveBeenCalledWith(
+      'mission-b',
+      'session-orch-b',
+    );
+  });
+
+  it('fails closed before changing layout on a forced hard reopen', async () => {
+    listMissionPanes.mockResolvedValueOnce([
+      {
+        id: 'spec-hard',
+        missionId: 'mission-hard',
+        adapterId: 'gemini',
+        title: 'orch-hard',
+        role: 'orchestrator',
+        paneId: 'orch-hard',
+        createdAt: 1,
+      },
+    ]);
+
+    const result = await reopenMission(
+      {
+        id: 'mission-hard',
+        title: 'Hard',
+        description: '',
+        status: 'running',
+        milestones: [],
+        learnings: '',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      { forceHard: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/saída|encerramento físico/i),
+    });
+    expect(setPanes).not.toHaveBeenCalled();
+    expect(killLiveAgents).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on exclusive-auth conflict without renderer-side kill', async () => {
+    layoutPanes = [
+      {
+        id: 'claude-live',
+        kind: 'cli-agent',
+        role: 'orchestrator',
+        adapterId: 'claude',
+      },
+    ];
+    paneMissions = { 'claude-live': 'mission-live' };
+    listMissionPanes.mockResolvedValueOnce([
+      {
+        id: 'spec-conflict',
+        missionId: 'mission-conflict',
+        adapterId: 'claude',
+        title: 'orch-conflict',
+        role: 'orchestrator',
+        paneId: 'orch-conflict',
+        createdAt: 1,
+      },
+    ]);
+
+    const result = await reopenMission({
+      id: 'mission-conflict',
+      title: 'Conflict',
+      description: '',
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/credencial exclusiva|saída/i),
+    });
+    expect(setPanes).not.toHaveBeenCalled();
+    expect(killConflictingOrchestrators).not.toHaveBeenCalled();
+  });
+
+  it('does not claim restore success before every pane and rebind are acknowledged', async () => {
+    listMissionPanes.mockResolvedValueOnce([
+      {
+        id: 'spec-orch',
+        missionId: 'mission-b',
+        adapterId: 'gemini',
+        title: 'orch-b',
+        role: 'orchestrator',
+        paneId: 'orch-b',
+        createdAt: 1,
+      },
+      {
+        id: 'spec-worker',
+        missionId: 'mission-b',
+        adapterId: 'codex',
+        title: 'worker-b',
+        role: 'worker',
+        paneId: 'worker-b',
+        createdAt: 1,
+      },
+    ]);
+    terminalMocks.waitForSession.mockImplementation(async (paneId: string) =>
+      paneId === 'worker-b' ? null : `session-${paneId}`,
+    );
+    const result = await reopenMission({
+      id: 'mission-b',
+      title: 'B',
+      description: '',
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(result.error).toMatch(/worker-b.*não confirmou/i);
+    expect(window.nexus.orch.rebindMissionOrchestrator).not.toHaveBeenCalled();
   });
 
   it('returns intentShell for armed agentic missions without panes', async () => {
@@ -161,7 +304,7 @@ describe('reopenMission soft / multi', () => {
     expect(setPanes).not.toHaveBeenCalled();
   });
 
-  it('hard-reopens when forceHard is set', async () => {
+  it('rejects legacy forceHard instead of killing from the renderer', async () => {
     listMissionPanes.mockResolvedValueOnce([
       {
         id: 'spec-1',
@@ -186,13 +329,13 @@ describe('reopenMission soft / multi', () => {
       },
       { forceHard: true },
     );
-    expect(result.ok).toBe(true);
-    expect(result.soft).toBe(false);
-    expect(killLiveAgents).toHaveBeenCalled();
-    expect(setPanes).toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/encerramento físico|saída/i);
+    expect(killLiveAgents).not.toHaveBeenCalled();
+    expect(setPanes).not.toHaveBeenCalled();
   });
 
-  it('kills only conflicting Claude orchestrator when needed', async () => {
+  it('rejects a Claude conflict instead of killing only its visible pane', async () => {
     layoutPanes = [
       {
         id: 'claude-orch',
@@ -225,12 +368,9 @@ describe('reopenMission soft / multi', () => {
       createdAt: 1,
       updatedAt: 2,
     });
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(killLiveAgents).not.toHaveBeenCalled();
-    expect(killConflictingOrchestrators).toHaveBeenCalledWith('claude');
-    const merged = setPanes.mock.calls[0]![0] as Array<{ id: string }>;
-    expect(merged.map((p) => p.id)).toContain('worker-x');
-    expect(merged.map((p) => p.id)).toContain('orch-b');
-    expect(merged.map((p) => p.id)).not.toContain('claude-orch');
+    expect(killConflictingOrchestrators).not.toHaveBeenCalled();
+    expect(setPanes).not.toHaveBeenCalled();
   });
 });

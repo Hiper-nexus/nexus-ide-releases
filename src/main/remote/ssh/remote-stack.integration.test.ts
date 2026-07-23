@@ -60,7 +60,12 @@ describe('remote stack mock e2e (D2–D5)', () => {
     await expect(git.write(['push', '--force'])).rejects.toBeInstanceOf(RemoteGitDeniedError);
 
     const frames: Uint8Array[] = [];
-    const pty = await openRemotePty(session, { streamId: 7, cols: 80, rows: 24 });
+    const pty = await openRemotePty(session, {
+      streamId: 7,
+      cols: 80,
+      rows: 24,
+      replay: { maxFrames: 2, maxBytes: 1_024 },
+    });
     pty.onFrame((f) => frames.push(f));
     pty.writeInput('echo hi\n');
     expect(frames.length).toBe(1);
@@ -70,6 +75,19 @@ describe('remote stack mock e2e (D2–D5)', () => {
     expect(decoded?.seq).toBe(1);
     expect(new TextDecoder().decode(decoded!.payload)).toBe('echo hi\n');
     expect(pty.getLastSeq()).toBe(1);
+    expect(pty.resumeAfter(0)).toMatchObject({
+      snapshotRequired: false,
+      fromSeq: 1,
+      toSeq: 1,
+    });
+
+    pty.writeInput('second\n');
+    pty.writeInput('third\n');
+    expect(pty.resumeAfter(0)).toMatchObject({
+      snapshotRequired: true,
+      oldestAvailableSeq: 2,
+      latestSeq: 3,
+    });
 
     await session.disconnect();
     expect(transport.isConnected()).toBe(false);

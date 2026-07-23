@@ -12,7 +12,9 @@ function deps(fetchFn: typeof fetch, addresses = [PUBLIC_IP]) {
 
 describe('provider media downloads', () => {
   it('downloads an allowlisted HTTPS provider URL with a bounded body', async () => {
-    const fetchFn = vi.fn(async () => new Response('video')) as unknown as typeof fetch;
+    const fetchFn = vi.fn(
+      async () => new Response('video'),
+    ) as unknown as typeof fetch;
     const input = deps(fetchFn);
     await expect(
       downloadProviderAsset(
@@ -25,7 +27,10 @@ describe('provider media downloads', () => {
     expect(input.resolveHostname).toHaveBeenCalledWith('replicate.delivery');
     expect(fetchFn).toHaveBeenCalledWith(
       'https://replicate.delivery/output/video.mp4',
-      expect.objectContaining({ redirect: 'manual', signal: expect.any(AbortSignal) }),
+      expect.objectContaining({
+        redirect: 'manual',
+        signal: expect.any(AbortSignal),
+      }),
     );
   });
 
@@ -50,7 +55,10 @@ describe('provider media downloads', () => {
     expect(fetchPinned).toHaveBeenCalledWith(
       expect.objectContaining({ hostname: 'replicate.delivery' }),
       [PUBLIC_IP],
-      expect.objectContaining({ redirect: 'manual', signal: expect.any(AbortSignal) }),
+      expect.objectContaining({
+        redirect: 'manual',
+        signal: expect.any(AbortSignal),
+      }),
     );
     expect(fetchFn).not.toHaveBeenCalled();
   });
@@ -90,11 +98,12 @@ describe('provider media downloads', () => {
   });
 
   it('revalidates every redirect target', async () => {
-    const fetchFn = vi.fn(async () =>
-      new Response(null, {
-        status: 302,
-        headers: { location: 'https://attacker.example/payload.mp4' },
-      }),
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://attacker.example/payload.mp4' },
+        }),
     ) as unknown as typeof fetch;
     const input = deps(fetchFn);
     await expect(
@@ -108,11 +117,12 @@ describe('provider media downloads', () => {
   });
 
   it('revalidates DNS after a redirect between allowlisted provider hosts', async () => {
-    const fetchFn = vi.fn(async () =>
-      new Response(null, {
-        status: 302,
-        headers: { location: 'https://files.replicate.delivery/payload.mp4' },
-      }),
+    const fetchFn = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://files.replicate.delivery/payload.mp4' },
+        }),
     ) as unknown as typeof fetch;
     const input = {
       fetchFn,
@@ -133,7 +143,9 @@ describe('provider media downloads', () => {
   });
 
   it('aborts downloads that exceed the body limit', async () => {
-    const fetchFn = vi.fn(async () => new Response('too-large')) as unknown as typeof fetch;
+    const fetchFn = vi.fn(
+      async () => new Response('too-large'),
+    ) as unknown as typeof fetch;
     await expect(
       downloadProviderAsset(
         'https://oaidalleapiprodscus.blob.core.windows.net/private/image.png',
@@ -148,7 +160,9 @@ describe('provider media downloads', () => {
     const fetchFn = vi.fn(
       async (_url: RequestInfo | URL, init?: RequestInit) =>
         await new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          init?.signal?.addEventListener('abort', () =>
+            reject(new Error('aborted')),
+          );
         }),
     ) as unknown as typeof fetch;
 
@@ -160,6 +174,40 @@ describe('provider media downloads', () => {
         { maxBytes: 16, timeoutMs: 10 },
       ),
     ).rejects.toThrow(/timeout/);
+  });
+
+  it('composes caller revocation into the pinned download transport', async () => {
+    const caller = new AbortController();
+    const observed: { signal?: AbortSignal } = {};
+    const fetchPinned = vi.fn(
+      async (_url: URL, _addresses: readonly string[], init: RequestInit) =>
+        await new Promise<Response>((_resolve, reject) => {
+          observed.signal = init.signal ?? undefined;
+          const onAbort = () => reject(new Error('caller revoked'));
+          if (init.signal?.aborted) {
+            onAbort();
+            return;
+          }
+          init.signal?.addEventListener('abort', onAbort, { once: true });
+          queueMicrotask(() => caller.abort('session_authority_revoked'));
+        }),
+    );
+
+    await expect(
+      downloadProviderAsset(
+        'https://replicate.delivery/output.mp4',
+        'replicate-video',
+        {
+          fetchFn: vi.fn() as unknown as typeof fetch,
+          fetchPinned,
+          resolveHostname: vi.fn(async () => [PUBLIC_IP]),
+        },
+        { maxBytes: 16, timeoutMs: 1_000 },
+        caller.signal,
+      ),
+    ).rejects.toThrow(/caller revoked/);
+    expect(fetchPinned).toHaveBeenCalledOnce();
+    expect(observed.signal?.aborted).toBe(true);
   });
 
   it('times out DNS resolution before any HTTP request', async () => {

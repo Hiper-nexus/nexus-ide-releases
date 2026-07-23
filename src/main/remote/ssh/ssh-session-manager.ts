@@ -9,6 +9,7 @@
 import type { RemoteHostCapability } from '../remote-capability';
 import { remoteCapabilityGrantsAgentForce } from '../remote-capability';
 import { identityAllowlistIsWildcard } from './ssh-identity-filter';
+import { SshTransportError } from './ssh-operation-lifecycle';
 
 export type SshAuthMethod =
   | { readonly kind: 'password'; readonly password: string }
@@ -40,19 +41,35 @@ export type SshConnectOptions = {
   ) => boolean | Promise<boolean>;
 };
 
+export type SshOperationOptions = {
+  /** Per-call timeout override. Production transports still enforce a bound. */
+  readonly timeoutMs?: number;
+  /** Cancellation never triggers an automatic retry. */
+  readonly signal?: AbortSignal;
+};
+
 export type SshTransport = {
   connect(options: SshConnectOptions): Promise<void>;
   disconnect(): Promise<void>;
   isConnected(): boolean;
   exec(
     command: string,
+    options?: SshOperationOptions,
   ): Promise<{ code: number; stdout: string; stderr: string }>;
-  readFile(remotePath: string): Promise<string>;
-  writeFile(remotePath: string, content: string): Promise<void>;
-  listDir(remotePath: string): Promise<readonly string[]>;
+  readFile(remotePath: string, options?: SshOperationOptions): Promise<string>;
+  writeFile(
+    remotePath: string,
+    content: string,
+    options?: SshOperationOptions,
+  ): Promise<void>;
+  listDir(
+    remotePath: string,
+    options?: SshOperationOptions,
+  ): Promise<readonly string[]>;
   openPty?(
     cols: number,
     rows: number,
+    options?: SshOperationOptions,
   ): Promise<{
     write: (data: string) => void;
     onData: (cb: (data: string) => void) => void;
@@ -65,6 +82,8 @@ export type SshSession = {
   readonly sessionId: string;
   readonly capability: RemoteHostCapability;
   readonly transport: SshTransport;
+  /** Explicit reconnect only; no failed operation is replayed automatically. */
+  reconnect(): Promise<void>;
   disconnect(): Promise<void>;
 };
 
@@ -108,13 +127,49 @@ export function createSshSessionManager(): SshSessionManager {
       // Production transport is injected (ssh2 via createSsh2Transport).
       await transport.connect(options);
       const sessionId = `ssh-${++seq}-${capability.hostId}`;
+      let closed = false;
+      let reconnectInFlight: Promise<void> | null = null;
+      const guardedTransport = createSessionTransportGuard(
+        transport,
+        () => closed,
+      );
       const session: SshSession = {
         sessionId,
         capability,
-        transport,
+        transport: guardedTransport,
+        async reconnect() {
+          if (closed) {
+            throw new SshTransportError(
+              'not_connected',
+              'Sessão SSH encerrada; crie uma nova sessão para reconectar.',
+            );
+          }
+          if (transport.isConnected()) return;
+          if (reconnectInFlight) return reconnectInFlight;
+          reconnectInFlight = (async () => {
+            // Invalidate any dead generation/resources before opening another.
+            await transport.disconnect();
+            if (closed) {
+              throw new SshTransportError(
+                'not_connected',
+                'Sessão SSH foi encerrada durante a reconexão.',
+              );
+            }
+            await transport.connect(options);
+          })();
+          try {
+            await reconnectInFlight;
+          } finally {
+            reconnectInFlight = null;
+          }
+        },
         async disconnect() {
-          await transport.disconnect();
-          sessions.delete(sessionId);
+          closed = true;
+          try {
+            await transport.disconnect();
+          } finally {
+            sessions.delete(sessionId);
+          }
         },
       };
       sessions.set(sessionId, session);
@@ -130,6 +185,57 @@ export function createSshSessionManager(): SshSessionManager {
     list() {
       return [...sessions.values()];
     },
+  };
+}
+
+function createSessionTransportGuard(
+  transport: SshTransport,
+  isClosed: () => boolean,
+): SshTransport {
+  const assertLive = (operation: string): void => {
+    if (isClosed() || !transport.isConnected()) {
+      throw new SshTransportError(
+        'not_connected',
+        `Transporte SSH morto para ${operation}; chame session.reconnect() explicitamente e verifique o estado remoto antes de repetir.`,
+      );
+    }
+  };
+
+  return {
+    async connect() {
+      throw new SshTransportError(
+        'not_connected',
+        'Use session.reconnect(); conexão direta pelo transporte da sessão é bloqueada.',
+      );
+    },
+    disconnect() {
+      return transport.disconnect();
+    },
+    isConnected() {
+      return !isClosed() && transport.isConnected();
+    },
+    async exec(command, options) {
+      assertLive('exec');
+      return await transport.exec(command, options);
+    },
+    async readFile(remotePath, options) {
+      assertLive('readFile');
+      return await transport.readFile(remotePath, options);
+    },
+    async writeFile(remotePath, content, options) {
+      assertLive('writeFile');
+      await transport.writeFile(remotePath, content, options);
+    },
+    async listDir(remotePath, options) {
+      assertLive('listDir');
+      return await transport.listDir(remotePath, options);
+    },
+    openPty: transport.openPty
+      ? async (cols, rows, options) => {
+          assertLive('openPty');
+          return await transport.openPty!(cols, rows, options);
+        }
+      : undefined,
   };
 }
 

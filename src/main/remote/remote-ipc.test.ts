@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { REMOTE_CHANNELS } from '../../shared/remote-channels';
 import type { ProjectExecutionScope } from '../../shared/types';
+import type { RemoteSpawnRequest } from '../../shared/remote-types';
+import type { RemoteSpawnControl } from './remote-spawn';
 
 interface TestOwner {
   id: number;
@@ -14,10 +16,12 @@ const harness = vi.hoisted(() => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   const scopes = new Map<number, ProjectExecutionScope>();
   const windows = new Map<number, { isDestroyed(): boolean }>();
+  const scopeListeners = new Set<(owner: TestOwner) => void>();
   return {
     handlers,
     scopes,
     windows,
+    scopeListeners,
     dialog: {
       showMessageBox: vi.fn(
         async (_window: unknown, _options: Record<string, unknown>) => ({ response: 1 }),
@@ -33,10 +37,25 @@ const harness = vi.hoisted(() => {
     },
     detectRemoteClis: vi.fn(),
     listRemoteTmuxSessions: vi.fn(),
-    createRemoteTmuxSession: vi.fn(async (request) => ({
+    createRemoteTmuxSession: vi.fn(async (
+      request: RemoteSpawnRequest,
+      _control?: RemoteSpawnControl,
+    ) => ({
       ok: true,
       target: request.target,
       sessionName: request.sessionName ?? 'generated',
+    })),
+    startRemoteBridge: vi.fn(async () => ({
+      running: true,
+      urls: ['wss://127.0.0.1:4242'],
+      tokenCount: 0,
+      clientCount: 0,
+    })),
+    stopRemoteBridge: vi.fn(() => ({
+      running: false,
+      urls: [],
+      tokenCount: 0,
+      clientCount: 0,
     })),
   };
 });
@@ -48,6 +67,10 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../persistence/renderer-workspace-scope', () => ({
+  onRendererWorkspaceScopeChange: (listener: (owner: TestOwner) => void) => {
+    harness.scopeListeners.add(listener);
+    return () => harness.scopeListeners.delete(listener);
+  },
   requireLiveRendererWorkspaceScope: (
     owner: TestOwner,
     expected?: ProjectExecutionScope,
@@ -80,8 +103,8 @@ vi.mock('./remote-bridge', () => ({
   getRemoteBridgeInfo: vi.fn(() => ({ running: false, urls: [], tokenCount: 0, clientCount: 0 })),
   revokeRemoteTokens: vi.fn(),
   rotateRemotePairing: vi.fn(),
-  startRemoteBridge: vi.fn(),
-  stopRemoteBridge: vi.fn(),
+  startRemoteBridge: harness.startRemoteBridge,
+  stopRemoteBridge: harness.stopRemoteBridge,
 }));
 
 import { registerRemoteIpc } from './remote-ipc';
@@ -135,6 +158,7 @@ beforeEach(() => {
   harness.handlers.clear();
   harness.scopes.clear();
   harness.windows.clear();
+  harness.scopeListeners.clear();
   vi.clearAllMocks();
   harness.dialog.showMessageBox.mockResolvedValue({ response: 1 });
   registerRemoteIpc();
@@ -224,5 +248,49 @@ describe('remote IPC renderer authority', () => {
       invoke(REMOTE_CHANNELS.remoteSpawnCreate, sender, SPAWN_REQUEST),
     ).rejects.toThrow(/renderer is unavailable/i);
     expect(harness.createRemoteTmuxSession).not.toHaveBeenCalled();
+  });
+
+  it('aborts and cleans a newly started bridge when renderer scope changes', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.startRemoteBridge.mockImplementationOnce(async () => {
+      harness.scopes.set(sender.id, SCOPE_B);
+      for (const listener of harness.scopeListeners) listener(sender);
+      return {
+        running: true,
+        urls: ['wss://127.0.0.1:4242'],
+        tokenCount: 0,
+        clientCount: 0,
+      };
+    });
+
+    await expect(
+      invoke(REMOTE_CHANNELS.bridgeStart, sender, { port: 4242 }),
+    ).rejects.toThrow(/workspace authority changed/i);
+    expect(harness.stopRemoteBridge).toHaveBeenCalledWith(SCOPE_A);
+  });
+
+  it('passes live renderer cancellation into remote tmux creation', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    harness.createRemoteTmuxSession.mockImplementationOnce(
+      async (_request, control) => {
+        harness.scopes.set(sender.id, SCOPE_B);
+        for (const listener of harness.scopeListeners) listener(sender);
+        control?.assertCurrentAuthority?.();
+        return {
+          ok: true,
+          target: SPAWN_REQUEST.target,
+          sessionName: SPAWN_REQUEST.sessionName,
+        };
+      },
+    );
+
+    await expect(
+      invoke(REMOTE_CHANNELS.remoteSpawnCreate, sender, SPAWN_REQUEST),
+    ).rejects.toThrow(/workspace authority changed/i);
+    const control = harness.createRemoteTmuxSession.mock.calls[0]?.[1];
+    expect(control?.signal?.aborted).toBe(true);
   });
 });

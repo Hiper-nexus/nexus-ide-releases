@@ -84,8 +84,10 @@ function paneFromRecovery(req: MissionPaneRecoveryRequest): PaneModel {
     title: req.pane.title,
     accountId: req.pane.accountId,
     effort: req.pane.effort,
+    missionId: req.missionId,
     agentName: req.pane.agentName,
     role: req.role,
+    orchRequestId: req.requestId,
   };
 }
 
@@ -105,6 +107,8 @@ async function recoverMissionPane(
       replacementSessionId = await respawnMissionPaneFresh(
         pane,
         req.expectedSessionId,
+        RECOVERY_HEALTH_TIMEOUT_MS,
+        req.requestId,
       );
       // The helper owns cleanup until its CAS check, spawn and health check
       // succeed. Only then may this request cancel the exact replacement.
@@ -164,6 +168,9 @@ async function recoverMissionPane(
       requestId: req.requestId,
       ok: false,
       paneId: req.paneId,
+      ...(replacementSessionId
+        ? { sessionId: replacementSessionId }
+        : {}),
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -190,14 +197,22 @@ export function useOrchBridge(): void {
             const existing = listPanes(useLayoutStore.getState().root).find(
               (pane) => pane.orchRequestId === req.requestId,
             );
+            if (existing && existing.id !== req.paneId) {
+              throw new Error(
+                `Spawn retry pane id mismatch: ${existing.id} != ${req.paneId}`,
+              );
+            }
             const paneId = existing?.id ??
               useLayoutStore.getState().spawnOrchPane({
+                paneId: req.paneId,
                 adapterId: req.adapterId,
                 model: req.model,
+                accountId: req.accountId,
                 effort: req.effort,
                 cwd: req.cwd,
                 title: req.title,
                 orchRequestId: req.requestId,
+                missionId: req.missionId,
                 agentName: req.agentName,
                 role: req.role ?? 'worker',
               });
@@ -248,7 +263,12 @@ export function useOrchBridge(): void {
         void (async () => {
           let paneId: string | null = null;
           try {
-            paneId = useLayoutStore.getState().addBrowserPane(req.url);
+            paneId = useLayoutStore
+              .getState()
+              .addBrowserPane(req.url, req.paneId, req.requestId);
+            if (paneId !== req.paneId) {
+              throw new Error('browser pane identity mismatch');
+            }
             await waitForBrowserPaneCreated(paneId);
             window.nexus.orch.syncPanes(snapshotPanes());
             window.nexus.orch.sendBrowserOpenResult({
@@ -270,7 +290,19 @@ export function useOrchBridge(): void {
         })();
       }),
 
-      window.nexus.orch.onPaneCloseRequest((paneId) => {
+      window.nexus.orch.onPaneCloseRequest((request) => {
+        const paneId = typeof request === 'string' ? request : request.paneId;
+        if (typeof request !== 'string') {
+          const pane = listPanes(useLayoutStore.getState().root).find(
+            (candidate) => candidate.id === request.paneId,
+          );
+          if (
+            pane?.kind !== 'browser' ||
+            pane.browserOpenRequestId !== request.requestId
+          ) {
+            return;
+          }
+        }
         useLayoutStore.getState().close(paneId, 'orch-close-request');
         window.nexus.orch.syncPanes(snapshotPanes());
       }),

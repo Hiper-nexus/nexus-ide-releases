@@ -131,6 +131,28 @@ export interface ContextWorkflowServiceDependencies {
   readonly makeId?: () => string;
 }
 
+function sortedUnique(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export function unionMissionDraftWithBlastRadius(
+  draft: MissionContractDraft,
+  radius: { readonly symbols: readonly string[]; readonly domains: readonly string[] },
+): MissionContractDraft {
+  return Object.freeze({
+    ...draft,
+    impactedSymbols: sortedUnique([
+      ...(draft.impactedSymbols ?? []),
+      ...radius.symbols,
+    ]),
+    impactedDomains: sortedUnique([
+      ...(draft.impactedDomains ?? []),
+      ...radius.domains,
+    ]),
+  });
+}
+
 export interface FrozenMissionWorkflow {
   readonly contract: MissionContract;
   readonly workflow: WorkflowState;
@@ -280,33 +302,18 @@ export class ContextWorkflowService {
   }
 
   /**
-   * Auto-pilot enrichment: fill empty impacted symbols/domains from the
-   * structural orientation map (never overrides explicit caller values).
+   * Auto-pilot enrichment: union caller-proposed blast radius with the
+   * structural orientation map, so an agent cannot narrow derived scope.
    */
   async enrichDraftFromOrientation(
     draft: MissionContractDraft,
   ): Promise<MissionContractDraft> {
-    const hasSymbols = (draft.impactedSymbols?.length ?? 0) > 0;
-    const hasDomains = (draft.impactedDomains?.length ?? 0) > 0;
-    if (hasSymbols && hasDomains) return draft;
     try {
       const radius = await ensureBlastRadius(this.scope, {
         goal: draft.goal,
         seedSymbols: draft.impactedSymbols,
       });
-      return Object.freeze({
-        ...draft,
-        impactedSymbols: hasSymbols
-          ? draft.impactedSymbols
-          : radius.symbols.length > 0
-            ? radius.symbols
-            : draft.impactedSymbols,
-        impactedDomains: hasDomains
-          ? draft.impactedDomains
-          : radius.domains.length > 0
-            ? radius.domains
-            : draft.impactedDomains,
-      });
+      return unionMissionDraftWithBlastRadius(draft, radius);
     } catch {
       return draft;
     }
@@ -334,19 +341,19 @@ export class ContextWorkflowService {
       corpus.facts.filter((fact) => fact.category === 'invariant')
         .map((fact) => fact.id),
     );
-    // Sync enrichment from warm cache when caller left symbols/domains empty.
+    // Sync enrichment from the warm cache is always additive. Explicit
+    // caller scope can broaden a contract but can never hide the structural
+    // radius derived by Nexus.
     let impactedSymbols = draft.impactedSymbols ? [...draft.impactedSymbols] : [];
     let impactedDomains = draft.impactedDomains ? [...draft.impactedDomains] : [];
-    if (impactedSymbols.length === 0 || impactedDomains.length === 0) {
-      const map = tryGetProjectOrientationService()?.get(this.scope);
-      if (map) {
-        const radius = computeBlastRadius(map, {
-          goal: draft.goal,
-          seedSymbols: impactedSymbols,
-        });
-        if (impactedSymbols.length === 0) impactedSymbols = [...radius.symbols];
-        if (impactedDomains.length === 0) impactedDomains = [...radius.domains];
-      }
+    const map = tryGetProjectOrientationService()?.get(this.scope);
+    if (map) {
+      const radius = computeBlastRadius(map, {
+        goal: draft.goal,
+        seedSymbols: impactedSymbols,
+      });
+      impactedSymbols = sortedUnique([...impactedSymbols, ...radius.symbols]);
+      impactedDomains = sortedUnique([...impactedDomains, ...radius.domains]);
     }
     const git = (this.#dependencies.inspectGit ?? inspectGitBinding)(this.scope);
     const contract = compileMissionContract(
@@ -365,9 +372,13 @@ export class ContextWorkflowService {
           invariantRefs: [...criterion.invariantRefs],
           requiredArtifactIds: [...criterion.requiredArtifactIds],
         })),
-        businessInvariantRefs: draft.businessInvariantRefs
-          ? [...draft.businessInvariantRefs]
-          : [],
+        // Invariants are authored/attested project authority, not a menu the
+        // LLM may narrow. Every current invariant is therefore part of the
+        // frozen business contract; criterion refs may only add linkage.
+        businessInvariantRefs: sortedUnique([
+          ...(draft.businessInvariantRefs ?? []),
+          ...invariantRefs,
+        ]),
         impactedDomains,
         impactedSymbols,
         requestedSensors: [
@@ -951,7 +962,15 @@ export class ContextWorkflowService {
     return readiness;
   }
 
-  async runSensor(missionId: string, sensorId: string): Promise<TrustedEvidence> {
+  async runSensor(
+    missionId: string,
+    sensorId: string,
+    options: {
+      readonly signal?: AbortSignal;
+      readonly assertCurrentAuthority?: () => void;
+    } = {},
+  ): Promise<TrustedEvidence> {
+    options.assertCurrentAuthority?.();
     const stored = this.#store.getContract(missionId);
     const workflow = this.#store.getWorkflow(missionId);
     if (!stored || !workflow) throw new Error('mission has no frozen workflow');
@@ -976,20 +995,26 @@ export class ContextWorkflowService {
       },
     });
     try {
-      const evidence = await broker.run({
-        scope: this.scope,
-        missionId,
-        sensorId,
-        baseSha: stored.contract.baseCommit,
-        contractHash: stored.contract.contractHash,
-        contextHash: stored.contract.contextRevision,
-      });
+      options.assertCurrentAuthority?.();
+      const evidence = await broker.run(
+        {
+          scope: this.scope,
+          missionId,
+          sensorId,
+          baseSha: stored.contract.baseCommit,
+          contractHash: stored.contract.contractHash,
+          contextHash: stored.contract.contextRevision,
+        },
+        options,
+      );
+      options.assertCurrentAuthority?.();
       if (
         evidence.headSha !== workflow.binding.headSha ||
         evidence.diffHash !== workflow.binding.diffHash
       ) {
         throw new Error('sensor result does not match the integrated workflow diff');
       }
+      options.assertCurrentAuthority?.();
       this.#store.recordSensorEvidence(evidence);
       this.#ledger.append({
         projectId: this.scope.projectId,

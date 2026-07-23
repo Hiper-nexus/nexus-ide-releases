@@ -1,4 +1,5 @@
 import type { PaneModel } from '../../shared/types';
+import { sharedAgentAuthFamily } from '../../shared/agent-auth-family';
 import { listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { getPaneSessionId } from '../terminal/terminal-host';
@@ -9,10 +10,7 @@ import { getPaneSessionId } from '../terminal/terminal-host';
  * Other adapters return null (parallel missions allowed when safe).
  */
 export function sharedAuthFamily(adapterId: string | undefined): string | null {
-  if (!adapterId) return null;
-  const id = adapterId.toLowerCase();
-  if (id.includes('claude')) return 'claude-shared-login';
-  return null;
+  return sharedAgentAuthFamily(adapterId);
 }
 
 export function isExclusiveOrchestratorAdapter(adapterId: string | undefined): boolean {

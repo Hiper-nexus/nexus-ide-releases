@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ORCHESTRATION_PROJECT_MIGRATION_SPECS } from './project-runtime-orchestration-migrations';
 
 export interface ProjectMigrationSpec {
   id: string;
@@ -855,4 +856,7 @@ export const INITIAL_PROJECT_MIGRATIONS: readonly ProjectMigration[] =
       appVersion: '0.15.5',
       sql: MISSION_EVENTS_COMMAND_BLOCKS_SCHEMA,
     }),
+    ...ORCHESTRATION_PROJECT_MIGRATION_SPECS.map((spec) =>
+      createProjectMigration(spec),
+    ),
   ]);

@@ -39,6 +39,7 @@ describe('scoped mission store', () => {
     const contract = {
       ...compileIntentContract({ goal: 'Ship safely', intentVersion: 2 }),
       deniedTools: ['terminal_run'],
+      attachmentPaths: ['/Users/me/.nexus/dropped/proof.png'],
     };
     expect(() => store.create({
       title: 'Skewed', intentVersion: 1, intentContract: contract,
@@ -50,6 +51,25 @@ describe('scoped mission store', () => {
     });
     expect(created.intentContract?.deniedTools).toEqual(['terminal_run']);
     expect(created.intentContract?.deniedTools).not.toBe(contract.deniedTools);
+    expect(created.intentContract?.attachmentPaths).toEqual(
+      contract.attachmentPaths,
+    );
+    expect(created.intentContract?.attachmentPaths).not.toBe(
+      contract.attachmentPaths,
+    );
+    contract.attachmentPaths.push('/tmp/forged-after-create');
+    expect(store.get(created.id)?.intentContract?.attachmentPaths).toEqual([
+      '/Users/me/.nexus/dropped/proof.png',
+    ]);
+
+    runtimeManager.close(testProjectScope());
+    const reopened = createScopedMissionStore(
+      runtimeManager,
+      testProjectScope(),
+    );
+    expect(reopened.get(created.id)?.intentContract?.attachmentPaths).toEqual([
+      '/Users/me/.nexus/dropped/proof.png',
+    ]);
   });
 
   it('physically isolates projects and returns explicit scope coordinates', () => {
@@ -122,6 +142,275 @@ describe('scoped mission store', () => {
     });
     expect(reopened.remove('mission-stable')).toBe(true);
     expect(reopened.remove('mission-stable')).toBe(false);
+  });
+
+  it('preserves explicit technical blocks and defaults only unspecified blocks to user', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'blocking-contract' });
+    let sequence = 0;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => `mission-block-${++sequence}`,
+    });
+    const technical = store.create({
+      title: 'Falha recuperável',
+      intentState: 'executing',
+    });
+    store.setStatus(technical.id, 'running');
+
+    expect(
+      store.update(technical.id, {
+        status: 'blocked',
+        intentState: 'blocked_technical',
+      }),
+    ).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    expect(
+      store.update(technical.id, { description: 'Diagnóstico atualizado' }),
+    ).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    expect(store.setStatus(technical.id, 'blocked')).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+
+    const unspecified = store.create({
+      title: 'Espera humana sem classificação',
+      intentState: 'executing',
+    });
+    store.setStatus(unspecified.id, 'running');
+    expect(store.setStatus(unspecified.id, 'blocked')).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
+
+    const canonical = store.create({
+      title: 'Contrato técnico canônico',
+      intentState: 'executing',
+    });
+    store.setStatus(canonical.id, 'running');
+    expect(store.block(canonical.id, 'technical')).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionStore(runtimeManager, scope);
+    expect(reopened.get(technical.id)).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    expect(reopened.get(unspecified.id)).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
+    expect(reopened.get(canonical.id)).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+  });
+
+  it('persiste RouteReservation, consome uma vez e invalida expiração/intenção', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let now = 1_000;
+    let sequence = 0;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++sequence}`,
+    });
+    const mission = store.create({
+      title: 'Rota durável',
+      intentState: 'dispatched',
+      intentVersion: 1,
+    });
+    store.setStatus(mission.id, 'running');
+    const decision = {
+      tier: 'medium' as const,
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'medium',
+      reason: 'modelo real do CLI para execução isolada',
+      alternatives: [
+        { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'medium' },
+      ],
+    };
+    const reserved = store.reserveRouteDecision(mission.id, 'implementar RC3', decision);
+    expect(reserved).toMatchObject({
+      id: 'route-reservation-2',
+      missionId: mission.id,
+      intentVersion: 1,
+      decision,
+      createdAt: 1_000,
+      expiresAt: 301_000,
+    });
+    expect(store.get(mission.id)?.latestRoute).toMatchObject({
+      reservationId: reserved.id,
+      taskPreview: 'implementar RC3',
+      tier: 'medium',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'medium',
+      reason: 'modelo real do CLI para execução isolada',
+      state: 'reserved',
+    });
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionStore(runtimeManager, scope);
+    expect(reopened.getRouteReservation(reserved.id)).toMatchObject({
+      id: reserved.id,
+      decision,
+    });
+    const expectation = {
+      reservationId: reserved.id,
+      missionId: mission.id,
+      adapterId: decision.adapterId,
+      model: decision.model,
+      effort: decision.effort,
+      at: 1_001,
+    };
+    expect(reopened.assertRouteReservation(expectation).consumedAt).toBeUndefined();
+    expect(
+      reopened.consumeRouteReservation(expectation, 'orchestrator-session'),
+    ).toMatchObject({
+      consumedAt: 1_001,
+      consumedBySession: 'orchestrator-session',
+    });
+    expect(reopened.list()[0]?.latestRoute).toMatchObject({
+      reservationId: reserved.id,
+      state: 'consumed',
+      consumedBySession: 'orchestrator-session',
+    });
+    expect(() => reopened.consumeRouteReservation(expectation, 'other-session')).toThrow(
+      /já foi consumida/i,
+    );
+
+    now = 2_000;
+    const fresh = store.reserveRouteDecision(mission.id, 'outra tarefa', decision, 1_000);
+    expect(() =>
+      store.assertRouteReservation({
+        ...expectation,
+        reservationId: fresh.id,
+        at: fresh.expiresAt,
+      }),
+    ).toThrow(/expirou/i);
+
+    const stale = store.reserveRouteDecision(mission.id, 'intenção atual', decision);
+    store.update(mission.id, { intentVersion: 2 });
+    expect(() =>
+      store.assertRouteReservation({
+        ...expectation,
+        reservationId: stale.id,
+        at: now,
+      }),
+    ).toThrow(/intenção.*mudou/i);
+  });
+
+  it('persiste aceite do kickoff e invalida sessão/revisão antigas após restart', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'kickoff-proof' });
+    let now = 7_000;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => now,
+      idFactory: () => 'mission-kickoff-proof',
+    });
+    const contract = {
+      ...compileIntentContract({
+        goal: 'Executar uma missão real com kickoff observado',
+        intentVersion: 3,
+      }),
+      approvedAt: 6_000,
+      dispatchedAt: 6_500,
+    };
+    const mission = store.create({
+      title: 'Kickoff durável',
+      intentState: 'dispatched',
+      intentVersion: 3,
+      intentContract: contract,
+      orchestratorSessionId: 'orch-a',
+    });
+    store.setStatus(mission.id, 'running');
+
+    expect(store.hasCurrentKickoffAcceptance(mission.id)).toBe(false);
+    expect(
+      store.recordKickoffAcceptance({
+        missionId: mission.id,
+        intentVersion: 3,
+        orchestratorSessionId: 'orch-a',
+        promptHash: 'a'.repeat(64),
+      }),
+    ).toMatchObject({
+      missionId: mission.id,
+      intentVersion: 3,
+      orchestratorSessionId: 'orch-a',
+      promptHash: 'a'.repeat(64),
+      acceptedAt: 7_000,
+    });
+    expect(store.hasCurrentKickoffAcceptance(mission.id)).toBe(true);
+    expect(
+      store.hasExactCurrentKickoffAcceptance({
+        missionId: mission.id,
+        intentVersion: 3,
+        orchestratorSessionId: 'orch-a',
+        promptHash: 'a'.repeat(64),
+      }),
+    ).toBe(true);
+    expect(
+      store.hasExactCurrentKickoffAcceptance({
+        missionId: mission.id,
+        intentVersion: 3,
+        orchestratorSessionId: 'orch-a',
+        promptHash: 'b'.repeat(64),
+      }),
+    ).toBe(false);
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionStore(runtimeManager, scope, {
+      now: () => now,
+    });
+    expect(reopened.hasCurrentKickoffAcceptance(mission.id)).toBe(true);
+
+    reopened.setOrchestratorSession(mission.id, 'orch-b');
+    expect(reopened.hasCurrentKickoffAcceptance(mission.id)).toBe(false);
+    expect(
+      reopened.hasExactCurrentKickoffAcceptance({
+        missionId: mission.id,
+        intentVersion: 3,
+        orchestratorSessionId: 'orch-a',
+        promptHash: 'a'.repeat(64),
+      }),
+    ).toBe(false);
+    expect(() =>
+      reopened.recordKickoffAcceptance({
+        missionId: mission.id,
+        intentVersion: 3,
+        orchestratorSessionId: 'orch-a',
+        promptHash: 'a'.repeat(64),
+      }),
+    ).toThrow(/autoridade.*kickoff/i);
+
+    now = 8_000;
+    reopened.recordKickoffAcceptance({
+      missionId: mission.id,
+      intentVersion: 3,
+      orchestratorSessionId: 'orch-b',
+      promptHash: 'b'.repeat(64),
+    });
+    expect(reopened.hasCurrentKickoffAcceptance(mission.id)).toBe(true);
+
+    reopened.update(mission.id, {
+      intentVersion: 4,
+      intentContract: {
+        ...contract,
+        intentVersion: 4,
+        approvedAt: 7_500,
+        dispatchedAt: 7_600,
+      },
+    });
+    expect(reopened.hasCurrentKickoffAcceptance(mission.id)).toBe(false);
   });
 
   it('notifies only observers bound to the mutated scope', () => {

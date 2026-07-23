@@ -3,6 +3,7 @@ import type { CliPtyAdapter } from '../../shared/adapter-types';
 import {
   requiresReadOnlyNativeAuthority,
   secureAutonomousCliArgs,
+  supportsEnforceableReadOnlyNativeAuthority,
 } from './autonomous-cli-policy';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
@@ -60,14 +61,12 @@ describe('secureAutonomousCliArgs', () => {
       source: 'pending',
       role: 'worker',
     })).toBe(true);
-    // Orquestrador despachado tem escrita nativa: ele spawna ANTES do freeze
-    // (nunca teria contextRevision) e o fechamento da missão — commit, git
-    // push, merge — é efeito legítimo dele. Read-only aqui travava push/merge
-    // no terminal sempre que os workers esgotavam.
+    // Coordenadores não implementam nem integram pela CLI nativa. Eles
+    // delegam e avançam a integração pelas tools Nexus auditadas.
     expect(requiresReadOnlyNativeAuthority({
       source: 'pending',
       role: 'orchestrator',
-    })).toBe(false);
+    })).toBe(true);
     expect(requiresReadOnlyNativeAuthority({
       source: 'legacy-squad',
       role: 'orchestrator',
@@ -81,6 +80,29 @@ describe('secureAutonomousCliArgs', () => {
       source: 'direct-user',
       role: 'user',
     })).toBe(false);
+  });
+
+  it('reports read-only confinement support before provider side effects', () => {
+    expect(
+      supportsEnforceableReadOnlyNativeAuthority(
+        adapter({ id: 'codex' }),
+      ),
+    ).toBe(true);
+    expect(
+      supportsEnforceableReadOnlyNativeAuthority(
+        adapter({
+          id: 'omp',
+          control: {
+            permission: {
+              safe: [],
+              yolo: [],
+              modes: {},
+              default: '',
+            },
+          },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it('keeps Codex reviewer panes safe when the user disables full-auto', () => {
@@ -110,7 +132,7 @@ describe('secureAutonomousCliArgs', () => {
     expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
   });
 
-  it('preserves Codex YOLO for reviewers instead of prompting on MCP calls', () => {
+  it('makes read-only override Codex YOLO and forces the native sandbox', () => {
     const codex = adapter({
       id: 'codex',
       quirks: {
@@ -129,11 +151,19 @@ describe('secureAutonomousCliArgs', () => {
       },
     });
 
-    expect(secureAutonomousCliArgs(
+    const args = secureAutonomousCliArgs(
       codex,
       ['--dangerously-bypass-approvals-and-sandbox'],
       true,
-    )).toEqual(['--dangerously-bypass-approvals-and-sandbox']);
+    );
+    expect(args).toContain('--sandbox');
+    expect(args).toContain('read-only');
+    expect(args).toContain('--ask-for-approval');
+    expect(args).toContain('on-request');
+    expect(args).not.toContain('workspace-write');
+    expect(args).not.toContain(
+      '--dangerously-bypass-approvals-and-sandbox',
+    );
   });
 
   it('rejects reviewer providers without enforceable read-only confinement', () => {
@@ -150,6 +180,31 @@ describe('secureAutonomousCliArgs', () => {
     }), [], true))
       .toThrow(/read-only review confinement/i);
   });
+
+  it('rejects a yolo-only provider even when full-auto was explicitly selected', () => {
+    const kimi = adapter({
+      id: 'kimi',
+      control: { permission: { modes: {}, yolo: ['-y'], default: '' } },
+    });
+    expect(() => secureAutonomousCliArgs(kimi, ['-y'], true)).toThrow(
+      /read-only review confinement/i,
+    );
+  });
+
+  it('does not trust a provider flag merely because its name contains read-only', () => {
+    expect(() => secureAutonomousCliArgs(adapter({
+      id: 'plugin-cli',
+      control: {
+        permission: {
+          safe: ['--pretend-read-only'],
+          yolo: ['--yolo'],
+          modes: {},
+          default: '',
+        },
+      },
+    }), [], true)).toThrow(/read-only review confinement/i);
+  });
+
   it('keeps writable Claude workers able to code while loading Nexus MCP', () => {
     const claude = adapter({
       id: 'claude',
@@ -185,15 +240,21 @@ describe('secureAutonomousCliArgs', () => {
     const coordinatorArgs = secureAutonomousCliArgs(claude, [
       '--dangerously-skip-permissions',
     ], true);
-    expect(coordinatorArgs).toContain('--dangerously-skip-permissions');
+    expect(coordinatorArgs).not.toContain('--dangerously-skip-permissions');
+    expect(coordinatorArgs).toContain('dontAsk');
     expect(coordinatorArgs).not.toContain('manual');
     expect(coordinatorArgs).toContain('--disallowedTools');
-    for (const tool of ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Task']) {
+    for (const tool of ['Bash', 'Edit', 'Write', 'NotebookEdit', 'Task']) {
       expect(coordinatorArgs).toContain(tool);
     }
+    expect(coordinatorArgs).not.toContain('Read');
+    expect(coordinatorArgs).not.toContain('Glob');
+    expect(coordinatorArgs).not.toContain('Grep');
+    expect(coordinatorArgs).toContain('--allowedTools');
+    expect(coordinatorArgs).toContain('mcp__nexus');
   });
 
-  it('upgrades Claude-family bypassPermissions to zero-click yolo always', () => {
+  it('does not upgrade a read-only Claude-family pane to bypassPermissions', () => {
     const claude = adapter({
       id: 'claude',
       quirks: {
@@ -221,12 +282,16 @@ describe('secureAutonomousCliArgs', () => {
       'bypassPermissions',
     ], true);
 
-    expect(args).toContain('--allow-dangerously-skip-permissions');
-    expect(args).toContain('--dangerously-skip-permissions');
+    expect(args).not.toContain('--allow-dangerously-skip-permissions');
+    expect(args).not.toContain('--dangerously-skip-permissions');
     expect(args).toContain('--allowedTools');
     expect(args).toContain('mcp__nexus');
     expect(args).not.toContain('bypassPermissions');
+    expect(args).toContain('dontAsk');
     expect(args).not.toContain('manual');
+    expect(args).toContain('--disallowedTools');
+    expect(args).toContain('Bash');
+    expect(args).toContain('Write');
   });
 
   it('preserves explicit plan mode on Claude-family panes', () => {

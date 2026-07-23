@@ -45,19 +45,27 @@ interface LayoutState {
   /** Add a fresh shell terminal pane (＋ Terminal) alongside the others. */
   addShellPane(): string;
   /** Add an embedded browser pane. */
-  addBrowserPane(url?: string): string;
+  addBrowserPane(
+    url?: string,
+    paneId?: string,
+    browserOpenRequestId?: string,
+  ): string;
   /**
    * Orchestration-requested agent pane (MCP pane_spawn). Returns the new
    * paneId; the orchRequestId rides along into the PTY spawn so the main
    * process can bind the pane to its skill-gate context.
    */
   spawnOrchPane(req: {
+    /** Stable physical pane id minted and sealed by the main process. */
+    paneId: string;
     adapterId: string;
     model?: string;
+    accountId?: string;
     effort?: string;
     cwd?: string;
     title?: string;
     orchRequestId: string;
+    missionId?: string;
     agentName?: string;
     role?: 'orchestrator' | 'worker';
   }): string;
@@ -258,7 +266,13 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
 
   spawnOrchPane: (req) => {
     const { root: currentRoot, viewKind, canvasNodeLayouts } = get();
-    const liveCount = listPanes(currentRoot).length;
+    const existingPanes = listPanes(currentRoot);
+    if (existingPanes.some((pane) => pane.id === req.paneId)) {
+      throw new Error(
+        `Main-owned pane id already exists in layout: ${req.paneId}`,
+      );
+    }
+    const liveCount = existingPanes.length;
     if (liveCount >= MAX_LIVE_PANES_SOFT) {
       console.warn(
         `[layout] refuse orch spawn (live=${liveCount} soft=${MAX_LIVE_PANES_SOFT} hard=${MAX_LIVE_PANES_HARD}) title=${req.title ?? req.adapterId}`,
@@ -275,9 +289,12 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     );
     const newPane: PaneModel = {
       ...base,
+      id: req.paneId,
       title: req.title ?? base.title,
+      accountId: req.accountId,
       effort: req.effort,
       orchRequestId: req.orchRequestId,
+      missionId: req.missionId,
       agentName: req.agentName,
       role: req.role,
     };
@@ -287,7 +304,6 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       ? splitPane(currentRoot, target.paneId, target.direction, newPane)
       : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
 
-    const existingPanes = listPanes(currentRoot);
     const paneCount = listPanes(root).length;
     const baseCanvasLayouts =
       viewKind === 'canvas'
@@ -453,12 +469,17 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     persist({ ...get(), root });
   },
 
-  addBrowserPane: (url) => {
+  addBrowserPane: (url, paneId, browserOpenRequestId) => {
     const { root: currentRoot, focusedPaneId, viewKind, canvasNodeLayouts } = get();
+    if (paneId && listPanes(currentRoot).some((pane) => pane.id === paneId)) {
+      throw new Error(`browser pane identity already exists: ${paneId}`);
+    }
     const newPane: PaneModel = {
       ...createPane('browser', getActiveWorkspacePath() ?? undefined),
+      ...(paneId ? { id: paneId } : {}),
       title: 'browser',
       browserUrl: url,
+      browserOpenRequestId,
     };
     const pivot = focusedPaneId ?? firstPaneId(currentRoot);
     const root = pivot

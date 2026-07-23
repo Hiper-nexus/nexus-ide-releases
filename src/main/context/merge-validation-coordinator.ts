@@ -8,6 +8,7 @@ import { CliAutomatedReviewer, type RunAutomatedReviewInput } from './cli-automa
 import { SensorBroker, type TrustedEvidence } from './sensor-broker';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from '../orch/project-domain-store-registry';
+import { assertMcpInvocationCurrent } from '../orch/mcp-protocol';
 import {
   normalizeWorkflowIdentity,
   type ContextWorkflowService,
@@ -23,6 +24,10 @@ export interface MergeValidationCoordinatorDependencies {
       readonly baseSha: string;
       readonly contractHash: string;
       readonly contextHash: string;
+    },
+    authority?: {
+      readonly signal?: AbortSignal;
+      readonly assertCurrentAuthority?: () => void;
     },
   ) => Promise<TrustedEvidence>;
   readonly runReview?: (
@@ -69,13 +74,14 @@ export class MergeValidationCoordinator {
         provider: pane.adapterId,
       });
     });
-    this.#runSensor = dependencies.runSensor ?? (async (scope, input) => {
+    this.#runSensor = dependencies.runSensor ?? (async (scope, input, authority) => {
       const config = loadContextConfiguration(this.#service.scope);
-      return new SensorBroker(config.sensors).run({ scope, ...input });
+      return new SensorBroker(config.sensors).run({ scope, ...input }, authority);
     });
   }
 
   async validate(context: MergeValidationContext): Promise<MergeValidationDecision> {
+    assertMcpInvocationCurrent(context);
     const mission = this.#service.getMissionWorkflow(context.missionId);
     if (!mission.contract || !mission.workflow) {
       throw new Error('merge validation mission has no frozen workflow');
@@ -107,7 +113,8 @@ export class MergeValidationCoordinator {
         baseSha: context.integrationBaseSha,
         contractHash: contract.contractHash,
         contextHash: contract.contextRevision,
-      });
+      }, context);
+      assertMcpInvocationCurrent(context);
       if (
         evidence.baseSha !== binding.baseSha ||
         evidence.headSha !== binding.headSha ||
@@ -115,11 +122,13 @@ export class MergeValidationCoordinator {
       ) {
         throw new Error('merge sensor returned evidence for another candidate');
       }
+      assertMcpInvocationCurrent(context);
       this.#service.recordMergeSensorEvidence(evidence);
       evidenceIds.push(evidence.id);
       if (evidence.exitCode !== 0 || evidence.timedOut) sensorsPassed = false;
     }
     if (!sensorsPassed) {
+      assertMcpInvocationCurrent(context);
       return Object.freeze({
         sensorsPassed: false,
         reviewPassed: false,
@@ -127,6 +136,7 @@ export class MergeValidationCoordinator {
       });
     }
 
+    assertMcpInvocationCurrent(context);
     const review = await this.#runReview({
       scope: context.scope,
       checkoutPath: context.checkoutPath,
@@ -135,9 +145,15 @@ export class MergeValidationCoordinator {
       author: this.#resolveAuthor(context),
       contextMarkdown: this.#service.compileMissionSnapshot(context.missionId).markdown,
       persist: (report) => {
+        assertMcpInvocationCurrent(context);
         this.#service.recordMergeReviewReport(report);
       },
+      ...(context.signal ? { signal: context.signal } : {}),
+      ...(context.assertCurrentAuthority
+        ? { assertCurrentAuthority: context.assertCurrentAuthority }
+        : {}),
     });
+    assertMcpInvocationCurrent(context);
     evidenceIds.push(...review.evidenceIds);
     return Object.freeze({
       sensorsPassed: true,

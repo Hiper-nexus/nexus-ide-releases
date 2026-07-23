@@ -90,7 +90,7 @@ describe('defaultHookEventParser', () => {
   });
 
   it('ignores unknown event types', () => {
-    expect(defaultHookEventParser('tool-use', {})).toEqual({ kind: 'ignore' });
+    expect(defaultHookEventParser('unknown-event', {})).toEqual({ kind: 'ignore' });
     expect(defaultHookEventParser('', {})).toEqual({ kind: 'ignore' });
   });
 });

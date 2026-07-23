@@ -88,6 +88,16 @@ function signature(name: string) {
 }
 
 describe('CLI prompt autoresponder', () => {
+  it('has a fail-closed runtime kill switch that prevents every automatic keypress', () => {
+    const responder = new CliPromptAutoResponder(() => false);
+    responder.bind('session-glm', 'glm');
+
+    expect(responder.isPending('session-glm')).toBe(false);
+    expect(responder.observe('session-glm', CLAUDE_BYPASS_PROMPT_21)).toBeNull();
+    expect(responder.shouldDeferInjection('session-glm')).toBe(false);
+    expect(responder.forceAcceptResponse('session-glm')).toBeNull();
+  });
+
   it('recognizes the Antigravity workspace trust prompt', () => {
     expect(
       matchesPromptSignature(AGY_TRUST_PROMPT, signature('agy-workspace-trust')),

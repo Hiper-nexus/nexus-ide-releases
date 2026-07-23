@@ -110,7 +110,44 @@ export function throwIfMediaAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new MediaAbortError();
 }
 
-export interface ImageRequest {
+interface MediaAuthorityRequest {
+  /** Aborted on caller/mission revocation. */
+  signal?: AbortSignal;
+  /** Revalidates non-signal authority (PREVC/scope/intent) at commit points. */
+  assertCurrentAuthority?: () => void;
+}
+
+function assertMediaAuthorityCurrent(req: MediaAuthorityRequest): void {
+  req.assertCurrentAuthority?.();
+  throwIfMediaAborted(req.signal);
+}
+
+async function sleepWhileAuthorized(
+  deps: MediaDeps,
+  delayMs: number,
+  req: MediaAuthorityRequest,
+): Promise<void> {
+  assertMediaAuthorityCurrent(req);
+  if (!req.signal) {
+    await deps.sleep(delayMs);
+    assertMediaAuthorityCurrent(req);
+    return;
+  }
+  let rejectAbort!: (reason: MediaAbortError) => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () => rejectAbort(new MediaAbortError());
+  req.signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    await Promise.race([deps.sleep(delayMs), aborted]);
+  } finally {
+    req.signal.removeEventListener('abort', onAbort);
+  }
+  assertMediaAuthorityCurrent(req);
+}
+
+export interface ImageRequest extends MediaAuthorityRequest {
   prompt: string;
   provider?: string;
   model?: string;
@@ -131,11 +168,9 @@ export interface ImageRequest {
    * (Official/Replicate schema — not 4K on 5.0 Pro.)
    */
   size?: string;
-  /** Aborted on mission preempt / Estúdio cancel — polling stops early. */
-  signal?: AbortSignal;
 }
 
-export interface VideoRequest {
+export interface VideoRequest extends MediaAuthorityRequest {
   prompt: string;
   provider?: string;
   model?: string;
@@ -155,19 +190,15 @@ export interface VideoRequest {
   referenceImagePaths?: string[];
   /** Resume a timed-out prediction without resubmitting. */
   recoverJobId?: string;
-  /** Aborted on mission preempt / Estúdio cancel — polling stops early. */
-  signal?: AbortSignal;
 }
 
-export interface AudioRequest {
+export interface AudioRequest extends MediaAuthorityRequest {
   text: string;
   provider?: string;
   model?: string;
   voiceId?: string;
   outPath?: string;
   baseDir: string;
-  /** Aborted on mission preempt — checked before the provider call. */
-  signal?: AbortSignal;
 }
 
 function requireKey(def: MediaProviderDef, deps: MediaDeps): string {
@@ -240,6 +271,7 @@ async function googleImage(
   deps: MediaDeps,
   image?: MediaInputFile,
 ): Promise<Buffer> {
+  assertMediaAuthorityCurrent(req);
   const parts: unknown[] = [{ text: req.prompt }];
   if (image) parts.push({ inlineData: fileToInlineData(image) });
   const aspect = geminiImageAspect(req.aspectRatio);
@@ -255,8 +287,10 @@ async function googleImage(
           ...(aspect ? { imageConfig: { aspectRatio: aspect } } : {}),
         },
       }),
+      signal: req.signal,
     },
   );
+  assertMediaAuthorityCurrent(req);
   if (!res.ok) throw await httpError(res, def.id);
   const json = (await res.json()) as {
     candidates?: Array<{
@@ -266,6 +300,7 @@ async function googleImage(
     }>;
   };
   const partsOut = json.candidates?.[0]?.content?.parts ?? [];
+  assertMediaAuthorityCurrent(req);
   const inline = partsOut.find((p) => p.inlineData?.data)?.inlineData;
   if (!inline?.data) {
     const text = partsOut
@@ -288,6 +323,7 @@ async function openaiImage(
   deps: MediaDeps,
   image?: MediaInputFile,
 ): Promise<Buffer> {
+  assertMediaAuthorityCurrent(req);
   const size = openaiImageSize(req.aspectRatio);
   let res: Response;
   if (image) {
@@ -304,6 +340,7 @@ async function openaiImage(
       method: 'POST',
       headers: { authorization: `Bearer ${key}` },
       body: form,
+      signal: req.signal,
     });
   } else {
     res = await deps.fetchFn(`${OPENAI_BASE}/images/generations`, {
@@ -318,20 +355,29 @@ async function openaiImage(
         n: 1,
         ...(size ? { size } : {}),
       }),
+      signal: req.signal,
     });
   }
+  assertMediaAuthorityCurrent(req);
   if (!res.ok) throw await httpError(res, def.id);
   const json = (await res.json()) as {
     data?: Array<{ b64_json?: string; url?: string }>;
   };
+  assertMediaAuthorityCurrent(req);
   const first = json.data?.[0];
   if (first?.b64_json) return Buffer.from(first.b64_json, 'base64');
   if (first?.url) {
-    return downloadProviderAsset(first.url, 'openai-image', {
-      fetchFn: deps.fetchFn,
-      resolveHostname: deps.resolveHostname,
-      fetchPinned: deps.fetchPinned,
-    });
+    return downloadProviderAsset(
+      first.url,
+      'openai-image',
+      {
+        fetchFn: deps.fetchFn,
+        resolveHostname: deps.resolveHostname,
+        fetchPinned: deps.fetchPinned,
+      },
+      undefined,
+      req.signal,
+    );
   }
   throw new Error(`${def.id}: resposta sem imagem`);
 }
@@ -382,7 +428,7 @@ export function seedreamInput(
   const input: Record<string, unknown> = {
     prompt,
     // 5.x: only 1K|2K. Older families may accept other size strings.
-    size: isSeedream5 ? size : (req.size?.trim() || '2K'),
+    size: isSeedream5 ? size : req.size?.trim() || '2K',
     aspect_ratio: aspect,
     output_format: 'png',
   };
@@ -404,6 +450,7 @@ async function replicateImage(
   deps: MediaDeps,
   images: MediaInputFile[],
 ): Promise<Buffer> {
+  assertMediaAuthorityCurrent(req);
   const create = await deps.fetchFn(
     `${REPLICATE_BASE}/models/${model}/predictions`,
     {
@@ -413,8 +460,10 @@ async function replicateImage(
         'content-type': 'application/json',
       },
       body: JSON.stringify({ input: seedreamInput(req, model, images) }),
+      signal: req.signal,
     },
   );
+  assertMediaAuthorityCurrent(req);
   if (!create.ok) throw await httpError(create, def.id);
   const created = (await create.json()) as {
     id?: string;
@@ -422,6 +471,7 @@ async function replicateImage(
     output?: string | string[];
     error?: string;
   };
+  assertMediaAuthorityCurrent(req);
   if (!created.id) throw new Error(`${def.id}: prediction sem id`);
 
   const url = await pollReplicatePrediction(
@@ -432,13 +482,24 @@ async function replicateImage(
     def.id,
     // Image jobs are never persisted — recovery is video-only, so the
     // timeout message must not promise a recoverJobId that cannot work.
-    { recoverable: false, signal: req.signal },
+    {
+      recoverable: false,
+      signal: req.signal,
+      assertCurrentAuthority: req.assertCurrentAuthority,
+    },
   );
-  return downloadProviderAsset(url, 'replicate-image', {
-    fetchFn: deps.fetchFn,
-    resolveHostname: deps.resolveHostname,
-    fetchPinned: deps.fetchPinned,
-  });
+  assertMediaAuthorityCurrent(req);
+  return downloadProviderAsset(
+    url,
+    'replicate-image',
+    {
+      fetchFn: deps.fetchFn,
+      resolveHostname: deps.resolveHostname,
+      fetchPinned: deps.fetchPinned,
+    },
+    undefined,
+    req.signal,
+  );
 }
 
 export async function generateImage(
@@ -446,7 +507,7 @@ export async function generateImage(
   deps: MediaDeps = defaultMediaDeps(),
 ): Promise<MediaGenerationResult> {
   const startedAt = deps.now();
-  throwIfMediaAborted(req.signal);
+  assertMediaAuthorityCurrent(req);
   const def = resolveMediaProvider(
     'image',
     req.provider,
@@ -489,6 +550,7 @@ export async function generateImage(
   } else {
     data = await openaiImage(req, def, model, key, deps, image);
   }
+  assertMediaAuthorityCurrent(req);
   writeMediaOutput(outPath, req.baseDir, data);
   return result(def, model, outPath, startedAt, deps);
 }
@@ -502,7 +564,10 @@ export async function generateImage(
  */
 export function replicateImageField(model: string): string {
   if (model.startsWith('kwaivgi/kling')) return 'start_image';
-  if (model.startsWith('minimax/hailuo') || model.startsWith('minimax/video-01')) {
+  if (
+    model.startsWith('minimax/hailuo') ||
+    model.startsWith('minimax/video-01')
+  ) {
     return 'first_frame_image';
   }
   if (model.startsWith('luma/')) return 'start_image';
@@ -602,8 +667,13 @@ async function pollReplicatePrediction(
   deps: MediaDeps,
   initial?: { status?: string; output?: string | string[]; error?: string },
   providerLabel: string = 'replicate-video',
-  opts: { recoverable?: boolean; signal?: AbortSignal } = {},
+  opts: {
+    recoverable?: boolean;
+    signal?: AbortSignal;
+    assertCurrentAuthority?: () => void;
+  } = {},
 ): Promise<string> {
+  const authority: MediaAuthorityRequest = opts;
   let prediction = {
     id: jobId,
     status: initial?.status,
@@ -615,19 +685,22 @@ async function pollReplicatePrediction(
     prediction.status !== 'succeeded' && poll < REPLICATE_MAX_POLLS;
     poll += 1
   ) {
-    throwIfMediaAborted(opts.signal);
+    assertMediaAuthorityCurrent(authority);
     if (prediction.status === 'failed' || prediction.status === 'canceled') {
       throw new Error(
         `${providerLabel}: prediction ${prediction.status} — ${prediction.error ?? 'sem causa'}`,
       );
     }
-    await deps.sleep(REPLICATE_POLL_MS);
-    const res = await deps.fetchFn(
-      `${REPLICATE_BASE}/predictions/${jobId}`,
-      { headers: { authorization: `Bearer ${key}` } },
-    );
+    await sleepWhileAuthorized(deps, REPLICATE_POLL_MS, authority);
+    assertMediaAuthorityCurrent(authority);
+    const res = await deps.fetchFn(`${REPLICATE_BASE}/predictions/${jobId}`, {
+      headers: { authorization: `Bearer ${key}` },
+      signal: opts.signal,
+    });
+    assertMediaAuthorityCurrent(authority);
     if (!res.ok) throw await httpError(res, providerLabel);
     prediction = (await res.json()) as typeof prediction;
+    assertMediaAuthorityCurrent(authority);
   }
   if (prediction.status !== 'succeeded') {
     throw new MediaJobTimeoutError(
@@ -642,6 +715,7 @@ async function pollReplicatePrediction(
   if (typeof url !== 'string' || !url) {
     throw new Error(`${providerLabel}: prediction sem output`);
   }
+  assertMediaAuthorityCurrent(authority);
   return url;
 }
 
@@ -656,6 +730,7 @@ async function generateVideoReplicate(
   const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp4', deps.now);
 
   if (req.recoverJobId) {
+    assertMediaAuthorityCurrent(req);
     const saved = getVideoJob(req.baseDir, req.recoverJobId);
     if (!saved || saved.provider !== 'replicate-video') {
       throw new Error(
@@ -670,30 +745,51 @@ async function generateVideoReplicate(
         deps,
         undefined,
         def.id,
-        { signal: req.signal },
+        {
+          signal: req.signal,
+          assertCurrentAuthority: req.assertCurrentAuthority,
+        },
       );
-      const data = await downloadProviderAsset(url, 'replicate-video', {
-        fetchFn: deps.fetchFn,
-        resolveHostname: deps.resolveHostname,
-        fetchPinned: deps.fetchPinned,
-      });
+      assertMediaAuthorityCurrent(req);
+      const data = await downloadProviderAsset(
+        url,
+        'replicate-video',
+        {
+          fetchFn: deps.fetchFn,
+          resolveHostname: deps.resolveHostname,
+          fetchPinned: deps.fetchPinned,
+        },
+        undefined,
+        req.signal,
+      );
+      assertMediaAuthorityCurrent(req);
       const dest = resolveOutPath(
         req.outPath ?? saved.outPath,
         req.baseDir,
         'mp4',
         deps.now,
       );
+      assertMediaAuthorityCurrent(req);
       writeMediaOutput(dest, req.baseDir, data);
+      assertMediaAuthorityCurrent(req);
       saveVideoJob(req.baseDir, { ...saved, status: 'completed' });
-      return result(def, saved.model, dest, startedAt, deps, {
-        seconds: req.durationSeconds ?? 5,
-      }, saved.jobId);
+      return result(
+        def,
+        saved.model,
+        dest,
+        startedAt,
+        deps,
+        {
+          seconds: req.durationSeconds ?? 5,
+        },
+        saved.jobId,
+      );
     } catch (err) {
+      assertMediaAuthorityCurrent(req);
       if (err instanceof MediaJobTimeoutError) throw err;
-      if (err instanceof MediaJobTimeoutError) throw err;
-      // Abort ≠ failure: the provider job keeps running and stays
-      // recoverable via recoverJobId — leave the record 'pending'.
-      if (err instanceof MediaAbortError) throw err;
+      // Authority is still current here; a revoked/aborted request was
+      // normalized by the checkpoint above and left the job pending.
+      assertMediaAuthorityCurrent(req);
       saveVideoJob(req.baseDir, { ...saved, status: 'failed' });
       throw err;
     }
@@ -721,6 +817,7 @@ async function generateVideoReplicate(
     }
   }
 
+  assertMediaAuthorityCurrent(req);
   const create = await deps.fetchFn(
     `${REPLICATE_BASE}/models/${model}/predictions`,
     {
@@ -739,6 +836,7 @@ async function generateVideoReplicate(
           openaiApiKey,
         ),
       }),
+      signal: req.signal,
     },
   );
   if (!create.ok) throw await httpError(create, def.id);
@@ -760,7 +858,11 @@ async function generateVideoReplicate(
     startedAt: deps.now(),
     status: 'pending',
   };
+  // The provider has accepted a billable remote job. Persisting its pending
+  // recovery identity is compensating state and must survive a revocation that
+  // races the submit response; output/completion/usage still require authority.
   saveVideoJob(req.baseDir, jobRecord);
+  assertMediaAuthorityCurrent(req);
 
   try {
     const url = await pollReplicatePrediction(
@@ -769,23 +871,42 @@ async function generateVideoReplicate(
       deps,
       created,
       def.id,
-      { signal: req.signal },
+      {
+        signal: req.signal,
+        assertCurrentAuthority: req.assertCurrentAuthority,
+      },
     );
-    const data = await downloadProviderAsset(url, 'replicate-video', {
-      fetchFn: deps.fetchFn,
-      resolveHostname: deps.resolveHostname,
-      fetchPinned: deps.fetchPinned,
-    });
+    assertMediaAuthorityCurrent(req);
+    const data = await downloadProviderAsset(
+      url,
+      'replicate-video',
+      {
+        fetchFn: deps.fetchFn,
+        resolveHostname: deps.resolveHostname,
+        fetchPinned: deps.fetchPinned,
+      },
+      undefined,
+      req.signal,
+    );
+    assertMediaAuthorityCurrent(req);
     writeMediaOutput(outPath, req.baseDir, data);
+    assertMediaAuthorityCurrent(req);
     saveVideoJob(req.baseDir, { ...jobRecord, status: 'completed' });
-    return result(def, model, outPath, startedAt, deps, {
-      seconds: req.durationSeconds ?? 5,
-    }, created.id);
+    return result(
+      def,
+      model,
+      outPath,
+      startedAt,
+      deps,
+      {
+        seconds: req.durationSeconds ?? 5,
+      },
+      created.id,
+    );
   } catch (err) {
+    assertMediaAuthorityCurrent(req);
     if (err instanceof MediaJobTimeoutError) throw err;
-    // Abort ≠ failure: the provider job keeps running and stays
-    // recoverable via recoverJobId — leave the record 'pending'.
-    if (err instanceof MediaAbortError) throw err;
+    assertMediaAuthorityCurrent(req);
     saveVideoJob(req.baseDir, { ...jobRecord, status: 'failed' });
     throw err;
   }
@@ -827,13 +948,15 @@ function googleVeoParameters(req: VideoRequest): Record<string, unknown> {
   return params;
 }
 
-function extractGoogleVeoVideo(
-  operation: Record<string, unknown>,
-): { uri?: string; bytesBase64?: string } {
+function extractGoogleVeoVideo(operation: Record<string, unknown>): {
+  uri?: string;
+  bytesBase64?: string;
+} {
   const response = operation.response as Record<string, unknown> | undefined;
   const generate =
     (response?.generateVideoResponse as Record<string, unknown> | undefined) ??
-    (response?.generate_video_response as Record<string, unknown> | undefined) ??
+    (response?.generate_video_response as
+      Record<string, unknown> | undefined) ??
     response;
   const samples =
     (generate?.generatedSamples as unknown[]) ??
@@ -862,7 +985,12 @@ async function pollGoogleVeoOperation(
   key: string,
   deps: MediaDeps,
   signal?: AbortSignal,
+  assertCurrentAuthority?: () => void,
 ): Promise<Record<string, unknown>> {
+  const authority: MediaAuthorityRequest = {
+    signal,
+    assertCurrentAuthority,
+  };
   // operation.name is like "operations/xyz" — poll relative to GEMINI_BASE.
   const pollPath = operationName.startsWith('http')
     ? operationName
@@ -870,13 +998,19 @@ async function pollGoogleVeoOperation(
 
   let body: Record<string, unknown> = {};
   for (let poll = 0; poll < GOOGLE_VIDEO_MAX_POLLS; poll += 1) {
-    throwIfMediaAborted(signal);
-    if (poll > 0) await deps.sleep(GOOGLE_VIDEO_POLL_MS);
+    assertMediaAuthorityCurrent(authority);
+    if (poll > 0) {
+      await sleepWhileAuthorized(deps, GOOGLE_VIDEO_POLL_MS, authority);
+    }
+    assertMediaAuthorityCurrent(authority);
     const res = await deps.fetchFn(pollPath, {
       headers: { 'x-goog-api-key': key },
+      signal,
     });
+    assertMediaAuthorityCurrent(authority);
     if (!res.ok) throw await httpError(res, 'google-video');
     body = (await res.json()) as Record<string, unknown>;
+    assertMediaAuthorityCurrent(authority);
     if (body.done === true) {
       if (body.error) {
         const err = body.error as { message?: string };
@@ -894,7 +1028,9 @@ async function downloadGoogleVeoBytes(
   extracted: { uri?: string; bytesBase64?: string },
   key: string,
   deps: MediaDeps,
+  req: MediaAuthorityRequest,
 ): Promise<Buffer> {
+  assertMediaAuthorityCurrent(req);
   if (extracted.bytesBase64) {
     return Buffer.from(extracted.bytesBase64, 'base64');
   }
@@ -903,17 +1039,28 @@ async function downloadGoogleVeoBytes(
   }
   // Signed URIs often work without auth; try with key header as fallback.
   try {
-    return await downloadProviderAsset(extracted.uri, 'google-video', {
-      fetchFn: deps.fetchFn,
-      resolveHostname: deps.resolveHostname,
-      fetchPinned: deps.fetchPinned,
-    });
+    return await downloadProviderAsset(
+      extracted.uri,
+      'google-video',
+      {
+        fetchFn: deps.fetchFn,
+        resolveHostname: deps.resolveHostname,
+        fetchPinned: deps.fetchPinned,
+      },
+      undefined,
+      req.signal,
+    );
   } catch {
+    assertMediaAuthorityCurrent(req);
     const res = await deps.fetchFn(extracted.uri, {
       headers: { 'x-goog-api-key': key },
+      signal: req.signal,
     });
+    assertMediaAuthorityCurrent(req);
     if (!res.ok) throw await httpError(res, 'google-video');
-    return Buffer.from(await res.arrayBuffer());
+    const data = Buffer.from(await res.arrayBuffer());
+    assertMediaAuthorityCurrent(req);
+    return data;
   }
 }
 
@@ -928,6 +1075,7 @@ async function generateVideoGoogle(
   const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp4', deps.now);
 
   if (req.recoverJobId) {
+    assertMediaAuthorityCurrent(req);
     const saved = getVideoJob(req.baseDir, req.recoverJobId);
     if (!saved || saved.provider !== 'google-video') {
       throw new Error(
@@ -941,26 +1089,37 @@ async function generateVideoGoogle(
         key,
         deps,
         req.signal,
+        req.assertCurrentAuthority,
       );
+      assertMediaAuthorityCurrent(req);
       const extracted = extractGoogleVeoVideo(done);
-      const data = await downloadGoogleVeoBytes(extracted, key, deps);
+      const data = await downloadGoogleVeoBytes(extracted, key, deps, req);
+      assertMediaAuthorityCurrent(req);
       const dest = resolveOutPath(
         req.outPath ?? saved.outPath,
         req.baseDir,
         'mp4',
         deps.now,
       );
+      assertMediaAuthorityCurrent(req);
       writeMediaOutput(dest, req.baseDir, data);
+      assertMediaAuthorityCurrent(req);
       saveVideoJob(req.baseDir, { ...saved, status: 'completed' });
-      return result(def, saved.model, dest, startedAt, deps, {
-        seconds: req.durationSeconds ?? 8,
-      }, saved.jobId);
+      return result(
+        def,
+        saved.model,
+        dest,
+        startedAt,
+        deps,
+        {
+          seconds: req.durationSeconds ?? 8,
+        },
+        saved.jobId,
+      );
     } catch (err) {
+      assertMediaAuthorityCurrent(req);
       if (err instanceof MediaJobTimeoutError) throw err;
-      if (err instanceof MediaJobTimeoutError) throw err;
-      // Abort ≠ failure: the provider job keeps running and stays
-      // recoverable via recoverJobId — leave the record 'pending'.
-      if (err instanceof MediaAbortError) throw err;
+      assertMediaAuthorityCurrent(req);
       saveVideoJob(req.baseDir, { ...saved, status: 'failed' });
       throw err;
     }
@@ -980,6 +1139,7 @@ async function generateVideoGoogle(
     .slice(0, MAX_REFERENCE_IMAGES)
     .map((p) => readMediaInput(p, req.baseDir));
 
+  assertMediaAuthorityCurrent(req);
   const submit = await deps.fetchFn(
     `${GEMINI_BASE}/models/${model}:predictLongRunning`,
     {
@@ -989,11 +1149,10 @@ async function generateVideoGoogle(
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        instances: [
-          googleVeoInstance(req, image, endImage, referenceImages),
-        ],
+        instances: [googleVeoInstance(req, image, endImage, referenceImages)],
         parameters: googleVeoParameters(req),
       }),
+      signal: req.signal,
     },
   );
   if (!submit.ok) throw await httpError(submit, def.id);
@@ -1012,7 +1171,10 @@ async function generateVideoGoogle(
     startedAt: deps.now(),
     status: 'pending',
   };
+  // Recovery identity is compensating state for an already-submitted remote
+  // operation; keep it pending even if authority disappears immediately after.
   saveVideoJob(req.baseDir, jobRecord);
+  assertMediaAuthorityCurrent(req);
 
   try {
     const done = await pollGoogleVeoOperation(
@@ -1020,19 +1182,30 @@ async function generateVideoGoogle(
       key,
       deps,
       req.signal,
+      req.assertCurrentAuthority,
     );
+    assertMediaAuthorityCurrent(req);
     const extracted = extractGoogleVeoVideo(done);
-    const data = await downloadGoogleVeoBytes(extracted, key, deps);
+    const data = await downloadGoogleVeoBytes(extracted, key, deps, req);
+    assertMediaAuthorityCurrent(req);
     writeMediaOutput(outPath, req.baseDir, data);
+    assertMediaAuthorityCurrent(req);
     saveVideoJob(req.baseDir, { ...jobRecord, status: 'completed' });
-    return result(def, model, outPath, startedAt, deps, {
-      seconds: req.durationSeconds ?? 8,
-    }, started.name);
+    return result(
+      def,
+      model,
+      outPath,
+      startedAt,
+      deps,
+      {
+        seconds: req.durationSeconds ?? 8,
+      },
+      started.name,
+    );
   } catch (err) {
+    assertMediaAuthorityCurrent(req);
     if (err instanceof MediaJobTimeoutError) throw err;
-    // Abort ≠ failure: the provider job keeps running and stays
-    // recoverable via recoverJobId — leave the record 'pending'.
-    if (err instanceof MediaAbortError) throw err;
+    assertMediaAuthorityCurrent(req);
     saveVideoJob(req.baseDir, { ...jobRecord, status: 'failed' });
     throw err;
   }
@@ -1043,7 +1216,7 @@ export async function generateVideo(
   deps: MediaDeps = defaultMediaDeps(),
 ): Promise<MediaGenerationResult> {
   const startedAt = deps.now();
-  throwIfMediaAborted(req.signal);
+  assertMediaAuthorityCurrent(req);
 
   // recoverJobId may imply provider from the saved job.
   let providerId = req.provider;
@@ -1077,7 +1250,7 @@ export async function generateAudio(
   deps: MediaDeps = defaultMediaDeps(),
 ): Promise<MediaGenerationResult> {
   const startedAt = deps.now();
-  throwIfMediaAborted(req.signal);
+  assertMediaAuthorityCurrent(req);
   const def = resolveMediaProvider('audio', req.provider, (d) =>
     Boolean(deps.getKey(d)),
   );
@@ -1086,17 +1259,22 @@ export async function generateAudio(
   const voiceId = req.voiceId ?? DEFAULT_ELEVENLABS_VOICE;
   const outPath = resolveOutPath(req.outPath, req.baseDir, 'mp3', deps.now);
 
+  assertMediaAuthorityCurrent(req);
   const res = await deps.fetchFn(
     `${ELEVENLABS_BASE}/text-to-speech/${encodeURIComponent(voiceId)}`,
     {
       method: 'POST',
       headers: { 'xi-api-key': key, 'content-type': 'application/json' },
       body: JSON.stringify({ text: req.text, model_id: model }),
+      signal: req.signal,
     },
   );
+  assertMediaAuthorityCurrent(req);
   if (!res.ok) throw await httpError(res, def.id);
 
-  writeMediaOutput(outPath, req.baseDir, Buffer.from(await res.arrayBuffer()));
+  const data = Buffer.from(await res.arrayBuffer());
+  assertMediaAuthorityCurrent(req);
+  writeMediaOutput(outPath, req.baseDir, data);
   return result(def, model, outPath, startedAt, deps, {
     chars: req.text.length,
   });
@@ -1107,7 +1285,8 @@ export async function generateAudio(
 function defaultMediaDeps(): MediaDeps {
   // Lazy require keeps this module importable from unit tests (no electron).
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { resolveMediaKey } = require('./media-keys') as typeof import('./media-keys');
+  const { resolveMediaKey } =
+    require('./media-keys') as typeof import('./media-keys');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { resolveBrowserHostname } =
     require('../browser/url-policy') as typeof import('../browser/url-policy');

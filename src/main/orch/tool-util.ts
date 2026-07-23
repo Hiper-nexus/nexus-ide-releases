@@ -12,7 +12,9 @@ import {
 import type { AgentGateContext } from './gate';
 import {
   getSessionState,
+  orchTerminateSession,
   orchWriteSession,
+  tapSessionData,
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
@@ -28,7 +30,11 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { resolveCwdForScope } from './workspace-path';
 import { canUseNexusMcp } from './cli-mcp-inject';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
-import { spawnMissionOmpRpcWorker } from '../adapters/omp-rpc-ipc';
+import {
+  isSafeOmpMissionPreflightFailure,
+  spawnMissionOmpRpcWorker,
+  terminateOmpRpcSession,
+} from '../adapters/omp-rpc-ipc';
 import { isAdapterInstalled } from '../adapters/adapter-registry';
 import { hasAvailableAccount } from '../persistence/account-store';
 import {
@@ -38,6 +44,16 @@ import {
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
 import { OmpAutoCompanionSingleFlight } from './omp-auto-companion-single-flight';
+import { assertSafePtyPrompt } from './pty-prompt-safety';
+import { isSessionInjectableIdle } from './agent-status';
+import { listSquads } from './squad-store';
+import { resolveMissionPaneAuthoritySeal } from './mission-pane-authority';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolInvocation,
+} from './mcp-protocol';
+
+export { assertSafePtyPrompt } from './pty-prompt-safety';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
@@ -54,19 +70,10 @@ const BOOT_PROMPT_HOLD_MS = 5_000;
  * blind to idle panes: stall needs busy, login-stuck needs a busy transition).
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
-const UNSAFE_TERMINAL_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
 const ompAutoCompanionFlights = new OmpAutoCompanionSingleFlight();
 
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Reject bytes that can escape bracketed paste or submit/cancel PTY input. */
-export function assertSafePtyPrompt(prompt: string): string {
-  if (UNSAFE_TERMINAL_CONTROL.test(prompt)) {
-    throw new Error('unsafe terminal control in prompt');
-  }
-  return prompt;
 }
 
 export function str(
@@ -135,6 +142,7 @@ export function authorizedSessionIdOf(
 export async function injectPrompt(
   sessionId: string,
   prompt: string,
+  invocation?: McpToolInvocation,
 ): Promise<void> {
   const safePrompt = assertSafePtyPrompt(prompt);
   // Agent briefs routinely contain Markdown and many newlines. Sending those
@@ -144,10 +152,11 @@ export async function injectPrompt(
   const input = safePrompt.includes('\n')
     ? `\x1b[200~${safePrompt}\x1b[201~`
     : safePrompt;
-  if (!orchWriteSession(sessionId, input)) {
+  assertMcpInvocationCurrent(invocation);
+  if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
     throw new Error('session is gone');
   }
-  await submitEnter(sessionId);
+  await submitEnter(sessionId, invocation);
 }
 
 /**
@@ -158,18 +167,53 @@ export async function injectPrompt(
  * is safe only while the session is still idle; once it turned busy the first
  * submit is proven and we stop.
  */
-async function submitEnter(sessionId: string): Promise<void> {
+async function submitEnter(
+  sessionId: string,
+  invocation?: McpToolInvocation,
+  onBeforeSubmit?: () => void,
+  requireInjectableIdle = false,
+): Promise<void> {
   let observedBusy = getSessionState(sessionId) === 'busy';
   const untapState = tapSessionState((changedSessionId, state) => {
     if (changedSessionId === sessionId && state === 'busy') observedBusy = true;
   });
   try {
     await delay(PROMPT_SETTLE_MS);
-    orchWriteSession(sessionId, '\r');
-    await delay(ENTER_RETRY_MS);
-    if (!observedBusy && getSessionState(sessionId) === 'idle') {
-      orchWriteSession(sessionId, '\r');
+    if (requireInjectableIdle && !isSessionInjectableIdle(sessionId)) {
+      throw new Error('agent pane is awaiting operator input');
     }
+    assertMcpInvocationCurrent(invocation);
+    onBeforeSubmit?.();
+    orchWriteSession(sessionId, '\r', { markInputBusy: false });
+    await delay(ENTER_RETRY_MS);
+    if (
+      !observedBusy &&
+      (requireInjectableIdle
+        ? isSessionInjectableIdle(sessionId)
+        : getSessionState(sessionId) === 'idle')
+    ) {
+      assertMcpInvocationCurrent(invocation);
+      orchWriteSession(sessionId, '\r', { markInputBusy: false });
+    }
+  } catch (error) {
+    if (invocation) {
+      let authorityLost = false;
+      try {
+        assertMcpInvocationCurrent(invocation);
+      } catch {
+        authorityLost = true;
+      }
+      if (authorityLost) {
+        const exited = await orchTerminateSession(sessionId);
+        if (!exited) {
+          throw new Error(
+            'session_authority_revoked; pasted prompt could not be cleared ' +
+              'because physical session exit was not proven',
+          );
+        }
+      }
+    }
+    throw error;
   } finally {
     untapState();
   }
@@ -179,12 +223,18 @@ async function submitEnter(sessionId: string): Promise<void> {
 export async function injectPastedPrompt(
   sessionId: string,
   prompt: string,
+  invocation?: McpToolInvocation,
 ): Promise<void> {
   const safePrompt = assertSafePtyPrompt(prompt);
-  if (!orchWriteSession(sessionId, `\x1b[200~${safePrompt}\x1b[201~`)) {
+  assertMcpInvocationCurrent(invocation);
+  if (!orchWriteSession(
+    sessionId,
+    `\x1b[200~${safePrompt}\x1b[201~`,
+    { markInputBusy: false },
+  )) {
     throw new Error('session is gone');
   }
-  await submitEnter(sessionId);
+  await submitEnter(sessionId, invocation);
 }
 
 /**
@@ -197,14 +247,28 @@ async function injectWithBusyProof(
   sessionId: string,
   prompt: string,
   windowMs: number,
+  invocation?: McpToolInvocation,
 ): Promise<boolean> {
+  // Never interleave a brief with boot or a turn already in progress. The
+  // caller may retry only after an actual idle snapshot/edge.
+  if (!isSessionInjectableIdle(sessionId)) return false;
   let observedBusy = false;
+  let observedOutput = false;
+  let submitted = false;
   let sessionExited = false;
   let settle: ((accepted: boolean) => void) | null = null;
+  const maybeAccept = () => {
+    if (observedBusy && observedOutput) settle?.(true);
+  };
   const untapState = tapSessionState((changedSessionId, state) => {
-    if (changedSessionId !== sessionId || state !== 'busy') return;
+    if (changedSessionId !== sessionId || !submitted || state !== 'busy') return;
     observedBusy = true;
-    settle?.(true);
+    maybeAccept();
+  });
+  const untapData = tapSessionData((changedSessionId, data) => {
+    if (changedSessionId !== sessionId || !submitted || data.length === 0) return;
+    observedOutput = true;
+    maybeAccept();
   });
   const untapExit = tapSessionExit((exitedSessionId) => {
     if (exitedSessionId !== sessionId) return;
@@ -213,8 +277,22 @@ async function injectWithBusyProof(
   });
 
   try {
-    await injectPrompt(sessionId, prompt);
-    if (observedBusy || getSessionState(sessionId) === 'busy') return true;
+    const safePrompt = assertSafePtyPrompt(prompt);
+    const input = safePrompt.includes('\n')
+      ? `\x1b[200~${safePrompt}\x1b[201~`
+      : safePrompt;
+    if (!isSessionInjectableIdle(sessionId)) return false;
+    assertMcpInvocationCurrent(invocation);
+    if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
+      return false;
+    }
+    await submitEnter(
+      sessionId,
+      invocation,
+      () => { submitted = true; },
+      true,
+    );
+    if (observedBusy && observedOutput) return true;
     if (sessionExited || getSessionState(sessionId) === null) return false;
     return await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
@@ -230,6 +308,7 @@ async function injectWithBusyProof(
   } finally {
     settle = null;
     untapState();
+    untapData();
     untapExit();
   }
 }
@@ -244,10 +323,20 @@ async function injectWithBusyProof(
 export async function deliverAgentPrompt(
   sessionId: string,
   prompt: string,
+  invocation?: McpToolInvocation,
 ): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await waitOutBootPrompts(sessionId);
-    if (await injectWithBusyProof(sessionId, prompt, PROMPT_ACCEPTANCE_WINDOW_MS)) {
+    // Linearization point after boot/menu waits and immediately before paste.
+    assertMcpInvocationCurrent(invocation);
+    if (
+      await injectWithBusyProof(
+        sessionId,
+        prompt,
+        PROMPT_ACCEPTANCE_WINDOW_MS,
+        invocation,
+      )
+    ) {
       return;
     }
   }
@@ -256,6 +345,8 @@ export async function deliverAgentPrompt(
 
 export interface SpawnToolOptions {
   adapterId: string;
+  /** Main-selected vault identity; never let the renderer choose for missions. */
+  accountId?: string;
   model?: string;
   /** Per-spawn reasoning effort (task-router decision). */
   effort?: string;
@@ -264,6 +355,7 @@ export interface SpawnToolOptions {
   missionId?: string;
   contextRevision?: string;
   agentName?: string;
+  workerIncarnationId?: string;
   /** Squad role category (scout/executor/reviewer/…) — tiers the charters. */
   agentCategory?: string;
   allowedTools?: string[] | null;
@@ -287,6 +379,27 @@ export interface SpawnToolOptions {
  */
 export interface SpawnPaneHooks {
   readonly onPaneCreated?: (paneId: string, sessionId: string) => void;
+  /** Exact dispatch authority propagated across asynchronous preflight. */
+  readonly invocation?: McpToolInvocation;
+}
+
+function requireMissionPaneAuthoritySeal(options: SpawnToolOptions) {
+  if (!options.missionId) return undefined;
+  const stores = getProjectDomainStores(options.scope);
+  const mission = stores.missions.get(options.missionId);
+  const squads = listSquads().filter(
+    (candidate) => candidate.id === mission?.squadId,
+  );
+  const seal =
+    mission && squads.length === 1
+      ? resolveMissionPaneAuthoritySeal(options.scope, mission, squads[0])
+      : null;
+  if (!seal) {
+    throw new Error(
+      'mission pane authority seal is unavailable; replane and approve the current mission revision',
+    );
+  }
+  return seal;
 }
 
 /**
@@ -376,6 +489,8 @@ function scheduleOmpAutoCompanion(
 ): void {
   if (options.suppressOmpAutoSpawn) return;
   if (!options.missionId) return;
+  // An unconfined companion would silently widen a read-only task.
+  if (options.readOnly === true) return;
   const settings = getOrchSettings();
   let missionHasOmp = false;
   try {
@@ -441,6 +556,7 @@ export async function spawnPaneAndMaybePrompt(
   options: SpawnToolOptions,
   hooks: SpawnPaneHooks = {},
 ): Promise<{ paneId: string; sessionId: string }> {
+  assertMcpInvocationCurrent(hooks.invocation);
   // The cli-rpc adapter IS the omp rpc transport: normalize to `omp` BEFORE
   // resolving anything else so the rest of the path (models, handoff
   // contract, transport branch) only ever sees the cli-pty omp adapter.
@@ -456,11 +572,17 @@ export async function spawnPaneAndMaybePrompt(
     throw new Error(`adapter ${options.adapterId} is not spawnable as a pane`);
   }
   const adapter = resolvedAdapter;
+  if (options.adapterId === 'omp' && options.readOnly === true) {
+    throw new Error(
+      'OMP does not provide enforceable read-only native confinement',
+    );
+  }
   // Pre-spawn credential probe (Overclock F-256 harvest): a spawn with a
   // missing credential used to surface as a dead pane or a mute login TUI.
   // Fail here — before any pane exists — with a typed, actionable error.
   // Cheap (<50ms, no network) and never judges what it cannot prove.
   await assertPreSpawnProbe(options.adapterId);
+  assertMcpInvocationCurrent(hooks.invocation);
   // Circuit half-open / closed only for auto traffic; explicit spawns still try.
   // Failures below trip the breaker for future routeTask multi-score.
   // Defesa em profundidade contra modelo-fantasma (caso de campo 17/07): a
@@ -495,6 +617,7 @@ export async function spawnPaneAndMaybePrompt(
     executionScope: options.executionScope ?? options.scope,
     cwd: resolveCwdForScope(options.executionScope ?? options.scope, options.cwd),
   };
+  const authoritySeal = requireMissionPaneAuthoritySeal(options);
 
   // Oh My Pi dual transport: rpc-ui for deterministic lifecycle, PTY for full
   // MCP inject. `auto` prefers rpc and falls back to PTY on failure.
@@ -502,6 +625,7 @@ export async function spawnPaneAndMaybePrompt(
     const transport = getOrchSettings().ompMissionTransport;
     if (transport === 'rpc' || transport === 'auto') {
       try {
+        assertMcpInvocationCurrent(hooks.invocation);
         const prompt = options.prompt
           ? withHandoffContract(options.prompt, adapter, {
               category: options.agentCategory,
@@ -510,68 +634,111 @@ export async function spawnPaneAndMaybePrompt(
           : undefined;
         const rpc = await spawnMissionOmpRpcWorker({
           scope: options.scope,
-          workspaceRoot: safeOptions.cwd ?? options.scope.rootRealPath,
+          executionScope: {
+            ...(safeOptions.executionScope ?? options.scope),
+          },
           missionId: options.missionId,
           model: effectiveModel,
           title: options.title,
           agentName: options.agentName,
+          workerIncarnationId: options.workerIncarnationId,
           prompt,
           // Unattended mission path: audited yolo (safe hangs without UI attach).
           approvalPolicy: 'yolo',
           allowedTools: options.allowedTools,
+          signal: hooks.invocation?.signal,
+          assertCurrentAuthority:
+            hooks.invocation?.assertCurrentAuthority,
+          onSessionReady: (paneId, sessionId) => {
+            // Bind the dispatch before the first OMP prompt can emit
+            // agent_start and a same-turn handoff.
+            hooks.onPaneCreated?.(paneId, sessionId);
+          },
+          onAccepted: (paneId) => {
+            // Persist composition only after agent_start. A rejected prompt
+            // must not leave a dead pane identity that blocks safe recovery.
+            if (options.missionId) {
+              getProjectDomainStores(options.scope).missionPanes.record({
+                missionId: options.missionId,
+                adapterId: options.adapterId,
+                model: effectiveModel,
+                accountId: options.accountId,
+                effort: options.effort,
+                cwd: safeOptions.cwd,
+                executionScope: safeOptions.executionScope,
+                title: options.title,
+                agentName: options.agentName,
+                workerIncarnationId: options.workerIncarnationId,
+                role: options.role ?? 'worker',
+                allowedTools: options.allowedTools,
+                allowedSkills: options.allowedSkills,
+                readOnly: options.readOnly,
+                authoritySeal,
+                paneId,
+              });
+            }
+          },
         });
-        hooks.onPaneCreated?.(rpc.paneId, rpc.sessionId);
-        if (options.missionId) {
-          getProjectDomainStores(options.scope).missionPanes.record({
-            missionId: options.missionId,
-            adapterId: options.adapterId,
-            model: effectiveModel,
-            effort: options.effort,
-            cwd: safeOptions.cwd,
-            executionScope: safeOptions.executionScope,
-            title: options.title,
-            agentName: options.agentName,
-            role: options.role ?? 'worker',
-            allowedTools: options.allowedTools,
-            allowedSkills: options.allowedSkills,
-            paneId: rpc.paneId,
-          });
+        try {
+          assertMcpInvocationCurrent(hooks.invocation);
+        } catch (error) {
+          await terminateOmpRpcSession(rpc.sessionId);
+          throw error;
         }
         // rpc path already is omp — no companion needed.
         adapterCircuitBreakers.recordSuccess(options.adapterId);
         return rpc;
       } catch (err) {
         adapterCircuitBreakers.recordFailure(options.adapterId);
-        if (transport === 'rpc') throw err;
+        if (transport === 'rpc' || !isSafeOmpMissionPreflightFailure(err)) {
+          throw err;
+        }
         console.warn(
-          '[spawn] omp rpc-ui falhou; caindo para PTY:',
+          '[spawn] preflight omp rpc-ui falhou; caindo para PTY:',
           err instanceof Error ? err.message : err,
         );
       }
     }
   }
 
-  const result = await requestPaneSpawn(safeOptions);
+  assertMcpInvocationCurrent(hooks.invocation);
+  const result = await requestPaneSpawn({
+    ...safeOptions,
+    ...(hooks.invocation?.signal
+      ? { abortSignal: hooks.invocation.signal }
+      : {}),
+  });
   if (!result.ok || !result.paneId || !result.sessionId) {
     adapterCircuitBreakers.recordFailure(options.adapterId);
     throw new Error(result.error ?? 'pane spawn failed');
+  }
+  try {
+    assertMcpInvocationCurrent(hooks.invocation);
+  } catch (error) {
+    await requestPaneClose(result.paneId);
+    throw error;
   }
   adapterCircuitBreakers.recordSuccess(options.adapterId);
   hooks.onPaneCreated?.(result.paneId, result.sessionId);
   // Remember the mission's composition so it can be reopened from history.
   if (options.missionId) {
+    assertMcpInvocationCurrent(hooks.invocation);
     getProjectDomainStores(options.scope).missionPanes.record({
       missionId: options.missionId,
       adapterId: options.adapterId,
       model: effectiveModel,
+      accountId: options.accountId,
       effort: options.effort,
       cwd: safeOptions.cwd,
       executionScope: safeOptions.executionScope,
       title: options.title,
       agentName: options.agentName,
+      workerIncarnationId: options.workerIncarnationId,
       role: options.role ?? 'worker',
       allowedTools: options.allowedTools,
       allowedSkills: options.allowedSkills,
+      readOnly: options.readOnly,
+      authoritySeal,
       // Chave do resume direcionado: o reopen reusa este paneId para o CLI
       // voltar à MESMA conversa (não à mais recente do cwd).
       paneId: result.paneId,
@@ -588,17 +755,23 @@ export async function spawnPaneAndMaybePrompt(
             hints: [options.title, options.agentName],
           });
     try {
+      assertMcpInvocationCurrent(hooks.invocation);
       if (boot === 'exited') {
         throw new Error('agent session exited during boot');
       }
       // 'idle' or 'timeout' (slow boot): deliver and prove acceptance —
       // a swallowed brief used to leave a zombie worker no watchdog can see.
-      await deliverAgentPrompt(result.sessionId, prompt);
+      await deliverAgentPrompt(
+        result.sessionId,
+        prompt,
+        hooks.invocation,
+      );
     } catch (error) {
-      // Never leave a mute zombie pane occupying a mission worker slot; the
-      // durable mission_panes row stays so the driver can respawn from it.
+      // Never leave a mute zombie pane occupying a mission worker slot. The
+      // durable row remains as audit history, but a fenced worker incarnation
+      // is never respawned as a different physical process.
       try {
-        requestPaneClose(result.paneId);
+        await requestPaneClose(result.paneId);
       } catch {
         // best effort — the original error matters more
       }

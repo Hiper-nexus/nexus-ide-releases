@@ -15,6 +15,7 @@ import {
   releaseSession,
   resetGateForTests,
   restoreSessionAuthority,
+  rotateContextRevisionAuthority,
 } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 
@@ -52,6 +53,7 @@ describe('isToolAllowed', () => {
   it('always allows handoff tools and ToolSearch, even with empty allowlist', () => {
     expect(isToolAllowed([], 'nexus_handoff_submit')).toBe(true);
     expect(isToolAllowed([], 'handoff_list')).toBe(true);
+    expect(isToolAllowed([], 'nexus_worker_heartbeat')).toBe(true);
     expect(isToolAllowed([], 'ToolSearch')).toBe(true);
   });
 
@@ -62,14 +64,17 @@ describe('isToolAllowed', () => {
     expect(isToolAllowed(null, 'nexus_agent_spec_write')).toBe(false);
     expect(isToolAllowed(null, 'nexus_remote_cli_detect')).toBe(false);
     expect(isToolAllowed(null, 'nexus_remote_bridge_status')).toBe(false);
+    expect(isToolAllowed(null, 'nexus_cron')).toBe(false);
   });
 
   it('grants high-impact tools only when named explicitly', () => {
     expect(isToolAllowed(['nexus_remote_spawn'], 'nexus_remote_spawn')).toBe(true);
     expect(isToolAllowed(['remote_spawn'], 'nexus_remote_spawn')).toBe(true);
     expect(isToolAllowed(['agent_spec_write'], 'nexus_agent_spec_write')).toBe(true);
+    expect(isToolAllowed(['cron'], 'nexus_cron')).toBe(true);
     // A different explicit grant does not leak the dangerous one.
     expect(isToolAllowed(['nexus_pane_read'], 'nexus_remote_spawn')).toBe(false);
+    expect(isToolAllowed(['nexus_pane_read'], 'nexus_cron')).toBe(false);
   });
 });
 
@@ -176,6 +181,30 @@ describe('token registry + stop gate', () => {
     );
   });
 
+  it('rotates context authority only from the exact PREVC revision', () => {
+    const ctx = mintToken({
+      label: 'revision-rotation',
+      role: 'orchestrator',
+      missionId: 'mission-a',
+      contextRevision: 'context-revision-a',
+      scope: testProjectScope(),
+    });
+
+    rotateContextRevisionAuthority(
+      ctx,
+      'context-revision-a',
+      'context-revision-b',
+    );
+    expect(ctx.contextRevision).toBe('context-revision-b');
+    expect(() =>
+      rotateContextRevisionAuthority(
+        ctx,
+        'context-revision-a',
+        'context-revision-c',
+      ),
+    ).toThrow(/changed before PREVC authority rotation/i);
+  });
+
   it('never mints revision authority without its mission coordinate', () => {
     expect(() => mintToken({
       label: 'invalid-revision',
@@ -232,6 +261,34 @@ describe('token registry + stop gate', () => {
     expect(worker.allowedTools).toEqual(['nexus_file_read']);
   });
 
+  it('binds one worker token to one immutable physical incarnation', () => {
+    const worker = mintToken({
+      label: 'worker',
+      role: 'worker',
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-incarnation-current',
+      scope: testProjectScope(),
+    });
+    bindTokenToSession(worker.token, 'pty-worker-incarnation');
+
+    expect(getContextBySession('pty-worker-incarnation')).toMatchObject({
+      workerIncarnationId: 'worker-incarnation-current',
+    });
+    expect(
+      restoreSessionAuthority('pty-worker-incarnation', {
+        missionId: 'mission-a',
+        role: 'worker',
+        workerIncarnationId: 'worker-incarnation-stale',
+      }),
+    ).toBe(false);
+    expect(() => mintToken({
+      label: 'orchestrator',
+      role: 'orchestrator',
+      workerIncarnationId: 'worker-incarnation-invalid',
+      scope: testProjectScope(),
+    })).toThrow(/worker incarnation/i);
+  });
+
   it('restores the persisted worker capability snapshot on a resumed user token', () => {
     const resumed = token('resumed-custom', 'user');
     bindTokenToSession(resumed.token, 'pty-resumed-custom');
@@ -241,12 +298,14 @@ describe('token registry + stop gate', () => {
         missionId: 'mission-a',
         contextRevision: 'context-revision-a',
         role: 'worker',
+        readOnly: true,
         allowedTools: ['nexus_file_read'],
         allowedSkills: ['review'],
       }),
     ).toBe(true);
     expect(getContextBySession('pty-resumed-custom')).toMatchObject({
       role: 'worker',
+      readOnly: true,
       contextRevision: 'context-revision-a',
       allowedTools: ['nexus_file_read'],
       allowedSkills: ['review'],

@@ -62,6 +62,10 @@ export class WorktreeRuntimeRegistry {
       stateStore: mergeState,
       worktreeManager: worktrees,
     });
+    // This registry instance is constructed only after the app's
+    // single-instance boundary. Any pre-existing `reserved` row belongs to an
+    // interrupted prior process and must converge before scheduler dispatch.
+    worktrees.reconcileInterruptedReservations(immutableScope);
     queue.reconcile(immutableScope);
     const value = Object.freeze({
       scope: immutableScope,

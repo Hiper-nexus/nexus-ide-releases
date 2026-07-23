@@ -10,6 +10,7 @@ import type { McpToolDef } from './mcp-protocol';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { requireStr, str } from './tool-util';
 import { compactText } from './session-compaction';
+import { TASK_DISPATCH_HEARTBEAT_LEASE_MS } from './task-dispatch-lifecycle';
 
 const handoffSubmitTool: McpToolDef = {
   name: 'nexus_handoff_submit',
@@ -80,6 +81,25 @@ const handoffSubmitTool: McpToolDef = {
     ) {
       throw new Error('evidenceIds must be an array of Nexus evidence IDs');
     }
+    const activeDispatch = ctx.sessionId
+      ? suite.taskDispatches
+          ?.list(mission.id)
+          .find((dispatch) =>
+            dispatch.sessionId === ctx.sessionId &&
+            dispatch.state === 'running',
+          )
+      : undefined;
+    if (
+      activeDispatch &&
+      (
+        !ctx.workerIncarnationId ||
+        activeDispatch.workerIncarnationId !== ctx.workerIncarnationId
+      )
+    ) {
+      throw new Error(
+        'worker incarnation obsoleta: este handoff pertence a outra geração física',
+      );
+    }
     const handoff = suite.handoffs.submit({
       status: handoffStatusSchema.parse(args.status),
       summary,
@@ -87,8 +107,26 @@ const handoffSubmitTool: McpToolDef = {
       evidenceIds: rawEvidenceIds as string[] | undefined,
       missionId: ctx.missionId,
       sessionId: ctx.sessionId,
+      workerIncarnationId: ctx.workerIncarnationId,
       fromAgent: ctx.agentName ?? ctx.label,
     });
+    let taskDispatchState: string | undefined;
+    if (ctx.sessionId && ctx.workerIncarnationId && activeDispatch) {
+        const status = handoffStatusSchema.parse(args.status);
+        const dispatch = status === 'success'
+          ? suite.taskDispatches.acceptHandoff({
+              sessionId: ctx.sessionId,
+              workerIncarnationId: ctx.workerIncarnationId,
+              handoffId: handoff.id,
+            })
+          : suite.taskDispatches.blockFromHandoff({
+              sessionId: ctx.sessionId,
+              workerIncarnationId: ctx.workerIncarnationId,
+              handoffId: handoff.id,
+              detail: `${status}: ${summary}`,
+            });
+        taskDispatchState = dispatch.state;
+    }
     if (handoff.evidenceTrust === 'nexus-trusted') {
       markHandoffSubmitted(ctx);
     }
@@ -98,6 +136,7 @@ const handoffSubmitTool: McpToolDef = {
       handoffId: handoff.id,
       evidenceTrust: handoff.evidenceTrust,
       stopGateSatisfied: handoff.evidenceTrust === 'nexus-trusted',
+      ...(taskDispatchState ? { taskDispatchState } : {}),
       ...(petStudioCompletion
         ? { petStudioCompletion }
         : {}),
@@ -157,6 +196,47 @@ const handoffAcknowledgeTool: McpToolDef = {
   },
 };
 
+const workerHeartbeatTool: McpToolDef = {
+  name: 'nexus_worker_heartbeat',
+  description:
+    'Renew the durable lifecycle lease for this exact worker PTY. Workers on ' +
+    'long tasks should call it no later than every four minutes. It never changes ' +
+    'task/mission status and is always allowed by the skill gate.',
+  inputSchema: { type: 'object', properties: {} },
+  handler: async (_args, ctx) => {
+    if (
+      ctx.role !== 'worker' ||
+      !ctx.missionId ||
+      !ctx.sessionId ||
+      !ctx.workerIncarnationId
+    ) {
+      throw new Error(
+        'worker heartbeat exige worker com missão, sessão e encarnação vinculadas',
+      );
+    }
+    const dispatch = getProjectDomainStores(ctx.scope).taskDispatches.heartbeat({
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
+      workerIncarnationId: ctx.workerIncarnationId,
+      leaseMs: TASK_DISPATCH_HEARTBEAT_LEASE_MS,
+    });
+    if (dispatch.missionId !== ctx.missionId) {
+      throw new Error('worker heartbeat não pertence à missão do token');
+    }
+    return {
+      ok: true,
+      dispatchId: dispatch.id,
+      taskId: dispatch.taskId,
+      leaseExpiresAt: dispatch.leaseExpiresAt,
+    };
+  },
+};
+
 export function buildHandoffTools(): McpToolDef[] {
-  return [handoffSubmitTool, handoffListTool, handoffAcknowledgeTool];
+  return [
+    handoffSubmitTool,
+    handoffListTool,
+    handoffAcknowledgeTool,
+    workerHeartbeatTool,
+  ];
 }

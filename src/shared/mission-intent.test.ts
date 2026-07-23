@@ -20,7 +20,9 @@ import {
   isAutoDerivedCriterion,
   isHumanWaitIntentState,
   isRecoveryEligibleIntentState,
+  missionBlockPatch,
   resolveDispatchAuthorizedAt,
+  resolveMissionBlockingIntentState,
   resolveEffectiveIntentState,
   reserveEffectfulSpend,
   synthesizeImmediateDispatchContract,
@@ -147,6 +149,67 @@ describe('supervisor eligibility', () => {
       expect(isRecoveryEligibleIntentState(state)).toBe(true);
       expect(canDispatchWorkers(state)).toBe(true);
     }
+  });
+
+  it('keeps an explicit technical block recoverable instead of treating it as human wait', () => {
+    const effective = resolveEffectiveIntentState({
+      mission: baseMission({
+        status: 'blocked',
+        intentState: 'blocked_technical',
+      }),
+      taskCount: 1,
+      workerPaneCount: 0,
+    });
+
+    expect(effective).toBe('blocked_technical');
+    expect(isRecoveryEligibleIntentState(effective)).toBe(true);
+    expect(isHumanWaitIntentState(effective)).toBe(false);
+  });
+});
+
+describe('canonical mission blocking contract', () => {
+  it('creates typed user and technical block patches', () => {
+    expect(missionBlockPatch('user')).toEqual({
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
+    expect(missionBlockPatch('technical')).toEqual({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+  });
+
+  it('preserves an explicit block kind and defaults only an unspecified block to user', () => {
+    expect(
+      resolveMissionBlockingIntentState({
+        status: 'blocked',
+        intentState: 'blocked_technical',
+      }),
+    ).toBe('blocked_technical');
+    expect(
+      resolveMissionBlockingIntentState({
+        status: 'blocked',
+        intentState: 'blocked_user',
+      }),
+    ).toBe('blocked_user');
+    expect(
+      resolveMissionBlockingIntentState({
+        status: 'blocked',
+        intentState: 'executing',
+      }),
+    ).toBe('blocked_user');
+    expect(
+      resolveMissionBlockingIntentState({
+        status: 'failed',
+        intentState: 'blocked_user',
+      }),
+    ).toBe('blocked_technical');
+    expect(
+      resolveMissionBlockingIntentState({
+        status: 'running',
+        intentState: 'blocked_technical',
+      }),
+    ).toBeNull();
   });
 });
 
@@ -368,6 +431,22 @@ describe('budget and parent/child ceilings', () => {
     expect(hasApprovedDispatchContract(c)).toBe(true);
     expect(c.budgets.maxWorkers).toBeGreaterThan(0);
     expect(c.dispatchedAt).toBeDefined();
+  });
+
+  it('synthesizes Pet Studio as a sealed single-session profile', () => {
+    const c = synthesizeImmediateDispatchContract({
+      title: 'Pet hatch',
+      goal: 'Crie o pet usando /tmp/source.png',
+      profile: 'pet-studio',
+      now: 5_000,
+    });
+    expect(hasApprovedDispatchContract(c)).toBe(true);
+    expect(c.budgets.maxWorkers).toBe(0);
+    expect(c.acceptanceCriteria.join('\n')).toContain('hatch-pet');
+    expect(c.acceptanceCriteria.join('\n')).not.toMatch(/workers?|PREVC/i);
+    expect(c.deniedTools).toEqual(
+      expect.arrayContaining(['pane_spawn', 'route_task', 'worktree_merge']),
+    );
   });
 
   it('steps/tokens são ledger, nunca teto — missão esgotada não bloqueia', () => {

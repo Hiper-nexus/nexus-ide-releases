@@ -13,10 +13,14 @@ import {
   type ScopedMissionStore,
 } from "./mission-store";
 import { createScopedTaskStore, type ScopedTaskStore } from "./task-store";
+import {
+  createTaskDispatchStore,
+  type TaskDispatchStore,
+} from './task-dispatch-store';
 import { createScopedTodoStore, type ScopedTodoStore } from "./todo-store";
 
 export type ProjectDomainStoreName =
-  "missions" | "mission-panes" | "handoffs" | "tasks" | "todos";
+  "missions" | "mission-panes" | "handoffs" | "tasks" | "task-dispatches" | "todos";
 
 export interface ProjectDomainStoreSuite {
   readonly scope: ProjectExecutionScope;
@@ -24,6 +28,7 @@ export interface ProjectDomainStoreSuite {
   readonly missionPanes: ScopedMissionPaneStore;
   readonly handoffs: ScopedHandoffStore;
   readonly tasks: ScopedTaskStore;
+  readonly taskDispatches: TaskDispatchStore;
   readonly todos: ScopedTodoStore;
 }
 
@@ -88,6 +93,7 @@ export class ProjectDomainStoreRegistry {
       ),
       handoffs: createScopedHandoffStore(this.#runtimeManager, immutableScope),
       tasks: createScopedTaskStore(this.#runtimeManager, immutableScope),
+      taskDispatches: createTaskDispatchStore(this.#runtimeManager, immutableScope),
       todos: createScopedTodoStore(this.#runtimeManager, immutableScope),
     });
     const unsubscribers = [
@@ -97,6 +103,15 @@ export class ProjectDomainStoreRegistry {
       ),
       suite.handoffs.onChange(() => this.#emit(immutableScope, "handoffs")),
       suite.tasks.onChange(() => this.#emit(immutableScope, "tasks")),
+      suite.taskDispatches.onChange(() => {
+        // Dispatch transactions also advance `tasks` and can block/complete a
+        // `mission` in the same SQLite commit. Publish every affected read
+        // model; otherwise the renderer could keep showing running after the
+        // main-owned coordinator had already persisted done/blocked.
+        this.#emit(immutableScope, 'task-dispatches');
+        this.#emit(immutableScope, 'tasks');
+        this.#emit(immutableScope, 'missions');
+      }),
       suite.todos.onChange(() => this.#emit(immutableScope, "todos")),
     ];
     this.#entries.set(key, { suite, unsubscribers });
@@ -122,6 +137,13 @@ export class ProjectDomainStoreRegistry {
       listener(entry.suite.scope, entry.suite);
     }
     return () => this.#scopeListeners.delete(listener);
+  }
+
+  /** Immutable snapshot used by main-owned reconcilers; never exposes entries. */
+  listSuites(): readonly ProjectDomainStoreSuite[] {
+    return Object.freeze(
+      [...this.#entries.values()].map((entry) => entry.suite),
+    );
   }
 
   dispose(): void {

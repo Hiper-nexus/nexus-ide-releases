@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { framesToResume, shouldFullSnapshot } from './remote-reconnect';
+import {
+  framesToResume,
+  resolveTerminalResume,
+  shouldFullSnapshot,
+} from './remote-reconnect';
 
 describe('remote-reconnect', () => {
   it('resumes contiguous frames after client last seq', () => {
@@ -18,5 +22,18 @@ describe('remote-reconnect', () => {
   it('requests full snapshot when client is behind buffer', () => {
     expect(shouldFullSnapshot(0, 10)).toBe(true);
     expect(shouldFullSnapshot(9, 10)).toBe(false);
+  });
+
+  it('never presents a partial replay as lossless when the buffer has a gap', () => {
+    const buffered = new Map<number, Uint8Array>([
+      [2, new Uint8Array([2])],
+      [4, new Uint8Array([4])],
+    ]);
+    expect(resolveTerminalResume(buffered, 1, 4)).toEqual({
+      snapshotRequired: true,
+      frames: [],
+      oldestAvailableSeq: 2,
+      latestSeq: 4,
+    });
   });
 });

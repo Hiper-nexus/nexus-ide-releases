@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertPackagedSmokeOutput,
+  assertMatchingReleaseArchitectures,
   assertReleaseArtifacts,
   assertSignatureMetadata,
+  buildFusesReadInvocation,
   expectedEntitlementKeysForPath,
   parseCodesignMetadata,
+  parseLipoArchitectures,
 } from './verify-macos-release.mjs';
 
 describe('macOS release artifact contract', () => {
@@ -30,6 +33,7 @@ describe('macOS release artifact contract', () => {
     const metadata = parseCodesignMetadata([
       'Authority=Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
       'Authority=Developer ID Certification Authority',
+      'Timestamp=23 Jul 2026 at 08:49:41',
       'TeamIdentifier=35P5XL3JN6',
     ].join('\n'));
 
@@ -48,6 +52,47 @@ describe('macOS release artifact contract', () => {
       '35P5XL3JN6',
       'Developer ID Application: Cleofas Pereira rocha',
     )).not.toThrow();
+  });
+
+  it('requires a secure Timestamp and rejects Signed Time as a substitute', () => {
+    const signatureLines = [
+      'Authority=Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+      'Authority=Developer ID Certification Authority',
+      'TeamIdentifier=35P5XL3JN6',
+    ];
+    const secure = parseCodesignMetadata([
+      ...signatureLines,
+      'Timestamp=23 Jul 2026 at 08:49:41',
+    ].join('\n'));
+    const localOnly = parseCodesignMetadata([
+      ...signatureLines,
+      'Signed Time=23 Jul 2026 at 08:49:41',
+    ].join('\n'));
+    const missing = parseCodesignMetadata(signatureLines.join('\n'));
+
+    expect(secure).toMatchObject({
+      secureTimestamp: '23 Jul 2026 at 08:49:41',
+      signedTime: '',
+    });
+    expect(localOnly).toMatchObject({
+      secureTimestamp: '',
+      signedTime: '23 Jul 2026 at 08:49:41',
+    });
+    expect(() => assertSignatureMetadata(
+      secure,
+      '35P5XL3JN6',
+      'Developer ID Application: Cleofas Pereira rocha',
+    )).not.toThrow();
+    expect(() => assertSignatureMetadata(
+      localOnly,
+      '35P5XL3JN6',
+      'Developer ID Application: Cleofas Pereira rocha',
+    )).toThrow(/secure Timestamp.*Signed Time/);
+    expect(() => assertSignatureMetadata(
+      missing,
+      '35P5XL3JN6',
+      'Developer ID Application: Cleofas Pereira rocha',
+    )).toThrow(/secure Timestamp/);
   });
 
   it('maps Mach-O classes to the least-privilege entitlement allowlist', () => {
@@ -91,5 +136,41 @@ describe('macOS release artifact contract', () => {
       '[smoke] renderer-mounted',
       '[smoke] functional-ready',
     ].join('\n'))).not.toThrow();
+  });
+
+  it('reads Electron fuses with the locked local CLI and current Node', () => {
+    const invocation = buildFusesReadInvocation(
+      '/tmp/NexusIDE.app',
+      '/repo',
+    );
+    expect(invocation.command).toBe(process.execPath);
+    expect(invocation.args).toEqual([
+      '/repo/node_modules/@electron/fuses/dist/bin.js',
+      'read',
+      '--app',
+      '/tmp/NexusIDE.app',
+    ]);
+    expect(invocation.args).not.toContain('npx');
+  });
+
+  it('accepts one host architecture and rejects incoherent DMG/ZIP apps', () => {
+    expect(parseLipoArchitectures('arm64\n')).toEqual(['arm64']);
+    expect(parseLipoArchitectures('x86_64 arm64\n')).toEqual([
+      'arm64',
+      'x86_64',
+    ]);
+    expect(() =>
+      assertMatchingReleaseArchitectures(['arm64'], ['arm64'], 'arm64'),
+    ).not.toThrow();
+    expect(() =>
+      assertMatchingReleaseArchitectures(['arm64'], ['x86_64'], 'arm64'),
+    ).toThrow(/DMG.*ZIP.*architecture/i);
+    expect(() =>
+      assertMatchingReleaseArchitectures(
+        ['arm64', 'x86_64'],
+        ['arm64', 'x86_64'],
+        'arm64',
+      ),
+    ).toThrow(/single-architecture/i);
   });
 });

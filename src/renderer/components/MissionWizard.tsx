@@ -34,6 +34,7 @@ import {
 import { balanceSquadRosterCli } from '../orch/squad-roster';
 import { CloseButton } from './CloseButton';
 import { MissionWizardReview } from './MissionWizardReview';
+import { MissionWizardPlanReview } from './MissionWizardPlanReview';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { MissionModePicker } from './MissionModePicker';
 import { PixelIcon } from './PixelIcon';
@@ -1020,6 +1021,23 @@ export function MissionWizard() {
       setError('Contrato de intenção ausente antes do despacho.');
       return false;
     }
+    // The main-owned bootstrap derives the roster exclusively from the saved
+    // squad. Persist the exact roster reviewed in this wizard before approval
+    // so a transient renderer object can never become hidden launch authority.
+    if (!rosterSaved) {
+      const saved = await window.nexus.orch.saveSquad({
+        ...selectedSquad,
+        agents: roster,
+      });
+      if (!saved.ok) {
+        setError(
+          saved.error ??
+            'Não foi possível salvar o roster revisado antes do despacho.',
+        );
+        return false;
+      }
+      setRosterSaved(true);
+    }
     // Squad reusado no agêntico: as instruções salvas ainda abrem com a
     // missão ANTIGA ("# Missão Clone Overclock…") — retarget para o objetivo
     // do contrato antes do kickoff, senão o orquestrador recebe duas missões.
@@ -1078,6 +1096,10 @@ export function MissionWizard() {
         const approved = await window.nexus.orch.approveMissionIntent({
           missionId: planned.id,
           evidenceAttached: missionAttachments.length > 0,
+          attachmentPaths:
+            missionAttachments.length > 0
+              ? missionAttachments.map((attachment) => attachment.path)
+              : undefined,
         });
         if (
           approved.intentVersion !== planned.intentVersion ||
@@ -1645,73 +1667,17 @@ export function MissionWizard() {
           )}
 
           {step === 'intent-plan' && selectedSquad && plannedMission && (
-            <div className="wizard__section">
-              <p className="wizard__label">PLANO RESUMIDO</p>
-              <p className="wizard__mode-desc">
-                <strong>Objetivo:</strong>{' '}
-                {plannedMission.intentContract?.goal ?? plannedMission.description}
-              </p>
-              {plannedMission.intentContract && (
-                <>
-                  <p className="wizard__mode-desc">
-                    <strong>Lane:</strong>{' '}
-                    {plannedMission.intentContract.lane === 'consult'
-                      ? 'só pesquisar (não muda nada)'
-                      : plannedMission.intentContract.lane === 'plan'
-                        ? 'só planejar (apenas o plano)'
-                        : plannedMission.intentContract.lane === 'ops'
-                          ? 'só infra (não edita código)'
-                          : 'sem restrições'}
-                    {' · '}
-                    <strong>Risco:</strong> {plannedMission.intentContract.risk}
-                    {' · '}
-                    <strong>Workers máx.:</strong>{' '}
-                    {plannedMission.intentContract.budgets.maxWorkers}
-                  </p>
-                  <ul className="wizard__mode-desc">
-                    {plannedMission.intentContract.acceptanceCriteria.map((c) => (
-                      <li key={c}>{c}</li>
-                    ))}
-                  </ul>
-                </>
-              )}
-              {plannedMission.intentState === 'awaiting_approval' && (
-                <p className="wizard__mode-desc">
-                  Superfície sensível detectada — confirme o plano antes de
-                  despachar especialistas.
-                </p>
-              )}
-              <p className="wizard__mode-desc">
-                Depois de começar, o Nexus pilota implementação, revisão e QA
-                pelo PREVC. Ele só volta a você para uma decisão real, uma
-                autorização sensível ou um bloqueio comprovado.
-              </p>
-              {error && <p className="wizard__error">{error}</p>}
-              <div className="wizard__actions">
-                <button
-                  className="wizard__btn wizard__btn--ghost"
-                  onClick={() => setStep('intent-compose')}
-                >
-                  ‹ Editar objetivo
-                </button>
-                <div className="wizard__actions-right">
-                  <button className="wizard__btn wizard__btn--ghost" onClick={discardAndClose}>
-                    Cancelar
-                  </button>
-                  <button
-                    className="wizard__btn wizard__btn--primary"
-                    disabled={spawning}
-                    onClick={() => void handleStartFromIntentPlan()}
-                  >
-                    {spawning
-                      ? 'Iniciando…'
-                      : plannedMission.intentState === 'awaiting_approval'
-                        ? 'Confirmar e começar'
-                        : 'Começar'}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <MissionWizardPlanReview
+              mission={plannedMission}
+              squad={selectedSquad}
+              roster={roster}
+              adapters={adapters}
+              error={error}
+              spawning={spawning}
+              onBack={() => setStep('intent-compose')}
+              onCancel={discardAndClose}
+              onStart={() => void handleStartFromIntentPlan()}
+            />
           )}
         </div>
       </div>

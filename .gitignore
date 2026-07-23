@@ -21,6 +21,8 @@ build/*
 !build/macos-info-plist.test.ts
 !build/prune-native-payload.ts
 !build/prune-native-payload.test.ts
+!build/release-npm-integrity.json
+!build/release-tag-signers.json
 .next/
 .nuxt/
 

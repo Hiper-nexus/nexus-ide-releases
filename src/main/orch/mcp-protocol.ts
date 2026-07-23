@@ -4,6 +4,7 @@ import {
   dispatchToolCall,
   type McpDispatchOptions,
 } from './mcp-dispatch';
+import { isToolAllowedForReadOnlyContext } from './mcp-effect-policy';
 
 /**
  * Minimal MCP (Model Context Protocol) server core: JSON-RPC 2.0 message
@@ -55,6 +56,35 @@ export interface McpToolDef {
 export interface McpToolInvocation {
   /** Aborted when a newer mission intent preempts bootstrap/preflight work. */
   readonly signal?: AbortSignal;
+  /**
+   * Revalidate the exact caller at an asynchronous linearization point.
+   * Effectful handlers must call this after awaited preparation and
+   * immediately before starting a process, network request, or durable write.
+   */
+  readonly assertCurrentAuthority?: () => void;
+  /**
+   * One-shot receipt emitted only after exact native consent (or consumption
+   * of an exact, single-use permission) for tools whose authority outlives the
+   * current mission. It is never derived from mission-wide autopilot approval.
+   */
+  readonly exactUserConsent?: {
+    readonly toolName: string;
+    /** Canonical mutation action reviewed by the user. */
+    readonly action: string;
+    readonly grantedAt: number;
+    /** Correlated append-only audit intent that authenticated this one use. */
+    readonly receiptId: string;
+  };
+}
+
+/** Shared fail-closed checkpoint for effectful tool implementations. */
+export function assertMcpInvocationCurrent(
+  invocation?: McpToolInvocation,
+): void {
+  invocation?.assertCurrentAuthority?.();
+  if (invocation?.signal?.aborted) {
+    throw new Error('session_authority_revoked');
+  }
 }
 
 export interface McpRegistry {
@@ -147,7 +177,8 @@ export async function handleMcpMessage(
     case 'tools/list': {
       const tools = registry.tools
         .filter((tool) =>
-          isToolAllowedForRole(ctx.role, ctx.allowedTools, tool.name),
+          isToolAllowedForRole(ctx.role, ctx.allowedTools, tool.name) &&
+          (!ctx.readOnly || isToolAllowedForReadOnlyContext(tool.name)),
         )
         .map((tool) => ({
           name: tool.name,

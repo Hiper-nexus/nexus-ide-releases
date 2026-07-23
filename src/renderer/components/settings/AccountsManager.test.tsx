@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccountInfo } from '../../../shared/account-types';
 import { useAccountStore } from '../../state/account-store';
 import { useConfirmStore } from '../../state/confirm-store';
+import { useUsageStore, EMPTY_USAGE_SNAPSHOT } from '../../state/usage-store';
 import { AccountsManager } from './AccountsManager';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -47,6 +48,7 @@ describe('AccountsManager', () => {
       restartLabel: null,
     });
     useConfirmStore.setState({ pending: null, queue: [] });
+    useUsageStore.setState({ snapshot: EMPTY_USAGE_SNAPSHOT });
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
@@ -115,6 +117,36 @@ describe('AccountsManager', () => {
     expect(host.textContent).toContain('Remover');
     expect(host.textContent).toContain('Usar');
     expect(host.querySelector('.acct__mini')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('shows auditable real spend on the exact account row', async () => {
+    useAccountStore.setState({ accounts: [account()] });
+    useUsageStore.setState({
+      snapshot: {
+        ...EMPTY_USAGE_SNAPSHOT,
+        byAccount: {
+          'acct-1': {
+            accountId: 'acct-1',
+            provider: 'claude',
+            costUsd: 1.25,
+            inputTokens: 1_000,
+            outputTokens: 100,
+            cacheReadTokens: 0,
+            turns: 3,
+            source: 'real',
+          },
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain('US$ 1,25');
+    expect(host.textContent).toContain('3 turnos reais');
     act(() => root.unmount());
   });
 

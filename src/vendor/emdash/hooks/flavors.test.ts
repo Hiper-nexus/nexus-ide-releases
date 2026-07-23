@@ -30,9 +30,12 @@ describe('parseClaudeHookEvent', () => {
     ).toMatchObject({ notificationType: 'permission_prompt' });
   });
 
-  it('classifies any other notification as idle_prompt', () => {
+  it('classifies explicit waiting text as elicitation and ordinary notices as idle', () => {
     expect(
       parseClaudeHookEvent('notification', { message: 'Claude is waiting for your input' }),
+    ).toMatchObject({ notificationType: 'elicitation_dialog' });
+    expect(
+      parseClaudeHookEvent('notification', { message: 'Task completed' }),
     ).toMatchObject({ notificationType: 'idle_prompt' });
   });
 
@@ -99,6 +102,21 @@ describe('parseFlavorHookEvent dispatch', () => {
     expect(parseFlavorHookEvent('default', 'start', {}))
       .toMatchObject({ kind: 'status', type: 'start' });
   });
+
+  it('distinguishes interactive question tools from parallel ordinary tools', () => {
+    expect(parseFlavorHookEvent('codex', 'tool-use', {
+      tool_name: 'request_user_input',
+    })).toMatchObject({
+      type: 'notification',
+      notificationType: 'elicitation_dialog',
+    });
+    expect(parseFlavorHookEvent('claude', 'tool-use', {
+      tool_name: 'Bash',
+    })).toMatchObject({ type: 'start', clearsAwaitingInput: false });
+    expect(parseFlavorHookEvent('kimi', 'tool-complete', {
+      tool_name: 'AskUserQuestion',
+    })).toMatchObject({ type: 'start', clearsAwaitingInput: true });
+  });
 });
 
 describe('flavor hook spec tables', () => {
@@ -107,12 +125,18 @@ describe('flavor hook spec tables', () => {
   it('covers the documented event surface per flavor', () => {
     expect(claudeHookSpecs(linux).map((s) => s.hookKey)).toEqual([
       'UserPromptSubmit',
+      'PreToolUse',
+      'PostToolUse',
+      'PostToolUseFailure',
       'Notification',
       'Stop',
     ]);
     expect(codexHookSpecs(linux).map((s) => s.hookKey)).toEqual([
       'SessionStart',
       'UserPromptSubmit',
+      'PreToolUse',
+      'PostToolUse',
+      'PostToolUseFailure',
       'Stop',
       'PermissionRequest',
     ]);

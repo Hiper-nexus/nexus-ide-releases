@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { WebContents } from 'electron';
+import type { Squad } from '../../shared/orch-types';
 import { compileIntentContract } from '../../shared/mission-intent';
 
 const storeState = vi.hoisted(() => {
@@ -92,7 +93,40 @@ describe('promotePlanLaneFromRenderer', () => {
         },
       }),
     };
-    return new RendererMissionAuthority(registry as never);
+    const squad: Squad = {
+      id: 'navalha',
+      name: 'Navalha',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '## Política\nExecute o plano aprovado.',
+      agents: [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'codex',
+          allowedTools: ['nexus_task'],
+          allowedSkills: [],
+        },
+      ],
+    };
+    return new RendererMissionAuthority(
+      registry as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => squad,
+      () => ({
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        accountId: 'account-a',
+        effort: 'high',
+        readOnly: false,
+        nativeReadOnly: true,
+      }),
+    );
   }
 
   it('promotes plan → standard and expands budgets', () => {
@@ -130,6 +164,47 @@ describe('promotePlanLaneFromRenderer', () => {
     expect(updated.intentVersion).toBe(2);
     expect(updated.intentContract?.budgets.maxWorkers).toBeGreaterThan(0);
     expect(updated.intentState).toBe('dispatched');
+  });
+
+  it('rejects a promotion when the plan changes while native confirmation is open', () => {
+    const contract = compileIntentContract({
+      goal: 'Desenhar auth e depois implementar',
+      intentVersion: 1,
+      lane: 'plan',
+    });
+    storeState.missions.set('m-plan', {
+      id: 'm-plan',
+      title: 'Auth plan',
+      description: contract.goal,
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      intentState: 'dispatched',
+      intentVersion: 1,
+      intentContract: { ...contract, approvedAt: 100, dispatchedAt: 100 },
+      createdAt: 1,
+      updatedAt: 1,
+      squadId: 'navalha',
+    });
+    const auth = authority();
+    const owner = {} as WebContents;
+    const candidate = auth.planPromotionCandidateFromRenderer(owner, {
+      missionId: 'm-plan',
+    });
+
+    storeState.missions.set('m-plan', {
+      ...storeState.missions.get('m-plan')!,
+      intentVersion: 2,
+      intentContract: { ...contract, intentVersion: 2, goal: 'Plano trocado' },
+    });
+    expect(() =>
+      auth.promotePlanLaneFromRenderer(
+        owner,
+        { missionId: 'm-plan' },
+        candidate.fence,
+      ),
+    ).toThrow(/promotion.*stale|intent.*changed/i);
+    expect(storeState.update).not.toHaveBeenCalled();
   });
 
   it('rejects non-plan missions', () => {

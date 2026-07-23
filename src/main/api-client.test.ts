@@ -106,6 +106,32 @@ describe('apiFetch', () => {
     expect(result).toEqual({ status: 0, json: null });
   });
 
+  it('compõe o cancelamento do caller com o timeout da requisição', async () => {
+    const release = deferred();
+    const observed: { signal?: AbortSignal } = {};
+    const d = deps({
+      fetchFn: vi.fn(async (_url: string, init: RequestInit) => {
+        observed.signal = init.signal as AbortSignal;
+        await release.promise;
+        if (observed.signal.aborted) throw new Error('aborted');
+        return json({ ok: true });
+      }),
+    });
+    const controller = new AbortController();
+
+    const pending = apiFetch(
+      '/v1/cron/schedules',
+      { timeoutMs: 1_000, signal: controller.signal },
+      d as never,
+    );
+    await Promise.resolve();
+    controller.abort();
+    release.resolve();
+
+    await expect(pending).resolves.toEqual({ status: 0, json: null });
+    expect(observed.signal?.aborted).toBe(true);
+  });
+
   it('faz uma única rotação quando requests concorrentes recebem 401', async () => {
     const d = deps();
     let refreshCalls = 0;
@@ -134,3 +160,11 @@ describe('apiFetch', () => {
     expect(d.store['auth:refresh']).toBe('r2');
   });
 });
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}

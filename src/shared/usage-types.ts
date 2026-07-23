@@ -19,8 +19,21 @@ export interface PaneUsage {
   source: 'real';
 }
 
+export interface AccountUsage {
+  accountId: string;
+  provider: string;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  turns: number;
+  source: 'real';
+}
+
 export interface UsageSnapshot {
   byPane: Record<string, PaneUsage>;
+  /** Auditable transcript spend keyed by the exact Nexus vault account. */
+  byAccount: Record<string, AccountUsage>;
   global: {
     costUsd: number;
     inputTokens: number;

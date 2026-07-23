@@ -27,6 +27,10 @@ import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
 import { getAxTree, performAxAction } from './ax-tree';
 import { runFunctionalSmokeProbes } from './functional-smoke';
+import { runRealMissionE2E } from './real-mission-e2e';
+import {
+  REAL_MISSION_E2E_CHANNELS,
+} from '../shared/real-mission-e2e';
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
 import type { UpdateState } from '../shared/update-ipc';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
@@ -120,6 +124,7 @@ import type {
 import type {
   Handoff,
   BrowserPaneOpenRequest,
+  PaneCloseRequest,
   Mission,
   MissionPatch,
   MissionPaneRecoveryRequest,
@@ -375,7 +380,7 @@ const paneRecoveryRequestListeners = new Set<
   (req: MissionPaneRecoveryRequest) => void
 >();
 const browserOpenRequestListeners = new Set<(req: BrowserPaneOpenRequest) => void>();
-const paneCloseRequestListeners = new Set<(paneId: string) => void>();
+const paneCloseRequestListeners = new Set<(request: PaneCloseRequest) => void>();
 const missionsChangedListeners = new Set<(missions: Mission[]) => void>();
 const handoffsChangedListeners = new Set<(handoffs: Handoff[]) => void>();
 const todosChangedListeners = new Set<(lists: TodoList[]) => void>();
@@ -394,8 +399,8 @@ ipcRenderer.on(
 ipcRenderer.on(ORCH_CHANNELS.browserOpenRequest, (_e, req: BrowserPaneOpenRequest) =>
   browserOpenRequestListeners.forEach((cb) => cb(req)),
 );
-ipcRenderer.on(ORCH_CHANNELS.paneCloseRequest, (_e, paneId: string) =>
-  paneCloseRequestListeners.forEach((cb) => cb(paneId)),
+ipcRenderer.on(ORCH_CHANNELS.paneCloseRequest, (_e, request: PaneCloseRequest) =>
+  paneCloseRequestListeners.forEach((cb) => cb(request)),
 );
 ipcRenderer.on(ORCH_CHANNELS.missionsChanged, (_e, missions: Mission[]) =>
   missionsChangedListeners.forEach((cb) => cb(missions)),
@@ -562,6 +567,14 @@ const api: NexusApi = {
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>
       ipcRenderer.invoke(PTY_CHANNELS.spawn, req),
+    replay: async (sessionId: string): Promise<void> => {
+      const afterSequence = lastPtySequence.get(sessionId) ?? 0;
+      const events = (await ipcRenderer.invoke(PTY_CHANNELS.recover, {
+        sessionId,
+        afterSequence,
+      })) as PtyDataEvent[];
+      events.forEach(deliverPtyData);
+    },
     write: (sessionId, data) =>
       ipcRenderer.send(PTY_CHANNELS.write, { sessionId, data }),
     writeConfirmed: (sessionId, data) =>
@@ -755,6 +768,7 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionPanesList, missionId),
     createMission: (input: {
       title: string;
+      goal?: string;
       squadId?: string;
       orchestratorPane?: {
         paneId: string;
@@ -766,6 +780,20 @@ const api: NexusApi = {
         agentName?: string;
       };
     }) => ipcRenderer.invoke(ORCH_CHANNELS.missionCreate, input),
+    authorizeImmediateSquadLaunch: (input: {
+      squadId: string;
+      paneId: string;
+      adapterId: string;
+      model?: string;
+      accountId?: string;
+      effort?: string;
+      missionTitle: string;
+      missionGoal: string;
+    }) =>
+      ipcRenderer.invoke(
+        ORCH_CHANNELS.missionAuthorizeImmediateSquad,
+        input,
+      ),
     armMission: (input: { title: string; squadId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionArm, input),
     submitMissionIntent: (input: {
@@ -777,11 +805,22 @@ const api: NexusApi = {
       acceptanceCriteria?: string[];
       /** standard | consult | plan (design-only) | ops (infra, sem PREVC). */
       lane?: 'standard' | 'consult' | 'plan' | 'ops';
+      evidenceAttached?: boolean;
     }) => ipcRenderer.invoke(ORCH_CHANNELS.missionSubmitIntent, input),
-    approveMissionIntent: (input: { missionId: string }) =>
+    approveMissionIntent: (input: {
+      missionId: string;
+      evidenceAttached?: boolean;
+      attachmentPaths?: string[];
+    }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionApproveIntent, input),
+    bootstrapMissionOrchestrator: (input: { missionId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionBootstrapOrchestrator, input),
     promotePlanLane: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPromotePlanLane, input),
+    submitMissionKickoff: (input: {
+      missionId: string;
+      sessionId: string;
+    }) => ipcRenderer.invoke(ORCH_CHANNELS.missionKickoffSubmit, input),
     prepareMissionProject: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPrepareProject, input),
     cancelMissionPreparation: (input: { missionId: string }) =>
@@ -815,8 +854,12 @@ const api: NexusApi = {
     updateMission: (missionId: string, patch: MissionPatch) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionUpdate, { missionId, patch }),
     removeMission: (missionId: string) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.missionRemove, missionId),
+      ipcRenderer.invoke(ORCH_CHANNELS.missionRemove, { missionId }),
     listHandoffs: () => ipcRenderer.invoke(ORCH_CHANNELS.handoffsList),
+    answerClarify: (input) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.clarifyAnswerSubmit, input),
+    submitOperatorReview: (input) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.operatorReviewSubmit, input),
     getTodos: () => ipcRenderer.invoke(ORCH_CHANNELS.todosGet),
     setTodoStatus: (listId: string, itemId: string, status: TodoStatus) =>
       ipcRenderer.invoke(ORCH_CHANNELS.todoSetStatus, { listId, itemId, status }),
@@ -835,12 +878,12 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.catalogIndex, { refresh }),
     installCatalogItem: (req) =>
       ipcRenderer.invoke(ORCH_CHANNELS.catalogInstall, req),
-    getRecipeOverlay: (workspacePath?: string) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.recipeOverlay, { workspacePath }),
+    getRecipeOverlay: () =>
+      ipcRenderer.invoke(ORCH_CHANNELS.recipeOverlay, {}),
     saveCatalogOverlay: (patch) =>
       ipcRenderer.invoke(ORCH_CHANNELS.catalogOverlaySave, patch),
-    proposeRecipes: (workspacePath?: string) =>
-      ipcRenderer.invoke(ORCH_CHANNELS.recipePropose, { workspacePath }),
+    proposeRecipes: () =>
+      ipcRenderer.invoke(ORCH_CHANNELS.recipePropose, {}),
     writeAgentSpec: (req) =>
       ipcRenderer.invoke(ORCH_CHANNELS.agentSpecWrite, req),
     listInstalledCatalog: () =>
@@ -1227,6 +1270,24 @@ ipcRenderer.on(WINDOW_CHANNELS.functionalSmokeRun, (_event, payload: unknown) =>
         failedProbe: 'workspace-open',
       });
     });
+});
+
+let realMissionE2EStarted = false;
+ipcRenderer.on(REAL_MISSION_E2E_CHANNELS.run, (_event, payload: unknown) => {
+  if (realMissionE2EStarted) return;
+  realMissionE2EStarted = true;
+  void runRealMissionE2E(api, payload, {
+    prepareFixture: (rendererFailureToken) =>
+      ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.prepareFixture, {
+        rendererFailureToken,
+      }),
+    observeMission: (missionId) =>
+      ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.observe, { missionId }),
+  }).catch(() => {
+    // Main owns the timeout/verdict and persists the only evidence receipt.
+    // Never echo an exception here: provider/PTY errors can contain prompts.
+    console.error('[real-mission] renderer-run-failed');
+  });
 });
 
 contextBridge.exposeInMainWorld('nexus', api);

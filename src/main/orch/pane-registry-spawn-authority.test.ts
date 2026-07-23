@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
-import type { OrchPaneSpawnRequest } from "../../shared/orch-types";
+import type {
+  BrowserPaneOpenRequest,
+  OrchPaneSpawnRequest,
+} from "../../shared/orch-types";
 import type { MissionPaneRecoveryRequest } from "../../shared/orch-types";
+import { ORCH_CHANNELS } from "../../shared/orch-channels";
 import {
   bindResolvedRendererWorkspaceScope,
   clearRendererWorkspaceScope,
@@ -17,8 +21,11 @@ import {
   getPaneAuthzInfoOwnedBy,
   getPaneAuthzInfoOwnedByPane,
   registerOrchRenderer,
+  requestBrowserPane,
+  requestMissionPaneClose,
   requestPaneSpawn,
   requestMissionPaneRecovery,
+  resolveBrowserOpen,
   resolveMissionPaneRecovery,
   resolvePaneSpawn,
   syncPanes,
@@ -36,17 +43,134 @@ function renderer(): WebContents & { send: ReturnType<typeof vi.fn> } {
 }
 
 let registered: WebContents | null = null;
+const scopedRenderers = new Set<WebContents>();
+
+function bindScope(owner: WebContents, scope = testProjectScope()): void {
+  bindResolvedRendererWorkspaceScope(owner, scope);
+  scopedRenderers.add(owner);
+}
 
 afterEach(() => {
   vi.useRealTimers();
   if (registered) unregisterOrchRenderer(registered);
+  for (const owner of scopedRenderers) clearRendererWorkspaceScope(owner);
+  scopedRenderers.clear();
   registered = null;
 });
 
 describe("pending pane spawn authority", () => {
+  it("closes the main-minted browser pane when its acknowledgement arrives after timeout", async () => {
+    vi.useFakeTimers();
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+
+    const pending = requestBrowserPane({
+      url: "https://example.com",
+      missionId: "mission-browser",
+      role: "worker",
+      scope,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as BrowserPaneOpenRequest;
+    expect(request.paneId).toMatch(/^browser-/);
+
+    await vi.advanceTimersByTimeAsync(90_000);
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: "browser open timed out",
+    });
+
+    expect(resolveBrowserOpen({
+      requestId: request.requestId,
+      ok: true,
+      paneId: "renderer-controlled-id",
+    }, owner)).toBe(true);
+    expect(owner.send).toHaveBeenLastCalledWith(
+      ORCH_CHANNELS.paneCloseRequest,
+      { requestId: request.requestId, paneId: request.paneId },
+    );
+  });
+
+  it("uses a request-sealed cleanup when browser creation reports failure", async () => {
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+
+    const pending = requestBrowserPane({
+      url: "https://example.com/failure",
+      missionId: "mission-browser",
+      role: "worker",
+      scope,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as BrowserPaneOpenRequest;
+    expect(
+      resolveBrowserOpen(
+        { requestId: request.requestId, ok: false, error: "renderer failed" },
+        owner,
+      ),
+    ).toBe(true);
+
+    await expect(pending).resolves.toMatchObject({ ok: false });
+    expect(owner.send).toHaveBeenLastCalledWith(
+      ORCH_CHANNELS.paneCloseRequest,
+      { requestId: request.requestId, paneId: request.paneId },
+    );
+  });
+
+  it("never closes a homonymous mission pane from another checkout", async () => {
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const localScope = testProjectScope({
+      projectId: "project-local",
+      checkoutId: "checkout-local",
+      rootRealPath: "/workspace/local",
+    });
+    const foreignScope = testProjectScope({
+      projectId: "project-foreign",
+      checkoutId: "checkout-foreign",
+      rootRealPath: "/workspace/foreign",
+    });
+    bindScope(owner, foreignScope);
+    syncPanes(
+      [
+        {
+          paneId: "pane-shared",
+          sessionId: null,
+          title: "Foreign worker",
+          kind: "cli-agent",
+        },
+      ],
+      owner,
+    );
+    attachOrchMeta(owner, "pane-shared", {
+      missionId: "mission-shared",
+      role: "worker",
+      scope: foreignScope,
+    });
+    owner.send.mockClear();
+
+    await expect(
+      requestMissionPaneClose({
+        paneId: "pane-shared",
+        missionId: "mission-shared",
+        scope: localScope,
+      }),
+    ).resolves.toBe(false);
+    expect(owner.send).not.toHaveBeenCalledWith(
+      ORCH_CHANNELS.paneCloseRequest,
+      expect.anything(),
+    );
+  });
+
   it("routes a worker spawn back to the renderer that owns its mission", async () => {
     const missionOwner = renderer();
     const unrelatedOwner = renderer();
+    bindScope(missionOwner);
     syncPanes(
       [{ paneId: "mission-orch", sessionId: null, title: "Orch", kind: "cli-agent" }],
       missionOwner,
@@ -74,6 +198,25 @@ describe("pending pane spawn authority", () => {
     );
     await expect(resultPromise).resolves.toMatchObject({ ok: false });
     syncPanes([], missionOwner);
+  });
+
+  it("fails closed instead of falling back to a renderer from another workspace", async () => {
+    const ownerB = renderer();
+    const scopeA = testProjectScope({ projectId: "project-a" });
+    const scopeB = testProjectScope({ projectId: "project-b" });
+    registered = ownerB;
+    registerOrchRenderer(ownerB);
+    bindScope(ownerB, scopeB);
+
+    await expect(requestPaneSpawn({
+      adapterId: "codex",
+      missionId: "mission-a",
+      scope: scopeA,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: "no renderer window available",
+    });
+    expect(ownerB.send).not.toHaveBeenCalled();
   });
 
   it("keeps pane registrations isolated per renderer and fails closed on ambiguous ids", () => {
@@ -158,6 +301,7 @@ describe("pending pane spawn authority", () => {
     registered = owner;
     registerOrchRenderer(owner);
     const scope = testProjectScope();
+    bindScope(owner, scope);
     const resultPromise = requestPaneSpawn({
       adapterId: "codex",
       missionId: "mission-a",
@@ -169,16 +313,31 @@ describe("pending pane spawn authority", () => {
     const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
 
     expect(claimPendingSpawnMeta(request.requestId, attacker)).toBeNull();
-    expect(claimPendingSpawnMeta(request.requestId, owner)).toEqual({
+    const claimed = claimPendingSpawnMeta(request.requestId, owner);
+    expect(claimed).toMatchObject({
       missionId: "mission-a",
       agentName: "worker-a",
       role: "worker",
       allowedTools: [],
       allowedSkills: undefined,
       scope,
+      requestedCwd: scope.rootRealPath,
       executionScope: undefined,
       readOnly: false,
+      sealedRequest: {
+        requestId: request.requestId,
+        paneId: request.paneId,
+        adapterId: "codex",
+        cwd: scope.rootRealPath,
+        missionId: "mission-a",
+        agentName: "worker-a",
+        role: "worker",
+        resume: false,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: false,
+      },
     });
+    expect(Object.isFrozen(claimed?.sealedRequest)).toBe(true);
     expect(claimPendingSpawnMeta(request.requestId, owner)).toBeNull();
 
     resolvePaneSpawn(
@@ -193,6 +352,7 @@ describe("pending pane spawn authority", () => {
     const owner = renderer();
     registered = owner;
     registerOrchRenderer(owner);
+    bindScope(owner);
     const resultPromise = requestPaneSpawn({
       adapterId: "codex",
       missionId: "mission-replay",
@@ -216,6 +376,7 @@ describe("pending pane spawn authority", () => {
     const attacker = renderer();
     registered = owner;
     registerOrchRenderer(owner);
+    bindScope(owner);
     const resultPromise = requestPaneSpawn({
       adapterId: "codex",
       scope: testProjectScope(),
@@ -244,6 +405,7 @@ describe("pending pane spawn authority", () => {
     const owner = renderer();
     registered = owner;
     registerOrchRenderer(owner);
+    bindScope(owner);
     const resultPromise = requestPaneSpawn({
       adapterId: "codex",
       scope: testProjectScope(),
@@ -255,7 +417,7 @@ describe("pending pane spawn authority", () => {
         {
           requestId: request.requestId,
           ok: true,
-          paneId: "pane-a",
+          paneId: request.paneId,
           sessionId: "pty-a",
         },
         owner,
@@ -273,7 +435,7 @@ describe("pending pane spawn authority", () => {
         {
           requestId: request.requestId,
           ok: true,
-          paneId: "pane-a",
+          paneId: request.paneId,
           sessionId: "pty-forged",
         },
         owner,
@@ -284,7 +446,7 @@ describe("pending pane spawn authority", () => {
         {
           requestId: request.requestId,
           ok: true,
-          paneId: "pane-a",
+          paneId: request.paneId,
           sessionId: "pty-a",
         },
         owner,
@@ -292,7 +454,7 @@ describe("pending pane spawn authority", () => {
     ).toBe(true);
     await expect(resultPromise).resolves.toMatchObject({
       ok: true,
-      paneId: "pane-a",
+      paneId: request.paneId,
       sessionId: "pty-a",
     });
   });
@@ -300,7 +462,7 @@ describe("pending pane spawn authority", () => {
   it("requests recovery when the stable mission pane has already lost its session", async () => {
     const owner = renderer();
     const scope = testProjectScope();
-    bindResolvedRendererWorkspaceScope(owner, scope);
+    bindScope(owner, scope);
     syncPanes(
       [{
         paneId: "pane-dead", sessionId: null, title: "Worker",
@@ -345,7 +507,6 @@ describe("pending pane spawn authority", () => {
     }, owner)).toBe(true);
     await expect(promise).resolves.toMatchObject({ ok: false });
     syncPanes([], owner);
-    clearRendererWorkspaceScope(owner);
   });
 
   it("routes a completely missing persisted pane to the live renderer in the same scope", async () => {
@@ -353,7 +514,7 @@ describe("pending pane spawn authority", () => {
     const scope = testProjectScope();
     registered = owner;
     registerOrchRenderer(owner);
-    bindResolvedRendererWorkspaceScope(owner, scope);
+    bindScope(owner, scope);
     const promise = requestMissionPaneRecovery({
       missionId: "mission-missing",
       paneId: "pane-missing",
@@ -381,6 +542,5 @@ describe("pending pane spawn authority", () => {
       error: "test cleanup",
     }, owner);
     await expect(promise).resolves.toMatchObject({ ok: false });
-    clearRendererWorkspaceScope(owner);
   });
 });

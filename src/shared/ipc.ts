@@ -77,6 +77,7 @@ const paneModelSchema = z.object({
   title: z.string().max(512),
   cwd: z.string().max(4096).optional(),
   browserUrl: z.string().max(4096).optional(),
+  browserOpenRequestId: z.string().min(1).max(128).optional(),
   adapterId: z.string().min(1).max(64).optional(),
   model: z.string().min(1).max(128).optional(),
   accountId: z.string().min(1).max(128).optional(),

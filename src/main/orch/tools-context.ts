@@ -5,9 +5,14 @@ import {
   getContextWorkflowService,
 } from '../context/context-workflow-registry';
 import { workflowStageSchema } from '../context/contract-compiler';
-import type { McpToolDef } from './mcp-protocol';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolDef,
+  type McpToolInvocation,
+} from './mcp-protocol';
 import type { AgentGateContext } from './gate';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { assertMainTaskDispatcherAuthority } from './task-dispatch-authority';
 import { automatedReviewSessions } from '../context/automated-review-session';
 import {
   normalizeWorkflowIdentity,
@@ -15,8 +20,9 @@ import {
 } from '../context/context-workflow-service';
 import {
   assertOrchestratorMission,
-  bindContextRevision,
   executionScopeFor,
+  getContextBySession,
+  rotateContextRevisionAuthority,
 } from './gate';
 import { MergeValidationCoordinator } from '../context/merge-validation-coordinator';
 import { CliAutomatedReviewer } from '../context/cli-automated-reviewer';
@@ -33,8 +39,15 @@ import {
   type ContextBootstrapAutopilotResult,
 } from '../context/context-bootstrap-autopilot';
 import { publishFinalValidationHandoff } from './final-validation-handoff';
-import { finalizeIntegratedTask } from './merge-task-finalizer';
-import type { MergeQueueResult } from '../runtime/merge-queue';
+import { bindFreezeDraftToApprovedIntent } from './mission-freeze-authority';
+import { getAgentSessionInfo } from '../pty/pty-manager';
+import { requestPaneClose } from './pane-registry';
+import { getSquad } from './squad-store';
+import {
+  resolveMissionPaneAuthoritySeal,
+  sameMissionPaneAuthoritySeal,
+} from './mission-pane-authority';
+import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
 
 // Doctor is an idempotent project operation, not a fan-out primitive. Several
 // model retries used to launch independent reviewers for the same drafts.
@@ -158,40 +171,244 @@ function assertMission(ctx: AgentGateContext, requested: string): void {
   }
 }
 
+function sameProjectScope(
+  left: Readonly<AgentGateContext['scope']>,
+  right: Readonly<AgentGateContext['scope']>,
+): boolean {
+  return left.version === right.version &&
+    left.installationId === right.installationId &&
+    left.projectId === right.projectId &&
+    left.checkoutId === right.checkoutId &&
+    left.rootRealPath === right.rootRealPath;
+}
+
+/**
+ * Manual/recovery merge tools are a legacy shell around MergeQueue. Bind that
+ * shell to the exact live orchestrator pane and approved intent so the queue's
+ * post-await authority checkpoints and rollback path are never optional.
+ */
+function captureManualMergeAuthority(
+  ctx: AgentGateContext,
+  missionId: string,
+  operation: 'nexus_merge_task' | 'nexus_merge_retry',
+): () => void {
+  assertOrchestratorMission(ctx, missionId);
+  const sessionId = ctx.sessionId;
+  if (!sessionId) throw new Error('merge authority requires a bound session');
+  const stores = getProjectDomainStores(ctx.scope);
+  assertMainTaskDispatcherAuthority(stores, missionId, operation);
+  const mission = stores.missions.get(missionId);
+  const squad = mission?.squadId ? getSquad(mission.squadId) : null;
+  const live = getAgentSessionInfo(sessionId);
+  const pane = live?.paneId
+    ? stores.missionPanes.findByPaneId(live.paneId)
+    : null;
+  const seal = mission && squad
+    ? resolveMissionPaneAuthoritySeal(ctx.scope, mission, squad)
+    : null;
+  const gate = getContextBySession(sessionId);
+  if (
+    !mission ||
+    !hasCurrentDispatchAuthority(mission) ||
+    mission.orchestratorSessionId !== sessionId ||
+    !live ||
+    live.role !== 'orchestrator' ||
+    live.missionId !== missionId ||
+    !live.paneId ||
+    !sameProjectScope(live.scope, ctx.scope) ||
+    !pane ||
+    pane.missionId !== missionId ||
+    pane.role !== 'orchestrator' ||
+    pane.paneId !== live.paneId ||
+    !sameMissionPaneAuthoritySeal(pane.authoritySeal, seal) ||
+    !gate ||
+    gate.token !== ctx.token ||
+    gate.role !== 'orchestrator' ||
+    gate.missionId !== missionId ||
+    !sameProjectScope(gate.scope, ctx.scope)
+  ) {
+    throw new Error('merge authority requires the exact current sealed orchestrator');
+  }
+  const intentVersion = mission.intentVersion ?? 0;
+  const paneId = live.paneId;
+  const expectedSeal = pane.authoritySeal;
+  const expectedContextRevision = ctx.contextRevision;
+
+  return () => {
+    const currentStores = getProjectDomainStores(ctx.scope);
+    const currentMission = currentStores.missions.get(missionId);
+    const currentSquad = currentMission?.squadId
+      ? getSquad(currentMission.squadId)
+      : null;
+    const currentLive = getAgentSessionInfo(sessionId);
+    const currentPane = currentStores.missionPanes.findByPaneId(paneId);
+    const currentSeal = currentMission && currentSquad
+      ? resolveMissionPaneAuthoritySeal(ctx.scope, currentMission, currentSquad)
+      : null;
+    const currentGate = getContextBySession(sessionId);
+    if (
+      !currentMission ||
+      !hasCurrentDispatchAuthority(currentMission) ||
+      (currentMission.intentVersion ?? 0) !== intentVersion ||
+      currentMission.orchestratorSessionId !== sessionId ||
+      !currentLive ||
+      currentLive.paneId !== paneId ||
+      currentLive.role !== 'orchestrator' ||
+      currentLive.missionId !== missionId ||
+      !sameProjectScope(currentLive.scope, ctx.scope) ||
+      !currentPane ||
+      currentPane.missionId !== missionId ||
+      currentPane.role !== 'orchestrator' ||
+      !sameMissionPaneAuthoritySeal(currentPane.authoritySeal, expectedSeal) ||
+      !sameMissionPaneAuthoritySeal(currentPane.authoritySeal, currentSeal) ||
+      !currentGate ||
+      currentGate.token !== ctx.token ||
+      currentGate.role !== 'orchestrator' ||
+      currentGate.missionId !== missionId ||
+      currentGate.contextRevision !== expectedContextRevision ||
+      !sameProjectScope(currentGate.scope, ctx.scope)
+    ) {
+      throw new Error('merge authority revoked: mission, session or seal changed');
+    }
+    assertMainTaskDispatcherAuthority(currentStores, missionId, operation);
+  };
+}
+
+/**
+ * Freeze/refreeze rotates only the live orchestrator onto the new PREVC
+ * binding. Existing workers retain their prior seal and their processes are
+ * revoked; continuing implementation requires a fresh route/spawn under the
+ * new contract. A legacy/unsealed orchestrator is never upgraded here.
+ */
+async function rotateMissionPaneWorkflowAuthority(
+  ctx: AgentGateContext,
+  missionId: string,
+  assertCurrentAuthority: () => void = () => {},
+): Promise<void> {
+  assertCurrentAuthority();
+  const suite = getProjectDomainStores(ctx.scope);
+  const panes = suite.missionPanes.list(missionId);
+  if (panes.length === 0) return;
+  if (ctx.role !== 'orchestrator' || !ctx.sessionId) {
+    throw new Error(
+      'workflow authority rotation requires the live mission orchestrator',
+    );
+  }
+  const mission = suite.missions.get(missionId);
+  const squad = mission?.squadId ? getSquad(mission.squadId) : null;
+  const nextSeal =
+    mission && squad
+      ? resolveMissionPaneAuthoritySeal(ctx.scope, mission, squad)
+      : null;
+  const live = getAgentSessionInfo(ctx.sessionId);
+  const orchestratorPane =
+    live?.missionId === missionId &&
+    live.role === 'orchestrator' &&
+    live.paneId
+      ? suite.missionPanes.findByPaneId(live.paneId)
+      : null;
+  if (
+    !nextSeal ||
+    !orchestratorPane ||
+    orchestratorPane.missionId !== missionId ||
+    orchestratorPane.role !== 'orchestrator' ||
+    !orchestratorPane.authoritySeal ||
+    !orchestratorPane.paneId
+  ) {
+    throw new Error(
+      'exact sealed orchestrator pane is unavailable for workflow rotation',
+    );
+  }
+  assertCurrentAuthority();
+  suite.missionPanes.rebindOrchestratorAuthority({
+    missionId,
+    paneId: orchestratorPane.paneId,
+    expectedAuthoritySeal: orchestratorPane.authoritySeal,
+    authoritySeal: nextSeal,
+  });
+
+  for (const pane of panes) {
+    if (
+      pane.role === 'worker' &&
+      !sameMissionPaneAuthoritySeal(pane.authoritySeal, nextSeal) &&
+      pane.paneId
+    ) {
+      assertCurrentAuthority();
+      if (!(await requestPaneClose(pane.paneId))) {
+        throw new Error(
+          `worker pane ${pane.paneId} did not produce physical exit proof`,
+        );
+      }
+      assertCurrentAuthority();
+    }
+  }
+}
+
+function invocationAuthority(
+  invocation?: McpToolInvocation,
+): () => void {
+  return () => assertMcpInvocationCurrent(invocation);
+}
+
 function nextWorkflowStage(route: readonly string[], stage: string): string {
   const index = route.indexOf(stage);
   if (index < 0) throw new Error('workflow stage is outside its frozen route');
   return route[index + 1] ?? 'complete';
 }
 
-async function runCouncilReview(ctx: AgentGateContext, missionId: string) {
+async function runCouncilReview(
+  ctx: AgentGateContext,
+  missionId: string,
+  assertCurrentAuthority: () => void = () => {},
+  signal?: AbortSignal,
+) {
+  assertCurrentAuthority();
   const service = getContextWorkflowService(ctx.scope);
   const mission = service.getMissionWorkflow(missionId);
   if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
   const reviewer = new CliAutomatedReviewer();
-  return reviewer.run({
+  const result = await reviewer.run({
     scope: ctx.scope,
     checkoutPath: ctx.scope.rootRealPath,
     contract: mission.contract.contract,
     binding: mission.workflow.binding,
     author: mission.contract.author,
     contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
-    persist: (report) => service.recordMergeReviewReport(report),
+    persist: (report) => {
+      assertCurrentAuthority();
+      return service.recordMergeReviewReport(report);
+    },
+    ...(signal ? { signal } : {}),
+    assertCurrentAuthority,
   });
+  assertCurrentAuthority();
+  return result;
 }
 
-async function runFinalValidation(ctx: AgentGateContext, missionId: string) {
+async function runFinalValidation(
+  ctx: AgentGateContext,
+  missionId: string,
+  assertCurrentAuthority: () => void = () => {},
+  signal?: AbortSignal,
+) {
+  assertCurrentAuthority();
   const service = getContextWorkflowService(ctx.scope);
   const mission = service.getMissionWorkflow(missionId);
   if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
   const sensorEvidence = [];
   for (const sensorId of mission.contract.contract.requiredSensors) {
-    const evidence = await service.runSensor(missionId, sensorId);
+    assertCurrentAuthority();
+    const evidence = await service.runSensor(missionId, sensorId, {
+      ...(signal ? { signal } : {}),
+      assertCurrentAuthority,
+    });
+    assertCurrentAuthority();
     sensorEvidence.push(evidence);
     if (evidence.exitCode !== 0 || evidence.timedOut) {
       return { ready: false, reason: `sensor failed: ${sensorId}`, sensorEvidence, review: null };
     }
   }
+  assertCurrentAuthority();
   const worktrees = requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId);
   const panes = getProjectDomainStores(ctx.scope).missionPanes.list(missionId);
   const authors: WorkflowIdentity[] = worktrees.map((worktree) => {
@@ -207,6 +424,7 @@ async function runFinalValidation(ctx: AgentGateContext, missionId: string) {
     });
   });
   if (authors.length === 0) throw new Error('final validation has no integrated code author');
+  assertCurrentAuthority();
   const reviewer = new CliAutomatedReviewer();
   const review = await reviewer.run({
     scope: ctx.scope,
@@ -216,8 +434,14 @@ async function runFinalValidation(ctx: AgentGateContext, missionId: string) {
     author: authors[0],
     additionalAuthors: authors.slice(1),
     contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
-    persist: (report) => service.recordMergeReviewReport(report),
+    persist: (report) => {
+      assertCurrentAuthority();
+      return service.recordMergeReviewReport(report);
+    },
+    ...(signal ? { signal } : {}),
+    assertCurrentAuthority,
   });
+  assertCurrentAuthority();
   return { ready: review.ready, reason: review.gate.reason, sensorEvidence, review };
 }
 
@@ -225,11 +449,14 @@ async function drivePrevcAutopilot(
   ctx: AgentGateContext,
   missionId: string,
   allowExecutionExit: boolean,
+  assertCurrentAuthority: () => void = () => {},
+  signal?: AbortSignal,
 ) {
   const service = getContextWorkflowService(ctx.scope);
   const transitions: string[] = [];
   let validatedEvidenceIds: readonly string[] = [];
   for (let guard = 0; guard < 8; guard += 1) {
+    assertCurrentAuthority();
     const mission = service.getMissionWorkflow(missionId);
     if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
     const { stage, route } = mission.workflow;
@@ -243,6 +470,7 @@ async function drivePrevcAutopilot(
       return { state: 'execution', transitions, reason: 'planned tasks are not all integrated' };
     }
     const advanceCurrentStage = () => {
+      assertCurrentAuthority();
       const next = workflowStageSchema.parse(nextWorkflowStage(route, stage));
       if (!canAutopilotAdvanceTo(next)) return null;
       service.advance(missionId, next);
@@ -255,6 +483,7 @@ async function drivePrevcAutopilot(
       reason: 'final PREVC transition awaits the atomic mission-step receipt',
     });
     const publishFinalReceiptEvidence = () => {
+      assertCurrentAuthority();
       const currentEvidenceIds = service.listCurrentPersistedEvidenceIds(missionId);
       const recoveredAttestations = currentEvidenceIds.filter((id) =>
         id.startsWith('milestone:'));
@@ -281,13 +510,25 @@ async function drivePrevcAutopilot(
       continue;
     }
     if (action === 'review') {
-      const review = await runCouncilReview(ctx, missionId);
+      const review = await runCouncilReview(
+        ctx,
+        missionId,
+        assertCurrentAuthority,
+        signal,
+      );
+      assertCurrentAuthority();
       if (!review.ready) return { state: stage, transitions, reason: review.gate.reason };
       if (!advanceCurrentStage()) return awaitingFinalReceipt();
       continue;
     }
     if (action === 'validate') {
-      const validation = await runFinalValidation(ctx, missionId);
+      const validation = await runFinalValidation(
+        ctx,
+        missionId,
+        assertCurrentAuthority,
+        signal,
+      );
+      assertCurrentAuthority();
       if (!validation.ready) return { state: stage, transitions, reason: validation.reason };
       validatedEvidenceIds = [
         ...validation.sensorEvidence.map((evidence) => evidence.id),
@@ -297,6 +538,7 @@ async function drivePrevcAutopilot(
         missionId,
         validatedEvidenceIds,
       );
+      assertCurrentAuthority();
       if (!advanceCurrentStage()) {
         publishFinalReceiptEvidence();
         return awaitingFinalReceipt();
@@ -315,25 +557,17 @@ async function drivePrevcAutopilot(
   throw new Error('PREVC autopilot transition guard exceeded');
 }
 
-function finalizeMergeResult(
+function markMergedTaskDone(
   ctx: AgentGateContext,
-  missionId: string,
   taskId: string,
-  result: MergeQueueResult,
-) {
-  return finalizeIntegratedTask(missionId, taskId, result, {
-    markTaskDone: (_missionId, integratedTaskId) => {
-      const updated = getProjectDomainStores(ctx.scope).tasks.update(
-        integratedTaskId,
-        { status: 'done' },
-      );
-      if (!updated) {
-        throw new Error(`integrated task ${integratedTaskId} disappeared`);
-      }
-    },
-    driveMission: (integratedMissionId) =>
-      drivePrevcAutopilot(ctx, integratedMissionId, true),
-  });
+): void {
+  const updated = getProjectDomainStores(ctx.scope).tasks.update(
+    taskId,
+    { status: 'done' },
+  );
+  if (!updated) {
+    throw new Error(`integrated task ${taskId} disappeared`);
+  }
 }
 
 const doctorTool: McpToolDef = {
@@ -354,6 +588,7 @@ const doctorTool: McpToolDef = {
     },
   },
   handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const input = z
       .object({
         autoReview: z.boolean().optional(),
@@ -400,6 +635,7 @@ const doctorTool: McpToolDef = {
       contextDoctorFlights.set(key, flight);
     }
     const result = await flight;
+    assertMcpInvocationCurrent(invocation);
     return Object.freeze({
       ...result.readiness,
       phase: result.phase,
@@ -635,7 +871,7 @@ const contextDraftReviewRunTool: McpToolDef = {
     properties: { draftId: { type: 'string' } },
     required: ['draftId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     if (ctx.role === 'worker') {
       throw new Error('only an orchestrator can launch autonomous context review');
     }
@@ -659,10 +895,13 @@ const contextDraftReviewRunTool: McpToolDef = {
       reviewed = await new CliContextDraftReviewer().run({
         scope: ctx.scope,
         draftId,
+        invocation,
       });
+      assertMcpInvocationCurrent(invocation);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!/timed out/i.test(message)) throw error;
+      assertMcpInvocationCurrent(invocation);
       // O pane revisor sobrevive ao poll inicial (semântica de recuperação de
       // mission-pane) e persiste o veredito via nexus_context_draft_review
       // quando terminar. Timeout aqui é revisão EM ANDAMENTO, não falha —
@@ -680,6 +919,7 @@ const contextDraftReviewRunTool: McpToolDef = {
       });
     }
     if (reviewed.status === 'approved') {
+      assertMcpInvocationCurrent(invocation);
       return Object.freeze({ reviewed, applied: service.apply(draftId) });
     }
     return Object.freeze({ reviewed, applied: null });
@@ -734,7 +974,7 @@ const freezeTool: McpToolDef = {
     },
     required: ['missionId', 'goal', 'acceptanceCriteria'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     if (ctx.role === 'worker') throw new Error('only an orchestrator can freeze a contract');
     const parsed = freezeSchema.parse(args);
     const input = {
@@ -745,12 +985,34 @@ const freezeTool: McpToolDef = {
       })),
     };
     assertMission(ctx, input.missionId);
+    const mission = getProjectDomainStores(ctx.scope).missions.get(input.missionId);
+    const authorized = bindFreezeDraftToApprovedIntent(mission, input);
     const service = getContextWorkflowService(ctx.scope);
-    // Auto-pilot: fill empty impact lists from structural blast radius.
-    const enriched = await service.enrichDraftFromOrientation(input);
+    const assertCurrentAuthority = invocationAuthority(invocation);
+    // Auto-pilot unions caller scope with the main-derived structural radius;
+    // an agent may broaden the contract, never narrow the approved mission.
+    const enriched = await service.enrichDraftFromOrientation(authorized);
+    assertCurrentAuthority();
     const frozen = service.freezeContract(enriched, missionIdentity(ctx));
-    bindContextRevision(ctx, frozen.contract.contextRevision);
-    const autopilot = await drivePrevcAutopilot(ctx, input.missionId, false);
+    await rotateMissionPaneWorkflowAuthority(
+      ctx,
+      input.missionId,
+      assertCurrentAuthority,
+    );
+    assertCurrentAuthority();
+    rotateContextRevisionAuthority(
+      ctx,
+      undefined,
+      frozen.contract.contextRevision,
+    );
+    const autopilot = await drivePrevcAutopilot(
+      ctx,
+      input.missionId,
+      false,
+      assertCurrentAuthority,
+      invocation?.signal,
+    );
+    assertCurrentAuthority();
     return {
       ...service.getMissionWorkflow(input.missionId),
       autopilot,
@@ -771,16 +1033,38 @@ const refreezeTool: McpToolDef = {
     properties: { missionId: { type: 'string' } },
     required: ['missionId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     if (ctx.role === 'worker') {
       throw new Error('only an orchestrator can refreeze a contract');
     }
     const parsed = z.object({ missionId: z.string().min(1) }).parse(args);
     assertMission(ctx, parsed.missionId);
     const service = getContextWorkflowService(ctx.scope);
+    const assertCurrentAuthority = invocationAuthority(invocation);
+    const previousRevision =
+      service.getMissionWorkflow(parsed.missionId).contract?.contract
+        .contextRevision;
+    assertCurrentAuthority();
     const frozen = service.refreezeContract(parsed.missionId, missionIdentity(ctx));
-    bindContextRevision(ctx, frozen.contract.contextRevision);
-    const autopilot = await drivePrevcAutopilot(ctx, parsed.missionId, false);
+    await rotateMissionPaneWorkflowAuthority(
+      ctx,
+      parsed.missionId,
+      assertCurrentAuthority,
+    );
+    assertCurrentAuthority();
+    rotateContextRevisionAuthority(
+      ctx,
+      previousRevision,
+      frozen.contract.contextRevision,
+    );
+    const autopilot = await drivePrevcAutopilot(
+      ctx,
+      parsed.missionId,
+      false,
+      assertCurrentAuthority,
+      invocation?.signal,
+    );
+    assertCurrentAuthority();
     return { ...service.getMissionWorkflow(parsed.missionId), autopilot };
   },
 };
@@ -833,10 +1117,20 @@ const sensorTool: McpToolDef = {
     properties: { missionId: { type: 'string' }, sensorId: { type: 'string' } },
     required: ['missionId', 'sensorId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const input = z.object({ missionId: identifier, sensorId: identifier }).strict().parse(args);
     assertOrchestratorMission(ctx, input.missionId);
-    return getContextWorkflowService(ctx.scope).runSensor(input.missionId, input.sensorId);
+    const assertCurrentAuthority = invocationAuthority(invocation);
+    const result = await getContextWorkflowService(ctx.scope).runSensor(
+      input.missionId,
+      input.sensorId,
+      {
+        ...(invocation?.signal ? { signal: invocation.signal } : {}),
+        assertCurrentAuthority,
+      },
+    );
+    assertCurrentAuthority();
+    return result;
   },
 };
 
@@ -872,7 +1166,7 @@ const worktreeCreateTool: McpToolDef = {
     },
     required: ['missionId', 'taskId', 'workerId', 'ownership'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     if (ctx.role === 'worker') throw new Error('only an orchestrator can allocate worktrees');
     const input = z.object({
       missionId: identifier,
@@ -889,6 +1183,11 @@ const worktreeCreateTool: McpToolDef = {
       }).strict()).max(256).default([]),
     }).strict().parse(args);
     assertMission(ctx, input.missionId);
+    assertMainTaskDispatcherAuthority(
+      getProjectDomainStores(ctx.scope),
+      input.missionId,
+      'nexus_worktree_create',
+    );
     const protectedFile = input.ownership.files.find((file) => {
       const normalized = file.replaceAll('\\', '/');
       return normalized === '.nexus/project.json' ||
@@ -911,19 +1210,23 @@ const worktreeCreateTool: McpToolDef = {
     // P4 auto-pilot: expand ownership with structural blast radius (still no .context).
     let ownership = input.ownership;
     let ownershipExpanded = false;
+    const assertCurrentAuthority = invocationAuthority(invocation);
     try {
       const { tryGetProjectOrientationService } = await import(
         '../context/orientation/orientation-service'
       );
+      assertCurrentAuthority();
       const { expandOwnershipWithBlastRadius } = await import(
         '../context/orientation/orientation-blast-radius'
       );
+      assertCurrentAuthority();
       const map =
         tryGetProjectOrientationService()?.get(ctx.scope) ??
         (await tryGetProjectOrientationService()?.ensure(ctx.scope, {
           reason: 'mcp',
           waitMs: 3_000,
         }));
+      assertCurrentAuthority();
       if (map) {
         const expanded = expandOwnershipWithBlastRadius(ownership, map);
         ownership = {
@@ -936,6 +1239,7 @@ const worktreeCreateTool: McpToolDef = {
     } catch {
       // ownership expansion is advisory
     }
+    assertCurrentAuthority();
     const created = requireWorktreeRuntimeRegistry().create({
       scope: ctx.scope,
       missionId: input.missionId,
@@ -1014,30 +1318,46 @@ const mergeTaskTool: McpToolDef = {
     properties: { missionId: { type: 'string' }, taskId: { type: 'string' } },
     required: ['missionId', 'taskId'],
   },
-  handler: async (args, ctx) => {
-    if (ctx.role === 'worker') throw new Error('only an orchestrator can enqueue merge');
+  handler: async (args, ctx, invocation) => {
     const input = z.object({ missionId: identifier, taskId: identifier }).strict().parse(args);
-    assertMission(ctx, input.missionId);
+    const assertManualAuthority = captureManualMergeAuthority(
+      ctx,
+      input.missionId,
+      'nexus_merge_task',
+    );
+    const assertCurrentAuthority = () => {
+      assertMcpInvocationCurrent(invocation);
+      assertManualAuthority();
+    };
     const service = getContextWorkflowService(ctx.scope);
     service.assertMutationAllowed(input.missionId, 'nexus_merge_task', {});
     const validator = new MergeValidationCoordinator(service);
-    let finalized: Awaited<ReturnType<typeof finalizeMergeResult>> | null = null;
-    await requireWorktreeRuntimeRegistry().enqueue({
+    const integrated = await requireWorktreeRuntimeRegistry().enqueue({
       scope: ctx.scope,
       missionId: input.missionId,
       taskId: input.taskId,
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+      assertCurrentAuthority,
       validate: (validationContext) => validator.validate(validationContext),
-      finalize: async (result) => {
-        finalized = await finalizeMergeResult(
-          ctx,
-          input.missionId,
-          input.taskId,
-          result,
-        );
+      finalize: () => {
+        assertCurrentAuthority();
+        markMergedTaskDone(ctx, input.taskId);
+        assertCurrentAuthority();
       },
     });
-    if (!finalized) throw new Error('merge finalizer did not produce a result');
-    return finalized;
+    // Git integration + task completion are now the linearization point. PREVC
+    // advancement runs afterwards under the same fence; a later block stops
+    // the autopilot but never creates Git-rollback/task-done disagreement.
+    assertCurrentAuthority();
+    const autopilot = await drivePrevcAutopilot(
+      ctx,
+      input.missionId,
+      true,
+      assertCurrentAuthority,
+      invocation?.signal,
+    );
+    assertCurrentAuthority();
+    return Object.freeze({ ...integrated, autopilot });
   },
 };
 
@@ -1084,40 +1404,53 @@ const mergeRetryTool: McpToolDef = {
     },
     required: ['missionId', 'taskId', 'expectedStateRevision'],
   },
-  handler: async (args, ctx) => {
-    if (ctx.role === 'worker') throw new Error('only an orchestrator can retry merge');
+  handler: async (args, ctx, invocation) => {
     const input = z.object({
       missionId: identifier,
       taskId: identifier,
       expectedStateRevision: z.number().int().nonnegative(),
     }).strict().parse(args);
-    assertMission(ctx, input.missionId);
+    const assertManualAuthority = captureManualMergeAuthority(
+      ctx,
+      input.missionId,
+      'nexus_merge_retry',
+    );
+    const assertCurrentAuthority = () => {
+      assertMcpInvocationCurrent(invocation);
+      assertManualAuthority();
+    };
     const service = getContextWorkflowService(ctx.scope);
     // Retry owns a narrower gate than ordinary workflow mutation: the durable
     // queue CAS below proves the exact blocked task/attempt. This must remain
     // available after a crash where finalization already advanced PREVC.
     const validator = new MergeValidationCoordinator(service);
-    let finalized: Awaited<ReturnType<typeof finalizeMergeResult>> | null = null;
-    await requireWorktreeRuntimeRegistry().retry({
+    const integrated = await requireWorktreeRuntimeRegistry().retry({
       scope: ctx.scope,
       missionId: input.missionId,
       taskId: input.taskId,
       expectedStateRevision: input.expectedStateRevision,
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+      assertCurrentAuthority,
       acknowledgement: {
         evidenceIds: service.listPersistedEvidenceIds(input.missionId),
       },
       validate: (validationContext) => validator.validate(validationContext),
-      finalize: async (result) => {
-        finalized = await finalizeMergeResult(
-          ctx,
-          input.missionId,
-          input.taskId,
-          result,
-        );
+      finalize: () => {
+        assertCurrentAuthority();
+        markMergedTaskDone(ctx, input.taskId);
+        assertCurrentAuthority();
       },
     });
-    if (!finalized) throw new Error('merge finalizer did not produce a result');
-    return finalized;
+    assertCurrentAuthority();
+    const autopilot = await drivePrevcAutopilot(
+      ctx,
+      input.missionId,
+      true,
+      assertCurrentAuthority,
+      invocation?.signal,
+    );
+    assertCurrentAuthority();
+    return Object.freeze({ ...integrated, autopilot });
   },
 };
 
@@ -1130,11 +1463,12 @@ const validationRunTool: McpToolDef = {
     properties: { missionId: { type: 'string' } },
     required: ['missionId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     if (ctx.role === 'worker') throw new Error('only an orchestrator can run final validation');
     const missionId = identifier.parse(args.missionId);
     assertMission(ctx, missionId);
     const service = getContextWorkflowService(ctx.scope);
+    const assertCurrentAuthority = invocationAuthority(invocation);
     const mission = service.getMissionWorkflow(missionId);
     if (!mission.contract || !mission.workflow) {
       throw new Error('mission has no frozen workflow');
@@ -1144,7 +1478,12 @@ const validationRunTool: McpToolDef = {
     }
     const sensorEvidence = [];
     for (const sensorId of mission.contract.contract.requiredSensors) {
-      const evidence = await service.runSensor(missionId, sensorId);
+      assertCurrentAuthority();
+      const evidence = await service.runSensor(missionId, sensorId, {
+        ...(invocation?.signal ? { signal: invocation.signal } : {}),
+        assertCurrentAuthority,
+      });
+      assertCurrentAuthority();
       sensorEvidence.push(evidence);
       if (evidence.exitCode !== 0 || evidence.timedOut) {
         return {
@@ -1182,9 +1521,13 @@ const validationRunTool: McpToolDef = {
       additionalAuthors: authors.slice(1),
       contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
       persist: (report) => {
+        assertCurrentAuthority();
         service.recordMergeReviewReport(report);
       },
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+      assertCurrentAuthority,
     });
+    assertCurrentAuthority();
     return {
       ready: review.ready,
       reason: review.gate.reason,
@@ -1203,11 +1546,12 @@ const planReviewRunTool: McpToolDef = {
     properties: { missionId: { type: 'string' } },
     required: ['missionId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     if (ctx.role === 'worker') throw new Error('only an orchestrator can launch plan review');
     const missionId = identifier.parse(args.missionId);
     assertMission(ctx, missionId);
     const service = getContextWorkflowService(ctx.scope);
+    const assertCurrentAuthority = invocationAuthority(invocation);
     const mission = service.getMissionWorkflow(missionId);
     if (!mission.contract || !mission.workflow) {
       throw new Error('mission has no frozen workflow');
@@ -1227,9 +1571,13 @@ const planReviewRunTool: McpToolDef = {
       author: mission.contract.author,
       contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
       persist: (report) => {
+        assertCurrentAuthority();
         service.recordMergeReviewReport(report);
       },
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+      assertCurrentAuthority,
     });
+    assertCurrentAuthority();
     return { ready: review.ready, reason: review.gate.reason, review };
   },
 };

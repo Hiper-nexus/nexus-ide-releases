@@ -34,6 +34,7 @@ describe('Claude-family zero-click settings (system default)', () => {
     expect(Object.keys(settings.hooks ?? {}).sort()).toEqual([
       'Notification',
       'PostToolUse',
+      'PostToolUseFailure',
       'PreToolUse',
       'Stop',
       'UserPromptSubmit',
@@ -59,6 +60,9 @@ describe('Claude-family zero-click settings (system default)', () => {
     expect(settings.skipWorkflowUsageWarning).toBe(true);
     expect(Object.keys(settings.hooks ?? {}).sort()).toEqual([
       'Notification',
+      'PostToolUse',
+      'PostToolUseFailure',
+      'PreToolUse',
       'Stop',
       'UserPromptSubmit',
     ]);

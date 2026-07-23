@@ -7,6 +7,7 @@
  * nexus_route_task feeds it the live adapter list.
  */
 import {
+  hasAuthoritativeModelQuality,
   isModelBlockedForAutoRouting,
   loadModelCatalog,
   modelCatalogInfo,
@@ -319,8 +320,12 @@ function evaluatedCandidates(
   return [...available.values()]
     .flatMap((adapter) => (adapter.models ?? []).flatMap((model) => {
       const info = modelCatalogInfo(catalog, adapter.id, model);
-      if (!info?.quality || isModelBlockedForAutoRouting(info)) return [];
-      const quality = info.quality[dimension] ?? info.quality.coding ?? info.quality.overall;
+      if (!hasAuthoritativeModelQuality(info) || isModelBlockedForAutoRouting(info)) {
+        return [];
+      }
+      const qualityInfo = info!.quality!;
+      const quality =
+        qualityInfo[dimension] ?? qualityInfo.coding ?? qualityInfo.overall;
       const costPenalty = tier === 'trivial' || tier === 'easy'
         ? modelRoutingRank(info) * 12
         : tier === 'medium'
@@ -480,7 +485,10 @@ export function routeTask(
   const evaluationCoversAllInstalled = [...available.values()].every((adapter) =>
     (adapter.models ?? []).some((model) => {
       const info = modelCatalogInfo(modelCatalog, adapter.id, model);
-      return Boolean(info?.quality) && !isModelBlockedForAutoRouting(info);
+      return (
+        hasAuthoritativeModelQuality(info) &&
+        !isModelBlockedForAutoRouting(info)
+      );
     }),
   );
   const evaluated = evaluationCoversAllInstalled

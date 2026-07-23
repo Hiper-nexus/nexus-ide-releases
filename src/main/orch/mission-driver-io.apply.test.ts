@@ -570,4 +570,77 @@ describe('createProductionApplyPorts advance/complete', () => {
       expect.stringContaining('session-worker-new'),
     );
   });
+
+  it('blocks a dead orchestrator without asking the renderer to respawn it', async () => {
+    let mission = makeMission(
+      [step({ id: 's1', label: 'Validar entrega', status: 'pending' })],
+      {
+        orchestratorSessionId: 'session-orch-dead',
+        description: 'Concluir a missão com prova real.',
+      },
+    );
+    const persisted: MissionPaneSpec[] = [
+      {
+        id: 'spec-orch',
+        missionId: mission.id,
+        paneId: 'pane-orch-dead',
+        adapterId: 'codex',
+        title: 'Orchestrator',
+        role: 'orchestrator',
+        createdAt: 1,
+      },
+    ];
+    const update = vi.fn((_missionId: string, patch: Record<string, unknown>) => {
+      mission = { ...mission, ...patch } as typeof mission;
+      return mission;
+    });
+    const recoverPane = vi.fn();
+    const ports = createProductionApplyPorts(
+      { advanceMissionStep: vi.fn(), isMissionComplete: () => false },
+      () => ({
+        missions: {
+          get: () => mission,
+          update,
+          appendLearning: vi.fn(),
+        },
+        missionPanes: { list: () => persisted },
+        handoffs: { list: () => [] },
+      }) as never,
+      recoverPane,
+      () => [{
+        paneId: 'pane-orch-dead',
+        sessionId: 'session-orch-dead',
+        title: 'Orchestrator',
+        kind: 'cli-agent',
+        state: 'exited',
+        missionId: mission.id,
+        role: 'orchestrator',
+      }],
+    );
+
+    await expect(
+      ports.respawnFreshContext(mission.id, scope, 'provider exited'),
+    ).rejects.toThrow(/blocked.*Retomar missão/i);
+    await expect(
+      ports.respawnFreshContext(mission.id, scope, 'provider exited again'),
+    ).rejects.toThrow(/blocked.*Retomar missão/i);
+
+    expect(recoverPane).not.toHaveBeenCalled();
+    expect(update).toHaveBeenLastCalledWith(
+      mission.id,
+      expect.objectContaining({
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        description: expect.stringMatching(
+          /NEXUS_DEAD_ORCHESTRATOR_RECOVERY_BLOCKED[\s\S]*Retomar missão/,
+        ),
+      }),
+    );
+    expect(
+      mission.description.match(
+        /\[NEXUS_DEAD_ORCHESTRATOR_RECOVERY_BLOCKED\]/g,
+      ),
+    ).toHaveLength(1);
+    expect(mission.description.match(/CTA: Retomar missão/g)).toHaveLength(1);
+  });
 });

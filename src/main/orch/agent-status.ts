@@ -1,3 +1,5 @@
+// Adapted from stablyai/orca @ 0121f571e4c9929f4d299f1a339d6e72c5d58c8b
+// (MIT): interactive-question latch semantics, under Nexus main authority.
 // Semantic agent-status reducer — the Nexus-native half of the emdash hook
 // protocol harvest (wave 1). Canonical hook events (parsed by the vendored
 // emdash parsers from raw CLI hook payloads) become a per-pane semantic
@@ -31,6 +33,7 @@ import type {
 import type { PaneSessionState } from '../../shared/types';
 import {
   getAgentSessionInfo,
+  getSessionState,
   publishSessionActivityState,
 } from '../pty/pty-manager';
 
@@ -124,6 +127,25 @@ export function getAgentSemanticStatus(
   return statusByPane.get(paneId) ?? null;
 }
 
+export function getAgentSemanticStatusBySession(
+  sessionId: string,
+): AgentSemanticStatusEntry | null {
+  const paneId = paneBySession.get(sessionId);
+  const entry = paneId ? statusByPane.get(paneId) : undefined;
+  return entry?.sessionId === sessionId ? entry : null;
+}
+
+/**
+ * PTY `idle` is only a visual/transport state. It is safe to inject input only
+ * when no main-owned permission/question latch is active. A session without
+ * native status events keeps the legacy quiet-PTY fallback.
+ */
+export function isSessionInjectableIdle(sessionId: string): boolean {
+  if (getSessionState(sessionId) !== 'idle') return false;
+  const semantic = getAgentSemanticStatusBySession(sessionId)?.status;
+  return semantic === undefined || semantic === 'idle' || semantic === 'completed';
+}
+
 function resolvePaneId(sessionId: string): string {
   const owned = getAgentSessionInfo(sessionId);
   if (owned?.paneId) return owned.paneId;
@@ -144,12 +166,20 @@ export function applyCanonicalHookEvent(input: {
   try {
     const { sessionId, event } = input;
     if (!sessionId) return { applied: false, transitioned: false, entry: null };
-    const next = semanticStatusForEvent(event);
-    if (next === null) return { applied: false, transitioned: false, entry: null };
+    const mapped = semanticStatusForEvent(event);
+    if (mapped === null) return { applied: false, transitioned: false, entry: null };
 
     const paneId = resolvePaneId(sessionId);
     paneBySession.set(sessionId, paneId);
     const prev = statusByPane.get(paneId);
+    const preserveAwaitingInput =
+      prev?.sessionId === sessionId &&
+      prev.status === 'awaiting-input' &&
+      event.kind === 'status' &&
+      event.type !== 'stop' &&
+      event.type !== 'error' &&
+      event.clearsAwaitingInput !== true;
+    const next = preserveAwaitingInput ? 'awaiting-input' : mapped;
     const entry: AgentSemanticStatusEntry = {
       status: next,
       sessionId,
@@ -197,14 +227,15 @@ export function resetAgentStatusOnExit(sessionId: string, now = Date.now()): voi
     paneBySession.delete(sessionId);
     if (!paneId) return;
     const prev = statusByPane.get(paneId);
-    if (!prev || prev.status === 'idle') return;
+    if (!prev) return;
+    statusByPane.delete(paneId);
+    if (prev.status === 'idle') return;
     const entry: AgentSemanticStatusEntry = {
       ...prev,
       status: 'idle',
       notificationType: undefined,
       updatedAt: now,
     };
-    statusByPane.set(paneId, entry);
     publishSessionActivityState(sessionId, 'idle');
     for (const tap of statusTaps) {
       try {

@@ -561,11 +561,16 @@ export async function chatViaBrainChain(
   messages: Array<{ role: string; content: string }>,
   maxTokens: number,
   deps: BrainDeps = defaultBrainDeps,
+  signal?: AbortSignal,
 ): Promise<string> {
   const attempts: string[] = [];
   for (const provider of flattenJarvisBrainProviders(
     ensureFullBrainCascade(getVoiceConfig().jarvisBrain),
   )) {
+    if (signal?.aborted) {
+      if (signal.reason instanceof Error) throw signal.reason;
+      throw new Error('brain request was aborted');
+    }
     const key = providerKey(provider, deps);
     if (key === undefined) continue;
     try {
@@ -577,8 +582,13 @@ export async function chatViaBrainChain(
         deps,
         provider.jsonMode ?? true,
         maxTokens,
+        signal,
       );
     } catch (err) {
+      if (signal?.aborted) {
+        if (signal.reason instanceof Error) throw signal.reason;
+        throw new Error('brain request was aborted');
+      }
       attempts.push(
         `${provider.provider}: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -634,6 +644,7 @@ export async function chatOnce(
   // 420 serve às respostas faladas da JARVIS; consumidores de JSON longo
   // (ex.: squad-architect) DEVEM subir — JSON truncado = erro de parse.
   maxTokens = 420,
+  signal?: AbortSignal,
 ): Promise<string> {
   const body: Record<string, unknown> = {
     model,
@@ -642,6 +653,10 @@ export async function chatOnce(
     max_tokens: maxTokens,
   };
   if (jsonMode) body.response_format = { type: 'json_object' };
+  const timeoutSignal = AbortSignal.timeout(BRAIN_TIMEOUT_MS);
+  const requestSignal = signal
+    ? AbortSignal.any([signal, timeoutSignal])
+    : timeoutSignal;
   let res: Response;
   try {
     res = await deps.fetchImpl(endpoint, {
@@ -650,11 +665,18 @@ export async function chatOnce(
         Authorization: `Bearer ${key}`,
         'Content-Type': 'application/json',
       },
-      signal: AbortSignal.timeout(BRAIN_TIMEOUT_MS),
+      signal: requestSignal,
       body: JSON.stringify(body),
     });
   } catch (err) {
-    if (err instanceof Error && err.name === 'TimeoutError') {
+    if (signal?.aborted) {
+      if (signal.reason instanceof Error) throw signal.reason;
+      throw new Error('brain request was aborted');
+    }
+    if (
+      timeoutSignal.aborted ||
+      (err instanceof Error && err.name === 'TimeoutError')
+    ) {
       throw new Error(`timeout (${BRAIN_TIMEOUT_MS / 1000}s sem resposta)`);
     }
     throw err;

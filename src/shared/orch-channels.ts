@@ -13,6 +13,9 @@ export const ORCH_CHANNELS = {
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
   missionCreate: 'orch:missions.create',
+  /** Native-confirmed, exact one-shot grant for Pet/legacy immediate launch. */
+  missionAuthorizeImmediateSquad:
+    'orch:missions.authorizeImmediateSquad',
   /** Intent-first: arm a squad mission shell without an orchestrator pane. */
   missionArm: 'orch:missions.arm',
   /** Intent-first: submit/compile a goal contract (bumps intentVersion). */
@@ -20,10 +23,17 @@ export const ORCH_CHANNELS = {
   /** Intent-first: authorize dispatch after plan approval. */
   missionApproveIntent: 'orch:missions.approveIntent',
   /**
+   * Materialize the approved mission's first orchestrator in main. The
+   * renderer sends only missionId; every runtime field comes from main stores.
+   */
+  missionBootstrapOrchestrator: 'orch:missions.bootstrapOrchestrator',
+  /**
    * Promote lane=plan → standard after plan.md is ready so PREVC code work
    * is allowed (operator "Executar plano").
    */
   missionPromotePlanLane: 'orch:missions.promotePlanLane',
+  /** Main-owned passive paste + finite idle→busy/output acceptance proof. */
+  missionKickoffSubmit: 'orch:missions.kickoffSubmit',
   /** Bind a live orchestrator pane to an armed mission (no new mission row). */
   missionBindOrchestrator: 'orch:missions.bindOrchestrator',
   /**
@@ -44,6 +54,10 @@ export const ORCH_CHANNELS = {
   missionEventsAck: 'orch:missionEvents.ack',
   missionEventsCursor: 'orch:missionEvents.cursor',
   handoffsList: 'orch:handoffs.list',
+  /** Answer one exact durable nexus_clarify question in this renderer scope. */
+  clarifyAnswerSubmit: 'orch:clarify.answer',
+  /** Human diff annotations persisted as a non-terminal mission handoff. */
+  operatorReviewSubmit: 'orch:operatorReview.submit',
   todosGet: 'orch:todos.get',
   todoSetStatus: 'orch:todos.setStatus',
   squadsList: 'orch:squads.list',

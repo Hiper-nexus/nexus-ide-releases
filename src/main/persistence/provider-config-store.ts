@@ -416,7 +416,6 @@ function buildProviderSpawnOverrides(
 ): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
   const adapter = getAdapter(adapterId);
-  const key = resolveApiKey(adapterId, cfg.upstream);
   // Control flags (permission mode / effort / verbose) always apply, whatever
   // the auth/routing path — they're how the user turns on auto-operation.
   const base = {
@@ -519,6 +518,7 @@ function buildProviderSpawnOverrides(
   // API-key env (the launcher unsets ANTHROPIC_API_KEY for third parties).
   // An explicit route is the user's choice — it wins over subscription auth.
   if (cfg.upstream && cfg.upstream !== 'anthropic' && isRoutable(adapterId)) {
+    const key = resolveApiKey(adapterId, cfg.upstream);
     return {
       ...base,
       keyEnv: buildProviderRoutingEnv(cfg.upstream, key),
@@ -530,6 +530,12 @@ function buildProviderSpawnOverrides(
   // never receives an API key — and inherited key vars are stripped so they
   // cannot hijack billing. The key only flows when there is no subscription.
   const decision = authDecision(adapterId);
+  // `getKey()` may synchronously cross the macOS Keychain boundary. Keep that
+  // effect behind the exact API-key decision so a healthy native subscription
+  // can never stall the Electron main thread on an irrelevant vault prompt.
+  const key = decision.injectKey
+    ? resolveApiKey(adapterId, cfg.upstream)
+    : null;
   const keyEnv =
     decision.injectKey && adapter && key
       ? nativeKeyEnv(adapterId, key, perSpawn.model)

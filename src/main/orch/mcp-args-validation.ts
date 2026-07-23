@@ -98,6 +98,38 @@ const auditSourceSchema = z
 const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
   ['load_workspace_dependencies', z.object({}).strict()],
   [
+    'lsp_symbols',
+    z.object({
+      path: pathText,
+      maxResults: positiveInt.max(100).optional(),
+    }).strict(),
+  ],
+  [
+    'lsp_definition',
+    z.object({
+      path: pathText,
+      line: positiveInt,
+      column: positiveInt,
+      maxResults: positiveInt.max(100).optional(),
+    }).strict(),
+  ],
+  [
+    'lsp_references',
+    z.object({
+      path: pathText,
+      line: positiveInt,
+      column: positiveInt,
+      maxResults: positiveInt.max(100).optional(),
+    }).strict(),
+  ],
+  [
+    'lsp_diagnostics',
+    z.object({
+      path: pathText,
+      maxResults: positiveInt.max(100).optional(),
+    }).strict(),
+  ],
+  [
     'terminal_run',
     z.object({
       command: text.max(8192),

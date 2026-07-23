@@ -82,6 +82,20 @@ describe('preview-server', () => {
     expect(listPreviews(scopeA)).toHaveLength(1);
   });
 
+  it('does not retain a listener when authority is revoked at bind completion', async () => {
+    let checkpoints = 0;
+    await expect(
+      startPreview(dir, scopeA, {
+        assertCurrentAuthority: () => {
+          checkpoints += 1;
+          if (checkpoints >= 3) throw new Error('session_authority_revoked');
+        },
+      }),
+    ).rejects.toThrow(/session_authority_revoked/);
+
+    expect(listPreviews(scopeA)).toEqual([]);
+  });
+
   it('bloqueia path traversal para fora da raiz', async () => {
     const { url } = await startPreview(dir, scopeA);
     const res = await fetch(`${url}..%2f..%2f..%2fetc%2fpasswd`);

@@ -29,6 +29,118 @@ describe('detectLimit', () => {
     expect(detectLimit('mission-429 finished successfully')).toBeNull();
   });
 
+  it('ignora erros citados em blockquotes Markdown (EN/PT)', () => {
+    expect(
+      detectLimit(
+        [
+          '> Provider response:',
+          '> Error: HTTP 429 Too Many Requests',
+          '> status code: 401',
+        ].join('\n'),
+      ),
+    ).toBeNull();
+    expect(
+      detectLimit(
+        [
+          '  > Trecho histórico:',
+          '  > Erro: cota esgotada nesta conta',
+          '  >> Erro: sessão expirada',
+        ].join('\n'),
+      ),
+    ).toBeNull();
+  });
+
+  it('ignora erros dentro de code fences Markdown completos ou em streaming', () => {
+    expect(
+      detectLimit(
+        [
+          'Exemplo da documentação:',
+          '```text',
+          'Error: HTTP 429 Too Many Requests',
+          'rate_limit_exceeded',
+          'invalid api key provided',
+          '```',
+        ].join('\n'),
+      ),
+    ).toBeNull();
+    expect(
+      detectLimit(
+        [
+          'Exemplo sem language tag:',
+          '```',
+          'Error: HTTP 429 Too Many Requests',
+          '```',
+        ].join('\n'),
+      ),
+    ).toBeNull();
+    expect(
+      detectLimit(
+        [
+          'Saída histórica:',
+          '~~~log',
+          'Erro: limite de uso atingido para esta conta',
+          'HTTP 401 Unauthorized',
+          '~~~',
+        ].join('\n'),
+      ),
+    ).toBeNull();
+    expect(
+      detectLimit(
+        [
+          'O agente ainda está escrevendo o bloco:',
+          '```console',
+          'HTTP 402 payment required',
+        ].join('\n'),
+      ),
+    ).toBeNull();
+  });
+
+  it('não usa fence órfão para mascarar um erro real posterior', () => {
+    expect(
+      detectLimit(
+        [
+          'Trecho anterior saiu da janela rolante.',
+          '```',
+          'Error: HTTP 429 Too Many Requests',
+        ].join('\n'),
+      )?.kind,
+    ).toBe('rate-limit');
+  });
+
+  it('ignora exemplos em inline code e linhas rotuladas como log/output', () => {
+    expect(
+      detectLimit('A documentação usa `rate_limit_exceeded` como exemplo.'),
+    ).toBeNull();
+    expect(
+      detectLimit('Log output: Error: HTTP 429 Too Many Requests'),
+    ).toBeNull();
+    expect(
+      detectLimit('Saída do log: Erro: sessão expirada'),
+    ).toBeNull();
+    expect(detectLimit('stdout: invalid api key provided')).toBeNull();
+    expect(detectLimit('stderr: HTTP 402 payment required')).toBeNull();
+  });
+
+  it('não mascara sinal real misturado com conteúdo citado', () => {
+    const rateLimit = detectLimit(
+      [
+        '> Histórico: Error: HTTP 401 Unauthorized',
+        '```log',
+        'HTTP 402 payment required',
+        '```',
+        'Provider request failed.',
+        'Error: HTTP 429 Too Many Requests',
+      ].join('\n'),
+    );
+    expect(rateLimit?.kind).toBe('rate-limit');
+    expect(rateLimit?.reason).toMatch(/429|too many requests/i);
+
+    const auth = detectLimit(
+      'A documentação usa `rate_limit_exceeded`; Error: HTTP 401 Unauthorized',
+    );
+    expect(auth?.kind).toBe('auth');
+  });
+
   it('detects credit/quota exhaustion as quota (long cooldown)', () => {
     const hit = detectLimit('Your credit balance is too low to run this request.');
     expect(hit?.kind).toBe('quota');

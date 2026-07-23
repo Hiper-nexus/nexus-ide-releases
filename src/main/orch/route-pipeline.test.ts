@@ -18,6 +18,32 @@ function entry(
 }
 
 describe('scoreRouteCandidate', () => {
+  it('não usa quality de fixture no multi-score', () => {
+    const fixtureCatalog = {
+      adapters: {
+        codex: {
+          models: [
+            {
+              id: 'gpt-fixture',
+              quality: {
+                overall: 100,
+                coding: 100,
+                evaluatedAt: '2026-07-01T00:00:00.000Z',
+                source: 'nexus-eval/v1/fixture',
+              },
+            },
+          ],
+        },
+      },
+    };
+    const scored = scoreRouteCandidate(entry('codex', 'gpt-fixture'), 0, {
+      tier: 'medium',
+      modelCatalog: fixtureCatalog,
+    });
+
+    expect(scored.quality).toBe(6);
+  });
+
   it('penalizes adapters already used in the mission (diversity)', () => {
     const e = entry('codex', 'gpt-5.4');
     const fresh = scoreRouteCandidate(e, 0, {
@@ -91,6 +117,25 @@ describe('multiScoreRerank', () => {
     });
     // codex heavily used → diversity attenuation drops it below omp.
     expect(out[0]?.c.adapterId).toBe('omp');
+  });
+
+  it('reports the same diversity multiplier used by the score', () => {
+    const ranked = [
+      entry('codex', 'gpt-5.4'),
+      entry('omp', 'zai/glm-5'),
+    ];
+    const { note } = multiScoreRerank({
+      ranked,
+      tier: 'medium',
+      modelCatalog: catalog,
+      context: { ompParticipation: 'diversity' },
+      missionUseCounts: new Map([
+        ['codex', 1],
+        ['omp', 2],
+      ]),
+    });
+
+    expect(note).toContain('diversity×1');
   });
 
   it('keeps unused table lead ahead of unused omp under diversity', () => {

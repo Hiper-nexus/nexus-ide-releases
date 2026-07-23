@@ -1114,7 +1114,16 @@ export async function executeJarvisAction(
       checkpoint(control);
       if (result.ok) {
         sayText = `Missão restaurada com ${result.panes ?? 0} panes.`;
-        toolResult = { tool: action.type, ok: true, summary: `missão restaurada (${result.panes} panes)` };
+        toolResult = {
+          tool: action.type,
+          ok: true,
+          summary: `missão restaurada (${result.panes} panes)`,
+          output: {
+            ackId: result.ackId,
+            sessionIds: result.sessionIds,
+            ackedAt: result.ackedAt,
+          },
+        };
       } else {
         sayText = result.error ?? 'Não consegui restaurar a missão.';
         toolResult = { tool: action.type, ok: false, summary: result.error ?? 'falhou' };

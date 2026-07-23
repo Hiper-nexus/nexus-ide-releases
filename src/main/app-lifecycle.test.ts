@@ -13,6 +13,20 @@ describe('macOS activate lifecycle', () => {
     expect(integrationStart).toBeGreaterThan(windowStart);
   });
 
+  it('stops bootstrap when the fail-closed CSP boundary refuses the main window', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
+    const windowAttempt = source.indexOf('const mainWindow = createMainWindow();');
+    const failedGuard = source.indexOf('if (!mainWindow)', windowAttempt);
+    const quit = source.indexOf('app.quit();', failedGuard);
+    const bootstrap = source.indexOf('bootstrap();', windowAttempt);
+
+    expect(windowAttempt).toBeGreaterThanOrEqual(0);
+    expect(failedGuard).toBeGreaterThan(windowAttempt);
+    expect(quit).toBeGreaterThan(failedGuard);
+    expect(bootstrap).toBeGreaterThan(quit);
+    expect(source.slice(failedGuard, bootstrap)).toContain('return;');
+  });
+
   it('keeps the native window explicitly visible on launch', () => {
     const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
     expect(source).toContain('show: false');

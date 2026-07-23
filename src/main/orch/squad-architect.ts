@@ -153,11 +153,25 @@ export interface ArchitectResult {
   warning?: string;
 }
 
+export interface SquadDesignOptions {
+  readonly signal?: AbortSignal;
+  readonly assertCurrentAuthority?: () => void;
+}
+
+function assertSquadDesignAuthority(options: SquadDesignOptions): void {
+  options.assertCurrentAuthority?.();
+  if (!options.signal?.aborted) return;
+  if (options.signal.reason instanceof Error) throw options.signal.reason;
+  throw new Error('squad design authority was revoked');
+}
+
 function deterministicSquadFallback(
   workspacePath: string,
   intent: string | undefined,
   reason: string,
+  options: SquadDesignOptions = {},
 ): ArchitectResult {
+  assertSquadDesignAuthority(options);
   const adapters = listAdapterInfos().filter(
     (adapter) => adapter.installed && adapter.id !== 'shell',
   );
@@ -204,6 +218,10 @@ function deterministicSquadFallback(
     ...(visual ? [worker('ux', 'UX e validação visual', 'reviewer', 3)] : []),
   ];
   const orchestrator = adapters.find((adapter) => adapter.orchestratorCapable) ?? adapters[0];
+  // `saveSquad` is the authority-bearing global effect. Keep this assertion
+  // outside the error-normalization block so revocation fails closed instead
+  // of being disguised as a recoverable model/fallback error.
+  assertSquadDesignAuthority(options);
   try {
     const squad = saveSquad({
       id: `agentic-fallback-${Date.now()}`,
@@ -250,8 +268,9 @@ function deterministicSquadFallback(
 /** Analisa o workspace e salva um squad sob medida. */
 export async function designSquadForWorkspace(
   workspacePath: string,
+  options: SquadDesignOptions = {},
 ): Promise<ArchitectResult> {
-  return designSquad({ workspacePath });
+  return designSquad({ workspacePath, options });
 }
 
 /**
@@ -261,7 +280,9 @@ export async function designSquadForWorkspace(
 export async function designSquadFromIntent(
   intent: string,
   workspacePath: string,
+  options: SquadDesignOptions = {},
 ): Promise<ArchitectResult> {
+  assertSquadDesignAuthority(options);
   const clean = intent.trim();
   if (!clean) return { ok: false, error: 'descreva o objetivo da missão' };
   // O roster que o usuário salvou vem ANTES de qualquer síntese: um squad de
@@ -275,6 +296,7 @@ export async function designSquadFromIntent(
   );
   const saved = pickReusableSquad(listSquads(), installed);
   if (saved) {
+    assertSquadDesignAuthority(options);
     return {
       ok: true,
       squad: saved,
@@ -288,14 +310,17 @@ export async function designSquadFromIntent(
     workspacePath,
     clean.slice(0, 4_000),
     'Time montado localmente',
+    options,
   );
 }
 
 async function designSquad(opts: {
   workspacePath: string;
   intent?: string;
+  options: SquadDesignOptions;
 }): Promise<ArchitectResult> {
-  const { workspacePath, intent } = opts;
+  const { workspacePath, intent, options } = opts;
+  assertSquadDesignAuthority(options);
   const installed = listAdapterInfos()
     .filter((a) => a.installed && a.id !== 'shell')
     .map((a) => `${a.id} [models: ${a.models.list.join(', ') || a.models.default}]`)
@@ -310,6 +335,7 @@ async function designSquad(opts: {
   // Arsenal enriquecido (harness-enrich): o arquiteto cita agents/skills
   // REAIS instalados em vez de inventar papéis genéricos.
   const enriched = enrichedBlockForArchitect(loadEnrichedCatalog(), 4_000);
+  assertSquadDesignAuthority(options);
   const profile =
     intentBlock +
     `CATÁLOGO RUNTIME DE CLIs/MODELOS (fonte de verdade):\n${installed || 'nenhuma'}\n\n` +
@@ -322,6 +348,8 @@ async function designSquad(opts: {
         { role: 'user', content: `PERFIL DO PROJETO:\n\n${profile}` },
       ],
       2_000,
+      undefined,
+      options.signal,
     ).catch((err) => {
       throw new Error(err instanceof Error ? err.message : String(err));
     });
@@ -335,21 +363,31 @@ async function designSquad(opts: {
         jsonSchema: ARCHITECT_JSON_SCHEMA,
         model: doctor.doctorModel || undefined,
         effort: doctor.doctorEffort,
+        signal: options.signal,
       });
+      assertSquadDesignAuthority(options);
     } catch (grokError) {
+      assertSquadDesignAuthority(options);
       console.warn(
         '[orch doctor] Grok indisponível; usando seleção automática:',
         grokError instanceof Error ? grokError.message : String(grokError),
       );
       raw = await viaAutoChain();
+      assertSquadDesignAuthority(options);
     }
   } else {
     raw = await viaAutoChain();
+    assertSquadDesignAuthority(options);
   }
 
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) {
-    return deterministicSquadFallback(workspacePath, intent, 'o modelo não devolveu JSON');
+    return deterministicSquadFallback(
+      workspacePath,
+      intent,
+      'o modelo não devolveu JSON',
+      options,
+    );
   }
   let parsed: {
     name?: string;
@@ -364,10 +402,16 @@ async function designSquad(opts: {
       workspacePath,
       intent,
       'JSON inválido do modelo (resposta truncada?)',
+      options,
     );
   }
   if (!parsed.name || !Array.isArray(parsed.agents) || parsed.agents.length === 0) {
-    return deterministicSquadFallback(workspacePath, intent, 'squad gerado incompleto');
+    return deterministicSquadFallback(
+      workspacePath,
+      intent,
+      'squad gerado incompleto',
+      options,
+    );
   }
 
   const workspaceName = path.basename(workspacePath);
@@ -393,6 +437,7 @@ async function designSquad(opts: {
       ...parsed.agents.slice(0, 6),
     ],
   };
+  assertSquadDesignAuthority(options);
   try {
     // saveSquad aplica withAllowlists (normalizador canônico): os workers
     // gerados aqui não carregam `allowedTools`, e é lá que ganham o `[]` que os

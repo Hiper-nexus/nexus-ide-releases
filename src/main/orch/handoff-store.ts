@@ -27,6 +27,15 @@ import {
 const identifierSchema = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/);
+// Squad agentName is a human-facing identity and legitimately contains spaces
+// (for example "UX Designer"). Keep opaque ids strict, but do not make those
+// valid roster workers unable to submit a handoff.
+const agentLabelSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .regex(/^[^\u0000-\u001F\u007F]+$/u);
 
 const evidenceIdsSchema = z
   .array(identifierSchema)
@@ -43,7 +52,8 @@ const submitHandoffInputSchema = z
     evidenceIds: evidenceIdsSchema.optional(),
     missionId: identifierSchema.optional(),
     sessionId: identifierSchema.optional(),
-    fromAgent: identifierSchema.optional(),
+    workerIncarnationId: identifierSchema.optional(),
+    fromAgent: agentLabelSchema.optional(),
   })
   .strict();
 
@@ -58,7 +68,9 @@ const handoffRowSchema = z
     id: identifierSchema,
     mission_id: identifierSchema.nullable(),
     session_id: identifierSchema.nullable(),
-    from_agent: identifierSchema.nullable(),
+    worker_incarnation_id: identifierSchema.nullable(),
+    from_agent: agentLabelSchema.nullable(),
+    authority_origin: z.enum(['agent', 'operator-confirmed']),
     status: handoffStatusSchema,
     summary: z.string().min(1).max(65_536),
     artifacts_json: z.string(),
@@ -78,6 +90,41 @@ const handoffRowSchema = z
     created_at: z.number().int().nonnegative(),
   })
   .strict();
+
+const deliveryAttemptStateSchema = z.enum([
+  'reserved',
+  'pasted',
+  'accepted',
+  'failed',
+]);
+
+const deliveryAttemptRowSchema = z.object({
+  id: identifierSchema,
+  handoff_id: identifierSchema,
+  mission_id: identifierSchema,
+  orchestrator_session_id: identifierSchema,
+  attempt_no: z.number().int().positive(),
+  state: deliveryAttemptStateSchema,
+  started_at: z.number().int().nonnegative(),
+  accept_deadline_at: z.number().int().nonnegative().nullable(),
+  accepted_at: z.number().int().nonnegative().nullable(),
+  failed_at: z.number().int().nonnegative().nullable(),
+  failure_code: z.string().max(256).nullable(),
+}).strict();
+
+export interface HandoffDeliveryAttempt {
+  readonly id: string;
+  readonly handoffId: string;
+  readonly missionId: string;
+  readonly orchestratorSessionId: string;
+  readonly attemptNo: number;
+  readonly state: z.infer<typeof deliveryAttemptStateSchema>;
+  readonly startedAt: number;
+  readonly acceptDeadlineAt?: number;
+  readonly acceptedAt?: number;
+  readonly failedAt?: number;
+  readonly failureCode?: string;
+}
 
 const currentWorkflowRowSchema = z
   .object({
@@ -100,7 +147,8 @@ const BINDING_KEYS: readonly (keyof EvidenceBinding)[] = [
 ];
 
 const HANDOFF_SELECT = `
-  SELECT id, mission_id, session_id, from_agent, status, summary,
+  SELECT id, mission_id, session_id, worker_incarnation_id, from_agent,
+         authority_origin, status, summary,
          artifacts_json, evidence_ids_json, evidence_trusted,
          context_revision, contract_hash, base_sha, head_sha, diff_hash,
          workflow_revision, delivered, delivery_state, submitted_at,
@@ -235,6 +283,18 @@ export class ScopedHandoffStore {
   }
 
   submit(rawInput: SubmitHandoffInput): ScopedHandoff {
+    return this.#submit(rawInput, 'agent');
+  }
+
+  /** Main-only semantic boundary used after an exact native operator click. */
+  submitOperatorConfirmed(rawInput: SubmitHandoffInput): ScopedHandoff {
+    return this.#submit(rawInput, 'operator-confirmed');
+  }
+
+  #submit(
+    rawInput: SubmitHandoffInput,
+    authorityOrigin: 'agent' | 'operator-confirmed',
+  ): ScopedHandoff {
     const input = submitHandoffInputSchema.parse(rawInput);
     const artifactsJson = encodeJsonArray(
       input.artifacts ?? [],
@@ -259,7 +319,9 @@ export class ScopedHandoffStore {
         id,
         missionId: input.missionId,
         sessionId: input.sessionId,
+        workerIncarnationId: input.workerIncarnationId,
         fromAgent: input.fromAgent,
+        authorityOrigin,
         status: input.status,
         claimTrust: 'untrusted',
         summary: input.summary,
@@ -274,16 +336,19 @@ export class ScopedHandoffStore {
       };
       db.prepare(
         `INSERT INTO handoffs
-           (id, mission_id, session_id, from_agent, status, summary,
+           (id, mission_id, session_id, worker_incarnation_id, from_agent,
+            authority_origin, status, summary,
             artifacts_json, evidence_ids_json, evidence_trusted,
             context_revision, contract_hash, base_sha, head_sha, diff_hash,
             workflow_revision, delivered, delivery_state, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'queued', ?)`,
       ).run(
         handoff.id,
         handoff.missionId ?? null,
         handoff.sessionId ?? null,
+        handoff.workerIncarnationId ?? null,
         handoff.fromAgent ?? null,
+        handoff.authorityOrigin,
         handoff.status,
         handoff.summary,
         artifactsJson,
@@ -358,6 +423,154 @@ export class ScopedHandoffStore {
     return true;
   }
 
+  reserveDeliveryAttempt(input: {
+    readonly handoffId: string;
+    readonly missionId: string;
+    readonly orchestratorSessionId: string;
+    readonly maxAttempts: number;
+  }): HandoffDeliveryAttempt {
+    const handoffId = identifierSchema.parse(input.handoffId);
+    const missionId = identifierSchema.parse(input.missionId);
+    const sessionId = identifierSchema.parse(input.orchestratorSessionId);
+    const maxAttempts = z.number().int().positive().max(16).parse(input.maxAttempts);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const attempt = db.transaction(() => {
+      const handoff = db.prepare(
+        `SELECT h.mission_id, h.delivery_state, m.orch_session_id
+         FROM handoffs AS h
+         JOIN missions AS m ON m.id = h.mission_id
+         WHERE h.id = ?`,
+      ).get(handoffId) as {
+        mission_id: string | null;
+        delivery_state: string;
+        orch_session_id: string | null;
+      } | undefined;
+      if (!handoff || handoff.mission_id !== missionId) {
+        throw new Error('handoff delivery scope/mission mismatch');
+      }
+      if (handoff.orch_session_id !== sessionId) {
+        throw new Error('handoff delivery orchestrator session is stale');
+      }
+      if (handoff.delivery_state !== 'queued') {
+        throw new Error(`handoff delivery is already ${handoff.delivery_state}`);
+      }
+      // A process restart loses the in-memory acceptance observer. Preserve
+      // the attempt as failed evidence before reserving the bounded retry.
+      db.prepare(
+        `UPDATE handoff_delivery_attempts
+         SET state = 'failed', failed_at = ?, failure_code = ?
+         WHERE handoff_id = ? AND state IN ('reserved', 'pasted')`,
+      ).run(now, 'acceptance_observer_lost', handoffId);
+      const latest = db.prepare(
+        `SELECT COALESCE(MAX(attempt_no), 0) AS attempt_no
+         FROM handoff_delivery_attempts WHERE handoff_id = ?`,
+      ).get(handoffId) as { attempt_no: number };
+      const attemptNo = latest.attempt_no + 1;
+      if (attemptNo > maxAttempts) {
+        throw new Error('handoff delivery attempt budget exhausted');
+      }
+      const id = this.#binding.makeId('handoff-delivery');
+      db.prepare(
+        `INSERT INTO handoff_delivery_attempts (
+           id, handoff_id, mission_id, orchestrator_session_id,
+           attempt_no, state, started_at
+         ) VALUES (?, ?, ?, ?, ?, 'reserved', ?)`,
+      ).run(id, handoffId, missionId, sessionId, attemptNo, now);
+      return this.#deliveryAttemptFromDatabase(db, id);
+    }).immediate();
+    if (!attempt) throw new Error('handoff delivery attempt was not persisted');
+    this.#binding.emitChange();
+    return attempt;
+  }
+
+  markDeliveryAttemptPasted(input: {
+    readonly attemptId: string;
+    readonly handoffId: string;
+    readonly acceptDeadlineAt: number;
+  }): HandoffDeliveryAttempt {
+    const attemptId = identifierSchema.parse(input.attemptId);
+    const handoffId = identifierSchema.parse(input.handoffId);
+    const deadline = z.number().int().nonnegative().parse(input.acceptDeadlineAt);
+    const now = this.#binding.now();
+    if (deadline < now) throw new Error('handoff acceptance deadline is already expired');
+    const db = this.#binding.writeDatabase();
+    const result = db.prepare(
+      `UPDATE handoff_delivery_attempts
+       SET state = 'pasted', accept_deadline_at = ?
+       WHERE id = ? AND handoff_id = ? AND state = 'reserved'
+         AND orchestrator_session_id = (
+           SELECT orch_session_id FROM missions
+           WHERE id = handoff_delivery_attempts.mission_id
+         )`,
+    ).run(deadline, attemptId, handoffId);
+    if (result.changes !== 1) throw new Error('handoff paste attempt lost CAS');
+    const attempt = this.#deliveryAttemptFromDatabase(db, attemptId);
+    if (!attempt) throw new Error('handoff delivery attempt disappeared after paste');
+    this.#binding.emitChange();
+    return attempt;
+  }
+
+  failDeliveryAttempt(input: {
+    readonly attemptId: string;
+    readonly handoffId: string;
+    readonly failureCode: string;
+  }): boolean {
+    const attemptId = identifierSchema.parse(input.attemptId);
+    const handoffId = identifierSchema.parse(input.handoffId);
+    const failureCode = identifierSchema.parse(input.failureCode);
+    const result = this.#binding.writeDatabase().prepare(
+      `UPDATE handoff_delivery_attempts
+       SET state = 'failed', failed_at = ?, failure_code = ?
+       WHERE id = ? AND handoff_id = ? AND state IN ('reserved', 'pasted')`,
+    ).run(this.#binding.now(), failureCode, attemptId, handoffId);
+    if (result.changes > 0) this.#binding.emitChange();
+    return result.changes === 1;
+  }
+
+  acceptDeliveryAttempt(input: {
+    readonly attemptId: string;
+    readonly handoffId: string;
+  }): boolean {
+    const attemptId = identifierSchema.parse(input.attemptId);
+    const handoffId = identifierSchema.parse(input.handoffId);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const accepted = db.transaction(() => {
+      const result = db.prepare(
+        `UPDATE handoff_delivery_attempts
+         SET state = 'accepted', accepted_at = ?
+         WHERE id = ? AND handoff_id = ? AND state = 'pasted'
+           AND accept_deadline_at >= ?
+           AND orchestrator_session_id = (
+             SELECT orch_session_id FROM missions
+             WHERE id = handoff_delivery_attempts.mission_id
+           )`,
+      ).run(now, attemptId, handoffId, now);
+      if (result.changes !== 1) return false;
+      const handoff = db.prepare(
+        `UPDATE handoffs
+         SET delivered = 1, delivery_state = 'submitted', submitted_at = ?
+         WHERE id = ? AND delivery_state = 'queued'`,
+      ).run(now, handoffId);
+      if (handoff.changes !== 1) {
+        throw new Error('handoff submission lost delivery-attempt CAS');
+      }
+      return true;
+    }).immediate();
+    if (accepted) this.#binding.emitChange();
+    return accepted;
+  }
+
+  listDeliveryAttempts(rawHandoffId: string): HandoffDeliveryAttempt[] {
+    const handoffId = identifierSchema.parse(rawHandoffId);
+    const db = this.#binding.readDatabase();
+    return db.prepare(
+      `SELECT * FROM handoff_delivery_attempts
+       WHERE handoff_id = ? ORDER BY attempt_no ASC`,
+    ).all(handoffId).map((row) => this.#deliveryAttemptFromRow(row));
+  }
+
   acknowledgeMission(rawMissionId: string): number {
     const missionId = identifierSchema.parse(rawMissionId);
     const result = this.#binding.writeDatabase().prepare(
@@ -384,8 +597,14 @@ export class ScopedHandoffStore {
     return true;
   }
 
-  hasTrustedFromSession(rawSessionId: string): boolean {
+  hasTrustedFromSession(
+    rawSessionId: string,
+    rawWorkerIncarnationId?: string,
+  ): boolean {
     const sessionId = identifierSchema.parse(rawSessionId);
+    const workerIncarnationId = rawWorkerIncarnationId === undefined
+      ? undefined
+      : identifierSchema.parse(rawWorkerIncarnationId);
     const db = this.#binding.readDatabase();
     const rows = db
       .prepare(
@@ -395,13 +614,50 @@ export class ScopedHandoffStore {
       )
       .all(sessionId);
     return rows.some(
-      (row) => this.#fromRow(row, db).evidenceTrust === 'nexus-trusted',
+      (row) => {
+        const handoff = this.#fromRow(row, db);
+        return handoff.evidenceTrust === 'nexus-trusted' &&
+          (workerIncarnationId === undefined ||
+            handoff.workerIncarnationId === workerIncarnationId);
+      },
     );
   }
 
   /** Compatibility alias with fail-closed trusted semantics. */
   hasFromSession(rawSessionId: string): boolean {
     return this.hasTrustedFromSession(rawSessionId);
+  }
+
+  #deliveryAttemptFromDatabase(
+    db: Database.Database,
+    id: string,
+  ): HandoffDeliveryAttempt | null {
+    const row = db.prepare(
+      `SELECT * FROM handoff_delivery_attempts WHERE id = ?`,
+    ).get(id);
+    return row ? this.#deliveryAttemptFromRow(row) : null;
+  }
+
+  #deliveryAttemptFromRow(raw: unknown): HandoffDeliveryAttempt {
+    let row: z.infer<typeof deliveryAttemptRowSchema>;
+    try {
+      row = deliveryAttemptRowSchema.parse(raw);
+    } catch (error) {
+      throw new ScopedStoreCorruptionError('handoff delivery attempt', { cause: error });
+    }
+    return Object.freeze({
+      id: row.id,
+      handoffId: row.handoff_id,
+      missionId: row.mission_id,
+      orchestratorSessionId: row.orchestrator_session_id,
+      attemptNo: row.attempt_no,
+      state: row.state,
+      startedAt: row.started_at,
+      acceptDeadlineAt: row.accept_deadline_at ?? undefined,
+      acceptedAt: row.accepted_at ?? undefined,
+      failedAt: row.failed_at ?? undefined,
+      failureCode: row.failure_code ?? undefined,
+    });
   }
 
   #currentBinding(
@@ -573,7 +829,9 @@ export class ScopedHandoffStore {
       id: row.id,
       missionId: row.mission_id ?? undefined,
       sessionId: row.session_id ?? undefined,
+      workerIncarnationId: row.worker_incarnation_id ?? undefined,
       fromAgent: row.from_agent ?? undefined,
+      authorityOrigin: row.authority_origin,
       status: row.status,
       claimTrust: 'untrusted',
       summary: row.summary,

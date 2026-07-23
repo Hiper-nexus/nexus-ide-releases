@@ -203,4 +203,23 @@ describe('HttpCronBackend transport policy', () => {
       actualVersion: 2,
     });
   });
+
+  it('propagates the caller abort signal to portable schedule requests', async () => {
+    const request = vi.fn<
+      (path: string, init: CronBackendRequest) => Promise<ApiResult>
+    >(async () => response(null, 0));
+    const backend = new HttpCronBackend({
+      baseUrl: 'https://cron.example.test',
+      request,
+    });
+    const controller = new AbortController();
+
+    await backend.list(PROJECT_ID, { signal: controller.signal });
+    await backend.publish(PROJECT_ID, SCHEDULE_ID, 0, definition, {
+      signal: controller.signal,
+    });
+
+    expect(request.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(request.mock.calls[1]?.[1]?.signal).toBe(controller.signal);
+  });
 });

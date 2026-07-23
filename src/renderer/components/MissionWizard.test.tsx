@@ -192,4 +192,18 @@ describe('MissionWizard lane default (sem restrições)', () => {
       lane: 'consult',
     });
   });
+
+  it('wires the compiled intent into the single-screen mission review', async () => {
+    const { host } = mount(<MissionWizard />);
+    await act(async () => {});
+    typeGoal(host, 'corrigir a regressão no carrinho');
+
+    await submitAndFlush(host);
+
+    expect(host.textContent).toContain('REVISÃO DA MISSÃO');
+    expect(host.textContent).toMatch(/Ondas previstas/i);
+    expect(host.textContent).toMatch(/Custo estimado do roster/i);
+    expect(host.textContent).toMatch(/Review P0–P3 automático ao final/i);
+    expect(host.textContent).toContain('Ainda não garantido');
+  });
 });

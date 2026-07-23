@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Squad } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { CronJob } from './cron-loop';
 
@@ -12,7 +13,10 @@ const stubs = vi.hoisted(() => ({
   saveCronJobs: vi.fn(),
   createMission: vi.fn(() => ({ id: 'mission-1' })),
   setMissionStatus: vi.fn(),
-  spawnPane: vi.fn(async () => ({})),
+  bootstrap: vi.fn(),
+  getSquad: vi.fn(),
+  listSquads: vi.fn(),
+  resolveRuntime: vi.fn(),
 }));
 
 vi.mock('./workspace-path', () => ({
@@ -42,21 +46,29 @@ vi.mock('./project-domain-store-registry', () => ({
   }),
 }));
 
-vi.mock('./tool-util', () => ({
-  spawnPaneAndMaybePrompt: stubs.spawnPane,
+vi.mock('./mission-orchestrator-bootstrap', () => ({
+  bootstrapMissionOrchestratorForScope: stubs.bootstrap,
+}));
+
+vi.mock('./cron-authority-auth', () => ({
+  signCronAuthority: () => 'a'.repeat(64),
+  verifyCronAuthority: (_payload: string, tag: string) =>
+    tag === 'a'.repeat(64),
 }));
 
 vi.mock('./squad-store', () => ({
-  getSquad: vi.fn(),
-  findAgent: vi.fn(() => ({
-    agent: {
-      agentName: 'qa',
-      category: 'worker',
-      cli: 'codex',
-      model: '',
-    },
-  })),
+  getSquad: stubs.getSquad,
+  listSquads: stubs.listSquads,
 }));
+
+vi.mock('./mission-orchestrator-runtime', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('./mission-orchestrator-runtime')>();
+  return {
+    ...actual,
+    resolveProductionMissionOrchestratorRuntime: stubs.resolveRuntime,
+  };
+});
 
 import {
   addCronJob,
@@ -73,6 +85,39 @@ const scopeA: ProjectExecutionScope = {
   rootRealPath: '/workspace/a',
   identitySource: 'manifest',
 };
+
+const savedSquad: Squad = {
+  id: 'squad-workspace',
+  name: 'Workspace Squad',
+  createdAt: '1',
+  builtin: false,
+  orchestratorInstructions: 'Coordene o plano selado.',
+  agents: [
+    {
+      id: 'orchestrator',
+      agentName: 'Maestro',
+      category: 'orchestrator',
+      cli: 'claude',
+    },
+    {
+      id: 'qa',
+      agentName: 'qa',
+      category: 'executor',
+      cli: 'codex',
+    },
+  ],
+};
+
+function exactCronConsent(action: 'create' | 'update' | 'delete') {
+  return {
+    exactUserConsent: {
+      toolName: 'cron',
+      action,
+      grantedAt: 1_800_000_000_000,
+      receiptId: '00000000-0000-4000-8000-000000000001',
+    },
+  } as const;
+}
 
 function cronJob(overrides: Partial<CronJob> = {}): CronJob {
   return {
@@ -103,6 +148,16 @@ describe('cron workspace confinement', () => {
         : value ?? scope.rootRealPath,
     );
     stubs.resolveProjectExecutionScope.mockReturnValue(scopeA);
+    stubs.getSquad.mockImplementation((id: string) =>
+      id === savedSquad.id ? structuredClone(savedSquad) : null,
+    );
+    stubs.listSquads.mockReturnValue([structuredClone(savedSquad)]);
+    stubs.resolveRuntime.mockReturnValue({
+      adapterId: 'claude',
+      model: 'claude-sonnet-4-5',
+      readOnly: false,
+      nativeReadOnly: true,
+    });
   });
 
   it('does not create the default shared job without a configured backend', async () => {
@@ -143,7 +198,7 @@ describe('cron workspace confinement', () => {
       workspacePath: 'packages/api',
       executionMode: 'local',
       agentName: 'qa',
-    }, scopeA);
+    }, scopeA, exactCronConsent('create'));
 
     expect(created).toMatchObject({
       workspacePath: '/workspace/a',
@@ -160,7 +215,7 @@ describe('cron workspace confinement', () => {
       brief: 'clean local cache',
       executionMode: 'local',
       agentName: 'qa',
-    }, scopeA);
+    }, scopeA, exactCronConsent('create'));
 
     expect(created.executionMode).toBe('local');
   });
@@ -170,37 +225,35 @@ describe('cron workspace confinement', () => {
       fireCronJob(cronJob({ workspacePath: undefined })),
     ).rejects.toThrow(/job sem workspace registrado/);
     expect(stubs.createMission).not.toHaveBeenCalled();
-    expect(stubs.spawnPane).not.toHaveBeenCalled();
+    expect(stubs.bootstrap).not.toHaveBeenCalled();
   });
 
-  it('fires project A with its captured scope while project B is active', async () => {
-    await fireCronJob(cronJob());
+  it('fails closed instead of bypassing the golden mission path', async () => {
+    await expect(fireCronJob(cronJob())).rejects.toThrow(
+      /cron_execution_authority_missing/i,
+    );
 
     expect(stubs.resolveWorkspaceCwd).not.toHaveBeenCalled();
     expect(stubs.resolveProjectExecutionScope).toHaveBeenCalledWith('/workspace/a');
     expect(stubs.resolveCwdForScope).toHaveBeenCalledWith(scopeA, undefined);
-    expect(stubs.spawnPane).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cwd: '/workspace/a',
-        scope: scopeA,
-        agentName: 'qa',
-      }),
-    );
+    expect(stubs.createMission).not.toHaveBeenCalled();
+    expect(stubs.bootstrap).not.toHaveBeenCalled();
   });
 
-  it('restores a recorded nested cwd inside the captured project scope', async () => {
+  it('validates the recorded nested cwd but still refuses raw spawn', async () => {
     const workingDirectory = '/workspace/a/packages/api';
     stubs.resolveCwdForScope.mockReturnValue(workingDirectory);
 
-    await fireCronJob(cronJob({ workingDirectory }));
+    await expect(
+      fireCronJob(cronJob({ workingDirectory })),
+    ).rejects.toThrow(/cron_execution_authority_missing/i);
 
     expect(stubs.resolveCwdForScope).toHaveBeenCalledWith(
       scopeA,
       workingDirectory,
     );
-    expect(stubs.spawnPane).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: workingDirectory, scope: scopeA }),
-    );
+    expect(stubs.createMission).not.toHaveBeenCalled();
+    expect(stubs.bootstrap).not.toHaveBeenCalled();
   });
 
   it('hides and protects jobs from another checkout', async () => {
@@ -214,7 +267,19 @@ describe('cron workspace confinement', () => {
     stubs.loadCronJobs.mockReturnValue([own, foreign]);
 
     expect(listCronJobs(scopeA)).toEqual([own]);
-    await expect(deleteCronJob(foreign.id, scopeA)).resolves.toBe(false);
+    await expect(
+      deleteCronJob(foreign.id, scopeA, exactCronConsent('delete')),
+    ).resolves.toBe(false);
+    expect(stubs.saveCronJobs).not.toHaveBeenCalled();
+  });
+
+  it('refuses direct deletion without the exact one-shot cron consent receipt', async () => {
+    const own = cronJob();
+    stubs.loadCronJobs.mockReturnValue([own]);
+
+    await expect(deleteCronJob(own.id, scopeA)).rejects.toThrow(
+      /cron_exact_consent_required/i,
+    );
     expect(stubs.saveCronJobs).not.toHaveBeenCalled();
   });
 
@@ -228,7 +293,9 @@ describe('cron workspace confinement', () => {
     });
     stubs.loadCronJobs.mockReturnValue([foreign, own]);
 
-    await expect(deleteCronJob(own.id, scopeA)).resolves.toBe(true);
+    await expect(
+      deleteCronJob(own.id, scopeA, exactCronConsent('delete')),
+    ).resolves.toBe(true);
     expect(stubs.saveCronJobs).toHaveBeenCalledWith([foreign]);
   });
 
@@ -241,6 +308,8 @@ describe('cron workspace confinement', () => {
       '/workspace/a',
       scopeA.installationId,
     );
-    await expect(deleteCronJob(legacy.id, scopeA)).resolves.toBe(true);
+    await expect(
+      deleteCronJob(legacy.id, scopeA, exactCronConsent('delete')),
+    ).resolves.toBe(true);
   });
 });

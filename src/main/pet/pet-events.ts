@@ -9,6 +9,7 @@ import type { PetEvent } from '../../shared/pet-types';
 interface MissionLike {
   id: string;
   title: string;
+  description?: string;
   status: string;
 }
 
@@ -40,7 +41,16 @@ export class MissionTransitionTracker {
         events.push({ kind: 'mission-failed', title: mission.title, at });
       } else if (mission.status === 'blocked') {
         // O aviso que mais importa: a missão parou esperando um humano.
-        events.push({ kind: 'mission-blocked', title: mission.title, at });
+        const handoffDeliveryFailed = mission.description?.includes(
+          '<!-- nexus:handoff-delivery-failed:',
+        );
+        events.push({
+          kind: 'mission-blocked',
+          title: handoffDeliveryFailed
+            ? `Handoff não entregue — ${mission.title}`
+            : mission.title,
+          at,
+        });
       }
     }
     // Poda: missões removidas do escopo saem do mapa — o tracker fica

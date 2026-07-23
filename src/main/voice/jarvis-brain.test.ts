@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildJarvisPersonaInstruction,
+  chatOnce,
   emptyReplyReason,
   jarvisThink,
   parseReply,
@@ -476,5 +477,40 @@ describe('jarvisThink chain deadline (Gap 8)', () => {
     expect(reply.action).toEqual({ type: 'none' });
     expect(reply.expectReply).toBe(true);
     expect(reply.say.toLowerCase()).toContain('operando');
+  });
+});
+
+describe('chatOnce external cancellation', () => {
+  it('aborts the provider fetch with the caller authority signal', async () => {
+    const authority = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    const hangingFetch = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          requestSignal = init?.signal ?? undefined;
+          requestSignal?.addEventListener(
+            'abort',
+            () => reject(requestSignal?.reason),
+            { once: true },
+          );
+        }),
+    ) as unknown as typeof fetch;
+    const revoked = new Error('renderer workspace authority changed');
+
+    const flight = chatOnce(
+      'https://provider.invalid/chat',
+      'secret',
+      'model',
+      [{ role: 'user', content: 'classifique' }],
+      deps(() => undefined, hangingFetch),
+      true,
+      400,
+      authority.signal,
+    );
+    await vi.waitFor(() => expect(hangingFetch).toHaveBeenCalledOnce());
+    authority.abort(revoked);
+
+    await expect(flight).rejects.toThrow(revoked.message);
+    expect(requestSignal?.aborted).toBe(true);
   });
 });

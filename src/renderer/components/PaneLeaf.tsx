@@ -4,6 +4,8 @@ import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { attachHost, blurHost, focusHost } from '../terminal/terminal-host';
 import { BrowserPane } from './BrowserPane';
+import { PaneActivityStrip } from './PaneActivityStrip';
+import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
 
 interface Props {
@@ -44,13 +46,15 @@ function TerminalPaneLeaf({ pane }: Props) {
   }, [isFocused, pane.id]);
 
   return (
-    <div
+    <PaneInteractionSurface
+      pane={pane}
       className={`pane ${isFocused ? 'pane--focused' : ''} ${
         sessionState ? `pane--state-${sessionState}` : ''
       }`}
     >
       <PaneToolbar pane={pane} isFocused={isFocused} />
+      {pane.kind === 'cli-agent' && <PaneActivityStrip paneId={pane.id} />}
       <div className="pane__terminal" ref={slotRef} />
-    </div>
+    </PaneInteractionSurface>
   );
 }

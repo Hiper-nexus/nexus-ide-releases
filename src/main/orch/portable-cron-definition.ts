@@ -122,8 +122,15 @@ export type PublishPortableScheduleResult =
       readonly current: PortableCronSchedule | null;
     };
 
+export interface PortableCronScheduleRequestOptions {
+  readonly signal?: AbortSignal;
+}
+
 export interface PortableCronScheduleBackend {
-  list(projectId: string): Promise<
+  list(
+    projectId: string,
+    options?: PortableCronScheduleRequestOptions,
+  ): Promise<
     | { readonly ok: true; readonly schedules: readonly PortableCronSchedule[] }
     | { readonly ok: false; readonly reason: 'backend-unavailable' }
   >;
@@ -132,5 +139,6 @@ export interface PortableCronScheduleBackend {
     scheduleId: string,
     expectedVersion: number,
     definition: PortableCronDefinition,
+    options?: PortableCronScheduleRequestOptions,
   ): Promise<PublishPortableScheduleResult>;
 }

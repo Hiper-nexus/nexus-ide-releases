@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeAgentSpec } from './agent-spec-writer';
+import { prepareAgentSpecWrite, writeAgentSpec } from './agent-spec-writer';
 
 let home: string;
 
@@ -63,6 +63,59 @@ describe('writeAgentSpec — validation', () => {
 });
 
 describe('writeAgentSpec — writing', () => {
+  it('prepara conteúdo integral revisável e aplica CAS contra drift', () => {
+    expect(
+      writeAgentSpec({
+        name: 'reviewer',
+        model: 'sonnet',
+        systemPrompt: 'Contrato original',
+      }).ok,
+    ).toBe(true);
+    const candidate = prepareAgentSpecWrite({
+      name: 'reviewer',
+      tools: ['Read', 'Grep'],
+      systemPrompt: 'Prompt novo que precisa aparecer integralmente.',
+    });
+    expect(candidate.nextContents).toContain('tools: Read, Grep');
+    expect(candidate.nextContents).toContain(
+      'Prompt novo que precisa aparecer integralmente.',
+    );
+
+    expect(
+      writeAgentSpec({
+        name: 'reviewer',
+        systemPrompt: 'Mudança concorrente',
+      }).ok,
+    ).toBe(true);
+    const stale = writeAgentSpec(candidate.patch, candidate.currentFingerprint);
+    expect(stale).toMatchObject({ ok: false });
+    expect(stale.error).toMatch(/changed.*confirmation/i);
+    expect(read('reviewer')).toContain('Mudança concorrente');
+  });
+
+  it('recusa review truncada, controles invisíveis e arquivo symlink', () => {
+    expect(() =>
+      prepareAgentSpecWrite({
+        name: 'huge',
+        systemPrompt: 'x'.repeat(6_100),
+      }),
+    ).toThrow(/exceeds 6000/i);
+    expect(() =>
+      prepareAgentSpecWrite({
+        name: 'bidi',
+        systemPrompt: 'benigno\u202emalicioso',
+      }),
+    ).toThrow(/invisible control/i);
+
+    const dir = path.join(home, '.claude', 'agents');
+    fs.mkdirSync(dir, { recursive: true });
+    const outside = path.join(home, 'outside.md');
+    fs.writeFileSync(outside, 'segredo', 'utf8');
+    fs.symlinkSync(outside, path.join(dir, 'linked.md'));
+    expect(() => prepareAgentSpecWrite({ name: 'linked', model: 'sonnet' }))
+      .toThrow(/regular single-link/i);
+  });
+
   it('writes valid frontmatter and a default body', () => {
     const res = writeAgentSpec({
       name: 'reviewer',

@@ -8,6 +8,7 @@ const {
   launchSquadMission,
   missionWizardState,
   orchState,
+  reopenMission,
   resolveSendToPaneTarget,
   setPendingDelegation,
   submitPromptToPane,
@@ -17,6 +18,7 @@ const {
 } = vi.hoisted(() => ({
   confirmCommand: vi.fn(),
   invokeMcpWithConfirm: vi.fn(),
+  reopenMission: vi.fn(),
   launchSquadMission: vi.fn(),
   resolveSendToPaneTarget: vi.fn(),
   setPendingDelegation: vi.fn(),
@@ -36,6 +38,7 @@ const {
   },
   orchState: {
     squads: [] as Array<{ id: string; name: string; agents: unknown[] }>,
+    missions: [] as Array<Record<string, unknown>>,
   },
   workspaceState: {
     current: null as { path: string } | null,
@@ -88,7 +91,7 @@ vi.mock('../services/mcp-bridge', async (importActual) => ({
   invokeMcpWithConfirm,
 }));
 vi.mock('../orch/mission-reopen', () => ({
-  reopenMission: vi.fn(),
+  reopenMission,
   livePaneIdsForMission: vi.fn(() => []),
 }));
 vi.mock('./delegation-confirm', () => ({
@@ -135,11 +138,49 @@ describe('Jarvis MCP result propagation', () => {
       missionWizardState.visibleStep = 'squad-select';
     });
     orchState.squads = [];
+    orchState.missions = [];
     workspaceState.current = null;
     vi.stubGlobal('window', {
       nexus: {
         adapters: { list: vi.fn(async () => []) },
         voice: { confirmCommand, logVoice: vi.fn() },
+      },
+    });
+  });
+
+  it('narrates mission restore only after the physical ack proof returns', async () => {
+    orchState.missions = [
+      {
+        id: 'mission-a',
+        title: 'Checkout',
+        description: '',
+        status: 'running',
+        milestones: [],
+        learnings: '',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+    reopenMission.mockResolvedValueOnce({
+      ok: true,
+      panes: 2,
+      ackId: 'mission-reopen:mission-a:proof',
+      sessionIds: ['session-orch', 'session-worker'],
+      ackedAt: 123,
+    });
+
+    const execution = await executeJarvisAction(
+      { say: '', action: { type: 'restore_mission_panes', alvo: 'checkout' } },
+      context,
+    );
+
+    expect(execution.sayText).toBe('Missão restaurada com 2 panes.');
+    expect(execution.toolResult).toMatchObject({
+      ok: true,
+      output: {
+        ackId: 'mission-reopen:mission-a:proof',
+        sessionIds: ['session-orch', 'session-worker'],
+        ackedAt: 123,
       },
     });
   });

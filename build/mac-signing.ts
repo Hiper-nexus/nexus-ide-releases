@@ -6,6 +6,8 @@ const EMPTY_ENTITLEMENTS_PATH = 'build/entitlements.mac.none.plist';
 
 export const EXPECTED_DEVELOPER_ID_IDENTITY =
   'Developer ID Application: Cleofas Pereira rocha';
+export const EXPECTED_APPLE_TEAM_ID = '35P5XL3JN6';
+export const EXPECTED_NOTARY_PROFILE = 'nexus-notary';
 
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
@@ -54,6 +56,37 @@ export function isAppleReleaseSigning(teamId: string | undefined): boolean {
   return APPLE_TEAM_ID_PATTERN.test(teamId?.trim() ?? '');
 }
 
+export function assertMacPublishReleaseEnvironment(
+  environment: NodeJS.ProcessEnv,
+): { teamId: string; keychainProfile: string } {
+  if (environment.NEXUS_MAC_PUBLISH_RELEASE !== '1') {
+    throw new Error(
+      'NEXUS_MAC_PUBLISH_RELEASE must be exactly "1" for a publishable release.',
+    );
+  }
+  if (environment.APPLE_TEAM_ID !== EXPECTED_APPLE_TEAM_ID) {
+    throw new Error(
+      `APPLE_TEAM_ID must be exactly ${EXPECTED_APPLE_TEAM_ID}.`,
+    );
+  }
+  if (environment.APPLE_KEYCHAIN_PROFILE !== EXPECTED_NOTARY_PROFILE) {
+    throw new Error(
+      `APPLE_KEYCHAIN_PROFILE must be exactly "${EXPECTED_NOTARY_PROFILE}".`,
+    );
+  }
+  for (const forbidden of ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD']) {
+    if (environment[forbidden]) {
+      throw new Error(
+        `${forbidden} must not be exported; use the "${EXPECTED_NOTARY_PROFILE}" keychain profile.`,
+      );
+    }
+  }
+  return {
+    teamId: EXPECTED_APPLE_TEAM_ID,
+    keychainProfile: EXPECTED_NOTARY_PROFILE,
+  };
+}
+
 /**
  * Resources such as the asar, locale packs, sprites and wake models are
  * opaque data, not Mach-O code. osx-sign walks every binary-looking resource
@@ -94,6 +127,9 @@ export function createMacSignOptions(teamId: string | undefined) {
     optionsForFile: (filePath: string) => ({
       entitlements: entitlementProfileForMacTarget(filePath),
       hardenedRuntime: isRelease,
+      // Leaving this undefined in release mode makes @electron/osx-sign use
+      // codesign's Apple-provided TSA (`--timestamp`). A URL override is both
+      // unnecessary and less resilient across Apple timestamp backends.
       ...(isRelease ? {} : { timestamp: 'none' }),
     }),
   };

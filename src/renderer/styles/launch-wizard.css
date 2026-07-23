@@ -200,6 +200,33 @@
   gap: 14px;
 }
 
+.wizard__plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+
+.wizard__plan-card > .wizard__label {
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.wizard__plan-card > :is(.wizard__mode-desc, .wizard__hint-sm) {
+  margin: 0;
+}
+
+.wizard__plan-cost-row {
+  display: block;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .wizard__label {
   font-size: 12px;
   color: var(--text-dim);

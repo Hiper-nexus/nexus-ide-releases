@@ -103,6 +103,13 @@ export function reviewTargetPaneId(): string | null {
   });
 }
 
+export function resolveReviewMissionId(
+  paneId: string,
+  paneMissions: Readonly<Record<string, string>>,
+): string | null {
+  return paneMissions[paneId] ?? null;
+}
+
 /** Inject path(s) into the focused agent as if typed into the prompt. */
 export function injectPathsToAgent(paths: string[], paneId?: string): boolean {
   const target = paneId ?? focusedAgentPaneId();
@@ -160,9 +167,9 @@ export function annotationsToAgentPrompt(
 }
 
 /**
- * Ship the batched review to the mission orchestrator (or the focused agent
- * when no mission is live) as ONE submitted prompt — bracketed paste + Enter,
- * not text left unsent in the composer.
+ * Mission feedback is persisted first as a non-terminal handoff; main-owned
+ * idle delivery supplies acceptance/retry proof. Solo panes without a mission
+ * keep the direct submitted-prompt behavior.
  */
 export async function sendAnnotationsToAgent(
   annotations: Array<{ path: string; line: number; body: string }>,
@@ -172,6 +179,17 @@ export async function sendAnnotationsToAgent(
   if (!text) return false;
   const target = paneId ?? reviewTargetPaneId();
   if (!target) return false;
+  const missionId = resolveReviewMissionId(
+    target,
+    useOrchStore.getState().paneMissions,
+  );
+  if (missionId) {
+    const result = await window.nexus.orch.submitOperatorReview({
+      missionId,
+      annotations: annotations.map((annotation) => ({ ...annotation })),
+    });
+    return result.ok;
+  }
   const sessionId = getPaneSessionId(target);
   if (!sessionId) return false;
   return submitPromptToPaneConfirmed(target, text, sessionId);

@@ -109,4 +109,24 @@ describe('nexus_git_sync', () => {
     });
     expect(state.calls).not.toContainEqual(['merge', '--ff-only', '@{upstream}']);
   });
+
+  it('never starts push when authority is revoked after remote preflight', async () => {
+    state.responses.set(
+      'remote get-url origin',
+      response('https://github.com/acme/project.git'),
+    );
+    const push = buildGitTools().find((tool) => tool.name === 'nexus_git_push')!;
+    const controller = new AbortController();
+
+    const pending = push.handler(
+      { remote: 'origin', branch: 'main' },
+      fakeCtx(),
+      { signal: controller.signal },
+    );
+    expect(state.calls).toContainEqual(['remote', 'get-url', 'origin']);
+    controller.abort(new Error('session_authority_revoked'));
+
+    await expect(pending).rejects.toThrow(/session_authority_revoked/i);
+    expect(state.calls).not.toContainEqual(['push', 'origin', 'main']);
+  });
 });

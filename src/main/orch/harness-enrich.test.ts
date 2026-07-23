@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildEnrichMessages,
   chunkItems,
+  ENRICH_MAX_ITEMS,
   enrichedBlockForArchitect,
   mergeEnriched,
   parseEnrichResponse,
   runHarnessEnrich,
+  runHarnessEnrichWithBrain,
   type EnrichableItem,
   type EnrichedCatalog,
 } from './harness-enrich';
@@ -77,6 +79,19 @@ describe('mergeEnriched', () => {
 });
 
 describe('runHarnessEnrich', () => {
+  it('fails closed before provider calls when the installed inventory is oversized', async () => {
+    const chat = vi.fn(async () => '{"items":[]}');
+    const items = Array.from(
+      { length: ENRICH_MAX_ITEMS + 1 },
+      (_, index) => item(`agent-${index}`),
+    );
+
+    await expect(runHarnessEnrich(items, chat)).rejects.toThrow(
+      /inventory exceeds/i,
+    );
+    expect(chat).not.toHaveBeenCalled();
+  });
+
   it('retries a failed chunk in smaller batches and merges exact items', async () => {
     const items = Array.from({ length: 3 }, (_, i) => item(`agent-${i}`));
     let failedOnce = false;
@@ -215,5 +230,76 @@ describe('buildEnrichMessages', () => {
     const user = msgs.find((m) => m.role === 'user')?.content ?? '';
     expect(user).toContain('a (agent)');
     expect(user).toContain('b (skill)');
+  });
+});
+
+describe('runHarnessEnrichWithBrain authority', () => {
+  it('forwards cancellation to the external provider and never persists after revocation', async () => {
+    const controller = new AbortController();
+    const save = vi.fn();
+    const chat = vi.fn(
+      async (
+        _messages: Array<{ role: string; content: string }>,
+        signal?: AbortSignal,
+      ): Promise<string> =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(signal.reason),
+            { once: true },
+          );
+        }),
+    );
+
+    const flight = runHarnessEnrichWithBrain({
+      signal: controller.signal,
+      assertCurrentAuthority: () => {
+        if (controller.signal.aborted) throw controller.signal.reason;
+      },
+      listInstalledItems: () => [{ name: 'reviewer', kind: 'agent', path: '/agent' }],
+      chat,
+      loadPrevious: () => null,
+      save,
+    });
+
+    await vi.waitFor(() => expect(chat).toHaveBeenCalledTimes(1));
+    const revoked = new Error('renderer workspace authority changed');
+    controller.abort(revoked);
+
+    await expect(flight).rejects.toThrow(revoked.message);
+    expect(save).not.toHaveBeenCalled();
+    expect(chat.mock.calls[0]?.[1]).toBe(controller.signal);
+  });
+
+  it('revalidates authority after an external await and before the global write', async () => {
+    let authorized = true;
+    const save = vi.fn();
+    const assertCurrentAuthority = vi.fn(() => {
+      if (!authorized) throw new Error('renderer workspace authority changed');
+    });
+
+    const flight = runHarnessEnrichWithBrain({
+      assertCurrentAuthority,
+      listInstalledItems: () => [{ name: 'builder', kind: 'skill', path: '/skill' }],
+      chat: async () => {
+        authorized = false;
+        return JSON.stringify({
+          items: [
+            {
+              name: 'builder',
+              kind: 'skill',
+              tier: 'builder',
+              blurb: 'constrói',
+            },
+          ],
+        });
+      },
+      loadPrevious: () => null,
+      save,
+    });
+
+    await expect(flight).rejects.toThrow('renderer workspace authority changed');
+    expect(assertCurrentAuthority).toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
   });
 });

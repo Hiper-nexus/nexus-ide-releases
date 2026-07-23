@@ -1,4 +1,4 @@
-import type { McpToolDef } from './mcp-protocol';
+import { assertMcpInvocationCurrent, type McpToolDef } from './mcp-protocol';
 import {
   generateAudio,
   generateImage,
@@ -80,6 +80,7 @@ const imageGenerateTool: McpToolDef = {
   },
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const result = await generateImage({
       prompt: requireStr(args, 'prompt'),
       provider: str(args, 'provider'),
@@ -91,8 +92,11 @@ const imageGenerateTool: McpToolDef = {
       size: str(args, 'size'),
       baseDir: baseDirFor(ctx),
       signal: invocation?.signal,
+      assertCurrentAuthority: invocation?.assertCurrentAuthority,
     });
-    await recordMediaUsage(result, ctx);
+    assertMcpInvocationCurrent(invocation);
+    await recordMediaUsage(result, ctx, invocation);
+    assertMcpInvocationCurrent(invocation);
     return result;
   },
 };
@@ -135,6 +139,7 @@ const videoGenerateTool: McpToolDef = {
   },
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const recoverJobId = str(args, 'recoverJobId');
     const prompt = str(args, 'prompt');
     if (!recoverJobId && !prompt) {
@@ -155,10 +160,14 @@ const videoGenerateTool: McpToolDef = {
         recoverJobId,
         baseDir: baseDirFor(ctx),
         signal: invocation?.signal,
+        assertCurrentAuthority: invocation?.assertCurrentAuthority,
       });
-      await recordMediaUsage(result, ctx);
+      assertMcpInvocationCurrent(invocation);
+      await recordMediaUsage(result, ctx, invocation);
+      assertMcpInvocationCurrent(invocation);
       return result;
     } catch (err) {
+      assertMcpInvocationCurrent(invocation);
       if (err instanceof MediaJobTimeoutError) {
         return {
           ok: false,
@@ -193,6 +202,7 @@ const audioGenerateTool: McpToolDef = {
   },
   requiresConfirm: true,
   handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const result = await generateAudio({
       text: requireStr(args, 'text'),
       provider: str(args, 'provider'),
@@ -201,8 +211,11 @@ const audioGenerateTool: McpToolDef = {
       outPath: str(args, 'outPath'),
       baseDir: baseDirFor(ctx),
       signal: invocation?.signal,
+      assertCurrentAuthority: invocation?.assertCurrentAuthority,
     });
-    await recordMediaUsage(result, ctx);
+    assertMcpInvocationCurrent(invocation);
+    await recordMediaUsage(result, ctx, invocation);
+    assertMcpInvocationCurrent(invocation);
     return result;
   },
 };

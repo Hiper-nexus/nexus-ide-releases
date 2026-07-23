@@ -456,7 +456,18 @@ async function prepareNavigation(
   entry: BrowserEntry,
   rawUrl: string,
   privateAccessConfirmed: boolean,
+  authority: {
+    readonly signal?: AbortSignal;
+    readonly assertCurrentAuthority?: () => void;
+  } = {},
 ): Promise<string> {
+  const assertCurrentAuthority = (): void => {
+    authority.assertCurrentAuthority?.();
+    if (authority.signal?.aborted) {
+      throw new Error('session_authority_revoked');
+    }
+  };
+  assertCurrentAuthority();
   let normalized: string;
   try {
     normalized = normalizeBrowserUrl(rawUrl, { allowAboutBlank: true });
@@ -477,11 +488,13 @@ async function prepareNavigation(
     });
   const existingPins = entry.allowedPrivateTargets.get(targetKey);
   let decision = await assess(Boolean(existingPins?.size));
+  assertCurrentAuthority();
   const needsPrivateConfirmation = decision.allowed
     ? !allowedTargetMatchesPins(decision, existingPins)
     : decision.kind === 'private-network';
   if (needsPrivateConfirmation && privateAccessConfirmed) {
     decision = await assess(true);
+    assertCurrentAuthority();
     if (decision.allowed && !isRunningPreviewUrl(decision.normalizedUrl)) {
       const privateAddresses = privateAddressesOf(decision);
       if (privateAddresses.size > 0) {
@@ -786,19 +799,34 @@ async function loadBrowserForEntry(
   paneId: string,
   entry: BrowserEntry,
   rawUrl: string,
-  options: { privateAccessConfirmed?: boolean } = {},
+  options: {
+    privateAccessConfirmed?: boolean;
+    signal?: AbortSignal;
+    assertCurrentAuthority?: () => void;
+  } = {},
 ): Promise<BrowserPaneState> {
+  const assertCurrentAuthority = (): void => {
+    options.assertCurrentAuthority?.();
+    if (options.signal?.aborted) {
+      throw new Error('session_authority_revoked');
+    }
+  };
+  assertCurrentAuthority();
   const url = await prepareNavigation(
     entry,
     rawUrl,
     options.privateAccessConfirmed === true,
+    options,
   );
+  assertCurrentAuthority();
   entry.url = url;
   entry.error = undefined;
+  assertCurrentAuthority();
   if (url === 'about:blank') {
     entry.view.webContents.loadURL(url).catch(() => {});
   } else {
     await entry.view.webContents.loadURL(url);
+    assertCurrentAuthority();
   }
   return stateOf(paneId, entry);
 }
@@ -809,6 +837,8 @@ export async function loadBrowser(
   options: {
     scope: ProjectExecutionScope;
     privateAccessConfirmed?: boolean;
+    signal?: AbortSignal;
+    assertCurrentAuthority?: () => void;
   },
 ): Promise<BrowserPaneState> {
   const state = await loadBrowserForEntry(
@@ -860,8 +890,19 @@ export async function captureBrowserScreenshot(
   paneId: string,
   scope: ProjectExecutionScope,
   missionId?: string,
-  options: { clip?: BrowserDesignRect } = {},
+  options: {
+    clip?: BrowserDesignRect;
+    signal?: AbortSignal;
+    assertCurrentAuthority?: () => void;
+  } = {},
 ): Promise<BrowserScreenshotResult> {
+  const assertCurrentAuthority = (): void => {
+    options.assertCurrentAuthority?.();
+    if (options.signal?.aborted) {
+      throw new Error('session_authority_revoked');
+    }
+  };
+  assertCurrentAuthority();
   const entry = withEntry(paneId, scope);
   const artifactStore = createScopedBrowserArtifactStore(
     requireBrowserRuntimeManager(),
@@ -880,11 +921,13 @@ export async function captureBrowserScreenshot(
       })
     : null;
   const image = await (clip ? wc.capturePage(clip) : wc.capturePage());
+  assertCurrentAuthority();
   const size = image.getSize();
   if (size.width <= 0 || size.height <= 0) {
     throw new Error('browser screenshot is empty; the pane may not be visible yet');
   }
 
+  assertCurrentAuthority();
   const artifact = artifactStore.recordScreenshot({
     paneId,
     missionId,

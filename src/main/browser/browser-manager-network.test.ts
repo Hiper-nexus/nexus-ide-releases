@@ -294,6 +294,40 @@ describe('browser manager pinned network boundary', () => {
     expect(state.proxy.close).toHaveBeenCalledOnce();
   });
 
+  it('does not call loadURL after authority is revoked during DNS assessment', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    await ensureBrowser(state.owner as never, scope, 'pane-revoked-dns');
+    state.guest.loadURL.mockClear();
+    let resolveDns!: (value: {
+      endpoints: Array<{ address: string; port: number }>;
+    }) => void;
+    state.browserSession.resolveHost.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDns = resolve;
+      }),
+    );
+    let current = true;
+    const pending = loadBrowser(
+      'pane-revoked-dns',
+      'https://example.com/',
+      {
+        scope,
+        assertCurrentAuthority: () => {
+          if (!current) throw new Error('session_authority_revoked');
+        },
+      },
+    );
+    await vi.waitFor(() =>
+      expect(state.browserSession.resolveHost).toHaveBeenCalled(),
+    );
+    current = false;
+    resolveDns({ endpoints: [{ address: '93.184.216.34', port: 0 }] });
+
+    await expect(pending).rejects.toThrow('session_authority_revoked');
+    expect(state.guest.loadURL).not.toHaveBeenCalled();
+    destroyBrowser('pane-revoked-dns', scope);
+  });
+
   it('allows the same pane id in isolated project partitions', async () => {
     // Ensure no leftover owner↔scope bind from design-send tests above.
     clearRendererWorkspaceScope(state.owner);

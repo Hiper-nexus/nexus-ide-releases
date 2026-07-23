@@ -19,7 +19,13 @@ vi.mock('../persistence/settings-store', () => ({
   getOrchSettings: vi.fn(() => ({})),
 }));
 
-import { designSquadFromIntent } from './squad-architect';
+import { chatViaBrainChain } from '../voice/jarvis-brain';
+import {
+  designSquadForWorkspace,
+  designSquadFromIntent,
+} from './squad-architect';
+
+const chatViaBrainChainMock = vi.mocked(chatViaBrainChain);
 
 function adapterInfo(id: string, orchestratorCapable = true) {
   return {
@@ -47,6 +53,7 @@ describe('designSquadFromIntent honra squad salvo (fiação RC4)', () => {
     listSquadsMock.mockReset();
     saveSquadMock.mockReset();
     listAdapterInfosMock.mockReset();
+    chatViaBrainChainMock.mockReset();
     listAdapterInfosMock.mockReturnValue([
       adapterInfo('claude'),
       adapterInfo('kimi', false),
@@ -81,5 +88,46 @@ describe('designSquadFromIntent honra squad salvo (fiação RC4)', () => {
     ]);
     const result = await designSquadFromIntent('melhorar o onboarding', '/tmp/ws');
     expect(result.squad?.id).toMatch(/^agentic-fallback-/);
+  });
+
+  it('não persiste fallback determinístico quando a autoridade já foi revogada', async () => {
+    listSquadsMock.mockReturnValue([]);
+
+    await expect(
+      designSquadFromIntent('melhorar o onboarding', '/tmp/ws', {
+        assertCurrentAuthority: () => {
+          throw new Error('renderer workspace authority changed');
+        },
+      }),
+    ).rejects.toThrow('renderer workspace authority changed');
+    expect(saveSquadMock).not.toHaveBeenCalled();
+  });
+
+  it('cancela o provider externo e não persiste quando o escopo é revogado', async () => {
+    const controller = new AbortController();
+    listSquadsMock.mockReturnValue([]);
+    chatViaBrainChainMock.mockImplementation(
+      async (_messages, _maxTokens, _deps, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+
+    const flight = designSquadForWorkspace('/tmp/ws', {
+      signal: controller.signal,
+      assertCurrentAuthority: () => {
+        if (controller.signal.aborted) throw controller.signal.reason;
+      },
+    });
+    await vi.waitFor(() =>
+      expect(chatViaBrainChainMock).toHaveBeenCalledTimes(1),
+    );
+    controller.abort(new Error('renderer workspace authority changed'));
+
+    await expect(flight).rejects.toThrow('renderer workspace authority changed');
+    expect(saveSquadMock).not.toHaveBeenCalled();
+    expect(chatViaBrainChainMock.mock.calls[0]?.[3]).toBe(controller.signal);
   });
 });

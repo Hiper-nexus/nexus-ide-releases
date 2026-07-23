@@ -169,7 +169,12 @@ export function scanComponentFiles(files: ScanInput[]): ScanResult {
   const warnings = new Set<string>();
   let blockReason: string | undefined;
   for (const file of files) {
-    if (!looksTextual(file.buffer)) continue;
+    if (!looksTextual(file.buffer)) {
+      warnings.add(
+        `${file.name}: conteúdo binário/não textual não foi inspecionado pelo scan heurístico`,
+      );
+      continue;
+    }
     const text = file.buffer.toString('utf8');
     for (const finding of scanTextForThreats(text)) {
       if (finding.severity === 'block') {

@@ -18,6 +18,7 @@ import { buildMemoryTools } from './tools-memory';
 import { buildBgTools } from './tools-bg';
 import { buildPlanTools } from './tools-plan';
 import { buildHunkTools } from './tools-hunks';
+import { buildLspTools } from './tools-lsp';
 
 /**
  * The MCP toolset — the orchestration tools in the
@@ -29,6 +30,7 @@ import { buildHunkTools } from './tools-hunks';
  * todos, preview/browser, perf, media generation (image/video/audio),
  * files (5), terminal (2), git (10), editor (4), design (1),
  * design systems (3), read-only security audits (2), bg tasks, plan lane, hunks.
+ * LSP (4) is a bounded, no-watcher TypeScript sidecar owned by main.
  */
 export function buildToolset(): McpToolDef[] {
   return [
@@ -43,6 +45,7 @@ export function buildToolset(): McpToolDef[] {
     ...buildBgTools(),
     ...buildPlanTools(),
     ...buildHunkTools(),
+    ...buildLspTools(),
     ...buildGitTools(),
     ...buildEditorTools(),
     ...buildVisionTools(),

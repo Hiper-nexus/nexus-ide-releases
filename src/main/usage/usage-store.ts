@@ -23,6 +23,8 @@ export type UsageProvider = 'claude' | 'codex' | (string & {});
 export interface UsageRecord extends UsageEvent {
   paneId?: string | null;
   missionId?: string | null;
+  /** Exact Nexus vault account that owned the provider session. */
+  accountId?: string | null;
 }
 
 export interface UsageTotals {
@@ -38,9 +40,15 @@ export interface PaneUsageTotals extends UsageTotals {
   paneId: string;
 }
 
+export interface AccountUsageTotals extends UsageTotals {
+  accountId: string;
+  provider: string;
+}
+
 export interface CapturedProviderSession {
   provider: string;
   sessionId: string;
+  accountId?: string;
   capturedAt: number;
 }
 
@@ -49,6 +57,7 @@ interface UsageMetadata {
   sessionId: string;
   messageId: string | null;
   displayPaneId: string | null;
+  accountId?: string | null;
   cacheReadTokens: number;
   cacheWrite5mTokens: number;
   cacheWrite1hTokens: number;
@@ -90,6 +99,7 @@ const usageEventSchema = providerUsageEventSchema
   .extend({
     paneId: nullableEntityIdSchema.optional(),
     missionId: nullableEntityIdSchema.optional(),
+    accountId: nullableEntityIdSchema.optional(),
   })
   .strict();
 
@@ -99,6 +109,7 @@ const sessionMetadataSchema = z
     sessionId: z.string().min(1).max(512),
     messageId: z.string().min(1).max(512).nullable(),
     displayPaneId: z.string().min(1).max(256).nullable(),
+    accountId: z.string().min(1).max(256).nullable().optional(),
     cacheReadTokens: z.number().int().nonnegative().safe(),
     cacheWrite5mTokens: z.number().int().nonnegative().safe(),
     cacheWrite1hTokens: z.number().int().nonnegative().safe(),
@@ -216,6 +227,9 @@ export class ScopedUsageStore {
       record.paneId ?? null,
       record.missionId ?? null,
     );
+    const accountId =
+      record.accountId ??
+      this.accountIdForProviderSession(provider, record.sessionId);
     const costMicros = Math.round(computeRealCost(record) * MICROS_PER_USD);
     if (!Number.isSafeInteger(costMicros) || costMicros < 0) {
       throw new Error('usage cost exceeds the supported range');
@@ -225,6 +239,7 @@ export class ScopedUsageStore {
       sessionId: record.sessionId,
       messageId: record.messageId,
       displayPaneId: record.paneId ?? null,
+      accountId,
       cacheReadTokens: record.cacheReadTokens,
       cacheWrite5mTokens: record.cacheWrite5mTokens,
       cacheWrite1hTokens: record.cacheWrite1hTokens,
@@ -337,6 +352,55 @@ export class ScopedUsageStore {
     }));
   }
 
+  totalsByAccount(): AccountUsageTotals[] {
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `${TOTALS_SELECT.replace(
+          'SELECT',
+          `SELECT provider,
+             json_extract(metadata_json, '$.accountId') AS account_id,`,
+        )}
+         WHERE event_type = ?
+           AND json_extract(metadata_json, '$.accountId') IS NOT NULL
+         GROUP BY provider, account_id
+         ORDER BY account_id ASC, provider ASC`,
+      )
+      .all(TOKEN_EVENT_TYPE) as Array<
+        TotalsRow & { account_id: unknown; provider: unknown }
+      >;
+    return rows.map((row) => ({
+      accountId: entityIdSchema.parse(row.account_id),
+      provider: usageProviderSchema.parse(row.provider),
+      ...toTotals(row),
+    }));
+  }
+
+  /** A provider session is account-bound; ambiguity fails closed. */
+  accountIdForProviderSession(
+    rawProvider: UsageProvider,
+    rawSessionId: string,
+  ): string | null {
+    const provider = usageProviderSchema.parse(rawProvider);
+    const sessionId = z.string().min(1).max(512).parse(rawSessionId);
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT DISTINCT json_extract(metadata_json, '$.accountId') AS account_id
+         FROM usage_events
+         WHERE event_type = ?
+           AND provider = ?
+           AND json_extract(metadata_json, '$.sessionId') = ?
+           AND json_extract(metadata_json, '$.accountId') IS NOT NULL
+         LIMIT 2`,
+      )
+      .all(TOKEN_EVENT_TYPE, provider, sessionId) as Array<{
+        account_id: unknown;
+      }>;
+    if (rows.length !== 1) return null;
+    return entityIdSchema.parse(rows[0].account_id);
+  }
+
   latestProviderSessionByPane(
     rawPaneId: string,
   ): CapturedProviderSession | null {
@@ -366,6 +430,7 @@ export class ScopedUsageStore {
       return {
         provider: usageProviderSchema.parse(row.provider),
         sessionId: metadata.sessionId,
+        ...(metadata.accountId ? { accountId: metadata.accountId } : {}),
         capturedAt: z.number().int().nonnegative().safe().parse(row.occurred_at),
       };
     } catch (error) {

@@ -35,6 +35,14 @@ const gitState = {
   diffHash: 'd'.repeat(64),
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('SensorBroker', () => {
   it('runs an immutable declarative argv and emits Nexus-bound evidence', async () => {
     const root = tempRoot();
@@ -75,6 +83,7 @@ describe('SensorBroker', () => {
       expect.objectContaining({ command: ['npm', 'test', '--', '--run'] }),
       root,
       expect.objectContaining({ projectId: 'project-a' }),
+      expect.any(Object),
     );
     expect(evidence).toMatchObject({
       id: 'evidence-a',
@@ -90,6 +99,51 @@ describe('SensorBroker', () => {
     expect(evidence.sensorConfigHash).toMatch(/^[a-f0-9]{64}$/);
     expect(evidence.stdoutHash).toMatch(/^[a-f0-9]{64}$/);
     expect(Object.isFrozen(evidence)).toBe(true);
+  });
+
+  it('does not mint evidence after authority is revoked during process execution', async () => {
+    const root = tempRoot();
+    const processResult = deferred<SensorProcessResult>();
+    const runProcess = vi.fn(() => processResult.promise);
+    const makeId = vi.fn(() => 'evidence-a');
+    const broker = new SensorBroker(
+      [{ id: 'unit', command: ['npm', 'test'], network: false }],
+      {
+        inspectGit: async () => gitState,
+        runProcess,
+        makeId,
+      },
+    );
+    const controller = new AbortController();
+    const running = broker.run(
+      {
+        scope: scope(root),
+        missionId: 'mission-a',
+        sensorId: 'unit',
+        baseSha: gitState.baseSha,
+        contractHash: 'c'.repeat(64),
+        contextHash: 'e'.repeat(64),
+      },
+      { signal: controller.signal },
+    );
+    await vi.waitFor(() => expect(runProcess).toHaveBeenCalledOnce());
+    controller.abort();
+    processResult.resolve({
+      exitCode: 0,
+      stdout: 'passed',
+      stderr: '',
+      timedOut: false,
+      truncated: false,
+    });
+
+    await expect(running).rejects.toThrow(/authority_revoked/i);
+    expect(makeId).not.toHaveBeenCalled();
+    expect(runProcess).toHaveBeenCalledWith(
+      expect.any(Object),
+      root,
+      expect.objectContaining({ projectId: 'project-a' }),
+      expect.objectContaining({ signal: controller.signal }),
+    );
   });
 
   it('rejects unknown sensors, base substitutions and execution roots outside scope', async () => {

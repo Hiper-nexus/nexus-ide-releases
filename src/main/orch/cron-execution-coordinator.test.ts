@@ -143,6 +143,7 @@ function coordinator(options: {
   runtimeManager: ProjectRuntimeManager;
   projectScope: ProjectExecutionScope;
   backend?: LeaseBackend;
+  preflight?: (job: CronJob, scope: ProjectExecutionScope) => void;
   now: () => number;
   renewalTimer?: CronRenewalTimer;
   leaseTtlMs?: number;
@@ -151,6 +152,7 @@ function coordinator(options: {
   return new CronExecutionCoordinator({
     runtimeManager: options.runtimeManager,
     leaseBackend: options.backend,
+    preflight: options.preflight,
     now: options.now,
     leaseTtlMs: options.leaseTtlMs,
     staleMs: options.staleMs,
@@ -165,6 +167,33 @@ afterEach(() => {
 });
 
 describe('CronExecutionCoordinator multi-PC semantics', () => {
+  it('rejects an imported peer without execution authority before acquiring the shared lease', async () => {
+    const backend = new MemoryLeaseBackend();
+    const fire = vi.fn(async () => {});
+    const pc = coordinator({
+      runtimeManager: manager(),
+      projectScope: scope('installation-imported-peer'),
+      backend,
+      now: () => 10_000,
+      preflight: () => {
+        throw new Error(
+          'cron_execution_authority_missing: recrie a agenda neste dispositivo',
+        );
+      },
+    });
+
+    await expect(pc.execute(job(), 9_000, fire)).resolves.toMatchObject({
+      fired: false,
+      disposition: 'authority-invalid',
+      error: expect.stringMatching(
+        /cron_execution_authority_missing.*CTA: Recrie a agenda/i,
+      ),
+    });
+    expect(backend.tokenCounter).toBe(0);
+    expect(backend.states.size).toBe(0);
+    expect(fire).not.toHaveBeenCalled();
+  });
+
   it('allows exactly one concurrent fire across two installations', async () => {
     const backend = new MemoryLeaseBackend();
     const now = () => 10_000;
@@ -369,7 +398,7 @@ describe('CronExecutionCoordinator multi-PC semantics', () => {
     expect(fireB).not.toHaveBeenCalled();
   });
 
-  it('does not repeat an already-started occurrence after a physical restart', async () => {
+  it('projects an interrupted started receipt as an honest failed occurrence after restart', async () => {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-cron-restart-pc-'));
     const projectScope = scope('installation-a');
     const firstManager = manager(baseDir);
@@ -383,8 +412,9 @@ describe('CronExecutionCoordinator multi-PC semantics', () => {
     })).toBe(true);
     firstManager.closeAll();
 
+    const restartedManager = manager(baseDir);
     const restarted = coordinator({
-      runtimeManager: manager(baseDir),
+      runtimeManager: restartedManager,
       projectScope,
       now: () => 10_100,
     });
@@ -393,8 +423,17 @@ describe('CronExecutionCoordinator multi-PC semantics', () => {
       restarted.execute(job({ executionMode: 'local' }), 9_000, fireAgain),
     ).resolves.toMatchObject({
       fired: false,
-      disposition: 'already-recorded',
+      disposition: 'interrupted',
+      error: expect.stringMatching(/interrompida.*CTA:/i),
     });
     expect(fireAgain).not.toHaveBeenCalled();
+    expect(
+      new CronExecutionStateStore(restartedManager, projectScope).read(
+        'nightly-review',
+      ),
+    ).toMatchObject({
+      status: 'failed',
+      error: expect.stringMatching(/interrompida.*CTA:/i),
+    });
   });
 });

@@ -4,10 +4,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { McpToolDef } from './mcp-protocol';
+import { assertMcpInvocationCurrent } from './mcp-protocol';
 import { str } from './tool-util';
 import { resolvePathForScope } from './workspace-path';
 import { executionScopeFor } from './gate';
 import { isPlanLaneWritablePath } from '../../shared/mission-intent';
+import { writeWorkspaceTextFile } from './workspace-file';
 
 const planWrite: McpToolDef = {
   name: 'nexus_plan_write',
@@ -25,7 +27,7 @@ const planWrite: McpToolDef = {
     },
     required: ['content'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const content = str(args, 'content') ?? '';
     if (content.trim().length < 20) {
       throw new Error('plan content too short (min 20 characters of real plan text)');
@@ -43,9 +45,8 @@ const planWrite: McpToolDef = {
       );
     }
     const scope = executionScopeFor(ctx);
-    const abs = resolvePathForScope(scope, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content, 'utf8');
+    assertMcpInvocationCurrent(invocation);
+    writeWorkspaceTextFile(scope, rel, content);
     return { ok: true, path: rel, bytes: Buffer.byteLength(content, 'utf8') };
   },
 };

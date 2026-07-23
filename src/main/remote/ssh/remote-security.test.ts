@@ -74,6 +74,32 @@ describe('remote security negatives (D8)', () => {
     ).rejects.toThrow(/wildcard identity allowlist rejected/);
   });
 
+  it('blocks operations on a dead transport until an explicit manual reconnect', async () => {
+    const cap = createRemoteHostCapability({
+      kind: 'ssh',
+      hostId: 'h-reconnect',
+      displayName: 'h',
+      scope,
+      paired: true,
+    });
+    const transport = createMockSshTransport();
+    const session = await createSshSessionManager().connect(
+      cap,
+      { host: 'h', username: 'u', auth: { kind: 'password', password: 'x' } },
+      transport,
+    );
+    await transport.disconnect();
+
+    await expect(session.transport.exec('echo no-auto-retry')).rejects.toMatchObject({
+      code: 'not_connected',
+    });
+    expect(transport.history.filter((entry) => entry.startsWith('connect:'))).toHaveLength(1);
+
+    await session.reconnect();
+    await expect(session.transport.exec('echo explicit')).resolves.toMatchObject({ code: 0 });
+    expect(transport.history.filter((entry) => entry.startsWith('connect:'))).toHaveLength(2);
+  });
+
   it('FS write denied without authz; traversal denied', async () => {
     const cap = createRemoteHostCapability({
       kind: 'ssh',

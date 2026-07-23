@@ -44,8 +44,10 @@ describe('scoped mission pane store', () => {
       paneId: 'pane-a',
       role: 'worker',
       agentName: 'QA',
+      workerIncarnationId: 'worker-incarnation-a',
       allowedTools: ['nexus_file_read'],
       allowedSkills: ['review'],
+      readOnly: true,
     });
     recorded.allowedTools?.push('mutated-outside');
 
@@ -56,10 +58,49 @@ describe('scoped mission pane store', () => {
       paneId: 'pane-a',
       role: 'worker',
       agentName: 'QA',
+      workerIncarnationId: 'worker-incarnation-a',
       scope,
       allowedTools: ['nexus_file_read'],
       allowedSkills: ['review'],
+      readOnly: true,
     });
+  });
+
+  it('keeps worker pane incarnations distinct and durable', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({
+      title: 'Incarnation fence',
+    });
+    let id = 0;
+    const panes = createScopedMissionPaneStore(runtimeManager, scope, {
+      idFactory: () => `mpane-${++id}`,
+    });
+
+    const first = panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Worker',
+      role: 'worker',
+      paneId: 'pane-first',
+      workerIncarnationId: 'worker-incarnation-first',
+    });
+    const second = panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Worker',
+      role: 'worker',
+      paneId: 'pane-second',
+      workerIncarnationId: 'worker-incarnation-second',
+    });
+
+    expect(second.id).not.toBe(first.id);
+    runtimeManager.close(scope);
+    expect(createScopedMissionPaneStore(runtimeManager, scope).list(mission.id))
+      .toMatchObject([
+        { paneId: 'pane-first', workerIncarnationId: 'worker-incarnation-first' },
+        { paneId: 'pane-second', workerIncarnationId: 'worker-incarnation-second' },
+      ]);
   });
 
   it('keeps explicit unrestricted null distinct from an absent snapshot', () => {
@@ -121,6 +162,136 @@ describe('scoped mission pane store', () => {
       paneId: 'pane-a',
       allowedTools: ['nexus_file_read'],
     });
+  });
+
+  it('persists one immutable mission revision seal and upgrades an unsealed row once', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({
+      title: 'Sealed',
+    });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const authoritySeal = {
+      intentVersion: 3,
+      intentContractHash: '1'.repeat(64),
+      contextRevision: '2'.repeat(64),
+      contractHash: '3'.repeat(64),
+      squadRevisionHash: '4'.repeat(64),
+    };
+    panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Worker',
+      paneId: 'pane-sealed',
+    });
+    panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Worker',
+      paneId: 'pane-sealed',
+      authoritySeal,
+    });
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionPaneStore(runtimeManager, scope);
+    expect(reopened.findByPaneId('pane-sealed')?.authoritySeal).toEqual(
+      authoritySeal,
+    );
+    expect(() =>
+      reopened.record({
+        missionId: mission.id,
+        adapterId: 'codex',
+        title: 'Worker',
+        paneId: 'pane-sealed',
+        authoritySeal: {
+          ...authoritySeal,
+          intentVersion: 4,
+        },
+      }),
+    ).toThrow(/authority revision is immutable/i);
+  });
+
+  it('reseals only the exact orchestrator across a workflow revision', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({
+      title: 'Workflow rotation',
+    });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const fallbackSeal = {
+      intentVersion: 3,
+      intentContractHash: '1'.repeat(64),
+      contextRevision: '1'.repeat(64),
+      contractHash: '1'.repeat(64),
+      squadRevisionHash: '4'.repeat(64),
+    };
+    const frozenSeal = {
+      ...fallbackSeal,
+      contextRevision: '2'.repeat(64),
+      contractHash: '3'.repeat(64),
+    };
+    panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Orchestrator',
+      paneId: 'pane-orchestrator',
+      role: 'orchestrator',
+      authoritySeal: fallbackSeal,
+    });
+    panes.record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      title: 'Worker',
+      paneId: 'pane-worker',
+      role: 'worker',
+      authoritySeal: fallbackSeal,
+    });
+    panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Legacy orchestrator',
+      paneId: 'pane-legacy',
+      role: 'orchestrator',
+    });
+
+    expect(
+      panes.rebindOrchestratorAuthority({
+        missionId: mission.id,
+        paneId: 'pane-orchestrator',
+        expectedAuthoritySeal: fallbackSeal,
+        authoritySeal: frozenSeal,
+      }).authoritySeal,
+    ).toEqual(frozenSeal);
+    expect(panes.findByPaneId('pane-worker')?.authoritySeal).toEqual(
+      fallbackSeal,
+    );
+    expect(() =>
+      panes.rebindOrchestratorAuthority({
+        missionId: mission.id,
+        paneId: 'pane-worker',
+        expectedAuthoritySeal: fallbackSeal,
+        authoritySeal: frozenSeal,
+      }),
+    ).toThrow(/only the exact mission orchestrator/i);
+    expect(() =>
+      panes.rebindOrchestratorAuthority({
+        missionId: mission.id,
+        paneId: 'pane-legacy',
+        expectedAuthoritySeal: fallbackSeal,
+        authoritySeal: frozenSeal,
+      }),
+    ).toThrow(/authority changed before reseal/i);
+    expect(() =>
+      panes.rebindOrchestratorAuthority({
+        missionId: mission.id,
+        paneId: 'pane-orchestrator',
+        expectedAuthoritySeal: frozenSeal,
+        authoritySeal: {
+          ...frozenSeal,
+          intentVersion: 4,
+        },
+      }),
+    ).toThrow(/approval changed/i);
   });
 
   it('rejects assigning a pane id already owned by another mission', () => {

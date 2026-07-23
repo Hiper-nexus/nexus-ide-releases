@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
-import type { MissionPaneSpec } from '../../shared/orch-types';
+import type {
+  MissionPaneAuthoritySeal,
+  MissionPaneSpec,
+} from '../../shared/orch-types';
 import {
   projectExecutionScopeSchema,
   type ProjectExecutionScope,
@@ -16,6 +19,16 @@ import {
 const capabilityListSchema = z.array(z.string().min(1).max(128)).max(256);
 const nullableCapabilityListSchema = capabilityListSchema.nullable();
 const entityIdSchema = z.string().min(1).max(256);
+const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const missionPaneAuthoritySealSchema = z
+  .object({
+    intentVersion: z.number().int().positive().max(1_000_000),
+    intentContractHash: hashSchema,
+    contextRevision: z.string().min(1).max(256),
+    contractHash: hashSchema,
+    squadRevisionHash: hashSchema,
+  })
+  .strict();
 
 const recordMissionPaneInputSchema = z
   .object({
@@ -27,11 +40,23 @@ const recordMissionPaneInputSchema = z
     cwd: z.string().min(1).max(4_096).optional(),
     title: z.string().min(1).max(512).optional(),
     agentName: z.string().min(1).max(256).optional(),
+    workerIncarnationId: entityIdSchema.optional(),
     role: z.enum(['orchestrator', 'worker']).optional(),
     allowedTools: nullableCapabilityListSchema.optional(),
     allowedSkills: nullableCapabilityListSchema.optional(),
+    readOnly: z.boolean().optional(),
     paneId: entityIdSchema.optional(),
     executionScope: projectExecutionScopeSchema.optional(),
+    authoritySeal: missionPaneAuthoritySealSchema.optional(),
+  })
+  .strict();
+
+const rebindOrchestratorAuthorityInputSchema = z
+  .object({
+    missionId: entityIdSchema,
+    paneId: entityIdSchema,
+    expectedAuthoritySeal: missionPaneAuthoritySealSchema,
+    authoritySeal: missionPaneAuthoritySealSchema,
   })
   .strict();
 
@@ -58,19 +83,55 @@ const missionPaneRowSchema = z
 export type RecordMissionPaneInput = z.input<
   typeof recordMissionPaneInputSchema
 >;
+export type RebindOrchestratorAuthorityInput = z.input<
+  typeof rebindOrchestratorAuthorityInputSchema
+>;
 
 export interface ScopedMissionPaneSpec extends MissionPaneSpec {
   scope: ProjectExecutionScope;
   executionScope: ProjectExecutionScope;
 }
 
-const persistedPaneScopesSchema = z
+const persistedPaneScopesV2Schema = z
   .object({
     schemaVersion: z.literal(2),
     coordinationScope: projectExecutionScopeSchema,
     executionScope: projectExecutionScopeSchema,
   })
   .strict();
+const persistedPaneScopesV3Schema = z
+  .object({
+    schemaVersion: z.literal(3),
+    coordinationScope: projectExecutionScopeSchema,
+    executionScope: projectExecutionScopeSchema,
+    readOnly: z.boolean(),
+  })
+  .strict();
+const persistedPaneScopesV4Schema = z
+  .object({
+    schemaVersion: z.literal(4),
+    coordinationScope: projectExecutionScopeSchema,
+    executionScope: projectExecutionScopeSchema,
+    readOnly: z.boolean(),
+    workerIncarnationId: entityIdSchema.nullable(),
+  })
+  .strict();
+const persistedPaneScopesV5Schema = z
+  .object({
+    schemaVersion: z.literal(5),
+    coordinationScope: projectExecutionScopeSchema,
+    executionScope: projectExecutionScopeSchema,
+    readOnly: z.boolean(),
+    workerIncarnationId: entityIdSchema.nullable(),
+    authoritySeal: missionPaneAuthoritySealSchema.nullable(),
+  })
+  .strict();
+const persistedPaneScopesSchema = z.union([
+  persistedPaneScopesV2Schema,
+  persistedPaneScopesV3Schema,
+  persistedPaneScopesV4Schema,
+  persistedPaneScopesV5Schema,
+]);
 
 function encodeCapabilityList(
   value: string[] | null | undefined,
@@ -110,7 +171,51 @@ function cloneSpec(spec: ScopedMissionPaneSpec): ScopedMissionPaneSpec {
           : [...spec.allowedSkills],
     scope: Object.freeze({ ...spec.scope }),
     executionScope: Object.freeze({ ...spec.executionScope }),
+    authoritySeal: spec.authoritySeal
+      ? Object.freeze({ ...spec.authoritySeal })
+      : undefined,
   };
+}
+
+function sameAuthoritySeal(
+  left: MissionPaneAuthoritySeal,
+  right: MissionPaneAuthoritySeal,
+): boolean {
+  return (
+    left.intentVersion === right.intentVersion &&
+    left.intentContractHash === right.intentContractHash &&
+    left.contextRevision === right.contextRevision &&
+    left.contractHash === right.contractHash &&
+    left.squadRevisionHash === right.squadRevisionHash
+  );
+}
+
+function sameApprovalSeal(
+  left: MissionPaneAuthoritySeal,
+  right: MissionPaneAuthoritySeal,
+): boolean {
+  return (
+    left.intentVersion === right.intentVersion &&
+    left.intentContractHash === right.intentContractHash &&
+    left.squadRevisionHash === right.squadRevisionHash
+  );
+}
+
+function encodePersistedPaneScopes(input: {
+  readonly coordinationScope: ProjectExecutionScope;
+  readonly executionScope: ProjectExecutionScope;
+  readonly readOnly: boolean;
+  readonly workerIncarnationId?: string;
+  readonly authoritySeal?: MissionPaneAuthoritySeal;
+}): string {
+  return JSON.stringify({
+    schemaVersion: 5,
+    coordinationScope: input.coordinationScope,
+    executionScope: input.executionScope,
+    readOnly: input.readOnly,
+    workerIncarnationId: input.workerIncarnationId ?? null,
+    authoritySeal: input.authoritySeal ?? null,
+  });
 }
 
 export class ScopedMissionPaneStore {
@@ -148,6 +253,9 @@ export class ScopedMissionPaneStore {
     }
     const title = input.title ?? input.agentName ?? input.adapterId;
     const role = input.role ?? 'worker';
+    if (input.workerIncarnationId && role !== 'worker') {
+      throw new Error('worker incarnation may only bind a worker mission pane');
+    }
     const db = this.#binding.writeDatabase();
     const result = db.transaction(() => {
       const existing = this.#listFromDatabase(db, input.missionId).find(
@@ -157,7 +265,8 @@ export class ScopedMissionPaneStore {
           spec.accountId === input.accountId &&
           spec.cwd === input.cwd &&
           spec.title === title &&
-          spec.role === role,
+          spec.role === role &&
+          spec.workerIncarnationId === input.workerIncarnationId,
       );
       if (input.paneId !== undefined) {
         const owners = this.#findRowsByPaneId(db, input.paneId);
@@ -180,6 +289,7 @@ export class ScopedMissionPaneStore {
         cwd: input.cwd,
         title,
         agentName: input.agentName,
+        workerIncarnationId: input.workerIncarnationId,
         role,
         paneId: input.paneId,
         allowedTools:
@@ -194,6 +304,10 @@ export class ScopedMissionPaneStore {
             : input.allowedSkills === undefined
               ? undefined
               : [...input.allowedSkills],
+        readOnly: input.readOnly === true,
+        authoritySeal: input.authoritySeal
+          ? Object.freeze({ ...input.authoritySeal })
+          : undefined,
         scope: this.#binding.scope,
         executionScope: input.executionScope ?? this.#binding.scope,
         createdAt: this.#binding.now(),
@@ -216,10 +330,12 @@ export class ScopedMissionPaneStore {
         spec.agentName ?? null,
         spec.role,
         spec.paneId ?? null,
-        JSON.stringify({
-          schemaVersion: 2,
+        encodePersistedPaneScopes({
           coordinationScope: this.#binding.scope,
           executionScope: spec.executionScope,
+          readOnly: spec.readOnly === true,
+          workerIncarnationId: spec.workerIncarnationId,
+          authoritySeal: spec.authoritySeal,
         }),
         encodeCapabilityList(spec.allowedTools),
         encodeCapabilityList(spec.allowedSkills),
@@ -255,6 +371,79 @@ export class ScopedMissionPaneStore {
     return rows.length === 1 ? rows[0] : null;
   }
 
+  /**
+   * Explicit workflow-authority rotation for the current orchestrator pane.
+   * This is a compare-and-swap: legacy/unsealed rows, workers, intent drift,
+   * squad drift and a stale caller all fail closed. Workers deliberately keep
+   * their old seal so freeze/refreeze revokes their prior generation.
+   */
+  rebindOrchestratorAuthority(
+    rawInput: RebindOrchestratorAuthorityInput,
+  ): ScopedMissionPaneSpec {
+    const input = rebindOrchestratorAuthorityInputSchema.parse(rawInput);
+    const db = this.#binding.writeDatabase();
+    const result = db.transaction(() => {
+      const rows = this.#findRowsByPaneId(db, input.paneId);
+      if (rows.length !== 1) {
+        throw new Error('mission orchestrator pane identity is unavailable');
+      }
+      const existing = rows[0];
+      if (
+        existing.missionId !== input.missionId ||
+        existing.role !== 'orchestrator'
+      ) {
+        throw new Error('only the exact mission orchestrator may be resealed');
+      }
+      if (
+        !existing.authoritySeal ||
+        !sameAuthoritySeal(
+          existing.authoritySeal,
+          input.expectedAuthoritySeal,
+        )
+      ) {
+        throw new Error('mission orchestrator authority changed before reseal');
+      }
+      if (
+        !sameApprovalSeal(existing.authoritySeal, input.authoritySeal)
+      ) {
+        throw new Error(
+          'mission orchestrator approval changed; replan and approve instead',
+        );
+      }
+      if (sameAuthoritySeal(existing.authoritySeal, input.authoritySeal)) {
+        return { spec: cloneSpec(existing), changed: false };
+      }
+      const updated: ScopedMissionPaneSpec = {
+        ...existing,
+        authoritySeal: Object.freeze({ ...input.authoritySeal }),
+      };
+      const update = db
+        .prepare(
+          `UPDATE mission_panes
+           SET scope_json = ?
+           WHERE id = ?`,
+        )
+        .run(
+          encodePersistedPaneScopes({
+            coordinationScope: this.#binding.scope,
+            executionScope: updated.executionScope,
+            readOnly: updated.readOnly === true,
+            workerIncarnationId: updated.workerIncarnationId,
+            authoritySeal: updated.authoritySeal,
+          }),
+          updated.id,
+        );
+      if (update.changes !== 1) {
+        throw new ScopedStoreCorruptionError(
+          'mission orchestrator authority reseal',
+        );
+      }
+      return { spec: cloneSpec(updated), changed: true };
+    })();
+    if (result.changed) this.#binding.emitChange();
+    return cloneSpec(result.spec);
+  }
+
   #fillMissingAuthority(
     db: Database.Database,
     existing: ScopedMissionPaneSpec,
@@ -266,6 +455,20 @@ export class ScopedMissionPaneStore {
     ) {
       throw new Error('mission pane execution scope is immutable');
     }
+    if (
+      input.readOnly !== undefined &&
+      input.readOnly !== (existing.readOnly === true)
+    ) {
+      throw new Error('mission pane read-only authority is immutable');
+    }
+    if (
+      existing.authoritySeal &&
+      input.authoritySeal &&
+      JSON.stringify(existing.authoritySeal) !==
+        JSON.stringify(input.authoritySeal)
+    ) {
+      throw new Error('mission pane authority revision is immutable');
+    }
     const paneId = existing.paneId ?? input.paneId;
     const allowedTools =
       existing.allowedTools === undefined
@@ -275,10 +478,12 @@ export class ScopedMissionPaneStore {
       existing.allowedSkills === undefined
         ? input.allowedSkills
         : existing.allowedSkills;
+    const authoritySeal = existing.authoritySeal ?? input.authoritySeal;
     const hasChanges =
       paneId !== existing.paneId ||
       allowedTools !== existing.allowedTools ||
-      allowedSkills !== existing.allowedSkills;
+      allowedSkills !== existing.allowedSkills ||
+      authoritySeal !== existing.authoritySeal;
     if (!hasChanges) return { spec: cloneSpec(existing), changed: false };
 
     const updated: ScopedMissionPaneSpec = {
@@ -296,6 +501,9 @@ export class ScopedMissionPaneStore {
           : allowedSkills === undefined
             ? undefined
             : [...allowedSkills],
+      authoritySeal: authoritySeal
+        ? Object.freeze({ ...authoritySeal })
+        : undefined,
     };
     const result = db
       .prepare(
@@ -306,10 +514,12 @@ export class ScopedMissionPaneStore {
       )
       .run(
         updated.paneId ?? null,
-        JSON.stringify({
-          schemaVersion: 2,
+        encodePersistedPaneScopes({
           coordinationScope: this.#binding.scope,
           executionScope: updated.executionScope,
+          readOnly: updated.readOnly === true,
+          workerIncarnationId: updated.workerIncarnationId,
+          authoritySeal: updated.authoritySeal,
         }),
         encodeCapabilityList(updated.allowedTools),
         encodeCapabilityList(updated.allowedSkills),
@@ -366,12 +576,30 @@ export class ScopedMissionPaneStore {
 
     let persistedScope: ProjectExecutionScope;
     let executionScope: ProjectExecutionScope;
+    let readOnly = false;
+    let workerIncarnationId: string | undefined;
+    let authoritySeal: MissionPaneAuthoritySeal | undefined;
     try {
       const raw = JSON.parse(row.scope_json) as unknown;
       const modern = persistedPaneScopesSchema.safeParse(raw);
       if (modern.success) {
         persistedScope = modern.data.coordinationScope;
         executionScope = modern.data.executionScope;
+        readOnly =
+          modern.data.schemaVersion === 3 ||
+          modern.data.schemaVersion === 4 ||
+          modern.data.schemaVersion === 5
+            ? modern.data.readOnly === true
+            : false;
+        workerIncarnationId =
+          modern.data.schemaVersion === 4 ||
+          modern.data.schemaVersion === 5
+            ? modern.data.workerIncarnationId ?? undefined
+            : undefined;
+        authoritySeal =
+          modern.data.schemaVersion === 5
+            ? modern.data.authoritySeal ?? undefined
+            : undefined;
       } else {
         persistedScope = projectExecutionScopeSchema.parse(raw);
         executionScope = persistedScope;
@@ -405,6 +633,8 @@ export class ScopedMissionPaneStore {
       cwd: row.cwd ?? undefined,
       title: row.title,
       agentName: row.agent_name ?? undefined,
+      workerIncarnationId,
+      authoritySeal,
       role: row.role,
       paneId: row.pane_id ?? undefined,
       allowedTools: parseCapabilityList(
@@ -415,6 +645,7 @@ export class ScopedMissionPaneStore {
         row.allowed_skills_json,
         'mission pane allowed skills',
       ),
+      readOnly,
       // Rebind local authority while preserving project/checkout ownership.
       scope: this.#binding.scope,
       executionScope,

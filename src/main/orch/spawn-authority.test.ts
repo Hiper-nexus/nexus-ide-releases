@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { WebContents } from "electron";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Squad } from "../../shared/orch-types";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
   bindSpawnAuthority,
-  isKnownLegacySquadSpawnRequest,
+  consumeImmediateSquadSpawnGrant,
+  issueImmediateSquadSpawnGrant,
   resolveSpawnAuthority,
 } from "./spawn-authority";
 
@@ -44,17 +46,32 @@ const squad: Squad = {
   ],
 };
 
+const immediateRuntime = {
+  adapterId: "claude",
+  model: null,
+  accountId: null,
+  effort: null,
+  paneId: "pane-immediate",
+  title: "Maestro",
+  missionTitle: "Reviewed mission",
+  missionGoal: "Reviewed mission",
+  missionId: null,
+} as const;
+
+const immediateRuntimeRequest = {
+  adapterId: immediateRuntime.adapterId,
+  model: immediateRuntime.model,
+  accountId: immediateRuntime.accountId,
+  effort: immediateRuntime.effort,
+  paneId: immediateRuntime.paneId,
+  missionId: immediateRuntime.missionId,
+} as const;
+
 describe("spawn authority resolution", () => {
-  it("reconhece somente ids de squad persistidos no main", () => {
-    expect(
-      isKnownLegacySquadSpawnRequest("squad-nexus-review-abc123", [squad]),
-    ).toBe(true);
-    expect(
-      isKnownLegacySquadSpawnRequest("squad-inventado-abc123", [squad]),
-    ).toBe(false);
-    expect(
-      isKnownLegacySquadSpawnRequest("squad-nexus-review-!!!", [squad]),
-    ).toBe(false);
+  it("never treats a renderer-derived squad id as main authority", () => {
+    expect(() =>
+      resolveSpawnAuthority("squad-nexus-review-abc123", null, [squad]),
+    ).toThrow(/unknown or expired/);
   });
 
   it("keeps a trusted pending binding unchanged", () => {
@@ -76,20 +93,329 @@ describe("spawn authority resolution", () => {
     expect(resolveSpawnAuthority(undefined, null, [squad])).toBeNull();
   });
 
-  it("reconstructs the legacy initial squad role from the trusted registry", () => {
-    expect(
-      resolveSpawnAuthority("squad-nexus-review-m123", null, [squad]),
-    ).toEqual({
-      squadId: "nexus-review",
-      agentName: "Maestro",
-      role: "orchestrator",
-      allowedTools: ["nexus_pane_spawn"],
-      allowedSkills: ["review"],
+  it("accepts only a cryptographically opaque main-owned squad grant, once", () => {
+    const owner = {
+      id: 7,
+      isDestroyed: () => false,
+    } as unknown as WebContents;
+    const scope = testProjectScope();
+    const token = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad,
+      runtime: immediateRuntime,
+      now: 1_000,
     });
+    expect(token).toMatch(/^squadgrant_[A-Za-z0-9_-]{40,}$/);
+    expect(token).not.toContain(squad.id);
+
+    const grant = consumeImmediateSquadSpawnGrant({
+      requestId: token,
+      owner,
+      scope,
+      squads: [squad],
+      runtime: immediateRuntimeRequest,
+      now: 1_001,
+    });
+    expect(grant).toEqual({
+      authority: {
+        squadId: "nexus-review",
+        agentName: "Maestro",
+        role: "orchestrator",
+        allowedTools: ["nexus_pane_spawn"],
+        allowedSkills: ["review"],
+        immediateMissionTitle: "Reviewed mission",
+        immediateMissionGoal: "Reviewed mission",
+        scope,
+        requestedCwd: scope.rootRealPath,
+      },
+      runtime: immediateRuntime,
+    });
+    expect(
+      resolveSpawnAuthority(
+        token,
+        null,
+        [squad],
+        null,
+        grant?.authority ?? null,
+      ),
+    ).toBe(
+      grant?.authority,
+    );
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: token,
+        owner,
+        scope,
+        squads: [squad],
+        runtime: immediateRuntimeRequest,
+        now: 1_002,
+      }),
+    ).toBeNull();
+  });
+
+  it("burns an immediate grant on owner, scope, squad, or expiry drift", () => {
+    const owner = {
+      id: 7,
+      isDestroyed: () => false,
+    } as unknown as WebContents;
+    const attacker = {
+      id: 8,
+      isDestroyed: () => false,
+    } as unknown as WebContents;
+    const scope = testProjectScope();
+
+    const ownerBound = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad,
+      runtime: immediateRuntime,
+      now: 1_000,
+    });
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: ownerBound,
+        owner: attacker,
+        scope,
+        squads: [squad],
+        runtime: immediateRuntimeRequest,
+        now: 1_001,
+      }),
+    ).toBeNull();
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: ownerBound,
+        owner,
+        scope,
+        squads: [squad],
+        runtime: immediateRuntimeRequest,
+        now: 1_002,
+      }),
+    ).toBeNull();
+
+    const scopeBound = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad,
+      runtime: immediateRuntime,
+      now: 2_000,
+    });
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: scopeBound,
+        owner,
+        scope: testProjectScope({ checkoutId: "checkout-drift" }),
+        squads: [squad],
+        runtime: immediateRuntimeRequest,
+        now: 2_001,
+      }),
+    ).toBeNull();
+
+    const squadBound = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad,
+      runtime: immediateRuntime,
+      now: 3_000,
+    });
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: squadBound,
+        owner,
+        scope,
+        squads: [
+          {
+            ...squad,
+            agents: [{ ...squad.agents[0], agentName: "Alterado" }],
+          },
+        ],
+        runtime: immediateRuntimeRequest,
+        now: 3_001,
+      }),
+    ).toBeNull();
+
+    const expired = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad,
+      runtime: immediateRuntime,
+      now: 4_000,
+      ttlMs: 10,
+    });
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: expired,
+        owner,
+        scope,
+        squads: [squad],
+        runtime: immediateRuntimeRequest,
+        now: 4_011,
+      }),
+    ).toBeNull();
+  });
+
+  it("binds the complete squad snapshot, including native instructions and workers", () => {
+    const owner = {
+      id: 7,
+      isDestroyed: () => false,
+    } as unknown as WebContents;
+    const scope = testProjectScope();
+    const reviewedSquad: Squad = {
+      ...squad,
+      orchestratorInstructions: "Delegate and verify.",
+      nativeInstructions: "Use the provider planner.",
+      agents: [
+        ...squad.agents,
+        {
+          id: "worker",
+          agentName: "Executor",
+          category: "executor",
+          cli: "codex",
+          model: "gpt-5.4",
+          effort: "high",
+          allowedTools: ["nexus_handoff"],
+        },
+      ],
+    };
+    const token = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad: reviewedSquad,
+      runtime: immediateRuntime,
+      now: 4_500,
+    });
+
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: token,
+        owner,
+        scope,
+        squads: [
+          {
+            ...reviewedSquad,
+            nativeInstructions: "Changed after confirmation.",
+            agents: reviewedSquad.agents.map((agent) =>
+              agent.id === "worker"
+                ? { ...agent, model: "gpt-5.5" }
+                : agent,
+            ),
+          },
+        ],
+        runtime: immediateRuntimeRequest,
+        now: 4_501,
+      }),
+    ).toBeNull();
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: token,
+        owner,
+        scope,
+        squads: [reviewedSquad],
+        runtime: immediateRuntimeRequest,
+        now: 4_502,
+      }),
+    ).toBeNull();
+  });
+
+  it("burns the one-shot grant when exact provider or pane runtime drifts", () => {
+    const owner = {
+      id: 7,
+      isDestroyed: () => false,
+    } as unknown as WebContents;
+    const scope = testProjectScope();
+    const reviewedRuntime = {
+      ...immediateRuntime,
+      model: "claude-opus",
+      accountId: "account-a",
+      effort: "high",
+    };
+    const token = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad,
+      runtime: reviewedRuntime,
+      now: 4_600,
+    });
+
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: token,
+        owner,
+        scope,
+        squads: [squad],
+        runtime: {
+          ...immediateRuntimeRequest,
+          model: reviewedRuntime.model,
+          accountId: reviewedRuntime.accountId,
+          effort: "medium",
+        },
+        now: 4_601,
+      }),
+    ).toBeNull();
+    expect(
+      consumeImmediateSquadSpawnGrant({
+        requestId: token,
+        owner,
+        scope,
+        squads: [squad],
+        runtime: {
+          ...immediateRuntimeRequest,
+          model: reviewedRuntime.model,
+          accountId: reviewedRuntime.accountId,
+          effort: reviewedRuntime.effort,
+        },
+        now: 4_602,
+      }),
+    ).toBeNull();
+  });
+
+  it("binds an immediate grant to the main-captured root, ignoring renderer cwd bytes", () => {
+    const root = tempProject();
+    const rendererChoice = path.join(root, "renderer-selected");
+    fs.mkdirSync(rendererChoice);
+    const owner = {
+      id: 7,
+      isDestroyed: () => false,
+    } as unknown as WebContents;
+    const scope = testProjectScope({ rootRealPath: root });
+    const token = issueImmediateSquadSpawnGrant({
+      owner,
+      scope,
+      squad,
+      runtime: immediateRuntime,
+      now: 5_000,
+    });
+    const grant = consumeImmediateSquadSpawnGrant({
+      requestId: token,
+      owner,
+      scope,
+      squads: [squad],
+      runtime: immediateRuntimeRequest,
+      now: 5_001,
+    });
+
+    expect(
+      bindSpawnAuthority({
+        requestId: token,
+        pending: null,
+        immediateGrant: grant?.authority ?? null,
+        squads: [squad],
+        persistedPane: null,
+        trustedUserScope: scope,
+        requestedCwd: rendererChoice,
+      }).cwd,
+    ).toBe(root);
   });
 
   it("restores a persisted pane with its original scope and attenuated worker tools", () => {
     const scope = testProjectScope({ projectId: "project-a" });
+    const authoritySeal = {
+      intentVersion: 1,
+      intentContractHash: "a".repeat(64),
+      contextRevision: "workflow-revision-a",
+      contractHash: "b".repeat(64),
+      squadRevisionHash: "c".repeat(64),
+    };
     const persisted = {
       id: "mpane-1",
       missionId: "mission-a",
@@ -101,6 +427,7 @@ describe("spawn authority resolution", () => {
       scope,
       allowedTools: ["nexus_file_read"],
       allowedSkills: ["review"],
+      authoritySeal,
       createdAt: 1,
     };
 
@@ -110,6 +437,8 @@ describe("spawn authority resolution", () => {
       role: "worker",
       allowedTools: ["nexus_file_read"],
       allowedSkills: ["review"],
+      contextRevision: authoritySeal.contextRevision,
+      authoritySeal,
       scope,
     });
   });
@@ -200,6 +529,7 @@ describe("spawn authority resolution", () => {
         adapterId: "codex",
         title: "Orquestrador",
         role: "orchestrator",
+        readOnly: true,
         paneId: "pane-resume",
         cwd: root,
         scope,
@@ -212,6 +542,7 @@ describe("spawn authority resolution", () => {
     expect(authority.source).toBe("persisted-pane");
     expect(authority.scope).toEqual(scope);
     expect(authority.cwd).toBe(fs.realpathSync(root));
+    expect(authority.context?.readOnly).toBe(true);
   });
 
   it("binds task filesystem authority to an external worktree without changing mission coordinates", () => {

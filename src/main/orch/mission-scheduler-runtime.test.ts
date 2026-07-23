@@ -320,6 +320,9 @@ describe('task schedule meta codec', () => {
       },
       merged: false,
       parallelEligible: true,
+      agentRef: 'backend',
+      agentCategory: 'executor',
+      executionMode: 'isolated_worktree',
     });
     const decoded = decodeTaskScheduleDetail(encoded);
     expect(decoded.body).toBe('implement auth');
@@ -332,6 +335,9 @@ describe('task schedule meta codec', () => {
       },
       merged: false,
       parallelEligible: true,
+      agentRef: 'backend',
+      agentCategory: 'executor',
+      executionMode: 'isolated_worktree',
     });
     const merged = withMergedFlag(encoded, true);
     expect(decodeTaskScheduleDetail(merged).meta?.merged).toBe(true);

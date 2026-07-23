@@ -4,6 +4,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   USAGE_CHANNELS,
+  type AccountUsage,
   type PaneUsage,
   type UsageSnapshot,
 } from '../../shared/usage-types';
@@ -45,6 +46,7 @@ interface DictatedAttribution {
   ptySessionId: string;
   adapterId: string;
   paneId: string;
+  accountId?: string;
 }
 
 interface ScopeTelemetryState {
@@ -52,6 +54,7 @@ interface ScopeTelemetryState {
   readonly stores: ProjectUsageStoreSuite;
   readonly dictated: Map<string, DictatedAttribution>;
   readonly resumedPaneIds: Map<string, Set<string>>;
+  readonly accountIdByProviderSession: Map<string, string>;
   readonly pendingResumePanes: Map<string, number>;
   readonly pendingLaunches: Map<
     string,
@@ -90,6 +93,21 @@ function paneUsage(row: ReturnType<ProjectUsageStoreSuite['usage']['totalsByPane
   };
 }
 
+function accountUsage(
+  row: ReturnType<ProjectUsageStoreSuite['usage']['totalsByAccount']>[number],
+): AccountUsage {
+  return {
+    accountId: row.accountId,
+    provider: row.provider,
+    costUsd: row.costUsd,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    cacheReadTokens: row.cacheReadTokens,
+    turns: row.turns,
+    source: 'real',
+  };
+}
+
 export class UsageTelemetryService {
   readonly #registry: ProjectUsageStoreRegistry;
   readonly #states = new Map<string, ScopeTelemetryState>();
@@ -117,8 +135,14 @@ export class UsageTelemetryService {
         .totalsByPane()
         .map((row) => [row.paneId, paneUsage(row)]),
     );
+    const byAccount = Object.fromEntries(
+      state.stores.usage
+        .totalsByAccount()
+        .map((row) => [row.accountId, accountUsage(row)]),
+    );
     return {
       byPane,
+      byAccount,
       global: {
         costUsd: global.costUsd,
         inputTokens: global.inputTokens,
@@ -161,6 +185,7 @@ export class UsageTelemetryService {
       state.broadcastTimer = null;
       state.dictated.clear();
       state.resumedPaneIds.clear();
+      state.accountIdByProviderSession.clear();
       state.pendingResumePanes.clear();
       state.pendingLaunches.clear();
     }
@@ -194,6 +219,7 @@ export class UsageTelemetryService {
       stores: this.#registry.forScope(immutableScope),
       dictated: new Map(),
       resumedPaneIds: new Map(),
+      accountIdByProviderSession: new Map(),
       pendingResumePanes: new Map(),
       pendingLaunches: new Map(),
       watcher: null,
@@ -235,7 +261,14 @@ export class UsageTelemetryService {
         ptySessionId: info.ptySessionId,
         adapterId: info.adapterId,
         paneId: info.paneId,
+        ...(info.accountId ? { accountId: info.accountId } : {}),
       });
+      if (info.accountId) {
+        state.accountIdByProviderSession.set(
+          info.providerSessionId,
+          info.accountId,
+        );
+      }
     } else {
       state.pendingLaunches.set(info.ptySessionId, {
         adapterId: info.adapterId,
@@ -264,6 +297,9 @@ export class UsageTelemetryService {
       const paneIds = state.resumedPaneIds.get(persisted.id) ?? new Set();
       paneIds.add(paneId);
       state.resumedPaneIds.set(persisted.id, paneIds);
+      if (accountId) {
+        state.accountIdByProviderSession.set(persisted.id, accountId);
+      }
       if (adapterId === 'claude' || adapterId === 'codex') {
         this.#watchProvider(scope, adapterId);
       }
@@ -280,17 +316,25 @@ export class UsageTelemetryService {
     const paneIds = state.resumedPaneIds.get(captured.sessionId) ?? new Set();
     paneIds.add(paneId);
     state.resumedPaneIds.set(captured.sessionId, paneIds);
+    if (captured.accountId) {
+      state.accountIdByProviderSession.set(captured.sessionId, captured.accountId);
+    }
     this.#watchProvider(scope, adapterId);
     return captured.sessionId;
   }
 
   #onClaudeEvent(state: ScopeTelemetryState, event: UsageEvent): void {
     if (!this.#acceptProviderEvent(state, 'claude', event)) return;
-    const attribution = this.#attributionForEvent(state, event.sessionId);
+    const attribution = this.#attributionForEvent(
+      state,
+      'claude',
+      event.sessionId,
+    );
     state.stores.usage.record('claude', {
       ...event,
       paneId: attribution?.paneId ?? null,
       missionId: attribution?.missionId ?? null,
+      accountId: attribution?.accountId ?? null,
     });
     this.#awardAgentTurn(state, 'claude', event);
     this.#scheduleBroadcast(state);
@@ -298,11 +342,16 @@ export class UsageTelemetryService {
 
   #onCodexEvent(state: ScopeTelemetryState, event: UsageEvent): void {
     if (!this.#acceptProviderEvent(state, 'codex', event)) return;
-    const attribution = this.#attributionForEvent(state, event.sessionId);
+    const attribution = this.#attributionForEvent(
+      state,
+      'codex',
+      event.sessionId,
+    );
     state.stores.usage.record('codex', {
       ...event,
       paneId: attribution?.paneId ?? null,
       missionId: attribution?.missionId ?? null,
+      accountId: attribution?.accountId ?? null,
     });
     this.#awardAgentTurn(state, 'codex', event);
     this.#scheduleBroadcast(state);
@@ -329,9 +378,17 @@ export class UsageTelemetryService {
 
   #attributionForEvent(
     state: ScopeTelemetryState,
+    provider: 'claude' | 'codex',
     providerSessionId: string,
-  ): { paneId: string; missionId: string | null } | null {
+  ): { paneId: string | null; missionId: string | null; accountId: string | null } | null {
     const dictated = state.dictated.get(providerSessionId);
+    const accountId =
+      dictated?.accountId ??
+      state.accountIdByProviderSession.get(providerSessionId) ??
+      state.stores.usage.accountIdForProviderSession(
+        provider,
+        providerSessionId,
+      );
     let paneId: string | null = null;
     if (dictated) {
       // The pane registry is renderer-lifecycle state and can disappear during
@@ -342,10 +399,14 @@ export class UsageTelemetryService {
       const resumed = state.resumedPaneIds.get(providerSessionId);
       if (resumed?.size === 1) paneId = [...resumed][0];
     }
-    if (!paneId) return null;
+    if (!paneId) {
+      return accountId
+        ? { paneId: null, missionId: null, accountId }
+        : null;
+    }
     const pane = getPaneAuthzInfo(paneId);
     if (pane?.scope && !sameProjectScope(pane.scope, state.scope)) return null;
-    return { paneId, missionId: pane?.missionId ?? null };
+    return { paneId, missionId: pane?.missionId ?? null, accountId };
   }
 
   /**

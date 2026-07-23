@@ -11,6 +11,10 @@ import {
   buildScopedExecPlan,
   createScopedSandboxHome,
 } from '../runtime/process-sandbox';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolInvocation,
+} from '../orch/mcp-protocol';
 import { canonicalJson } from './canonical-json';
 
 const HASH_256 = /^[a-f0-9]{64}$/;
@@ -132,12 +136,15 @@ export interface SensorRunInput {
   readonly cwd?: string;
 }
 
+export type SensorRunAuthority = McpToolInvocation;
+
 export interface SensorBrokerDependencies {
   inspectGit?: (root: string, baseSha: string) => Promise<SensorGitState>;
   runProcess?: (
     definition: Readonly<Required<Pick<SensorDefinition, 'id' | 'command' | 'timeoutMs' | 'network'>> & Pick<SensorDefinition, 'cwd'>>,
     cwd: string,
     scope: ProjectExecutionScope,
+    authority?: SensorRunAuthority,
   ) => Promise<SensorProcessResult>;
   now?: () => number;
   makeId?: () => string;
@@ -259,7 +266,9 @@ async function runSensorProcess(
   definition: NormalizedSensorDefinition,
   cwd: string,
   scope: ProjectExecutionScope,
+  authority: SensorRunAuthority = {},
 ): Promise<SensorProcessResult> {
+  assertMcpInvocationCurrent(authority);
   const envPath = process.env.PATH ?? '/usr/bin:/bin';
   const sandbox = createScopedSandboxHome(scope);
   let plan;
@@ -285,12 +294,20 @@ async function runSensorProcess(
   }
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(plan.file, plan.args, {
-      cwd: plan.cwd,
-      env: plan.env,
-      detached: plan.detached,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    let proc: ChildProcess;
+    try {
+      assertMcpInvocationCurrent(authority);
+      proc = spawn(plan.file, plan.args, {
+        cwd: plan.cwd,
+        env: plan.env,
+        detached: plan.detached,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      reject(error);
+      return;
+    }
     const stdoutHash = createHash('sha256');
     const stderrHash = createHash('sha256');
     let stdout = '';
@@ -299,6 +316,33 @@ async function runSensorProcess(
     let truncated = false;
     let timedOut = false;
     let settled = false;
+    let authorityError: Error | null = null;
+    let forceKillTimer: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      authority.signal?.removeEventListener('abort', onAbort);
+      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+    };
+
+    const scheduleForceKill = () => {
+      if (forceKillTimer) return;
+      forceKillTimer = setTimeout(() => {
+        if (proc.exitCode === null) killTree(proc, 'SIGKILL');
+      }, 2_000);
+      forceKillTimer.unref();
+    };
+
+    const onAbort = () => {
+      if (settled || authorityError) return;
+      authorityError =
+        authority.signal?.reason instanceof Error
+          ? authority.signal.reason
+          : new Error('session_authority_revoked');
+      killTree(proc, 'SIGTERM');
+      scheduleForceKill();
+    };
 
     function capture(stream: 'stdout' | 'stderr', chunk: Buffer): void {
       (stream === 'stdout' ? stdoutHash : stderrHash).update(chunk);
@@ -317,9 +361,7 @@ async function runSensorProcess(
     const timer = setTimeout(() => {
       timedOut = true;
       killTree(proc, 'SIGTERM');
-      setTimeout(() => {
-        if (proc.exitCode === null) killTree(proc, 'SIGKILL');
-      }, 2_000).unref();
+      scheduleForceKill();
     }, definition.timeoutMs);
     timer.unref();
     proc.stdout?.on('data', (chunk: Buffer) => capture('stdout', chunk));
@@ -327,16 +369,18 @@ async function runSensorProcess(
     proc.once('error', (error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      fs.rmSync(sandbox.dir, { recursive: true, force: true });
-      reject(error);
+      cleanup();
+      reject(authorityError ?? error);
     });
     proc.once('close', (exitCode) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
       killTree(proc, timedOut ? 'SIGKILL' : 'SIGTERM');
-      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      cleanup();
+      if (authorityError) {
+        reject(authorityError);
+        return;
+      }
       resolve({
         exitCode,
         stdout,
@@ -347,6 +391,8 @@ async function runSensorProcess(
         truncated,
       });
     });
+    authority.signal?.addEventListener('abort', onAbort, { once: true });
+    if (authority.signal?.aborted) onAbort();
   });
 }
 
@@ -384,12 +430,17 @@ export class SensorBroker {
     return Object.freeze([...this.#definitions.values()]);
   }
 
-  async run(rawInput: SensorRunInput): Promise<TrustedEvidence> {
+  async run(
+    rawInput: SensorRunInput,
+    authority: SensorRunAuthority = {},
+  ): Promise<TrustedEvidence> {
+    assertMcpInvocationCurrent(authority);
     const input = runInputSchema.parse(rawInput);
     const definition = this.#definitions.get(input.sensorId);
     if (!definition) throw new Error(`unknown sensor: ${input.sensorId}`);
     const cwd = resolveSensorCwd(input.scope, input.cwd ?? definition.cwd);
     const git = await this.#inspectGit(input.scope.rootRealPath, input.baseSha);
+    assertMcpInvocationCurrent(authority);
     if (git.baseSha.toLowerCase() !== input.baseSha.toLowerCase()) {
       throw new Error('sensor base SHA does not match the frozen contract');
     }
@@ -397,10 +448,18 @@ export class SensorBroker {
       throw new Error('Git inspector returned an invalid evidence binding');
     }
     const startedAt = this.#now();
-    const result = await this.#runProcess(definition, cwd, input.scope);
+    assertMcpInvocationCurrent(authority);
+    const result = await this.#runProcess(
+      definition,
+      cwd,
+      input.scope,
+      authority,
+    );
+    assertMcpInvocationCurrent(authority);
     const finishedAt = this.#now();
     const sensorConfigHash = sha256(canonicalJson(definition));
 
+    assertMcpInvocationCurrent(authority);
     return Object.freeze({
       id: this.#makeId(),
       producer: 'nexus',

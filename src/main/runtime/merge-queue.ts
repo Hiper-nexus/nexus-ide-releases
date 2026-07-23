@@ -14,6 +14,7 @@ import {
   type WorktreeRecord,
 } from './worktree-manager';
 import {
+  MergeAuthorityRevokedError,
   MergeCasError,
   MergeConflictError,
   MergeQueueStateError,
@@ -187,6 +188,7 @@ export class MergeQueue {
     let candidate: CandidateCheckout | null = null;
     let candidateAttached = false;
     let integrationApplied = false;
+    let integrationBaseSha: string | null = null;
     let evidenceIds: readonly string[] =
       resume?.acknowledgementEvidenceIds ?? [];
 
@@ -198,6 +200,7 @@ export class MergeQueue {
         taskKey,
         this.#timestamp(),
       );
+      this.#assertCurrentAuthority(input);
       if (resume) {
         this.#worktrees.reopenFailedForRetry(
           input.scope,
@@ -218,6 +221,7 @@ export class MergeQueue {
         prepared.taskHeadSha,
       );
       const integration = this.#worktrees.integrationSnapshot(prepared.record);
+      integrationBaseSha = integration.headSha;
       this.#state.updateEntry(claimed, (entry) => ({
         ...entry,
         status: 'candidate-validating',
@@ -253,6 +257,7 @@ export class MergeQueue {
           candidate.path,
         ),
       );
+      this.#assertCurrentAuthority(input);
       evidenceIds = Object.freeze([
         ...new Set([
           ...evidenceIds,
@@ -273,6 +278,7 @@ export class MergeQueue {
         integration.headSha,
         'integration HEAD changed during candidate validation',
       );
+      this.#assertCurrentAuthority(input);
       this.#state.updateEntry(claimed, (entry) => ({
         ...entry,
         status: 'integrating',
@@ -364,6 +370,7 @@ export class MergeQueue {
         updatedAt: this.#timestamp(),
       }));
 
+      this.#assertCurrentAuthority(input);
       const postDecision = await input.validate(
         this.#validationContext(
           'post-integration',
@@ -374,6 +381,7 @@ export class MergeQueue {
           prepared.record.rootRealPath,
         ),
       );
+      this.#assertCurrentAuthority(input);
       evidenceIds = Object.freeze([
         ...new Set([
           ...evidenceIds,
@@ -386,6 +394,7 @@ export class MergeQueue {
         candidate.candidateSha,
         'post-integration validation changed the integrated checkout',
       );
+      this.#assertCurrentAuthority(input);
       this.#state.updateEntry(claimed, (entry) => ({
         ...entry,
         status: 'finalizing',
@@ -408,7 +417,14 @@ export class MergeQueue {
         diffHash: candidate.diffHash,
         evidenceIds,
       });
-      await input.finalize?.(result);
+      const finalization = input.finalize?.(result);
+      if (
+        finalization &&
+        typeof (finalization as PromiseLike<void>).then === 'function'
+      ) {
+        await finalization;
+      }
+      this.#assertCurrentAuthority(input);
       this.#state.complete(
         claimed,
         candidate.candidateSha,
@@ -416,7 +432,28 @@ export class MergeQueue {
         this.#timestamp(),
       );
       return result;
-    } catch (error) {
+    } catch (caught) {
+      let error = caught;
+      let integrationRolledBack = false;
+      if (
+        error instanceof MergeAuthorityRevokedError &&
+        integrationApplied &&
+        prepared &&
+        candidate &&
+        integrationBaseSha
+      ) {
+        try {
+          this.#rollbackRevokedIntegration(
+            prepared.record,
+            integrationBaseSha,
+            candidate.candidateSha,
+          );
+          integrationApplied = false;
+          integrationRolledBack = true;
+        } catch (rollbackError) {
+          error = rollbackError;
+        }
+      }
       if (candidateAttached && candidate && prepared) {
         try {
           this.#assertCheckout(
@@ -449,6 +486,7 @@ export class MergeQueue {
           claimed,
           error,
           integrationApplied ? candidate?.candidateSha : undefined,
+          integrationRolledBack,
         );
       }
       throw error;
@@ -456,7 +494,9 @@ export class MergeQueue {
   }
 
   async #retry(input: RetryMergeInput): Promise<MergeQueueResult> {
+    this.#assertCurrentAuthority(input);
     const attempt = this.#recovery.acknowledge(input);
+    this.#assertCurrentAuthority(input);
     if (attempt.mode === 'full') {
       return this.#integrate(input, {
         claimed: attempt.claimed,
@@ -589,6 +629,8 @@ export class MergeQueue {
       candidateSha: candidate.candidateSha,
       diffHash: candidate.diffHash,
       changedFiles: Object.freeze([...prepared.changedFiles]),
+      ...(input.signal ? { signal: input.signal } : {}),
+      assertCurrentAuthority: () => this.#assertCurrentAuthority(input),
     });
   }
 
@@ -692,16 +734,102 @@ export class MergeQueue {
     }
   }
 
+  #assertCurrentAuthority(input: EnqueueMergeInput): void {
+    if (!input.assertCurrentAuthority) return;
+    try {
+      input.assertCurrentAuthority();
+    } catch (error) {
+      throw new MergeAuthorityRevokedError(error);
+    }
+  }
+
+  #rollbackRevokedIntegration(
+    record: WorktreeRecord,
+    integrationBaseSha: string,
+    candidateSha: string,
+  ): void {
+    this.#assertIntegrationCas(
+      record,
+      candidateSha,
+      'cannot roll back a revoked merge because integration HEAD changed',
+    );
+    const refRollback = this.#git.run(
+      record.rootRealPath,
+      [
+        'update-ref',
+        '-m',
+        `Nexus revoke ${record.taskKey}`,
+        record.integrationRef,
+        integrationBaseSha,
+        candidateSha,
+      ],
+      { allowFailure: true },
+    );
+    if (refRollback.status !== 0) {
+      throw new MergeCasError(
+        'revoked merge rollback compare-and-swap failed',
+        {
+          cause: new GitCommandError(
+            'git update-ref rollback compare-and-swap failed',
+            [
+              'update-ref',
+              record.integrationRef,
+              integrationBaseSha,
+              candidateSha,
+            ],
+            refRollback,
+          ),
+        },
+      );
+    }
+    const materialize = this.#git.run(
+      record.rootRealPath,
+      [
+        'read-tree',
+        '-u',
+        '-m',
+        candidateSha,
+        integrationBaseSha,
+      ],
+      { allowFailure: true },
+    );
+    if (materialize.status !== 0) {
+      throw new MergeCasError(
+        'revoked merge ref rolled back but checkout rematerialization failed',
+        {
+          cause: new GitCommandError(
+            'git read-tree rollback materialization failed',
+            [
+              'read-tree',
+              '-u',
+              '-m',
+              candidateSha,
+              integrationBaseSha,
+            ],
+            materialize,
+          ),
+        },
+      );
+    }
+    this.#assertIntegrationCas(
+      record,
+      integrationBaseSha,
+      'revoked merge checkout did not return to the exact integration base',
+    );
+  }
+
   #blockAttempt(
     claimed: MergeQueueClaim,
     error: unknown,
     integratedSha?: string,
+    integrationRolledBack = false,
   ): void {
     this.#state.block(claimed, {
       errorName: errorName(error),
       reason: errorMessage(error),
       now: this.#timestamp(),
       integratedSha,
+      integrationRolledBack,
       rejectedEvidenceIds:
         error instanceof MergeValidationRejectedError
           ? error.evidenceIds

@@ -3,6 +3,7 @@ import type { CanonicalHookEvent } from '../../vendor/emdash/hooks/hooks-types';
 
 const harness = vi.hoisted(() => ({
   publish: vi.fn((_sessionId: string, _state: string) => true),
+  state: 'idle' as string | null,
   agentInfo: vi.fn(
     (_sessionId: string): { paneId?: string } | null => null,
   ),
@@ -12,12 +13,14 @@ vi.mock('../pty/pty-manager', () => ({
   publishSessionActivityState: (sessionId: string, state: string) =>
     harness.publish(sessionId, state),
   getAgentSessionInfo: (sessionId: string) => harness.agentInfo(sessionId),
+  getSessionState: () => harness.state,
 }));
 
 import {
   __resetAgentStatusForTests,
   applyCanonicalHookEvent,
   getAgentSemanticStatus,
+  isSessionInjectableIdle,
   paneStateForStatus,
   resetAgentStatusOnExit,
   semanticStatusForEvent,
@@ -25,6 +28,11 @@ import {
 } from './agent-status';
 
 const start: CanonicalHookEvent = { kind: 'status', type: 'start' };
+const userSubmit: CanonicalHookEvent = {
+  kind: 'status',
+  type: 'start',
+  clearsAwaitingInput: true,
+};
 const stop: CanonicalHookEvent = { kind: 'status', type: 'stop' };
 const failure: CanonicalHookEvent = { kind: 'status', type: 'error' };
 const permission: CanonicalHookEvent = {
@@ -54,6 +62,7 @@ beforeEach(() => {
   // implementation with a throwing one and it must not leak into later tests.
   harness.publish.mockReset().mockImplementation(() => true);
   harness.agentInfo.mockReset().mockReturnValue(null);
+  harness.state = 'idle';
 });
 
 describe('semanticStatusForEvent (pure mapping)', () => {
@@ -104,14 +113,38 @@ describe('applyCanonicalHookEvent', () => {
     const transitions: string[] = [];
     tapAgentSemanticStatus((entry) => transitions.push(entry.status));
 
-    applyCanonicalHookEvent({ sessionId: 'pty-1', event: start });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
     applyCanonicalHookEvent({ sessionId: 'pty-1', event: permission });
-    applyCanonicalHookEvent({ sessionId: 'pty-1', event: start });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
     applyCanonicalHookEvent({ sessionId: 'pty-1', event: stop });
 
     expect(transitions).toEqual(['working', 'awaiting-input', 'working', 'completed']);
     expect(getAgentSemanticStatus('pty-1')?.status).toBe('completed');
     expect(harness.publish).toHaveBeenLastCalledWith('pty-1', 'idle');
+  });
+
+  it('keeps a permission latch across parallel non-interactive tool starts', () => {
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: permission });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: start });
+
+    expect(getAgentSemanticStatus('pty-1')?.status).toBe('awaiting-input');
+    expect(isSessionInjectableIdle('pty-1')).toBe(false);
+
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: userSubmit });
+    expect(getAgentSemanticStatus('pty-1')?.status).toBe('working');
+    harness.state = 'busy';
+    expect(isSessionInjectableIdle('pty-1')).toBe(false);
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: stop });
+    harness.state = 'idle';
+    expect(isSessionInjectableIdle('pty-1')).toBe(true);
+  });
+
+  it('does not let an unrelated idle notification clear a permission latch', () => {
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: permission });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: idlePrompt });
+
+    expect(getAgentSemanticStatus('pty-1')?.status).toBe('awaiting-input');
+    expect(isSessionInjectableIdle('pty-1')).toBe(false);
   });
 
   it('fires transition taps only on CHANGE — hook re-asserts are silent', () => {
@@ -170,7 +203,7 @@ describe('resetAgentStatusOnExit', () => {
 
     resetAgentStatusOnExit('pty-9');
 
-    expect(getAgentSemanticStatus('pane-9')?.status).toBe('idle');
+    expect(getAgentSemanticStatus('pane-9')).toBeNull();
     expect(transitions).toEqual(['working', 'idle']);
   });
 

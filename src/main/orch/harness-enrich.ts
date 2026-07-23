@@ -24,6 +24,8 @@ export interface EnrichableItem {
 }
 
 export const ENRICH_CHUNK_SIZE = 16;
+export const ENRICH_MAX_ITEMS = 512;
+const ENRICH_MAX_CHUNK_SIZE = 64;
 const ENRICH_RETRY_CHUNK_SIZE = 8;
 const BLURB_MAX = 160;
 const WHEN_MAX = 120;
@@ -139,6 +141,17 @@ export interface RunEnrichOptions {
   chunkSize?: number;
   prev?: EnrichedCatalog | null;
   now?: () => number;
+  signal?: AbortSignal;
+  assertCurrentAuthority?: () => void;
+}
+
+function assertEnrichAuthority(
+  options: Pick<RunEnrichOptions, 'signal' | 'assertCurrentAuthority'>,
+): void {
+  options.assertCurrentAuthority?.();
+  if (!options.signal?.aborted) return;
+  if (options.signal.reason instanceof Error) throw options.signal.reason;
+  throw new Error('harness enrichment authority was revoked');
 }
 
 /**
@@ -147,21 +160,44 @@ export interface RunEnrichOptions {
  */
 export async function runHarnessEnrich(
   items: EnrichableItem[],
-  chat: (messages: Array<{ role: string; content: string }>) => Promise<string>,
+  chat: (
+    messages: Array<{ role: string; content: string }>,
+    signal?: AbortSignal,
+  ) => Promise<string>,
   opts: RunEnrichOptions = {},
 ): Promise<EnrichedCatalog> {
   const { chunkSize = ENRICH_CHUNK_SIZE, prev = null, now = Date.now } = opts;
+  assertEnrichAuthority(opts);
+  if (items.length > ENRICH_MAX_ITEMS) {
+    throw new Error(
+      `harness inventory exceeds ${ENRICH_MAX_ITEMS} installed items`,
+    );
+  }
+  if (
+    !Number.isInteger(chunkSize) ||
+    chunkSize < 1 ||
+    chunkSize > ENRICH_MAX_CHUNK_SIZE
+  ) {
+    throw new Error(
+      `harness chunk size must be between 1 and ${ENRICH_MAX_CHUNK_SIZE}`,
+    );
+  }
   const inventory = [
     ...new Map(items.map((item) => [`${item.kind}:${item.name}`, item])).values(),
   ];
   const fresh: EnrichedItem[] = [];
   for (const chunk of chunkItems(inventory, chunkSize)) {
+    assertEnrichAuthority(opts);
     let parsed: EnrichedItem[] = [];
     try {
-      const raw = await chat(buildEnrichMessages(chunk));
+      const raw = await chat(buildEnrichMessages(chunk), opts.signal);
+      assertEnrichAuthority(opts);
       parsed = parseEnrichResponse(raw, chunk);
       fresh.push(...parsed);
     } catch (err) {
+      // Provider failures degrade to deterministic annotations; an authority
+      // revocation is different and must terminate the operation fail-closed.
+      assertEnrichAuthority(opts);
       console.warn(
         '[harness] chunk de enriquecimento falhou (tentando lacunas):',
         err instanceof Error ? err.message : err,
@@ -174,10 +210,13 @@ export async function runHarnessEnrich(
     const covered = new Set(parsed.map((entry) => `${entry.kind}:${entry.name}`));
     const missing = chunk.filter((entry) => !covered.has(`${entry.kind}:${entry.name}`));
     for (const retryChunk of chunkItems(missing, ENRICH_RETRY_CHUNK_SIZE)) {
+      assertEnrichAuthority(opts);
       try {
-        const raw = await chat(buildEnrichMessages(retryChunk));
+        const raw = await chat(buildEnrichMessages(retryChunk), opts.signal);
+        assertEnrichAuthority(opts);
         fresh.push(...parseEnrichResponse(raw, retryChunk));
       } catch (err) {
+        assertEnrichAuthority(opts);
         console.warn(
           '[harness] retry de enriquecimento falhou (seguindo):',
           err instanceof Error ? err.message : err,
@@ -191,6 +230,7 @@ export async function runHarnessEnrich(
       fresh.push(fallbackEnrichedItem(item));
     }
   }
+  assertEnrichAuthority(opts);
   const installed = new Set(
     inventory.map((item) => `${item.kind}:${item.name}`),
   );
@@ -281,19 +321,55 @@ export function saveEnrichedCatalog(cat: EnrichedCatalog): void {
  * Borda: enriquece o arsenal INSTALADO usando a cadeia de brain providers
  * (Gemini → OpenAI → Groq). Lazy requires mantêm o módulo testável.
  */
-export async function runHarnessEnrichWithBrain(): Promise<EnrichedCatalog> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { listInstalledCatalogItems } = require('./catalog') as typeof import('./catalog');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { chatViaBrainChain } = require('../voice/jarvis-brain') as typeof import('../voice/jarvis-brain');
-  const items: EnrichableItem[] = listInstalledCatalogItems()
+export interface RunHarnessEnrichWithBrainOptions {
+  readonly signal?: AbortSignal;
+  readonly assertCurrentAuthority?: () => void;
+  readonly listInstalledItems?: () => ReadonlyArray<{
+    readonly name: string;
+    readonly kind: string;
+  }>;
+  readonly chat?: (
+    messages: Array<{ role: string; content: string }>,
+    signal?: AbortSignal,
+  ) => Promise<string>;
+  readonly loadPrevious?: () => EnrichedCatalog | null;
+  readonly save?: (catalog: EnrichedCatalog) => void;
+}
+
+export async function runHarnessEnrichWithBrain(
+  options: RunHarnessEnrichWithBrainOptions = {},
+): Promise<EnrichedCatalog> {
+  const listInstalledItems = options.listInstalledItems ?? (() => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { listInstalledCatalogItems } = require('./catalog') as typeof import('./catalog');
+    return listInstalledCatalogItems();
+  });
+  const chat = options.chat ?? ((
+    messages: Array<{ role: string; content: string }>,
+    signal?: AbortSignal,
+  ) => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { chatViaBrainChain } = require('../voice/jarvis-brain') as typeof import('../voice/jarvis-brain');
+    return chatViaBrainChain(messages, 4_000, undefined, signal);
+  });
+  const loadPrevious = options.loadPrevious ?? loadEnrichedCatalog;
+  const save = options.save ?? saveEnrichedCatalog;
+
+  assertEnrichAuthority(options);
+  const items: EnrichableItem[] = listInstalledItems()
     .filter((i) => i.kind === 'agent' || i.kind === 'skill')
     .map((i) => ({ name: i.name, kind: i.kind as 'agent' | 'skill' }));
+  assertEnrichAuthority(options);
   const result = await runHarnessEnrich(
     items,
-    (messages) => chatViaBrainChain(messages, 4_000),
-    { prev: loadEnrichedCatalog() },
+    chat,
+    {
+      prev: loadPrevious(),
+      signal: options.signal,
+      assertCurrentAuthority: options.assertCurrentAuthority,
+    },
   );
-  saveEnrichedCatalog(result);
+  assertEnrichAuthority(options);
+  save(result);
   return result;
 }

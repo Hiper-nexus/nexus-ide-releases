@@ -78,4 +78,52 @@ describe('automated review session registry', () => {
       missionId: 'mission-a', checkoutPath: '/candidate',
     }, [])).toThrow(/every code author/i);
   });
+
+  it('cancels a pending wait immediately when review authority is revoked', async () => {
+    const registry = new AutomatedReviewSessionRegistry();
+    const id = registry.open({
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+      risk: 'medium',
+      binding,
+      author: {
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      },
+      persist: () => {},
+    });
+    const controller = new AbortController();
+    const waiting = registry.wait(id, 10 * 60_000, controller.signal);
+
+    controller.abort(new Error('review authority revoked'));
+
+    await expect(waiting).rejects.toThrow(/authority revoked/i);
+    registry.close(id);
+  });
+
+  it('detects callback-only authority revocation without waiting for the review timeout', async () => {
+    const registry = new AutomatedReviewSessionRegistry();
+    const id = registry.open({
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+      risk: 'medium',
+      binding,
+      author: {
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      },
+      persist: () => {},
+    });
+    let revoked = false;
+    const waiting = registry.wait(id, 10 * 60_000, undefined, () => {
+      if (revoked) throw new Error('review authority revoked');
+    });
+
+    revoked = true;
+
+    await expect(waiting).rejects.toThrow(/authority revoked/i);
+    registry.close(id);
+  });
 });

@@ -28,7 +28,7 @@ export type AgentDistribution = (typeof AGENT_DISTRIBUTION)[number];
 
 export const progressiveLaunchSchema = z
   .object({
-    mode: z.enum(WORK_MODES).default('terminal-only'),
+    mode: z.enum(WORK_MODES).default('missions'),
     paneCount: z
       .number()
       .int()
@@ -36,8 +36,8 @@ export const progressiveLaunchSchema = z
         (LAYOUT_PANE_COUNTS as readonly number[]).includes(n),
       )
       .default(1),
-    agentDistribution: z.enum(AGENT_DISTRIBUTION).default('none'),
-    openWithoutAi: z.boolean().default(true),
+    agentDistribution: z.enum(AGENT_DISTRIBUTION).default('one-of-each'),
+    openWithoutAi: z.boolean().default(false),
     presetName: z.string().max(128).optional(),
     recentWorkspacePath: z.string().max(4096).optional(),
   })

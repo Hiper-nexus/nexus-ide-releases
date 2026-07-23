@@ -17,15 +17,13 @@ const squad: Squad = {
 };
 
 describe('mission kickoff context/PREVC contract', () => {
-  it('orders context, frozen contract, worktrees, merge review and final validation', () => {
+  it('orders context, frozen contract and one sealed plan owned by the main dispatcher', () => {
     const prompt = buildMissionKickoffPrompt(squad, 'mission-a');
     const orderedTools = [
       'nexus_context_doctor',
       'nexus_mission_freeze_contract',
-      'nexus_task create',
-      'nexus_worktree_create',
-      'nexus_pane_spawn',
-      'nexus_merge_task',
+      'nexus_task plan',
+      'nexus_handoff_list',
     ];
     let previous = -1;
     for (const tool of orderedTools) {
@@ -34,11 +32,11 @@ describe('mission kickoff context/PREVC contract', () => {
       previous = index;
     }
     expect(prompt).toContain('Nunca invente regra de negócio');
-    expect(prompt).toContain('NÃO confiável');
+    expect(prompt).toContain('receipts imutáveis');
     expect(prompt).toMatch(/Nunca declare done manualmente sem PREVC|declare a missão done manualmente/i);
     expect(prompt).toContain('PILOTO AUTOMÁTICO');
     expect(prompt).toContain('blast radius');
-    expect(prompt).toContain('plano sela');
+    expect(prompt).toContain('plano inteiro em UMA chamada');
     expect(prompt).toContain('DESIGN.md');
     expect(prompt).toContain('nexus_design_system_search/get/import');
     expect(prompt).toContain('Orientação estrutural do repositório');
@@ -51,10 +49,13 @@ describe('mission kickoff context/PREVC contract', () => {
     expect(prompt).not.toContain('Só claude/glm/longcat');
     expect(prompt).not.toContain('gpt-5.4-mini');
     expect(prompt).not.toContain('gpt-5.5');
-    expect(prompt).toContain('same_checkout');
-    expect(prompt).toContain('NUNCA peça `git stash`');
-    expect(prompt).toContain('nexus_pane_spawn');
-    expect(prompt).toContain('um worker escritor por vez');
+    expect(prompt).toContain('NUNCA peça stash/reset/limpeza');
+    expect(prompt).toContain('dispatcher durável do main');
+    expect(prompt).toContain('NÃO crie worktree');
+    expect(prompt).toContain('NÃO spawne worker');
+    expect(prompt).toContain('agentRef');
+    expect(prompt).toContain('executionMode');
+    expect(prompt).not.toContain('nexus_task create');
   });
 
   it('forbids done without PREVC while the mission is already running', () => {

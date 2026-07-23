@@ -10,27 +10,34 @@ import {
   ptyRecoverSchema,
 } from "../../shared/ipc";
 import type { SpawnResult } from "../../shared/types";
-import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
-import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import {
   spawnSession,
   spawnAgentSession,
+  adoptMainOwnedAgentSession,
+  listAgentSessionsForPane,
   writeSession,
   resizeSession,
   killSession,
+  orchTerminateSession,
   acknowledgeSessionOutput,
   recoverSessionOutput,
   setPtyHost,
 } from "./pty-manager";
 import { createRealPtyHost } from "./pty-host-client";
 import { getAdapter, isAdapterInstalled } from "../adapters/adapter-registry";
-import type { CliRpcAdapter } from "../../shared/adapter-types";
+import type {
+  CliPtyAdapter,
+  CliRpcAdapter,
+} from "../../shared/adapter-types";
 import {
   acknowledgeOmpRpcPaneOutput,
+  canRendererControlOmpRpcPane,
   isOmpRpcPaneOwnedBy,
   killOmpRpcPane,
+  listOmpRpcSessions,
   recoverOmpRpcPaneOutput,
   spawnOmpRpcPane,
+  terminateOmpRpcSession,
   writeOmpRpcPaneInput,
 } from "../adapters/omp-rpc-ipc";
 import { prepareProviderSpawn } from "../persistence/provider-config-store";
@@ -38,20 +45,26 @@ import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace
 import { trackManagedSession } from "../adapters/managed-credentials";
 import { isFileAuthAdapter } from "../adapters/managed-credentials";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
+import { attachSessionScope } from "../orch/pane-registry";
 import {
-  attachOrchMeta,
-  attachSessionScope,
-  bindPendingSpawnSession,
-  claimPendingSpawnMeta,
-} from "../orch/pane-registry";
-import { createScopedMissionPaneStore } from "../orch/mission-pane-store";
-import { createScopedMissionStore } from "../orch/mission-store";
-import { listSquads } from "../orch/squad-store";
+  assertMainOwnedAgentSpawnGrantActive,
+  authorizeMainOwnedAgentSpawn,
+  resolveMainOwnedAgentSpawn,
+  settleSpawnedMainOwnedAgentSession,
+  type ResolvedMainOwnedAgentSpawn,
+} from "../orch/main-owned-agent-spawn";
 import {
-  type BoundSpawnAuthority,
-  bindSpawnAuthority,
-  isKnownLegacySquadSpawnRequest,
-} from "../orch/spawn-authority";
+  requiresReadOnlyNativeAuthority,
+  supportsEnforceableReadOnlyNativeAuthority,
+} from "./autonomous-cli-policy";
+import { resolveCwdForScope } from "../orch/workspace-path";
+import { getTerminalSettings } from "../persistence/settings-store";
+import {
+  listAvailableShells,
+  resolveConfiguredShell,
+} from "../persistence/shell-catalog";
+import { getCommandBlockTracker } from "../terminal/command-block-tracker";
+import { registerCommandBlockScope } from "../terminal/command-block-scope-registry";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 
@@ -61,176 +74,277 @@ export function configurePtyProjectRuntimeManager(
   projectRuntimeManager = runtimeManager;
 }
 
-function findPersistedPane(owner: WebContents, paneId: string) {
-  if (!projectRuntimeManager) {
-    throw new Error("project-scoped PTY runtime is not initialized");
-  }
-  const scope = requireRendererWorkspaceScope(owner);
-  return createScopedMissionPaneStore(
-    projectRuntimeManager,
-    scope,
-  ).findByPaneId(paneId);
-}
-import { resolveCwdForScope } from "../orch/workspace-path";
-import {
-  getOrchSettings,
-  getTerminalSettings,
-} from "../persistence/settings-store";
-import {
-  listAvailableShells,
-  resolveConfiguredShell,
-} from "../persistence/shell-catalog";
-import { getCommandBlockTracker } from "../terminal/command-block-tracker";
-import { registerCommandBlockScope } from "../terminal/command-block-scope-registry";
-
-function bindMissionLaunchAuthority(
-  authority: BoundSpawnAuthority,
-  requestedMissionId: string | undefined,
-): BoundSpawnAuthority {
-  const boundMissionId = authority.context?.missionId;
+function assertNoLivePhysicalPaneProcess(
+  spawn: ResolvedMainOwnedAgentSpawn,
+): void {
+  const paneId = spawn.persistedPane?.paneId;
   if (
-    requestedMissionId &&
-    boundMissionId &&
-    requestedMissionId !== boundMissionId
+    paneId &&
+    (listAgentSessionsForPane(paneId).length > 0 ||
+      listOmpRpcSessions().some(
+        (session) =>
+          session.paneId === paneId && session.state !== "exited",
+      ))
   ) {
-    throw new Error("spawn mission does not match main-owned authority");
+    throw new Error(
+      "live physical mission process still owns this pane; " +
+        "replacement is denied until main observes its exact exit",
+    );
   }
-  const missionId = requestedMissionId ?? boundMissionId;
-  if (missionId) {
-    if (authority.source === "direct-user" || !authority.context) {
-      throw new Error("mission agent spawn requires main-owned role authority");
-    }
-    if (!projectRuntimeManager) {
-      throw new Error("project-scoped PTY runtime is not initialized");
-    }
-    const coordinationScope = authority.coordinationScope ?? authority.scope;
-    const mission = createScopedMissionStore(
-      projectRuntimeManager,
-      coordinationScope,
-    ).get(missionId);
-    if (!mission) {
-      throw new Error("mission not found for spawn authority");
-    }
-    if (
-      authority.context.squadId &&
-      mission.squadId !== authority.context.squadId
-    ) {
-      throw new Error("mission squad does not match spawn authority");
-    }
-    if (!hasCurrentDispatchAuthority(mission)) {
-      throw new Error(
-        "approval_required: mission current intent is not authorized for agent spawn",
-      );
-    }
-    return Object.freeze({
-      ...authority,
-      context: Object.freeze({ ...authority.context, missionId }),
-    });
-  }
-
-  if (authority.source === "legacy-squad") {
-    const squadId = authority.context?.squadId;
-    const isImmediateException =
-      squadId === PET_STUDIO_SQUAD_ID ||
-      getOrchSettings().intentFirstMissionRuntimeV1 === false;
-    if (!isImmediateException) {
-      throw new Error(
-        "intent-first: immediate squad spawn is not authorized",
-      );
-    }
-  }
-  return authority;
 }
 
-/**
- * cli-rpc agent spawn: mirrors the cli-pty authority pipeline exactly
- * (pending claim → persisted pane → scope resolution → mission binding) but
- * hosts the session over RPC pipes instead of a PTY. Sibling block so the
- * PTY path stays byte-for-byte untouched.
- */
 async function spawnCliRpcAgentPane(
   sender: WebContents,
-  req: import("zod").infer<typeof spawnRequestSchema>,
   adapter: CliRpcAdapter,
+  spawn: ResolvedMainOwnedAgentSpawn,
 ): Promise<SpawnResult> {
-  if (!isAdapterInstalled(adapter.id)) {
-    return {
-      ok: false,
-      error: `${adapter.label} not found. Install: ${adapter.install.command}`,
-    };
-  }
   try {
-    const pending = req.orchRequestId
-      ? claimPendingSpawnMeta(req.orchRequestId, sender)
-      : null;
-    const persistedPane =
-      (req.resume || req.restorePersistedAuthority) && req.paneId
-        ? findPersistedPane(sender, req.paneId)
-        : null;
-    if (persistedPane && persistedPane.adapterId !== adapter.id) {
+    const {
+      request,
+      authority,
+      pending,
+      recovery,
+      persistedPane,
+    } = spawn;
+    if (persistedPane && request.resume) {
       throw new Error(
-        "persisted pane adapter does not match spawn request",
+        "exact main-owned provider session is unavailable for RPC mission resume",
       );
     }
-    const squads = listSquads();
-    const knownLegacySquadRequest = Boolean(
-      req.orchRequestId &&
-        isKnownLegacySquadSpawnRequest(req.orchRequestId, squads),
-    );
-    const orchRequestId =
-      req.orchRequestId && !pending && !persistedPane && !knownLegacySquadRequest
-        ? undefined
-        : req.orchRequestId;
-    const needsActiveScope = !pending?.scope && !persistedPane?.scope;
-    const trustedUserScope = needsActiveScope
-      ? requireRendererWorkspaceScope(sender)
-      : null;
-    const authority = bindMissionLaunchAuthority(
-      bindSpawnAuthority({
-        requestId: orchRequestId,
-        pending,
-        squads,
-        persistedPane,
-        trustedUserScope,
-        requestedCwd: req.cwd,
-      }),
-      req.missionId,
-    );
+    if (
+      persistedPane?.role === "worker" &&
+      persistedPane.workerIncarnationId
+    ) {
+      throw new Error(
+        "worker_incarnation_lost: o processo exato desta encarnação não pode " +
+          "ser adotado; o Nexus não reutiliza uma identidade física em outro worker",
+      );
+    }
+    if (
+      requiresReadOnlyNativeAuthority({
+        source: authority.source,
+        role: authority.context?.role,
+        contextRevision: authority.context?.contextRevision,
+        readOnly: authority.context?.readOnly,
+        nativeReadOnly: authority.context?.nativeReadOnly,
+      })
+    ) {
+      throw new Error(
+        `adapter ${adapter.id} RPC cannot enforce native read-only authority`,
+      );
+    }
+    if (!isAdapterInstalled(adapter.id)) {
+      throw new Error(
+        `${adapter.label} not found. Install: ${adapter.install.command}`,
+      );
+    }
+    assertNoLivePhysicalPaneProcess(spawn);
     const spawned = await spawnOmpRpcPane({
       owner: sender,
       scope: authority.scope,
       workspaceRoot: authority.cwd,
-      paneId: req.paneId,
-      model: req.model,
-      missionId: authority.context?.missionId ?? req.missionId,
+      paneId: request.paneId,
+      title: persistedPane?.title ?? authority.context?.agentName,
+      agentName: authority.context?.agentName,
+      model: request.model,
+      missionId:
+        authority.context?.missionId ?? request.missionId,
+      workerIncarnationId: authority.context?.workerIncarnationId,
+      allowedTools: authority.context?.allowedTools,
+      assertAuthority: () =>
+        assertMainOwnedAgentSpawnGrantActive({
+          owner: sender,
+          requestId: request.orchRequestId,
+          pending,
+          recovery,
+        }),
     });
     if (!spawned.ok) throw new Error(spawned.error);
     const { sessionId } = spawned;
-    if (
-      authority.source === "pending" &&
-      (!req.orchRequestId ||
-        !bindPendingSpawnSession(req.orchRequestId, sender, sessionId))
-    ) {
-      killOmpRpcPane(sessionId);
-      throw new Error(
-        "orchestration request could not bind spawned RPC session",
-      );
-    }
-    attachSessionScope(sessionId, authority.scope);
-    if (persistedPane && req.paneId) {
-      attachOrchMeta(sender, req.paneId, {
-        missionId: persistedPane.missionId,
-        agentName: persistedPane.agentName,
-        role: persistedPane.role,
-        scope: persistedPane.scope,
-        executionScope: persistedPane.executionScope,
-        allowedTools: persistedPane.allowedTools,
-        allowedSkills: persistedPane.allowedSkills,
-      });
-    }
+    const settlement = settleSpawnedMainOwnedAgentSession({
+      backend: "RPC",
+      owner: sender,
+      requestId: request.orchRequestId,
+      sessionId,
+      authority,
+      pending,
+      recovery,
+      persistedPane,
+      terminate: () => terminateOmpRpcSession(sessionId),
+    });
+    if (settlement) return settlement;
     return { ok: true, sessionId };
   } catch (err) {
     const message = err instanceof Error ? err.message : "failed to spawn agent";
+    return { ok: false, error: message };
+  }
+}
+
+function bindCommandTracking(
+  sessionId: string,
+  paneId: string,
+  adapterId: string,
+  spawn: ResolvedMainOwnedAgentSpawn,
+): void {
+  registerCommandBlockScope(sessionId, spawn.authority.scope);
+  getCommandBlockTracker()?.bindSession(sessionId, {
+    paneId,
+    workspaceId: spawn.authority.scope.checkoutId,
+    shell: adapterId,
+    cwd: spawn.authority.cwd,
+    projectRoot: spawn.authority.scope.rootRealPath,
+    missionId: spawn.authority.context?.missionId,
+  });
+}
+
+function spawnCliPtyAgentPane(
+  sender: WebContents,
+  adapter: CliPtyAdapter,
+  spawn: ResolvedMainOwnedAgentSpawn,
+): SpawnResult | Promise<SpawnResult> {
+  try {
+    const {
+      request,
+      authority,
+      pending,
+      recovery,
+      persistedPane,
+    } = spawn;
+    const nativeReadOnly = requiresReadOnlyNativeAuthority({
+      source: authority.source,
+      role: authority.context?.role,
+      contextRevision: authority.context?.contextRevision,
+      readOnly: authority.context?.readOnly,
+      nativeReadOnly: authority.context?.nativeReadOnly,
+    });
+    if (
+      nativeReadOnly &&
+      !supportsEnforceableReadOnlyNativeAuthority(adapter)
+    ) {
+      throw new Error(
+        `adapter ${adapter.id} cannot enforce native read-only authority`,
+      );
+    }
+    const preparation = prepareProviderSpawn(adapter.id, {
+      effort: request.effort,
+      accountId: request.accountId,
+      model: request.model,
+    });
+    if (!preparation.ok) {
+      throw new Error(preparation.error);
+    }
+    const { overrides } = preparation;
+    if (!overrides.binPath && !isAdapterInstalled(adapter.id)) {
+      throw new Error(
+        `${adapter.label} not found. Install: ${adapter.install.command}`,
+      );
+    }
+    const authorizedRequest = { ...request, cwd: authority.cwd };
+    const adopted =
+      persistedPane && request.paneId
+        ? adoptMainOwnedAgentSession(sender, {
+            paneId: request.paneId,
+            adapterId: adapter.id,
+            missionId: persistedPane.missionId,
+            role: persistedPane.role,
+            workerIncarnationId: persistedPane.workerIncarnationId,
+            model: request.model,
+            accountId: request.accountId,
+            effort: request.effort,
+            cwd: authority.cwd,
+            agentName: persistedPane.agentName,
+            readOnly: persistedPane.readOnly === true,
+            nativeReadOnly,
+            allowedTools:
+              persistedPane.allowedTools !== undefined
+                ? persistedPane.allowedTools
+                : persistedPane.role === "worker"
+                  ? []
+                  : null,
+            allowedSkills: persistedPane.allowedSkills ?? null,
+            authoritySeal: persistedPane.authoritySeal,
+            scope: authority.scope,
+          })
+        : null;
+    if (adopted) {
+      const settlement = settleSpawnedMainOwnedAgentSession({
+        backend: "PTY",
+        owner: sender,
+        requestId: request.orchRequestId,
+        sessionId: adopted.sessionId,
+        authority,
+        pending,
+        recovery,
+        persistedPane,
+        terminate: () => orchTerminateSession(adopted.sessionId),
+      });
+      if (settlement) return settlement;
+      bindCommandTracking(
+        adopted.sessionId,
+        request.paneId!,
+        adapter.id,
+        spawn,
+      );
+      return {
+        ok: true,
+        sessionId: adopted.sessionId,
+        adopted: true,
+        state: adopted.state,
+      };
+    }
+
+    assertNoLivePhysicalPaneProcess(spawn);
+    if (
+      persistedPane?.role === "worker" &&
+      persistedPane.workerIncarnationId
+    ) {
+      throw new Error(
+        "worker_incarnation_lost: o processo exato desta encarnação não " +
+          "está vivo; o Nexus não cria outro PTY com o mesmo nonce",
+      );
+    }
+    assertMainOwnedAgentSpawnGrantActive({
+      owner: sender,
+      requestId: request.orchRequestId,
+      pending,
+      recovery,
+    });
+    const { sessionId, resumeMode } = spawnAgentSession(
+      sender,
+      authorizedRequest,
+      adapter,
+      overrides,
+      authority,
+    );
+    if (request.accountId && isFileAuthAdapter(adapter.id)) {
+      trackManagedSession(sessionId, adapter.id, request.accountId);
+    }
+    const settlement = settleSpawnedMainOwnedAgentSession({
+      backend: "PTY",
+      owner: sender,
+      requestId: request.orchRequestId,
+      sessionId,
+      authority,
+      pending,
+      recovery,
+      persistedPane,
+      terminate: () => orchTerminateSession(sessionId),
+    });
+    if (settlement) return settlement;
+    bindCommandTracking(
+      sessionId,
+      request.paneId ?? sessionId,
+      adapter.id,
+      spawn,
+    );
+    return {
+      ok: true,
+      sessionId,
+      ...(request.resume && resumeMode ? { resumeMode } : {}),
+    };
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "failed to spawn agent";
     return { ok: false, error: message };
   }
 }
@@ -256,142 +370,35 @@ export function registerPtyIpc(): void {
     const req = parsed.data;
 
     if (req.kind === "cli-agent") {
-      if (!req.adapterId) {
-        return { ok: false, error: "cli-agent spawn requires adapterId" };
-      }
-      const adapter = getAdapter(req.adapterId);
-      if (!adapter) {
-        return { ok: false, error: `unknown adapter: ${req.adapterId}` };
-      }
-      // cli-rpc: hosted over NDJSON pipes (omp --mode rpc-ui), no PTY. Same
-      // authority pipeline; the pane streams via the normal PTY data channel.
-      if (adapter.kind === "cli-rpc") {
-        return spawnCliRpcAgentPane(event.sender, req, adapter);
-      }
-      if (adapter.kind !== "cli-pty") {
-        return {
-          ok: false,
-          error: `adapter ${req.adapterId} is not a cli-pty adapter`,
-        };
-      }
-      const preparation = prepareProviderSpawn(adapter.id, {
-        effort: req.effort,
-        accountId: req.accountId,
-        model: req.model,
-      });
-      if (!preparation.ok) {
-        return { ok: false, error: preparation.error };
-      }
-      const { overrides } = preparation;
-      // node-pty does not throw for a missing binary on macOS: it spawns and exits
-      // 1 with no output, so the pane would show a bare "process exited (code 1)".
-      // Gate on install status here to surface the actionable install command.
-      // A user-set binary path bypasses the PATH-based install check.
-      if (!overrides.binPath && !isAdapterInstalled(adapter.id)) {
-        return {
-          ok: false,
-          error: `${adapter.label} not found. Install: ${adapter.install.command}`,
-        };
-      }
       try {
-        const pending = req.orchRequestId
-          ? claimPendingSpawnMeta(req.orchRequestId, event.sender)
-          : null;
-        const persistedPane =
-          (req.resume || req.restorePersistedAuthority) && req.paneId
-            ? findPersistedPane(event.sender, req.paneId)
-            : null;
-        if (persistedPane && persistedPane.adapterId !== adapter.id) {
-          throw new Error(
-            "persisted pane adapter does not match spawn request",
-          );
-        }
-        // Stale orchRequestId after a failed/expired first spawn: the layout
-        // leaf still exists and the user hits Reiniciar. Re-throwing
-        // "unknown or expired" leaves a dead pane forever. Drop the id and
-        // bind as a direct user spawn (scope from workspace / persisted).
-        const squads = listSquads();
-        const knownLegacySquadRequest = Boolean(
-          req.orchRequestId &&
-            isKnownLegacySquadSpawnRequest(req.orchRequestId, squads),
-        );
-        const orchRequestId =
-          req.orchRequestId &&
-          !pending &&
-          !persistedPane &&
-          !knownLegacySquadRequest
-            ? undefined
-            : req.orchRequestId;
-        const needsActiveScope = !pending?.scope && !persistedPane?.scope;
-        const trustedUserScope = needsActiveScope
-          ? requireRendererWorkspaceScope(event.sender)
-          : null;
-        const authority = bindMissionLaunchAuthority(
-          bindSpawnAuthority({
-            requestId: orchRequestId,
-            pending,
-            squads,
-            persistedPane,
-            trustedUserScope,
-            requestedCwd: req.cwd,
-          }),
-          req.missionId,
-        );
-        // Downstream code receives the canonical value as defense in depth;
-        // spawnAgentSession independently ignores renderer cwd and consumes
-        // authority.cwd as the actual PTY working directory.
-        const authorizedRequest = { ...req, cwd: authority.cwd };
-        const { sessionId, resumeMode } = spawnAgentSession(
+        const envelope = authorizeMainOwnedAgentSpawn(
           event.sender,
-          authorizedRequest,
-          adapter,
-          overrides,
-          authority,
+          req,
+          projectRuntimeManager,
         );
-        // M1: track managed-account sessions so auth.json is scrubbed on exit.
-        if (req.accountId && isFileAuthAdapter(adapter.id)) {
-          trackManagedSession(sessionId, adapter.id, req.accountId);
+        const adapterId = envelope.request.adapterId;
+        if (!adapterId) {
+          return { ok: false, error: "cli-agent spawn requires adapterId" };
         }
-        if (
-          authority.source === "pending" &&
-          (!req.orchRequestId ||
-            !bindPendingSpawnSession(
-              req.orchRequestId,
-              event.sender,
-              sessionId,
-            ))
-        ) {
-          killSession(event.sender, sessionId);
-          throw new Error(
-            "orchestration request could not bind spawned PTY session",
-          );
+        const adapter = getAdapter(adapterId);
+        if (!adapter) {
+          return { ok: false, error: `unknown adapter: ${adapterId}` };
         }
-        attachSessionScope(sessionId, authority.scope);
-        if (persistedPane && req.paneId) {
-          attachOrchMeta(event.sender, req.paneId, {
-            missionId: persistedPane.missionId,
-            agentName: persistedPane.agentName,
-            role: persistedPane.role,
-            scope: persistedPane.scope,
-            executionScope: persistedPane.executionScope,
-            allowedTools: persistedPane.allowedTools,
-            allowedSkills: persistedPane.allowedSkills,
-          });
+        const spawn = resolveMainOwnedAgentSpawn(
+          event.sender,
+          envelope,
+          projectRuntimeManager,
+        );
+        if (adapter.kind === "cli-rpc") {
+          return spawnCliRpcAgentPane(event.sender, adapter, spawn);
         }
-        registerCommandBlockScope(sessionId, authority.scope);
-        getCommandBlockTracker()?.bindSession(sessionId, {
-          paneId: req.paneId ?? sessionId,
-          workspaceId: authority.scope.checkoutId,
-          shell: adapter.id,
-          cwd: authority.cwd,
-          projectRoot: authority.scope.rootRealPath,
-          missionId: authority.context?.missionId,
-        });
-        return {
-          ok: true,
-          sessionId,
-          ...(req.resume && resumeMode ? { resumeMode } : {}),
-        };
+        if (adapter.kind !== "cli-pty") {
+          return {
+            ok: false,
+            error: `adapter ${adapterId} is not a cli-pty adapter`,
+          };
+        }
+        return spawnCliPtyAgentPane(event.sender, adapter, spawn);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "failed to spawn agent";
@@ -432,10 +439,10 @@ export function registerPtyIpc(): void {
   ipcMain.on(PTY_CHANNELS.write, (event, raw) => {
     const parsed = writeSchema.safeParse(raw);
     if (parsed.success) {
-      if (
-        isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender) &&
-        writeOmpRpcPaneInput(parsed.data.sessionId, parsed.data.data)
-      ) {
+      if (isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender)) {
+        if (canRendererControlOmpRpcPane(parsed.data.sessionId, event.sender)) {
+          writeOmpRpcPaneInput(parsed.data.sessionId, parsed.data.data);
+        }
         return;
       }
       writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
@@ -445,11 +452,11 @@ export function registerPtyIpc(): void {
   ipcMain.handle(PTY_CHANNELS.writeConfirmed, (event, raw): boolean => {
     const parsed = writeSchema.safeParse(raw);
     if (!parsed.success) return false;
-    if (
-      isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender) &&
-      writeOmpRpcPaneInput(parsed.data.sessionId, parsed.data.data)
-    ) {
-      return true;
+    if (isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender)) {
+      return (
+        canRendererControlOmpRpcPane(parsed.data.sessionId, event.sender) &&
+        writeOmpRpcPaneInput(parsed.data.sessionId, parsed.data.data)
+      );
     }
     return writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
   });
@@ -470,7 +477,9 @@ export function registerPtyIpc(): void {
     const parsed = killSchema.safeParse(raw);
     if (parsed.success) {
       if (isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender)) {
-        killOmpRpcPane(parsed.data.sessionId);
+        if (canRendererControlOmpRpcPane(parsed.data.sessionId, event.sender)) {
+          killOmpRpcPane(parsed.data.sessionId);
+        }
         return;
       }
       killSession(event.sender, parsed.data.sessionId);

@@ -12,6 +12,7 @@ import { AUTO_DERIVED_CRITERION_PREFIX } from '../../shared/mission-intent';
 import type { Squad } from '../../shared/orch-types';
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -53,10 +54,15 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toContain('QA sênior (reviewer');
     expect(prompt).toContain('PILOTO AUTOMÁTICO');
     expect(prompt).toContain('nexus_mission_freeze_contract');
-    expect(prompt).toContain('nexus_merge_task');
+    expect(prompt).toContain('nexus_task plan');
+    expect(prompt).toContain('agentRef');
+    expect(prompt).toContain('executionMode');
+    expect(prompt).toMatch(/main [ée] o [uú]nico dispatcher/i);
+    expect(prompt).toMatch(/N[aã]o fa[cç]a merge manual/i);
+    expect(prompt).not.toContain('nexus_merge_task');
     expect(prompt).toContain('PREVC');
     // PREVC degrada, nunca bloqueia: freeze é best-effort em segundo plano.
-    expect(prompt).toContain('EXECUTE a tarefa diretamente');
+    expect(prompt).toContain('ORQUESTRE a execução de ponta a ponta');
     expect(prompt).toMatch(/best-effort em segundo plano/i);
     expect(prompt).toContain('NUNCA pause ou bloqueie a execução');
     expect(prompt).toMatch(/status=done: com contrato congelado, exige PREVC completo/);
@@ -254,12 +260,12 @@ describe('materializeSquadMission with existingMissionId', () => {
 });
 
 describe('legacy mission materialization compensation', () => {
-  it('removes a newly created mission when running status publication fails', async () => {
+  it('não publica status pelo renderer porque main já devolve missão running', async () => {
     const mission = {
       id: 'mission-legacy',
       title: 'Legacy',
       description: 'Legacy',
-      status: 'pending' as const,
+      status: 'running' as const,
       milestones: [],
       learnings: '',
       createdAt: 1,
@@ -287,8 +293,8 @@ describe('legacy mission materialization compensation', () => {
           removeMission,
         },
       ),
-    ).rejects.toThrow(/status store unavailable/i);
-    expect(removeMission).toHaveBeenCalledWith('mission-legacy');
+    ).resolves.toEqual({ sessionId: 'session-legacy', mission });
+    expect(removeMission).not.toHaveBeenCalled();
   });
 });
 

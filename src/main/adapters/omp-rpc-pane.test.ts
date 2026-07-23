@@ -3,6 +3,10 @@ import type { WebContents } from 'electron';
 import { PTY_CHANNELS } from '../../shared/channels';
 import { OMP_RPC_CHANNELS } from '../../shared/omp-rpc-types';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
+import {
+  bindResolvedRendererWorkspaceScope,
+  clearRendererWorkspaceScope,
+} from '../persistence/renderer-workspace-scope';
 
 /**
  * cli-rpc grid pane (P3): spawnOmpRpcPane presents an `omp --mode rpc-ui`
@@ -74,6 +78,7 @@ const h = vi.hoisted(() => {
     auditSuccess: vi.fn(),
     getAdapter: vi.fn((): undefined => undefined),
     publishSessionActivityState: vi.fn(),
+    publishExternalSessionExit: vi.fn(),
   };
 });
 
@@ -98,18 +103,23 @@ vi.mock('../jarvis/audit-log', () => ({ auditSuccess: h.auditSuccess }));
 vi.mock('./adapter-registry', () => ({ getAdapter: h.getAdapter }));
 vi.mock('../pty/pty-manager', () => ({
   publishSessionActivityState: h.publishSessionActivityState,
+  publishExternalSessionExit: h.publishExternalSessionExit,
 }));
 
 import {
   __resetOmpRpcPaneStreamsForTests,
   acknowledgeOmpRpcPaneOutput,
+  canRendererControlOmpRpcPane,
+  detachOmpRpcMissionPane,
   disposeAllOmpRpcSessions,
   isOmpRpcPaneOwnedBy,
   isOmpRpcPaneSession,
+  isOmpRpcSession,
   killOmpRpcPane,
   listOmpRpcSessions,
   recoverOmpRpcPaneOutput,
   spawnOmpRpcPane,
+  terminateOmpRpcSession,
   writeOmpRpcPaneInput,
 } from './omp-rpc-ipc';
 
@@ -202,6 +212,23 @@ describe('spawnOmpRpcPane', () => {
     expect(h.mintToken).not.toHaveBeenCalled();
     expect(listOmpRpcSessions()).toHaveLength(0);
   });
+
+  it('prompt inicial rejeitado encerra pane, sessão e gate', async () => {
+    vi.spyOn(h.FakeOmpRpcSession.prototype, 'prompt').mockRejectedValueOnce(
+      new Error('prompt rejeitado'),
+    );
+    const result = await spawnOmpRpcPane({
+      owner: fakeWebContents(10),
+      scope: scopeA,
+      workspaceRoot: scopeA.rootRealPath,
+      prompt: 'começar',
+    });
+
+    expect(result).toEqual({ ok: false, error: 'prompt rejeitado' });
+    expect(lastSession().disposed).toBe(true);
+    expect(listOmpRpcSessions()).toHaveLength(0);
+    expect(h.releaseSession).toHaveBeenCalledOnce();
+  });
 });
 
 describe('streaming, estado, input e kill do pane RPC', () => {
@@ -278,6 +305,65 @@ describe('streaming, estado, input e kill do pane RPC', () => {
     expect(writeOmpRpcPaneInput('sessao-inexistente', 'x')).toBe(false);
   });
 
+  it('keeps a grid mission session observable but not renderer-controllable', async () => {
+    const owner = fakeWebContents(51);
+    const result = await spawnOmpRpcPane({
+      owner,
+      scope: scopeA,
+      workspaceRoot: scopeA.rootRealPath,
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-a',
+    });
+    if (!result.ok) throw new Error('spawn falhou');
+
+    expect(isOmpRpcPaneOwnedBy(result.sessionId, owner)).toBe(true);
+    expect(canRendererControlOmpRpcPane(result.sessionId, owner)).toBe(false);
+    expect(listOmpRpcSessions()).toEqual([
+      expect.objectContaining({
+        sessionId: result.sessionId,
+        missionId: 'mission-a',
+        kind: 'mission',
+      }),
+    ]);
+    expect(killOmpRpcPane(result.sessionId)).toBe(true);
+  });
+
+  it('detaches mission presentation so a reused renderer cannot observe scope A in B', async () => {
+    const owner = fakeWebContents(52);
+    bindResolvedRendererWorkspaceScope(owner, scopeA);
+    const result = await spawnOmpRpcPane({
+      owner,
+      scope: scopeA,
+      workspaceRoot: scopeA.rootRealPath,
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-a',
+    });
+    if (!result.ok) throw new Error('spawn falhou');
+    expect(listOmpRpcSessions(owner)).toHaveLength(1);
+
+    expect(detachOmpRpcMissionPane(owner, result.sessionId)).toBe(true);
+    expect(isOmpRpcPaneOwnedBy(result.sessionId, owner)).toBe(false);
+    expect(canRendererControlOmpRpcPane(result.sessionId, owner)).toBe(false);
+    owner.send.mockClear();
+    emitPush({ kind: 'text-delta', delta: 'segredo do projeto A' });
+    expect(owner.send).not.toHaveBeenCalledWith(
+      PTY_CHANNELS.data,
+      expect.objectContaining({ sessionId: result.sessionId }),
+    );
+
+    bindResolvedRendererWorkspaceScope(
+      owner,
+      testProjectScope({
+        projectId: 'project-b',
+        checkoutId: 'checkout-b',
+        rootRealPath: '/ws/b',
+      }),
+    );
+    expect(listOmpRpcSessions(owner)).toEqual([]);
+    clearRendererWorkspaceScope(owner);
+    expect(killOmpRpcPane(result.sessionId)).toBe(true);
+  });
+
   it('kill emite exit sintético, publica idle e dispõe a sessão', async () => {
     const owner = fakeWebContents(6);
     const result = await spawnOmpRpcPane({
@@ -300,6 +386,38 @@ describe('streaming, estado, input e kill do pane RPC', () => {
     expect(listOmpRpcSessions()).toHaveLength(0);
     expect(writeOmpRpcPaneInput(sessionId, 'x')).toBe(false);
     expect(killOmpRpcPane(sessionId)).toBe(false);
+  });
+
+  it('term provider só resolve depois do exit físico observado', async () => {
+    const result = await spawnOmpRpcPane({
+      owner: fakeWebContents(31),
+      scope: scopeA,
+      workspaceRoot: scopeA.rootRealPath,
+      paneId: 'pane-physical-exit',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const session = lastSession();
+    let settled = false;
+    const termination = terminateOmpRpcSession(result.sessionId, {
+      timeoutMs: 10_000,
+      pollMs: 1,
+    }).then((value) => {
+      settled = true;
+      return value;
+    });
+
+    await Promise.resolve();
+    expect(session.disposed).toBe(true);
+    expect(h.releaseSession).toHaveBeenCalledOnce();
+    expect(isOmpRpcSession(result.sessionId)).toBe(true);
+    expect(settled).toBe(false);
+
+    session.state = 'exited';
+    emitPush({ kind: 'exit', code: 0 });
+    await expect(termination).resolves.toBe(true);
+    expect(isOmpRpcSession(result.sessionId)).toBe(false);
+    expect(listOmpRpcSessions()).toEqual([]);
   });
 
   it('evento exit do processo emite exit e libera o pane', async () => {

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
-import { launchPetHatchMission } from './pet-hatch-flow';
+import { hatchPetIntent, launchPetHatchMission } from './pet-hatch-flow';
 
 describe('launchPetHatchMission', () => {
   it('usa o Pet Studio fixo em um único Codex e aguarda o launcher confirmar', async () => {
@@ -13,7 +13,7 @@ describe('launchPetHatchMission', () => {
     });
 
     expect(result).toMatchObject({ ok: true, paneId: 'pane-1' });
-    expect(result.squad?.orchestratorInstructions).toContain('/ws/cat.png');
+    expect(result.squad?.orchestratorInstructions).not.toContain('/ws/cat.png');
     expect(result.squad?.agents).toHaveLength(1);
     expect(result.squad?.agents[0]).toMatchObject({
       cli: 'codex',
@@ -23,7 +23,12 @@ describe('launchPetHatchMission', () => {
     expect(launchSquad).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'nexus-pet-studio' }),
       [],
-      { profile: 'pet-studio', adapterId: 'codex' },
+      {
+        profile: 'pet-studio',
+        adapterId: 'codex',
+        missionTitle: 'Criar mascote cat',
+        missionGoal: hatchPetIntent('/ws/cat.png'),
+      },
     );
   });
 
@@ -78,7 +83,12 @@ describe('launchPetHatchMission', () => {
         ],
       }),
       [],
-      { profile: 'pet-studio', adapterId: 'codex' },
+      {
+        profile: 'pet-studio',
+        adapterId: 'codex',
+        missionTitle: 'Criar mascote cat',
+        missionGoal: hatchPetIntent('/ws/cat.png'),
+      },
     );
   });
 });

@@ -31,6 +31,19 @@ export const agentCategorySchema = z.enum([
 ]);
 export type AgentCategory = z.infer<typeof agentCategorySchema>;
 
+const INVISIBLE_AUTHORITY_CONTROL_RE =
+  /[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u;
+
+function authorityString(max: number, label: string, min = 0) {
+  return z
+    .string()
+    .min(min)
+    .max(max)
+    .refine((value) => !INVISIBLE_AUTHORITY_CONTROL_RE.test(value), {
+      message: `${label} contains an invisible control or bidi character`,
+    });
+}
+
 /** providerId → adapter id (builtin mapping). */
 const PROVIDER_ID_TO_CLI: Record<string, string> = {
   'claude-cli': 'claude',
@@ -55,40 +68,82 @@ export const squadAgentSchema = z.preprocess(
     return raw;
   },
   z.object({
-    id: z.string().min(1).max(128),
-    agentName: z.string().min(1).max(128),
+    id: authorityString(128, 'agent id', 1),
+    agentName: authorityString(128, 'agent name', 1),
     category: agentCategorySchema,
     /** Adapter id (claude, codex, agy, …) that backs this agent. */
-    cli: z.string().min(1).max(64),
-    providerId: z.string().max(128).optional(),
-    model: z.string().max(128).optional(),
+    cli: authorityString(64, 'agent cli', 1),
+    providerId: authorityString(128, 'agent provider id').optional(),
+    model: authorityString(128, 'agent model').optional(),
     // CLI-owned capability: new levels (for example Codex `ultra`) must not
     // require a Nexus release. Spawn validation still checks the adapter.
     effort: z.string().min(1).max(32).regex(/^[A-Za-z0-9_-]+$/).optional(),
     /** null/absent = unrestricted. */
-    allowedSkills: z.array(z.string().max(128)).nullable().optional(),
-    allowedTools: z.array(z.string().max(128)).nullable().optional(),
+    allowedSkills: z
+      .array(authorityString(128, 'allowed skill'))
+      .max(128)
+      .nullable()
+      .optional(),
+    allowedTools: z
+      .array(authorityString(128, 'allowed tool'))
+      .max(128)
+      .nullable()
+      .optional(),
   }),
 );
 export type SquadAgent = z.infer<typeof squadAgentSchema>;
 
-export const squadSchema = z.object({
-  id: z.string().min(1).max(128),
-  name: z.string().min(1).max(256),
-  // Some exports write epoch-ms numbers here; others use ISO strings.
-  createdAt: z
-    .union([z.string().max(64), z.number()])
-    .transform((value) => String(value)),
-  builtin: z.boolean().default(false),
-  orchestratorInstructions: z.string().max(65_536).default(''),
-  /** Optional per-squad native instructions — preserved as-is. */
-  nativeInstructions: z.string().max(65_536).optional(),
-  agents: z.array(squadAgentSchema).default([]),
-});
+export const squadSchema = z
+  .object({
+    id: authorityString(128, 'squad id', 1),
+    name: authorityString(256, 'squad name', 1),
+    // Some exports write epoch-ms numbers here; others use ISO strings.
+    createdAt: z
+      .union([authorityString(64, 'squad createdAt'), z.number()])
+      .transform((value) => String(value)),
+    builtin: z.boolean().default(false),
+    orchestratorInstructions: authorityString(
+      65_536,
+      'orchestrator instructions',
+    ).default(''),
+    /** Optional per-squad native instructions — preserved as-is. */
+    nativeInstructions: authorityString(
+      65_536,
+      'native instructions',
+    ).optional(),
+    agents: z.array(squadAgentSchema).max(32).default([]),
+  })
+  .superRefine((squad, ctx) => {
+    const ids = new Set<string>();
+    for (const [index, agent] of squad.agents.entries()) {
+      if (ids.has(agent.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['agents', index, 'id'],
+          message: `duplicate agent id: ${agent.id}`,
+        });
+      }
+      ids.add(agent.id);
+    }
+  });
 export type Squad = z.infer<typeof squadSchema>;
 
 /** Wire format of a squads file. */
-export const squadsFileSchema = z.object({ squads: z.array(squadSchema) });
+export const squadsFileSchema = z
+  .object({ squads: z.array(squadSchema).max(64) })
+  .superRefine((file, ctx) => {
+    const ids = new Set<string>();
+    for (const [index, squad] of file.squads.entries()) {
+      if (ids.has(squad.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['squads', index, 'id'],
+          message: `duplicate squad id: ${squad.id}`,
+        });
+      }
+      ids.add(squad.id);
+    }
+  });
 
 export const missionStatusSchema = z.enum([
   'pending',
@@ -222,8 +277,28 @@ export interface Mission {
   intentVersion?: number;
   /** Session that created the mission — receives handoffs when idle. */
   orchestratorSessionId?: string;
+  /**
+   * Latest main-owned routing trace, derived from the durable reservation
+   * ledger. Informational in the renderer; never accepted back as authority.
+   */
+  latestRoute?: MissionRouteTrace;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface MissionRouteTrace {
+  reservationId: string;
+  taskPreview: string;
+  tier: 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
+  adapterId: string;
+  model?: string;
+  effort?: string;
+  reason: string;
+  state: 'reserved' | 'consumed' | 'expired';
+  createdAt: number;
+  expiresAt: number;
+  consumedAt?: number;
+  consumedBySession?: string;
 }
 
 /** Renderer-editable subset of a Mission. Any subset of fields may be patched. */
@@ -269,6 +344,23 @@ export const handoffDeliveryStateSchema = z.enum([
 ]);
 export type HandoffDeliveryState = z.infer<typeof handoffDeliveryStateSchema>;
 
+export interface OperatorReviewAnnotation {
+  readonly path: string;
+  readonly line: number;
+  readonly body: string;
+}
+
+export interface OperatorReviewFeedbackInput {
+  readonly missionId: string;
+  readonly annotations: readonly OperatorReviewAnnotation[];
+}
+
+export interface OperatorReviewFeedbackResult {
+  readonly ok: true;
+  readonly handoffId: string;
+  readonly deliveryState: HandoffDeliveryState;
+}
+
 export interface HandoffEvidenceBinding {
   readonly missionId: string;
   readonly contextRevision: string;
@@ -284,7 +376,11 @@ export interface Handoff {
   missionId?: string;
   /** PTY session of the worker that submitted. */
   sessionId?: string;
+  /** Main-issued generation nonce for the exact physical worker process. */
+  workerIncarnationId?: string;
   fromAgent?: string;
+  /** Main-owned provenance. Renderer/MCP payloads cannot select this value. */
+  readonly authorityOrigin?: 'agent' | 'operator-confirmed';
   /** Reporter-supplied metadata. `success` never completes a mission. */
   status: HandoffStatus;
   readonly claimTrust: 'untrusted';
@@ -354,6 +450,14 @@ export type PaneActivitySummary = z.infer<typeof paneActivitySummarySchema>;
  * mission can be reopened from history with its panes restored — the CLIs
  * re-spawn with their adapter's resume flags to continue the conversations.
  */
+export interface MissionPaneAuthoritySeal {
+  readonly intentVersion: number;
+  readonly intentContractHash: string;
+  readonly contextRevision: string;
+  readonly contractHash: string;
+  readonly squadRevisionHash: string;
+}
+
 export interface MissionPaneSpec {
   id: string;
   missionId: string;
@@ -365,14 +469,28 @@ export interface MissionPaneSpec {
   cwd?: string;
   title: string;
   agentName?: string;
+  /** Exact worker generation; absent only for legacy/manual composition rows. */
+  workerIncarnationId?: string;
   role: 'orchestrator' | 'worker';
   /** Exact Nexus capability snapshot restored with this pane. */
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
+  /**
+   * Nexus MCP mutation authority; persisted so recovery cannot widen it.
+   * Provider-native confinement is derived independently from the trusted
+   * role/source at spawn time, so a delegate-only orchestrator can still use
+   * audited Nexus delegation tools.
+   */
+  readOnly?: boolean;
   /** Trusted main-side execution authority captured when the pane was created. */
   scope?: ProjectExecutionScope;
   /** Task worktree filesystem authority; defaults to scope for legacy panes. */
   executionScope?: ProjectExecutionScope;
+  /**
+   * Exact approved mission/workflow/squad revision that created this pane.
+   * Missing rows are legacy history and cannot regain mission authority.
+   */
+  authoritySeal?: MissionPaneAuthoritySeal;
   /**
    * paneId ORIGINAL do pane no layout — a captura de session-id de resume é
    * chaveada por (cwd, paneId); sem reutilizá-lo, o reopen criava ids novos e
@@ -387,6 +505,54 @@ export interface MissionPaneSpec {
    */
   activity?: PaneActivitySummary | null;
 }
+
+/** Main-sealed identity returned after the first orchestrator is materialized. */
+export interface MissionOrchestratorPane {
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly adapterId: string;
+  readonly model?: string;
+  readonly accountId?: string;
+  readonly effort?: string;
+  readonly cwd: string;
+  readonly title: string;
+  readonly agentName: string;
+  readonly role: 'orchestrator';
+}
+
+export type MissionOrchestratorBootstrapResult =
+  | {
+      readonly ok: true;
+      readonly missionId: string;
+      readonly pane: MissionOrchestratorPane;
+      readonly kickoff:
+        | { readonly accepted: true }
+        | {
+            readonly accepted: false;
+            readonly reason:
+              | 'boot_timeout'
+              | 'timeout'
+              | 'session_exited'
+              | 'write_failed'
+              | 'authority_lost';
+            readonly detail: string;
+            readonly cta: string;
+          };
+      readonly reused?: boolean;
+    }
+  | {
+      readonly ok: false;
+      readonly missionId: string;
+      readonly reason:
+        | 'not_authorized'
+        | 'squad_missing'
+        | 'preflight_failed'
+        | 'spawn_failed'
+        | 'materialization_failed'
+        | 'provider_exited';
+      readonly error: string;
+      readonly cta: string;
+    };
 
 export type PaneRuntimeState =
   | 'spawning'
@@ -416,13 +582,21 @@ export interface PaneSnapshot extends PaneRegistryEntry {
   role?: 'orchestrator' | 'worker';
   scope?: Readonly<ProjectExecutionScope>;
   executionScope?: Readonly<ProjectExecutionScope>;
+  /** Effective Nexus MCP mutation confinement mirrored from trusted pane meta. */
+  readOnly?: boolean;
+  /** Provider-native filesystem/process confinement, when enforceable. */
+  nativeReadOnly?: boolean;
 }
 
 /** Main → renderer: please create a pane and spawn its session. */
 export interface OrchPaneSpawnRequest {
   requestId: string;
+  /** Stable pane identity minted by main for this exact physical worker. */
+  paneId: string;
   adapterId: string;
   model?: string;
+  /** Exact vault account selected by main for this mission spawn. */
+  accountId?: string;
   /** Per-spawn reasoning effort (task-router decision). */
   effort?: string;
   cwd?: string;
@@ -431,6 +605,10 @@ export interface OrchPaneSpawnRequest {
   /** Agente do squad que este pane representa — exibido no badge do pane. */
   agentName?: string;
   role?: 'orchestrator' | 'worker';
+  /** New mission workers are always fresh; renderer may not select recovery. */
+  resume: false;
+  resumeLatestOnly: false;
+  restorePersistedAuthority: false;
 }
 
 /** Renderer → main: outcome of an OrchPaneSpawnRequest. */
@@ -481,9 +659,24 @@ export type MissionPaneRecoveryResult = z.infer<
 /** Main → renderer: open a browser pane in the user's layout. */
 export interface BrowserPaneOpenRequest {
   requestId: string;
+  /** Stable pane identity minted by main; renderer must not substitute it. */
+  paneId: string;
   url: string;
   title?: string;
 }
+
+/**
+ * Main → renderer cleanup for one browser-open attempt. The renderer must only
+ * close the pane when both identities still match; paneId alone is not an
+ * authority token because another workspace/request may legitimately own it.
+ */
+export interface BrowserPaneCleanupRequest {
+  paneId: string;
+  requestId: string;
+}
+
+/** Legacy/general closes remain pane-id strings; browser cleanup is sealed. */
+export type PaneCloseRequest = string | BrowserPaneCleanupRequest;
 
 export const browserPaneOpenResultSchema = z.object({
   requestId: z.string().min(1).max(128),

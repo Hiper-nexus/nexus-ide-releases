@@ -14,6 +14,10 @@ export type McpEffectPolicy =
 
 const READ_ONLY_TOOLS = new Set([
   'load_workspace_dependencies',
+  'lsp_definition',
+  'lsp_diagnostics',
+  'lsp_references',
+  'lsp_symbols',
   'agent_get',
   'agent_list',
   'browser_inspect',
@@ -49,7 +53,6 @@ const READ_ONLY_TOOLS = new Set([
   'pane_wait_idle',
   'pane_wait_many',
   'perf_snapshot',
-  'route_task',
   'sync_status',
   'system_doctor',
   'ui_read',
@@ -59,7 +62,8 @@ const READ_ONLY_TOOLS = new Set([
   'security_audit',
   // Planejamento/comunicação — NÃO são efeitos de código/contexto e não podem
   // ser reféns do freeze de contrato (caso de campo 17/07: "nem documentar o
-  // Nexus deixava"). clarify só devolve {question, chips} (zero escrita);
+  // Nexus deixava"). clarify grava somente um envelope de diálogo durável,
+  // mission-scoped e reversível (nenhuma escrita no workspace);
   // todo_manager escreve apenas na lista de tarefas local, mission-scoped e
   // reversível (mesma natureza do contador de recall do memory_recall). Um
   // agente PRECISA organizar/perguntar ANTES de congelar contexto — gatear
@@ -114,6 +118,9 @@ const DELEGATION_AUTHORITY_TOOLS = new Set([
   'agent_invoke',
   'mission_spawn_pane',
   'pane_spawn',
+  // route_task now mints a durable one-shot RouteReservation consumed by
+  // pane_spawn. It is delegation authority, not an observation.
+  'route_task',
 ]);
 
 /** PREVC state transitions whose handlers enforce mission/stage authority. */
@@ -130,6 +137,22 @@ const WORKFLOW_AUTHORITY_TOOLS = new Set([
 ]);
 
 const HANDOFF_AUTHORITY_TOOLS = new Set(['handoff_submit', 'handoff_ack']);
+
+/**
+ * Narrow Nexus metadata receipts that a read-only worker must still be able
+ * to persist. These handlers revalidate mission/reviewer/session authority
+ * and never grant workspace, process, delegation, or external side effects.
+ *
+ * Keep this list name-based rather than allowing an entire effect-policy
+ * class: a newly classified authority tool must remain denied until its
+ * handler is reviewed specifically for the read-only boundary.
+ */
+const READ_ONLY_CONTEXT_METADATA_TOOLS = new Set([
+  'context_draft_review',
+  'handoff_submit',
+  'handoff_ack',
+  'worker_heartbeat',
+]);
 
 /** Bounded local controls that do not change workspace or external data. */
 const MISSION_CONTROL_TOOLS = new Set([
@@ -197,6 +220,43 @@ export function effectPolicyForTool(toolName: string): McpEffectPolicy {
   }
   if (EXECUTION_EFFECT_TOOLS.has(canonical)) return 'execution-effect';
   return 'mission-effect';
+}
+
+/**
+ * Mechanical MCP boundary for a token minted with readOnly=true.
+ *
+ * The effect policy remains default-deny, while a tiny set of internal Nexus
+ * receipts is allowed by exact name. Allowlist/role/mission checks still run
+ * independently; this predicate only answers whether read-only authority may
+ * reach those later checks.
+ */
+export function isToolAllowedForReadOnlyContext(toolName: string): boolean {
+  const canonical = canonicalToolName(toolName);
+  return (
+    effectPolicyForTool(canonical) === 'read-only' ||
+    READ_ONLY_CONTEXT_METADATA_TOOLS.has(canonical)
+  );
+}
+
+/**
+ * Claude-family PreToolUse receives Nexus MCP calls under an
+ * `mcp__nexus__...` name. Apply the same policy there, while leaving native
+ * CLI tools and other MCP servers to their own permission/sandbox boundary.
+ */
+export function isHookMcpToolAllowedForReadOnlyContext(
+  hookToolName: string,
+): boolean {
+  const normalized = hookToolName.trim().toLowerCase();
+  const nexusMcpPrefix = 'mcp__nexus__';
+  if (normalized.startsWith(nexusMcpPrefix)) {
+    return isToolAllowedForReadOnlyContext(
+      normalized.slice(nexusMcpPrefix.length),
+    );
+  }
+  if (normalized.startsWith('nexus_')) {
+    return isToolAllowedForReadOnlyContext(normalized);
+  }
+  return true;
 }
 
 export function requiresHumanConfirmationForTool(toolName: string): boolean {

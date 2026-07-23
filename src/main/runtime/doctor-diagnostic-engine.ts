@@ -41,6 +41,7 @@ export async function diagnoseWithDoctorGrok(input: {
   jsonSchema: Record<string, unknown>;
   model?: string;
   effort?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const prompt = `${input.system}\n\n${input.user}`;
   const { stdout } = await execFileAsync(
@@ -66,6 +67,7 @@ export async function diagnoseWithDoctorGrok(input: {
       timeout: 120_000,
       maxBuffer: 2 * 1024 * 1024,
       env: process.env,
+      signal: input.signal,
     },
   );
   const output = stdout.trim();

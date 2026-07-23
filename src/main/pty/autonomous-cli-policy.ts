@@ -1,46 +1,44 @@
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 import type { SpawnAuthoritySource } from '../orch/spawn-authority';
 
-const CLAUDE_NATIVE_TOOLS = [
+const CLAUDE_MUTATING_NATIVE_TOOLS = [
   'Task',
   'Bash',
-  'Read',
   'Edit',
   'Write',
-  'Glob',
-  'Grep',
   'NotebookEdit',
-  'WebFetch',
-  'WebSearch',
 ] as const;
+const CLAUDE_FAMILY_ADAPTERS = new Set(['claude', 'glm', 'longcat']);
 
 export interface NativeEffectAuthority {
   readonly source: SpawnAuthoritySource;
   readonly role?: 'orchestrator' | 'worker' | 'user';
   readonly contextRevision?: string;
   readonly readOnly?: boolean;
+  /** Native CLI confinement independent from Nexus MCP delegation authority. */
+  readonly nativeReadOnly?: boolean;
 }
 
 /**
  * Autoridade nativa de escrita:
  * - worker vinculado a contrato congelado (contextRevision) — como sempre;
- * - ORQUESTRADOR despachado com autoridade real — mudança operacional: o
- *   fechamento da missão (commit, git push, merge de PR) é efeito legítimo
- *   do coordenador, e ele spawna ANTES do freeze (nunca teria
- *   contextRevision). Mantê-lo read-only travava push/merge no terminal
- *   sempre que os workers esgotavam (achado de operador: "o Nexus não
- *   deixava o terminal fazer git push nem merge").
- * Panes legacy-squad, reviewers com readOnly explícito e workers sem
- * contexto congelado continuam read-only, agindo só pelo MCP auditado.
+ * - usuário direto, sob a escolha explícita de permissão do provider.
+ *
+ * Orquestradores são delegate-only: planejam, delegam e integram pelas tools
+ * Nexus auditadas, mas nunca ganham Bash/Edit/git nativos no checkout base.
+ * `readOnly` continua sendo a restrição MCP completa para reviewers; o novo
+ * `nativeReadOnly` permite confinar a CLI sem negar a superfície de delegação.
  */
 export function requiresReadOnlyNativeAuthority(
   authority: NativeEffectAuthority,
 ): boolean {
-  if (authority.readOnly === true) return true;
+  if (authority.readOnly === true || authority.nativeReadOnly === true) {
+    return true;
+  }
   // A pane opened directly by the user follows the provider permission choice.
   if (authority.source === 'direct-user') return false;
+  if (authority.role === 'orchestrator') return true;
   if (authority.source === 'legacy-squad') return true;
-  if (authority.role === 'orchestrator') return false;
   return authority.role !== 'worker' || !authority.contextRevision;
 }
 
@@ -83,6 +81,35 @@ function appendOnce(args: string[], sequence: readonly string[]): void {
   if (!alreadyPresent) args.push(...sequence);
 }
 
+function declaresEnforceableReadOnly(
+  safeArgs: readonly string[],
+): boolean {
+  if (
+    safeArgs.includes('--read-only') ||
+    safeArgs.includes('--sandbox=read-only')
+  ) {
+    return true;
+  }
+  return safeArgs.some(
+    (arg, index) =>
+      arg === '--sandbox' && safeArgs[index + 1] === 'read-only',
+  );
+}
+
+/** Side-effect-free capability probe used before credential or PTY setup. */
+export function supportsEnforceableReadOnlyNativeAuthority(
+  adapter: CliPtyAdapter,
+): boolean {
+  const permission = adapter.control?.permission;
+  return (
+    adapter.id === 'codex' ||
+    (adapter.quirks?.mcpAutoload &&
+      CLAUDE_FAMILY_ADAPTERS.has(adapter.id) &&
+      permission?.arg === '--permission-mode') ||
+    declaresEnforceableReadOnly(permission?.safe ?? [])
+  );
+}
+
 function requestedFullAutoSequence(
   adapter: CliPtyAdapter,
   args: readonly string[],
@@ -121,10 +148,78 @@ export function secureAutonomousCliArgs(
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
   const safeArgs = permission?.safe ?? [];
   const requestedFullAuto = requestedFullAutoSequence(adapter, currentArgs);
+
+  /*
+   * Read-only is an authority boundary, not a provider preference. Resolve it
+   * before the writable/full-auto path and return from here so no later YOLO
+   * compatibility rule can restore a bypass flag.
+   */
+  if (readOnly) {
+    const declaresReadOnly =
+      supportsEnforceableReadOnlyNativeAuthority(adapter);
+    const codexConfinement = adapter.id === 'codex';
+    const claudeToolConfinement =
+      usesNexusOnlyTools &&
+      CLAUDE_FAMILY_ADAPTERS.has(adapter.id) &&
+      permission?.arg === '--permission-mode';
+    if (!declaresReadOnly) {
+      throw new Error(
+        `adapter ${adapter.id} does not declare enforceable read-only review confinement`,
+      );
+    }
+
+    let readOnlyArgs = [...currentArgs];
+    for (const sequence of permissionSequences(adapter)) {
+      readOnlyArgs = removeSequence(readOnlyArgs, sequence);
+    }
+    appendOnce(readOnlyArgs, safeArgs);
+
+    if (codexConfinement) {
+      // The bypass flag disables BOTH approval and sandbox. It must never
+      // coexist with a read-only authority, even when the user selected YOLO.
+      readOnlyArgs = removeSequence(readOnlyArgs, [
+        '--dangerously-bypass-approvals-and-sandbox',
+      ]);
+      readOnlyArgs = removeSequence(readOnlyArgs, [
+        '--sandbox',
+        'workspace-write',
+      ]);
+      readOnlyArgs = removeSequence(readOnlyArgs, ['--sandbox', 'read-only']);
+      appendOnce(readOnlyArgs, ['--sandbox', 'read-only']);
+    }
+
+    if (claudeToolConfinement) {
+      // Claude-family MCP autoload can stay unattended for Nexus reads without
+      // granting native mutation. `--allowedTools mcp__nexus` preserves the
+      // audited MCP surface; disallow the native escape hatches explicitly.
+      readOnlyArgs = removeSequence(readOnlyArgs, permission?.yolo ?? []);
+      // `dontAsk` denies anything not pre-approved instead of prompting. The
+      // explicit Nexus allowlist below keeps audited reads zero-click without
+      // relying on bypassPermissions.
+      for (let index = 0; index < readOnlyArgs.length; ) {
+        if (
+          readOnlyArgs[index] === permission?.arg &&
+          readOnlyArgs[index + 1] !== undefined
+        ) {
+          readOnlyArgs.splice(index, 2);
+          continue;
+        }
+        index += 1;
+      }
+      appendOnce(readOnlyArgs, ['--permission-mode', 'dontAsk']);
+      appendOnce(readOnlyArgs, ['--allowedTools', 'mcp__nexus']);
+      appendOnce(readOnlyArgs, [
+        '--disallowedTools',
+        ...CLAUDE_MUTATING_NATIVE_TOOLS,
+      ]);
+    }
+    return readOnlyArgs;
+  }
+
   if (
     !usesNexusOnlyTools &&
     safeArgs.length === 0 &&
-    (requestedFullAuto.length === 0 || readOnly)
+    requestedFullAuto.length === 0
   ) {
     throw new Error(
       `adapter ${adapter.id} does not declare enforceable autonomous confinement`,
@@ -192,24 +287,8 @@ export function secureAutonomousCliArgs(
     }
   }
 
-  if (readOnly && !usesNexusOnlyTools && requestedFullAuto.length === 0) {
-    const declaresReadOnly = safeArgs.some((arg) =>
-      /read[-_ ]?only/i.test(arg),
-    );
-    if (adapter.id !== 'codex' && !declaresReadOnly) {
-      throw new Error(
-        `adapter ${adapter.id} does not declare enforceable read-only review confinement`,
-      );
-    }
-    if (adapter.id === 'codex') {
-      args = removeSequence(args, ['--sandbox', 'workspace-write']);
-      appendOnce(args, ['--sandbox', 'read-only']);
-    }
-  }
-
   if (usesNexusOnlyTools) {
     args.push('--allowedTools', 'mcp__nexus');
-    if (readOnly) args.push('--disallowedTools', ...CLAUDE_NATIVE_TOOLS);
   }
   return args;
 }

@@ -170,6 +170,36 @@ describe('nexus_editor_apply_patch (hashline patch bus)', () => {
     );
   });
 
+  it('revokes after prepare and performs zero filesystem writes', async () => {
+    const read = (await readTool().handler(
+      { path: 'patch-me.ts', hashline: true },
+      fakeCtx(),
+    )) as { header: string };
+    let authorityChecks = 0;
+
+    await expect(
+      applyTool().handler(
+        { patch: `${read.header}\nSWAP 2.=2:\n+BETA` },
+        fakeCtx(),
+        {
+          assertCurrentAuthority: () => {
+            authorityChecks += 1;
+            // First check is the handler boundary. The second is Patcher.commit,
+            // after parsing/read/tag validation and immediately before writeText.
+            if (authorityChecks === 2) {
+              throw new Error('session_authority_revoked');
+            }
+          },
+        },
+      ),
+    ).rejects.toThrow('session_authority_revoked');
+
+    expect(authorityChecks).toBe(2);
+    expect(fs.readFileSync(path.join(wsDir, 'patch-me.ts'), 'utf-8')).toBe(
+      'alpha\nbeta\ngamma\n',
+    );
+  });
+
   it('rejects a stale tag with the mismatch context and leaves the file untouched', async () => {
     const read = (await readTool().handler(
       { path: 'patch-me.ts', hashline: true },

@@ -2,8 +2,14 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { requestPaneClose } from '../orch/pane-registry';
 import { spawnPaneAndMaybePrompt } from '../orch/tool-util';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolInvocation,
+} from '../orch/mcp-protocol';
 import { routeTask, type TaskTier } from '../orch/task-router';
 import { getAdapter } from '../adapters/adapter-registry';
+import { isOmpRpcSession } from '../adapters/omp-rpc-ipc';
+import { getSessionState } from '../pty/pty-manager';
 import type { MissionContract } from './contract-compiler';
 import {
   automatedReviewSessions,
@@ -30,6 +36,8 @@ export interface RunAutomatedReviewInput {
   readonly additionalAuthors?: readonly WorkflowActorIdentity[];
   readonly contextMarkdown: string;
   readonly persist: (report: ReviewReport) => void;
+  readonly signal?: AbortSignal;
+  readonly assertCurrentAuthority?: () => void;
 }
 
 export interface CliAutomatedReviewerDependencies {
@@ -37,9 +45,10 @@ export interface CliAutomatedReviewerDependencies {
   readonly selectRoutes?: (
     contract: MissionContract,
     authorProviders: readonly string[],
-  ) => readonly ReviewerRoute[];
+  ) => readonly ReviewerRoute[] | Promise<readonly ReviewerRoute[]>;
   readonly spawn?: typeof spawnPaneAndMaybePrompt;
-  readonly close?: (paneId: string) => boolean;
+  readonly close?: (paneId: string) => boolean | Promise<boolean>;
+  readonly isSessionLive?: (sessionId: string) => boolean;
   readonly timeoutMs?: number;
 }
 
@@ -151,7 +160,8 @@ export class CliAutomatedReviewer {
   readonly #sessions: AutomatedReviewSessionRegistry;
   readonly #selectRoutes: NonNullable<CliAutomatedReviewerDependencies['selectRoutes']>;
   readonly #spawn: typeof spawnPaneAndMaybePrompt;
-  readonly #close: (paneId: string) => boolean;
+  readonly #close: (paneId: string) => boolean | Promise<boolean>;
+  readonly #isSessionLive: (sessionId: string) => boolean;
   readonly #timeoutMs: number;
 
   constructor(dependencies: CliAutomatedReviewerDependencies = {}) {
@@ -159,17 +169,27 @@ export class CliAutomatedReviewer {
     this.#selectRoutes = dependencies.selectRoutes ?? selectRoutes;
     this.#spawn = dependencies.spawn ?? spawnPaneAndMaybePrompt;
     this.#close = dependencies.close ?? requestPaneClose;
+    this.#isSessionLive =
+      dependencies.isSessionLive ??
+      ((sessionId) =>
+        getSessionState(sessionId) !== null || isOmpRpcSession(sessionId));
     this.#timeoutMs = dependencies.timeoutMs ?? REVIEW_TIMEOUT_MS;
   }
 
   async run(input: RunAutomatedReviewInput): Promise<AutomatedReviewResult> {
-    const routes = this.#selectRoutes(
+    const invocation: McpToolInvocation = {
+      signal: input.signal,
+      assertCurrentAuthority: input.assertCurrentAuthority,
+    };
+    assertMcpInvocationCurrent(invocation);
+    const routes = await this.#selectRoutes(
       input.contract,
       [
         input.author.provider,
         ...(input.additionalAuthors ?? []).map((author) => author.provider),
       ],
     );
+    assertMcpInvocationCurrent(invocation);
     const reviewSessionId = this.#sessions.open({
       missionId: input.contract.missionId,
       checkoutPath: input.checkoutPath,
@@ -177,64 +197,113 @@ export class CliAutomatedReviewer {
       binding: input.binding,
       author: input.author,
       additionalAuthors: input.additionalAuthors,
-      persist: input.persist,
+      persist: (report) => {
+        assertMcpInvocationCurrent(invocation);
+        input.persist(report);
+      },
     });
-    const panes: string[] = [];
+    const panes = new Map<string, string>();
     try {
-      await Promise.all(routes.map(async (route, index) => {
-        const spawned = await this.#spawn({
-          adapterId: route.adapterId,
-          model: route.model,
-          effort: route.effort,
-          cwd: input.checkoutPath,
-          title: `review-${input.contract.missionId}-${index + 1}`,
-          missionId: input.contract.missionId,
-          agentName:
-            `reviewer-${route.adapterId}-${index + 1}-` +
-            reviewSessionId.replaceAll('-', '').slice(0, 12),
-          allowedTools: [
-            'nexus_file_open',
-            'nexus_file_close',
-            'nexus_file_read',
-            'nexus_file_search',
-            'nexus_git_status',
-            'nexus_git_diff',
-            'nexus_git_log',
-            'nexus_merge_review_submit',
-            ...(input.contract.requiredSensors.includes('design-system')
-              ? [
-                  'nexus_browser_open',
-                  'nexus_browser_read',
-                  'nexus_browser_inspect',
-                  'nexus_browser_screenshot',
-                  'nexus_browser_wait',
-                ]
-              : []),
-          ],
-          allowedSkills: [
-            'find-bugs',
-            'security-best-practices',
-            ...(input.contract.requiredSensors.includes('design-system') ? ['impeccable'] : []),
-          ],
-          role: 'worker',
-          readOnly: true,
-          prompt: reviewerPrompt(
-            reviewSessionId,
-            input.contract,
-            input.contextMarkdown,
-          ),
-          scope: input.scope,
-          executionScope: Object.freeze({
-            ...input.scope,
-            rootRealPath: input.checkoutPath,
-          }),
-        });
-        panes.push(spawned.paneId);
-      }));
-      return await this.#sessions.wait(reviewSessionId, this.#timeoutMs);
+      const spawnResults = await Promise.allSettled(
+        routes.map(async (route, index) => {
+          assertMcpInvocationCurrent(invocation);
+          const spawned = await this.#spawn(
+            {
+              adapterId: route.adapterId,
+              model: route.model,
+              effort: route.effort,
+              cwd: input.checkoutPath,
+              title: `review-${input.contract.missionId}-${index + 1}`,
+              missionId: input.contract.missionId,
+              agentName:
+                `reviewer-${route.adapterId}-${index + 1}-` +
+                reviewSessionId.replaceAll('-', '').slice(0, 12),
+              allowedTools: [
+                'nexus_file_open',
+                'nexus_file_close',
+                'nexus_file_read',
+                'nexus_file_search',
+                'nexus_git_status',
+                'nexus_git_diff',
+                'nexus_git_log',
+                'nexus_merge_review_submit',
+                ...(input.contract.requiredSensors.includes('design-system')
+                  ? [
+                      'nexus_browser_open',
+                      'nexus_browser_read',
+                      'nexus_browser_inspect',
+                      'nexus_browser_screenshot',
+                      'nexus_browser_wait',
+                    ]
+                  : []),
+              ],
+              allowedSkills: [
+                'find-bugs',
+                'security-best-practices',
+                ...(input.contract.requiredSensors.includes('design-system')
+                  ? ['impeccable']
+                  : []),
+              ],
+              role: 'worker',
+              readOnly: true,
+              prompt: reviewerPrompt(
+                reviewSessionId,
+                input.contract,
+                input.contextMarkdown,
+              ),
+              scope: input.scope,
+              executionScope: Object.freeze({
+                ...input.scope,
+                rootRealPath: input.checkoutPath,
+              }),
+            },
+            {
+              invocation,
+              onPaneCreated: (paneId, sessionId) => {
+                panes.set(paneId, sessionId);
+              },
+            },
+          );
+          panes.set(spawned.paneId, spawned.sessionId);
+          assertMcpInvocationCurrent(invocation);
+        }),
+      );
+      const failedSpawn = spawnResults.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected',
+      );
+      if (failedSpawn) throw failedSpawn.reason;
+      assertMcpInvocationCurrent(invocation);
+      const result = await this.#sessions.wait(
+        reviewSessionId,
+        this.#timeoutMs,
+        input.signal,
+        input.assertCurrentAuthority,
+      );
+      assertMcpInvocationCurrent(invocation);
+      return result;
     } finally {
       this.#sessions.close(reviewSessionId);
-      for (const paneId of panes) this.#close(paneId);
+      const closeResults = await Promise.allSettled(
+        [...panes].map(async ([paneId, sessionId]) => {
+          let closed = false;
+          try {
+            closed = await this.#close(paneId);
+          } catch {
+            closed = false;
+          }
+          if (!closed && this.#isSessionLive(sessionId)) {
+            throw new Error(
+              `reviewer pane ${paneId} did not produce physical exit proof`,
+            );
+          }
+        }),
+      );
+      const failedClose = closeResults.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected',
+      );
+      if (failedClose) throw failedClose.reason;
     }
   }
 }

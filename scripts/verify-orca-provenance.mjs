@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 /**
  * Mechanical honesty check for third_party/provenance/orca-143c36e.json
- * against a local pin clone of stablyai/orca @ 143c36e.
+ * against a local Git clone containing every ledger commit. The ledger began
+ * at 143c36e and may contain explicitly pinned later harvests.
  *
  * Rules:
  * - originalPath starts with "(concept)":
  *     originalSha256 === sha256(nexus file in repo)
  * - otherwise (copied/adapted with real pin path):
- *     pin file must exist as a file AND originalSha256 === sha256(pin file)
- * - every source file with "Adapted from stablyai/orca @ 143c36e…" header
- *     must have a ledger nexusPath entry
+ *     `<entry.upstreamCommit>:<originalPath>` must be a Git blob AND
+ *     originalSha256 === sha256(blob)
+ * - every source file with an "Adapted from stablyai/orca @ <sha>" header
+ *     must have a ledger nexusPath entry pinned to that exact commit
  *
  * Env: ORCA_PIN_DIR (required), REPO_ROOT (default cwd)
  */
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import {
   readFileSync,
   readdirSync,
@@ -23,7 +26,6 @@ import {
 } from 'node:fs';
 import { join, relative } from 'node:path';
 
-const PIN = '143c36e566483006fe54fa2716b019ec00599752';
 const REPO = process.env.REPO_ROOT || process.cwd();
 const LEDGER = join(REPO, 'third_party/provenance/orca-143c36e.json');
 const pinDir = process.env.ORCA_PIN_DIR;
@@ -67,6 +69,12 @@ if (!pinDir || !existsSync(pinDir)) {
 const ledger = JSON.parse(readFileSync(LEDGER, 'utf8'));
 const files = ledger.files || [];
 const nexusPaths = new Set(files.map((e) => e.nexusPath));
+const entriesByNexusPath = new Map();
+for (const entry of files) {
+  const list = entriesByNexusPath.get(entry.nexusPath) ?? [];
+  list.push(entry);
+  entriesByNexusPath.set(entry.nexusPath, list);
+}
 let checked = 0;
 
 for (const e of files) {
@@ -93,14 +101,32 @@ for (const e of files) {
     continue;
   }
 
-  const pinFile = join(pinDir, op);
-  if (!existsSync(pinFile) || !lstatSync(pinFile).isFile()) {
+  const commit = String(e.upstreamCommit ?? '');
+  if (
+    !/^[a-f0-9]{40}$/.test(commit) ||
+    op.startsWith('/') ||
+    op.includes('\\') ||
+    op.split('/').some((part) => part === '' || part === '.' || part === '..')
+  ) {
     fail(
-      `entry ${e.nexusPath}: originalPath "${op}" is not a file in pin clone`,
+      `entry ${e.nexusPath}: unsafe commit or upstream path`,
     );
     continue;
   }
-  const pinSha = sha256(readFileSync(pinFile));
+  let pinBlob;
+  try {
+    pinBlob = execFileSync(
+      'git',
+      ['-C', pinDir, 'show', `${commit}:${op}`],
+      { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
+    );
+  } catch {
+    fail(
+      `entry ${e.nexusPath}: ${commit}:${op} is not a readable Git blob`,
+    );
+    continue;
+  }
+  const pinSha = sha256(pinBlob);
   if (e.originalSha256 !== pinSha) {
     fail(
       `entry ${e.nexusPath}: originalSha256 does not match pin file ${op}\n  want ${pinSha}\n  got  ${e.originalSha256}`,
@@ -108,16 +134,21 @@ for (const e of files) {
   }
 }
 
-const headerRe = new RegExp(
-  String.raw`Adapted from stablyai/orca @ ${PIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
-);
+const headerRe = /Adapted from stablyai\/orca @ ([a-f0-9]{40})/;
 for (const root of ['src', 'scripts'].map((r) => join(REPO, r))) {
   for (const abs of walk(root)) {
     const text = readFileSync(abs, 'utf8').slice(0, 1200);
-    if (!headerRe.test(text)) continue;
+    const match = headerRe.exec(text);
+    if (!match) continue;
     const rel = relative(REPO, abs).replace(/\\/g, '/');
     if (!nexusPaths.has(rel)) {
       fail(`file has ORCA header but no ledger nexusPath: ${rel}`);
+    } else if (
+      !(entriesByNexusPath.get(rel) ?? []).some(
+        (entry) => entry.upstreamCommit === match[1],
+      )
+    ) {
+      fail(`file ORCA header commit is absent from ledger: ${rel} @ ${match[1]}`);
     }
   }
 }

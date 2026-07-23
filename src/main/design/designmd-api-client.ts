@@ -282,10 +282,14 @@ async function apiRequest(
 
   let response: Response;
   try {
+    const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+    const requestSignal = init.signal
+      ? AbortSignal.any([init.signal, timeoutSignal])
+      : timeoutSignal;
     response = await deps.fetchFn(urlFor(deps, path), {
       ...init,
       headers,
-      signal: init.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+      signal: requestSignal,
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'TimeoutError') {
@@ -474,14 +478,17 @@ export class DesignMdApiClient {
     return parseKitDetail(metaBody, content);
   }
 
-  async publishKit(input: {
-    slug: string;
-    name: string;
-    description?: string;
-    tags?: readonly string[];
-    license?: string;
-    content: string;
-  }): Promise<DesignMdKitDetail> {
+  async publishKit(
+    input: {
+      slug: string;
+      name: string;
+      description?: string;
+      tags?: readonly string[];
+      license?: string;
+      content: string;
+    },
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<DesignMdKitDetail> {
     const slug = input.slug.trim();
     if (!slug || slug.length > 512 || slug.includes('..') || slug.includes('//')) {
       throw new DesignMdApiError('invalid kit slug');
@@ -497,6 +504,7 @@ export class DesignMdApiClient {
       '/kits',
       {
         method: 'POST',
+        signal: options.signal,
         body: JSON.stringify({
           slug,
           name,

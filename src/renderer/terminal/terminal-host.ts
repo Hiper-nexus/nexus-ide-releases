@@ -13,6 +13,7 @@ import {
   useLayoutStore,
 } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { listPanes } from '../lib/split-tree';
@@ -343,7 +344,16 @@ function startSpawn(
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   return (async (): Promise<string | null> => {
     try {
-      const accountId = await ensurePaneAccountPin(pane);
+      const missionId =
+        pane.missionId ?? useOrchStore.getState().paneMissions[pane.id];
+      const isMainOwnedMissionRecovery =
+        Boolean(missionId) && (resume || restorePersistedAuthority);
+      // A persisted mission account is part of the main-sealed pane spec.
+      // Auto-pinning here would let renderer-side account discovery drift the
+      // recovery request before it reaches the main trust boundary.
+      const accountId = isMainOwnedMissionRecovery
+        ? pane.accountId
+        : await ensurePaneAccountPin(pane);
       if (host.disposed || host.spawnGeneration !== generation) return null;
       const spawnKind = pane.kind === 'cli-agent' ? 'cli-agent' : 'shell';
       const res = await window.nexus.pty.spawn({
@@ -369,7 +379,7 @@ function startSpawn(
         accountId: accountId ?? pane.accountId,
         effort: pane.effort,
         orchRequestId: pane.orchRequestId,
-        missionId: pane.missionId,
+        missionId,
       });
       if (host.disposed || host.spawnGeneration !== generation) {
         if (res.ok) window.nexus.pty.kill(res.sessionId);
@@ -394,7 +404,7 @@ function startSpawn(
       }
       setHostSession(host, pane.id, res.sessionId);
       const spawnedAt = Date.now();
-      if (resume) {
+      if (resume && !res.adopted) {
         const message =
           res.resumeMode === 'exact'
             ? '[nexus] sessão exata recuperada para este pane.'
@@ -430,6 +440,7 @@ function startSpawn(
         window.nexus.pty.onExit(res.sessionId, ({ exitCode }) => {
           const staleExactResume =
             resume &&
+            !missionId &&
             !resumeLatestOnly &&
             res.resumeMode === 'exact' &&
             exitCode !== 0 &&
@@ -458,6 +469,20 @@ function startSpawn(
             }, 0);
             return;
           }
+          const failedMissionExactResume =
+            resume &&
+            Boolean(missionId) &&
+            res.resumeMode === 'exact' &&
+            exitCode !== 0 &&
+            Date.now() - spawnedAt < 10_000;
+          if (failedMissionExactResume) {
+            reportPaneResumeIncident(
+              pane,
+              'resume-fallback-failed',
+              'A sessão exata desta missão não pôde ser recuperada. O Nexus não abriu a conversa mais recente de outro pane.',
+              false,
+            );
+          }
           const failedFallback =
             resume &&
             exitCode !== 0 &&
@@ -481,13 +506,22 @@ function startSpawn(
           useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         }),
       );
+      if (res.adopted) {
+        if (res.state) {
+          useSessionStateStore.getState().setPaneState(pane.id, res.state);
+        }
+        // Listener installation must precede the pull: headless output may
+        // already exist and must paint immediately, not wait for the preload
+        // recovery backstop.
+        void window.nexus.pty.replay(res.sessionId);
+      }
 
       // After mount: inject either same-account continue or cross-account pack.
       // Cross-account always injects (fresh session). Same-account resume only
       // when the adapter actually restored something.
       const shouldInjectContinue =
         Boolean(continuityPack) ||
-        (resume && res.resumeMode !== 'unsupported');
+        (resume && !res.adopted && res.resumeMode !== 'unsupported');
       if (shouldInjectContinue) {
         const resumedSessionId = res.sessionId;
         const continuationTimer = setTimeout(() => {
@@ -1053,6 +1087,39 @@ export function scrollPaneToBottom(paneId: string, sendJumpKey = false): void {
   host.term.focus();
 }
 
+function isMainControlledMissionPane(
+  paneId: string,
+  pane?: PaneModel,
+): boolean {
+  const resolved =
+    pane ??
+    listPanes(useLayoutStore.getState().root).find(
+      (candidate) => candidate.id === paneId,
+    );
+  return Boolean(
+    resolved?.missionId ||
+      resolved?.role === 'orchestrator' ||
+      resolved?.role === 'worker' ||
+      useOrchStore.getState().paneMissions[paneId],
+  );
+}
+
+function reportMainOwnedLifecycleOnly(host: Host, action: string): void {
+  const message =
+    `O pane pertence a uma missão. ${action} exige encerramento físico ` +
+    'confirmado pelo processo principal.';
+  try {
+    host.term.writeln(`\r\n\x1b[33m[nexus] ${message}\x1b[0m`);
+  } catch {
+    // Terminal presentation is best effort; the denial already happened.
+  }
+  useToastStore.getState().push(
+    'warn',
+    'Ação de missão bloqueada',
+    message,
+  );
+}
+
 /**
  * Re-spawn a cli-agent pane in the SAME xterm (scrollback preserved).
  * - same-account-resume: adapter --resume / --continue
@@ -1069,6 +1136,10 @@ export function respawnWithResume(
 ): void {
   const host = hosts.get(pane.id);
   if (!host || host.disposed) return;
+  if (isMainControlledMissionPane(pane.id, pane)) {
+    reportMainOwnedLifecycleOnly(host, 'Reiniciar ou trocar conta');
+    return;
+  }
   host.cleanups.forEach((fn) => fn());
   host.cleanups = [];
   if (host.sessionId) window.nexus.pty.kill(host.sessionId);
@@ -1099,6 +1170,10 @@ export function respawnWithResume(
 export function hibernateHost(paneId: string): boolean {
   const host = hosts.get(paneId);
   if (!host || host.disposed) return false;
+  if (isMainControlledMissionPane(paneId)) {
+    reportMainOwnedLifecycleOnly(host, 'Hibernar');
+    return false;
+  }
   host.cleanups.forEach((fn) => fn());
   host.cleanups = [];
   host.spawnGeneration += 1;
@@ -1122,6 +1197,10 @@ export function wakeHost(pane: PaneModel): boolean {
   const host = hosts.get(pane.id);
   if (!host || host.disposed || host.sessionId) return false;
   if (pane.kind === 'browser') return false;
+  if (isMainControlledMissionPane(pane.id, pane)) {
+    reportMainOwnedLifecycleOnly(host, 'Acordar/recriar');
+    return false;
+  }
   host.hibernated = false;
   host.spawnStarted = false;
   try {
@@ -1258,6 +1337,7 @@ export async function respawnMissionPaneFresh(
   pane: PaneModel,
   expectedSessionId?: string,
   timeoutMs = 75_000,
+  recoveryRequestId?: string,
 ): Promise<string> {
   const host = hosts.get(pane.id);
   if (!host || host.disposed) throw new Error('mission pane host is unavailable');
@@ -1278,13 +1358,16 @@ export async function respawnMissionPaneFresh(
   host.term.writeln(
     '\r\n\x1b[33m[nexus] contexto degradado — iniciando uma sessão limpa…\x1b[0m',
   );
-  const spawnPane = pane.orchRequestId
+  const spawnPaneBase = pane.orchRequestId
     ? (() => {
         useLayoutStore.getState().clearOrchRequestId(pane.id);
         const { orchRequestId: _drop, ...rest } = pane;
         return rest as PaneModel;
       })()
     : pane;
+  const spawnPane = recoveryRequestId
+    ? { ...spawnPaneBase, orchRequestId: recoveryRequestId }
+    : spawnPaneBase;
   const startedAt = Date.now();
   const spawnPromise = startSpawn(
     spawnPane,

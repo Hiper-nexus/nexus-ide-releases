@@ -8,6 +8,7 @@
  */
 import type { ModelCatalog } from '../adapters/model-catalog';
 import {
+  hasAuthoritativeModelQuality,
   modelCatalogInfo,
   modelRoutingRank,
 } from '../adapters/model-catalog';
@@ -73,9 +74,12 @@ export function scoreRouteCandidate(
   const table = Math.max(0, 60 - index * 4);
 
   const info = modelCatalogInfo(input.modelCatalog, c.adapterId, c.model);
+  const authoritativeQuality = hasAuthoritativeModelQuality(info)
+    ? info?.quality
+    : undefined;
   const qualityRaw =
-    info?.quality?.coding ??
-    info?.quality?.overall ??
+    authoritativeQuality?.coding ??
+    authoritativeQuality?.overall ??
     (entry.evaluated ? 12 : 6);
   const quality = Math.min(24, Number(qualityRaw) || 6);
 
@@ -146,7 +150,7 @@ export function multiScoreRerank(input: MultiScoreInput): {
   const head = sorted[0];
   const noteParts: string[] = ['; multi-score'];
   if (head && head.score.diversity < 0) {
-    noteParts.push(` diversity×${Math.abs(head.score.diversity / 12)}`);
+    noteParts.push(` diversity×${Math.abs(head.score.diversity / 18)}`);
   }
   if (head && head.score.omp > 0) noteParts.push(' omp-boost');
   if (anyClosed && filtered.length < scored.length) {

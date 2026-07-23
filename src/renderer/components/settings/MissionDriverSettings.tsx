@@ -27,6 +27,7 @@ const RESTORE_OPTIONS: {
 
 export function MissionDriverSettings() {
   const [isActive, setIsActive] = useState(false);
+  const [autoResponderEnabled, setAutoResponderEnabled] = useState(true);
   const [restorePolicy, setRestorePolicy] =
     useState<AgentRestorePolicy>('ask');
   const [isLoading, setIsLoading] = useState(true);
@@ -41,6 +42,7 @@ export function MissionDriverSettings() {
       .then((settings) => {
         if (!cancelled) {
           setIsActive(settings.missionDriverActiveMode);
+          setAutoResponderEnabled(settings.cliPromptAutoResponderEnabled ?? true);
           setRestorePolicy(settings.agentRestorePolicy ?? 'ask');
         }
       })
@@ -104,6 +106,31 @@ export function MissionDriverSettings() {
         cause instanceof Error
           ? cause.message
           : 'Falha ao salvar a política de retoma.',
+      );
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
+  };
+
+  const saveAutoResponder = async (next: boolean) => {
+    if (savingRef.current) return;
+    const previous = autoResponderEnabled;
+    savingRef.current = true;
+    setAutoResponderEnabled(next);
+    setIsSaving(true);
+    setError(null);
+    try {
+      const saved = await window.nexus.settings.orchSet({
+        cliPromptAutoResponderEnabled: next,
+      });
+      setAutoResponderEnabled(saved.cliPromptAutoResponderEnabled ?? true);
+    } catch (cause) {
+      setAutoResponderEnabled(previous);
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Falha ao salvar o autoaceite de prompts.',
       );
     } finally {
       savingRef.current = false;
@@ -176,6 +203,35 @@ export function MissionDriverSettings() {
         até reiniciar o Nexus. Shadow apenas observa; Ativo executa ações
         protegidas pelos gates e limites do Ralph.
       </p>
+
+      <div className="settings-section-heading settings-section-heading--with-count" style={{ marginTop: 20 }}>
+        <h4>Prompts de boot</h4>
+        <span
+          className={`settings-chip ${autoResponderEnabled ? 'settings-chip--ok' : ''}`}
+          aria-live="polite"
+        >
+          {autoResponderEnabled ? 'Autoaceite restrito' : 'Kill switch ativo'}
+        </span>
+      </div>
+      <div className="settings-toggle-list">
+        <label className="settings-toggle-row">
+          <span className="settings-toggle-row__copy">
+            <strong>Autoaceitar prompts conhecidos</strong>
+            <span>
+              Responde apenas assinaturas fixas de confiança/boot do adapter.
+              Desative para bloquear imediatamente todo keypress automático.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            aria-label="Autoaceitar prompts conhecidos"
+            checked={autoResponderEnabled}
+            disabled={isLoading || isSaving}
+            onChange={(event) => void saveAutoResponder(event.target.checked)}
+          />
+          <span className="settings-toggle-row__control" aria-hidden="true" />
+        </label>
+      </div>
       {error && (
         <p className="settings-error" role="alert">
           {error}

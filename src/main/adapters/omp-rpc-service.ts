@@ -4,7 +4,7 @@ import path from 'node:path';
 import { buildOmpInheritedKeyEnv } from './omp-provider-keys';
 import { StringDecoder } from 'node:string_decoder';
 import {
-  OMP_PINNED_MAJOR,
+  OMP_RPC_SUPPORTED_VERSION,
   ompAgentEndFrameSchema,
   ompAgentStartFrameSchema,
   ompAvailableModelsDataSchema,
@@ -51,13 +51,20 @@ const DEFAULT_UI_RESPONSE_TIMEOUT_MS = 120_000;
 const DEFAULT_KILL_GRACE_MS = 3_000;
 const ARGS_PREVIEW_CHARS = 160;
 const VERSION_PROBE_TIMEOUT_MS = 8_000;
+/** Hard transport budgets: the child is not a trusted memory authority. */
+export const OMP_RPC_MAX_FRAME_CHARS = 1_048_576;
+export const OMP_RPC_MAX_PENDING_REQUESTS = 512;
+export const OMP_RPC_MAX_PRE_READY_BYTES = 8 * 1_048_576;
+export const OMP_RPC_MAX_PENDING_UI = 256;
+export const OMP_RPC_MAX_CANCELLED_HOST_CALLS = 4_096;
+export const OMP_RPC_MAX_ACTIVE_HOST_CALLS = 128;
 
 /** Título de select que representa um prompt de aprovação/permissão. */
 const APPROVAL_TITLE_RE = /approval|allow|permission|permitir|autoriza|aprova/i;
 /** Opção afirmativa preferida quando um select de aprovação chega em yolo. */
 const AFFIRMATIVE_OPTION_RE = /^(approve|allow|yes|sim|permitir|aprovar|ok)\b/i;
 
-const baseFrameSchema = z.looseObject({ type: z.string() });
+const baseFrameSchema = z.looseObject({ type: z.string().max(64) });
 
 // ---------------------------------------------------------------------------
 // Seams injetáveis (produção em omp-rpc-ipc.ts; testes usam fakes).
@@ -158,6 +165,15 @@ interface PendingUiRequest {
   timer: NodeJS.Timeout | null;
 }
 
+interface PendingAgentStart {
+  requestId: string;
+  acked: boolean;
+  started: boolean;
+  resolve(): void;
+  reject(err: Error): void;
+  timer: NodeJS.Timeout;
+}
+
 // ---------------------------------------------------------------------------
 // Binary resolution — same doctrine as the adapters (isBinInstalled in
 // adapter-registry.ts): fast `which` against process.env.PATH first (the
@@ -169,7 +185,7 @@ interface PendingUiRequest {
 
 export interface OmpBinResolution {
   binPath: string;
-  version: string | null;
+  version: string;
 }
 
 type ExecFileFn = (
@@ -292,7 +308,10 @@ export async function resolveOmpBin(
   let version: string | null = null;
   try {
     const out = await execText(execImpl, binPath, ['--version'], effectiveEnv);
-    version = /(\d+)\.(\d+)\.(\d+)/.exec(out)?.[0] ?? null;
+    version =
+      /(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)/.exec(
+        out,
+      )?.[1] ?? null;
   } catch (err) {
     throw new Error(
       `omp --version falhou em ${binPath}: ${
@@ -300,20 +319,17 @@ export async function resolveOmpBin(
       }`,
     );
   }
-  if (version) {
-    const major = Number(version.split('.')[0]);
-    if (Number.isFinite(major) && major !== OMP_PINNED_MAJOR) {
-      throw new Error(
-        `versão do omp incompatível: encontrado ${version}, o protocolo ` +
-          `RPC do Nexus está pinado no major ${OMP_PINNED_MAJOR}`,
-      );
-    }
-  } else {
-    // Output sem semver: segue (defensivo contra mudança de formato), mas
-    // registra — a validação de major fica impossível.
-    console.warn(
-      `[omp-rpc] omp --version sem semver reconhecível em ${binPath}; ` +
-        'pulando pin de versão',
+  if (!version) {
+    throw new Error(
+      'omp --version não informou uma versão semântica reconhecível. ' +
+        `Ação: reinstale ou ative o omp ${OMP_RPC_SUPPORTED_VERSION} e tente novamente.`,
+    );
+  }
+  if (version !== OMP_RPC_SUPPORTED_VERSION) {
+    throw new Error(
+      `versão do omp incompatível com o RPC do Nexus: encontrado ${version}; ` +
+        `suportado ${OMP_RPC_SUPPORTED_VERSION}. Ação: instale ou ative o omp ` +
+        `${OMP_RPC_SUPPORTED_VERSION} e tente novamente.`,
     );
   }
   const resolved = { binPath, version };
@@ -326,7 +342,11 @@ export async function resolveOmpBin(
  * Used by mission-side RPC workers before the first prompt.
  */
 export async function waitForOmpSessionReady(
-  session: { readonly state: OmpRpcSessionLifecycle },
+  session: {
+    readonly state: OmpRpcSessionLifecycle;
+    readonly bootstrapStatus?: 'pending' | 'ready' | 'failed';
+    readonly bootstrapError?: string | null;
+  },
   timeoutMs = 20_000,
   sleepMs = 40,
 ): Promise<void> {
@@ -335,7 +355,15 @@ export async function waitForOmpSessionReady(
     if (session.state === 'exited') {
       throw new Error('processo omp encerrou antes de ficar pronto');
     }
-    if (session.state !== 'spawning') return;
+    if (session.bootstrapStatus === 'failed') {
+      throw new Error(
+        `bootstrap omp falhou: ${session.bootstrapError ?? 'erro desconhecido'}`,
+      );
+    }
+    if (
+      session.state === 'idle' &&
+      (session.bootstrapStatus === undefined || session.bootstrapStatus === 'ready')
+    ) return;
     await new Promise((resolve) => setTimeout(resolve, sleepMs));
   }
   throw new Error('timeout aguardando omp --mode rpc-ui ficar pronto');
@@ -403,9 +431,11 @@ export class OmpRpcSession {
   private reqCounter = 0;
   private readonly pending = new Map<string, PendingRequest>();
   /** Comandos enfileirados enquanto o frame ready não chega. */
-  private readonly preReadyQueue: string[] = [];
+  private readonly preReadyQueue = new Map<string, string>();
+  private preReadyBytes = 0;
   private readonly pendingUi = new Map<string, PendingUiRequest>();
   private readonly cancelledHostCalls = new Set<string>();
+  private readonly activeHostCalls = new Set<string>();
   private autoApprovals = 0;
   private lastModel: OmpModel | null = null;
   private lastContextUsage: OmpRpcStateSnapshot['contextUsage'] = null;
@@ -414,6 +444,9 @@ export class OmpRpcSession {
   private exitCode: number | null = null;
   private killTimer: NodeJS.Timeout | null = null;
   private disposed = false;
+  private bootstrapLifecycle: 'pending' | 'ready' | 'failed' = 'pending';
+  private bootstrapFailure: string | null = null;
+  private pendingAgentStart: PendingAgentStart | null = null;
 
   constructor(config: OmpRpcSessionConfig, deps: OmpRpcSessionDeps) {
     this.sessionId = config.sessionId;
@@ -466,6 +499,14 @@ export class OmpRpcSession {
     return this.lifecycle;
   }
 
+  get bootstrapStatus(): 'pending' | 'ready' | 'failed' {
+    return this.bootstrapLifecycle;
+  }
+
+  get bootstrapError(): string | null {
+    return this.bootstrapFailure;
+  }
+
   snapshot(): OmpRpcStateSnapshot {
     return {
       state: this.lifecycle,
@@ -504,6 +545,74 @@ export class OmpRpcSession {
     await this.request(command);
   }
 
+  /**
+   * Mission-worker submit contract: an RPC response is only transport ACK.
+   * Return solely after the exact idle session emits a real agent_start.
+   */
+  async promptAndWaitForAgentStart(
+    message: string,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  ): Promise<void> {
+    if (this.lifecycle !== 'idle' || this.bootstrapLifecycle !== 'ready') {
+      throw new Error('sessão omp precisa estar idle e com bootstrap concluído');
+    }
+    if (this.pendingAgentStart) {
+      throw new Error('já existe um prompt aguardando agent_start nesta sessão omp');
+    }
+    const command: OmpRpcCommand = { type: 'prompt', message };
+    let requestId = '';
+    let resolveStart!: () => void;
+    let rejectStart!: (error: Error) => void;
+    const startPromise = new Promise<void>((resolve, reject) => {
+      resolveStart = resolve;
+      rejectStart = reject;
+    });
+    // A prompt_result may reject before the transport ACK arrives. Attach a
+    // noop observer immediately; the method still awaits the same promise.
+    void startPromise.catch(() => {});
+    try {
+      const response = await this.request(command, (issuedId) => {
+        requestId = issuedId;
+        const timer = setTimeout(() => {
+          if (this.pendingAgentStart?.requestId !== issuedId) return;
+          this.settlePendingAgentStart(
+            new Error('O worker OMP recebeu o prompt, mas não iniciou o agente a tempo.'),
+          );
+        }, timeoutMs);
+        timer.unref?.();
+        this.pendingAgentStart = {
+          requestId: issuedId,
+          acked: false,
+          started: false,
+          resolve: resolveStart,
+          reject: rejectStart,
+          timer,
+        };
+      });
+      const data = response.data;
+      if (
+        data && typeof data === 'object' &&
+        (data as { agentInvoked?: unknown }).agentInvoked === false
+      ) {
+        this.settlePendingAgentStart(
+          new Error('O prompt OMP foi local-only e não iniciou o agente.'),
+        );
+      }
+      const pending = this.readPendingAgentStart();
+      if (pending?.requestId === requestId) {
+        pending.acked = true;
+        if (pending.started) this.settlePendingAgentStart();
+      }
+      await startPromise;
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      if (this.readPendingAgentStart()?.requestId === requestId) {
+        this.settlePendingAgentStart(normalized);
+      }
+      throw normalized;
+    }
+  }
+
   async abort(): Promise<void> {
     await this.request({ type: 'abort' });
   }
@@ -537,6 +646,7 @@ export class OmpRpcSession {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.settlePendingAgentStart(new Error('sessão encerrada antes de agent_start'));
     this.rejectAllPending(new Error('sessão encerrada'));
     for (const requestId of [...this.pendingUi.keys()]) this.settleUi(requestId);
     if (this.lifecycle === 'exited') return;
@@ -562,32 +672,62 @@ export class OmpRpcSession {
   // ------------------------------------------------------------------
 
   private onStdout(chunk: string): void {
-    this.stdoutBuffer += chunk;
-    const lines = this.stdoutBuffer.split('\n');
-    this.stdoutBuffer = lines.pop() ?? '';
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      let value: unknown;
-      try {
-        value = JSON.parse(trimmed);
-      } catch {
-        // Linha inválida: registra e segue — o parser nunca derruba a sessão.
-        // É aqui que caem mensagens humanas do CLI ("No models available.
-        // Use /login…") — o tail vira diagnóstico visível se o processo sair.
-        this.rememberDiagnostic(trimmed);
-        console.warn(
-          `[omp-rpc:${this.sessionId}] linha NDJSON inválida ignorada: ` +
-            trimmed.slice(0, 200),
-        );
-        continue;
+    if (this.disposed || this.lifecycle === 'exited') return;
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf('\n', offset);
+      if (newline < 0) {
+        const suffix = chunk.slice(offset);
+        if (this.stdoutBuffer.length + suffix.length > OMP_RPC_MAX_FRAME_CHARS) {
+          this.failTransport('frame NDJSON excedeu o limite de 1 MiB');
+          return;
+        }
+        this.stdoutBuffer += suffix;
+        return;
       }
-      try {
-        this.routeFrame(value);
-      } catch (err) {
-        console.warn(`[omp-rpc:${this.sessionId}] frame não processado:`, err);
+      const segment = chunk.slice(offset, newline);
+      if (this.stdoutBuffer.length + segment.length > OMP_RPC_MAX_FRAME_CHARS) {
+        this.failTransport('frame NDJSON excedeu o limite de 1 MiB');
+        return;
       }
+      const line = this.stdoutBuffer + segment;
+      this.stdoutBuffer = '';
+      offset = newline + 1;
+      this.consumeStdoutLine(line);
+      if (this.disposed) return;
     }
+  }
+
+  private consumeStdoutLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let value: unknown;
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      // Human diagnostics are tolerated, but only inside the bounded frame.
+      this.rememberDiagnostic(trimmed);
+      console.warn(
+        `[omp-rpc:${this.sessionId}] linha NDJSON inválida ignorada: ` +
+          trimmed.slice(0, 200),
+      );
+      return;
+    }
+    try {
+      this.routeFrame(value);
+    } catch (err) {
+      console.warn(`[omp-rpc:${this.sessionId}] frame não processado:`, err);
+    }
+  }
+
+  private failTransport(reason: string): void {
+    this.stdoutBuffer = '';
+    this.push({
+      kind: 'notice',
+      level: 'error',
+      message: `sessão omp encerrada: ${reason}`,
+    });
+    this.dispose();
   }
 
   private writeFrame(frame: object): void {
@@ -598,23 +738,55 @@ export class OmpRpcSession {
     }
   }
 
-  private request(command: OmpRpcCommand): Promise<OmpResponseFrame> {
+  private request(
+    command: OmpRpcCommand,
+    onIssued?: (requestId: string) => void,
+    bootstrapCommand = false,
+  ): Promise<OmpResponseFrame> {
     if (this.lifecycle === 'exited' || this.disposed) {
       return Promise.reject(new Error('sessão omp encerrada'));
+    }
+    if (this.pending.size >= OMP_RPC_MAX_PENDING_REQUESTS) {
+      return Promise.reject(
+        new Error('limite de comandos pendentes da sessão omp excedido'),
+      );
     }
     this.reqCounter += 1;
     const id = `req_${this.reqCounter}`;
     const line = `${JSON.stringify({ ...command, id })}\n`;
+    const queueUntilBootstrap =
+      !bootstrapCommand && this.bootstrapLifecycle !== 'ready';
+    if (
+      queueUntilBootstrap &&
+      this.preReadyBytes + line.length > OMP_RPC_MAX_PRE_READY_BYTES
+    ) {
+      return Promise.reject(
+        new Error('orçamento da fila pré-ready da sessão omp excedido'),
+      );
+    }
     return new Promise<OmpResponseFrame>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        this.removePreReadyRequest(id);
         reject(new Error(`timeout aguardando resposta de ${command.type}`));
       }, this.deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
       timer.unref?.();
       this.pending.set(id, { command: command.type, resolve, reject, timer });
-      if (this.lifecycle === 'spawning') {
-        // Ainda sem ready: enfileira — o flush acontece no frame ready.
-        this.preReadyQueue.push(line);
+      try {
+        onIssued?.(id);
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        this.removePreReadyRequest(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+      if (queueUntilBootstrap) {
+        // User commands remain queued through the whole bootstrap. An RPC
+        // timeout removes the exact line, so no acknowledged failure can turn
+        // into a late effect after ready.
+        this.preReadyQueue.set(id, line);
+        this.preReadyBytes += line.length;
       } else {
         try {
           this.proc.stdin?.write(line);
@@ -633,7 +805,15 @@ export class OmpRpcSession {
       entry.reject(err);
     }
     this.pending.clear();
-    this.preReadyQueue.length = 0;
+    this.preReadyQueue.clear();
+    this.preReadyBytes = 0;
+  }
+
+  private removePreReadyRequest(id: string): void {
+    const line = this.preReadyQueue.get(id);
+    if (line === undefined) return;
+    this.preReadyQueue.delete(id);
+    this.preReadyBytes = Math.max(0, this.preReadyBytes - line.length);
   }
 
   // ------------------------------------------------------------------
@@ -659,6 +839,10 @@ export class OmpRpcSession {
       }
       case 'agent_start': {
         if (ompAgentStartFrameSchema.safeParse(value).success) {
+          if (this.pendingAgentStart) {
+            this.pendingAgentStart.started = true;
+            if (this.pendingAgentStart.acked) this.settlePendingAgentStart();
+          }
           this.lifecycle = 'busy';
           this.lastIsStreaming = true;
           this.pushStatus();
@@ -734,12 +918,21 @@ export class OmpRpcSession {
       }
       case 'host_tool_cancel': {
         const parsed = ompHostToolCancelFrameSchema.safeParse(value);
-        if (parsed.success) this.cancelledHostCalls.add(parsed.data.targetId);
+        if (parsed.success) this.rememberCancelledHostCall(parsed.data.targetId);
         return;
       }
       case 'prompt_result': {
         const parsed = ompPromptResultFrameSchema.safeParse(value);
         if (parsed.success && !parsed.data.agentInvoked) {
+          const pendingStart = this.pendingAgentStart;
+          if (
+            pendingStart &&
+            (parsed.data.id === undefined || parsed.data.id === pendingStart.requestId)
+          ) {
+            this.settlePendingAgentStart(
+              new Error('O prompt OMP foi local-only e não iniciou o agente.'),
+            );
+          }
           // Prompt local-only: nunca haverá agent_end para este turno.
           if (this.lifecycle === 'busy') {
             this.lifecycle = 'idle';
@@ -759,13 +952,6 @@ export class OmpRpcSession {
   private onReady(): void {
     if (this.lifecycle !== 'spawning') return;
     this.lifecycle = 'ready';
-    for (const line of this.preReadyQueue.splice(0)) {
-      try {
-        this.proc.stdin?.write(line);
-      } catch (err) {
-        console.warn(`[omp-rpc:${this.sessionId}] flush pós-ready falhou:`, err);
-      }
-    }
     this.pushStatus();
     void this.bootstrap();
   }
@@ -777,17 +963,21 @@ export class OmpRpcSession {
         await this.request({
           type: 'set_host_tools',
           tools: this.deps.hostTools,
-        });
+        }, undefined, true);
       }
       if (this.config.model) {
         await this.request({
           type: 'set_model',
           provider: this.config.model.provider,
           modelId: this.config.model.modelId,
-        });
+        }, undefined, true);
       }
-      await this.refreshState();
+      await this.request({ type: 'get_state' }, undefined, true);
+      this.pushStatus();
+      this.bootstrapLifecycle = 'ready';
     } catch (err) {
+      this.bootstrapLifecycle = 'failed';
+      this.bootstrapFailure = err instanceof Error ? err.message : String(err);
       console.warn(`[omp-rpc:${this.sessionId}] bootstrap falhou:`, err);
       this.push({
         kind: 'notice',
@@ -797,9 +987,20 @@ export class OmpRpcSession {
         }`,
       });
     }
-    if (this.lifecycle === 'ready') {
+    if (this.lifecycle === 'ready' && this.bootstrapLifecycle === 'ready') {
       this.lifecycle = this.lastIsStreaming ? 'busy' : 'idle';
       this.pushStatus();
+      const queued = [...this.preReadyQueue.entries()];
+      this.preReadyQueue.clear();
+      this.preReadyBytes = 0;
+      for (const [requestId, line] of queued) {
+        if (!this.pending.has(requestId)) continue;
+        try {
+          this.proc.stdin?.write(line);
+        } catch (err) {
+          console.warn(`[omp-rpc:${this.sessionId}] flush pós-bootstrap falhou:`, err);
+        }
+      }
     }
   }
 
@@ -861,6 +1062,9 @@ export class OmpRpcSession {
   private onExit(code: number | null): void {
     if (this.lifecycle === 'exited') return;
     this.lifecycle = 'exited';
+    this.settlePendingAgentStart(
+      new Error('processo omp encerrou antes de agent_start'),
+    );
     this.exitCode = code;
     if (this.killTimer) {
       clearTimeout(this.killTimer);
@@ -868,6 +1072,9 @@ export class OmpRpcSession {
     }
     this.rejectAllPending(new Error('processo omp encerrou'));
     for (const requestId of [...this.pendingUi.keys()]) this.settleUi(requestId);
+    this.cancelledHostCalls.clear();
+    this.activeHostCalls.clear();
+    this.stdoutBuffer = '';
     if (code !== null && code !== 0 && this.diagnosticTail.length > 0) {
       this.push({
         kind: 'notice',
@@ -876,6 +1083,20 @@ export class OmpRpcSession {
       });
     }
     this.push({ kind: 'exit', code: this.exitCode });
+  }
+
+  private settlePendingAgentStart(error?: Error): void {
+    const pending = this.pendingAgentStart;
+    if (!pending) return;
+    this.pendingAgentStart = null;
+    clearTimeout(pending.timer);
+    if (error) pending.reject(error);
+    else pending.resolve();
+  }
+
+  /** Callback assíncrono de request() pode instalar/remover o waiter. */
+  private readPendingAgentStart(): PendingAgentStart | null {
+    return this.pendingAgentStart;
   }
 
   // ------------------------------------------------------------------
@@ -927,6 +1148,25 @@ export class OmpRpcSession {
 
     if (this.approvalPolicy === 'yolo') {
       this.autoRespond(request);
+      return;
+    }
+
+    if (
+      this.pendingUi.has(request.id) ||
+      this.pendingUi.size >= OMP_RPC_MAX_PENDING_UI
+    ) {
+      this.writeFrame({
+        type: 'extension_ui_response',
+        id: request.id,
+        cancelled: true,
+      } satisfies OmpExtensionUiResponseFrame);
+      this.push({
+        kind: 'notice',
+        level: 'warning',
+        message: this.pendingUi.has(request.id)
+          ? 'pedido de UI OMP duplicado foi negado'
+          : 'limite de pedidos de UI OMP pendentes excedido; pedido negado',
+      });
       return;
     }
 
@@ -1058,26 +1298,50 @@ export class OmpRpcSession {
     toolName: string,
     args: Record<string, unknown>,
   ): Promise<void> {
+    if (this.activeHostCalls.has(callId)) {
+      this.writeFrame(hostToolResult(callId, 'host tool call duplicada', true));
+      return;
+    }
+    if (this.activeHostCalls.size >= OMP_RPC_MAX_ACTIVE_HOST_CALLS) {
+      this.writeFrame(
+        hostToolResult(callId, 'limite de host tools concorrentes excedido', true),
+      );
+      return;
+    }
+    this.activeHostCalls.add(callId);
     let frame: OmpHostToolResultFrame;
-    if (!this.deps.hostTools.some((tool) => tool.name === toolName)) {
-      frame = hostToolResult(callId, `host tool desconhecida: ${toolName}`, true);
-    } else {
-      let outcome: OmpHostToolDispatchResult;
-      try {
-        outcome = await this.deps.dispatchHostTool(toolName, args);
-      } catch (err) {
-        outcome = {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        };
+    try {
+      if (!this.deps.hostTools.some((tool) => tool.name === toolName)) {
+        frame = hostToolResult(callId, `host tool desconhecida: ${toolName}`, true);
+      } else {
+        let outcome: OmpHostToolDispatchResult;
+        try {
+          outcome = await this.deps.dispatchHostTool(toolName, args);
+        } catch (err) {
+          outcome = {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+        frame = outcome.ok
+          ? hostToolResult(callId, stringifyResult(outcome.result), false)
+          : hostToolResult(callId, outcome.error ?? 'tool falhou', true);
       }
-      frame = outcome.ok
-        ? hostToolResult(callId, stringifyResult(outcome.result), false)
-        : hostToolResult(callId, outcome.error ?? 'tool falhou', true);
+    } finally {
+      this.activeHostCalls.delete(callId);
     }
     if (this.cancelledHostCalls.delete(callId)) return; // abortada pelo servidor
     if (this.lifecycle === 'exited' || this.disposed) return;
     this.writeFrame(frame);
+  }
+
+  private rememberCancelledHostCall(callId: string): void {
+    if (this.cancelledHostCalls.has(callId)) return;
+    if (this.cancelledHostCalls.size >= OMP_RPC_MAX_CANCELLED_HOST_CALLS) {
+      const oldest = this.cancelledHostCalls.values().next().value;
+      if (typeof oldest === 'string') this.cancelledHostCalls.delete(oldest);
+    }
+    this.cancelledHostCalls.add(callId);
   }
 
   // ------------------------------------------------------------------

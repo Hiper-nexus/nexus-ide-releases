@@ -199,6 +199,19 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(spawnDeps.ensureSubscriptionActive).not.toHaveBeenCalled();
   });
 
+  it('does not decrypt the global vault when native subscription auth wins', () => {
+    const result = prepareProviderSpawn('claude');
+
+    expect(result).toMatchObject({
+      ok: true,
+      overrides: {
+        keyEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active' },
+        suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+      },
+    });
+    expect(spawnDeps.runtimeKey).not.toHaveBeenCalled();
+  });
+
   it('injects Kimi API credentials through the official transient-model env', () => {
     spawnDeps.subscriptionAuthed.mockReturnValue(false);
     spawnDeps.runtimeKey.mockReturnValue('sk-kimi-selected');

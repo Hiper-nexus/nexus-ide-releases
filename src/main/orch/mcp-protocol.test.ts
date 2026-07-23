@@ -2,7 +2,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { mintToken, resetGateForTests } from './gate';
+import {
+  mintToken,
+  releaseSessionByToken,
+  resetGateForTests,
+} from './gate';
 import {
   clearAuditLogForTests,
   configureAuditLogRuntime,
@@ -193,6 +197,52 @@ describe('handleMcpMessage', () => {
     expect(tools.map((t) => t.name)).toEqual(['nexus_pane_read']);
   });
 
+  it('does not advertise workspace or process effects to read-only agents', async () => {
+    resetGateForTests();
+    const ctx = mintToken({
+      label: 'read-only-reviewer',
+      role: 'worker',
+      missionId: TEST_MISSION_ID,
+      contextRevision: TEST_CONTEXT_REVISION,
+      readOnly: true,
+      scope: auditScope,
+      allowedTools: null,
+    });
+    const handler = vi.fn(async () => ({ ok: true }));
+    const names = [
+      'nexus_pane_read',
+      'nexus_context_draft_review',
+      'nexus_handoff_submit',
+      'nexus_worker_heartbeat',
+      'nexus_file_write',
+      'nexus_terminal_run',
+      'nexus_git_commit',
+      'nexus_pane_spawn',
+      'nexus_context_draft_apply',
+    ];
+    const registry: McpRegistry = {
+      tools: names.map((name) => ({
+        name,
+        description: name,
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      })),
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+
+    const res = await handleMcpMessage(registry, ctx, req('tools/list'));
+    const tools = (res?.result as { tools: Array<{ name: string }> }).tools;
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'nexus_pane_read',
+      'nexus_context_draft_review',
+      'nexus_handoff_submit',
+      'nexus_worker_heartbeat',
+    ]);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('executes tools/call through alias names', async () => {
     const res = await handleMcpMessage(
       makeRegistry(),
@@ -210,6 +260,116 @@ describe('handleMcpMessage', () => {
       tool: 'nexus_pane_read',
       result: 'ok',
     });
+  });
+
+  it('does not run read or always-allowed handoff handlers after bearer revocation', async () => {
+    const read = vi.fn(async () => ({ content: 'secret' }));
+    const handoff = vi.fn(async () => ({ id: 'handoff-should-not-exist' }));
+    const registry: McpRegistry = {
+      tools: [
+        {
+          name: 'nexus_pane_read',
+          description: 'read',
+          inputSchema: { type: 'object', properties: {} },
+          handler: read,
+        },
+        {
+          name: 'nexus_handoff_submit',
+          description: 'handoff',
+          inputSchema: { type: 'object', properties: {} },
+          handler: handoff,
+        },
+      ],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const ctx = userCtx();
+    releaseSessionByToken(ctx.token);
+
+    const readResponse = await handleMcpMessage(
+      registry,
+      ctx,
+      req('tools/call', { name: 'nexus_pane_read', arguments: {} }),
+    );
+    const handoffResponse = await handleMcpMessage(
+      registry,
+      ctx,
+      req('tools/call', { name: 'nexus_handoff_submit', arguments: {} }),
+    );
+
+    expect(read).not.toHaveBeenCalled();
+    expect(handoff).not.toHaveBeenCalled();
+    expect(
+      (readResponse?.result as { content: Array<{ text: string }> })
+        .content[0]?.text,
+    ).toContain('session_authority_revoked');
+    expect(
+      (handoffResponse?.result as { content: Array<{ text: string }> })
+        .content[0]?.text,
+    ).toContain('session_authority_revoked');
+  });
+
+  it('aborts and discards an in-flight handler when its bearer is revoked', async () => {
+    let releaseStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      releaseStarted = resolve;
+    });
+    let releaseHandler!: () => void;
+    const continueHandler = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+    let signal: AbortSignal | undefined;
+    let committed = false;
+    const handler = vi.fn(
+      async (
+        _args: Record<string, unknown>,
+        _ctx: unknown,
+        invocation?: { signal?: AbortSignal },
+      ) => {
+        signal = invocation?.signal;
+        releaseStarted();
+        await continueHandler;
+        if (signal?.aborted) throw new Error('aborted before commit');
+        committed = true;
+        return { secret: 'must-not-return' };
+      },
+    );
+    const registry: McpRegistry = {
+      tools: [{
+        name: 'nexus_deferred_effect',
+        description: 'deferred effect',
+        inputSchema: { type: 'object', properties: {} },
+        handler,
+      }],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const ctx = missionCtx();
+    const pending = handleMcpMessage(
+      registry,
+      ctx,
+      req('tools/call', {
+        name: 'nexus_deferred_effect',
+        arguments: {},
+      }),
+      workflowOptions(),
+    );
+    await started;
+
+    releaseSessionByToken(ctx.token);
+    expect(signal?.aborted).toBe(true);
+    releaseHandler();
+    const response = await pending;
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(committed).toBe(false);
+    const result = response?.result as {
+      isError?: boolean;
+      content: Array<{ text: string }>;
+    };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('session_authority_revoked');
+    expect(result.content[0]?.text).not.toContain('must-not-return');
   });
 
   it('fails HTTP MCP confirmation-required tools closed and audits denial', async () => {

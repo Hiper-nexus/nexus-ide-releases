@@ -634,7 +634,8 @@ export function startClaudeSubscriptionFreshness(
 
 /**
  * Pick an available account for `adapterId`, excluding `excludeId` and any on
- * cooldown. Prefers the explicitly-active one; else the earliest created.
+ * cooldown. Preserves the explicitly-active one when quota is unknown; when
+ * measured scores are supplied, a demonstrably freer sibling may win.
  * Pure-ish (reads cooldown vs a supplied now) — the core failover decision.
  */
 export function pickAvailable(

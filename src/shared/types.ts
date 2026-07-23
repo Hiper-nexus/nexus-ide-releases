@@ -63,10 +63,14 @@ import type {
   Handoff,
   BrowserPaneOpenRequest,
   BrowserPaneOpenResult,
+  PaneCloseRequest,
   McpRuntimeInfo,
   Mission,
+  MissionOrchestratorBootstrapResult,
   MissionPaneSpec,
   MissionPatch,
+  OperatorReviewFeedbackInput,
+  OperatorReviewFeedbackResult,
   MissionPaneRecoveryRequest,
   MissionPaneRecoveryResult,
   OrchPaneSpawnRequest,
@@ -76,6 +80,10 @@ import type {
   TodoList,
   TodoStatus,
 } from './orch-types';
+import type {
+  ClarifyAnswerInput,
+  ClarifyAnswerResult,
+} from './clarify';
 import type {
   AudioSettings,
   AudioSettingsPatch,
@@ -324,6 +332,8 @@ export interface NexusApi {
   };
   pty: {
     spawn(req: SpawnRequest): Promise<SpawnResult>;
+    /** Pull retained output immediately (used after adopting a headless PTY). */
+    replay(sessionId: string): Promise<void>;
     write(sessionId: string, data: string): void;
     writeConfirmed(sessionId: string, data: string): Promise<boolean>;
     resize(sessionId: string, cols: number, rows: number): void;
@@ -504,7 +514,7 @@ export interface NexusApi {
     ): Unsubscribe;
     sendBrowserOpenResult(result: BrowserPaneOpenResult): void;
     onBrowserOpenRequest(cb: (req: BrowserPaneOpenRequest) => void): Unsubscribe;
-    onPaneCloseRequest(cb: (paneId: string) => void): Unsubscribe;
+    onPaneCloseRequest(cb: (request: PaneCloseRequest) => void): Unsubscribe;
     listMissions(): Promise<Mission[]>;
     /** Recorded pane composition of a mission (for 1-click reopen). */
     listMissionPanes(missionId: string): Promise<MissionPaneSpec[]>;
@@ -517,6 +527,7 @@ export interface NexusApi {
     /** Cria o registro da missão no lançamento (não depende do LLM). */
     createMission(input: {
       title: string;
+      goal?: string;
       squadId?: string;
       orchestratorPane?: {
         paneId: string;
@@ -528,6 +539,16 @@ export interface NexusApi {
         agentName?: string;
       };
     }): Promise<Mission>;
+    authorizeImmediateSquadLaunch(input: {
+      squadId: string;
+      paneId: string;
+      adapterId: string;
+      model?: string;
+      accountId?: string;
+      effort?: string;
+      missionTitle: string;
+      missionGoal: string;
+    }): Promise<{ grant: string }>;
     /** Intent-first: create awaiting_goal shell without orchestrator pane. */
     armMission(input: { title: string; squadId: string }): Promise<Mission>;
     submitMissionIntent(input: {
@@ -544,9 +565,31 @@ export interface NexusApi {
     approveMissionIntent(input: {
       missionId: string;
       evidenceAttached?: boolean;
+      /** Staged candidates; main validates and canonicalizes before approval. */
+      attachmentPaths?: string[];
     }): Promise<Mission>;
+    /**
+     * Materialize the approved mission's initial orchestrator. Runtime
+     * identity is derived and sealed in main; no provider metadata is input.
+     */
+    bootstrapMissionOrchestrator(input: {
+      missionId: string;
+    }): Promise<MissionOrchestratorBootstrapResult>;
     /** After plan.md is ready: plan lane → standard PREVC. */
     promotePlanLane(input: { missionId: string }): Promise<Mission>;
+    /** Submit an approved mission kickoff through main-owned PTY authority. */
+    submitMissionKickoff(input: {
+      missionId: string;
+      sessionId: string;
+    }): Promise<
+      | { accepted: true }
+      | {
+          accepted: false;
+          reason: 'boot_timeout' | 'timeout' | 'session_exited' | 'write_failed' | 'authority_lost';
+          detail: string;
+          cta: string;
+        }
+    >;
     /** Explicit prepare-project while still awaiting a real goal. */
     prepareMissionProject(input: { missionId: string }): Promise<Mission>;
     cancelMissionPreparation(input: {
@@ -613,6 +656,12 @@ export interface NexusApi {
     updateMission(missionId: string, patch: MissionPatch): Promise<Mission>;
     removeMission(missionId: string): Promise<{ removed: boolean }>;
     listHandoffs(): Promise<Handoff[]>;
+    /** Resolve one durable mission question through scoped main authority. */
+    answerClarify(input: ClarifyAnswerInput): Promise<ClarifyAnswerResult>;
+    /** Persist diff comments before main-owned idle delivery to the mission. */
+    submitOperatorReview(
+      input: OperatorReviewFeedbackInput,
+    ): Promise<OperatorReviewFeedbackResult>;
     getTodos(): Promise<TodoList[]>;
     /** Set a single todo item's status. */
     setTodoStatus(
@@ -635,9 +684,9 @@ export interface NexusApi {
       kind: 'agent' | 'skill';
       slug: string;
     }): Promise<CatalogInstallResult>;
-    getRecipeOverlay(workspacePath?: string): Promise<RecipeOverlayResult>;
+    getRecipeOverlay(): Promise<RecipeOverlayResult>;
     saveCatalogOverlay(patch: CatalogOverlayPatch): Promise<CatalogOverlayState>;
-    proposeRecipes(workspacePath?: string): Promise<RecipeSuggestion[]>;
+    proposeRecipes(): Promise<RecipeSuggestion[]>;
     writeAgentSpec(req: AgentSpecWriteRequest): Promise<{ ok: boolean; path?: string; error?: string }>;
     listInstalledCatalog(): Promise<InstalledItemInfo[]>;
     harnessEnriched(): Promise<EnrichedCatalogInfo | null>;

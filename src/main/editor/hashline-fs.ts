@@ -8,6 +8,7 @@ import {
 import { resolvePathCandidateForScope } from '../orch/workspace-path';
 import {
   Filesystem,
+  type MoveOptions,
   NotFoundError,
   type PreflightWriteOptions,
   type WriteResult,
@@ -95,11 +96,13 @@ export class WorkspaceHashlineFs extends Filesystem {
     from: string,
     to: string,
     content?: string,
+    options?: MoveOptions,
   ): Promise<void> {
     const finalContent = content ?? (await this.readText(from));
     // Write-then-remove keeps both legs inside the descriptor-validated
     // workspace primitives (there is no scoped rename primitive).
     writeWorkspaceTextFile(this.scope, to, finalContent);
+    options?.assertCurrentAuthority?.();
     try {
       removeWorkspaceFile(this.scope, from);
     } catch (error) {
@@ -241,8 +244,9 @@ export class EditorBufferHashlineFs extends WorkspaceHashlineFs {
     from: string,
     to: string,
     content?: string,
+    options?: MoveOptions,
   ): Promise<void> {
-    await super.move(from, to, content);
+    await super.move(from, to, content, options);
     const fromCanonical = this.canonicalPath(from);
     const toCanonical = this.canonicalPath(to);
     this.documents.relocate(fromCanonical, toCanonical);

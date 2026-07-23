@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
+import type { Squad } from "../../shared/orch-types";
 import { testProjectScope } from "./__tests__/scope-fixture";
 
 const deps = vi.hoisted(() => ({
@@ -10,6 +11,7 @@ const deps = vi.hoisted(() => ({
   bindOwnedAgentSessionMission: vi.fn(),
   hasMissionOrchestratorGrant: vi.fn(),
   rollbackOwnedAgentSessionMission: vi.fn(),
+  orchTerminateSession: vi.fn(async () => true),
   requireRendererWorkspaceScope: vi.fn(),
   getContextBySession: vi.fn(),
   restoreSessionAuthority: vi.fn(),
@@ -17,15 +19,22 @@ const deps = vi.hoisted(() => ({
   createMission: vi.fn(),
   getMission: vi.fn(),
   setMissionOrchestratorSession: vi.fn(),
+  rebindMissionOrchestratorSession: vi.fn(),
   updateMission: vi.fn(),
   removeMission: vi.fn(),
   recordMissionPane: vi.fn(),
   removeMissionPane: vi.fn(),
   findMissionPaneByPaneId: vi.fn(),
   listMissionPanes: vi.fn(),
+  listHandoffs: vi.fn(),
+  listTasks: vi.fn(),
   forScope: vi.fn(),
   orientationEnsure: vi.fn(),
   resolvePaneActivity: vi.fn(),
+  validateAttachmentPaths: vi.fn(),
+  snapshotAttachmentPaths: vi.fn(),
+  requestMissionOrchestratorBootstrap: vi.fn(),
+  resolveOrchestratorRuntime: vi.fn(),
 }));
 
 vi.mock("./pane-registry", () => ({
@@ -39,6 +48,7 @@ vi.mock("../pty/pty-manager", () => ({
   bindOwnedAgentSessionMission: deps.bindOwnedAgentSessionMission,
   hasMissionOrchestratorGrant: deps.hasMissionOrchestratorGrant,
   rollbackOwnedAgentSessionMission: deps.rollbackOwnedAgentSessionMission,
+  orchTerminateSession: deps.orchTerminateSession,
 }));
 
 vi.mock("../persistence/renderer-workspace-scope", () => ({
@@ -97,6 +107,8 @@ const session = {
   role: "orchestrator" as const,
   squadId: "review-squad",
   agentName: "Maestro",
+  immediateMissionTitle: "Review",
+  immediateMissionGoal: "Review",
   allowedTools: ["nexus_pane_spawn"],
   allowedSkills: ["review"],
 };
@@ -123,10 +135,41 @@ const approvedMission = {
     },
   },
 };
+const savedSquad: Squad = {
+  id: "review-squad",
+  name: "Review squad",
+  createdAt: "1",
+  builtin: false,
+  orchestratorInstructions: "## Política\nCoordene pelo contrato Nexus.",
+  agents: [
+    {
+      id: "orch",
+      agentName: "Maestro",
+      category: "orchestrator",
+      cli: "codex",
+      allowedTools: ["nexus_task"],
+      allowedSkills: ["check-work"],
+    },
+  ],
+};
+const approvedRuntime = Object.freeze({
+  adapterId: "codex",
+  model: "gpt-5.6-sol",
+  accountId: "account-a",
+  effort: "high",
+  readOnly: false as const,
+  nativeReadOnly: true as const,
+});
 const authority = new RendererMissionAuthority(
   { forScope: deps.forScope } as never,
   () => "context-revision-a",
   () => true,
+  deps.resolvePaneActivity,
+  deps.validateAttachmentPaths,
+  deps.requestMissionOrchestratorBootstrap,
+  () => savedSquad,
+  deps.resolveOrchestratorRuntime,
+  deps.snapshotAttachmentPaths,
 );
 
 beforeEach(() => {
@@ -134,7 +177,9 @@ beforeEach(() => {
   resetMissionPromptQueues();
   deps.getMission.mockReset();
   deps.setMissionOrchestratorSession.mockReset();
+  deps.rebindMissionOrchestratorSession.mockReset();
   deps.updateMission.mockReset();
+  deps.removeMission.mockReset();
   deps.findPaneOwnedBy.mockReturnValue({
     paneId: "pane-a",
     sessionId: "pty-a",
@@ -157,18 +202,39 @@ beforeEach(() => {
   deps.createMission.mockReturnValue(mission);
   deps.getMission.mockReturnValue(mission);
   deps.setMissionOrchestratorSession.mockReturnValue(mission);
+  deps.rebindMissionOrchestratorSession.mockReturnValue(mission);
   deps.updateMission.mockReturnValue(mission);
+  deps.removeMission.mockReturnValue(true);
+  deps.listMissionPanes.mockReturnValue([]);
+  deps.listHandoffs.mockReturnValue([]);
+  deps.listTasks.mockReturnValue([]);
   deps.recordMissionPane.mockReturnValue({
     id: "mpane-new",
     missionId: "mission-a",
     paneId: "pane-a",
   });
   deps.orientationEnsure.mockResolvedValue({ status: "ready" });
+  deps.validateAttachmentPaths.mockImplementation((paths: string[]) =>
+    paths.map((item) => `/validated/${item.split('/').at(-1)}`),
+  );
+  deps.snapshotAttachmentPaths.mockImplementation((paths: string[]) =>
+    paths.map((attachmentPath) => ({
+      path: attachmentPath,
+      sha256: "a".repeat(64),
+      size: 128,
+    })),
+  );
+  deps.requestMissionOrchestratorBootstrap.mockResolvedValue({
+    ok: true,
+    missionId: mission.id,
+  });
+  deps.resolveOrchestratorRuntime.mockReturnValue(approvedRuntime);
   deps.forScope.mockReturnValue({
     missions: {
       create: deps.createMission,
       get: deps.getMission,
       setOrchestratorSession: deps.setMissionOrchestratorSession,
+      rebindOrchestratorSession: deps.rebindMissionOrchestratorSession,
       update: deps.updateMission,
       remove: deps.removeMission,
     },
@@ -178,10 +244,52 @@ beforeEach(() => {
       findByPaneId: deps.findMissionPaneByPaneId,
       list: deps.listMissionPanes,
     },
+    handoffs: { list: deps.listHandoffs },
+    tasks: { list: deps.listTasks },
   });
 });
 
 describe("renderer mission authority", () => {
+  it("remove somente um draft vazio e revalida todos os receipts", () => {
+    deps.getMission.mockReturnValue({
+      ...mission,
+      orchestratorSessionId: undefined,
+      intentState: "awaiting_goal",
+    });
+
+    expect(authority.missionRemovalCandidateFromRenderer(owner, "mission-a"))
+      .toEqual({ missionId: "mission-a", title: "Review" });
+    expect(authority.removeMissionFromRenderer(owner, "mission-a")).toBe(true);
+    expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
+  });
+
+  it.each([
+    ["running", [], [], []],
+    ["done", [], [], []],
+    ["blocked", [], [], []],
+    ["pending", [{ role: "worker" }], [], []],
+    ["pending", [], [{ id: "handoff-a" }], []],
+    ["pending", [], [], [{ id: "task-a" }]],
+  ] as const)(
+    "preserva missão/receipts quando status=%s ou há atividade durável",
+    (status, panes, handoffs, tasks) => {
+      deps.getMission.mockReturnValue({
+        ...mission,
+        status,
+        orchestratorSessionId: undefined,
+        intentState: status === "pending" ? "awaiting_goal" : "executing",
+      });
+      deps.listMissionPanes.mockReturnValue(panes);
+      deps.listHandoffs.mockReturnValue(handoffs);
+      deps.listTasks.mockReturnValue(tasks);
+
+      expect(() =>
+        authority.removeMissionFromRenderer(owner, "mission-a"),
+      ).toThrow(/preservada|receipts|atividade/i);
+      expect(deps.removeMission).not.toHaveBeenCalled();
+    },
+  );
+
   it("turns the approved intent criteria into durable PREVC milestones", () => {
     authority.submitIntentFromRenderer(owner, {
       missionId: "mission-a",
@@ -249,7 +357,7 @@ describe("renderer mission authority", () => {
       }),
     ).toBe(plannedMission);
 
-    const queue = getMissionPromptQueue(mission.id);
+    const queue = getMissionPromptQueue(scope, mission.id);
     expect(queue.executingId).toBeNull();
     expect(queue.items).toEqual([
       expect.objectContaining({
@@ -258,7 +366,7 @@ describe("renderer mission authority", () => {
         status: "delivered",
       }),
     ]);
-    expect(peekMissionPromptQueue(mission.id).queued).toHaveLength(0);
+    expect(peekMissionPromptQueue(scope, mission.id).queued).toHaveLength(0);
   });
 
   it("keeps a goal waiting when it promises evidence in a later step", () => {
@@ -316,6 +424,7 @@ describe("renderer mission authority", () => {
         intentVersion: 1,
         approvedAt: expect.any(Number),
         dispatchedAt: expect.any(Number),
+        orchestratorRuntime: approvedRuntime,
       },
     });
     expect(deps.updateMission).toHaveBeenCalledWith(
@@ -325,6 +434,369 @@ describe("renderer mission authority", () => {
         intentState: "dispatched",
       }),
     );
+  });
+
+  it("fence de aprovação invalida mudança de intent durante confirmação nativa", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValue(awaitingApproval);
+    const candidate = authority.missionApprovalCandidateFromRenderer(owner, {
+      missionId: mission.id,
+    });
+    expect(candidate).toMatchObject({
+      missionId: mission.id,
+      goal: "Review",
+      lane: "standard",
+      executionMode: "assisted",
+      contextPolicy: "on-demand",
+      acceptanceCriteria: ["Done"],
+      intentVersion: 1,
+      orchestratorRuntime: approvedRuntime,
+    });
+
+    deps.getMission.mockReturnValue({
+      ...awaitingApproval,
+      intentVersion: 2,
+      intentContract: {
+        ...awaitingApproval.intentContract,
+        intentVersion: 2,
+        goal: "Objetivo trocado durante o modal",
+      },
+    });
+    expect(() =>
+      authority.approveIntentFromRenderer(
+        owner,
+        { missionId: mission.id },
+        candidate.fence,
+      ),
+    ).toThrow(/approval.*stale|intent.*changed/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+    expect(deps.requestMissionOrchestratorBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("sela o runtime exato e invalida mudança de provider/account durante o modal", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValue(awaitingApproval);
+    const candidate = authority.missionApprovalCandidateFromRenderer(owner, {
+      missionId: mission.id,
+    });
+
+    deps.resolveOrchestratorRuntime.mockReturnValue({
+      ...approvedRuntime,
+      accountId: "account-b",
+    });
+
+    expect(() =>
+      authority.approveIntentFromRenderer(
+        owner,
+        { missionId: mission.id },
+        candidate.fence,
+      ),
+    ).toThrow(/approval.*stale|runtime.*changed/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+    expect(deps.requestMissionOrchestratorBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("não abre aprovação quando o runtime main-owned está indisponível", () => {
+    deps.getMission.mockReturnValue({
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    });
+    deps.resolveOrchestratorRuntime.mockImplementationOnce(() => {
+      throw new Error("Nenhuma conta tem credencial válida");
+    });
+
+    expect(() =>
+      authority.missionApprovalCandidateFromRenderer(owner, {
+        missionId: mission.id,
+      }),
+    ).toThrow(/credencial válida/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("recusa conteúdo que não cabe integralmente na revisão nativa", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        goal: `Objetivo ${"x".repeat(6_100)}`,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValue(awaitingApproval);
+
+    expect(() =>
+      authority.missionApprovalCandidateFromRenderer(owner, {
+        missionId: mission.id,
+      }),
+    ).toThrow(/approval_review_too_large/i);
+
+    deps.getMission.mockReturnValue({
+      ...awaitingApproval,
+      intentContract: {
+        ...awaitingApproval.intentContract,
+        goal: "Objetivo visualmente benigno\u202eexe.malicioso",
+      },
+    });
+    expect(() =>
+      authority.missionApprovalCandidateFromRenderer(owner, {
+        missionId: mission.id,
+      }),
+    ).toThrow(/approval_review_unsafe/i);
+  });
+
+  it("inclui anexos validados no fence da aprovação", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValue(awaitingApproval);
+    const candidate = authority.missionApprovalCandidateFromRenderer(owner, {
+      missionId: mission.id,
+      attachmentPaths: ["/staged/a.png"],
+    });
+    expect(candidate.attachmentPaths).toEqual(["/validated/a.png"]);
+    expect(candidate.attachmentSnapshots).toEqual([
+      {
+        path: "/validated/a.png",
+        sha256: "a".repeat(64),
+        size: 128,
+      },
+    ]);
+
+    expect(() =>
+      authority.approveIntentFromRenderer(
+        owner,
+        { missionId: mission.id, attachmentPaths: ["/staged/b.png"] },
+        candidate.fence,
+      ),
+    ).toThrow(/approval.*stale|attachments.*changed/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("invalida aprovação quando bytes mudam no mesmo caminho durante o modal", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValue(awaitingApproval);
+    const input = {
+      missionId: mission.id,
+      attachmentPaths: ["/staged/a.png"],
+    };
+    const candidate = authority.missionApprovalCandidateFromRenderer(owner, input);
+    deps.snapshotAttachmentPaths.mockImplementation((paths: string[]) =>
+      paths.map((attachmentPath) => ({
+        path: attachmentPath,
+        sha256: "b".repeat(64),
+        size: 128,
+      })),
+    );
+
+    expect(() =>
+      authority.approveIntentFromRenderer(owner, input, candidate.fence),
+    ).toThrow(/approval.*stale|attachments.*changed/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("invalida aprovação quando roster/instruções do squad mudam no modal", () => {
+    let liveSquad = savedSquad;
+    const squadAuthority = new RendererMissionAuthority(
+      { forScope: deps.forScope } as never,
+      () => "context-revision-a",
+      () => true,
+      deps.resolvePaneActivity,
+      deps.validateAttachmentPaths,
+      deps.requestMissionOrchestratorBootstrap,
+      () => liveSquad,
+      deps.resolveOrchestratorRuntime,
+    );
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValue(awaitingApproval);
+    const candidate = squadAuthority.missionApprovalCandidateFromRenderer(
+      owner,
+      { missionId: mission.id },
+    );
+    liveSquad = {
+      ...savedSquad,
+      orchestratorInstructions: "## Política alterada\nExecute algo não exibido.",
+    };
+
+    expect(() =>
+      squadAuthority.approveIntentFromRenderer(
+        owner,
+        { missionId: mission.id },
+        candidate.fence,
+      ),
+    ).toThrow(/approval.*stale|squad.*changed/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("keeps main-owned bootstrap progressing after the approving renderer disappears", async () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValueOnce(awaitingApproval);
+    deps.updateMission.mockImplementationOnce(
+      (_missionId: string, patch: Record<string, unknown>) => ({
+        ...awaitingApproval,
+        ...patch,
+      }),
+    );
+    let rendererPresent = true;
+    let bootstrapFinished = false;
+    deps.requestMissionOrchestratorBootstrap.mockImplementationOnce(
+      async () => {
+        await Promise.resolve();
+        bootstrapFinished = !rendererPresent;
+        return { ok: true, missionId: mission.id };
+      },
+    );
+
+    const approved = authority.approveIntentFromRenderer(owner, {
+      missionId: mission.id,
+    });
+    rendererPresent = false;
+
+    expect(approved).toMatchObject({
+      status: "running",
+      intentState: "dispatched",
+    });
+    expect(deps.requestMissionOrchestratorBootstrap).toHaveBeenCalledWith(
+      scope,
+      mission.id,
+    );
+    await vi.waitFor(() => expect(bootstrapFinished).toBe(true));
+  });
+
+  it("validates and persists attachment paths in the approved contract", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValueOnce(awaitingApproval);
+    deps.updateMission.mockImplementationOnce(
+      (_missionId: string, patch: Record<string, unknown>) => ({
+        ...awaitingApproval,
+        ...patch,
+      }),
+    );
+
+    const result = authority.approveIntentFromRenderer(owner, {
+      missionId: mission.id,
+      evidenceAttached: true,
+      attachmentPaths: ['/staged/print.png'],
+    });
+
+    expect(deps.validateAttachmentPaths).toHaveBeenCalledWith([
+      '/staged/print.png',
+    ]);
+    expect(result.intentContract).toMatchObject({
+      evidenceAttached: true,
+      attachmentPaths: ['/validated/print.png'],
+      attachmentSnapshots: [
+        {
+          path: '/validated/print.png',
+          sha256: 'a'.repeat(64),
+          size: 128,
+        },
+      ],
+    });
+    expect(deps.updateMission).toHaveBeenCalledWith(
+      mission.id,
+      expect.objectContaining({
+        intentContract: expect.objectContaining({
+          attachmentPaths: ['/validated/print.png'],
+        }),
+      }),
+    );
+  });
+
+  it("leaves attachment paths absent when approval does not provide them", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValueOnce(awaitingApproval);
+    deps.updateMission.mockImplementationOnce(
+      (_missionId: string, patch: Record<string, unknown>) => ({
+        ...awaitingApproval,
+        ...patch,
+      }),
+    );
+
+    const result = authority.approveIntentFromRenderer(owner, {
+      missionId: mission.id,
+    });
+
+    expect(deps.validateAttachmentPaths).not.toHaveBeenCalled();
+    expect(result.intentContract).not.toHaveProperty('attachmentPaths');
   });
 
   it("blocks final approval when promised evidence is still missing", () => {
@@ -412,7 +884,7 @@ describe("renderer mission authority", () => {
         signal: expect.any(AbortSignal),
       }),
     );
-    expect(peekMissionPromptQueue(mission.id).executing).toBeNull();
+    expect(peekMissionPromptQueue(scope, mission.id).executing).toBeNull();
   });
 
   it("aborts the real prepare-project warm when renderer cancels", async () => {
@@ -441,14 +913,16 @@ describe("renderer mission authority", () => {
       missionId: mission.id,
     });
     await vi.waitFor(() => {
-      expect(peekMissionPromptQueue(mission.id).executing?.kind).toBe("preflight");
+      expect(peekMissionPromptQueue(scope, mission.id).executing?.kind).toBe(
+        "preflight",
+      );
     });
     expect(authority.cancelPreparationFromRenderer(owner, {
       missionId: mission.id,
     })).toEqual({ cancelled: true });
     await expect(pending).rejects.toThrow(/cancelled by a newer intent/i);
     expect(observedSignal?.aborted).toBe(true);
-    expect(peekMissionPromptQueue(mission.id).cancelled).toHaveLength(1);
+    expect(peekMissionPromptQueue(scope, mission.id).cancelled).toHaveLength(1);
   });
 
   it("does not expose another workspace mission prompt queue", () => {
@@ -466,11 +940,22 @@ describe("renderer mission authority", () => {
     ).toThrow(/PREVC workflow reaches complete/);
     expect(deps.updateMission).not.toHaveBeenCalled();
 
+    const demotion = {
+      title: "Safer title",
+      status: "blocked" as const,
+    };
+    const candidate = authority.missionLifecycleCandidateFromRenderer(
+      owner,
+      "mission-a",
+      demotion,
+    );
     expect(
-      authority.updateMissionFromRenderer(owner, "mission-a", {
-        title: "Safer title",
-        status: "blocked",
-      }),
+      authority.updateMissionFromRenderer(
+        owner,
+        "mission-a",
+        demotion,
+        candidate.fence,
+      ),
     ).toBe(mission);
     expect(deps.requireRendererWorkspaceScope).toHaveBeenCalledWith(owner);
     expect(deps.forScope).toHaveBeenCalledWith(scope);
@@ -478,6 +963,44 @@ describe("renderer mission authority", () => {
       title: "Safer title",
       status: "blocked",
     });
+  });
+
+  it("não ressuscita missão bloqueada/failed por patch do renderer", () => {
+    deps.getMission.mockReturnValue({
+      ...approvedMission,
+      status: "blocked",
+      intentState: "blocked_user",
+    });
+    expect(() =>
+      authority.updateMissionFromRenderer(owner, "mission-a", {
+        status: "running",
+      }),
+    ).toThrow(/main-owned|resume flow/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+
+    deps.getMission.mockReturnValue({
+      ...approvedMission,
+      status: "failed",
+      intentState: "blocked_technical",
+    });
+    expect(() =>
+      authority.updateMissionFromRenderer(owner, "mission-a", {
+        status: "running",
+      }),
+    ).toThrow(/main-owned|resume flow/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("não permite reduzir milestones derivados após contrato aprovado", () => {
+    deps.getMission.mockReturnValue(approvedMission);
+    expect(() =>
+      authority.updateMissionFromRenderer(owner, "mission-a", {
+        milestones: [
+          { id: "atalho", label: "Um único passo arbitrário", status: "pending" },
+        ],
+      }),
+    ).toThrow(/milestones.*intent contract.*main-owned/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
   });
 
   it("refuses to approve a contract compiled for an older intent version", () => {
@@ -587,377 +1110,5 @@ describe("renderer mission authority", () => {
       }),
     ).toThrow(/approved and dispatched/i);
     expect(deps.recordMissionPane).not.toHaveBeenCalled();
-  });
-
-  it("rolls pane persistence back without revoking a dispatched contract", () => {
-    deps.getMission.mockReturnValueOnce(approvedMission);
-    deps.restoreSessionAuthority.mockReturnValueOnce(false);
-
-    expect(() =>
-      authority.bindOrchestratorToMissionFromRenderer(owner, {
-        missionId: "mission-a",
-        title: "Review",
-        squadId: "review-squad",
-        orchestratorPane: { paneId: "pane-a" },
-      }),
-    ).toThrow(/failed to bind mission/i);
-
-    expect(deps.removeMissionPane).toHaveBeenCalledWith("mpane-new");
-    expect(deps.updateMission).not.toHaveBeenCalled();
-  });
-
-  it("rejects renderer-forged milestone completion and evidence", () => {
-    expect(() =>
-      authority.updateMissionFromRenderer(owner, "mission-a", {
-        milestones: [
-          {
-            id: "step-a",
-            label: "Forged",
-            status: "done",
-            evidenceIds: ["evidence-forged"],
-          },
-        ],
-      }),
-    ).toThrow(/milestone completion.*Nexus/i);
-
-    expect(() =>
-      authority.updateMissionFromRenderer(owner, "mission-a", {
-        milestones: [
-          {
-            id: "step-a",
-            label: "Forged",
-            status: "in-progress",
-            evidenceIds: ["evidence-forged"],
-          },
-        ],
-      }),
-    ).toThrow(/milestone completion.*Nexus/i);
-    expect(deps.updateMission).not.toHaveBeenCalled();
-  });
-
-  it("rejects duplicate milestone ids and any mutation after completion", () => {
-    expect(() =>
-      authority.updateMissionFromRenderer(owner, "mission-a", {
-        milestones: [
-          { id: "same", label: "One" },
-          { id: "same", label: "Two" },
-        ],
-      }),
-    ).toThrow(/ids must be unique/i);
-
-    deps.getMission.mockReturnValueOnce({ ...mission, status: "done" });
-    expect(() =>
-      authority.updateMissionFromRenderer(owner, "mission-a", {
-        status: "blocked",
-      }),
-    ).toThrow(/completed missions are immutable/i);
-    expect(deps.updateMission).not.toHaveBeenCalled();
-  });
-
-  it("does not let renderer replacement erase a completed milestone", () => {
-    deps.getMission.mockReturnValueOnce({
-      ...mission,
-      status: "running",
-      milestones: [
-        {
-          id: "step-a",
-          label: "Verified",
-          status: "done",
-          evidenceIds: ["evidence-a"],
-        },
-      ],
-    });
-    expect(() =>
-      authority.updateMissionFromRenderer(owner, "mission-a", {
-        milestones: [{ id: "step-b", label: "Replacement" }],
-      }),
-    ).toThrow(/completed mission milestones are immutable/i);
-    expect(deps.updateMission).not.toHaveBeenCalled();
-  });
-
-  it("creates from main-owned session metadata and ignores forged pane fields", () => {
-    const result = authority.createMissionFromRenderer(owner, {
-      title: "Review",
-      squadId: "review-squad",
-      orchestratorPane: {
-        paneId: "pane-a",
-        adapterId: "evil-adapter",
-        model: "evil-model",
-        accountId: "evil-account",
-        cwd: "/etc",
-        title: "evil-title",
-        agentName: "evil-agent",
-      },
-    });
-
-    expect(result).toBe(mission);
-    expect(deps.createMission).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Review",
-        squadId: "review-squad",
-        orchestratorSessionId: "pty-a",
-        intentState: "dispatched",
-        intentVersion: 1,
-        intentContract: expect.objectContaining({
-          approvedAt: expect.any(Number),
-          dispatchedAt: expect.any(Number),
-          goal: expect.any(String),
-          budgets: expect.objectContaining({ maxWorkers: expect.any(Number) }),
-        }),
-      }),
-    );
-    expect(deps.recordMissionPane).toHaveBeenCalledWith({
-      missionId: "mission-a",
-      paneId: "pane-a",
-      adapterId: "codex",
-      model: "gpt-5.4",
-      accountId: "account-a",
-      effort: "high",
-      cwd: "/workspace/a/packages/app",
-      title: "Review · orq",
-      agentName: "Maestro",
-      role: "orchestrator",
-      allowedTools: ["nexus_pane_spawn"],
-      allowedSkills: ["review"],
-    });
-    expect(deps.consumeMissionOrchestratorGrant).toHaveBeenCalledWith(
-      owner,
-      "pty-a",
-      "review-squad",
-    );
-  });
-
-  it("rejects immediate creation when main policy did not grant the exception", () => {
-    const strictAuthority = new RendererMissionAuthority(
-      { forScope: deps.forScope } as never,
-      () => "context-revision-a",
-      () => false,
-    );
-
-    expect(() =>
-      strictAuthority.createMissionFromRenderer(owner, {
-        title: "Review",
-        squadId: "review-squad",
-        orchestratorPane: { paneId: "pane-a" },
-      }),
-    ).toThrow(/immediate.*not authorized|intent-first/i);
-    expect(deps.createMission).not.toHaveBeenCalled();
-  });
-
-  it("binds only with approval for the exact mission intent version", () => {
-    deps.getMission.mockReturnValueOnce({
-      ...approvedMission,
-      intentVersion: 2,
-    });
-
-    expect(() =>
-      authority.bindOrchestratorToMissionFromRenderer(owner, {
-        missionId: "mission-a",
-        title: "Review",
-        squadId: "review-squad",
-        orchestratorPane: { paneId: "pane-a" },
-      }),
-    ).toThrow(/approval_required|current intent/i);
-    expect(deps.recordMissionPane).not.toHaveBeenCalled();
-  });
-
-  it("fails closed before creating when pane ownership or promotion is absent", () => {
-    deps.findPaneOwnedBy.mockReturnValueOnce(null);
-    expect(() =>
-      authority.createMissionFromRenderer(owner, {
-        title: "Review",
-        squadId: "review-squad",
-        orchestratorPane: { paneId: "pane-a" },
-      }),
-    ).toThrow(/owned registered pane/);
-    expect(deps.createMission).not.toHaveBeenCalled();
-
-    deps.findPaneOwnedBy.mockReturnValueOnce({
-      paneId: "pane-a",
-      sessionId: "pty-a",
-      title: "A",
-      kind: "cli-agent",
-    });
-    deps.hasMissionOrchestratorGrant.mockReturnValueOnce(false);
-    expect(() =>
-      authority.createMissionFromRenderer(owner, {
-        title: "Review",
-        squadId: "review-squad",
-        orchestratorPane: { paneId: "pane-a" },
-      }),
-    ).toThrow(/promotion grant/);
-    expect(deps.createMission).not.toHaveBeenCalled();
-  });
-
-  it("compensates a failed cross-store/session commit without consuming the grant", () => {
-    deps.restoreSessionAuthority.mockReturnValueOnce(false);
-
-    expect(() =>
-      authority.createMissionFromRenderer(owner, {
-        title: "Review",
-        squadId: "review-squad",
-        orchestratorPane: { paneId: "pane-a" },
-      }),
-    ).toThrow(/failed to bind mission/);
-
-    expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
-    expect(deps.consumeMissionOrchestratorGrant).not.toHaveBeenCalled();
-    expect(deps.rollbackOwnedAgentSessionMission).not.toHaveBeenCalled();
-  });
-
-  it("restores only the owned persisted pane with the same scope and runtime metadata", () => {
-    deps.getMission.mockReturnValue(approvedMission);
-    deps.getContextBySession.mockReturnValue({
-      role: "orchestrator",
-      missionId: "mission-a",
-      scope,
-    });
-    deps.getOwnedAgentSessionInfo.mockReturnValueOnce({
-      ...session,
-      source: "persisted-pane",
-      missionId: "mission-a",
-    });
-    deps.findMissionPaneByPaneId.mockReturnValue({
-      id: "mpane-a",
-      missionId: "mission-a",
-      paneId: "pane-a",
-      adapterId: "codex",
-      model: "gpt-5.4",
-      accountId: "account-a",
-      effort: "high",
-      cwd: "/workspace/a/packages/app",
-      title: "Review · orq",
-      agentName: "Maestro",
-      role: "orchestrator",
-      scope,
-      allowedTools: ["nexus_pane_spawn"],
-      allowedSkills: ["review"],
-      createdAt: 1,
-    });
-
-    expect(authority.restorePersistedPaneAuthority(owner, "pane-a")).toBe(true);
-    expect(deps.restoreSessionAuthority).toHaveBeenCalledWith("pty-a", {
-      missionId: "mission-a",
-      contextRevision: "context-revision-a",
-      role: "orchestrator",
-      agentName: "Maestro",
-      allowedTools: ["nexus_pane_spawn"],
-      allowedSkills: ["review"],
-    });
-
-    deps.getOwnedAgentSessionInfo.mockReturnValueOnce({
-      ...session,
-      source: "persisted-pane",
-      scope: testProjectScope({ projectId: "project-b" }),
-    });
-    expect(authority.restorePersistedPaneAuthority(owner, "pane-a")).toBe(
-      false,
-    );
-
-    deps.getOwnedAgentSessionInfo.mockReturnValueOnce({
-      ...session,
-      source: "persisted-pane",
-      missionId: "mission-a",
-    });
-    deps.getMission.mockReturnValueOnce({
-      ...approvedMission,
-      intentVersion: 2,
-    });
-    expect(authority.restorePersistedPaneAuthority(owner, "pane-a")).toBe(false);
-    expect(deps.restoreSessionAuthority).toHaveBeenCalledTimes(1);
-  });
-
-  it("rebinds only an owned restored orchestrator session for that mission", () => {
-    deps.getMission.mockReturnValue({
-      ...approvedMission,
-      orchestratorSessionId: "pty-old",
-    });
-    deps.getContextBySession.mockReturnValue({
-      role: "orchestrator",
-      missionId: "mission-a",
-      scope,
-    });
-    deps.getOwnedAgentSessionInfo.mockReturnValue({
-      ...session,
-      source: "persisted-pane",
-      missionId: "mission-a",
-    });
-    deps.findMissionPaneByPaneId.mockReturnValue({
-      id: "mpane-a",
-      missionId: "mission-a",
-      paneId: "pane-a",
-      adapterId: "codex",
-      model: "gpt-5.4",
-      accountId: "account-a",
-      effort: "high",
-      cwd: session.cwd,
-      title: "Review · orq",
-      role: "orchestrator",
-      scope,
-      createdAt: 1,
-    });
-
-    expect(
-      authority.rebindMissionFromRenderer(owner, "mission-a", "pty-a"),
-    ).toBe(mission);
-    expect(deps.setMissionOrchestratorSession).toHaveBeenCalledWith(
-      "mission-a",
-      "pty-a",
-    );
-
-    expect(
-      authority.rebindMissionFromRenderer(owner, "mission-b", "pty-a"),
-    ).toBeNull();
-  });
-
-  it("lists reopen specs only inside the renderer main-owned scope", () => {
-    const spec = {
-      id: "mpane-a",
-      missionId: "mission-a",
-      paneId: "pane-a",
-      adapterId: "codex",
-      cwd: session.cwd,
-      title: "Review · orq",
-      role: "orchestrator" as const,
-      scope,
-      createdAt: 1,
-    };
-    // Activity summary rides the persisted-panes channel (zero-LLM harvest).
-    const activity = {
-      title: "review the diff",
-      lastLine: "done",
-      stoppedAt: 123,
-      source: "transcript" as const,
-    };
-    deps.resolvePaneActivity.mockReturnValue(activity);
-    deps.listMissionPanes.mockReturnValueOnce([spec]);
-    expect(authority.listMissionPanesForRenderer(owner, "mission-a")).toEqual([
-      { ...spec, activity },
-    ]);
-    expect(deps.resolvePaneActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        owner,
-        scope,
-        paneId: "pane-a",
-        adapterId: "codex",
-        cwd: session.cwd,
-      }),
-    );
-
-    // Resolver failures degrade to null — never break the reopen path.
-    deps.resolvePaneActivity.mockImplementationOnce(() => {
-      throw new Error("boom");
-    });
-    deps.listMissionPanes.mockReturnValueOnce([spec]);
-    expect(authority.listMissionPanesForRenderer(owner, "mission-a")).toEqual([
-      { ...spec, activity: null },
-    ]);
-
-    deps.listMissionPanes.mockReturnValueOnce([
-      { ...spec, scope: testProjectScope({ projectId: "project-b" }) },
-    ]);
-    expect(() =>
-      authority.listMissionPanesForRenderer(owner, "mission-a"),
-    ).toThrow(/outside renderer workspace scope/);
   });
 });

@@ -76,6 +76,110 @@
   padding: 8px 0 10px;
 }
 
+/* Perguntas estruturadas do orquestrador: o ledger é durável no main; este
+   card só projeta e responde pelo IPC escopado do workspace atual. */
+.mission-clarify {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.mission-clarify__card {
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 52%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-elevated));
+}
+
+.mission-clarify__eyebrow,
+.mission-clarify__question,
+.mission-clarify__cta,
+.mission-clarify__feedback {
+  margin: 0;
+}
+
+.mission-clarify__eyebrow {
+  color: var(--warn);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.mission-clarify__question {
+  margin-top: 5px;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.mission-clarify__cta,
+.mission-clarify__feedback {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+
+.mission-clarify__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.mission-clarify__option,
+.mission-clarify__freeform button {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 11%, var(--bg-elevated));
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.mission-clarify__option:hover:not(:disabled),
+.mission-clarify__freeform button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mission-clarify__option:disabled,
+.mission-clarify__freeform button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.mission-clarify__freeform {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.mission-clarify__freeform input {
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+
+.mission-clarify__feedback {
+  color: var(--state-running);
+}
+
 .activity-rail__section {
   display: flex;
   flex-direction: column;

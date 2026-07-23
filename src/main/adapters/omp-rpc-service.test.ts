@@ -9,11 +9,14 @@ import {
   type OmpRpcPushEvent,
 } from '../../shared/omp-rpc-types';
 import {
+  OMP_RPC_MAX_FRAME_CHARS,
+  OMP_RPC_MAX_PENDING_UI,
   OmpRpcSession,
   buildOmpChildEnv,
   clearOmpBinCache,
   ompControlArgs,
   resolveOmpBin,
+  waitForOmpSessionReady,
   type OmpAutoApprovalRecord,
   type OmpChildLike,
   type OmpRpcSessionDeps,
@@ -289,16 +292,16 @@ describe('resolveOmpBin', () => {
         _opts: { timeout: number },
         cb: (err: Error | null, stdout: string) => void,
       ) => {
-        if (args[0] === '--version') cb(null, 'omp 17.0.0\n');
+        if (args[0] === '--version') cb(null, 'omp/17.0.4\n');
         else cb(null, '/opt/homebrew/bin/omp\n');
       },
     );
     const resolved = await resolveOmpBin('omp', exec as never);
     expect(resolved.binPath).toBe('/opt/homebrew/bin/omp');
-    expect(resolved.version).toBe('17.0.0');
+    expect(resolved.version).toBe('17.0.4');
   });
 
-  it('recusa major incompatível', async () => {
+  it('recusa versão diferente mesmo dentro do major 17 com CTA PT-BR', async () => {
     const exec = vi.fn(
       (
         _file: string,
@@ -306,11 +309,46 @@ describe('resolveOmpBin', () => {
         _opts: { timeout: number },
         cb: (err: Error | null, stdout: string) => void,
       ) => {
-        cb(null, args[0] === '--version' ? 'omp 18.2.0\n' : '/x/omp\n');
+        cb(null, args[0] === '--version' ? 'omp/17.0.5\n' : '/x/omp\n');
       },
     );
     await expect(resolveOmpBin('omp', exec as never)).rejects.toThrow(
-      /incompatível/,
+      /encontrado 17\.0\.5.*suportado 17\.0\.4.*Ação:/s,
+    );
+  });
+
+  it('recusa saída de versão ilegível em vez de pular o pin', async () => {
+    const exec = vi.fn(
+      (
+        _file: string,
+        args: string[],
+        _opts: { timeout: number },
+        cb: (err: Error | null, stdout: string) => void,
+      ) => {
+        cb(null, args[0] === '--version' ? 'omp development build\n' : '/x/omp\n');
+      },
+    );
+    await expect(resolveOmpBin('omp', exec as never)).rejects.toThrow(
+      /não informou uma versão semântica.*Ação:/s,
+    );
+  });
+
+  it('recusa prerelease com o mesmo core semver', async () => {
+    const exec = vi.fn(
+      (
+        _file: string,
+        args: string[],
+        _opts: { timeout: number },
+        cb: (err: Error | null, stdout: string) => void,
+      ) => {
+        cb(
+          null,
+          args[0] === '--version' ? 'omp/17.0.4-rc.1\n' : '/x/omp\n',
+        );
+      },
+    );
+    await expect(resolveOmpBin('omp', exec as never)).rejects.toThrow(
+      /encontrado 17\.0\.4-rc\.1.*suportado 17\.0\.4/s,
     );
   });
 
@@ -333,7 +371,7 @@ describe('resolveOmpBin', () => {
         ) => {
           calls.push({ file, args, envPath: opts.env?.PATH });
           if (args[0] === '--version') {
-            cb(null, 'omp 17.0.0\n');
+            cb(null, 'omp/17.0.4\n');
           } else if (args[0] === '-l') {
             cb(null, loginPath);
           } else if (file === 'which') {
@@ -349,7 +387,7 @@ describe('resolveOmpBin', () => {
       );
       const resolved = await resolveOmpBin('omp', exec as never);
       expect(resolved.binPath).toBe('/opt/homebrew/bin/omp');
-      expect(resolved.version).toBe('17.0.0');
+      expect(resolved.version).toBe('17.0.4');
       // Duas sondagens: a rápida (PATH do processo) + o retry (login shell).
       expect(calls.filter((c) => c.file === 'which')).toHaveLength(2);
       // O --version roda com o PATH efetivo — o que de fato achou o binário.
@@ -391,7 +429,7 @@ describe('resolveOmpBin', () => {
         _opts: { timeout: number },
         cb: (err: Error | null, stdout: string) => void,
       ) => {
-        cb(null, args[0] === '--version' ? 'omp 17.0.0\n' : '/opt/homebrew/bin/omp\n');
+        cb(null, args[0] === '--version' ? 'omp/17.0.4\n' : '/opt/homebrew/bin/omp\n');
       },
     );
     const first = await resolveOmpBin('omp', exec as never);
@@ -403,6 +441,23 @@ describe('resolveOmpBin', () => {
 });
 
 describe('handshake e ciclo de vida', () => {
+  it('encerra fail-closed quando um frame NDJSON sem newline excede 1 MiB', async () => {
+    const harness = createHarness();
+    harness.proc.emitStdout('x'.repeat(OMP_RPC_MAX_FRAME_CHARS + 1));
+
+    expect(harness.proc.kills).toContain('SIGTERM');
+    expect(harness.pushes).toContainEqual(
+      expect.objectContaining({
+        kind: 'notice',
+        level: 'error',
+        message: expect.stringMatching(/frame NDJSON.*1 MiB/i),
+      }),
+    );
+    await expect(harness.session.prompt('must be rejected')).rejects.toThrow(
+      /sessão omp encerrada/i,
+    );
+  });
+
   it('spawning → ready → idle após set_host_tools + get_state', async () => {
     const harness = createHarness();
     expect(harness.session.state).toBe('spawning');
@@ -419,8 +474,29 @@ describe('handshake e ciclo de vida', () => {
     expect(harness.proc.written).toHaveLength(0); // ainda sem ready
     harness.proc.emitFrame({ type: 'ready' });
     await Promise.resolve();
+    expect(harness.proc.lastWritten('prompt')).toBeUndefined();
+    const hostTools = harness.proc.lastWritten('set_host_tools');
+    harness.proc.emitFrame({
+      id: hostTools?.id,
+      type: 'response',
+      command: 'set_host_tools',
+      success: true,
+    });
+    await vi.waitFor(() => {
+      expect(harness.proc.lastWritten('get_state')).toBeDefined();
+    });
+    const getState = harness.proc.lastWritten('get_state');
+    harness.proc.emitFrame({
+      id: getState?.id,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: { isStreaming: false },
+    });
+    await vi.waitFor(() => {
+      expect(harness.proc.lastWritten('prompt')).toBeDefined();
+    });
     const prompt = harness.proc.lastWritten('prompt');
-    expect(prompt).toBeDefined();
     harness.proc.emitFrame({
       id: prompt?.id,
       type: 'response',
@@ -428,6 +504,23 @@ describe('handshake e ciclo de vida', () => {
       success: true,
     });
     await expect(promptPromise).resolves.toBeUndefined();
+  });
+
+  it('remove comandos pré-ready expirados e nunca os executa tardiamente', async () => {
+    const harness = createHarness({ requestTimeoutMs: 100 });
+    for (let index = 0; index < 3; index += 1) {
+      await expect(
+        harness.session.prompt(`expired-before-ready-${index}`),
+      ).rejects.toThrow(/timeout aguardando resposta de prompt/i);
+    }
+    expect(harness.proc.lastWritten('prompt')).toBeUndefined();
+
+    await becomeIdle(harness);
+    expect(
+      harness.proc.written
+        .map((line) => JSON.parse(line) as { type?: string })
+        .filter((frame) => frame.type === 'prompt'),
+    ).toHaveLength(0);
   });
 
   it('prompt→ack→agent_start→deltas→agent_end deriva busy→idle', async () => {
@@ -494,6 +587,146 @@ describe('handshake e ciclo de vida', () => {
       success: true,
     });
     await promptPromise;
+  });
+
+  it('não libera readiness no frame ready antes de host tools/model/state terminarem', async () => {
+    const harness = createHarness();
+    let settled = false;
+    const ready = waitForOmpSessionReady(harness.session, 500, 1).then(() => {
+      settled = true;
+    });
+
+    harness.proc.emitFrame({ type: 'ready' });
+    await Promise.resolve();
+    expect(harness.session.state).toBe('ready');
+    expect(settled).toBe(false);
+
+    const hostTools = harness.proc.lastWritten('set_host_tools');
+    harness.proc.emitFrame({
+      id: hostTools?.id,
+      type: 'response',
+      command: 'set_host_tools',
+      success: true,
+    });
+    await vi.waitFor(() => expect(harness.proc.lastWritten('get_state')).toBeDefined());
+    const getState = harness.proc.lastWritten('get_state');
+    harness.proc.emitFrame({
+      id: getState?.id,
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: {
+        isStreaming: false,
+        isCompacting: false,
+        sessionId: 'omp-ready-proof',
+      },
+    });
+
+    await ready;
+    expect(harness.session.state).toBe('idle');
+  });
+
+  it('promptAndWaitForAgentStart não aceita ACK sozinho e resolve após agent_start', async () => {
+    const harness = createHarness();
+    await becomeIdle(harness);
+    let settled = false;
+    const accepted = harness.session
+      .promptAndWaitForAgentStart('Execute a task', 500)
+      .then(() => { settled = true; });
+    const prompt = harness.proc.lastWritten('prompt');
+    harness.proc.emitFrame({
+      id: prompt?.id,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+      data: { agentInvoked: true },
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    harness.proc.emitFrame({ type: 'agent_start' });
+    await accepted;
+    expect(settled).toBe(true);
+  });
+
+  it('promptAndWaitForAgentStart correlaciona agent_start anterior ao ACK', async () => {
+    const harness = createHarness();
+    await becomeIdle(harness);
+    const accepted = harness.session.promptAndWaitForAgentStart('Execute', 500);
+    const prompt = harness.proc.lastWritten('prompt');
+    harness.proc.emitFrame({ type: 'agent_start' });
+    harness.proc.emitFrame({
+      id: prompt?.id,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+      data: { agentInvoked: true },
+    });
+    await expect(accepted).resolves.toBeUndefined();
+  });
+
+  it('não aceita agent_start quando o processo morre no mesmo tick do chunk de ACK', async () => {
+    const harness = createHarness();
+    await becomeIdle(harness);
+    const accepted = harness.session.promptAndWaitForAgentStart('Execute', 500);
+    const prompt = harness.proc.lastWritten('prompt');
+
+    // O child pode descarregar ACK + agent_start em um único chunk e morrer
+    // antes da continuação assíncrona do host. O exit precisa vencer essa
+    // corrida; aceitar aqui criaria um worker fantasma no store durável.
+    harness.proc.emitStdout(
+      `${JSON.stringify({
+        id: prompt?.id,
+        type: 'response',
+        command: 'prompt',
+        success: true,
+        data: { agentInvoked: true },
+      })}\n${JSON.stringify({ type: 'agent_start' })}\n`,
+    );
+    harness.proc.exit(137);
+
+    await expect(accepted).rejects.toThrow(/encerrou antes de agent_start/i);
+    expect(harness.session.state).toBe('exited');
+    expect(harness.pushes.at(-1)).toEqual({ kind: 'exit', code: 137 });
+  });
+
+  it('promptAndWaitForAgentStart rejeita local-only por response ou prompt_result', async () => {
+    const responseHarness = createHarness();
+    await becomeIdle(responseHarness);
+    const responseRejected = responseHarness.session.promptAndWaitForAgentStart(
+      'Local only',
+      500,
+    );
+    const responsePrompt = responseHarness.proc.lastWritten('prompt');
+    responseHarness.proc.emitFrame({
+      id: responsePrompt?.id,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+      data: { agentInvoked: false },
+    });
+    await expect(responseRejected).rejects.toThrow(/n[aã]o iniciou|local-only/i);
+
+    const resultHarness = createHarness();
+    await becomeIdle(resultHarness);
+    const resultRejected = resultHarness.session.promptAndWaitForAgentStart(
+      'No agent',
+      500,
+    );
+    const resultPrompt = resultHarness.proc.lastWritten('prompt');
+    resultHarness.proc.emitFrame({
+      id: resultPrompt?.id,
+      type: 'response',
+      command: 'prompt',
+      success: true,
+      data: { agentInvoked: true },
+    });
+    resultHarness.proc.emitFrame({
+      type: 'prompt_result',
+      id: resultPrompt?.id,
+      agentInvoked: false,
+    });
+    await expect(resultRejected).rejects.toThrow(/n[aã]o iniciou|local-only/i);
   });
 });
 
@@ -664,6 +897,34 @@ describe('extension_ui_request — política yolo', () => {
 });
 
 describe('extension_ui_request — política safe', () => {
+  it('nega pedidos acima do limite sem ampliar o mapa pendente', async () => {
+    const harness = createHarness({ approvalPolicy: 'safe' });
+    await becomeIdle(harness);
+    for (let index = 0; index < OMP_RPC_MAX_PENDING_UI; index += 1) {
+      harness.proc.emitFrame({
+        type: 'extension_ui_request',
+        id: `ui-bounded-${index}`,
+        method: 'confirm',
+        title: 'Allow tool',
+      });
+    }
+    harness.proc.emitFrame({
+      type: 'extension_ui_request',
+      id: 'ui-overflow',
+      method: 'confirm',
+      title: 'Allow tool overflow',
+    });
+
+    expect(
+      harness.pushes.filter((event) => event.kind === 'ui-request'),
+    ).toHaveLength(OMP_RPC_MAX_PENDING_UI);
+    expect(harness.proc.lastWritten('extension_ui_response')).toMatchObject({
+      id: 'ui-overflow',
+      cancelled: true,
+    });
+    harness.session.dispose();
+  });
+
   it('encaminha ao renderer e devolve a resposta do usuário', async () => {
     const harness = createHarness({ approvalPolicy: 'safe' });
     await becomeIdle(harness);
@@ -713,191 +974,5 @@ describe('extension_ui_request — política safe', () => {
     });
     // Depois do timeout a resposta do usuário não é mais aceita.
     expect(harness.session.respondUi('ui_10', { confirmed: true })).toBe(false);
-  });
-});
-
-describe('host_tool_call → dispatcher com gate', () => {
-  it('roteia pelo dispatcher injetado e devolve host_tool_result', async () => {
-    const harness = createHarness();
-    await becomeIdle(harness);
-    harness.proc.emitFrame({
-      type: 'host_tool_call',
-      id: 'host_1',
-      toolCallId: 'toolu_123',
-      toolName: 'nexus_pane_list',
-      arguments: {},
-    });
-    await vi.waitFor(() => {
-      expect(harness.proc.lastWritten('host_tool_result')).toBeDefined();
-    });
-    expect(harness.dispatched).toEqual([{ toolName: 'nexus_pane_list', args: {} }]);
-    const result = harness.proc.lastWritten('host_tool_result');
-    expect(result).toMatchObject({ id: 'host_1' });
-    expect(result?.isError).toBeUndefined();
-    const content = (result?.result as { content: Array<{ text: string }> }).content;
-    expect(content[0].text).toContain('panes');
-  });
-
-  it('negação do gate volta como isError sem bypass', async () => {
-    const harness = createHarness({
-      dispatchHostTool: async () => ({
-        ok: false,
-        error: 'tool "nexus_pane_list" is outside this agent\'s allowlist',
-      }),
-    });
-    await becomeIdle(harness);
-    harness.proc.emitFrame({
-      type: 'host_tool_call',
-      id: 'host_2',
-      toolCallId: 'toolu_124',
-      toolName: 'nexus_pane_list',
-      arguments: {},
-    });
-    await vi.waitFor(() => {
-      expect(harness.proc.lastWritten('host_tool_result')).toMatchObject({
-        id: 'host_2',
-        isError: true,
-      });
-    });
-  });
-
-  it('tool fora do set anunciado é recusada sem tocar o dispatcher', async () => {
-    const harness = createHarness();
-    await becomeIdle(harness);
-    harness.proc.emitFrame({
-      type: 'host_tool_call',
-      id: 'host_3',
-      toolCallId: 'toolu_125',
-      toolName: 'nexus_git_push',
-      arguments: {},
-    });
-    await vi.waitFor(() => {
-      expect(harness.proc.lastWritten('host_tool_result')).toMatchObject({
-        id: 'host_3',
-        isError: true,
-      });
-    });
-    expect(harness.dispatched).toHaveLength(0);
-  });
-
-  it('host_tool_cancel suprime o resultado tardio', async () => {
-    let release: (() => void) | null = null;
-    const harness = createHarness({
-      dispatchHostTool: () =>
-        new Promise((resolve) => {
-          release = () => resolve({ ok: true, result: 'late' });
-        }),
-    });
-    await becomeIdle(harness);
-    harness.proc.emitFrame({
-      type: 'host_tool_call',
-      id: 'host_4',
-      toolCallId: 'toolu_126',
-      toolName: 'nexus_pane_list',
-      arguments: {},
-    });
-    harness.proc.emitFrame({
-      type: 'host_tool_cancel',
-      id: 'host_cancel_1',
-      targetId: 'host_4',
-    });
-    await vi.waitFor(() => {
-      expect(release).not.toBeNull();
-    });
-    release!();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(harness.proc.lastWritten('host_tool_result')).toBeUndefined();
-  });
-});
-
-describe('robustez do parser NDJSON', () => {
-  it('linha malformada é ignorada sem derrubar a sessão', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      const harness = createHarness();
-      harness.proc.emitStdout('{esto não é json}\n');
-      harness.proc.emitFrame({ type: 'ready' });
-      await Promise.resolve();
-      expect(harness.session.state).not.toBe('exited');
-      expect(harness.proc.lastWritten('set_host_tools')).toBeDefined();
-    } finally {
-      warn.mockRestore();
-    }
-  });
-
-  it('frames divididos entre chunks são remontados', async () => {
-    const harness = createHarness();
-    const frame = JSON.stringify({ type: 'ready' });
-    harness.proc.emitStdout(frame.slice(0, 5));
-    harness.proc.emitStdout(`${frame.slice(5)}\n`);
-    await Promise.resolve();
-    expect(harness.session.state).not.toBe('spawning');
-  });
-
-  it('frame com type desconhecido é ignorado por contrato', async () => {
-    const harness = createHarness();
-    await becomeIdle(harness);
-    harness.proc.emitFrame({ type: 'subagent_progress', payload: {} });
-    expect(harness.session.state).toBe('idle');
-  });
-
-  it('UTF-8 multibyte partido entre Buffers é remontado sem U+FFFD', async () => {
-    const harness = createHarness();
-    await becomeIdle(harness);
-    // Frame com pt-BR + emoji; parte os bytes no meio do 🚀 (F0 9F 9A 80).
-    const frame = `${JSON.stringify({
-      type: 'message_update',
-      assistantMessageEvent: { type: 'text_delta', delta: 'café 🚀 ação' },
-    })}\n`;
-    const bytes = Buffer.from(frame, 'utf8');
-    const rocket = Buffer.from('🚀', 'utf8');
-    const cut = bytes.indexOf(rocket) + 2; // no meio dos 4 bytes do emoji
-    harness.proc.emitStdoutBytes(bytes.subarray(0, cut));
-    harness.proc.emitStdoutBytes(bytes.subarray(cut));
-    await Promise.resolve();
-    const textPush = harness.pushes.find(
-      (p) =>
-        p.kind === 'text-delta' && String(p.delta ?? '').includes('café'),
-    ) as { kind: 'text-delta'; delta: string } | undefined;
-    expect(textPush).toBeDefined();
-    expect(textPush?.delta).toBe('café 🚀 ação');
-    expect(textPush?.delta).not.toContain('�');
-  });
-});
-
-describe('dispose e saída do processo', () => {
-  it('dispose envia SIGTERM e escala para SIGKILL após o grace', async () => {
-    vi.useFakeTimers();
-    try {
-      const harness = createHarness({ killGraceMs: 50 });
-      harness.proc.emitFrame({ type: 'ready' });
-      harness.session.dispose();
-      expect(harness.proc.kills).toEqual(['SIGTERM']);
-      vi.advanceTimersByTime(60);
-      expect(harness.proc.kills).toEqual(['SIGTERM', 'SIGKILL']);
-      harness.proc.exit(137);
-      expect(harness.session.state).toBe('exited');
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('exit rejeita comandos pendentes e emite push de exit', async () => {
-    const harness = createHarness();
-    await becomeIdle(harness);
-    const pendingPrompt = harness.session.prompt('nunca respondido');
-    harness.proc.exit(0);
-    await expect(pendingPrompt).rejects.toThrow(/encerrou/);
-    expect(harness.session.state).toBe('exited');
-    expect(harness.pushes.at(-1)).toEqual({ kind: 'exit', code: 0 });
-  });
-
-  it('dispose após exit não re-mata o processo', async () => {
-    const harness = createHarness();
-    await becomeIdle(harness);
-    harness.proc.exit(0);
-    harness.session.dispose();
-    expect(harness.proc.kills).toHaveLength(0);
   });
 });

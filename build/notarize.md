@@ -4,11 +4,12 @@ Para que o `.dmg` abra **limpo em qualquer Mac** (sem o erro "está danificado"
 nem "desenvolvedor não identificado"), o build precisa ser **assinado com um
 Developer ID Application** e **notarizado pela Apple**.
 
-Isso já está cabeado no `forge.config.ts`: release exige o certificado
+Isso já está cabeado no `forge.config.ts`: o alvo publicável exige o certificado
 `Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)` e ativa
-hardened runtime/notarização quando `APPLE_TEAM_ID` é válido. Sem Team ID, o
-`make` usa assinatura **ad-hoc** (`identity: -`), sem hardened runtime e sem
-notarização. O pacote ad-hoc é apenas para smoke local e não pode ser publicado.
+hardened runtime/notarização apenas com `NEXUS_MAC_PUBLISH_RELEASE=1`, Team ID
+exato e o perfil exato `"nexus-notary"`. Sem isso, somente `npm run make`
+produz assinatura **ad-hoc** (`identity: -`) para smoke local. `make:release`
+falha; pacote ad-hoc não pode ser publicado.
 
 ## Pré-requisitos (uma vez só)
 
@@ -23,35 +24,64 @@ notarização. O pacote ad-hoc é apenas para smoke local e não pode ser public
 4. Confirme: `security find-identity -v -p codesigning` deve listar
    `Developer ID Application: Seu Nome (TEAMID)`.
 
-### 2. Perfil `nexus-notary` no Keychain (recomendado localmente)
-1. <https://appleid.apple.com> → **Login e Segurança → Senhas de app** →
-   gere uma nova (ex.: nome "notarytool"). Guarde a senha `xxxx-xxxx-xxxx-xxxx`.
-2. Armazene-a diretamente no Keychain:
+### 2. Perfil `"nexus-notary"` no Keychain
+
+O nome do perfil local desta release é **exatamente** `nexus-notary`, incluindo
+o hífen. Sempre o coloque entre aspas no shell.
+
+1. Em <https://appleid.apple.com>, abra **Login e Segurança → Senhas de app** e
+   gere uma senha de app para a notarização.
+2. Grave a credencial de forma interativa. O `notarytool` solicitará Apple ID,
+   Team ID e senha sem exigir que o segredo seja colocado na linha de comando:
+
    ```bash
-   xcrun notarytool store-credentials nexus-notary \
-     --apple-id "seu@email.com" \
-     --team-id "35P5XL3JN6" \
-     --password "xxxx-xxxx-xxxx-xxxx"
+   xcrun notarytool store-credentials "nexus-notary"
    ```
-3. Teste sem expor a senha no ambiente:
+
+3. Valide o perfil sem imprimir nem exportar a senha:
+
    ```bash
-   xcrun notarytool history --keychain-profile nexus-notary
+   xcrun notarytool history --keychain-profile "nexus-notary"
    ```
+
+Nunca use `--password`, `APPLE_APP_SPECIFIC_PASSWORD` ou a senha de app em um
+comando copiado para histórico, arquivo, log ou commit.
 
 ### 3. Team ID
 - Aparece entre parênteses no nome do certificado, ou em
   <https://developer.apple.com/account> → **Membership**.
 
-## Build de release
+## Release manual local — caminho principal
 
-Instale/reconstrua tudo antes de a chave privada estar disponível e só então
-rode o target de release (não exporte a senha de app):
+Esta release é construída, verificada e publicada **localmente**. Não execute
+`gh workflow run`, não dispare o workflow de release e não dependa de GitHub
+Actions.
+
+Use exatamente Node `22.23.1`, fixado em `package.json > nexusRelease.node`.
+`make:release` e o gate de segurança baixam o pacote npm na versão declarada por
+`packageManager`, conferem o SHA-512 fixado em
+`build/release-npm-integrity.json` e o executam em cache temporário privado. O
+npm global não é atualizado nem usado para resolver dependências da release.
+
+O fluxo abaixo produz **somente a arquitetura do Mac de release**. No Mac
+Apple Silicon oficial, o candidato é `arm64`; este runbook não promete binário
+universal nem `x86_64`. Uma distribuição Intel exigiria um build e uma prova
+separados em host Intel, não a reutilização dos artefatos arm64.
+
+Finalize e faça commit da versão antes de começar. A tag local precisa apontar
+para `HEAD`; ela só é enviada ao remoto depois de todos os gates. O working tree
+deve estar limpo inclusive quanto a arquivos não rastreados (saídas ignoradas e
+`release-artifacts/` gerado pelo próprio gate são as únicas exceções fechadas):
 
 ```bash
 npm ci
 npm run typecheck
 npm test
-npm run premake
+
+release_tag="v$(node -p "require('./package.json').version")"
+test -z "$(git status --porcelain=v1 --untracked-files=all)"
+git tag -a "$release_tag" -m "NexusIDE $release_tag"
+test "$(git rev-parse "$release_tag^{commit}")" = "$(git rev-parse HEAD)"
 
 # TSA da Apple derruba rajadas de `codesign --timestamp` (muitos nativos
 # unpacked) e o build falha com "A timestamp was expected but was not
@@ -60,79 +90,34 @@ mkdir -p scripts/codesign-retry-bin
 ln -sf ../codesign-with-retry.sh scripts/codesign-retry-bin/codesign
 
 env -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD \
+  NEXUS_MAC_PUBLISH_RELEASE=1 \
   APPLE_TEAM_ID=35P5XL3JN6 \
-  APPLE_KEYCHAIN_PROFILE=nexus-notary \
+  APPLE_KEYCHAIN_PROFILE='nexus-notary' \
   PATH="$PWD/scripts/codesign-retry-bin:$PATH" \
   npm run make:release
+
+# Verifica DMG e ZIP nos caminhos aninhados de out/make, prova a missão real
+# no .app desse mesmo build e finaliza manifesto/recibos com os hashes.
+env -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD \
+  NEXUS_MAC_PUBLISH_RELEASE=1 \
+  APPLE_TEAM_ID=35P5XL3JN6 \
+  APPLE_KEYCHAIN_PROFILE='nexus-notary' \
+  npm run release:candidate
 
 # Restaura o ABI do Node para continuar o desenvolvimento local.
 env -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD -u APPLE_TEAM_ID \
   npm run rebuild:node
 ```
 
-No GitHub Actions, onde o perfil local não existe, o workflow usa os secrets
-`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` e `APPLE_TEAM_ID`. A notarização
-adiciona alguns minutos (upload + validação da Apple). O Forge faz o *staple*
-do ticket no `.app`, gera DMG/ZIP e, no `postMake`, assina, notariza e faz
-*staple* também no container DMG.
-
-### Gate de release no GitHub
-
-O workflow `.github/workflows/release.yml` aceita somente uma tag existente no
-formato `vMAJOR.MINOR.PATCH`. Ele fixa todos os builds no commit resolvido da
-tag e revalida a mesma referência imediatamente antes da publicação. Configure
-os seis secrets abaixo no environment protegido `macos-signing`:
-
-- `APPLE_ID`
-- `APPLE_APP_SPECIFIC_PASSWORD`
-- `APPLE_TEAM_ID`
-- `MACOS_CERTIFICATE` (PKCS#12 em base64)
-- `MACOS_CERTIFICATE_PASSWORD`
-- `KEYCHAIN_PASSWORD`
-
-Se qualquer valor estiver ausente, se o Team ID for inválido, ou se a Apple
-rejeitar `notarytool history`, o job termina com diagnóstico explícito. O
-workflow nunca converte essa falha em pacote ad-hoc publicável. A chave privada
-só entra no keychain efêmero depois de `npm ci`, typecheck e rebuild dos módulos
-nativos; ela é removida em um step `always()`.
-
-Proteja também os environments `windows-signing` e `production-release` com
-revisores e restrição de tags. O único job com `contents: write` é o job final,
-que não recebe certificados e só executa depois dos builds de produção macOS
-arm64/x64 e Linux x64. O preview Windows é diagnóstico opcional e não bloqueia
-esses artefatos enquanto o sandbox win32 continuar indisponível.
-
-O environment `windows-signing` exige:
-
-- `WINDOWS_CERTIFICATE_BASE64` (PFX Authenticode em base64);
-- `WINDOWS_CERTIFICATE_PASSWORD`.
-
-O workflow materializa o PFX somente depois de `npm ci` e do rebuild nativo,
-restringe sua ACL ao usuário do runner e o remove em um step `always()`. A mesma
-política SHA-256 assina o diretório produzido pelo Electron Packager e o Maker
-Squirrel. Antes do upload interno, o job exige `AuthenticodeStatus=Valid`, o
-mesmo thumbprint e timestamp em Setup.exe e em todo `.exe`, `.dll`, `.node` ou
-`.msi` contido no NUPKG. Ausência de secrets, assinatura parcial, signer
-divergente ou falta de timestamp falha o preview, sem publicar Windows e sem
-impedir a release Mac/Linux.
-
-Linux e Windows são construídos em runners nativos. O smoke Linux executa o app
-extraído do DEB e o smoke Windows executa o app extraído do NUPKG; macOS executa
-separadamente os apps recebidos via DMG e ZIP. Testes unitários/mocks nunca
-promovem a matriz de runtime. O RPM e o Setup.exe têm metadata/estrutura
-validadas, mas não são instalados durante o smoke, e essa limitação fica gravada
-no manifesto. Cada plataforma publica seu SBOM, manifesto de smoke e SHA-256; o
-job final recalcula todos os checksums antes de criar a release.
-
-Windows permanece **preview interno de CI**: o Nexus Doctor o considera
-indisponível enquanto não existir um sandbox provider fail-closed para win32.
-Por isso seus artefatos assinados são enviados apenas como
-`preview-assets-win32-x64`, com retenção curta, e o manifesto registra
-`production_eligibility=blocked-windows-sandbox`. O job de publicação baixa
-somente `release-assets-*`; a release de produção contém macOS e Linux, nunca
-Setup/NUPKG Windows, até essa lacuna de sandbox ser fechada.
+A notarização adiciona alguns minutos (upload + validação da Apple). O Forge faz
+o *staple* do ticket no `.app`, gera DMG/ZIP e, no `postMake`, notariza e faz
+*staple* também no container DMG. Se o perfil não existir ou a Apple rejeitar a
+submissão, o build deve falhar; pacote ad-hoc nunca é promovido.
 
 ## Verificar antes de distribuir
+
+O comando manual equivalente abaixo é útil para diagnóstico; o gate canônico é
+`npm run release:candidate`, que também executa o E2E e amarra as evidências:
 
 ```bash
 node scripts/verify-macos-release.mjs \
@@ -140,16 +125,20 @@ node scripts/verify-macos-release.mjs \
   --version "$(node -p "require('./package.json').version")" \
   --bundle-id com.nexuside.app \
   --team-id 35P5XL3JN6 \
-  --identity "Developer ID Application: Cleofas Pereira rocha"
+  --identity "Developer ID Application: Cleofas Pereira rocha" \
+  --arch arm64
 ```
 
-O gate exige exatamente um DMG e um ZIP (o ZIP alimenta o Squirrel.Mac). Antes
+O verificador procura recursivamente nos caminhos aninhados de `out/make` e
+exige exatamente um DMG e um ZIP (o ZIP alimenta o Squirrel.Mac). Antes
 de montar, valida assinatura, Authority/TeamIdentifier, Gatekeeper e ticket
 stapled do próprio container DMG. Depois monta o DMG como somente leitura e
 extrai o ZIP em diretório temporário. Em **cada** app contido revalida versão,
 bundle ID, assinatura strict de todos os Mach-O, Gatekeeper, ticket stapled,
 entitlements por tipo de processo, fuses e o smoke isolado com userData
-temporário. Só depois disso os artefatos podem ser publicados.
+temporário. Também exige que todos os Mach-O sejam da única arquitetura
+declarada e que os apps extraídos do DMG e do ZIP sejam coerentes. Só depois
+disso os artefatos podem ser publicados.
 
 Os perfis de entitlement são deliberadamente separados:
 
@@ -162,6 +151,34 @@ Os perfis de entitlement são deliberadamente separados:
 Nenhum perfil permite variáveis DYLD, desabilita library validation ou
 desabilita executable-page protection.
 
+## Publicação manual no GitHub Release
+
+Publique somente pelo alvo abaixo. Ele repete fail-closed o gate do candidato,
+envia a tag exata e chama `gh release create` diretamente; não inicia GitHub
+Actions e inclui DMG, ZIP, auditorias runtime/toolchain, SBOMs, manifesto,
+evidência E2E e recibo do candidato:
+
+```bash
+env -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD \
+  NEXUS_MAC_PUBLISH_RELEASE=1 \
+  APPLE_TEAM_ID=35P5XL3JN6 \
+  APPLE_KEYCHAIN_PROFILE='nexus-notary' \
+  npm run release:publish
+```
+
+A tag deve existir apenas localmente e resolver a `HEAD` ao entrar no comando;
+o script a envia somente após assinatura/notarização, verificação e E2E. Não
+use `gh release create` à mão. O workflow anterior está arquivado fora de
+`.github/workflows` e não é executável pelo GitHub Actions.
+
+## Limite de assinatura Windows
+
+A release canônica não executa o CodeSignTool/eSigner 1.3.3. Essa versão aceita
+usuário, senha e TOTP apenas por argumentos de linha de comando, o que exporia
+segredos na lista de processos. Até existir uma integração que receba
+credenciais por canal seguro, assinatura e publicação Windows falham de forma
+fechada; nenhum script local de compatibilidade faz parte do fluxo autorizado.
+
 ## Canal de atualização
 
 Assinar e publicar um ZIP não cria, por si só, auto-update para usuários finais.
@@ -169,4 +186,5 @@ O app só usa Squirrel diretamente quando recebe um `NEXUS_UPDATE_FEED` HTTPS
 confiável. Sem esse feed, o caminho alternativo depende de `gh` autenticado e é
 adequado apenas para instalações de desenvolvimento do repositório privado.
 Antes de prometer atualização automática, provisione e teste o feed em um
-domínio Nexus confiável com ZIPs separados para `darwin-arm64` e `darwin-x64`.
+domínio Nexus confiável. Este fluxo gera hoje apenas o ZIP `darwin-arm64`;
+`darwin-x64` continua indisponível até receber build e prova próprios.

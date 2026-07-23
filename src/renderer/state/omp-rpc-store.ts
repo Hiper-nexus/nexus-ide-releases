@@ -13,7 +13,6 @@ import {
   type OmpAuthPushEvent,
 } from '../../shared/omp-auth-types';
 import { getActiveWorkspacePath } from './active-workspace';
-import { useOrchStore } from './orch-store';
 import { claimRightDrawer, registerRightDrawer } from './right-drawer';
 import { useToastStore } from './toast-store';
 
@@ -382,16 +381,10 @@ export const useOmpRpcStore = create<OmpRpcUiState>((set, get) => ({
     ensureSubscription();
     set({ starting: true, startError: null, transcript: [], pendingUi: [] });
     const workspaceRoot = getActiveWorkspacePath() ?? undefined;
-    // Bind active mission when present so host tools (mission_get / handoff)
-    // have real gate context — optional; start still works without it.
-    const missionId = useOrchStore
-      .getState()
-      .missions.find((m) => m.status === 'running' || m.status === 'blocked')
-      ?.id;
     const result = await window.nexus.ompRpc.start({
       workspaceRoot,
-      approvalPolicy: get().approvalPolicy,
-      ...(missionId ? { missionId } : {}),
+      // Renderer sessions are always safe and carry no mission authority.
+      approvalPolicy: 'safe',
     });
     if (!result.ok || !result.sessionId) {
       set({
@@ -515,10 +508,26 @@ export const useOmpRpcStore = create<OmpRpcUiState>((set, get) => ({
   async respondUi(requestId, response) {
     const sessionId = get().sessionId;
     if (!sessionId) return;
-    await window.nexus.ompRpc.respondUi(sessionId, requestId, response);
-    set({
-      pendingUi: get().pendingUi.filter((request) => request.requestId !== requestId),
-    });
+    const result = await window.nexus.ompRpc.respondUi(
+      sessionId,
+      requestId,
+      response,
+    );
+    if (result.ok) {
+      set({
+        pendingUi: get().pendingUi.filter(
+          (request) => request.requestId !== requestId,
+        ),
+      });
+      return;
+    }
+    useToastStore
+      .getState()
+      .push(
+        'error',
+        'Aprovação OMP negada',
+        result.error ?? 'A ação exige confirmação no processo principal.',
+      );
   },
 
   async disposeSession() {

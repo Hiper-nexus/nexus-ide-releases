@@ -42,6 +42,8 @@ export * from './worktree-contract';
 export { cowWorktreeAvailable, materializeGitWorktree } from './worktree-cow';
 
 const MAX_CAS_ATTEMPTS = 16;
+export const INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER =
+  '[NEXUS_INTERRUPTED_WORKTREE_RESERVATION]';
 
 function assertExecutorOwnershipIsNotAuthority(files: readonly string[]): void {
   const protectedFile = files.find((file) => {
@@ -121,6 +123,29 @@ export class WorktreeManager {
       'worktree-scope',
       assertIdentifier(scope.projectId, 'projectId'),
       assertIdentifier(scope.checkoutId, 'checkoutId'),
+    );
+  }
+
+  /**
+   * Startup-only recovery for reservations persisted before `git worktree add`
+   * and the final `ready` CAS completed. A reservation is promoted only when
+   * the primary checkout and linked worktree still prove the exact frozen
+   * branch/base/common Git directory. Every other state is terminally failed
+   * without deleting any path or ref.
+   *
+   * Re-running this method is a no-op once every record is non-reserved.
+   */
+  reconcileInterruptedReservations(
+    scope: ProjectExecutionScope,
+  ): readonly WorktreeRecord[] {
+    const scopeKey = this.scopeKey(scope);
+    const taskKeys = this.#snapshot(scopeKey).records
+      .filter((record) => record.status === 'reserved')
+      .map((record) => record.taskKey);
+    return Object.freeze(
+      taskKeys.map((taskKey) =>
+        this.#reconcileInterruptedReservation(scope, scopeKey, taskKey),
+      ),
     );
   }
 
@@ -695,6 +720,25 @@ export class WorktreeManager {
     if (branchRef !== record.branchRef) {
       throw new WorktreeStateConflictError('task worktree branch changed');
     }
+    const repositoryCommonDirectory = fs.realpathSync(
+      gitOutput(this.#git, record.rootRealPath, [
+        'rev-parse',
+        '--path-format=absolute',
+        '--git-common-dir',
+      ]),
+    );
+    const worktreeCommonDirectory = fs.realpathSync(
+      gitOutput(this.#git, real, [
+        'rev-parse',
+        '--path-format=absolute',
+        '--git-common-dir',
+      ]),
+    );
+    if (worktreeCommonDirectory !== repositoryCommonDirectory) {
+      throw new WorktreeStateConflictError(
+        'task worktree is not linked to the frozen repository',
+      );
+    }
     this.#assertSafeRepositoryConfig(real);
     const status = this.#git.run(real, [
       'status',
@@ -708,6 +752,93 @@ export class WorktreeManager {
     return assertSha(
       gitOutput(this.#git, real, ['rev-parse', '--verify', 'HEAD^{commit}']),
       'task HEAD',
+    );
+  }
+
+  #reconcileInterruptedReservation(
+    scope: ProjectExecutionScope,
+    scopeKey: string,
+    taskKey: string,
+  ): WorktreeRecord {
+    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+      const snapshot = this.#snapshot(scopeKey);
+      const index = snapshot.records.findIndex(
+        (record) => record.taskKey === taskKey,
+      );
+      if (index < 0) {
+        throw new WorktreeStateConflictError(
+          'reserved worktree state record disappeared',
+        );
+      }
+      const current = snapshot.records[index];
+      if (current.status !== 'reserved') return cloneRecord(current);
+
+      let next: WorktreeRecord;
+      try {
+        if (
+          current.projectId !== scope.projectId ||
+          current.checkoutId !== scope.checkoutId ||
+          current.rootRealPath !== scope.rootRealPath
+        ) {
+          throw new WorktreeStateConflictError(
+            'reserved worktree does not belong to the requested scope',
+          );
+        }
+        const repository = this.#repositorySnapshot(scope, true);
+        if (
+          repository.integrationRef !== current.integrationRef ||
+          repository.headSha !== current.baseSha
+        ) {
+          throw new WorktreeStateConflictError(
+            'primary checkout changed after the reserved base was frozen',
+          );
+        }
+        const taskHeadSha = this.#assertWorktree(current);
+        if (taskHeadSha !== current.baseSha) {
+          throw new WorktreeStateConflictError(
+            'reserved worktree HEAD diverged from its frozen base',
+          );
+        }
+        next = cloneRecord({
+          ...current,
+          status: 'ready',
+          failureReason: undefined,
+          updatedAt: this.#timestamp(),
+        });
+      } catch (error) {
+        next = cloneRecord({
+          ...current,
+          status: 'failed',
+          failureReason: this.#failureMessage(
+            `${INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER} ` +
+              `reserved worktree reconciliation failed closed: ` +
+              this.#failureMessage(error),
+          ),
+          updatedAt: this.#timestamp(),
+        });
+      }
+
+      const records = snapshot.records.map((record, candidateIndex) =>
+        candidateIndex === index ? next : record,
+      );
+      const validated = validateWorktreeStateSnapshot(
+        { revision: snapshot.revision, records },
+        { scopeKey, worktreesRoot: this.worktreesRoot },
+      ).records;
+      if (
+        this.#stateStore.compareAndSwap(
+          scopeKey,
+          snapshot.revision,
+          validated,
+        )
+      ) {
+        return next;
+      }
+      // Another process won the durable CAS. Re-read and re-prove every Git
+      // identity rather than applying a decision computed from stale state.
+    }
+    throw new WorktreeStateConflictError(
+      'reserved worktree reconciliation CAS could not converge',
     );
   }
 

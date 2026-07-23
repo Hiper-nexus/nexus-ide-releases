@@ -98,6 +98,13 @@ export interface MergeValidationContext {
   readonly candidateSha: string;
   readonly diffHash: string;
   readonly changedFiles: readonly string[];
+  /** Parent operation cancellation, propagated into sensors/reviewer spawns. */
+  readonly signal?: AbortSignal;
+  /**
+   * Main-owned lifecycle fence. Validation implementations must call this
+   * after every await and immediately before persisting evidence.
+   */
+  readonly assertCurrentAuthority?: () => void;
 }
 
 export interface MergeValidationDecision {
@@ -110,6 +117,13 @@ export interface EnqueueMergeInput {
   readonly scope: ProjectExecutionScope;
   readonly missionId: string;
   readonly taskId: string;
+  /** Parent MCP/reconciler cancellation for nested validation effects. */
+  readonly signal?: AbortSignal;
+  /**
+   * Synchronous main-owned lifecycle fence. MergeQueue invokes it immediately
+   * before Git effects and again after every validation await.
+   */
+  readonly assertCurrentAuthority?: () => void;
   readonly validate: (
     context: MergeValidationContext,
   ) => Promise<MergeValidationDecision> | MergeValidationDecision;
@@ -200,6 +214,19 @@ export class MergeValidationRejectedError extends Error {
     this.name = 'MergeValidationRejectedError';
     this.phase = phase;
     this.evidenceIds = Object.freeze([...evidenceIds]);
+  }
+}
+
+export class MergeAuthorityRevokedError extends Error {
+  constructor(cause?: unknown) {
+    const detail =
+      cause instanceof Error && cause.message.trim()
+        ? `: ${cause.message.trim()}`
+        : '';
+    super(`merge authority revoked${detail}`, {
+      cause,
+    });
+    this.name = 'MergeAuthorityRevokedError';
   }
 }
 

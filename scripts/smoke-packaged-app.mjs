@@ -350,11 +350,19 @@ export function resolvePackagedMainBundlePath(entries, declaredMain = null) {
   const target = PACKAGED_MAIN_BUNDLE_PATH;
   const normalizedDeclared =
     typeof declaredMain === 'string'
-      ? declaredMain.replaceAll('\\', '/').replace(/^\.\//u, '')
+      ? declaredMain
+          .replaceAll('\\', '/')
+          .replace(/^\.\//u, '')
+          .replace(/^\/+/, '')
       : null;
   const candidates = entries
     .filter((entry) => typeof entry === 'string')
-    .map((entry) => entry.replaceAll('\\', '/').replace(/^\.\//u, ''))
+    .map((entry) =>
+      entry
+        .replaceAll('\\', '/')
+        .replace(/^\.\//u, '')
+        .replace(/^\/+/, ''),
+    )
     .filter((entry) =>
       normalizedDeclared
         ? entry === normalizedDeclared || entry.endsWith(`/${normalizedDeclared}`)
@@ -396,6 +404,26 @@ export function inspectPackagedMainBundle(resourcesDir) {
     }
   }
   assertPackagedMainBundleBootable(bundle);
+
+  // Vite may leave package.json pointing at a tiny stable `main.js` loader
+  // while the evaluated code lives in a hashed `main-*.js` chunk. Inspecting
+  // only the loader let a broken createRequire(import.meta.url) reach Electron.
+  const mainChunks = listPackage(asarPath)
+    .map((entry) =>
+      entry
+        .replaceAll('\\', '/')
+        .replace(/^\.\//u, '')
+        .replace(/^\/+/, ''),
+    )
+    .filter((entry) =>
+      /(?:^|\/)\.vite\/build\/main(?:-[^/]+)?\.js$/u.test(entry),
+    );
+  if (mainChunks.length === 0) {
+    throw new Error('could not inspect packaged main bundle: no main chunks found');
+  }
+  for (const chunk of mainChunks) {
+    assertPackagedMainBundleBootable(extractAsarFile(asarPath, chunk));
+  }
 }
 
 export function inspectPackagedLegalArtifacts(resourcesDir) {

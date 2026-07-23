@@ -9,10 +9,7 @@ import { Readable } from 'node:stream';
 import tls from 'node:tls';
 
 export type DynamicMediaProvider =
-  | 'openai-image'
-  | 'replicate-image'
-  | 'replicate-video'
-  | 'google-video';
+  'openai-image' | 'replicate-image' | 'replicate-video' | 'google-video';
 
 export type PinnedMediaFetch = (
   url: URL,
@@ -79,7 +76,9 @@ async function assertSafeDownloadUrl(
   provider: DynamicMediaProvider,
   resolver: BrowserAddressResolver,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<ApprovedDownloadTarget> {
+  signal?.throwIfAborted();
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -108,6 +107,7 @@ async function assertSafeDownloadUrl(
       resolver,
       timeoutMs,
       provider,
+      signal,
     );
   } catch (err) {
     if (err instanceof MediaDnsTimeoutError) throw err;
@@ -117,12 +117,16 @@ async function assertSafeDownloadUrl(
     addresses.length === 0 ||
     addresses.some((address) => classifyBrowserAddress(address) !== 'public')
   ) {
-    throw new Error(`${provider}: download deve resolver apenas para rede pública`);
+    throw new Error(
+      `${provider}: download deve resolver apenas para rede pública`,
+    );
   }
   return { url, addresses };
 }
 
-function responseHeaders(headers: Record<string, string | string[] | undefined>): Headers {
+function responseHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): Headers {
   const result = new Headers();
   for (const [name, value] of Object.entries(headers)) {
     if (value === undefined) continue;
@@ -165,7 +169,12 @@ function requestPinnedAddress(
         const body = bodyless
           ? null
           : (Readable.toWeb(response) as ReadableStream<Uint8Array>);
-        resolve(new Response(body, { status, headers: responseHeaders(response.headers) }));
+        resolve(
+          new Response(body, {
+            status,
+            headers: responseHeaders(response.headers),
+          }),
+        );
       },
     );
     const abort = () => request.destroy(new Error('provider download aborted'));
@@ -192,7 +201,9 @@ export async function fetchPinnedProviderAsset(
   approvedAddresses: readonly string[],
   init: RequestInit,
 ): Promise<Response> {
-  let lastError: unknown = new Error('provider resolved to no usable addresses');
+  let lastError: unknown = new Error(
+    'provider resolved to no usable addresses',
+  );
   for (const address of approvedAddresses) {
     try {
       return await requestPinnedAddress(url, address, init);
@@ -209,26 +220,56 @@ async function resolveHostnameWithTimeout(
   resolver: BrowserAddressResolver,
   timeoutMs: number,
   provider: DynamicMediaProvider,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   return new Promise<string[]>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new MediaDnsTimeoutError(`${provider}: timeout no DNS do download`)),
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const succeed = (addresses: string[]) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(addresses);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onAbort = () => {
+      fail(
+        signal?.reason instanceof Error
+          ? signal.reason
+          : new Error(`${provider}: download abortado`),
+      );
+    };
+    timer = setTimeout(
+      () =>
+        fail(
+          new MediaDnsTimeoutError(`${provider}: timeout no DNS do download`),
+        ),
       timeoutMs,
     );
-    void resolver(hostname).then(
-      (addresses) => {
-        clearTimeout(timer);
-        resolve(addresses);
-      },
-      (err: unknown) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    void resolver(hostname).then(succeed, fail);
   });
 }
 
-async function readLimitedBody(response: Response, maxBytes: number): Promise<Buffer> {
+async function readLimitedBody(
+  response: Response,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  signal?.throwIfAborted();
   const declaredLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     throw new Error(`download excede limite de ${maxBytes} bytes`);
@@ -240,7 +281,9 @@ async function readLimitedBody(response: Response, maxBytes: number): Promise<Bu
   let total = 0;
   try {
     while (true) {
+      signal?.throwIfAborted();
       const { done, value } = await reader.read();
+      signal?.throwIfAborted();
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
@@ -260,13 +303,17 @@ async function downloadHop(
   provider: DynamicMediaProvider,
   deps: MediaDownloadDeps,
   limits: MediaDownloadLimits,
+  signal?: AbortSignal,
 ): Promise<{ body?: Buffer; redirect?: string }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), limits.timeoutMs);
+  const requestSignal = signal
+    ? AbortSignal.any([controller.signal, signal])
+    : controller.signal;
   try {
     const requestInit: RequestInit = {
       redirect: 'manual',
-      signal: controller.signal,
+      signal: requestSignal,
     };
     const response = deps.fetchPinned
       ? await deps.fetchPinned(target.url, target.addresses, requestInit)
@@ -277,13 +324,20 @@ async function downloadHop(
       return { redirect: new URL(location, target.url).toString() };
     }
     if (!response.ok) {
-      const detail = (await readLimitedBody(response, MAX_ERROR_BODY_BYTES))
+      const detail = (
+        await readLimitedBody(response, MAX_ERROR_BODY_BYTES, requestSignal)
+      )
         .toString('utf8')
         .slice(0, MAX_ERROR_DETAIL_CHARS);
-      throw new Error(`${provider} download HTTP ${response.status}: ${detail}`);
+      throw new Error(
+        `${provider} download HTTP ${response.status}: ${detail}`,
+      );
     }
-    return { body: await readLimitedBody(response, limits.maxBytes) };
+    return {
+      body: await readLimitedBody(response, limits.maxBytes, requestSignal),
+    };
   } catch (err) {
+    if (signal?.aborted) throw err;
     if (controller.signal.aborted) {
       throw new Error(`${provider}: timeout no download`);
     }
@@ -302,27 +356,38 @@ export async function downloadProviderAsset(
     fetchPinned: fetchPinnedProviderAsset,
   },
   overrideLimits?: Partial<MediaDownloadLimits>,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
+  signal?.throwIfAborted();
   const limits = { ...DEFAULT_LIMITS[provider], ...overrideLimits };
   const deadline = Date.now() + limits.timeoutMs;
   let currentUrl = rawUrl;
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new Error(`${provider}: timeout no download`);
+    signal?.throwIfAborted();
     const target = await assertSafeDownloadUrl(
       currentUrl,
       provider,
       deps.resolveHostname,
       remainingMs,
+      signal,
     );
+    signal?.throwIfAborted();
     const fetchTimeoutMs = deadline - Date.now();
     if (fetchTimeoutMs <= 0) {
       throw new Error(`${provider}: timeout no download`);
     }
-    const result = await downloadHop(target, provider, deps, {
-      ...limits,
-      timeoutMs: fetchTimeoutMs,
-    });
+    const result = await downloadHop(
+      target,
+      provider,
+      deps,
+      {
+        ...limits,
+        timeoutMs: fetchTimeoutMs,
+      },
+      signal,
+    );
     if (result.body) return result.body;
     if (!result.redirect) throw new Error(`${provider}: download sem conteúdo`);
     currentUrl = result.redirect;

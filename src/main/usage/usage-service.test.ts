@@ -68,6 +68,7 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
       cacheWrite1hTokens: 0,
       timestamp: 100,
       paneId: 'pane-a',
+      accountId: 'acct-a',
     });
     registry.forScope(scopeB).usage.record('codex', {
       sessionId: 'same-session',
@@ -85,6 +86,14 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
 
     expect(service.snapshot(scopeA)).toMatchObject({
       byPane: { 'pane-a': { inputTokens: 10, turns: 1 } },
+      byAccount: {
+        'acct-a': {
+          accountId: 'acct-a',
+          provider: 'claude',
+          inputTokens: 10,
+          turns: 1,
+        },
+      },
       global: { inputTokens: 10, outputTokens: 2, turns: 1 },
     });
     expect(service.snapshot(scopeB)).toMatchObject({

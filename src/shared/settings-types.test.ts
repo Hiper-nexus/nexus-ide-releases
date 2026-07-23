@@ -91,11 +91,20 @@ describe('orchSettingsSchema', () => {
     expect(DEFAULT_ORCH_SETTINGS.intentFirstMissionRuntimeV1).toBe(true);
     // Ralph coordinates autopilot missions unless the user explicitly opts out.
     expect(DEFAULT_ORCH_SETTINGS.missionDriverActiveMode).toBe(true);
+    // Known boot dialogs are handled by default, with an explicit persisted kill switch.
+    expect(DEFAULT_ORCH_SETTINGS.cliPromptAutoResponderEnabled).toBe(true);
     // Zero-friction vibe-coder defaults: prefer omp, auto transport, auto-spawn.
     expect(DEFAULT_ORCH_SETTINGS.ompParticipation).toBe('prefer');
     expect(DEFAULT_ORCH_SETTINGS.ompRpcAutoStart).toBe(true);
     expect(DEFAULT_ORCH_SETTINGS.ompMissionTransport).toBe('auto');
     expect(DEFAULT_ORCH_SETTINGS.ompAutoSpawn).toBe(true);
+  });
+
+  it('persists an explicit CLI prompt autoresponder kill switch', () => {
+    expect(
+      orchSettingsSchema.parse({ cliPromptAutoResponderEnabled: false })
+        .cliPromptAutoResponderEnabled,
+    ).toBe(false);
   });
 
   it('accepts omp participation modes', () => {

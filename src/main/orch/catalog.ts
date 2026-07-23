@@ -3,6 +3,32 @@ import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { scanComponentFiles, type ScanInput } from './skill-threat-scan';
+import type {
+  CatalogEntry,
+  CatalogIndex,
+  CatalogInstallOptions,
+  CatalogInstallReview,
+  CatalogKind,
+  CatalogPreparedInstall,
+  CatalogProvenance,
+  InstallResult,
+} from './catalog-contract';
+export type {
+  CatalogEntry,
+  CatalogIndex,
+  CatalogInstallOptions,
+  CatalogInstallReview,
+  CatalogKind,
+  CatalogPreparedInstall,
+  CatalogProvenance,
+  InstalledItem,
+  InstallResult,
+} from './catalog-contract';
+export {
+  listHookHomes,
+  listInstalledCatalogItems,
+  listPluginFiles,
+} from './catalog-installed';
 
 /**
  * aitmpl catalog (davila7/claude-code-templates) — the catalog install
@@ -23,9 +49,11 @@ const API_BASE = `https://api.github.com/repos/${REPO}`;
 const RAW_BASE = `https://raw.githubusercontent.com/${REPO}`;
 const USER_AGENT = 'nexus-ide';
 const FETCH_TIMEOUT_MS = 20_000;
+const MAX_INSTALL_WALL_CLOCK_MS = 120_000;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_SKILL_FILES = 200;
 const MAX_SKILL_ENTRIES = 500;
+const MAX_CONTENTS_REQUESTS = 256;
 const MAX_SKILL_DEPTH = 20;
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -34,41 +62,15 @@ const MAX_CONTENTS_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_TREE_RESPONSE_BYTES = 32 * 1024 * 1024;
 const MAX_TREE_ENTRIES = 100_000;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
+const activeCatalogInstalls = new Set<string>();
+let catalogIndexFlight: Promise<{
+  ok: boolean;
+  index?: CatalogIndex;
+  error?: string;
+}> | null = null;
 
 function cacheFile(): string {
   return path.join(os.homedir(), '.nexus', 'catalog-cache.json');
-}
-
-export type CatalogKind = 'agent' | 'skill';
-
-export interface CatalogEntry {
-  kind: CatalogKind;
-  /** Repo slug, e.g. "ai-research/ai-agents-architect". */
-  slug: string;
-  name: string;
-  category: string;
-}
-
-export interface CatalogIndex {
-  fetchedAt: number;
-  agents: CatalogEntry[];
-  skills: CatalogEntry[];
-  /** Immutable source used to build this snapshot. */
-  provenance?: CatalogProvenance;
-}
-
-export interface CatalogProvenance {
-  repository: string;
-  commitSha: string;
-  /** SHA-256 of the index response or installed payload set. */
-  sha256?: string;
-  fileCount?: number;
-  totalBytes?: number;
-  /**
-   * Non-blocking content-trust warnings raised by the install-time threat scan
-   * (H1). Blocking findings abort the install and never reach here.
-   */
-  warnings?: string[];
 }
 
 type CatalogHost = 'api.github.com' | 'raw.githubusercontent.com';
@@ -101,24 +103,50 @@ function sameUrl(actual: string, expected: string): boolean {
   }
 }
 
-async function fetchWithTimeout(
+function assertCatalogOperationLive(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error('catalog operation deadline exceeded');
+  }
+}
+
+async function fetchResponseLimited(
   rawUrl: string,
   host: CatalogHost,
-): Promise<Response> {
+  maxBytes: number,
+  operationSignal?: AbortSignal,
+): Promise<{ response: Response; body: Buffer }> {
+  assertCatalogOperationLive(operationSignal);
   const url = validatedCatalogUrl(rawUrl, host).href;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const abortForOperation = (): void => {
+    controller.abort(new Error('catalog operation deadline exceeded'));
+  };
+  operationSignal?.addEventListener('abort', abortForOperation, { once: true });
+  const timer = setTimeout(
+    () => controller.abort(new Error('catalog request deadline exceeded')),
+    FETCH_TIMEOUT_MS,
+  );
   try {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': USER_AGENT },
       redirect: 'error',
     });
+    assertCatalogOperationLive(operationSignal);
     if (response.redirected || !response.url || !sameUrl(response.url, url)) {
       throw new Error('unexpected catalog response URL');
     }
-    return response;
+    // Keep the AbortController alive through body consumption. A peer that
+    // sends headers and then stalls must not hold an install forever.
+    const body = await readResponseLimited(response, maxBytes);
+    assertCatalogOperationLive(operationSignal);
+    return { response, body };
+  } catch (error) {
+    assertCatalogOperationLive(operationSignal);
+    throw error;
   } finally {
+    operationSignal?.removeEventListener('abort', abortForOperation);
+    controller.abort();
     clearTimeout(timer);
   }
 }
@@ -168,12 +196,17 @@ async function readResponseLimited(
 async function fetchJson<T>(
   url: string,
   maxBytes: number,
+  operationSignal?: AbortSignal,
 ): Promise<{ value: T; raw: Buffer }> {
-  const response = await fetchWithTimeout(url, 'api.github.com');
+  const { response, body: raw } = await fetchResponseLimited(
+    url,
+    'api.github.com',
+    maxBytes,
+    operationSignal,
+  );
   if (!response.ok) {
     throw new Error(`fetch failed: ${response.status} ${response.statusText}`);
   }
-  const raw = await readResponseLimited(response, maxBytes);
   try {
     return { value: JSON.parse(raw.toString('utf8')) as T, raw };
   } catch {
@@ -181,11 +214,12 @@ async function fetchJson<T>(
   }
 }
 
-async function resolveCommitSha(): Promise<string> {
+async function resolveCommitSha(operationSignal?: AbortSignal): Promise<string> {
   const url = `${API_BASE}/commits/main`;
   const { value } = await fetchJson<{ sha?: unknown }>(
     url,
     MAX_COMMIT_RESPONSE_BYTES,
+    operationSignal,
   );
   if (typeof value?.sha !== 'string' || !COMMIT_SHA_PATTERN.test(value.sha)) {
     throw new Error('catalog returned an invalid commit SHA');
@@ -209,6 +243,17 @@ function rawFileUrl(repoPath: string, commitSha: string): string {
 
 function sha256(value: Buffer): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+/** Unlike existsSync, this treats dangling symlinks as occupied targets. */
+function pathEntryExists(candidate: string): boolean {
+  try {
+    fs.lstatSync(candidate);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,40 +349,49 @@ export async function getCatalogIndex(refresh = false): Promise<{
   if (!refresh && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     return { ok: true, index: cached };
   }
+  if (catalogIndexFlight) return catalogIndexFlight;
+  const flight = (async () => {
+    try {
+      const commitSha = await resolveCommitSha();
+      const treeUrl = `${API_BASE}/git/trees/${commitSha}?recursive=1`;
+      const { value: body, raw } = await fetchJson<{
+        truncated?: unknown;
+        tree?: Array<{ path?: string }>;
+      }>(treeUrl, MAX_TREE_RESPONSE_BYTES);
+      if (body.truncated !== false) {
+        throw new Error('catalog tree response is incomplete');
+      }
+      if (!Array.isArray(body.tree) || body.tree.length > MAX_TREE_ENTRIES) {
+        throw new Error('catalog tree entry limit exceeded');
+      }
+      const paths = (body.tree ?? [])
+        .map((t) => t.path)
+        .filter((p): p is string => typeof p === 'string');
+      const index: CatalogIndex = {
+        fetchedAt: Date.now(),
+        ...parseTreePaths(paths),
+        provenance: {
+          repository: REPO,
+          commitSha,
+          sha256: sha256(raw),
+          fileCount: paths.length,
+          totalBytes: raw.byteLength,
+        },
+      };
+      writeCache(index);
+      return { ok: true, index };
+    } catch (err) {
+      // Offline / rate limited — serve the stale cache when we have one.
+      if (cached) return { ok: true, index: cached };
+      const detail = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `catálogo indisponível: ${detail}` };
+    }
+  })();
+  catalogIndexFlight = flight;
   try {
-    const commitSha = await resolveCommitSha();
-    const treeUrl = `${API_BASE}/git/trees/${commitSha}?recursive=1`;
-    const { value: body, raw } = await fetchJson<{
-      truncated?: unknown;
-      tree?: Array<{ path?: string }>;
-    }>(treeUrl, MAX_TREE_RESPONSE_BYTES);
-    if (body.truncated !== false) {
-      throw new Error('catalog tree response is incomplete');
-    }
-    if (!Array.isArray(body.tree) || body.tree.length > MAX_TREE_ENTRIES) {
-      throw new Error('catalog tree entry limit exceeded');
-    }
-    const paths = (body.tree ?? [])
-      .map((t) => t.path)
-      .filter((p): p is string => typeof p === 'string');
-    const index: CatalogIndex = {
-      fetchedAt: Date.now(),
-      ...parseTreePaths(paths),
-      provenance: {
-        repository: REPO,
-        commitSha,
-        sha256: sha256(raw),
-        fileCount: paths.length,
-        totalBytes: raw.byteLength,
-      },
-    };
-    writeCache(index);
-    return { ok: true, index };
-  } catch (err) {
-    // Offline / rate limited — serve the stale cache when we have one.
-    if (cached) return { ok: true, index: cached };
-    const detail = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `catálogo indisponível: ${detail}` };
+    return await flight;
+  } finally {
+    if (catalogIndexFlight === flight) catalogIndexFlight = null;
   }
 }
 
@@ -361,37 +415,146 @@ function isSafeSlug(slug: string): boolean {
   );
 }
 
-export interface InstallResult {
-  ok: boolean;
-  skipped?: boolean;
-  installed?: { name: string; path: string };
-  provenance?: CatalogProvenance;
-  error?: string;
+interface CatalogInstallExecutionOptions extends CatalogInstallOptions {
+  readonly operationSignal: AbortSignal;
 }
 
-async function installAgent(slug: string): Promise<InstallResult> {
-  const home = os.homedir();
-  const slugBase = path.basename(slug);
-  const destName = slugBase.endsWith('.md') ? slugBase : `${slugBase}.md`;
-  const targetPath = path.join(home, '.claude', 'agents', destName);
-  if (fs.existsSync(targetPath)) return { ok: true, skipped: true };
+function assertInstallLive(options: CatalogInstallExecutionOptions): void {
+  assertCatalogOperationLive(options.operationSignal);
+  options.assertCurrentAuthority?.();
+}
 
-  const commitSha = await resolveCommitSha();
+async function awaitInstallOperation<T>(
+  pending: PromiseLike<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  assertCatalogOperationLive(signal);
+  // Native confirmation dialogs cannot be programmatically dismissed. When
+  // the automated deadline expires, keep the install lane occupied until the
+  // physical modal settles, then reject its now-stale answer. Releasing the
+  // lane on abort would allow a second overlapping dialog whose late click
+  // misleadingly appears to authorize a different install.
+  const value = await pending;
+  assertCatalogOperationLive(signal);
+  return value;
+}
+
+function catalogTarget(kind: CatalogKind, slug: string): {
+  name: string;
+  targetPath: string;
+} {
+  const slugBase = path.basename(slug);
+  if (kind === 'agent') {
+    const name = slugBase.endsWith('.md') ? slugBase : `${slugBase}.md`;
+    return {
+      name,
+      targetPath: path.join(os.homedir(), '.claude', 'agents', name),
+    };
+  }
+  return {
+    name: slugBase,
+    targetPath: path.join(os.homedir(), '.claude', 'skills', slugBase),
+  };
+}
+
+/** Read-only source candidate. It never refreshes/fetches or writes: the
+ * renderer must first browse a main-validated cached catalog snapshot. */
+export function reviewCatalogInstall(input: {
+  kind: CatalogKind;
+  slug: string;
+}): { ok: true; candidate: CatalogInstallReview } | { ok: false; error: string } {
+  if (!isSafeSlug(input.slug)) return { ok: false, error: 'invalid slug' };
+  const cached = readCache();
+  if (!cached?.provenance?.commitSha) {
+    return {
+      ok: false,
+      error: 'catálogo sem snapshot local; atualize a lista antes de instalar',
+    };
+  }
+  const entries = input.kind === 'agent' ? cached.agents : cached.skills;
+  const entry = entries.find(
+    (candidate) =>
+      candidate.kind === input.kind && candidate.slug === input.slug,
+  );
+  if (!entry) {
+    return { ok: false, error: 'item ausente do snapshot de catálogo revisado' };
+  }
+  const target = catalogTarget(input.kind, input.slug);
+  return {
+    ok: true,
+    candidate: Object.freeze({
+      kind: input.kind,
+      slug: input.slug,
+      name: target.name,
+      repository: REPO,
+      commitSha: cached.provenance.commitSha,
+      targetPath: target.targetPath,
+      alreadyInstalled: pathEntryExists(target.targetPath),
+    }),
+  };
+}
+
+function selectedCommit(
+  options: CatalogInstallExecutionOptions,
+): Promise<string> {
+  assertInstallLive(options);
+  if (options.expectedCommitSha !== undefined) {
+    if (!COMMIT_SHA_PATTERN.test(options.expectedCommitSha)) {
+      return Promise.reject(new Error('invalid expected catalog commit'));
+    }
+    return Promise.resolve(options.expectedCommitSha);
+  }
+  return resolveCommitSha(options.operationSignal);
+}
+
+async function approvePreparedInstall(
+  candidate: CatalogPreparedInstall,
+  options: CatalogInstallExecutionOptions,
+): Promise<boolean> {
+  assertInstallLive(options);
+  const pending = options.beforePublish?.(candidate);
+  const approved =
+    pending && typeof (pending as PromiseLike<boolean>).then === 'function'
+      ? await awaitInstallOperation(
+          pending as PromiseLike<boolean>,
+          options.operationSignal,
+        )
+      : pending;
+  assertInstallLive(options);
+  return approved !== false;
+}
+
+async function installAgent(
+  slug: string,
+  options: CatalogInstallExecutionOptions,
+): Promise<InstallResult> {
+  assertInstallLive(options);
+  const { name: destName, targetPath } = catalogTarget('agent', slug);
+  if (pathEntryExists(targetPath)) return { ok: true, skipped: true };
+
+  const commitSha = await selectedCommit(options);
+  assertInstallLive(options);
   const repoPath = `cli-tool/components/agents/${slug}.md`;
   const url = rawFileUrl(repoPath, commitSha);
-  const response = await fetchWithTimeout(url, 'raw.githubusercontent.com');
+  const { response, body: payload } = await fetchResponseLimited(
+    url,
+    'raw.githubusercontent.com',
+    MAX_FILE_BYTES,
+    options.operationSignal,
+  );
+  assertInstallLive(options);
   if (!response.ok) {
     return {
       ok: false,
       error: `fetch failed: ${response.status} ${response.statusText}`,
     };
   }
-  const payload = await readResponseLimited(response, MAX_FILE_BYTES);
 
   // H1 content-trust gate: refuse to publish unambiguously malicious content
   // (credential exfiltration, reverse shell, pipe-to-shell). Automatic and
   // fail-closed — no prompt, no effect on agent autonomy.
   const scan = scanComponentFiles([{ name: destName, buffer: payload }]);
+  assertInstallLive(options);
   if (scan.blocked) {
     return {
       ok: false,
@@ -400,19 +563,59 @@ async function installAgent(slug: string): Promise<InstallResult> {
   }
 
   const parent = path.dirname(targetPath);
+  assertInstallLive(options);
   await fs.promises.mkdir(parent, {
     recursive: true,
     mode: 0o700,
   });
+  assertInstallLive(options);
   const stagingDir = await fs.promises.mkdtemp(
     path.join(parent, `.${destName}.staging-`),
   );
   try {
+    assertInstallLive(options);
     const stagedFile = path.join(stagingDir, 'payload');
     await fs.promises.writeFile(stagedFile, payload, {
       flag: 'wx',
       mode: 0o600,
     });
+    assertInstallLive(options);
+    const provenance: CatalogProvenance = {
+      repository: REPO,
+      commitSha,
+      sha256: sha256(payload),
+      fileCount: 1,
+      totalBytes: payload.byteLength,
+      ...(scan.warnings.length > 0 ? { warnings: scan.warnings } : {}),
+    };
+    const approved = await approvePreparedInstall(
+      Object.freeze({
+        kind: 'agent',
+        slug,
+        name: destName,
+        repository: REPO,
+        commitSha,
+        targetPath,
+        alreadyInstalled: false,
+        sha256: provenance.sha256!,
+        fileCount: 1,
+        totalBytes: payload.byteLength,
+        warnings: Object.freeze([...(scan.warnings ?? [])]),
+      }),
+      options,
+    );
+    if (!approved) return { ok: false, error: 'user_denied' };
+    const stagedStat = await fs.promises.lstat(stagedFile);
+    const stagedPayload = await fs.promises.readFile(stagedFile);
+    if (
+      !stagedStat.isFile() ||
+      stagedStat.isSymbolicLink() ||
+      stagedPayload.byteLength !== payload.byteLength ||
+      sha256(stagedPayload) !== provenance.sha256
+    ) {
+      throw new Error('staged catalog payload changed after review');
+    }
+    assertInstallLive(options);
     try {
       // A hard link publishes the complete same-filesystem payload atomically
       // and, unlike rename(), never overwrites a target created concurrently.
@@ -426,14 +629,7 @@ async function installAgent(slug: string): Promise<InstallResult> {
     return {
       ok: true,
       installed: { name: destName, path: targetPath },
-      provenance: {
-        repository: REPO,
-        commitSha,
-        sha256: sha256(payload),
-        fileCount: 1,
-        totalBytes: payload.byteLength,
-        ...(scan.warnings.length > 0 ? { warnings: scan.warnings } : {}),
-      },
+      provenance,
     };
   } finally {
     await fs.promises.rm(stagingDir, { recursive: true, force: true });
@@ -476,15 +672,79 @@ function aggregateSkillDigest(
   return hash.digest('hex');
 }
 
-async function installSkill(slug: string): Promise<InstallResult> {
-  const home = os.homedir();
-  const slugBase = path.basename(slug);
-  const targetDir = path.join(home, '.claude', 'skills', slugBase);
-  if (fs.existsSync(targetDir)) return { ok: true, skipped: true };
+async function verifyStagedSkill(
+  stagingDir: string,
+  rootRepoPath: string,
+  expectedFiles: readonly {
+    repoPath: string;
+    digest: string;
+    bytes: number;
+  }[],
+): Promise<void> {
+  const actual = new Map<string, { digest: string; bytes: number }>();
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await fs.promises.readdir(directory, {
+      withFileTypes: true,
+    })) {
+      const absolute = path.join(directory, entry.name);
+      const stat = await fs.promises.lstat(absolute);
+      if (stat.isSymbolicLink()) {
+        throw new Error('staged catalog skill contains a symlink');
+      }
+      if (stat.isDirectory()) {
+        await visit(absolute);
+        continue;
+      }
+      if (!stat.isFile()) {
+        throw new Error('staged catalog skill contains a non-regular entry');
+      }
+      const relative = path
+        .relative(stagingDir, absolute)
+        .split(path.sep)
+        .join('/');
+      if (
+        !relative ||
+        relative.startsWith('../') ||
+        path.isAbsolute(relative)
+      ) {
+        throw new Error('staged catalog skill escaped its root');
+      }
+      const body = await fs.promises.readFile(absolute);
+      actual.set(`${rootRepoPath}/${relative}`, {
+        digest: sha256(body),
+        bytes: body.byteLength,
+      });
+    }
+  };
+  await visit(stagingDir);
+  if (actual.size !== expectedFiles.length) {
+    throw new Error('staged catalog skill file set changed after review');
+  }
+  for (const expected of expectedFiles) {
+    const observed = actual.get(expected.repoPath);
+    if (
+      !observed ||
+      observed.digest !== expected.digest ||
+      observed.bytes !== expected.bytes
+    ) {
+      throw new Error('staged catalog skill payload changed after review');
+    }
+  }
+}
 
-  const commitSha = await resolveCommitSha();
+async function installSkill(
+  slug: string,
+  options: CatalogInstallExecutionOptions,
+): Promise<InstallResult> {
+  assertInstallLive(options);
+  const { name: slugBase, targetPath: targetDir } = catalogTarget('skill', slug);
+  if (pathEntryExists(targetDir)) return { ok: true, skipped: true };
+
+  const commitSha = await selectedCommit(options);
+  assertInstallLive(options);
   const parent = path.dirname(targetDir);
   await fs.promises.mkdir(parent, { recursive: true, mode: 0o700 });
+  assertInstallLive(options);
   const stagingDir = await fs.promises.mkdtemp(
     path.join(parent, `.${slugBase}.staging-`),
   );
@@ -500,24 +760,34 @@ async function installSkill(slug: string): Promise<InstallResult> {
   const files: Array<{ repoPath: string; digest: string; bytes: number }> = [];
   const scanInputs: ScanInput[] = [];
   let entryCount = 0;
+  let contentsRequests = 0;
   let totalBytes = 0;
 
   try {
     while (queue.length > 0) {
+      assertInstallLive(options);
       const { repoPath, localDir, depth } = queue.shift()!;
       if (depth > MAX_SKILL_DEPTH) {
         throw new Error('skill too deep (depth cap exceeded)');
+      }
+      contentsRequests += 1;
+      if (contentsRequests > MAX_CONTENTS_REQUESTS) {
+        throw new Error('skill too large (contents request cap exceeded)');
       }
       const apiUrl = contentsUrl(repoPath, commitSha);
       const { value: entries } = await fetchJson<ContentsEntry[]>(
         apiUrl,
         MAX_CONTENTS_RESPONSE_BYTES,
+        options.operationSignal,
       );
+      assertInstallLive(options);
       if (!Array.isArray(entries)) {
         throw new Error('unexpected contents response');
       }
       await fs.promises.mkdir(localDir, { recursive: true, mode: 0o700 });
+      assertInstallLive(options);
       for (const entry of entries) {
+        assertInstallLive(options);
         entryCount += 1;
         if (entryCount > MAX_SKILL_ENTRIES) {
           throw new Error('skill too large (entry cap exceeded)');
@@ -560,17 +830,16 @@ async function installSkill(slug: string): Promise<InstallResult> {
         if (remainingBytes <= 0) {
           throw new Error('skill too large (total byte limit exceeded)');
         }
-        const fileResponse = await fetchWithTimeout(
+        const { response: fileResponse, body: buffer } = await fetchResponseLimited(
           expectedUrl,
           'raw.githubusercontent.com',
+          Math.min(MAX_FILE_BYTES, remainingBytes),
+          options.operationSignal,
         );
+        assertInstallLive(options);
         if (!fileResponse.ok) {
           throw new Error(`fetch failed: ${fileResponse.status}`);
         }
-        const buffer = await readResponseLimited(
-          fileResponse,
-          Math.min(MAX_FILE_BYTES, remainingBytes),
-        );
         totalBytes += buffer.byteLength;
         if (totalBytes > MAX_TOTAL_BYTES) {
           throw new Error('skill too large (total byte limit exceeded)');
@@ -585,12 +854,14 @@ async function installSkill(slug: string): Promise<InstallResult> {
           flag: 'wx',
           mode: 0o600,
         });
+        assertInstallLive(options);
       }
     }
 
     // H1 content-trust gate: scan all downloaded files before publishing. A
     // blocking finding aborts the install (staging is cleaned in `finally`).
     const scan = scanComponentFiles(scanInputs);
+    assertInstallLive(options);
     if (scan.blocked) {
       return {
         ok: false,
@@ -598,7 +869,35 @@ async function installSkill(slug: string): Promise<InstallResult> {
       };
     }
 
-    if (fs.existsSync(targetDir)) return { ok: true, skipped: true };
+    const digest = aggregateSkillDigest(files);
+    const provenance: CatalogProvenance = {
+      repository: REPO,
+      commitSha,
+      sha256: digest,
+      fileCount: files.length,
+      totalBytes,
+      ...(scan.warnings.length > 0 ? { warnings: scan.warnings } : {}),
+    };
+    const approved = await approvePreparedInstall(
+      Object.freeze({
+        kind: 'skill',
+        slug,
+        name: slugBase,
+        repository: REPO,
+        commitSha,
+        targetPath: targetDir,
+        alreadyInstalled: false,
+        sha256: digest,
+        fileCount: files.length,
+        totalBytes,
+        warnings: Object.freeze([...(scan.warnings ?? [])]),
+      }),
+      options,
+    );
+    if (!approved) return { ok: false, error: 'user_denied' };
+    await verifyStagedSkill(stagingDir, rootRepoPath, files);
+    assertInstallLive(options);
+    if (pathEntryExists(targetDir)) return { ok: true, skipped: true };
     try {
       await fs.promises.rename(stagingDir, targetDir);
     } catch (err) {
@@ -611,14 +910,7 @@ async function installSkill(slug: string): Promise<InstallResult> {
     return {
       ok: true,
       installed: { name: slugBase, path: targetDir },
-      provenance: {
-        repository: REPO,
-        commitSha,
-        sha256: aggregateSkillDigest(files),
-        fileCount: files.length,
-        totalBytes,
-        ...(scan.warnings.length > 0 ? { warnings: scan.warnings } : {}),
-      },
+      provenance,
     };
   } finally {
     // If rename succeeded this path no longer exists. On every failure, all
@@ -635,125 +927,45 @@ async function installSkill(slug: string): Promise<InstallResult> {
 export async function installCatalogItem(input: {
   kind: CatalogKind;
   slug: string;
-}): Promise<InstallResult> {
+}, options: CatalogInstallOptions = {}): Promise<InstallResult> {
   if (!isSafeSlug(input.slug)) return { ok: false, error: 'invalid slug' };
+  const target = catalogTarget(input.kind, input.slug).targetPath;
+  if (pathEntryExists(target)) return { ok: true, skipped: true };
+  if (activeCatalogInstalls.size >= 1 || activeCatalogInstalls.has(target)) {
+    return { ok: false, error: 'catalog_install_busy' };
+  }
+  const requestedTimeout =
+    options.operationTimeoutMs ?? MAX_INSTALL_WALL_CLOCK_MS;
+  if (
+    !Number.isSafeInteger(requestedTimeout) ||
+    requestedTimeout <= 0
+  ) {
+    return { ok: false, error: 'invalid catalog operation deadline' };
+  }
+  const operationController = new AbortController();
+  const operationTimer = setTimeout(
+    () =>
+      operationController.abort(
+        new Error('catalog operation deadline exceeded'),
+      ),
+    Math.min(requestedTimeout, MAX_INSTALL_WALL_CLOCK_MS),
+  );
+  operationTimer.unref?.();
+  const executionOptions: CatalogInstallExecutionOptions = {
+    ...options,
+    operationSignal: operationController.signal,
+  };
+  activeCatalogInstalls.add(target);
   try {
     return input.kind === 'agent'
-      ? await installAgent(input.slug)
-      : await installSkill(input.slug);
+      ? await installAgent(input.slug, executionOptions)
+      : await installSkill(input.slug, executionOptions);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return { ok: false, error: detail };
+  } finally {
+    clearTimeout(operationTimer);
+    operationController.abort();
+    activeCatalogInstalls.delete(target);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Installed listings (settings drawer AGENTS/SKILLS/PLUGINS/HOOKS)
-// ---------------------------------------------------------------------------
-
-/** One locally installed catalog component (or user plugin file). */
-export interface InstalledItem {
-  kind: string;
-  name: string;
-  file: string;
-  size: number;
-  modifiedAt: number;
-}
-
-function scanDir(
-  dir: string,
-  kind: string,
-  opts: { dirs?: boolean; ext?: string } = {},
-): InstalledItem[] {
-  try {
-    return fs
-      .readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => {
-        if (entry.name.startsWith('.')) return false;
-        if (opts.dirs) return entry.isDirectory();
-        if (opts.ext) return entry.isFile() && entry.name.endsWith(opts.ext);
-        return entry.isFile();
-      })
-      .map((entry) => {
-        const file = path.join(dir, entry.name);
-        const stat = fs.statSync(file);
-        return {
-          kind,
-          name: entry.isDirectory()
-            ? entry.name
-            : path.basename(entry.name, path.extname(entry.name)),
-          file,
-          size: entry.isDirectory() ? 0 : stat.size,
-          modifiedAt: stat.mtimeMs,
-        };
-      });
-  } catch {
-    return []; // Directory absent — nothing installed.
-  }
-}
-
-function uniqueInstalledItems(items: InstalledItem[]): InstalledItem[] {
-  const seen = new Set<string>();
-  const out: InstalledItem[] = [];
-  for (const item of items) {
-    const key = `${item.kind}:${item.name}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
-  }
-  return out;
-}
-
-/**
- * Installed catalog components. Components install into the CLI's real
- * namespace (~/.claude) — that's what we scan; the legacy
- * ~/.nexus/plugins/catalog dir is included for anything installed by older
- * builds.
- */
-export function listInstalledCatalogItems(): InstalledItem[] {
-  const home = os.homedir();
-  const legacyRoot = path.join(home, '.nexus', 'plugins', 'catalog');
-  const legacy = (() => {
-    try {
-      return fs
-        .readdirSync(legacyRoot, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .flatMap((entry) => scanDir(path.join(legacyRoot, entry.name), entry.name));
-    } catch {
-      return [];
-    }
-  })();
-  return uniqueInstalledItems([
-    ...scanDir(path.join(home, '.claude', 'agents'), 'agent', { ext: '.md' }),
-    ...scanDir(path.join(home, '.claude', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.agents', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.codex', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.gemini', 'config', 'skills'), 'skill', {
-      dirs: true,
-    }),
-    ...scanDir(path.join(home, '.gemini', 'antigravity', 'skills'), 'skill', {
-      dirs: true,
-    }),
-    ...scanDir(path.join(home, '.kimi-code', 'skills'), 'skill', { dirs: true }),
-    ...scanDir(path.join(home, '.grok', 'skills'), 'skill', { dirs: true }),
-    ...legacy,
-  ]);
-}
-
-/** User plugin files (declarative adapters + voice configs). */
-export function listPluginFiles(): InstalledItem[] {
-  const pluginsRoot = path.join(os.homedir(), '.nexus', 'plugins');
-  return [
-    ...scanDir(path.join(pluginsRoot, 'adapters'), 'adapter'),
-    ...scanDir(path.join(pluginsRoot, 'voice'), 'voice'),
-    ...scanDir(path.join(pluginsRoot, 'themes'), 'theme'),
-    ...scanDir(path.join(pluginsRoot, 'keybindings'), 'keybinding'),
-  ];
-}
-
-/** Generated skill-gate hook homes (one per gated worker session). */
-export function listHookHomes(): InstalledItem[] {
-  return scanDir(path.join(os.homedir(), '.nexus', 'ephemeral'), 'hook-home', {
-    dirs: true,
-  });
 }

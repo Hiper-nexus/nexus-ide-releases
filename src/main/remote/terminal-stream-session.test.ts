@@ -35,4 +35,48 @@ describe('TerminalStreamSession', () => {
     expect(receiver.receive(first)).toBeNull();
     expect(receiver.resumeFromSeq()).toBe(2);
   });
+
+  it('replays every contiguous outbound frame after the client cursor', () => {
+    const sender = new TerminalStreamSession({
+      streamId: 9,
+      maxBufferedFrames: 4,
+      maxBufferedBytes: 1_024,
+    });
+    sender.encodeOutput(new TextEncoder().encode('one'));
+    sender.encodeOutput(new TextEncoder().encode('two'));
+    sender.encodeOutput(new TextEncoder().encode('three'));
+
+    const resumed = sender.resumeAfter(1);
+    expect(resumed.snapshotRequired).toBe(false);
+    if (!resumed.snapshotRequired) {
+      expect(resumed.frames).toHaveLength(2);
+      expect(resumed.fromSeq).toBe(2);
+      expect(resumed.toSeq).toBe(3);
+    }
+  });
+
+  it('requests a snapshot when count or byte eviction moved past the cursor', () => {
+    const byCount = new TerminalStreamSession({
+      streamId: 10,
+      maxBufferedFrames: 2,
+      maxBufferedBytes: 1_024,
+    });
+    byCount.encodeOutput(new Uint8Array([1]));
+    byCount.encodeOutput(new Uint8Array([2]));
+    byCount.encodeOutput(new Uint8Array([3]));
+    expect(byCount.resumeAfter(0)).toMatchObject({
+      snapshotRequired: true,
+      oldestAvailableSeq: 2,
+      latestSeq: 3,
+    });
+
+    const byBytes = new TerminalStreamSession({
+      streamId: 11,
+      maxBufferedFrames: 10,
+      maxBufferedBytes: 40,
+    });
+    byBytes.encodeOutput(new Uint8Array(16));
+    byBytes.encodeOutput(new Uint8Array(16));
+    expect(byBytes.resumeAfter(0).snapshotRequired).toBe(true);
+  });
 });

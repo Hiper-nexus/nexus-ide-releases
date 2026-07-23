@@ -116,6 +116,12 @@ export const orchSettingsSchema = z.object({
    *  autopilot; false permanece como opt-out/shadow. Exige restart para aplicar. */
   missionDriverActiveMode: z.boolean().default(true),
   /**
+   * Autoaceita somente menus de boot conhecidos e assinados por adapter.
+   * O default preserva o fluxo sem pane engolindo kickoff; false é o kill
+   * switch persistido e de efeito imediato para impedir qualquer keypress.
+   */
+  cliPromptAutoResponderEnabled: z.boolean().default(true),
+  /**
    * When a saved layout with mission agents is restored (app start, workspace
    * open, any OS — macOS / Linux / Windows, same code path):
    * - `ask` (default, safe): hold agents and confirm before they run

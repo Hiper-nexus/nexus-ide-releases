@@ -44,14 +44,14 @@ const AGENT_DIST_LABELS: Record<
 /** Featured pair — BridgeSpace / BridgeSwarm analogue. */
 const FEATURED = [
   {
-    launcherId: 'terminal' as const,
-    workMode: 'terminal-only' as WorkMode,
-    title: 'Nexus Space',
+    launcherId: 'missions' as const,
+    workMode: 'missions' as WorkMode,
+    title: 'Missão Nexus',
     description:
-      'Grade limpa de terminais. Ideal pro dia a dia — com ou sem IA.',
-    cta: 'Continuar',
+      'Descreva o objetivo; o Nexus monta o time, executa e valida a entrega.',
+    cta: 'Preparar missão',
     badge: 'recomendado' as const,
-    icon: 'terminal' as PixelIconName,
+    icon: 'mission' as PixelIconName,
   },
   {
     launcherId: 'swarm' as const,
@@ -65,7 +65,7 @@ const FEATURED = [
   },
 ] as const;
 
-const SECONDARY_IDS = new Set(['missions', 'board', 'memory', 'skills']);
+const SECONDARY_IDS = new Set(['board', 'memory', 'skills']);
 
 export interface ProgressiveOnboardingProps {
   readonly flagEnabled?: boolean;
@@ -83,11 +83,11 @@ export function ProgressiveOnboarding({
   onOpenTerminalOnly,
 }: ProgressiveOnboardingProps) {
   const [step, setStep] = useState<Step>('mode');
-  const [mode, setMode] = useState<WorkMode>('terminal-only');
+  const [mode, setMode] = useState<WorkMode>('missions');
   const [paneCount, setPaneCount] = useState<LayoutPaneCount>(1);
   const [agentDistribution, setAgentDistribution] =
-    useState<AgentDistribution>('none');
-  const [openWithoutAi, setOpenWithoutAi] = useState(true);
+    useState<AgentDistribution>('one-of-each');
+  const [openWithoutAi, setOpenWithoutAi] = useState(false);
   const [recentPath, setRecentPath] = useState<string | undefined>();
 
   const plan = useMemo(
@@ -167,7 +167,7 @@ export function ProgressiveOnboarding({
         </h1>
         <p className="prog-onb__subtitle">
           {step === 'mode' &&
-            (greet.line || 'Escolha como quer trabalhar. Pode mudar depois.')}
+            (greet.line || 'Comece por uma missão. Você pode abrir só o workspace quando quiser.')}
           {step === 'layout' &&
             'Quantos panes abrem no grid? Escolha um workspace recente ou continue.'}
           {step === 'agents' &&
@@ -197,7 +197,7 @@ export function ProgressiveOnboarding({
                     if (card.workMode === 'terminal-only') {
                       setOpenWithoutAi(true);
                       setAgentDistribution('none');
-                    } else if (card.workMode === 'swarm') {
+                    } else {
                       setOpenWithoutAi(false);
                       setAgentDistribution('one-of-each');
                     }
@@ -371,7 +371,11 @@ export function ProgressiveOnboarding({
               data-testid="launch-primary"
               onClick={() => onLaunch(plan)}
             >
-              {openWithoutAi ? 'Abrir e sentir o fluxo' : 'Lançar a sessão'} ›
+              {openWithoutAi
+                ? 'Abrir e sentir o fluxo'
+                : mode === 'missions'
+                  ? 'Lançar a missão'
+                  : 'Lançar a sessão'} ›
             </button>
           </div>
         </section>

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildClarify, resolveClarifyAnswer } from './clarify';
+import {
+  buildClarify,
+  parseClarifyAnswerArtifact,
+  parseClarifyQuestionArtifact,
+  resolveClarifyAnswer,
+} from './clarify';
 
 describe('buildClarify', () => {
   it('normaliza opções em chips com id estável', () => {
@@ -27,9 +32,67 @@ describe('buildClarify', () => {
     ).toThrow(/6/);
   });
 
+  it('rejeita opções duplicadas ou com controles', () => {
+    expect(() =>
+      buildClarify({ question: 'x', options: ['Postgres', 'postgres'] }),
+    ).toThrow(/duplicad/i);
+    expect(() =>
+      buildClarify({ question: 'x', options: ['válida', 'quebra\u0000'] }),
+    ).toThrow(/controle/i);
+  });
+
   it('allowFreeform pode ser desligado', () => {
     const c = buildClarify({ question: 'x', options: ['a', 'b'], allowFreeform: false });
     expect(c.allowFreeform).toBe(false);
+  });
+});
+
+describe('durable clarify artifact parsing', () => {
+  it('aceita apenas ids de chip determinísticos', () => {
+    const valid = {
+      kind: 'nexus-clarify-question',
+      schemaVersion: 1,
+      clarify: {
+        question: 'Qual banco?',
+        chips: [
+          { id: 'opt-1', label: 'Postgres' },
+          { id: 'opt-2', label: 'SQLite' },
+        ],
+        allowFreeform: false,
+      },
+    };
+    expect(parseClarifyQuestionArtifact(valid)?.clarify.chips).toHaveLength(2);
+    expect(
+      parseClarifyQuestionArtifact({
+        ...valid,
+        clarify: {
+          ...valid.clarify,
+          chips: [
+            { id: 'forjado', label: 'Postgres' },
+            valid.clarify.chips[1],
+          ],
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it('rejeita envelopes de resposta malformados', () => {
+    expect(
+      parseClarifyAnswerArtifact({
+        kind: 'nexus-clarify-answer',
+        schemaVersion: 1,
+        questionId: 'question-a',
+        answer: { kind: 'chip', chipId: 'opt-1', value: 'Postgres' },
+      }),
+    ).toMatchObject({ questionId: 'question-a' });
+    expect(
+      parseClarifyAnswerArtifact({
+        kind: 'nexus-clarify-answer',
+        schemaVersion: 1,
+        questionId: '../question-a',
+        answer: { kind: 'chip', chipId: 'opt-99', value: 'Postgres' },
+      }),
+    ).toBeNull();
   });
 });
 

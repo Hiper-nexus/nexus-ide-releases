@@ -7,46 +7,45 @@
  * Copyright (c) 2026 Lovecast Inc. — MIT License (ORCA concepts); Nexus-authored.
  * See third_party/licenses/orca-MIT.txt.
  */
-import type { SshConnectOptions, SshTransport } from '../remote/ssh/ssh-session-manager';
-import { hostKeyVerdict, pinHostKey } from '../remote/ssh/known-hosts';
+import type {
+  SshConnectOptions,
+  SshOperationOptions,
+  SshTransport,
+} from '../remote/ssh/ssh-session-manager';
 import {
-  buildProxiedConnectFragment,
-  type ProxiedConnectFragment,
-  type SshProxySpec,
-} from '../remote/ssh/proxied-connect-config';
-import type { SpawnProcess } from '../../vendor/emdash/ssh/transports';
+  createIdentityFilteredAgent,
+} from '../remote/ssh/ssh-identity-filter';
+import { hostKeyVerdict, pinHostKey } from '../remote/ssh/known-hosts';
+import { buildProxiedConnectFragment } from '../remote/ssh/proxied-connect-config';
+import {
+  createBoundedSshOperation,
+  SshTransportError,
+  type BoundedSshOperation,
+} from '../remote/ssh/ssh-operation-lifecycle';
+import { createSsh2OperationMethods } from './ssh2-transport-operations';
+import {
+  boundedTimeout,
+  clearConnectTimer,
+  closeResource,
+  errorMessage,
+  resolveTimeouts,
+  teardownConnection,
+  type ConnectionState,
+  type PendingOperation,
+  type Ssh2Module,
+  type Ssh2TransportFactoryOptions,
+} from './ssh2-transport-shared';
 
-type Ssh2Client = {
-  on(event: string, cb: (...args: unknown[]) => void): void;
-  connect(cfg: Record<string, unknown>): void;
-  end(): void;
-  exec(
-    command: string,
-    cb: (err: Error | undefined, stream: NodeJS.ReadableStream & {
-      stderr: NodeJS.ReadableStream;
-      on(event: string, cb: (...args: unknown[]) => void): void;
-    }) => void,
-  ): void;
-  sftp(
-    cb: (
-      err: Error | undefined,
-      sftp: {
-        readFile(path: string, cb: (err: Error | undefined, data: Buffer) => void): void;
-        writeFile(path: string, data: Buffer, cb: (err: Error | undefined) => void): void;
-        readdir(
-          path: string,
-          cb: (err: Error | undefined, list: Array<{ filename: string }>) => void,
-        ): void;
-      },
-    ) => void,
-  ): void;
-};
+export type {
+  Ssh2TransportFactoryOptions,
+  Ssh2TransportTimeouts,
+} from './ssh2-transport-shared';
 
-function loadSsh2(): { Client: new () => Ssh2Client } {
+function loadSsh2(): Ssh2Module {
   try {
     // Optional dependency — not all installs ship native ssh2.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require('ssh2') as { Client: new () => Ssh2Client };
+    return require('ssh2') as Ssh2Module;
   } catch {
     throw new Error(
       'ssh2 package is not installed. Run: npm i ssh2  (or use MockSshTransport in tests)',
@@ -55,29 +54,148 @@ function loadSsh2(): { Client: new () => Ssh2Client } {
 }
 
 export function createSsh2Transport(
-  factoryOptions: { proxy?: SshProxySpec; spawnProcess?: SpawnProcess } = {},
+  factoryOptions: Ssh2TransportFactoryOptions = {},
 ): SshTransport {
-  const { Client } = loadSsh2();
-  let client: Ssh2Client | null = null;
-  let connected = false;
-  let proxyFragment: ProxiedConnectFragment | null = null;
+  const ssh2 = loadSsh2();
+  const { Client } = ssh2;
+  const timeouts = resolveTimeouts(factoryOptions.timeouts);
+  let generation = 0;
+  let current: ConnectionState | null = null;
+
+  const isCurrent = (state: ConnectionState): boolean => (
+    current === state
+    && state.generation === generation
+    && state.phase === 'connected'
+  );
+
+  const failCurrent = (
+    state: ConnectionState,
+    error: SshTransportError,
+  ): void => {
+    if (current !== state || state.generation !== generation) return;
+    current = null;
+    generation += 1;
+    teardownConnection(state, error);
+  };
+
+  const beginOperation = <T>(
+    state: ConnectionState,
+    label: string,
+    options: SshOperationOptions | undefined,
+    defaultTimeoutMs: number,
+    outcomeUnknown: boolean,
+  ): BoundedSshOperation<T> => {
+    const controller = createBoundedSshOperation<T>({
+      label,
+      timeoutMs: boundedTimeout(options?.timeoutMs, defaultTimeoutMs, label),
+      signal: options?.signal,
+      outcomeUnknownOnTimeout: outcomeUnknown,
+      isGenerationCurrent: () => isCurrent(state),
+    });
+    const pending: PendingOperation = {
+      label,
+      outcomeUnknown,
+      controller: controller as BoundedSshOperation<unknown>,
+    };
+    state.operations.add(pending);
+    const remove = (): void => {
+      state.operations.delete(pending);
+    };
+    void controller.promise.then(remove, remove);
+    return controller;
+  };
+  const operationMethods = createSsh2OperationMethods({
+    timeouts,
+    getCurrent: () => current,
+    isCurrent,
+    beginOperation,
+  });
 
   return {
     async connect(options: SshConnectOptions): Promise<void> {
-      client = new Client();
+      const filteredAgent = options.auth.kind === 'agent'
+        ? createIdentityFilteredAgent(
+            process.env.SSH_AUTH_SOCK ?? '',
+            options.auth.allowedFingerprints,
+            ssh2,
+          )
+        : undefined;
+      if (current) {
+        const previous = current;
+        current = null;
+        generation += 1;
+        teardownConnection(
+          previous,
+          new SshTransportError(
+            'stale_generation',
+            'A conexão SSH foi substituída por uma nova geração.',
+          ),
+        );
+      }
+
+      const state: ConnectionState = {
+        generation: generation += 1,
+        client: new Client(),
+        phase: 'connecting',
+        proxy: null,
+        connectTimer: null,
+        connectResolve: null,
+        connectReject: null,
+        operations: new Set(),
+        resources: new Set(),
+      };
+      current = state;
+
       await new Promise<void>((resolve, reject) => {
-        const c = client!;
+        const c = state.client;
+        state.connectResolve = resolve;
+        state.connectReject = reject;
+
         c.on('ready', () => {
-          connected = true;
-          resolve();
+          if (
+            current !== state
+            || state.generation !== generation
+            || state.phase !== 'connecting'
+          ) {
+            closeResource(c);
+            return;
+          }
+          state.phase = 'connected';
+          clearConnectTimer(state);
+          const complete = state.connectResolve;
+          state.connectResolve = null;
+          state.connectReject = null;
+          complete?.();
         });
         c.on('error', (err: unknown) => {
-          connected = false;
-          // A failed proxied connect must not leak the proxy child.
-          proxyFragment?.cleanup();
-          proxyFragment = null;
-          reject(err instanceof Error ? err : new Error(String(err)));
+          failCurrent(
+            state,
+            new SshTransportError(
+              'connection_lost',
+              `Conexão SSH falhou: ${errorMessage(err)}. Reconecte manualmente antes de nova operação.`,
+              { cause: err },
+            ),
+          );
         });
+        c.on('end', () => {
+          failCurrent(
+            state,
+            new SshTransportError(
+              'connection_lost',
+              'Conexão SSH encerrada pelo host. Reconecte manualmente antes de nova operação.',
+            ),
+          );
+        });
+        c.on('close', () => {
+          failCurrent(
+            state,
+            new SshTransportError(
+              'connection_lost',
+              'Conexão SSH fechada. Reconecte manualmente antes de nova operação.',
+            ),
+          );
+        });
+
         const host = options.host;
         const port = options.port ?? 22;
         // ssh2 auto-accepts ANY server host key when hostVerifier is absent
@@ -88,20 +206,34 @@ export function createSsh2Transport(
         // value would make ssh2 call it a second time (client.js:284-286).
         // Attached to EVERY connect config below — direct or proxied.
         const hostVerifier = (key: Buffer, verify: (ok: boolean) => void): void => {
+          let settled = false;
+          const finish = (accepted: boolean): void => {
+            if (settled) return;
+            settled = true;
+            verify(accepted);
+          };
+          if (
+            current !== state
+            || state.generation !== generation
+            || state.phase !== 'connecting'
+          ) {
+            finish(false);
+            return;
+          }
           let assessment: ReturnType<typeof hostKeyVerdict>;
           try {
             assessment = hostKeyVerdict(host, port, key);
           } catch {
-            verify(false);
+            finish(false);
             return;
           }
           if (assessment.verdict === 'match') {
-            verify(true);
+            finish(true);
             return;
           }
           if (assessment.verdict === 'mismatch') {
             // Changed since pinned: possible MITM. Never overridable here.
-            verify(false);
+            finish(false);
             return;
           }
           // Unknown key → trust-on-first-use. An interactive caller confirms
@@ -110,145 +242,108 @@ export function createSsh2Transport(
           if (!confirm) {
             try {
               pinHostKey(host, port, key);
-              verify(true);
+              finish(true);
             } catch {
-              verify(false);
+              finish(false);
             }
             return;
           }
-          Promise.resolve(
-            confirm({ host, port, fingerprint: assessment.fingerprint }),
-          )
+          let confirmation: boolean | Promise<boolean>;
+          try {
+            confirmation = confirm({
+              host,
+              port,
+              fingerprint: assessment.fingerprint,
+            });
+          } catch {
+            finish(false);
+            return;
+          }
+          Promise.resolve(confirmation)
             .then((accepted) => {
-              if (!accepted) {
-                verify(false);
+              if (
+                !accepted
+                || current !== state
+                || state.generation !== generation
+                || state.phase !== 'connecting'
+              ) {
+                finish(false);
                 return;
               }
               pinHostKey(host, port, key);
-              verify(true);
+              finish(true);
             })
-            .catch(() => verify(false));
+            .catch(() => finish(false));
         };
         const cfg: Record<string, unknown> = {
           host,
           port,
           username: options.username,
           keepaliveInterval: options.keepaliveIntervalMs ?? 15_000,
+          readyTimeout: timeouts.connectMs,
           hostVerifier,
         };
-        if (factoryOptions.proxy) {
-          // Vendored emdash proxy transport (ProxyJump/ProxyCommand resolved
-          // from ~/.ssh/config). Upstream emdash connected through these
-          // WITHOUT any hostVerifier; the glue requires one, so the
-          // known-hosts pin for host:port (the FINAL destination, not the
-          // jump host) applies unchanged. ssh2 dials through cfg.sock;
-          // host/port above remain the pin identity.
-          proxyFragment = buildProxiedConnectFragment(
-            factoryOptions.proxy,
-            { host, port, username: options.username, originalHost: options.host },
-            hostVerifier,
-            factoryOptions.spawnProcess,
+        try {
+          if (factoryOptions.proxy) {
+            // The pin identity remains the FINAL host even through cfg.sock.
+            state.proxy = buildProxiedConnectFragment(
+              factoryOptions.proxy,
+              { host, port, username: options.username, originalHost: options.host },
+              hostVerifier,
+              factoryOptions.spawnProcess,
+            );
+            cfg.sock = state.proxy.sock;
+          }
+          if (options.auth.kind === 'password') {
+            cfg.password = options.auth.password;
+          } else if (options.auth.kind === 'privateKey') {
+            cfg.privateKey = options.auth.privateKey;
+            if (options.auth.passphrase) cfg.passphrase = options.auth.passphrase;
+          } else {
+            // Never pass SSH_AUTH_SOCK directly: the wrapper filters list+sign.
+            cfg.agent = filteredAgent;
+          }
+
+          state.connectTimer = setTimeout(() => {
+            failCurrent(
+              state,
+              new SshTransportError(
+                'connect_timeout',
+                `Conexão SSH excedeu ${timeouts.connectMs}ms e foi encerrada.`,
+              ),
+            );
+          }, timeouts.connectMs);
+          state.connectTimer.unref?.();
+          c.connect(cfg);
+        } catch (error) {
+          failCurrent(
+            state,
+            new SshTransportError(
+              'connection_lost',
+              `Não foi possível iniciar a conexão SSH: ${errorMessage(error)}`,
+              { cause: error },
+            ),
           );
-          cfg.sock = proxyFragment.sock;
         }
-        if (options.auth.kind === 'password') {
-          cfg.password = options.auth.password;
-        } else if (options.auth.kind === 'privateKey') {
-          cfg.privateKey = options.auth.privateKey;
-          if (options.auth.passphrase) cfg.passphrase = options.auth.passphrase;
-        } else {
-          cfg.agent = process.env.SSH_AUTH_SOCK;
-          // Fingerprint allowlist enforced by session manager before connect.
-        }
-        c.connect(cfg);
       });
     },
     async disconnect(): Promise<void> {
-      connected = false;
-      try {
-        client?.end();
-      } catch {
-        // ignore
-      }
-      client = null;
-      // Reap the proxy child, if any (SIGTERM→SIGKILL; idempotent).
-      proxyFragment?.cleanup();
-      proxyFragment = null;
+      const state = current;
+      current = null;
+      generation += 1;
+      if (!state) return;
+      teardownConnection(
+        state,
+        new SshTransportError(
+          'connection_lost',
+          'Conexão SSH desconectada localmente; reconecte antes de nova operação.',
+        ),
+      );
     },
     isConnected(): boolean {
-      return connected;
+      return current?.phase === 'connected';
     },
-    async exec(command: string) {
-      const c = client;
-      if (!c || !connected) throw new Error('ssh not connected');
-      return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-        c.exec(command, (err, stream) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          let stdout = '';
-          let stderr = '';
-          stream.on('data', (d: Buffer) => {
-            stdout += d.toString('utf8');
-          });
-          stream.stderr.on('data', (d: Buffer) => {
-            stderr += d.toString('utf8');
-          });
-          stream.on('close', (code: number) => {
-            resolve({ code: code ?? 0, stdout, stderr });
-          });
-        });
-      });
-    },
-    async readFile(remotePath: string): Promise<string> {
-      const c = client;
-      if (!c || !connected) throw new Error('ssh not connected');
-      return new Promise((resolve, reject) => {
-        c.sftp((err, sftp) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          sftp.readFile(remotePath, (e, data) => {
-            if (e) reject(e);
-            else resolve(data.toString('utf8'));
-          });
-        });
-      });
-    },
-    async writeFile(remotePath: string, content: string): Promise<void> {
-      const c = client;
-      if (!c || !connected) throw new Error('ssh not connected');
-      return new Promise((resolve, reject) => {
-        c.sftp((err, sftp) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          sftp.writeFile(remotePath, Buffer.from(content, 'utf8'), (e) => {
-            if (e) reject(e);
-            else resolve();
-          });
-        });
-      });
-    },
-    async listDir(remotePath: string): Promise<readonly string[]> {
-      const c = client;
-      if (!c || !connected) throw new Error('ssh not connected');
-      return new Promise((resolve, reject) => {
-        c.sftp((err, sftp) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          sftp.readdir(remotePath, (e, list) => {
-            if (e) reject(e);
-            else resolve(list.map((x) => x.filename));
-          });
-        });
-      });
-    },
+    ...operationMethods,
   };
 }
 

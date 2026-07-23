@@ -5,6 +5,7 @@ import { REMOTE_CHANNELS } from '../../shared/remote-channels';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { RemoteSpawnRequest } from '../../shared/remote-types';
 import {
+  onRendererWorkspaceScopeChange,
   requireLiveRendererWorkspaceScope,
 } from '../persistence/renderer-workspace-scope';
 import {
@@ -22,6 +23,7 @@ import {
   createRemoteTmuxSession,
   detectRemoteClis,
   listRemoteTmuxSessions,
+  type RemoteSpawnControl,
 } from './remote-spawn';
 import { registerCompanionRelayIpc } from './relay/companion-relay-ipc';
 
@@ -41,6 +43,64 @@ const spawnSchema = z.object({
 });
 
 const REMOTE_SPAWN_TOOL = 'nexus_remote_spawn';
+
+interface RendererRemoteAuthority extends RemoteSpawnControl {
+  assertCurrentAuthority(): void;
+  dispose(): void;
+}
+
+function rendererRemoteAuthority(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+): RendererRemoteAuthority {
+  const controller = new AbortController();
+  const revoke = (reason: unknown) => {
+    if (controller.signal.aborted) return;
+    controller.abort(
+      reason instanceof Error
+        ? reason
+        : new Error('renderer workspace authority changed'),
+    );
+  };
+  const assertCurrentAuthority = () => {
+    if (controller.signal.aborted) {
+      const reason = controller.signal.reason;
+      throw reason instanceof Error
+        ? reason
+        : new Error('renderer workspace authority changed');
+    }
+    try {
+      requireLiveRendererWorkspaceScope(owner, scope);
+    } catch (error) {
+      revoke(error);
+      throw error;
+    }
+  };
+  const unsubscribeScope = onRendererWorkspaceScopeChange((changedOwner) => {
+    if (changedOwner.id !== owner.id) return;
+    try {
+      assertCurrentAuthority();
+    } catch {
+      // The signal transports the exact failure into SSH/process boundaries.
+    }
+  });
+  const eventOwner = owner as WebContents & {
+    on?: (event: string, listener: () => void) => void;
+    removeListener?: (event: string, listener: () => void) => void;
+  };
+  const onUnavailable = () => revoke(new Error('renderer is unavailable'));
+  eventOwner.on?.('destroyed', onUnavailable);
+  eventOwner.on?.('render-process-gone', onUnavailable);
+  return {
+    signal: controller.signal,
+    assertCurrentAuthority,
+    dispose: () => {
+      unsubscribeScope();
+      eventOwner.removeListener?.('destroyed', onUnavailable);
+      eventOwner.removeListener?.('render-process-gone', onUnavailable);
+    },
+  };
+}
 
 function safeDialogLabel(value: string, maxChars = 256): string {
   return value
@@ -94,7 +154,25 @@ export function registerRemoteIpc(): void {
     if (!parsed.success) {
       return { ...getRemoteBridgeInfo(scope), error: 'invalid start request' };
     }
-    return startRemoteBridge(parsed.data, scope);
+    const authority = rendererRemoteAuthority(event.sender, scope);
+    const wasRunning = getRemoteBridgeInfo(scope).running;
+    try {
+      authority.assertCurrentAuthority();
+      const info = await startRemoteBridge(parsed.data, scope);
+      authority.assertCurrentAuthority();
+      return info;
+    } catch (error) {
+      if (!wasRunning) {
+        try {
+          stopRemoteBridge(scope);
+        } catch {
+          // Starting failed before ownership materialized, or cleanup already ran.
+        }
+      }
+      throw error;
+    } finally {
+      authority.dispose();
+    }
   });
   ipcMain.handle(REMOTE_CHANNELS.bridgeStop, (event) =>
     stopRemoteBridge(requireLiveRendererWorkspaceScope(event.sender)),
@@ -107,27 +185,48 @@ export function registerRemoteIpc(): void {
   );
 
   ipcMain.handle(REMOTE_CHANNELS.remoteSpawnDetect, async (event, raw) => {
-    requireLiveRendererWorkspaceScope(event.sender);
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
     const parsed = targetSchema.safeParse(raw);
     if (!parsed.success) return { target: '', found: [], error: 'invalid target' };
-    return detectRemoteClis(parsed.data.target);
+    const authority = rendererRemoteAuthority(event.sender, scope);
+    try {
+      const result = await detectRemoteClis(parsed.data.target, authority);
+      authority.assertCurrentAuthority();
+      return result;
+    } finally {
+      authority.dispose();
+    }
   });
   ipcMain.handle(REMOTE_CHANNELS.remoteSpawnList, async (event, raw) => {
-    requireLiveRendererWorkspaceScope(event.sender);
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
     const parsed = targetSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, target: '', error: 'invalid target' };
-    return listRemoteTmuxSessions(parsed.data.target);
+    const authority = rendererRemoteAuthority(event.sender, scope);
+    try {
+      const result = await listRemoteTmuxSessions(parsed.data.target, authority);
+      authority.assertCurrentAuthority();
+      return result;
+    } finally {
+      authority.dispose();
+    }
   });
   ipcMain.handle(REMOTE_CHANNELS.remoteSpawnCreate, async (event, raw) => {
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const parsed = spawnSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, target: '', error: 'invalid remote spawn request' };
     const request = parsed.data as RemoteSpawnRequest;
-    const approved = await confirmRemoteSpawn(event.sender, scope, request);
-    if (!approved) {
-      return { ok: false, target: request.target, error: 'user_denied' };
+    const authority = rendererRemoteAuthority(event.sender, scope);
+    try {
+      const approved = await confirmRemoteSpawn(event.sender, scope, request);
+      authority.assertCurrentAuthority();
+      if (!approved) {
+        return { ok: false, target: request.target, error: 'user_denied' };
+      }
+      const result = await createRemoteTmuxSession(request, authority);
+      authority.assertCurrentAuthority();
+      return result;
+    } finally {
+      authority.dispose();
     }
-    requireLiveRendererWorkspaceScope(event.sender, scope);
-    return createRemoteTmuxSession(request);
   });
 }

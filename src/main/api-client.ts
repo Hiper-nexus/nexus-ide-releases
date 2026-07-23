@@ -18,6 +18,7 @@ export interface ApiRequestInit {
   body?: unknown;
   timeoutMs?: number;
   maxResponseBytes?: number;
+  signal?: AbortSignal;
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -46,6 +47,12 @@ async function doFetch(
   init: ApiRequestInit,
   session: string,
 ): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(
+    init.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, timeoutSignal])
+    : timeoutSignal;
   return deps.fetchFn(urlFor(deps, path), {
     method: init.method ?? 'GET',
     headers: {
@@ -53,7 +60,7 @@ async function doFetch(
       ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}),
     },
     ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
-    signal: AbortSignal.timeout(init.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    signal,
   });
 }
 

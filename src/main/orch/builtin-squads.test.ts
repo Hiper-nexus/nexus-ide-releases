@@ -77,6 +77,69 @@ describe('built-in squads (invariantes gerais)', () => {
   });
 });
 
+describe('built-in squads orientados a resultado', () => {
+  const expectedPacks = [
+    { id: 'outcome-landing-page', name: 'Landing Page' },
+    { id: 'outcome-bug-fix', name: 'Bug Fix' },
+    { id: 'outcome-store', name: 'Loja' },
+  ] as const;
+
+  it.each(expectedPacks)(
+    '$name existe como builtin com contrato de resultado verificável',
+    ({ id, name }) => {
+      const squad = BUILTIN_SQUADS.find((entry) => entry.id === id);
+      expect(squad).toBeDefined();
+      expect(squad?.builtin).toBe(true);
+      expect(squad?.name).toBe(name);
+      expect(squad?.orchestratorInstructions).toContain(
+        '## Contrato de resultado',
+      );
+      expect(squad?.orchestratorInstructions).toMatch(/crit[eé]rios de aceite/i);
+      expect(squad?.orchestratorInstructions).toMatch(
+        /handoff|evid[eê]ncia|prova/i,
+      );
+      expect(squad?.orchestratorInstructions).toMatch(
+        /n[aã]o (?:marque|declare|conte).*(?:conclu[ií]d|done)/i,
+      );
+    },
+  );
+
+  it.each(expectedPacks)(
+    '$name tem autoridade única, diversidade real e revisão independente',
+    ({ id }) => {
+      const squad = BUILTIN_SQUADS.find((entry) => entry.id === id);
+      const orchestrators =
+        squad?.agents.filter((agent) => agent.category === 'orchestrator') ?? [];
+      const workers =
+        squad?.agents.filter((agent) => agent.category !== 'orchestrator') ?? [];
+      const cliFamilies = new Set(workers.map((agent) => agent.cli));
+
+      expect(orchestrators).toHaveLength(1);
+      expect(workers.length).toBeGreaterThanOrEqual(3);
+      expect(cliFamilies.size).toBeGreaterThanOrEqual(3);
+      expect(workers.some((agent) => agent.cli === 'omp')).toBe(true);
+      expect(
+        workers.some((agent) => agent.category === 'reviewer'),
+      ).toBe(true);
+
+      for (const worker of workers) {
+        expect(worker.allowedTools).not.toBeNull();
+        expect(worker.allowedTools).toBeDefined();
+      }
+    },
+  );
+
+  it('Loja trata pagamentos, credenciais e dados de cliente como superfícies sensíveis', () => {
+    const squad = BUILTIN_SQUADS.find((entry) => entry.id === 'outcome-store');
+    expect(squad?.orchestratorInstructions).toMatch(/pagamento/i);
+    expect(squad?.orchestratorInstructions).toMatch(/segredo|credencial/i);
+    expect(squad?.orchestratorInstructions).toMatch(/dados (?:do )?cliente/i);
+    expect(squad?.orchestratorInstructions).toMatch(
+      /autoriza[cç][aã]o|confirma[cç][aã]o/i,
+    );
+  });
+});
+
 describe('built-in Review P0–P3 squad', () => {
   const squad = BUILTIN_SQUADS.find((entry) => entry.id === 'review-p0p3');
 

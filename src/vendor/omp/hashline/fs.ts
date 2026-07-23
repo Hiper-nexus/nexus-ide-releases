@@ -27,6 +27,15 @@ export interface PreflightWriteOptions {
 	fileOp?: FileOp;
 }
 
+/** Commit-time fence used by compound move implementations. */
+export interface MoveOptions {
+	/**
+	 * Revalidate caller authority after the destination write and immediately
+	 * before removing the source. A throw must leave the source in place.
+	 */
+	assertCurrentAuthority?: () => void;
+}
+
 /**
  * ENOENT-like error thrown by {@link Filesystem.readText} when a path is
  * missing. Carrying a `code` property keeps the contract compatible with
@@ -84,8 +93,9 @@ export abstract class Filesystem {
 	 * Move/rename `from` to `to`. When `content` is provided the destination
 	 * receives that text; otherwise implementations may preserve the source bytes.
 	 */
-	async move(from: string, to: string, content?: string): Promise<void> {
+	async move(from: string, to: string, content?: string, options?: MoveOptions): Promise<void> {
 		void content;
+		void options;
 		throw new Error(`Filesystem does not support move: ${from} -> ${to}`);
 	}
 
@@ -155,11 +165,12 @@ export class InMemoryFilesystem extends Filesystem {
 		if (!this.#files.delete(path)) throw new NotFoundError(path);
 	}
 
-	async move(from: string, to: string, content?: string): Promise<void> {
+	async move(from: string, to: string, content?: string, options?: MoveOptions): Promise<void> {
 		const existing = this.#files.get(from);
 		if (existing === undefined) throw new NotFoundError(from);
 		const finalContent = content ?? existing;
 		this.#files.set(to, finalContent);
+		options?.assertCurrentAuthority?.();
 		this.#files.delete(from);
 	}
 

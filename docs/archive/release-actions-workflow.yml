@@ -1,4 +1,7 @@
-name: Release macOS + Linux/Windows preview gates
+# ARCHIVED, NON-EXECUTABLE REFERENCE ONLY.
+# Releases are local/manual. This file intentionally lives outside
+# .github/workflows so GitHub Actions cannot dispatch it.
+name: Release macOS + Linux/Windows preview gates (archived)
 
 on:
   # Local release is the default while hosted Actions credits are unavailable.

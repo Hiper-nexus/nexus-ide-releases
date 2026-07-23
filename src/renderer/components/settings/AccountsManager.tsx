@@ -4,6 +4,7 @@ import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useAccountStore } from '../../state/account-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { useSettingsStore } from '../../state/settings-store';
+import { useUsageStore } from '../../state/usage-store';
 import { waitForSession } from '../../terminal/terminal-host';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
@@ -60,6 +61,10 @@ function authStatusLabel(state: string | undefined): string {
   return 'Não verificado';
 }
 
+function formatAccountUsd(costUsd: number): string {
+  return `US$ ${costUsd.toFixed(2).replace('.', ',')}`;
+}
+
 export function AccountsManager({
   adapterId,
   adapterLabel,
@@ -83,6 +88,7 @@ export function AccountsManager({
   const remove = useAccountStore((s) => s.remove);
   const activate = useAccountStore((s) => s.activate);
   const hydrate = useAccountStore((s) => s.hydrate);
+  const usageByAccount = useUsageStore((s) => s.snapshot.byAccount);
 
   const [addMode, setAddMode] = useState<null | 'subscription' | 'api-key'>(null);
   const [label, setLabel] = useState('');
@@ -285,6 +291,7 @@ export function AccountsManager({
   function renderRow(account: AccountInfo, role: 'active' | 'standby') {
     const state = accountState(account);
     const isRenaming = renamingId === account.id;
+    const realUsage = usageByAccount[account.id];
 
     return (
       <li
@@ -352,6 +359,15 @@ export function AccountsManager({
                 )}
                 {role === 'active' && !account.onCooldown && account.hasCredential && (
                   <span className="acct__meta-quiet">próximo terminal</span>
+                )}
+                {realUsage && (
+                  <span
+                    className="acct__usage"
+                    title={`${realUsage.inputTokens + realUsage.outputTokens} tokens atribuídos por transcript`}
+                  >
+                    {formatAccountUsd(realUsage.costUsd)} · {realUsage.turns}{' '}
+                    {realUsage.turns === 1 ? 'turno real' : 'turnos reais'}
+                  </span>
                 )}
               </div>
             </>

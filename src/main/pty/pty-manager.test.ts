@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
+import { PTY_CHANNELS } from "../../shared/channels";
 import {
   agentEnv,
   acknowledgeSessionOutput,
@@ -9,13 +10,22 @@ import {
   consumeMissionOrchestratorGrant,
   getOwnedAgentSessionInfo,
   getSessionState,
+  adoptMainOwnedAgentSession,
   killSession,
+  killSessionsFor,
+  listAgentSessions,
   recoverSessionOutput,
   setPtyHost,
+  setResumeSessionLookup,
   setSessionDictationHook,
   spawnAgentSession,
+  spawnMainOwnedAgentSession,
   spawnSession,
   publishSessionActivityState,
+  tapSessionTermination,
+  orchKillSession,
+  orchTerminateSession,
+  orchWriteSession,
   writeSession,
 } from "./pty-manager";
 import type {
@@ -26,6 +36,13 @@ import type {
 } from "./pty-host-core";
 import type { CliPtyAdapter } from "../../shared/adapter-types";
 import type { BoundSpawnAuthority } from "../orch/spawn-authority";
+import {
+  bindTokenToSession,
+  getContext,
+  mintToken,
+  resetGateForTests,
+} from "../orch/gate";
+import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 
 function trustedSpawn(
   cwd = fs.realpathSync(process.cwd()),
@@ -74,7 +91,28 @@ function revisionBoundWorker(
       missionId: "mission-worker",
       contextRevision: "context-revision-worker",
       role: "worker",
+      workerIncarnationId: "worker-incarnation-main-owned",
       allowedTools: [],
+      allowedSkills: null,
+      scope: base.scope,
+      executionScope: base.scope,
+    },
+  };
+}
+
+function persistedMissionGrant(
+  cwd = fs.realpathSync(process.cwd()),
+): BoundSpawnAuthority {
+  const base = trustedSpawn(cwd);
+  return {
+    ...base,
+    source: "persisted-pane",
+    coordinationScope: base.scope,
+    context: {
+      missionId: "mission-persisted",
+      agentName: "Persisted orchestrator",
+      role: "orchestrator",
+      allowedTools: null,
       allowedSkills: null,
       scope: base.scope,
       executionScope: base.scope,
@@ -221,6 +259,11 @@ function fakeHost(): {
           write: vi.fn(),
           resize: vi.fn(),
           kill: vi.fn(),
+          terminate: vi.fn(async () => ({
+            ok: false,
+            rootExited: false,
+            descendantsExited: false,
+          })),
         };
         specs.set(spec.sessionId, spec);
         procs.set(spec.sessionId, proc);
@@ -233,9 +276,92 @@ function fakeHost(): {
 }
 
 describe("PTY session ownership (renderer capability boundary)", () => {
+  it("spawns a mission agent without a renderer and adopts it without restarting the process", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const authority = revisionBoundWorker();
+    const { sessionId } = spawnMainOwnedAgentSession(
+      {
+        kind: "cli-agent",
+        cols: 120,
+        rows: 36,
+        paneId: "pane-main-owned",
+        adapterId: "test-cli",
+      },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      authority,
+    );
+    const proc = h.procFor(sessionId);
+    const owner = fakeWc();
+    const exactClaim = {
+      paneId: "pane-main-owned",
+      adapterId: "test-cli",
+      missionId: "mission-worker",
+      role: "worker" as const,
+      workerIncarnationId: "worker-incarnation-main-owned",
+      model: undefined,
+      accountId: undefined,
+      effort: undefined,
+      cwd: authority.cwd,
+      agentName: undefined,
+      readOnly: false,
+      nativeReadOnly: false,
+      allowedTools: [] as string[],
+      allowedSkills: null,
+      authoritySeal: undefined,
+      scope: authority.scope,
+    };
+
+    expect(
+      adoptMainOwnedAgentSession(owner, exactClaim),
+    ).toEqual({ sessionId, state: "spawning" });
+    expect(writeSession(owner, sessionId, "continue\r")).toBe(false);
+    expect(getOwnedAgentSessionInfo(owner, sessionId)).toMatchObject({
+      workerIncarnationId: "worker-incarnation-main-owned",
+    });
+    expect(proc.write).not.toHaveBeenCalled();
+    killSession(owner, sessionId);
+    expect(proc.kill).not.toHaveBeenCalled();
+    expect(orchWriteSession(sessionId, "main-before-detach\r")).toBe(true);
+    expect(proc.write).toHaveBeenCalledWith("main-before-detach\r");
+
+    // Closing/crashing a renderer must detach an orchestrated mission process,
+    // not kill the worker that the main coordinator still owns.
+    killSessionsFor(owner);
+    expect(proc.kill).not.toHaveBeenCalled();
+    expect(writeSession(owner, sessionId, "forged\r")).toBe(false);
+    expect(orchWriteSession(sessionId, "main\r")).toBe(true);
+    expect(publishSessionActivityState(sessionId, "busy")).toBe(true);
+
+    const replacement = fakeWc();
+    expect(
+      adoptMainOwnedAgentSession(replacement, {
+        ...exactClaim,
+        readOnly: true,
+      }),
+    ).toBeNull();
+    expect(
+      adoptMainOwnedAgentSession(replacement, exactClaim),
+    ).toEqual({ sessionId, state: "busy" });
+    killSession(replacement, sessionId);
+    expect(proc.kill).not.toHaveBeenCalled();
+    expect(orchKillSession(sessionId)).toBe(true);
+    expect(proc.kill).toHaveBeenCalledOnce();
+  });
+
   it('sequences output and recovers missed push chunks through the owner-only pull lane', () => {
     let handlers: PtySessionHandlers | null = null;
-    const proc: PtyProcHandle = { write: vi.fn(), resize: vi.fn(), kill: vi.fn() };
+    const proc: PtyProcHandle = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      terminate: vi.fn(async () => ({
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+      })),
+    };
     setPtyHost({
       spawn(_spec, nextHandlers) {
         handlers = nextHandlers;
@@ -269,7 +395,7 @@ describe("PTY session ownership (renderer capability boundary)", () => {
       { sessionId, data: 'two', sequence: 2 },
     ]);
     expect(recoverSessionOutput(attacker, sessionId, 0)).toEqual([]);
-    killSession(owner, sessionId);
+    orchKillSession(sessionId);
   });
 
   it("only the owning WebContents can write to / kill a session", () => {
@@ -304,9 +430,368 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     expect(proc.kill).toHaveBeenCalledTimes(1);
     expect(getSessionState(sessionId)).toBeNull();
   });
+
+  it("does not authorize replacement until the PTY host proves physical exit", async () => {
+    let handlers: PtySessionHandlers | null = null;
+    let resolveProof!: (proof: {
+      ok: true;
+      rootExited: true;
+      descendantsExited: true;
+    }) => void;
+    const proc: PtyProcHandle = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      terminate: vi.fn(() => new Promise<{
+        ok: true;
+        rootExited: true;
+        descendantsExited: true;
+      }>((resolve) => {
+        resolveProof = resolve;
+      })),
+    };
+    setPtyHost({
+      spawn(_spec, nextHandlers) {
+        handlers = nextHandlers;
+        return proc;
+      },
+    });
+    const send = vi.fn();
+    const owner = {
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send,
+    } as unknown as WebContents;
+    const trusted = trustedSpawn();
+    const { sessionId } = spawnSession(
+      owner,
+      { kind: "shell", cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
+    const replacement = vi.fn();
+    const termination = orchTerminateSession(sessionId, {
+      termTimeoutMs: 10_000,
+      killTimeoutMs: 10_000,
+    });
+    void termination.then((exited) => {
+      if (exited) replacement();
+    });
+
+    expect(proc.terminate).toHaveBeenCalledWith({
+      termTimeoutMs: 10_000,
+      killTimeoutMs: 10_000,
+    });
+    expect(getSessionState(sessionId)).not.toBeNull();
+    expect(orchWriteSession(sessionId, "late command\r")).toBe(false);
+    (handlers as PtySessionHandlers | null)?.onData("late output");
+    await Promise.resolve();
+    expect(replacement).not.toHaveBeenCalled();
+    expect(
+      send.mock.calls.some(([channel]) => channel === PTY_CHANNELS.data),
+    ).toBe(false);
+
+    (handlers as PtySessionHandlers | null)?.onExit(0, 15);
+    resolveProof({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+    await expect(termination).resolves.toBe(true);
+    expect(getSessionState(sessionId)).toBeNull();
+    expect(replacement).toHaveBeenCalledOnce();
+  });
 });
 
 describe("cli-agent spawn argv hardening", () => {
+  it("denies a second exclusive-auth orchestrator even when the first is detached", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const adapter: CliPtyAdapter = {
+      ...makeAdapter({
+        static: {},
+        passthrough: [],
+        ephemeralHome: false,
+      }),
+      id: "claude",
+      label: "Claude",
+    };
+    const first = spawnAgentSession(
+      null,
+      {
+        kind: "cli-agent",
+        paneId: "pane-claude-first",
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {},
+      missionGrant(),
+    );
+
+    expect(() =>
+      spawnAgentSession(
+        null,
+        {
+          kind: "cli-agent",
+          paneId: "pane-claude-second",
+          cols: 80,
+          rows: 24,
+        },
+        adapter,
+        {},
+        missionGrant(),
+      ),
+    ).toThrow(/exclusive auth family.*physical exit proof/i);
+    expect(
+      listAgentSessions().filter(
+        (session) => session.adapterId === "claude",
+      ),
+    ).toHaveLength(1);
+    orchKillSession(first.sessionId);
+  });
+
+  it("revokes a stubborn PTY bearer but keeps exclusivity until process-tree proof", async () => {
+    resetGateForTests();
+    const spawnedHandlers: PtySessionHandlers[] = [];
+    const terminate = vi.fn(async () => ({
+      ok: false,
+      rootExited: false,
+      descendantsExited: false,
+    }));
+    const proc: PtyProcHandle = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      terminate,
+    };
+    setPtyHost({
+      spawn(_spec, handlers) {
+        spawnedHandlers.push(handlers);
+        return proc;
+      },
+    });
+    const adapter: CliPtyAdapter = {
+      ...makeAdapter({
+        static: {},
+        passthrough: [],
+        ephemeralHome: false,
+      }),
+      id: "claude",
+      label: "Claude",
+    };
+    const authority = missionGrant();
+    const first = spawnAgentSession(
+      null,
+      {
+        kind: "cli-agent",
+        paneId: "pane-stubborn-claude",
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {},
+      authority,
+    );
+    const gate = mintToken({
+      label: "stubborn claude",
+      role: "orchestrator",
+      missionId: "mission-stubborn",
+      scope: authority.scope,
+      allowedTools: null,
+      allowedSkills: null,
+    });
+    bindTokenToSession(gate.token, first.sessionId);
+
+    const terminationTap = vi.fn();
+    const disposeObserver = tapSessionTermination(terminationTap);
+    const disposeRevocation = installMcpSessionTerminationRevocation();
+    try {
+      const termination = orchTerminateSession(first.sessionId, {
+        termTimeoutMs: 1,
+        killTimeoutMs: 1,
+      });
+
+      // Logical authority is revoked synchronously, before either signal can
+      // produce physical exit proof.
+      expect(getContext(gate.token)).toBeNull();
+      expect(terminationTap).toHaveBeenCalledOnce();
+      await expect(termination).resolves.toBe(false);
+      expect(proc.terminate).toHaveBeenCalledWith({
+        termTimeoutMs: 1,
+        killTimeoutMs: 1,
+      });
+
+      // The dead bearer does not authorize replacement: the physical process
+      // remains in main's inventory until the host reports its real exit.
+      expect(
+        listAgentSessions().some(
+          (session) => session.sessionId === first.sessionId,
+        ),
+      ).toBe(true);
+      expect(() =>
+        spawnAgentSession(
+          null,
+          {
+            kind: "cli-agent",
+            paneId: "pane-replacement-too-early",
+            cols: 80,
+            rows: 24,
+          },
+          adapter,
+          {},
+          missionGrant(),
+        ),
+      ).toThrow(/exclusive auth family.*physical exit proof/i);
+
+      await expect(
+        orchTerminateSession(first.sessionId, {
+          termTimeoutMs: 1,
+          killTimeoutMs: 1,
+        }),
+      ).resolves.toBe(false);
+      expect(terminationTap).toHaveBeenCalledOnce();
+
+      spawnedHandlers[0]?.onExit(0, 9);
+      expect(
+        listAgentSessions().some(
+          (session) => session.sessionId === first.sessionId,
+        ),
+      ).toBe(true);
+      expect(() =>
+        spawnAgentSession(
+          null,
+          {
+            kind: "cli-agent",
+            paneId: "pane-replacement-root-only",
+            cols: 80,
+            rows: 24,
+          },
+          adapter,
+          {},
+          missionGrant(),
+        ),
+      ).toThrow(/exclusive auth family.*physical exit proof/i);
+
+      terminate.mockResolvedValueOnce({
+        ok: true,
+        rootExited: true,
+        descendantsExited: true,
+      });
+      await expect(
+        orchTerminateSession(first.sessionId, {
+          termTimeoutMs: 1,
+          killTimeoutMs: 1,
+        }),
+      ).resolves.toBe(true);
+      expect(
+        listAgentSessions().some(
+          (session) => session.sessionId === first.sessionId,
+        ),
+      ).toBe(false);
+
+      const replacement = spawnAgentSession(
+        null,
+        {
+          kind: "cli-agent",
+          paneId: "pane-replacement-after-exit",
+          cols: 80,
+          rows: 24,
+        },
+        adapter,
+        {},
+        missionGrant(),
+      );
+      orchKillSession(replacement.sessionId);
+    } finally {
+      disposeRevocation();
+      disposeObserver();
+      spawnedHandlers[0]?.onExit(0, 9);
+      resetGateForTests();
+    }
+  });
+
+  it("refuses persisted mission resume when no exact provider session exists", () => {
+    const spawn = vi.fn();
+    setPtyHost({ spawn });
+    setResumeSessionLookup(() => null);
+    const adapter = makeAdapter(
+      { static: {}, passthrough: [], ephemeralHome: false },
+      {
+        resumeArgs: ["--continue"],
+        resumeIdArgs: ["--resume"],
+      },
+    );
+
+    try {
+      expect(() =>
+        spawnAgentSession(
+          fakeWc(),
+          {
+            kind: "cli-agent",
+            paneId: "pane-persisted",
+            accountId: "account-main",
+            resume: true,
+            resumeLatestOnly: false,
+            cols: 80,
+            rows: 24,
+          },
+          adapter,
+          {},
+          persistedMissionGrant(),
+        ),
+      ).toThrow(/exact main-owned provider session/i);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      setResumeSessionLookup(null);
+    }
+  });
+
+  it("resumes a persisted mission only with its exact captured provider session", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    setResumeSessionLookup(
+      (_scope, paneId, adapterId, accountId) =>
+        paneId === "pane-persisted" &&
+        adapterId === "test-cli" &&
+        accountId === "account-main"
+          ? "provider-session-exact"
+          : null,
+    );
+    const adapter = makeAdapter(
+      { static: {}, passthrough: [], ephemeralHome: false },
+      {
+        resumeArgs: ["--continue"],
+        resumeIdArgs: ["--resume"],
+      },
+    );
+
+    try {
+      const spawned = spawnAgentSession(
+        fakeWc(),
+        {
+          kind: "cli-agent",
+          paneId: "pane-persisted",
+          accountId: "account-main",
+          resume: true,
+          resumeLatestOnly: false,
+          cols: 80,
+          rows: 24,
+        },
+        adapter,
+        {},
+        persistedMissionGrant(),
+      );
+      expect(spawned.resumeMode).toBe("exact");
+      expect(h.specFor(spawned.sessionId).args).toEqual(
+        expect.arrayContaining(["--resume", "provider-session-exact"]),
+      );
+      expect(h.specFor(spawned.sessionId).args).not.toContain("--continue");
+      orchKillSession(spawned.sessionId);
+    } finally {
+      setResumeSessionLookup(null);
+    }
+  });
+
   it("injects the managed hook endpoint and the main-owned PTY session key", () => {
     const h = fakeHost();
     setPtyHost(h.host);
@@ -379,7 +864,7 @@ describe("cli-agent spawn argv hardening", () => {
     expect(h.specFor(worker.sessionId).args).not.toContain("read-only");
   });
 
-  it("keeps the configured Codex bypass on a read-only squad reviewer", () => {
+  it("makes read-only override the configured Codex bypass", () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const base = makeAdapter({
@@ -416,11 +901,11 @@ describe("cli-agent spawn argv hardening", () => {
       reviewer,
     );
 
-    expect(h.specFor(spawned.sessionId).args).toContain(
+    expect(h.specFor(spawned.sessionId).args).not.toContain(
       "--dangerously-bypass-approvals-and-sandbox",
     );
-    expect(h.specFor(spawned.sessionId).args).not.toContain("on-request");
-    expect(h.specFor(spawned.sessionId).args).not.toContain("read-only");
+    expect(h.specFor(spawned.sessionId).args).toContain("on-request");
+    expect(h.specFor(spawned.sessionId).args).toContain("read-only");
   });
 
   it("reports every scoped agent session even when the provider chooses its id", () => {
@@ -445,7 +930,7 @@ describe("cli-agent spawn argv hardening", () => {
       paneId: "pane-a",
     });
     setSessionDictationHook(null);
-    killSession(owner, sessionId);
+    orchKillSession(sessionId);
   });
 
   it("appends adapter-declared extra args after user overrides", () => {
@@ -734,13 +1219,113 @@ describe("cli-agent spawn argv hardening", () => {
       false,
     );
 
-    killSession(owner, sessionId);
+    orchKillSession(sessionId);
+  });
+
+  it("expires an unconsumed mission orchestrator promotion grant", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+    const cwd = fs.realpathSync(process.cwd());
+    const baseAdapter = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const adapter: CliPtyAdapter = {
+      ...baseAdapter,
+      quirks: { ...baseAdapter.quirks, mcpAutoload: true },
+    };
+    const { sessionId } = spawnAgentSession(
+      owner,
+      {
+        kind: "cli-agent",
+        paneId: "pane-expired-orchestrator",
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {},
+      missionGrant(cwd),
+    );
+
+    vi.setSystemTime(10 * 60_000);
+    expect(
+      consumeMissionOrchestratorGrant(owner, sessionId, "review-squad"),
+    ).toBeNull();
+
+    orchKillSession(sessionId);
+    vi.useRealTimers();
+  });
+
+  it("physically terminates an abandoned immediate orchestrator when promotion expires", async () => {
+    vi.useFakeTimers();
+    let handlers: PtySessionHandlers | null = null;
+    const proc: PtyProcHandle = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      terminate: vi.fn(async () => ({
+        ok: true,
+        rootExited: true,
+        descendantsExited: true,
+      })),
+    };
+    setPtyHost({
+      spawn(_spec, nextHandlers) {
+        handlers = nextHandlers;
+        return proc;
+      },
+    });
+    const owner = fakeWc();
+    const cwd = fs.realpathSync(process.cwd());
+    const adapter = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const { sessionId } = spawnAgentSession(
+      owner,
+      {
+        kind: "cli-agent",
+        paneId: "pane-abandoned-orchestrator",
+        cols: 80,
+        rows: 24,
+      },
+      adapter,
+      {},
+      missionGrant(cwd),
+    );
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(proc.terminate).toHaveBeenCalledWith({
+      termTimeoutMs: 1_500,
+      killTimeoutMs: 1_500,
+    });
+    expect(getSessionState(sessionId)).not.toBeNull();
+    expect(orchWriteSession(sessionId, "late\r")).toBe(false);
+
+    (handlers as PtySessionHandlers | null)?.onExit(0, 15);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getSessionState(sessionId)).toBeNull();
+    vi.useRealTimers();
   });
 
   it("keeps state as busy when hookState is busy, ignoring the idle timeout", async () => {
     vi.useFakeTimers();
     let handlers: PtySessionHandlers | null = null;
-    const proc: PtyProcHandle = { write: vi.fn(), resize: vi.fn(), kill: vi.fn() };
+    const proc: PtyProcHandle = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      terminate: vi.fn(async () => ({
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+      })),
+    };
     setPtyHost({
       spawn(_spec, nextHandlers) {
         handlers = nextHandlers;
@@ -795,7 +1380,16 @@ describe("cli-agent spawn argv hardening", () => {
 
   it("does not re-emit stateChange when hook re-asserts the same state", () => {
     let handlers: PtySessionHandlers | null = null;
-    const proc: PtyProcHandle = { write: vi.fn(), resize: vi.fn(), kill: vi.fn() };
+    const proc: PtyProcHandle = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      terminate: vi.fn(async () => ({
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+      })),
+    };
     setPtyHost({
       spawn(_spec, nextHandlers) {
         handlers = nextHandlers;
@@ -833,10 +1427,55 @@ describe("cli-agent spawn argv hardening", () => {
     killSession(owner, sessionId);
   });
 
+  it('supports passive orchestration writes whose busy proof comes from PTY output', () => {
+    let handlers: PtySessionHandlers | null = null;
+    const proc: PtyProcHandle = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      terminate: vi.fn(async () => ({
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+      })),
+    };
+    setPtyHost({
+      spawn(_spec, nextHandlers) {
+        handlers = nextHandlers;
+        return proc;
+      },
+    });
+    const owner = fakeWc();
+    const { sessionId } = spawnAgentSession(
+      owner,
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      trustedSpawn(),
+    );
+    publishSessionActivityState(sessionId, 'idle');
+
+    expect(orchWriteSession(sessionId, 'kickoff\r', { markInputBusy: false })).toBe(true);
+    expect(getSessionState(sessionId)).toBe('idle');
+    (handlers as PtySessionHandlers | null)?.onData('accepted');
+    expect(getSessionState(sessionId)).toBe('busy');
+
+    killSession(owner, sessionId);
+  });
+
   it("releases a stale hook busy after the watchdog window when no idle arrives", async () => {
     vi.useFakeTimers();
     let handlers: PtySessionHandlers | null = null;
-    const proc: PtyProcHandle = { write: vi.fn(), resize: vi.fn(), kill: vi.fn() };
+    const proc: PtyProcHandle = {
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      terminate: vi.fn(async () => ({
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+      })),
+    };
     setPtyHost({
       spawn(_spec, nextHandlers) {
         handlers = nextHandlers;

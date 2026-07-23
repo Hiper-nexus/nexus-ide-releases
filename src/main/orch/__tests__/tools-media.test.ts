@@ -68,7 +68,9 @@ describe('media MCP tools', () => {
       'nexus_video_generate',
       'nexus_audio_generate',
     ]) {
-      expect(tools.find((tool) => tool.name === name)?.requiresConfirm).toBe(true);
+      expect(tools.find((tool) => tool.name === name)?.requiresConfirm).toBe(
+        true,
+      );
     }
   });
 
@@ -106,7 +108,31 @@ describe('media MCP tools', () => {
       image.handler({ prompt: 'safe prompt' }, fakeCtx()),
     ).rejects.toThrow(/safe read-only/i);
     expect(mocks.generateImage).toHaveBeenCalledOnce();
-    expect(mocks.recordUsage).toHaveBeenCalledWith(result, fakeCtx());
+    expect(mocks.recordUsage).toHaveBeenCalledWith(
+      result,
+      fakeCtx(),
+      undefined,
+    );
+  });
+
+  it('does not persist usage when authority is revoked while generation awaits', async () => {
+    let current = true;
+    mocks.generateImage.mockImplementationOnce(async () => {
+      current = false;
+      return result;
+    });
+    const image = buildMediaTools().find(
+      (tool) => tool.name === 'nexus_image_generate',
+    )!;
+
+    await expect(
+      image.handler({ prompt: 'safe prompt' }, fakeCtx(), {
+        assertCurrentAuthority: () => {
+          if (!current) throw new Error('session_authority_revoked');
+        },
+      }),
+    ).rejects.toThrow('session_authority_revoked');
+    expect(mocks.recordUsage).not.toHaveBeenCalled();
   });
 });
 

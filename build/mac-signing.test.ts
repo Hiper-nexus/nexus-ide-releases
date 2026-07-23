@@ -1,4 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
+import {
+  existsSync,
+  readFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -6,6 +9,7 @@ import {
   createMacSignOptions,
   entitlementProfileForMacTarget,
   EXPECTED_DEVELOPER_ID_IDENTITY,
+  assertMacPublishReleaseEnvironment,
   isAppleReleaseSigning,
   shouldIgnoreMacSigningFile,
 } from './mac-signing';
@@ -22,6 +26,7 @@ describe('macOS signing modes', () => {
     const environment = {
       APPLE_TEAM_ID: '35P5XL3JN6',
       APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+      NEXUS_MAC_PUBLISH_RELEASE: '1',
     };
     expect(createMacDmgMakerConfig(environment)).toMatchObject({
       additionalDMGOptions: {
@@ -47,6 +52,31 @@ describe('macOS signing modes', () => {
     ).resolves.toBe(makeResults);
     expect(notarizeArtifact).toHaveBeenCalledWith({
       appPath: '/tmp/NexusIDE.dmg',
+      keychainProfile: 'nexus-notary',
+    });
+  });
+
+  it('makes the publish release mode impossible without the exact local identity contract', () => {
+    expect(() => assertMacPublishReleaseEnvironment({})).toThrow(
+      /NEXUS_MAC_PUBLISH_RELEASE/,
+    );
+    expect(() => assertMacPublishReleaseEnvironment({
+      NEXUS_MAC_PUBLISH_RELEASE: '1',
+      APPLE_TEAM_ID: '35P5XL3JN6',
+      APPLE_KEYCHAIN_PROFILE: 'nexus_notary',
+    })).toThrow(/nexus-notary/);
+    expect(() => assertMacPublishReleaseEnvironment({
+      NEXUS_MAC_PUBLISH_RELEASE: '1',
+      APPLE_TEAM_ID: '35P5XL3JN6',
+      APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+      APPLE_ID: 'must-not-be-in-env',
+    })).toThrow(/APPLE_ID/);
+    expect(assertMacPublishReleaseEnvironment({
+      NEXUS_MAC_PUBLISH_RELEASE: '1',
+      APPLE_TEAM_ID: '35P5XL3JN6',
+      APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+    })).toEqual({
+      teamId: '35P5XL3JN6',
       keychainProfile: 'nexus-notary',
     });
   });

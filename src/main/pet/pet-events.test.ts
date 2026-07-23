@@ -31,6 +31,36 @@ describe('MissionTransitionTracker', () => {
     ).toEqual([{ kind: 'mission-blocked', title: 'Deploy', at }]);
   });
 
+  it('expõe “Handoff não entregue” no alerta quando esse foi o bloqueio', () => {
+    const t = new MissionTransitionTracker();
+    t.ingest(
+      'a',
+      [{ id: '1', title: 'Deploy', description: '', status: 'running' }],
+      at,
+    );
+    expect(
+      t.ingest(
+        'a',
+        [
+          {
+            id: '1',
+            title: 'Deploy',
+            description:
+              '<!-- nexus:handoff-delivery-failed:h1 -->\nHandoff não entregue. Clique em Reabrir.',
+            status: 'blocked',
+          },
+        ],
+        at + 1,
+      ),
+    ).toEqual([
+      {
+        kind: 'mission-blocked',
+        title: 'Handoff não entregue — Deploy',
+        at: at + 1,
+      },
+    ]);
+  });
+
   it('dispara mission-failed e ignora transições irrelevantes', () => {
     const t = new MissionTransitionTracker();
     t.ingest('a', [{ id: '1', title: 'Build', status: 'pending' }], at);

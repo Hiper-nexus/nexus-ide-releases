@@ -4,12 +4,14 @@ import { createPane, listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
-import { markResumeOnSpawn, waitForSession } from '../terminal/terminal-host';
+import {
+  getPaneSessionId,
+  markResumeOnSpawn,
+  waitForSession,
+} from '../terminal/terminal-host';
 import {
   conflictingOrchestratorPanes,
   hardReopenWouldKillAgents,
-  killConflictingOrchestrators,
-  killLiveAgents,
 } from './mission-launcher';
 
 /**
@@ -41,6 +43,32 @@ export interface MissionReopenResult {
    * Nova Missão on the goal composer instead of spawning panes.
    */
   intentShell?: boolean;
+  /** Correlates the voice/UI request to the exact physical readiness proof. */
+  ackId?: string;
+  /** Every restored pane had a concrete PTY session before success returned. */
+  sessionIds?: string[];
+  /** Wall clock of the successful orchestrator rebind/readiness acknowledgement. */
+  ackedAt?: number;
+}
+
+function reopenAckId(missionId: string): string {
+  const nonce = globalThis.crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `mission-reopen:${missionId}:${nonce}`;
+}
+
+function acknowledgedReopen(
+  missionId: string,
+  sessionIds: string[],
+  rest: Omit<MissionReopenResult, 'ok' | 'ackId' | 'sessionIds' | 'ackedAt'>,
+): MissionReopenResult {
+  return {
+    ok: true,
+    ...rest,
+    ackId: reopenAckId(missionId),
+    sessionIds: [...sessionIds],
+    ackedAt: Date.now(),
+  };
 }
 
 /**
@@ -99,7 +127,11 @@ export function hardReopenWouldDisplaceAgents(missionId: string): boolean {
 
 export { hardReopenWouldKillAgents };
 
-function specsToPanes(specs: MissionPaneSpec[], fallbackCwd?: string): PaneModel[] {
+function specsToPanes(
+  specs: MissionPaneSpec[],
+  missionId: string,
+  fallbackCwd?: string,
+): PaneModel[] {
   const ordered = specs.slice(0, MAX_REOPEN_PANES);
   return ordered.map((spec) => {
     const base = createPane(
@@ -119,6 +151,7 @@ function specsToPanes(specs: MissionPaneSpec[], fallbackCwd?: string): PaneModel
       title: spec.title,
       accountId: spec.accountId,
       effort: spec.effort,
+      missionId,
       role: spec.role,
       agentName: spec.agentName,
     };
@@ -141,8 +174,14 @@ export async function reopenMission(
   if (!options?.forceHard) {
     const live = livePaneIdsForMission(mission.id);
     if (live.length > 0) {
-      useLayoutStore.getState().focus(live[0]!);
-      return { ok: true, panes: live.length, soft: true };
+      const sessionIds = live.map((paneId) => getPaneSessionId(paneId));
+      if (sessionIds.every((sessionId): sessionId is string => Boolean(sessionId))) {
+        useLayoutStore.getState().focus(live[0]!);
+        return acknowledgedReopen(mission.id, sessionIds, {
+          panes: live.length,
+          soft: true,
+        });
+      }
     }
   }
 
@@ -169,7 +208,7 @@ export async function reopenMission(
   }
 
   const fallbackCwd = getActiveWorkspacePath() ?? undefined;
-  const panes = specsToPanes(specs, fallbackCwd);
+  const panes = specsToPanes(specs, mission.id, fallbackCwd);
   const incomingAdapter = primaryOrchestratorAdapter(specs);
   const existing = listPanes(useLayoutStore.getState().root);
   const forceHard = options?.forceHard === true;
@@ -179,16 +218,17 @@ export async function reopenMission(
   const foreignConflicts = conflicts.filter((p) => !newIds.has(p.id));
 
   if (forceHard) {
-    killLiveAgents();
-    useLayoutStore.getState().setPanes(panes);
+    return {
+      ok: false,
+      error:
+        'Reabertura forçada exige encerramento físico confirmado pelo processo principal. Feche a missão conflitante e tente novamente.',
+    };
   } else if (foreignConflicts.length > 0) {
-    // Exclusive shared-login: kill only conflicting orchestrators, keep others.
-    const killedIds = new Set(killConflictingOrchestrators(incomingAdapter));
-    // Also drop killed panes from the tree so reconcile doesn't double-kill
-    // mid-flight; sessions already killed above.
-    const kept = existing.filter((p) => !killedIds.has(p.id) && !newIds.has(p.id));
-    const merged = [...kept, ...panes].slice(0, MAX_MERGED_PANES);
-    useLayoutStore.getState().setPanes(merged);
+    return {
+      ok: false,
+      error:
+        'Há um orquestrador com credencial exclusiva em execução. O Nexus não substitui esse processo sem prova física de saída.',
+    };
   } else {
     // Safe multi-mission: keep every live pane, append this mission's panes.
     // (reconcileHosts only kills hosts for panes removed from the tree.)
@@ -205,24 +245,46 @@ export async function reopenMission(
     useOrchStore.getState().bindPaneMission(pane.id, mission.id);
   }
 
-  if (specs[0]?.role === 'orchestrator' || panes[0]) {
-    const orchPaneId = panes[0]!.id;
-    void waitForSession(orchPaneId).then((sessionId) => {
-      if (sessionId) {
-        void window.nexus.orch.rebindMissionOrchestrator(mission.id, sessionId);
-      }
-    });
-  }
-
   // Focus the reopened mission's orchestrator (first pane).
   useLayoutStore.getState().focus(panes[0]!.id);
 
+  // Physical acknowledgement: an updated layout is not proof that the CLI
+  // sessions exist. Wait for every exact pane, then rebind the persisted
+  // orchestrator before any caller (especially voice) may claim success.
+  const maybeSessions = await Promise.all(
+    panes.map((pane) => waitForSession(pane.id, 10_000)),
+  );
+  const missingIndex = maybeSessions.findIndex((sessionId) => !sessionId);
+  if (missingIndex >= 0) {
+    return {
+      ok: false,
+      error: `O pane ${panes[missingIndex]!.id} não confirmou uma sessão ativa.`,
+    };
+  }
+  const sessionIds = maybeSessions as string[];
+  const orchestratorIndex = Math.max(
+    0,
+    specs.findIndex((spec) => spec.role === 'orchestrator'),
+  );
+  const orchestratorSessionId = sessionIds[orchestratorIndex];
+  if (!orchestratorSessionId) {
+    return { ok: false, error: 'O orquestrador restaurado não confirmou sessão.' };
+  }
+  const rebound = await window.nexus.orch.rebindMissionOrchestrator(
+    mission.id,
+    orchestratorSessionId,
+  );
+  if (!rebound.ok) {
+    return {
+      ok: false,
+      error: 'Os panes abriram, mas a autoridade da missão não foi restaurada.',
+    };
+  }
+
   const multi = !forceHard && existing.length > 0;
-  return {
-    ok: true,
+  return acknowledgedReopen(mission.id, sessionIds, {
     panes: panes.length,
     soft: false,
     multi,
-  };
+  });
 }
-

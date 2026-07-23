@@ -43,6 +43,8 @@ interface BlockAttemptInput {
   readonly reason: string;
   readonly now: number;
   readonly integratedSha?: string;
+  /** Exact Git CAS restored candidate → integration base. */
+  readonly integrationRolledBack?: boolean;
   readonly rejectedEvidenceIds?: readonly string[];
 }
 
@@ -194,7 +196,9 @@ export class MergeQueueStateController {
       const blockedEntry = cloneEntry({
         ...current,
         status: 'blocked',
-        ...(input.integratedSha
+        ...(input.integrationRolledBack
+          ? { integratedSha: undefined }
+          : input.integratedSha
           ? { integratedSha: input.integratedSha }
           : {}),
         evidenceIds,
@@ -215,7 +219,8 @@ export class MergeQueueStateController {
             input.now,
             {
               fromStatus: current.status,
-              integrationState: input.integratedSha
+              integrationState:
+                input.integratedSha && !input.integrationRolledBack
                 ? 'candidate-integrated'
                 : 'not-integrated',
               errorName: block.errorName,

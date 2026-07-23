@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CONTEXTUAL_TAB_COPY,
   CONTEXTUAL_TABS,
@@ -13,6 +13,7 @@ import {
   type KeyValueStorage,
 } from '../../shared/contextual-panel-persist';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
+import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
 
 export interface ContextualPanelProps {
   readonly flagEnabled?: boolean;
@@ -71,6 +72,11 @@ export function ContextualPanel({
   const [state, setState] = useState<ContextualPanelState>(() =>
     initialState(workspaceId, initial, controlledTab, storage),
   );
+  const requestedTab = useContextualPanelNavStore(
+    (nav) => nav.requestedTab,
+  );
+  const requestId = useContextualPanelNavStore((nav) => nav.requestId);
+  const handledRequestId = useRef(0);
 
   // Rehydrate when workspace changes (real product path).
   useEffect(() => {
@@ -102,6 +108,16 @@ export function ContextualPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional controlled prop
   }, [controlledTab]);
+
+  useEffect(() => {
+    if (
+      requestId > handledRequestId.current &&
+      requestedTab
+    ) {
+      handledRequestId.current = requestId;
+      update({ activeTab: requestedTab, visible: true });
+    }
+  }, [requestId, requestedTab, update]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

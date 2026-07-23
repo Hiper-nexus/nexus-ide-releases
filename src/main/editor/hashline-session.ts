@@ -6,6 +6,10 @@ import { normalizeToLF, stripBom } from '../../vendor/omp/hashline/normalize';
 import { Patcher } from '../../vendor/omp/hashline/patcher';
 import { InMemorySnapshotStore } from '../../vendor/omp/hashline/snapshots';
 import { EditorBufferHashlineFs, openEditorDocuments } from './hashline-fs';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolInvocation,
+} from '../orch/mcp-protocol';
 
 /**
  * Hashline patch-bus session layer (oh-my-pi integration, entrega B3).
@@ -111,6 +115,7 @@ export async function applyHashlinePatch(
   scope: ProjectExecutionScope,
   sessionKey: string,
   patchText: string,
+  invocation?: McpToolInvocation,
 ): Promise<HashlineApplyOutcome> {
   const root = resolveRootForScope(scope);
   const patch = Patch.parse(patchText, { cwd: root });
@@ -122,7 +127,11 @@ export async function applyHashlinePatch(
 
   const fs = new EditorBufferHashlineFs(scope, openEditorDocuments);
   const snapshots = hashlineSnapshotStoreFor(sessionKey);
-  const patcher = new Patcher({ fs, snapshots });
+  const patcher = new Patcher({
+    fs,
+    snapshots,
+    assertCurrentAuthority: () => assertMcpInvocationCurrent(invocation),
+  });
   const result = await patcher.apply(patch);
 
   const applied: HashlineAppliedSection[] = result.sections.map(

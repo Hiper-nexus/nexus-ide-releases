@@ -32,9 +32,11 @@ import {
 import {
   dispatchToolCall,
   permissionScopeForTool,
+  type McpDispatchOptions,
 } from '../orch/mcp-dispatch';
 import { validateToolArgs } from '../orch/mcp-args-validation';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import { sameProjectScope } from '../orch/project-scoped-broadcast';
 
 let registry: McpRegistry | null = null;
 const RENDERER_SESSION_ID = 'jarvis-renderer';
@@ -71,6 +73,10 @@ function rendererToolContext(scope: ProjectExecutionScope) {
 export async function invokeMcpTool(
   raw: McpInvokeRequest,
   projectScope: ProjectExecutionScope,
+  dispatchOptions: Pick<
+    McpDispatchOptions,
+    'assertCurrentCaller' | 'callerSignal'
+  > = {},
 ): Promise<McpInvokeResult> {
   const toolName = raw?.tool;
 
@@ -84,6 +90,7 @@ export async function invokeMcpTool(
     toolName,
     raw?.args ?? {},
     rendererToolContext(projectScope),
+    dispatchOptions,
   );
 }
 
@@ -179,8 +186,33 @@ export function clearMcpRendererSession(): { ok: boolean } {
 export function registerMcpInvokeIpc(): void {
   ipcMain.handle(
     MCP_CHANNELS.invoke,
-    async (event, raw: McpInvokeRequest): Promise<McpInvokeResult> =>
-      invokeMcpTool(raw, requireRendererWorkspaceScope(event.sender)),
+    async (event, raw: McpInvokeRequest): Promise<McpInvokeResult> => {
+      const sender = event.sender;
+      const projectScope = requireRendererWorkspaceScope(sender);
+      const callerAbort = new AbortController();
+      const abortCaller = (): void => callerAbort.abort();
+      sender.once('destroyed', abortCaller);
+      sender.once('render-process-gone', abortCaller);
+      try {
+        return await invokeMcpTool(raw, projectScope, {
+          callerSignal: callerAbort.signal,
+          assertCurrentCaller: () => {
+            if (sender.isDestroyed() || sender.isCrashed()) return false;
+            try {
+              return sameProjectScope(
+                requireRendererWorkspaceScope(sender),
+                projectScope,
+              );
+            } catch {
+              return false;
+            }
+          },
+        });
+      } finally {
+        sender.removeListener('destroyed', abortCaller);
+        sender.removeListener('render-process-gone', abortCaller);
+      }
+    },
   );
 }
 

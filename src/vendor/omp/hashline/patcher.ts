@@ -80,6 +80,12 @@ export interface PatcherOptions {
 	 * validate on content hash alone and any anchor into the tagged content applies.
 	 */
 	enforceSeenLines?: boolean;
+	/**
+	 * Synchronous main-owned authority fence. It runs only at commit
+	 * linearization points, after all asynchronous preparation and immediately
+	 * before each filesystem mutation.
+	 */
+	assertCurrentAuthority?: () => void;
 }
 
 /** Per-section result returned by {@link Patcher.apply} / {@link Patcher.commit}. */
@@ -205,6 +211,7 @@ export class Patcher {
 	readonly recovery: Recovery;
 	readonly blockResolver: BlockResolver | undefined;
 	readonly #enforceSeenLines: boolean;
+	readonly #assertCurrentAuthority: (() => void) | undefined;
 
 	constructor(options: PatcherOptions) {
 		if (!options.snapshots) {
@@ -215,6 +222,7 @@ export class Patcher {
 		this.recovery = new Recovery(options.snapshots);
 		this.blockResolver = options.blockResolver;
 		this.#enforceSeenLines = options.enforceSeenLines ?? true;
+		this.#assertCurrentAuthority = options.assertCurrentAuthority;
 	}
 
 	/**
@@ -412,6 +420,7 @@ export class Patcher {
 		const resultPath = moveDest ?? section.path;
 
 		if (fileOp?.kind === "rem") {
+			this.#assertCurrentAuthority?.();
 			await this.fs.delete(section.path);
 			this.snapshots.invalidate(canonicalPath);
 			return {
@@ -448,8 +457,20 @@ export class Patcher {
 
 		if (moveDest !== undefined) {
 			const destCanonical = this.fs.canonicalPath(moveDest);
+			this.#assertCurrentAuthority?.();
+			await this.fs.move(section.path, moveDest, persisted, {
+				assertCurrentAuthority: () => {
+					try {
+						this.#assertCurrentAuthority?.();
+					} catch (error) {
+						throw new Error(
+							`effectMayHaveCommitted: move destination ${moveDest} was written, but source ${section.path} was not removed after authority revocation`,
+							{ cause: error },
+						);
+					}
+				},
+			});
 			this.snapshots.relocate(canonicalPath, destCanonical);
-			await this.fs.move(section.path, moveDest, persisted);
 			const fileHash = this.#recordFullSnapshot(destCanonical, after);
 			return {
 				path: resultPath,
@@ -468,6 +489,7 @@ export class Patcher {
 			};
 		}
 
+		this.#assertCurrentAuthority?.();
 		const write: WriteResult = await this.fs.writeText(section.path, persisted);
 		const fileHash = this.#recordFullSnapshot(canonicalPath, after);
 		const op = exists ? "update" : "create";

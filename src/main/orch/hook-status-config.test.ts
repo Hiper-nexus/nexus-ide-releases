@@ -28,6 +28,9 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
 
     expect(Object.keys(merged).sort()).toEqual([
       'Notification',
+      'PostToolUse',
+      'PostToolUseFailure',
+      'PreToolUse',
       'Stop',
       'UserPromptSubmit',
     ]);
@@ -51,7 +54,7 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     const twice = mergeClaudeStatusHooks(once);
 
     expect(twice).toEqual(once);
-    expect(JSON.stringify(twice).match(new RegExp(MARKER, 'g'))).toHaveLength(3);
+    expect(JSON.stringify(twice).match(new RegExp(MARKER, 'g'))).toHaveLength(6);
   });
 });
 
@@ -71,6 +74,9 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
     expect(keys).toEqual([
       'hooks.SessionStart',
       'hooks.UserPromptSubmit',
+      'hooks.PreToolUse',
+      'hooks.PostToolUse',
+      'hooks.PostToolUseFailure',
       'hooks.Stop',
       'hooks.PermissionRequest',
     ]);

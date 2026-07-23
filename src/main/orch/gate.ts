@@ -20,6 +20,8 @@ export interface AgentGateContext {
   role: GateRole;
   /** PTY session bound after spawn (used by Stop-gate + handoff attribution). */
   sessionId?: string;
+  /** Main-issued nonce for one physical worker generation. */
+  workerIncarnationId?: string;
   missionId?: string;
   /** Frozen business-context revision bound to every mission effect. */
   contextRevision?: string;
@@ -44,6 +46,7 @@ export const MAX_STOP_ATTEMPTS = 3;
 const ALWAYS_ALLOWED = new Set([
   "handoff_submit",
   "handoff_list",
+  "worker_heartbeat",
   "toolsearch",
 ]);
 
@@ -61,6 +64,7 @@ const REQUIRES_EXPLICIT_ALLOW = new Set([
   "remote_bridge_status",
   "agent_spec_write",
   "catalog_install",
+  "cron",
 ]);
 
 const ORCHESTRATOR_DENIED_TOOLS = new Set([
@@ -159,6 +163,7 @@ export function isSkillAllowed(
 
 const contexts = new Map<string, AgentGateContext>();
 const contextBySession = new Map<string, AgentGateContext>();
+const abortByToken = new Map<string, AbortController>();
 
 export interface MintTokenInput {
   label: string;
@@ -166,6 +171,7 @@ export interface MintTokenInput {
   missionId?: string;
   contextRevision?: string;
   agentName?: string;
+  workerIncarnationId?: string;
   providerId?: string;
   readOnly?: boolean;
   scope: ProjectExecutionScope;
@@ -179,6 +185,18 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
     throw new Error('context revision authority requires a mission');
   }
   const executionScope = input.executionScope ?? input.scope;
+  const workerIncarnationId = input.workerIncarnationId?.trim();
+  if (
+    workerIncarnationId !== undefined &&
+    (
+      input.role !== 'worker' ||
+      workerIncarnationId.length === 0 ||
+      workerIncarnationId.length > 256 ||
+      workerIncarnationId.includes('\0')
+    )
+  ) {
+    throw new Error('invalid worker incarnation authority');
+  }
   if (
     executionScope.installationId !== input.scope.installationId ||
     executionScope.projectId !== input.scope.projectId ||
@@ -191,6 +209,7 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
     label: input.label,
     role: input.role,
     missionId: input.missionId,
+    workerIncarnationId,
     agentName: input.agentName,
     providerId: input.providerId,
     readOnly: input.readOnly === true,
@@ -203,6 +222,7 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
   };
   if (input.contextRevision) bindContextRevision(ctx, input.contextRevision);
   contexts.set(ctx.token, ctx);
+  abortByToken.set(ctx.token, new AbortController());
   return ctx;
 }
 
@@ -221,6 +241,34 @@ export function assertOrchestratorMission(
   }
   if (!ctx.missionId || ctx.missionId !== missionId) {
     throw new Error('requested mission does not match the orchestrator authority');
+  }
+}
+
+/**
+ * Exact physical authority for mutations that belong to the mission
+ * orchestrator. A role-bearing token is not enough once main has durably bound
+ * the mission to one PTY session: stale/replayed orchestrator tokens must fail
+ * closed instead of acting in parallel with the accepted kickoff session.
+ *
+ * Legacy rows without an orchestrator binding retain their existing behavior;
+ * modern running missions are bound by the main-owned bootstrap.
+ */
+export function assertCurrentMissionOrchestratorSession(
+  ctx: Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'>,
+  mission: {
+    readonly id: string;
+    readonly orchestratorSessionId?: string | null;
+  },
+): void {
+  assertOrchestratorMission(ctx, mission.id);
+  const currentSessionId = mission.orchestratorSessionId?.trim();
+  if (!currentSessionId) return;
+  if (!ctx.sessionId || ctx.sessionId !== currentSessionId) {
+    throw new Error(
+      'orchestrator_session_stale: somente a sessão main-owned atual da missão ' +
+        'pode planejar, reservar rota ou delegar workers; use “Retomar missão” ' +
+        'para restaurar a autoridade correta',
+    );
   }
 }
 
@@ -248,11 +296,28 @@ export function getContextBySession(
   return contextBySession.get(sessionId) ?? null;
 }
 
+/** Exact identity check used at async dispatch boundaries after bearer lookup. */
+export function isCurrentGateContext(ctx: AgentGateContext): boolean {
+  if (contexts.get(ctx.token) !== ctx) return false;
+  return !ctx.sessionId || contextBySession.get(ctx.sessionId) === ctx;
+}
+
+/** Cancellation signal paired with the exact live bearer identity. */
+export function gateContextAbortSignal(
+  ctx: AgentGateContext,
+): AbortSignal | undefined {
+  return isCurrentGateContext(ctx)
+    ? abortByToken.get(ctx.token)?.signal
+    : undefined;
+}
+
 export interface RestoredSessionAuthority {
   missionId: string;
+  workerIncarnationId?: string;
   contextRevision?: string;
   role: "orchestrator" | "worker";
   agentName?: string;
+  readOnly?: boolean;
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
 }
@@ -270,9 +335,15 @@ export function restoreSessionAuthority(
   if (!ctx) return false;
   if (ctx.missionId && ctx.missionId !== authority.missionId) return false;
   if (ctx.role !== "user" && ctx.role !== authority.role) return false;
+  if (authority.workerIncarnationId && authority.role !== 'worker') return false;
+  if (
+    ctx.workerIncarnationId &&
+    ctx.workerIncarnationId !== authority.workerIncarnationId
+  ) return false;
 
   if (ctx.role === "user") {
     ctx.role = authority.role;
+    ctx.readOnly = authority.readOnly === true;
     ctx.allowedTools =
       authority.allowedTools === undefined
         ? authority.role === "worker"
@@ -288,7 +359,11 @@ export function restoreSessionAuthority(
           ? null
           : [...authority.allowedSkills];
   }
+  if (authority.readOnly === true) ctx.readOnly = true;
   ctx.missionId = authority.missionId;
+  if (authority.workerIncarnationId) {
+    ctx.workerIncarnationId = authority.workerIncarnationId;
+  }
   if (authority.contextRevision) {
     bindContextRevision(ctx, authority.contextRevision);
   }
@@ -322,11 +397,37 @@ export function bindContextRevision(
   ctx.contextRevision = normalized;
 }
 
+/**
+ * Main-owned PREVC freeze/refreeze transition. A provider cannot call this
+ * primitive directly: the context tool supplies the exact prior revision
+ * from the durable workflow, and only an unbound or exactly matching gate
+ * context may advance to the new revision.
+ */
+export function rotateContextRevisionAuthority(
+  ctx: Pick<AgentGateContext, 'contextRevision'>,
+  expectedRevision: string | undefined,
+  nextRevision: string,
+): void {
+  const expected = expectedRevision?.trim();
+  if (
+    ctx.contextRevision !== undefined &&
+    ctx.contextRevision !== expected
+  ) {
+    throw new Error(
+      'agent context revision changed before PREVC authority rotation',
+    );
+  }
+  delete ctx.contextRevision;
+  bindContextRevision(ctx, nextRevision);
+}
+
 export function releaseSession(sessionId: string): void {
   const ctx = contextBySession.get(sessionId);
   if (!ctx) return;
   contextBySession.delete(sessionId);
   contexts.delete(ctx.token);
+  abortByToken.get(ctx.token)?.abort('session_authority_revoked');
+  abortByToken.delete(ctx.token);
 }
 
 /**
@@ -334,7 +435,16 @@ export function releaseSession(sessionId: string): void {
  * cannot authorize MCP calls forever.
  */
 export function releaseSessionByToken(token: string): void {
+  const ctx = contexts.get(token);
+  if (
+    ctx?.sessionId &&
+    contextBySession.get(ctx.sessionId) === ctx
+  ) {
+    contextBySession.delete(ctx.sessionId);
+  }
   contexts.delete(token);
+  abortByToken.get(token)?.abort('session_authority_revoked');
+  abortByToken.delete(token);
 }
 
 export function markHandoffSubmitted(ctx: AgentGateContext): void {
@@ -370,6 +480,10 @@ export function evaluateStop(
 
 /** Test-only: reset module state. */
 export function resetGateForTests(): void {
+  for (const controller of abortByToken.values()) {
+    controller.abort('gate_reset');
+  }
   contexts.clear();
   contextBySession.clear();
+  abortByToken.clear();
 }

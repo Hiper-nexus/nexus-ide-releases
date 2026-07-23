@@ -120,6 +120,21 @@ export function confirmationReason(
   if (toolName === 'nexus_git_commit' || toolName === 'git_commit') {
     return `commit: ${String(args.message ?? 'no message')}`;
   }
+  if (toolName === 'nexus_cron' || toolName === 'cron') {
+    const action = safeMediaArg(args.action, 'mutate');
+    const name = safeMediaArg(args.name, safeMediaArg(args.id, 'unknown'));
+    const target = safeMediaArg(
+      args.agentName,
+      safeMediaArg(args.squadId, 'saved roster'),
+    );
+    if (action === 'create' || action === 'update') {
+      return (
+        `autorizar missões futuras a iniciarem automaticamente pelo golden path ` +
+        `do Nexus: cron ${action} "${name}", alvo ${target}`
+      );
+    }
+    return `remover autoridade agendada do cron "${name}"`;
+  }
   if (toolName === 'nexus_editor_insert' || toolName === 'editor_insert') {
     return `edit ${String(args.path ?? 'unknown file')}`;
   }

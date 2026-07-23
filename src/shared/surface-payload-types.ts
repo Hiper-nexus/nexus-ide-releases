@@ -282,7 +282,6 @@ export interface CatalogOverlayState {
 }
 
 export interface CatalogOverlayPatch {
-  workspacePath?: string;
   stacks?: string[];
   disabled?: string[];
   tombstones?: string[];
@@ -326,6 +325,11 @@ export interface PaneModel {
   cwd?: string;
   /** Initial/current URL for browser panes. */
   browserUrl?: string;
+  /**
+   * Main-minted identity of the browser-open attempt that created this pane.
+   * Automated cleanup must match this seal as well as the pane id.
+   */
+  browserOpenRequestId?: string;
   /** Set for cli-agent panes — identifies which adapter backs this pane. */
   adapterId?: string;
   /** The model selected for this agent pane (e.g. "claude-sonnet-4-5"). */
@@ -433,6 +437,10 @@ export type SpawnResult =
       ok: true;
       sessionId: string;
       resumeMode?: 'exact' | 'latest' | 'unsupported';
+      /** Existing main-owned mission PTY was attached; no provider restart. */
+      adopted?: boolean;
+      /** Current state snapshot for an adopted session (push may predate listeners). */
+      state?: PaneSessionState;
     }
   | { ok: false; error: string };
 

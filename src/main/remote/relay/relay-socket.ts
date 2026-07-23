@@ -1,6 +1,7 @@
 // Porte de can1357/oh-my-pi@03c48d073
 // packages/coding-agent/src/collab/relay-client.ts (MIT) para o pacote `ws`
-// (Node). Mesmas constantes de reconexão/backoff/buffer/backpressure.
+// (Node). O hardening Nexus adiciona fila por bytes, erro observável e
+// confirmação de escrita; reconexão/backoff preserva o padrão de origem.
 /**
  * Wrapper WebSocket cliente para uma sala do relay cego.
  *
@@ -24,11 +25,20 @@ const FATAL_CLOSE_REASONS: Record<number, string> = {
 
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
-/** Máximo de envelopes bufferizados aguardando reconexão; excedente é descartado. */
+/** Limites duplos: quantidade sozinha não protege contra um frame gigante. */
 const MAX_PENDING_SENDS = 256;
+const MAX_PENDING_SEND_BYTES = 2 * 1024 * 1024;
 const WS_BACKPRESSURE_THRESHOLD = 64 * 1024;
 const WS_BACKPRESSURE_DRAIN_THRESHOLD = 32 * 1024;
 const WS_BACKPRESSURE_DRAIN_RETRY_MS = 25;
+
+export type RelaySocketState =
+  | 'idle'
+  | 'connecting'
+  | 'open'
+  | 'reconnecting'
+  | 'closed'
+  | 'failed';
 
 export interface RelaySocketOptions {
   /** ws(s)://host[:port]/r/<roomId> — sem query string. */
@@ -59,6 +69,9 @@ export class RelaySocket {
   #recvChain: Promise<void> = Promise.resolve();
   /** Envelopes selados enquanto desconectado, drenados no próximo open. */
   #pendingSends: Uint8Array[] = [];
+  #pendingSendBytes = 0;
+  #state: RelaySocketState = 'idle';
+  #lastError: string | null = null;
 
   constructor(opts: RelaySocketOptions) {
     this.#opts = opts;
@@ -68,46 +81,38 @@ export class RelaySocket {
     return this.#ws?.readyState === WebSocket.OPEN;
   }
 
+  /** Estado observável para UI/telemetria sem expor payload ou chave. */
+  get state(): RelaySocketState {
+    return this.#state;
+  }
+
+  /** Última falha de transporte; limpa quando uma conexão nova abre com sucesso. */
+  get lastError(): string | null {
+    return this.#lastError;
+  }
+
+  get pendingSendCount(): number {
+    return this.#pendingSends.length;
+  }
+
+  get pendingSendBytes(): number {
+    return this.#pendingSendBytes;
+  }
+
   connect(): void {
     if (this.#ws || this.#retryTimer) return;
     this.#closed = false;
     this.#attempt = 0;
+    this.#lastError = null;
+    this.#state = 'connecting';
     this.#openSocket();
   }
 
   send(frame: unknown, targetPeer = 0): void {
     this.#sendChain = this.#sendChain
-      .then(async () => {
-        if (this.#closed) return;
-        const openWs = this.#ws;
-        if (openWs && openWs.readyState === WebSocket.OPEN) {
-          this.#drainPendingSends(openWs);
-        }
-        const sealed = await seal(this.#opts.key, frame);
-        const envelope = packEnvelope(targetPeer, sealed);
-        const ws = this.#ws;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          if (this.#pendingSends.length > 0) {
-            this.#enqueuePendingSend(envelope);
-            if (ws.bufferedAmount < WS_BACKPRESSURE_DRAIN_THRESHOLD) {
-              this.#drainPendingSends(ws);
-            } else {
-              this.#scheduleBackpressureDrain(ws);
-            }
-            return;
-          }
-          if (ws.bufferedAmount >= WS_BACKPRESSURE_THRESHOLD) {
-            this.#enqueuePendingSend(envelope);
-            this.#scheduleBackpressureDrain(ws);
-            return;
-          }
-          ws.send(envelope);
-          return;
-        }
-        this.#enqueuePendingSend(envelope);
-      })
+      .then(() => this.#sendOrdered(frame, targetPeer))
       .catch(() => {
-        // Falha de seal/send: frame descartado; nada é logado (payload sigiloso).
+        this.#failFatal('relay send failed; resync required');
       });
   }
 
@@ -118,7 +123,8 @@ export class RelaySocket {
     this.#clearBackpressureDrain();
     const wasClosed = this.#closed;
     this.#closed = true;
-    this.#pendingSends.length = 0;
+    this.#state = 'closed';
+    this.#clearPendingSends();
     const ws = this.#ws;
     this.#ws = null;
     if (ws) {
@@ -131,21 +137,103 @@ export class RelaySocket {
     if (hadActivity && !wasClosed) this.onClose?.('closed', false);
   }
 
-  #enqueuePendingSend(envelope: Uint8Array): void {
-    if (this.#pendingSends.length >= MAX_PENDING_SENDS) return;
-    this.#pendingSends.push(envelope);
+  async #sendOrdered(frame: unknown, targetPeer: number): Promise<void> {
+    if (this.#closed) return;
+    const openWs = this.#ws;
+    if (openWs && openWs.readyState === WebSocket.OPEN) {
+      await this.#drainPendingSends(openWs);
+      if (this.#closed) return;
+    }
+
+    let envelope: Uint8Array;
+    try {
+      const sealed = await seal(this.#opts.key, frame);
+      envelope = packEnvelope(targetPeer, sealed);
+    } catch {
+      this.#failFatal('relay send seal failed; resync required');
+      return;
+    }
+    // close()/fatal pode ocorrer enquanto o WebCrypto está selando.
+    if (this.#closed) return;
+
+    const ws = this.#ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      this.#enqueuePendingSend(envelope);
+      return;
+    }
+    if (this.#pendingSends.length > 0) {
+      if (!this.#enqueuePendingSend(envelope)) return;
+      if (ws.bufferedAmount < WS_BACKPRESSURE_DRAIN_THRESHOLD) {
+        await this.#drainPendingSends(ws);
+      } else {
+        this.#scheduleBackpressureDrain(ws);
+      }
+      return;
+    }
+    if (ws.bufferedAmount >= WS_BACKPRESSURE_THRESHOLD) {
+      if (!this.#enqueuePendingSend(envelope)) return;
+      this.#scheduleBackpressureDrain(ws);
+      return;
+    }
+    await this.#writeEnvelope(ws, envelope);
   }
 
-  #drainPendingSends(ws: WebSocket): void {
+  #enqueuePendingSend(envelope: Uint8Array): boolean {
+    const nextCount = this.#pendingSends.length + 1;
+    const nextBytes = this.#pendingSendBytes + envelope.byteLength;
+    if (
+      nextCount > MAX_PENDING_SENDS ||
+      nextBytes > MAX_PENDING_SEND_BYTES
+    ) {
+      this.#failFatal('relay send queue overflow; resync required');
+      return false;
+    }
+    this.#pendingSends.push(envelope);
+    this.#pendingSendBytes = nextBytes;
+    return true;
+  }
+
+  async #drainPendingSends(ws: WebSocket): Promise<void> {
     while (
       this.#pendingSends.length > 0 &&
+      !this.#closed &&
+      this.#ws === ws &&
       ws.readyState === WebSocket.OPEN &&
       ws.bufferedAmount < WS_BACKPRESSURE_DRAIN_THRESHOLD
     ) {
-      const envelope = this.#pendingSends.shift();
+      const envelope = this.#pendingSends[0];
       if (!envelope) return;
-      ws.send(envelope);
+      await this.#writeEnvelope(ws, envelope);
+      if (this.#pendingSends[0] !== envelope) {
+        throw new Error('relay send queue order changed');
+      }
+      this.#pendingSends.shift();
+      this.#pendingSendBytes -= envelope.byteLength;
     }
+  }
+
+  #writeEnvelope(ws: WebSocket, envelope: Uint8Array): Promise<void> {
+    if (
+      this.#closed ||
+      this.#ws !== ws ||
+      ws.readyState !== WebSocket.OPEN
+    ) {
+      return Promise.reject(new Error('relay socket is no longer writable'));
+    }
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        if (error) reject(error);
+        else resolve();
+      };
+      try {
+        ws.send(envelope, (error?: Error) => settle(error));
+      } catch (error) {
+        settle(error instanceof Error ? error : new Error('relay send failed'));
+      }
+    });
   }
 
   #scheduleBackpressureDrain(ws: WebSocket): void {
@@ -153,15 +241,15 @@ export class RelaySocket {
     this.#backpressureDrainTimer = setTimeout(() => {
       this.#backpressureDrainTimer = undefined;
       this.#sendChain = this.#sendChain
-        .then(() => {
+        .then(async () => {
           if (this.#closed || this.#ws !== ws || ws.readyState !== WebSocket.OPEN) {
             return;
           }
-          this.#drainPendingSends(ws);
+          await this.#drainPendingSends(ws);
           if (this.#pendingSends.length > 0) this.#scheduleBackpressureDrain(ws);
         })
         .catch(() => {
-          // Drain falhou; próximo send tenta de novo.
+          this.#failFatal('relay send failed; resync required');
         });
     }, WS_BACKPRESSURE_DRAIN_RETRY_MS);
   }
@@ -181,9 +269,20 @@ export class RelaySocket {
     ws.on('open', () => {
       if (this.#ws !== ws) return;
       this.#attempt = 0;
+      this.#state = 'open';
+      this.#lastError = null;
       if (this.#pendingSends.length > 0) {
-        this.#drainPendingSends(ws);
-        if (this.#pendingSends.length > 0) this.#scheduleBackpressureDrain(ws);
+        this.#sendChain = this.#sendChain
+          .then(async () => {
+            if (this.#closed || this.#ws !== ws) return;
+            await this.#drainPendingSends(ws);
+            if (this.#pendingSends.length > 0) {
+              this.#scheduleBackpressureDrain(ws);
+            }
+          })
+          .catch(() => {
+            this.#failFatal('relay send failed; resync required');
+          });
       }
       this.onOpen?.();
     });
@@ -244,11 +343,16 @@ export class RelaySocket {
     const fatalReason = FATAL_CLOSE_REASONS[code];
     if (fatalReason !== undefined) {
       this.#closed = true;
-      this.#pendingSends.length = 0;
+      this.#state = 'failed';
+      this.#lastError = fatalReason;
+      this.#clearPendingSends();
       this.onClose?.(fatalReason, false);
       return;
     }
-    this.onClose?.(reason || `connection lost (code ${code})`, true);
+    const reconnectReason = reason || `connection lost (code ${code})`;
+    this.#state = 'reconnecting';
+    this.#lastError = reconnectReason;
+    this.onClose?.(reconnectReason, true);
     this.#scheduleRetry();
   }
 
@@ -256,8 +360,10 @@ export class RelaySocket {
   #failFatal(reason: string): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#state = 'failed';
+    this.#lastError = reason;
     this.#clearRetry();
-    this.#pendingSends.length = 0;
+    this.#clearPendingSends();
     const ws = this.#ws;
     this.#ws = null;
     this.#clearBackpressureDrain();
@@ -269,6 +375,11 @@ export class RelaySocket {
       }
     }
     this.onClose?.(reason, false);
+  }
+
+  #clearPendingSends(): void {
+    this.#pendingSends.length = 0;
+    this.#pendingSendBytes = 0;
   }
 
   #scheduleRetry(): void {

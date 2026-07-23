@@ -1,6 +1,10 @@
 import fs from 'node:fs';
+import crypto, { type KeyObject } from 'node:crypto';
+import type { IncomingHttpHeaders } from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 
@@ -81,6 +85,36 @@ function connect(): Promise<WebSocket> {
   });
 }
 
+function httpGet(pathname: string): Promise<{
+  statusCode: number | undefined;
+  headers: IncomingHttpHeaders;
+  body: string;
+}> {
+  const info = bridge.getRemoteBridgeInfo();
+  return new Promise((resolve, reject) => {
+    const request = https.get(
+      {
+        hostname: '127.0.0.1',
+        port: info.port,
+        path: pathname,
+        rejectUnauthorized: false,
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        response.once('end', () => {
+          resolve({
+            statusCode: response.statusCode,
+            headers: response.headers,
+            body: Buffer.concat(chunks).toString('utf8'),
+          });
+        });
+      },
+    );
+    request.once('error', reject);
+  });
+}
+
 function waitForClose(socket: WebSocket): Promise<{ code: number; reason: string }> {
   return new Promise((resolve) => {
     socket.once('close', (code, reason) => {
@@ -89,19 +123,100 @@ function waitForClose(socket: WebSocket): Promise<{ code: number; reason: string
   });
 }
 
-async function issueToken(): Promise<string> {
-  const code = bridge.getRemoteBridgeInfo().pairingCode;
+interface DeviceCredential {
+  token: string;
+  deviceId: string;
+  publicKey: {
+    kty: 'EC';
+    crv: 'P-256';
+    x: string;
+    y: string;
+  };
+  privateKey: KeyObject;
+}
+
+function createDeviceIdentity(): Omit<DeviceCredential, 'token'> {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'P-256',
+  });
+  const jwk = publicKey.export({ format: 'jwk' });
+  if (
+    jwk.kty !== 'EC' ||
+    jwk.crv !== 'P-256' ||
+    typeof jwk.x !== 'string' ||
+    typeof jwk.y !== 'string'
+  ) {
+    throw new Error('test device key export failed');
+  }
+  return {
+    deviceId: crypto.randomBytes(24).toString('base64url'),
+    publicKey: {
+      kty: 'EC',
+      crv: 'P-256',
+      x: jwk.x,
+      y: jwk.y,
+    },
+    privateKey,
+  };
+}
+
+function signDeviceChallenge(privateKey: KeyObject, challenge: string): string {
+  return crypto
+    .sign('sha256', Buffer.from(challenge), {
+      key: privateKey,
+      dsaEncoding: 'ieee-p1363',
+    })
+    .toString('base64url');
+}
+
+async function issueToken(): Promise<DeviceCredential> {
+  const code = bridge.rotateRemotePairing().pairingCode;
+  if (!code) throw new Error('bridge did not issue a pairing code');
+  const device = createDeviceIdentity();
   const socket = await connect();
-  const paired = await rpc(socket, { id: 'pair-token', type: 'pair', code });
+  const paired = await rpc(socket, {
+    id: 'pair-token',
+    type: 'pair',
+    code,
+    deviceId: device.deviceId,
+    devicePublicKey: device.publicKey,
+    deviceProof: signDeviceChallenge(
+      device.privateKey,
+      `nexus-remote-pair-v1:${code}`,
+    ),
+  });
   socket.close();
   const token = (paired.result as { token?: unknown }).token;
   if (typeof token !== 'string') throw new Error('bridge did not issue a token');
-  return token;
+  return { ...device, token };
 }
 
-async function authenticate(token: string): Promise<WebSocket> {
+async function authenticate(device: DeviceCredential): Promise<WebSocket> {
   const socket = await connect();
-  const response = await rpc(socket, { id: 'auth-token', type: 'auth', token });
+  const requested = await rpc(socket, {
+    id: 'auth-challenge',
+    type: 'auth.challenge',
+    token: device.token,
+    deviceId: device.deviceId,
+  });
+  const challenge = requested.result as {
+    challenge?: unknown;
+    challengeId?: unknown;
+  };
+  if (
+    typeof challenge.challenge !== 'string' ||
+    typeof challenge.challengeId !== 'string'
+  ) {
+    throw new Error('bridge did not issue an auth challenge');
+  }
+  const response = await rpc(socket, {
+    id: 'auth-token',
+    type: 'auth',
+    token: device.token,
+    deviceId: device.deviceId,
+    challengeId: challenge.challengeId,
+    signature: signDeviceChallenge(device.privateKey, challenge.challenge),
+  });
   if (response.ok !== true) throw new Error('bridge did not authenticate the token');
   return socket;
 }
@@ -135,6 +250,58 @@ describe('remote bridge', () => {
     expect(info.pairingCode).toHaveLength(8);
   });
 
+  it('does not auto-mint another code when desktop-issued pairing expires', () => {
+    const issued = bridge.rotateRemotePairing();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(
+      (issued.pairingExpiresAt ?? 0) + 1,
+    );
+    expect(bridge.getRemoteBridgeInfo().pairingCode).toBeUndefined();
+    now.mockRestore();
+    expect(bridge.getRemoteBridgeInfo().pairingCode).toBeUndefined();
+    expect(bridge.rotateRemotePairing().pairingCode).toHaveLength(8);
+  });
+
+  it('serves an installable same-origin PWA without exposing state over HTTP', async () => {
+    const page = await httpGet('/');
+    expect(page.statusCode).toBe(200);
+    expect(page.headers['cache-control']).toBe('no-store');
+    expect(page.headers['content-security-policy']).toContain(
+      "frame-ancestors 'none'",
+    );
+    expect(page.headers['x-frame-options']).toBe('DENY');
+    expect(page.body).toContain('rel="manifest" href="/manifest.webmanifest"');
+    expect(page.body).toContain("serviceWorker.register('/sw.js')");
+    expect(page.body).toContain("send('auth.challenge'");
+    expect(page.body).toContain("indexedDB.open(DEVICE_DB, 1)");
+    expect(page.body).toContain("crypto.subtle.sign(");
+    const embeddedScript = page.body.match(/<script>([\s\S]*)<\/script>/)?.[1];
+    expect(embeddedScript).toBeTruthy();
+    expect(() => new vm.Script(embeddedScript!)).not.toThrow();
+
+    const manifest = await httpGet('/manifest.webmanifest');
+    expect(manifest.statusCode).toBe(200);
+    expect(manifest.headers['content-type']).toContain('application/manifest+json');
+    expect(JSON.parse(manifest.body)).toMatchObject({
+      name: 'Nexus Remote',
+      start_url: '/',
+      scope: '/',
+      display: 'standalone',
+    });
+
+    const serviceWorker = await httpGet('/sw.js');
+    expect(serviceWorker.statusCode).toBe(200);
+    expect(serviceWorker.headers['service-worker-allowed']).toBe('/');
+    expect(serviceWorker.body).toContain("'/manifest.webmanifest'");
+    expect(serviceWorker.body).not.toContain('localStorage');
+
+    const icon = await httpGet('/icon.svg');
+    expect(icon.statusCode).toBe(200);
+    expect(icon.headers['content-type']).toContain('image/svg+xml');
+
+    const privateStateProbe = await httpGet('/tokens.json');
+    expect(privateStateProbe.statusCode).toBe(404);
+  });
+
   it('answers ping without auth', async () => {
     const socket = await connect();
     const res = await rpc(socket, { id: '1', type: 'ping' });
@@ -152,19 +319,135 @@ describe('remote bridge', () => {
 
   it('issues a token on correct pairing and accepts it on a fresh socket', async () => {
     const code = bridge.getRemoteBridgeInfo().pairingCode;
+    if (!code) throw new Error('missing pairing code');
+    const device = createDeviceIdentity();
     const pairSocket = await connect();
-    const paired = await rpc(pairSocket, { id: 'p', type: 'pair', code });
+    const paired = await rpc(pairSocket, {
+      id: 'p',
+      type: 'pair',
+      code,
+      deviceId: device.deviceId,
+      devicePublicKey: device.publicKey,
+      deviceProof: signDeviceChallenge(
+        device.privateKey,
+        `nexus-remote-pair-v1:${code}`,
+      ),
+    });
     expect(paired.ok).toBe(true);
     const token = (paired.result as { token?: string }).token;
     expect(typeof token).toBe('string');
+    expect(bridge.getRemoteBridgeInfo().pairingCode).toBeUndefined();
     pairSocket.close();
 
-    const authSocket = await connect();
-    const authed = await rpc(authSocket, { id: 'a', type: 'auth', token });
-    expect(authed.ok).toBe(true);
+    const authSocket = await authenticate({
+      ...device,
+      token: token!,
+    });
     const listed = await rpc(authSocket, { id: 'l', type: 'panes.list' });
     expect(listed.ok).toBe(true);
     authSocket.close();
+
+    const copiedDevice = createDeviceIdentity();
+    const replaySocket = await connect();
+    const replay = await rpc(replaySocket, {
+      id: 'pair-replay',
+      type: 'pair',
+      code,
+      deviceId: copiedDevice.deviceId,
+      devicePublicKey: copiedDevice.publicKey,
+      deviceProof: signDeviceChallenge(
+        copiedDevice.privateKey,
+        `nexus-remote-pair-v1:${code}`,
+      ),
+    });
+    expect(replay).toMatchObject({ ok: false, error: 'invalid pairing code' });
+    replaySocket.close();
+  });
+
+  it('requires a device public key before consuming a single-use pairing code', async () => {
+    const code = bridge.rotateRemotePairing().pairingCode;
+    const socket = await connect();
+    const paired = await rpc(socket, {
+      id: 'pair-without-device',
+      type: 'pair',
+      code,
+    });
+
+    expect(paired).toMatchObject({
+      ok: false,
+      error: 'device identity required',
+    });
+    expect(bridge.getRemoteBridgeInfo().pairingCode).toBe(code);
+    socket.close();
+  });
+
+  it('binds a persisted token to proof from the paired device key', async () => {
+    const paired = await issueToken();
+    const impostor = createDeviceIdentity();
+    const socket = await connect();
+    const wrongDevice = await rpc(socket, {
+      id: 'wrong-device',
+      type: 'auth.challenge',
+      token: paired.token,
+      deviceId: impostor.deviceId,
+    });
+    expect(wrongDevice).toMatchObject({
+      ok: false,
+      error: 'invalid token or device',
+    });
+
+    const requested = await rpc(socket, {
+      id: 'real-device-challenge',
+      type: 'auth.challenge',
+      token: paired.token,
+      deviceId: paired.deviceId,
+    });
+    const challenge = requested.result as {
+      challenge: string;
+      challengeId: string;
+    };
+    const forged = await rpc(socket, {
+      id: 'forged-device-proof',
+      type: 'auth',
+      token: paired.token,
+      deviceId: paired.deviceId,
+      challengeId: challenge.challengeId,
+      signature: signDeviceChallenge(
+        impostor.privateKey,
+        challenge.challenge,
+      ),
+    });
+    expect(forged).toMatchObject({
+      ok: false,
+      error: 'invalid device authentication',
+    });
+    const replayAfterFailure = await rpc(socket, {
+      id: 'replayed-device-proof',
+      type: 'auth',
+      token: paired.token,
+      deviceId: paired.deviceId,
+      challengeId: challenge.challengeId,
+      signature: signDeviceChallenge(
+        paired.privateKey,
+        challenge.challenge,
+      ),
+    });
+    expect(replayAfterFailure).toMatchObject({
+      ok: false,
+      error: 'invalid device authentication',
+    });
+    socket.close();
+
+    const tokenFile = JSON.parse(
+      fs.readFileSync(path.join(home, '.nexus', 'remote-bridge', 'tokens.json'), 'utf8'),
+    ) as { tokens: Array<Record<string, unknown>> };
+    const record = tokenFile.tokens.find((entry) => entry.deviceId === paired.deviceId);
+    expect(record).toMatchObject({
+      deviceId: paired.deviceId,
+      deviceKeyFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      devicePublicKey: paired.publicKey,
+    });
+    expect(JSON.stringify(record)).not.toContain(paired.token);
   });
 
   it('closes already authenticated sockets when tokens are revoked', async () => {
@@ -184,9 +467,14 @@ describe('remote bridge', () => {
       { code: 1008, reason: 'tokens revoked' },
     ]);
     const retry = await connect();
-    await expect(rpc(retry, { id: 'revoked', type: 'auth', token: secondToken })).resolves.toMatchObject({
+    await expect(rpc(retry, {
+      id: 'revoked',
+      type: 'auth.challenge',
+      token: secondToken.token,
+      deviceId: secondToken.deviceId,
+    })).resolves.toMatchObject({
       ok: false,
-      error: 'invalid token',
+      error: 'invalid token or device',
     });
     retry.close();
   });
@@ -234,6 +522,37 @@ describe('remote bridge', () => {
     const res = await rpc(socket, { id: 'gp', type: 'git.push' });
     expect(res.ok).toBe(false);
     expect(String(res.error)).toContain('not authorized');
+    socket.close();
+  });
+
+  it('mantém pane.input local de baixo risco fluido, mas bloqueia destrutivo sem desktop', async () => {
+    ptyMocks.orchWriteSession.mockClear();
+    const token = await issueToken();
+    const socket = await authenticate(token);
+
+    const routine = await rpc(socket, {
+      id: 'routine-input',
+      type: 'pane.input',
+      paneId: 'pane-stream',
+      data: 'npm test',
+    });
+    expect(routine.ok).toBe(true);
+    expect(ptyMocks.orchWriteSession).toHaveBeenCalledWith(
+      'session-stream-1',
+      'npm test\n',
+    );
+
+    const destructive = await rpc(socket, {
+      id: 'destructive-input',
+      type: 'pane.input',
+      paneId: 'pane-stream',
+      data: 'rm -rf /tmp/nexus-build',
+    });
+    expect(destructive).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('desktop confirmation'),
+    });
+    expect(ptyMocks.orchWriteSession).toHaveBeenCalledTimes(1);
     socket.close();
   });
 
@@ -368,7 +687,7 @@ describe('remote bridge', () => {
     bystander.close();
   });
 
-  it('writes a sequenced input frame only once when a client replays it', async () => {
+  it('rejects raw input frames so commands cannot bypass pane.input authority', async () => {
     ptyMocks.orchWriteSession.mockClear();
     const token = await issueToken();
     const socket = await authenticate(token);
@@ -403,27 +722,47 @@ describe('remote bridge', () => {
       frameBase64,
     });
 
-    expect(first.ok).toBe(true);
+    expect(first).toMatchObject({
+      ok: false,
+      error: 'not authorized: raw terminal input is disabled; use pane.input',
+    });
     expect(duplicate).toMatchObject({ ok: false, error: 'invalid stream frame' });
-    expect(ptyMocks.orchWriteSession).toHaveBeenCalledTimes(1);
-    expect(ptyMocks.orchWriteSession).toHaveBeenCalledWith(
-      'session-stream-1',
-      'deploy\n',
-    );
+    expect(ptyMocks.orchWriteSession).not.toHaveBeenCalled();
     socket.close();
   });
 
   // Kept LAST: it locks this IP out of pairing for a cooldown, which would
   // otherwise leak into other tests that pair from the same loopback address.
   it('locks out an IP after too many failures WITHOUT rotating the shared code (L16)', async () => {
-    const before = bridge.getRemoteBridgeInfo().pairingCode;
+    bridge.stopRemoteBridge();
+    const restarted = await bridge.startRemoteBridge(
+      { host: '127.0.0.1' },
+      projectScope,
+    );
+    url = `wss://127.0.0.1:${restarted.port}`;
+    const before = restarted.pairingCode;
+    const device = createDeviceIdentity();
     const socket = await connect();
     for (let i = 0; i < 8; i += 1) {
-      const res = await rpc(socket, { id: `f${i}`, type: 'pair', code: 'AAAAAAAA' });
+      const res = await rpc(socket, {
+        id: `f${i}`,
+        type: 'pair',
+        code: 'AAAAAAAA',
+        deviceId: device.deviceId,
+        devicePublicKey: device.publicKey,
+        deviceProof: 'invalid',
+      });
       expect(res.ok).toBe(false);
     }
     // Further attempts from this IP are locked out...
-    const locked = await rpc(socket, { id: 'locked', type: 'pair', code: 'AAAAAAAA' });
+    const locked = await rpc(socket, {
+      id: 'locked',
+      type: 'pair',
+      code: 'AAAAAAAA',
+      deviceId: device.deviceId,
+      devicePublicKey: device.publicKey,
+      deviceProof: 'invalid',
+    });
     expect(locked.ok).toBe(false);
     expect(locked.error).toMatch(/too many attempts/);
     socket.close();

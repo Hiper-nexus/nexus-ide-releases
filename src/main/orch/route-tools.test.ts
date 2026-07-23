@@ -31,7 +31,6 @@ function context(): AgentGateContext {
     token: 't',
     label: 'orch',
     role: 'orchestrator',
-    missionId: 'm',
     scope,
     allowedTools: null,
     allowedSkills: null,
@@ -157,19 +156,13 @@ describe('nexus_route_log handler', () => {
 });
 
 describe('nexus_clarify handler', () => {
-  it('constrói chips e respeita allowFreeform boolean/ausente', async () => {
-    const out = (await tool('nexus_clarify').handler(
-      { question: 'Qual banco?', options: ['Postgres', 'MySQL'] },
-      context(),
-    )) as { chips: unknown[]; allowFreeform: boolean };
-    expect(out.chips.length).toBe(2);
-    expect(out.allowFreeform).toBe(true);
-
-    const strict = (await tool('nexus_clarify').handler(
-      { question: 'x', options: ['a', 'b'], allowFreeform: false },
-      context(),
-    )) as { allowFreeform: boolean };
-    expect(strict.allowFreeform).toBe(false);
+  it('falha fechado fora de uma missão em vez de depender de prompt-hope', async () => {
+    await expect(
+      tool('nexus_clarify').handler(
+        { question: 'Qual banco?', options: ['Postgres', 'MySQL'] },
+        context(),
+      ),
+    ).rejects.toThrow(/missão|orquestrador/i);
   });
 
   it('propaga o erro de validação (menos de 2 opções)', async () => {

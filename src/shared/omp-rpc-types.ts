@@ -8,12 +8,12 @@ import { z } from 'zod';
  * do processo é `unknown` até passar por um destes schemas (padrão do repo:
  * zod no receptor).
  *
- * A versão do binário é pinada por major (docs/rpc.md não versiona o frame
- * `ready`, então o handshake valida `omp --version` no start).
+ * A versão do binário é pinada exatamente (docs/rpc.md não versiona o frame
+ * `ready`, então o handshake valida `omp --version` antes do start).
  */
 
-/** Major da versão do omp compatível com estes frames (pinado no SHA acima). */
-export const OMP_PINNED_MAJOR = 17;
+/** Única release cujo contrato rpc-ui foi validado pelo Nexus. */
+export const OMP_RPC_SUPPORTED_VERSION = '17.0.4' as const;
 
 // ---------------------------------------------------------------------------
 // Frames inbound (stdout do processo omp) — schemas zod.
@@ -23,9 +23,9 @@ export const OMP_PINNED_MAJOR = 17;
 export const ompReadyFrameSchema = z.looseObject({ type: z.literal('ready') });
 
 export const ompModelSchema = z.looseObject({
-  provider: z.string(),
-  id: z.string(),
-  name: z.string().optional(),
+  provider: z.string().max(256),
+  id: z.string().max(512),
+  name: z.string().max(1_024).optional(),
 });
 export type OmpModel = z.infer<typeof ompModelSchema>;
 
@@ -39,11 +39,11 @@ export type OmpContextUsage = z.infer<typeof ompContextUsageSchema>;
 /** Payload de `get_state` (RpcSessionState) — só os campos que o Nexus usa. */
 export const ompSessionStateSchema = z.looseObject({
   model: ompModelSchema.optional(),
-  thinkingLevel: z.string().optional(),
+  thinkingLevel: z.string().max(128).optional(),
   isStreaming: z.boolean(),
   isCompacting: z.boolean(),
-  sessionId: z.string(),
-  sessionName: z.string().optional(),
+  sessionId: z.string().max(512),
+  sessionName: z.string().max(2_048).optional(),
   contextUsage: ompContextUsageSchema.optional(),
 });
 export type OmpSessionState = z.infer<typeof ompSessionStateSchema>;
@@ -54,25 +54,25 @@ export type OmpSessionState = z.infer<typeof ompSessionStateSchema>;
  */
 export const ompResponseFrameSchema = z.looseObject({
   type: z.literal('response'),
-  id: z.string().optional(),
-  command: z.string(),
+  id: z.string().max(256).optional(),
+  command: z.string().max(128),
   success: z.boolean(),
   data: z.unknown().optional(),
-  error: z.string().optional(),
+  error: z.string().max(65_536).optional(),
 });
 export type OmpResponseFrame = z.infer<typeof ompResponseFrameSchema>;
 
 export const ompPromptResultFrameSchema = z.looseObject({
   type: z.literal('prompt_result'),
-  id: z.string().optional(),
+  id: z.string().max(256).optional(),
   agentInvoked: z.boolean(),
 });
 
 /** Deltas de streaming dentro de `message_update` (AssistantMessageEvent). */
 export const ompAssistantMessageEventSchema = z.looseObject({
-  type: z.string(),
+  type: z.string().max(128),
   contentIndex: z.number().optional(),
-  delta: z.string().optional(),
+  delta: z.string().max(1_048_576).optional(),
 });
 
 export const ompAgentStartFrameSchema = z.looseObject({
@@ -91,14 +91,14 @@ export const ompMessageEndFrameSchema = z.looseObject({
 
 export const ompToolExecutionStartFrameSchema = z.looseObject({
   type: z.literal('tool_execution_start'),
-  toolCallId: z.string(),
-  toolName: z.string(),
+  toolCallId: z.string().max(256),
+  toolName: z.string().max(256),
   args: z.unknown().optional(),
 });
 export const ompToolExecutionEndFrameSchema = z.looseObject({
   type: z.literal('tool_execution_end'),
-  toolCallId: z.string(),
-  toolName: z.string(),
+  toolCallId: z.string().max(256),
+  toolName: z.string().max(256),
   result: z.unknown().optional(),
   isError: z.boolean().optional(),
 });
@@ -111,7 +111,7 @@ export const ompToolExecutionEndFrameSchema = z.looseObject({
  */
 export const ompExtensionUiRequestSchema = z.looseObject({
   type: z.literal('extension_ui_request'),
-  id: z.string(),
+  id: z.string().max(256),
   method: z.enum([
     'select',
     'confirm',
@@ -125,41 +125,41 @@ export const ompExtensionUiRequestSchema = z.looseObject({
     'set_editor_text',
     'open_url',
   ]),
-  title: z.string().optional(),
-  message: z.string().optional(),
-  options: z.array(z.string()).optional(),
-  placeholder: z.string().optional(),
-  prefill: z.string().optional(),
-  targetId: z.string().optional(),
-  url: z.string().optional(),
+  title: z.string().max(4_096).optional(),
+  message: z.string().max(65_536).optional(),
+  options: z.array(z.string().max(20_000)).max(256).optional(),
+  placeholder: z.string().max(20_000).optional(),
+  prefill: z.string().max(200_000).optional(),
+  targetId: z.string().max(256).optional(),
+  url: z.string().max(8_192).optional(),
   notifyType: z.enum(['info', 'warning', 'error']).optional(),
-  timeout: z.number().optional(),
+  timeout: z.number().finite().int().positive().max(600_000).optional(),
 });
 export type OmpExtensionUiRequest = z.infer<typeof ompExtensionUiRequestSchema>;
 
 export const ompHostToolCallFrameSchema = z.looseObject({
   type: z.literal('host_tool_call'),
-  id: z.string(),
-  toolCallId: z.string(),
-  toolName: z.string(),
+  id: z.string().max(256),
+  toolCallId: z.string().max(256),
+  toolName: z.string().max(256),
   arguments: z.record(z.string(), z.unknown()),
 });
 export type OmpHostToolCallFrame = z.infer<typeof ompHostToolCallFrameSchema>;
 
 export const ompHostToolCancelFrameSchema = z.looseObject({
   type: z.literal('host_tool_cancel'),
-  id: z.string(),
-  targetId: z.string(),
+  id: z.string().max(256),
+  targetId: z.string().max(256),
 });
 
 export const ompAvailableCommandsUpdateFrameSchema = z.looseObject({
   type: z.literal('available_commands_update'),
-  commands: z.array(z.unknown()),
+  commands: z.array(z.unknown()).max(4_096),
 });
 
 /** Payload de `get_available_models`. */
 export const ompAvailableModelsDataSchema = z.looseObject({
-  models: z.array(ompModelSchema),
+  models: z.array(ompModelSchema).max(4_096),
 });
 
 // ---------------------------------------------------------------------------
@@ -233,7 +233,11 @@ export const ompRpcStartRequestSchema = z
   .object({
     /** Precisa viver dentro do escopo de projeto autorizado do renderer. */
     workspaceRoot: z.string().min(1).max(4096).optional(),
-    approvalPolicy: ompApprovalPolicySchema,
+    /**
+     * Sessões iniciadas pelo renderer são painéis auxiliares sem autoridade
+     * de missão. `yolo` é reservado ao scheduler main-owned.
+     */
+    approvalPolicy: z.literal('safe'),
     model: z
       .object({
         provider: z.string().min(1).max(128),
@@ -241,8 +245,6 @@ export const ompRpcStartRequestSchema = z
       })
       .strict()
       .optional(),
-    /** Liga a sessão a uma missão (habilita nexus_handoff_submit no gate). */
-    missionId: z.string().min(1).max(128).optional(),
   })
   .strict();
 export type OmpRpcStartRequest = z.infer<typeof ompRpcStartRequestSchema>;

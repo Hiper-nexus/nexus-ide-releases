@@ -1,4 +1,21 @@
 import { z } from 'zod';
+import { resolveMissionBlockingIntentState } from './mission-blocking';
+
+export {
+  missionBlockKindSchema,
+  missionBlockingIntentStateSchema,
+  missionBlockPatch,
+  resolveMissionBlockingIntentState,
+  type MissionBlockKind,
+  type MissionBlockingIntentState,
+  type MissionBlockPatch,
+} from './mission-blocking';
+export {
+  missionStatusForIntent,
+  type IntentMappedMissionStatus,
+  type MissionIntentEventName,
+  type MissionIntentEvent,
+} from './mission-intent-projection';
 
 /**
  * Intent-first mission runtime — pure domain.
@@ -82,6 +99,39 @@ export const missionIntentBudgetsSchema = z.object({
   maxSteps: z.number().int().positive().max(100_000).optional(),
 });
 
+/**
+ * Exact main-owned runtime approved for the initial orchestrator.
+ *
+ * `readOnly=false` keeps the audited Nexus MCP delegation surface available;
+ * `nativeReadOnly=true` independently denies provider-native repo mutations.
+ * Both bits are explicit so a persisted contract cannot silently inherit a
+ * later settings default.
+ */
+export const missionOrchestratorRuntimeSnapshotSchema = z
+  .object({
+    adapterId: z.string().min(1).max(64),
+    model: z.string().min(1).max(256).optional(),
+    accountId: z.string().min(1).max(128).optional(),
+    effort: z.string().min(1).max(64).optional(),
+    readOnly: z.literal(false),
+    nativeReadOnly: z.literal(true),
+  })
+  .strict();
+export type MissionOrchestratorRuntimeSnapshot = z.infer<
+  typeof missionOrchestratorRuntimeSnapshotSchema
+>;
+
+export const missionAttachmentSnapshotSchema = z
+  .object({
+    path: z.string().min(1).max(4_096),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    size: z.number().int().nonnegative().max(14 * 1024 * 1024),
+  })
+  .strict();
+export type MissionAttachmentSnapshot = z.infer<
+  typeof missionAttachmentSnapshotSchema
+>;
+
 export const missionIntentContractSchema = z.object({
   version: z.literal(1),
   source: missionIntentSourceSchema,
@@ -107,6 +157,23 @@ export const missionIntentContractSchema = z.object({
   spentTokens: z.number().int().nonnegative().max(10_000_000).optional(),
   /** True only when the current submission included the promised evidence. */
   evidenceAttached: z.boolean().optional(),
+  /**
+   * Canonical main-validated files staged under ~/.nexus/dropped. Paths are
+   * persisted only at approval and revalidated immediately before bootstrap.
+   */
+  attachmentPaths: z.array(z.string().min(1).max(4_096)).max(6).optional(),
+  /** Exact bytes approved for each attachment path; legacy contracts may omit. */
+  attachmentSnapshots: z.array(missionAttachmentSnapshotSchema).max(6).optional(),
+  /** Exact saved-squad authority approved by the operator. */
+  squadRevisionHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  /** Exact provider/model/account/confinement approved before any spawn. */
+  orchestratorRuntime: missionOrchestratorRuntimeSnapshotSchema.optional(),
+  /**
+   * Scheduled single-worker missions may attenuate the planner to one exact
+   * saved-roster worker. The main planner enforces both the identity and a
+   * single-task plan; prompt text alone is never authority.
+   */
+  requiredWorkerAgentRef: z.string().min(1).max(128).optional(),
 });
 export type MissionIntentContract = z.infer<typeof missionIntentContractSchema>;
 
@@ -320,12 +387,18 @@ export interface InferIntentContext {
 export function resolveEffectiveIntentState(
   ctx: InferIntentContext,
 ): MissionIntentState {
+  // Lifecycle terminal/demotion states always revoke an older persisted
+  // dispatch state. A stale `dispatched` value must never outvote blocked or
+  // failed and reopen effect authority.
+  if (ctx.mission.status === 'done') return 'done';
+  const blockingState = resolveMissionBlockingIntentState({
+    status: ctx.mission.status,
+    intentState: ctx.mission.intentState,
+  });
+  if (blockingState) return blockingState;
+
   const stored = ctx.mission.intentState;
   if (stored && stored !== 'legacy') return stored;
-
-  if (ctx.mission.status === 'done') return 'done';
-  if (ctx.mission.status === 'failed') return 'blocked_technical';
-  if (ctx.mission.status === 'blocked') return 'blocked_user';
 
   // Real work already in flight — never invent a goal, but do not stall recovery
   // for empty missions that only have free-text description.
@@ -605,6 +678,7 @@ export function hasCurrentDispatchAuthority(
     workerPaneCount: context.workerPaneCount ?? 0,
   });
   return (
+    mission.status === 'running' &&
     canDispatchWorkers(intentState) &&
     hasCurrentApprovedDispatchContract(mission)
   );
@@ -617,26 +691,50 @@ export function hasCurrentDispatchAuthority(
  */
 export function synthesizeImmediateDispatchContract(input: {
   readonly title: string;
+  readonly goal?: string;
   readonly intentVersion?: number;
   readonly now?: number;
+  /** Dedicated single-session authority profile; never inherits PREVC workers. */
+  readonly profile?: 'standard' | 'pet-studio';
 }): MissionIntentContract {
   const now = input.now ?? Date.now();
   const goal =
+    input.goal?.trim() ||
     input.title.trim() ||
     'Execução imediata autorizada (legado / perfil dedicado)';
+  const petStudio = input.profile === 'pet-studio';
   const base = compileIntentContract({
     goal,
     source: 'automation',
     intentVersion: Math.max(1, input.intentVersion ?? 1),
     executionMode: 'autopilot',
     contextPolicy: 'on-demand',
-    acceptanceCriteria: [
-      'Missão legada/pet despachada com orquestrador ativo',
-      'Workers e bootstrap permitidos sob PREVC e effect policy',
-    ],
+    acceptanceCriteria: petStudio
+      ? [
+          'Sessão Codex única iniciou com objetivo e imagem autorizados',
+          'Pacote final passou geração, montagem e QA da skill hatch-pet',
+          'Handoff final contém caminho do pacote, manifesto e evidências verificáveis',
+        ]
+      : [
+          'Missão legada despachada com orquestrador ativo',
+          'Workers e bootstrap permitidos sob PREVC e effect policy',
+        ],
   });
   return {
     ...base,
+    ...(petStudio
+      ? {
+          budgets: { ...base.budgets, maxWorkers: 0 },
+          deniedTools: [
+            'route_task',
+            'pane_spawn',
+            'task',
+            'worktree_create',
+            'worktree_merge',
+            'mission_freeze_contract',
+          ],
+        }
+      : {}),
     approvedAt: now,
     dispatchedAt: now,
   };
@@ -776,6 +874,12 @@ export function applyEffectfulSpend(
     acceptanceCriteria: [...contract.acceptanceCriteria],
     budgets: { ...contract.budgets },
     deniedTools: contract.deniedTools ? [...contract.deniedTools] : undefined,
+    attachmentPaths: contract.attachmentPaths
+      ? [...contract.attachmentPaths]
+      : undefined,
+    attachmentSnapshots: contract.attachmentSnapshots
+      ? contract.attachmentSnapshots.map((snapshot) => ({ ...snapshot }))
+      : undefined,
   };
 }
 
@@ -883,57 +987,4 @@ export function recoveryHandoffIdempotencyKey(
   stage: 1 | 2,
 ): string {
   return `recovery:${missionId}:stage_${stage}`;
-}
-
-export type IntentMappedMissionStatus =
-  | 'pending'
-  | 'running'
-  | 'blocked'
-  | 'done'
-  | 'failed';
-
-export function missionStatusForIntent(
-  intent: MissionIntentState,
-): IntentMappedMissionStatus | null {
-  switch (intent) {
-    case 'done':
-      return 'done';
-    case 'blocked_user':
-    case 'blocked_technical':
-      return 'blocked';
-    case 'dispatched':
-    case 'executing':
-    case 'validating':
-      return 'running';
-    case 'draft':
-    case 'awaiting_goal':
-    case 'intent_compiling':
-    case 'ready_to_start':
-    case 'awaiting_approval':
-      return 'pending';
-    default:
-      return null;
-  }
-}
-
-export type MissionIntentEventName =
-  | 'squad_selected'
-  | 'goal_submitted'
-  | 'intent_compiled'
-  | 'plan_approved'
-  | 'task_dispatched'
-  | 'worker_started'
-  | 'automatic_recovery'
-  | 'intent_gate_denied'
-  | 'prepare_project';
-
-export interface MissionIntentEvent {
-  readonly name: MissionIntentEventName;
-  readonly at: number;
-  readonly missionId?: string;
-  readonly squadId?: string;
-  readonly intentState?: MissionIntentState;
-  readonly intentVersion?: number;
-  readonly reason?: string;
-  readonly meta?: Readonly<Record<string, string | number | boolean | null>>;
 }

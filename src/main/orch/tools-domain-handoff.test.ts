@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   markHandoffSubmitted: vi.fn(),
   onHandoffSubmitted: vi.fn(),
   getStores: vi.fn(),
+  heartbeat: vi.fn(),
 }));
 
 vi.mock('./gate', () => ({
@@ -34,6 +35,7 @@ function context(): AgentGateContext {
     role: 'worker',
     missionId: 'mission-a',
     sessionId: 'worker-session',
+    workerIncarnationId: 'worker-incarnation-a',
     agentName: 'worker-a',
     contextRevision: 'c'.repeat(64),
     scope,
@@ -70,6 +72,14 @@ function submitTool() {
     (candidate) => candidate.name === 'nexus_handoff_submit',
   );
   if (!tool) throw new Error('handoff submit tool is not registered');
+  return tool;
+}
+
+function heartbeatTool() {
+  const tool = buildDomainTools().find(
+    (candidate) => candidate.name === 'nexus_worker_heartbeat',
+  );
+  if (!tool) throw new Error('worker heartbeat tool is not registered');
   return tool;
 }
 
@@ -110,6 +120,7 @@ describe('handoff MCP stop receipt', () => {
       tasks: { list: () => [] },
       missionPanes: { list: () => [] },
       handoffs: { submit: mocks.submit, list: vi.fn() },
+      taskDispatches: { list: () => [], heartbeat: mocks.heartbeat },
     });
   });
 
@@ -214,5 +225,53 @@ describe('handoff MCP stop receipt', () => {
     ).rejects.toThrow(/trusted evidence.*not found/i);
     expect(mocks.markHandoffSubmitted).not.toHaveBeenCalled();
     expect(mocks.onHandoffSubmitted).not.toHaveBeenCalled();
+  });
+
+  it('rejects a late handoff from a previous worker incarnation before persistence', async () => {
+    const stores = mocks.getStores();
+    stores.taskDispatches.list = () => [{
+      id: 'dispatch-current',
+      missionId: 'mission-a',
+      taskId: 'task-a',
+      sessionId: 'worker-session',
+      workerIncarnationId: 'worker-incarnation-current',
+      state: 'running',
+    }];
+
+    await expect(
+      submitTool().handler(
+        {
+          status: 'success',
+          summary: 'Resultado tardio da pane física anterior não deve concluir.',
+        },
+        context(),
+      ),
+    ).rejects.toThrow(/incarnation|encarnação|gera[cç][aã]o/i);
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
+
+  it('renews lifecycle authority only for the worker exact session', async () => {
+    mocks.heartbeat.mockReturnValue({
+      id: 'dispatch-a', taskId: 'task-a', missionId: 'mission-a',
+      state: 'running', sessionId: 'worker-session', leaseExpiresAt: 601_000,
+    });
+
+    await expect(heartbeatTool().handler({}, context())).resolves.toMatchObject({
+      ok: true,
+      dispatchId: 'dispatch-a',
+      taskId: 'task-a',
+      leaseExpiresAt: 601_000,
+    });
+    expect(mocks.heartbeat).toHaveBeenCalledWith({
+      sessionId: 'worker-session',
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-incarnation-a',
+      leaseMs: 10 * 60_000,
+    });
+
+    await expect(heartbeatTool().handler({}, {
+      ...context(),
+      sessionId: undefined,
+    })).rejects.toThrow(/sess[aã]o/i);
   });
 });

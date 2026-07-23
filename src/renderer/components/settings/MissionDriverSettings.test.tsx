@@ -104,4 +104,43 @@ describe('MissionDriverSettings', () => {
     expect(host.textContent).toContain('disk full');
     act(() => root.unmount());
   });
+
+  it('exposes and persists the CLI prompt autoresponder kill switch', async () => {
+    let saved: OrchSettings = {
+      ...DEFAULT_ORCH_SETTINGS,
+      cliPromptAutoResponderEnabled: false,
+    };
+    const orchSet = vi.fn(async (patch: Partial<OrchSettings>) => {
+      saved = { ...saved, ...patch };
+      return saved;
+    });
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        settings: {
+          orchGet: vi.fn(async () => saved),
+          orchSet,
+        },
+      },
+    });
+    const { host, root } = mount();
+    await flushEffects();
+
+    const toggle = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Autoaceitar prompts conhecidos"]',
+    );
+    expect(toggle?.checked).toBe(false);
+    expect(host.textContent).toContain('Kill switch ativo');
+
+    await act(async () => {
+      toggle!.click();
+      await Promise.resolve();
+    });
+
+    expect(orchSet).toHaveBeenCalledWith({
+      cliPromptAutoResponderEnabled: true,
+    });
+    expect(toggle?.checked).toBe(true);
+    act(() => root.unmount());
+  });
 });

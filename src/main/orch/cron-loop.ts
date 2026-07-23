@@ -2,6 +2,27 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
+import { missionIntentContractSchema } from '../../shared/mission-intent';
+import { projectExecutionScopeSchema } from '../../shared/types';
+
+export const cronExecutionAuthoritySchema = z
+  .object({
+    version: z.literal(2),
+    origin: z.literal('nexus-cron-exact-consent'),
+    authorizedAt: z.number().int().positive(),
+    consentReceiptId: z.string().uuid(),
+    consentAction: z.enum(['create', 'update']),
+    scope: projectExecutionScopeSchema,
+    squadId: z.string().min(1).max(128),
+    targetAgentId: z.string().min(1).max(128).optional(),
+    contract: missionIntentContractSchema,
+    jobBindingHash: z.string().regex(/^[a-f0-9]{64}$/),
+    authorityTag: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export type CronExecutionAuthority = z.infer<
+  typeof cronExecutionAuthoritySchema
+>;
 
 /**
  * Cron — squads/agentes agendados. Tick de 60s: jobs vencidos disparam o brief
@@ -36,6 +57,8 @@ export interface CronJob {
   /** Um dos dois: agente do squad OU squad inteiro. */
   agentName?: string;
   squadId?: string;
+  /** Exact recurring-execution consent, bound to this definition and roster. */
+  executionAuthority?: CronExecutionAuthority;
   createdAt: number;
   updatedAt: number;
   nextFireAt?: number;
@@ -173,6 +196,7 @@ const cronJobSchema = z
     checkoutId: z.string().min(1).max(128).optional(),
     agentName: z.string().min(1).max(256).optional(),
     squadId: z.string().min(1).max(256).optional(),
+    executionAuthority: cronExecutionAuthoritySchema.optional(),
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
     nextFireAt: z.number().int().nonnegative().optional(),
@@ -182,6 +206,31 @@ const cronJobSchema = z
   .strict();
 
 const cronJobsSchema = z.array(cronJobSchema).max(10_000);
+
+/**
+ * One process owns one physical ~/.nexus/crons.json file. Every read-modify-
+ * write transaction must therefore share one FIFO, even when jobs belong to
+ * different project scopes; a per-project lock would still clobber the other
+ * scopes because persistence replaces the complete array.
+ */
+let cronJobsMutationTail: Promise<void> = Promise.resolve();
+
+export function withCronJobsMutationLock<T>(
+  operation: () => Promise<T> | T,
+  signal?: AbortSignal,
+): Promise<T> {
+  const run = cronJobsMutationTail.then(async () => {
+    if (signal?.aborted) throw new Error('session_authority_revoked');
+    return operation();
+  });
+  // A failed/cancelled transaction releases the FIFO but never breaks the
+  // chain for later jobs. The caller still receives the original result.
+  cronJobsMutationTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 export function parseCronJobs(raw: unknown): CronJob[] {
   return cronJobsSchema.parse(raw);

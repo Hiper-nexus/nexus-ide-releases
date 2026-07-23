@@ -175,6 +175,63 @@ describe.skipIf(!sqliteAvailable)('ScopedUsageStore', () => {
     ).toThrow(/does not own/i);
   });
 
+  it('aggregates real token spend by exact vault account and provider', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    store.record(
+      'claude',
+      usage({ accountId: 'acct-work', messageId: 'work', inputTokens: 30 }),
+    );
+    store.record(
+      'claude',
+      usage({ accountId: 'acct-home', messageId: 'home', inputTokens: 70 }),
+    );
+    store.record(
+      'codex',
+      usage({ accountId: null, messageId: 'native', inputTokens: 100 }),
+    );
+
+    expect(store.totalsByAccount()).toEqual([
+      expect.objectContaining({
+        provider: 'claude',
+        accountId: 'acct-home',
+        inputTokens: 70,
+        turns: 1,
+      }),
+      expect.objectContaining({
+        provider: 'claude',
+        accountId: 'acct-work',
+        inputTokens: 30,
+        turns: 1,
+      }),
+    ]);
+  });
+
+  it('retains account ownership when a transcript replay omits attribution', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    store.record(
+      'claude',
+      usage({ accountId: 'acct-work', messageId: 'first', inputTokens: 10 }),
+    );
+    store.record(
+      'claude',
+      usage({ accountId: null, messageId: 'first', inputTokens: 20 }),
+    );
+    store.record(
+      'claude',
+      usage({ accountId: null, messageId: 'second', inputTokens: 30 }),
+    );
+
+    expect(store.totalsByAccount()).toEqual([
+      expect.objectContaining({
+        accountId: 'acct-work',
+        inputTokens: 50,
+        turns: 2,
+      }),
+    ]);
+  });
+
   it('stores scope identity in the database location, never an absolute path row', () => {
     const { baseDir, scope } = fixture();
     const runtimeManager = manager(baseDir);

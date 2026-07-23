@@ -133,6 +133,7 @@ describe('scoped handoff store', () => {
     const submitted = handoffs.submit({
       missionId: 'mission-a',
       sessionId: 'session-a',
+      workerIncarnationId: 'worker-incarnation-a',
       fromAgent: 'reviewer',
       status: 'success',
       summary: 'Reviewed the complete implementation.',
@@ -146,11 +147,18 @@ describe('scoped handoff store', () => {
       claimTrust: 'untrusted',
       evidenceTrust: 'unverified',
       evidenceIds: [],
+      workerIncarnationId: 'worker-incarnation-a',
       projectId: scope.projectId,
       checkoutId: scope.checkoutId,
     });
     submitted.artifacts.push('outside mutation');
     expect(handoffs.hasTrustedFromSession('session-a')).toBe(false);
+    expect(
+      handoffs.hasTrustedFromSession(
+        'session-a',
+        'worker-incarnation-stale',
+      ),
+    ).toBe(false);
     expect(handoffs.list()).toHaveLength(1);
     expect(handoffs.list()[0].artifacts).toEqual([{ path: 'src/a.ts' }]);
     expect(handoffs.markDelivered('handoff-a')).toBe(true);
@@ -174,6 +182,144 @@ describe('scoped handoff store', () => {
         includeDelivered: true,
       }),
     ).toHaveLength(1);
+  });
+
+  it('persists bounded delivery attempts and accepts the exact attempt atomically', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    let now = 100;
+    let id = 0;
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => 'mission-delivery',
+    });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    missions.create({
+      title: 'Delivery',
+      orchestratorSessionId: 'orchestrator-session',
+    });
+    const handoff = handoffs.submit({
+      missionId: 'mission-delivery',
+      sessionId: 'worker-session',
+      fromAgent: 'worker',
+      status: 'success',
+      summary: 'Entrega durável para o orquestrador.',
+    });
+
+    expect(() => handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: 'mission-delivery',
+      orchestratorSessionId: 'orchestrator-session-stale',
+      maxAttempts: 2,
+    })).toThrow(/orchestrator session is stale/i);
+
+    const first = handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: 'mission-delivery',
+      orchestratorSessionId: 'orchestrator-session',
+      maxAttempts: 2,
+    });
+    expect(first).toMatchObject({ attemptNo: 1, state: 'reserved' });
+    now = 120;
+    missions.setOrchestratorSession(
+      'mission-delivery',
+      'orchestrator-session-rebound',
+    );
+    expect(() => handoffs.markDeliveryAttemptPasted({
+      attemptId: first.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: 1_120,
+    })).toThrow(/lost CAS/i);
+    missions.setOrchestratorSession(
+      'mission-delivery',
+      'orchestrator-session',
+    );
+    const pasted = handoffs.markDeliveryAttemptPasted({
+      attemptId: first.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: 1_120,
+    });
+    expect(pasted.state).toBe('pasted');
+    now = 130;
+    handoffs.failDeliveryAttempt({
+      attemptId: first.id,
+      handoffId: handoff.id,
+      failureCode: 'accept_timeout',
+    });
+
+    runtimeManager.close(scope);
+    const reopened = createScopedHandoffStore(runtimeManager, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    const second = reopened.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: 'mission-delivery',
+      orchestratorSessionId: 'orchestrator-session',
+      maxAttempts: 2,
+    });
+    expect(second).toMatchObject({ attemptNo: 2, state: 'reserved' });
+    reopened.markDeliveryAttemptPasted({
+      attemptId: second.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: 2_000,
+    });
+    now = 150;
+    missions.setOrchestratorSession(
+      'mission-delivery',
+      'orchestrator-session-rebound',
+    );
+    expect(reopened.acceptDeliveryAttempt({
+      attemptId: second.id,
+      handoffId: handoff.id,
+    })).toBe(false);
+    expect(reopened.listDeliveryAttempts(handoff.id)[1]).toMatchObject({
+      attemptNo: 2,
+      state: 'pasted',
+    });
+    missions.setOrchestratorSession(
+      'mission-delivery',
+      'orchestrator-session',
+    );
+    expect(reopened.acceptDeliveryAttempt({
+      attemptId: second.id,
+      handoffId: handoff.id,
+    })).toBe(true);
+    expect(reopened.get(handoff.id)).toMatchObject({
+      delivered: true,
+      deliveryState: 'submitted',
+      submittedAt: 150,
+    });
+    expect(reopened.listDeliveryAttempts(handoff.id)).toMatchObject([
+      { attemptNo: 1, state: 'failed', failureCode: 'accept_timeout' },
+      { attemptNo: 2, state: 'accepted', acceptedAt: 150 },
+    ]);
+
+    const blocked = missions.rebindOrchestratorSession(
+      'mission-delivery',
+      'orchestrator-session-rebound',
+    );
+    expect(blocked).toMatchObject({
+      status: 'blocked',
+      orchestratorSessionId: 'orchestrator-session-rebound',
+    });
+    expect(blocked?.description).toMatch(
+      /Handoff não reentregue[\s\S]*Clique em “Retomar missão”/i,
+    );
+    const repeated = missions.rebindOrchestratorSession(
+      'mission-delivery',
+      'orchestrator-session-rebound',
+    );
+    expect(
+      repeated?.description.match(/Clique em “Retomar missão”/g),
+    ).toHaveLength(1);
+    expect(reopened.listDeliveryAttempts(handoff.id)).toHaveLength(2);
+    expect(reopened.get(handoff.id)).toMatchObject({
+      delivered: true,
+      deliveryState: 'submitted',
+    });
   });
 
   it('accepts only persisted Nexus evidence bound to the current mission revision and diff', () => {

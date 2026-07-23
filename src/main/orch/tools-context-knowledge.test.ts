@@ -259,6 +259,44 @@ describe('native context knowledge MCP tools', () => {
     });
   });
 
+  it('does not materialize an approved draft after async caller authority is revoked', async () => {
+    fs.writeFileSync(path.join(root, 'README.md'), '# Fonte vinculada\n');
+    const proposed = await tool('nexus_context_draft_propose').handler({
+      targetPath: '.context/docs/revoked-review.md',
+      content: '# Não aplicar após revogação\n',
+      sources: [{ type: 'file', locator: 'README.md' }],
+    }, context('codex', 'revoked-author')) as { id: string };
+
+    let resolveReview!: (value: unknown) => void;
+    reviewerMocks.run.mockReturnValue(new Promise((resolve) => {
+      resolveReview = resolve;
+    }));
+    let authorityCurrent = true;
+    const pending = tool('nexus_context_draft_review_run').handler(
+      { draftId: proposed.id },
+      context('codex', 'revoked-orchestrator'),
+      {
+        assertCurrentAuthority: () => {
+          if (!authorityCurrent) throw new Error('session_authority_revoked');
+        },
+      },
+    );
+    await vi.waitFor(() => expect(reviewerMocks.run).toHaveBeenCalledOnce());
+
+    const reviewed = await tool('nexus_context_draft_review').handler({
+      draftId: proposed.id,
+      decision: 'approve',
+      rationale: 'Fonte e conteúdo conferidos de forma independente.',
+    }, context('claude', 'revoked-reviewer', 'worker'));
+    authorityCurrent = false;
+    resolveReview(reviewed);
+
+    await expect(pending).rejects.toThrow('session_authority_revoked');
+    expect(
+      fs.existsSync(path.join(root, '.context/docs/revoked-review.md')),
+    ).toBe(false);
+  });
+
   it('never lets a worker materialize approved authority', async () => {
     await expect(tool('nexus_context_draft_apply').handler({
       draftId: 'draft-a',

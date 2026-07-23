@@ -4,6 +4,8 @@
  */
 import type { WebContents } from 'electron';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { broadcastToProject } from './project-scoped-broadcast';
 
 export interface BgTaskEvent {
   readonly taskId: string;
@@ -12,6 +14,7 @@ export interface BgTaskEvent {
   readonly exitCode: number | null;
   readonly projectId: string;
   readonly checkoutId: string;
+  readonly scope: Readonly<ProjectExecutionScope>;
   readonly at: number;
 }
 
@@ -41,12 +44,11 @@ export function emitBgTaskEvent(event: BgTaskEvent): void {
       console.warn('[bg-task] listener failed:', error);
     }
   }
-  for (const wc of webContents) {
-    if (wc.isDestroyed() || wc.isCrashed()) continue;
-    try {
-      wc.send(ORCH_CHANNELS.bgTaskEvent, event);
-    } catch {
-      // frame disposed
-    }
-  }
+  const { scope, ...rendererPayload } = event;
+  broadcastToProject(
+    webContents,
+    scope,
+    ORCH_CHANNELS.bgTaskEvent,
+    rendererPayload,
+  );
 }

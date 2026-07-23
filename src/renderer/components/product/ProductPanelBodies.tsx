@@ -12,6 +12,12 @@ import {
   type McpExportToolId,
   type McpSyncPlan,
 } from '../McpAcrossSyncControls';
+import {
+  PANE_SKILL_DRAG_TYPE,
+  buildSkillInvocationPrompt,
+  serializeSkillDragPayload,
+} from '../../lib/pane-interactions';
+import { useToastStore } from '../../state/toast-store';
 
 type Hit = {
   id: string;
@@ -105,6 +111,7 @@ export function SkillsPanelBody() {
     Array<{ id: string; name: string; description: string; category?: string }>
   >([]);
   const [error, setError] = useState<string | null>(null);
+  const pushToast = useToastStore((state) => state.push);
 
   useEffect(() => {
     void (async () => {
@@ -130,10 +137,50 @@ export function SkillsPanelBody() {
       {!error && skills.length === 0 && (
         <p className="product-pane__meta">Nenhuma skill nos caminhos do catálogo.</p>
       )}
+      {skills.length > 0 && (
+        <p className="product-pane__meta product-pane__drag-hint">
+          Arraste para um agente. O roster e as permissões da missão continuam
+          valendo.
+        </p>
+      )}
       <ul className="product-pane__list">
         {skills.map((s) => (
-          <li key={s.id} className="product-pane__item">
-            <strong>{s.name}</strong>
+          <li key={s.id} className="product-pane__item product-skill">
+            <button
+              type="button"
+              className="product-skill__chip"
+              draggable
+              data-testid="skill-drag-chip"
+              aria-label={`Arrastar skill ${s.name} para um agente`}
+              title="Arraste para um pane de agente ou clique para copiar a instrução"
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = 'copy';
+                event.dataTransfer.setData(
+                  PANE_SKILL_DRAG_TYPE,
+                  serializeSkillDragPayload({ id: s.id, name: s.name }),
+                );
+              }}
+              onClick={() => {
+                const instruction = buildSkillInvocationPrompt(s.name);
+                void navigator.clipboard.writeText(instruction).then(
+                  () =>
+                    pushToast(
+                      'success',
+                      'Instrução copiada',
+                      `Cole em um agente para solicitar ${s.name}.`,
+                    ),
+                  () =>
+                    pushToast(
+                      'warn',
+                      'Clipboard indisponível',
+                      'Arraste a skill diretamente para um pane de agente.',
+                    ),
+                );
+              }}
+            >
+              <strong>{s.name}</strong>
+              <span aria-hidden="true">arrastar</span>
+            </button>
             {s.category && <span className="product-pane__sub">{s.category}</span>}
             <p className="product-pane__snip">{s.description}</p>
           </li>

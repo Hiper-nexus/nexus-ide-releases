@@ -1,5 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
-import { runCronTick, type CronRuntimeDeps } from './cron-runtime';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  runCronTick,
+  startCronLoop,
+  stopCronLoop,
+  type CronRuntimeDeps,
+} from './cron-runtime';
 import type { CronJob } from './cron-loop';
 
 function job(over: Partial<CronJob> = {}): CronJob {
@@ -51,6 +56,11 @@ function deps(
 }
 
 describe('runCronTick', () => {
+  afterEach(async () => {
+    await stopCronLoop();
+    vi.useRealTimers();
+  });
+
   it('dispara job vencido e reavança nextFireAt', async () => {
     const jobs = [job()];
     const now = new Date('2026-07-06T00:00:30').getTime();
@@ -103,6 +113,38 @@ describe('runCronTick', () => {
     expect(fire).not.toHaveBeenCalled();
   });
 
+  it('não dispara quando nextFireAt adulterado não pertence à expressão aprovada', async () => {
+    const forgedOccurrence = new Date('2026-07-06T12:00:00').getTime();
+    const now = forgedOccurrence + 30_000;
+    const fixture = deps(
+      [job({ schedule: '0 0 * * *', nextFireAt: forgedOccurrence })],
+      now,
+    );
+    const executeOccurrence = vi.spyOn(fixture.deps, 'executeOccurrence');
+
+    await expect(runCronTick(fixture.deps)).resolves.toBe(0);
+
+    expect(executeOccurrence).not.toHaveBeenCalled();
+    expect(fixture.fire).not.toHaveBeenCalled();
+    expect(fixture.saved.at(-1)?.[0]).toMatchObject({
+      lastError: expect.stringMatching(/nextFireAt.*CTA:/i),
+    });
+    expect(fixture.saved.at(-1)![0].nextFireAt).toBeGreaterThan(now);
+  });
+
+  it('não aceita um nextFireAt deslocado para segundos fora do minuto cron', async () => {
+    const forgedOccurrence = new Date('2026-07-06T00:00:45').getTime();
+    const now = forgedOccurrence + 5_000;
+    const fixture = deps([job({ nextFireAt: forgedOccurrence })], now);
+
+    await expect(runCronTick(fixture.deps)).resolves.toBe(0);
+
+    expect(fixture.fire).not.toHaveBeenCalled();
+    expect(fixture.saved.at(-1)?.[0]?.lastError).toMatch(
+      /nextFireAt.*CTA:/i,
+    );
+  });
+
   it('avança sem catch-up quando o lease remoto está indisponível', async () => {
     const jobs = [job()];
     const now = new Date('2026-07-06T00:00:30').getTime();
@@ -119,5 +161,50 @@ describe('runCronTick', () => {
       lastError: 'remote cron lease backend is not configured',
     });
     expect(fixture.saved.at(-1)![0].nextFireAt).toBeGreaterThan(now);
+  });
+
+  it('preserva o erro durável de uma ocorrência já registrada', async () => {
+    const now = new Date('2026-07-06T00:00:30').getTime();
+    const fixture = deps([job()], now);
+    fixture.deps.executeOccurrence = vi.fn(async () => ({
+      fired: false,
+      disposition: 'already-recorded' as const,
+      error:
+        'A ocorrência anterior falhou sem comprovação. CTA: Revise a agenda.',
+    }));
+
+    await runCronTick(fixture.deps);
+
+    expect(fixture.saved.at(-1)?.[0]?.lastError).toMatch(/falhou.*CTA:/i);
+  });
+
+  it('stopCronLoop aguarda o tick físico em andamento antes de liberar o shutdown', async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const occurrenceStarted = vi.fn();
+    const pendingOccurrence = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const now = new Date('2026-07-06T00:00:30').getTime();
+    const fixture = deps([job()], now);
+    fixture.deps.executeOccurrence = vi.fn(async () => {
+      occurrenceStarted();
+      await pendingOccurrence;
+      return { fired: true, disposition: 'completed' as const };
+    });
+    startCronLoop(fixture.deps);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(occurrenceStarted).toHaveBeenCalledOnce();
+    let stopped = false;
+    const stopping = stopCronLoop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    release();
+    await stopping;
+    expect(stopped).toBe(true);
   });
 });

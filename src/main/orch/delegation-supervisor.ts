@@ -260,19 +260,28 @@ function scopeKey(suite: ProjectDomainStoreSuite): string {
 
 export function initDelegationSupervisor(): void {
   if (timer) return;
+  prepareDelegationSupervisor();
+  timer = setInterval(() => reconcileDelegationSupervisor(), DELEGATION_SCAN_MS);
+  timer.unref?.();
+}
+
+/** Install store discovery without creating a supervisor timer. */
+export function prepareDelegationSupervisor(): void {
+  if (unsubscribeScopes) return;
   unsubscribeScopes = requireProjectDomainStoreRegistry().onScope((_scope, suite) => {
     suites.set(scopeKey(suite), suite);
   });
-  timer = setInterval(() => {
-    for (const suite of suites.values()) {
-      try {
-        scanSuite(suite, Date.now());
-      } catch (error) {
-        console.warn('[delegation-supervisor] scan failed:', error);
-      }
+}
+
+/** One main-coordinator scan, error-isolated per project scope. */
+export function reconcileDelegationSupervisor(now: number = Date.now()): void {
+  for (const suite of suites.values()) {
+    try {
+      scanSuite(suite, now);
+    } catch (error) {
+      console.warn('[delegation-supervisor] scan failed:', error);
     }
-  }, DELEGATION_SCAN_MS);
-  timer.unref?.();
+  }
 }
 
 export function shutdownDelegationSupervisor(): void {

@@ -753,6 +753,115 @@ describe('MergeQueue', () => {
     )?.status).toBe('integrated');
   });
 
+  it('does not acknowledge a retry after mission authority was revoked', async () => {
+    commitTask(
+      'mission-retry-revoked-before-ack',
+      'task-retry-revoked-before-ack',
+      'worker-retry-revoked-before-ack',
+      'retry-revoked-before-ack.txt',
+      'integrated but rejected\n',
+    );
+    await expect(queue.enqueue({
+      scope,
+      missionId: 'mission-retry-revoked-before-ack',
+      taskId: 'task-retry-revoked-before-ack',
+      validate(context) {
+        if (context.phase === 'post-integration') {
+          return {
+            sensorsPassed: false,
+            reviewPassed: true,
+            evidenceIds: ['retry-revoked-before-ack-rejection'],
+          };
+        }
+        return approved(context);
+      },
+    })).rejects.toThrow(MergeValidationRejectedError);
+
+    const blocked = queue.snapshot(scope);
+    await expect(queue.retry({
+      scope,
+      missionId: 'mission-retry-revoked-before-ack',
+      taskId: 'task-retry-revoked-before-ack',
+      expectedStateRevision: blocked.revision,
+      acknowledgement: { evidenceIds: ['retry-revoked-before-ack-new'] },
+      assertCurrentAuthority: () => {
+        throw new Error('mission lifecycle authority revoked');
+      },
+      validate: approved,
+    })).rejects.toThrow(/authority.*revoked/i);
+
+    expect(queue.snapshot(scope)).toEqual(blocked);
+    expect(queue.snapshot(scope).events).not.toContainEqual(
+      expect.objectContaining({ type: 'retry-acknowledged' }),
+    );
+  });
+
+  it('blocks an integrated retry when authority is revoked during recovery validation', async () => {
+    commitTask(
+      'mission-retry-revoked-during-validation',
+      'task-retry-revoked-during-validation',
+      'worker-retry-revoked-during-validation',
+      'retry-revoked-during-validation.txt',
+      'integrated but retry must remain blocked\n',
+    );
+    await expect(queue.enqueue({
+      scope,
+      missionId: 'mission-retry-revoked-during-validation',
+      taskId: 'task-retry-revoked-during-validation',
+      validate(context) {
+        if (context.phase === 'post-integration') {
+          return {
+            sensorsPassed: false,
+            reviewPassed: true,
+            evidenceIds: ['retry-revoked-during-validation-rejection'],
+          };
+        }
+        return approved(context);
+      },
+    })).rejects.toThrow(MergeValidationRejectedError);
+
+    const blocked = queue.snapshot(scope);
+    const validationStarted = createSignal('retry-recovery-validation-started');
+    const resumeValidation = createSignal('retry-recovery-validation-resume');
+    const finalize = vi.fn();
+    let authorized = true;
+    const retry = queue.retry({
+      scope,
+      missionId: 'mission-retry-revoked-during-validation',
+      taskId: 'task-retry-revoked-during-validation',
+      expectedStateRevision: blocked.revision,
+      acknowledgement: {
+        evidenceIds: ['retry-revoked-during-validation-new'],
+      },
+      assertCurrentAuthority: () => {
+        if (!authorized) throw new Error('mission lifecycle authority revoked');
+      },
+      async validate(context) {
+        expect(context.phase).toBe('post-integration');
+        validationStarted.notify();
+        await resumeValidation.wait();
+        return approved(context);
+      },
+      finalize,
+    });
+
+    await validationStarted.wait();
+    authorized = false;
+    resumeValidation.notify();
+    await expect(retry).rejects.toThrow(/authority.*revoked/i);
+
+    expect(finalize).not.toHaveBeenCalled();
+    expect(queue.snapshot(scope)).toMatchObject({
+      activeTaskKey: null,
+      blocked: { errorName: 'MergeAuthorityRevokedError' },
+      entries: [{
+        status: 'blocked',
+        attempt: 2,
+        integratedSha: expect.any(String),
+      }],
+    });
+  });
+
   it('keeps an integrated candidate blocked until durable mission finalization succeeds', async () => {
     commitTask(
       'mission-finalizer-retry',
@@ -999,6 +1108,65 @@ describe('MergeQueue', () => {
     expect(
       worktrees.get(scope, 'mission-a', 'task-a'),
     ).toMatchObject({ status: 'failed', integratedSha: git(root, 'rev-parse', 'HEAD') });
+  });
+
+  it('rolls back the exact candidate when mission authority is revoked during post-integration validation', async () => {
+    commitTask(
+      'mission-revoked',
+      'task-revoked',
+      'worker-revoked',
+      'revoked.txt',
+      'must be rolled back\n',
+    );
+    const originalHead = git(root, 'rev-parse', 'HEAD');
+    const postValidationStarted = createSignal('post-validation-started');
+    const resumePostValidation = createSignal('resume-post-validation');
+    let authorized = true;
+    const finalize = vi.fn();
+
+    const attempt = queue.enqueue({
+      scope,
+      missionId: 'mission-revoked',
+      taskId: 'task-revoked',
+      assertCurrentAuthority: () => {
+        if (!authorized) throw new Error('mission lifecycle authority revoked');
+      },
+      async validate(context) {
+        if (context.phase === 'post-integration') {
+          postValidationStarted.notify();
+          await resumePostValidation.wait();
+        }
+        return approved(context);
+      },
+      finalize,
+    });
+
+    await postValidationStarted.wait();
+    expect(git(root, 'rev-parse', 'HEAD')).not.toBe(originalHead);
+    expect(fs.existsSync(path.join(root, 'revoked.txt'))).toBe(true);
+
+    authorized = false;
+    resumePostValidation.notify();
+
+    await expect(attempt).rejects.toThrow(/authority.*revoked/i);
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(originalHead);
+    expect(fs.existsSync(path.join(root, 'revoked.txt'))).toBe(false);
+    expect(finalize).not.toHaveBeenCalled();
+    expect(queueEntries().at(-1)).toMatchObject({
+      status: 'blocked',
+      integratedSha: undefined,
+    });
+    expect(queue.snapshot(scope).events.at(-1)).toMatchObject({
+      type: 'blocked',
+      integrationState: 'not-integrated',
+    });
+    const failedWorktree = worktrees.get(
+      scope,
+      'mission-revoked',
+      'task-revoked',
+    );
+    expect(failedWorktree).toMatchObject({ status: 'failed' });
+    expect(failedWorktree).not.toHaveProperty('integratedSha');
   });
 
   it('requires injected durable queue state instead of an implicit memory fallback', () => {

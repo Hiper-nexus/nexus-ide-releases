@@ -1,0 +1,344 @@
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  assertFreshCandidateArtifacts,
+  assertCandidateBuildReceipt,
+  assertCandidateArtifactSeal,
+  captureCandidateArtifactSeal,
+  assertReleaseRepositoryState,
+  runReleaseCandidateGate,
+} from './release-candidate-gate.mjs';
+import { buildReleaseSecurityArtifacts } from './release-security-gate.mjs';
+import { makeValidRealMissionEvidence } from './test-support/real-mission-evidence.mjs';
+
+const roots = [];
+const TAG_AUTHORITY = {
+  tagObjectSha: 'b'.repeat(40),
+  tagObjectType: 'tag',
+  tagSignerFingerprint: 'A'.repeat(40),
+};
+const RELEASE_AUTHORITY = {
+  version: '1.2.3',
+  tag: 'v1.2.3',
+  nodeVersion: '22.23.1',
+  npmVersion: '12.0.0',
+  npmPackageIntegrity:
+    'sha512-qzvPQfNSY7louiM6rv7dL0hi5esBGLn1lLwxbdyL5XOIssWzoYMwn8xqvWhYcZL6onTkenYSxrtKxsFrFbUFyw==',
+  allowedTagSignerFingerprints: ['A'.repeat(40)],
+};
+
+function tempRoot() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-release-candidate-'));
+  roots.push(root);
+  fs.mkdirSync(path.join(root, 'out', 'make', 'nested'), { recursive: true });
+  fs.mkdirSync(
+    path.join(root, 'out', 'NexusIDE-darwin-arm64', 'NexusIDE.app'),
+    { recursive: true },
+  );
+  fs.mkdirSync(path.join(root, 'release-artifacts', 'security'), {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    path.join(root, 'package.json'),
+    JSON.stringify({
+      name: 'nexus-ide',
+      version: '1.2.3',
+      packageManager: 'npm@12.0.0',
+      nexusRelease: { node: '22.23.1' },
+    }),
+  );
+  fs.writeFileSync(path.join(root, 'package-lock.json'), 'lock');
+  return root;
+}
+
+const hash = (value) =>
+  createHash('sha256').update(value).digest('hex');
+
+afterEach(() => {
+  for (const root of roots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+describe('manual release candidate gate', () => {
+  it('requires clean tracked/staged/untracked state and tag^{commit}=HEAD', () => {
+    expect(() => assertReleaseRepositoryState({
+      statusPorcelain: '?? forgotten.txt\n',
+      headSha: 'a'.repeat(40),
+      tagCommitSha: 'a'.repeat(40),
+      ...TAG_AUTHORITY,
+      allowedTagSignerFingerprints:
+        RELEASE_AUTHORITY.allowedTagSignerFingerprints,
+      version: '1.2.3',
+    })).toThrow(/untracked|dirty/i);
+    expect(() => assertReleaseRepositoryState({
+      statusPorcelain: '',
+      headSha: 'a'.repeat(40),
+      tagCommitSha: 'b'.repeat(40),
+      ...TAG_AUTHORITY,
+      allowedTagSignerFingerprints:
+        RELEASE_AUTHORITY.allowedTagSignerFingerprints,
+      version: '1.2.3',
+    })).toThrow(/tag.*HEAD/i);
+    expect(assertReleaseRepositoryState({
+      statusPorcelain: '',
+      headSha: 'a'.repeat(40),
+      tagCommitSha: 'a'.repeat(40),
+      ...TAG_AUTHORITY,
+      allowedTagSignerFingerprints:
+        RELEASE_AUTHORITY.allowedTagSignerFingerprints,
+      version: '1.2.3',
+    })).toEqual({
+      commitSha: 'a'.repeat(40),
+      tag: 'v1.2.3',
+      tagObjectSha: TAG_AUTHORITY.tagObjectSha,
+      tagSignerFingerprint: TAG_AUTHORITY.tagSignerFingerprint,
+      tagSignatureVerified: true,
+    });
+  });
+
+  it('requires exactly one freshly generated host-architecture DMG and ZIP', () => {
+    const root = tempRoot();
+    const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
+    const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
+    fs.writeFileSync(dmg, 'dmg');
+    fs.writeFileSync(zip, 'zip');
+    const generatedAfterMs = Date.now() - 1_000;
+    fs.utimesSync(dmg, new Date(), new Date());
+    fs.utimesSync(zip, new Date(), new Date());
+    expect(assertFreshCandidateArtifacts({
+      paths: [dmg, zip],
+      generatedAfterMs,
+      expectedArch: 'arm64',
+    })).toEqual({ dmg, zip });
+    fs.utimesSync(zip, new Date(0), new Date(0));
+    expect(() => assertFreshCandidateArtifacts({
+      paths: [dmg, zip],
+      generatedAfterMs,
+      expectedArch: 'arm64',
+    })).toThrow(/fresh/i);
+  });
+
+  it('detects candidate byte replacement after signed verification', () => {
+    const root = tempRoot();
+    const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
+    const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
+    fs.writeFileSync(dmg, 'dmg');
+    fs.writeFileSync(zip, 'zip');
+    const seal = captureCandidateArtifactSeal({ dmg, zip });
+
+    fs.writeFileSync(zip, 'replaced after codesign verification');
+    expect(() => assertCandidateArtifactSeal(seal)).toThrow(
+      /bytes changed after signed verification/i,
+    );
+  });
+
+  it('binds the exact artifact bytes/path/mtime emitted by the tagged build', () => {
+    const root = tempRoot();
+    const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
+    const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
+    fs.writeFileSync(dmg, 'dmg');
+    fs.writeFileSync(zip, 'zip');
+    const entries = [dmg, zip].map((filePath) => {
+      const stat = fs.statSync(filePath);
+      return {
+        path: path.relative(root, filePath),
+        bytes: stat.size,
+        mtimeMs: stat.mtimeMs,
+        sha256: hash(fs.readFileSync(filePath)),
+      };
+    });
+    const receipt = {
+      schemaVersion: 2,
+      startedAt: '2026-07-23T00:00:00.000Z',
+      version: '1.2.3',
+      tag: 'v1.2.3',
+      architecture: 'arm64',
+      commitSha: 'a'.repeat(40),
+      tagObjectSha: 'b'.repeat(40),
+      tagSignerFingerprint: 'A'.repeat(40),
+      tagSignatureVerified: true,
+      provenance: {
+        mode: 'clean-git-worktree',
+        npmCi: true,
+        sourceCommitSha: 'a'.repeat(40),
+        packageLockSha256: hash('lock'),
+        nodeVersion: 'v22.23.1',
+        npmVersion: '12.0.0',
+        npmPackageIntegrity:
+          'sha512-qzvPQfNSY7louiM6rv7dL0hi5esBGLn1lLwxbdyL5XOIssWzoYMwn8xqvWhYcZL6onTkenYSxrtKxsFrFbUFyw==',
+      },
+      artifacts: entries,
+    };
+    expect(assertCandidateBuildReceipt({
+      root,
+      receipt,
+      commitSha: 'a'.repeat(40),
+      version: '1.2.3',
+      tagObjectSha: 'b'.repeat(40),
+      tagSignerFingerprint: 'A'.repeat(40),
+      tagSignatureVerified: true,
+      packageLockSha256: hash('lock'),
+      npmVersion: '12.0.0',
+      npmPackageIntegrity: RELEASE_AUTHORITY.npmPackageIntegrity,
+      nodeVersion: '22.23.1',
+      expectedArch: 'arm64',
+      artifacts: { dmg, zip },
+    })).toBe(Date.parse(receipt.startedAt));
+    fs.writeFileSync(zip, 'tampered');
+    expect(() => assertCandidateBuildReceipt({
+      root,
+      receipt,
+      commitSha: 'a'.repeat(40),
+      version: '1.2.3',
+      tagObjectSha: 'b'.repeat(40),
+      tagSignerFingerprint: 'A'.repeat(40),
+      tagSignatureVerified: true,
+      packageLockSha256: hash('lock'),
+      npmVersion: '12.0.0',
+      npmPackageIntegrity: RELEASE_AUTHORITY.npmPackageIntegrity,
+      nodeVersion: '22.23.1',
+      expectedArch: 'arm64',
+      artifacts: { dmg, zip },
+    })).toThrow(/diverges/);
+    expect(() => assertCandidateBuildReceipt({
+      root,
+      receipt: { ...receipt, provenance: { ...receipt.provenance, npmCi: false } },
+      commitSha: 'a'.repeat(40),
+      version: '1.2.3',
+      tagObjectSha: 'b'.repeat(40),
+      tagSignerFingerprint: 'A'.repeat(40),
+      tagSignatureVerified: true,
+      packageLockSha256: hash('lock'),
+      npmVersion: '12.0.0',
+      npmPackageIntegrity: RELEASE_AUTHORITY.npmPackageIntegrity,
+      nodeVersion: '22.23.1',
+      expectedArch: 'arm64',
+      artifacts: { dmg, zip },
+    })).toThrow(/provenance/i);
+  });
+
+  it('runs signed verifier and real E2E before producing a commit/artifact-bound receipt', async () => {
+    const root = tempRoot();
+    const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
+    const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
+    const app = path.join(
+      root,
+      'out',
+      'NexusIDE-darwin-arm64',
+      'NexusIDE.app',
+    );
+    fs.writeFileSync(dmg, 'dmg');
+    fs.writeFileSync(zip, 'zip');
+    const runChecked = vi.fn(() => ({ stdout: '', stderr: '' }));
+    const runE2E = vi.fn(async (_app, options) => {
+      fs.writeFileSync(
+        options.evidencePath,
+        JSON.stringify(makeValidRealMissionEvidence()),
+      );
+      return { evidencePath: options.evidencePath };
+    });
+
+    const result = await runReleaseCandidateGate({
+      root,
+      environment: {
+        NEXUS_MAC_PUBLISH_RELEASE: '1',
+        APPLE_TEAM_ID: '35P5XL3JN6',
+        APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+      },
+      generatedAfterMs: Date.now() - 1_000,
+      authority: RELEASE_AUTHORITY,
+      repository: {
+        statusPorcelain: '',
+        headSha: 'a'.repeat(40),
+        tagCommitSha: 'a'.repeat(40),
+        ...TAG_AUTHORITY,
+      },
+      buildSecurityArtifacts: (options) =>
+        buildReleaseSecurityArtifacts({
+          ...options,
+          runCommand: (args) => ({
+            status: 0,
+            stdout: JSON.stringify(
+              args[0] === 'audit'
+                ? {
+                    metadata: {
+                      vulnerabilities: {
+                        info: 0,
+                        low: 0,
+                        moderate: 0,
+                        high: 0,
+                        critical: 0,
+                        total: 0,
+                      },
+                    },
+                  }
+                : { bomFormat: 'CycloneDX', components: [] },
+            ),
+            stderr: '',
+          }),
+          runtime: { node: 'v22.23.1', npm: '12.0.0' },
+        }),
+      runChecked,
+      runE2E,
+      extractE2EApp: async (_zipPath, callback) => callback(app),
+      now: () => new Date('2026-07-23T01:00:00.000Z'),
+    });
+
+    expect(runChecked).toHaveBeenCalledWith(
+      process.execPath,
+      expect.arrayContaining([
+        expect.stringMatching(/verify-macos-release\.mjs$/u),
+        '--artifacts',
+        path.join(root, 'out', 'make'),
+      ]),
+      expect.any(Object),
+    );
+    expect(runE2E).toHaveBeenCalledWith(
+      app,
+      expect.objectContaining({
+        releaseBinding: expect.objectContaining({
+          appVersion: '1.2.3',
+          commitSha: 'a'.repeat(40),
+          artifact: {
+            sha256: hash('zip'),
+            identity:
+              'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+          },
+        }),
+      }),
+    );
+    expect(result.receipt).toMatchObject({
+      schemaVersion: 3,
+      version: '1.2.3',
+      tag: 'v1.2.3',
+      commitSha: 'a'.repeat(40),
+      tagObjectSha: TAG_AUTHORITY.tagObjectSha,
+      tagSignerFingerprint: TAG_AUTHORITY.tagSignerFingerprint,
+      tagSignatureVerified: true,
+      architecture: 'arm64',
+      verification: {
+        signedNotarized: true,
+        realMissionE2E: true,
+      },
+    });
+    expect(result.receipt.securityAssets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'security-manifest.json',
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        }),
+        expect.objectContaining({
+          name: 'real-mission-evidence.json',
+          sha256: hash(
+            `${JSON.stringify(makeValidRealMissionEvidence())}`,
+          ),
+        }),
+      ]),
+    );
+  });
+});

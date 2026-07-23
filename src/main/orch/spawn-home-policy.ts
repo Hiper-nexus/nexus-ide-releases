@@ -2,6 +2,16 @@ import type { CliPtyAdapter } from '../../shared/adapter-types';
 
 type SpawnHomeAdapter = Pick<CliPtyAdapter, 'env' | 'quirks'>;
 
+export function requiresSpawnGate(meta: {
+  readonly role?: 'orchestrator' | 'worker' | 'user';
+  readonly allowedTools?: readonly string[] | null;
+  readonly allowedSkills?: readonly string[] | null;
+} | null | undefined): boolean {
+  return meta?.role === 'orchestrator' ||
+    (meta?.allowedTools ?? null) !== null ||
+    (meta?.allowedSkills ?? null) !== null;
+}
+
 /**
  * HOME efêmero é uma técnica do adapter Claude-like: ele precisa enxergar o
  * settings/MCP gerado pelo Nexus sem herdar hooks globais. CLIs como Codex,

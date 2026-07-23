@@ -1,5 +1,11 @@
-import { assertOrchestratorMission } from './gate';
-import type { McpToolDef } from './mcp-protocol';
+import {
+  assertCurrentMissionOrchestratorSession,
+  assertOrchestratorMission,
+} from './gate';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolDef,
+} from './mcp-protocol';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
@@ -10,18 +16,16 @@ import { hasAvailableAccount } from '../persistence/account-store';
 import { buildOmpRouteContext } from './omp-roster-policy';
 import { missionStatusSchema } from '../../shared/orch-types';
 import { buildClarify } from '../../shared/clarify';
+import { emitClarifyQuestion } from './clarify-flow';
 import { findAgent, listAgents, saveSquad } from './squad-store';
 import { DEFAULT_TODO_LIST } from './todo-store';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
-import { installCatalogItem } from './catalog';
 import { saveCatalogOverlay, proposeRecipes } from './catalog-overlay';
-import { writeAgentSpec } from './agent-spec-writer';
 import {
   addCronJob,
   deleteCronJob,
   listCronJobs,
-  syncCronJobsForScope,
   updateCronJob,
 } from './cron-runtime';
 import {
@@ -46,6 +50,8 @@ import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-regi
 import { canCompleteConsultLane, canCompleteOpsLane } from '../../shared/mission-intent';
 import { emitPlannedTasksWithContract } from './mission-scheduler';
 import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
+import { isTaskQueueManagedMission } from './task-dispatch-authority';
+import { planMissionTasks } from './mission-task-plan-authority';
 
 /**
  * MCP tools for handoffs (2), agents (3), missions (5), squad/catalog/task
@@ -91,7 +97,7 @@ const agentInvokeTool: McpToolDef = {
     },
     required: ['agent', 'prompt'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const found = findAgent(requireStr(args, 'agent'));
     if (!found) throw new Error('agent not found');
     const { agent } = found;
@@ -108,7 +114,7 @@ const agentInvokeTool: McpToolDef = {
       taskId: str(args, 'taskId'),
       agentName: agent.agentName,
       prompt: requireStr(args, 'prompt'),
-    }, ctx)) as { paneId: string; sessionId: string };
+    }, ctx, invocation)) as { paneId: string; sessionId: string };
     const { paneId, sessionId } = spawned;
     const state = await waitForIdle(
       sessionId,
@@ -219,8 +225,10 @@ const missionSetStatusTool: McpToolDef = {
     'Update a mission status (pending|running|blocked|done|failed). ' +
     'done is ONLY for real completion — never a shortcut. With a frozen PREVC contract, ' +
     'done requires the complete workflow and immutable step receipts; without a frozen ' +
-    'contract (PREVC degrades, never blocks), done is accepted in any lane with a durable ' +
-    'note (or existing learnings) ≥40 chars describing what was delivered. ' +
+    'contract (PREVC degrades, never blocks), a non-orchestrated completion requires a ' +
+    'durable note (or existing learnings) ≥40 chars. A standard squad mission may only ' +
+    'reach done through main-owned verified completion receipts; prose or a reporter claim ' +
+    'is never orchestration completion. ' +
     'Use blocked when the environment is not ready (work may still ' +
     'have been delivered outside the pipeline). Use failed when execution started and ended in error. ' +
     'Optional note: required for durable blocked/failed justification and for done without ' +
@@ -252,6 +260,7 @@ const missionSetStatusTool: McpToolDef = {
     if (current.status === 'done' && status !== 'done') {
       throw new Error('completed mission status is immutable');
     }
+    if (current.status === 'done' && status === 'done') return current;
     if (status === 'blocked' || status === 'failed') {
       if (note.length < 8 && current.learnings.trim().length < 8) {
         throw new Error(
@@ -261,12 +270,23 @@ const missionSetStatusTool: McpToolDef = {
       }
     }
     if (status === 'done') {
+      const lane = current.intentContract?.lane ?? 'standard';
+      const intentVersion = current.intentContract?.intentVersion;
+      if (
+        lane === 'standard' &&
+        intentVersion !== undefined &&
+        stores.tasks?.hasPlan?.(missionId, intentVersion) === true
+      ) {
+        throw new Error(
+          'task_dispatcher_authority: missão com plano selado só conclui pelo motor ' +
+            'Nexus após receipts de integração e entrega aceita de todos os handoffs',
+        );
+      }
       const workflow = getContextWorkflowService(ctx.scope);
       if (!workflow.isMissionDriverComplete(
         missionId,
         current.milestones.map((milestone) => milestone.id),
       )) {
-        const lane = current.intentContract?.lane ?? 'standard';
         const hasFrozenContract = Boolean(
           workflow.getMissionWorkflow(missionId).contract,
         );
@@ -283,6 +303,22 @@ const missionSetStatusTool: McpToolDef = {
               'mission done without a frozen PREVC contract requires a durable note (≥40 chars) ' +
                 'via note=… or existing learnings describing what was delivered. ' +
                 'This is not a code PREVC completion.',
+            );
+          }
+          if (lane === 'standard' && current.squadId) {
+            // Reporter metadata is intentionally untrusted: even a `success`
+            // handoff plus an idle→busy delivery attempt cannot prove that the
+            // exact current worker/incarnation produced and integrated the
+            // result. Modern missions close atomically in the task-dispatch
+            // authority; PREVC missions close from trusted immutable evidence.
+            // A legacy direct status call has neither authority and must fail
+            // closed instead of reconstructing a weaker third completion path.
+            throw new Error(
+              'main-owned verified completion required: orchestrated mission done requires ' +
+                'a current worker, a success handoff with trusted/current evidence, and an ' +
+                'accepted handoff for the current orchestrator session. Direct status=done ' +
+                'cannot prove worker incarnation, integration, or current intent. Use ' +
+                'status=blocked with one actionable cause when the verified path is unavailable.',
             );
           }
         } else if (
@@ -347,17 +383,20 @@ const missionSpawnPaneTool: McpToolDef = {
       adapterId: { type: 'string' },
       agentName: { type: 'string' },
       model: { type: 'string' },
+      effort: { type: 'string' },
+      routeReservationId: { type: 'string' },
+      taskId: { type: 'string' },
       cwd: { type: 'string' },
       prompt: { type: 'string' },
     },
     required: ['missionId'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const missionId = requireStr(args, 'missionId');
     if (!getProjectDomainStores(ctx.scope).missions.get(missionId)) {
       throw new Error('mission not found');
     }
-    return paneSpawnTool.handler({ ...args, missionId }, ctx);
+    return paneSpawnTool.handler({ ...args, missionId }, ctx, invocation);
   },
 };
 
@@ -371,7 +410,12 @@ const squadSaveTool: McpToolDef = {
     properties: { squad: { type: 'object' } },
     required: ['squad'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
+    if (ctx.role !== 'user' || ctx.missionId) {
+      throw new Error(
+        'squad save is operator-owned: mission agents cannot mutate the persistent squad catalog',
+      );
+    }
     const squad = saveSquad(args.squad);
     return { ok: true, squadId: squad.id };
   },
@@ -414,12 +458,10 @@ const catalogInstallTool: McpToolDef = {
     },
     required: ['kind', 'slug'],
   },
-  handler: async (args) => {
-    const kind = str(args, 'kind');
-    if (kind !== 'agent' && kind !== 'skill') {
-      throw new Error('kind must be "agent" or "skill"');
-    }
-    return installCatalogItem({ kind, slug: requireStr(args, 'slug') });
+  handler: async () => {
+    throw new Error(
+      'renderer_exact_confirmation_required: use o Marketplace nativo',
+    );
   },
 };
 
@@ -431,16 +473,17 @@ const catalogOverlayTool: McpToolDef = {
   inputSchema: {
     type: 'object',
     properties: {
-      workspacePath: { type: 'string' },
       stacks: { type: 'array', items: { type: 'string' } },
       disabled: { type: 'array', items: { type: 'string' } },
       tombstones: { type: 'array', items: { type: 'string' } },
       categories: { type: 'object' },
     },
   },
-  handler: async (args) =>
+  handler: async (args, ctx) =>
     saveCatalogOverlay({
-      workspacePath: str(args, 'workspacePath'),
+      // Renderer/agent input is never a filesystem authority. The MCP gate
+      // already bound this call to one immutable ProjectExecutionScope.
+      workspacePath: ctx.scope.rootRealPath,
       stacks: Array.isArray(args.stacks) ? strArray(args, 'stacks') : undefined,
       disabled: Array.isArray(args.disabled) ? strArray(args, 'disabled') : undefined,
       tombstones: Array.isArray(args.tombstones) ? strArray(args, 'tombstones') : undefined,
@@ -458,9 +501,9 @@ const recipeProposeTool: McpToolDef = {
     'and catalog overlay. Returns recipes with explicit gaps.',
   inputSchema: {
     type: 'object',
-    properties: { workspacePath: { type: 'string' } },
+    properties: {},
   },
-  handler: async (args) => proposeRecipes(str(args, 'workspacePath')),
+  handler: async (_args, ctx) => proposeRecipes(ctx.scope.rootRealPath),
 };
 
 const agentSpecWriteTool: McpToolDef = {
@@ -481,16 +524,11 @@ const agentSpecWriteTool: McpToolDef = {
     },
     required: ['name'],
   },
-  handler: async (args) =>
-    writeAgentSpec({
-      name: requireStr(args, 'name'),
-      tools: Array.isArray(args.tools) ? strArray(args, 'tools') : undefined,
-      skills: Array.isArray(args.skills) ? strArray(args, 'skills') : undefined,
-      model: str(args, 'model'),
-      effort: str(args, 'effort'),
-      category: str(args, 'category'),
-      systemPrompt: str(args, 'systemPrompt'),
-    }),
+  handler: async () => {
+    throw new Error(
+      'renderer_exact_confirmation_required: use o editor nativo de agentes',
+    );
+  },
 };
 
 const remoteBridgeTool: McpToolDef = {
@@ -507,11 +545,12 @@ const remoteBridgeTool: McpToolDef = {
       port: { type: 'number' },
     },
   },
-  handler: async (args, ctx) =>
+  handler: async (args, ctx, invocation) =>
     runRemoteBridgeToolAction(
       str(args, 'action') ?? 'status',
       num(args, 'port'),
       ctx.scope,
+      invocation,
     ),
 };
 
@@ -523,7 +562,8 @@ const remoteCliDetectTool: McpToolDef = {
     properties: { target: { type: 'string' } },
     required: ['target'],
   },
-  handler: async (args) => detectRemoteClis(requireStr(args, 'target')),
+  handler: async (args, _ctx, invocation) =>
+    detectRemoteClis(requireStr(args, 'target'), invocation),
 };
 
 const remoteTmuxListTool: McpToolDef = {
@@ -534,7 +574,8 @@ const remoteTmuxListTool: McpToolDef = {
     properties: { target: { type: 'string' } },
     required: ['target'],
   },
-  handler: async (args) => listRemoteTmuxSessions(requireStr(args, 'target')),
+  handler: async (args, _ctx, invocation) =>
+    listRemoteTmuxSessions(requireStr(args, 'target'), invocation),
 };
 
 const remoteSpawnTool: McpToolDef = {
@@ -556,14 +597,25 @@ const remoteSpawnTool: McpToolDef = {
     },
     required: ['target', 'cli'],
   },
-  handler: async (args) =>
-    createRemoteTmuxSession({
-      target: requireStr(args, 'target'),
-      cwd: str(args, 'cwd'),
-      cli: requireStr(args, 'cli') as 'claude' | 'codex' | 'agy' | 'kimi',
-      sessionName: str(args, 'sessionName'),
-      prompt: str(args, 'prompt'),
-    }),
+  handler: async (args, _ctx, invocation) => {
+    const result = await createRemoteTmuxSession(
+      {
+        target: requireStr(args, 'target'),
+        cwd: str(args, 'cwd'),
+        cli: requireStr(args, 'cli') as 'claude' | 'codex' | 'agy' | 'kimi',
+        sessionName: str(args, 'sessionName'),
+        prompt: str(args, 'prompt'),
+      },
+      {
+        signal: invocation?.signal,
+        assertCurrentAuthority: invocation?.assertCurrentAuthority,
+      },
+    );
+    if (!result.ok) {
+      throw new Error(result.error ?? 'remote tmux spawn failed');
+    }
+    return result;
+  },
 };
 
 const taskTool: McpToolDef = {
@@ -571,8 +623,10 @@ const taskTool: McpToolDef = {
   description:
     'Tracked background work items. action "create" {title, detail?, ' +
     'missionId?, ownership?, dependsOn?}, "update" {taskId, status?, detail?}, ' +
-    '"list" {missionId?}, "plan" {missionId, tasks[]} emits ownership+dependsOn ' +
-    'contract (sequential chain when ownership unknown).',
+    '"list" {missionId?}, "plan" {missionId, tasks:[{id,title,detail,' +
+    'agentRef,category,executionMode,ownership,dependsOn}]} seals one immutable ' +
+    'plan to the current squad roster. isolated_worktree requires owned files; ' +
+    'read_only is restricted to scout/reviewer.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -595,12 +649,27 @@ const taskTool: McpToolDef = {
     required: ['action'],
   },
   handler: async (args, ctx) => {
-    const tasks = getProjectDomainStores(ctx.scope).tasks;
+    const suite = getProjectDomainStores(ctx.scope);
+    const tasks = suite.tasks;
     switch (args.action) {
       case 'create': {
         const missionId = str(args, 'missionId') ?? ctx.missionId;
         if (missionId) {
           if (ctx.role === 'worker') throw new Error('only an orchestrator can define the mission plan');
+          const mission = suite.missions.get(missionId);
+          if (
+            mission?.status === 'running' &&
+            mission.intentContract?.lane === 'standard'
+          ) {
+            throw new Error(
+              'task_plan_required: missão standard/running aceita somente UMA chamada nexus_task plan; não crie task avulsa',
+            );
+          }
+          if (isTaskQueueManagedMission(suite, missionId)) {
+            throw new Error(
+              'task_dispatcher_authority: o plano durável já existe; liste as tasks em vez de criar dispatch manual',
+            );
+          }
           if (requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId).length > 0) {
             throw new Error('mission task plan is sealed after the first worktree allocation');
           }
@@ -662,121 +731,26 @@ const taskTool: McpToolDef = {
           missionId,
         });
       }
-      case 'plan': {
-        if (ctx.role === 'worker') {
-          throw new Error('only an orchestrator can plan mission tasks');
-        }
-        const missionId = str(args, 'missionId') ?? ctx.missionId;
-        if (!missionId) throw new Error('missionId is required for plan');
-        if (requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId).length > 0) {
-          throw new Error('mission task plan is sealed after the first worktree allocation');
-        }
-        const rawTasks = Array.isArray(args.tasks) ? args.tasks : [];
-        if (rawTasks.length === 0) throw new Error('tasks[] is required for plan');
-        if (rawTasks.length > 64) throw new Error('at most 64 tasks per plan');
-        const inputs = rawTasks.map((raw, index) => {
-          if (!raw || typeof raw !== 'object') {
-            throw new Error(`invalid task at index ${index}`);
-          }
-          const row = raw as {
-            id?: unknown;
-            title?: unknown;
-            detail?: unknown;
-            ownership?: {
-              files?: unknown;
-              symbols?: unknown;
-              domains?: unknown;
-            };
-            dependsOn?: unknown;
-          };
-          const id =
-            typeof row.id === 'string' && row.id.trim().length > 0
-              ? row.id.trim()
-              : `task-${index + 1}`;
-          const title =
-            typeof row.title === 'string' && row.title.trim().length > 0
-              ? row.title.trim()
-              : id;
-          const ownershipFiles = Array.isArray(row.ownership?.files)
-            ? row.ownership!.files!.filter(
-                (f): f is string => typeof f === 'string',
-              )
-            : [];
-          const ownership =
-            ownershipFiles.length > 0
-              ? {
-                  files: ownershipFiles,
-                  symbols: Array.isArray(row.ownership?.symbols)
-                    ? row.ownership!.symbols!.filter(
-                        (s): s is string => typeof s === 'string',
-                      )
-                    : [],
-                  domains: Array.isArray(row.ownership?.domains)
-                    ? row.ownership!.domains!.filter(
-                        (d): d is string => typeof d === 'string',
-                      )
-                    : [],
-                }
-              : undefined;
-          const dependsOn = Array.isArray(row.dependsOn)
-            ? row.dependsOn.filter((d): d is string => typeof d === 'string')
-            : undefined;
-          return {
-            id,
-            title,
-            detail: typeof row.detail === 'string' ? row.detail : '',
-            ownership,
-            dependsOn,
-          };
-        });
-        const planned = emitPlannedTasksWithContract(inputs);
-        // Create first so store ids exist, then remap dependsOn planner ids → store ids.
-        const createdDraft = planned.map((p) =>
-          tasks.create({
-            title: p.title,
-            missionId,
-            detail: p.detail,
-          }),
-        );
-        const idMap = new Map(
-          planned.map((p, i) => [p.id, createdDraft[i]!.id] as const),
-        );
-        const created = planned.map((p, i) => {
-          const storeId = createdDraft[i]!.id;
-          const dependsOn = p.dependsOn
-            .map((dep) => idMap.get(dep) ?? dep)
-            .filter((dep) => dep !== storeId);
-          const detail = encodeTaskScheduleDetail(p.detail, {
-            dependsOn,
-            ownership: p.ownership,
-            merged: false,
-            parallelEligible: p.parallelEligible,
-          });
-          return (
-            tasks.update(storeId, { detail }) ?? {
-              ...createdDraft[i]!,
-              detail,
-            }
-          );
-        });
-        return Object.freeze({
-          missionId,
-          tasks: created,
-          planned: planned.map((p, i) =>
-            Object.freeze({
-              plannerId: p.id,
-              taskId: created[i]!.id,
-              dependsOn: p.dependsOn
-                .map((dep) => idMap.get(dep) ?? dep)
-                .filter((dep) => dep !== created[i]!.id),
-              ownership: p.ownership,
-              parallelEligible: p.parallelEligible,
-            }),
-          ),
-        });
-      }
+      case 'plan':
+        return planMissionTasks(args, ctx, suite);
       case 'update': {
-        const updated = tasks.update(requireStr(args, 'taskId'), {
+        const taskId = requireStr(args, 'taskId');
+        const existing = tasks.list().find((task) => task.id === taskId);
+        if (tasks.getPlannedTask(taskId)) {
+          throw new Error(
+            'task_plan_immutable: task selada só pode avançar pelo dispatcher Nexus e pelo handoff do worker',
+          );
+        }
+        if (
+          str(args, 'status') !== undefined &&
+          existing?.missionId &&
+          isTaskQueueManagedMission(suite, existing.missionId)
+        ) {
+          throw new Error(
+            'task_dispatcher_authority: status de task planejada é exclusivo do motor Nexus; envie o handoff',
+          );
+        }
+        const updated = tasks.update(taskId, {
           status: str(args, 'status') as
             | 'pending'
             | 'running'
@@ -789,8 +763,13 @@ const taskTool: McpToolDef = {
         if (!updated) throw new Error('task not found');
         return updated;
       }
-      case 'list':
-        return tasks.list(str(args, 'missionId') ?? ctx.missionId);
+      case 'list': {
+        const requestedMission = str(args, 'missionId');
+        const missionId = ctx.role === 'worker'
+          ? ctx.missionId
+          : (requestedMission ?? ctx.missionId);
+        return tasks.list(missionId);
+      }
       default:
         throw new Error(`unknown action: ${String(args.action)}`);
     }
@@ -854,10 +833,11 @@ const clarifyTool: McpToolDef = {
   name: 'nexus_clarify',
   description:
     'Ask the user ONE clarifying question with 2-6 suggestion chips instead ' +
-    'of a vague free-text prompt. Returns {question, chips:[{id,label}], ' +
-    'allowFreeform} — present the chips to the user; when they reply, route ' +
-    'their answer with the chip id/label/number. Use before spawning work ' +
-    'when a decision is genuinely ambiguous — not for confirmations.',
+    'of a vague free-text prompt. The Nexus main process persists the question ' +
+    'and shows its chips in the mission rail; the scoped operator answer is ' +
+    'delivered back as an accepted handoff. Returns {missionId, questionId, ' +
+    'question, chips, allowFreeform}. Use before spawning work when a decision ' +
+    'is genuinely ambiguous — not for confirmations.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -874,16 +854,19 @@ const clarifyTool: McpToolDef = {
     },
     required: ['question', 'options'],
   },
-  handler: async (args) => {
+  handler: async (args, ctx) => {
     const question = requireStr(args, 'question');
     const options = strArray(args, 'options');
     const allowFreeformRaw = args.allowFreeform;
-    return buildClarify({
-      question,
-      options,
-      allowFreeform:
-        typeof allowFreeformRaw === 'boolean' ? allowFreeformRaw : undefined,
-    });
+    return emitClarifyQuestion(
+      ctx,
+      buildClarify({
+        question,
+        options,
+        allowFreeform:
+          typeof allowFreeformRaw === 'boolean' ? allowFreeformRaw : undefined,
+      }),
+    );
   },
 };
 
@@ -915,12 +898,13 @@ const routeLogTool: McpToolDef = {
 const routeTaskTool: McpToolDef = {
   name: 'nexus_route_task',
   description:
-    'Decide the best cost/capability route for a task before spawning it. ' +
+    'Mission-orchestrator-only: reserve the best cost/capability route for a task before spawning it. ' +
     'The decision is resolved against the current installed provider and model ' +
     'catalog, never against model names remembered by the orchestrator. Classifies the task ' +
     '(trivial|easy|medium|hard|critical) and returns {tier, adapterId, ' +
-    'model, effort, reason, alternatives}: pass adapterId/model/effort ' +
-    'straight into nexus_pane_spawn. Call it for every delegation and trust the ' +
+    'model, effort, reason, alternatives, routeReservationId, routeReservationExpiresAt}: ' +
+    'for a mission, pass routeReservationId and adapterId/model/effort straight ' +
+    'into nexus_pane_spawn. Call it for every delegation and trust the ' +
     'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook. ' +
     'When spawning a roster agent whose cli is omp, keep adapterId=omp (roster sticky) even if this tool returns another provider.',
   inputSchema: {
@@ -944,7 +928,7 @@ const routeTaskTool: McpToolDef = {
       missionId: {
         type: 'string',
         description:
-          'Optional mission id — enables diversity routing (prefer unused CLIs / omp)',
+          'Current orchestrator mission id; when supplied it must match the bound mission',
       },
       preferAdapters: {
         type: 'array',
@@ -955,6 +939,17 @@ const routeTaskTool: McpToolDef = {
     required: ['task'],
   },
   handler: async (args, ctx) => {
+    if (ctx.role !== 'orchestrator') {
+      throw new Error(
+        'route_task delegation authority is reserved to the mission orchestrator',
+      );
+    }
+    const missionId = childMissionId(ctx, str(args, 'missionId'));
+    if (missionId) {
+      const mission = getProjectDomainStores(ctx.scope).missions.get(missionId);
+      if (!mission) throw new Error(`mission not found: ${missionId}`);
+      assertCurrentMissionOrchestratorSession(ctx, mission);
+    }
     const task = requireStr(args, 'task');
     const tierRaw = str(args, 'tier');
     const tier = TIERS.includes(tierRaw as TaskTier)
@@ -999,9 +994,6 @@ const routeTaskTool: McpToolDef = {
       quotaFallbackNote = `; quota auto-exclude reverted, all candidates cooling: ${quotaExcluded.join(',')}`;
     }
     const settings = getOrchSettings();
-    const missionId =
-      str(args, 'missionId') ??
-      (typeof ctx.missionId === 'string' ? ctx.missionId : undefined);
     let missionAdapterIds: string[] | undefined;
     if (missionId) {
       try {
@@ -1050,20 +1042,31 @@ const routeTaskTool: McpToolDef = {
       effort: decision.effort,
       reason: decision.reason,
     });
-    return decision;
+    if (!missionId) return decision;
+    const reservation = getProjectDomainStores(ctx.scope)
+      .missions.reserveRouteDecision(missionId, task, decision);
+    return {
+      ...decision,
+      routeReservationId: reservation.id,
+      routeReservationExpiresAt: reservation.expiresAt,
+    };
   },
 };
 
 const cronTool: McpToolDef = {
   name: 'nexus_cron',
   description:
-    'Agendar squads/agentes: action "create" {name, schedule (cron 5 campos ' +
+    'Persistir definições de agenda (grant explícito + consentimento por mutação): ' +
+    'action "create" {name, schedule (cron 5 campos ' +
     '"min hora dom mês dow"), brief, workspacePath?, agentName? XOR squadId?, ' +
     'executionMode?: "shared" | "local"}. Shared é o padrão e exige lease ' +
     'remoto; local só existe quando solicitado explicitamente. ' +
     '"list", "update" {id, campos}, "delete" {id}. Shared usa definição ' +
-    'portátil versionada com conflito CAS explícito. O job dispara o brief no horário; atraso > 5min ' +
-    '(laptop fechado) é pulado, sem catch-up em rajada.',
+    'portátil versionada com conflito CAS explícito. Jobs criados/reaprovados com ' +
+    'consentimento exato entram pelo bootstrap main-owned; jobs legados/importados ' +
+    'sem autoridade ficam fail-closed e devem ser recriados. Toda execução atravessa ' +
+    'missão selada, RouteReservation/roster sticky, kickoff e handoff. ' +
+    'Atraso > 5min (laptop fechado) é pulado, sem catch-up em rajada.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1080,7 +1083,8 @@ const cronTool: McpToolDef = {
     },
     required: ['action'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     switch (args.action) {
       case 'create': {
         const agentName = str(args, 'agentName');
@@ -1096,7 +1100,7 @@ const cronTool: McpToolDef = {
         ) {
           throw new Error('executionMode deve ser "shared" ou "local"');
         }
-        return await addCronJob({
+        const created = await addCronJob({
           name: requireStr(args, 'name'),
           schedule: requireStr(args, 'schedule'),
           brief: requireStr(args, 'brief'),
@@ -1104,10 +1108,11 @@ const cronTool: McpToolDef = {
           executionMode: requestedMode ?? 'shared',
           agentName,
           squadId,
-        }, ctx.scope);
+        }, ctx.scope, invocation);
+        assertMcpInvocationCurrent(invocation);
+        return created;
       }
       case 'list':
-        await syncCronJobsForScope(ctx.scope);
         return listCronJobs(ctx.scope);
       case 'update': {
         const status = str(args, 'status');
@@ -1118,7 +1123,7 @@ const cronTool: McpToolDef = {
         ) {
           throw new Error('status deve ser active ou paused');
         }
-        return await updateCronJob(
+        const updated = await updateCronJob(
           requireStr(args, 'id'),
           {
             name: str(args, 'name'),
@@ -1130,12 +1135,20 @@ const cronTool: McpToolDef = {
             status,
           },
           ctx.scope,
+          invocation,
         );
+        assertMcpInvocationCurrent(invocation);
+        return updated;
       }
-      case 'delete':
-        return {
-          deleted: await deleteCronJob(requireStr(args, 'id'), ctx.scope),
-        };
+      case 'delete': {
+        const deleted = await deleteCronJob(
+          requireStr(args, 'id'),
+          ctx.scope,
+          invocation,
+        );
+        assertMcpInvocationCurrent(invocation);
+        return { deleted };
+      }
       default:
         throw new Error(`unknown action: ${String(args.action)}`);
     }

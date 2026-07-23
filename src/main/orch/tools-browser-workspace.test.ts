@@ -14,6 +14,7 @@ const stubs = vi.hoisted(() => ({
     (): Array<{ id: string; dir: string; url: string }> => [],
   ),
   requestBrowserPane: vi.fn(async () => ({ ok: true, paneId: 'browser-1' })),
+  requestPaneClose: vi.fn(async () => true),
   loadBrowser: vi.fn(async () => ({ url: 'https://example.com' })),
   captureBrowserScreenshot: vi.fn(async () => ({ path: '/runtime/shot.png' })),
 }));
@@ -37,7 +38,10 @@ vi.mock('../browser/browser-manager', () => ({
   waitForBrowser: vi.fn(),
 }));
 vi.mock('../perf/perf-ipc', () => ({ collectPerfSnapshot: vi.fn() }));
-vi.mock('./pane-registry', () => ({ requestBrowserPane: stubs.requestBrowserPane }));
+vi.mock('./pane-registry', () => ({
+  requestBrowserPane: stubs.requestBrowserPane,
+  requestPaneClose: stubs.requestPaneClose,
+}));
 vi.mock('./tool-util', () => ({
   authorizePaneRef: vi.fn(),
   num: (args: Record<string, unknown>, key: string) =>
@@ -68,13 +72,18 @@ describe('preview tool workspace confinement', () => {
     vi.clearAllMocks();
     stubs.resolveCwdForScope.mockReturnValue('/workspace/a/dist');
     stubs.requestBrowserPane.mockResolvedValue({ ok: true, paneId: 'browser-1' });
+    stubs.requestPaneClose.mockResolvedValue(true);
   });
 
   it('serves only the canonical directory resolved inside the captured scope', async () => {
     const tool = buildBrowserTools().find((item) => item.name === 'nexus_preview_start')!;
     await tool.handler({ dir: 'dist' }, context);
     expect(stubs.resolveCwdForScope).toHaveBeenCalledWith(scope, 'dist');
-    expect(stubs.startPreview).toHaveBeenCalledWith('/workspace/a/dist', scope);
+    expect(stubs.startPreview).toHaveBeenCalledWith(
+      '/workspace/a/dist',
+      scope,
+      undefined,
+    );
   });
 
   it('never starts a preview when the directory escapes the workspace', async () => {
@@ -98,6 +107,34 @@ describe('preview tool workspace confinement', () => {
     );
   });
 
+  it('closes a newly created blank pane when caller authority expires before navigation', async () => {
+    let resolvePane!: (value: { ok: true; paneId: string }) => void;
+    stubs.requestBrowserPane.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePane = resolve;
+      }),
+    );
+    let current = true;
+    const tool = buildBrowserTools().find(
+      (item) => item.name === 'nexus_browser_open',
+    )!;
+    const pending = tool.handler(
+      { url: 'https://example.com' },
+      context,
+      {
+        assertCurrentAuthority: () => {
+          if (!current) throw new Error('session_authority_revoked');
+        },
+      },
+    );
+    current = false;
+    resolvePane({ ok: true, paneId: 'browser-revoked' });
+
+    await expect(pending).rejects.toThrow('session_authority_revoked');
+    expect(stubs.loadBrowser).not.toHaveBeenCalled();
+    expect(stubs.requestPaneClose).toHaveBeenCalledWith('browser-revoked');
+  });
+
   it('binds screenshot artifacts to the caller project and mission', async () => {
     const tool = buildBrowserTools().find(
       (item) => item.name === 'nexus_browser_screenshot',
@@ -113,6 +150,10 @@ describe('preview tool workspace confinement', () => {
       'browser-1',
       scope,
       'mission-a',
+      {
+        signal: undefined,
+        assertCurrentAuthority: undefined,
+      },
     );
   });
 

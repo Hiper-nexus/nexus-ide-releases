@@ -1,14 +1,22 @@
 import type { AdapterInfo, PaneModel } from "../../shared/types";
 import type { Squad, SquadAgent } from "../../shared/orch-types";
-import { isAutoDerivedCriterion } from '../../shared/mission-intent';
+import {
+  buildIntentDispatchKickoffPrompt as buildSharedIntentDispatchKickoffPrompt,
+  type IntentDispatchKickoffInput,
+} from '../../shared/mission-dispatch-kickoff';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { QUOTA_HIGH_USAGE_THRESHOLD } from "../../shared/quota-types";
 import { useLayoutStore } from "../state/layout-store";
 import { useHomeStore } from "../state/home-store";
 import { useOrchStore } from "../state/orch-store";
+import { useToastStore } from "../state/toast-store";
 import { listPanes, createPane } from "../lib/split-tree";
 import { getActiveWorkspacePath } from "../state/active-workspace";
-import { getPaneSessionId, waitForSession } from "../terminal/terminal-host";
+import {
+  getPaneSessionId,
+  markPersistedAuthorityOnSpawn,
+  waitForSession,
+} from "../terminal/terminal-host";
 import {
   hasOrchestratorMcpRoute,
   isOrchestratorCapableAdapter,
@@ -16,7 +24,6 @@ import {
 } from "./orchestrator-runtime";
 import {
   conflictingOrchestratorPanes,
-  killConflictingOrchestrators,
 } from "./mission-auth-conflict";
 
 /**
@@ -51,8 +58,6 @@ export {
   killConflictingOrchestrators,
   sharedAuthFamily,
 } from "./mission-auth-conflict";
-const BOOT_IDLE_TIMEOUT_MS = 15_000;
-const PASTE_SETTLE_MS = 250;
 /**
  * Cold orientation builds scan the whole repo and can take far longer than a
  * CLI boot. The kickoff already has a "mapa aquecendo" fallback, so never hold
@@ -95,23 +100,6 @@ export function launchLibrePanes(
   });
   useHomeStore.getState().hide();
   useLayoutStore.getState().setPanes(panes);
-}
-
-/** Resolve on the CLI's first idle (booted, waiting for input) or timeout. */
-function waitFirstIdle(sessionId: string): Promise<void> {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      unsub();
-      resolve();
-    };
-    const unsub = window.nexus.pty.onStateChange(sessionId, (state) => {
-      if (state === "idle") finish();
-    });
-    setTimeout(finish, BOOT_IDLE_TIMEOUT_MS);
-  });
 }
 
 function rosterBlock(agents: SquadAgent[]): string {
@@ -191,14 +179,10 @@ export function buildMissionKickoffPrompt(
       '"rodar o doctor" ou "mapear o repo" — faça você. Multi-projeto e multi-PC ' +
       "já estão no scope/checkout do token.\n" +
       "### Rota de WIP — não bloqueie em checkout sujo\n" +
-      "Se Doctor/freeze informar checkout sujo ou `clean committed checkout`, " +
-      "NUNCA peça `git stash`, reset, checkout ou limpeza ao usuário. Use a rota " +
-      "de delegação pré-contrato: nexus_route_task e nexus_pane_spawn/" +
-      "nexus_agent_invoke no modo `same_checkout`. O host preserva o WIP e permite " +
-      "um worker escritor por vez; dê escopo de arquivos claro e aguarde o handoff " +
-      "antes do próximo. Depois do worker, tente Doctor→freeze mais uma vez se o " +
-      "checkout ficou limpo. Se ainda não puder congelar, marque `blocked` com a causa " +
-      "exata — sem executar o trabalho no coordenador e sem fingir conclusão.\n" +
+      "Se Doctor/freeze informar checkout sujo, NUNCA peça stash/reset/limpeza. " +
+      "Registre o plano; o dispatcher main materializa o isolated_worktree declarado " +
+      "(ou uma inspeção read_only mecanicamente confinada), preserva o WIP e bloqueia com CTA se não puder " +
+      "provar uma execução segura. O coordenador não implementa o trabalho.\n" +
       `1. ${step1}. O doctor É o piloto de bootstrap: ` +
       "aquece o mapa, scaffold, propõe drafts com hashes reais e, se houver quorum " +
       "de outro provider, roda review→apply→commit sozinho (sem auto-aprovação). " +
@@ -213,14 +197,14 @@ export function buildMissionKickoffPrompt(
       "Se qualquer tool reportar `context drifted after freeze`, chame " +
       "**nexus_mission_refreeze_contract** (preserva goal/critérios, re-vincula ao " +
       "contexto atual e o workflow revalida a evidência) e continue — drift não é morte.\n" +
-      "3. Registre TODAS as tarefas com nexus_task create (plano sela no 1º worktree). " +
-      "Para cada tarefa: **nexus_worktree_create** (ownership é expandido automaticamente " +
-      "com imports vizinhos), **nexus_route_task**, **nexus_pane_spawn** com adapter/model/effort " +
-      "exatos do router. Paralelo quando independente; em rate limit, re-roteie.\n" +
-      "4. Workers devolvem nexus_handoff_submit (NÃO confiável). Integre só com " +
-      "**nexus_merge_task** + evidências. Bloqueio → nexus_merge_status / nexus_merge_retry " +
-      "com revision exata.\n" +
-      "5. O último merge conduz execution → validação → confirmation → complete. " +
+      "3. Proponha o plano inteiro em UMA chamada `nexus_task plan`; cada task exige " +
+      "agentRef e category exatos do roster, executionMode (isolated_worktree ou read_only), " +
+      "ownership explícito e dependências proporcionais. Depois disso NÃO crie worktree, NÃO chame router, " +
+      "NÃO spawne worker e NÃO faça merge: o dispatcher durável do main reivindica a " +
+      "task, reserva a rota, materializa o checkout, prova o kickoff e integra o handoff.\n" +
+      "4. Acompanhe com `nexus_task list`, `nexus_handoff_list`, workflow e evidências. " +
+      "Worker bloqueado vira status blocked + CTA; não abra uma segunda via manual.\n" +
+      "5. A integração durável conduz execution → validação → confirmation → complete. " +
       "Recuse mudança não trivial sem sensores verdes. Erro de tool: mostre e tente 1 vez.",
   );
   parts.push(
@@ -300,6 +284,8 @@ export interface SquadLaunchOptions {
    * de outra missão ("Clone Overclock" numa missão de dashboards).
    */
   missionTitle?: string;
+  /** Full immediate goal/briefing; native-confirmed and contract-bound. */
+  missionGoal?: string;
 }
 
 export function initialGoalForArmedMission(input: {
@@ -323,155 +309,24 @@ export function squadLaunchDedupeKey(
  * legacy monolithic prompt.
  */
 export function buildIntentDispatchKickoffPrompt(input: {
-  squad: Squad;
-  missionId: string;
-  goal: string;
-  acceptanceCriteria: readonly string[];
-  risk: string;
-  maxWorkers: number;
-  /** Optional compact memory block (mission ledger) — never a full playbook. */
-  compactMemoryMarkdown?: string | null;
-  /** standard = PREVC; consult = read-only; plan = design-only plan.md; ops = infra sem PREVC. */
-  lane?: 'standard' | 'consult' | 'plan' | 'ops';
-  /** Título real da missão — sobrepõe o nome do squad no heading quando o
-   * squad foi reusado de outra missão. */
-  missionTitle?: string;
+  squad: IntentDispatchKickoffInput['squad'];
+  missionId: IntentDispatchKickoffInput['missionId'];
+  goal: IntentDispatchKickoffInput['goal'];
+  acceptanceCriteria: IntentDispatchKickoffInput['acceptanceCriteria'];
+  risk: IntentDispatchKickoffInput['risk'];
+  maxWorkers: IntentDispatchKickoffInput['maxWorkers'];
+  attachmentPaths?: IntentDispatchKickoffInput['attachmentPaths'];
+  compactMemoryMarkdown?: IntentDispatchKickoffInput['compactMemoryMarkdown'];
+  lane?: IntentDispatchKickoffInput['lane'];
+  missionTitle?: IntentDispatchKickoffInput['missionTitle'];
 }): string {
-  const headingTitle = input.missionTitle?.trim() || input.squad.name;
-  // The auto-derived criterion is a restated slice of the goal; the goal is
-  // already the section above, so repeating it only inflates the kickoff.
-  const explicitCriteria = input.acceptanceCriteria.filter(
-    (c) => !isAutoDerivedCriterion(c),
-  );
-  const criteria =
-    explicitCriteria.length > 0
-      ? explicitCriteria.map((c) => `- ${c}`).join('\n')
-      : '- Objetivo acima concluído e validado pelo PREVC';
-  const compact =
-    input.compactMemoryMarkdown && input.compactMemoryMarkdown.trim()
-      ? ['', input.compactMemoryMarkdown.trim(), '']
-      : [''];
-  const lane = input.lane ?? 'standard';
-  if (lane === 'consult') {
-    return [
-      input.squad.orchestratorInstructions.trim(),
-      `# Missão de consulta (read-only) — ${headingTitle}`,
-      `missionId=${input.missionId}`,
-      `lane=consult`,
-      '',
-      '## Objetivo (contrato de intenção)',
-      input.goal.trim(),
-      '',
-      '## Critérios de aceite',
-      criteria,
-      ...compact,
-      `## Risco: ${input.risk}`,
-      '',
-      '## CONTRATO CONSULT — investigação somente leitura',
-      '- A missão JÁ está despachada. NÃO chame nexus_mission_create.',
-      '- Esta lane NÃO é PREVC de alteração de código: sem worktrees, sem multi-worker escritor, sem merge de código.',
-      '- Investigue com tools de leitura (status, logs, doctor sob demanda). Não edite o checkout principal.',
-      '- Ao concluir, registre um learning note durável (nexus_mission_get / learnings ≥ 40 caracteres) e só então use status=done da lane consult.',
-      '- Se o ambiente não estiver pronto ou a consulta não puder começar, use status=blocked com causa. Se a execução falhou, use status=failed. Nunca finja green de código.',
-      '- Fale em português claro sobre achados e bloqueios.',
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }
-  if (lane === 'plan') {
-    return [
-      input.squad.orchestratorInstructions.trim(),
-      `# Missão de plano (design) — ${headingTitle}`,
-      `missionId=${input.missionId}`,
-      `lane=plan`,
-      '',
-      '## Objetivo (contrato de intenção)',
-      input.goal.trim(),
-      '',
-      '## Critérios de aceite',
-      criteria,
-      ...compact,
-      `## Risco: ${input.risk}`,
-      '',
-      '## CONTRATO PLAN — design antes de código',
-      '- A missão JÁ está despachada. NÃO chame nexus_mission_create.',
-      '- Escreva o plano com nexus_plan_write (ou file_write em plan.md / docs/plan.md apenas).',
-      '- Sem worktrees, terminal, merge, ou edições de código fora do plan.md.',
-      '- Use tools de leitura (code_map, git_status, file_read) para embasar o desenho.',
-      '- Ao terminar: nexus_handoff_submit com resumo do plan.md. O operador promove a lane no MissionRail (▶ Executar plano) — você NÃO sai do plan mode sozinho.',
-      '- Fale em português claro: contexto, abordagem, arquivos, riscos, verificação.',
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }
-  if (lane === 'ops') {
-    return [
-      input.squad.orchestratorInstructions.trim(),
-      `# Missão de operação (infra) — ${headingTitle}`,
-      `missionId=${input.missionId}`,
-      `lane=ops`,
-      '',
-      '## Objetivo (contrato de intenção)',
-      input.goal.trim(),
-      '',
-      '## Critérios de aceite',
-      criteria,
-      ...compact,
-      `## Risco: ${input.risk}`,
-      '',
-      '## CONTRATO OPS — infra/operação sem PREVC de código',
-      '- A missão JÁ está despachada. NÃO chame nexus_mission_create nem nexus_mission_freeze_contract — esta lane NÃO usa contrato PREVC congelado.',
-      '- Execute a operação direto no orquestrador com nexus_terminal_run / nexus_bg_run (SSH, deploy, backup, DNS, subir/pausar app) e tools de browser/mídia quando preciso.',
-      '- Esta lane NÃO altera código do repo: sem editor/file_write, git add/commit/branch, worktree, merge ou spawn de workers. Se o objetivo exigir mudança de código, use status=blocked explicando que a missão precisa ser reaberta como standard.',
-      '- Tarefas longas (deploy, backup): nexus_bg_run + nexus_bg_wait / nexus_bg_kill — não bloqueie o turno com terminal_run eterno.',
-      '- Ao concluir, registre uma nota durável do que foi executado (≥ 40 caracteres via note=… em nexus_mission_set_status) e só então use status=done. Se o ambiente não estiver pronto, use status=blocked com causa; se falhou, status=failed.',
-      '- Fale em português claro sobre o que foi executado e o resultado.',
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }
-  return [
-    input.squad.orchestratorInstructions.trim(),
-    `# Missão autorizada — ${headingTitle}`,
-    `missionId=${input.missionId}`,
-    `lane=standard`,
-    '',
-    '## Objetivo (contrato de intenção)',
-    input.goal.trim(),
-    '',
-    '## Critérios de aceite',
-    criteria,
-    ...compact,
-    `## Risco: ${input.risk}`,
-    `## Limite de workers: ${input.maxWorkers}`,
-    '',
-    `## Especialistas disponíveis\n${rosterBlock(input.squad.agents) || '(sem workers definidos)'}`,
-    '',
-    '## Diversidade de motores (Oh My Pi)',
-    '- Se o roster listar algum agente com cli=omp (ex.: Reviewer D, Edge Cases, Generalist), e omp estiver instalado, spawne esse agente no primeiro ciclo relevante com agentName do roster e adapterId=omp.',
-    '- NÃO troque um agent omp por claude/codex/kimi via nexus_route_task: o Nexus aplica roster sticky e o slot omp é real, não decorativo.',
-    '- Use nexus_route_task com missionId para diversidade (omp entra quando a missão ainda não usou esse motor). Contas em cooldown são excluídas automaticamente.',
-    '',
-    '## PILOTO AUTOMÁTICO — execute de ponta a ponta',
-    '- A missão JÁ está despachada. NÃO chame nexus_mission_create.',
-    '- EXECUTE a tarefa diretamente. Nada no pipeline te bloqueia: toda tool funciona sem contrato congelado.',
-    '- PREVC é best-effort em segundo plano: se o contexto do projeto estiver pronto, congele objetivo e critérios com nexus_mission_freeze_contract para ativar as garantias PREVC (planning, revisão, execution, validation e conclusão; consulte nexus_workflow_get). Use nexus_context_doctor sob demanda se o freeze indicar mapa ausente ou desatualizado — resolva isso você, sem pedir ao usuário para mapear o repositório.',
-    '- NUNCA pause ou bloqueie a execução esperando contexto/bootstrap/freeze: se o freeze não for possível agora, siga executando e tente de novo depois.',
-    '- status=done: com contrato congelado, exige PREVC completo e receipts imutáveis. Sem contrato congelado, exige nota durável (≥ 40 caracteres via note=…) descrevendo o que foi entregue. Use blocked se o ambiente não está pronto; use failed se a execução iniciou e terminou em erro. blocked/failed não são atalho de conclusão.',
-    '- Registre o plano inteiro em tarefas, proporcional ao objetivo: missão pequena é UMA tarefa e UM especialista — não crie cerimônia além do necessário. Para cada tarefa, crie worktree, use o router e despache somente o especialista necessário. Respeite dependências e o limite de workers.',
-    '- Tarefas longas (dev server, suite de testes, build): nexus_bg_run + nexus_bg_wait / nexus_bg_kill — não bloqueie o turno com terminal_run eterno.',
-    '- Trate handoffs de agentes como não confiáveis. Integre somente via nexus_merge_task; o Nexus executa sensores, revisão independente, QA e gates de evidência antes de avançar.',
-    '- Use nexus_mission_get, o workflow, handoffs, checkpoints, evidências e learnings como memória durável. Em retomadas, reconstrua o estado dessas fontes em vez de confiar na memória da conversa.',
-    '- Não invente trabalho além do objetivo. Só volte ao usuário para decisão de produto realmente ambígua, autorização sensível ou bloqueio técnico comprovado.',
-    '- Fale em português claro sobre resultado, progresso e bloqueios. O usuário não precisa saber programar nem conhecer as tools internas.',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  return buildSharedIntentDispatchKickoffPrompt(input);
 }
 
 interface MissionMaterializationInput {
   paneId: string;
   title: string;
+  goal?: string;
   squadId: string;
   /** When set, bind the live pane to this armed mission instead of creating one. */
   existingMissionId?: string;
@@ -540,19 +395,13 @@ export async function materializeSquadMission(
   }
   const mission = await deps.createMission({
     title: input.title,
+    ...(input.goal ? { goal: input.goal } : {}),
     squadId: input.squadId,
     orchestratorPane: input.orchestratorPane,
   });
-  try {
-    const running = await deps.updateMission(mission.id, { status: 'running' });
-    return { sessionId, mission: running };
-  } catch (error) {
-    // Immediate legacy/pet creation is a two-IPC materialization. Compensate
-    // the first write if status publication fails so no authorized orphan row
-    // survives without the pane that launchSquadMission is about to kill.
-    await deps.removeMission?.(mission.id).catch(() => undefined);
-    throw error;
-  }
+  // Main creates and publishes the authorized legacy mission atomically. The
+  // renderer cannot promote lifecycle state after the fact.
+  return { sessionId, mission };
 }
 
 /**
@@ -651,11 +500,17 @@ export async function launchSquadMission(
     window.nexus.accounts.list(),
     window.nexus.quota?.snapshot?.().catch(() => null) ?? Promise.resolve(null),
   ]);
-  const configuredAdapterId =
-    options.adapterId ||
-    (profile === 'pet-studio' ? 'codex' : undefined) ||
-    orchDefaults.defaultAdapterId ||
-    FALLBACK_ORCHESTRATOR_ADAPTER_ID;
+  const rosterAdapterId = orchestrator.cli?.trim();
+  const configuredAdapterId = options.existingMissionId
+    ? rosterAdapterId ||
+      (profile === 'pet-studio' ? 'codex' : undefined) ||
+      orchDefaults.defaultAdapterId ||
+      FALLBACK_ORCHESTRATOR_ADAPTER_ID
+    : options.adapterId ||
+      (profile === 'pet-studio' ? 'codex' : undefined) ||
+      orchDefaults.defaultAdapterId ||
+      rosterAdapterId ||
+      FALLBACK_ORCHESTRATOR_ADAPTER_ID;
   const selectedAdapter = adapters.find(
     (adapter) => adapter.id === configuredAdapterId,
   );
@@ -733,25 +588,153 @@ export async function launchSquadMission(
   }
   const runtime = resolveOrchestratorRuntime({
     adapterId: cli,
-    squadModel: orchestrator.cli === cli ? orchestrator.model : undefined,
+    squadModel: rosterAdapterId === cli ? orchestrator.model : undefined,
     defaultModel: orchDefaults.defaultModel,
     defaultAccountId: orchDefaults.defaultAccountId,
     accounts,
   });
   const { model, accountId } = runtime;
 
-  if (options.authorizeDispatch) {
+  /**
+   * Approved intent path: main is the physical launch authority. The renderer
+   * sends only missionId, then presents/adopts the sealed pane identity from
+   * the response. Provider/model/account/cwd from this function are preflight
+   * UX only and never cross the bootstrap IPC boundary.
+   */
+  if (options.existingMissionId) {
+    const { paneMissions, missions } = useOrchStore.getState();
+    if (options.authorizeDispatch) {
+      try {
+        await options.authorizeDispatch();
+      } catch (cause) {
+        return {
+          ok: false,
+          error:
+            cause instanceof Error
+              ? `A missão não foi autorizada: ${cause.message}`
+              : 'A missão não foi autorizada.',
+        };
+      }
+    }
+    const conflicts = conflictingOrchestratorPanes(cli);
+    const killedIds = new Set<string>();
+    const displaced = new Set<string>();
+    for (const pane of conflicts) {
+      const sessionId = getPaneSessionId(pane.id);
+      const missionId =
+        paneMissions[pane.id] ??
+        (sessionId
+          ? missions.find(
+              (mission) => mission.orchestratorSessionId === sessionId,
+            )?.id
+          : undefined);
+      if (!missionId) {
+        return {
+          ok: false,
+          error:
+            'Existe um orquestrador incompatível sem autoridade de missão ' +
+            'resolvida. Feche-o explicitamente antes de iniciar outra missão.',
+        };
+      }
+      displaced.add(missionId);
+    }
+    for (const missionId of displaced) {
+      try {
+        await window.nexus.orch.updateMission(missionId, {
+          status: 'blocked',
+        });
+      } catch (cause) {
+        return {
+          ok: false,
+          error:
+            cause instanceof Error
+              ? `O orquestrador anterior não foi encerrado: ${cause.message}`
+              : 'O orquestrador anterior não foi encerrado.',
+        };
+      }
+    }
+    for (const pane of conflicts) killedIds.add(pane.id);
+
+    let bootstrap: Awaited<
+      ReturnType<typeof window.nexus.orch.bootstrapMissionOrchestrator>
+    >;
     try {
-      await options.authorizeDispatch();
+      bootstrap = await window.nexus.orch.bootstrapMissionOrchestrator({
+        missionId: options.existingMissionId,
+      });
     } catch (cause) {
       return {
         ok: false,
         error:
           cause instanceof Error
-            ? `A missão não foi autorizada: ${cause.message}`
-            : 'A missão não foi autorizada.',
+            ? `A missão não foi iniciada: ${cause.message}`
+            : 'A missão não foi iniciada pelo processo principal.',
       };
     }
+    if (!bootstrap.ok) {
+      return {
+        ok: false,
+        error: `${bootstrap.error} CTA: ${bootstrap.cta}.`,
+      };
+    }
+
+    const sealed = bootstrap.pane;
+    const orchPane: PaneModel = {
+      ...createPane(
+        'cli-agent',
+        sealed.cwd,
+        sealed.adapterId,
+        sealed.model,
+      ),
+      id: sealed.paneId,
+      accountId: sealed.accountId,
+      effort: sealed.effort,
+      title: sealed.title,
+      missionId: bootstrap.missionId,
+      role: 'orchestrator',
+      agentName: sealed.agentName,
+    };
+    markPersistedAuthorityOnSpawn(orchPane.id);
+    useOrchStore.getState().bindPaneMission(orchPane.id, bootstrap.missionId);
+    const existing = listPanes(useLayoutStore.getState().root).filter(
+      (pane) => pane.id !== orchPane.id,
+    );
+    useHomeStore.getState().hide();
+    useLayoutStore.getState().setPanes(
+      panesAfterSquadLaunch(existing, killedIds, orchPane),
+    );
+
+    // Presentation can lag behind the already-running main PTY. Adoption is
+    // best-effort UI attachment; failure never kills or restarts the mission.
+    void waitForSession(orchPane.id).then((adoptedSessionId) => {
+      if (
+        adoptedSessionId &&
+        adoptedSessionId !== sealed.sessionId
+      ) {
+        useToastStore.getState().push(
+          'error',
+          'Pane do orquestrador divergiu',
+          'A missão continua no processo principal; reabra a missão para adotar a sessão correta.',
+        );
+      }
+    });
+    if (!bootstrap.kickoff.accepted) {
+      useToastStore.getState().push('error', 'Kickoff não foi aceito', {
+        detail: bootstrap.kickoff.detail,
+        action: {
+          label: bootstrap.kickoff.cta,
+          onClick: () => {
+            useLayoutStore.getState().focus(orchPane.id);
+            useOrchStore.getState().openPanel('missions');
+          },
+        },
+      });
+    }
+    return {
+      ok: true,
+      paneId: orchPane.id,
+      missionId: bootstrap.missionId,
+    };
   }
 
   // Squad opens with orchestrator pane. Workers are added via MCP as it
@@ -774,18 +757,55 @@ export async function launchSquadMission(
     ...createPane("cli-agent", cwd, cli, model),
     accountId,
     title: `${squad.name} · orq`,
-    orchRequestId: `squad-${squad.id}-${Date.now().toString(36)}`,
     missionId: options.existingMissionId,
     role: "orchestrator" as const,
     agentName: orchestrator.agentName,
   };
+  const immediateMissionTitle =
+    options.missionTitle?.trim() || squad.name;
+  const immediateMissionGoal =
+    options.missionGoal?.trim() || immediateMissionTitle;
+  try {
+    const authorized =
+      await window.nexus.orch.authorizeImmediateSquadLaunch({
+        squadId: squad.id,
+        paneId: orchPane.id,
+        adapterId: cli,
+        model,
+        accountId,
+        effort: orchestrator.effort,
+        missionTitle: immediateMissionTitle,
+        missionGoal: immediateMissionGoal,
+      });
+    orchPane.orchRequestId = authorized.grant;
+  } catch (cause) {
+    return {
+      ok: false,
+      error:
+        cause instanceof Error
+          ? `O lançamento imediato não foi autorizado: ${cause.message}`
+          : "O lançamento imediato não foi autorizado.",
+    };
+  }
   squadLaunchesInFlight.set(launchKey, orchPane.id);
   const { paneMissions, missions } = useOrchStore.getState();
   const existing = listPanes(useLayoutStore.getState().root);
+  if (options.authorizeDispatch) {
+    try {
+      await options.authorizeDispatch();
+    } catch (cause) {
+      squadLaunchesInFlight.delete(launchKey);
+      return {
+        ok: false,
+        error:
+          cause instanceof Error
+            ? `A missão não foi autorizada: ${cause.message}`
+            : 'A missão não foi autorizada.',
+      };
+    }
+  }
   const conflicts = conflictingOrchestratorPanes(cli);
-  const killedIds = new Set(
-    conflicts.length > 0 ? killConflictingOrchestrators(cli) : [],
-  );
+  const killedIds = new Set<string>();
   // Only mark missions blocked when we actually tore down their orch.
   const displaced = new Set<string>();
   for (const pane of conflicts) {
@@ -795,13 +815,17 @@ export async function launchSquadMission(
       (sessionId
         ? missions.find((mission) => mission.orchestratorSessionId === sessionId)?.id
         : undefined);
-    if (mid) displaced.add(mid);
+    if (!mid) {
+      squadLaunchesInFlight.delete(launchKey);
+      return {
+        ok: false,
+        error:
+          'Existe um orquestrador incompatível sem autoridade de missão ' +
+          'resolvida. Feche-o explicitamente antes de continuar.',
+      };
+    }
+    displaced.add(mid);
   }
-
-  useHomeStore.getState().hide();
-  useLayoutStore.getState().setPanes(
-    panesAfterSquadLaunch(existing, killedIds, orchPane),
-  );
 
   // Só confirma sucesso depois que PTY e missão existem. Antes este trecho
   // inteiro rodava em background: timeout/IPC falhava silenciosamente, o
@@ -810,13 +834,19 @@ export async function launchSquadMission(
   let mission: Awaited<ReturnType<typeof window.nexus.orch.createMission>>;
   try {
     for (const missionId of displaced) {
-      await window.nexus.orch
-        .updateMission(missionId, { status: "blocked" })
-        .catch(() => {}); // missão já removida — nada a marcar
+      await window.nexus.orch.updateMission(missionId, {
+        status: "blocked",
+      });
     }
+    for (const pane of conflicts) killedIds.add(pane.id);
+    useHomeStore.getState().hide();
+    useLayoutStore.getState().setPanes(
+      panesAfterSquadLaunch(existing, killedIds, orchPane),
+    );
     const materialized = await materializeSquadMission({
       paneId: orchPane.id,
-      title: options.missionTitle?.trim() || squad.name,
+      title: immediateMissionTitle,
+      goal: immediateMissionGoal,
       squadId: squad.id,
       existingMissionId: options.existingMissionId,
       orchestratorPane: {
@@ -849,30 +879,37 @@ export async function launchSquadMission(
     };
   }
 
-  // Com a autoridade persistida, só a espera pelo idle e a injeção do kickoff
-  // continuam em background.
+  // O renderer só solicita o submit por identidade. O main reconstrói o prompt
+  // canônico do contrato+squad e também possui idle, escrita e prova física.
   void (async () => {
     try {
-      await waitFirstIdle(sessionId);
-      let prompt: string;
-      if (options.goalPrompt && options.existingMissionId) {
-        prompt = options.goalPrompt;
-      } else if (profile === 'pet-studio') {
-        prompt = buildMissionKickoffPrompt(squad, mission.id, null, profile);
-      } else {
-        const orientationMarkdown = await orientationForKickoff(() =>
-          window.nexus.orientation.ensure(),
-        );
-        prompt = buildMissionKickoffPrompt(
-          squad,
-          mission.id,
-          orientationMarkdown,
-          profile,
-        );
+      const result = await window.nexus.orch.submitMissionKickoff({
+        sessionId,
+        missionId: mission.id,
+      });
+      if (!result.accepted) {
+        useToastStore.getState().push('error', 'Kickoff não foi aceito', {
+          detail: result.detail,
+          action: {
+            label: result.cta,
+            onClick: () => {
+              useLayoutStore.getState().focus(orchPane.id);
+              useOrchStore.getState().openPanel('missions');
+            },
+          },
+        });
       }
-      // Bracketed paste keeps multi-line playbooks from submitting line-by-line.
-      window.nexus.pty.write(sessionId, `\x1b[200~${prompt}\x1b[201~`);
-      setTimeout(() => window.nexus.pty.write(sessionId, "\r"), PASTE_SETTLE_MS);
+    } catch (cause) {
+      useToastStore.getState().push('error', 'Kickoff não foi enviado', {
+        detail: cause instanceof Error ? cause.message : 'Falha de autoridade no main.',
+        action: {
+          label: 'Retomar missão',
+          onClick: () => {
+            useLayoutStore.getState().focus(orchPane.id);
+            useOrchStore.getState().openPanel('missions');
+          },
+        },
+      });
     } finally {
       squadLaunchesInFlight.delete(launchKey);
     }

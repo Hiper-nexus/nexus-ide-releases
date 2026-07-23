@@ -8,6 +8,8 @@ import {
   type ReviewReport,
 } from './review-council';
 
+const AUTHORITY_POLL_MS = 50;
+
 export interface AutomatedReviewAuthor {
   readonly id: string;
   readonly sessionId: string;
@@ -37,6 +39,16 @@ export interface AutomatedReviewResult {
   readonly gate: ReviewGateResult;
   readonly reports: readonly ReviewReport[];
   readonly evidenceIds: readonly string[];
+}
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error(
+        typeof signal.reason === 'string'
+          ? signal.reason
+          : 'session_authority_revoked',
+      );
 }
 
 interface ReviewSession {
@@ -132,25 +144,66 @@ export class AutomatedReviewSessionRegistry {
     return report;
   }
 
-  wait(sessionId: string, timeoutMs: number): Promise<AutomatedReviewResult> {
+  wait(
+    sessionId: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    assertCurrentAuthority?: () => void,
+  ): Promise<AutomatedReviewResult> {
     const session = this.#sessions.get(sessionId);
     if (!session) return Promise.reject(new Error('unknown automated review session'));
-    if (session.result) return Promise.resolve(session.result);
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30 * 60_000) {
       return Promise.reject(new Error('invalid automated review timeout'));
     }
+    try {
+      assertCurrentAuthority?.();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (signal?.aborted) return Promise.reject(abortError(signal));
+    if (session.result) return Promise.resolve(session.result);
     return new Promise((resolve, reject) => {
-      const settle = (result: AutomatedReviewResult) => {
+      let authorityTimer: NodeJS.Timeout | null = null;
+      const cleanup = () => {
         clearTimeout(timer);
+        if (authorityTimer) clearInterval(authorityTimer);
+        signal?.removeEventListener('abort', onAbort);
         session.waiters.delete(settle);
+      };
+      const settle = (result: AutomatedReviewResult) => {
+        try {
+          assertCurrentAuthority?.();
+        } catch (error) {
+          cleanup();
+          reject(error);
+          return;
+        }
+        cleanup();
         resolve(result);
       };
+      const onAbort = () => {
+        cleanup();
+        reject(abortError(signal as AbortSignal));
+      };
       const timer = setTimeout(() => {
-        session.waiters.delete(settle);
+        cleanup();
         reject(new Error('automated review timed out'));
       }, timeoutMs);
       timer.unref();
       session.waiters.add(settle);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (assertCurrentAuthority) {
+        authorityTimer = setInterval(() => {
+          try {
+            assertCurrentAuthority();
+          } catch (error) {
+            cleanup();
+            reject(error);
+          }
+        }, AUTHORITY_POLL_MS);
+        authorityTimer.unref();
+      }
+      if (signal?.aborted) onAbort();
     });
   }
 

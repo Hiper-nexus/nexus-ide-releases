@@ -75,4 +75,188 @@ describe('remote-spawn target validation', () => {
     expect(options.env).not.toHaveProperty('NODE_OPTIONS');
     expect(options.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
   });
+
+  it('carries cancellation into SSH and exactly cleans a session revoked after creation', async () => {
+    let revoked = false;
+    harness.execFile
+      .mockImplementationOnce(
+        (
+          _file: string,
+          _args: string[],
+          _options: Record<string, unknown>,
+          callback: (
+            error: Error | null,
+            result: { stdout: string; stderr: string },
+          ) => void,
+        ) => {
+          revoked = true;
+          callback(null, {
+            stdout: 'NEXUS_REMOTE_TMUX_CREATED\n',
+            stderr: '',
+          });
+        },
+      )
+      .mockImplementationOnce(
+        (
+          _file: string,
+          _args: string[],
+          _options: Record<string, unknown>,
+          callback: (
+            error: Error | null,
+            result: { stdout: string; stderr: string },
+          ) => void,
+        ) =>
+          callback(null, {
+            stdout: 'NEXUS_REMOTE_TMUX_CLEANED\n',
+            stderr: '',
+          }),
+      );
+    const controller = new AbortController();
+
+    await expect(
+      createRemoteTmuxSession(
+        {
+          target: 'dev@example.com',
+          cli: 'codex',
+          sessionName: 'nexus-revoked',
+        },
+        {
+          signal: controller.signal,
+          assertCurrentAuthority: () => {
+            if (revoked) throw new Error('session_authority_revoked');
+          },
+        },
+      ),
+    ).rejects.toThrow('session_authority_revoked');
+
+    expect(harness.execFile).toHaveBeenCalledTimes(2);
+    const startArgs = harness.execFile.mock.calls[0]?.[1] as string[];
+    const startOptions = harness.execFile.mock.calls[0]?.[2] as {
+      signal?: AbortSignal;
+    };
+    const cleanupArgs = harness.execFile.mock.calls[1]?.[1] as string[];
+    const startScript = startArgs.at(-1) ?? '';
+    const cleanupScript = cleanupArgs.at(-1) ?? '';
+    const token = startScript.match(
+      /@nexus_spawn_token '([0-9a-f]{48})'/,
+    )?.[1];
+
+    expect(startOptions.signal).toBe(controller.signal);
+    expect(token).toBeTruthy();
+    expect(cleanupScript).toContain(token);
+    expect(cleanupScript).toContain('tmux kill-session');
+  });
+
+  it('fails explicitly when revocation cleanup cannot prove the exact remote exit', async () => {
+    let revoked = false;
+    harness.execFile
+      .mockImplementationOnce(
+        (
+          _file: string,
+          _args: string[],
+          _options: Record<string, unknown>,
+          callback: (
+            error: Error | null,
+            result: { stdout: string; stderr: string },
+          ) => void,
+        ) => {
+          revoked = true;
+          callback(null, {
+            stdout: 'NEXUS_REMOTE_TMUX_CREATED\n',
+            stderr: '',
+          });
+        },
+      )
+      .mockImplementationOnce(
+        (
+          _file: string,
+          _args: string[],
+          _options: Record<string, unknown>,
+          callback: (
+            error: Error | null,
+            result: { stdout: string; stderr: string },
+          ) => void,
+        ) =>
+          callback(new Error('ssh cleanup unavailable'), {
+            stdout: '',
+            stderr: '',
+          }),
+      );
+
+    await expect(
+      createRemoteTmuxSession(
+        {
+          target: 'dev@example.com',
+          cli: 'codex',
+          sessionName: 'nexus-cleanup-unknown',
+        },
+        {
+          assertCurrentAuthority: () => {
+            if (revoked) throw new Error('session_authority_revoked');
+          },
+        },
+      ),
+    ).rejects.toThrow(
+      /effectMayHaveCommitted: remote tmux creation outcome or exact cleanup was not proven/,
+    );
+  });
+
+  it('attempts token-scoped cleanup when the start acknowledgement is lost', async () => {
+    harness.execFile
+      .mockImplementationOnce(
+        (_file, _args, _options, callback) =>
+          callback(null, { stdout: 'unexpected output\n', stderr: '' }),
+      )
+      .mockImplementationOnce(
+        (_file, _args, _options, callback) =>
+          callback(null, {
+            stdout: 'NEXUS_REMOTE_TMUX_CLEANED\n',
+            stderr: '',
+          }),
+      );
+
+    await expect(createRemoteTmuxSession({
+      target: 'dev@example.com',
+      cli: 'codex',
+      sessionName: 'nexus-ack-lost',
+    })).resolves.toMatchObject({
+      ok: false,
+      error: 'remote tmux creation acknowledgement is invalid',
+    });
+    expect(harness.execFile).toHaveBeenCalledTimes(2);
+    expect((harness.execFile.mock.calls[1]?.[1] as string[]).at(-1)).toContain(
+      'tmux kill-session',
+    );
+  });
+
+  it('marks prompt delivery to an adopted session as possibly committed', async () => {
+    harness.execFile
+      .mockImplementationOnce(
+        (_file, _args, _options, callback) =>
+          callback(null, {
+            stdout: 'NEXUS_REMOTE_TMUX_ADOPTED\n',
+            stderr: '',
+          }),
+      )
+      .mockImplementationOnce(
+        (_file, _args, _options, callback) =>
+          callback(new Error('ssh dropped after send-keys'), {
+            stdout: '',
+            stderr: '',
+          }),
+      );
+
+    await expect(createRemoteTmuxSession({
+      target: 'dev@example.com',
+      cli: 'codex',
+      sessionName: 'nexus-adopted',
+      prompt: 'deploy now',
+    })).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        'effectMayHaveCommitted: prompt delivery outcome was not proven',
+      ),
+    });
+    expect(harness.execFile).toHaveBeenCalledTimes(2);
+  });
 });

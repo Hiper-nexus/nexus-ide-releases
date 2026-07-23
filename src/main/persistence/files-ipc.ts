@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { ipcMain } from 'electron';
 import {
@@ -12,6 +11,10 @@ import {
   type ReadFileResult,
 } from '../../shared/files-types';
 import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  DROPPED_ATTACHMENT_MAX_BASE64_CHARS,
+  saveDroppedFile,
+} from './dropped-files';
 import { requireRendererWorkspaceScope } from './renderer-workspace-scope';
 
 /**
@@ -366,40 +369,19 @@ function writeFile(
   }
 }
 
-/**
- * Save pasted/dropped binary data (e.g. an image from the clipboard) into
- * ~/.nexus/dropped and return its absolute path, so it can be injected into a
- * pane's terminal.
- */
-function saveDropped(
-  name: string,
-  base64: string,
-): { ok: boolean; path?: string; error?: string } {
-  try {
-    const dir = path.join(os.homedir(), '.nexus', 'dropped');
-    fs.mkdirSync(dir, { recursive: true });
-    const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80) || 'pasted';
-    const stamped = `${Date.now().toString(36)}-${safeName}`;
-    const file = path.join(dir, stamped);
-    fs.writeFileSync(file, Buffer.from(base64, 'base64'));
-    return { ok: true, path: file };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'save failed' };
-  }
-}
-
 export function registerFilesIpc(hooks: FilesIpcTestHooks = {}): void {
   ipcMain.handle(FILES_CHANNELS.saveDropped, (event, raw) => {
     requireRendererWorkspaceScope(event.sender);
     if (
       !raw ||
       typeof raw.name !== 'string' ||
+      raw.name.length > 512 ||
       typeof raw.base64 !== 'string' ||
-      raw.base64.length > 20_000_000
+      raw.base64.length > DROPPED_ATTACHMENT_MAX_BASE64_CHARS
     ) {
       return { ok: false, error: 'invalid payload' };
     }
-    return saveDropped(raw.name, raw.base64);
+    return saveDroppedFile(raw.name, raw.base64);
   });
 
   ipcMain.handle(FILES_CHANNELS.list, (event, raw) => {

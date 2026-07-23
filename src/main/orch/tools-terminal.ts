@@ -1,4 +1,8 @@
-import type { McpToolDef } from './mcp-protocol';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolDef,
+  type McpToolInvocation,
+} from './mcp-protocol';
 import { requireStr, str } from './tool-util';
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
@@ -18,9 +22,12 @@ import {
 
 interface ActiveProcess {
   proc: ChildProcess;
+  installationId: string;
   projectId: string;
   checkoutId: string;
   rootRealPath: string;
+  ownerToken: string;
+  ownerSessionId: string | null;
   killTree: (signal: NodeJS.Signals) => void;
   killRequested: boolean;
 }
@@ -83,8 +90,20 @@ function isSameCheckout(
   scope: ProjectExecutionScope,
 ): boolean {
   return (
-    entry.projectId === scope.projectId && entry.checkoutId === scope.checkoutId
-    && entry.rootRealPath === scope.rootRealPath
+    entry.installationId === scope.installationId &&
+    entry.projectId === scope.projectId &&
+    entry.checkoutId === scope.checkoutId &&
+    entry.rootRealPath === scope.rootRealPath
+  );
+}
+
+function isSameOwner(entry: ActiveProcess, ctx: {
+  token: string;
+  sessionId?: string;
+}): boolean {
+  return (
+    entry.ownerToken === ctx.token &&
+    entry.ownerSessionId === (ctx.sessionId ?? null)
   );
 }
 
@@ -106,6 +125,17 @@ function signalProcessTree(
       // The process tree already exited.
     }
   }
+}
+
+function revokedError(): Error {
+  return new Error('session_authority_revoked');
+}
+
+function removeInvocationAbortListener(
+  invocation: McpToolInvocation | undefined,
+  listener: () => void,
+): void {
+  invocation?.signal?.removeEventListener('abort', listener);
 }
 
 const terminalRun: McpToolDef = {
@@ -144,7 +174,8 @@ const terminalRun: McpToolDef = {
     },
     required: ['command'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const executionScope = executionScopeFor(ctx);
     const command = requireStr(args, 'command');
     const cwd = resolveCwdForScope(executionScope, str(args, 'cwd'));
@@ -157,45 +188,57 @@ const terminalRun: McpToolDef = {
       rawProfile === 'yolo'
         ? rawProfile
         : undefined;
+    const sandbox = createScopedSandboxHome(executionScope);
+    let plan;
+    try {
+      plan = buildScopedShellPlan({
+        platform: process.platform,
+        command,
+        cwd,
+        rootRealPath: executionScope.rootRealPath,
+        sandboxDir: sandbox.dir,
+        env,
+        sandboxProfile,
+      });
+    } catch (error) {
+      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      throw error;
+    }
 
-    return new Promise<{
-      exitCode: number | null;
-      stdout: string;
-      stderr: string;
-      killed: boolean;
-    }>((resolve, reject) => {
-      const sandbox = createScopedSandboxHome(executionScope);
-      let plan;
-      try {
-        plan = buildScopedShellPlan({
-          platform: process.platform,
-          command,
-          cwd,
-          rootRealPath: executionScope.rootRealPath,
-          sandboxDir: sandbox.dir,
-          env,
-          sandboxProfile,
-        });
-      } catch (error) {
-        fs.rmSync(sandbox.dir, { recursive: true, force: true });
-        reject(error);
-        return;
-      }
-      const proc = spawn(plan.file, plan.args, {
+    let proc: ChildProcess;
+    try {
+      // Linearization point: no process may exist unless the exact MCP
+      // session/intent is still current after all preparation.
+      assertMcpInvocationCurrent(invocation);
+      proc = spawn(plan.file, plan.args, {
         cwd: plan.cwd,
         env: plan.env,
         detached: plan.detached,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+    } catch (error) {
+      fs.rmSync(sandbox.dir, { recursive: true, force: true });
+      throw error;
+    }
+
+    return await new Promise<{
+      exitCode: number | null;
+      stdout: string;
+      stderr: string;
+      killed: boolean;
+    }>((resolve, reject) => {
       const killTree = (signal: NodeJS.Signals) =>
         signalProcessTree(proc, signal);
 
       const id = String(++processCounter);
       activeProcesses.set(id, {
         proc,
-        projectId: ctx.scope.projectId,
-        checkoutId: ctx.scope.checkoutId,
+        installationId: executionScope.installationId,
+        projectId: executionScope.projectId,
+        checkoutId: executionScope.checkoutId,
         rootRealPath: executionScope.rootRealPath,
+        ownerToken: ctx.token,
+        ownerSessionId: ctx.sessionId ?? null,
         killTree,
         killRequested: false,
       });
@@ -203,50 +246,115 @@ const terminalRun: McpToolDef = {
       const stdout: OutputBuffer = { value: '', bytes: 0, truncated: false };
       const stderr: OutputBuffer = { value: '', bytes: 0, truncated: false };
       let killed = false;
+      let authorityRevoked = false;
+      let settled = false;
+      let finalized = false;
+      let forceKillTimer: NodeJS.Timeout | null = null;
+      let timeoutTimer: NodeJS.Timeout | null = null;
+      let teardownProofTimer: NodeJS.Timeout | null = null;
 
-      const timer = setTimeout(() => {
+      const onStdout = (chunk: Buffer) => {
+        if (!authorityRevoked) appendOutput(stdout, chunk);
+      };
+      const onStderr = (chunk: Buffer) => {
+        if (!authorityRevoked) appendOutput(stderr, chunk);
+      };
+      const removeOutputListeners = () => {
+        proc.stdout?.removeListener('data', onStdout);
+        proc.stderr?.removeListener('data', onStderr);
+      };
+      const requestTermination = (revoked: boolean) => {
         killed = true;
+        authorityRevoked ||= revoked;
         const entry = activeProcesses.get(id);
         if (entry) entry.killRequested = true;
+        if (revoked) removeOutputListeners();
         killTree('SIGTERM');
-        // Force kill after 3s if still alive
-        setTimeout(() => {
-          if (proc.exitCode === null) {
-            killTree('SIGKILL');
-          }
-        }, 3000);
-      }, timeoutMs);
-
-      proc.stdout?.on('data', (chunk: Buffer) => {
-        appendOutput(stdout, chunk);
-      });
-      proc.stderr?.on('data', (chunk: Buffer) => {
-        appendOutput(stderr, chunk);
-      });
-
-      proc.on('close', (code) => {
-        clearTimeout(timer);
+        if (!forceKillTimer) {
+          forceKillTimer = setTimeout(() => {
+            if (proc.exitCode === null) {
+              killTree('SIGKILL');
+            }
+          }, 3000);
+          forceKillTimer.unref?.();
+        }
+        if (!teardownProofTimer) {
+          teardownProofTimer = setTimeout(() => {
+            if (finalized || settled) return;
+            settled = true;
+            reject(
+              new Error(
+                authorityRevoked
+                  ? 'session_authority_revoked; physical process exit not proven'
+                  : 'terminal_timeout; physical process exit not proven',
+              ),
+            );
+          }, 5_000);
+          teardownProofTimer.unref?.();
+        }
+      };
+      const onAuthorityRevoked = () => {
+        if (authorityRevoked) return;
+        requestTermination(true);
+      };
+      const finalize = (code: number | null, error?: Error) => {
+        if (finalized) return;
+        finalized = true;
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
+        if (teardownProofTimer) clearTimeout(teardownProofTimer);
+        removeInvocationAbortListener(invocation, onAuthorityRevoked);
+        removeOutputListeners();
         // A shell can exit after daemonizing a child. End the entire detached
         // process group before releasing its private runtime directory.
         killTree(killed ? 'SIGKILL' : 'SIGTERM');
         activeProcesses.delete(id);
-        setTimeout(() => {
+        let cleanupError: Error | undefined;
+        try {
           fs.rmSync(sandbox.dir, { recursive: true, force: true });
+        } catch (cause) {
+          cleanupError =
+            cause instanceof Error ? cause : new Error(String(cause));
+        }
+        if (settled) return;
+        settled = true;
+        if (authorityRevoked) {
+          reject(revokedError());
+        } else if (error) {
+          reject(error);
+        } else if (cleanupError) {
+          reject(cleanupError);
+        } else {
           resolve({
             exitCode: code,
             stdout: stdout.value,
             stderr: stderr.value,
             killed,
           });
-        }, killed ? 25 : 0);
-      });
+        }
+      };
 
-      proc.on('error', (err) => {
-        clearTimeout(timer);
-        activeProcesses.delete(id);
-        fs.rmSync(sandbox.dir, { recursive: true, force: true });
-        reject(err);
-      });
+      proc.stdout?.on('data', onStdout);
+      proc.stderr?.on('data', onStderr);
+      proc.once('close', (code) => finalize(code));
+      proc.once('error', (error) => finalize(null, error));
+
+      timeoutTimer = setTimeout(() => requestTermination(false), timeoutMs);
+      timeoutTimer.unref?.();
+      invocation?.signal?.addEventListener(
+        'abort',
+        onAuthorityRevoked,
+        { once: true },
+      );
+      if (invocation?.signal?.aborted) {
+        onAuthorityRevoked();
+      } else {
+        try {
+          assertMcpInvocationCurrent(invocation);
+        } catch {
+          onAuthorityRevoked();
+        }
+      }
     });
   },
 };
@@ -266,7 +374,8 @@ const terminalKill: McpToolDef = {
       },
     },
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const pid = str(args, 'processId');
     if (pid) {
       const entry = activeProcesses.get(pid);
@@ -276,6 +385,10 @@ const terminalKill: McpToolDef = {
       if (!isSameCheckout(entry, executionScopeFor(ctx))) {
         throw new Error('not authorized: process belongs to another project checkout');
       }
+      if (!isSameOwner(entry, ctx)) {
+        throw new Error('not authorized: process belongs to another MCP session');
+      }
+      assertMcpInvocationCurrent(invocation);
       entry.killRequested = true;
       entry.killTree('SIGTERM');
       return { killed: true, processId: pid };
@@ -286,9 +399,14 @@ const terminalKill: McpToolDef = {
     }
     const latest = [...activeProcesses.entries()]
       .reverse()
-      .find(([, entry]) => isSameCheckout(entry, executionScopeFor(ctx)));
+      .find(
+        ([, entry]) =>
+          isSameCheckout(entry, executionScopeFor(ctx)) &&
+          isSameOwner(entry, ctx),
+      );
     if (latest) {
       const [lastId, entry] = latest;
+      assertMcpInvocationCurrent(invocation);
       entry.killRequested = true;
       entry.killTree('SIGTERM');
       return { killed: true, processId: lastId };

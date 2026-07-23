@@ -16,9 +16,10 @@
  *  - unscoped hits only. A per-tier claim (`tier:opus`) is not cleared by an
  *    account-wide reading.
  *  - a provider-api window of the MATCHING kind must exist, be fresh, and read
- *    clearly below the limit. No such reading (the "unknown" case) ⇒ fall back
- *    to trusting the PTY (legacy behaviour). This is why source-isolation, not
- *    this gate, is the primary fix for the echoed-pack cascade.
+ *    clearly below the limit to refute a hit.
+ *  - independently, a textual hit is never authoritative enough to create a
+ *    long usage cooldown without a fresh matching provider-api window. Short
+ *    backoff plus auth/transient recovery remain available without quota APIs.
  */
 
 import type {
@@ -29,6 +30,13 @@ import type { LimitHit } from './limit-detector';
 
 /** A provider-api reading older than this is too stale to trust over a live PTY. */
 export const REFUTE_FRESH_MS = 10 * 60 * 1000;
+
+/**
+ * One hour or more removes an account from useful work for long enough that a
+ * PTY regex cannot be the sole authority. This gates the 1h/5h/12h patterns
+ * while preserving 15-minute auth recovery and short transient backoff.
+ */
+export const LONG_COOLDOWN_MIN_MS = 60 * 60 * 1000;
 
 /**
  * Below this used fraction the account clearly has room, so a "limit reached"
@@ -50,6 +58,53 @@ const RATE_WINDOW_KINDS: ReadonlySet<QuotaWindowKind> = new Set([
   'hours',
   'session',
 ]);
+
+function relevantWindowKinds(
+  kind: Pick<LimitHit, 'kind'>['kind'],
+): ReadonlySet<QuotaWindowKind> | null {
+  if (kind === 'quota') return QUOTA_WINDOW_KINDS;
+  if (kind === 'rate-limit') return RATE_WINDOW_KINDS;
+  return null;
+}
+
+/**
+ * Whether a cooldown is a long-lived usage quarantine and therefore requires
+ * fresh provider authority. Auth validity and transient capacity are distinct
+ * signals and deliberately retain their existing recovery behavior.
+ */
+export function longCooldownNeedsFreshProviderApi(
+  hit: Pick<LimitHit, 'kind' | 'cooldownMs'>,
+): boolean {
+  return (
+    (hit.kind === 'quota' || hit.kind === 'rate-limit') &&
+    hit.cooldownMs >= LONG_COOLDOWN_MIN_MS
+  );
+}
+
+/**
+ * Presence check only: healthy readings are handled by
+ * `providerApiRefutesLimit`; this function prevents "unknown" from authorizing
+ * a multi-hour quarantine. A ratio must be known and the window kind must match
+ * the alleged limit.
+ */
+export function hasFreshProviderApiWindowForLimit(
+  entry: ProviderQuotaEntry | undefined,
+  hit: Pick<LimitHit, 'kind'>,
+  now: number,
+): boolean {
+  if (!entry) return false;
+  if (!Number.isFinite(entry.updatedAt) || now - entry.updatedAt > REFUTE_FRESH_MS) {
+    return false;
+  }
+  const relevant = relevantWindowKinds(hit.kind);
+  if (!relevant) return false;
+  return entry.windows.some(
+    (window) =>
+      window.source === 'provider-api' &&
+      window.usedRatio !== null &&
+      relevant.has(window.kind),
+  );
+}
 
 /**
  * Refuta um COOLDOWN já persistido (pós-hoc, sem saber o kind do hit que o
@@ -89,8 +144,8 @@ export function providerApiRefutesLimit(
     return false;
   }
 
-  const relevant =
-    hit.kind === 'quota' ? QUOTA_WINDOW_KINDS : RATE_WINDOW_KINDS;
+  const relevant = relevantWindowKinds(hit.kind);
+  if (!relevant) return false;
   let sawHealthyProviderApi = false;
   for (const w of entry.windows) {
     if (w.source !== 'provider-api') continue;

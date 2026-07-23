@@ -17,7 +17,11 @@
 //  - Kimi/Grok are covered by the default parser upstream; kept that way.
 
 import type { CanonicalHookEvent } from './hooks-types';
-import { defaultHookEventParser, extractProviderSessionId } from './parse-hook-event';
+import {
+  defaultHookEventParser,
+  extractProviderSessionId,
+  looksLikeAwaitingInput,
+} from './parse-hook-event';
 import {
   makeHookPostCommand,
   makeNotificationHookCommand,
@@ -51,7 +55,9 @@ export function parseClaudeHookEvent(
     const message = typeof body.message === 'string' ? body.message : '';
     const notificationType = /permission|approval/i.test(message)
       ? ('permission_prompt' as const)
-      : ('idle_prompt' as const);
+      : looksLikeAwaitingInput(message)
+        ? ('elicitation_dialog' as const)
+        : ('idle_prompt' as const);
     return {
       kind: 'status',
       type: 'notification',
@@ -67,7 +73,10 @@ export function parseClaudeHookEvent(
 export function claudeHookSpecs(opts: HookCommandOptions = {}): FlavorHookSpec[] {
   const withFlavor = { ...opts, flavor: 'claude' as const };
   return [
-    { hookKey: 'UserPromptSubmit', command: makeStdinHookCommand('start', withFlavor) },
+    { hookKey: 'UserPromptSubmit', command: makeStdinHookCommand('user-submit', withFlavor) },
+    { hookKey: 'PreToolUse', command: makeStdinHookCommand('tool-use', withFlavor) },
+    { hookKey: 'PostToolUse', command: makeStdinHookCommand('tool-complete', withFlavor) },
+    { hookKey: 'PostToolUseFailure', command: makeStdinHookCommand('tool-use-failure', withFlavor) },
     { hookKey: 'Notification', command: makeStdinHookCommand('notification', withFlavor) },
     { hookKey: 'Stop', command: makeStdinHookCommand('stop', withFlavor) },
   ];
@@ -121,7 +130,10 @@ export function codexHookSpecs(opts: HookCommandOptions = {}): FlavorHookSpec[] 
   return [
     { hookKey: 'SessionStart', command: makeCodexSessionStartCommand(opts) },
     // Nexus extension (see header): start signal so Codex panes report working.
-    { hookKey: 'UserPromptSubmit', command: makeStdinHookCommand('start', withFlavor) },
+    { hookKey: 'UserPromptSubmit', command: makeStdinHookCommand('user-submit', withFlavor) },
+    { hookKey: 'PreToolUse', command: makeStdinHookCommand('tool-use', withFlavor) },
+    { hookKey: 'PostToolUse', command: makeStdinHookCommand('tool-complete', withFlavor) },
+    { hookKey: 'PostToolUseFailure', command: makeStdinHookCommand('tool-use-failure', withFlavor) },
     { hookKey: 'Stop', command: makeNotificationHookCommand('idle_prompt', withFlavor) },
     {
       hookKey: 'PermissionRequest',
@@ -137,9 +149,10 @@ export function kimiHookSpecs(opts: HookCommandOptions = {}): FlavorHookSpec[] {
   const withFlavor = { ...opts, flavor: 'kimi' as const };
   return [
     { hookKey: 'SessionStart', command: makeStdinHookCommand('session', withFlavor) },
-    { hookKey: 'UserPromptSubmit', command: makeStdinHookCommand('start', withFlavor) },
-    { hookKey: 'PostToolUse', command: makeStdinHookCommand('start', withFlavor) },
-    { hookKey: 'PostToolUseFailure', command: makeStdinHookCommand('start', withFlavor) },
+    { hookKey: 'UserPromptSubmit', command: makeStdinHookCommand('user-submit', withFlavor) },
+    { hookKey: 'PreToolUse', command: makeStdinHookCommand('tool-use', withFlavor) },
+    { hookKey: 'PostToolUse', command: makeStdinHookCommand('tool-complete', withFlavor) },
+    { hookKey: 'PostToolUseFailure', command: makeStdinHookCommand('tool-use-failure', withFlavor) },
     { hookKey: 'Notification', command: makeStdinHookCommand('notification', withFlavor) },
     { hookKey: 'Stop', command: makeStdinHookCommand('stop', withFlavor) },
     { hookKey: 'StopFailure', command: makeStdinHookCommand('stop', withFlavor) },
@@ -201,10 +214,10 @@ export function grokHookSpecs(opts: HookCommandOptions = {}): FlavorHookSpec[] {
   const withFlavor = { ...opts, flavor: 'grok' as const };
   return [
     { hookKey: 'SessionStart', command: makeGrokSessionStartCommand(opts) },
-    { hookKey: 'UserPromptSubmit', command: makeStdinHookCommand('start', withFlavor) },
-    { hookKey: 'PreToolUse', command: makeStdinHookCommand('start', withFlavor) },
-    { hookKey: 'PostToolUse', command: makeStdinHookCommand('start', withFlavor) },
-    { hookKey: 'PostToolUseFailure', command: makeStdinHookCommand('start', withFlavor) },
+    { hookKey: 'UserPromptSubmit', command: makeStdinHookCommand('user-submit', withFlavor) },
+    { hookKey: 'PreToolUse', command: makeStdinHookCommand('tool-use', withFlavor) },
+    { hookKey: 'PostToolUse', command: makeStdinHookCommand('tool-complete', withFlavor) },
+    { hookKey: 'PostToolUseFailure', command: makeStdinHookCommand('tool-use-failure', withFlavor) },
     { hookKey: 'Notification', command: makeStdinHookCommand('notification', withFlavor) },
     { hookKey: 'Stop', command: makeStdinHookCommand('stop', withFlavor) },
     { hookKey: 'StopFailure', command: makeStdinHookCommand('stop', withFlavor) },

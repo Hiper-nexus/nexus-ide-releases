@@ -318,6 +318,120 @@ describe('account failover authority and lifecycle', () => {
     );
   });
 
+  it('does not create a long quarantine from PTY text without fresh provider-api authority', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'rate-limit',
+            reason: '5-hour usage limit reached',
+            cooldownMs: 5 * 60 * 60 * 1000,
+          }
+        : null,
+    );
+    const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    try {
+      const scope = testProjectScope();
+      const owner = renderer(718);
+      renderers.push(owner);
+      bindResolvedRendererWorkspaceScope(owner, scope);
+      registerFailoverListener(owner);
+      addPane({
+        owner,
+        paneId: 'pane-718',
+        sessionId: 'session-718',
+        missionId: 'mission-718',
+        scope,
+      });
+
+      ptyMocks.dataTaps[0]('session-718', 'LIMIT');
+
+      expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+      expect(owner.send).not.toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover,
+        expect.anything(),
+      );
+      expect(log).toHaveBeenCalledWith(
+        '[failover]',
+        expect.stringContaining('provider-api-required-for-long-cooldown'),
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('allows a long cooldown when a fresh matching provider-api window exists', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'rate-limit',
+            reason: '5-hour usage limit reached',
+            cooldownMs: 5 * 60 * 60 * 1000,
+          }
+        : null,
+    );
+    const { requireQuotaService } = await import('../quota/quota-service');
+    vi.mocked(requireQuotaService).mockReturnValueOnce({
+      lastSnapshot: () => ({
+        updatedAt: 100_000,
+        worstUsedRatio: 0.92,
+        highUsageCount: 1,
+        unknownCount: 0,
+        entries: [
+          {
+            id: 'claude:account-a',
+            adapterId: 'claude',
+            accountId: 'account-a',
+            label: 'Account A',
+            installed: true,
+            onCooldown: false,
+            updatedAt: 100_000,
+            windows: [
+              {
+                kind: 'hours' as const,
+                label: '5 Horas',
+                usedRatio: 0.92,
+                source: 'provider-api' as const,
+                confidence: 'high' as const,
+              },
+            ],
+          },
+        ],
+      }),
+    } as unknown as ReturnType<typeof requireQuotaService>);
+
+    const scope = testProjectScope();
+    const owner = renderer(719);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: 'pane-719',
+      sessionId: 'session-719',
+      missionId: 'mission-719',
+      scope,
+    });
+
+    ptyMocks.dataTaps[0]('session-719', 'LIMIT');
+
+    expect(accountMocks.setCooldown).toHaveBeenCalledWith(
+      'account-a',
+      100_000 + 5 * 60 * 60 * 1000,
+      '5-hour usage limit reached',
+      undefined,
+    );
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-719',
+        switched: true,
+        toAccountId: 'account-b',
+      }),
+    );
+  });
+
   it('coalesces multi-pane bursts on the same exhausted account to one target', () => {
     const scope = testProjectScope();
     const owner = renderer(606);

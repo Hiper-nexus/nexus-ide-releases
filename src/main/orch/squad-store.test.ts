@@ -6,12 +6,18 @@ import {
   PET_STUDIO_SQUAD,
   PET_STUDIO_SQUAD_ID,
 } from '../../shared/pet-studio';
+import { BUILTIN_SQUADS } from './builtin-squads';
 import {
+  applyPreparedSquadSave,
+  applyPreparedSquadsImport,
   deleteSquad,
   getSquad,
   importSquadsJson,
+  importLegacySquadsJson,
   initSquadStore,
   isSquadStoreReadOnly,
+  prepareSquadSave,
+  prepareSquadsImport,
   saveSquad,
 } from './squad-store';
 
@@ -213,9 +219,110 @@ describe('squad-store load path self-heals existing squads', () => {
       PET_STUDIO_SQUAD.agents,
     );
   });
+
+  it('repairs every managed builtin id even when a historical row says builtin=false', () => {
+    const db = makeDb();
+    openDb = db;
+    const managed = BUILTIN_SQUADS.find(
+      (squad) => squad.id !== PET_STUDIO_SQUAD_ID,
+    );
+    if (!managed) throw new Error('missing non-Pet managed builtin');
+    insertRawSquad(db, {
+      id: managed.id,
+      name: 'Poisoned managed squad',
+      builtin: false,
+      orchestratorInstructions: 'Attacker-owned historical content',
+      agents: [],
+    });
+
+    initSquadStore(db);
+
+    expect(getSquad(managed.id)).toEqual(managed);
+    const persisted = db
+      .prepare('SELECT name, builtin FROM squads WHERE id = ?')
+      .get(managed.id) as { name: string; builtin: number };
+    expect(persisted).toEqual({ name: managed.name, builtin: 1 });
+  });
 });
 
 describe('squad-store save path', () => {
+  it('prepares the final executable squad once and persists exactly what was reviewed', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+
+    const candidate = prepareSquadSave({
+      id: 'normalized-save',
+      name: 'Normalized save',
+      createdAt: '1704067200000',
+      builtin: false,
+      orchestratorInstructions: '# Exact',
+      nativeInstructions: 'Native exact',
+      agents: [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'agy',
+        },
+        {
+          id: 'worker',
+          agentName: 'Worker',
+          category: 'executor',
+          cli: 'codex',
+        },
+      ],
+    });
+
+    expect(getSquad('normalized-save')).toBeNull();
+    expect(candidate.squad.agents[0]).toMatchObject({
+      model: 'gemini-3.6-flash-high',
+      allowedTools: null,
+    });
+    expect(candidate.squad.agents[1]).toMatchObject({ allowedTools: [] });
+    expect(candidate.snapshot.nativeInstructions).toBe('Native exact');
+
+    applyPreparedSquadSave(candidate);
+    expect(getSquad('normalized-save')).toEqual(candidate.squad);
+    const persisted = db
+      .prepare('SELECT roster_json FROM squads WHERE id = ?')
+      .get('normalized-save') as { roster_json: string };
+    expect(JSON.parse(persisted.roster_json)).toEqual(candidate.squad.agents);
+  });
+
+  it('rejects save CAS drift without mutating the newer durable value', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    saveSquad({
+      id: 'save-cas',
+      name: 'Before',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '',
+      agents: [],
+    });
+    const candidate = prepareSquadSave({
+      id: 'save-cas',
+      name: 'Reviewed',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '',
+      agents: [],
+    });
+    saveSquad({
+      id: 'save-cas',
+      name: 'Concurrent',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '',
+      agents: [],
+    });
+
+    expect(() => applyPreparedSquadSave(candidate)).toThrow(/CAS|changed/i);
+    expect(getSquad('save-cas')?.name).toBe('Concurrent');
+  });
+
   it('saveSquad normalizes a new worker to [] and orchestrator to null', () => {
     const db = makeDb();
     openDb = db;
@@ -386,6 +493,315 @@ describe('squad-store save path', () => {
       .prepare("SELECT COUNT(*) AS count FROM squads WHERE id LIKE 'import-%'")
       .get() as { count: number };
     expect(count.count).toBe(0);
+  });
+
+  it('prepares an immutable, normalized import candidate without mutating the store', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const raw = JSON.stringify({
+      squads: [
+        {
+          id: 'import-normalized',
+          name: 'Import normalized',
+          createdAt: 1,
+          builtin: true,
+          orchestratorInstructions: '# Exact import',
+          nativeInstructions: 'Native import instructions',
+          agents: [
+            {
+              id: 'orch',
+              agentName: 'Maestro',
+              category: 'orchestrator',
+              cli: 'agy',
+            },
+            {
+              id: 'worker',
+              agentName: 'Worker',
+              category: 'executor',
+              cli: 'codex',
+            },
+          ],
+        },
+      ],
+    });
+
+    const candidate = prepareSquadsImport(raw);
+    expect(getSquad('import-normalized')).toBeNull();
+    expect(candidate).toMatchObject({
+      squadCount: 1,
+      agentCount: 2,
+      targetIds: ['import-normalized'],
+    });
+    expect(candidate.rawSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(candidate.canonicalSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(candidate.squads[0]).toMatchObject({ builtin: false });
+    expect(candidate.squads[0].agents[0]).toMatchObject({
+      model: 'gemini-3.6-flash-high',
+      allowedTools: null,
+    });
+    expect(candidate.squads[0].agents[1]).toMatchObject({ allowedTools: [] });
+    expect(candidate.snapshots[0].nativeInstructions).toBe(
+      'Native import instructions',
+    );
+    expect(candidate.canonicalJson).toContain('Native import instructions');
+
+    applyPreparedSquadsImport(candidate);
+    expect(getSquad('import-normalized')).toEqual(candidate.squads[0]);
+  });
+
+  it.each([
+    [
+      'oversized raw file',
+      () => `${' '.repeat(1_048_577)}{"squads":[]}`,
+      /1 MiB|too large/i,
+    ],
+    [
+      'too many squads',
+      () =>
+        JSON.stringify({
+          squads: Array.from({ length: 65 }, (_, index) => ({
+            id: `many-${index}`,
+            name: `Many ${index}`,
+            createdAt: '1',
+            builtin: false,
+            agents: [],
+          })),
+        }),
+      /64|squads/i,
+    ],
+    [
+      'too many agents',
+      () =>
+        JSON.stringify({
+          squads: [
+            {
+              id: 'many-agents',
+              name: 'Many agents',
+              createdAt: '1',
+              builtin: false,
+              agents: Array.from({ length: 33 }, (_, index) => ({
+                id: `agent-${index}`,
+                agentName: `Agent ${index}`,
+                category: 'executor',
+                cli: 'codex',
+              })),
+            },
+          ],
+        }),
+      /32|agents/i,
+    ],
+    [
+      'too many allowed tools',
+      () =>
+        JSON.stringify({
+          squads: [
+            {
+              id: 'many-tools',
+              name: 'Many tools',
+              createdAt: '1',
+              builtin: false,
+              agents: [
+                {
+                  id: 'worker',
+                  agentName: 'Worker',
+                  category: 'executor',
+                  cli: 'codex',
+                  allowedTools: Array.from(
+                    { length: 129 },
+                    (_, index) => `tool-${index}`,
+                  ),
+                },
+              ],
+            },
+          ],
+        }),
+      /128|allowedTools/i,
+    ],
+    [
+      'duplicate squad ids',
+      () =>
+        JSON.stringify({
+          squads: [
+            {
+              id: 'duplicate',
+              name: 'One',
+              createdAt: '1',
+              builtin: false,
+              agents: [],
+            },
+            {
+              id: 'duplicate',
+              name: 'Two',
+              createdAt: '1',
+              builtin: false,
+              agents: [],
+            },
+          ],
+        }),
+      /duplicate.*squad/i,
+    ],
+    [
+      'duplicate agent ids',
+      () =>
+        JSON.stringify({
+          squads: [
+            {
+              id: 'duplicate-agent',
+              name: 'Duplicate agent',
+              createdAt: '1',
+              builtin: false,
+              agents: [
+                {
+                  id: 'same',
+                  agentName: 'One',
+                  category: 'executor',
+                  cli: 'codex',
+                },
+                {
+                  id: 'same',
+                  agentName: 'Two',
+                  category: 'reviewer',
+                  cli: 'codex',
+                },
+              ],
+            },
+          ],
+        }),
+      /duplicate.*agent/i,
+    ],
+    [
+      'invisible bidi control',
+      () =>
+        JSON.stringify({
+          squads: [
+            {
+              id: 'bidi',
+              name: 'Visible\u202eHidden',
+              createdAt: '1',
+              builtin: false,
+              agents: [],
+            },
+          ],
+        }),
+      /control|invisible|bidi/i,
+    ],
+  ])('rejects %s before any mutation', (_name, makeRaw, expected) => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const before = db
+      .prepare('SELECT COUNT(*) AS count FROM squads')
+      .get() as { count: number };
+
+    expect(() => prepareSquadsImport(makeRaw())).toThrow(expected);
+    const after = db
+      .prepare('SELECT COUNT(*) AS count FROM squads')
+      .get() as { count: number };
+    expect(after.count).toBe(before.count);
+  });
+
+  it('rejects every managed builtin id even when the imported flag says user-owned', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+
+    expect(() =>
+      prepareSquadsImport(
+        JSON.stringify({
+          squads: [
+            {
+              id: PET_STUDIO_SQUAD_ID,
+              name: 'Builtin takeover',
+              createdAt: '1',
+              builtin: false,
+              agents: [],
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/managed.*built-in|reserved/i);
+    expect(getSquad(PET_STUDIO_SQUAD_ID)).toEqual(PET_STUDIO_SQUAD);
+  });
+
+  it('legacy migration ignores managed rows but still atomically recovers customs', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const managed = BUILTIN_SQUADS[0];
+
+    expect(
+      importLegacySquadsJson(
+        JSON.stringify({
+          squads: [
+            {
+              ...managed,
+              name: 'Poisoned legacy builtin',
+              builtin: false,
+            },
+            {
+              id: 'legacy-custom',
+              name: 'Legacy custom',
+              createdAt: '1',
+              builtin: true,
+              orchestratorInstructions: 'Recovered custom',
+              agents: [],
+            },
+          ],
+        }),
+      ),
+    ).toBe(1);
+    expect(getSquad(managed.id)).toEqual(managed);
+    expect(getSquad('legacy-custom')).toMatchObject({
+      name: 'Legacy custom',
+      builtin: false,
+    });
+  });
+
+  it('CAS-checks every import id before the transaction and applies none on drift', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    saveSquad({
+      id: 'import-cas-a',
+      name: 'Before',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '',
+      agents: [],
+    });
+    const candidate = prepareSquadsImport(
+      JSON.stringify({
+        squads: [
+          {
+            id: 'import-cas-a',
+            name: 'Reviewed A',
+            createdAt: '1',
+            builtin: false,
+            agents: [],
+          },
+          {
+            id: 'import-cas-b',
+            name: 'Reviewed B',
+            createdAt: '1',
+            builtin: false,
+            agents: [],
+          },
+        ],
+      }),
+    );
+    saveSquad({
+      id: 'import-cas-a',
+      name: 'Concurrent',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '',
+      agents: [],
+    });
+
+    expect(() => applyPreparedSquadsImport(candidate)).toThrow(/CAS|changed/i);
+    expect(getSquad('import-cas-a')?.name).toBe('Concurrent');
+    expect(getSquad('import-cas-b')).toBeNull();
   });
 
   it('preserves already-hydrated reads when reinitialized without SQLite', () => {

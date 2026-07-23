@@ -14,6 +14,7 @@ const selectionDeps = vi.hoisted(() => ({
       quirks: { mcpAutoload: boolean };
       control?: {
         permission: {
+          arg?: string;
           safe: string[];
           yolo: string[];
           modes: Record<string, string>;
@@ -45,6 +46,10 @@ const paneDeps = vi.hoisted(() => ({
     state: 'busy' | 'idle' | 'exited' | 'hibernated';
     agentName?: string;
     adapterId?: string;
+    scope?: ReturnType<typeof testProjectScope>;
+    missionId?: string;
+    role?: 'worker';
+    readOnly?: boolean;
   }>,
 }));
 
@@ -111,6 +116,7 @@ function proposedDraft(
 function reviewedDraft(
   status: 'approved' | 'rejected',
   reviewer: ContextDraftRecord['author'],
+  patch: Partial<ContextDraftRecord> = {},
 ): ContextDraftRecord {
   return proposedDraft({
     status,
@@ -121,6 +127,7 @@ function reviewedDraft(
         : `Source ${SOURCE_HASH} contradicts content ${CONTENT_HASH}`,
     reviewedAt: 20,
     updatedAt: 20,
+    ...patch,
   });
 }
 
@@ -181,6 +188,15 @@ describe('CLI context draft reviewer', () => {
       id: 'claude',
       kind: 'cli-pty',
       quirks: { mcpAutoload: true },
+      control: {
+        permission: {
+          arg: '--permission-mode',
+          safe: ['--permission-mode', 'manual'],
+          yolo: ['--dangerously-skip-permissions'],
+          modes: {},
+          default: '',
+        },
+      },
     });
     selectionDeps.adapters.set('agy', {
       id: 'agy',
@@ -330,6 +346,45 @@ describe('CLI context draft reviewer', () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it('does not spawn a reviewer after authority is revoked during route selection', async () => {
+    const scope = testProjectScope();
+    const draft = proposedDraft();
+    let resolveRoute!: (
+      value: { adapterId: string },
+    ) => void;
+    const selectRoute = vi.fn(
+      () =>
+        new Promise<{ adapterId: string }>((resolve) => {
+          resolveRoute = resolve;
+        }),
+    );
+    const spawn = vi.fn(async () => ({
+      paneId: 'pane-must-not-start',
+      sessionId: 'session-must-not-start',
+    }));
+    let current = true;
+    const reviewer = new CliContextDraftReviewer({
+      selectRoute,
+      spawn,
+      readDraft: () => draft,
+    });
+    const pending = reviewer.run({
+      scope,
+      draftId: draft.id,
+      invocation: {
+        assertCurrentAuthority: () => {
+          if (!current) throw new Error('session_authority_revoked');
+        },
+      },
+    });
+    await vi.waitFor(() => expect(selectRoute).toHaveBeenCalledOnce());
+    current = false;
+    resolveRoute({ adapterId: 'claude' });
+
+    await expect(pending).rejects.toThrow('session_authority_revoked');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it('times out fail-closed and preserves the reviewer pane for recovery', async () => {
     const scope = testProjectScope();
     const draft = proposedDraft();
@@ -374,6 +429,10 @@ describe('CLI context draft reviewer', () => {
       title: contextDraftReviewerPaneTitle(draft.id),
       kind: 'cli-agent',
       state: 'idle',
+      scope,
+      missionId: draft.missionId ?? undefined,
+      role: 'worker',
+      readOnly: true,
     });
     const spawn = vi.fn(async () => ({
       paneId: 'pane-new',
@@ -414,6 +473,8 @@ describe('CLI context draft reviewer', () => {
       state: 'idle',
       agentName: contextDraftReviewerAgentName('glm', draft.id),
       adapterId: 'glm',
+      scope,
+      missionId: draft.missionId ?? undefined,
     });
     const spawn = vi.fn();
     const deliverPrompt = vi.fn(async (_sessionId: string, _prompt: string) => undefined);
@@ -440,6 +501,58 @@ describe('CLI context draft reviewer', () => {
     expect(deliverPrompt.mock.calls[0]?.[1]).toContain(draft.id);
   });
 
+  it('never resumes or closes a homonymous reviewer pane from another checkout', async () => {
+    const scope = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'checkout-a',
+      rootRealPath: '/workspace/a',
+    });
+    const foreignScope = testProjectScope({
+      projectId: 'project-b',
+      checkoutId: 'checkout-b',
+      rootRealPath: '/workspace/b',
+    });
+    const draft = proposedDraft({ id: 'context-draft-cross-scope' });
+    const agentName = contextDraftReviewerAgentName('glm', draft.id);
+    const approved = reviewedDraft('approved', {
+      id: agentName,
+      sessionId: 'session-new',
+      provider: 'glm',
+    }, { id: draft.id });
+    paneDeps.snapshots.push({
+      paneId: 'pane-foreign',
+      sessionId: 'session-foreign',
+      title: contextDraftReviewerPaneTitle(draft.id),
+      kind: 'cli-agent',
+      state: 'idle',
+      agentName,
+      adapterId: 'glm',
+      scope: foreignScope,
+      missionId: draft.missionId ?? undefined,
+    });
+    const close = vi.fn(() => true);
+    const spawn = vi.fn(async () => ({
+      paneId: 'pane-new',
+      sessionId: 'session-new',
+    }));
+    let reads = 0;
+    const reviewer = new CliContextDraftReviewer({
+      selectRoute: () => ({ adapterId: 'glm' }),
+      readDraft: () => (reads++ === 0 ? draft : approved),
+      listPanes: () => paneDeps.snapshots,
+      sessionState: vi.fn(() => 'idle'),
+      close,
+      spawn,
+    });
+
+    await expect(reviewer.run({ scope, draftId: draft.id })).resolves.toBe(
+      approved,
+    );
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalledWith('pane-foreign');
+    expect(close).toHaveBeenCalledWith('pane-new');
+  });
+
   it('resumes polling without re-delivering when the preserved reviewer is still busy', async () => {
     const scope = testProjectScope();
     const draft = proposedDraft();
@@ -456,6 +569,8 @@ describe('CLI context draft reviewer', () => {
       state: 'busy',
       agentName: contextDraftReviewerAgentName('glm', draft.id),
       adapterId: 'glm',
+      scope,
+      missionId: draft.missionId ?? undefined,
     });
     const deliverPrompt = vi.fn(async () => undefined);
     let reads = 0;
@@ -495,6 +610,8 @@ describe('CLI context draft reviewer', () => {
       state: 'idle',
       agentName: contextDraftReviewerAgentName('glm', draft.id),
       adapterId: 'glm',
+      scope,
+      missionId: draft.missionId ?? undefined,
     });
     const close = vi.fn(() => true);
     const spawn = vi.fn(async () => ({
@@ -581,6 +698,8 @@ describe('CLI context draft reviewer', () => {
       state: 'busy',
       agentName: contextDraftReviewerAgentName('glm', draft.id),
       adapterId: 'glm',
+      scope,
+      missionId: draft.missionId ?? undefined,
     });
 
     // Passes 2-3: the preserved pane is resumed (up to the cap) and never votes.

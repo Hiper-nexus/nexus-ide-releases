@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   effectPolicyForTool,
+  isHookMcpToolAllowedForReadOnlyContext,
+  isToolAllowedForReadOnlyContext,
   requiresHumanConfirmationForTool,
 } from './mcp-effect-policy';
 
@@ -47,6 +49,7 @@ describe('MCP effect policy', () => {
       'nexus_agent_invoke',
       'nexus_pane_spawn',
       'nexus_mission_spawn_pane',
+      'nexus_route_task',
     ]) {
       expect(effectPolicyForTool(tool)).toBe('delegation-authority');
       expect(requiresHumanConfirmationForTool(tool)).toBe(false);
@@ -114,5 +117,54 @@ describe('MCP effect policy', () => {
 
   it('treats every unclassified or newly added tool as a mission effect', () => {
     expect(effectPolicyForTool('nexus_future_unknown_tool')).toBe('mission-effect');
+  });
+
+  it('limits read-only contexts to observations and narrow Nexus metadata receipts', () => {
+    for (const tool of [
+      'nexus_file_read',
+      'nexus_git_diff',
+      'nexus_pane_read',
+      'nexus_context_draft_get',
+      'nexus_context_draft_review',
+      'nexus_handoff_submit',
+      'nexus_handoff_ack',
+      'nexus_worker_heartbeat',
+    ]) {
+      expect(isToolAllowedForReadOnlyContext(tool), tool).toBe(true);
+    }
+
+    for (const tool of [
+      'nexus_file_write',
+      'nexus_terminal_run',
+      'nexus_git_add',
+      'nexus_git_commit',
+      'nexus_git_push',
+      'nexus_pane_spawn',
+      'nexus_route_task',
+      'nexus_context_draft_apply',
+      'nexus_future_unknown_tool',
+    ]) {
+      expect(isToolAllowedForReadOnlyContext(tool), tool).toBe(false);
+    }
+  });
+
+  it('applies the same read-only boundary to Claude Nexus MCP hook names', () => {
+    expect(
+      isHookMcpToolAllowedForReadOnlyContext(
+        'mcp__nexus__nexus_context_draft_get',
+      ),
+    ).toBe(true);
+    expect(
+      isHookMcpToolAllowedForReadOnlyContext(
+        'mcp__nexus__nexus_handoff_submit',
+      ),
+    ).toBe(true);
+    expect(
+      isHookMcpToolAllowedForReadOnlyContext(
+        'mcp__nexus__nexus_file_write',
+      ),
+    ).toBe(false);
+    // Native CLI authority is enforced separately from the Nexus MCP boundary.
+    expect(isHookMcpToolAllowedForReadOnlyContext('Bash')).toBe(true);
   });
 });

@@ -1,4 +1,7 @@
-import type { McpToolDef } from './mcp-protocol';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolDef,
+} from './mcp-protocol';
 import { executionScopeFor } from './gate';
 import { num, requireStr } from './tool-util';
 import {
@@ -211,12 +214,14 @@ const editorApplyPatch: McpToolDef = {
     },
     required: ['patch'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
     const patchText = requireStr(args, 'patch');
     const outcome = await applyHashlinePatch(
       executionScopeFor(ctx),
       ctx.token,
       patchText,
+      invocation,
     );
     return {
       files: outcome.applied.length,

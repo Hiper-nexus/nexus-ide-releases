@@ -1,3 +1,5 @@
+import { getOrchSettings } from '../persistence/settings-store';
+
 const PROMPT_WINDOW = 4_096;
 /** After auto-accepting a boot prompt, hold prompt injection briefly so the TUI can leave the menu. */
 const SETTLE_AFTER_ACCEPT_MS = 450;
@@ -115,7 +117,22 @@ export class CliPromptAutoResponder {
   private readonly settlingUntil = new Map<string, number>();
   private readonly boundAt = new Map<string, number>();
 
+  constructor(private readonly enabled: () => boolean = () => true) {}
+
+  private isEnabled(sessionId?: string): boolean {
+    let enabled = false;
+    try {
+      enabled = this.enabled();
+    } catch {
+      // A broken settings read can never authorize an automatic keypress.
+      enabled = false;
+    }
+    if (!enabled && sessionId) this.drop(sessionId);
+    return enabled;
+  }
+
   bind(sessionId: string, adapterId: string, now = Date.now()): void {
+    if (!this.isEnabled(sessionId)) return;
     const signatures = signaturesFor(adapterId);
     if (signatures.length === 0) return;
     this.sessions.set(sessionId, signatures);
@@ -139,6 +156,7 @@ export class CliPromptAutoResponder {
 
   /** True while we are still watching PTY output for a known boot prompt. */
   isPending(sessionId: string, now = Date.now()): boolean {
+    if (!this.isEnabled(sessionId)) return false;
     return this.watchingSignatures(sessionId, now) !== null;
   }
 
@@ -183,6 +201,7 @@ export class CliPromptAutoResponder {
    * screen or we just auto-accepted one (TUI still leaving the dialog).
    */
   shouldDeferInjection(sessionId: string, now = Date.now()): boolean {
+    if (!this.isEnabled(sessionId)) return false;
     const settleUntil = this.settlingUntil.get(sessionId);
     if (settleUntil !== undefined) {
       if (now < settleUntil) return true;
@@ -201,6 +220,7 @@ export class CliPromptAutoResponder {
     sessionId: string,
     now = Date.now(),
   ): { response: string; fallbackResponse?: string } | null {
+    if (!this.isEnabled(sessionId)) return null;
     const match = this.pendingMatch(sessionId, now);
     if (!match) return null;
     // Settle so callers wait before typing the mission brief.
@@ -222,6 +242,7 @@ export class CliPromptAutoResponder {
   }
 
   observe(sessionId: string, output: string, now = Date.now()): string | null {
+    if (!this.isEnabled(sessionId)) return null;
     const signatures = this.watchingSignatures(sessionId, now);
     if (!signatures) return null;
     const buffer = `${this.buffers.get(sessionId) ?? ''}${output}`.slice(
@@ -241,4 +262,6 @@ export class CliPromptAutoResponder {
 }
 
 /** Process-wide instance shared by MCP spawn decoration and prompt injection. */
-export const cliPromptAutoResponder = new CliPromptAutoResponder();
+export const cliPromptAutoResponder = new CliPromptAutoResponder(
+  () => getOrchSettings().cliPromptAutoResponderEnabled,
+);

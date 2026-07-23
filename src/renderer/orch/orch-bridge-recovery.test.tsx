@@ -2,7 +2,12 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { MissionPaneRecoveryRequest } from '../../shared/orch-types';
+import type {
+  BrowserPaneOpenRequest,
+  MissionPaneRecoveryRequest,
+  PaneCloseRequest,
+} from '../../shared/orch-types';
+import { listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchBridge } from './orch-bridge';
 
@@ -113,6 +118,8 @@ describe('orchestration bridge pane recovery', () => {
     expect(terminal.respawnMissionPaneFresh).toHaveBeenCalledWith(
       pane,
       'session-old',
+      75_000,
+      'recovery-a',
     );
     expect(rebindMissionOrchestrator).toHaveBeenCalledWith(
       'mission-a',
@@ -342,6 +349,138 @@ describe('orchestration bridge pane recovery', () => {
       'pane-orch',
       'session-new',
     );
+    act(() => mounted.root.unmount());
+  });
+
+  it('closes browser cleanup only when pane id and request seal both match', () => {
+    let closeHandler: ((request: PaneCloseRequest) => void) | null = null;
+    const syncPanes = vi.fn();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: vi.fn(
+            (cb: (request: PaneCloseRequest) => void) => {
+              closeHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes,
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+          rebindMissionOrchestrator: vi.fn(async () => ({ ok: true })),
+        },
+      },
+    });
+    const pane = {
+      id: 'browser-shared',
+      kind: 'browser' as const,
+      title: 'Pre-existing browser',
+      browserOpenRequestId: 'browseropen-owner',
+    };
+    useLayoutStore.setState({
+      root: { kind: 'leaf', id: 'leaf-browser', pane },
+      focusedPaneId: pane.id,
+    });
+    const mounted = mount();
+    syncPanes.mockClear();
+
+    act(() => {
+      closeHandler?.({
+        paneId: pane.id,
+        requestId: 'browseropen-foreign',
+      });
+    });
+    expect(
+      listPanes(useLayoutStore.getState().root).some(
+        (candidate) => candidate.id === pane.id,
+      ),
+    ).toBe(true);
+    expect(syncPanes).not.toHaveBeenCalled();
+
+    act(() => {
+      closeHandler?.({
+        paneId: pane.id,
+        requestId: 'browseropen-owner',
+      });
+    });
+    expect(
+      listPanes(useLayoutStore.getState().root).some(
+        (candidate) => candidate.id === pane.id,
+      ),
+    ).toBe(false);
+    expect(syncPanes).toHaveBeenCalled();
+    act(() => mounted.root.unmount());
+  });
+
+  it('persists the main browser-open request seal on the created pane', async () => {
+    let browserHandler: ((request: BrowserPaneOpenRequest) => void) | null = null;
+    const sendBrowserOpenResult = vi.fn();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: vi.fn(
+            (cb: (request: BrowserPaneOpenRequest) => void) => {
+              browserHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onPaneCloseRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult,
+          rebindMissionOrchestrator: vi.fn(async () => ({ ok: true })),
+        },
+      },
+    });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-shell',
+        pane: { id: 'pane-shell', kind: 'shell', title: 'Shell' },
+      },
+      focusedPaneId: 'pane-shell',
+    });
+    const mounted = mount();
+
+    await act(async () => {
+      browserHandler?.({
+        requestId: 'browseropen-created',
+        paneId: 'browser-created',
+        url: 'https://example.com',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const created = listPanes(useLayoutStore.getState().root).find(
+      (pane) => pane.id === 'browser-created',
+    );
+    expect(created).toMatchObject({
+      kind: 'browser',
+      browserOpenRequestId: 'browseropen-created',
+    });
+    expect(sendBrowserOpenResult).toHaveBeenCalledWith({
+      requestId: 'browseropen-created',
+      ok: true,
+      paneId: 'browser-created',
+    });
     act(() => mounted.root.unmount());
   });
 });

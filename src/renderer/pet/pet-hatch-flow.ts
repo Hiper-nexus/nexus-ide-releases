@@ -95,13 +95,14 @@ export async function launchPetHatchMission(
           'Não consegui preparar o squad nativo Pet Studio.',
       };
     }
-    const squad: Squad = {
-      ...PET_STUDIO_SQUAD,
-      orchestratorInstructions: `${PET_STUDIO_SQUAD.orchestratorInstructions.trim()}\n\n## Briefing desta imagem\n${intent}`,
-    };
+    // The saved squad is the authority snapshot. Per-image bytes belong to
+    // the native-confirmed mission goal, never to a renderer-mutated roster.
+    const squad: Squad = PET_STUDIO_SQUAD;
     const launched = await deps.launchSquad(squad, adapters, {
       profile: 'pet-studio',
       adapterId: 'codex',
+      missionTitle: `Criar mascote ${petSlugFromImagePath(imagePath)}`,
+      missionGoal: intent,
     });
     if (!launched.ok) return launched;
     return { ...launched, squad };

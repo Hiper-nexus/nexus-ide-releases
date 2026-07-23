@@ -65,7 +65,10 @@ afterEach(() => {
 describe.skipIf(!sqliteAvailable)('ScopedMediaUsageStore', () => {
   it('isolates project checkouts and persists totals across restart', () => {
     const { baseDir, scope } = fixture();
-    const checkoutBPath = path.join(path.dirname(scope.rootRealPath), 'checkout-b');
+    const checkoutBPath = path.join(
+      path.dirname(scope.rootRealPath),
+      'checkout-b',
+    );
     fs.mkdirSync(checkoutBPath);
     const checkoutB: ProjectExecutionScope = Object.freeze({
       ...scope,
@@ -101,7 +104,9 @@ describe.skipIf(!sqliteAvailable)('ScopedMediaUsageStore', () => {
     firstManager.closeAll();
     managers.splice(managers.indexOf(firstManager), 1);
 
-    expect(createScopedMediaUsageStore(manager(baseDir), scope).totals()).toEqual({
+    expect(
+      createScopedMediaUsageStore(manager(baseDir), scope).totals(),
+    ).toEqual({
       generations: 1,
       costUsd: 0.04,
     });
@@ -133,7 +138,9 @@ describe.skipIf(!sqliteAvailable)('ScopedMediaUsageStore', () => {
 
     const row = runtimeManager
       .open(scope)
-      .db.prepare('SELECT storage_key, sha256, metadata_json FROM media_artifacts')
+      .db.prepare(
+        'SELECT storage_key, sha256, metadata_json FROM media_artifacts',
+      )
       .get() as {
       storage_key: string;
       sha256: string;
@@ -142,6 +149,46 @@ describe.skipIf(!sqliteAvailable)('ScopedMediaUsageStore', () => {
     expect(row.storage_key).toBe('artifact.png');
     expect(row.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(row.metadata_json).not.toContain(scope.rootRealPath);
+  });
+
+  it('does not commit usage when authority is revoked during artifact hashing', async () => {
+    const { baseDir, scope } = fixture();
+    const runtimeManager = manager(baseDir);
+    configureProjectUsageStoreRegistry(runtimeManager);
+    const mediaPath = path.join(scope.rootRealPath, 'revoked.png');
+    fs.writeFileSync(mediaPath, 'bytes-read-before-revocation');
+    let checkpoints = 0;
+
+    await expect(
+      recordMediaUsage(
+        {
+          ok: true,
+          path: mediaPath,
+          provider: 'openai-image',
+          model: 'gpt-image-1',
+          kind: 'image',
+          estimatedCostUsd: 0.02,
+          durationMs: 42,
+        },
+        { label: 'worker', scope },
+        {
+          assertCurrentAuthority: () => {
+            checkpoints += 1;
+            if (checkpoints >= 9) {
+              throw new Error('session_authority_revoked');
+            }
+          },
+        },
+      ),
+    ).rejects.toThrow('session_authority_revoked');
+
+    expect(checkpoints).toBeGreaterThanOrEqual(9);
+    expect(createScopedMediaUsageStore(runtimeManager, scope).totals()).toEqual(
+      {
+        generations: 0,
+        costUsd: 0,
+      },
+    );
   });
 
   it('enforces mission foreign keys and computes mission-only totals', () => {
@@ -197,10 +244,12 @@ describe.skipIf(!sqliteAvailable)('ScopedMediaUsageStore', () => {
     await expect(recordMediaUsage(result(hardlink), ctx)).rejects.toThrow(
       /safe regular file/i,
     );
-    expect(createScopedMediaUsageStore(runtimeManager, scope).totals()).toEqual({
-      generations: 0,
-      costUsd: 0,
-    });
+    expect(createScopedMediaUsageStore(runtimeManager, scope).totals()).toEqual(
+      {
+        generations: 0,
+        costUsd: 0,
+      },
+    );
   });
 
   it('rejects absolute/escaping keys and fails closed on read-only runtime', () => {
@@ -215,9 +264,9 @@ describe.skipIf(!sqliteAvailable)('ScopedMediaUsageStore', () => {
       costUsd: null,
       durationMs: 1,
     };
-    expect(() => store.record({ ...base, storageKey: '../escape.png' })).toThrow(
-      /project-relative/i,
-    );
+    expect(() =>
+      store.record({ ...base, storageKey: '../escape.png' }),
+    ).toThrow(/project-relative/i);
     expect(() =>
       store.record({ ...base, storageKey: path.join(scope.rootRealPath, 'x') }),
     ).toThrow(/relative/i);

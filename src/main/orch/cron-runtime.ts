@@ -1,37 +1,48 @@
 import { randomUUID } from 'node:crypto';
+import type { MissionIntentContract } from '../../shared/mission-intent';
+import type { ProjectExecutionScope } from '../../shared/types';
+import type { LeaseBackend } from '../context/distributed-lease';
+import { resolveProjectExecutionScope } from '../persistence/project-identity';
+import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   CRON_STALE_MS,
   CRON_TICK_MS,
   loadCronJobs,
+  matchesCron,
   nextCronAfter,
   parseCronExpr,
   saveCronJobs,
   shouldFire,
+  withCronJobsMutationLock,
   type CronJob,
 } from './cron-loop';
-import { getSquad, findAgent } from './squad-store';
-import { spawnPaneAndMaybePrompt } from './tool-util';
-import { getProjectDomainStores } from './project-domain-store-registry';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolInvocation,
+} from './mcp-protocol';
 import { resolveCwdForScope } from './workspace-path';
-import { resolveProjectExecutionScope } from '../persistence/project-identity';
-import type { ProjectExecutionScope } from '../../shared/types';
-import type { LeaseBackend } from '../context/distributed-lease';
-import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   CronExecutionCoordinator,
   type CronOccurrenceExecutor,
 } from './cron-execution-coordinator';
 import {
+  assertCronExecutionAuthority,
+  issueCronExecutionAuthority,
+  type CronExactUserConsent,
+} from './cron-execution-authority';
+import {
   CronPortableScheduleService,
   type PortableCronUpdateInput,
 } from './cron-portable-schedule-service';
+import { bootstrapMissionOrchestratorForScope } from './mission-orchestrator-bootstrap';
 import type { PortableCronScheduleBackend } from './portable-cron-definition';
+import { getProjectDomainStores } from './project-domain-store-registry';
 
 /**
- * Runtime do cron: tick de 60s no main. Jobs vencidos disparam o brief num
- * pane novo (agente do squad ou orquestrador do squad), skip-if-stale, e
- * reavançam nextFireAt. IO/spawn injetáveis → testável; a instância default
- * usa os stores reais.
+ * Runtime do cron: tick de 60s no main, lease/fence de ocorrência,
+ * skip-if-stale e avanço de nextFireAt. A instância default mantém o efeito
+ * Uma ocorrência autorizada cria uma missão selada e entra exclusivamente no
+ * bootstrap main-owned; jobs legados/alterados continuam fail-closed.
  */
 
 export interface CronRuntimeDeps {
@@ -43,7 +54,12 @@ export interface CronRuntimeDeps {
   now(): number;
 }
 
-/** Dispara um job: cria missão + spawna o alvo com o brief. */
+/**
+ * Scheduled occurrence boundary. This function only materializes the approved
+ * mission envelope; the existing main-owned bootstrap/scheduler own physical
+ * spawn, kickoff proof, RouteReservation/sticky roster, handoff and terminal
+ * state. Never reintroduce a raw pane spawn here.
+ */
 export async function fireCronJob(job: CronJob): Promise<void> {
   // Revalida também jobs legados ou alterados no disco. Sem workspace aberto,
   // ou se o caminho escapar do workspace ativo, falha antes de criar missão.
@@ -55,63 +71,65 @@ export async function fireCronJob(job: CronJob): Promise<void> {
   if (job.checkoutId && job.checkoutId !== scope.checkoutId) {
     throw new Error('cron checkout identity no longer matches this installation');
   }
-  const workspacePath = resolveCwdForScope(scope, job.workingDirectory);
-  const missionStore = getProjectDomainStores(scope).missions;
-  const mission = missionStore.create({
-    title: `⏰ ${job.name}`,
-    description: job.brief,
+  resolveCwdForScope(scope, job.workingDirectory);
+  const authority = assertCronExecutionAuthority(job, scope);
+  const contract: MissionIntentContract = {
+    ...authority.contract,
+    dispatchedAt: Date.now(),
+    acceptanceCriteria: [...authority.contract.acceptanceCriteria],
+    budgets: { ...authority.contract.budgets },
+    deniedTools: authority.contract.deniedTools
+      ? [...authority.contract.deniedTools]
+      : undefined,
+    attachmentPaths: authority.contract.attachmentPaths
+      ? [...authority.contract.attachmentPaths]
+      : undefined,
+    attachmentSnapshots: authority.contract.attachmentSnapshots
+      ? authority.contract.attachmentSnapshots.map((snapshot) => ({
+          ...snapshot,
+        }))
+      : undefined,
+    orchestratorRuntime: authority.contract.orchestratorRuntime
+      ? { ...authority.contract.orchestratorRuntime }
+      : undefined,
+  };
+  const missions = getProjectDomainStores(scope).missions;
+  const created = missions.create({
+    title: `⏰ ${job.name}`.slice(0, 512),
+    description: contract.goal,
+    squadId: authority.squadId,
+    milestones: contract.acceptanceCriteria,
+    intentState: 'dispatched',
+    intentVersion: contract.intentVersion,
+    intentContract: contract,
   });
-  if (job.squadId) {
-    const squad = getSquad(job.squadId);
-    if (!squad) throw new Error(`squad ${job.squadId} não existe`);
-    const orch =
-      squad.agents.find((a) => a.category === 'orchestrator') ?? squad.agents[0];
-    if (!orch) throw new Error(`squad ${job.squadId} sem agentes`);
-    try {
-      await spawnPaneAndMaybePrompt({
-      adapterId: orch.cli,
-      model: orch.model,
-      cwd: workspacePath,
-      title: `${squad.name} (cron)`,
-      missionId: mission.id,
-      agentName: orch.agentName,
-      allowedTools: orch.allowedTools ?? null,
-      allowedSkills: orch.allowedSkills ?? null,
-      role: 'orchestrator',
-      prompt: `${squad.orchestratorInstructions ?? ''}\n\nMISSÃO AGENDADA: ${job.brief}`,
-      scope,
-      });
-    } catch (error) {
-      missionStore.setStatus(mission.id, 'failed');
-      throw error;
-    }
-    return;
+  const running = missions.update(created.id, { status: 'running' });
+  if (!running) {
+    missions.update(created.id, {
+      status: 'failed',
+      description:
+        `${created.description}\n\n` +
+        'Falha ao publicar a missão agendada. CTA: recrie a agenda e tente novamente.',
+    });
+    throw new Error(
+      'cron_golden_path_failed: mission lifecycle could not enter running',
+    );
   }
-  if (job.agentName) {
-    const found = findAgent(job.agentName);
-    if (!found) throw new Error(`agente ${job.agentName} não encontrado`);
-    const { agent } = found;
-    try {
-      await spawnPaneAndMaybePrompt({
-      adapterId: agent.cli,
-      model: agent.model,
-      cwd: workspacePath,
-      title: `${agent.agentName} (cron)`,
-      missionId: mission.id,
-      agentName: agent.agentName,
-      allowedTools: agent.allowedTools ?? null,
-      allowedSkills: agent.allowedSkills ?? null,
-      role: agent.category === 'orchestrator' ? 'orchestrator' : 'worker',
-      prompt: job.brief,
-      scope,
-      });
-    } catch (error) {
-      missionStore.setStatus(mission.id, 'failed');
-      throw error;
-    }
-    return;
+  const launched = await bootstrapMissionOrchestratorForScope(
+    scope,
+    running.id,
+  );
+  if (!launched.ok) {
+    throw new Error(
+      `cron_golden_path_failed: ${launched.error} CTA: ${launched.cta}`,
+    );
   }
-  throw new Error('job sem agentName nem squadId');
+  if (!launched.kickoff.accepted) {
+    throw new Error(
+      `cron_kickoff_not_accepted: ${launched.kickoff.detail} ` +
+        `CTA: ${launched.kickoff.cta}`,
+    );
+  }
 }
 
 let configuredOccurrenceExecutor: CronOccurrenceExecutor | null = null;
@@ -129,7 +147,12 @@ export function configureCronRuntime(options: {
   scheduleBackend?: PortableCronScheduleBackend;
   listScopes?: () => readonly ProjectExecutionScope[];
 }): CronOccurrenceExecutor {
-  const executor = new CronExecutionCoordinator(options);
+  const executor = new CronExecutionCoordinator({
+    ...options,
+    preflight: (job, scope) => {
+      assertCronExecutionAuthority(job, scope);
+    },
+  });
   configuredOccurrenceExecutor = executor;
   configuredPortableSchedules = options.scheduleBackend
     ? new CronPortableScheduleService({
@@ -150,9 +173,12 @@ export function disposeCronRuntime(): void {
 
 export async function syncCronJobsForScope(
   scope: ProjectExecutionScope,
+  invocation?: McpToolInvocation,
 ): Promise<void> {
+  assertMcpInvocationCurrent(invocation);
   if (!configuredPortableSchedules) return;
-  const result = await configuredPortableSchedules.syncScope(scope);
+  const result = await configuredPortableSchedules.syncScope(scope, invocation);
+  assertMcpInvocationCurrent(invocation);
   if (!result.ok && result.reason === 'definition-conflict') {
     console.warn(
       '[cron] portable definition conflict:',
@@ -209,8 +235,7 @@ function cronErrorMessage(error: unknown): string {
  * nextFireAt de todos. Puro em relação ao tempo (recebe `now`/deps). Retorna
  * quantos dispararam.
  */
-export async function runCronTick(deps: CronRuntimeDeps): Promise<number> {
-  await deps.syncSchedules?.();
+async function runCronTickLocked(deps: CronRuntimeDeps): Promise<number> {
   const jobs = deps.load();
   const now = deps.now();
   let fired = 0;
@@ -225,6 +250,22 @@ export async function runCronTick(deps: CronRuntimeDeps): Promise<number> {
       job.lastError = cronErrorMessage(err);
       changed = true;
       continue;
+    }
+    if (job.nextFireAt != null) {
+      const occurrenceAt = new Date(job.nextFireAt);
+      if (
+        occurrenceAt.getSeconds() !== 0 ||
+        occurrenceAt.getMilliseconds() !== 0 ||
+        !matchesCron(fields, occurrenceAt)
+      ) {
+        job.lastError =
+          'cron_schedule_state_invalid: nextFireAt não pertence à expressão ' +
+          'aprovada. CTA: Recrie a agenda para restaurar o estado.';
+        job.nextFireAt = nextCronAfter(fields, new Date(now))?.getTime();
+        job.updatedAt = now;
+        changed = true;
+        continue;
+      }
     }
     const decision = shouldFire(job, now, CRON_STALE_MS);
     if (decision.fire) {
@@ -242,7 +283,7 @@ export async function runCronTick(deps: CronRuntimeDeps): Promise<number> {
         }
         job.lastError =
           result.disposition === 'completed' ||
-          result.disposition === 'already-recorded'
+          (result.disposition === 'already-recorded' && !result.error)
             ? undefined
             : result.error ?? `cron occurrence ${result.disposition}`;
       } catch (err) {
@@ -266,22 +307,41 @@ export async function runCronTick(deps: CronRuntimeDeps): Promise<number> {
   return fired;
 }
 
+export async function runCronTick(deps: CronRuntimeDeps): Promise<number> {
+  // Remote reconciliation owns the same mutex internally; run it first to
+  // avoid nested-lock deadlock, then keep load/fire/save as one transaction.
+  await deps.syncSchedules?.();
+  return withCronJobsMutationLock(() => runCronTickLocked(deps));
+}
+
 let timer: ReturnType<typeof setInterval> | null = null;
+let tickFlight: Promise<number> | null = null;
+
+function requestCronTick(deps: CronRuntimeDeps): Promise<number> {
+  if (tickFlight) return tickFlight;
+  const flight = runCronTick(deps).finally(() => {
+    if (tickFlight === flight) tickFlight = null;
+  });
+  tickFlight = flight;
+  return flight;
+}
 
 /** Inicia o loop de tick (idempotente). */
 export function startCronLoop(deps: CronRuntimeDeps = defaultCronDeps): void {
   if (timer) return;
   timer = setInterval(() => {
-    void runCronTick(deps).catch((err) =>
+    void requestCronTick(deps).catch((err) =>
       console.warn('[cron] tick falhou:', err),
     );
   }, CRON_TICK_MS);
   timer.unref?.();
 }
 
-export function stopCronLoop(): void {
+export async function stopCronLoop(): Promise<void> {
   if (timer) clearInterval(timer);
   timer = null;
+  const active = tickFlight;
+  if (active) await active;
 }
 
 // ── CRUD helpers para as MCP tools / IPC ─────────────────────────────────────
@@ -289,6 +349,30 @@ export function stopCronLoop(): void {
 export function listCronJobs(scope: ProjectExecutionScope): CronJob[] {
   const jobs = loadCronJobs();
   return jobs.filter((job) => jobMatchesScope(job, scope));
+}
+
+function requireExactCronConsent(
+  invocation: McpToolInvocation | undefined,
+  action: 'create' | 'update' | 'delete',
+): CronExactUserConsent {
+  assertMcpInvocationCurrent(invocation);
+  const consent = invocation?.exactUserConsent;
+  if (
+    !consent ||
+    consent.toolName.replace(/^nexus_/, '').toLowerCase() !== 'cron' ||
+    consent.action !== action
+  ) {
+    throw new Error(
+      'cron_exact_consent_required: criação/alteração exige consentimento ' +
+        'exato para execuções futuras automáticas',
+    );
+  }
+  return {
+    toolName: consent.toolName,
+    action,
+    grantedAt: consent.grantedAt,
+    receiptId: consent.receiptId,
+  };
 }
 
 function jobMatchesScope(job: CronJob, scope: ProjectExecutionScope): boolean {
@@ -312,29 +396,49 @@ function jobMatchesScope(job: CronJob, scope: ProjectExecutionScope): boolean {
   }
 }
 
-export async function addCronJob(input: {
-  name: string;
-  schedule: string;
-  brief: string;
-  workspacePath?: string;
-  executionMode?: 'shared' | 'local';
-  agentName?: string;
-  squadId?: string;
-}, scope: ProjectExecutionScope): Promise<CronJob> {
+export async function addCronJob(
+  input: {
+    name: string;
+    schedule: string;
+    brief: string;
+    workspacePath?: string;
+    executionMode?: 'shared' | 'local';
+    agentName?: string;
+    squadId?: string;
+  },
+  scope: ProjectExecutionScope,
+  invocation?: McpToolInvocation,
+): Promise<CronJob> {
+  assertMcpInvocationCurrent(invocation);
   const fields = parseCronExpr(input.schedule); // valida
   // O job fica preso ao workspace ativo canônico. Nunca deixe o PTY cair para
   // HOME quando o chamador omite ou fornece um caminho inválido.
   const resolvedCwd = resolveCwdForScope(scope, input.workspacePath);
   const executionMode = input.executionMode ?? 'shared';
+  const portableSchedules = configuredPortableSchedules;
   if (executionMode === 'shared') {
-    if (!configuredPortableSchedules) {
+    if (!portableSchedules) {
       throw new Error(
         'shared cron backend is not configured; choose local explicitly or configure the remote control plane',
       );
     }
-    return configuredPortableSchedules.create(
+  }
+  const consent = requireExactCronConsent(invocation, 'create');
+  const now = Date.now();
+  const normalizedName = input.name.trim();
+  if (!normalizedName || normalizedName.length > 120) {
+    throw new Error('cron name must contain 1..120 characters');
+  }
+  if (input.brief.length > 64 * 1024) {
+    throw new Error('cron brief exceeds 64 KiB');
+  }
+  if (executionMode === 'shared') {
+    if (!portableSchedules) {
+      throw new Error('shared cron backend became unavailable');
+    }
+    return portableSchedules.create(
       {
-        name: input.name,
+        name: normalizedName,
         schedule: input.schedule,
         brief: input.brief,
         workingDirectory:
@@ -343,37 +447,47 @@ export async function addCronJob(input: {
         squadId: input.squadId,
       },
       scope,
+      invocation,
+      (candidate) => issueCronExecutionAuthority(candidate, scope, consent),
     );
   }
-  const workspacePath = scope.rootRealPath;
-  const now = Date.now();
-  const job: CronJob = {
-    id: `cron-${randomUUID().slice(0, 8)}`,
-    name: input.name.slice(0, 120),
-    schedule: input.schedule,
-    brief: input.brief,
-    status: 'active',
-    executionMode: 'local',
-    workspacePath,
-    workingDirectory: resolvedCwd !== scope.rootRealPath ? resolvedCwd : undefined,
-    projectId: scope.projectId,
-    checkoutId: scope.checkoutId,
-    agentName: input.agentName,
-    squadId: input.squadId,
-    createdAt: now,
-    updatedAt: now,
-    nextFireAt: nextCronAfter(fields, new Date(now))?.getTime(),
-  };
-  const jobs = loadCronJobs();
-  jobs.push(job);
-  saveCronJobs(jobs);
-  return job;
+  return withCronJobsMutationLock(() => {
+    assertMcpInvocationCurrent(invocation);
+    const workspacePath = scope.rootRealPath;
+    const job: CronJob = {
+      id: `cron-${randomUUID()}`,
+      name: normalizedName,
+      schedule: input.schedule,
+      brief: input.brief,
+      status: 'active',
+      executionMode: 'local',
+      workspacePath,
+      workingDirectory:
+        resolvedCwd !== scope.rootRealPath ? resolvedCwd : undefined,
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+      agentName: input.agentName,
+      squadId: input.squadId,
+      createdAt: now,
+      updatedAt: now,
+      nextFireAt: nextCronAfter(fields, new Date(now))?.getTime(),
+    };
+    job.executionAuthority = issueCronExecutionAuthority(job, scope, consent);
+    const jobs = loadCronJobs();
+    jobs.push(job);
+    assertMcpInvocationCurrent(invocation);
+    saveCronJobs(jobs);
+    return job;
+  }, invocation?.signal);
 }
 
 export async function deleteCronJob(
   id: string,
   scope: ProjectExecutionScope,
+  invocation?: McpToolInvocation,
 ): Promise<boolean> {
+  assertMcpInvocationCurrent(invocation);
+  requireExactCronConsent(invocation, 'delete');
   const jobs = loadCronJobs();
   const target = jobs.find(
     (job) => job.id === id && jobMatchesScope(job, scope),
@@ -383,24 +497,32 @@ export async function deleteCronJob(
     if (!configuredPortableSchedules) {
       throw new Error('shared cron backend is not configured');
     }
-    return configuredPortableSchedules.delete(id, scope);
+    return configuredPortableSchedules.delete(id, scope, invocation);
   }
-  let didDelete = false;
-  const next = jobs.filter((job) => {
-    if (job.id !== id || !jobMatchesScope(job, scope)) return true;
-    didDelete = true;
-    return false;
-  });
-  if (!didDelete) return false;
-  saveCronJobs(next);
-  return true;
+  return withCronJobsMutationLock(() => {
+    assertMcpInvocationCurrent(invocation);
+    const currentJobs = loadCronJobs();
+    let didDelete = false;
+    const next = currentJobs.filter((job) => {
+      if (job.id !== id || !jobMatchesScope(job, scope)) return true;
+      didDelete = true;
+      return false;
+    });
+    if (!didDelete) return false;
+    assertMcpInvocationCurrent(invocation);
+    saveCronJobs(next);
+    return true;
+  }, invocation?.signal);
 }
 
 export async function updateCronJob(
   id: string,
   patch: PortableCronUpdateInput & { workspacePath?: string },
   scope: ProjectExecutionScope,
+  invocation?: McpToolInvocation,
 ): Promise<CronJob> {
+  assertMcpInvocationCurrent(invocation);
+  const consent = requireExactCronConsent(invocation, 'update');
   const jobs = loadCronJobs();
   const index = jobs.findIndex(
     (job) => job.id === id && jobMatchesScope(job, scope),
@@ -430,41 +552,81 @@ export async function updateCronJob(
           : {}),
       },
       scope,
+      invocation,
+      (liveCurrent, candidate) => {
+        try {
+          assertCronExecutionAuthority(liveCurrent, scope);
+        } catch (error) {
+          throw new Error(
+            'cron_reapproval_required: autoridade ausente ou stale; ' +
+              'exclua e recrie a agenda para revisar a definição completa',
+            { cause: error },
+          );
+        }
+        return issueCronExecutionAuthority(candidate, scope, consent);
+      },
     );
   }
-  if (patch.agentName && patch.squadId) {
-    throw new Error('cron target update is ambiguous');
-  }
-  const schedule = patch.schedule ?? current.schedule;
-  const fields = parseCronExpr(schedule);
-  const now = Date.now();
-  const updated: CronJob = {
-    ...current,
-    ...(patch.name !== undefined ? { name: patch.name.slice(0, 120) } : {}),
-    schedule,
-    ...(patch.brief !== undefined ? { brief: patch.brief } : {}),
-    ...(patch.status !== undefined ? { status: patch.status } : {}),
-    ...(patch.workspacePath !== undefined
-      ? {
-          workingDirectory:
-            resolvedWorkingDirectory === scope.rootRealPath
-              ? undefined
-              : resolvedWorkingDirectory,
-        }
-      : {}),
-    ...(patch.agentName !== undefined
-      ? { agentName: patch.agentName, squadId: undefined }
-      : {}),
-    ...(patch.squadId !== undefined
-      ? { squadId: patch.squadId, agentName: undefined }
-      : {}),
-    updatedAt: now,
-    ...(patch.schedule !== undefined
-      ? { nextFireAt: nextCronAfter(fields, new Date(now))?.getTime() }
-      : {}),
-  };
-  const next = [...jobs];
-  next[index] = updated;
-  saveCronJobs(next);
-  return updated;
+  return withCronJobsMutationLock(() => {
+    assertMcpInvocationCurrent(invocation);
+    const currentJobs = loadCronJobs();
+    const currentIndex = currentJobs.findIndex(
+      (job) => job.id === id && jobMatchesScope(job, scope),
+    );
+    if (currentIndex < 0) throw new Error('cron job was not found in scope');
+    const liveCurrent = currentJobs[currentIndex];
+    if (liveCurrent.executionMode !== 'local') {
+      throw new Error('cron execution mode changed while awaiting local update');
+    }
+    if (patch.agentName && patch.squadId) {
+      throw new Error('cron target update is ambiguous');
+    }
+    const schedule = patch.schedule ?? liveCurrent.schedule;
+    const fields = parseCronExpr(schedule);
+    const now = Date.now();
+    const updated: CronJob = {
+      ...liveCurrent,
+      ...(patch.name !== undefined ? { name: patch.name.slice(0, 120) } : {}),
+      schedule,
+      ...(patch.brief !== undefined ? { brief: patch.brief } : {}),
+      ...(patch.status !== undefined ? { status: patch.status } : {}),
+      ...(patch.workspacePath !== undefined
+        ? {
+            workingDirectory:
+              resolvedWorkingDirectory === scope.rootRealPath
+                ? undefined
+                : resolvedWorkingDirectory,
+          }
+        : {}),
+      ...(patch.agentName !== undefined
+        ? { agentName: patch.agentName, squadId: undefined }
+        : {}),
+      ...(patch.squadId !== undefined
+        ? { squadId: patch.squadId, agentName: undefined }
+        : {}),
+      updatedAt: now,
+      ...(patch.schedule !== undefined
+        ? { nextFireAt: nextCronAfter(fields, new Date(now))?.getTime() }
+        : {}),
+    };
+    try {
+      assertCronExecutionAuthority(liveCurrent, scope);
+    } catch (error) {
+      throw new Error(
+        'cron_reapproval_required: autoridade ausente ou stale; ' +
+          'exclua e recrie a agenda para revisar a definição completa',
+        { cause: error },
+      );
+    }
+    updated.executionAuthority = issueCronExecutionAuthority(
+      updated,
+      scope,
+      consent,
+    );
+    const next = [...currentJobs];
+    next[currentIndex] = updated;
+    assertMcpInvocationCurrent(invocation);
+    saveCronJobs(next);
+    return updated;
+  }, invocation?.signal);
 }

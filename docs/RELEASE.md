@@ -1,102 +1,74 @@
-# Publicar uma nova versão (automático via GitHub Actions)
+# Publicar uma nova versão
 
-O workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml)
-builda em **Node 22 LTS**, **assina** com Developer ID, **notariza** na Apple e
-**publica o Release** com DMG + ZIP Squirrel para **Apple Silicon e Intel**.
-Os dois builds passam por verificação independente antes de o job final criar a
-release — tudo ao dar push numa tag `v*`.
+O caminho vigente é **manual e local**, sem GitHub Actions. O Mac de release
+assina com Developer ID, notariza com o perfil exato `"nexus-notary"`, executa
+os gates no mesmo commit da tag e envia os artefatos diretamente pelo alvo
+`npm run release:publish`. O publicador fixa `--repo` em toda chamada ao `gh`;
+não depende do repositório inferido pelo diretório atual.
 
-## Cortar uma release (o dia a dia)
+O runtime de release também é autoridade versionada: use exatamente Node
+`22.23.1`, conforme `package.json > nexusRelease.node`. Outro patch de Node 22
+falha antes da build.
 
-```bash
-npm version patch      # 0.1.4 -> 0.1.5, cria commit + tag v0.1.5
-git push --follow-tags # dispara o CI
-```
+O runbook canônico, incluindo cadastro interativo da credencial no Keychain,
+build, SBOM/audit, verificação do DMG/ZIP e publicação, está em
+[`build/notarize.md`](../build/notarize.md).
 
-Pronto. Em alguns minutos o Release aparece em **Releases** com os DMGs e ZIPs
-assinados e notarizados. `npm version minor` / `major` para saltos maiores.
+Não execute `gh workflow run`, não use `npm version` e não publique pacote
+ad-hoc. A tag local é criada sobre o commit final antes do build, mas só é
+enviada pelo alvo de publicação depois dos gates. A release só pode ser criada
+quando:
 
-> Auto-update de consumidor ainda exige um feed HTTPS operacional em
-> `NEXUS_UPDATE_FEED`. Enquanto o repositório for privado e esse feed não
-> estiver provisionado, o fallback via `gh` só funciona em máquinas que já têm
-> GitHub CLI autenticado; ele não substitui um canal público de atualização.
+1. typecheck, testes e `npm run release:security` passarem;
+2. a missão E2E real passar no artefato candidato;
+3. assinatura, Gatekeeper, notarização e *staple* forem verificados;
+4. tag, artefatos e evidências de segurança apontarem para o mesmo commit;
+5. o manifesto incluir auditoria/SBOM de produção e da toolchain, lockfile,
+   versões Node/npm e hashes finais de DMG, ZIP e evidência E2E.
 
-## Setup único dos GitHub Secrets
+## Publicação canônica e espelho
 
-O CI precisa de 6 secrets no repositório
-(**Settings → Secrets and variables → Actions**). Não trate os valores como
-válidos só porque existem: antes de cortar uma tag, rode uma release de teste ou
-valide `notarytool history`; uma credencial Apple expirada/inválida bloqueia a
-notarização e não deve ser contornada com assinatura ad-hoc.
+O comando publica duas releases com a mesma tag, em ordem fail-closed:
 
-| Secret | O que é |
-| --- | --- |
-| `MACOS_CERTIFICATE` | O certificado **Developer ID Application** + chave privada, exportado como `.p12` e codificado em base64. |
-| `MACOS_CERTIFICATE_PASSWORD` | A senha definida ao exportar o `.p12`. |
-| `KEYCHAIN_PASSWORD` | Uma senha qualquer para a keychain temporária do CI. |
-| `APPLE_ID` | Apple ID da conta de desenvolvedor. |
-| `APPLE_APP_SPECIFIC_PASSWORD` | App-Specific Password (appleid.apple.com). |
-| `APPLE_TEAM_ID` | Team ID (10 caracteres). |
+1. `cleofasvolarehost/nexus-ide` recebe DMG, ZIP, manifesto, auditorias,
+   SBOMs, evidência E2E e recibo do candidato;
+2. para `cleofasvolarehost/nexus-ide-releases`, o publicador envia **somente
+   DMG e ZIP** para o atualizador público; não envia evidências internas nem
+   outros assets da release canônica.
 
-### Como exportar o `.p12` (para `MACOS_CERTIFICATE`)
+Em uma publicação nova, ambos os repositórios ficam em *draft*, recebem
+upload com `--clobber` e têm nome, tamanho e, quando disponível no draft,
+SHA-256 conferidos antes de qualquer release se tornar pública. A release
+canônica é publicada e relida primeiro; só então o espelho público pode ser
+publicado. No estado publicado, o SHA-256 retornado pelo GitHub é obrigatório
+para cada asset. Inventário extra, ausente ou divergente interrompe o fluxo.
 
-1. **Acesso às Chaves** → categoria **Certificados** → botão direito em
-   **"Developer ID Application: … (TEAMID)"** → **Exportar…**
-2. Salve como `devid.p12` e defina uma senha (vira `MACOS_CERTIFICATE_PASSWORD`).
-3. Gere o base64 do arquivo:
-   ```bash
-   base64 -i devid.p12 | pbcopy   # conteúdo vai para o clipboard
-   ```
-   Cole como valor do secret `MACOS_CERTIFICATE`.
+Uma tentativa interrompida enquanto ainda há drafts executa novamente o gate
+completo e substitui apenas os assets declarados. Se a release canônica já
+estiver publicada e exata, a retomada não recompila nem repete a missão E2E:
+ela revalida HEAD, tag local e remota, recibo durável, hashes de DMG/ZIP,
+manifesto e todos os arquivos de segurança contra a release canônica
+publicada, e então conclui o espelho. Se o espelho aparecer publicado antes da
+canônica, o comando falha sem tentar “consertar” silenciosamente. Executar o
+comando novamente com ambas as releases publicadas só é aceito quando os dois
+snapshots são exatamente os esperados.
 
-> O certificado Developer ID vale ~5 anos; a App-Specific Password até ser
-> revogada. Rotacione os secrets se qualquer um mudar.
+O release oficial atual é single-architecture `arm64`, gerado no Mac Apple
+Silicon. Não há promessa de universal ou `x86_64` sem build/prova separados.
 
-## Build local (fallback, sem CI)
-
-O perfil de notarização local oficial do projeto é `nexus-notary`. Cadastre-o
-uma vez no Keychain (a senha de app não fica no shell nem no repositório):
-
-```bash
-export PATH="/opt/homebrew/opt/node@22/bin:$PATH"   # Node 22 LTS
-xcrun notarytool store-credentials nexus-notary \
-  --apple-id "seu@email.com" \
-  --team-id "35P5XL3JN6" \
-  --password "xxxx-xxxx-xxxx-xxxx"
-
-npm ci
-npm run typecheck
-npm test
-npm run premake # rebuild antes da chave privada entrar no keychain
-
-env -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD \
-  APPLE_TEAM_ID=35P5XL3JN6 \
-  APPLE_KEYCHAIN_PROFILE=nexus-notary \
-  npm run make:release
-
-# Opcional, para voltar o node_modules local ao ABI do Node depois do Forge.
-env -u APPLE_ID -u APPLE_APP_SPECIFIC_PASSWORD -u APPLE_TEAM_ID \
-  npm run rebuild:node
-```
-
-O certificado esperado é exatamente
-`Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)`. Depois do
-`make`, rode o mesmo gate usado pelo CI; ele monta o DMG, extrai o ZIP do
-updater e valida os dois apps contidos:
+Para checar a credencial local sem expor segredo:
 
 ```bash
-node scripts/verify-macos-release.mjs \
-  --artifacts out/make \
-  --version "$(node -p "require('./package.json').version")" \
-  --bundle-id com.nexuside.app \
-  --team-id 35P5XL3JN6 \
-  --identity "Developer ID Application: Cleofas Pereira rocha"
+xcrun notarytool history --keychain-profile "nexus-notary"
 ```
 
-Sem `APPLE_TEAM_ID`, o Forge produz deliberadamente uma assinatura **ad-hoc**
-(`identity: -`), sem hardened runtime e sem notarização. Esse pacote serve só
-para smoke local: Gatekeeper não o considera distribuível e ele nunca deve ser
-publicado. O `.zip` é obrigatório em toda release, pois é o payload consumido
-pelo auto-update Squirrel.Mac.
+O workflow anterior foi preservado apenas como histórico em
+[`docs/archive/release-actions-workflow.yml`](archive/release-actions-workflow.yml).
+Ele está fora de `.github/workflows`, portanto não pode ser executado pelo
+GitHub Actions.
 
-Detalhes de assinatura/notarização em [`build/notarize.md`](../build/notarize.md).
+Quando `NEXUS_UPDATE_FEED` apontar para um feed HTTPS Nexus válido, ele continua
+sendo a fonte preferencial. Sem esse feed, instalações com acesso ao
+repositório privado podem usar `gh` autenticado; as demais consultam de forma
+anônima o espelho público de artefatos acima. O espelho disponibiliza apenas a
+arquitetura realmente construída e provada nesta release.

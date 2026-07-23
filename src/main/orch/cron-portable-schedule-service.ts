@@ -8,8 +8,15 @@ import {
 import {
   nextCronAfter,
   parseCronExpr,
+  withCronJobsMutationLock,
+  cronExecutionAuthoritySchema,
+  type CronExecutionAuthority,
   type CronJob,
 } from './cron-loop';
+import {
+  assertMcpInvocationCurrent,
+  type McpToolInvocation,
+} from './mcp-protocol';
 import { resolveCwdForScope } from './workspace-path';
 import {
   cronDefinitionHash,
@@ -47,6 +54,14 @@ export interface CronPortableScheduleServiceOptions {
   readonly now?: () => number;
   readonly idFactory?: () => string;
 }
+
+export type PortableCronSyncResult =
+  | { ok: true; imported: number; updated: number; deleted: number }
+  | {
+      ok: false;
+      reason: 'backend-unavailable' | 'definition-conflict';
+      scheduleIds?: readonly string[];
+    };
 
 export class CronPortableScheduleConflictError extends Error {
   readonly expectedVersion: number;
@@ -174,7 +189,28 @@ export class CronPortableScheduleService {
   async create(
     rawInput: PortableCronCreateInput,
     rawScope: ProjectExecutionScope,
+    invocation?: McpToolInvocation,
+    authorize?: (candidate: CronJob) => CronExecutionAuthority,
   ): Promise<CronJob> {
+    return withCronJobsMutationLock(
+      () =>
+        this.#create(
+          rawInput,
+          rawScope,
+          invocation,
+          authorize,
+        ),
+      invocation?.signal,
+    );
+  }
+
+  async #create(
+    rawInput: PortableCronCreateInput,
+    rawScope: ProjectExecutionScope,
+    invocation?: McpToolInvocation,
+    authorize?: (candidate: CronJob) => CronExecutionAuthority,
+  ): Promise<CronJob> {
+    assertMcpInvocationCurrent(invocation);
     const input = createInputSchema.parse(rawInput);
     const scope = immutableScope(rawScope);
     const scheduleId = portableScheduleIdSchema.parse(this.#idFactory());
@@ -192,13 +228,42 @@ export class CronPortableScheduleService {
         : { kind: 'squad', id: input.squadId },
       status: 'active',
     });
+    // The exact-consent authority must bind the final stable schedule identity
+    // before the remote publish effect begins. expectedVersion=0 can only
+    // create version 1; any backend response that disagrees is rejected.
+    const expectedHash = cronDefinitionHash(definition);
+    const candidate = this.#materialize(
+      {
+        projectId: scope.projectId,
+        scheduleId,
+        version: 1,
+        definition,
+        definitionHash: expectedHash,
+        updatedAt: validNow(this.#now),
+      },
+      scope,
+    );
+    const executionAuthority = authorize?.(candidate);
+    assertMcpInvocationCurrent(invocation);
     const published = await this.#backend.publish(
       scope.projectId,
       scheduleId,
       0,
       definition,
+      invocation,
     );
+    assertMcpInvocationCurrent(invocation);
     const remote = this.#published(published);
+    if (
+      remote.projectId !== scope.projectId ||
+      remote.scheduleId !== scheduleId ||
+      remote.version !== 1 ||
+      remote.definitionHash !== expectedHash
+    ) {
+      throw new Error(
+        'portable cron backend returned an unexpected created definition',
+      );
+    }
     const jobs = this.#load();
     if (
       jobs.some(
@@ -208,7 +273,15 @@ export class CronPortableScheduleService {
     ) {
       throw new Error('portable cron schedule already has a local binding');
     }
-    const created = this.#materialize(remote, scope);
+    const materialized = this.#materialize(remote, scope);
+    const created = executionAuthority
+      ? {
+          ...materialized,
+          executionAuthority:
+            cronExecutionAuthoritySchema.parse(executionAuthority),
+        }
+      : materialized;
+    assertMcpInvocationCurrent(invocation);
     this.#save([...jobs, created]);
     return created;
   }
@@ -217,7 +290,36 @@ export class CronPortableScheduleService {
     rawJobId: string,
     rawPatch: PortableCronUpdateInput,
     rawScope: ProjectExecutionScope,
+    invocation?: McpToolInvocation,
+    reauthorize?: (
+      current: CronJob,
+      candidate: CronJob,
+    ) => CronExecutionAuthority,
   ): Promise<CronJob> {
+    return withCronJobsMutationLock(
+      () =>
+        this.#update(
+          rawJobId,
+          rawPatch,
+          rawScope,
+          invocation,
+          reauthorize,
+        ),
+      invocation?.signal,
+    );
+  }
+
+  async #update(
+    rawJobId: string,
+    rawPatch: PortableCronUpdateInput,
+    rawScope: ProjectExecutionScope,
+    invocation?: McpToolInvocation,
+    reauthorize?: (
+      current: CronJob,
+      candidate: CronJob,
+    ) => CronExecutionAuthority,
+  ): Promise<CronJob> {
+    assertMcpInvocationCurrent(invocation);
     const jobId = z.string().min(1).max(256).parse(rawJobId);
     const patch = updateInputSchema.parse(rawPatch);
     const scope = immutableScope(rawScope);
@@ -253,17 +355,45 @@ export class CronPortableScheduleService {
       .int()
       .positive()
       .parse(current.definitionVersion);
+    const expectedHash = cronDefinitionHash(definition);
+    const authorityCandidate: CronJob = {
+      ...candidate,
+      definitionVersion: expectedVersion + 1,
+      definitionHash: expectedHash,
+    };
+    const executionAuthority = reauthorize?.(current, authorityCandidate);
+    assertMcpInvocationCurrent(invocation);
     const remote = this.#published(
       await this.#backend.publish(
         scope.projectId,
         scheduleId,
         expectedVersion,
         definition,
+        invocation,
       ),
     );
-    const updated = this.#materialize(remote, scope, current);
+    assertMcpInvocationCurrent(invocation);
+    if (
+      remote.projectId !== scope.projectId ||
+      remote.scheduleId !== scheduleId ||
+      remote.version !== expectedVersion + 1 ||
+      remote.definitionHash !== expectedHash
+    ) {
+      throw new Error(
+        'portable cron backend returned an unexpected updated definition',
+      );
+    }
+    const materialized = this.#materialize(remote, scope, current);
+    const updated = executionAuthority
+      ? {
+          ...materialized,
+          executionAuthority:
+            cronExecutionAuthoritySchema.parse(executionAuthority),
+        }
+      : materialized;
     const next = [...jobs];
     next[index] = updated;
+    assertMcpInvocationCurrent(invocation);
     this.#save(next);
     return updated;
   }
@@ -271,7 +401,20 @@ export class CronPortableScheduleService {
   async delete(
     rawJobId: string,
     rawScope: ProjectExecutionScope,
+    invocation?: McpToolInvocation,
   ): Promise<boolean> {
+    return withCronJobsMutationLock(
+      () => this.#delete(rawJobId, rawScope, invocation),
+      invocation?.signal,
+    );
+  }
+
+  async #delete(
+    rawJobId: string,
+    rawScope: ProjectExecutionScope,
+    invocation?: McpToolInvocation,
+  ): Promise<boolean> {
+    assertMcpInvocationCurrent(invocation);
     const jobId = z.string().min(1).max(256).parse(rawJobId);
     const scope = immutableScope(rawScope);
     const jobs = this.#load();
@@ -291,22 +434,32 @@ export class CronPortableScheduleService {
         portableScheduleIdSchema.parse(current.portableScheduleId),
         z.number().int().positive().parse(current.definitionVersion),
         definition,
+        invocation,
       ),
     );
+    assertMcpInvocationCurrent(invocation);
     this.#save(jobs.filter((_job, candidate) => candidate !== index));
     return true;
   }
 
-  async syncScope(rawScope: ProjectExecutionScope): Promise<
-    | { ok: true; imported: number; updated: number; deleted: number }
-    | {
-        ok: false;
-        reason: 'backend-unavailable' | 'definition-conflict';
-        scheduleIds?: readonly string[];
-      }
-  > {
+  async syncScope(
+    rawScope: ProjectExecutionScope,
+    invocation?: McpToolInvocation,
+  ): Promise<PortableCronSyncResult> {
+    return withCronJobsMutationLock(
+      () => this.#syncScope(rawScope, invocation),
+      invocation?.signal,
+    );
+  }
+
+  async #syncScope(
+    rawScope: ProjectExecutionScope,
+    invocation?: McpToolInvocation,
+  ): Promise<PortableCronSyncResult> {
+    assertMcpInvocationCurrent(invocation);
     const scope = immutableScope(rawScope);
-    const listed = await this.#backend.list(scope.projectId);
+    const listed = await this.#backend.list(scope.projectId, invocation);
+    assertMcpInvocationCurrent(invocation);
     if (!listed.ok) return { ok: false, reason: 'backend-unavailable' };
     const jobs = this.#load();
     const next = [...jobs];
@@ -386,7 +539,10 @@ export class CronPortableScheduleService {
         changed = true;
       }
     }
-    if (changed) this.#save(next);
+    if (changed) {
+      assertMcpInvocationCurrent(invocation);
+      this.#save(next);
+    }
     return conflicts.size > 0
       ? {
           ok: false,

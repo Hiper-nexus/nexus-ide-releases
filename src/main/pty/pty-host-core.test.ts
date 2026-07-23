@@ -49,12 +49,108 @@ describe('createPtyHostBridge', () => {
     t.posted.length = 0;
     proc.write('ls\n');
     proc.resize(120, 40);
-    proc.kill();
+    proc.kill('SIGTERM');
     expect(t.posted).toEqual([
       { type: 'write', sessionId: 's1', data: 'ls\n' },
       { type: 'resize', sessionId: 's1', cols: 120, rows: 40 },
-      { type: 'kill', sessionId: 's1' },
+      { type: 'kill', sessionId: 's1', signal: 'SIGTERM' },
     ]);
+  });
+
+  it('resolves a physical termination only from the exact host proof', async () => {
+    const t = fakeTransport();
+    const bridge = createPtyHostBridge(t.transport);
+    const proc = bridge.host.spawn(spec, { onData: () => {}, onExit: () => {} });
+    t.posted.length = 0;
+
+    const proof = proc.terminate({
+      termTimeoutMs: 100,
+      killTimeoutMs: 200,
+    });
+    const request = t.posted[0];
+    expect(request).toMatchObject({
+      type: 'terminate',
+      sessionId: 's1',
+      termTimeoutMs: 100,
+      killTimeoutMs: 200,
+    });
+    if (!request || request.type !== 'terminate') {
+      throw new Error('terminate request missing');
+    }
+    bridge.dispatchEvent({
+      type: 'termination-result',
+      sessionId: 's1',
+      requestId: request.requestId,
+      proof: {
+        ok: true,
+        rootExited: true,
+        descendantsExited: true,
+      },
+    });
+
+    await expect(proof).resolves.toMatchObject({ ok: true });
+  });
+
+  it('fails pending physical proof closed when the PTY host restarts', async () => {
+    const t = fakeTransport();
+    const bridge = createPtyHostBridge(t.transport);
+    const proc = bridge.host.spawn(spec, { onData: () => {}, onExit: () => {} });
+    const proof = proc.terminate({
+      termTimeoutMs: 100,
+      killTimeoutMs: 200,
+    });
+
+    bridge.handleHostDown();
+
+    await expect(proof).resolves.toMatchObject({
+      ok: false,
+      descendantsExited: false,
+      error: expect.stringMatching(/host/i),
+    });
+  });
+
+  it('times out a silent host and ignores its late physical-proof reply', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = fakeTransport();
+      const bridge = createPtyHostBridge(t.transport);
+      const proc = bridge.host.spawn(spec, {
+        onData: () => {},
+        onExit: () => {},
+      });
+      const resolved = vi.fn();
+      const proof = proc.terminate({
+        termTimeoutMs: 100,
+        killTimeoutMs: 200,
+      });
+      void proof.then(resolved);
+      const request = t.posted.at(-1);
+      if (!request || request.type !== 'terminate') {
+        throw new Error('terminate request missing');
+      }
+
+      await vi.advanceTimersByTimeAsync(4_800);
+      await expect(proof).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/não respondeu|janela/i),
+      });
+      expect(resolved).toHaveBeenCalledOnce();
+
+      bridge.dispatchEvent({
+        type: 'termination-result',
+        sessionId: 's1',
+        requestId: request.requestId,
+        proof: {
+          ok: true,
+          rootExited: true,
+          descendantsExited: true,
+        },
+      });
+      await Promise.resolve();
+      expect(resolved).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('routes data events to the owning session only', () => {

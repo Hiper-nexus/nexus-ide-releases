@@ -4,12 +4,83 @@
  * input — a ÚNICA rota de escrita é pane.input (8KB cap), igual ao protocolo
  * WS. Zero dependências externas (CSP-friendly, roda offline no celular).
  *
- * Token persistido em localStorage (origem HTTPS da própria bridge): reload
- * não exige re-pareamento; revogação no desktop invalida o token no servidor
- * e o cliente cai de volta para a tela de pareamento. Terminal em tempo real:
+ * O token persistido sozinho não autentica: uma chave privada ECDSA
+ * não-extraível fica no IndexedDB do aparelho e assina um desafio novo a cada
+ * reconexão. O código é single-use e não gira sozinho; revogação no desktop
+ * invalida token + chave e volta à tela de pareamento. Terminal em tempo real:
  * consome pushes `pane.stream.data` (terminal-stream-protocol) e usa o poll
  * apenas como reconciliação — um gap de seq dispara pane.read para curar.
  */
+
+export const REMOTE_CLIENT_MANIFEST = JSON.stringify({
+  id: '/',
+  name: 'Nexus Remote',
+  short_name: 'Nexus',
+  description: 'Companion local do NexusIDE para acompanhar missões e panes.',
+  lang: 'pt-BR',
+  start_url: '/',
+  scope: '/',
+  display: 'standalone',
+  orientation: 'any',
+  background_color: '#0a0c10',
+  theme_color: '#0a0c10',
+  icons: [
+    {
+      src: '/icon.svg',
+      sizes: 'any',
+      type: 'image/svg+xml',
+      purpose: 'any maskable',
+    },
+  ],
+});
+
+export const REMOTE_CLIENT_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Nexus">
+<rect width="512" height="512" rx="112" fill="#0a0c10"/>
+<circle cx="256" cy="256" r="142" fill="none" stroke="#35d0a5" stroke-width="34"/>
+<circle cx="256" cy="256" r="48" fill="#35d0a5"/>
+<circle cx="116" cy="148" r="24" fill="#d8dee9"/>
+<circle cx="398" cy="364" r="24" fill="#d8dee9"/>
+<path d="M135 164l77 59M300 289l78 59" stroke="#d8dee9" stroke-width="20" stroke-linecap="round"/>
+</svg>`;
+
+export const REMOTE_CLIENT_SERVICE_WORKER = `'use strict';
+const CACHE = 'nexus-remote-shell-v1';
+const SHELL = ['/', '/manifest.webmanifest', '/icon.svg'];
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()),
+  );
+});
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim()),
+  );
+});
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            event.waitUntil(caches.open(CACHE).then((cache) => cache.put('/', copy)));
+          }
+          return response;
+        })
+        .catch(() => caches.match('/')),
+    );
+    return;
+  }
+  if (SHELL.includes(url.pathname)) {
+    event.respondWith(caches.match(request).then((cached) => cached || fetch(request)));
+  }
+});`;
 
 export const REMOTE_CLIENT_HTML = `<!doctype html>
 <html lang="pt-BR">
@@ -17,6 +88,11 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#0a0c10" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/icon.svg" type="image/svg+xml" />
 <title>Nexus Remote</title>
 <style>
   :root {
@@ -93,6 +169,7 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
     <label style="margin-top:12px">Panes</label>
     <div id="paneList"></div>
     <button class="ghost" id="refreshBtn">Atualizar</button>
+    <button class="ghost" id="enableAlertsBtn">Ativar alertas locais</button>
   </section>
 
   <section id="detail" class="card hidden">
@@ -109,15 +186,115 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
 <script>
 (function () {
   var ws = null, token = null, nextId = 1, pending = {}, curPane = null, poll = null;
+  var opsPoll = null, missionStates = {}, missionSnapshotReady = false;
   var curStreamId = null, lastSeq = 0, streamLive = false;
   var TOKEN_KEY = 'nexusRemoteToken';
+  var DEVICE_DB = 'nexusRemoteDeviceV1', DEVICE_STORE = 'identity', DEVICE_KEY = 'current';
   var $ = function (id) { return document.getElementById(id); };
   function setConn(on, txt) { $('dot').className = 'dot' + (on ? ' on' : ''); $('sub').textContent = txt; }
   function loadToken() { try { return localStorage.getItem(TOKEN_KEY); } catch (_) { return null; } }
   function saveToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (_) {} }
   function clearToken() { try { localStorage.removeItem(TOKEN_KEY); } catch (_) {} }
+  function b64url(bytes) {
+    var binary = '';
+    for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
+  }
+  function openDeviceDb() {
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB || !window.crypto || !crypto.subtle) {
+        reject(new Error('este navegador não suporta identidade segura do aparelho'));
+        return;
+      }
+      var request = indexedDB.open(DEVICE_DB, 1);
+      request.onupgradeneeded = function () {
+        if (!request.result.objectStoreNames.contains(DEVICE_STORE)) {
+          request.result.createObjectStore(DEVICE_STORE);
+        }
+      };
+      request.onsuccess = function () { resolve(request.result); };
+      request.onerror = function () {
+        reject(new Error('não foi possível abrir a identidade do aparelho'));
+      };
+    });
+  }
+  function readDeviceIdentity() {
+    return openDeviceDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(DEVICE_STORE, 'readonly');
+        var request = tx.objectStore(DEVICE_STORE).get(DEVICE_KEY);
+        request.onsuccess = function () { resolve(request.result || null); };
+        request.onerror = function () {
+          reject(new Error('não foi possível ler a identidade do aparelho'));
+        };
+        tx.oncomplete = function () { db.close(); };
+      });
+    });
+  }
+  function storeDeviceIdentity(identity) {
+    return openDeviceDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(DEVICE_STORE, 'readwrite');
+        tx.objectStore(DEVICE_STORE).put(identity, DEVICE_KEY);
+        tx.oncomplete = function () { db.close(); resolve(identity); };
+        tx.onerror = function () {
+          db.close();
+          reject(new Error('não foi possível salvar a identidade do aparelho'));
+        };
+      });
+    });
+  }
+  function clearDeviceIdentity() {
+    return openDeviceDb().then(function (db) {
+      return new Promise(function (resolve) {
+        var tx = db.transaction(DEVICE_STORE, 'readwrite');
+        tx.objectStore(DEVICE_STORE).delete(DEVICE_KEY);
+        tx.oncomplete = function () { db.close(); resolve(); };
+        tx.onerror = function () { db.close(); resolve(); };
+      });
+    }).catch(function () {});
+  }
+  function createDeviceIdentity() {
+    return crypto.subtle.generateKey(
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['sign', 'verify']
+    ).then(function (keyPair) {
+      return crypto.subtle.exportKey('jwk', keyPair.publicKey)
+        .then(function (publicKey) {
+          return {
+            deviceId: b64url(crypto.getRandomValues(new Uint8Array(24))),
+            publicKey: {
+              kty: publicKey.kty,
+              crv: publicKey.crv,
+              x: publicKey.x,
+              y: publicKey.y
+            },
+            privateKey: keyPair.privateKey
+          };
+        });
+    }).then(storeDeviceIdentity);
+  }
+  function getOrCreateDeviceIdentity() {
+    return readDeviceIdentity().then(function (identity) {
+      if (
+        identity && typeof identity.deviceId === 'string' &&
+        identity.publicKey && identity.privateKey
+      ) return identity;
+      return createDeviceIdentity();
+    });
+  }
+  function signDeviceChallenge(identity, challenge) {
+    return crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      identity.privateKey,
+      new TextEncoder().encode(challenge)
+    ).then(function (signature) {
+      return b64url(new Uint8Array(signature));
+    });
+  }
   function showPairScreen(msg) {
-    token = null; clearToken();
+    token = null; clearToken(); clearDeviceIdentity();
     $('home').classList.add('hidden');
     $('detail').classList.add('hidden');
     $('pair').classList.remove('hidden');
@@ -180,10 +357,13 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
     return new Promise(function (resolve, reject) {
       ws = new WebSocket('wss://' + location.host);
       ws.onopen = function () { setConn(true, 'conectado'); resolve(); };
-      ws.onerror = function () { reject(new Error('falha de conexão (aceite o certificado)')); };
+      ws.onerror = function () {
+        reject(new Error('falha de conexão segura com o desktop'));
+      };
       ws.onclose = function (e) {
         setConn(false, 'desconectado');
         if (poll) clearInterval(poll);
+        if (opsPoll) clearInterval(opsPoll);
         // Revogação/expiração AO VIVO: a bridge fecha com o motivo. Voltar
         // para o pareamento na hora — sem isso a tela fica morta com token
         // podre salvo e o usuário só se recupera limpando o storage.
@@ -217,14 +397,30 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
     $('pairErr').textContent = '';
     var code = $('code').value.trim().toUpperCase();
     if (!code) { $('pairErr').textContent = 'informe o código'; return; }
-    (ws && ws.readyState === 1 ? Promise.resolve() : connect())
-      .then(function () { return send('pair', { code: code }); })
+    var identity;
+    getOrCreateDeviceIdentity()
+      .then(function (value) {
+        identity = value;
+        return signDeviceChallenge(identity, 'nexus-remote-pair-v1:' + code);
+      })
+      .then(function (deviceProof) {
+        return (ws && ws.readyState === 1 ? Promise.resolve() : connect())
+          .then(function () {
+            return send('pair', {
+              code: code,
+              deviceId: identity.deviceId,
+              devicePublicKey: identity.publicKey,
+              deviceProof: deviceProof
+            });
+          });
+      })
       .then(function (r) {
         token = r.token || (r.result && r.result.token);
         if (!token) throw new Error('sem token');
         saveToken(token);
         $('pair').classList.add('hidden');
         $('home').classList.remove('hidden');
+        startOpsPoll();
         return refresh();
       })
       .catch(function (err) { $('pairErr').textContent = err.message; });
@@ -236,17 +432,49 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
   (function bootWithSavedToken() {
     var saved = loadToken();
     if (!saved) return;
-    connect()
+    var identity;
+    readDeviceIdentity()
+      .then(function (value) {
+        if (!value || !value.privateKey || !value.deviceId) {
+          var missing = new Error('identidade do aparelho ausente');
+          missing.authRejected = true;
+          throw missing;
+        }
+        identity = value;
+        return connect();
+      })
       .then(function () {
-        return send('auth', { token: saved }).catch(function (err) {
-          err.authRejected = true;
-          throw err;
+        return send('auth.challenge', {
+          token: saved,
+          deviceId: identity.deviceId
         });
+      })
+      .then(function (response) {
+        var challenge = response.result || response;
+        if (!challenge.challenge || !challenge.challengeId) {
+          throw new Error('desafio de autenticação inválido');
+        }
+        return signDeviceChallenge(identity, challenge.challenge)
+          .then(function (signature) {
+            return send('auth', {
+              token: saved,
+              deviceId: identity.deviceId,
+              challengeId: challenge.challengeId,
+              signature: signature
+            });
+          });
+      })
+      .catch(function (err) {
+        if (err && !err.authRejected && ws && ws.readyState === 1) {
+          err.authRejected = true;
+        }
+        throw err;
       })
       .then(function () {
         token = saved;
         $('pair').classList.add('hidden');
         $('home').classList.remove('hidden');
+        startOpsPoll();
         // Falha do refresh não derruba a sessão: a home mostra o erro dela.
         return refresh().catch(function () {});
       })
@@ -260,17 +488,73 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       });
   })();
 
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/sw.js').catch(function () {});
+    });
+  }
+
+  function updateAlertsButton() {
+    var button = $('enableAlertsBtn');
+    if (!('Notification' in window)) {
+      button.textContent = 'Alertas indisponíveis neste navegador';
+      button.disabled = true;
+      return;
+    }
+    button.textContent = Notification.permission === 'granted'
+      ? 'Alertas locais ativos'
+      : Notification.permission === 'denied'
+        ? 'Alertas bloqueados no navegador'
+        : 'Ativar alertas locais';
+    button.disabled = Notification.permission !== 'default';
+  }
+  $('enableAlertsBtn').onclick = function () {
+    if (!('Notification' in window) || Notification.permission !== 'default') return;
+    Notification.requestPermission().then(updateAlertsButton);
+  };
+  updateAlertsButton();
+
+  function notifyMissionTransition(status, missionId) {
+    if (
+      !missionSnapshotReady ||
+      !document.hidden ||
+      !('Notification' in window) ||
+      Notification.permission !== 'granted'
+    ) return;
+    var body = status === 'done'
+      ? 'Uma missão foi concluída.'
+      : 'Uma missão foi bloqueada e requer ação no desktop.';
+    try {
+      new Notification('Nexus Remote', {
+        body: body,
+        tag: 'nexus-mission-' + String(missionId || 'unknown'),
+      });
+    } catch (_) {}
+  }
+
   function renderMissions(list) {
     var el = $('missionList'); el.textContent = '';
     if (!list || !list.length) {
       var empty = document.createElement('div');
       empty.style.color = 'var(--dim)'; empty.textContent = 'nenhuma missão';
-      el.appendChild(empty); return;
+      el.appendChild(empty);
+      missionStates = {};
+      missionSnapshotReady = true;
+      return;
     }
+    var nextStates = {};
     list.slice(0, 40).forEach(function (m) {
       var d = document.createElement('div'); d.className = 'pane';
       var st = document.createElement('span');
       var status = typeof m.status === 'string' ? m.status : '';
+      var missionId = String(m.id || '');
+      if (missionId) {
+        var previous = missionStates[missionId];
+        nextStates[missionId] = status;
+        if (previous && previous !== status && (status === 'done' || status === 'blocked')) {
+          notifyMissionTransition(status, missionId);
+        }
+      }
       st.className = 'st ' + (status === 'running' ? 'busy' : status === 'done' ? 'idle' : '');
       var nm = document.createElement('span');
       nm.className = 'nm';
@@ -278,6 +562,17 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
       d.appendChild(st); d.appendChild(nm);
       el.appendChild(d);
     });
+    missionStates = nextStates;
+    missionSnapshotReady = true;
+  }
+
+  function startOpsPoll() {
+    if (opsPoll) clearInterval(opsPoll);
+    opsPoll = setInterval(function () {
+      if (!$('home').classList.contains('hidden') && ws && ws.readyState === 1) {
+        refresh().catch(function () {});
+      }
+    }, 10000);
   }
 
   function refresh() {
@@ -408,6 +703,7 @@ export const REMOTE_CLIENT_HTML = `<!doctype html>
     curStreamId = null; lastSeq = 0; streamLive = false; resyncInFlight = false;
     $('detail').classList.add('hidden');
     $('home').classList.remove('hidden');
+    startOpsPoll();
     refresh();
   };
 })();

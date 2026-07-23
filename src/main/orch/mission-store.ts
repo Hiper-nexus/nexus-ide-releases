@@ -17,7 +17,30 @@ import {
   type MissionStatus,
 } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  missionBlockKindSchema,
+  missionBlockPatch,
+  resolveMissionBlockingIntentState,
+  type MissionBlockKind,
+} from '../../shared/mission-intent';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import type { RouteDecision } from './task-router';
+import {
+  MissionRouteReservationLedger,
+  ROUTE_RESERVATION_TTL_MS,
+  type MissionRouteReservation,
+  type RouteReservationExpectation,
+} from './mission-route-reservation-ledger';
+import {
+  MissionKickoffProofLedger,
+  type MissionKickoffAcceptance,
+  type RecordMissionKickoffAcceptance,
+} from './mission-kickoff-proof-ledger';
+import {
+  HANDOFF_REBIND_BLOCK_CTA,
+  HANDOFF_REBIND_BLOCK_MARKER,
+  MAX_HANDOFF_DELIVERY_ATTEMPTS,
+} from './handoff-delivery-policy';
 import {
   ScopedStoreBinding,
   ScopedStoreCorruptionError,
@@ -25,6 +48,14 @@ import {
   type ScopedStoreChangeListener,
   type ScopedStoreOptions,
 } from './scoped-store';
+
+export { ROUTE_RESERVATION_TTL_MS };
+export type {
+  MissionKickoffAcceptance,
+  MissionRouteReservation,
+  RecordMissionKickoffAcceptance,
+  RouteReservationExpectation,
+};
 
 const createMissionInputSchema = z
   .object({
@@ -133,6 +164,14 @@ function cloneMission(mission: ScopedMission): ScopedMission {
             deniedTools: mission.intentContract.deniedTools
               ? [...mission.intentContract.deniedTools]
               : undefined,
+            attachmentPaths: mission.intentContract.attachmentPaths
+              ? [...mission.intentContract.attachmentPaths]
+              : undefined,
+            attachmentSnapshots: mission.intentContract.attachmentSnapshots
+              ? mission.intentContract.attachmentSnapshots.map((snapshot) => ({
+                  ...snapshot,
+                }))
+              : undefined,
           },
         }
       : {}),
@@ -170,6 +209,8 @@ function assertIntentContractRevision(
 
 export class ScopedMissionStore {
   readonly #binding: ScopedStoreBinding;
+  readonly #kickoffProofs: MissionKickoffProofLedger;
+  readonly #routeReservations: MissionRouteReservationLedger;
 
   constructor(
     runtimeManager: ProjectRuntimeManager,
@@ -177,6 +218,8 @@ export class ScopedMissionStore {
     options: ScopedStoreOptions = {},
   ) {
     this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+    this.#kickoffProofs = new MissionKickoffProofLedger(this.#binding);
+    this.#routeReservations = new MissionRouteReservationLedger(this.#binding);
   }
 
   get scope(): ProjectExecutionScope {
@@ -185,6 +228,58 @@ export class ScopedMissionStore {
 
   onChange(listener: ScopedStoreChangeListener): () => void {
     return this.#binding.onChange(listener);
+  }
+
+  recordKickoffAcceptance(
+    rawInput: RecordMissionKickoffAcceptance,
+  ): MissionKickoffAcceptance {
+    return this.#kickoffProofs.recordAcceptance(rawInput);
+  }
+
+  hasCurrentKickoffAcceptance(rawMissionId: string): boolean {
+    return this.#kickoffProofs.hasCurrentAcceptance(rawMissionId);
+  }
+
+  hasExactCurrentKickoffAcceptance(
+    rawInput: RecordMissionKickoffAcceptance,
+  ): boolean {
+    return this.#kickoffProofs.hasExactCurrentAcceptance(rawInput);
+  }
+
+  reserveRouteDecision(
+    rawMissionId: string,
+    rawTask: string,
+    rawDecision: RouteDecision,
+    rawTtlMs: number = ROUTE_RESERVATION_TTL_MS,
+  ): MissionRouteReservation {
+    return this.#routeReservations.reserveRouteDecision(
+      rawMissionId,
+      rawTask,
+      rawDecision,
+      rawTtlMs,
+    );
+  }
+
+  getRouteReservation(
+    rawReservationId: string,
+  ): MissionRouteReservation | null {
+    return this.#routeReservations.getRouteReservation(rawReservationId);
+  }
+
+  assertRouteReservation(
+    rawExpected: RouteReservationExpectation,
+  ): MissionRouteReservation {
+    return this.#routeReservations.assertRouteReservation(rawExpected);
+  }
+
+  consumeRouteReservation(
+    rawExpected: RouteReservationExpectation,
+    rawConsumerSessionId: string,
+  ): MissionRouteReservation {
+    return this.#routeReservations.consumeRouteReservation(
+      rawExpected,
+      rawConsumerSessionId,
+    );
   }
 
   getDriveRuntimeState(rawId: string): MissionDriveRuntimeState | null {
@@ -389,7 +484,8 @@ export class ScopedMissionStore {
          FROM missions WHERE id = ?`,
       )
       .get(id);
-    return row === undefined ? null : this.#fromRow(row);
+    if (row === undefined) return null;
+    return this.#routeReservations.withLatestRoute(db, this.#fromRow(row));
   }
 
   list(status?: MissionStatus): ScopedMission[] {
@@ -414,7 +510,10 @@ export class ScopedMissionStore {
              FROM missions ORDER BY created_at DESC, id ASC`,
           )
           .all();
-    return rows.map((row) => this.#fromRow(row));
+    const db = this.#binding.readDatabase();
+    return rows.map((row) =>
+      this.#routeReservations.withLatestRoute(db, this.#fromRow(row)),
+    );
   }
 
   setOrchestratorSession(
@@ -437,6 +536,115 @@ export class ScopedMissionStore {
     return this.get(id);
   }
 
+  /**
+   * Rebind a live orchestrator and recover completion-critical deliveries in
+   * the same SQLite transaction. Accepted attempts remain immutable audit
+   * evidence; only the handoff's delivery projection is queued for the new
+   * physical session. Task dispatch/integration receipts are never rewritten.
+   */
+  rebindOrchestratorSession(
+    rawId: string,
+    rawSessionId: string,
+  ): ScopedMission | null {
+    const id = entityIdSchema.parse(rawId);
+    const sessionId = sessionIdSchema.parse(rawSessionId);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const found = db.transaction(() => {
+      const mission = db.prepare(
+        `SELECT description FROM missions WHERE id = ?`,
+      ).get(id) as { description: string } | undefined;
+      if (!mission) return false;
+
+      const staleDeliveries = db.prepare(
+        `SELECT h.id, h.delivery_state, h.submitted_at,
+                COALESCE((
+                  SELECT MAX(attempt_no)
+                  FROM handoff_delivery_attempts
+                  WHERE handoff_id = h.id
+                ), 0) AS latest_attempt_no
+         FROM handoffs AS h
+         WHERE h.mission_id = ?
+           AND h.status = 'success'
+           AND h.delivered = 1
+           AND EXISTS (
+             SELECT 1 FROM handoff_delivery_attempts AS old_attempt
+             WHERE old_attempt.handoff_id = h.id
+               AND old_attempt.mission_id = h.mission_id
+               AND old_attempt.state = 'accepted'
+               AND old_attempt.accepted_at IS NOT NULL
+               AND old_attempt.orchestrator_session_id <> ?
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM handoff_delivery_attempts AS current_attempt
+             WHERE current_attempt.handoff_id = h.id
+               AND current_attempt.mission_id = h.mission_id
+               AND current_attempt.state = 'accepted'
+               AND current_attempt.accepted_at IS NOT NULL
+               AND current_attempt.orchestrator_session_id = ?
+           )`,
+      ).all(id, sessionId, sessionId) as Array<{
+        id: string;
+        delivery_state: string;
+        submitted_at: number | null;
+        latest_attempt_no: number;
+      }>;
+
+      const blocked = staleDeliveries.some((handoff) =>
+        handoff.delivery_state !== 'submitted' ||
+        handoff.submitted_at === null ||
+        handoff.latest_attempt_no >= MAX_HANDOFF_DELIVERY_ATTEMPTS,
+      );
+      if (blocked) {
+        const description = mission.description.includes(
+          HANDOFF_REBIND_BLOCK_MARKER,
+        )
+          ? mission.description
+          : (
+              mission.description.trim()
+                ? `${mission.description}\n\n${HANDOFF_REBIND_BLOCK_CTA}`
+                : HANDOFF_REBIND_BLOCK_CTA
+            ).slice(0, 65_536);
+        const updated = db.prepare(
+          `UPDATE missions
+           SET orch_session_id = ?, status = 'blocked',
+               intent_state = 'blocked_technical',
+               description = ?, updated_at = ?
+           WHERE id = ?`,
+        ).run(sessionId, description, now, id);
+        if (updated.changes !== 1) {
+          throw new Error('orchestrator rebind block lost mission CAS');
+        }
+        return true;
+      }
+
+      for (const handoff of staleDeliveries) {
+        const requeued = db.prepare(
+          `UPDATE handoffs
+           SET delivered = 0, delivery_state = 'queued',
+               submitted_at = NULL, acknowledged_at = NULL,
+               consumed_at = NULL
+           WHERE id = ? AND mission_id = ?
+             AND delivered = 1 AND delivery_state = 'submitted'`,
+        ).run(handoff.id, id);
+        if (requeued.changes !== 1) {
+          throw new Error('orchestrator rebind lost handoff delivery CAS');
+        }
+      }
+
+      const updated = db.prepare(
+        `UPDATE missions SET orch_session_id = ?, updated_at = ? WHERE id = ?`,
+      ).run(sessionId, now, id);
+      if (updated.changes !== 1) {
+        throw new Error('orchestrator rebind lost mission CAS');
+      }
+      return true;
+    }).immediate();
+    if (!found) return null;
+    this.#binding.emitChange();
+    return this.get(id);
+  }
+
   update(rawId: string, rawPatch: MissionPatch): ScopedMission | null {
     const id = entityIdSchema.parse(rawId);
     const patch = missionPatchSchema.parse(rawPatch);
@@ -454,7 +662,7 @@ export class ScopedMissionStore {
           : patch.intentContract === null
             ? undefined
             : patch.intentContract;
-      const next: ScopedMission = {
+      let next: ScopedMission = {
         ...existing,
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.description !== undefined
@@ -475,10 +683,58 @@ export class ScopedMissionStore {
         milestones: nextMilestones,
         updatedAt: this.#binding.now(),
       };
+      const blockingIntentState = resolveMissionBlockingIntentState({
+        status: next.status,
+        intentState: next.intentState,
+      });
+      if (blockingIntentState) {
+        next = { ...next, intentState: blockingIntentState };
+      }
       if (patch.intentContract === null) {
         delete next.intentContract;
       }
       assertIntentContractRevision(next.intentContract, next.intentVersion ?? 0);
+      const intentChanged = (next.intentVersion ?? 0) !== (existing.intentVersion ?? 0);
+      const activeDispatches = db.prepare(
+        `SELECT task_id, intent_version FROM task_dispatch_queue
+         WHERE mission_id = ?
+           AND state IN (
+             'claimed', 'routed', 'spawning', 'running',
+             'handoff_ready', 'merging', 'suspended'
+           )`,
+      ).all(id) as Array<{ task_id: string; intent_version: number }>;
+      const staleDispatches = intentChanged
+        ? activeDispatches.filter(
+            (dispatch) => dispatch.intent_version !== (next.intentVersion ?? 0),
+          )
+        : [];
+      if (staleDispatches.length > 0) {
+        const marker = '[NEXUS_INTENT_SUPERSEDED]';
+        const detail =
+          'A intenção da missão mudou enquanto havia um worker em execução. ' +
+          'O resultado antigo foi invalidado para não concluir um contrato diferente.';
+        const cta =
+          `${marker}\n## Execução anterior invalidada\n${detail}\n` +
+          'Clique em “Retomar missão” para revisar o plano e despachar novos workers.';
+        next = {
+          ...next,
+          status: 'blocked',
+          intentState: 'blocked_technical',
+          description: next.description.includes(marker)
+            ? next.description
+            : (next.description.trim()
+                ? `${next.description}\n\n${cta}`
+                : cta).slice(0, 65_536),
+        };
+      }
+      const lifecycleRevoked =
+        next.status === 'blocked' ||
+        next.status === 'failed' ||
+        next.intentState === 'blocked_user' ||
+        next.intentState === 'blocked_technical';
+      const invalidatedDispatches = lifecycleRevoked
+        ? activeDispatches
+        : staleDispatches;
       const result = db
         .prepare(
           `UPDATE missions
@@ -498,6 +754,38 @@ export class ScopedMissionStore {
           next.updatedAt,
           id,
         );
+      if (result.changes === 1 && invalidatedDispatches.length > 0) {
+        const detail = lifecycleRevoked
+          ? 'A missão foi bloqueada ou falhou; a autoridade deste worker foi revogada.'
+          : 'A intenção da missão mudou; este worker não possui autoridade para a nova versão.';
+        const versionPredicate = lifecycleRevoked
+          ? ''
+          : 'AND intent_version <> ?';
+        const predicateArgs = lifecycleRevoked
+          ? [id]
+          : [id, next.intentVersion ?? 0];
+        db.prepare(
+          `UPDATE tasks SET status = 'failed', updated_at = ?
+           WHERE id IN (
+             SELECT task_id FROM task_dispatch_queue
+             WHERE mission_id = ? ${versionPredicate}
+               AND state IN (
+                 'claimed', 'routed', 'spawning', 'running',
+                 'handoff_ready', 'merging', 'suspended'
+               )
+           )`,
+        ).run(next.updatedAt, ...predicateArgs);
+        db.prepare(
+          `UPDATE task_dispatch_queue
+           SET state = 'superseded', last_error = ?, revision = revision + 1,
+               updated_at = ?
+           WHERE mission_id = ? ${versionPredicate}
+             AND state IN (
+               'claimed', 'routed', 'spawning', 'running',
+               'handoff_ready', 'merging', 'suspended'
+             )`,
+        ).run(detail, next.updatedAt, ...predicateArgs);
+      }
       if (
         result.changes === 1 &&
         next.status === 'running' &&
@@ -508,7 +796,7 @@ export class ScopedMissionStore {
         ).run(id);
       }
       return result.changes === 1 ? next : null;
-    })();
+    }).immediate();
     if (!updated) return null;
     this.#binding.emitChange();
     return cloneMission(updated);
@@ -602,29 +890,13 @@ export class ScopedMissionStore {
   setStatus(rawId: string, rawStatus: MissionStatus): ScopedMission | null {
     const id = entityIdSchema.parse(rawId);
     const status = missionStatusSchema.parse(rawStatus);
-    const db = this.#binding.writeDatabase();
-    const result = db.transaction(() => {
-      const existing = db
-        .prepare('SELECT status FROM missions WHERE id = ?')
-        .get(id) as { status: string } | undefined;
-      if (!existing) return { changes: 0 };
-      const update = db
-        .prepare('UPDATE missions SET status = ?, updated_at = ? WHERE id = ?')
-        .run(status, this.#binding.now(), id);
-      if (
-        update.changes === 1 &&
-        status === 'running' &&
-        existing.status !== 'running'
-      ) {
-        db.prepare(
-          'DELETE FROM mission_drive_state WHERE mission_id = ?',
-        ).run(id);
-      }
-      return update;
-    })();
-    if (result.changes === 0) return null;
-    this.#binding.emitChange();
-    return this.get(id);
+    return this.update(id, { status });
+  }
+
+  /** Persist a typed user/technical block without an ambiguous status-only write. */
+  block(rawId: string, rawKind: MissionBlockKind): ScopedMission | null {
+    const kind = missionBlockKindSchema.parse(rawKind);
+    return this.update(rawId, missionBlockPatch(kind));
   }
 
   #fromRow(rawRow: unknown): ScopedMission {

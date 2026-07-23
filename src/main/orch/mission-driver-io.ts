@@ -66,6 +66,10 @@ const driveSignalMemory = new Map<string, number>();
 const driveStartedAtMemory = new Map<string, number>();
 let unsubscribeDriveStoreChanges: (() => void) | null = null;
 
+const DEAD_ORCHESTRATOR_RECOVERY_MARKER =
+  '[NEXUS_DEAD_ORCHESTRATOR_RECOVERY_BLOCKED]';
+const DEAD_ORCHESTRATOR_RECOVERY_CTA = 'Retomar missão';
+
 function snapshotForPersistedPane(
   missionId: string,
   persisted: MissionPaneSpec,
@@ -322,6 +326,34 @@ export function createProductionApplyPorts(
         (target.role === 'orchestrator'
           ? mission.orchestratorSessionId
           : undefined);
+      if (
+        target.role === 'orchestrator' &&
+        (!snapshot || snapshot.state === 'exited')
+      ) {
+        const detail =
+          `${DEAD_ORCHESTRATOR_RECOVERY_MARKER}\n` +
+          '## Orquestrador encerrou\n' +
+          'O provider do orquestrador saiu. O Nexus preservou a missão e não ' +
+          'repetiu o kickoff nem pediu ao renderer para inventar uma nova ' +
+          `sessão. CTA: ${DEAD_ORCHESTRATOR_RECOVERY_CTA}.`;
+        const description = mission.description.includes(
+          DEAD_ORCHESTRATOR_RECOVERY_MARKER,
+        )
+          ? mission.description
+          : [mission.description.trim(), detail]
+              .filter(Boolean)
+              .join('\n\n')
+              .slice(0, 65_536);
+        stores.missions.update(missionId, {
+          status: 'blocked',
+          intentState: 'blocked_technical',
+          description,
+        });
+        throw new Error(
+          'fresh-context blocked: orchestrator provider exited; ' +
+            `CTA: ${DEAD_ORCHESTRATOR_RECOVERY_CTA}`,
+        );
+      }
       const compactMemory = renderMissionCompact(
         compactMissionContext({
           mission,
