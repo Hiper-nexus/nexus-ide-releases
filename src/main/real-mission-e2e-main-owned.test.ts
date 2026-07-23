@@ -35,10 +35,12 @@ vi.mock('./runtime/worktree-runtime-registry', () => ({
 import { advanceRealMissionE2EMainOwnedChain } from './real-mission-e2e-main-owned';
 
 const scope = {
+  version: 1 as const,
   installationId: 'install',
   projectId: 'project',
   checkoutId: 'checkout',
   rootRealPath: '/tmp/e2e-root',
+  identitySource: 'provisional' as const,
 };
 
 function makeWorktree(worktreePath: string) {
