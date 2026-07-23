@@ -137,7 +137,17 @@ export function stageRealMissionE2EContextCorpus(workspacePath: string): void {
       2,
     )}\n`,
   );
+  // Attestations are written later with the real projectId (see seal…Attestations).
+}
 
+/**
+ * Bind attestations to the live project identity. Must run after the workspace
+ * scope is known; files are gitignored so merge keeps a clean primary checkout.
+ */
+export function sealRealMissionE2EContextAttestations(
+  scope: ProjectExecutionScope,
+): void {
+  const root = scope.rootRealPath;
   for (const targetPath of [
     ...CONTEXT_DOCS.map((name) => `.context/docs/${name}.md`),
     '.context/nexus/invariants/core.json',
@@ -146,12 +156,12 @@ export function stageRealMissionE2EContextCorpus(workspacePath: string): void {
       scope,
       createContextAttestation(scope, {
         targetPath,
-        targetHash: sha256File(workspacePath, targetPath),
+        targetHash: sha256File(root, targetPath),
         sources: [
           {
             type: 'file',
             locator: 'package.json',
-            sourceHash: sha256File(workspacePath, 'package.json'),
+            sourceHash: sha256File(root, 'package.json'),
           },
         ],
         author: {
@@ -169,8 +179,6 @@ export function stageRealMissionE2EContextCorpus(workspacePath: string): void {
       }),
     );
   }
-
-  // Caller commits once with README so evidence stays at 2 commits (base+merge).
 }
 
 export function freezeRealMissionE2EPrevCIfNeeded(
@@ -207,6 +215,7 @@ export function freezeRealMissionE2EPrevCIfNeeded(
   }
 
   try {
+    sealRealMissionE2EContextAttestations(scope);
     service.freezeContract(
       {
         missionId,

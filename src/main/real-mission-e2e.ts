@@ -158,7 +158,9 @@ function setupScratchRepository(userData: string): ScratchRepository {
   // primary checkout, so ignore it from the disposable gate repo.
   fs.writeFileSync(
     path.join(workspacePath, '.gitignore'),
-    '.nexus/\n',
+    // Attestations are written at freeze time with the real projectId (unknown
+    // at init). Ignore them so merge still sees a clean primary checkout.
+    '.nexus/\n.context/nexus/attestations/\n',
     { encoding: 'utf8', mode: PRIVATE_FILE_MODE },
   );
   // Operational PREVC corpus before the single baseline commit so evidence
