@@ -143,6 +143,15 @@ function blockExitedSession(
         );
       }
     }
+    // Release gate: a worker PTY is terminal once it exits (the dispatch is
+    // completed by the main-owned chain + durable merge, never by re-engaging
+    // the dead worker). Do NOT block the mission here. If the worktree was not
+    // ready at exit time, the chain could not advance yet — the observer tick
+    // retries advanceRealMissionE2EMainOwnedChain until the worktree is ready
+    // and the artifact/handoff/merge land. Blocking now would wedge the
+    // mission, because the main-owned chain refuses to advance a blocked
+    // status. The gate's own timeout bounds a genuinely stuck run.
+    return;
   }
 
   for (const suite of candidates) {
