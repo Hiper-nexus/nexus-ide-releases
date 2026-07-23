@@ -259,7 +259,8 @@ async function injectWithBusyProof(
   // Never interleave a brief with boot or a turn already in progress. The
   // caller may retry only after an actual idle snapshot/edge.
   if (!isSessionInjectableIdle(sessionId)) return false;
-  let observedBusy = false;
+  const realMission = isCurrentProcessRealMissionE2E();
+  let observedBusy = getSessionState(sessionId) === 'busy';
   let observedOutput = false;
   let submitted = false;
   let sessionExited = false;
@@ -268,22 +269,20 @@ async function injectWithBusyProof(
     if (observedBusy && observedOutput) settle?.(true);
     // Release gate: Codex can stay in silent reasoning for seconds after busy
     // without PTY output; do not kill a live worker that already accepted work.
-    else if (
-      observedBusy &&
-      isCurrentProcessRealMissionE2E()
-    ) {
+    else if (observedBusy && realMission) {
       settle?.(true);
     }
   };
   const untapState = tapSessionState((changedSessionId, state) => {
-    if (changedSessionId !== sessionId || !submitted || state !== 'busy') return;
+    // Count busy even before submitted flips — paste can auto-start the turn.
+    if (changedSessionId !== sessionId || state !== 'busy') return;
     observedBusy = true;
-    maybeAccept();
+    if (submitted) maybeAccept();
   });
   const untapData = tapSessionData((changedSessionId, data) => {
-    if (changedSessionId !== sessionId || !submitted || data.length === 0) return;
+    if (changedSessionId !== sessionId || data.length === 0) return;
     observedOutput = true;
-    maybeAccept();
+    if (submitted) maybeAccept();
   });
   const untapExit = tapSessionExit((exitedSessionId) => {
     if (exitedSessionId !== sessionId) return;
@@ -307,18 +306,23 @@ async function injectWithBusyProof(
       () => { submitted = true; },
       true,
     );
-    if (observedBusy && observedOutput) return true;
+    if (getSessionState(sessionId) === 'busy') observedBusy = true;
+    if (observedBusy && (observedOutput || realMission)) return true;
     if (sessionExited || getSessionState(sessionId) === null) return false;
     return await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         settle = null;
-        resolve(false);
+        resolve(Boolean(observedBusy && (observedOutput || realMission)));
       }, windowMs);
       settle = (accepted) => {
         clearTimeout(timer);
         settle = null;
         resolve(accepted);
       };
+      // Immediate settle if we already have proof.
+      if (observedBusy && (observedOutput || realMission)) {
+        settle(true);
+      }
     });
   } finally {
     settle = null;

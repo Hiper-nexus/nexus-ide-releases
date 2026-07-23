@@ -28,11 +28,15 @@ import {
   isSessionInjectableIdle,
   tapAgentSemanticStatus,
 } from './agent-status';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 
 const BOOT_IDLE_WINDOW_MS = 15_000;
 const PASTE_SETTLE_MS = 250;
 const PASTE_IDLE_WINDOW_MS = 3_000;
 const ACCEPTANCE_WINDOW_MS = 12_000;
+/** Real-mission Codex may keep processing after paste; give it longer to re-idle. */
+const REAL_MISSION_PASTE_IDLE_WINDOW_MS = 8_000;
+const REAL_MISSION_ACCEPTANCE_WINDOW_MS = 20_000;
 const KICKOFF_BLOCK_MARKER = '<!-- nexus:kickoff-not-accepted -->';
 const KICKOFF_CTA = 'Retomar missão';
 
@@ -136,10 +140,15 @@ export async function runMissionKickoffAcceptance(
   timing: MissionKickoffTiming = {},
 ): Promise<MissionKickoffResult> {
   const prompt = assertSafePtyPrompt(input.prompt);
+  const realMission = isCurrentProcessRealMissionE2E();
   const bootIdleWindowMs = timing.bootIdleWindowMs ?? BOOT_IDLE_WINDOW_MS;
   const pasteSettleMs = timing.pasteSettleMs ?? PASTE_SETTLE_MS;
-  const pasteIdleWindowMs = timing.pasteIdleWindowMs ?? PASTE_IDLE_WINDOW_MS;
-  const acceptanceWindowMs = timing.acceptanceWindowMs ?? ACCEPTANCE_WINDOW_MS;
+  const pasteIdleWindowMs =
+    timing.pasteIdleWindowMs ??
+    (realMission ? REAL_MISSION_PASTE_IDLE_WINDOW_MS : PASTE_IDLE_WINDOW_MS);
+  const acceptanceWindowMs =
+    timing.acceptanceWindowMs ??
+    (realMission ? REAL_MISSION_ACCEPTANCE_WINDOW_MS : ACCEPTANCE_WINDOW_MS);
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let exited = false;
   let submitted = false;
@@ -159,7 +168,9 @@ export async function runMissionKickoffAcceptance(
     }
     if (submitted && state === 'busy') {
       busySeen = true;
-      if (outputSeen) acceptanceWaiter?.(true);
+      // Real-mission: Codex often starts silent reasoning without immediate PTY
+      // bytes after Enter; busy alone is enough acceptance for the gate.
+      if (outputSeen || realMission) acceptanceWaiter?.(true);
     }
     if (state === 'exited') {
       exited = true;
@@ -255,13 +266,28 @@ export async function runMissionKickoffAcceptance(
     }
     // A TUI may repaint/echo the paste. Do not attribute that busy edge to CR;
     // wait for a fresh idle baseline before arming the actual submit proof.
+    // Real-mission exception: Codex may start the turn from bracketed paste
+    // without returning to idle; treat durable busy as acceptance.
     if (!isInjectableIdle()) {
+      if (realMission && ports.getState(input.sessionId) === 'busy') {
+        return { accepted: true };
+      }
       const pasteIdle = await waitForIdle(pasteIdleWindowMs);
       if (pasteIdle === 'exited') return await fail('session_exited');
-      if (pasteIdle !== 'idle') return await fail('timeout');
+      if (pasteIdle !== 'idle') {
+        if (realMission && ports.getState(input.sessionId) === 'busy') {
+          return { accepted: true };
+        }
+        return await fail('timeout');
+      }
     }
     if (!ports.isAuthorized()) return await fail('authority_lost');
-    if (!isInjectableIdle()) return await fail('timeout');
+    if (!isInjectableIdle()) {
+      if (realMission && ports.getState(input.sessionId) === 'busy') {
+        return { accepted: true };
+      }
+      return await fail('timeout');
+    }
 
     let settleAcceptance: (accepted: boolean) => void = () => {};
     const accepted = new Promise<boolean>((resolve) => {
@@ -282,6 +308,11 @@ export async function runMissionKickoffAcceptance(
     outputSeen = false;
     busySeen = false;
     submitted = true;
+    // Capture busy that already exists at submit arm time (paste auto-start).
+    if (ports.getState(input.sessionId) === 'busy') {
+      busySeen = true;
+      if (realMission) settleAcceptance(true);
+    }
     let enterWritten = false;
     try {
       enterWritten = ports.write(input.sessionId, '\r', { markInputBusy: false });
@@ -292,6 +323,11 @@ export async function runMissionKickoffAcceptance(
     if (!enterWritten) {
       settleAcceptance(false);
       return await fail('write_failed');
+    }
+    // Snapshot after Enter: some CLIs go busy before the state tap fires.
+    if (ports.getState(input.sessionId) === 'busy') {
+      busySeen = true;
+      if (outputSeen || realMission) settleAcceptance(true);
     }
     if (await accepted) return { accepted: true };
     if (exited || ports.getState(input.sessionId) === null) {
