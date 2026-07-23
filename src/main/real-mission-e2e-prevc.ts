@@ -13,7 +13,6 @@ import {
   createContextAttestation,
   writeContextAttestation,
 } from './context/context-attestation';
-import { ensureContextScaffold } from './context/context-doctor';
 import { getContextWorkflowService } from './context/context-workflow-registry';
 import { AutomatedReviewSessionRegistry } from './context/automated-review-session';
 import type { MergeValidationCoordinatorDependencies } from './context/merge-validation-coordinator';
@@ -54,15 +53,60 @@ function writeText(root: string, relative: string, content: string): void {
  * Caller must commit it with the gate baseline so HEAD history stays 1 commit.
  */
 export function stageRealMissionE2EContextCorpus(workspacePath: string): void {
-  const scope = {
-    version: 1 as const,
-    installationId: 'real-mission-e2e',
-    projectId: 'real-mission-e2e',
-    checkoutId: 'real-mission-e2e',
-    rootRealPath: workspacePath,
-    identitySource: 'provisional' as const,
-  };
-  ensureContextScaffold(scope);
+  // Pure filesystem staging — do NOT use workspace-file helpers here: the
+  // scratch tree is not yet bound as a product workspace identity.
+  for (const relative of [
+    '.context/docs',
+    '.context/decisions',
+    '.context/plans',
+    '.context/agents',
+    '.context/skills',
+    '.context/config',
+    '.context/nexus/facts',
+    '.context/nexus/invariants',
+    '.context/nexus/regressions',
+    '.context/nexus/attestations',
+    '.context/nexus/evidence',
+  ]) {
+    fs.mkdirSync(path.join(workspacePath, relative), {
+      recursive: true,
+      mode: 0o700,
+    });
+  }
+
+  writeText(
+    workspacePath,
+    '.context/config/policy.json',
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        mode: 'enforce',
+        protectedPaths: ['.context'],
+        evidence: {
+          trustedProducer: 'nexus',
+          bind: [
+            'projectId',
+            'checkoutId',
+            'missionId',
+            'baseSha',
+            'headSha',
+            'diffHash',
+            'contractHash',
+            'contextHash',
+            'sensorConfigHash',
+          ],
+          blockOnSeverities: ['critical', 'high'],
+        },
+        review: {
+          requireIndependentAuthor: true,
+          requireDifferentProviderFor: ['high', 'critical'],
+          minimumReviewers: { high: 1, critical: 2 },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
 
   writeText(
     workspacePath,
