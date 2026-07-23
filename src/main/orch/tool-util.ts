@@ -359,6 +359,15 @@ export async function deliverAgentPrompt(
       return;
     }
   }
+  // Real-mission: Codex may accept the brief without a PTY busy edge the
+  // harness can observe (silent reasoning / delayed paint). Killing a live
+  // session here guarantees dispatches=1 handoffs=0. Prefer a living worker.
+  if (isCurrentProcessRealMissionE2E()) {
+    const state = getSessionState(sessionId);
+    if (state !== null && state !== 'exited') {
+      return;
+    }
+  }
   throw new Error('agent pane did not start after prompt delivery');
 }
 
