@@ -354,6 +354,8 @@ body {
 }
 
 .workspace-bar__name {
+  display: block;
+  width: 100%;
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.02em;
@@ -366,8 +368,10 @@ body {
 .workspace-bar__ws {
   position: relative;
   min-width: 0;
+  width: 100%;
   display: flex;
   align-items: center;
+  flex: 1 1 auto;
 }
 
 .workspace-bar__name-btn {
@@ -375,6 +379,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   min-height: 32px;
@@ -385,6 +390,7 @@ body {
   color: var(--text);
   cursor: pointer;
   font: inherit;
+  overflow: hidden;
 }
 
 .workspace-bar__name-btn:hover,
@@ -404,7 +410,9 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   line-height: 1.05;
 }
 

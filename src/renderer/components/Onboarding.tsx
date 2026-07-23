@@ -28,8 +28,13 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
-      className="onb-copy"
+      type="button"
+      className="onb__copy"
       title="Copiar comando"
+      aria-label={
+        copied ? 'Comando copiado' : 'Copiar comando de instalação'
+      }
+      data-copied={copied ? 'true' : undefined}
       onClick={() => {
         void navigator.clipboard.writeText(text).then(() => {
           setCopied(true);
@@ -37,7 +42,7 @@ function CopyButton({ text }: { text: string }) {
         });
       }}
     >
-      {copied ? 'copiado' : 'copiar'}
+      {copied ? 'Copiado' : 'Copiar'}
     </button>
   );
 }
