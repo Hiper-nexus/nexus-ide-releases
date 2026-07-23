@@ -4,7 +4,10 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse } from 'smol-toml';
 
-import { stageRealMissionCodexTrust } from './real-mission-codex-trust';
+import {
+  stageRealMissionCodexTrust,
+  trustRealMissionCodexProjectPath,
+} from './real-mission-codex-trust';
 
 const temporaryDirectories: string[] = [];
 
@@ -59,6 +62,27 @@ describe('real mission Codex trust fixture', () => {
     expect(() => stageRealMissionCodexTrust(userData, outside)).toThrow(
       /outside disposable user data/,
     );
+  });
+
+  it('no-ops worktree trust outside the real-mission process flag', () => {
+    // isCurrentProcessRealMissionE2E is fixed at module load from process.argv.
+    // Vitest runs without the flag, so append must be a silent no-op here.
+    const userData = makeUserData();
+    const workspace = path.join(userData, 'real-mission-workspace-test');
+    fs.mkdirSync(workspace, { mode: 0o700 });
+    stageRealMissionCodexTrust(userData, workspace);
+    const worktree = path.join(userData, 'project-runtime', 'worktrees', 'task-1');
+    fs.mkdirSync(worktree, { recursive: true, mode: 0o700 });
+    const before = fs.readFileSync(
+      path.join(userData, 'home', '.codex', 'config.toml'),
+      'utf8',
+    );
+    trustRealMissionCodexProjectPath(userData, worktree);
+    const after = fs.readFileSync(
+      path.join(userData, 'home', '.codex', 'config.toml'),
+      'utf8',
+    );
+    expect(after).toBe(before);
   });
 
   it('never overwrites a pre-existing Codex config', () => {
