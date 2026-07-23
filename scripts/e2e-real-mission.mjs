@@ -867,7 +867,14 @@ export async function runPackagedRealMission(
     await atomicWriteEvidence(evidence, evidencePath);
     return { evidence, evidencePath, target };
   } finally {
-    await fsp.rm(userData, { recursive: true, force: true });
+    // Preserve the last failed gate state for local diagnosis when requested.
+    if (process.env.NEXUS_REAL_MISSION_PRESERVE_USERDATA === '1') {
+      process.stderr.write(
+        `[real-mission] preserved userData=${userData}\n`,
+      );
+    } else {
+      await fsp.rm(userData, { recursive: true, force: true });
+    }
   }
 }
 
