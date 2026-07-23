@@ -13,6 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.19.27',
+  date: '2026-07-23',
+  codename: 'Golden Path',
+  summary:
+    'Missões aprovadas agora percorrem uma rota selada do kickoff ao handoff, com autoridade durável, execução observável e conclusão baseada em recibos verificáveis.',
+  highlights: [
+    {
+      title: 'Rota selada e diversa',
+      detail:
+        'RouteReservation vincula missão, revisão, adapter, modelo e esforço antes do spawn; o roster permanece sticky e o router distribui trabalho sem degradar qualidade.',
+    },
+    {
+      title: 'Kickoff com prova real',
+      detail:
+        'O processo principal materializa o orquestrador e só libera o scheduler após observar uma borda idle→busy com saída real, preservando missão, sessão e revisão exatas.',
+    },
+    {
+      title: 'Handoff até a integração',
+      detail:
+        'Dispatcher, worktrees e merge queue usam leases e receipts duráveis; uma missão só chega a concluída quando a entrega aceita também possui integração ou validação verificável.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Recuperação sem duplicação',
+      detail:
+        'Reinício, troca de renderer, saída física e failover preservam a autoridade do main, revogam sessões antigas e retomam apenas o trabalho que ainda é atual.',
+    },
+    {
+      title: 'Release fail-closed',
+      detail:
+        'Build local limpo, Node/npm fixados, assinatura, notarização, Gatekeeper, SBOM, auditoria e missão E2E pertencem obrigatoriamente ao mesmo commit e aos mesmos artefatos.',
+    },
+  ],
+};
+
+export const PREVIOUS_RELEASE: AppRelease = {
   version: '0.19.26',
   date: '2026-07-22',
   codename: 'Piloto Automático sem Modal',
@@ -45,43 +82,6 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Kickoff anti-travamento',
       detail:
         'O orquestrador executa direto e trata freeze/bootstrap PREVC como best-effort em segundo plano, nunca como pré-condição.',
-    },
-  ],
-};
-
-export const PREVIOUS_RELEASE: AppRelease = {
-  version: '0.19.25',
-  date: '2026-07-22',
-  codename: 'Piloto Automático de Verdade',
-  summary:
-    'Lane ops para infra sem PREVC, fila de bootstrap destravada, bootstrap convergente sem segundo provider, panes Codex sem review de hooks e login OMP sem aba fantasma.',
-  highlights: [
-    {
-      title: 'Lane ops (Operação/infra)',
-      detail:
-        'Missões de deploy, backup e SSH executam terminal/browser sem exigir contexto PREVC, com aprovação de intenção e auditoria mantidas.',
-    },
-    {
-      title: 'Bootstrap destravado',
-      detail:
-        'Retry faz join em vez de prompt_queue_busy, watchdog libera slot preso e o usuário aprova o contexto pela UI — sem depender de segundo provider.',
-    },
-    {
-      title: 'Panes Codex sobem direto',
-      detail:
-        'Hooks de status pré-confiados via trusted_hash no config.toml e bypass com guard de versão — sem a tela "hooks need review".',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Login OMP sem aba fantasma',
-      detail:
-        'Autorização OAuth em janela in-app endurecida que abre e fecha sozinha.',
-    },
-    {
-      title: 'Fila sem deadlock',
-      detail:
-        'Awaits de orientation com bound e watchdog de 10 min no slot executing — missão nunca mais trava esperando o mapa do projeto.',
     },
   ],
 };

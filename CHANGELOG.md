@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.19.27 — Golden Path
+
+Data: 2026-07-23
+
+### Orquestração com autoridade durável
+
+- **RouteReservation obrigatória**: decisões do router passam a ser seladas
+  por missão e revisão, com adapter, modelo, esforço, expiração e consumo
+  atômico. Spawns fora do roster sticky precisam apresentar exatamente a
+  reserva emitida por `nexus_route_task`.
+- **Roteamento com diversidade**: o ranking considera tier, histórico,
+  qualidade, custo, participação OMP e atenuação de repetição sem trocar um
+  candidato mais capaz por um fallback inadequado.
+- **Bootstrap main-owned**: plano, squad, grants, sessão e pane do
+  orquestrador são derivados e revalidados no processo principal; reinício ou
+  troca do renderer não transfere autoridade.
+
+### Execução observável até o fim
+
+- **Kickoff com aceite físico**: o prompt só é considerado entregue após uma
+  janela idle injetável, envio seguro e prova de saída + borda `idle → busy`.
+  Timeout, saída da sessão ou perda de autoridade bloqueiam a missão com ação
+  de retomada, sem falso sucesso.
+- **Dispatcher e handoff verificáveis**: tasks usam leases, incarnation,
+  ownership e worktrees persistidos. Worker só termina após handoff aceito e
+  a missão só conclui com receipt de integração ou validação confiável.
+- **Recuperação convergente**: revogação de bearer, término físico, falha de
+  merge e reinício convergem para estados duráveis sem duplicar spawn,
+  kickoff ou integração.
+
+### Segurança e release
+
+- **Electron endurecido**: limites de navegação, XSS, IPC, downloads, browser,
+  mídia, SSH e companion foram revisados com validação fail-closed e testes
+  dedicados.
+- **Release local canônica**: Node/npm, commit, tag, SBOM, auditorias,
+  assinatura, notarização, Gatekeeper, DMG/ZIP e missão E2E precisam apontar
+  para o mesmo candidato antes de qualquer publicação.
+
+### Qualidade
+
+- **Validação local**: typecheck do app e servidor; suíte principal e do
+  servidor; gates de segurança, build limpo, assinatura, notarização e missão
+  E2E do artefato candidato.
+
 ## 0.19.26 — Piloto Automático sem Modal
 
 Data: 2026-07-22
