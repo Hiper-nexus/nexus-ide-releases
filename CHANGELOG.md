@@ -29,12 +29,18 @@ Data: 2026-07-23
 - **Recuperação convergente**: revogação de bearer, término físico, falha de
   merge e reinício convergem para estados duráveis sem duplicar spawn,
   kickoff ou integração.
+- **Modelo padrão sem falso bloqueio**: o bootstrap valida o modelo solicitado
+  e selado, não o alias normalizado pelo provider, evitando bloquear a missão
+  quando o runtime aprovado usa o modelo padrão.
 
 ### Segurança e release
 
 - **Electron endurecido**: limites de navegação, XSS, IPC, downloads, browser,
   mídia, SSH e companion foram revisados com validação fail-closed e testes
   dedicados.
+- **Aprovação visível em telas pequenas**: a confirmação nativa foi reduzida a
+  um resumo fixo de 12 linhas, mantendo objetivo, critérios, anexos, restrições,
+  roster, runtime e hashes do contrato sem esconder os botões de ação.
 - **Release local canônica**: Node/npm, commit, tag, SBOM, auditorias,
   assinatura, notarização, Gatekeeper, DMG/ZIP e missão E2E precisam apontar
   para o mesmo candidato antes de qualquer publicação.

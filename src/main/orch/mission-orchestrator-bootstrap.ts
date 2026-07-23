@@ -256,7 +256,7 @@ function validRuntime(
       agent.sessionId === mission.orchestratorSessionId &&
       agent.paneId === pane.paneId &&
       agent.adapterId === pane.adapterId &&
-      agent.model === pane.model &&
+      agent.requestedModel === pane.model &&
       agent.accountId === pane.accountId &&
       agent.effort === pane.effort &&
       agent.cwd === pane.cwd &&

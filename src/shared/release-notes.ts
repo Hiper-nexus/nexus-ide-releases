@@ -42,6 +42,11 @@ export const CURRENT_RELEASE: AppRelease = {
         'Reinício, troca de renderer, saída física e failover preservam a autoridade do main, revogam sessões antigas e retomam apenas o trabalho que ainda é atual.',
     },
     {
+      title: 'Aprovação compacta e bootstrap correto',
+      detail:
+        'A confirmação nativa mantém ações visíveis em telas pequenas e o modelo padrão aprovado deixa de ser confundido com o alias normalizado pelo provider.',
+    },
+    {
       title: 'Release fail-closed',
       detail:
         'Build local limpo, Node/npm fixados, assinatura, notarização, Gatekeeper, SBOM, auditoria e missão E2E pertencem obrigatoriamente ao mesmo commit e aos mesmos artefatos.',
