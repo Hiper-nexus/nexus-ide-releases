@@ -163,8 +163,9 @@ function setupScratchRepository(userData: string): ScratchRepository {
     '.nexus/\n.context/nexus/attestations/\n',
     { encoding: 'utf8', mode: PRIVATE_FILE_MODE },
   );
-  // Operational PREVC corpus before the single baseline commit so evidence
-  // remains initial+merge (commitCount === 2).
+  // Operational PREVC corpus before the single baseline commit so the
+  // integration history stays the initial commit plus the worker result
+  // (fast-forward: 2 commits, or a real merge commit: 3 commits).
   stageRealMissionE2EContextCorpus(workspacePath);
   runGit(workspacePath, ['add', '--', 'README.md', '.gitignore', '.context', 'package.json']);
   runGit(workspacePath, [
@@ -858,7 +859,7 @@ class RealMissionObserver {
             pathPart.includes('/.nexus/')
           );
         });
-      const parentHeadSha = runGit(this.#scratch.workspacePath, [
+      const firstParentSha = runGit(this.#scratch.workspacePath, [
         'rev-parse',
         `${finalHeadSha}^`,
       ]);
@@ -869,9 +870,23 @@ class RealMissionObserver {
         this.#scratch.initialHeadSha,
         finalHeadSha,
       ]);
+      // The integration may land as a fast-forward (initial + result = 2
+      // commits) or as a real merge commit (initial + worker result + merge =
+      // 3 commits). Either is valid as long as HEAD descends from the initial
+      // commit and the only change against the initial tree is resultado.txt.
+      let headDescendsFromInitial =
+        firstParentSha === this.#scratch.initialHeadSha;
+      if (!headDescendsFromInitial && commitCount === 3) {
+        const secondParentSha = runGit(this.#scratch.workspacePath, [
+          'rev-parse',
+          `${finalHeadSha}^2`,
+        ]);
+        headDescendsFromInitial =
+          secondParentSha === this.#scratch.initialHeadSha;
+      }
       exactSingleCommit =
-        commitCount === 2 &&
-        parentHeadSha === this.#scratch.initialHeadSha &&
+        (commitCount === 2 || commitCount === 3) &&
+        headDescendsFromInitial &&
         changedPaths === REAL_MISSION_E2E_RESULT_FILE;
       const resultPath = path.join(
         this.#scratch.workspacePath,
