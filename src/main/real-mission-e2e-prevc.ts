@@ -282,6 +282,11 @@ export function freezeRealMissionE2EPrevCIfNeeded(
         provider: 'codex',
       },
     );
+    // The release plan is main-owned and already sealed, so the planning
+    // stage of the medium-risk route is satisfied. Advance to execution so
+    // the durable scheduler can dispatch the worker — without dropping
+    // acceptance criteria to weaken the contract into a low-risk route.
+    service.advance(missionId, 'execution');
     return { frozen: true, reason: 'frozen' };
   } catch (error) {
     return {
