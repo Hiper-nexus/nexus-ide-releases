@@ -312,19 +312,6 @@ export class WorktreeManager {
         headSha: repository.headSha,
         git: this.#git,
       });
-      try {
-        // Real-mission workers stall without exact Codex project trust on the
-        // worktree path. Best-effort only; production is unaffected.
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { trustRealMissionCodexProjectPath } = require(
-          '../real-mission-codex-trust',
-        ) as typeof import('../real-mission-codex-trust');
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { app } = require('electron') as typeof import('electron');
-        trustRealMissionCodexProjectPath(app.getPath('userData'), worktreePath);
-      } catch {
-        // Trust registration must never block worktree readiness.
-      }
       this.#assertWorktree(candidate);
       this.#assertRepositoryUnchanged(repository, true);
       return this.#transition(scopeKey, taskKey, (record) => ({

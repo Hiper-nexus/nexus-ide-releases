@@ -1,3 +1,4 @@
+import { app } from 'electron';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   FEATURE_FLAG_IDS,
@@ -27,6 +28,7 @@ import {
 import {
   INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER,
 } from '../runtime/worktree-manager';
+import { trustRealMissionCodexProjectPath } from '../real-mission-codex-trust';
 import {
   spawnPaneAndMaybePrompt,
 } from './tool-util';
@@ -511,6 +513,16 @@ async function dispatchTask(
       : null;
     worktreeCreated = worktree !== null;
     const executionRoot = worktree?.worktreePath ?? scope.rootRealPath;
+    if (worktree?.worktreePath) {
+      try {
+        trustRealMissionCodexProjectPath(
+          app.getPath('userData'),
+          worktree.worktreePath,
+        );
+      } catch {
+        // Exact Codex project trust is best-effort for the release gate only.
+      }
+    }
     const routeReservation = stores.missions.reserveRouteDecision(
       missionId,
       taskText,
