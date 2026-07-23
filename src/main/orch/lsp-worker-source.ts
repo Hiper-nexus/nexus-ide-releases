@@ -352,11 +352,9 @@ function clip(value, max) {
   return String(value || '').slice(0, max);
 }
 
-function sourcePosition(service, fileName, span) {
+function sourcePositionFromSource(source, fileName, span) {
   const relative = relativeResultPath(fileName);
   if (!relative) return null;
-  const source = service.getProgram()?.getSourceFile(fileName);
-  if (!source) return null;
   const start = source.getLineAndCharacterOfPosition(
     Math.max(0, Math.min(source.getFullWidth(), span.start))
   );
@@ -371,6 +369,12 @@ function sourcePosition(service, fileName, span) {
     endLine: end.line + 1,
     endColumn: end.character + 1,
   };
+}
+
+function sourcePosition(service, fileName, span) {
+  const source = service.getProgram()?.getSourceFile(fileName);
+  if (!source) return null;
+  return sourcePositionFromSource(source, fileName, span);
 }
 
 function targetOffset(service, targetPath, line, column) {
@@ -389,12 +393,16 @@ function targetOffset(service, targetPath, line, column) {
   return lineStart + column - 1;
 }
 
-function flattenNavigationTree(service, targetPath, tree, maxResults) {
+function flattenNavigationTree(source, targetPath, tree, maxResults) {
   const items = [];
   const visit = (node, container) => {
     if (items.length >= maxResults) return;
     if (node.text && node.text !== '<global>') {
-      const position = sourcePosition(service, targetPath, node.spans[0] || { start: 0, length: 0 });
+      const position = sourcePositionFromSource(
+        source,
+        targetPath,
+        node.spans[0] || { start: 0, length: 0 }
+      );
       if (position) {
         items.push({
           ...position,
@@ -475,8 +483,14 @@ function execute() {
 
   checkDeadline();
   if (input.query.kind === 'symbols') {
+    const targetSource = ts.createSourceFile(
+      target.absolute,
+      safeRead(target.absolute) || '',
+      options.target || ts.ScriptTarget.ES2022,
+      true
+    );
     const tree = service.getNavigationTree(target.absolute);
-    items = flattenNavigationTree(service, target.absolute, tree, maxResults);
+    items = flattenNavigationTree(targetSource, target.absolute, tree, maxResults);
   } else if (input.query.kind === 'definition' || input.query.kind === 'references') {
     const offset = targetOffset(
       service,
