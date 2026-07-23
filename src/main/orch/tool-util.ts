@@ -180,7 +180,13 @@ async function submitEnter(
   try {
     await delay(PROMPT_SETTLE_MS);
     if (requireInjectableIdle && !isSessionInjectableIdle(sessionId)) {
-      throw new Error('agent pane is awaiting operator input');
+      // After bracketed paste some CLIs flip to busy/semantic non-idle before
+      // Enter; that is progress, not a permission modal. Only fail closed when
+      // the session is still not busy and never observed a busy edge.
+      const state = getSessionState(sessionId);
+      if (state !== 'busy' && !observedBusy) {
+        throw new Error('agent pane is awaiting operator input');
+      }
     }
     assertMcpInvocationCurrent(invocation);
     onBeforeSubmit?.();
