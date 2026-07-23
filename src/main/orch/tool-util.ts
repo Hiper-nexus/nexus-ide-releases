@@ -344,19 +344,25 @@ export async function deliverAgentPrompt(
   prompt: string,
   invocation?: McpToolInvocation,
 ): Promise<void> {
+  let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await waitOutBootPrompts(sessionId);
     // Linearization point after boot/menu waits and immediately before paste.
     assertMcpInvocationCurrent(invocation);
-    if (
-      await injectWithBusyProof(
-        sessionId,
-        prompt,
-        PROMPT_ACCEPTANCE_WINDOW_MS,
-        invocation,
-      )
-    ) {
-      return;
+    try {
+      if (
+        await injectWithBusyProof(
+          sessionId,
+          prompt,
+          PROMPT_ACCEPTANCE_WINDOW_MS,
+          invocation,
+        )
+      ) {
+        return;
+      }
+    } catch (error) {
+      lastError = error;
+      // Fall through: real-mission may still keep a live session.
     }
   }
   // Real-mission: Codex may accept the brief without a PTY busy edge the
@@ -368,6 +374,7 @@ export async function deliverAgentPrompt(
       return;
     }
   }
+  if (lastError instanceof Error) throw lastError;
   throw new Error('agent pane did not start after prompt delivery');
 }
 
