@@ -623,6 +623,10 @@ export function ProvidersPanel() {
   async function refreshCatalog() {
     setRefreshing(true);
     try {
+      // Re-fold login PATH + re-probe absolute CLI paths, then refresh UI.
+      if (typeof window.nexus.adapters.rescan === 'function') {
+        await window.nexus.adapters.rescan();
+      }
       await hydrate();
     } catch (err) {
       console.warn('[providers] refresh failed:', err);
@@ -774,9 +778,10 @@ export function ProvidersPanel() {
               className="settings-btn settings-btn--primary"
               disabled={refreshing}
               onClick={() => void refreshCatalog()}
-              title="Re-lê CLIs no PATH, auth e catálogo de modelos"
+              title="Reexamina PATH e caminhos absolutos das CLIs, auth e catálogo de modelos"
+              data-testid="prov-rescan-clis"
             >
-              {refreshing ? 'Atualizando…' : 'Atualizar modelos'}
+              {refreshing ? 'Examinando…' : 'Reexaminar CLIs'}
             </button>
           </div>
         </div>
@@ -787,10 +792,11 @@ export function ProvidersPanel() {
               <>
                 <p>
                   Nenhuma CLI detectada no PATH. Instale Claude, Codex, Gemini ou
-                  outra e clique em <strong>Atualizar modelos</strong>.
+                  outra e clique em <strong>Reexaminar CLIs</strong>.
                 </p>
                 <p className="prov-hub__empty-hint">
-                  Dica: o Nexus procura em PATH + ~/.local/bin após o boot.
+                  Dica: o Nexus resolve caminhos absolutos em PATH, ~/.local/bin,
+                  ~/.kimi-code/bin, Homebrew, Volta/NVM/Bun e npm global.
                 </p>
               </>
             ) : tab === 'remote' ? (

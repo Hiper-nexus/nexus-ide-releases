@@ -2,6 +2,30 @@ import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
 import { PTY_CHANNELS } from "../../shared/channels";
+
+// Unit tests use a fake PTY host — pin absolute bin paths so spawn never
+// depends on the machine PATH (same contract as production discovery).
+vi.mock("../path-resolver", () => ({
+  resolveSpawnBinary: (command: string, preferred?: string | null) => {
+    const binPath =
+      preferred && preferred.startsWith("/")
+        ? preferred
+        : `/mock/bin/${command || "cli"}`;
+    return {
+      binPath,
+      effectivePath: "/mock/bin",
+      source: preferred ? "absolute" : "process-path",
+    };
+  },
+  revalidateExecutable: (binPath: string) =>
+    typeof binPath === "string" && binPath.startsWith("/"),
+  resolveCliBinary: (command: string) => ({
+    binPath: `/mock/bin/${command}`,
+    effectivePath: "/mock/bin",
+    source: "process-path",
+  }),
+}));
+
 import {
   agentEnv,
   acknowledgeSessionOutput,

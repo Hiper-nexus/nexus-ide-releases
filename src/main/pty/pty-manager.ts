@@ -26,6 +26,7 @@ import {
   shellIntegrationSpawnArgs,
 } from "../terminal/shell-integration-env";
 import { scrubManagedSessionAuth } from "../adapters/managed-credentials";
+import { resolveSpawnBinary } from "../path-resolver";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -763,8 +764,16 @@ export function spawnAgentSession(
     PROMPT: "",
   }).filter((a) => a.length > 0);
 
-  // A user-set absolute binary path overrides the adapter's declared command.
-  const bin = overrides.binPath || argv[0];
+  // Absolute path only — bare names re-search PATH inside the PTY host, which
+  // often has a minimal Finder PATH and misses ~/.kimi-code/bin, Homebrew, etc.
+  const resolvedBin = resolveSpawnBinary(adapter.bin, overrides.binPath);
+  const bin = resolvedBin?.binPath ?? null;
+  if (!bin || !path.isAbsolute(bin)) {
+    throw new Error(
+      `${adapter.label}: missing absolute binary path for spawn ` +
+        `(adapter.bin="${adapter.bin}"). Re-scan CLIs or set binPath in settings.`,
+    );
+  }
   let args = argv.slice(1);
   // Adapters whose interactive argv has no {{MODEL}} placeholder would
   // silently DROP the requested model (route_task picks grok-code-fast-1,

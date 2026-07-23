@@ -25,11 +25,15 @@ import {
 } from '../../shared/provider-settings-types';
 import {
   getAdapter,
+  getAdapterResolvedBin,
   isBinResolvable,
   listAdapters,
   notifyAdaptersChanged,
   primaryKeyEnvVar,
+  rescanAdapterBinaries,
+  resolveAdapterBinary,
 } from '../adapters/adapter-registry';
+import { revalidateExecutable } from '../path-resolver';
 import {
   availableEfforts,
   availablePermissionModes,
@@ -418,12 +422,30 @@ function buildProviderSpawnOverrides(
   const adapter = getAdapter(adapterId);
   // Control flags (permission mode / effort / verbose) always apply, whatever
   // the auth/routing path — they're how the user turns on auto-operation.
+  // Prefer: (1) valid user absolute override, (2) valid discovery cache,
+  // (3) live resolve. Stale absolute paths must not block live PATH walk.
+  // Spawn must receive an absolute path so the PTY host never re-searches a
+  // different PATH for a bare command name.
+  const userBin =
+    cfg.binPath &&
+    path.isAbsolute(cfg.binPath) &&
+    revalidateExecutable(cfg.binPath)
+      ? cfg.binPath
+      : null;
+  const cached = getAdapterResolvedBin(adapterId);
+  const cachedValid =
+    cached && revalidateExecutable(cached) ? cached : null;
+  const discovered =
+    userBin ?? cachedValid ?? resolveAdapterBinary(adapterId);
   const base = {
     // Defense in depth (SEC#4): only an ABSOLUTE path is ever used as the
     // executable. A bare/relative binPath (e.g. from a hand-edited config) is
     // dropped so it can never resolve to an arbitrary binary off PATH; the
     // setConfig confirmation is the primary control.
-    binPath: cfg.binPath && path.isAbsolute(cfg.binPath) ? cfg.binPath : null,
+    binPath:
+      discovered && path.isAbsolute(discovered) && revalidateExecutable(discovered)
+        ? discovered
+        : null,
     defaultModel: cfg.defaultModel || null,
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
   };
@@ -604,10 +626,29 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
   if (!adapter) return null;
   const cfg = configFor(adapterId);
   // cli-rpc shares the CLI binary surface with cli-pty (same `bin`, no endpoint).
-  const detectedBin = adapter.kind !== 'api-provider' ? adapter.bin : adapter.endpoint;
-  const effectiveBin = cfg.binPath || detectedBin;
+  // Prefer the absolute path from discovery so UI and spawn agree.
+  // Cache first; live-resolve only on miss so listing N providers does not
+  // re-walk PATH when the registry is already warm.
+  let resolved: string | null = null;
+  if (adapter.kind !== 'api-provider') {
+    const cached = getAdapterResolvedBin(adapterId);
+    resolved =
+      cached && revalidateExecutable(cached)
+        ? cached
+        : resolveAdapterBinary(adapterId);
+  }
+  const detectedBin =
+    adapter.kind !== 'api-provider'
+      ? resolved || adapter.bin
+      : adapter.endpoint;
+  const userBinOk =
+    Boolean(cfg.binPath) &&
+    path.isAbsolute(cfg.binPath) &&
+    revalidateExecutable(cfg.binPath);
   const installed =
-    adapter.kind !== 'api-provider' ? isBinResolvable(effectiveBin) : true;
+    adapter.kind !== 'api-provider'
+      ? Boolean(userBinOk || resolved)
+      : true;
   const custom = getCustomModels(adapterId).filter(
     (m) => !adapter.models.list.includes(m),
   );
@@ -1008,7 +1049,8 @@ export function registerProviderIpc(): void {
             : 'instalação falhou',
       };
     }
-    // A CLI recém-instalada aparece como installed no próximo snapshot.
+    // Re-fold PATH + re-probe absolute bins so the new CLI is spawnable now.
+    rescanAdapterBinaries();
     broadcast();
     return { ok: true };
   });

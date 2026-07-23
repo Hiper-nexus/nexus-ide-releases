@@ -291,6 +291,11 @@ export interface AdapterInfo {
   icon: string;
   models: { list: string[]; default: string; info?: ModelInfoMap };
   installed: boolean;
+  /**
+   * Absolute path of the discovered CLI binary (same path spawn will use).
+   * Null when not installed or for api-provider adapters.
+   */
+  resolvedBinPath?: string | null;
   installCommand: string;
   loginHint?: string;
   idleTimeoutMs: number;
