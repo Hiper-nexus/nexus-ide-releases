@@ -150,7 +150,14 @@ function setupScratchRepository(userData: string): ScratchRepository {
     '# Nexus real mission release gate\n',
     { encoding: 'utf8', mode: PRIVATE_FILE_MODE },
   );
-  runGit(workspacePath, ['add', '--', 'README.md']);
+  // Product may drop runtime metadata under `.nexus/`; merge requires a clean
+  // primary checkout, so ignore it from the disposable gate repo.
+  fs.writeFileSync(
+    path.join(workspacePath, '.gitignore'),
+    '.nexus/\n',
+    { encoding: 'utf8', mode: PRIVATE_FILE_MODE },
+  );
+  runGit(workspacePath, ['add', '--', 'README.md', '.gitignore']);
   runGit(workspacePath, [
     'commit',
     '--quiet',

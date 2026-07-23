@@ -112,6 +112,15 @@ function completeRunningWorkerIfNeeded(
 
   writeAndCommitResult(worktree.worktreePath);
 
+  // Merge inspects the primary checkout; drop any non-ignored residue that
+  // product code may have written under the scratch tree.
+  try {
+    const primaryNexus = path.join(scope.rootRealPath, '.nexus');
+    fs.rmSync(primaryNexus, { recursive: true, force: true });
+  } catch {
+    // Best-effort; gitignore on the scratch repo is the durable fence.
+  }
+
   const existing = suite.handoffs
     .list({ missionId, includeDelivered: true })
     .find(
