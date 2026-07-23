@@ -24,14 +24,11 @@ vi.mock('../shared/real-mission-e2e', async (importOriginal) => {
   };
 });
 
-vi.mock('./orch/mission-scheduler-production', () => ({
-  requestMissionSchedulerTick: () => requestMissionSchedulerTick(),
-}));
-
 vi.mock('./runtime/worktree-runtime-registry', () => ({
   requireWorktreeRuntimeRegistry: () => requireWorktreeRuntimeRegistry(),
 }));
 
+import { setRealMissionE2ESchedulerTick } from './real-mission-e2e-scheduler-tick';
 import { advanceRealMissionE2EMainOwnedChain } from './real-mission-e2e-main-owned';
 
 const scope = {
@@ -122,6 +119,7 @@ describe('advanceRealMissionE2EMainOwnedChain', () => {
   beforeEach(() => {
     isCurrentProcessRealMissionE2E.mockReturnValue(true);
     requestMissionSchedulerTick.mockReset();
+    setRealMissionE2ESchedulerTick(() => requestMissionSchedulerTick());
     worktreePath = fs.mkdtempSync(
       path.join(os.tmpdir(), 'nexus-main-owned-wt-'),
     );
@@ -142,6 +140,7 @@ describe('advanceRealMissionE2EMainOwnedChain', () => {
   });
 
   afterEach(() => {
+    setRealMissionE2ESchedulerTick(null);
     fs.rmSync(worktreePath, { recursive: true, force: true });
     vi.clearAllMocks();
   });

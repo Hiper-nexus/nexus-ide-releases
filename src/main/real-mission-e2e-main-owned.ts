@@ -13,8 +13,8 @@ import {
 } from '../shared/real-mission-e2e';
 import type { ProjectExecutionScope } from '../shared/types';
 import type { ProjectDomainStoreSuite } from './orch/project-domain-store-registry';
-import { requestMissionSchedulerTick } from './orch/mission-scheduler-production';
 import { requireWorktreeRuntimeRegistry } from './runtime/worktree-runtime-registry';
+import { requestRealMissionE2ESchedulerTick } from './real-mission-e2e-scheduler-tick';
 
 /**
  * Main-owned release-gate completion.
@@ -213,7 +213,7 @@ export function advanceRealMissionE2EMainOwnedChain(
 
   const workerStep = completeRunningWorkerIfNeeded(suite, scope, missionId);
   if (workerStep.advanced) {
-    requestMissionSchedulerTick();
+    requestRealMissionE2ESchedulerTick();
     return workerStep;
   }
 
@@ -223,7 +223,7 @@ export function advanceRealMissionE2EMainOwnedChain(
     mission.orchestratorSessionId,
   );
   if (deliveryStep.advanced) {
-    requestMissionSchedulerTick();
+    requestRealMissionE2ESchedulerTick();
     return deliveryStep;
   }
 
@@ -234,7 +234,7 @@ export function advanceRealMissionE2EMainOwnedChain(
       ['handoff_ready', 'merging', 'completed'].includes(dispatch.state),
     );
   if (needsTick) {
-    requestMissionSchedulerTick();
+    requestRealMissionE2ESchedulerTick();
     return { advanced: true, reason: 'scheduler-tick' };
   }
 
