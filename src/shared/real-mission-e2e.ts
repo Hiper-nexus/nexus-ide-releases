@@ -499,10 +499,13 @@ export function isExclusiveRealMissionE2E(
   );
 }
 
-const currentRealMissionE2E = isRealMissionE2E(process.argv);
-
+/**
+ * Live process check — do not freeze at module load. Packaged Electron may
+ * reorder argv around `--`, and the release gate also sets an env marker.
+ */
 export function isCurrentProcessRealMissionE2E(): boolean {
-  return currentRealMissionE2E;
+  if (process.env.NEXUS_REAL_MISSION_E2E === '1') return true;
+  return isRealMissionE2E(process.argv);
 }
 
 export function parseRealMissionE2EEvidence(raw: unknown): RealMissionE2EEvidence {

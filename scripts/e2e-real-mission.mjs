@@ -134,6 +134,9 @@ export function realMissionEnvironment(baseEnv, userData, codexBinary) {
       '/sbin',
     ].join(path.delimiter),
     NEXUS_USER_DATA_DIR: isolatedUserData,
+    // Reliable gate marker: argv after `--` is not always visible the same way
+    // across Electron packaging layers. Main-owned e2e paths read this env.
+    NEXUS_REAL_MISSION_E2E: '1',
   };
 }
 
