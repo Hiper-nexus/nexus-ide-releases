@@ -91,9 +91,10 @@ describe("codexMcpArgs", () => {
     const args = codexMcpArgs("http://127.0.0.1:5123/mcp", token);
     const serialized = JSON.stringify(args);
 
-    expect(args).toHaveLength(4);
+    expect(args).toHaveLength(6);
     expect(args[0]).toBe("-c");
     expect(args[2]).toBe("-c");
+    expect(args[4]).toBe("-c");
     const serverName = args[1]?.match(
       /^mcp_servers\.(nexus_[0-9a-f]{12})\.url=/,
     )?.[1];
@@ -103,6 +104,9 @@ describe("codexMcpArgs", () => {
     );
     expect(args[3]).toBe(
       `mcp_servers.${serverName}.bearer_token_env_var="NEXUS_MCP_TOKEN"`,
+    );
+    expect(args[5]).toBe(
+      `mcp_servers.${serverName}.tool_timeout_sec=45`,
     );
     expect(serialized).not.toContain(token);
     expect(serialized).not.toContain("Bearer ");

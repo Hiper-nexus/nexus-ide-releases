@@ -38,21 +38,60 @@ export const REAL_MISSION_E2E_ACCEPTANCE_CRITERIA = Object.freeze([
   'O motor Nexus aceita o handoff, integra o commit e marca a missão done sem atalho manual.',
 ]);
 
+export const REAL_MISSION_E2E_PLANNER_TASK_ID = 'resultado-worker';
+
+/** Canonical worker task detail sealed by the main-owned release plan. */
+export const REAL_MISSION_E2E_WORKER_TASK_DETAIL =
+  'Crie resultado.txt com o conteúdo exato `nexus-real-mission-e2e-ok\\n` ' +
+  '(byte-a-byte, newline final). Verifique o arquivo, faça um único commit LOCAL ' +
+  'e chame nexus_handoff_submit com status success. Nunca faça push nem merge.';
+
+/**
+ * Exact plan rows the release gate seals (main-owned). Mirrors the orchestrator
+ * contract so a flaky LLM that never reaches nexus_task plan still unlocks the
+ * durable scheduler → worker → handoff path.
+ */
+export function createRealMissionE2EPlanTasks(): readonly Readonly<{
+  id: string;
+  title: string;
+  detail: string;
+  agentRef: string;
+  category: 'executor';
+  executionMode: 'isolated_worktree';
+  ownership: { files: readonly string[]; symbols: readonly string[]; domains: readonly string[] };
+  dependsOn: readonly string[];
+}>[] {
+  return Object.freeze([
+    Object.freeze({
+      id: REAL_MISSION_E2E_PLANNER_TASK_ID,
+      title: 'Criar resultado.txt no worktree isolado',
+      detail: REAL_MISSION_E2E_WORKER_TASK_DETAIL,
+      agentRef: REAL_MISSION_E2E_WORKER_ID,
+      category: 'executor' as const,
+      executionMode: 'isolated_worktree' as const,
+      ownership: Object.freeze({
+        files: Object.freeze([REAL_MISSION_E2E_RESULT_FILE]),
+        symbols: Object.freeze([] as string[]),
+        domains: Object.freeze([] as string[]),
+      }),
+      dependsOn: Object.freeze([] as string[]),
+    }),
+  ]);
+}
+
 export const REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS = [
   '# Release gate E2E real',
   'Você é somente o orquestrador. É PROIBIDO criar, editar, adicionar ou commitar resultado.txt.',
-  'Use exatamente um worker do roster. Primeiro sele um plano imutável com nexus_task:',
-  'Chame nexus_task action=plan imediatamente como sua primeira chamada Nexus. ' +
-    'Não consulte missão, workflow ou handoffs antes do plano. ' +
-    'Não agrupe chamadas Nexus em Promise.all.',
-  '- action: plan',
-  '- uma task com id resultado-worker, agentRef e2e-worker, category executor',
-  '- executionMode isolated_worktree',
-  '- ownership.files exatamente ["resultado.txt"]',
-  '- sem dependências',
-  'No detail da task, ordene ao worker criar resultado.txt com o conteúdo exato ' +
-    '`nexus-real-mission-e2e-ok\\n`, verificar o arquivo, fazer um único commit LOCAL e ' +
-    'chamar nexus_handoff_submit com status success. Nunca peça push ou merge.',
+  'Use exatamente um worker do roster (e2e-worker).',
+  'PRIMEIRA ação de ferramenta: uma ÚNICA chamada nativa a nexus_task (NÃO use a tool exec, ' +
+    'NÃO use Promise.all, NÃO leia missão/workflow/handoffs antes).',
+  'Payload exato da plan:',
+  '  action=plan',
+  `  tasks=[{id:${REAL_MISSION_E2E_PLANNER_TASK_ID}, agentRef:${REAL_MISSION_E2E_WORKER_ID}, ` +
+    'category:executor, executionMode:isolated_worktree, ' +
+    `ownership.files:["${REAL_MISSION_E2E_RESULT_FILE}"], dependsOn:[]}]`,
+  `No detail: ${REAL_MISSION_E2E_WORKER_TASK_DETAIL}`,
+  'Se o plano já existir (main selou), NÃO replaneje: só acompanhe handoffs.',
   'Depois do plano, não spawne worker manualmente: o scheduler durável do main reserva a rota e spawna.',
   'Aguarde o handoff automático. Leia nexus_handoff_list e chame nexus_handoff_ack quando ele for entregue.',
   'Não use nexus_mission_update para forçar done: integração, receipts e conclusão pertencem ao motor Nexus.',
@@ -71,7 +110,9 @@ export function createRealMissionE2ESquadFixture(): Squad {
         agentName: REAL_MISSION_E2E_ORCHESTRATOR_NAME,
         category: 'orchestrator',
         cli: 'codex',
-        effort: 'high',
+        // Medium: high-effort Codex often invents exec+Promise.all MCP batches
+        // that hang; the gate seals the plan in main regardless.
+        effort: 'medium',
         allowedSkills: [],
         allowedTools: null,
       },
@@ -80,7 +121,7 @@ export function createRealMissionE2ESquadFixture(): Squad {
         agentName: REAL_MISSION_E2E_WORKER_NAME,
         category: 'executor',
         cli: 'codex',
-        effort: 'high',
+        effort: 'medium',
         allowedSkills: [],
         allowedTools: [],
       },

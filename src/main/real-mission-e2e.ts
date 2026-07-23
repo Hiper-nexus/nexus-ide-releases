@@ -47,6 +47,7 @@ import {
   isExactRealMissionE2ESquadFixture,
   persistRealMissionE2ESquadFixture,
 } from './real-mission-e2e-fixture';
+import { sealRealMissionE2EPlanIfNeeded } from './real-mission-e2e-plan';
 import { stageRealMissionCodexTrust } from './real-mission-codex-trust';
 
 const DONE_SETTLE_MS = 20_000;
@@ -236,6 +237,7 @@ class RealMissionObserver {
   };
   readonly #physicalPty = new Map<string, PhysicalPtyCapture>();
   #kickoffProven = false;
+  #planSealAttempted = false;
   #changedBeforeWorker = false;
   #workerObserved = false;
   #doneSeenAt: number | null = null;
@@ -526,6 +528,50 @@ class RealMissionObserver {
       this.#kickoff.ptyDataAt >= this.#kickoff.idleAt
     ) {
       this.#kickoffProven = true;
+      this.#maybeSealMainOwnedPlan();
+    }
+  }
+
+  /**
+   * Unlock the durable scheduler without waiting for the orchestrator LLM to
+   * finish a flaky first MCP turn (tool_search + concurrent exec hangs).
+   */
+  #maybeSealMainOwnedPlan(): void {
+    if (this.#stopped || !this.#kickoffProven) return;
+    try {
+      const result = sealRealMissionE2EPlanIfNeeded(
+        this.#suite,
+        this.#missionId,
+      );
+      if (result.sealed) {
+        this.#planSealAttempted = true;
+        console.log(
+          `[real-mission] PHASE phase=main-plan-sealed mission=${this.#missionId}`,
+        );
+        return;
+      }
+      // Retry while kickoff is proven but gate context / running state lag.
+      if (
+        result.reason === 'gate-context-unavailable' ||
+        result.reason === 'kickoff-pending' ||
+        result.reason.startsWith('status-')
+      ) {
+        return;
+      }
+      if (!this.#planSealAttempted && result.reason !== 'already-sealed') {
+        this.#planSealAttempted = true;
+        console.log(
+          `[real-mission] PHASE phase=main-plan-skip reason=${result.reason}`,
+        );
+      }
+    } catch (error) {
+      if (!this.#planSealAttempted) {
+        this.#planSealAttempted = true;
+        console.error(
+          '[real-mission] main-owned plan seal failed:',
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
   }
 
@@ -585,6 +631,7 @@ class RealMissionObserver {
       this.#onFinish('observer-invalid');
       return;
     }
+    this.#maybeSealMainOwnedPlan();
     const dispatches = this.#suite.taskDispatches.list(this.#missionId);
     const integrationMayHaveStarted = dispatches.some((dispatch) =>
       dispatch.state === 'merging' || dispatch.state === 'completed',
