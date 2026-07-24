@@ -26,6 +26,10 @@ Data: 2026-07-24
 - **Worker entregue não é pane morto (recorrência)**: o driver decide pelo
   dispatch mais recente da identidade — histórico com replan/supersedes não
   reintroduz o respawn loop.
+- **Grant de recovery vence o modo pedido**: consent de retomada correndo
+  contra a recuperação fresh do driver não mata mais os dois caminhos — com
+  grant pendente o main decide o modo; sem grant, fresh continua exigindo
+  grant e só exact resume reanexa.
 
 ### Gate único de aprovação
 
@@ -45,12 +49,6 @@ Data: 2026-07-24
 - **Time novo de verdade**: o arquiteto desenha um squad para o objetivo em
   vez de reusar silenciosamente o squad salvo mais recente (reuso virou
   opt-in). O picker não lista squads gerados pelo motor (`agentic-`/`custom-`).
-
-### Conhecidos
-
-- Sob recuperação do driver, um respawn de renderer pode competir com o grant
-  fresh e falhar com `recoveryMode(resume/fresh)[false != true]` — o erro é
-  nomeado e a missão segue recuperável pelo rail.
 
 ## 0.19.27 — Golden Path
 
