@@ -23,6 +23,9 @@ export function requestRealMissionE2ESchedulerTick(): void {
 
 /** Await one full scheduler pass (merge + mission complete). */
 export async function reconcileRealMissionE2EScheduler(): Promise<void> {
+  if (!reconcileImpl && !tickImpl) {
+    console.warn('[real-mission] reconcile no-op: scheduler nunca registrado neste processo');
+  }
   if (reconcileImpl) {
     await reconcileImpl();
     return;

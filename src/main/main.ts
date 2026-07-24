@@ -4,6 +4,7 @@ import {
   app,
   BrowserWindow,
   dialog,
+  powerSaveBlocker,
   protocol,
   systemPreferences,
 } from "electron";
@@ -28,6 +29,16 @@ import {
 // Must run before Electron emits `ready`. The handler itself is installed in
 // bootstrap (after ready), before the first BrowserWindow is created.
 registerRendererProtocolScheme(protocol);
+
+// O Nexus orquestra agentes de longa duração: o Chromium NUNCA pode throttlar
+// os timers do processo (em background/oculto o message pump adia a fase de
+// timers do main indefinidamente sob I/O contínuo de PTY — worker spawn/merge
+// do scheduler congelavam com o app fora de foco).
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch(
+  'disable-features',
+  'IntensiveWakeUpThrottling,TimerThrottlingForBackgroundTabs',
+);
 
 // Sandbox de userData para dev/testes explícitos: redireciona SQLite, layout,
 // sessões e o single-instance lock. Launches normais empacotados nunca
@@ -600,6 +611,13 @@ if (!wireDeepLinks()) {
       return;
     }
     startMacOSDockWatchdog();
+
+    // macOS App Nap suspende TODOS os timers do main quando a janela perde o
+    // foco — worker spawn/merge do scheduler morrem com o app em background
+    // (release gate unattended: waitForIdle agendou setTimeout de 20s que
+    // nunca disparou). O IDE orquestra agentes de longa duração; suspensão de
+    // timers nunca é aceitável enquanto o app vive.
+    powerSaveBlocker.start('prevent-app-suspension');
 
     // Agent awake: prevent sleep while provider hooks report working.
     getAgentAwakeService();

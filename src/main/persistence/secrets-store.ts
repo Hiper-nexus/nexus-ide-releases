@@ -4,6 +4,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { safeStorage } from 'electron';
 import { isCurrentProcessSmokeTest } from '../smoke-core';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 
 /**
  * Secret key vault. API keys are encrypted with Electron safeStorage (backed
@@ -49,6 +50,12 @@ export function isSecureStorageBackendAllowed(
  * auth. Never honored in a packaged build.
  */
 function isDevVaultDisabled(): boolean {
+  // Release gate: the packaged e2e process must NEVER touch the Keychain.
+  // With the login keychain auto-locked (unattended machine overnight), the
+  // vault's first SecItemAdd blocks the ENTIRE main thread in a synchronous
+  // makeLoginAuthUI XPC wait — scheduler timers die and merge never runs.
+  // The gate's CLIs authenticate natively; the vault adds nothing there.
+  if (isCurrentProcessRealMissionE2E()) return true;
   return (
     process.env.NEXUS_DEV_NO_VAULT === '1' &&
     process.defaultApp !== undefined

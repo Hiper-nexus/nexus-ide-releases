@@ -758,10 +758,16 @@ class RealMissionObserver {
   #queueEvaluation(): void {
     if (this.#evaluationQueued || this.#stopped) return;
     this.#evaluationQueued = true;
-    setImmediate(() => {
+    // setTimeout(0), never setImmediate: every store change re-queued an
+    // immediate while live worker PTY output kept generating store changes
+    // (activity heartbeats), so Electron's uv check phase never drained and
+    // ALL main-process timers starved forever — waitForIdle hung, the
+    // scheduler tick zombified and merge never ran. The timer queue cannot
+    // starve itself.
+    setTimeout(() => {
       this.#evaluationQueued = false;
       this.#evaluate();
-    });
+    }, 0);
   }
 
   #evaluate(): void {

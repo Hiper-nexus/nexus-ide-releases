@@ -4,6 +4,26 @@
 
 Data: 2026-07-24
 
+### App nunca congela com o Keychain trancado
+
+- **Main thread nunca mais espera o SecurityAgent**: com o login keychain
+  auto-trancado (máquina sem usuário), a primeira gravação do vault pendurava
+  o processo inteiro num `SecItemAdd` síncrono esperando senha — timers do
+  scheduler morriam e a missão travava em pleno merge. O processo do release
+  gate agora roda com o vault desativado (fail-closed; as CLIs autenticam
+  nativamente), e o freeze foi diagnosticado por stack sample e coberto.
+- **Timers do orquestrador imunes a suspensão**: `powerSaveBlocker`
+  (prevent-app-suspension) + Chromium sem throttling de timers em background
+  — um IDE que orquestra agentes de longa duração não pode ter a fase de
+  timers adiada quando perde o foco.
+- **Observer do gate não starva o event loop**: reavaliação agendada na fila
+  de timers (`setTimeout 0`) em vez de `setImmediate` re-armado por cada
+  store change — output contínuo de PTY não afoga mais os timers do main.
+- **Scheduler com skips nomeados**: early-returns do merge e do tick (kickoff
+  ausente com merge pendente, worktree fora do registry, dispatch em estado
+  inesperado, reconcile sem scheduler) agora avisam no console com o motivo —
+  fim dos travamentos mudos.
+
 ### Recuperação de missão fecha o ciclo
 
 - **Retomar funciona de ponta a ponta**: missão `blocked_technical` volta pelo

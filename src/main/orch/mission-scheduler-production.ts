@@ -639,12 +639,23 @@ async function mergeCompletedTask(
   taskId: string,
 ): Promise<void> {
   const key = missionKey(scope, missionId) + `:${taskId}`;
-  if (merging.has(key)) return;
+  const mergeSkip = (reason: string) =>
+    console.warn(`[mission-scheduler] merge skip ${missionId}/${taskId}: ${reason}`);
+  if (merging.has(key)) {
+    mergeSkip('merge em voo (merging.has)');
+    return;
+  }
   const worktree = requireWorktreeRuntimeRegistry().get(scope, missionId, taskId);
-  if (!worktree) return;
+  if (!worktree) {
+    mergeSkip('worktree ausente no registry em memória');
+    return;
+  }
   const domainStores = getProjectDomainStores(scope);
   let dispatch = domainStores.taskDispatches.get(taskId);
-  if (!dispatch || !['handoff_ready', 'merging'].includes(dispatch.state)) return;
+  if (!dispatch || !['handoff_ready', 'merging'].includes(dispatch.state)) {
+    mergeSkip(`dispatch state=${dispatch?.state ?? 'ausente'}`);
+    return;
+  }
   const mergeIntentVersion = dispatch.intentVersion;
   if (worktree.status === 'integrated') {
     const mergeEntry = requireWorktreeRuntimeRegistry()
@@ -687,7 +698,10 @@ async function mergeCompletedTask(
     );
     return;
   }
-  if (worktree.status !== 'ready' && worktree.status !== 'queued') return;
+  if (worktree.status !== 'ready' && worktree.status !== 'queued') {
+    mergeSkip(`worktree status=${worktree.status}`);
+    return;
+  }
   merging.add(key);
   try {
     if (dispatch.state === 'handoff_ready') {
@@ -772,7 +786,17 @@ async function tickMission(scope: ProjectExecutionScope, missionId: string): Pro
   // Nothing downstream—merge, spawn or mission completion—may advance before
   // the finite idle→busy kickoff proof commits for the current revision and
   // physical orchestrator session. The mission-store change wakes this tick.
-  if (!missionSchedulerHasKickoffAuthority(stores.missions, missionId)) return;
+  if (!missionSchedulerHasKickoffAuthority(stores.missions, missionId)) {
+    const pendingMerge = stores.taskDispatches
+      .list(missionId)
+      .some((dispatch) => ['handoff_ready', 'merging'].includes(dispatch.state));
+    if (pendingMerge) {
+      console.warn(
+        `[mission-scheduler] tick skip ${missionId}: kickoff authority ausente com merge pendente`,
+      );
+    }
+    return;
+  }
   const dispatches = stores.taskDispatches.list(missionId);
   for (const dispatch of dispatches) {
     if (!['handoff_ready', 'merging'].includes(dispatch.state)) continue;
@@ -887,7 +911,10 @@ export function setMissionSchedulerReconcileRequest(
 
 /** One single-flight pass for the main-owned orchestration coordinator. */
 export async function reconcileMissionScheduler(): Promise<void> {
-  if (!configured) return;
+  if (!configured) {
+    console.warn('[mission-scheduler] reconcile ignorado: scheduler não configurado');
+    return;
+  }
   if (!tickInFlight) {
     tickInFlight = tick().finally(() => {
       tickInFlight = null;
