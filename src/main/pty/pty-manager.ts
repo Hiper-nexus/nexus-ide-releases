@@ -1118,8 +1118,12 @@ function sameAuthoritySeal(
 /**
  * Transfer presentation ownership of one headless mission PTY to a renderer.
  * Every identity field comes from persisted/main-owned authority at the IPC
- * boundary. A guessed pane id, cross-project renderer, or already-owned
- * session cannot be adopted.
+ * boundary. A guessed pane id, cross-project renderer, or session owned by a
+ * DIFFERENT renderer cannot be adopted. A session already owned by the
+ * requesting renderer reattaches: after a page reload (HMR, Cmd+R, crash
+ * recovery) the WebContents survives but the renderer lost its session map,
+ * and refusing the reattach used to dead-end the pane on the physical-exit
+ * fence while its own process was still alive.
  */
 export function adoptMainOwnedAgentSession(
   wc: WebContents,
@@ -1128,7 +1132,7 @@ export function adoptMainOwnedAgentSession(
   const matches = [...sessions.entries()].filter(([, session]) => {
     const info = session.agent;
     return (
-      session.wc === null &&
+      (session.wc === null || session.wc === wc) &&
       info?.paneId === claim.paneId &&
       info.adapterId === claim.adapterId &&
       info.missionId === claim.missionId &&

@@ -28,6 +28,9 @@ import {
   type AgentVisualState,
 } from './AgentAvatar';
 import { ProviderLogo } from './ProviderLogo';
+import { livePaneIdsForMission } from '../orch/mission-reopen';
+import { missionListAction } from '../orch/mission-list-action';
+import { closeMissionRuntimeAndPanes } from '../orch/close-mission-runtime';
 
 /**
  * Orchestration drawer — the mission control surface (docs/ARCHITECTURE.md
@@ -68,12 +71,15 @@ function MissionRow({
   handoffCount,
   onReopen,
   onRemove,
+  hasVisiblePanes,
 }: {
   mission: Mission;
   handoffCount: number;
   onReopen: (mission: Mission) => void;
   onRemove: (mission: Mission) => void;
+  hasVisiblePanes: boolean;
 }) {
+  const listAction = missionListAction(mission, hasVisiblePanes);
   return (
     <li className="orch-item">
       <div className="orch-item__head">
@@ -93,14 +99,24 @@ function MissionRow({
         >
           Reabrir
         </button>
-        <button
-          className="orch-item__remove"
-          onClick={() => onRemove(mission)}
-          title="Remover esta missão da lista"
-          aria-label={`Remover missão ${mission.title}`}
-        >
-          <CloseIcon />
-        </button>
+        {listAction !== 'none' && (
+          <button
+            className="orch-item__remove"
+            onClick={() => onRemove(mission)}
+            title={
+              listAction === 'close-runtime'
+                ? 'Encerrar processos e panes; preservar histórico'
+                : 'Descartar rascunho'
+            }
+            aria-label={
+              listAction === 'close-runtime'
+                ? `Encerrar missão ${mission.title}`
+                : `Descartar missão ${mission.title}`
+            }
+          >
+            <CloseIcon />
+          </button>
+        )}
       </div>
       {mission.description && (
         <p className="orch-item__detail">{mission.description}</p>
@@ -320,10 +336,26 @@ export function OrchestrationPanel() {
   }
 
   async function onRemoveMission(mission: Mission) {
+    const paneIds = livePaneIdsForMission(mission.id);
+    const action = missionListAction(mission, paneIds.length > 0);
+    if (action === 'none') return;
+    if (action === 'close-runtime') {
+      const result = await closeMissionRuntimeAndPanes(
+        mission.id,
+        'orch-panel-close',
+      );
+      if (!result.ok && result.cancelled) return;
+      setNotice(
+        result.ok
+          ? 'Missão encerrada; histórico preservado.'
+          : result.error ?? 'Falha ao encerrar a missão.',
+      );
+      return;
+    }
     const ok = await askConfirm({
-      title: `Remover "${mission.title}"?`,
-      body: 'Os panes abertos continuam; só o registro sai da lista.',
-      confirmLabel: 'Remover missão',
+      title: `Descartar "${mission.title}"?`,
+      body: 'Este rascunho ainda não foi despachado e será removido.',
+      confirmLabel: 'Descartar missão',
       danger: true,
     });
     if (!ok) return;
@@ -419,6 +451,9 @@ export function OrchestrationPanel() {
                     handoffCount={handoffCountByMission.get(m.id) ?? 0}
                     onReopen={onReopenMission}
                     onRemove={onRemoveMission}
+                    hasVisiblePanes={
+                      livePaneIdsForMission(m.id).length > 0
+                    }
                   />
                 ))}
               </ul>

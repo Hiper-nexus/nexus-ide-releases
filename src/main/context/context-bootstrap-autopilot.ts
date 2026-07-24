@@ -35,7 +35,11 @@ export type BootstrapAutopilotPhase =
 export interface BootstrapDraftOutcome {
   readonly draftId: string;
   readonly targetPath: string;
-  readonly status: ContextDraftRecord['status'] | 'propose-failed' | 'review-failed';
+  readonly status:
+    | ContextDraftRecord['status']
+    | 'propose-failed'
+    | 'review-failed'
+    | 'rejected-stable';
   readonly autoReviewable: boolean;
   readonly error?: string;
 }
@@ -169,6 +173,23 @@ function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>)
       'Autonomous independent review gave up: the reviewer pane never decided ' +
       'after repeated resumed passes. ' +
       HUMAN_CONTEXT_REVIEW_HINT
+    );
+  }
+  const stableRejected = result.draftOutcomes.filter(
+    (outcome) => outcome.status === 'rejected-stable',
+  );
+  if (
+    stableRejected.length > 0 &&
+    result.proposedDraftIds.length === 0 &&
+    result.appliedDraftIds.length === 0
+  ) {
+    const targets = [...new Set(stableRejected.map((outcome) => outcome.targetPath))].join(', ');
+    return (
+      `Independent review keeps rejecting the deterministic bootstrap proposal for ${targets} ` +
+      'with byte-identical content, so re-proposing would loop without ever converging. This is a ' +
+      'terminal bootstrap state: fix the underlying sources (or author the doc by hand with a ' +
+      'source-bound draft), then re-run once. Do not call nexus_context_doctor again for the same ' +
+      'content — it will only burn the execution budget.'
     );
   }
   if (!result.quorumAvailable && result.proposedDraftIds.length > 0) {
@@ -375,10 +396,37 @@ export async function runContextBootstrapAutopilot(
     if (autoReviewable) autoReviewQueue.push(draft.id);
   }
 
+  // Rejection memory across Doctor passes. idx_context_drafts_active_target is
+  // UNIQUE only over proposed/approved drafts, so a rejected draft frees the
+  // slot and the deterministic proposal below would happily re-insert
+  // byte-identical content that independent review already rejected — an
+  // infinite Doctor loop that drains the mission execution budget. Remember
+  // which targets already carry a rejected draft with identical content so we
+  // can escalate instead of re-proposing.
+  const rejectedContentByTarget = new Map<string, Set<string>>();
+  for (const draft of knowledge.list({ status: 'rejected' })) {
+    if (draft.missionId !== null && draft.missionId !== (options.missionId ?? null)) continue;
+    if (!proposalsByTarget.has(draft.targetPath)) continue;
+    const contents = rejectedContentByTarget.get(draft.targetPath) ?? new Set<string>();
+    contents.add(draft.content);
+    rejectedContentByTarget.set(draft.targetPath, contents);
+  }
+
   for (const proposal of proposals) {
     throwIfBootstrapAborted(options.signal);
     if (resumableTargets.has(proposal.targetPath)) continue;
     const autoReviewable = isAutoReviewableBootstrapProposal(proposal);
+    if (rejectedContentByTarget.get(proposal.targetPath)?.has(proposal.content)) {
+      // Byte-identical to a prior independent-review rejection: re-proposing
+      // only loops. Record a terminal outcome and escalate via the hint.
+      outcomes.push({
+        draftId: '',
+        targetPath: proposal.targetPath,
+        status: 'rejected-stable',
+        autoReviewable,
+      });
+      continue;
+    }
     try {
       const draft = knowledge.propose(
         {

@@ -970,6 +970,38 @@ export function markResumeOnSpawn(paneId: string): void {
   kickHeldSpawnIfReady(paneId);
 }
 
+function unlockExitedSessionlessHost(paneId: string): void {
+  const host = hosts.get(paneId);
+  if (
+    !host ||
+    host.disposed ||
+    host.sessionId !== null ||
+    paneState(paneId) !== 'exited'
+  ) {
+    return;
+  }
+  host.spawnGeneration += 1;
+  host.cleanups.forEach((cleanup) => cleanup());
+  host.cleanups = [];
+  host.spawnStarted = false;
+  host.hibernated = false;
+}
+
+/**
+ * Explicit mission reopen may target a host whose previous spawn failed before
+ * a PTY session was assigned. That host intentionally keeps `spawnStarted`
+ * latched so ordinary React remounts cannot create an automatic retry loop,
+ * but the latch must not also reject a deliberate "Retomar missão" action.
+ *
+ * A live session is never touched here: main remains the only authority that
+ * can adopt or replace a physical mission process. We only reset a renderer
+ * host that has no session and is already in a terminal `exited` state.
+ */
+export function prepareMissionPaneResume(paneId: string): void {
+  unlockExitedSessionlessHost(paneId);
+  markResumeOnSpawn(paneId);
+}
+
 /** Pause spawn for a restored agent until the user approves (or reopens). */
 export function holdSpawnUntilApproved(paneId: string): void {
   heldSpawnPanes.add(paneId);
@@ -1031,6 +1063,8 @@ function listPanesFromLayout(): readonly PaneModel[] {
 export function markPersistedAuthorityOnSpawn(paneId: string): void {
   restoreAuthorityOnFirstSpawn.add(paneId);
   heldSpawnPanes.delete(paneId);
+  unlockExitedSessionlessHost(paneId);
+  kickHeldSpawnIfReady(paneId);
 }
 
 // Default: do NOT auto-resume restored agents. The restore-agents-gate module

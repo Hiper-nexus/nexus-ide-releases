@@ -35,7 +35,7 @@ export function QrCode({ value, size = 180, quiet = 4, label = 'QR code' }: Prop
       {modules.flatMap((row, r) =>
         row.map((dark, c) =>
           dark ? (
-            <rect key={`${r}-${c}`} x={c + quiet} y={r + quiet} width={1} height={1} fill="#000000" />
+            <rect key={`${r}-${c}`} x={c + quiet} y={r + quiet} width="1" height="1" fill="#000000" />
           ) : null,
         ),
       )}

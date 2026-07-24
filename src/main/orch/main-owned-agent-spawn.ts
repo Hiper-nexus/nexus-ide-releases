@@ -246,7 +246,16 @@ function canonicalizePersistedSpawnRequest(
   const mismatches = spawnFenceMismatches([
     ["modo(resume+fresh simultâneos)", ambiguousMode, false],
     ["kind", request.kind, "cli-agent"],
-    ["orchRequestId", request.orchRequestId, recovery?.request.requestId],
+    // Sem recovery grant, o renderer pode ainda carregar o orchRequestId
+    // histórico do pane (persistido no layout salvo; os maps de grant do main
+    // morrem no restart). O registro persistido é a autoridade mais forte —
+    // resolveSpawnAuthority já tolera o id antigo, a fence não pode rejeitá-lo
+    // antes. Com recovery ativo, o id tem que ser exatamente o do grant.
+    ...(recovery
+      ? ([
+          ["orchRequestId", request.orchRequestId, recovery.request.requestId],
+        ] as const)
+      : []),
     ["paneId", request.paneId, persisted.paneId],
     ["adapterId", request.adapterId, persisted.adapterId],
     ["model", request.model, persisted.model],
@@ -406,9 +415,12 @@ export function authorizeMainOwnedAgentSpawn(
   let persistedPane: ScopedMissionPaneSpec | null = null;
   if (
     !pending &&
-    (canonicalRequest.resume ||
-      canonicalRequest.restorePersistedAuthority) &&
-    canonicalRequest.paneId
+    canonicalRequest.paneId &&
+    (
+      canonicalRequest.resume ||
+      canonicalRequest.restorePersistedAuthority ||
+      Boolean(canonicalRequest.missionId)
+    )
   ) {
     if (!runtimeManager) {
       throw new Error("project-scoped PTY runtime is not initialized");
@@ -418,7 +430,14 @@ export function authorizeMainOwnedAgentSpawn(
       runtimeManager,
       scope,
     ).findByPaneId(canonicalRequest.paneId);
-    if (found) {
+    if (
+      found &&
+      (
+        canonicalRequest.resume ||
+        canonicalRequest.restorePersistedAuthority ||
+        canonicalRequest.missionId === found.missionId
+      )
+    ) {
       persistedPane = assertCurrentPersistedPaneAuthority(
         runtimeManager,
         found,

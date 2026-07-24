@@ -7,6 +7,17 @@ const require = createRequire(import.meta.url);
 // straight from node_modules (dev) / app.asar.unpacked (prod) instead of being
 // pulled into the Rollup graph, which would break the .node binaries.
 export default defineConfig({
+  // A chave publica de licenca e lida via process.env.NEXUS_LICENSE_PUBKEY em
+  // src/main/persistence/billing-ipc.ts. Um app EMPACOTADO (.dmg) nao recebe a
+  // env do shell em runtime, entao assamos o valor no bundle do main aqui:
+  // `npm run make` (ou `npm start`) com NEXUS_LICENSE_PUBKEY exportada embute a
+  // chave literal. Sem a env no build -> '' -> licensePublicKey() = null ->
+  // fail-closed (nenhuma licenca aceita), que e o comportamento seguro.
+  define: {
+    'process.env.NEXUS_LICENSE_PUBKEY': JSON.stringify(
+      process.env.NEXUS_LICENSE_PUBKEY ?? '',
+    ),
+  },
   build: {
     rollupOptions: {
       output: {

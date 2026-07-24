@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  loadArchivedMissionIds,
+  loadCollapsedSections,
   loadPinnedMissionIds,
   savePinnedMissionIds,
+  setMissionArchived,
   togglePinnedMissionId,
 } from './mission-rail-prefs';
 
@@ -46,5 +49,46 @@ describe('mission rail pins per workspace', () => {
       'mission-2',
     ]);
     expect(loadPinnedMissionIds('/other', store)).toEqual([]);
+  });
+});
+
+describe('archived missions (view-only, per workspace)', () => {
+  function memoryStore() {
+    const data = new Map<string, string>();
+    return {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => void data.set(k, v),
+      removeItem: (k: string) => void data.delete(k),
+    };
+  }
+
+  it('arquiva e desarquiva por workspace, sem vazar entre pastas', () => {
+    const store = memoryStore();
+    expect(setMissionArchived('/w/a', 'm1', true, store)).toEqual(['m1']);
+    expect(loadArchivedMissionIds('/w/a', store)).toEqual(['m1']);
+    expect(loadArchivedMissionIds('/w/b', store)).toEqual([]);
+
+    setMissionArchived('/w/b', 'm2', true, store);
+    expect(loadArchivedMissionIds('/w/a', store)).toEqual(['m1']);
+    expect(loadArchivedMissionIds('/w/b', store)).toEqual(['m2']);
+
+    expect(setMissionArchived('/w/a', 'm1', false, store)).toEqual([]);
+    expect(loadArchivedMissionIds('/w/a', store)).toEqual([]);
+    expect(loadArchivedMissionIds('/w/b', store)).toEqual(['m2']);
+  });
+
+  it('arquivar duas vezes não duplica e sem workspace é no-op', () => {
+    const store = memoryStore();
+    setMissionArchived('/w/a', 'm1', true, store);
+    expect(setMissionArchived('/w/a', 'm1', true, store)).toEqual(['m1']);
+    expect(setMissionArchived(null, 'm1', true, store)).toEqual([]);
+  });
+
+  it('seções sem trabalho vivo nascem fechadas', () => {
+    expect(loadCollapsedSections(memoryStore())).toEqual([
+      'stopped',
+      'done',
+      'archived',
+    ]);
   });
 });

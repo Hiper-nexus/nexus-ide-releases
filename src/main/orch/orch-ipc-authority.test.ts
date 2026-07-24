@@ -311,6 +311,7 @@ vi.mock('./pane-registry', () => ({
   initPaneRegistry: vi.fn(),
   listPaneSnapshots: vi.fn(() => [...harness.paneSnapshots]),
   registerOrchRenderer: vi.fn(),
+  requestMissionPaneClose: vi.fn(async () => true),
   requestPaneClose: vi.fn(),
   resolveBrowserOpen: vi.fn(),
   resolveMissionPaneRecovery: vi.fn(),
@@ -319,7 +320,10 @@ vi.mock('./pane-registry', () => ({
   unregisterOrchRenderer: vi.fn(),
 }));
 vi.mock('../adapters/omp-rpc-ipc', () => ({
+  getOmpRpcSessionAuthority: vi.fn(() => null),
+  isOmpRpcSession: vi.fn(() => false),
   listOmpRpcSessions: vi.fn(() => [...harness.ompSessions]),
+  terminateOmpRpcSession: vi.fn(async () => true),
 }));
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) =>
@@ -1882,6 +1886,145 @@ describe('mission removal IPC authority', () => {
     ).rejects.toThrow(/preservada/i);
     expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
     expect(harness.removeMission).not.toHaveBeenCalled();
+  });
+});
+
+describe('mission runtime close IPC authority', () => {
+  function configureAndGetHandler() {
+    configureRendererMissionAuthority({} as never);
+    const handler = harness.handlers.get(ORCH_CHANNELS.missionCloseRuntime);
+    if (!handler) throw new Error('missing mission close runtime handler');
+    return handler;
+  }
+
+  it('closes an already-blocked physical runtime and preserves the mission row', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    let stored = {
+      id: 'mission-stuck',
+      title: 'Missão travada',
+      description: 'Histórico e receipts preservados.',
+      status: 'blocked' as const,
+      intentState: 'blocked_user' as const,
+      intentVersion: 3,
+      orchestratorSessionId: 'pty-stuck-close',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const persistedPane = {
+      id: 'mission-pane-stuck-close',
+      missionId: stored.id,
+      paneId: 'pane-stuck-close',
+      adapterId: 'codex',
+      title: 'Orquestrador',
+      agentName: 'Maestro',
+      role: 'orchestrator' as const,
+      scope: SCOPE_A,
+      createdAt: 1,
+    };
+    harness.agentSessions.push({
+      sessionId: 'pty-stuck-close',
+      paneId: persistedPane.paneId,
+      adapterId: 'codex',
+      cwd: SCOPE_A.rootRealPath,
+      missionId: stored.id,
+      role: 'orchestrator',
+      scope: SCOPE_A,
+    });
+    harness.terminatePty.mockImplementationOnce(async (sessionId: string) => {
+      const index = harness.agentSessions.findIndex(
+        (entry) => entry.sessionId === sessionId,
+      );
+      if (index >= 0) harness.agentSessions.splice(index, 1);
+      return true;
+    });
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === stored.id ? stored : null,
+        list: () => [stored],
+        block: () => stored,
+        update: (missionId: string, patch: Record<string, unknown>) => {
+          if (missionId !== stored.id) return null;
+          stored = {
+            ...stored,
+            ...patch,
+            updatedAt: stored.updatedAt + 1,
+          } as typeof stored;
+          return stored;
+        },
+        setOrchestratorSession: (
+          missionId: string,
+          sessionId: string | null,
+        ) => {
+          if (missionId !== stored.id) return null;
+          stored = {
+            ...stored,
+            orchestratorSessionId: sessionId ?? undefined,
+            updatedAt: stored.updatedAt + 1,
+          } as typeof stored;
+          return stored;
+        },
+      },
+      missionPanes: {
+        list: (missionId: string) =>
+          missionId === stored.id ? [persistedPane] : [],
+      },
+    });
+    const handler = configureAndGetHandler();
+
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+    await expect(
+      handler({ sender }, { missionId: stored.id }),
+    ).resolves.toEqual({
+      ok: false,
+      cancelled: true,
+      terminatedSessionIds: [],
+    });
+    expect(harness.terminatePty).not.toHaveBeenCalled();
+
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+    await expect(
+      handler({ sender }, { missionId: stored.id }),
+    ).resolves.toMatchObject({
+      ok: true,
+      mission: {
+        id: stored.id,
+        status: 'blocked',
+        orchestratorSessionId: undefined,
+        description: 'Histórico e receipts preservados.',
+      },
+      terminatedSessionIds: ['pty-stuck-close'],
+    });
+    expect(harness.terminatePty).toHaveBeenCalledWith('pty-stuck-close');
+    expect(stored.id).toBe('mission-stuck');
+    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
+    expect(options).toMatchObject({
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    expect(options?.detail).toContain('Tasks, entregas');
+  });
+
+  it('validates the close payload before inspecting or terminating anything', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const handler = configureAndGetHandler();
+
+    await expect(handler({ sender }, { missionId: '' })).rejects.toThrow(
+      /invalid mission close runtime payload/i,
+    );
+    await expect(
+      handler({ sender }, { missionId: 'mission-a', forged: true }),
+    ).rejects.toThrow(/invalid mission close runtime payload/i);
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(harness.terminatePty).not.toHaveBeenCalled();
   });
 });
 

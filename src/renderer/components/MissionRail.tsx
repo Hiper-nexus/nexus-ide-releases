@@ -9,6 +9,7 @@ import { livePaneIdsForMission } from '../orch/mission-reopen';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import {
   groupMissionsForRail,
+  missionHasLiveRuntime,
   missionRailResumeCopy,
   railStatusDisplay,
   statusLabel,
@@ -19,8 +20,10 @@ import {
   summarizeOmpMissionActivity,
 } from '../lib/omp-mission-activity';
 import {
+  loadArchivedMissionIds,
   loadCollapsedSections,
   loadPinnedMissionIds,
+  setMissionArchived,
   saveCollapsedSections,
   savePinnedMissionIds,
   togglePinnedMissionId,
@@ -29,6 +32,7 @@ import {
 import { formatShortcut } from '../lib/platform';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useLayoutStore } from '../state/layout-store';
+import { listPanes } from '../lib/split-tree';
 import { useGitScmStore } from '../state/git-scm-store';
 import { PixelIcon } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
@@ -56,6 +60,16 @@ import {
 import { EndorphinPresence } from './EndorphinPresence';
 import { missionRouteDisplay } from '../lib/mission-route-display';
 import { MissionClarifyCards } from './MissionClarifyCards';
+import {
+  archiveMissionPrompt,
+  discardMissionPrompt,
+  missionActionCopy,
+  missionListAction,
+} from '../orch/mission-list-action';
+import {
+  closeMissionNote,
+  closeMissionRuntimeAndPanes,
+} from '../orch/close-mission-runtime';
 
 /**
  * Activity Rail — missões **deste workspace** apenas:
@@ -93,6 +107,9 @@ export function MissionRail() {
   const [, setElapsedTick] = useState(0);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() =>
     loadPinnedMissionIds(workspacePath),
+  );
+  const [archivedIds, setArchivedIds] = useState<string[]>(() =>
+    loadArchivedMissionIds(workspacePath),
   );
   const [collapsed, setCollapsed] = useState<RailSectionId[]>(() =>
     loadCollapsedSections(),
@@ -136,6 +153,7 @@ export function MissionRail() {
   // Pins e lista só deste path — ao trocar workspace, recarrega pins locais.
   useEffect(() => {
     setPinnedIds(loadPinnedMissionIds(workspacePath));
+    setArchivedIds(loadArchivedMissionIds(workspacePath));
     setQuery('');
     setNote(null);
     useGitScmStore.getState().reset();
@@ -177,6 +195,14 @@ export function MissionRail() {
   // Layout no dep: livePaneIds filtra panes mortos do tree — sem isso, o
   // useMemo ficava stale e missão com terminal vivo sumia do “Em progresso”.
   const layoutRoot = useLayoutStore((s) => s.root);
+  useEffect(() => {
+    if (!note) return;
+    const match = note.match(/\b(?:O )?pane ([A-Za-z0-9_-]+) não confirmou\b/i);
+    if (!match) return;
+    const liveIds = new Set(listPanes(layoutRoot).map((pane) => pane.id));
+    if (!liveIds.has(match[1]!)) setNote(null);
+  }, [layoutRoot, note]);
+
   const ompLiveMissionIds = useMemo(
     () => missionIdsWithOmpWorkers(ompSessions),
     [ompSessions],
@@ -213,16 +239,16 @@ export function MissionRail() {
         missions: listReady ? missions : [],
         openMissionIds,
         pinnedIds,
+        archivedIds,
         query,
       }),
-    [listReady, missions, openMissionIds, pinnedIds, query],
+    [listReady, missions, openMissionIds, pinnedIds, archivedIds, query],
   );
 
-  const activeCount = localMissions.filter(
-    (m) =>
-      openMissionIds.has(m.id) ||
-      m.status === 'running' ||
-      m.status === 'blocked',
+  // Contador de ativas segue o runtime físico: encerrar precisa fazer o número
+  // cair, senão o operador encerra tudo e o rail insiste que há 7 rodando.
+  const activeCount = localMissions.filter((m) =>
+    missionHasLiveRuntime(m, openMissionIds.has(m.id)),
   ).length;
 
   const workspaceBudget = useMemo(
@@ -254,15 +280,41 @@ export function MissionRail() {
     setPinnedIds(togglePinnedMissionId(workspacePath, id));
   }
 
-  async function removeMission(m: Mission, active: boolean) {
-    const ok = await askConfirm({
-      title: `Remover "${m.title}"?`,
-      body: active
-        ? 'A missão está aberta. Remover tira o registro da lista; os panes continuam abertos.'
-        : 'A missão sai da lista de trabalho.',
-      confirmLabel: 'Remover missão',
-      danger: true,
-    });
+  async function closeOrDiscardMission(m: Mission, active: boolean) {
+    const action = missionListAction(m, active);
+    if (action === 'none') return;
+    if (action === 'close-runtime') {
+      setBusy(m.id);
+      try {
+        const result = await closeMissionRuntimeAndPanes(
+          m.id,
+          'mission-rail-close',
+        );
+        if (!result.ok && result.cancelled) return;
+        setNote(
+          result.ok
+            ? closeMissionNote(result.terminatedSessionIds.length)
+            : result.error ?? 'Não foi possível provar a saída dos processos.',
+        );
+      } finally {
+        // Sem finally, uma rejeição deixava `busy` preso e travava TODOS os
+        // botões da lista — a missão “não encerrava” e nada explicava por quê.
+        setBusy(null);
+      }
+      return;
+    }
+    if (action === 'archive') {
+      const ok = await askConfirm({
+        ...archiveMissionPrompt(m),
+        confirmLabel: 'Arquivar missão',
+      });
+      if (!ok) return;
+      setArchivedIds(setMissionArchived(workspacePath, m.id, true));
+      setNote('Missão arquivada. Nada foi apagado — está em “Arquivadas”.');
+      return;
+    }
+    const prompt = discardMissionPrompt(m);
+    const ok = await askConfirm({ ...prompt, danger: true });
     if (!ok) return;
     setNote(null);
     void window.nexus.orch
@@ -788,15 +840,48 @@ export function MissionRail() {
                                 size={11}
                               />
                             </button>
-                            <button
-                              className="mission-rail__remove"
-                              disabled={busy !== null}
-                              title="Remover esta missão da lista"
-                              aria-label={`Remover missão ${m.title}`}
-                              onClick={() => removeMission(m, liveInGrid)}
-                            >
-                              <PixelIcon name="close" size={10} />
-                            </button>
+                            {archivedIds.includes(m.id) ? (
+                              <button
+                                className="mission-rail__remove"
+                                disabled={busy !== null}
+                                title="Trazer de volta para a lista"
+                                aria-label={`Desarquivar missão ${m.title}`}
+                                onClick={() => {
+                                  setArchivedIds(
+                                    setMissionArchived(
+                                      workspacePath,
+                                      m.id,
+                                      false,
+                                    ),
+                                  );
+                                  setNote(null);
+                                }}
+                              >
+                                <PixelIcon name="restart" size={10} />
+                              </button>
+                            ) : (
+                              missionListAction(m, liveInGrid) !== 'none' && (
+                                <button
+                                  className="mission-rail__remove"
+                                  disabled={busy !== null}
+                                  title={
+                                    missionActionCopy(
+                                      missionListAction(m, liveInGrid),
+                                    ).title
+                                  }
+                                  aria-label={`${
+                                    missionActionCopy(
+                                      missionListAction(m, liveInGrid),
+                                    ).verb
+                                  } missão ${m.title}`}
+                                  onClick={() =>
+                                    closeOrDiscardMission(m, liveInGrid)
+                                  }
+                                >
+                                  <PixelIcon name="close" size={10} />
+                                </button>
+                              )
+                            )}
                           </li>
                         );
                       })}

@@ -213,6 +213,7 @@ function harness(): Harness {
             nativeReadOnly: true,
             allowedTools: ['nexus_task'],
             allowedSkills: ['check-work'],
+            authoritySeal: authoritySealFor(value.mission),
           }
         : null,
     getRuntimeAuthority: (sessionId) =>
@@ -301,6 +302,23 @@ describe('initial main-owned orchestrator bootstrap', () => {
         'claude',
       ),
     ).toBe('claude');
+  });
+
+  it('passes the exact approved authority seal into the physical main-owned PTY', async () => {
+    const value = harness();
+    const expectedSeal = authoritySealFor(value.mission);
+
+    const result = await new MissionOrchestratorBootstrapService(
+      value.deps,
+    ).bootstrap(scope, value.mission.id);
+
+    expect(result.ok).toBe(true);
+    expect(value.spawned).toHaveLength(1);
+    expect(value.spawned[0]).toMatchObject({
+      missionId: value.mission.id,
+      role: 'orchestrator',
+      authoritySeal: expectedSeal,
+    });
   });
 
   it('nega bootstrap prematuro sem alterar a missão byte a byte', async () => {
@@ -881,7 +899,8 @@ describe('blockedBootstrapResumePatch', () => {
       description: 'sem marker de bootstrap',
     };
     expect(blockedBootstrapResumePatch(blockedByDriver)).toMatchObject({
-      ok: false,
+      ok: true,
+      patch: { status: 'running', intentState: 'executing' },
     });
 
     // Re-bloqueios do ciclo (kickoff sem recibo, provider_exited) não anexam
@@ -953,6 +972,7 @@ describe('seal capability canonicalization (field: agent.allowedSkills×pane)', 
       role: 'orchestrator',
       readOnly: false,
       allowedTools: ['nexus_task'],
+      authoritySeal: authoritySealFor(mission),
       ...(overrides.paneSkills !== undefined
         ? { allowedSkills: overrides.paneSkills as string[] | null }
         : {}),
@@ -975,6 +995,7 @@ describe('seal capability canonicalization (field: agent.allowedSkills×pane)', 
       nativeReadOnly: true,
       allowedTools: ['nexus_task'],
       allowedSkills: overrides.agentSkills,
+      authoritySeal: authoritySealFor(mission),
     } as never;
     const authority = {
       owner: null,
@@ -1023,5 +1044,31 @@ describe('seal capability canonicalization (field: agent.allowedSkills×pane)', 
         approvedRuntime,
       ),
     ).toContain('agent.allowedSkills×pane');
+  });
+
+  it('rejects a physical PTY whose authority seal differs from the persisted pane', () => {
+    const { mission, pane, agent, authority } = sealInputs({
+      agentSkills: null,
+      paneSkills: undefined,
+    });
+    pane.authoritySeal = authoritySealFor(mission);
+    const divergentAgent = {
+      ...(agent as unknown as Record<string, unknown>),
+      authoritySeal: {
+        ...pane.authoritySeal,
+        contextRevision: 'f'.repeat(64),
+      },
+    } as never;
+
+    expect(
+      runtimeAuthorityMismatches(
+        scope,
+        mission,
+        pane,
+        divergentAgent,
+        authority,
+        approvedRuntime,
+      ),
+    ).toContain('agent.authoritySeal×pane');
   });
 });

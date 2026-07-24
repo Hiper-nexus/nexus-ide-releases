@@ -374,6 +374,58 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     expect(proc.kill).toHaveBeenCalledOnce();
   });
 
+  it("reattaches an owned mission session to the same renderer after a page reload", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const authority = revisionBoundWorker();
+    const { sessionId } = spawnMainOwnedAgentSession(
+      {
+        kind: "cli-agent",
+        cols: 120,
+        rows: 36,
+        paneId: "pane-reattach",
+        adapterId: "test-cli",
+      },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      authority,
+    );
+    const owner = fakeWc();
+    const claim = {
+      paneId: "pane-reattach",
+      adapterId: "test-cli",
+      missionId: "mission-worker",
+      role: "worker" as const,
+      workerIncarnationId: "worker-incarnation-main-owned",
+      model: undefined,
+      accountId: undefined,
+      effort: undefined,
+      cwd: authority.cwd,
+      agentName: undefined,
+      readOnly: false,
+      nativeReadOnly: false,
+      allowedTools: [] as string[],
+      allowedSkills: null,
+      authoritySeal: undefined,
+      scope: authority.scope,
+    };
+    expect(adoptMainOwnedAgentSession(owner, claim)).toEqual({
+      sessionId,
+      state: "spawning",
+    });
+
+    // A page reload keeps the same WebContents but wipes the renderer's
+    // session map; re-adoption by the SAME owner must reattach, not null out
+    // into the physical-exit fence.
+    expect(adoptMainOwnedAgentSession(owner, claim)).toEqual({
+      sessionId,
+      state: "spawning",
+    });
+
+    // A different renderer still cannot take a session owned by another wc.
+    expect(adoptMainOwnedAgentSession(fakeWc(), claim)).toBeNull();
+  });
+
   it('sequences output and recovers missed push chunks through the owner-only pull lane', () => {
     let handlers: PtySessionHandlers | null = null;
     const proc: PtyProcHandle = {

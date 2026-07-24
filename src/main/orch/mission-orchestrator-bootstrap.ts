@@ -313,6 +313,11 @@ export function runtimeAuthorityMismatches(
     agent.nativeReadOnly,
     approvedRuntime.nativeReadOnly,
   );
+  if (
+    !sameMissionPaneAuthoritySeal(agent.authoritySeal, pane.authoritySeal)
+  ) {
+    mismatches.push('agent.authoritySeal×pane');
+  }
   if (!sameCapabilities(agent.allowedTools, pane.allowedTools)) {
     mismatches.push('agent.allowedTools×pane');
   }
@@ -696,6 +701,7 @@ export class MissionOrchestratorBootstrapService {
       // denied by the provider confinement selected above.
       readOnly: runtime.readOnly,
       nativeReadOnly: runtime.nativeReadOnly,
+      authoritySeal,
     });
     if (!spawn.ok || !spawn.paneId || !spawn.sessionId) {
       return this.#failure(
@@ -1053,12 +1059,15 @@ export function blockedBootstrapResumePatch(
   // qualquer forma. blocked_user segue no caminho de re-arme com panes.
   if (
     mission.status !== 'blocked' ||
-    mission.intentState !== 'blocked_technical'
+    (
+      mission.intentState !== 'blocked_technical' &&
+      mission.intentState !== 'blocked_user'
+    )
   ) {
     return {
       ok: false,
       error:
-        'Só uma missão bloqueada pelo bootstrap do orquestrador pode ser retomada por aqui.',
+        'Só uma missão bloqueada pode ser retomada por aqui.',
     };
   }
   // The approved contract must still be current; everything else (squad hash,

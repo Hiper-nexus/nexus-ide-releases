@@ -17,6 +17,11 @@ import {
   groupMissionsIntoColumns,
 } from '../lib/ops-board';
 import { useLayoutStore } from '../state/layout-store';
+import { useWorkspaceStore } from '../state/workspace-store';
+import {
+  loadArchivedMissionIds,
+  setMissionArchived,
+} from '../lib/mission-rail-prefs';
 import { useSessionStateStore } from '../state/session-state-store';
 import { listPanes } from '../lib/split-tree';
 import { formatShortcut } from '../lib/platform';
@@ -26,6 +31,16 @@ import {
   summarizeAgentStates,
   type AgentVisualState,
 } from './AgentAvatar';
+import {
+  archiveMissionPrompt,
+  discardMissionPrompt,
+  missionActionCopy,
+  missionListAction,
+} from '../orch/mission-list-action';
+import {
+  closeMissionNote,
+  closeMissionRuntimeAndPanes,
+} from '../orch/close-mission-runtime';
 
 /**
  * Ops Board — o pipeline de missões como superfície espacial (war-room).
@@ -52,6 +67,7 @@ export function OpsBoard() {
   const openWizard = useMissionWizardStore((s) => s.openForMission);
   const snapshot = useGamificationStore((s) => s.snapshot);
 
+  const workspacePath = useWorkspaceStore((s) => s.current?.path ?? null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [dropCol, setDropCol] = useState<MissionStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -68,7 +84,12 @@ export function OpsBoard() {
 
   if (!open) return null;
 
-  const columns = groupMissionsIntoColumns(missions);
+  // Arquivadas saem do board pelo mesmo motivo que saem do rail: o operador
+  // já tirou da mesa. Nada é apagado — reaparecem ao desarquivar no rail.
+  const archivedSet = new Set(loadArchivedMissionIds(workspacePath));
+  const columns = groupMissionsIntoColumns(
+    missions.filter((m) => !archivedSet.has(m.id)),
+  );
   const openMissionIds = new Set(Object.values(paneMissions));
   const squadNames = new Map(squads.map((s) => [s.id, s.name]));
   const panes = listPanes(layoutRoot);
@@ -97,19 +118,51 @@ export function OpsBoard() {
       .finally(() => setBusy(null));
   }
 
-  async function remover(m: Mission, active: boolean) {
-    const ok = await askConfirm({
-      title: `Remover "${m.title}"?`,
-      body: active
-        ? 'A missão está aberta. Remover tira o registro da lista; os panes continuam abertos.'
-        : 'A missão sai da lista de trabalho.',
-      confirmLabel: 'Remover missão',
-      danger: true,
-    });
+  async function closeOrDiscard(m: Mission, active: boolean) {
+    const action = missionListAction(m, active);
+    if (action === 'none') return;
+    if (action === 'close-runtime') {
+      setBusy(m.id);
+      try {
+        const result = await closeMissionRuntimeAndPanes(
+          m.id,
+          'ops-board-close',
+        );
+        if (!result.ok && result.cancelled) return;
+        setNote(
+          result.ok
+            ? closeMissionNote(result.terminatedSessionIds.length)
+            : result.error ?? 'Falha ao encerrar a missão.',
+        );
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
+    if (action === 'archive') {
+      const ok = await askConfirm({
+        ...archiveMissionPrompt(m),
+        confirmLabel: 'Arquivar missão',
+      });
+      if (!ok) return;
+      setMissionArchived(workspacePath, m.id, true);
+      setNote('Missão arquivada. Nada foi apagado — desarquive pelo rail.');
+      // Board lê a preferência no render; força um repaint pelo store.
+      useOrchStore.setState((state) => ({ ...state }));
+      return;
+    }
+    const ok = await askConfirm({ ...discardMissionPrompt(m), danger: true });
     if (!ok) return;
-    void window.nexus.orch.removeMission(m.id).then((r) => {
-      if (!r.removed) setNote('Missão já não estava na lista.');
-    });
+    void window.nexus.orch
+      .removeMission(m.id)
+      .then((r) => {
+        if (!r.removed) setNote('Missão já não estava na lista.');
+      })
+      .catch((cause) => {
+        setNote(
+          cause instanceof Error ? cause.message : 'Falha ao remover a missão.',
+        );
+      });
   }
 
   async function encerrarComoBloqueada(m: Mission) {
@@ -374,13 +427,21 @@ export function OpsBoard() {
                                 bloquear
                               </button>
                             )}
-                            <button
-                              className="ops-board__card-btn ops-board__card-btn--danger"
-                              onClick={() => remover(m, active)}
-                              title="Remover esta missão da lista"
-                            >
-                              remover
-                            </button>
+                            {missionListAction(m, active) !== 'none' && (
+                              <button
+                                className="ops-board__card-btn ops-board__card-btn--danger"
+                                onClick={() => closeOrDiscard(m, active)}
+                                title={
+                                  missionActionCopy(
+                                    missionListAction(m, active),
+                                  ).title
+                                }
+                              >
+                                {missionActionCopy(
+                                  missionListAction(m, active),
+                                ).verb.toLowerCase()}
+                              </button>
+                            )}
                           </div>
                         </article>
                       );

@@ -51,6 +51,8 @@ export const ORCH_CHANNELS = {
   missionPromptQueue: 'orch:missions.promptQueue',
   missionRebind: 'orch:missions.rebind',
   missionUpdate: 'orch:missions.update',
+  /** Native-confirmed physical shutdown that preserves the durable mission. */
+  missionCloseRuntime: 'orch:missions.closeRuntime',
   missionRemove: 'orch:missions.remove',
   /** Mission event journal consumer (flag: feature.mission.eventJournal). */
   missionEventsRecent: 'orch:missionEvents.recent',

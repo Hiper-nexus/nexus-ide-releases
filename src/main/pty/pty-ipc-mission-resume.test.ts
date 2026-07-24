@@ -871,6 +871,131 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
+  it("resumes a persisted pane carrying its historical orchRequestId after restart", () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: {},
+    });
+    const persisted = {
+      id: "mpane-worker-stale-token",
+      missionId: "mission-a",
+      adapterId: "claude",
+      model: "claude-opus-4-1",
+      accountId: "account-main",
+      effort: "high",
+      title: "Worker",
+      agentName: "Worker B",
+      workerIncarnationId: "worker-incarnation-b",
+      role: "worker" as const,
+      paneId: "pane-worker-stale-token",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
+    ptyDeps.adoptMainOwnedAgentSession.mockReturnValueOnce({
+      sessionId: "pty-adopted-stale",
+      state: "idle",
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    // The saved layout persists the pane's historical orchRequestId, but the
+    // main-process grant maps are empty after a restart (both claims → null).
+    // The stale token must not fence the resume: the persisted record wins.
+    const result = handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: persisted.adapterId,
+        model: persisted.model,
+        accountId: persisted.accountId,
+        effort: persisted.effort,
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        orchRequestId: "orchspawn-stale-from-layout",
+        resume: true,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: false,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      sessionId: "pty-adopted-stale",
+      adopted: true,
+      state: "idle",
+    });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  it("reattaches an already-live persisted mission pane even when a stale renderer retries with no resume flags", () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: {},
+    });
+    const persisted = {
+      id: "mpane-orch-stale-plain",
+      missionId: "mission-a",
+      adapterId: "claude",
+      model: "claude-opus-4-1",
+      accountId: "account-main",
+      effort: "high",
+      title: "Orchestrator",
+      agentName: "Maestro",
+      role: "orchestrator" as const,
+      paneId: "pane-orch-stale-plain",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    authorityDeps.hasLivePaneSession.mockReturnValueOnce(true);
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
+    ptyDeps.adoptMainOwnedAgentSession.mockReturnValueOnce({
+      sessionId: "pty-adopted-plain",
+      state: "idle",
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: persisted.adapterId,
+        model: persisted.model,
+        accountId: persisted.accountId,
+        effort: persisted.effort,
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        resume: false,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: false,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      sessionId: "pty-adopted-plain",
+      adopted: true,
+      state: "idle",
+    });
+    expect(authorityDeps.findMissionPaneByPaneId).toHaveBeenCalledWith(
+      persisted.paneId,
+    );
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
   it("spawns one exact persisted RPC worker only under its recovery grant", async () => {
     const persisted = {
       id: "mpane-orch-rpc-recovery",

@@ -286,6 +286,20 @@ export interface Mission {
   updatedAt: number;
 }
 
+export type MissionRuntimeCloseResult =
+  | {
+      readonly ok: true;
+      readonly mission: Mission;
+      readonly terminatedSessionIds: readonly string[];
+    }
+  | {
+      readonly ok: false;
+      readonly mission?: Mission;
+      readonly terminatedSessionIds: readonly string[];
+      readonly cancelled?: boolean;
+      readonly error?: string;
+    };
+
 export interface MissionRouteTrace {
   reservationId: string;
   taskPreview: string;

@@ -14,9 +14,9 @@ import { listPanes, createPane } from "../lib/split-tree";
 import { getActiveWorkspacePath } from "../state/active-workspace";
 import {
   getPaneSessionId,
-  markPersistedAuthorityOnSpawn,
   waitForSession,
 } from "../terminal/terminal-host";
+import { presentMainOwnedMissionPane } from './mission-pane-presentation';
 import {
   hasOrchestratorMcpRoute,
   isOrchestratorCapableAdapter,
@@ -678,46 +678,15 @@ export async function launchSquadMission(
       };
     }
 
-    const sealed = bootstrap.pane;
-    const orchPane: PaneModel = {
-      ...createPane(
-        'cli-agent',
-        sealed.cwd,
-        sealed.adapterId,
-        sealed.model,
-      ),
-      id: sealed.paneId,
-      accountId: sealed.accountId,
-      effort: sealed.effort,
-      title: sealed.title,
-      missionId: bootstrap.missionId,
-      role: 'orchestrator',
-      agentName: sealed.agentName,
-    };
-    markPersistedAuthorityOnSpawn(orchPane.id);
-    useOrchStore.getState().bindPaneMission(orchPane.id, bootstrap.missionId);
-    const existing = listPanes(useLayoutStore.getState().root).filter(
-      (pane) => pane.id !== orchPane.id,
+    const presentation = await presentMainOwnedMissionPane(
+      bootstrap.missionId,
+      bootstrap.pane,
+      { removePaneIds: killedIds },
     );
-    useHomeStore.getState().hide();
-    useLayoutStore.getState().setPanes(
-      panesAfterSquadLaunch(existing, killedIds, orchPane),
-    );
-
-    // Presentation can lag behind the already-running main PTY. Adoption is
-    // best-effort UI attachment; failure never kills or restarts the mission.
-    void waitForSession(orchPane.id).then((adoptedSessionId) => {
-      if (
-        adoptedSessionId &&
-        adoptedSessionId !== sealed.sessionId
-      ) {
-        useToastStore.getState().push(
-          'error',
-          'Pane do orquestrador divergiu',
-          'A missão continua no processo principal; reabra a missão para adotar a sessão correta.',
-        );
-      }
-    });
+    if (!presentation.ok) {
+      return { ok: false, error: presentation.error };
+    }
+    const orchPane = presentation.pane;
     if (!bootstrap.kickoff.accepted) {
       useToastStore.getState().push('error', 'Kickoff não foi aceito', {
         detail: bootstrap.kickoff.detail,

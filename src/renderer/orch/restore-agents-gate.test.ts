@@ -38,6 +38,13 @@ const agent = (id: string, title: string) =>
     cwd: '/ws',
   }) as const;
 
+const missionAgent = (id: string, title: string) =>
+  ({
+    ...agent(id, title),
+    missionId: 'mission-a',
+    role: 'orchestrator' as const,
+  }) as const;
+
 const shell = {
   id: 'sh-1',
   kind: 'shell' as const,
@@ -105,6 +112,33 @@ describe('restore-agents-gate', () => {
     await gateRestoredAgents([agent('a1', 'Orq')]);
     expect(askConfirm).not.toHaveBeenCalled();
     expect(releaseHeldSpawns).toHaveBeenCalledWith(['a1'], { resume: true });
+  });
+
+  it('never generic-resumes mission panes even when policy is resume', async () => {
+    orchGet.mockResolvedValue({ agentRestorePolicy: 'resume' });
+    await gateRestoredAgents([
+      missionAgent('mission-orch', 'Orquestrador'),
+      agent('solo', 'Agente avulso'),
+    ]);
+
+    expect(holdSpawnUntilApproved).toHaveBeenCalledWith('mission-orch');
+    expect(releaseHeldSpawns).toHaveBeenCalledWith(['solo'], {
+      resume: true,
+    });
+    expect(releaseHeldSpawns).not.toHaveBeenCalledWith(
+      expect.arrayContaining(['mission-orch']),
+      expect.anything(),
+    );
+  });
+
+  it('keeps an all-mission layout paused without opening the generic dialog', async () => {
+    await gateRestoredAgents([
+      missionAgent('mission-orch', 'Orquestrador'),
+    ]);
+
+    expect(holdSpawnUntilApproved).toHaveBeenCalledWith('mission-orch');
+    expect(askConfirm).not.toHaveBeenCalled();
+    expect(releaseHeldSpawns).not.toHaveBeenCalled();
   });
 
   it('on ask+approve, resumes agents', async () => {

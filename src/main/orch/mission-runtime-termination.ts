@@ -8,6 +8,7 @@ import {
 import type {
   Mission,
   MissionPaneSpec,
+  MissionRuntimeCloseResult,
 } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
@@ -33,6 +34,7 @@ export type MissionRuntimeTerminationReason =
   | 'restart'
   | 'hibernate'
   | 'force-reopen'
+  | 'operator-close'
   | 'authority-revoked';
 
 export interface MissionRuntimeTerminationCandidate {
@@ -102,12 +104,19 @@ function runtimeTargets(input: {
   }): void => {
     if (
       physical.missionId !== input.mission.id ||
-      !sameScope(physical.scope, input.scope) ||
-      !physical.paneId ||
-      (input.paneId && physical.paneId !== input.paneId)
+      !sameScope(physical.scope, input.scope)
     ) {
       return;
     }
+    // Mission-bound and in scope: from here a silent skip would let a live
+    // process survive a "closed" mission. Never drop it quietly.
+    if (!physical.paneId) {
+      throw new Error(
+        `mission session ${physical.sessionId} is live without a pane ` +
+          'binding; physical exit cannot be proven',
+      );
+    }
+    if (input.paneId && physical.paneId !== input.paneId) return;
     const matching = specs.filter(
       (spec) =>
         spec.paneId === physical.paneId &&
@@ -192,16 +201,20 @@ function runtimeTargets(input: {
   }
   for (const sessionId of snapshotSessionIds) {
     if (targets.has(sessionId)) continue;
-    const authority = getPaneRuntimeAuthorityBySession(sessionId);
     const physicalLive =
       getSessionState(sessionId) !== null || isOmpRpcSession(sessionId);
-    if (
-      !physicalLive ||
-      !authority ||
-      !authority.role ||
-      !authority.scope
-    ) {
-      continue;
+    // A durable pointer to an already-dead process closes cleanly: there is
+    // no runtime left to prove anything about.
+    if (!physicalLive) continue;
+    const authority = getPaneRuntimeAuthorityBySession(sessionId);
+    if (!authority || !authority.role || !authority.scope) {
+      // The mission still points at a LIVE process that no pane authority can
+      // attribute. Reporting a clean exit here would strand that process and
+      // erase the only durable pointer to it — deny instead.
+      throw new Error(
+        `mission session ${sessionId} is live without pane authority; ` +
+          'physical exit cannot be proven',
+      );
     }
     addPhysical({
       sessionId,
@@ -461,7 +474,17 @@ export async function settleMissionRuntimeDemotion(input: {
     };
   }
   if (termination.ok) {
-    return { mission: input.demotedMission, termination };
+    const mission =
+      input.demotedMission.orchestratorSessionId === undefined
+        ? input.demotedMission
+        : input.suite.missions.setOrchestratorSession(
+            input.demotedMission.id,
+            null,
+          );
+    if (!mission) {
+      throw new Error('mission disappeared while clearing orchestrator session');
+    }
+    return { mission, termination };
   }
 
   const current = input.suite.missions.get(input.demotedMission.id);
@@ -490,6 +513,62 @@ export async function settleMissionRuntimeDemotion(input: {
     throw new Error('mission disappeared while persisting termination state');
   }
   return { mission: pending, termination };
+}
+
+/**
+ * Operator close for a durable mission. Unlike deletion, this preserves every
+ * mission row/receipt and is valid even when the mission is already blocked.
+ * The operation is idempotent when no physical runtime remains.
+ */
+export async function closeMissionRuntimePreservingHistory(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly suite: ProjectDomainStoreSuite;
+  readonly missionId: string;
+}): Promise<MissionRuntimeCloseResult> {
+  const current = input.suite.missions.get(input.missionId);
+  if (!current) {
+    return {
+      ok: false,
+      terminatedSessionIds: [],
+      error: 'Missão não encontrada.',
+    };
+  }
+  if (current.status === 'done') {
+    return {
+      ok: false,
+      mission: current,
+      terminatedSessionIds: [],
+      error: 'Missão concluída não possui execução encerrável.',
+    };
+  }
+  const blocked =
+    current.status === 'blocked' || current.status === 'failed'
+      ? current
+      : input.suite.missions.block(current.id, 'user');
+  if (!blocked) {
+    return {
+      ok: false,
+      terminatedSessionIds: [],
+      error: 'A missão desapareceu durante o encerramento.',
+    };
+  }
+  const settled = await settleMissionRuntimeDemotion({
+    scope: input.scope,
+    suite: input.suite,
+    demotedMission: blocked,
+  });
+  return settled.termination.ok
+    ? {
+        ok: true,
+        mission: settled.mission,
+        terminatedSessionIds: settled.termination.terminatedSessionIds,
+      }
+    : {
+        ok: false,
+        mission: settled.mission,
+        terminatedSessionIds: settled.termination.terminatedSessionIds,
+        error: settled.termination.error,
+      };
 }
 
 /**

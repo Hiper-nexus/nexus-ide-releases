@@ -14,6 +14,26 @@ export function isInFlightStatus(status: MissionStatus): boolean {
 }
 
 /**
+ * Runtime FÍSICO da missão, não o rótulo durável. Uma missão bloqueada cujo
+ * orquestrador já morreu (ou que o operador acabou de encerrar) não tem
+ * processo algum: ela está parada, não “em progresso”. Sem esta distinção o
+ * rail nunca esvaziava — encerrar preservava a linha e a lista seguia cheia.
+ */
+export function missionHasLiveRuntime(
+  mission: Mission,
+  hasVisiblePanes: boolean,
+): boolean {
+  return (
+    hasVisiblePanes ||
+    mission.orchestratorSessionId !== undefined ||
+    mission.status === 'running' ||
+    mission.intentState === 'dispatched' ||
+    mission.intentState === 'executing' ||
+    mission.intentState === 'validating'
+  );
+}
+
+/**
  * Group missions into rail sections:
  * - pinned
  * - active ("Em progresso"): panes ao vivo no grid **ou** status running/blocked
@@ -28,6 +48,8 @@ export function groupMissionsForRail(opts: {
   missions: Mission[];
   openMissionIds: ReadonlySet<string>;
   pinnedIds: readonly string[];
+  /** Escondidas pelo operador — histórico intacto, fora do caminho. */
+  archivedIds?: readonly string[];
   query: string;
 }): RailSection[] {
   const q = opts.query.trim().toLowerCase();
@@ -43,34 +65,56 @@ export function groupMissionsForRail(opts: {
   const pinnedSet = new Set(opts.pinnedIds);
   const byUpdated = (a: Mission, b: Mission) => b.updatedAt - a.updatedAt;
 
-  const isActive = (m: Mission): boolean =>
-    opts.openMissionIds.has(m.id) || isInFlightStatus(m.status);
+  const isLive = (m: Mission): boolean =>
+    missionHasLiveRuntime(m, opts.openMissionIds.has(m.id));
 
-  const pinned = filtered
+  // Uma missão arquivada que voltou a rodar não pode ficar escondida: o
+  // runtime vivo cancela o arquivamento na vista.
+  const archivedSet = new Set(
+    (opts.archivedIds ?? []).filter((id) => {
+      const mission = opts.missions.find((m) => m.id === id);
+      return mission ? !isLive(mission) : true;
+    }),
+  );
+  const archived = filtered
+    .filter((m) => archivedSet.has(m.id))
+    .sort(byUpdated);
+  const visible = filtered.filter((m) => !archivedSet.has(m.id));
+
+  const pinned = visible
     .filter((m) => pinnedSet.has(m.id))
     .sort(byUpdated);
 
-  const active = filtered
-    .filter((m) => isActive(m) && !pinnedSet.has(m.id))
+  const active = visible
+    .filter((m) => isLive(m) && !pinnedSet.has(m.id))
     .sort(byUpdated);
 
   const terminal: MissionStatus[] = ['done', 'failed'];
-  const done = filtered
+  const done = visible
     .filter(
       (m) =>
         terminal.includes(m.status) &&
-        !opts.openMissionIds.has(m.id) &&
+        !isLive(m) &&
         !pinnedSet.has(m.id),
     )
     .sort(byUpdated);
 
-  // Na fila = ainda não começou (pending) e sem panes abertos.
-  const queue = filtered
+  // Na fila = ainda não começou (pending) e sem runtime vivo.
+  const queue = visible
+    .filter(
+      (m) => !pinnedSet.has(m.id) && !isLive(m) && m.status === 'pending',
+    )
+    .sort(byUpdated);
+
+  // Encerradas = já despachadas, sem processo vivo. É aqui que a missão cai
+  // quando o operador encerra: a linha e os receipts continuam, o rail limpa.
+  const stopped = visible
     .filter(
       (m) =>
         !pinnedSet.has(m.id) &&
-        !opts.openMissionIds.has(m.id) &&
-        m.status === 'pending',
+        !isLive(m) &&
+        m.status !== 'pending' &&
+        !terminal.includes(m.status),
     )
     .sort(byUpdated);
 
@@ -78,7 +122,9 @@ export function groupMissionsForRail(opts: {
     { id: 'pinned', label: 'Fixadas', missions: pinned },
     { id: 'active', label: 'Em progresso', missions: active },
     { id: 'queue', label: 'Na fila', missions: queue },
+    { id: 'stopped', label: 'Encerradas', missions: stopped },
     { id: 'done', label: 'Concluídas', missions: done },
+    { id: 'archived', label: 'Arquivadas', missions: archived },
   ] as const satisfies RailSection[];
 }
 

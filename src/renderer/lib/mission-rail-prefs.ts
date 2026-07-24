@@ -3,12 +3,20 @@
  * collapsed sections. Pure module — storage injected for tests.
  */
 
-export type RailSectionId = 'pinned' | 'active' | 'queue' | 'done';
+export type RailSectionId =
+  | 'pinned'
+  | 'active'
+  | 'queue'
+  | 'stopped'
+  | 'done'
+  | 'archived';
 
 /** @deprecated legacy flat list — migrated away; kept only for read fallback skip */
 const PINS_KEY_LEGACY = 'nexus.activityRail.pins';
 const PINS_BY_WORKSPACE_KEY = 'nexus.activityRail.pinsByWorkspace';
-const COLLAPSED_KEY = 'nexus.activityRail.collapsed';
+// v2: a seção "Encerradas" nasceu depois. Preferência antiga não sabe dela e,
+// mantida, devolveria ao rail exatamente as missões que o operador encerrou.
+const COLLAPSED_KEY = 'nexus.activityRail.collapsed.v2';
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'> & {
   removeItem?(key: string): void;
@@ -18,12 +26,19 @@ function storage(): StorageLike | null {
   return typeof localStorage === 'undefined' ? null : localStorage;
 }
 
-function readPinsMap(
+// Arquivar é preferência de VISTA, não estado durável: a linha da missão e
+// todos os receipts continuam intactos no SQLite do projeto. O main recusa
+// (corretamente) apagar missão com atividade durável — sem uma forma de tirar
+// da vista, o operador encerrava tudo e continuava olhando a lista cheia.
+const ARCHIVED_BY_WORKSPACE_KEY = 'nexus.activityRail.archivedByWorkspace';
+
+function readIdMap(
+  key: string,
   store: StorageLike | null,
 ): Record<string, string[]> {
   if (!store) return {};
   try {
-    const raw = store.getItem(PINS_BY_WORKSPACE_KEY);
+    const raw = store.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -37,7 +52,7 @@ function readPinsMap(
       if (!Array.isArray(value)) continue;
       out[path] = value
         .filter((id): id is string => typeof id === 'string' && id.length > 0)
-        .slice(0, 64);
+        .slice(0, MAX_IDS_PER_WORKSPACE);
     }
     return out;
   } catch {
@@ -45,16 +60,62 @@ function readPinsMap(
   }
 }
 
-function writePinsMap(
+const MAX_IDS_PER_WORKSPACE = 512;
+
+function readPinsMap(store: StorageLike | null): Record<string, string[]> {
+  return readIdMap(PINS_BY_WORKSPACE_KEY, store);
+}
+
+function writeIdMap(
+  key: string,
   map: Record<string, string[]>,
   store: StorageLike | null,
 ): void {
   if (!store) return;
   try {
-    store.setItem(PINS_BY_WORKSPACE_KEY, JSON.stringify(map));
+    store.setItem(key, JSON.stringify(map));
   } catch {
     // ignore quota
   }
+}
+
+function writePinsMap(
+  map: Record<string, string[]>,
+  store: StorageLike | null,
+): void {
+  writeIdMap(PINS_BY_WORKSPACE_KEY, map, store);
+}
+
+/** Missões escondidas do rail/board deste workspace (histórico intacto). */
+export function loadArchivedMissionIds(
+  workspacePath: string | null | undefined,
+  store: StorageLike | null = storage(),
+): string[] {
+  if (!workspacePath) return [];
+  return readIdMap(ARCHIVED_BY_WORKSPACE_KEY, store)[workspacePath] ?? [];
+}
+
+export function setMissionArchived(
+  workspacePath: string | null | undefined,
+  id: string,
+  archived: boolean,
+  store: StorageLike | null = storage(),
+): string[] {
+  if (!workspacePath || !id) return [];
+  const map = readIdMap(ARCHIVED_BY_WORKSPACE_KEY, store);
+  const current = map[workspacePath] ?? [];
+  const next = archived
+    ? current.includes(id)
+      ? current
+      : [id, ...current].slice(0, MAX_IDS_PER_WORKSPACE)
+    : current.filter((entry) => entry !== id);
+  if (next.length === 0) {
+    delete map[workspacePath];
+  } else {
+    map[workspacePath] = next;
+  }
+  writeIdMap(ARCHIVED_BY_WORKSPACE_KEY, map, store);
+  return next;
 }
 
 /**
@@ -108,21 +169,32 @@ export function togglePinnedMissionId(
   return next;
 }
 
+/** Seções sem trabalho vivo nascem fechadas: o rail é a fila do agora. */
+const DEFAULT_COLLAPSED: RailSectionId[] = ['stopped', 'done', 'archived'];
+
 export function loadCollapsedSections(
   store: StorageLike | null = storage(),
 ): RailSectionId[] {
-  if (!store) return ['done'];
+  if (!store) return [...DEFAULT_COLLAPSED];
   try {
     const raw = store.getItem(COLLAPSED_KEY);
-    if (!raw) return ['done'];
+    if (!raw) return [...DEFAULT_COLLAPSED];
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return ['done'];
-    const allowed: RailSectionId[] = ['pinned', 'active', 'queue', 'done'];
+    if (!Array.isArray(parsed)) return [...DEFAULT_COLLAPSED];
+    const allowed: RailSectionId[] = [
+      'pinned',
+      'active',
+      'queue',
+      'stopped',
+      'done',
+      'archived',
+    ];
+    // Preferência gravada manda: quem abriu "Encerradas" mantém aberta.
     return parsed.filter((s): s is RailSectionId =>
       allowed.includes(s as RailSectionId),
     );
   } catch {
-    return ['done'];
+    return [...DEFAULT_COLLAPSED];
   }
 }
 

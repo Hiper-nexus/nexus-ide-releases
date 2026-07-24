@@ -60,11 +60,12 @@ describe('groupMissionsForRail', () => {
     expect(map.queue).toEqual(['b', 'e']);
   });
 
-  it('puts blocked in Em progresso', () => {
+  it('mantém bloqueada COM runtime vivo em Em progresso', () => {
     const blocked = mission({
       id: 'blk',
       title: 'Precisa de ok',
       status: 'blocked',
+      orchestratorSessionId: 'pty-live',
       updatedAt: 40,
     });
     const sections = groupMissionsForRail({
@@ -73,9 +74,59 @@ describe('groupMissionsForRail', () => {
       pinnedIds: [],
       query: '',
     });
-    const active = sections.find((s) => s.id === 'active')!.missions.map((m) => m.id);
-    expect(active).toContain('blk');
-    expect(active).toContain('a');
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+    expect(map.active).toContain('blk');
+    expect(map.active).toContain('a');
+    expect(map.stopped).toEqual([]);
+  });
+
+  it('joga bloqueada SEM runtime para Encerradas — encerrar esvazia o rail', () => {
+    // Regressão real: encerrar a missão preserva a linha durável. Enquanto
+    // "Em progresso" olhava só o status, o operador encerrava as 7 missões e
+    // continuava vendo as 7 como se estivessem rodando.
+    const closed = mission({
+      id: 'blk',
+      title: 'Encerrada pelo operador',
+      status: 'blocked',
+      intentState: 'blocked_user',
+      updatedAt: 40,
+    });
+    const sections = groupMissionsForRail({
+      missions: [...missions, closed],
+      openMissionIds: new Set(),
+      pinnedIds: [],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+    expect(map.stopped).toEqual(['blk']);
+    expect(map.active).toEqual(['a']);
+    expect(map.queue).not.toContain('blk');
+    expect(map.done).not.toContain('blk');
+  });
+
+  it('reabrir a missão devolve o card para Em progresso', () => {
+    const reopened = mission({
+      id: 'blk',
+      title: 'Retomada',
+      status: 'blocked',
+      intentState: 'blocked_user',
+      updatedAt: 40,
+    });
+    const sections = groupMissionsForRail({
+      missions: [reopened],
+      openMissionIds: new Set(['blk']),
+      pinnedIds: [],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+    expect(map.active).toEqual(['blk']);
+    expect(map.stopped).toEqual([]);
   });
 
   it('filters by query across title and status', () => {
@@ -226,5 +277,65 @@ describe('missionRailResumeCopy', () => {
       meta: 'Continuar plano',
       title: 'Plano armado — clique para revisar e começar',
     });
+  });
+});
+
+describe('arquivamento tira da vista sem apagar nada', () => {
+  const base = [
+    mission({ id: 'live', title: 'Rodando', status: 'running', updatedAt: 9 }),
+    mission({
+      id: 'closed',
+      title: 'Encerrada',
+      status: 'blocked',
+      intentState: 'blocked_user',
+      updatedAt: 8,
+    }),
+  ];
+
+  it('missão arquivada sai de todas as seções e cai em Arquivadas', () => {
+    const sections = groupMissionsForRail({
+      missions: base,
+      openMissionIds: new Set(),
+      pinnedIds: [],
+      archivedIds: ['closed'],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+    expect(map.archived).toEqual(['closed']);
+    expect(map.stopped).toEqual([]);
+    expect(map.active).toEqual(['live']);
+  });
+
+  it('runtime vivo cancela o arquivamento na vista', () => {
+    // Um agente que voltou a rodar não pode ficar invisível.
+    const sections = groupMissionsForRail({
+      missions: base,
+      openMissionIds: new Set(),
+      pinnedIds: [],
+      archivedIds: ['live'],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+    expect(map.active).toEqual(['live']);
+    expect(map.archived).toEqual([]);
+  });
+
+  it('arquivada fixada não volta pelo pin', () => {
+    const sections = groupMissionsForRail({
+      missions: base,
+      openMissionIds: new Set(),
+      pinnedIds: ['closed'],
+      archivedIds: ['closed'],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((s) => [s.id, s.missions.map((m) => m.id)]),
+    );
+    expect(map.pinned).toEqual([]);
+    expect(map.archived).toEqual(['closed']);
   });
 });

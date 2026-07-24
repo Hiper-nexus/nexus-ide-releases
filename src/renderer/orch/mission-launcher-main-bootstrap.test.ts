@@ -201,7 +201,10 @@ describe('approved mission main-owned presentation', () => {
         role: 'orchestrator',
       }),
     ]);
-    expect(harness.waitForSession).toHaveBeenCalledWith('pane-main-orch');
+    expect(harness.waitForSession).toHaveBeenCalledWith(
+      'pane-main-orch',
+      20_000,
+    );
     expect(harness.toast).toHaveBeenCalledWith(
       'error',
       'Kickoff não foi aceito',

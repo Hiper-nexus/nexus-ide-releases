@@ -150,6 +150,8 @@ import {
   type SquadAuthoritySnapshot,
 } from './squad-authority-snapshot';
 import {
+  closeMissionRuntimePreservingHistory,
+  prepareMissionRuntimeTermination,
   settleMissionRuntimeDemotion,
 } from './mission-runtime-termination';
 import { issueImmediateSquadSpawnGrant } from './spawn-authority';
@@ -725,6 +727,41 @@ async function confirmMissionLifecycleDemotion(
         `Transição: ${candidate.fromStatus} → ${candidate.toStatus}\n` +
         `Registro integral: ${safeDialogLabel(candidate.description, 6_000)}\n\n` +
         "Esta ação revoga imediatamente dispatch, merge e efeitos dos workers atuais.",
+    });
+    return result.response === 1;
+  } finally {
+    missionAuthorityConfirmations.delete(owner);
+  }
+}
+
+async function confirmMissionRuntimeClose(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  candidate: ReturnType<typeof prepareMissionRuntimeTermination>,
+): Promise<boolean> {
+  const window = BrowserWindow.fromWebContents(owner);
+  if (!window || window.isDestroyed()) {
+    throw new Error("renderer window is unavailable");
+  }
+  if (missionAuthorityConfirmations.has(owner)) {
+    throw new Error("mission authority confirmation is already pending");
+  }
+  missionAuthorityConfirmations.add(owner);
+  try {
+    const result = await dialog.showMessageBox(window, {
+      type: "warning",
+      title: "Nexus IDE — encerrar missão",
+      buttons: ["Cancelar", "Encerrar missão"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      message: `Encerrar "${safeDialogLabel(candidate.missionTitle, 512)}"?`,
+      detail:
+        `Workspace: ${safeDialogLabel(scope.rootRealPath, 4_096)}\n` +
+        `Missão: ${safeDialogLabel(candidate.missionId, 128)}\n` +
+        `Sessões físicas: ${candidate.sessionIds.length}\n\n` +
+        "Os processos e panes desta missão serão encerrados. Tasks, entregas, " +
+        "receipts e histórico permanecem salvos, e a missão poderá ser retomada depois.",
     });
     return result.response === 1;
   } finally {
@@ -1939,6 +1976,51 @@ export function registerOrchIpc(): void {
       return settled.mission;
     }
     return mission;
+  });
+
+  const missionCloseRuntimeSchema = z
+    .object({ missionId: z.string().min(1).max(128) })
+    .strict();
+  ipcMain.handle(ORCH_CHANNELS.missionCloseRuntime, async (event, raw) => {
+    const parsed = missionCloseRuntimeSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error("invalid mission close runtime payload");
+    }
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const suite = requireProjectStores(event.sender);
+    const candidate = prepareMissionRuntimeTermination({
+      scope,
+      suite,
+      missionId: parsed.data.missionId,
+      reason: 'operator-close',
+    });
+    const approved = await confirmMissionRuntimeClose(
+      event.sender,
+      scope,
+      candidate,
+    );
+    if (!approved) {
+      return {
+        ok: false,
+        cancelled: true,
+        terminatedSessionIds: [],
+      };
+    }
+    requireLiveRendererWorkspaceScope(event.sender, scope);
+    const currentCandidate = prepareMissionRuntimeTermination({
+      scope,
+      suite,
+      missionId: parsed.data.missionId,
+      reason: 'operator-close',
+    });
+    if (currentCandidate.fence !== candidate.fence) {
+      throw new Error("mission runtime changed while confirmation was open");
+    }
+    return closeMissionRuntimePreservingHistory({
+      scope,
+      suite,
+      missionId: parsed.data.missionId,
+    });
   });
 
   ipcMain.handle(ORCH_CHANNELS.missionRemove, async (event, raw) => {

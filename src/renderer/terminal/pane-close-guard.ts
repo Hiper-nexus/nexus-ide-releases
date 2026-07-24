@@ -3,6 +3,7 @@ import { listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { askConfirm } from '../state/confirm-store';
+import { closeMissionRuntimeAndPanes } from '../orch/close-mission-runtime';
 
 export function paneCloseNeedsConfirmation(
   kind: PaneModel['kind'],
@@ -30,6 +31,14 @@ export async function requestPaneClose(
   const layout = useLayoutStore.getState();
   const pane = listPanes(layout.root).find((candidate) => candidate.id === paneId);
   if (!pane) return false;
+  const missionId = pane.missionId;
+  if (missionId) {
+    const result = await closeMissionRuntimeAndPanes(
+      missionId,
+      'pane-toolbar-close',
+    );
+    return result.ok;
+  }
   const state = useSessionStateStore.getState().paneStates.get(paneId);
   if (paneCloseNeedsConfirmation(pane.kind, state)) {
     const ok = await confirmClose(

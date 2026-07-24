@@ -6,6 +6,8 @@ const runtime = vi.hoisted(() => ({
   pty: [] as Array<Record<string, unknown>>,
   omp: [] as Array<Record<string, unknown>>,
   snapshots: [] as Array<Record<string, unknown>>,
+  /** Live PTYs absent from every authority inventory (unattributable). */
+  unattributed: [] as string[],
   terminatePty: vi.fn(async (_sessionId: string) => true),
   terminateOmp: vi.fn(async (_sessionId: string) => true),
   closeMissionPane: vi.fn(
@@ -19,7 +21,10 @@ const runtime = vi.hoisted(() => ({
 
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) =>
-    runtime.pty.some((entry) => entry.sessionId === sessionId) ? 'idle' : null,
+    runtime.pty.some((entry) => entry.sessionId === sessionId) ||
+    runtime.unattributed.includes(sessionId)
+      ? 'idle'
+      : null,
   listAgentSessions: () => [...runtime.pty],
   orchTerminateSession: async (sessionId: string) => {
     const result = await runtime.terminatePty(sessionId);
@@ -67,6 +72,7 @@ vi.mock('./pane-registry', () => ({
 }));
 
 import {
+  closeMissionRuntimePreservingHistory,
   prepareMissionRuntimeTermination,
   settleMissionRuntimeDemotion,
   terminateMissionRuntime,
@@ -140,10 +146,65 @@ function suite(panes: MissionPaneSpec[]) {
   } as never;
 }
 
+function closeSuite(
+  initial: Mission,
+  panes: MissionPaneSpec[],
+): {
+  suite: Parameters<typeof closeMissionRuntimePreservingHistory>[0]['suite'];
+  current: () => Mission;
+} {
+  let current = initial;
+  const store = {
+    missions: {
+      get: (missionId: string) =>
+        missionId === current.id ? current : null,
+      list: () => [current],
+      block: (missionId: string, kind: 'user' | 'technical') => {
+        if (missionId !== current.id) return null;
+        current = {
+          ...current,
+          status: 'blocked',
+          intentState:
+            kind === 'user' ? 'blocked_user' : 'blocked_technical',
+          updatedAt: current.updatedAt + 1,
+        };
+        return current;
+      },
+      update: (missionId: string, patch: Partial<Mission>) => {
+        if (missionId !== current.id) return null;
+        current = {
+          ...current,
+          ...patch,
+          updatedAt: current.updatedAt + 1,
+        };
+        return current;
+      },
+      setOrchestratorSession: (
+        missionId: string,
+        sessionId: string | null,
+      ) => {
+        if (missionId !== current.id) return null;
+        current = {
+          ...current,
+          orchestratorSessionId: sessionId ?? undefined,
+          updatedAt: current.updatedAt + 1,
+        };
+        return current;
+      },
+    },
+    missionPanes: {
+      list: (missionId: string) =>
+        missionId === current.id ? panes : [],
+    },
+  } as never;
+  return { suite: store, current: () => current };
+}
+
 beforeEach(() => {
   runtime.pty = [];
   runtime.omp = [];
   runtime.snapshots = [];
+  runtime.unattributed = [];
   runtime.terminatePty.mockReset().mockResolvedValue(true);
   runtime.terminateOmp.mockReset().mockResolvedValue(true);
   runtime.closeMissionPane.mockReset().mockResolvedValue(true);
@@ -404,5 +465,193 @@ describe('mission runtime physical inventory termination', () => {
     expect(result.mission.description).toMatch(/encerramento físico.*pendente/i);
     expect(runtime.pty).toHaveLength(1);
     expect(runtime.closeMissionPane).not.toHaveBeenCalled();
+  });
+});
+
+describe('operator close preserves durable mission history', () => {
+  it('closes an already-blocked mission runtime and clears its session binding', async () => {
+    const blocked: Mission = {
+      ...mission,
+      intentState: 'blocked_user',
+      orchestratorSessionId: 'pty-blocked',
+    };
+    const persisted = pane('pane-blocked', 'inc-blocked');
+    runtime.pty = [
+      physical('pty-blocked', 'pane-blocked', 'inc-blocked'),
+    ];
+    const stores = closeSuite(blocked, [persisted]);
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: blocked.id,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      terminatedSessionIds: ['pty-blocked'],
+      mission: {
+        id: blocked.id,
+        status: 'blocked',
+        intentState: 'blocked_user',
+        orchestratorSessionId: undefined,
+      },
+    });
+    expect(runtime.terminatePty).toHaveBeenCalledWith('pty-blocked');
+    expect(stores.current().id).toBe(blocked.id);
+  });
+
+  it('demotes a running mission before terminating its physical runtime', async () => {
+    const running: Mission = {
+      ...mission,
+      status: 'running',
+      intentState: 'executing',
+      orchestratorSessionId: 'pty-running',
+    };
+    const persisted = pane('pane-running', 'inc-running');
+    runtime.pty = [
+      physical('pty-running', 'pane-running', 'inc-running'),
+    ];
+    const stores = closeSuite(running, [persisted]);
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: running.id,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      mission: {
+        status: 'blocked',
+        intentState: 'blocked_user',
+        orchestratorSessionId: undefined,
+      },
+    });
+  });
+
+  it('is idempotent when the runtime is already physically absent', async () => {
+    const blocked: Mission = {
+      ...mission,
+      intentState: 'blocked_user',
+      orchestratorSessionId: undefined,
+    };
+    const stores = closeSuite(blocked, [pane('pane-dead', 'inc-dead')]);
+
+    await expect(
+      closeMissionRuntimePreservingHistory({
+        scope,
+        suite: stores.suite,
+        missionId: blocked.id,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      terminatedSessionIds: [],
+      mission: { id: blocked.id, status: 'blocked' },
+    });
+  });
+
+  it('nunca reporta encerramento limpo sobre sessão viva sem autoridade de pane', async () => {
+    const blocked: Mission = {
+      ...mission,
+      intentState: 'blocked_user',
+      orchestratorSessionId: 'pty-ghost-live',
+    };
+    // Ponteiro durável da missão aponta para um processo VIVO que nenhuma
+    // autoridade de pane consegue atribuir (registro perdido/recarga do
+    // renderer). Encerrar aqui mataria o ponteiro e deixaria o processo órfão.
+    runtime.unattributed = ['pty-ghost-live'];
+    const stores = closeSuite(blocked, []);
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: blocked.id,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      terminatedSessionIds: [],
+      mission: {
+        intentState: 'blocked_technical',
+        orchestratorSessionId: 'pty-ghost-live',
+      },
+    });
+    expect(result.ok ? '' : result.error).toMatch(
+      /live without pane authority/i,
+    );
+    expect(runtime.terminatePty).not.toHaveBeenCalled();
+  });
+
+  it('encerra limpo quando o ponteiro durável aponta para processo já morto', async () => {
+    const blocked: Mission = {
+      ...mission,
+      intentState: 'blocked_user',
+      orchestratorSessionId: 'pty-already-dead',
+    };
+    const stores = closeSuite(blocked, []);
+
+    await expect(
+      closeMissionRuntimePreservingHistory({
+        scope,
+        suite: stores.suite,
+        missionId: blocked.id,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      terminatedSessionIds: [],
+      mission: { orchestratorSessionId: undefined },
+    });
+  });
+
+  it('nega encerramento quando worker vivo da missão não tem pane vinculado', async () => {
+    const blocked: Mission = {
+      ...mission,
+      intentState: 'blocked_user',
+      orchestratorSessionId: undefined,
+    };
+    const headless = physical('pty-headless', 'pane-headless', 'inc-headless');
+    delete (headless as { paneId?: string }).paneId;
+    runtime.pty = [headless];
+    const stores = closeSuite(blocked, []);
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: blocked.id,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? '' : result.error).toMatch(/without a pane binding/i);
+    expect(runtime.terminatePty).not.toHaveBeenCalled();
+  });
+
+  it('keeps the binding and records technical block when exit proof fails', async () => {
+    const blocked: Mission = {
+      ...mission,
+      intentState: 'blocked_user',
+      orchestratorSessionId: 'pty-stuck',
+    };
+    const persisted = pane('pane-stuck', 'inc-stuck');
+    runtime.pty = [physical('pty-stuck', 'pane-stuck', 'inc-stuck')];
+    runtime.terminatePty.mockResolvedValueOnce(false);
+    const stores = closeSuite(blocked, [persisted]);
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: blocked.id,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      terminatedSessionIds: [],
+      mission: {
+        status: 'blocked',
+        intentState: 'blocked_technical',
+        orchestratorSessionId: 'pty-stuck',
+        description: expect.stringMatching(/encerramento físico.*pendente/i),
+      },
+    });
   });
 });

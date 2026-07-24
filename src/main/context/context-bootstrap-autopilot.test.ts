@@ -301,6 +301,58 @@ describe('runContextBootstrapAutopilot', () => {
     expect(result.appliedDraftIds).toContain('draft-replacement');
   });
 
+  it('breaks the infinite Doctor loop when review keeps rejecting byte-identical bootstrap content', async () => {
+    // Regression: the active-target UNIQUE index only covers proposed/approved
+    // drafts, so a rejected draft frees the slot. Without rejection memory the
+    // autopilot re-proposes the SAME deterministic content every Doctor pass,
+    // independent review rejects it again, and the mission burns its execution
+    // budget in a silent loop until it dies blocked.
+    mocks.inspectReadiness.mockReturnValue(mocks.readiness);
+    const proposalContent = '# Business\nObserved from README.md.\n';
+    mocks.proposals = [{
+      targetPath: '.context/docs/business-model.md',
+      content: proposalContent,
+      sources: [{ type: 'file', locator: 'README.md', sourceHash: 'b'.repeat(64) }],
+      rationale: 'biz',
+    }];
+    // A previous Doctor pass proposed this exact content and had it rejected by
+    // independent review. That rejection is durable in the store.
+    const priorRejected = Object.freeze({
+      ...draft('draft-prev-rejected', 'rejected'),
+      targetPath: '.context/docs/business-model.md',
+      content: proposalContent,
+    });
+    mocks.list.mockImplementation((options?: { status?: string }) =>
+      options?.status === 'rejected' ? [priorRejected] : [],
+    );
+    mocks.selectQuorum.mockReturnValue({ adapterId: 'claude' });
+    mocks.ensure.mockResolvedValue({ docs: { hasContextScaffold: true }, status: 'ready' });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+      createReviewer: () => ({ run: mocks.reviewerRun }),
+    });
+
+    // Must NOT re-propose or re-review byte-identical content that will only be
+    // rejected again — that is the loop.
+    expect(mocks.propose).not.toHaveBeenCalled();
+    expect(mocks.reviewerRun).not.toHaveBeenCalled();
+    // The stuck target is recorded so the loop is observable, not silent.
+    expect(result.draftOutcomes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetPath: '.context/docs/business-model.md',
+        status: 'rejected-stable',
+      }),
+    ]));
+    expect(result.phase).toBe('blocked');
+    // The hint must terminate the loop: fix sources / author by hand, do not
+    // keep re-running Doctor on identical content.
+    expect(result.autopilotHint).toMatch(/byte-identical|terminal/i);
+    expect(result.autopilotHint).toMatch(/do not call nexus_context_doctor/i);
+  });
+
   it('reviews one draft per Doctor pass and directs the orchestrator to continue safely', async () => {
     mocks.inspectReadiness.mockReturnValue(mocks.readiness);
     mocks.proposals = [

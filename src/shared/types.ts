@@ -66,6 +66,7 @@ import type {
   PaneCloseRequest,
   McpRuntimeInfo,
   Mission,
+  MissionRuntimeCloseResult,
   MissionOrchestratorBootstrapResult,
   MissionPaneSpec,
   MissionPatch,
@@ -670,6 +671,7 @@ export interface NexusApi {
       };
     }): Promise<Mission>;
     updateMission(missionId: string, patch: MissionPatch): Promise<Mission>;
+    closeMissionRuntime(missionId: string): Promise<MissionRuntimeCloseResult>;
     removeMission(missionId: string): Promise<{ removed: boolean }>;
     listHandoffs(): Promise<Handoff[]>;
     /** Resolve one durable mission question through scoped main authority. */

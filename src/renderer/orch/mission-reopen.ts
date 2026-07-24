@@ -6,13 +6,14 @@ import { useOrchStore } from '../state/orch-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import {
   getPaneSessionId,
-  markResumeOnSpawn,
+  prepareMissionPaneResume,
   waitForSession,
 } from '../terminal/terminal-host';
 import {
   conflictingOrchestratorPanes,
   hardReopenWouldKillAgents,
 } from './mission-launcher';
+import { presentMainOwnedMissionPane } from './mission-pane-presentation';
 
 /**
  * One-click mission reopen: rebuild / merge the grid from the mission's
@@ -144,7 +145,6 @@ function specsToPanes(
     // chaveada por (cwd, paneId) — com id novo o resume direcionado nunca
     // acertava e o --continue genérico retomava a conversa da OUTRA missão.
     const paneId = spec.paneId ?? base.id;
-    markResumeOnSpawn(paneId);
     return {
       ...base,
       id: paneId,
@@ -171,38 +171,39 @@ export async function reopenMission(
   mission: Mission,
   options?: { forceHard?: boolean },
 ): Promise<MissionReopenResult> {
-  if (!options?.forceHard) {
-    const live = livePaneIdsForMission(mission.id);
-    if (live.length > 0) {
-      const sessionIds = live.map((paneId) => getPaneSessionId(paneId));
-      if (sessionIds.every((sessionId): sessionId is string => Boolean(sessionId))) {
-        useLayoutStore.getState().focus(live[0]!);
-        return acknowledgedReopen(mission.id, sessionIds, {
-          panes: live.length,
-          soft: true,
-        });
-      }
-    }
+  // Legacy hard reopen is no longer supported: reject before bootstrap,
+  // persistence, pane construction or any spawn-capable renderer operation.
+  if (options?.forceHard) {
+    return {
+      ok: false,
+      error:
+        'Reabertura forçada exige encerramento físico confirmado pelo processo principal. Feche a missão conflitante e tente novamente.',
+    };
   }
 
-  // Missão bloqueada pelo PRÓPRIO bootstrap (marker durável no main): o dono
-  // da retomada é o bootstrap — restaurar panes aqui recria a identidade
-  // morta que o bootstrap recusa (beco circular). Com ou sem pane rows,
-  // tenta o resume main-owned primeiro; se o main disser que não é um
-  // bloqueio de bootstrap, segue o fluxo normal de restore.
-  if (mission.status === 'blocked' && mission.intentState === 'blocked_technical') {
+  // Every blocked mission resumes through the main-owned authority. Main
+  // either adopts the exact still-live PTY or clears a proven-dead identity and
+  // creates one fresh sealed pane. Renderer-side persisted-pane spawning here
+  // creates ghost panes and circular "Retomar missão" failures.
+  if (mission.status === 'blocked') {
     const resumed = await window.nexus.orch.resumeMissionBootstrap({
       missionId: mission.id,
     });
     if (resumed.ok) {
+      const presentation = await presentMainOwnedMissionPane(
+        resumed.missionId,
+        resumed.pane,
+        {},
+      );
+      if (!presentation.ok) {
+        return { ok: false, error: presentation.error };
+      }
       return acknowledgedReopen(mission.id, [resumed.pane.sessionId], {
         panes: 1,
         soft: false,
       });
     }
-    if (!/bloqueada pelo bootstrap/i.test(resumed.error)) {
-      return { ok: false, error: resumed.error };
-    }
+    return { ok: false, error: resumed.error };
   }
 
   let specs: MissionPaneSpec[] = [];
@@ -227,50 +228,73 @@ export async function reopenMission(
     };
   }
 
-  // Blocked mission with a persisted composition: re-arm BEFORE any pane
-  // respawn. The persisted-pane spawn resolves the current authority seal
-  // from the live mission, and that seal is null while status != running —
-  // spawning first turned every resume into "stale or legacy persisted
-  // mission pane authority".
-  if (mission.status === 'blocked') {
-    const rearmed = await window.nexus.orch.rearmMission({
-      missionId: mission.id,
-    });
-    if (!rearmed.ok) return { ok: false, error: rearmed.error };
-  }
-
   const fallbackCwd = getActiveWorkspacePath() ?? undefined;
   const panes = specsToPanes(specs, mission.id, fallbackCwd);
   const incomingAdapter = primaryOrchestratorAdapter(specs);
   const existing = listPanes(useLayoutStore.getState().root);
-  const forceHard = options?.forceHard === true;
   const conflicts = conflictingOrchestratorPanes(incomingAdapter);
   // Exclude conflicts that are panes we're about to re-bind with same id.
   const newIds = new Set(panes.map((p) => p.id));
   const foreignConflicts = conflicts.filter((p) => !newIds.has(p.id));
 
-  if (forceHard) {
-    return {
-      ok: false,
-      error:
-        'Reabertura forçada exige encerramento físico confirmado pelo processo principal. Feche a missão conflitante e tente novamente.',
-    };
-  } else if (foreignConflicts.length > 0) {
+  if (foreignConflicts.length > 0) {
     return {
       ok: false,
       error:
         'Há um orquestrador com credencial exclusiva em execução. O Nexus não substitui esse processo sem prova física de saída.',
     };
+  }
+
+  const kept = existing.filter((pane) => !newIds.has(pane.id));
+  if (kept.length + panes.length > MAX_MERGED_PANES) {
+    return {
+      ok: false,
+      error:
+        `A missão precisa de ${panes.length} pane(s), mas o grid só tem ` +
+        `${Math.max(0, MAX_MERGED_PANES - kept.length)} vaga(s). ` +
+        'Feche panes que não pertencem à missão e tente novamente.',
+    };
+  }
+
+  const existingIds = new Set(existing.map((pane) => pane.id));
+  // Snapshot once. Reading the mutable host map separately for soft-focus and
+  // preparation creates a TOCTOU hole where a changing session can make us
+  // neither acknowledge it nor prepare its replacement.
+  const existingSessionByPane = new Map(
+    panes.map((pane) => [
+      pane.id,
+      existingIds.has(pane.id) ? getPaneSessionId(pane.id) : null,
+    ]),
+  );
+  const existingSessionIds = panes.map(
+    (pane) => existingSessionByPane.get(pane.id) ?? null,
+  );
+  if (
+    existingSessionIds.every(
+      (sessionId): sessionId is string => Boolean(sessionId),
+    )
+  ) {
+    useLayoutStore.getState().focus(panes[0]!.id);
+    return acknowledgedReopen(mission.id, existingSessionIds, {
+      panes: panes.length,
+      soft: true,
+    });
+  }
+
+  // All rejection gates passed and blocked authority was rearmed. Only now may
+  // renderer host preparation trigger a PTY adoption/resume. Live sessions are
+  // deliberately skipped: they must never be reset, replaced, or left with a
+  // latent resume flag.
+  for (const pane of panes) {
+    if (!existingSessionByPane.get(pane.id)) prepareMissionPaneResume(pane.id);
+  }
+
+  // Safe multi-mission: keep every live pane, append this mission's panes.
+  // (reconcileHosts only kills hosts for panes removed from the tree.)
+  if (kept.length === 0) {
+    useLayoutStore.getState().setPanes(panes);
   } else {
-    // Safe multi-mission: keep every live pane, append this mission's panes.
-    // (reconcileHosts only kills hosts for panes removed from the tree.)
-    const kept = existing.filter((p) => !newIds.has(p.id));
-    if (kept.length === 0) {
-      useLayoutStore.getState().setPanes(panes);
-    } else {
-      const merged = [...kept, ...panes].slice(0, MAX_MERGED_PANES);
-      useLayoutStore.getState().setPanes(merged);
-    }
+    useLayoutStore.getState().setPanes([...kept, ...panes]);
   }
 
   for (const pane of panes) {
@@ -313,7 +337,7 @@ export async function reopenMission(
     };
   }
 
-  const multi = !forceHard && existing.length > 0;
+  const multi = existing.length > 0;
   return acknowledgedReopen(mission.id, sessionIds, {
     panes: panes.length,
     soft: false,

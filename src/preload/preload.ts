@@ -858,6 +858,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionRebind, { missionId, sessionId }),
     updateMission: (missionId: string, patch: MissionPatch) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionUpdate, { missionId, patch }),
+    closeMissionRuntime: (missionId: string) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionCloseRuntime, { missionId }),
     removeMission: (missionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionRemove, { missionId }),
     listHandoffs: () => ipcRenderer.invoke(ORCH_CHANNELS.handoffsList),

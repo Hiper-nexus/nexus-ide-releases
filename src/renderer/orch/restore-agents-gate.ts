@@ -9,10 +9,11 @@ import {
 } from '../terminal/terminal-host';
 
 /**
- * Cross-platform gate for restored mission agents.
+ * Cross-platform gate for restored agents.
  *
  * Same Electron renderer path on macOS, Linux and Windows — no platform
- * branches. Silent auto-resume is opt-in only (`resume` policy).
+ * branches. Mission panes never use generic auto-resume: their authority must
+ * be rearmed/resumed through the main-owned mission flow from the rail.
  */
 
 export type AgentRestorePolicy = OrchSettings['agentRestorePolicy'];
@@ -37,6 +38,14 @@ let lastAskDecision: 'resume' | 'pause' | null = null;
 function agentLabel(pane: PaneModel): string {
   const name = pane.title?.trim() || pane.agentName?.trim() || pane.adapterId;
   return name || 'agente';
+}
+
+function isMissionAgent(pane: PaneModel): boolean {
+  return Boolean(
+    pane.missionId ||
+      pane.role === 'orchestrator' ||
+      pane.role === 'worker',
+  );
 }
 
 async function loadPolicy(): Promise<AgentRestorePolicy> {
@@ -74,10 +83,15 @@ export async function gateRestoredAgents(
   const agents = panes.filter((pane) => pane.kind === 'cli-agent');
   if (agents.length === 0) return;
 
-  const ids = agents.map((pane) => pane.id);
-
   // Always hold first so a fast attach cannot race before policy resolves.
-  for (const id of ids) holdSpawnUntilApproved(id);
+  for (const pane of agents) holdSpawnUntilApproved(pane.id);
+
+  // A mission pane is a presentation of main-owned physical authority. Generic
+  // restore cannot decide whether to adopt, rearm, or create a fresh context;
+  // keep it paused until the operator explicitly resumes the mission in rail.
+  const restorable = agents.filter((pane) => !isMissionAgent(pane));
+  if (restorable.length === 0) return;
+  const ids = restorable.map((pane) => pane.id);
 
   const action = resolveAgentRestoreAction(await loadPolicy());
 
@@ -102,14 +116,14 @@ export async function gateRestoredAgents(
 
   promptInFlight = (async () => {
     const snapshotIds = [...pendingAskIds];
-    const labels = agents.slice(0, 5).map(agentLabel).join(', ');
+    const labels = restorable.slice(0, 5).map(agentLabel).join(', ');
     const more =
-      agents.length > 5 ? ` e mais ${agents.length - 5}` : '';
-    const count = Math.max(snapshotIds.length, agents.length);
+      restorable.length > 5 ? ` e mais ${restorable.length - 5}` : '';
+    const count = Math.max(snapshotIds.length, restorable.length);
     const ok = await askConfirm({
       title: 'Retomar agentes da sessão anterior?',
       body:
-        `Este workspace tinha ${count} agente(s) de missão ` +
+        `Este workspace tinha ${count} agente(s) avulso(s) ` +
         `(${labels}${more}).\n\n` +
         'Se retomar agora, eles podem continuar a trabalhar sozinhos — ' +
         'comandos, edições e tools — sem pedir de novo a cada passo.\n\n' +

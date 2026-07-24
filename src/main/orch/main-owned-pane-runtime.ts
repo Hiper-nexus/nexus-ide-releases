@@ -1,4 +1,5 @@
 import type {
+  MissionPaneAuthoritySeal,
   OrchPaneSpawnRequest,
   OrchPaneSpawnResult,
   PaneRegistryEntry,
@@ -40,6 +41,8 @@ export interface PaneOrchMeta {
   readOnly?: boolean;
   /** Provider-native confinement, separate from Nexus MCP authority. */
   nativeReadOnly?: boolean;
+  /** Exact approved revision seal retained with the physical process. */
+  authoritySeal?: MissionPaneAuthoritySeal;
 }
 
 export interface PaneSpawnOptions {
@@ -63,6 +66,8 @@ export interface PaneSpawnOptions {
   readOnly?: boolean;
   /** Confine provider-native writes while retaining audited Nexus delegation. */
   nativeReadOnly?: boolean;
+  /** Exact approved revision seal retained by the physical PTY. */
+  authoritySeal?: MissionPaneAuthoritySeal;
 }
 
 export interface MainOwnedPane {
@@ -330,6 +335,7 @@ export function spawnMainOwnedMissionPane(
     executionScope,
     readOnly: options.readOnly === true,
     nativeReadOnly,
+    authoritySeal: options.authoritySeal,
   });
   const authority: BoundSpawnAuthority = Object.freeze({
     source: "pending",
