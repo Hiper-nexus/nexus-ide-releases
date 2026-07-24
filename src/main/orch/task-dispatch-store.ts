@@ -397,10 +397,15 @@ export class TaskDispatchStore {
   }
 
   /**
-   * Finish an unfrozen standard mission only from the complete durable chain:
-   * sealed plan -> exact dispatch -> accepted handoff delivery -> coordinator
-   * integration receipt. A frozen PREVC mission remains owned by its workflow
-   * driver and is deliberately left running here.
+   * Finish a standard mission only from the complete durable chain: sealed plan
+   * -> exact dispatch -> accepted handoff delivery -> coordinator integration
+   * receipt. Once the PREVC driver has taken ownership (any mission_step_receipt
+   * row — receipts only exist under a frozen workflow) the mission is left to
+   * the driver and never completed here. A contract frozen ONLY so merge
+   * validation can run (additive PREVC: every integrated candidate already
+   * passed sensors + independent review under that contract) does NOT block
+   * completion — blocking it wedged fully-integrated missions permanently
+   * running/blocked (release gate + field audit 17/07).
    */
   completeMissionFromVerifiedPlan(
     input: CompleteMissionFromVerifiedPlanInput,

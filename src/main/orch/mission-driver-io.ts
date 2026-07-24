@@ -117,9 +117,20 @@ export interface MissionPaneDispatchSignal {
  * exiting is the expected lifecycle, never a failure to recover from.
  * Counting such a pane as "dead" made the driver burn maxRespawnAttempts on
  * futile respawns and block missions whose work had already been integrated
- * (release gate + field audit "respawn loop"). A pane stays actionable while
- * any matching dispatch still owns live work, when it has no dispatch at all
- * (legacy/manual rows), or when it is the orchestrator.
+ * (release gate + field audit "respawn loop").
+ *
+ * Durable pane rows are reused across respawns/replan (stable paneId — see
+ * countLiveMissionWorkerSlots / findDeadMissionPane), so a single pane can
+ * carry many historical dispatches: a superseded/blocked/failed attempt plus
+ * a fresh one. Only the CURRENT work matters, so this looks at the most recent
+ * matching dispatch (dispatches arrive oldest→newest from
+ * taskDispatches.list, ORDER BY created_at ASC), never `every()` over the
+ * whole history — otherwise one stale non-delivered attempt would keep a pane
+ * whose latest dispatch is already delivered "actionable" and reintroduce the
+ * very respawn loop this fixes. Preferring worker-incarnation identity over
+ * paneId keeps the match tied to the exact generation when available. A pane
+ * with no matching dispatch (legacy/manual rows) and orchestrators always stay
+ * actionable.
  */
 export function actionableMissionPanes(
   persisted: readonly MissionPaneSpec[],
@@ -127,19 +138,29 @@ export function actionableMissionPanes(
 ): MissionPaneSpec[] {
   return persisted.filter((pane) => {
     if (pane.role !== 'worker') return true;
-    const matching = dispatches.filter(
-      (dispatch) =>
-        (dispatch.workerIncarnationId !== undefined &&
-          dispatch.workerIncarnationId !== null &&
-          dispatch.workerIncarnationId === pane.workerIncarnationId) ||
-        (dispatch.paneId !== undefined &&
-          dispatch.paneId !== null &&
-          dispatch.paneId === pane.paneId),
-    );
-    if (matching.length === 0) return true;
-    return !matching.every((dispatch) =>
-      WORKER_DELIVERED_DISPATCH_STATES.has(dispatch.state),
-    );
+    // Prefer the latest dispatch bound by exact worker incarnation; fall back
+    // to the latest bound by durable paneId only when no incarnation matched.
+    let latestByIncarnation: MissionPaneDispatchSignal | null = null;
+    let latestByPane: MissionPaneDispatchSignal | null = null;
+    for (const dispatch of dispatches) {
+      if (
+        dispatch.workerIncarnationId !== undefined &&
+        dispatch.workerIncarnationId !== null &&
+        pane.workerIncarnationId !== undefined &&
+        dispatch.workerIncarnationId === pane.workerIncarnationId
+      ) {
+        latestByIncarnation = dispatch;
+      } else if (
+        dispatch.paneId !== undefined &&
+        dispatch.paneId !== null &&
+        dispatch.paneId === pane.paneId
+      ) {
+        latestByPane = dispatch;
+      }
+    }
+    const current = latestByIncarnation ?? latestByPane;
+    if (!current) return true;
+    return !WORKER_DELIVERED_DISPATCH_STATES.has(current.state);
   });
 }
 

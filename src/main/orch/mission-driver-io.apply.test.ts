@@ -478,6 +478,43 @@ describe('createProductionApplyPorts advance/complete', () => {
     )).toEqual([worker]);
   });
 
+  it('protects a worker whose latest dispatch delivered even with a stale non-delivered attempt on the same pane', () => {
+    // Regression (review HIGH): replan/recovery reuses the durable paneId, so a
+    // superseded/blocked/failed older attempt coexists with a fresh delivered
+    // one. Judging by the WHOLE history (every-delivered) would keep the pane
+    // "actionable" and reintroduce the futile respawn loop; only the most
+    // recent dispatch bound to the pane defines the current work.
+    const worker: MissionPaneSpec = {
+      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
+      adapterId: 'codex', title: 'Worker', role: 'worker', createdAt: 1,
+      workerIncarnationId: 'incarnation-1',
+    };
+
+    for (const staleState of ['superseded', 'blocked', 'failed'] as const) {
+      const actionable = actionableMissionPanes(
+        [worker],
+        [
+          // oldest → newest (taskDispatches.list order)
+          { state: staleState, workerIncarnationId: 'incarnation-0', paneId: 'pane-worker' },
+          { state: 'completed', workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' },
+        ],
+      );
+      expect(actionable).toEqual([]);
+      expect(findDeadMissionPane('mission-a', actionable, [])).toBeNull();
+    }
+
+    // Match by exact incarnation wins over a homonymous paneId match: the
+    // pane's current incarnation dispatch is delivered even if a later,
+    // different-incarnation dispatch on the same paneId is still running.
+    expect(actionableMissionPanes(
+      [worker],
+      [
+        { state: 'completed', workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' },
+        { state: 'running', workerIncarnationId: 'incarnation-2', paneId: 'pane-worker' },
+      ],
+    )).toEqual([]);
+  });
+
   it('keeps workers without a matching dispatch and orchestrators always actionable', () => {
     const orchestrator: MissionPaneSpec = {
       id: 'spec-orch', missionId: 'mission-a', paneId: 'pane-orch',
