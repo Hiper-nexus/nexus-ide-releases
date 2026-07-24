@@ -180,6 +180,15 @@ const MAX_NATIVE_MISSION_REVIEW_CHARS = 6_000;
 const INVISIBLE_AUTHORITY_TEXT =
   /[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/;
 
+/** Control-character validation without a length veto (hash-pinned content). */
+function assertVisibleAuthorityText(values: readonly string[]): void {
+  if (values.some((value) => INVISIBLE_AUTHORITY_TEXT.test(value))) {
+    throw new Error(
+      "approval_review_unsafe: squad content contains invisible control characters",
+    );
+  }
+}
+
 function assertNativeMissionReviewable(values: readonly string[]): void {
   if (values.some((value) => INVISIBLE_AUTHORITY_TEXT.test(value))) {
     throw new Error(
@@ -966,6 +975,12 @@ export class RendererMissionAuthority {
     }
     const squadSnapshot = snapshotSquadAuthority(squad);
     const orchestratorRuntime = this.#runtimeForSquad(squad);
+    // The approval dialog shows a bounded summary; squad instructions and
+    // capabilities are pinned by the squad hash, not displayed. They must
+    // still be free of invisible control characters (they can surface in
+    // other operator dialogs), but their LENGTH must not veto approval — a
+    // legitimate squad with long orchestrator instructions wedged the launch
+    // with approval_review_too_large.
     assertNativeMissionReviewable([
       current.title,
       contract.goal,
@@ -973,9 +988,9 @@ export class RendererMissionAuthority {
       ...deniedTools,
       ...reviewedAttachments,
       ...attachmentSnapshotReviewStrings(reviewedAttachmentSnapshots),
-      ...squadAuthorityReviewStrings(squadSnapshot),
       ...missionOrchestratorRuntimeReviewStrings(orchestratorRuntime),
     ]);
+    assertVisibleAuthorityText(squadAuthorityReviewStrings(squadSnapshot));
     const approvalSnapshot = {
       evidenceAttached,
       attachmentPaths: reviewedAttachments,

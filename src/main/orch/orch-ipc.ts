@@ -757,18 +757,25 @@ async function confirmImmediateSquadLaunch(
   }
   immediateSquadConfirmations.add(owner);
   try {
-    const roster = candidate.squad.agents
-      .map(
-        (agent, index) =>
-          `${index + 1}. ${safeDialogLabel(agent.agentName, 128)} ` +
-          `(${safeDialogLabel(agent.category, 64)}, ` +
-          `cli=${safeDialogLabel(agent.cli, 64)}, ` +
-          `model=${safeDialogLabel(agent.model ?? "default", 128)}, ` +
-          `effort=${safeDialogLabel(agent.effort ?? "default", 32)})\n` +
-          `   tools=${(agent.allowedTools ?? []).join(", ") || "(default)"}\n` +
-          `   skills=${(agent.allowedSkills ?? []).join(", ") || "(nenhuma)"}`,
-      )
-      .join("\n");
+    const MAX_ROSTER_LINES = 12;
+    const shownAgents = candidate.squad.agents.slice(0, MAX_ROSTER_LINES);
+    const rosterLines = shownAgents.map(
+      (agent, index) =>
+        `${index + 1}. ${safeDialogLabel(agent.agentName, 64)} ` +
+        `(${safeDialogLabel(agent.category, 32)}, ` +
+        `cli=${safeDialogLabel(agent.cli, 32)}, ` +
+        `model=${safeDialogLabel(agent.model ?? "default", 64)}, ` +
+        `effort=${safeDialogLabel(agent.effort ?? "default", 24)}, ` +
+        `tools=${safeDialogLabel((agent.allowedTools ?? []).join(",") || "(default)", 96)}, ` +
+        `skills=${safeDialogLabel((agent.allowedSkills ?? []).join(",") || "(nenhuma)", 96)})`,
+    );
+    const rosterOverflow = candidate.squad.agents.length - shownAgents.length;
+    if (rosterOverflow > 0) {
+      rosterLines.push(
+        `… +${rosterOverflow} agente(s) — conteúdo exato garantido pelo hash`,
+      );
+    }
+    const roster = rosterLines.join("\n");
     const result = await dialog.showMessageBox(window, {
       type: "warning",
       title: "Nexus IDE — iniciar squad imediato",
@@ -778,24 +785,24 @@ async function confirmImmediateSquadLaunch(
       noLink: true,
       message:
         "Autorizar este runtime e objetivo exatos sem passar pelo wizard PREVC?",
+      // Native message boxes grow to fit `detail` and never scroll: dumping
+      // the full instructions/briefing overflowed off-screen and made the
+      // dialog unusable. Show a bounded summary; the squad hash pins the
+      // integral content (instructions, capabilities) exactly.
       detail:
-        `Workspace: ${safeDialogLabel(scope.rootRealPath, 4_096)}\n` +
-        `Título: ${safeDialogLabel(candidate.missionTitle, 512)}\n` +
-        `Objetivo/briefing integral:\n${safeDialogLabel(candidate.missionGoal, 16_384)}\n` +
-        `Squad: ${safeDialogLabel(candidate.squad.name, 256)} ` +
-        `(${safeDialogLabel(candidate.squad.id, 128)})\n` +
-        `Hash: ${candidate.squad.hash}\n` +
-        `Pane: ${safeDialogLabel(candidate.paneId, 128)}\n` +
+        `Workspace: ${safeDialogLabel(scope.rootRealPath, 512)}\n` +
+        `Título: ${safeDialogLabel(candidate.missionTitle, 160)}\n` +
+        `Objetivo: ${safeDialogLabel(candidate.missionGoal, 400)}\n` +
+        `Squad: ${safeDialogLabel(candidate.squad.name, 128)} ` +
+        `(${safeDialogLabel(candidate.squad.id, 96)})\n` +
+        `Pane: ${safeDialogLabel(candidate.paneId, 96)}\n` +
         `Runtime: adapter=${safeDialogLabel(candidate.adapterId, 64)}, ` +
-        `model=${safeDialogLabel(candidate.model ?? "default", 128)}, ` +
-        `account=${safeDialogLabel(candidate.accountId ?? "none", 128)}, ` +
-        `effort=${safeDialogLabel(candidate.effort ?? "default", 32)}\n\n` +
-        `Instruções do orquestrador:\n` +
-        `${safeDialogLabel(candidate.squad.orchestratorInstructions, 6_000)}\n` +
-        `Instruções nativas:\n` +
-        `${safeDialogLabel(candidate.squad.nativeInstructions ?? "", 6_000)}\n` +
-        `Roster/capacidades:\n${roster}\n\n` +
-        "O grant é opaco, de uso único e preso a todo o conteúdo acima.",
+        `model=${safeDialogLabel(candidate.model ?? "default", 96)}, ` +
+        `account=${safeDialogLabel(candidate.accountId ?? "none", 96)}, ` +
+        `effort=${safeDialogLabel(candidate.effort ?? "default", 32)}\n` +
+        `Roster:\n${roster}\n\n` +
+        `Hash exato (fixa instruções e capacidades integrais): ${candidate.squad.hash}\n` +
+        "O grant é opaco, de uso único e preso ao conteúdo fixado pelo hash acima.",
     });
     return result.response === 1;
   } finally {
@@ -803,12 +810,33 @@ async function confirmImmediateSquadLaunch(
   }
 }
 
+/**
+ * Roster that never expands worker authority: every non-orchestrator agent
+ * carries an explicit allowlist (array, possibly empty = block all) with no
+ * wildcard. Only such NEW squads may save without the native dialog.
+ */
+function squadSaveIsAuthorityFenced(squad: {
+  readonly agents: ReadonlyArray<{
+    readonly category: string;
+    readonly allowedTools?: readonly string[] | null;
+  }>;
+}): boolean {
+  return squad.agents.every(
+    (agent) =>
+      agent.category === 'orchestrator' ||
+      (Array.isArray(agent.allowedTools) &&
+        !agent.allowedTools.includes('*')),
+  );
+}
+
 function assertSquadReviewable(snapshot: SquadAuthoritySnapshot): void {
+  // Dialogs no longer dump the full squad content \u2014 they show a bounded
+  // summary pinned by the authority hash \u2014 so a total-length fence here only
+  // blocked legitimate squads with long orchestrator instructions ("squad
+  // review exceeds 6000 characters" wedged the launch flow). What must stay
+  // impossible is smuggling invisible control characters into ANY string that
+  // can reach an operator dialog.
   const values = squadAuthorityReviewStrings(snapshot);
-  const total = values.reduce((sum, value) => sum + value.length, 0);
-  if (total > 6_000) {
-    throw new Error('squad review exceeds 6000 characters; shorten it first');
-  }
   if (
     values.some((value) =>
       /[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(value),
@@ -1158,14 +1186,16 @@ async function confirmSquadsImport(
   if (!window || window.isDestroyed()) {
     throw new Error('renderer window is unavailable');
   }
+  // Native alerts never scroll; the SHA-256 pair already pins the exact bytes
+  // and the normalized content, so the integral JSON dump only overflowed the
+  // screen (and vetoed legitimate large squads via the dialog size fence).
   const detail = assertExactOperatorDialog(
-    `Workspace solicitante: ${scope.rootRealPath}\n` +
-      `Arquivo selecionado (JSON): ${JSON.stringify(selectedPath)}\n` +
+    `Workspace solicitante: ${safeDialogLabel(scope.rootRealPath, 512)}\n` +
+      `Arquivo selecionado (JSON): ${safeDialogLabel(selectedPath, 512)}\n` +
       `SHA-256 bruto: ${candidate.rawSha256}\n` +
-      `SHA-256 canônico: ${candidate.canonicalSha256}\n` +
+      `SHA-256 canônico (fixa o conteúdo normalizado integral): ${candidate.canonicalSha256}\n` +
       `Squads: ${candidate.squadCount}; agentes: ${candidate.agentCount}\n` +
-      `IDs alvo: ${candidate.targetIds.join(', ')}\n\n` +
-      `Conteúdo normalizado integral:\n${candidate.canonicalJson}`,
+      `IDs alvo: ${safeDialogLabel(candidate.targetIds.join(', '), 800)}`,
   );
   const result = await dialog.showMessageBox(window, {
     type: 'warning',
@@ -2066,15 +2096,26 @@ export function registerOrchIpc(): void {
       }
       const candidate = prepareSquadSave(parsed.data);
       assertSquadNotExecuting(event.sender, candidate.squad.id);
-      const approved = await confirmSquadMutation(
-        event.sender,
-        scope,
-        'save',
-        candidate.snapshot,
-      );
-      if (!approved) return { ok: false, error: 'user_denied' };
-      requireLiveRendererWorkspaceScope(event.sender, scope);
-      assertSquadNotExecuting(event.sender, candidate.squad.id);
+      // Single human gate: a saved squad is inert authority — any mission
+      // that uses it re-presents the exact roster hash in the mission
+      // approval dialog, and the bootstrap blocks on squadRevisionHash drift.
+      // A brand-new id with a fenced roster (every worker with an explicit,
+      // wildcard-free allowlist) therefore saves silently; the native dialog
+      // remains for OVERWRITING an existing squad (retargets authority the
+      // user may have trusted) and for rosters that expand worker authority.
+      const decidedByMain =
+        !existing && squadSaveIsAuthorityFenced(candidate.squad);
+      if (!decidedByMain) {
+        const approved = await confirmSquadMutation(
+          event.sender,
+          scope,
+          'save',
+          candidate.snapshot,
+        );
+        if (!approved) return { ok: false, error: 'user_denied' };
+        requireLiveRendererWorkspaceScope(event.sender, scope);
+        assertSquadNotExecuting(event.sender, candidate.squad.id);
+      }
       applyPreparedSquadSave(candidate);
       return { ok: true };
     } catch (err) {

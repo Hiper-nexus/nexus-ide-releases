@@ -1159,7 +1159,9 @@ describe('immediate squad native grant authority', () => {
     expect(result.grant).toMatch(/^squadgrant_[A-Za-z0-9_-]{40,}$/);
     const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
     expect(options?.detail).toContain('Implementar o objetivo exato');
-    expect(options?.detail).toContain('Coordene somente pelo contrato');
+    // Compacto: instruções integrais ficam fixadas pelo hash, fora do modal.
+    expect(options?.detail).not.toContain('Coordene somente pelo contrato');
+    expect(options?.detail).toContain('Hash exato');
     const consumed = consumeImmediateSquadSpawnGrant({
       requestId: result.grant,
       owner: sender as never,
@@ -1894,8 +1896,9 @@ describe('saved squad mutation authority', () => {
     return { handler, sender };
   }
 
-  it('mostra roster/instruções integrais e nega save por padrão', async () => {
+  it('sobrescrita mostra resumo compacto com hash e nega save por padrão', async () => {
     const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
+    harness.squads.push({ ...SAVED_SQUAD });
     harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
     await expect(handler({ sender }, {
       ...SAVED_SQUAD,
@@ -1908,10 +1911,13 @@ describe('saved squad mutation authority', () => {
     const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
     if (!options) throw new Error('missing squad confirmation options');
     expect(options).toMatchObject({ defaultId: 0, cancelId: 0, noLink: true });
-    expect(options.detail).toContain('Coordene somente pelo contrato.');
-    expect(options.detail).toContain('INSTRUÇÃO NATIVA EXATA E VISÍVEL');
+    // Resumo limitado: agentes com cli/model e hash fixando o conteúdo
+    // integral — o dump de instruções não cabe num alerta nativo sem scroll.
+    expect(options.detail).toContain('Maestro');
     expect(options.detail).toContain('gpt-5.6-sol');
-    expect(options.detail).toContain('check-work');
+    expect(options.detail).toContain('Hash exato');
+    expect(options.detail).not.toContain('INSTRUÇÃO NATIVA EXATA E VISÍVEL');
+    expect(options.detail).not.toContain('Coordene somente pelo contrato.');
   });
 
   it('recusa criar ou sobrescrever metadata de squad builtin gerenciado', async () => {
@@ -1959,7 +1965,7 @@ describe('saved squad mutation authority', () => {
     );
   });
 
-  it('confirma e persiste os defaults/allowlists finais, não o payload cru', async () => {
+  it('squad novo cercado persiste os defaults/allowlists finais sem modal', async () => {
     const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
     const raw = {
       id: 'normalized-ipc-save',
@@ -1985,11 +1991,11 @@ describe('saved squad mutation authority', () => {
     };
 
     await expect(handler({ sender }, raw)).resolves.toEqual({ ok: true });
-    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
-    expect(options?.detail).toContain('gemini-3.6-flash-high');
-    expect(options?.detail).toContain('"allowedTools": null');
-    expect(options?.detail).toContain('"allowedTools": []');
-    expect(options?.detail).toContain('Exact native instructions');
+    // Gate único: squad NOVO com roster cercado (workers com allowlist
+    // explícita sem wildcard após a normalização) salva sem modal — a
+    // autoridade real é conferida no modal de aprovação da missão, que fixa
+    // o hash exato do roster.
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
     expect(harness.squads[0].agents[0]).toMatchObject({
       model: 'gemini-3.6-flash-high',
       allowedTools: null,
@@ -2136,7 +2142,7 @@ describe('squad import/export global authority boundary', () => {
     return { dir, file, raw };
   }
 
-  it('prepara sem mutação, mostra conteúdo normalizado integral e nega por padrão', async () => {
+  it('prepara sem mutação, mostra hashes e resumo compacto e nega por padrão', async () => {
     const { handler, sender, window } = setup(ORCH_CHANNELS.squadImport);
     const { file } = validImportFile('NATIVE EXACTLY VISIBLE');
     harness.dialog.showOpenDialog.mockResolvedValueOnce({
@@ -2157,9 +2163,12 @@ describe('squad import/export global authority boundary', () => {
     );
     const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
     expect(options).toMatchObject({ defaultId: 0, cancelId: 0, noLink: true });
-    expect(options?.detail).toContain('NATIVE EXACTLY VISIBLE');
-    expect(options?.detail).toContain('ORCHESTRATOR IMPORT AUTHORITY');
-    expect(options?.detail).toContain('"allowedTools": null');
+    // Compacto: o par de SHA-256 fixa o conteúdo integral; o dump não cabe
+    // num alerta nativo sem scroll.
+    expect(options?.detail).toContain('SHA-256 canônico');
+    expect(options?.detail).toMatch(/Squads: \d+; agentes: \d+/);
+    expect(options?.detail).not.toContain('NATIVE EXACTLY VISIBLE');
+    expect(options?.detail).not.toContain('"allowedTools": null');
   });
 
   it('escapa o path selecionado no modal para impedir injeção de linhas', async () => {
@@ -2175,23 +2184,28 @@ describe('squad import/export global authority boundary', () => {
 
     await handler({ sender });
     const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
-    expect(options?.detail).toContain('squads\\nFAKE AUTHORITY.json');
+    // Sanitização em linha única: o newline do nome de arquivo nunca vira
+    // quebra de linha real no modal (injeção de linhas impossível).
+    expect(options?.detail).toContain('FAKE AUTHORITY.json');
     expect(options?.detail).not.toContain('squads\nFAKE AUTHORITY.json');
   });
 
-  it('recusa autoridade maior que o modal sem truncar o conteúdo', async () => {
+  it('squad grande importa com modal compacto fixado por hash (sem veto de tamanho)', async () => {
     const { handler, sender } = setup(ORCH_CHANNELS.squadImport, 893);
     const { file } = validImportFile('N'.repeat(6_100));
     harness.dialog.showOpenDialog.mockResolvedValueOnce({
       canceled: false,
       filePaths: [file],
     });
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
 
     await expect(handler({ sender })).resolves.toMatchObject({
       ok: false,
-      error: expect.stringMatching(/6000|too_large|review exceeds/i),
+      error: 'user_denied',
     });
-    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
+    expect(options?.detail).toContain('SHA-256 canônico');
+    expect(options?.detail).not.toContain('N'.repeat(200));
     expect(harness.applyPreparedSquadsImport).not.toHaveBeenCalled();
   });
 
