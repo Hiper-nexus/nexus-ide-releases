@@ -7,6 +7,7 @@ import type {
 } from '../../shared/orch-types';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
+  actionableMissionPanes,
   createProductionApplyPorts,
   findDeadMissionPane,
   hasMirroredScope,
@@ -416,6 +417,89 @@ describe('createProductionApplyPorts advance/complete', () => {
     expect(mission.status).toBe('done');
   });
 
+  it('never signals pane death for an exited worker whose dispatch was delivered', () => {
+    // Regression (release gate + field audit "respawn loop"): the worker CLI
+    // exits naturally after its handoff is accepted; the dispatch then lives
+    // in the engine (handoff_ready → merging → completed) and re-engaging the
+    // dead worker is never useful. Counting it as a dead pane made the driver
+    // burn maxRespawnAttempts on futile respawns and block a mission whose
+    // work had already been integrated.
+    const orchestrator: MissionPaneSpec = {
+      id: 'spec-orch', missionId: 'mission-a', paneId: 'pane-orch',
+      adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
+    };
+    const worker: MissionPaneSpec = {
+      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
+      adapterId: 'codex', title: 'Worker', role: 'worker', createdAt: 2,
+      workerIncarnationId: 'incarnation-1',
+    };
+    const liveOrchestratorOnly: PaneSnapshot[] = [{
+      paneId: 'pane-orch', sessionId: 'session-orch', title: 'Orchestrator',
+      kind: 'cli-agent', state: 'idle', missionId: 'mission-a', role: 'orchestrator',
+    }];
+
+    for (const state of ['handoff_ready', 'merging', 'completed'] as const) {
+      const actionable = actionableMissionPanes(
+        [orchestrator, worker],
+        [{ state, workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' }],
+      );
+      expect(actionable).toEqual([orchestrator]);
+      expect(
+        findDeadMissionPane('mission-a', actionable, liveOrchestratorOnly),
+      ).toBeNull();
+    }
+  });
+
+  it('keeps a worker recoverable while its dispatch still owns live work', () => {
+    const worker: MissionPaneSpec = {
+      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
+      adapterId: 'codex', title: 'Worker', role: 'worker', createdAt: 1,
+      workerIncarnationId: 'incarnation-1',
+    };
+
+    for (const state of ['claimed', 'routed', 'spawning', 'running'] as const) {
+      const actionable = actionableMissionPanes(
+        [worker],
+        [{ state, workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' }],
+      );
+      expect(actionable).toEqual([worker]);
+      expect(findDeadMissionPane('mission-a', actionable, [])).toMatchObject({
+        paneId: 'pane-worker',
+      });
+    }
+    // A fresh dispatch on the same durable pane row revives recoverability
+    // even when an older delivered dispatch also matches it.
+    expect(actionableMissionPanes(
+      [worker],
+      [
+        { state: 'completed', workerIncarnationId: 'incarnation-0', paneId: 'pane-worker' },
+        { state: 'running', workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' },
+      ],
+    )).toEqual([worker]);
+  });
+
+  it('keeps workers without a matching dispatch and orchestrators always actionable', () => {
+    const orchestrator: MissionPaneSpec = {
+      id: 'spec-orch', missionId: 'mission-a', paneId: 'pane-orch',
+      adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
+    };
+    const legacyWorker: MissionPaneSpec = {
+      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
+      adapterId: 'codex', title: 'Worker', role: 'worker', createdAt: 2,
+    };
+
+    expect(actionableMissionPanes(
+      [orchestrator, legacyWorker],
+      [{ state: 'completed', workerIncarnationId: 'incarnation-x', paneId: 'pane-other' }],
+    )).toEqual([orchestrator, legacyWorker]);
+    // Even a delivered dispatch bound to the orchestrator pane id never makes
+    // the orchestrator non-actionable.
+    expect(actionableMissionPanes(
+      [orchestrator],
+      [{ state: 'completed', workerIncarnationId: null, paneId: 'pane-orch' }],
+    )).toEqual([orchestrator]);
+  });
+
   it('treats a missing persisted worker as dead by stable pane identity', () => {
     const persisted: MissionPaneSpec[] = [
       {
@@ -530,6 +614,7 @@ describe('createProductionApplyPorts advance/complete', () => {
       () => ({
         missions: { get: () => mission, appendLearning },
         missionPanes: { list: () => persisted },
+        taskDispatches: { list: () => [] },
         handoffs: {
           list: () => [
             {
@@ -604,6 +689,7 @@ describe('createProductionApplyPorts advance/complete', () => {
           appendLearning: vi.fn(),
         },
         missionPanes: { list: () => persisted },
+        taskDispatches: { list: () => [] },
         handoffs: { list: () => [] },
       }) as never,
       recoverPane,

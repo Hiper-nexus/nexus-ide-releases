@@ -450,7 +450,11 @@ export const realMissionE2EEvidenceSchema = z
       evidence.repository.finalHeadSha !== null &&
       evidence.repository.initialHeadSha !== null &&
       evidence.repository.resultSha256 === evidence.expectedContentSha256 &&
-      evidence.repository.commitCount === 2 &&
+      // Fast-forward (2) or real merge commit (3); exactSingleCommit already
+      // proved HEAD descends from the initial commit with only resultado.txt
+      // changed, so both integration shapes are the same logical result.
+      (evidence.repository.commitCount === 2 ||
+        evidence.repository.commitCount === 3) &&
       evidence.repository.clean &&
       !evidence.repository.changedBeforeWorker &&
       evidence.repository.exactSingleCommit &&

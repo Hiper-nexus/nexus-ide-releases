@@ -39,6 +39,19 @@ Data: 2026-07-23
 - **Gate Codex sem falso aceite**: a missão empacotada prepara a confiança
   somente para seu repositório descartável e canônico, em HOME isolado e
   privado, evitando que a tela inicial de confiança consuma o primeiro kickoff.
+- **Worker entregue não é pane morto**: o driver deixa de contar como "pane
+  dead" um worker cujo dispatch já saiu de `running` (handoff aceito, merge ou
+  completed) — o CLI sair após entregar é o ciclo esperado. Isso elimina o
+  loop de respawns fúteis que bloqueava missões já integradas.
+- **Conclusão destravada sob contrato congelado**: congelar o contrato PREVC
+  para validar merges não torna mais a missão inconcluível. O plano verificado
+  (rota, roster, receipts, entrega aceita) conclui a missão enquanto o driver
+  PREVC não tiver assumido via step receipts — com receipt existente, o
+  bypass continua vedado.
+- **Integração por merge commit aceita no gate**: os validadores de evidência
+  (app, compartilhado e script) aceitam fast-forward (2 commits) ou merge real
+  (3 commits), mantendo a invariante de resultado exato descendente do commit
+  inicial.
 
 ### Segurança e release
 

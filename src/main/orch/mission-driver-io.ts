@@ -98,6 +98,51 @@ export function findDeadMissionPane(
   );
 }
 
+/** Dispatch states where the worker's output is already engine-owned. */
+const WORKER_DELIVERED_DISPATCH_STATES: ReadonlySet<string> = new Set([
+  'handoff_ready',
+  'merging',
+  'completed',
+]);
+
+export interface MissionPaneDispatchSignal {
+  readonly state: string;
+  readonly workerIncarnationId?: string | null;
+  readonly paneId?: string | null;
+}
+
+/**
+ * Workers are one-shot per dispatch: once the handoff is accepted the engine
+ * owns the result (handoff_ready → merging → completed) and the worker CLI
+ * exiting is the expected lifecycle, never a failure to recover from.
+ * Counting such a pane as "dead" made the driver burn maxRespawnAttempts on
+ * futile respawns and block missions whose work had already been integrated
+ * (release gate + field audit "respawn loop"). A pane stays actionable while
+ * any matching dispatch still owns live work, when it has no dispatch at all
+ * (legacy/manual rows), or when it is the orchestrator.
+ */
+export function actionableMissionPanes(
+  persisted: readonly MissionPaneSpec[],
+  dispatches: readonly MissionPaneDispatchSignal[],
+): MissionPaneSpec[] {
+  return persisted.filter((pane) => {
+    if (pane.role !== 'worker') return true;
+    const matching = dispatches.filter(
+      (dispatch) =>
+        (dispatch.workerIncarnationId !== undefined &&
+          dispatch.workerIncarnationId !== null &&
+          dispatch.workerIncarnationId === pane.workerIncarnationId) ||
+        (dispatch.paneId !== undefined &&
+          dispatch.paneId !== null &&
+          dispatch.paneId === pane.paneId),
+    );
+    if (matching.length === 0) return true;
+    return !matching.every((dispatch) =>
+      WORKER_DELIVERED_DISPATCH_STATES.has(dispatch.state),
+    );
+  });
+}
+
 /**
  * Pane absence is meaningful only after a renderer has mirrored the exact
  * workspace scope. Mission ids and pane ids are not cross-project authority.
@@ -194,9 +239,10 @@ export function loadDriveState(
     startedAt = Date.now();
     driveStartedAtMemory.set(key, startedAt);
   }
-  const persistedPanes = stores.missionPanes
-    .list(missionId)
-    .filter((pane) => pane.paneId);
+  const persistedPanes = actionableMissionPanes(
+    stores.missionPanes.list(missionId).filter((pane) => pane.paneId),
+    stores.taskDispatches.list(missionId),
+  );
   const snapshots = listPaneSnapshots();
   // Absence is actionable only after the exact workspace has been mirrored.
   // Readiness comes from the renderer sync heartbeat (covers an empty layout
@@ -310,9 +356,10 @@ export function createProductionApplyPorts(
     respawnFreshContext: async (missionId, scope, reason) => {
       const stores = getStores(scope);
       const mission = stores.missions.get(missionId);
-      const persisted = stores.missionPanes
-        .list(missionId)
-        .filter((pane) => pane.paneId);
+      const persisted = actionableMissionPanes(
+        stores.missionPanes.list(missionId).filter((pane) => pane.paneId),
+        stores.taskDispatches.list(missionId),
+      );
       const snapshots = snapshotsForScope(scope, paneSnapshots());
       const dead = findDeadMissionPane(missionId, persisted, snapshots);
       const target =

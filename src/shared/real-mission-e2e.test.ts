@@ -322,6 +322,22 @@ describe('real mission E2E closed receipts', () => {
     );
   });
 
+  it('accepts a merge-commit integration (3 commits) when the exact-result invariant holds', () => {
+    // The engine may integrate as fast-forward (2 commits) or as a real merge
+    // commit (initial + worker result + merge = 3). Either is a PASS as long
+    // as exactSingleCommit proved HEAD descends from the initial commit and
+    // only resultado.txt changed.
+    const mergeCommit = validPassEvidence();
+    (mergeCommit.repository as Record<string, unknown>).commitCount = 3;
+    expect(() => parseRealMissionE2EEvidence(mergeCommit)).not.toThrow();
+
+    const tooMany = validPassEvidence();
+    (tooMany.repository as Record<string, unknown>).commitCount = 4;
+    expect(() => parseRealMissionE2EEvidence(tooMany)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
   it('keeps failures closed and actionable without raw output fields', () => {
     const evidence = validPassEvidence();
     evidence.status = 'fail';

@@ -456,7 +456,10 @@ export function assertRealMissionPassEvidence(raw) {
     /^[a-f0-9]{40,64}$/u.test(repository?.finalHeadSha ?? '') &&
     repository?.resultSha256 === expectedSha &&
     Number.isInteger(repository?.commitCount) &&
-    repository.commitCount === 2 &&
+    // Fast-forward (2) or real merge commit (3); exactSingleCommit already
+    // proved HEAD descends from the initial commit with only resultado.txt
+    // changed, so both integration shapes are the same logical result.
+    (repository.commitCount === 2 || repository.commitCount === 3) &&
     repository?.clean === true &&
     repository?.changedBeforeWorker === false &&
     repository?.exactSingleCommit === true &&

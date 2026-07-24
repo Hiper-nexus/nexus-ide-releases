@@ -574,6 +574,16 @@ describe('independent evidence verifier', () => {
     expect(() => assertRealMissionPassEvidence(evidence)).toThrow(/incomplete/);
   });
 
+  it('accepts a merge-commit integration (3 commits) when the exact-result invariant holds', () => {
+    const evidence = validEvidence();
+    evidence.repository.commitCount = 3;
+    expect(() => assertRealMissionPassEvidence(evidence)).not.toThrow();
+
+    const tooMany = validEvidence();
+    tooMany.repository.commitCount = 4;
+    expect(() => assertRealMissionPassEvidence(tooMany)).toThrow(/incomplete/);
+  });
+
   it('rejects release evidence without version, run/clock, commit and artifact identity binding', () => {
     for (const mutate of [
       (evidence) => { delete evidence.release.appVersion; },

@@ -142,6 +142,107 @@ function claimedDispatchFixture() {
   return { missions, tasks, dispatches, mission, task, claim };
 }
 
+/**
+ * Full golden path up to a completable state: sealed plan + route reservation
+ * + spawn bind + success handoff accepted + worktree integration receipt +
+ * delivery attempt accepted by the exact orchestrator session.
+ */
+function verifiedPlanFixture(label: string) {
+  const runtime = manager();
+  const scope = testProjectScope();
+  const missions = createScopedMissionStore(runtime, scope);
+  const tasks = createScopedTaskStore(runtime, scope);
+  const handoffs = createScopedHandoffStore(runtime, scope);
+  const dispatches = createTaskDispatchStore(runtime, scope);
+  const contract = approvedIntentContract({
+    goal: `Completar pelo motor (${label})`, intentVersion: 7,
+  });
+  const mission = missions.create({
+    title: `Golden path ${label}`, squadId: 'golden-squad', intentVersion: 7,
+    intentState: 'executing', intentContract: contract,
+    orchestratorSessionId: 'orchestrator-golden',
+  });
+  missions.setStatus(mission.id, 'running');
+  const ownership = { files: ['src/golden.ts'], symbols: [], domains: [] };
+  const [task] = tasks.createPlanAtomically({
+    missionId: mission.id,
+    intentVersion: 7,
+    squad: {
+      id: 'golden-squad',
+      agents: [{
+        id: 'worker', agentName: 'Golden Worker', category: 'executor',
+        cli: 'codex', model: 'gpt-5.6-sol', effort: 'high',
+      }],
+    },
+    rows: [{
+      plannerId: 'implement', title: 'Implementar golden path',
+      detail: encodeTaskScheduleDetail('Implementar e testar.', {
+        dependsOn: [], ownership, merged: false, agentRef: 'worker',
+        agentCategory: 'executor', executionMode: 'isolated_worktree',
+      }),
+      agentRef: 'worker', agentCategory: 'executor',
+    }],
+  });
+  const receipt = tasks.getPlanReceipt(mission.id, 7)!;
+  const route = missions.reserveRouteDecision(mission.id, task!.title, {
+    tier: 'hard', adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high',
+    reason: 'roster selado', alternatives: [],
+  });
+  const claim = dispatches.claim({
+    missionId: mission.id, taskId: task!.id, intentVersion: 7,
+    workerId: 'Golden Worker', leaseOwner: 'main', leaseMs: 30_000,
+    ownership, executionMode: 'isolated_worktree', agentRef: 'worker',
+    agentCategory: 'executor', rosterHash: receipt.rosterHash,
+    routeContract: {
+      adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high',
+    },
+  });
+  const routed = dispatches.attachRoute({
+    taskId: task!.id, revision: claim.revision, leaseToken: claim.leaseToken,
+    routeReservationId: route.id, adapterId: 'codex',
+    model: 'gpt-5.6-sol', effort: 'high',
+  });
+  dispatches.bindSpawn({
+    taskId: task!.id, revision: routed.revision, leaseToken: claim.leaseToken,
+    workerIncarnationId: claim.workerIncarnationId,
+    paneId: 'pane-golden', sessionId: 'session-golden',
+  });
+  const handoff = handoffs.submit({
+    missionId: mission.id, sessionId: 'session-golden',
+    workerIncarnationId: claim.workerIncarnationId,
+    fromAgent: 'Golden Worker', status: 'success',
+    summary: 'Implementação integrada com testes e commit local verificados.',
+  });
+  const ready = dispatches.acceptHandoff({
+    sessionId: 'session-golden',
+    workerIncarnationId: claim.workerIncarnationId,
+    handoffId: handoff.id,
+  });
+  dispatches.completeByCoordinator({
+    taskId: task!.id,
+    revision: ready.revision,
+    receipt: {
+      kind: 'worktree_integrated', reference: 'a'.repeat(40),
+      completedAt: Date.now(), evidenceIds: ['evidence-golden'],
+    },
+  });
+  const attempt = handoffs.reserveDeliveryAttempt({
+    handoffId: handoff.id,
+    missionId: mission.id,
+    orchestratorSessionId: 'orchestrator-golden',
+    maxAttempts: 2,
+  });
+  handoffs.markDeliveryAttemptPasted({
+    attemptId: attempt.id,
+    handoffId: handoff.id,
+    acceptDeadlineAt: Date.now() + 10_000,
+  });
+  handoffs.acceptDeliveryAttempt({
+    attemptId: attempt.id, handoffId: handoff.id,
+  });
+  return { runtime, scope, missions, tasks, handoffs, dispatches, mission, task: task! };
+}
+
 beforeEach(() => {
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-task-dispatch-'));
 });
@@ -722,6 +823,51 @@ describe('durable task dispatcher authority', () => {
     expect(restartedDispatches.completeMissionFromVerifiedPlan({
       missionId: mission.id, intentVersion: 7,
     })).toBe(false);
+  });
+
+  it('completes a frozen mission whose verified plan integrated before PREVC took ownership', () => {
+    // Regression (release gate deadlock): freezing a PREVC contract is required
+    // for merge validation, but it must not wedge completion. While no
+    // milestone carries a PREVC step receipt, the mission-driver has not taken
+    // ownership and the verified task plan — whose every merge was already
+    // validated under the frozen contract — may complete the mission.
+    const fixture = verifiedPlanFixture('frozen-before-prevc');
+    fixture.runtime.open(fixture.scope).db.prepare(
+      `INSERT INTO mission_contracts
+         (mission_id, revision, contract_hash, context_revision, contract_json,
+          author_id, author_session_id, author_provider, frozen_at)
+       VALUES (?, 1, ?, ?, '{}', 'author', 'session-author', 'codex', 1)`,
+    ).run(fixture.mission.id, 'c'.repeat(64), 'r'.repeat(64));
+
+    expect(fixture.dispatches.completeMissionFromVerifiedPlan({
+      missionId: fixture.mission.id, intentVersion: 7,
+    })).toBe(true);
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'done', intentState: 'done',
+    });
+  });
+
+  it('refuses task-plan completion once PREVC step receipts exist (no bypass)', () => {
+    const fixture = verifiedPlanFixture('prevc-owned');
+    const db = fixture.runtime.open(fixture.scope).db;
+    db.prepare(
+      `INSERT INTO mission_contracts
+         (mission_id, revision, contract_hash, context_revision, contract_json,
+          author_id, author_session_id, author_provider, frozen_at)
+       VALUES (?, 1, ?, ?, '{}', 'author', 'session-author', 'codex', 1)`,
+    ).run(fixture.mission.id, 'd'.repeat(64), 's'.repeat(64));
+    db.prepare(
+      `INSERT INTO mission_step_receipts
+         (mission_id, step_id, from_stage, to_stage,
+          workflow_revision_before, workflow_revision_after,
+          evidence_ids_json, evidence_binding_json, completed_at)
+       VALUES (?, 'step-1', 'execution', 'validation-primary', 1, 2, '[]', '{}', 1)`,
+    ).run(fixture.mission.id);
+
+    expect(fixture.dispatches.completeMissionFromVerifiedPlan({
+      missionId: fixture.mission.id, intentVersion: 7,
+    })).toBe(false);
+    expect(fixture.missions.get(fixture.mission.id)?.status).toBe('running');
   });
 
   it('never completes from status alone: exact-session handoff and integration receipt are required', () => {
