@@ -13,11 +13,11 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.27',
-  date: '2026-07-23',
-  codename: 'Golden Path',
+  version: '0.19.28',
+  date: '2026-07-24',
+  codename: 'Retomada Real',
   summary:
-    'Missões aprovadas agora percorrem uma rota selada do kickoff ao handoff, com autoridade durável, execução observável e conclusão baseada em recibos verificáveis.',
+    'Missões travadas voltam a rodar de verdade: retomada main-owned com bootstrap fresh, cercas de autoridade com diagnóstico nomeado, gate único de aprovação com modais compactos e remoção destravada para missões sem receipts.',
   highlights: [
     {
       title: 'Rota selada e diversa',

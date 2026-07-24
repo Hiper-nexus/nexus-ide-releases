@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.19.28 — Retomada Real
+
+Data: 2026-07-24
+
+### Recuperação de missão fecha o ciclo
+
+- **Retomar funciona de ponta a ponta**: missão `blocked_technical` volta pelo
+  bootstrap main-owned (re-arma pela transição sancionada, limpa identidade de
+  orquestrador comprovadamente morta e refaz spawn+kickoff com recibo).
+  Validado ao vivo: missões presas voltaram a rodar com sessão nova e kickoff
+  aceito.
+- **Remover destravado**: missão bloqueada sem sessão e sem receipts reais
+  (handoffs/tasks) pode ser removida; pane rows são identidade de respawn e
+  caem em cascata. Missão com sessão viva ou receipts continua preservada.
+- **Cercas de autoridade com diagnóstico nomeado**: o selo do bootstrap, as
+  cercas de spawn (pending/persistido) e a autoridade stale agora listam os
+  campos divergentes com valores — fim dos erros mudos de comparação.
+- **Selo compara autoridade canônica**: `null` e `undefined` significam ambos
+  "não especificado" em tools/skills (squads desenhados pelo arquiteto omitem
+  o campo); `[]` continua distinto. O modelo validado é o solicitado/selado,
+  nunca o alias normalizado pelo provider.
+- **Pane zumbi não bloqueia missão nova**: conflito de credencial exclusiva
+  exige PTY vivo; pane com spawn falho não segura a família claude.
+- **Worker entregue não é pane morto (recorrência)**: o driver decide pelo
+  dispatch mais recente da identidade — histórico com replan/supersedes não
+  reintroduz o respawn loop.
+
+### Gate único de aprovação
+
+- **Um gate humano por missão**: a aprovação apresenta o hash exato do
+  roster/contrato; salvar squad NOVO com roster cercado (workers com
+  allowlist explícita sem wildcard) não pede segundo modal. Sobrescrever,
+  expandir autoridade ou deletar continuam atrás do modal nativo.
+- **Modais nativos compactos fixados por hash**: salvar/launch imediato/import
+  de squads mostram resumo limitado + SHA-256 do conteúdo integral (alerta
+  nativo não tem scroll; o dump estourava a tela e travava o app).
+- **Cercas de tamanho obsoletas removidas**: squads legítimos com instruções
+  longas não são mais vetados ('squad review exceeds 6000 characters',
+  'approval_review_too_large').
+
+### Modo Agêntico
+
+- **Time novo de verdade**: o arquiteto desenha um squad para o objetivo em
+  vez de reusar silenciosamente o squad salvo mais recente (reuso virou
+  opt-in). O picker não lista squads gerados pelo motor (`agentic-`/`custom-`).
+
+### Conhecidos
+
+- Sob recuperação do driver, um respawn de renderer pode competir com o grant
+  fresh e falhar com `recoveryMode(resume/fresh)[false != true]` — o erro é
+  nomeado e a missão segue recuperável pelo rail.
+
 ## 0.19.27 — Golden Path
 
 Data: 2026-07-23
