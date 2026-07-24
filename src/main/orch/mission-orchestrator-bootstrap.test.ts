@@ -884,6 +884,8 @@ describe('blockedBootstrapResumePatch', () => {
       ok: false,
     });
 
+    // Re-bloqueios do ciclo (kickoff sem recibo, provider_exited) não anexam
+    // o marker — blocked_technical sem marker TAMBÉM é resumível.
     const blockedWithoutMarker: Mission = {
       ...approvedMission(),
       status: 'blocked',
@@ -891,7 +893,8 @@ describe('blockedBootstrapResumePatch', () => {
       description: 'bloqueada por outra causa',
     };
     expect(blockedBootstrapResumePatch(blockedWithoutMarker)).toMatchObject({
-      ok: false,
+      ok: true,
+      patch: { status: 'running', intentState: 'executing' },
     });
   });
 

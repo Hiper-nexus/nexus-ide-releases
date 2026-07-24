@@ -185,6 +185,26 @@ export async function reopenMission(
     }
   }
 
+  // Missão bloqueada pelo PRÓPRIO bootstrap (marker durável no main): o dono
+  // da retomada é o bootstrap — restaurar panes aqui recria a identidade
+  // morta que o bootstrap recusa (beco circular). Com ou sem pane rows,
+  // tenta o resume main-owned primeiro; se o main disser que não é um
+  // bloqueio de bootstrap, segue o fluxo normal de restore.
+  if (mission.status === 'blocked' && mission.intentState === 'blocked_technical') {
+    const resumed = await window.nexus.orch.resumeMissionBootstrap({
+      missionId: mission.id,
+    });
+    if (resumed.ok) {
+      return acknowledgedReopen(mission.id, [resumed.pane.sessionId], {
+        panes: 1,
+        soft: false,
+      });
+    }
+    if (!/bloqueada pelo bootstrap/i.test(resumed.error)) {
+      return { ok: false, error: resumed.error };
+    }
+  }
+
   let specs: MissionPaneSpec[] = [];
   try {
     specs = await window.nexus.orch.listMissionPanes(mission.id);
@@ -199,22 +219,6 @@ export async function reopenMission(
     // Reopen means resume the goal wizard, not invent a pane history.
     if (isIntentFirstMissionShell(mission)) {
       return { ok: true, panes: 0, intentShell: true };
-    }
-    // Bootstrap-blocked mission: the orchestrator never materialized (zero
-    // panes, teardown cleared the session). "Retomar" must retry the
-    // main-owned bootstrap — there is no composition to restore and the
-    // wizard's submit_goal is an invalid transition from blocked_technical.
-    if (mission.status === 'blocked' && mission.intentState === 'blocked_technical') {
-      const resumed = await window.nexus.orch.resumeMissionBootstrap({
-        missionId: mission.id,
-      });
-      if (resumed.ok) {
-        return acknowledgedReopen(mission.id, [resumed.pane.sessionId], {
-          panes: 1,
-          soft: false,
-        });
-      }
-      return { ok: false, error: resumed.error };
     }
     return {
       ok: false,

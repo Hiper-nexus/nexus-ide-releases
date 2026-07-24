@@ -1045,10 +1045,15 @@ export function blockedBootstrapResumePatch(
   ok: false;
   error: string;
 } {
+  // Qualquer blocked_technical com contrato aprovado vigente é resumível
+  // pelo bootstrap: os re-bloqueios do próprio ciclo (kickoff sem recibo,
+  // provider_exited) NÃO anexam o marker, e exigi-lo aqui devolvia a missão
+  // ao restore de panes — que recria a identidade morta que o bootstrap
+  // recusa (beco circular). O bootstrap revalida squad/contrato/runtime de
+  // qualquer forma. blocked_user segue no caminho de re-arme com panes.
   if (
     mission.status !== 'blocked' ||
-    mission.intentState !== 'blocked_technical' ||
-    !mission.description.includes(BOOTSTRAP_BLOCK_MARKER)
+    mission.intentState !== 'blocked_technical'
   ) {
     return {
       ok: false,
@@ -1183,6 +1188,21 @@ export async function resumeBlockedMissionBootstrapForScope(
       error: resume.error,
       cta: BOOTSTRAP_CTA,
     };
+  }
+  // Bootstrap re-entry refuses while a stale orchestrator identity persists
+  // (dead session + pane row): it #failures with the SAME "Retomar missão"
+  // CTA this resume implements — a circular dead end. A PROVEN-dead session
+  // (no PTY state) holds no execution; clear the durable identity so the
+  // bootstrap takes its fresh spawn+kickoff path. A live session is left
+  // untouched — its duplicate-kickoff guard stands.
+  const staleSessionId = mission.orchestratorSessionId;
+  if (!staleSessionId || getSessionState(staleSessionId) === null) {
+    if (staleSessionId) {
+      stores.missions.setOrchestratorSession(missionId, null);
+    }
+    for (const row of stores.missionPanes.list(missionId)) {
+      if (row.role === 'orchestrator') stores.missionPanes.remove(row.id);
+    }
   }
   const updated = stores.missions.update(missionId, resume.patch);
   if (!updated) {

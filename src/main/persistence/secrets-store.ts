@@ -40,8 +40,24 @@ export function isSecureStorageBackendAllowed(
   return platform !== 'linux' || readBackend() !== 'basic_text';
 }
 
+/**
+ * Dev-only escape hatch for unattended sessions: the dev Electron binary is
+ * not the signature the Keychain ACL trusts, so ANY vault access raises a
+ * synchronous SecurityAgent prompt that freezes the main thread (and CDP)
+ * until a human types the login password. With the vault disabled, reads
+ * fail closed (null) and writes stay in-memory — CLIs keep their own native
+ * auth. Never honored in a packaged build.
+ */
+function isDevVaultDisabled(): boolean {
+  return (
+    process.env.NEXUS_DEV_NO_VAULT === '1' &&
+    process.defaultApp !== undefined
+  );
+}
+
 export function isSecureStorageAvailable(options?: { probe?: boolean }): boolean {
   if (isCurrentProcessSmokeTest()) return false;
+  if (isDevVaultDisabled()) return false;
   // Do not synchronously probe the macOS Keychain during app startup. On a
   // locked/stale login session `safeStorage.isEncryptionAvailable()` enters
   // SecItemCopyMatching and can block Electron's main thread indefinitely,
@@ -67,6 +83,7 @@ export function isSecureStorageAvailable(options?: { probe?: boolean }): boolean
  * vault at once on boot/getInfo.
  */
 function decryptBlob(blob: string): string | null {
+  if (isDevVaultDisabled()) return null;
   try {
     const plain = safeStorage.decryptString(Buffer.from(blob, 'base64'));
     return plain || null;

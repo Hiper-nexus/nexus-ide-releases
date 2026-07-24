@@ -624,8 +624,11 @@ export class RendererMissionAuthority {
         "missão ativa/terminal é preservada: remoção não pode apagar receipts duráveis",
       );
     }
+    // Pane ROWS are respawn identity, not work receipts — they cascade with
+    // the mission row. Vetoing removal on them left every wedged pre-kickoff
+    // mission (blocked + dead session + zero deliveries) permanently stuck.
+    // Real receipts (handoffs, tasks) still preserve the mission.
     const hasDurableActivity =
-      suite.missionPanes.list(mission.id).length > 0 ||
       suite.handoffs.list({
         missionId: mission.id,
         includeDelivered: true,

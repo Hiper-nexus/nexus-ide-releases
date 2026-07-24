@@ -266,10 +266,8 @@ describe("renderer mission authority", () => {
   it.each([
     ["running", [], [], []],
     ["done", [], [], []],
-    ["blocked", [{ role: "worker" }], [], []],
     ["blocked", [], [{ id: "handoff-a" }], []],
     ["blocked", [], [], [{ id: "task-a" }]],
-    ["pending", [{ role: "worker" }], [], []],
     ["pending", [], [{ id: "handoff-a" }], []],
     ["pending", [], [], [{ id: "task-a" }]],
   ] as const)(
@@ -302,7 +300,8 @@ describe("renderer mission authority", () => {
       orchestratorSessionId: undefined,
       intentState: "blocked_technical",
     });
-    deps.listMissionPanes.mockReturnValue([]);
+    // Pane rows são identidade de respawn e caem em cascata — não vetam.
+    deps.listMissionPanes.mockReturnValue([{ role: "orchestrator" }]);
     deps.listHandoffs.mockReturnValue([]);
     deps.listTasks.mockReturnValue([]);
 
