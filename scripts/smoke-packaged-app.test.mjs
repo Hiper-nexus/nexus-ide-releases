@@ -575,23 +575,59 @@ describe('process tree termination', () => {
     );
   });
 
-  it('sends SIGKILL to the process group on POSIX, then falls back to pid', () => {
-    const kill = vi.fn((pid) => {
-      if (pid < 0) {
-        const err = new Error('ESRCH');
-        err.code = 'ESRCH';
-        throw err;
+  it('escalates SIGTERM → SIGKILL and reports remaining orphans', () => {
+    const live = new Set([99, 100]);
+    const kill = vi.fn((pid, signal) => {
+      if (signal === 'SIGKILL') {
+        // Group kill removes the group leader; orphan 100 sticks until targeted.
+        if (pid === -99 || pid === 99) live.delete(99);
+        if (pid === 100) live.delete(100);
       }
     });
-    killProcessTree(99, { platform: 'darwin', kill });
-    expect(kill).toHaveBeenNthCalledWith(1, -99, 'SIGKILL');
-    expect(kill).toHaveBeenNthCalledWith(2, 99, 'SIGKILL');
+    const listPids = vi.fn(() => [...live].sort((a, b) => a - b));
+    const proof = killProcessTree(99, {
+      platform: 'darwin',
+      kill,
+      listPids,
+      sleep: () => undefined,
+      termGraceMs: 0,
+      killGraceMs: 0,
+      pollMs: 0,
+    });
+    expect(kill).toHaveBeenCalledWith(-99, 'SIGTERM');
+    expect(kill).toHaveBeenCalledWith(-99, 'SIGKILL');
+    expect(proof.ok).toBe(true);
+    expect(proof.remainingPids).toEqual([]);
+    expect(proof.signalled.some((s) => s.includes('SIGTERM'))).toBe(true);
+  });
+
+  it('returns remainingPids when helpers refuse to die', () => {
+    const kill = vi.fn();
+    const proof = killProcessTree(42, {
+      platform: 'darwin',
+      kill,
+      listPids: () => [42, 777],
+      sleep: () => undefined,
+      termGraceMs: 0,
+      killGraceMs: 0,
+      pollMs: 0,
+    });
+    expect(proof.ok).toBe(false);
+    expect(proof.remainingPids).toEqual([42, 777]);
   });
 
   it('no-ops for invalid pids', () => {
     const kill = vi.fn();
-    killProcessTree(0, { platform: 'linux', kill });
-    killProcessTree(undefined, { platform: 'linux', kill });
+    expect(killProcessTree(0, { platform: 'linux', kill })).toEqual({
+      ok: true,
+      remainingPids: [],
+      signalled: [],
+    });
+    expect(killProcessTree(undefined, { platform: 'linux', kill })).toEqual({
+      ok: true,
+      remainingPids: [],
+      signalled: [],
+    });
     expect(kill).not.toHaveBeenCalled();
   });
 });
@@ -754,11 +790,14 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
 
   it('kills the process tree on timeout', async () => {
     const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
-    const killTree = vi.fn();
     const child = new EventEmitter();
     child.pid = 777;
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
+    const killTree = vi.fn(() => {
+      queueMicrotask(() => child.emit('close', null));
+      return { ok: true, remainingPids: [], signalled: ['group:SIGKILL'] };
+    });
 
     await expect(
       runPackagedSmoke(targetPath, {
@@ -788,11 +827,15 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
 
   it('stops the isolated process once functional readiness is proven', async () => {
     const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
-    const killTree = vi.fn();
     const child = new EventEmitter();
     child.pid = 778;
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
+    // Smoke now waits for close + tree proof after functional-ready.
+    const killTree = vi.fn(() => {
+      queueMicrotask(() => child.emit('close', 0));
+      return { ok: true, remainingPids: [], signalled: ['group:SIGTERM'] };
+    });
 
     const result = await runPackagedSmoke(targetPath, {
       platform: 'linux',
@@ -817,6 +860,7 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
 
     expect(result.code).toBe(0);
     expect(killTree).toHaveBeenCalledWith(778, { platform: 'linux' });
+    expect(result.treeProof?.ok).toBe(true);
   });
 });
 

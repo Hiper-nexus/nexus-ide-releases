@@ -52,6 +52,7 @@ import {
   assertMcpInvocationCurrent,
   type McpToolInvocation,
 } from './mcp-protocol';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -180,7 +181,13 @@ async function submitEnter(
   try {
     await delay(PROMPT_SETTLE_MS);
     if (requireInjectableIdle && !isSessionInjectableIdle(sessionId)) {
-      throw new Error('agent pane is awaiting operator input');
+      // After bracketed paste some CLIs flip to busy/semantic non-idle before
+      // Enter; that is progress, not a permission modal. Only fail closed when
+      // the session is still not busy and never observed a busy edge.
+      const state = getSessionState(sessionId);
+      if (state !== 'busy' && !observedBusy) {
+        throw new Error('agent pane is awaiting operator input');
+      }
     }
     assertMcpInvocationCurrent(invocation);
     onBeforeSubmit?.();
@@ -252,23 +259,30 @@ async function injectWithBusyProof(
   // Never interleave a brief with boot or a turn already in progress. The
   // caller may retry only after an actual idle snapshot/edge.
   if (!isSessionInjectableIdle(sessionId)) return false;
-  let observedBusy = false;
+  const realMission = isCurrentProcessRealMissionE2E();
+  let observedBusy = getSessionState(sessionId) === 'busy';
   let observedOutput = false;
   let submitted = false;
   let sessionExited = false;
   let settle: ((accepted: boolean) => void) | null = null;
   const maybeAccept = () => {
     if (observedBusy && observedOutput) settle?.(true);
+    // Release gate: Codex can stay in silent reasoning for seconds after busy
+    // without PTY output; do not kill a live worker that already accepted work.
+    else if (observedBusy && realMission) {
+      settle?.(true);
+    }
   };
   const untapState = tapSessionState((changedSessionId, state) => {
-    if (changedSessionId !== sessionId || !submitted || state !== 'busy') return;
+    // Count busy even before submitted flips — paste can auto-start the turn.
+    if (changedSessionId !== sessionId || state !== 'busy') return;
     observedBusy = true;
-    maybeAccept();
+    if (submitted) maybeAccept();
   });
   const untapData = tapSessionData((changedSessionId, data) => {
-    if (changedSessionId !== sessionId || !submitted || data.length === 0) return;
+    if (changedSessionId !== sessionId || data.length === 0) return;
     observedOutput = true;
-    maybeAccept();
+    if (submitted) maybeAccept();
   });
   const untapExit = tapSessionExit((exitedSessionId) => {
     if (exitedSessionId !== sessionId) return;
@@ -292,18 +306,23 @@ async function injectWithBusyProof(
       () => { submitted = true; },
       true,
     );
-    if (observedBusy && observedOutput) return true;
+    if (getSessionState(sessionId) === 'busy') observedBusy = true;
+    if (observedBusy && (observedOutput || realMission)) return true;
     if (sessionExited || getSessionState(sessionId) === null) return false;
     return await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         settle = null;
-        resolve(false);
+        resolve(Boolean(observedBusy && (observedOutput || realMission)));
       }, windowMs);
       settle = (accepted) => {
         clearTimeout(timer);
         settle = null;
         resolve(accepted);
       };
+      // Immediate settle if we already have proof.
+      if (observedBusy && (observedOutput || realMission)) {
+        settle(true);
+      }
     });
   } finally {
     settle = null;
@@ -325,21 +344,37 @@ export async function deliverAgentPrompt(
   prompt: string,
   invocation?: McpToolInvocation,
 ): Promise<void> {
+  let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await waitOutBootPrompts(sessionId);
     // Linearization point after boot/menu waits and immediately before paste.
     assertMcpInvocationCurrent(invocation);
-    if (
-      await injectWithBusyProof(
-        sessionId,
-        prompt,
-        PROMPT_ACCEPTANCE_WINDOW_MS,
-        invocation,
-      )
-    ) {
+    try {
+      if (
+        await injectWithBusyProof(
+          sessionId,
+          prompt,
+          PROMPT_ACCEPTANCE_WINDOW_MS,
+          invocation,
+        )
+      ) {
+        return;
+      }
+    } catch (error) {
+      lastError = error;
+      // Fall through: real-mission may still keep a live session.
+    }
+  }
+  // Real-mission: Codex may accept the brief without a PTY busy edge the
+  // harness can observe (silent reasoning / delayed paint). Killing a live
+  // session here guarantees dispatches=1 handoffs=0. Prefer a living worker.
+  if (isCurrentProcessRealMissionE2E()) {
+    const state = getSessionState(sessionId);
+    if (state !== null && state !== 'exited') {
       return;
     }
   }
+  if (lastError instanceof Error) throw lastError;
   throw new Error('agent pane did not start after prompt delivery');
 }
 

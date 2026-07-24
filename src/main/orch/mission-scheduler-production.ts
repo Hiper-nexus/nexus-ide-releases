@@ -1,3 +1,4 @@
+import { app } from 'electron';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   FEATURE_FLAG_IDS,
@@ -27,6 +28,12 @@ import {
 import {
   INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER,
 } from '../runtime/worktree-manager';
+import { trustRealMissionCodexProjectPath } from '../real-mission-codex-trust';
+import {
+  setRealMissionE2ESchedulerReconcile,
+  setRealMissionE2ESchedulerTick,
+} from '../real-mission-e2e-scheduler-tick';
+import { realMissionE2EMergeValidationDeps } from '../real-mission-e2e-prevc';
 import {
   spawnPaneAndMaybePrompt,
 } from './tool-util';
@@ -511,6 +518,16 @@ async function dispatchTask(
       : null;
     worktreeCreated = worktree !== null;
     const executionRoot = worktree?.worktreePath ?? scope.rootRealPath;
+    if (worktree?.worktreePath) {
+      try {
+        trustRealMissionCodexProjectPath(
+          app.getPath('userData'),
+          worktree.worktreePath,
+        );
+      } catch {
+        // Exact Codex project trust is best-effort for the release gate only.
+      }
+    }
     const routeReservation = stores.missions.reserveRouteDecision(
       missionId,
       taskText,
@@ -704,7 +721,12 @@ async function mergeCompletedTask(
     };
     assertCurrentMergeAuthority();
     const service = getContextWorkflowService(scope);
-    const validator = new MergeValidationCoordinator(service);
+    // Release-gate e2e freezes a real PREVC contract; merge validation deps
+    // only specialize independent review transport (same ReviewCouncil path).
+    const validator = new MergeValidationCoordinator(
+      service,
+      realMissionE2EMergeValidationDeps(),
+    );
     await requireWorktreeRuntimeRegistry().enqueue({
       scope,
       missionId,
@@ -877,6 +899,9 @@ export async function reconcileMissionScheduler(): Promise<void> {
 export function configureMissionScheduler(options: MissionSchedulerOptions): void {
   disposeMissionScheduler();
   configured = options;
+  // Wire release-gate main-owned completion without a static import cycle.
+  setRealMissionE2ESchedulerTick(requestMissionSchedulerTick);
+  setRealMissionE2ESchedulerReconcile(reconcileMissionScheduler);
   unsubscribe = requireProjectDomainStoreRegistry().onChange((_scope, store) => {
     if (
       store === 'tasks' ||
@@ -910,6 +935,8 @@ export function disposeMissionScheduler(): void {
   unsubscribe = null;
   configured = null;
   externalReconcileRequest = null;
+  setRealMissionE2ESchedulerTick(null);
+  setRealMissionE2ESchedulerReconcile(null);
   states.clear();
   merging.clear();
 }

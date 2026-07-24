@@ -77,12 +77,36 @@ vi.mock('../adapters/adapter-registry', () => ({
           ? ompAdapter
           : null,
   isBinResolvable: () => true,
+  getAdapterResolvedBin: (id: string) =>
+    id === 'claude'
+      ? '/usr/local/bin/claude'
+      : id === 'kimi'
+        ? '/Users/test/.kimi-code/bin/kimi'
+        : id === 'omp'
+          ? '/usr/local/bin/omp'
+          : null,
+  resolveAdapterBinary: (id: string) =>
+    id === 'claude'
+      ? '/usr/local/bin/claude'
+      : id === 'kimi'
+        ? '/Users/test/.kimi-code/bin/kimi'
+        : id === 'omp'
+          ? '/usr/local/bin/omp'
+          : null,
+  rescanAdapterBinaries: vi.fn(() => []),
   listAdapters: () => [claudeAdapter, kimiAdapter, ompAdapter],
   notifyAdaptersChanged: vi.fn(),
   primaryKeyEnvVar: (adapter: typeof claudeAdapter | typeof kimiAdapter) =>
     'envVarFallback' in adapter.auth
       ? adapter.auth.envVarFallback
       : null,
+}));
+
+// Unit tests use synthetic absolute paths that do not exist on disk.
+vi.mock('../path-resolver', () => ({
+  revalidateExecutable: (binPath: string) =>
+    typeof binPath === 'string' &&
+    (binPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(binPath)),
 }));
 
 vi.mock('../adapters/control-args', () => ({
@@ -228,7 +252,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(result).toEqual({
       ok: true,
       overrides: {
-        binPath: null,
+        binPath: '/Users/test/.kimi-code/bin/kimi',
         defaultModel: null,
         extraArgs: [],
         keyEnv: {
@@ -301,7 +325,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(result).toEqual({
       ok: true,
       overrides: {
-        binPath: null,
+        binPath: '/usr/local/bin/claude',
         defaultModel: null,
         extraArgs: [],
         keyEnv: { ANTHROPIC_API_KEY: 'sk-exact-selected' },
@@ -334,7 +358,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(result).toEqual({
       ok: true,
       overrides: {
-        binPath: null,
+        binPath: '/usr/local/bin/claude',
         defaultModel: null,
         extraArgs: [],
         keyEnv: {

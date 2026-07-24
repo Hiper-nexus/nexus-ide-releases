@@ -667,8 +667,80 @@ async function findFileByName(root, fileNamePattern) {
 }
 
 /**
- * Terminate the Electron process tree. On POSIX the child is spawned detached
- * (new process group); kill(-pid) reaps helpers. On Windows use taskkill /T.
+ * Live PIDs that still belong to the smoke process group (or are direct
+ * descendants of `rootPid`). Used to prove spawn-helper / zsh orphans are gone.
+ *
+ * @returns {number[]}
+ */
+export function listProcessTreePids(
+  rootPid,
+  {
+    platform = process.platform,
+    runSync = spawnSync,
+  } = {},
+) {
+  if (!rootPid || rootPid <= 0 || platform === 'win32') return [];
+  const result = runSync(
+    'ps',
+    ['-axo', 'pid=,ppid=,pgid='],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      shell: false,
+      env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
+    },
+  );
+  if (result.status !== 0 || typeof result.stdout !== 'string') return [];
+  /** @type {Map<number, { ppid: number, pgid: number }>} */
+  const rows = new Map();
+  for (const line of result.stdout.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/u.exec(line);
+    if (!match) continue;
+    rows.set(Number(match[1]), {
+      ppid: Number(match[2]),
+      pgid: Number(match[3]),
+    });
+  }
+  if (!rows.has(rootPid)) {
+    // Root already gone: still collect orphans that kept the same process group.
+    const leftovers = [];
+    for (const [pid, row] of rows) {
+      if (row.pgid === rootPid) leftovers.push(pid);
+    }
+    return leftovers.sort((a, b) => a - b);
+  }
+  const live = new Set([rootPid]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [pid, row] of rows) {
+      if (live.has(pid)) continue;
+      if (row.pgid === rootPid || live.has(row.ppid)) {
+        live.add(pid);
+        grew = true;
+      }
+    }
+  }
+  return [...live].sort((a, b) => a - b);
+}
+
+function sleepMs(ms, sleep = (n) => {
+  // Synchronous sleep via Atomics so unit tests can inject a no-op.
+  const buf = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(buf, 0, 0, Math.max(0, n));
+}) {
+  if (ms > 0) sleep(ms);
+}
+
+/**
+ * Terminate the Electron process tree and prove helpers are gone.
+ *
+ * On POSIX the child is spawned detached (new process group). Escalate
+ * SIGTERM → SIGKILL so real-mission can flush evidence on before-quit, then
+ * re-scan `ps` until spawn-helper / zsh descendants exit (or timeout).
+ * On Windows use taskkill /T.
+ *
+ * @returns {{ ok: boolean, remainingPids: number[], signalled: string[] }}
  */
 export function killProcessTree(
   pid,
@@ -676,26 +748,74 @@ export function killProcessTree(
     platform = process.platform,
     kill = process.kill.bind(process),
     runSync = spawnSync,
+    listPids = listProcessTreePids,
+    sleep = sleepMs,
+    termGraceMs = 1_500,
+    killGraceMs = 1_500,
+    pollMs = 100,
   } = {},
 ) {
-  if (!pid || pid <= 0) return;
+  if (!pid || pid <= 0) {
+    return { ok: true, remainingPids: [], signalled: [] };
+  }
   if (platform === 'win32') {
     runSync('taskkill', ['/pid', String(pid), '/T', '/F'], {
       stdio: 'ignore',
       windowsHide: true,
       shell: false,
     });
-    return;
+    return { ok: true, remainingPids: [], signalled: ['taskkill'] };
   }
-  try {
-    kill(-pid, 'SIGKILL');
-  } catch {
+
+  /** @type {string[]} */
+  const signalled = [];
+  const signalGroup = (signal) => {
     try {
-      kill(pid, 'SIGKILL');
+      kill(-pid, signal);
+      signalled.push(`group:${signal}`);
     } catch {
-      // Process already exited.
+      try {
+        kill(pid, signal);
+        signalled.push(`pid:${signal}`);
+      } catch {
+        // Process already exited.
+      }
+    }
+  };
+
+  const waitUntilGone = (budgetMs) => {
+    const deadline = Date.now() + budgetMs;
+    let remaining = listPids(pid, { platform, runSync });
+    while (remaining.length > 0 && Date.now() < deadline) {
+      sleep(pollMs);
+      remaining = listPids(pid, { platform, runSync });
+    }
+    return remaining;
+  };
+
+  // Soft stop first: Electron before-quit + real-mission evidence flush.
+  signalGroup('SIGTERM');
+  let remaining = waitUntilGone(termGraceMs);
+  if (remaining.length === 0) {
+    return { ok: true, remainingPids: [], signalled };
+  }
+
+  // Hard stop process group + root, then re-check for orphans.
+  signalGroup('SIGKILL');
+  for (const orphan of remaining) {
+    try {
+      kill(orphan, 'SIGKILL');
+      signalled.push(`orphan:${orphan}:SIGKILL`);
+    } catch {
+      // Already gone or not owned.
     }
   }
+  remaining = waitUntilGone(killGraceMs);
+  return {
+    ok: remaining.length === 0,
+    remainingPids: remaining,
+    signalled,
+  };
 }
 
 /**
@@ -763,6 +883,8 @@ export async function runPackagedSmoke(
 
   let output = '';
   let runtimeExecuted = false;
+  /** @type {{ ok: boolean, remainingPids: number[], signalled: string[] } | null} */
+  let treeProof = null;
 
   try {
     const code = await new Promise((resolve, reject) => {
@@ -773,6 +895,7 @@ export async function runPackagedSmoke(
       );
       runtimeExecuted = true;
       let settled = false;
+      let readySeen = false;
       let timeout;
       const finish = (fn, value) => {
         if (settled) return;
@@ -780,15 +903,28 @@ export async function runPackagedSmoke(
         clearTimeout(timeout);
         fn(value);
       };
+      const reapTree = () => {
+        treeProof = killTree(child.pid, { platform }) ?? {
+          ok: true,
+          remainingPids: [],
+          signalled: [],
+        };
+        if (!treeProof.ok) {
+          process.stderr.write(
+            `[smoke] process-tree still live after kill: pids=${treeProof.remainingPids.join(',')}\n`,
+          );
+        }
+      };
       const append = (chunk) => {
         output = (output + chunk.toString()).slice(-MAX_LOG_CHARS);
         // The functional proof is the release contract. Some Linux images
         // leave a browser helper alive after the app has proved readiness;
         // terminate the isolated smoke process tree at that point instead of
-        // turning a valid proof into a timeout.
-        if (!settled && output.includes('[smoke] functional-ready')) {
-          killTree(child.pid, { platform });
-          finish(resolve, 0);
+        // turning a valid proof into a timeout. Wait for close + tree proof
+        // before resolving so spawn-helper/zsh cannot outlive the smoke.
+        if (!settled && !readySeen && output.includes('[smoke] functional-ready')) {
+          readySeen = true;
+          reapTree();
         }
       };
       child.stdout?.on('data', append);
@@ -796,7 +932,7 @@ export async function runPackagedSmoke(
       child.once('error', (error) => finish(reject, error));
 
       timeout = setTimeout(() => {
-        killTree(child.pid, { platform });
+        reapTree();
         const captured = output.trim();
         finish(
           reject,
@@ -808,12 +944,37 @@ export async function runPackagedSmoke(
       }, timeoutMs);
       timeout.unref?.();
 
-      child.once('close', (exitCode) => finish(resolve, exitCode));
+      child.once('close', (exitCode) => {
+        // If ready fired but close raced before kill finished, re-check tree.
+        if (readySeen && (!treeProof || !treeProof.ok)) {
+          reapTree();
+        }
+        if (readySeen && treeProof && !treeProof.ok) {
+          finish(
+            reject,
+            new Error(
+              `packaged smoke left orphan processes after termination: ` +
+                treeProof.remainingPids.join(','),
+            ),
+          );
+          return;
+        }
+        // Functional-ready path always counts as success once the tree is dead,
+        // even if Electron's exit code is non-zero after a forced kill.
+        finish(resolve, readySeen ? 0 : exitCode);
+      });
     });
 
     assertPackagedSmokeProof(code, output);
     await assertFunctionalMarker(userData);
     process.stdout.write(output);
+    if (treeProof) {
+      process.stdout.write(
+        `\n[smoke] process-tree ok=${treeProof.ok} ` +
+          `remaining=${treeProof.remainingPids.length} ` +
+          `signalled=${treeProof.signalled.join(',') || 'none'}\n`,
+      );
+    }
 
     const matrix = packagedSmokeValidationMatrix({
       hostPlatform: process.platform,
@@ -823,7 +984,7 @@ export async function runPackagedSmoke(
     process.stdout.write(
       `\n[smoke] validation-matrix\n${formatValidationMatrix(matrix)}\n`,
     );
-    return { code, output, matrix, target };
+    return { code, output, matrix, target, treeProof };
   } finally {
     await fs.rm(userData, { recursive: true, force: true });
   }

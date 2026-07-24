@@ -419,6 +419,8 @@ export interface NexusApi {
   };
   adapters: {
     list(): Promise<AdapterInfo[]>;
+    /** Re-fold PATH and re-probe every CLI binary (e.g. after brew/npm install). */
+    rescan(): Promise<AdapterInfo[]>;
     onChanged(cb: (adapters: AdapterInfo[]) => void): Unsubscribe;
   };
   onboarding: {

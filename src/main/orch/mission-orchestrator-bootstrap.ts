@@ -292,7 +292,10 @@ export function runtimeAuthorityMismatches(
   check('agent.sessionId×mission', agent.sessionId, mission.orchestratorSessionId);
   check('agent.paneId×pane', agent.paneId, pane.paneId);
   check('agent.adapterId×pane', agent.adapterId, pane.adapterId);
-  check('agent.model×pane', agent.model, pane.model);
+  // Compare the REQUESTED model (0.19.27 fix): providers normalize the
+  // model alias in agent.model; the seal validates what was requested and
+  // approved, never the provider's normalized spelling.
+  check('agent.requestedModel×pane', agent.requestedModel, pane.model);
   check('agent.accountId×pane', agent.accountId, pane.accountId);
   check('agent.effort×pane', agent.effort, pane.effort);
   check('agent.cwd×pane', agent.cwd, pane.cwd);

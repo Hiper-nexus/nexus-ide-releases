@@ -71,6 +71,13 @@ const CODEX_MCP_TOKEN_ENV_VAR = "NEXUS_MCP_TOKEN";
  * compatibilidade com callers durante o rollout. O segredo nunca entra no
  * argv; o Codex lê o valor de `NEXUS_MCP_TOKEN` no ambiente do processo.
  */
+/**
+ * Bound MCP tool latency so a hung tools/call (e.g. concurrent Promise.all
+ * from Codex `exec`) fails closed instead of parking the orchestrator forever
+ * and starving handoff delivery / plan sealing.
+ */
+export const CODEX_MCP_TOOL_TIMEOUT_SEC = 45;
+
 export function codexMcpArgs(url: string, _legacyToken?: string): string[] {
   const serverName =
     `nexus_${randomBytes(CODEX_MCP_SERVER_RANDOM_BYTES).toString("hex")}`;
@@ -79,6 +86,8 @@ export function codexMcpArgs(url: string, _legacyToken?: string): string[] {
     `mcp_servers.${serverName}.url=${JSON.stringify(url)}`,
     "-c",
     `mcp_servers.${serverName}.bearer_token_env_var=${JSON.stringify(CODEX_MCP_TOKEN_ENV_VAR)}`,
+    "-c",
+    `mcp_servers.${serverName}.tool_timeout_sec=${CODEX_MCP_TOOL_TIMEOUT_SEC}`,
   ];
 }
 

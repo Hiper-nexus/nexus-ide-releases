@@ -1,4 +1,5 @@
 import type { CliPtyAdapter } from '../../shared/adapter-types';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import type { SpawnAuthoritySource } from '../orch/spawn-authority';
 
 const CLAUDE_MUTATING_NATIVE_TOOLS = [
@@ -17,6 +18,15 @@ export interface NativeEffectAuthority {
   readonly readOnly?: boolean;
   /** Native CLI confinement independent from Nexus MCP delegation authority. */
   readonly nativeReadOnly?: boolean;
+}
+
+export interface AutonomousCliPolicyOptions {
+  /**
+   * Permit an already mission-bound orchestrator to use audited Nexus MCP
+   * without a second provider prompt while native filesystem access remains
+   * read-only.
+   */
+  readonly unattendedNexusMcp?: boolean;
 }
 
 /**
@@ -81,6 +91,19 @@ function appendOnce(args: string[], sequence: readonly string[]): void {
   if (!alreadyPresent) args.push(...sequence);
 }
 
+function removeFlagValuePairs(args: string[], flag: string): string[] {
+  const result: string[] = [];
+  for (let index = 0; index < args.length; ) {
+    if (args[index] === flag && args[index + 1] !== undefined) {
+      index += 2;
+      continue;
+    }
+    result.push(args[index]!);
+    index += 1;
+  }
+  return result;
+}
+
 function declaresEnforceableReadOnly(
   safeArgs: readonly string[],
 ): boolean {
@@ -143,11 +166,24 @@ export function secureAutonomousCliArgs(
   adapter: CliPtyAdapter,
   currentArgs: readonly string[],
   readOnly = false,
+  options: AutonomousCliPolicyOptions = {},
 ): string[] {
   const permission = adapter.control?.permission;
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
   const safeArgs = permission?.safe ?? [];
-  const requestedFullAuto = requestedFullAutoSequence(adapter, currentArgs);
+  // Release-gate workers run in disposable worktrees. Without YOLO they stall
+  // on Codex project-trust / approval prompts and fail as "awaiting operator
+  // input" before any handoff can exist.
+  const releaseGateFullAuto =
+    isCurrentProcessRealMissionE2E() &&
+    adapter.id === 'codex' &&
+    (permission?.yolo?.length ?? 0) > 0
+      ? permission!.yolo
+      : [];
+  const requestedFullAuto =
+    releaseGateFullAuto.length > 0
+      ? releaseGateFullAuto
+      : requestedFullAutoSequence(adapter, currentArgs);
 
   /*
    * Read-only is an authority boundary, not a provider preference. Resolve it
@@ -186,6 +222,21 @@ export function secureAutonomousCliArgs(
       ]);
       readOnlyArgs = removeSequence(readOnlyArgs, ['--sandbox', 'read-only']);
       appendOnce(readOnlyArgs, ['--sandbox', 'read-only']);
+
+      if (options.unattendedNexusMcp) {
+        const approvalFlag = permission?.arg;
+        const automaticApprovalMode = permission?.modes.auto;
+        if (
+          approvalFlag !== '--ask-for-approval' ||
+          automaticApprovalMode !== 'never'
+        ) {
+          throw new Error(
+            'Codex adapter does not declare unattended audited MCP approval',
+          );
+        }
+        readOnlyArgs = removeFlagValuePairs(readOnlyArgs, approvalFlag);
+        appendOnce(readOnlyArgs, [approvalFlag, automaticApprovalMode]);
+      }
     }
 
     if (claudeToolConfinement) {

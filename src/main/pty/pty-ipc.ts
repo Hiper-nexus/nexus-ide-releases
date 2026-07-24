@@ -24,7 +24,13 @@ import {
   setPtyHost,
 } from "./pty-manager";
 import { createRealPtyHost } from "./pty-host-client";
-import { getAdapter, isAdapterInstalled } from "../adapters/adapter-registry";
+import {
+  getAdapter,
+  getAdapterResolvedBin,
+  isAdapterInstalled,
+  resolveAdapterBinary,
+} from "../adapters/adapter-registry";
+import { revalidateExecutable } from "../path-resolver";
 import type {
   CliPtyAdapter,
   CliRpcAdapter,
@@ -233,12 +239,45 @@ function spawnCliPtyAgentPane(
     if (!preparation.ok) {
       throw new Error(preparation.error);
     }
-    const { overrides } = preparation;
-    if (!overrides.binPath && !isAdapterInstalled(adapter.id)) {
+    // Revalidate immediately before spawn: discovery cache can go stale after
+    // uninstall/move, and Finder launches must never re-search a bare name.
+    // Do not mutate preparation.overrides — build a fresh overrides object.
+    let spawnBin =
+      preparation.overrides.binPath &&
+      revalidateExecutable(preparation.overrides.binPath)
+        ? preparation.overrides.binPath
+        : null;
+    if (!spawnBin) {
+      // Prefer a still-valid cached path; otherwise live-resolve (updates cache).
+      // Stale cache alone must not block a successful live PATH walk (CodeRabbit).
+      const cached = getAdapterResolvedBin(adapter.id);
+      if (cached && revalidateExecutable(cached)) {
+        spawnBin = cached;
+      } else {
+        spawnBin = resolveAdapterBinary(adapter.id);
+        if (spawnBin && !revalidateExecutable(spawnBin)) {
+          spawnBin = null;
+        }
+      }
+    }
+    if (!spawnBin) {
+      // After live resolve, cache reflects truth — pick the accurate message.
+      if (!isAdapterInstalled(adapter.id)) {
+        throw new Error(
+          `${adapter.label} not found on PATH. Install: ${adapter.install.command}`,
+        );
+      }
       throw new Error(
-        `${adapter.label} not found. Install: ${adapter.install.command}`,
+        `${adapter.label} is installed but Nexus could not resolve an absolute ` +
+          `executable path for "${adapter.bin}". Open Settings → Providers → ` +
+          `Reexaminar CLIs, or set an absolute binary path. Common locations: ` +
+          `~/.kimi-code/bin, ~/.local/bin, /opt/homebrew/bin, npm global bin.`,
       );
     }
+    const overrides = {
+      ...preparation.overrides,
+      binPath: spawnBin,
+    };
     const authorizedRequest = { ...request, cwd: authority.cwd };
     const adopted =
       persistedPane && request.paneId

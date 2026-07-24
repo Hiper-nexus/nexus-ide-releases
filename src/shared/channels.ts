@@ -172,6 +172,8 @@ export const LAYOUT_CHANNELS = {
 export const ADAPTER_CHANNELS = {
   list: 'adapter:list',
   changed: 'adapter:changed',
+  /** invoke: re-fold PATH + re-probe every CLI; returns AdapterInfo[]. */
+  rescan: 'adapter:rescan',
 } as const;
 
 export const AGENT_HOOK_CHANNELS = {

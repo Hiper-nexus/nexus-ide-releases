@@ -668,6 +668,7 @@ const api: NexusApi = {
   },
   adapters: {
     list: () => ipcRenderer.invoke(ADAPTER_CHANNELS.list),
+    rescan: () => ipcRenderer.invoke(ADAPTER_CHANNELS.rescan),
     onChanged: (cb) => {
       adapterChangedListeners.add(cb);
       return () => adapterChangedListeners.delete(cb);

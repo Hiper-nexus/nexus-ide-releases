@@ -29,7 +29,29 @@ const PROVIDER_CANDIDATE = {
   authMethod: 'oauth',
 };
 
-function setNexusApi(opts: { installOk?: boolean; installError?: string } = {}) {
+const MISSING_ADAPTER = {
+  id: 'claude',
+  kind: 'cli-pty' as const,
+  label: 'Claude',
+  icon: 'C',
+  models: {
+    list: ['default'],
+    default: 'default',
+  },
+  installed: false,
+  installCommand: 'npm install -g @anthropic-ai/claude-code',
+  loginHint: 'Execute claude para autenticar',
+  idleTimeoutMs: 30_000,
+  orchestratorCapable: true,
+};
+
+function setNexusApi(
+  opts: {
+    installOk?: boolean;
+    installError?: string;
+    adapters?: typeof MISSING_ADAPTER[];
+  } = {},
+) {
   const installCli = vi.fn(async () =>
     opts.installOk === false
       ? { ok: false, error: opts.installError ?? 'falhou' }
@@ -39,7 +61,7 @@ function setNexusApi(opts: { installOk?: boolean; installError?: string } = {}) 
     configurable: true,
     value: {
       adapters: {
-        list: vi.fn(async () => []),
+        list: vi.fn(async () => opts.adapters ?? []),
         onChanged: vi.fn(() => () => {}),
       },
       providers: {
@@ -82,6 +104,7 @@ describe('Onboarding — CTA nunca disabled (critique P2)', () => {
   afterEach(() => {
     useOnboardingStore.setState(initialOnboarding);
     document.body.innerHTML = '';
+    vi.restoreAllMocks();
   });
 
   it('sem CLI: oferece instalar a CLI auto-instalável e, no sucesso, vira Começar a operar', async () => {
@@ -120,6 +143,96 @@ describe('Onboarding — CTA nunca disabled (critique P2)', () => {
     expect(host.textContent).toContain('brew ausente');
     expect(ctaOf(host)[0].textContent).toContain('Instalar Claude');
     expect(ctaOf(host)[0].disabled).toBe(false);
+    act(() => root.unmount());
+  });
+
+  it('fecha sozinho quando missão e handoff já aconteceram (não cobre o campo)', async () => {
+    const complete = vi.fn(async () => ({
+      completed: true,
+      skipped: false,
+      victories: {
+        firstMission: 1,
+        firstHandoff: 2,
+        cliDetected: 3,
+      },
+    }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        adapters: {
+          list: vi.fn(async () => [
+            { ...MISSING_ADAPTER, installed: true, id: 'codex', label: 'Codex' },
+          ]),
+          onChanged: vi.fn(() => () => {}),
+        },
+        providers: {
+          list: vi.fn(async () => []),
+          installCli: vi.fn(),
+        },
+        onboarding: {
+          set: complete,
+        },
+      },
+    });
+    useOnboardingStore.setState({
+      loaded: true,
+      state: {
+        completed: false,
+        skipped: false,
+        victories: {
+          cliDetected: 1,
+          firstMission: 2,
+          firstHandoff: 3,
+        },
+      },
+      complete: () => {
+        void complete();
+        useOnboardingStore.setState({
+          state: {
+            completed: true,
+            skipped: false,
+            victories: {
+              cliDetected: 1,
+              firstMission: 2,
+              firstHandoff: 3,
+            },
+          },
+        });
+      },
+    });
+    const { host, root } = mountOnboarding();
+    await act(async () => {});
+    // Modal must not keep covering the mission field once fleet is live.
+    expect(host.querySelector('.onb')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('mantém Copiar legível, acessível e confirma a cópia do comando', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    setNexusApi({ adapters: [MISSING_ADAPTER] });
+    const { host, root } = mountOnboarding();
+    await act(async () => {});
+
+    const copy = host.querySelector<HTMLButtonElement>('.onb__copy');
+    expect(copy).toBeTruthy();
+    expect(copy?.type).toBe('button');
+    expect(copy?.getAttribute('aria-label')).toBe(
+      'Copiar comando de instalação',
+    );
+    expect(copy?.textContent).toBe('Copiar');
+
+    await act(async () => {
+      copy?.click();
+    });
+
+    expect(writeText).toHaveBeenCalledWith(MISSING_ADAPTER.installCommand);
+    expect(copy?.getAttribute('aria-label')).toBe('Comando copiado');
+    expect(copy?.dataset.copied).toBe('true');
+    expect(copy?.textContent).toBe('Copiado');
     act(() => root.unmount());
   });
 });

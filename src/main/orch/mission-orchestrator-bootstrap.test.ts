@@ -200,6 +200,7 @@ function harness(): Harness {
             paneId: 'pane-main-orch',
             adapterId: 'codex',
             model: 'gpt-5.6-sol',
+            requestedModel: 'gpt-5.6-sol',
             accountId: 'account-codex',
             effort: 'high',
             cwd: scope.rootRealPath,
@@ -436,6 +437,45 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.kickoffPrompts[0]).not.toContain('# Missão antiga');
     expect(value.kickoffPrompts[0]).toContain('## Anexos validados pelo Nexus');
     expect(value.kickoffPrompts[0]).toContain('/validated/proof.png');
+  });
+
+  it('validates the sealed requested model instead of the provider-normalized model', async () => {
+    const value = harness();
+    const defaultRuntime = {
+      ...approvedRuntime,
+      model: undefined,
+    };
+    value.mission = {
+      ...value.mission,
+      intentContract: {
+        ...value.mission.intentContract!,
+        orchestratorRuntime: defaultRuntime,
+      },
+    };
+    value.deps.resolveRuntime = () => defaultRuntime;
+    const getAgentSessionInfo = value.deps.getAgentSessionInfo;
+    value.deps.getAgentSessionInfo = (sessionId) => {
+      const info = getAgentSessionInfo(sessionId);
+      return info
+        ? {
+            ...info,
+            model: 'provider-normalized-default',
+            requestedModel: undefined,
+          }
+        : null;
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    await expect(
+      service.bootstrap(scope, value.mission.id),
+    ).resolves.toMatchObject({
+      ok: true,
+      pane: {
+        model: undefined,
+      },
+      kickoff: { accepted: true },
+    });
+    expect(value.mission.status).toBe('running');
   });
 
   it('singleflights concurrent approval retries without duplicating the PTY', async () => {

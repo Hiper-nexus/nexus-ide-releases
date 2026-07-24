@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execFileSync } from 'node:child_process';
 import type { WebContents } from 'electron';
 import {
   adapterSchema,
@@ -10,6 +9,13 @@ import {
 import type { Adapter, AdapterInfo } from '../../shared/adapter-types';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { ADAPTER_CHANNELS } from '../../shared/channels';
+import {
+  resolveCliBinary,
+  revalidateExecutable,
+  refreshUserPath,
+  getEffectivePath,
+  type CliBinaryResolution,
+} from '../path-resolver';
 import { getCustomModels } from './custom-models';
 import {
   applyDiscoveredEffortsToAdapter,
@@ -91,80 +97,30 @@ export function mergeAdapters(
 }
 
 /**
- * Resolve the login-shell PATH once per process lifetime.
+ * Effective PATH (login shell + curated install dirs). Kept for callers that
+ * still inject PATH into child envs; discovery/spawn should prefer absolute
+ * paths from getAdapterResolvedBin / resolveAdapterBinary.
  *
- * GUI apps launched from Finder/Dock/Spotlight inherit only a minimal PATH
- * (~100 bytes) that omits everything set in the user's shell profile
- * (~/.zprofile, ~/.bash_profile, .bashrc, nvm, volta, Homebrew…).  Spawning
- * the user's login shell with `-l` sources those profiles and gives us the
- * real PATH so `which` can find CLIs installed there.
- *
- * Cost: one synchronous shell spawn at first call (~50–300 ms), then zero —
- * the result is memoised for the process lifetime.
+ * Ensures PATH has been folded at least once so GUI/Finder launches see the
+ * same tools as an interactive shell without every caller re-probing.
  */
-const COMMON_MAC_LINUX_PATHS = [
-  '/opt/homebrew/bin',
-  '/usr/local/bin',
-  path.join(os.homedir(), '.local', 'bin'),
-  path.join(os.homedir(), '.npm-global', 'bin'),
-];
-
-let _loginShellPath: string | null = null;
 export function resolveLoginShellPath(): string {
-  if (_loginShellPath !== null) return _loginShellPath;
-  if (process.platform === 'win32') {
-    _loginShellPath = process.env.PATH ?? '';
-    return _loginShellPath;
+  // getEffectivePath memoises; first call probes login shell once.
+  const effective = getEffectivePath();
+  // Keep process.env in sync for child PTYs that inherit PATH.
+  if (process.env.PATH !== effective) {
+    process.env.PATH = effective;
   }
-  const shell = process.env.SHELL ?? '/bin/bash';
-  let resolved = process.env.PATH ?? '';
-  try {
-    const out = execFileSync(shell, ['-l', '-c', 'printf "%s" "$PATH"'], {
-      stdio: 'pipe',
-      encoding: 'utf-8',
-      timeout: 5_000,
-    });
-    resolved = out.trim() || resolved;
-  } catch {
-    // Heavy profiles timing out won't lock out standard installations.
-  }
-
-  const paths = resolved.split(path.delimiter).filter(Boolean);
-  for (const p of COMMON_MAC_LINUX_PATHS) {
-    if (!paths.includes(p)) {
-      paths.push(p);
-    }
-  }
-  _loginShellPath = paths.join(path.delimiter);
-  return _loginShellPath;
+  return effective;
 }
 
-/** Check whether the CLI binary for an adapter is available on PATH. */
+/** Check whether the CLI binary for an adapter is available (absolute path). */
+function resolveBin(bin: string): CliBinaryResolution | null {
+  return resolveCliBinary(bin);
+}
+
 function isBinInstalled(bin: string): boolean {
-  // `which` doesn't exist on Windows; `where` is the equivalent lookup.
-  const lookup = process.platform === 'win32' ? 'where' : 'which';
-  try {
-    execFileSync(lookup, [bin], { stdio: 'pipe', encoding: 'utf-8' });
-    return true;
-  } catch {
-    // Fast path failed.  Packaged GUI apps on macOS/Linux inherit a minimal
-    // PATH that skips login-shell entries.  Re-try with the full login-shell
-    // PATH so the installed check succeeds for CLIs in ~/.local/bin,
-    // /opt/homebrew/bin, nvm shims, volta, etc.
-  }
-  if (process.platform === 'win32') return false;
-  const lsPath = resolveLoginShellPath();
-  if (!lsPath || lsPath === (process.env.PATH ?? '')) return false;
-  try {
-    execFileSync(lookup, [bin], {
-      stdio: 'pipe',
-      encoding: 'utf-8',
-      env: { ...process.env, PATH: lsPath },
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  return resolveBin(bin) !== null;
 }
 
 function resolveIdleTimeoutMs(adapter: Adapter): number {
@@ -173,8 +129,17 @@ function resolveIdleTimeoutMs(adapter: Adapter): number {
   return idle.type === 'timeout' ? idle.ms : 800;
 }
 
+export interface AdapterBinResolution {
+  installed: boolean;
+  /** Absolute path when installed; null when missing or api-provider. */
+  binPath: string | null;
+}
+
 /** Build a trimmed AdapterInfo safe to send to the renderer. */
-function toAdapterInfo(adapter: Adapter, installed: boolean): AdapterInfo {
+function toAdapterInfo(
+  adapter: Adapter,
+  resolution: AdapterBinResolution,
+): AdapterInfo {
   // cli-rpc shares the CLI install/auth surface with cli-pty (same binary).
   const installCommand =
     adapter.kind !== 'api-provider' ? adapter.install.command : '';
@@ -196,7 +161,8 @@ function toAdapterInfo(adapter: Adapter, installed: boolean): AdapterInfo {
       list: modelList,
       info: modelInfoForAdapter(loadModelCatalog(), adapter.id, modelList),
     },
-    installed,
+    installed: resolution.installed,
+    resolvedBinPath: resolution.binPath,
     installCommand,
     loginHint,
     idleTimeoutMs: resolveIdleTimeoutMs(adapter),
@@ -209,7 +175,8 @@ function toAdapterInfo(adapter: Adapter, installed: boolean): AdapterInfo {
 // ── Registry state ──────────────────────────────────────────────────────────
 
 let registry = new Map<string, Adapter>();
-let installedCache = new Map<string, boolean>();
+/** Discovery cache: installed flag + absolute bin path for spawn. */
+let installedCache = new Map<string, AdapterBinResolution>();
 const listeners = new Set<WebContents>();
 let watcher: fs.FSWatcher | null = null;
 let modelCatalogWatcher: fs.FSWatcher | null = null;
@@ -218,15 +185,25 @@ let periodicRefresh: ReturnType<typeof setInterval> | null = null;
 let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Atomic saves (write-temp + rename) fire 2-4 fs.watch events per file change,
-// and each reload() shells out `which <bin>` for every adapter — enough to stall
-// the main thread. Collapse the burst into one reload after a short quiet period.
+// and each reload() walks PATH for every adapter — enough to stall the main
+// thread. Collapse the burst into one reload after a short quiet period.
 const WATCH_DEBOUNCE_MS = 100;
 
+function resolveAdapterBin(adapter: Adapter): AdapterBinResolution {
+  if (adapter.kind === 'api-provider') {
+    return { installed: true, binPath: null };
+  }
+  const hit = resolveBin(adapter.bin);
+  return {
+    installed: hit !== null,
+    binPath: hit?.binPath ?? null,
+  };
+}
+
 function refreshInstalledCache(): void {
-  const next = new Map<string, boolean>();
+  const next = new Map<string, AdapterBinResolution>();
   for (const [id, adapter] of registry) {
-    const bin = adapter.kind !== 'api-provider' ? adapter.bin : null;
-    next.set(id, bin ? isBinInstalled(bin) : true);
+    next.set(id, resolveAdapterBin(adapter));
   }
   installedCache = next;
 }
@@ -282,7 +259,9 @@ function broadcast(): void {
 
 /** Push the (possibly custom-model-updated) adapter list to the renderer. */
 export function notifyAdaptersChanged(): void {
-  // Thunder-lite: drop hot snapshot so next route_task re-probes install/auth.
+  // Do NOT re-walk PATH here — model catalog / custom-model updates fire this
+  // often and shell probes would stall main. Call rescanAdapterBinaries() after
+  // external installs or explicit "Reexaminar CLIs".
   invalidateAdapterHotCache();
   broadcast();
 }
@@ -396,29 +375,64 @@ export function primaryKeyEnvVar(adapter: Adapter): string | null {
 
 /** Whether a bin path (absolute or bare command) resolves on this machine. */
 export function isBinResolvable(bin: string): boolean {
-  if (bin.includes('/')) {
-    try {
-      return fs.statSync(bin).isFile();
-    } catch {
-      return false;
-    }
-  }
+  if (path.isAbsolute(bin)) return revalidateExecutable(bin);
   return isBinInstalled(bin);
 }
 
 /**
- * Whether an adapter's CLI binary is currently resolvable on PATH. node-pty does
- * not throw for a missing bin on macOS — it spawns and immediately exits 1 — so
- * the spawn IPC must gate on this to surface an install hint instead of a bare
+ * Whether an adapter's CLI binary is currently resolvable. node-pty does not
+ * throw for a missing bin on macOS — it spawns and immediately exits 1 — so the
+ * spawn IPC must gate on this to surface an install hint instead of a bare
  * "process exited (code 1)".
  */
 export function isAdapterInstalled(id: string): boolean {
-  return installedCache.get(id) ?? false;
+  return installedCache.get(id)?.installed ?? false;
+}
+
+/**
+ * Absolute path discovered for an adapter's CLI, or null when missing.
+ * Spawn MUST use this path (or a user absolute override) — never the bare
+ * command name — so detection and execution share the same executable.
+ */
+export function getAdapterResolvedBin(id: string): string | null {
+  return installedCache.get(id)?.binPath ?? null;
+}
+
+/**
+ * Live resolve (bypasses cache). Prefer for pre-spawn revalidation.
+ * Returns absolute path or null.
+ */
+export function resolveAdapterBinary(id: string): string | null {
+  const adapter = registry.get(id);
+  if (!adapter || adapter.kind === 'api-provider') return null;
+  const hit = resolveBin(adapter.bin);
+  if (hit) {
+    installedCache.set(id, { installed: true, binPath: hit.binPath });
+  } else {
+    installedCache.set(id, { installed: false, binPath: null });
+  }
+  return hit?.binPath ?? null;
+}
+
+/**
+ * Re-fold PATH, re-probe every adapter binary, broadcast. Use after external
+ * CLI installs (brew/npm/kimi installer) without restarting the app.
+ */
+export function rescanAdapterBinaries(): AdapterInfo[] {
+  refreshUserPath();
+  refreshInstalledCache();
+  invalidateAdapterHotCache();
+  const infos = listAdapterInfos();
+  broadcastToListeners(listeners, ADAPTER_CHANNELS.changed, infos);
+  return infos;
 }
 
 export function listAdapterInfos(): AdapterInfo[] {
   return [...registry.values()].map((a) =>
-    toAdapterInfo(a, installedCache.get(a.id) ?? false),
+    toAdapterInfo(
+      a,
+      installedCache.get(a.id) ?? { installed: false, binPath: null },
+    ),
   );
 }
 

@@ -87,6 +87,7 @@ describe('ProvidersPanel hub', () => {
       configurable: true,
       value: {
         providers: { authStatus: vi.fn(async () => []) },
+        adapters: { rescan: vi.fn(async () => []) },
       },
     });
   });
@@ -107,9 +108,9 @@ describe('ProvidersPanel hub', () => {
     expect(host.textContent).toContain('Codex');
     expect(host.textContent).not.toContain('Kimi');
     expect(host.textContent).toContain('2/2');
-    // Single refresh CTA (no duplicate buttons).
+    // Single rescan CTA (no duplicate buttons).
     const refresh = [...host.querySelectorAll('button')].filter((b) =>
-      /Atualizar modelos|Atualizando/.test(b.textContent ?? ''),
+      /Reexaminar CLIs|Examinando/.test(b.textContent ?? ''),
     );
     expect(refresh).toHaveLength(1);
     act(() => root.unmount());

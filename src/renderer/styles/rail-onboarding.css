@@ -1515,14 +1515,20 @@
   gap: 6px;
 }
 .onb__install {
-  display: flex;
+  display: grid;
+  grid-template-columns: 20px minmax(70px, max-content) minmax(0, 1fr) 68px;
   align-items: center;
   gap: 8px;
   font-size: 12px;
 }
-.onb__install-label { min-width: 70px; }
+.onb__install-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .onb__install-cmd {
-  flex: 1;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-dim);
@@ -1534,16 +1540,43 @@
   white-space: nowrap;
 }
 .onb__copy {
-  flex: none;
-  font-size: 10px;
-  padding: 3px 8px;
+  width: 68px;
+  min-height: 26px;
+  padding: 3px 7px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
-  background: transparent;
-  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 7%, var(--bg));
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
   cursor: pointer;
 }
-.onb__copy:hover { color: var(--text); border-color: var(--accent); }
+.onb__copy:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.onb__copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.onb__copy[data-copied='true'] {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+@media (max-width: 560px) {
+  .onb__install {
+    grid-template-columns: 20px minmax(0, 1fr) 68px;
+    row-gap: 6px;
+  }
+
+  .onb__install-cmd {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
 .onb__hint {
   font-size: 11px;
   color: var(--text-dim);

@@ -28,8 +28,13 @@ function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
-      className="onb-copy"
+      type="button"
+      className="onb__copy"
       title="Copiar comando"
+      aria-label={
+        copied ? 'Comando copiado' : 'Copiar comando de instalação'
+      }
+      data-copied={copied ? 'true' : undefined}
       onClick={() => {
         void navigator.clipboard.writeText(text).then(() => {
           setCopied(true);
@@ -37,7 +42,7 @@ function CopyButton({ text }: { text: string }) {
         });
       }}
     >
-      {copied ? 'copiado' : 'copiar'}
+      {copied ? 'Copiado' : 'Copiar'}
     </button>
   );
 }
@@ -65,7 +70,20 @@ export function Onboarding() {
 
   useEffect(() => {
     if (!visible) return;
-    void window.nexus.adapters.list().then(setAdapters);
+    // Re-fold PATH + re-probe absolute bins so Finder/isolated-HOME launches
+    // still see claude/kimi/grok under the real account home.
+    const load = async () => {
+      try {
+        if (typeof window.nexus.adapters.rescan === 'function') {
+          setAdapters(await window.nexus.adapters.rescan());
+          return;
+        }
+      } catch {
+        // Fall through to list().
+      }
+      setAdapters(await window.nexus.adapters.list());
+    };
+    void load();
     const unsub = window.nexus.adapters.onChanged(setAdapters);
     return unsub;
   }, [visible]);
@@ -82,6 +100,20 @@ export function Onboarding() {
   useEffect(() => {
     if (installed.length > 0) markVictory('cliDetected');
   }, [installed.length, markVictory]);
+
+  /**
+   * Activation-first (Overclock lesson): once a real mission + handoff already
+   * happened, the welcome modal must not keep covering the mission field.
+   * Victories alone used to leave the user stuck on "Começar a operar" while
+   * toasts said the fleet was already in the field.
+   */
+  const missionAlreadyLive =
+    state.victories.firstMission !== undefined &&
+    state.victories.firstHandoff !== undefined;
+  useEffect(() => {
+    if (!visible || !missionAlreadyLive) return;
+    complete();
+  }, [visible, missionAlreadyLive, complete]);
 
   // Sem CLI detectada: descobre se alguma tem instalador automático — o CTA
   // primário passa a ser "Instalar …" (ação) em vez de um disabled parado.
@@ -241,9 +273,15 @@ export function Onboarding() {
             <button
               className="onb__cta"
               onClick={complete}
-              title="Ir para o deck"
+              title={
+                missionAlreadyLive
+                  ? 'Missão já em andamento — abrir o deck'
+                  : 'Ir para o deck'
+              }
             >
-              Começar a operar ▸
+              {missionAlreadyLive
+                ? 'Ir para a missão ▸'
+                : 'Começar a operar ▸'}
             </button>
           ) : autoInstallable ? (
             <button

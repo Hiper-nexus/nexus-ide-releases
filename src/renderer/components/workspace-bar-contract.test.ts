@@ -21,4 +21,23 @@ describe('workspace bar discoverability contract', () => {
     expect(css).toMatch(/\.term-host--history::after\s*\{/);
     expect(css).toContain('DIGITE PARA VOLTAR AO VIVO');
   });
+
+  it('trunca um nome longo antes de invadir os controles em tela estreita', () => {
+    const css = fs.readFileSync(path.join(ROOT, 'styles/base.css'), 'utf8');
+    const rule = (selector: string) => {
+      const start = css.indexOf(`${selector} {`);
+      if (start < 0) return '';
+      const end = css.indexOf('}', start);
+      return css.slice(start, end + 1);
+    };
+
+    expect(rule('.workspace-bar__ws')).toContain('flex: 1 1 auto');
+    expect(rule('.workspace-bar__name-btn')).toContain('width: 100%');
+    expect(rule('.workspace-bar__name-btn')).toContain('overflow: hidden');
+    expect(rule('.workspace-bar__context-copy')).toContain('overflow: hidden');
+    expect(rule('.workspace-bar__context-copy')).toContain('flex: 1 1 auto');
+    expect(rule('.workspace-bar__name')).toContain('display: block');
+    expect(rule('.workspace-bar__name')).toContain('width: 100%');
+    expect(rule('.workspace-bar__name')).toContain('text-overflow: ellipsis');
+  });
 });

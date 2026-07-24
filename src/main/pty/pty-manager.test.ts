@@ -2,6 +2,30 @@ import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
 import { PTY_CHANNELS } from "../../shared/channels";
+
+// Unit tests use a fake PTY host — pin absolute bin paths so spawn never
+// depends on the machine PATH (same contract as production discovery).
+vi.mock("../path-resolver", () => ({
+  resolveSpawnBinary: (command: string, preferred?: string | null) => {
+    const binPath =
+      preferred && preferred.startsWith("/")
+        ? preferred
+        : `/mock/bin/${command || "cli"}`;
+    return {
+      binPath,
+      effectivePath: "/mock/bin",
+      source: preferred ? "absolute" : "process-path",
+    };
+  },
+  revalidateExecutable: (binPath: string) =>
+    typeof binPath === "string" && binPath.startsWith("/"),
+  resolveCliBinary: (command: string) => ({
+    binPath: `/mock/bin/${command}`,
+    effectivePath: "/mock/bin",
+    source: "process-path",
+  }),
+}));
+
 import {
   agentEnv,
   acknowledgeSessionOutput,
@@ -906,6 +930,72 @@ describe("cli-agent spawn argv hardening", () => {
     );
     expect(h.specFor(spawned.sessionId).args).toContain("on-request");
     expect(h.specFor(spawned.sessionId).args).toContain("read-only");
+  });
+
+  it("keeps an approved pre-freeze Codex orchestrator read-only without provider prompts", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const base = makeAdapter({
+      static: {},
+      passthrough: [],
+      ephemeralHome: false,
+    });
+    const codex: CliPtyAdapter = {
+      ...base,
+      id: "codex",
+      quirks: {
+        ...base.quirks,
+        nexusMcp: "codex",
+      },
+      control: {
+        permission: {
+          arg: "--ask-for-approval",
+          safe: [
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "on-request",
+          ],
+          yolo: ["--dangerously-bypass-approvals-and-sandbox"],
+          modes: { auto: "never" },
+          default: "",
+        },
+      },
+    };
+    const baseAuthority = trustedSpawn();
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      source: "pending",
+      context: {
+        missionId: "mission-orchestrator",
+        role: "orchestrator",
+        readOnly: false,
+        nativeReadOnly: true,
+        scope: baseAuthority.scope,
+        executionScope: baseAuthority.scope,
+      },
+    };
+
+    const spawned = spawnAgentSession(
+      fakeWc(),
+      { kind: "cli-agent", cols: 80, rows: 24 },
+      codex,
+      {},
+      authority,
+    );
+
+    expect(h.specFor(spawned.sessionId).args).toEqual(
+      expect.arrayContaining([
+        "--sandbox",
+        "read-only",
+        "--ask-for-approval",
+        "never",
+      ]),
+    );
+    expect(h.specFor(spawned.sessionId).args).not.toContain("on-request");
+    expect(h.specFor(spawned.sessionId).args).not.toContain(
+      "--dangerously-bypass-approvals-and-sandbox",
+    );
   });
 
   it("reports every scoped agent session even when the provider chooses its id", () => {

@@ -1,10 +1,12 @@
 import type { ProjectExecutionScope } from '../../shared/types';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import {
   getAgentSessionInfo,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
+import { advanceRealMissionE2EMainOwnedChain } from '../real-mission-e2e-main-owned';
 import { getContextBySession } from './gate';
 import { getExternalWorkerSessionInfo } from './external-worker-session-registry';
 import {
@@ -99,6 +101,59 @@ function blockExitedSession(
   if (!authority?.workerIncarnationId) return;
   const preferred = suiteForSession(sessionId);
   const candidates = preferred ? [preferred] : [...suites.values()];
+
+  // Release gate: CLIs do not orchestrate. If the worker PTY dies before the
+  // LLM submits a handoff, finish the durable artifact path while the
+  // dispatch is still `running` — before the exit fence blocks the mission.
+  if (
+    isCurrentProcessRealMissionE2E() &&
+    authority.role === 'worker' &&
+    authority.missionId
+  ) {
+    for (const suite of candidates) {
+      try {
+        const advanced = advanceRealMissionE2EMainOwnedChain(
+          suite,
+          authority.missionId,
+          suite.scope,
+        );
+        if (advanced.advanced) {
+          console.log(
+            `[task-dispatch-lifecycle] real-mission main-owned on exit: ${advanced.reason}`,
+          );
+          // Handoff accepted → exit fence must not block a completed path.
+          const current = suite.taskDispatches
+            .list(authority.missionId)
+            .find(
+              (row) =>
+                row.sessionId === sessionId &&
+                row.workerIncarnationId === authority.workerIncarnationId,
+            );
+          if (
+            current &&
+            ['handoff_ready', 'merging', 'completed'].includes(current.state)
+          ) {
+            return;
+          }
+        }
+      } catch (error) {
+        console.warn(
+          '[task-dispatch-lifecycle] real-mission main-owned on exit failed:',
+          error,
+        );
+      }
+    }
+    // Release gate: a worker PTY is terminal once it exits (the dispatch is
+    // completed by the main-owned chain + durable merge, never by re-engaging
+    // the dead worker). Do NOT block the mission here. If the worktree was not
+    // ready at exit time, the chain could not advance yet — the observer tick
+    // retries advanceRealMissionE2EMainOwnedChain until the worktree is ready
+    // and the artifact/handoff/merge land. Blocking now would wedge the
+    // mission, because the main-owned chain refuses to advance a blocked
+    // status. The gate's own timeout bounds a genuinely stuck run.
+    return;
+  }
+
   for (const suite of candidates) {
     try {
       const blocked = suite.taskDispatches.blockSessionExit({

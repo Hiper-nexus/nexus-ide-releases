@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
+  REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_CTA,
   REAL_MISSION_E2E_FLAG,
+  REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_ORCHESTRATOR_ID,
   REAL_MISSION_E2E_SQUAD_ID,
   REAL_MISSION_E2E_WORKER_ID,
@@ -209,6 +211,13 @@ describe('real mission E2E closed receipts', () => {
         },
       ],
     });
+    expect(fixture.orchestratorInstructions).toContain(
+      'orquestração real é do main',
+    );
+    expect(fixture.orchestratorInstructions).toContain(
+      'pode concluir o artefato do worker',
+    );
+    expect(fixture.orchestratorInstructions).toContain('e2e-worker');
   });
 
   it('arms observation only for the exact sealed pre-approval fixture', () => {
@@ -221,20 +230,12 @@ describe('real mission E2E closed receipts', () => {
       intentContract: {
         version: 1,
         source: 'automation',
-        goal:
-          'Delegue a um worker do roster a criação de resultado.txt com o conteúdo exato ' +
-          '"nexus-real-mission-e2e-ok\\n", integre o commit local pelo motor Nexus e conclua ' +
-          'somente após receber o handoff. O orquestrador não pode editar nem commitar o arquivo.',
+        goal: REAL_MISSION_E2E_GOAL,
         executionMode: 'autopilot',
         lane: 'standard',
         contextPolicy: 'minimal',
         intentVersion: 1,
-        acceptanceCriteria: [
-          'Um worker Codex do roster, e não o orquestrador, cria resultado.txt.',
-          'resultado.txt contém exatamente nexus-real-mission-e2e-ok seguido de newline.',
-          'O worker faz um commit local no worktree e envia nexus_handoff_submit com status success.',
-          'O motor Nexus aceita o handoff, integra o commit e marca a missão done sem atalho manual.',
-        ],
+        acceptanceCriteria: [...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA],
       },
     } as const;
 
@@ -317,6 +318,22 @@ describe('real mission E2E closed receipts', () => {
     (extraCommit.repository as Record<string, unknown>).commitCount = 3;
     (extraCommit.repository as Record<string, unknown>).exactSingleCommit = false;
     expect(() => parseRealMissionE2EEvidence(extraCommit)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it('accepts a merge-commit integration (3 commits) when the exact-result invariant holds', () => {
+    // The engine may integrate as fast-forward (2 commits) or as a real merge
+    // commit (initial + worker result + merge = 3). Either is a PASS as long
+    // as exactSingleCommit proved HEAD descends from the initial commit and
+    // only resultado.txt changed.
+    const mergeCommit = validPassEvidence();
+    (mergeCommit.repository as Record<string, unknown>).commitCount = 3;
+    expect(() => parseRealMissionE2EEvidence(mergeCommit)).not.toThrow();
+
+    const tooMany = validPassEvidence();
+    (tooMany.repository as Record<string, unknown>).commitCount = 4;
+    expect(() => parseRealMissionE2EEvidence(tooMany)).toThrow(
       /real-mission invariants/,
     );
   });

@@ -337,6 +337,8 @@ function safeDialogLabel(value: string, maxChars = 256): string {
 const OPERATOR_DIALOG_FORBIDDEN =
   /[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u;
 const MAX_OPERATOR_DIALOG_CHARS = 16_000;
+const MISSION_APPROVAL_DIALOG_LINES = 12;
+const MAX_MISSION_APPROVAL_DIALOG_CHARS = 1_800;
 
 function assertExactOperatorDialog(detail: string): string {
   if (OPERATOR_DIALOG_FORBIDDEN.test(detail)) {
@@ -346,6 +348,78 @@ function assertExactOperatorDialog(detail: string): string {
     throw new Error(
       `operator_review_too_large: reduza a revisão para ${MAX_OPERATOR_DIALOG_CHARS} caracteres`,
     );
+  }
+  return detail;
+}
+
+function compactDialogText(value: string, maxChars: number): string {
+  const normalized = safeDialogLabel(value, Number.MAX_SAFE_INTEGER)
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function dialogDigest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function compactDialogList(
+  values: readonly string[],
+  maxChars: number,
+): string {
+  if (values.length === 0) return '(nenhum)';
+  return compactDialogText(values.join(' · '), maxChars);
+}
+
+function missionAuthorityDialogDetail(
+  scope: ProjectExecutionScope,
+  candidate: RendererMissionAuthorityCandidate,
+): string {
+  const budgets = candidate.budgets;
+  const criteria = candidate.acceptanceCriteria.map((criterion, index) =>
+    `${index + 1}. ${compactDialogText(criterion, 100)}`,
+  );
+  const attachmentPaths = candidate.attachmentPaths.map((attachment, index) =>
+    `${index + 1}. ${compactDialogText(attachment, 100)}`,
+  );
+  const attachmentContents = candidate.attachmentSnapshots.map(
+    (attachment) =>
+      `${compactDialogText(path.basename(attachment.path), 32)} ` +
+      `SHA-256=${attachment.sha256} Bytes: ${attachment.size}`,
+  );
+  const deniedTools = candidate.deniedTools.map((tool) =>
+    compactDialogText(tool, 128),
+  );
+  const roster = candidate.squad.agents.map(
+    (agent) =>
+      `${compactDialogText(agent.agentName, 32)} ` +
+      `(${compactDialogText(agent.category, 32)}, ` +
+      `cli=${compactDialogText(agent.cli, 48)}, ` +
+      `model=${compactDialogText(agent.model ?? 'default', 80)}, ` +
+      `effort=${compactDialogText(agent.effort ?? 'default', 32)})`,
+  );
+  const runtime = candidate.orchestratorRuntime;
+  const lines = [
+    `Workspace: ${compactDialogText(scope.rootRealPath, 100)}`,
+    `Missão: ${compactDialogText(candidate.title, 64)} · ID=${compactDialogText(candidate.missionId, 48)}`,
+    `Objetivo: ${compactDialogText(candidate.goal, 90)} · SHA-256=${dialogDigest(candidate.goal)}`,
+    `Execução: lane=${compactDialogText(candidate.lane, 24)} · modo=${compactDialogText(candidate.executionMode, 24)} · contexto=${compactDialogText(candidate.contextPolicy, 24)} · risco=${compactDialogText(candidate.risk, 24)} · intenção=${candidate.intentVersion} · evidência=${candidate.evidenceAttached ? 'sim' : 'não'}`,
+    `Limites: ${budgets.maxWorkers} worker(s) · ${budgets.planningTokens} tokens de planejamento · ${budgets.executionTokens} tokens de execução${budgets.maxSteps === undefined ? '' : ` · ${budgets.maxSteps} etapas`}`,
+    `Critérios (${criteria.length} critério(s)): ${compactDialogList(criteria, 100)} · SHA-256=${dialogDigest(candidate.acceptanceCriteria)}`,
+    `Anexos (${attachmentPaths.length}): ${compactDialogList(attachmentPaths, 70)} · conteúdo=${compactDialogList(attachmentContents, 100)} · SHA-256=${dialogDigest(candidate.attachmentSnapshots)}`,
+    `Ferramentas negadas (${deniedTools.length}): ${compactDialogList(deniedTools, 80)}`,
+    `Squad: ${compactDialogText(candidate.squad.name, 60)} (${compactDialogText(candidate.squad.id, 40)}) · Hash do squad=${candidate.squad.hash}`,
+    `Roster (${roster.length} agente(s)): ${compactDialogList(roster, 100)}`,
+    `Runtime: adapter=${compactDialogText(runtime.adapterId, 24)} · model=${compactDialogText(runtime.model ?? '(default explícito)', 40)} · account=${compactDialogText(runtime.accountId ?? '(sem conta gerenciada)', 40)} · effort=${compactDialogText(runtime.effort ?? '(default explícito)', 20)} · Nexus MCP readOnly=${String(runtime.readOnly)} · provider nativeReadOnly=${String(runtime.nativeReadOnly)}`,
+    'Instruções e capacidades integrais estão vinculadas ao hash do squad; revise-as no editor. Esta autorização vale para o resumo e os hashes acima; qualquer mudança exige nova confirmação.',
+  ];
+  if (lines.length !== MISSION_APPROVAL_DIALOG_LINES) {
+    throw new Error('mission approval dialog line budget is inconsistent');
+  }
+  const detail = assertExactOperatorDialog(lines.join('\n'));
+  if (detail.length > MAX_MISSION_APPROVAL_DIALOG_CHARS) {
+    throw new Error('mission approval dialog exceeds the compact size budget');
   }
   return detail;
 }
@@ -599,52 +673,6 @@ async function confirmMissionAuthorityChange(
   missionAuthorityConfirmations.add(owner);
   try {
     const isPromotion = action === "promote";
-    const budgets = candidate.budgets;
-    const criteria = candidate.acceptanceCriteria.length
-      ? candidate.acceptanceCriteria
-          .map(
-            (criterion, index) =>
-              `  ${index + 1}. ${safeDialogLabel(criterion, 6_000)}`,
-          )
-          .join("\n")
-      : "  (nenhum)";
-    const deniedTools = candidate.deniedTools.length
-      ? candidate.deniedTools
-          .map((tool) => safeDialogLabel(tool, 128))
-          .join(", ")
-      : "(nenhuma)";
-    const attachments = candidate.attachmentPaths.length
-      ? candidate.attachmentPaths
-          .map(
-            (attachment, index) =>
-              `  ${index + 1}. ${safeDialogLabel(attachment, 4_096)}`,
-          )
-          .join("\n")
-      : "  (nenhum)";
-    const attachmentDigests = candidate.attachmentSnapshots.length
-      ? candidate.attachmentSnapshots
-          .map(
-            (attachment, index) =>
-              `  ${index + 1}. ${safeDialogLabel(attachment.path, 4_096)}\n` +
-              `     SHA-256: ${attachment.sha256}\n` +
-              `     Bytes: ${attachment.size}`,
-          )
-          .join("\n")
-      : "  (nenhum)";
-    const squadRoster = candidate.squad.agents.length
-      ? candidate.squad.agents
-          .map(
-            (agent, index) =>
-              `  ${index + 1}. ${safeDialogLabel(agent.agentName, 256)} ` +
-              `(${safeDialogLabel(agent.category, 64)}, cli=${safeDialogLabel(agent.cli, 128)}, ` +
-              `model=${safeDialogLabel(agent.model ?? "default", 256)}, ` +
-              `effort=${safeDialogLabel(agent.effort ?? "default", 64)})\n` +
-              `     tools=${(agent.allowedTools ?? []).map((tool) => safeDialogLabel(tool, 128)).join(", ") || "(default)"}\n` +
-              `     skills=${(agent.allowedSkills ?? []).map((skill) => safeDialogLabel(skill, 128)).join(", ") || "(nenhuma)"}`,
-          )
-          .join("\n")
-      : "  (vazio)";
-    const runtime = candidate.orchestratorRuntime;
     const result = await dialog.showMessageBox(window, {
       type: candidate.risk === "destructive" ? "warning" : "question",
       title: isPromotion
@@ -657,39 +685,7 @@ async function confirmMissionAuthorityChange(
       message: isPromotion
         ? "Permitir que este plano passe a executar mudanças?"
         : "Aprovar esta missão e liberar sua execução?",
-      detail:
-        `Workspace: ${safeDialogLabel(scope.rootRealPath, 4_096)}\n` +
-        `Missão: ${safeDialogLabel(candidate.title, 512)}\n` +
-        `ID: ${safeDialogLabel(candidate.missionId, 128)}\n` +
-        `Objetivo integral: ${safeDialogLabel(candidate.goal, 6_000)}\n` +
-        `Lane atual: ${safeDialogLabel(candidate.lane, 32)}\n` +
-        `Modo: ${safeDialogLabel(candidate.executionMode, 32)}\n` +
-        `Contexto: ${safeDialogLabel(candidate.contextPolicy, 32)}\n` +
-        `Risco: ${safeDialogLabel(candidate.risk, 32)}\n` +
-        `Versão da intenção: ${candidate.intentVersion}\n` +
-        `Limites: ${budgets.maxWorkers} worker(s), ` +
-        `${budgets.planningTokens} tokens de planejamento, ` +
-        `${budgets.executionTokens} tokens de execução` +
-        (budgets.maxSteps === undefined ? "" : `, ${budgets.maxSteps} etapas`) +
-        `\nEvidência anexada: ${candidate.evidenceAttached ? "sim" : "não"}\n` +
-        `Critérios de aceite:\n${criteria}\n` +
-        `Anexos canônicos:\n${attachments}\n` +
-        `Conteúdo aprovado dos anexos:\n${attachmentDigests}\n` +
-        `Ferramentas negadas: ${deniedTools}\n\n` +
-        `Squad salvo: ${safeDialogLabel(candidate.squad.name, 512)} ` +
-        `(${safeDialogLabel(candidate.squad.id, 128)})\n` +
-        `Hash do squad: ${candidate.squad.hash}\n` +
-        `Instruções integrais do orquestrador:\n${safeDialogLabel(candidate.squad.orchestratorInstructions, 6_000)}\n` +
-        `Roster/capacidades integrais:\n${squadRoster}\n\n` +
-        `Runtime inicial exato:\n` +
-        `  adapter=${safeDialogLabel(runtime.adapterId, 64)}\n` +
-        `  model=${safeDialogLabel(runtime.model ?? "(default explícito do provider)", 256)}\n` +
-        `  account=${safeDialogLabel(runtime.accountId ?? "(sem conta gerenciada)", 128)}\n` +
-        `  effort=${safeDialogLabel(runtime.effort ?? "(default explícito do provider)", 64)}\n` +
-        `  Nexus MCP readOnly=${String(runtime.readOnly)}\n` +
-        `  provider nativeReadOnly=${String(runtime.nativeReadOnly)}\n\n` +
-        "A autorização vale somente para todo o conteúdo exibido acima. " +
-        "Qualquer mudança exige nova confirmação.",
+      detail: missionAuthorityDialogDetail(scope, candidate),
     });
     return result.response === 1;
   } finally {

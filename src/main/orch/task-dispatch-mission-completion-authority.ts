@@ -91,14 +91,22 @@ export function completeMissionFromVerifiedTaskPlan(
       ) {
         return false;
       }
-      // PREVC completion has stronger receipt requirements and is advanced by
-      // mission-driver; never turn task receipts into a PREVC bypass.
-      const frozen = db
+      // PREVC milestone completion has stronger receipt requirements and is
+      // advanced by mission-driver; once the driver owns the mission (any
+      // mission_step_receipts row — receipts only exist under a frozen
+      // workflow), task receipts must never become a PREVC bypass. A contract
+      // frozen only so merge validation can run (PREVC is additive: every
+      // integrated candidate already passed sensors + independent review
+      // under that contract) must NOT wedge completion — that deadlock left
+      // fully integrated missions permanently running/blocked (release gate,
+      // field audit 17/07).
+      const prevcOwned = db
         .prepare(
-          `SELECT 1 AS present FROM mission_contracts WHERE mission_id = ?`,
+          `SELECT 1 AS present FROM mission_step_receipts
+           WHERE mission_id = ? LIMIT 1`,
         )
         .get(missionId);
-      if (frozen !== undefined) return false;
+      if (prevcOwned !== undefined) return false;
 
       const rawPlan = db
         .prepare(

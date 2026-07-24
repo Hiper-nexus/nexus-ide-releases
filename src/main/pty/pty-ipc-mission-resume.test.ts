@@ -182,6 +182,7 @@ vi.mock("../adapters/adapter-registry", () => ({
           id: "claude",
           kind: "cli-pty",
           label: "Claude",
+          bin: "claude",
           install: { command: "npm install claude" },
           quirks: { mcpAutoload: true },
           control: {
@@ -203,6 +204,13 @@ vi.mock("../adapters/adapter-registry", () => ({
           }
       : null,
   isAdapterInstalled: () => true,
+  getAdapterResolvedBin: () => "/usr/local/bin/claude",
+  resolveAdapterBinary: () => "/usr/local/bin/claude",
+}));
+
+vi.mock("../path-resolver", () => ({
+  revalidateExecutable: (binPath: string) =>
+    typeof binPath === "string" && binPath.startsWith("/"),
 }));
 
 vi.mock("../persistence/provider-config-store", () => ({
@@ -1096,7 +1104,7 @@ describe("registerPtyIpc account fail-fast", () => {
         cwd: "/workspace/a",
       }),
       expect.objectContaining({ id: "claude" }),
-      {},
+      expect.objectContaining({ binPath: "/usr/local/bin/claude" }),
       expect.objectContaining({
         source: "direct-user",
         scope: authorityDeps.scope,

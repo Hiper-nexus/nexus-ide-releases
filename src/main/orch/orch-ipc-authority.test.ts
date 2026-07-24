@@ -1554,7 +1554,7 @@ describe('mission authority native confirmation', () => {
     expect(harness.bootstrapMissionOrchestrator).not.toHaveBeenCalled();
   });
 
-  it('amarra aprovação ao scope e fence exibidos no diálogo', async () => {
+  it('amarra aprovação ao scope e fence em um resumo nativo que cabe em tela pequena', async () => {
     const sender = owner();
     harness.scopes.set(sender.id, SCOPE_A);
     harness.windows.set(sender.id, { isDestroyed: () => false });
@@ -1570,22 +1570,75 @@ describe('mission authority native confirmation', () => {
     );
     const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
     if (!options) throw new Error('missing native confirmation options');
+    const detail = String(options.detail ?? '');
     expect(options).toMatchObject({ defaultId: 0, cancelId: 0, noLink: true });
-    expect(options.detail).toContain(SCOPE_A.rootRealPath);
-    expect(options.detail).toContain('Corrigir o golden path');
-    expect(options.detail).toContain('sensitive');
-    expect(options.detail).toContain('Teste real passa');
-    expect(options.detail).toContain('Handoff aceito');
-    expect(options.detail).toContain('proof.png');
-    expect(options.detail).toContain('e'.repeat(64));
-    expect(options.detail).toContain('Bytes: 321');
-    expect(options.detail).toContain('nexus_git_force_push');
-    expect(options.detail).toContain('Squad auditado');
-    expect(options.detail).toContain('Coordene somente pelo contrato exibido.');
-    expect(options.detail).toContain('gpt-5.6-sol');
-    expect(options.detail).toContain('account-a');
-    expect(options.detail).toContain('Nexus MCP readOnly=false');
-    expect(options.detail).toContain('provider nativeReadOnly=true');
+    expect(detail).toContain(SCOPE_A.rootRealPath);
+    expect(detail).toContain('Corrigir o golden path');
+    expect(detail).toContain('sensitive');
+    expect(detail).toContain('Teste real passa');
+    expect(detail).toContain('Handoff aceito');
+    expect(detail).toContain('proof.png');
+    expect(detail).toContain('e'.repeat(64));
+    expect(detail).toContain('Bytes: 321');
+    expect(detail).toContain('nexus_git_force_push');
+    expect(detail).toContain('Squad auditado');
+    expect(detail).toContain('Hash do squad');
+    expect(detail).toContain('a'.repeat(64));
+    expect(detail).toContain('Instruções e capacidades integrais');
+    expect(detail).toContain('gpt-5.6-sol');
+    expect(detail).toContain('account-a');
+    expect(detail).toContain('Nexus MCP readOnly=false');
+    expect(detail).toContain('provider nativeReadOnly=true');
+    expect(detail).not.toContain(
+      'Coordene somente pelo contrato exibido.',
+    );
+    expect(detail.split('\n')).toHaveLength(12);
+    expect(detail.length).toBeLessThanOrEqual(1_800);
+  });
+
+  it('mantém o resumo da aprovação limitado mesmo com conteúdo máximo', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const base = harness.missionApprovalCandidate();
+    harness.missionApprovalCandidate.mockReturnValueOnce({
+      ...base,
+      goal: 'objetivo '.repeat(1_000),
+      acceptanceCriteria: Array.from(
+        { length: 20 },
+        (_, index) => `critério ${index + 1} ${'detalhe '.repeat(100)}`,
+      ),
+      deniedTools: Array.from(
+        { length: 40 },
+        (_, index) => `nexus_tool_${index + 1}`,
+      ),
+      squad: {
+        ...base.squad,
+        orchestratorInstructions: 'instrução '.repeat(1_000),
+        agents: Array.from({ length: 24 }, (_, index) => ({
+          id: `agent-${index + 1}`,
+          agentName: `Agente ${index + 1} ${'nome '.repeat(20)}`,
+          category: index === 0 ? 'orchestrator' : 'executor',
+          cli: 'codex',
+          model: 'gpt-5.6-sol',
+          effort: 'high',
+          allowedTools: ['nexus_task'],
+          allowedSkills: ['check-work'],
+        })),
+      },
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await handler({ sender }, { missionId: 'mission-1' });
+
+    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
+    if (!options) throw new Error('missing native confirmation options');
+    const detail = String(options.detail ?? '');
+    expect(detail.split('\n')).toHaveLength(12);
+    expect(detail.length).toBeLessThanOrEqual(1_800);
+    expect(detail).toContain('24 agente(s)');
+    expect(detail).toContain('20 critério(s)');
+    expect(detail).not.toContain('instrução instrução instrução');
   });
 
   it('invalida aprovação se o renderer muda de workspace durante o modal', async () => {

@@ -134,6 +134,9 @@ export function realMissionEnvironment(baseEnv, userData, codexBinary) {
       '/sbin',
     ].join(path.delimiter),
     NEXUS_USER_DATA_DIR: isolatedUserData,
+    // Reliable gate marker: argv after `--` is not always visible the same way
+    // across Electron packaging layers. Main-owned e2e paths read this env.
+    NEXUS_REAL_MISSION_E2E: '1',
   };
 }
 
@@ -453,7 +456,10 @@ export function assertRealMissionPassEvidence(raw) {
     /^[a-f0-9]{40,64}$/u.test(repository?.finalHeadSha ?? '') &&
     repository?.resultSha256 === expectedSha &&
     Number.isInteger(repository?.commitCount) &&
-    repository.commitCount === 2 &&
+    // Fast-forward (2) or real merge commit (3); exactSingleCommit already
+    // proved HEAD descends from the initial commit with only resultado.txt
+    // changed, so both integration shapes are the same logical result.
+    (repository.commitCount === 2 || repository.commitCount === 3) &&
     repository?.clean === true &&
     repository?.changedBeforeWorker === false &&
     repository?.exactSingleCommit === true &&
@@ -591,6 +597,17 @@ async function atomicWriteEvidence(evidence, destination) {
   }
 }
 
+/**
+ * @typedef {'sigint' | 'sigterm' | 'timeout' | null} RealMissionInterrupt
+ */
+
+/**
+ * Wait for the packaged real-mission child. On SIGINT/SIGTERM/timeout the
+ * process tree is terminated gracefully (SIGTERM → SIGKILL) so main can flush
+ * evidence on before-quit; the promise **resolves** with `interruptedBy` set
+ * so the caller can still read the evidence file and emit accurate pane/
+ * dispatch/handoff counts instead of hardcoded zeros.
+ */
 export async function waitForChild(
   target,
   userData,
@@ -604,6 +621,8 @@ export async function waitForChild(
 ) {
   let phase = 'spawned';
   let passLineSeen = false;
+  /** Last FAIL line from the app (may carry real snapshot counts). */
+  let appFailSummary = null;
   const child = spawnImpl(target.binary, realMissionArgs(userData), {
     env: realMissionEnvironment(environment, userData, codexBinary),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -613,7 +632,8 @@ export async function waitForChild(
   });
   return await new Promise((resolve, reject) => {
     let settled = false;
-    let terminationError = null;
+    /** @type {RealMissionInterrupt} */
+    let interruptedBy = null;
     let terminationGrace = null;
     const signalHandlers = new Map();
     const finish = (handler, value) => {
@@ -626,17 +646,25 @@ export async function waitForChild(
       }
       handler(value);
     };
-    const terminate = (error) => {
-      if (settled || terminationError) return;
-      terminationError = error;
-      Promise.resolve(
-        killTree(child.pid, { platform: process.platform }),
-      ).catch(() => undefined);
+    const terminate = (reason) => {
+      if (settled || interruptedBy) return;
+      interruptedBy = reason;
+      // Graceful first so Electron before-quit can write real-mission-evidence.json
+      // with the live mission snapshot (pane/dispatch/handoff counts).
+      try {
+        killTree(child.pid, { platform: process.platform });
+      } catch {
+        // Best-effort; close handler still settles.
+      }
       terminationGrace = setTimeout(() => {
-        finish(
-          reject,
-          new Error(`${error.message}; child did not close after termination`),
-        );
+        finish(resolve, {
+          code: 1,
+          phase,
+          passLineSeen,
+          interruptedBy,
+          appFailSummary,
+          forcedClose: true,
+        });
       }, 10_000);
     };
     const append = (chunk) => {
@@ -653,6 +681,11 @@ export async function waitForChild(
           )
         ) {
           passLineSeen = true;
+          continue;
+        }
+        // Capture the app's own FAIL summary (includes real pane counts).
+        if (line.startsWith('[real-mission] FAIL ')) {
+          appFailSummary = line;
         }
       }
     };
@@ -660,35 +693,23 @@ export async function waitForChild(
     child.stderr?.on('data', append);
     child.once('error', (error) => finish(reject, error));
     child.once('close', (code) => {
-      if (terminationError) {
-        finish(reject, terminationError);
-      } else {
-        finish(resolve, {
-          code: Number.isInteger(code) ? code : 1,
-          phase,
-          passLineSeen,
-        });
-      }
+      finish(resolve, {
+        code: Number.isInteger(code) ? code : 1,
+        phase,
+        passLineSeen,
+        interruptedBy,
+        appFailSummary,
+        forcedClose: false,
+      });
     });
     for (const signal of ['SIGINT', 'SIGTERM']) {
       const listener = () =>
-        terminate(
-          new Error(
-            `[real-mission] FAIL code=${signal.toLowerCase()} ` +
-              `status=unknown panes=0 dispatches=0 handoffs=0 ` +
-              `CTA: ${REAL_MISSION_CTA}`,
-          ),
-        );
+        terminate(signal === 'SIGINT' ? 'sigint' : 'sigterm');
       signalHandlers.set(signal, listener);
       process.once(signal, listener);
     }
     const timeout = setTimeout(() => {
-      terminate(
-        new Error(
-          `[real-mission] FAIL code=timeout status=unknown panes=0 dispatches=0 ` +
-            `handoffs=0 CTA: ${REAL_MISSION_CTA}`,
-        ),
-      );
+      terminate('timeout');
     }, timeoutMs);
   });
 }
@@ -760,6 +781,57 @@ export async function runPackagedRealMission(
     try {
       rawEvidence = JSON.parse(await fsp.readFile(appEvidencePath, 'utf8'));
     } catch {
+      rawEvidence = null;
+    }
+
+    // Interrupted gate: prefer on-disk evidence snapshot (written on before-quit
+    // after SIGTERM), then the app FAIL line, then a phase-aware zero summary.
+    if (result.interruptedBy) {
+      let summary;
+      if (rawEvidence) {
+        summary = safeRealMissionFailureSummary(rawEvidence, result);
+        // Stamp the interrupt code when the app only recorded a generic failure.
+        if (
+          result.interruptedBy === 'sigint' ||
+          result.interruptedBy === 'sigterm' ||
+          result.interruptedBy === 'timeout'
+        ) {
+          summary = summary.replace(
+            /code=[a-z0-9-]+/u,
+            `code=${result.interruptedBy}`,
+          );
+        }
+      } else if (
+        typeof result.appFailSummary === 'string' &&
+        result.appFailSummary.startsWith('[real-mission] FAIL ')
+      ) {
+        summary = result.appFailSummary.includes('CTA:')
+          ? result.appFailSummary
+          : `${result.appFailSummary} CTA: ${REAL_MISSION_CTA}`;
+      } else {
+        const child = safeChildExitSummary(result);
+        summary =
+          `[real-mission] FAIL code=${result.interruptedBy} ` +
+          `reason=none exit=${child.exitCode} phase=${child.phase} ` +
+          `status=unknown panes=0 dispatches=0 handoffs=0 ` +
+          `CTA: ${REAL_MISSION_CTA}`;
+      }
+      if (rawEvidence) {
+        try {
+          const receipt = safeRealMissionFailureReceipt(
+            rawEvidence,
+            result,
+            releaseBinding,
+          );
+          await atomicWriteEvidence(receipt, evidencePath);
+        } catch {
+          // Summary is still the primary diagnostic for the operator.
+        }
+      }
+      throw new Error(summary);
+    }
+
+    if (!rawEvidence) {
       const child = safeChildExitSummary(result);
       throw new Error(
         `[real-mission] FAIL code=missing-evidence exit=${child.exitCode} ` +
@@ -801,7 +873,14 @@ export async function runPackagedRealMission(
     await atomicWriteEvidence(evidence, evidencePath);
     return { evidence, evidencePath, target };
   } finally {
-    await fsp.rm(userData, { recursive: true, force: true });
+    // Preserve the last failed gate state for local diagnosis when requested.
+    if (process.env.NEXUS_REAL_MISSION_PRESERVE_USERDATA === '1') {
+      process.stderr.write(
+        `[real-mission] preserved userData=${userData}\n`,
+      );
+    } else {
+      await fsp.rm(userData, { recursive: true, force: true });
+    }
   }
 }
 

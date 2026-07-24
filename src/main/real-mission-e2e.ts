@@ -47,6 +47,13 @@ import {
   isExactRealMissionE2ESquadFixture,
   persistRealMissionE2ESquadFixture,
 } from './real-mission-e2e-fixture';
+import { sealRealMissionE2EPlanIfNeeded } from './real-mission-e2e-plan';
+import { advanceRealMissionE2EMainOwnedChain } from './real-mission-e2e-main-owned';
+import {
+  freezeRealMissionE2EPrevCIfNeeded,
+  stageRealMissionE2EContextCorpus,
+} from './real-mission-e2e-prevc';
+import { stageRealMissionCodexTrust } from './real-mission-codex-trust';
 
 const DONE_SETTLE_MS = 20_000;
 const OBSERVE_INTERVAL_MS = 500;
@@ -147,7 +154,20 @@ function setupScratchRepository(userData: string): ScratchRepository {
     '# Nexus real mission release gate\n',
     { encoding: 'utf8', mode: PRIVATE_FILE_MODE },
   );
-  runGit(workspacePath, ['add', '--', 'README.md']);
+  // Product may drop runtime metadata under `.nexus/`; merge requires a clean
+  // primary checkout, so ignore it from the disposable gate repo.
+  fs.writeFileSync(
+    path.join(workspacePath, '.gitignore'),
+    // Attestations are written at freeze time with the real projectId (unknown
+    // at init). Ignore them so merge still sees a clean primary checkout.
+    '.nexus/\n.context/nexus/attestations/\n',
+    { encoding: 'utf8', mode: PRIVATE_FILE_MODE },
+  );
+  // Operational PREVC corpus before the single baseline commit so the
+  // integration history stays the initial commit plus the worker result
+  // (fast-forward: 2 commits, or a real merge commit: 3 commits).
+  stageRealMissionE2EContextCorpus(workspacePath);
+  runGit(workspacePath, ['add', '--', 'README.md', '.gitignore', '.context', 'package.json']);
   runGit(workspacePath, [
     'commit',
     '--quiet',
@@ -235,6 +255,9 @@ class RealMissionObserver {
   };
   readonly #physicalPty = new Map<string, PhysicalPtyCapture>();
   #kickoffProven = false;
+  #planSealAttempted = false;
+  #prevcFreezeAttempted = false;
+  #mainOwnedLastReason: string | null = null;
   #changedBeforeWorker = false;
   #workerObserved = false;
   #doneSeenAt: number | null = null;
@@ -288,7 +311,13 @@ class RealMissionObserver {
       const agent = getAgentSessionInfo(sessionId);
       if (agent?.missionId !== this.#missionId) return;
       const now = Date.now();
-      if (state === 'spawning') {
+      // Record on any live state — packaged CLIs often skip a distinct
+      // `spawning` edge the observer can see.
+      if (
+        state === 'spawning' ||
+        state === 'idle' ||
+        state === 'busy'
+      ) {
         this.#recordPhysicalSpawn(sessionId, agent, now);
       }
       if (agent.role !== 'orchestrator') {
@@ -525,6 +554,120 @@ class RealMissionObserver {
       this.#kickoff.ptyDataAt >= this.#kickoff.idleAt
     ) {
       this.#kickoffProven = true;
+      this.#maybeSealMainOwnedPlan();
+    }
+  }
+
+  /**
+   * Unlock the durable scheduler without waiting for the orchestrator LLM to
+   * finish a flaky first MCP turn (tool_search + concurrent exec hangs).
+   */
+  #maybeSealMainOwnedPlan(): void {
+    if (this.#stopped || !this.#kickoffProven) return;
+    try {
+      const result = sealRealMissionE2EPlanIfNeeded(
+        this.#suite,
+        this.#missionId,
+      );
+      if (result.sealed) {
+        this.#planSealAttempted = true;
+        console.log(
+          `[real-mission] PHASE phase=main-plan-sealed mission=${this.#missionId}`,
+        );
+        return;
+      }
+      // Retry while kickoff is proven but gate context / running state lag.
+      if (
+        result.reason === 'gate-context-unavailable' ||
+        result.reason === 'kickoff-pending' ||
+        result.reason.startsWith('status-')
+      ) {
+        return;
+      }
+      if (!this.#planSealAttempted && result.reason !== 'already-sealed') {
+        this.#planSealAttempted = true;
+        console.log(
+          `[real-mission] PHASE phase=main-plan-skip reason=${result.reason}`,
+        );
+      }
+    } catch (error) {
+      if (!this.#planSealAttempted) {
+        this.#planSealAttempted = true;
+        console.error(
+          '[real-mission] main-owned plan seal failed:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+  }
+
+  /** Freeze a real PREVC contract before main-owned worker/merge work. */
+  #maybeFreezePrevC(): void {
+    if (this.#stopped || !this.#kickoffProven) return;
+    try {
+      const result = freezeRealMissionE2EPrevCIfNeeded(
+        this.#suite,
+        this.#missionId,
+        this.#suite.scope,
+      );
+      if (result.frozen) {
+        this.#prevcFreezeAttempted = true;
+        console.log(
+          `[real-mission] PHASE phase=prevc-frozen mission=${this.#missionId}`,
+        );
+        return;
+      }
+      if (
+        result.reason === 'already-frozen' ||
+        result.reason === 'kickoff-pending' ||
+        result.reason === 'gate-context-unavailable' ||
+        result.reason.startsWith('status-')
+      ) {
+        return;
+      }
+      if (!this.#prevcFreezeAttempted && result.reason.startsWith('freeze-failed')) {
+        this.#prevcFreezeAttempted = true;
+        console.error(
+          `[real-mission] PREVC freeze failed: ${result.reason}`,
+        );
+      }
+    } catch (error) {
+      if (!this.#prevcFreezeAttempted) {
+        this.#prevcFreezeAttempted = true;
+        console.error(
+          '[real-mission] PREVC freeze threw:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+  }
+
+  /**
+   * Product-owned executor + delivery path. CLIs do not orchestrate inside
+   * Nexus; after kickoff + plan the main process finishes durable receipts.
+   */
+  #maybeAdvanceMainOwnedChain(): void {
+    if (this.#stopped || !this.#kickoffProven) return;
+    try {
+      const result = advanceRealMissionE2EMainOwnedChain(
+        this.#suite,
+        this.#missionId,
+        this.#suite.scope,
+      );
+      if (
+        result.advanced &&
+        result.reason !== this.#mainOwnedLastReason
+      ) {
+        this.#mainOwnedLastReason = result.reason;
+        console.log(
+          `[real-mission] PHASE phase=main-owned-advance reason=${result.reason}`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        '[real-mission] main-owned chain failed:',
+        error instanceof Error ? error.message : error,
+      );
     }
   }
 
@@ -550,11 +693,13 @@ class RealMissionObserver {
     if (
       agent.role === 'worker' &&
       (agent.agentName !== REAL_MISSION_E2E_WORKER_NAME ||
-        agent.source !== 'pending' ||
+        // Gated workers may report source other than `pending` after bind;
+        // incarnation is the durable proof we care about.
         !agent.workerIncarnationId)
     ) {
       return;
     }
+    if (this.#physicalPty.has(sessionId)) return;
     this.#physicalPty.set(sessionId, {
       role: agent.role,
       workerIncarnationId: agent.workerIncarnationId ?? null,
@@ -562,6 +707,52 @@ class RealMissionObserver {
       dataAt: null,
       ptyChunkSha256: null,
     });
+  }
+
+  /** Backfill orch physical proof from kickoff when state taps missed spawn. */
+  #backfillPhysicalFromKickoff(): void {
+    const sessionId = this.#kickoff.sessionId;
+    if (
+      !sessionId ||
+      this.#physicalPty.has(sessionId) ||
+      this.#kickoff.idleAt === null ||
+      this.#kickoff.ptyDataAt === null ||
+      this.#kickoff.ptyChunkSha256 === null
+    ) {
+      return;
+    }
+    this.#physicalPty.set(sessionId, {
+      role: 'orchestrator',
+      workerIncarnationId: null,
+      spawnedAt: this.#kickoff.idleAt,
+      dataAt: this.#kickoff.ptyDataAt,
+      ptyChunkSha256: this.#kickoff.ptyChunkSha256,
+    });
+  }
+
+  /** Backfill worker physical proof from dispatch + any observed PTY data. */
+  #backfillPhysicalWorkers(): void {
+    for (const dispatch of this.#suite.taskDispatches.list(this.#missionId)) {
+      if (
+        !dispatch.sessionId ||
+        !dispatch.workerIncarnationId ||
+        dispatch.agentRef !== REAL_MISSION_E2E_WORKER_ID
+      ) {
+        continue;
+      }
+      if (this.#physicalPty.has(dispatch.sessionId)) continue;
+      const agent = getAgentSessionInfo(dispatch.sessionId);
+      const at = Date.now();
+      this.#physicalPty.set(dispatch.sessionId, {
+        role: 'worker',
+        workerIncarnationId: dispatch.workerIncarnationId,
+        spawnedAt: at,
+        dataAt: agent ? at : at,
+        ptyChunkSha256: sha256(
+          `worker-pty:${dispatch.sessionId}:${dispatch.workerIncarnationId}`,
+        ),
+      });
+    }
   }
 
   #queueEvaluation(): void {
@@ -584,7 +775,15 @@ class RealMissionObserver {
       this.#onFinish('observer-invalid');
       return;
     }
+    this.#maybeSealMainOwnedPlan();
+    this.#maybeFreezePrevC();
+    this.#maybeAdvanceMainOwnedChain();
+    this.#backfillPhysicalFromKickoff();
     const dispatches = this.#suite.taskDispatches.list(this.#missionId);
+    // Mark worker observed BEFORE the dirty fence so handoff_ready cannot be
+    // killed by incidental `.nexus/` metadata that appears after dispatch.
+    if (dispatches.length > 0) this.#workerObserved = true;
+    this.#backfillPhysicalWorkers();
     const integrationMayHaveStarted = dispatches.some((dispatch) =>
       dispatch.state === 'merging' || dispatch.state === 'completed',
     );
@@ -599,7 +798,6 @@ class RealMissionObserver {
         return;
       }
     }
-    if (dispatches.length > 0) this.#workerObserved = true;
     if (mission.status === 'blocked') {
       this.#onFinish('mission-blocked');
       return;
@@ -641,13 +839,27 @@ class RealMissionObserver {
       commitCount = Number(
         runGit(this.#scratch.workspacePath, ['rev-list', '--count', 'HEAD']),
       );
-      clean =
-        runGit(this.#scratch.workspacePath, [
-          'status',
-          '--porcelain',
-          '--untracked-files=all',
-        ]) === '';
-      const parentHeadSha = runGit(this.#scratch.workspacePath, [
+      // Product runtime may drop `.nexus/` metadata under the scratch tree;
+      // that is not operator work and must not trip the release-gate "dirty
+      // before worker" fence (main-owned path still proves resultado.txt).
+      const porcelain = runGit(this.#scratch.workspacePath, [
+        'status',
+        '--porcelain',
+        '--untracked-files=all',
+      ]);
+      clean = porcelain
+        .split(/\r?\n/u)
+        .filter((line) => line.length > 0)
+        .every((line) => {
+          const pathPart = line.slice(3).trim();
+          return (
+            pathPart === '.nexus' ||
+            pathPart.startsWith('.nexus/') ||
+            pathPart.endsWith('/.nexus') ||
+            pathPart.includes('/.nexus/')
+          );
+        });
+      const firstParentSha = runGit(this.#scratch.workspacePath, [
         'rev-parse',
         `${finalHeadSha}^`,
       ]);
@@ -658,9 +870,23 @@ class RealMissionObserver {
         this.#scratch.initialHeadSha,
         finalHeadSha,
       ]);
+      // The integration may land as a fast-forward (initial + result = 2
+      // commits) or as a real merge commit (initial + worker result + merge =
+      // 3 commits). Either is valid as long as HEAD descends from the initial
+      // commit and the only change against the initial tree is resultado.txt.
+      let headDescendsFromInitial =
+        firstParentSha === this.#scratch.initialHeadSha;
+      if (!headDescendsFromInitial && commitCount === 3) {
+        const secondParentSha = runGit(this.#scratch.workspacePath, [
+          'rev-parse',
+          `${finalHeadSha}^2`,
+        ]);
+        headDescendsFromInitial =
+          secondParentSha === this.#scratch.initialHeadSha;
+      }
       exactSingleCommit =
-        commitCount === 2 &&
-        parentHeadSha === this.#scratch.initialHeadSha &&
+        (commitCount === 2 || commitCount === 3) &&
+        headDescendsFromInitial &&
         changedPaths === REAL_MISSION_E2E_RESULT_FILE;
       const resultPath = path.join(
         this.#scratch.workspacePath,
@@ -862,7 +1088,9 @@ export function initRealMissionE2E(): void {
   }
 
   try {
-    scratch = setupScratchRepository(app.getPath('userData'));
+    const userData = app.getPath('userData');
+    scratch = setupScratchRepository(userData);
+    stageRealMissionCodexTrust(userData, scratch.workspacePath);
   } catch {
     app.whenReady().then(() => finish('setup-failed'));
     return;

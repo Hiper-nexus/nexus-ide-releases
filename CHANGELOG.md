@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.19.27 — Golden Path
+
+Data: 2026-07-23
+
+### Orquestração com autoridade durável
+
+- **RouteReservation obrigatória**: decisões do router passam a ser seladas
+  por missão e revisão, com adapter, modelo, esforço, expiração e consumo
+  atômico. Spawns fora do roster sticky precisam apresentar exatamente a
+  reserva emitida por `nexus_route_task`.
+- **Roteamento com diversidade**: o ranking considera tier, histórico,
+  qualidade, custo, participação OMP e atenuação de repetição sem trocar um
+  candidato mais capaz por um fallback inadequado.
+- **Bootstrap main-owned**: plano, squad, grants, sessão e pane do
+  orquestrador são derivados e revalidados no processo principal; reinício ou
+  troca do renderer não transfere autoridade.
+
+### Execução observável até o fim
+
+- **Kickoff com aceite físico**: o prompt só é considerado entregue após uma
+  janela idle injetável, envio seguro e prova de saída + borda `idle → busy`.
+  Timeout, saída da sessão ou perda de autoridade bloqueiam a missão com ação
+  de retomada, sem falso sucesso.
+- **Dispatcher e handoff verificáveis**: tasks usam leases, incarnation,
+  ownership e worktrees persistidos. Worker só termina após handoff aceito e
+  a missão só conclui com receipt de integração ou validação confiável.
+- **Recuperação convergente**: revogação de bearer, término físico, falha de
+  merge e reinício convergem para estados duráveis sem duplicar spawn,
+  kickoff ou integração.
+- **Modelo padrão sem falso bloqueio**: o bootstrap valida o modelo solicitado
+  e selado, não o alias normalizado pelo provider, evitando bloquear a missão
+  quando o runtime aprovado usa o modelo padrão.
+- **MCP autônomo sob confinamento nativo**: orquestradores Codex de uma missão
+  aprovada continuam com filesystem nativo read-only, inclusive antes do
+  freeze PREVC, mas não abrem uma segunda confirmação do provider para chamar
+  as tools Nexus já auditadas.
+- **Gate Codex sem falso aceite**: a missão empacotada prepara a confiança
+  somente para seu repositório descartável e canônico, em HOME isolado e
+  privado, evitando que a tela inicial de confiança consuma o primeiro kickoff.
+- **Worker entregue não é pane morto**: o driver deixa de contar como "pane
+  dead" um worker cujo dispatch já saiu de `running` (handoff aceito, merge ou
+  completed) — o CLI sair após entregar é o ciclo esperado. Isso elimina o
+  loop de respawns fúteis que bloqueava missões já integradas.
+- **Conclusão destravada sob contrato congelado**: congelar o contrato PREVC
+  para validar merges não torna mais a missão inconcluível. O plano verificado
+  (rota, roster, receipts, entrega aceita) conclui a missão enquanto o driver
+  PREVC não tiver assumido via step receipts — com receipt existente, o
+  bypass continua vedado.
+- **Integração por merge commit aceita no gate**: os validadores de evidência
+  (app, compartilhado e script) aceitam fast-forward (2 commits) ou merge real
+  (3 commits), mantendo a invariante de resultado exato descendente do commit
+  inicial.
+
+### Segurança e release
+
+- **Electron endurecido**: limites de navegação, XSS, IPC, downloads, browser,
+  mídia, SSH e companion foram revisados com validação fail-closed e testes
+  dedicados.
+- **Aprovação visível em telas pequenas**: a confirmação nativa foi reduzida a
+  um resumo fixo de 12 linhas, mantendo objetivo, critérios, anexos, restrições,
+  roster, runtime e hashes do contrato sem esconder os botões de ação.
+- **Release local canônica**: Node/npm, commit, tag, SBOM, auditorias,
+  assinatura, notarização, Gatekeeper, DMG/ZIP e missão E2E precisam apontar
+  para o mesmo candidato antes de qualquer publicação.
+
+### Qualidade
+
+- **Validação local**: typecheck do app e servidor; suíte principal e do
+  servidor; gates de segurança, build limpo, assinatura, notarização e missão
+  E2E do artefato candidato.
+
 ## 0.19.26 — Piloto Automático sem Modal
 
 Data: 2026-07-22
