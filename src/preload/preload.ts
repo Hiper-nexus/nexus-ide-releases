@@ -815,6 +815,10 @@ const api: NexusApi = {
       ipcRenderer.invoke(ORCH_CHANNELS.missionApproveIntent, input),
     bootstrapMissionOrchestrator: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionBootstrapOrchestrator, input),
+    resumeMissionBootstrap: (input: { missionId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionResumeBootstrap, input),
+    rearmMission: (input: { missionId: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionRearm, input),
     promotePlanLane: (input: { missionId: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPromotePlanLane, input),
     submitMissionKickoff: (input: {

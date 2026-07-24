@@ -575,6 +575,20 @@ export interface NexusApi {
     bootstrapMissionOrchestrator(input: {
       missionId: string;
     }): Promise<MissionOrchestratorBootstrapResult>;
+    /**
+     * Retry the orchestrator bootstrap of a mission the bootstrap itself
+     * blocked (blocked_technical + marker). Main re-arms and re-validates.
+     */
+    resumeMissionBootstrap(input: {
+      missionId: string;
+    }): Promise<MissionOrchestratorBootstrapResult>;
+    /**
+     * Re-arm a blocked mission (sanctioned user_resume/begin_execution) so
+     * pane restore can resolve the current authority seal. No spawn happens.
+     */
+    rearmMission(input: {
+      missionId: string;
+    }): Promise<{ ok: true } | { ok: false; error: string }>;
     /** After plan.md is ready: plan lane → standard PREVC. */
     promotePlanLane(input: { missionId: string }): Promise<Mission>;
     /** Submit an approved mission kickoff through main-owned PTY authority. */

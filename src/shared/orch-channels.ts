@@ -27,6 +27,10 @@ export const ORCH_CHANNELS = {
    * renderer sends only missionId; every runtime field comes from main stores.
    */
   missionBootstrapOrchestrator: 'orch:missions.bootstrapOrchestrator',
+  /** Retry the orchestrator bootstrap of a bootstrap-blocked mission. */
+  missionResumeBootstrap: 'orch:missions.resumeBootstrap',
+  /** Re-arm a blocked mission (sanctioned resume) before pane restore. */
+  missionRearm: 'orch:missions.rearm',
   /**
    * Promote lane=plan → standard after plan.md is ready so PREVC code work
    * is allowed (operator "Executar plano").

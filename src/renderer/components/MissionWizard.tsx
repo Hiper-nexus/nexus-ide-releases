@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AdapterInfo } from '../../shared/types';
+import { isEngineGeneratedSquadId } from '../../shared/orch-types';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { DEFAULT_ORCH_SETTINGS } from '../../shared/settings-types';
 import {
@@ -558,7 +559,13 @@ export function MissionWizard() {
   }, [mode, hasNewWsStep, armedMissionId, step]);
 
   const originals = squads.filter((s) => s.builtin);
-  const userSquads = squads.filter((s) => !s.builtin);
+  // Fallbacks agênticos ('agentic-…') e customs por workspace ('custom-…')
+  // são infraestrutura de missão criada pelo motor — um por design/tentativa.
+  // Listá-los enche o picker de "Execução + QA" duplicados que o usuário
+  // nunca configurou; a missão que os referencia continua funcionando.
+  const userSquads = squads.filter(
+    (s) => !s.builtin && !isEngineGeneratedSquadId(s.id),
+  );
   const selectedSquad = squads.find((s) => s.id === squadId) ?? null;
   const rosterAdapters = useMemo(
     () =>

@@ -134,29 +134,59 @@ function bindMissionLaunchAuthority(
  * A renderer presents a pending token; it never authors the process request
  * carried by that token. The comparison happens before adapter/provider work.
  */
+function spawnFenceValue(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null) return "null";
+  if (typeof value === "string") return value.slice(0, 96) || "''";
+  return String(value);
+}
+
+/** Named divergences so a fence rejection is diagnosable in the field. */
+function spawnFenceMismatches(
+  checks: ReadonlyArray<readonly [string, unknown, unknown]>,
+): string[] {
+  return checks
+    .filter(([, left, right]) => left !== right)
+    .map(
+      ([name, left, right]) =>
+        `${name}[${spawnFenceValue(left)} != ${spawnFenceValue(right)}]`,
+    );
+}
+
 function canonicalizePendingSpawnRequest(
   request: MainOwnedAgentSpawnRequest,
   pending: PendingSpawnMeta,
 ): MainOwnedAgentSpawnRequest {
   const sealed = pending.sealedRequest;
-  const matches =
-    sealed !== undefined &&
-    request.kind === "cli-agent" &&
-    request.orchRequestId === sealed.requestId &&
-    request.paneId === sealed.paneId &&
-    request.adapterId === sealed.adapterId &&
-    request.model === sealed.model &&
-    request.accountId === sealed.accountId &&
-    request.effort === sealed.effort &&
-    request.cwd === sealed.cwd &&
-    request.missionId === sealed.missionId &&
-    request.resume !== true &&
-    request.resumeLatestOnly !== true &&
-    request.restorePersistedAuthority !== true &&
-    request.shell === undefined;
-  if (!matches) {
+  if (sealed === undefined) {
     throw new Error(
-      "renderer payload does not match main-sealed pending spawn request",
+      "renderer payload does not match main-sealed pending spawn request " +
+        "— divergências: sealedRequest ausente",
+    );
+  }
+  const mismatches = spawnFenceMismatches([
+    ["kind", request.kind, "cli-agent"],
+    ["orchRequestId", request.orchRequestId, sealed.requestId],
+    ["paneId", request.paneId, sealed.paneId],
+    ["adapterId", request.adapterId, sealed.adapterId],
+    ["model", request.model, sealed.model],
+    ["accountId", request.accountId, sealed.accountId],
+    ["effort", request.effort, sealed.effort],
+    ["cwd", request.cwd, sealed.cwd],
+    ["missionId", request.missionId, sealed.missionId],
+    ["resume", request.resume === true, false],
+    ["resumeLatestOnly", request.resumeLatestOnly === true, false],
+    [
+      "restorePersistedAuthority",
+      request.restorePersistedAuthority === true,
+      false,
+    ],
+    ["shell", request.shell, undefined],
+  ]);
+  if (mismatches.length > 0) {
+    throw new Error(
+      "renderer payload does not match main-sealed pending spawn request " +
+        `— divergências: ${mismatches.slice(0, 6).join("; ")}`,
     );
   }
 
@@ -199,32 +229,53 @@ function canonicalizePersistedSpawnRequest(
     request.resume !== true &&
     request.restorePersistedAuthority === true;
   const recoveryModeMatches = recovery ? explicitFresh : exactResume;
-  const matches =
-    request.kind === "cli-agent" &&
-    request.orchRequestId === recovery?.request.requestId &&
-    request.paneId === persisted.paneId &&
-    request.adapterId === persisted.adapterId &&
-    request.model === persisted.model &&
-    request.accountId === persisted.accountId &&
-    request.effort === persisted.effort &&
-    request.cwd === expectedCwd &&
-    request.missionId === persisted.missionId &&
-    request.resumeLatestOnly !== true &&
-    request.shell === undefined &&
-    recoveryModeMatches &&
-    (!recovery ||
-      (explicitFresh &&
-        recovery.request.paneId === persisted.paneId &&
-        recovery.request.missionId === persisted.missionId &&
-        recovery.request.role === persisted.role &&
-        recovery.request.pane.adapterId === persisted.adapterId &&
-        recovery.request.pane.model === persisted.model &&
-        recovery.request.pane.accountId === persisted.accountId &&
-        recovery.request.pane.effort === persisted.effort &&
-        recovery.request.pane.cwd === persisted.cwd));
-  if (!matches) {
+  const mismatches = spawnFenceMismatches([
+    ["kind", request.kind, "cli-agent"],
+    ["orchRequestId", request.orchRequestId, recovery?.request.requestId],
+    ["paneId", request.paneId, persisted.paneId],
+    ["adapterId", request.adapterId, persisted.adapterId],
+    ["model", request.model, persisted.model],
+    ["accountId", request.accountId, persisted.accountId],
+    ["effort", request.effort, persisted.effort],
+    ["cwd", request.cwd, expectedCwd],
+    ["missionId", request.missionId, persisted.missionId],
+    ["resumeLatestOnly", request.resumeLatestOnly === true, false],
+    ["shell", request.shell, undefined],
+    [
+      "recoveryMode(resume/fresh)",
+      recoveryModeMatches,
+      true,
+    ],
+    ...(recovery
+      ? ([
+          ["recovery.explicitFresh", explicitFresh, true],
+          ["recovery.paneId", recovery.request.paneId, persisted.paneId],
+          [
+            "recovery.missionId",
+            recovery.request.missionId,
+            persisted.missionId,
+          ],
+          ["recovery.role", recovery.request.role, persisted.role],
+          [
+            "recovery.adapterId",
+            recovery.request.pane.adapterId,
+            persisted.adapterId,
+          ],
+          ["recovery.model", recovery.request.pane.model, persisted.model],
+          [
+            "recovery.accountId",
+            recovery.request.pane.accountId,
+            persisted.accountId,
+          ],
+          ["recovery.effort", recovery.request.pane.effort, persisted.effort],
+          ["recovery.cwd", recovery.request.pane.cwd, persisted.cwd],
+        ] as const)
+      : []),
+  ]);
+  if (mismatches.length > 0) {
     throw new Error(
-      "renderer payload does not match main-sealed persisted pane request",
+      "renderer payload does not match main-sealed persisted pane request " +
+        `— divergências: ${mismatches.slice(0, 6).join("; ")}`,
     );
   }
 
@@ -285,8 +336,33 @@ function assertCurrentPersistedPaneAuthority(
       authoritySeal: currentSeal,
     });
   }
+  const seal = persisted.authoritySeal;
+  const detail = !mission
+    ? "missão ausente no store"
+    : squads.length !== 1
+      ? `squad '${mission.squadId ?? "?"}' indisponível`
+      : !currentSeal
+        ? `seal atual nulo (status=${mission.status}/${mission.intentState ?? "?"} — missão precisa estar running)`
+        : !seal
+          ? "pane sem authoritySeal persistido (legado)"
+          : spawnFenceMismatches([
+              ["intentVersion", seal.intentVersion, currentSeal.intentVersion],
+              [
+                "intentContractHash",
+                seal.intentContractHash,
+                currentSeal.intentContractHash,
+              ],
+              [
+                "squadRevisionHash",
+                seal.squadRevisionHash,
+                currentSeal.squadRevisionHash,
+              ],
+              ["contextRevision", seal.contextRevision, currentSeal.contextRevision],
+              ["contractHash", seal.contractHash, currentSeal.contractHash],
+            ]).join("; ");
   throw new Error(
-    "stale or legacy persisted mission pane authority; replane and approve the current revision",
+    "stale or legacy persisted mission pane authority; replane and approve " +
+      `the current revision — divergências: ${detail}`,
   );
 }
 

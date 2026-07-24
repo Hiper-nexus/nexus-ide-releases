@@ -597,10 +597,19 @@ export class RendererMissionAuthority {
       mission.intentState === "done" ||
       mission.intentState === "blocked_user" ||
       mission.intentState === "blocked_technical";
+    // A blocked mission whose runtime never materialized (no orchestrator
+    // session; the durable-activity check below still proves zero panes,
+    // handoffs and tasks) preserves nothing by existing — refusing removal
+    // wedged bootstrap-blocked missions with no exit. Anything with a live
+    // session or durable receipts stays preserved.
+    const blockedWithoutRuntime =
+      mission.status === "blocked" &&
+      mission.orchestratorSessionId === undefined;
     if (
-      mission.status !== "pending" ||
-      activeIntent ||
-      mission.orchestratorSessionId !== undefined
+      !blockedWithoutRuntime &&
+      (mission.status !== "pending" ||
+        activeIntent ||
+        mission.orchestratorSessionId !== undefined)
     ) {
       throw new Error(
         "missão ativa/terminal é preservada: remoção não pode apagar receipts duráveis",

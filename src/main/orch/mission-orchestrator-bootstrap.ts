@@ -2,6 +2,7 @@ import type { WebContents } from 'electron';
 import { z } from 'zod';
 import { buildIntentDispatchKickoffPrompt } from '../../shared/mission-dispatch-kickoff';
 import {
+  hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   missionBlockPatch,
   type MissionAttachmentSnapshot,
@@ -232,55 +233,101 @@ function chooseOrchestrator(squad: Squad): SquadAgent | null {
   return squad.agents.find((agent) => agent.category === 'orchestrator') ?? null;
 }
 
-function validRuntime(
+/** Bounded printable value for mismatch diagnostics (ids/models/paths only). */
+function mismatchValue(value: unknown): string {
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  if (typeof value === 'string') return value.slice(0, 96) || "''";
+  return String(value);
+}
+
+/**
+ * Every failing check of the exact-authority seal, by name and with both
+ * sides' values. The seal compares ~20 fields across four sources (live agent
+ * session, persisted pane row, approved runtime snapshot, runtime authority);
+ * a boolean-only verdict made real field drifts (model alias, null-vs-undefined
+ * accountId/effort, confinement flags) undiagnosable in the field — the
+ * operator only ever saw "did not retain exact mission authority" with no
+ * cause. Never weakens the check: callers still fail on any entry.
+ */
+export function runtimeAuthorityMismatches(
   scope: ProjectExecutionScope,
   mission: Mission,
   pane: MissionPaneSpec,
   agent: OwnedAgentSessionInfo | null,
   authority: PaneRuntimeAuthority | null,
   approvedRuntime: MissionOrchestratorRuntimeSnapshot,
-): agent is OwnedAgentSessionInfo {
+): string[] {
+  if (!mission.orchestratorSessionId) return ['mission.orchestratorSessionId ausente'];
+  if (!agent) return ['agent session info ausente'];
+  if (!authority) return ['runtime authority ausente'];
+  // Canonical authority, not representation: "unspecified" arrives as
+  // undefined from the durable pane row but as null from the PTY session
+  // (pty-manager coalesces undefined→null). Both grant the same thing, so the
+  // seal must not fail on the spelling — architect-designed squads omit the
+  // field entirely and hit exactly this (field: agent.allowedSkills×pane).
+  // An explicit [] stays distinct: it blocks everything.
   const sameCapabilities = (
-    left: readonly string[] | null | undefined,
-    right: readonly string[] | null | undefined,
-  ) =>
-    left === right ||
-    (Array.isArray(left) &&
-      Array.isArray(right) &&
-      left.length === right.length &&
-      left.every((value, index) => value === right[index]));
-  return Boolean(
-    mission.orchestratorSessionId &&
-      agent &&
-      authority &&
-      agent.sessionId === mission.orchestratorSessionId &&
-      agent.paneId === pane.paneId &&
-      agent.adapterId === pane.adapterId &&
-      agent.model === pane.model &&
-      agent.accountId === pane.accountId &&
-      agent.effort === pane.effort &&
-      agent.cwd === pane.cwd &&
-      agent.missionId === mission.id &&
-      agent.role === 'orchestrator' &&
-      agent.readOnly === (pane.readOnly === true) &&
-      pane.adapterId === approvedRuntime.adapterId &&
-      pane.model === approvedRuntime.model &&
-      pane.accountId === approvedRuntime.accountId &&
-      pane.effort === approvedRuntime.effort &&
-      (pane.readOnly === true) === approvedRuntime.readOnly &&
-      agent.readOnly === approvedRuntime.readOnly &&
-      agent.nativeReadOnly === approvedRuntime.nativeReadOnly &&
-      sameCapabilities(agent.allowedTools, pane.allowedTools) &&
-      sameCapabilities(agent.allowedSkills, pane.allowedSkills) &&
-      sameScope(agent.scope, scope) &&
-      authority.sessionId === agent.sessionId &&
-      authority.paneId === pane.paneId &&
-      authority.kind === 'cli-agent' &&
-      authority.missionId === mission.id &&
-      authority.role === 'orchestrator' &&
-      Boolean(authority.scope && sameScope(authority.scope, scope)),
+    rawLeft: readonly string[] | null | undefined,
+    rawRight: readonly string[] | null | undefined,
+  ) => {
+    const left = rawLeft ?? null;
+    const right = rawRight ?? null;
+    return (
+      left === right ||
+      (Array.isArray(left) &&
+        Array.isArray(right) &&
+        left.length === right.length &&
+        left.every((value, index) => value === right[index]))
+    );
+  };
+  const mismatches: string[] = [];
+  const check = (name: string, left: unknown, right: unknown) => {
+    if (left !== right) {
+      mismatches.push(
+        `${name}[${mismatchValue(left)} != ${mismatchValue(right)}]`,
+      );
+    }
+  };
+  check('agent.sessionId×mission', agent.sessionId, mission.orchestratorSessionId);
+  check('agent.paneId×pane', agent.paneId, pane.paneId);
+  check('agent.adapterId×pane', agent.adapterId, pane.adapterId);
+  check('agent.model×pane', agent.model, pane.model);
+  check('agent.accountId×pane', agent.accountId, pane.accountId);
+  check('agent.effort×pane', agent.effort, pane.effort);
+  check('agent.cwd×pane', agent.cwd, pane.cwd);
+  check('agent.missionId', agent.missionId, mission.id);
+  check('agent.role', agent.role, 'orchestrator');
+  check('agent.readOnly×pane', agent.readOnly, pane.readOnly === true);
+  check('pane.adapterId×runtime', pane.adapterId, approvedRuntime.adapterId);
+  check('pane.model×runtime', pane.model, approvedRuntime.model);
+  check('pane.accountId×runtime', pane.accountId, approvedRuntime.accountId);
+  check('pane.effort×runtime', pane.effort, approvedRuntime.effort);
+  check('pane.readOnly×runtime', pane.readOnly === true, approvedRuntime.readOnly);
+  check('agent.readOnly×runtime', agent.readOnly, approvedRuntime.readOnly);
+  check(
+    'agent.nativeReadOnly×runtime',
+    agent.nativeReadOnly,
+    approvedRuntime.nativeReadOnly,
   );
+  if (!sameCapabilities(agent.allowedTools, pane.allowedTools)) {
+    mismatches.push('agent.allowedTools×pane');
+  }
+  if (!sameCapabilities(agent.allowedSkills, pane.allowedSkills)) {
+    mismatches.push('agent.allowedSkills×pane');
+  }
+  if (!sameScope(agent.scope, scope)) mismatches.push('agent.scope');
+  check('authority.sessionId×agent', authority.sessionId, agent.sessionId);
+  check('authority.paneId×pane', authority.paneId, pane.paneId);
+  check('authority.kind', authority.kind, 'cli-agent');
+  check('authority.missionId', authority.missionId, mission.id);
+  check('authority.role', authority.role, 'orchestrator');
+  if (!authority.scope || !sameScope(authority.scope, scope)) {
+    mismatches.push('authority.scope');
+  }
+  return mismatches;
 }
+
 
 function paneResult(
   pane: MissionPaneSpec,
@@ -564,14 +611,14 @@ export class MissionOrchestratorBootstrapService {
         sessionId &&
         persistedOrchestrator &&
         this.#deps.getSessionState(sessionId) !== null &&
-        validRuntime(
+        runtimeAuthorityMismatches(
           scope,
           initial,
           persistedOrchestrator,
           agent,
           authority,
           runtime,
-        )
+        ).length === 0
       ) {
         if (!this.#deps.hasCurrentKickoffAcceptance(scope, missionId)) {
           return this.#failure(
@@ -688,11 +735,22 @@ export class MissionOrchestratorBootstrapService {
       const current = this.#deps.getMission(scope, missionId);
       const agent = this.#deps.getAgentSessionInfo(spawn.sessionId);
       const authority = this.#deps.getRuntimeAuthority(spawn.sessionId);
-      if (
-        !current ||
-        !validRuntime(scope, current, paneRow, agent, authority, runtime)
-      ) {
-        throw new Error('spawned PTY did not retain exact mission authority');
+      if (!current) {
+        throw new Error('mission disappeared before authority seal');
+      }
+      const mismatches = runtimeAuthorityMismatches(
+        scope,
+        current,
+        paneRow,
+        agent,
+        authority,
+        runtime,
+      );
+      if (mismatches.length > 0) {
+        throw new Error(
+          'spawned PTY did not retain exact mission authority — divergências: ' +
+            mismatches.slice(0, 8).join('; '),
+        );
       }
 
       this.#deps.emitDispatched(current);
@@ -962,6 +1020,180 @@ export function bootstrapMissionOrchestratorForScope(
   return productionService.bootstrap(scope, missionId);
 }
 
+/**
+ * Whether — and how — a bootstrap-blocked mission may be re-armed for another
+ * bootstrap attempt. Pure so the exact recovery precondition is testable: only
+ * a mission the BOOTSTRAP failure itself blocked (marker in description,
+ * blocked/blocked_technical, approved dispatch authority intact) qualifies.
+ * Field wedge this exits: bootstrap failure → blocked_technical with zero
+ * panes → wizard retry hits "invalid transition", rail reopen finds no pane
+ * composition, removal preserves the mission — no recovery path at all.
+ */
+export function blockedBootstrapResumePatch(
+  mission: Mission,
+): {
+  ok: true;
+  patch: {
+    status: 'running';
+    intentState: 'executing';
+    description: string;
+  };
+} | {
+  ok: false;
+  error: string;
+} {
+  if (
+    mission.status !== 'blocked' ||
+    mission.intentState !== 'blocked_technical' ||
+    !mission.description.includes(BOOTSTRAP_BLOCK_MARKER)
+  ) {
+    return {
+      ok: false,
+      error:
+        'Só uma missão bloqueada pelo bootstrap do orquestrador pode ser retomada por aqui.',
+    };
+  }
+  // The approved contract must still be current; everything else (squad hash,
+  // runtime, seal) is re-validated by the bootstrap itself after re-arm.
+  if (!hasCurrentApprovedDispatchContract(mission)) {
+    return {
+      ok: false,
+      error:
+        'A aprovação da missão não está mais vigente. Revise a intenção e aprove novamente.',
+    };
+  }
+  const description = mission.description
+    .split(BOOTSTRAP_BLOCK_MARKER)[0]!
+    .trim();
+  // begin_execution is the state machine's sanctioned exit from
+  // blocked_technical; canDispatchWorkers excludes blocked states, so the
+  // bootstrap would refuse a re-armed mission that kept the blocked intent.
+  return {
+    ok: true,
+    patch: { status: 'running', intentState: 'executing', description },
+  };
+}
+
+/**
+ * Re-arm (only) a blocked mission that still has persisted pane composition:
+ * pane respawn resolves the current authority seal from the LIVE mission, and
+ * createMissionPaneAuthoritySeal is null while status != running — so panes
+ * must never respawn before the mission is re-armed. Uses the state machine's
+ * sanctioned exits (user_resume / begin_execution → executing). Pure for
+ * testability; the IPC boundary applies the patch and the renderer then
+ * restores the composition.
+ */
+export function blockedMissionRearmPatch(
+  mission: Mission,
+): {
+  ok: true;
+  patch: {
+    status: 'running';
+    intentState: 'executing';
+    description: string;
+  };
+} | {
+  ok: false;
+  error: string;
+} {
+  if (
+    mission.status !== 'blocked' ||
+    (mission.intentState !== 'blocked_technical' &&
+      mission.intentState !== 'blocked_user')
+  ) {
+    return {
+      ok: false,
+      error: 'Só uma missão bloqueada pode ser re-armada para retomada.',
+    };
+  }
+  if (!hasCurrentApprovedDispatchContract(mission)) {
+    return {
+      ok: false,
+      error:
+        'A aprovação da missão não está mais vigente. Revise a intenção e aprove novamente.',
+    };
+  }
+  const description = mission.description
+    .split(BOOTSTRAP_BLOCK_MARKER)[0]!
+    .trim();
+  return {
+    ok: true,
+    patch: { status: 'running', intentState: 'executing', description },
+  };
+}
+
+/** Main boundary: re-arm a blocked mission before the renderer restores panes. */
+export function rearmBlockedMissionForScope(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): { ok: true } | { ok: false; error: string } {
+  const stores = getProjectDomainStores(scope);
+  const mission = stores.missions.get(missionId);
+  if (!mission) {
+    return { ok: false, error: 'Missão não encontrada neste workspace.' };
+  }
+  const rearm = blockedMissionRearmPatch(mission);
+  if (!rearm.ok) return rearm;
+  const updated = stores.missions.update(missionId, rearm.patch);
+  if (!updated) {
+    return { ok: false, error: 'A missão mudou durante a retomada. Tente novamente.' };
+  }
+  return { ok: true };
+}
+
+/** Renderer boundary for the pane-preserving re-arm. */
+export function rearmBlockedMissionFromRenderer(
+  owner: WebContents,
+  raw: unknown,
+): { ok: true } | { ok: false; error: string } {
+  const input = missionOrchestratorBootstrapRequestSchema.parse(raw);
+  const scope = requireRendererWorkspaceScope(owner);
+  return rearmBlockedMissionForScope(scope, input.missionId);
+}
+
+/**
+ * Re-arm a bootstrap-blocked mission and retry the orchestrator bootstrap.
+ * The bootstrap re-validates every authority (squad hash, contract, runtime)
+ * and re-blocks with an actionable marker if the retry fails again.
+ */
+export async function resumeBlockedMissionBootstrapForScope(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): Promise<MissionOrchestratorBootstrapResult> {
+  const stores = getProjectDomainStores(scope);
+  const mission = stores.missions.get(missionId);
+  if (!mission) {
+    return {
+      ok: false,
+      missionId,
+      reason: 'not_authorized',
+      error: 'Missão não encontrada neste workspace.',
+      cta: BOOTSTRAP_CTA,
+    };
+  }
+  const resume = blockedBootstrapResumePatch(mission);
+  if (!resume.ok) {
+    return {
+      ok: false,
+      missionId,
+      reason: 'not_authorized',
+      error: resume.error,
+      cta: BOOTSTRAP_CTA,
+    };
+  }
+  const updated = stores.missions.update(missionId, resume.patch);
+  if (!updated) {
+    return {
+      ok: false,
+      missionId,
+      reason: 'not_authorized',
+      error: 'A missão mudou durante a retomada. Tente novamente.',
+      cta: BOOTSTRAP_CTA,
+    };
+  }
+  return bootstrapMissionOrchestratorForScope(scope, missionId);
+}
+
 /** Starts durable-scope discovery before the coordinator's first pass. */
 export function prepareMissionOrchestratorBootstrapRecovery(): void {
   if (disposeProductionScopeListener) return;
@@ -995,4 +1227,14 @@ export function bootstrapMissionOrchestratorFromRenderer(
   const input = missionOrchestratorBootstrapRequestSchema.parse(raw);
   const scope = requireRendererWorkspaceScope(owner);
   return bootstrapMissionOrchestratorForScope(scope, input.missionId);
+}
+
+/** Renderer boundary for retrying a bootstrap-blocked mission. */
+export function resumeBlockedMissionBootstrapFromRenderer(
+  owner: WebContents,
+  raw: unknown,
+): Promise<MissionOrchestratorBootstrapResult> {
+  const input = missionOrchestratorBootstrapRequestSchema.parse(raw);
+  const scope = requireRendererWorkspaceScope(owner);
+  return resumeBlockedMissionBootstrapForScope(scope, input.missionId);
 }

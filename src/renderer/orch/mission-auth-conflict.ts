@@ -17,10 +17,21 @@ export function isExclusiveOrchestratorAdapter(adapterId: string | undefined): b
   return sharedAuthFamily(adapterId) !== null;
 }
 
-/** Live cli-agent panes that are orchestrators. */
+/**
+ * Live cli-agent panes that are orchestrators. Live means a real PTY session:
+ * the shared-login collision this feeds (dual Claude orch = mutual keychain
+ * logout) only exists for a RUNNING CLI. A layout pane whose spawn failed or
+ * never started holds no credential — counting it blocked every new mission
+ * behind a zombie ("orquestrador incompatível sem autoridade") with no exit
+ * besides closing the pane by hand. The main process still owns the
+ * authoritative race fence (assertExclusiveOrchestratorProcessAvailable).
+ */
 export function listLiveOrchestratorPanes(): PaneModel[] {
   return listPanes(useLayoutStore.getState().root).filter(
-    (p) => p.kind === 'cli-agent' && p.role === 'orchestrator',
+    (p) =>
+      p.kind === 'cli-agent' &&
+      p.role === 'orchestrator' &&
+      Boolean(getPaneSessionId(p.id)),
   );
 }
 

@@ -5,10 +5,12 @@ import {
   type MissionKickoffResult,
 } from './mission-kickoff';
 import {
+  blockedBootstrapResumePatch,
   MissionOrchestratorBootstrapRecovery,
   MissionOrchestratorBootstrapService,
   needsMissionOrchestratorBootstrapRecovery,
   preferredMissionOrchestratorAdapterId,
+  runtimeAuthorityMismatches,
   type MissionOrchestratorBootstrapDeps,
 } from './mission-orchestrator-bootstrap';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
@@ -801,5 +803,181 @@ describe('initial main-owned orchestrator bootstrap', () => {
     });
     expect(value.mission.status).toBe('blocked');
     expect(value.closedPanes).toEqual([]);
+  });
+});
+
+describe('blockedBootstrapResumePatch', () => {
+  const marker = '<!-- nexus:orchestrator-bootstrap-blocked -->';
+
+  function bootstrapBlockedMission(): Mission {
+    const mission = approvedMission();
+    return {
+      ...mission,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      description:
+        `${mission.description}\n\n${marker}\n## Orquestrador não iniciado\n` +
+        'O bootstrap não pôde selar a autoridade da sessão. CTA: Retomar missão.',
+    };
+  }
+
+  it('re-arms a bootstrap-blocked mission and strips the block note', () => {
+    const result = blockedBootstrapResumePatch(bootstrapBlockedMission());
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.patch.status).toBe('running');
+    expect(result.patch.description).toBe('Fechar bootstrap main-owned');
+    expect(result.patch.description).not.toContain(marker);
+  });
+
+  it('refuses missions the bootstrap did not block', () => {
+    const running = approvedMission();
+    expect(blockedBootstrapResumePatch(running)).toMatchObject({ ok: false });
+
+    const blockedByDriver: Mission = {
+      ...approvedMission(),
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description: 'sem marker de bootstrap',
+    };
+    expect(blockedBootstrapResumePatch(blockedByDriver)).toMatchObject({
+      ok: false,
+    });
+
+    const blockedWithoutMarker: Mission = {
+      ...approvedMission(),
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      description: 'bloqueada por outra causa',
+    };
+    expect(blockedBootstrapResumePatch(blockedWithoutMarker)).toMatchObject({
+      ok: false,
+    });
+  });
+
+  it('refuses when the approved dispatch authority is gone', () => {
+    const stale = bootstrapBlockedMission();
+    expect(
+      blockedBootstrapResumePatch({ ...stale, intentContract: undefined }),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/aprova/i) });
+  });
+});
+
+describe('runtimeAuthorityMismatches diagnostics', () => {
+  it('names each diverging field with both values', () => {
+    const mission = approvedMission();
+    const mismatches = runtimeAuthorityMismatches(
+      scope,
+      { ...mission, orchestratorSessionId: 'session-1' },
+      {
+        id: 'row-1',
+        missionId: mission.id,
+        paneId: 'pane-1',
+        adapterId: 'codex',
+        model: 'gpt-5.5',
+        title: 'orq',
+        role: 'orchestrator',
+        createdAt: 1,
+      },
+      null,
+      null,
+      mission.intentContract!.orchestratorRuntime!,
+    );
+    expect(mismatches).toEqual(['agent session info ausente']);
+  });
+});
+
+describe('seal capability canonicalization (field: agent.allowedSkills×pane)', () => {
+  function sealInputs(overrides: {
+    agentSkills: readonly string[] | null | undefined;
+    paneSkills: readonly string[] | null | undefined;
+  }) {
+    const mission: Mission = {
+      ...approvedMission(),
+      orchestratorSessionId: 'pty-1',
+    };
+    const pane: MissionPaneSpec = {
+      id: 'row-1',
+      missionId: mission.id,
+      paneId: 'pane-1',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      accountId: 'account-codex',
+      effort: 'high',
+      cwd: scope.rootRealPath,
+      title: 'orq',
+      agentName: 'Maestro',
+      role: 'orchestrator',
+      readOnly: false,
+      allowedTools: ['nexus_task'],
+      ...(overrides.paneSkills !== undefined
+        ? { allowedSkills: overrides.paneSkills as string[] | null }
+        : {}),
+      createdAt: 1,
+    };
+    const agent = {
+      sessionId: 'pty-1',
+      paneId: 'pane-1',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      accountId: 'account-codex',
+      effort: 'high',
+      cwd: scope.rootRealPath,
+      scope,
+      source: 'pending',
+      role: 'orchestrator',
+      missionId: mission.id,
+      readOnly: false,
+      nativeReadOnly: true,
+      allowedTools: ['nexus_task'],
+      allowedSkills: overrides.agentSkills,
+    } as never;
+    const authority = {
+      owner: null,
+      paneId: 'pane-1',
+      sessionId: 'pty-1',
+      kind: 'cli-agent',
+      missionId: mission.id,
+      role: 'orchestrator',
+      scope,
+    } as never;
+    return { mission, pane, agent, authority };
+  }
+
+  it('treats null (PTY) and undefined (pane row) skills as the same unspecified authority', () => {
+    // Field regression: architect-designed squads omit allowedSkills; the PTY
+    // layer coalesces undefined→null while the durable pane row preserves
+    // undefined. The seal must compare authority, not spelling.
+    const { mission, pane, agent, authority } = sealInputs({
+      agentSkills: null,
+      paneSkills: undefined,
+    });
+    expect(
+      runtimeAuthorityMismatches(
+        scope,
+        mission,
+        pane,
+        agent,
+        authority,
+        approvedRuntime,
+      ),
+    ).toEqual([]);
+  });
+
+  it('still rejects a real capability divergence (explicit [] blocks everything)', () => {
+    const { mission, pane, agent, authority } = sealInputs({
+      agentSkills: [],
+      paneSkills: null,
+    });
+    expect(
+      runtimeAuthorityMismatches(
+        scope,
+        mission,
+        pane,
+        agent,
+        authority,
+        approvedRuntime,
+      ),
+    ).toContain('agent.allowedSkills×pane');
   });
 });

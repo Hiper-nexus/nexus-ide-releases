@@ -200,11 +200,39 @@ export async function reopenMission(
     if (isIntentFirstMissionShell(mission)) {
       return { ok: true, panes: 0, intentShell: true };
     }
+    // Bootstrap-blocked mission: the orchestrator never materialized (zero
+    // panes, teardown cleared the session). "Retomar" must retry the
+    // main-owned bootstrap — there is no composition to restore and the
+    // wizard's submit_goal is an invalid transition from blocked_technical.
+    if (mission.status === 'blocked' && mission.intentState === 'blocked_technical') {
+      const resumed = await window.nexus.orch.resumeMissionBootstrap({
+        missionId: mission.id,
+      });
+      if (resumed.ok) {
+        return acknowledgedReopen(mission.id, [resumed.pane.sessionId], {
+          panes: 1,
+          soft: false,
+        });
+      }
+      return { ok: false, error: resumed.error };
+    }
     return {
       ok: false,
       error:
         'Esta missão não tem panes registrados (criada antes do histórico de composição).',
     };
+  }
+
+  // Blocked mission with a persisted composition: re-arm BEFORE any pane
+  // respawn. The persisted-pane spawn resolves the current authority seal
+  // from the live mission, and that seal is null while status != running —
+  // spawning first turned every resume into "stale or legacy persisted
+  // mission pane authority".
+  if (mission.status === 'blocked') {
+    const rearmed = await window.nexus.orch.rearmMission({
+      missionId: mission.id,
+    });
+    if (!rearmed.ok) return { ok: false, error: rearmed.error };
   }
 
   const fallbackCwd = getActiveWorkspacePath() ?? undefined;

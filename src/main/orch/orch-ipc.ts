@@ -141,6 +141,8 @@ import {
 import {
   bootstrapMissionOrchestratorForScope,
   bootstrapMissionOrchestratorFromRenderer,
+  rearmBlockedMissionFromRenderer,
+  resumeBlockedMissionBootstrapFromRenderer,
 } from './mission-orchestrator-bootstrap';
 import {
   snapshotSquadAuthority,
@@ -1198,18 +1200,6 @@ async function confirmSquadMutation(
   }
   squadMutationConfirmations.add(owner);
   try {
-    const exact = JSON.stringify(
-      {
-        id: snapshot.id,
-        name: snapshot.name,
-        builtin: snapshot.builtin,
-        orchestratorInstructions: snapshot.orchestratorInstructions,
-        nativeInstructions: snapshot.nativeInstructions,
-        agents: snapshot.agents,
-      },
-      null,
-      2,
-    );
     const result = await dialog.showMessageBox(window, {
       type: 'warning',
       title: action === 'save' ? 'Nexus IDE — salvar squad' : 'Nexus IDE — excluir squad',
@@ -1221,14 +1211,46 @@ async function confirmSquadMutation(
         action === 'save'
           ? 'Salvar exatamente este roster e contrato global?'
           : 'Excluir exatamente este squad global?',
-      detail:
-        `Workspace solicitante: ${safeDialogLabel(scope.rootRealPath, 4_096)}\n` +
-        `Hash exato: ${snapshot.hash}\n\nConteúdo integral:\n${exact}`,
+      // Native message boxes grow to fit their `detail` and never scroll, so
+      // dumping the full roster JSON here overflowed off-screen (worse on small
+      // displays). Show a bounded, readable summary; the exact bytes being
+      // saved are pinned by the hash below, so transparency is preserved
+      // without an unusable wall of text.
+      detail: summarizeSquadMutationForDialog(scope, snapshot),
     });
     return result.response === 1;
   } finally {
     squadMutationConfirmations.delete(owner);
   }
+}
+
+/** Bounded, human-readable confirmation body; exactness is pinned by the hash. */
+function summarizeSquadMutationForDialog(
+  scope: ProjectExecutionScope,
+  snapshot: SquadAuthoritySnapshot,
+): string {
+  const MAX_AGENT_LINES = 16;
+  const shown = snapshot.agents.slice(0, MAX_AGENT_LINES);
+  const agentLines = shown.map((agent) => {
+    const model = agent.model ? ` · ${safeDialogLabel(agent.model, 48)}` : '';
+    const effort = agent.effort ? ` (${safeDialogLabel(agent.effort, 24)})` : '';
+    return (
+      `• ${safeDialogLabel(agent.agentName, 64)} — ` +
+      `${safeDialogLabel(agent.category, 32)} · ${safeDialogLabel(agent.cli, 32)}${model}${effort}`
+    );
+  });
+  const overflow = snapshot.agents.length - shown.length;
+  if (overflow > 0) {
+    agentLines.push(`• +${overflow} agente(s) — conteúdo exato garantido pelo hash`);
+  }
+  return [
+    `Workspace solicitante: ${safeDialogLabel(scope.rootRealPath, 4_096)}`,
+    `Squad: ${safeDialogLabel(snapshot.name, 128)} (${safeDialogLabel(snapshot.id, 128)})`,
+    `${snapshot.agents.length} agente(s):`,
+    ...agentLines,
+    '',
+    `Hash exato (fixa o roster + contrato integral): ${snapshot.hash}`,
+  ].join('\n');
 }
 
 export function configureRendererMissionAuthority(
@@ -1700,6 +1722,22 @@ export function registerOrchIpc(): void {
       throw new Error("invalid mission orchestrator bootstrap payload");
     }
     return bootstrapMissionOrchestratorFromRenderer(event.sender, parsed.data);
+  });
+
+  ipcMain.handle(ORCH_CHANNELS.missionResumeBootstrap, (event, raw) => {
+    const parsed = missionOrchestratorBootstrapSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error("invalid mission bootstrap resume payload");
+    }
+    return resumeBlockedMissionBootstrapFromRenderer(event.sender, parsed.data);
+  });
+
+  ipcMain.handle(ORCH_CHANNELS.missionRearm, (event, raw) => {
+    const parsed = missionOrchestratorBootstrapSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error("invalid mission rearm payload");
+    }
+    return rearmBlockedMissionFromRenderer(event.sender, parsed.data);
   });
 
   const missionPromotePlanSchema = z.object({

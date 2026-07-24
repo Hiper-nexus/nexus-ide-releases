@@ -266,7 +266,9 @@ describe("renderer mission authority", () => {
   it.each([
     ["running", [], [], []],
     ["done", [], [], []],
-    ["blocked", [], [], []],
+    ["blocked", [{ role: "worker" }], [], []],
+    ["blocked", [], [{ id: "handoff-a" }], []],
+    ["blocked", [], [], [{ id: "task-a" }]],
     ["pending", [{ role: "worker" }], [], []],
     ["pending", [], [{ id: "handoff-a" }], []],
     ["pending", [], [], [{ id: "task-a" }]],
@@ -289,6 +291,41 @@ describe("renderer mission authority", () => {
       expect(deps.removeMission).not.toHaveBeenCalled();
     },
   );
+
+  it("permite remover missão bloqueada sem runtime nem atividade durável (wedge do bootstrap)", () => {
+    // Bootstrap falhou antes de materializar qualquer coisa: sem sessão, sem
+    // panes, sem handoffs, sem tasks. Não há receipt a preservar — recusar a
+    // remoção deixava a missão presa sem nenhuma saída.
+    deps.getMission.mockReturnValue({
+      ...mission,
+      status: "blocked",
+      orchestratorSessionId: undefined,
+      intentState: "blocked_technical",
+    });
+    deps.listMissionPanes.mockReturnValue([]);
+    deps.listHandoffs.mockReturnValue([]);
+    deps.listTasks.mockReturnValue([]);
+
+    expect(authority.removeMissionFromRenderer(owner, "mission-a")).toBe(true);
+    expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
+  });
+
+  it("preserva missão bloqueada que ainda tem sessão de orquestrador", () => {
+    deps.getMission.mockReturnValue({
+      ...mission,
+      status: "blocked",
+      orchestratorSessionId: "pty-live",
+      intentState: "blocked_user",
+    });
+    deps.listMissionPanes.mockReturnValue([]);
+    deps.listHandoffs.mockReturnValue([]);
+    deps.listTasks.mockReturnValue([]);
+
+    expect(() =>
+      authority.removeMissionFromRenderer(owner, "mission-a"),
+    ).toThrow(/preservada/i);
+    expect(deps.removeMission).not.toHaveBeenCalled();
+  });
 
   it("turns the approved intent criteria into durable PREVC milestones", () => {
     authority.submitIntentFromRenderer(owner, {

@@ -12,11 +12,7 @@ export interface ReusableSquadLike {
   agents: Array<{ cli: string }>;
 }
 
-// Squads sintetizados pelo motor: fallback determinístico ('agentic-fallback-'),
-// modo intent do LLM ('agentic-<nome>-<ts>') e o custom por workspace do
-// designSquad ('custom-<workspace>'). Nenhum deles é "o roster que o usuário
-// configurou" — reusar um congelaria exatamente o time que queremos evitar.
-const AUTO_GENERATED_PREFIXES = ['agentic-', 'custom-'];
+import { isEngineGeneratedSquadId } from '../../shared/orch-types';
 
 // O schema de squad aceita epoch-ms OU ISO string em createdAt (ambos viram
 // string). Number(ISO) é NaN e quebraria o "mais recente" — parse os dois.
@@ -41,7 +37,7 @@ export function pickReusableSquad<T extends ReusableSquadLike>(
   const eligible = squads.filter(
     (squad) =>
       !squad.builtin &&
-      !AUTO_GENERATED_PREFIXES.some((prefix) => squad.id.startsWith(prefix)) &&
+      !isEngineGeneratedSquadId(squad.id) &&
       squad.agents.length > 0 &&
       squad.agents.every((agent) => installedCliIds.has(agent.cli)),
   );

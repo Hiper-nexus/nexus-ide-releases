@@ -707,3 +707,21 @@ export interface McpRuntimeInfo {
   url: string | null;
   toolCount: number;
 }
+
+/**
+ * Squads sintetizados pelo motor: fallback determinístico do modo agêntico
+ * ('agentic-…') e o custom por workspace do designSquad ('custom-…'). São
+ * infraestrutura de missão (a aprovação fixa o hash do roster), não rosters
+ * que o usuário configurou — pickers de squad não devem listá-los, e o reuso
+ * agêntico nunca deve escolhê-los.
+ */
+export const ENGINE_GENERATED_SQUAD_PREFIXES = Object.freeze([
+  'agentic-',
+  'custom-',
+] as const);
+
+export function isEngineGeneratedSquadId(id: string): boolean {
+  return ENGINE_GENERATED_SQUAD_PREFIXES.some((prefix) =>
+    id.startsWith(prefix),
+  );
+}

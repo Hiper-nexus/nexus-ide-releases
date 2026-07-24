@@ -48,7 +48,7 @@ const savedSquad = {
   ],
 };
 
-describe('designSquadFromIntent honra squad salvo (fiação RC4)', () => {
+describe('designSquadFromIntent — Agêntico desenha do zero por padrão', () => {
   beforeEach(() => {
     listSquadsMock.mockReset();
     saveSquadMock.mockReset();
@@ -62,9 +62,23 @@ describe('designSquadFromIntent honra squad salvo (fiação RC4)', () => {
     saveSquadMock.mockImplementation((raw) => raw);
   });
 
-  it('reusa o squad salvo do usuário em vez de sintetizar fallback', async () => {
+  it('NÃO reusa um squad salvo por padrão — desenha um time novo do zero', async () => {
+    // Regressão (bug de campo): "escolhi orquestrador limpo / criar do 0" e o
+    // wizard pegou o squad salvo mais recente (roster de outro projeto). Modo
+    // Agêntico = desenhar um time para o objetivo, nunca substituir pelo salvo.
     listSquadsMock.mockReturnValue([savedSquad]);
     const result = await designSquadFromIntent('melhorar o onboarding', '/tmp/ws');
+    expect(result.ok).toBe(true);
+    expect(result.squad?.id).not.toBe('meu-time');
+    expect(result.squad?.id).toMatch(/^agentic-fallback-/);
+    expect(saveSquadMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reusa o squad salvo apenas quando preferSavedSquad é explicitamente pedido', async () => {
+    listSquadsMock.mockReturnValue([savedSquad]);
+    const result = await designSquadFromIntent('melhorar o onboarding', '/tmp/ws', {
+      preferSavedSquad: true,
+    });
     expect(result.ok).toBe(true);
     expect(result.squad?.id).toBe('meu-time');
     expect(saveSquadMock).not.toHaveBeenCalled();

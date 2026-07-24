@@ -156,6 +156,14 @@ export interface ArchitectResult {
 export interface SquadDesignOptions {
   readonly signal?: AbortSignal;
   readonly assertCurrentAuthority?: () => void;
+  /**
+   * Opt-in: reuse the newest fully-installed saved user squad instead of
+   * designing a fresh team. OFF by default — Modo Agêntico means "design a
+   * team for this objective from scratch", so silently substituting a saved
+   * squad (e.g. an unrelated project's roster) violated that intent. Users who
+   * want a saved squad pick it explicitly in Modo Squad.
+   */
+  readonly preferSavedSquad?: boolean;
 }
 
 function assertSquadDesignAuthority(options: SquadDesignOptions): void {
@@ -285,23 +293,26 @@ export async function designSquadFromIntent(
   assertSquadDesignAuthority(options);
   const clean = intent.trim();
   if (!clean) return { ok: false, error: 'descreva o objetivo da missão' };
-  // O roster que o usuário salvou vem ANTES de qualquer síntese: um squad de
-  // usuário com todos os clis instalados assume a missão como está (o wizard
-  // deixa revisar na tela seguinte). Só sem candidato é que o fallback
-  // determinístico monta um time novo.
-  const installed = new Set(
-    listAdapterInfos()
-      .filter((adapter) => adapter.installed && adapter.id !== 'shell')
-      .map((adapter) => adapter.id),
-  );
-  const saved = pickReusableSquad(listSquads(), installed);
-  if (saved) {
-    assertSquadDesignAuthority(options);
-    return {
-      ok: true,
-      squad: saved,
-      warning: `Reusando o squad salvo "${saved.name}" — edite o roster na próxima tela se quiser outro time.`,
-    };
+  // Reuso de um squad salvo é OPT-IN. Modo Agêntico = "desenhe um time novo
+  // para este objetivo do zero"; substituir isso silenciosamente pelo squad de
+  // usuário mais recente (ex.: o roster de OUTRO projeto que por acaso tem
+  // todos os clis instalados) atropelava exatamente esse pedido. Quem quer um
+  // squad salvo escolhe no Modo Squad. Só reusa quando o chamador pede.
+  if (options.preferSavedSquad) {
+    const installed = new Set(
+      listAdapterInfos()
+        .filter((adapter) => adapter.installed && adapter.id !== 'shell')
+        .map((adapter) => adapter.id),
+    );
+    const saved = pickReusableSquad(listSquads(), installed);
+    if (saved) {
+      assertSquadDesignAuthority(options);
+      return {
+        ok: true,
+        squad: saved,
+        warning: `Reusando o squad salvo "${saved.name}" — edite o roster na próxima tela se quiser outro time.`,
+      };
+    }
   }
   // Interactive UX must not wait for a remote model/Doctor. The deterministic
   // router already uses live installed adapters and mission capabilities; the
