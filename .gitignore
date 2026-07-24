@@ -107,3 +107,14 @@ release-assets/
 /.cache/
 *.tgz
 scripts/codesign-retry-bin/
+
+# Artefatos de runtime do próprio Nexus (logs, execuções, auditoria visual):
+# são gerados por uso local e não pertencem ao histórico.
+/.nexus/logs/
+/.nexus/pet-hatch-runs/
+/.nexus/ui-audit/
+/.nexus/attachments/
+# tsbuildinfo com nome fora do padrão *.tsbuildinfo
+/.tsb-verify-skeptic
+# Helpers de depuração via CDP, criados por sessão e descartáveis
+/.cdp-*.mjs
