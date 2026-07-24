@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.19.29 — Encerrar de Verdade
+
+Data: 2026-07-24
+
+### Encerrar uma missão passa a ter prova física
+
+- **Nunca mais "encerrou" sobre processo vivo**: uma sessão que a missão ainda
+  aponta, fisicamente viva e sem autoridade de pane que a atribua, era pulada
+  em silêncio — o encerramento devolvia sucesso e ainda apagava o
+  `orchestratorSessionId`, deixando o processo órfão e sem nenhum ponteiro
+  durável para alcançá-lo. Agora isso NEGA com erro nomeado, a missão vira
+  bloqueio técnico e o vínculo é preservado para a reconciliação. Mesmo
+  tratamento para worker vivo da missão sem pane vinculado.
+- **Encerramento de operador preserva o histórico**: canal próprio com modal
+  nativo, fence de runtime e preservação total de tasks, entregas, receipts e
+  histórico. Idempotente quando não resta processo algum.
+- **Aviso honesto**: "1 sessão encerrada" quando houve desligamento real
+  versus "nenhum processo restava vivo" — antes o no-op era indistinguível do
+  encerramento de verdade.
+- **Lista não trava mais**: recusa da autoridade virou resultado em vez de
+  promessa rejeitada; sem isso o estado ocupado ficava preso e desabilitava
+  todos os botões da lista sem explicar nada.
+
+### A lista de missões volta a esvaziar
+
+- **Agrupamento pelo runtime físico**: missão sem sessão e sem pane sai de "Em
+  progresso" e cai em "Encerradas" (fechada por padrão). Encerrar tudo e
+  continuar vendo todas as missões como ativas era o velho "travado em N
+  missões".
+- **Arquivar**: missão despachada carrega receipts que o Nexus se recusa a
+  apagar; arquivar tira do rail e do board sem tocar em nada durável, com
+  desarquivar no próprio card. Runtime vivo cancela o arquivamento na vista.
+
+### Retomada é sempre do processo principal
+
+- **Bootstrap main-owned é o único dono**: toda missão bloqueada retoma pelo
+  main, que adota o PTY ainda vivo ou limpa a identidade comprovadamente morta
+  e sela um pane novo. O respawn de panes persistidos pelo renderer criava
+  pane fantasma e o beco circular do "Retomar missão".
+- **Reabertura forçada é recusada cedo**, antes de qualquer operação com poder
+  de spawn.
+- **Reload de página não mata a sessão**: uma sessão que já pertence ao MESMO
+  renderer reata após HMR, Cmd+R ou recuperação de crash, em vez de morrer na
+  cerca de saída física.
+- **Selo de autoridade viaja com o processo** e entra no confronto de runtime
+  do bootstrap.
+
 ## 0.19.28 — Retomada Real
 
 Data: 2026-07-24

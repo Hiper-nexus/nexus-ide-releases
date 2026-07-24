@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.28',
+  version: '0.19.29',
   date: '2026-07-24',
-  codename: 'Retomada Real',
+  codename: 'Encerrar de Verdade',
   summary:
-    'Missões travadas voltam a rodar de verdade: retomada main-owned com bootstrap fresh, cercas de autoridade com diagnóstico nomeado, gate único de aprovação com modais compactos e remoção destravada para missões sem receipts.',
+    'Encerrar uma missão passa a exigir prova física de saída, a lista volta a esvaziar (Encerradas + Arquivar) e toda retomada de missão bloqueada é do processo principal, adotando o PTY vivo ou selando um pane novo.',
   highlights: [
     {
-      title: 'Rota selada e diversa',
+      title: 'Encerramento com prova física',
       detail:
-        'RouteReservation vincula missão, revisão, adapter, modelo e esforço antes do spawn; o roster permanece sticky e o router distribui trabalho sem degradar qualidade.',
+        'Sessão viva que a missão aponta e nenhuma autoridade de pane consegue atribuir agora NEGA o encerramento com erro nomeado, preservando o vínculo — antes o Nexus devolvia sucesso e apagava o ponteiro, deixando o processo órfão.',
     },
     {
-      title: 'Kickoff com prova real',
+      title: 'A lista esvazia',
       detail:
-        'O processo principal materializa o orquestrador e só libera o scheduler após observar uma borda idle→busy com saída real, preservando missão, sessão e revisão exatas.',
+        'O rail agrupa por runtime físico: missão sem sessão e sem pane sai de Em progresso e cai em Encerradas, fechada por padrão. Arquivar tira do rail e do board sem apagar nada durável, com desarquivar no próprio card.',
     },
     {
-      title: 'Handoff até a integração',
+      title: 'Retomada main-owned',
       detail:
-        'Dispatcher, worktrees e merge queue usam leases e receipts duráveis; uma missão só chega a concluída quando a entrega aceita também possui integração ou validação verificável.',
+        'Toda missão bloqueada retoma pelo processo principal, que adota o PTY ainda vivo ou limpa a identidade comprovadamente morta e sela um pane novo — fim do pane fantasma e do beco circular do Retomar missão.',
     },
   ],
   fixes: [
     {
-      title: 'Recuperação sem duplicação',
+      title: 'Aviso honesto de encerramento',
       detail:
-        'Reinício, troca de renderer, saída física e failover preservam a autoridade do main, revogam sessões antigas e retomam apenas o trabalho que ainda é atual.',
+        '"1 sessão encerrada" quando houve desligamento real versus "nenhum processo restava vivo" — o no-op deixou de ser indistinguível do encerramento de verdade.',
     },
     {
-      title: 'Aprovação compacta e bootstrap correto',
+      title: 'Lista não trava mais',
       detail:
-        'A confirmação nativa mantém ações visíveis em telas pequenas; o bootstrap respeita o modelo padrão aprovado e o orquestrador Codex usa MCP auditado sem uma segunda confirmação invisível.',
+        'Recusa da autoridade virou resultado em vez de promessa rejeitada: o estado ocupado não fica mais preso desabilitando todos os botões sem explicação.',
     },
     {
-      title: 'Release fail-closed',
+      title: 'Reload de página não mata a sessão',
       detail:
-        'Build local limpo, Node/npm fixados, assinatura, notarização, Gatekeeper, SBOM, auditoria e missão E2E pertencem obrigatoriamente ao mesmo commit e aos mesmos artefatos.',
+        'Sessão que já pertence ao mesmo renderer reata após HMR, Cmd+R ou recuperação de crash, em vez de morrer na cerca de saída física.',
     },
   ],
 };
