@@ -65,6 +65,7 @@ const authorityDeps = vi.hoisted(() => {
     assertPendingRecoverySpawnGrantActive: vi.fn(),
     attachOrchMeta: vi.fn(),
     attachSessionScope: vi.fn(),
+    hasLivePaneSession: vi.fn((_paneId: string) => false),
     findMissionPaneByPaneId: vi.fn((_paneId: string): unknown => null),
     rebindOrchestratorAuthority: vi.fn(),
     createScopedMissionPaneStore: vi.fn(),
@@ -151,6 +152,7 @@ vi.mock("../orch/pane-registry", () => ({
     authorityDeps.assertPendingRecoverySpawnGrantActive,
   attachOrchMeta: authorityDeps.attachOrchMeta,
   attachSessionScope: authorityDeps.attachSessionScope,
+  hasLivePaneSession: authorityDeps.hasLivePaneSession,
 }));
 
 vi.mock("../orch/mission-pane-store", () => ({
@@ -699,11 +701,174 @@ describe("registerPtyIpc account fail-fast", () => {
       },
     );
 
+    // A proven-dead pane clears the MODE fence without a grant, but a fresh
+    // process for a fenced WORKER incarnation stays impossible: physical
+    // identity is never reused outside the scheduler's own dispatch chain.
     expect(result).toEqual({
       ok: false,
-      error: expect.stringMatching(/main-sealed persisted pane/i),
+      error: expect.stringMatching(/incarnation|encarnação|processo exato/i),
     });
     expect(ompDeps.spawnOmpRpcPane).not.toHaveBeenCalled();
+  });
+
+  it("respawns a proven-dead persisted orchestrator fresh without a grant", () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: {},
+    });
+    const persisted = {
+      id: "mpane-orch-dead",
+      missionId: "mission-a",
+      adapterId: "claude",
+      model: "claude-opus-4-1",
+      accountId: "account-main",
+      effort: "high",
+      title: "Orchestrator",
+      role: "orchestrator" as const,
+      paneId: "pane-orch-dead",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.hasLivePaneSession.mockReturnValueOnce(false);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.rebindOrchestratorAuthority.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: persisted.adapterId,
+        model: persisted.model,
+        accountId: persisted.accountId,
+        effort: persisted.effort,
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        resume: false,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: true,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+    expect(authorityDeps.hasLivePaneSession).toHaveBeenCalledWith(
+      persisted.paneId,
+    );
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalled();
+  });
+
+  it("reattaches instead of fresh when the persisted pane session is alive", () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: {},
+    });
+    const persisted = {
+      id: "mpane-orch-alive",
+      missionId: "mission-a",
+      adapterId: "claude",
+      model: "claude-opus-4-1",
+      accountId: "account-main",
+      effort: "high",
+      title: "Orchestrator",
+      role: "orchestrator" as const,
+      paneId: "pane-orch-alive",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.hasLivePaneSession.mockReturnValueOnce(true);
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    ptyDeps.adoptMainOwnedAgentSession.mockReturnValueOnce({
+      sessionId: "pty-adopted",
+      state: "idle",
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: persisted.adapterId,
+        model: persisted.model,
+        accountId: persisted.accountId,
+        effort: persisted.effort,
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        resume: false,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: true,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    // A live identity is never destroyed on the renderer's word: the fresh
+    // request canonicalizes to reattach and adopts the live main-owned PTY.
+    expect(result).toEqual({
+      ok: true,
+      sessionId: "pty-adopted",
+      adopted: true,
+      state: "idle",
+    });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    expect(
+      authorityDeps.rebindOrchestratorAuthority,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("keeps the ambiguous resume+fresh payload fenced", () => {
+    const persisted = {
+      id: "mpane-orch-ambiguous",
+      missionId: "mission-a",
+      adapterId: "claude",
+      model: "claude-opus-4-1",
+      accountId: "account-main",
+      effort: "high",
+      title: "Orchestrator",
+      role: "orchestrator" as const,
+      paneId: "pane-orch-ambiguous",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = handler?.(
+      { sender: { id: 7 } },
+      {
+        kind: "cli-agent",
+        adapterId: persisted.adapterId,
+        model: persisted.model,
+        accountId: persisted.accountId,
+        effort: persisted.effort,
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        resume: true,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: true,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: expect.stringMatching(/resume\+fresh simultâneos/i),
+    });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
   it("spawns one exact persisted RPC worker only under its recovery grant", async () => {

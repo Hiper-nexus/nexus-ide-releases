@@ -16,6 +16,7 @@ import {
   bindPendingSpawnSession,
   claimPendingRecoverySpawnMeta,
   claimPendingSpawnMeta,
+  hasLivePaneSession,
   type PendingRecoverySpawnMeta,
   type PendingSpawnMeta,
 } from "./pane-registry";
@@ -217,33 +218,33 @@ function canonicalizePersistedSpawnRequest(
   request: MainOwnedAgentSpawnRequest,
   persisted: ScopedMissionPaneSpec,
   recovery: PendingRecoverySpawnMeta | null,
+  paneSessionAlive: boolean,
 ): MainOwnedAgentSpawnRequest {
   const expectedCwd =
     persisted.cwd ??
     persisted.executionScope?.rootRealPath ??
     persisted.scope.rootRealPath;
-  const exactResume =
+  const ambiguousMode =
     request.resume === true &&
-    request.restorePersistedAuthority !== true;
+    request.restorePersistedAuthority === true;
   const explicitFresh =
     request.resume !== true &&
     request.restorePersistedAuthority === true;
-  // Mode policy: with a recovery grant pending, the grant's fresh-context
-  // intent WINS over whatever mode the renderer asked — a consent-resume
-  // racing the driver's recovery used to dead-end BOTH paths (the claimed
-  // grant was consumed and the resume was rejected with
-  // recoveryMode[false != true]). Without a grant the old contract stands:
-  // only exact resume may reattach; a renderer cannot obtain a fresh
-  // context on its own.
-  const effectiveFresh = recovery !== null;
+  // Mode policy: main resolves the mode from its own evidence, never from the
+  // renderer's word alone. With a recovery grant pending, the grant's
+  // fresh-context intent WINS (a consent-resume racing the driver's recovery
+  // used to dead-end BOTH paths). Without a grant: a live pane session always
+  // reattaches (adoption/exact resume — the renderer cannot destroy a live
+  // identity), and an explicitly fresh request is honored only when main
+  // proves NO session of this pane is alive (launcher/bridge fallback after
+  // the sealed session died; retrying used to dead-end on the one-shot grant
+  // with modo(fresh exige grant)). An ambiguous resume+fresh payload stays
+  // fenced.
+  const effectiveFresh =
+    recovery !== null || (explicitFresh && !paneSessionAlive);
   const effectiveResume = !effectiveFresh;
   const mismatches = spawnFenceMismatches([
-    ...(!recovery
-      ? ([["modo(resume exigido sem grant)", exactResume, true]] as const)
-      : []),
-    ...(!recovery
-      ? ([["modo(fresh exige grant)", explicitFresh, false]] as const)
-      : []),
+    ["modo(resume+fresh simultâneos)", ambiguousMode, false],
     ["kind", request.kind, "cli-agent"],
     ["orchRequestId", request.orchRequestId, recovery?.request.requestId],
     ["paneId", request.paneId, persisted.paneId],
@@ -422,10 +423,12 @@ export function authorizeMainOwnedAgentSpawn(
         runtimeManager,
         found,
       );
+      const livenessPaneId = persistedPane.paneId ?? canonicalRequest.paneId;
       canonicalRequest = canonicalizePersistedSpawnRequest(
         canonicalRequest,
         persistedPane,
         recovery,
+        livenessPaneId !== undefined && hasLivePaneSession(livenessPaneId),
       );
     }
   }

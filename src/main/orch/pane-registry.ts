@@ -1149,6 +1149,29 @@ export function assertPendingRecoverySpawnGrantActive(
 }
 
 /**
+ * Main-owned proof of life for a stable pane id: does ANY registered session
+ * (renderer grid or main-owned envelope) still have a live PTY? This is the
+ * evidence the spawn fence trusts to allow an explicitly fresh persisted
+ * spawn without a recovery grant — the renderer's word is never enough to
+ * destroy a live identity.
+ */
+export function hasLivePaneSession(paneId: string): boolean {
+  const owned = getMainOwnedPane(paneId);
+  if (
+    owned?.entry.sessionId &&
+    getSessionState(owned.entry.sessionId) !== null
+  ) {
+    return true;
+  }
+  return panes.some(
+    ({ entry }) =>
+      entry.paneId === paneId &&
+      typeof entry.sessionId === "string" &&
+      getSessionState(entry.sessionId) !== null,
+  );
+}
+
+/**
  * Create a mission pane/session. A live renderer gets first chance to present
  * it; when none exists (or it disappears before ACK), main creates/retains the
  * physical PTY and returns the same stable pane/session contract.
