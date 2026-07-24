@@ -228,8 +228,22 @@ function canonicalizePersistedSpawnRequest(
   const explicitFresh =
     request.resume !== true &&
     request.restorePersistedAuthority === true;
-  const recoveryModeMatches = recovery ? explicitFresh : exactResume;
+  // Mode policy: with a recovery grant pending, the grant's fresh-context
+  // intent WINS over whatever mode the renderer asked — a consent-resume
+  // racing the driver's recovery used to dead-end BOTH paths (the claimed
+  // grant was consumed and the resume was rejected with
+  // recoveryMode[false != true]). Without a grant the old contract stands:
+  // only exact resume may reattach; a renderer cannot obtain a fresh
+  // context on its own.
+  const effectiveFresh = recovery !== null;
+  const effectiveResume = !effectiveFresh;
   const mismatches = spawnFenceMismatches([
+    ...(!recovery
+      ? ([["modo(resume exigido sem grant)", exactResume, true]] as const)
+      : []),
+    ...(!recovery
+      ? ([["modo(fresh exige grant)", explicitFresh, false]] as const)
+      : []),
     ["kind", request.kind, "cli-agent"],
     ["orchRequestId", request.orchRequestId, recovery?.request.requestId],
     ["paneId", request.paneId, persisted.paneId],
@@ -241,14 +255,8 @@ function canonicalizePersistedSpawnRequest(
     ["missionId", request.missionId, persisted.missionId],
     ["resumeLatestOnly", request.resumeLatestOnly === true, false],
     ["shell", request.shell, undefined],
-    [
-      "recoveryMode(resume/fresh)",
-      recoveryModeMatches,
-      true,
-    ],
     ...(recovery
       ? ([
-          ["recovery.explicitFresh", explicitFresh, true],
           ["recovery.paneId", recovery.request.paneId, persisted.paneId],
           [
             "recovery.missionId",
@@ -293,9 +301,9 @@ function canonicalizePersistedSpawnRequest(
       : {}),
     missionId: persisted.missionId,
     paneId: persisted.paneId,
-    resume: exactResume,
+    resume: effectiveResume,
     resumeLatestOnly: false,
-    restorePersistedAuthority: explicitFresh,
+    restorePersistedAuthority: effectiveFresh,
   };
 }
 
