@@ -13,43 +13,43 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.29',
-  date: '2026-07-24',
-  codename: 'Encerrar de Verdade',
+  version: '0.19.30',
+  date: '2026-07-25',
+  codename: 'Encerra e Entra',
   summary:
-    'Encerrar uma missão passa a exigir prova física de saída, a lista volta a esvaziar (Encerradas + Arquivar) e toda retomada de missão bloqueada é do processo principal, adotando o PTY vivo ou selando um pane novo.',
+    'O orquestrador volta a nascer autenticado e a começar de verdade: nem tela de login, nem diálogo de confiança da pasta, nem squad built-in que não despacha. E encerrar uma missão viva volta a funcionar.',
   highlights: [
     {
-      title: 'Encerramento com prova física',
+      title: 'O pane abre logado',
       detail:
-        'Sessão viva que a missão aponta e nenhuma autoridade de pane consegue atribuir agora NEGA o encerramento com erro nomeado, preservando o vínculo — antes o Nexus devolvia sucesso e apagava o ponteiro, deixando o processo órfão.',
+        'O orquestrador roda num HOME isolado, e de lá o CLI não enxerga o login da máquina — a credencial só chega pelo ambiente do processo. Ela era justamente retirada quando a conta escolhida É o login nativo, então o pane abria em "Not logged in" escrevendo "Welcome back". A decisão agora conhece o HOME que o pane vai receber.',
     },
     {
-      title: 'A lista esvazia',
+      title: 'A missão realmente começa',
       detail:
-        'O rail agrupa por runtime físico: missão sem sessão e sem pane sai de Em progresso e cai em Encerradas, fechada por padrão. Arquivar tira do rail e do board sem apagar nada durável, com desarquivar no próprio card.',
+        'O pane carrega a confiança de pasta que você já concedeu, em vez de parar no diálogo "Do you trust the files in this folder?" esperando uma tecla que ninguém manda. E squad built-in vira cópia editável na hora de despachar, em vez de travar o botão Começar.',
     },
     {
-      title: 'Retomada main-owned',
+      title: 'Encerrar missão viva',
       detail:
-        'Toda missão bloqueada retoma pelo processo principal, que adota o PTY ainda vivo ou limpa a identidade comprovadamente morta e sela um pane novo — fim do pane fantasma e do beco circular do Retomar missão.',
+        'A confirmação parou de brigar com a própria missão: qualquer escrita durável feita enquanto você lia o modal invalidava a aprovação. Quanto mais viva a missão, mais impossível encerrá-la.',
     },
   ],
   fixes: [
     {
-      title: 'Aviso honesto de encerramento',
+      title: 'Histórico do terminal na largura certa',
       detail:
-        '"1 sessão encerrada" quando houve desligamento real versus "nenhum processo restava vivo" — o no-op deixou de ser indistinguível do encerramento de verdade.',
+        'O conteúdo salvo de um pane era reescrito antes da primeira medição, numa grade estreita: a moldura da interface do agente caía por cima do texto quebrado. Agora o histórico só volta depois que o terminal conhece a largura real.',
     },
     {
-      title: 'Lista não trava mais',
+      title: 'Falha de credencial com motivo',
       detail:
-        'Recusa da autoridade virou resultado em vez de promessa rejeitada: o estado ocupado não fica mais preso desabilitando todos os botões sem explicação.',
+        'Pane de HOME isolado sem credencial legível recusa o spawn explicando o que fazer, em vez de entregar um orquestrador mudo que trava a missão inteira sem dizer por quê.',
     },
     {
-      title: 'Reload de página não mata a sessão',
+      title: 'HOME real sem token de ambiente',
       detail:
-        'Sessão que já pertence ao mesmo renderer reata após HMR, Cmd+R ou recuperação de crash, em vez de morrer na cerca de saída física.',
+        'Onde o CLI cuida da própria sessão, o Nexus não injeta mais um instantâneo estático que expira em horas e tem precedência sobre o login — a origem do erro de credencial expirada ao reabrir um pane.',
     },
   ],
 };
