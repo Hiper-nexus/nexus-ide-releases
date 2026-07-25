@@ -43,6 +43,56 @@ describe('native Claude auth in the ephemeral HOME', () => {
     expect(stub.projects).toBeUndefined();
   });
 
+  it('carrega a confiança de pasta já concedida — só as flags, só do cwd', () => {
+    // Sem isso o pane gated para no diálogo "Do you trust the files in this
+    // folder?" esperando uma tecla que ninguém manda: a missão fica "ao vivo"
+    // com o orquestrador parado na tela de boas-vindas para sempre.
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({
+        projects: {
+          '/work/projeto': {
+            hasTrustDialogAccepted: true,
+            history: ['prompt sensível'],
+            allowedTools: ['Bash'],
+          },
+          '/work/outro': { hasTrustDialogAccepted: true },
+        },
+      }),
+    );
+
+    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
+      cwd: '/work/projeto',
+    });
+
+    const stub = JSON.parse(
+      fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
+    ) as { projects?: Record<string, Record<string, unknown>> };
+    expect(Object.keys(stub.projects ?? {})).toEqual(['/work/projeto']);
+    expect(stub.projects?.['/work/projeto']).toEqual({
+      hasTrustDialogAccepted: true,
+      hasCompletedProjectOnboarding: true,
+    });
+  });
+
+  it('nunca inventa confiança que o usuário não deu', () => {
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({
+        projects: { '/work/projeto': { hasTrustDialogAccepted: false } },
+      }),
+    );
+
+    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
+      cwd: '/work/projeto',
+    });
+
+    const stub = JSON.parse(
+      fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(stub.projects).toBeUndefined();
+  });
+
   it('never carries the native identity without the flag (GLM/LongCat)', () => {
     fs.writeFileSync(
       path.join(home, '.claude.json'),

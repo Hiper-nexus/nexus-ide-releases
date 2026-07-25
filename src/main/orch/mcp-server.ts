@@ -394,6 +394,7 @@ function installSpawnHook(): void {
         // overlay; GLM/LongCat (base URL de terceiro) jamais podem recebê-la.
         const home = prepareEphemeralHome(ctx.token, mcpConfig, {
           carryNativeClaudeAuth: !isThirdPartyClaudeFamily(adapter),
+          cwd: authority.cwd,
         });
         env.HOME = home.dir;
         ephemeralHomeDir = home.dir;
