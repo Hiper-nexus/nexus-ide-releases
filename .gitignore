@@ -89,6 +89,8 @@ out/
 .claude/
 .aider*
 .overclock-app/
+# Wiki gerada pelo Qoder a partir do código: derivável, pesada e sempre defasada.
+.qoder/
 
 # Dev Electron shell with its own stable TCC identity (com.nexuside.dev)
 .dev-electron/
@@ -101,6 +103,12 @@ graphify-out/
 
 # packaged release artifacts (generated)
 release-assets/
+# Saídas dos gates de release (SBOM, audit, receipt): regeradas a cada build e
+# publicadas como assets da release — versioná-las só suja a árvore e faz o
+# gate recusar publicar, porque ele exige checkout limpo até de untracked.
+release-artifacts/
+# Auditorias geradas por versão (output/audit-v0.19.x)
+/output/
 
 # Local scrape / package scratch
 .firecrawl/
@@ -114,6 +122,11 @@ scripts/codesign-retry-bin/
 /.nexus/pet-hatch-runs/
 /.nexus/ui-audit/
 /.nexus/attachments/
+# Inventário local de servidores MCP: carrega credenciais de auth.
+/.nexus/mcp-hub.json
+# Capturas da auditoria visual (Impeccable). As críticas em .impeccable/critique
+# continuam versionadas — só os PNGs, que são regeráveis, ficam de fora.
+/.impeccable/shots/
 # tsbuildinfo com nome fora do padrão *.tsbuildinfo
 /.tsb-verify-skeptic
 # Helpers de depuração via CDP, criados por sessão e descartáveis
