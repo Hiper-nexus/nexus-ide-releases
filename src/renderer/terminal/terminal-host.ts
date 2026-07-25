@@ -63,6 +63,38 @@ interface Host {
   cleanups: Array<() => void>;
   /** Live WebGL addon while this host holds a lease from the pool. */
   webgl?: WebglAddon;
+  /**
+   * Scrollback salvo esperando a PRIMEIRA medição real do slot.
+   *
+   * O conteúdo foi serializado na largura que o terminal tinha quando o pane
+   * foi salvo. Reescrevê-lo antes do fit joga tudo numa grade de 80 colunas: a
+   * TUI do agente desenha caixas com posicionamento absoluto, então a moldura
+   * cai por cima do resto da linha quebrada e o texto sai duplicado/entrelaçado
+   * (`cCaude Codeev2.1.220h`, letras soltas empilhadas na borda direita). E
+   * isso NÃO tem volta: reflow de resize não reconstrói o que foi escrito com
+   * cursor absoluto. Por isso o replay espera a largura definitiva.
+   */
+  pendingScrollback?: string;
+}
+
+/**
+ * Reescreve o scrollback salvo assim que o terminal tem a largura final.
+ * Idempotente: só corre uma vez por host.
+ */
+function flushPendingScrollback(host: Host): void {
+  const pending = host.pendingScrollback;
+  if (!pending || host.disposed || !host.opened) return;
+  delete host.pendingScrollback;
+  host.inputVisibility.follow();
+  host.term.write(pending, () => {
+    if (host.disposed || !host.inputVisibility.isFollowing) return;
+    host.term.scrollToBottom();
+    try {
+      host.term.refresh(0, Math.max(0, host.term.rows - 1));
+    } catch {
+      // The next PTY write will paint after an early restore race.
+    }
+  });
 }
 
 function reportPaneResumeIncident(
@@ -593,6 +625,9 @@ function makeResizeObserver(host: Host): ResizeObserver {
       } catch {
         return;
       }
+      // Primeira medição real do slot: é aqui que o replay pendente entra, já
+      // na largura certa.
+      flushPendingScrollback(host);
       if (host.sessionId) {
         window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
       }
@@ -609,6 +644,7 @@ function refitAllHosts(): void {
     } catch {
       continue; // Not measurable right now; the ResizeObserver will settle it.
     }
+    flushPendingScrollback(host);
     if (host.sessionId) {
       window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
     }
@@ -897,24 +933,17 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
 
   if (!host.opened) {
     host.term.open(host.element);
-    if (pane.terminalScrollback) {
-      host.inputVisibility.follow();
-      host.term.write(pane.terminalScrollback, () => {
-        if (host.disposed || !host.inputVisibility.isFollowing) return;
-        host.term.scrollToBottom();
-        try {
-          host.term.refresh(0, Math.max(0, host.term.rows - 1));
-        } catch {
-          // The next PTY write will paint after an early restore race.
-        }
-      });
-    }
+    // NUNCA reescrever o scrollback antes da largura definitiva: o replay fica
+    // pendente e o flush acontece no primeiro fit bem-sucedido (aqui embaixo ou
+    // no ResizeObserver, quando o slot ainda não é mensurável neste frame).
+    if (pane.terminalScrollback) host.pendingScrollback = pane.terminalScrollback;
     host.opened = true;
     registerWebglLease(pane.id, host);
   }
 
   try {
     host.fit.fit();
+    flushPendingScrollback(host);
     if (host.sessionId) {
       window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
     }
