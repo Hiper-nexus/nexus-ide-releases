@@ -2011,6 +2011,119 @@ describe('mission runtime close IPC authority', () => {
     expect(options?.detail).toContain('Tasks, entregas');
   });
 
+  it('encerra mesmo quando a missão recebe escrita durável enquanto o modal está aberto', async () => {
+    // Regressão: a cerca pré-encerramento comparava um hash que incluía
+    // updatedAt/intentVersion. Qualquer escrita durável na missão durante os
+    // segundos do modal nativo (supervisor de delegação, learnings do agente,
+    // transição de status) invalidava a aprovação e devolvia
+    // "mission runtime changed while confirmation was open" — o operador não
+    // conseguia encerrar uma missão VIVA, justamente a que mais escreve.
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    let stored = {
+      id: 'mission-viva',
+      title: 'Missão viva',
+      description: 'Escreve enquanto o modal está aberto.',
+      status: 'running' as 'running' | 'blocked',
+      intentState: 'dispatched' as const,
+      intentVersion: 4,
+      orchestratorSessionId: 'pty-viva',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const persistedPane = {
+      id: 'mission-pane-viva',
+      missionId: stored.id,
+      paneId: 'pane-viva',
+      adapterId: 'claude',
+      title: 'Orquestrador',
+      agentName: 'Maestro',
+      role: 'orchestrator' as const,
+      scope: SCOPE_A,
+      createdAt: 1,
+    };
+    harness.agentSessions.push({
+      sessionId: 'pty-viva',
+      paneId: persistedPane.paneId,
+      adapterId: 'claude',
+      cwd: SCOPE_A.rootRealPath,
+      missionId: stored.id,
+      role: 'orchestrator',
+      scope: SCOPE_A,
+    });
+    harness.terminatePty.mockImplementationOnce(async (sessionId: string) => {
+      const index = harness.agentSessions.findIndex(
+        (entry) => entry.sessionId === sessionId,
+      );
+      if (index >= 0) harness.agentSessions.splice(index, 1);
+      return true;
+    });
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) => (missionId === stored.id ? stored : null),
+        list: () => [stored],
+        block: () => {
+          stored = {
+            ...stored,
+            status: 'blocked',
+            updatedAt: stored.updatedAt + 1,
+          } as typeof stored;
+          return stored;
+        },
+        update: (missionId: string, patch: Record<string, unknown>) => {
+          if (missionId !== stored.id) return null;
+          stored = {
+            ...stored,
+            ...patch,
+            updatedAt: stored.updatedAt + 1,
+          } as typeof stored;
+          return stored;
+        },
+        setOrchestratorSession: (
+          missionId: string,
+          sessionId: string | null,
+        ) => {
+          if (missionId !== stored.id) return null;
+          stored = {
+            ...stored,
+            orchestratorSessionId: sessionId ?? undefined,
+            updatedAt: stored.updatedAt + 1,
+          } as typeof stored;
+          return stored;
+        },
+      },
+      missionPanes: {
+        list: (missionId: string) =>
+          missionId === stored.id ? [persistedPane] : [],
+      },
+    });
+    const handler = configureAndGetHandler();
+
+    // O agente grava um learning e o supervisor sobe intentVersion enquanto o
+    // operador ainda lê o modal.
+    harness.dialog.showMessageBox.mockImplementationOnce(async () => {
+      stored = {
+        ...stored,
+        learnings: 'nota gravada durante a confirmação',
+        intentVersion: stored.intentVersion + 1,
+        updatedAt: stored.updatedAt + 7,
+      } as typeof stored;
+      return { response: 1 };
+    });
+
+    await expect(
+      handler({ sender }, { missionId: stored.id }),
+    ).resolves.toMatchObject({
+      ok: true,
+      terminatedSessionIds: ['pty-viva'],
+    });
+    expect(harness.terminatePty).toHaveBeenCalledWith('pty-viva');
+  });
+
   it('validates the close payload before inspecting or terminating anything', async () => {
     const sender = owner();
     harness.scopes.set(sender.id, SCOPE_A);
