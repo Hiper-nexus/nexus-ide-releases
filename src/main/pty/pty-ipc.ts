@@ -64,6 +64,10 @@ import {
   supportsEnforceableReadOnlyNativeAuthority,
 } from "./autonomous-cli-policy";
 import { resolveCwdForScope } from "../orch/workspace-path";
+import {
+  requiresSpawnGate,
+  shouldUseEphemeralHome,
+} from "../orch/spawn-home-policy";
 import { getTerminalSettings } from "../persistence/settings-store";
 import {
   listAvailableShells,
@@ -235,6 +239,12 @@ function spawnCliPtyAgentPane(
       effort: request.effort,
       accountId: request.accountId,
       model: request.model,
+      // Mesmo predicado que o spawn hook usa para trocar o HOME — a credencial
+      // do Claude depende dele (HOME efêmero não alcança a linhagem nativa).
+      isolatedHome: shouldUseEphemeralHome(
+        adapter,
+        requiresSpawnGate(authority.context),
+      ),
     });
     if (!preparation.ok) {
       throw new Error(preparation.error);

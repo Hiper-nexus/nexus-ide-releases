@@ -413,9 +413,54 @@ type PreparedAccount = Extract<
   { ok: true }
 >;
 
+/**
+ * `isolatedHome`: o pane vai rodar num HOME efêmero (gate de orquestrador /
+ * allowedTools / allowedSkills). Isso muda a decisão de credencial do Claude:
+ * no HOME real o CLI usa e RENOVA sozinho a linhagem nativa (Keychain /
+ * .credentials.json) e um token de env só atrapalha — é snapshot estático que
+ * expira em horas e tem precedência sobre o login. No HOME efêmero o CLI não
+ * enxerga essa linhagem, então o token de env é a única ponte possível.
+ */
+export interface ProviderPerSpawn {
+  effort?: string;
+  accountId?: string;
+  model?: string;
+  isolatedHome?: boolean;
+}
+
+/**
+ * Credencial da assinatura Claude NATIVA para um pane não pinado.
+ *
+ * HOME real → `{}`: o CLI lê e RENOVA a própria linhagem (Keychain no macOS,
+ * ~/.claude/.credentials.json no resto). `CLAUDE_CODE_OAUTH_TOKEN` ali seria um
+ * snapshot estático com precedência sobre o login — expira em horas e o CLI não
+ * refresca token de ambiente (401 no respawn de failover, caso de campo).
+ *
+ * HOME efêmero → token obrigatório: o CLI não enxerga a linhagem nativa a
+ * partir dele. Sem token o pane abre em "Not logged in · Run /login" com a
+ * máquina perfeitamente autenticada, e a identidade projetada no .claude.json
+ * ainda escreve "Welcome back" — falha silenciosa que parecia bug de login.
+ * Por isso aqui é fail-closed: melhor recusar o spawn com motivo do que
+ * entregar um orquestrador mudo que trava a missão inteira.
+ */
+function nativeClaudeSubscriptionEnv(
+  isolatedHome: boolean,
+): Record<string, string> {
+  if (!isolatedHome) return {};
+  const nativeEnv = activeClaudeAuthEnv();
+  if (!nativeEnv) {
+    throw new Error(
+      'não foi possível ler a credencial nativa do Claude (Keychain ' +
+        'indisponível) para um pane com HOME isolado. Desbloqueie o login ' +
+        'keychain ou rode `claude` num terminal para renovar a sessão',
+    );
+  }
+  return nativeEnv;
+}
+
 function buildProviderSpawnOverrides(
   adapterId: string,
-  perSpawn: { effort?: string; accountId?: string; model?: string },
+  perSpawn: ProviderPerSpawn,
   preparedAccount: PreparedAccount | null,
 ): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
@@ -474,12 +519,13 @@ function buildProviderSpawnOverrides(
           `selected subscription "${account.label}" could not be activated`,
         );
       }
-      // Unpinned active path: Claude via token env; file providers via managed home.
+      // Unpinned active path: Claude via linhagem nativa (token env só no HOME
+      // efêmero); file providers via managed home.
       // Fail closed for file-auth: empty keyEnv would silently use the system login.
       if (adapterId === 'claude') {
         return {
           ...base,
-          keyEnv: activeClaudeAuthEnv() ?? {},
+          keyEnv: nativeClaudeSubscriptionEnv(perSpawn.isolatedHome === true),
           suppressEnv: subscriptionSuppressEnvVars(adapterId),
         };
       }
@@ -562,7 +608,7 @@ function buildProviderSpawnOverrides(
     decision.injectKey && adapter && key
       ? nativeKeyEnv(adapterId, key, perSpawn.model)
       : decision.strategy === 'subscription' && adapterId === 'claude'
-        ? (activeClaudeAuthEnv() ?? {})
+        ? nativeClaudeSubscriptionEnv(perSpawn.isolatedHome === true)
         : {};
   return {
     ...base,
@@ -580,7 +626,7 @@ export type ProviderSpawnPreparation =
 /** Resolve all spawn-time auth synchronously, before node-pty is touched. */
 export function prepareProviderSpawn(
   adapterId: string,
-  perSpawn: { effort?: string; accountId?: string; model?: string } = {},
+  perSpawn: ProviderPerSpawn = {},
 ): ProviderSpawnPreparation {
   const readiness = perSpawn.accountId
     ? providerInfrastructureReadiness(adapterId)
@@ -589,7 +635,12 @@ export function prepareProviderSpawn(
 
   let preparedAccount: PreparedAccount | null = null;
   if (perSpawn.accountId) {
-    const prepared = prepareAccountForSpawn(adapterId, perSpawn.accountId);
+    const prepared = prepareAccountForSpawn(
+      adapterId,
+      perSpawn.accountId,
+      undefined,
+      { isolatedHome: perSpawn.isolatedHome === true },
+    );
     if (!prepared.ok) return prepared;
     preparedAccount = prepared;
   }
@@ -614,7 +665,7 @@ export function prepareProviderSpawn(
 /** Backward-compatible strict accessor for non-IPC callers. */
 export function providerSpawnOverrides(
   adapterId: string,
-  perSpawn: { effort?: string; accountId?: string; model?: string } = {},
+  perSpawn: ProviderPerSpawn = {},
 ): ProviderSpawnOverrides {
   const prepared = prepareProviderSpawn(adapterId, perSpawn);
   if (!prepared.ok) throw new Error(prepared.error);
