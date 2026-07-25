@@ -61,7 +61,11 @@ import {
   unregisterOrchRenderer,
 } from "./pane-registry";
 import { listOmpRpcSessions } from '../adapters/omp-rpc-ipc';
-import { listAgentSessions } from '../pty/pty-manager';
+import {
+  getOwnedAgentSessionInfo,
+  listAgentSessions,
+  orchWriteSession,
+} from '../pty/pty-manager';
 import {
   RendererMissionAuthority,
   type RendererMissionAuthorityCandidate,
@@ -72,6 +76,7 @@ import {
   ProjectDomainStoreRegistry,
   configureProjectDomainStoreRegistry,
   disposeProjectDomainStoreRegistry,
+  getProjectDomainStores,
   type ProjectDomainStoreSuite,
   type ProjectDomainStoreName,
 } from "./project-domain-store-registry";
@@ -303,6 +308,18 @@ export const missionApproveIntentSchema = z
     missionId: z.string().min(1).max(128),
     evidenceAttached: z.boolean().optional(),
     attachmentPaths: z.array(z.string().min(1).max(4_096)).max(6).optional(),
+  })
+  .strict();
+
+/**
+ * Teclado do operador num pane de missão. O teto é digitação e edição de
+ * linha — um prompt de kickoff não cabe aqui, e é essa a intenção: o operador
+ * conversa com o agente, não injeta contrato por fora do gate.
+ */
+export const paneOperatorInputSchema = z
+  .object({
+    sessionId: z.string().min(1).max(128),
+    data: z.string().min(1).max(4_096),
   })
   .strict();
 
@@ -1554,6 +1571,26 @@ export async function closeOrchestration(): Promise<void> {
 }
 
 export function registerOrchIpc(): void {
+  ipcMain.handle(ORCH_CHANNELS.paneOperatorInput, (event, raw): boolean => {
+    const parsed = paneOperatorInputSchema.safeParse(raw);
+    if (!parsed.success) return false;
+    const { sessionId, data } = parsed.data;
+    // Bracketed paste é o transporte da injeção orquestrada (kickoff, handoff,
+    // resposta de ferramenta). Ele continua entrando só pelo lane com recibo:
+    // o operador digita, não injeta contrato.
+    if (data.includes("\x1b[200~") || data.includes("\x1b[201~")) return false;
+    // Posse de apresentação é do main, não do payload: só quem realmente
+    // mostra a sessão pode falar por ela.
+    const info = getOwnedAgentSessionInfo(event.sender, sessionId);
+    if (!info?.missionId) return false;
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const mission = getProjectDomainStores(scope).missions.get(info.missionId);
+    if (!mission || mission.status === "done" || mission.status === "failed") {
+      return false;
+    }
+    return orchWriteSession(sessionId, data, { markInputBusy: true });
+  });
+
   ipcMain.on(ORCH_CHANNELS.panesSync, (event, raw) => {
     const parsed = panesSyncSchema.safeParse(raw);
     if (parsed.success) {

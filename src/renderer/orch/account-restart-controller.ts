@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAccountStore } from '../state/account-store';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { listPanes } from '../lib/split-tree';
 import { respawnWithResume } from '../terminal/terminal-host';
@@ -44,8 +45,17 @@ export function restartPanesForPendingAccount(): number {
   const active = accounts.find(
     (a) => a.adapterId === restartAdapterId && a.active,
   );
+  // Panes de missão são main-owned: o respawn do renderer é sempre recusado,
+  // então incluí-los aqui só produzia uma recusa por pane a cada hot-swap.
+  const missionBindings = useOrchStore.getState().paneMissions;
   const panes = listPanes(useLayoutStore.getState().root).filter(
-    (p) => p.kind === 'cli-agent' && p.adapterId === restartAdapterId,
+    (p) =>
+      p.kind === 'cli-agent' &&
+      p.adapterId === restartAdapterId &&
+      !p.missionId &&
+      !missionBindings[p.id] &&
+      p.role !== 'orchestrator' &&
+      p.role !== 'worker',
   );
 
   let restarted = 0;

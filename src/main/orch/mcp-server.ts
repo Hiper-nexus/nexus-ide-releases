@@ -398,7 +398,16 @@ function installSpawnHook(): void {
         });
         env.HOME = home.dir;
         ephemeralHomeDir = home.dir;
-        extraArgs.push('--mcp-config', home.mcpConfigPath);
+        // A identidade OAuth carregada faz o CLI baixar os conectores MCP da
+        // CONTA (Drive, Vercel, HF…): meia dúzia de OAuth remotos no boot de
+        // um agente que só pode usar mcp__nexus. Isso atrasava/mutava o boot
+        // (o paint espera handshake MCP) e afogava o orquestrador em
+        // ferramentas que ele nunca poderia chamar. Estrito: só o nexus.
+        extraArgs.push(
+          '--mcp-config',
+          home.mcpConfigPath,
+          '--strict-mcp-config',
+        );
       } else if (isThirdPartyClaudeFamily(adapter)) {
         // GLM/LongCat run the `claude` binary against a third-party endpoint via
         // an injected token. Sharing the native ~/.claude lets the binary

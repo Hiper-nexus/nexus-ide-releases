@@ -518,6 +518,15 @@ export interface NexusApi {
     sendBrowserOpenResult(result: BrowserPaneOpenResult): void;
     onBrowserOpenRequest(cb: (req: BrowserPaneOpenRequest) => void): Unsubscribe;
     onPaneCloseRequest(cb: (request: PaneCloseRequest) => void): Unsubscribe;
+    /**
+     * Teclado do operador num pane de missão. O renderer não escreve nesses
+     * panes; pede ao main, que valida posse/missão/formato e escreve pelo
+     * lane main-owned. Resolve false quando a autoridade não confere.
+     */
+    sendPaneOperatorInput(input: {
+      sessionId: string;
+      data: string;
+    }): Promise<boolean>;
     listMissions(): Promise<Mission[]>;
     /** Recorded pane composition of a mission (for 1-click reopen). */
     listMissionPanes(missionId: string): Promise<MissionPaneSpec[]>;

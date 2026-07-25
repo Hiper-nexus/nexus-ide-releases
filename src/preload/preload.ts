@@ -764,6 +764,8 @@ const api: NexusApi = {
       ipcRenderer.send(ORCH_CHANNELS.browserOpenResult, result),
     onPaneSpawnRequest: (cb) => addListener(paneSpawnRequestListeners, cb),
     onPaneCloseRequest: (cb) => addListener(paneCloseRequestListeners, cb),
+    sendPaneOperatorInput: (input: { sessionId: string; data: string }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.paneOperatorInput, input),
     listMissions: () => ipcRenderer.invoke(ORCH_CHANNELS.missionsList),
     listMissionPanes: (missionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPanesList, missionId),

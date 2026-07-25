@@ -172,7 +172,9 @@ describe('durable kickoff replay boundary', () => {
     };
 
     const first = submitMissionKickoffFromMain(runtime.scope!, request);
-    await vi.advanceTimersByTimeAsync(250);
+    // 3s do fallback de bracketed paste (o harness nunca emite ESC[?2004h)
+    // + as janelas curtas de settle/aceite.
+    await vi.advanceTimersByTimeAsync(3_250);
     await expect(first).resolves.toEqual({ accepted: true });
 
     await expect(

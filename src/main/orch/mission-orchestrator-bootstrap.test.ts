@@ -118,6 +118,7 @@ interface Harness {
   spawned: Array<Record<string, unknown>>;
   kickoffPrompts: string[];
   kickoffAccepted: boolean;
+  kickoffFlightPending: boolean;
   deps: MissionOrchestratorBootstrapDeps;
 }
 
@@ -130,6 +131,7 @@ function harness(): Harness {
   value.spawned = [];
   value.kickoffPrompts = [];
   value.kickoffAccepted = false;
+  value.kickoffFlightPending = false;
   value.deps = {
     getMission: (_scope, missionId) =>
       missionId === value.mission.id ? value.mission : null,
@@ -160,6 +162,7 @@ function harness(): Harness {
       return value.mission;
     },
     hasCurrentKickoffAcceptance: () => value.kickoffAccepted,
+    hasPendingKickoffFlight: () => value.kickoffFlightPending,
     listMissionPanes: () => [],
     recordMissionPane: (_scope, input) => {
       value.recorded.push(input as unknown as Record<string, unknown>);
@@ -636,6 +639,28 @@ describe('initial main-owned orchestrator bootstrap', () => {
     });
     expect(proven.spawned).toEqual([]);
     expect(proven.mission.status).toBe('running');
+
+    // Recibo EM VOO: o reconciliador re-entra a cada 5s enquanto o aceite
+    // ainda está provando idle→busy. Falhar aqui matava o orquestrador no
+    // meio do próprio kickoff — voo pendente devolve a sessão viva.
+    const inflight = harness();
+    inflight.mission = {
+      ...inflight.mission,
+      orchestratorSessionId: 'pty-main-orch',
+    };
+    inflight.kickoffFlightPending = true;
+    inflight.deps.listMissionPanes = () => [livePane(inflight.mission.id)];
+    const inflightService = new MissionOrchestratorBootstrapService(
+      inflight.deps,
+    );
+    await expect(
+      inflightService.bootstrap(scope, inflight.mission.id),
+    ).resolves.toMatchObject({
+      ok: true,
+      reused: true,
+    });
+    expect(inflight.spawned).toEqual([]);
+    expect(inflight.mission.status).toBe('running');
   });
 
   it('blocks with one PT-BR CTA when main-owned bootstrap throws unexpectedly', async () => {

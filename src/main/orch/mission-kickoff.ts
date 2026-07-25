@@ -31,6 +31,14 @@ import {
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 
 const BOOT_IDLE_WINDOW_MS = 15_000;
+/**
+ * Prazo até o primeiro byte do provider. Generoso de propósito: cobre o boot
+ * frio de um HOME efêmero carregando as ferramentas MCP. Continua finito —
+ * processo que nunca nasce ainda falha, só que por não ter nascido.
+ */
+const BOOT_BIRTH_WINDOW_MS = 90_000;
+/** Espera curta pelo arm do bracketed paste; TUIs sem o modo seguem no fallback. */
+const BRACKETED_PASTE_WINDOW_MS = 3_000;
 const PASTE_SETTLE_MS = 250;
 const PASTE_IDLE_WINDOW_MS = 3_000;
 const ACCEPTANCE_WINDOW_MS = 12_000;
@@ -108,6 +116,10 @@ export interface MissionKickoffAcceptancePorts {
 }
 
 export interface MissionKickoffTiming {
+  /** Prazo até o primeiro byte do provider (saída de "spawning"). */
+  readonly bootBirthWindowMs?: number;
+  /** Espera pelo ESC[?2004h do composer antes de colar (0 = não espera). */
+  readonly bracketedPasteWindowMs?: number;
   readonly bootIdleWindowMs?: number;
   readonly pasteSettleMs?: number;
   readonly pasteIdleWindowMs?: number;
@@ -142,6 +154,10 @@ export async function runMissionKickoffAcceptance(
   const prompt = assertSafePtyPrompt(input.prompt);
   const realMission = isCurrentProcessRealMissionE2E();
   const bootIdleWindowMs = timing.bootIdleWindowMs ?? BOOT_IDLE_WINDOW_MS;
+  const bootBirthWindowMs =
+    timing.bootBirthWindowMs ?? BOOT_BIRTH_WINDOW_MS;
+  const bracketedPasteWindowMs =
+    timing.bracketedPasteWindowMs ?? BRACKETED_PASTE_WINDOW_MS;
   const pasteSettleMs = timing.pasteSettleMs ?? PASTE_SETTLE_MS;
   const pasteIdleWindowMs =
     timing.pasteIdleWindowMs ??
@@ -155,6 +171,8 @@ export async function runMissionKickoffAcceptance(
   let outputSeen = false;
   let busySeen = false;
   let idleWaiter: ((outcome: 'idle' | 'timeout' | 'exited') => void) | null = null;
+  let birthWaiter: ((outcome: 'born' | 'timeout' | 'exited') => void) | null =
+    null;
   let acceptanceWaiter: ((accepted: boolean) => void) | null = null;
   const isInjectableIdle = () =>
     ports.getState(input.sessionId) === 'idle' &&
@@ -162,6 +180,11 @@ export async function runMissionKickoffAcceptance(
 
   const untapState = ports.onState((sessionId, state) => {
     if (sessionId !== input.sessionId) return;
+    // Sair de "spawning" é o primeiro byte do provider: o processo nasceu.
+    if (state !== 'spawning' && state !== 'exited') {
+      birthWaiter?.('born');
+      birthWaiter = null;
+    }
     if (state === 'idle' && isInjectableIdle()) {
       idleWaiter?.('idle');
       idleWaiter = null;
@@ -176,11 +199,24 @@ export async function runMissionKickoffAcceptance(
       exited = true;
       idleWaiter?.('exited');
       idleWaiter = null;
+      birthWaiter?.('exited');
+      birthWaiter = null;
       acceptanceWaiter?.(false);
     }
   });
+  let bracketedPasteArmed = false;
+  let bracketedWaiter: (() => void) | null = null;
   const untapData = ports.onData((sessionId, data) => {
-    if (sessionId !== input.sessionId || !submitted || data.length === 0) return;
+    if (sessionId !== input.sessionId || data.length === 0) return;
+    // O TUI arma bracketed paste com ESC[?2004h. Colar ESC[200~ antes disso
+    // faz os marcadores entrarem como texto cru: o prompt vira fragmento no
+    // composer ("pri…") e o turno nunca começa — aceite algum, recibo algum.
+    if (!bracketedPasteArmed && data.includes('\x1b[?2004h')) {
+      bracketedPasteArmed = true;
+      bracketedWaiter?.();
+      bracketedWaiter = null;
+    }
+    if (!submitted) return;
     outputSeen = true;
     if (busySeen) acceptanceWaiter?.(true);
   });
@@ -189,6 +225,8 @@ export async function runMissionKickoffAcceptance(
     exited = true;
     idleWaiter?.('exited');
     idleWaiter = null;
+    birthWaiter?.('exited');
+    birthWaiter = null;
     acceptanceWaiter?.(false);
   });
   const untapInjectability = ports.onInjectabilityChange?.((sessionId) => {
@@ -204,6 +242,39 @@ export async function runMissionKickoffAcceptance(
     }, ms);
     timers.add(timer);
   });
+  /**
+   * Espera o provider emitir o primeiro byte — a saída de "spawning".
+   *
+   * Nascer e ficar ocioso são coisas diferentes, e tratá-las com o mesmo prazo
+   * quebrava o kickoff: num HOME efêmero, sem cache e carregando as ferramentas
+   * MCP, o CLI leva mais que a janela de ocioso só para desenhar a primeira
+   * linha. O gate recusava com "não ficou ocioso a tempo" um processo que ainda
+   * nem havia nascido — e a missão inteira bloqueava por isso.
+   */
+  const waitForProcessBirth = async (
+    windowMs: number,
+  ): Promise<'born' | 'timeout' | 'exited'> => {
+    if (exited || ports.getState(input.sessionId) === null) return 'exited';
+    if (ports.getState(input.sessionId) !== 'spawning') return 'born';
+    return await new Promise((resolve) => {
+      let settled = false;
+      const finish = (outcome: 'born' | 'timeout' | 'exited') => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        timers.delete(timer);
+        if (birthWaiter === finish) birthWaiter = null;
+        resolve(outcome);
+      };
+      const timer = setTimeout(() => finish('timeout'), windowMs);
+      timers.add(timer);
+      birthWaiter = finish;
+      // Mesma dupla checagem do idle: fecha a corrida na instalação do waiter.
+      const snapshot = ports.getState(input.sessionId);
+      if (snapshot === null || exited) finish('exited');
+      else if (snapshot !== 'spawning') finish('born');
+    });
+  };
   const waitForIdle = async (
     windowMs: number,
   ): Promise<'idle' | 'timeout' | 'exited'> => {
@@ -231,6 +302,15 @@ export async function runMissionKickoffAcceptance(
   const fail = async (
     reason: MissionKickoffFailureReason,
   ): Promise<MissionKickoffResult> => {
+    // Um kickoff recusado bloqueia a missão inteira, e "não ficou ocioso" não
+    // diz QUAL metade falhou: o PTY que nunca silenciou ou a trava semântica
+    // dos hooks. Sem isso o diagnóstico vira adivinhação a cada ocorrência.
+    console.warn(
+      `[mission-kickoff] recusado (${reason}) ` +
+        `session=${input.sessionId} ptyState=${ports.getState(input.sessionId)} ` +
+        `injetavel=${ports.isInjectableIdle?.() ?? 'n/a'} ` +
+        `saidaVista=${outputSeen} busyVisto=${busySeen}`,
+    );
     // The production block port has its own mission/intent/session fence. That
     // lets mid-flight authority drift become visible while stale rebinds are a
     // safe no-op. Initial invalid renderer requests never enter this machine.
@@ -245,6 +325,9 @@ export async function runMissionKickoffAcceptance(
 
   try {
     if (!ports.isAuthorized()) return await fail('authority_lost');
+    const birth = await waitForProcessBirth(bootBirthWindowMs);
+    if (birth === 'exited') return await fail('session_exited');
+    if (birth !== 'born') return await fail('boot_timeout');
     const boot = await waitForIdle(bootIdleWindowMs);
     if (boot === 'exited') return await fail('session_exited');
     if (boot !== 'idle') return await fail('boot_timeout');
@@ -253,6 +336,30 @@ export async function runMissionKickoffAcceptance(
     }
     if (!ports.isAuthorized()) return await fail('authority_lost');
     if (!isInjectableIdle()) return await fail('timeout');
+
+    // Espera o composer armar bracketed paste (ESC[?2004h) antes de colar.
+    // Janela curta com fallback: TUIs sem o modo continuam recebendo o paste
+    // como hoje — o que não pode é colar marcador em composer desarmado.
+    if (!bracketedPasteArmed && bracketedPasteWindowMs > 0) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          if (bracketedWaiter) bracketedWaiter = null;
+          resolve();
+        }, bracketedPasteWindowMs);
+        timers.add(timer);
+        bracketedWaiter = () => {
+          clearTimeout(timer);
+          timers.delete(timer);
+          resolve();
+        };
+        if (bracketedPasteArmed) {
+          bracketedWaiter = null;
+          clearTimeout(timer);
+          timers.delete(timer);
+          resolve();
+        }
+      });
+    }
 
     const pasted = ports.write(
       input.sessionId,
@@ -488,6 +595,22 @@ const flights = new Map<
   string,
   { readonly promptHash: string; readonly promise: Promise<MissionKickoffResult> }
 >();
+
+/**
+ * Há um aceite de kickoff EM VOO para esta missão?
+ *
+ * O aceite leva de segundos a mais de um minuto (nascer, ficar ocioso, colar,
+ * Enter, prova busy+output). O reconciliador de recovery re-entra a cada 5s e
+ * lia "sem recibo durável" como falha terminal — matando o orquestrador no
+ * meio do próprio kickoff que ia gerar o recibo. Voo pendente não é ausência
+ * de recibo; é recibo a caminho.
+ */
+export function hasPendingMissionKickoffFlight(missionId: string): boolean {
+  for (const key of flights.keys()) {
+    if (key.split('\0')[3] === missionId) return true;
+  }
+  return false;
+}
 
 /** Renderer boundary: resolve all authority in main and keep one exact flight. */
 export function submitMissionKickoffFromRenderer(

@@ -42,7 +42,10 @@
     "sessionIdArg": "--session-id"
   },
   "env": {
-    "static": {},
+    "static": {
+      "MCP_TIMEOUT": "15000",
+      "MCP_TOOL_TIMEOUT": "120000"
+    },
     "passthrough": [
       "ANTHROPIC_API_KEY",
       "ANTHROPIC_BASE_URL",

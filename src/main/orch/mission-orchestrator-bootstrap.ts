@@ -33,6 +33,7 @@ import type {
   RecordMissionPaneInput,
 } from './mission-pane-store';
 import {
+  hasPendingMissionKickoffFlight,
   submitMissionKickoffFromMain,
   type MissionKickoffResult,
 } from './mission-kickoff';
@@ -149,6 +150,8 @@ export interface MissionOrchestratorBootstrapDeps {
     scope: ProjectExecutionScope,
     missionId: string,
   ): boolean;
+  /** Aceite de kickoff em voo — recibo a caminho, não ausência de recibo. */
+  hasPendingKickoffFlight(missionId: string): boolean;
   listMissionPanes(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -380,6 +383,8 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
     getProjectDomainStores(scope).missions.hasCurrentKickoffAcceptance(
       missionId,
     ),
+  hasPendingKickoffFlight: (missionId) =>
+    hasPendingMissionKickoffFlight(missionId),
   listMissionPanes: (scope, missionId) =>
     getProjectDomainStores(scope).missionPanes.list(missionId),
   recordMissionPane: (scope, input) =>
@@ -629,6 +634,18 @@ export class MissionOrchestratorBootstrapService {
         ).length === 0
       ) {
         if (!this.#deps.hasCurrentKickoffAcceptance(scope, missionId)) {
+          // Recibo a caminho ≠ recibo ausente. O aceite leva de segundos a
+          // minutos e o reconciliador re-entra a cada 5s; falhar aqui matava o
+          // orquestrador no meio do próprio kickoff que ia gerar o recibo.
+          if (this.#deps.hasPendingKickoffFlight(missionId)) {
+            return {
+              ok: true,
+              missionId,
+              pane: paneResult(persistedOrchestrator, sessionId),
+              kickoff: { accepted: true },
+              reused: true,
+            };
+          }
           return this.#failure(
             scope,
             missionId,

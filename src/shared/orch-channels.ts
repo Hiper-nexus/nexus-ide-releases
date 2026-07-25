@@ -7,6 +7,12 @@
 export const ORCH_CHANNELS = {
   // Renderer → main
   panesSync: 'orch:panes.sync',
+  /**
+   * Teclado do operador num pane de missão. O renderer não escreve nesses
+   * panes (fronteira de capacidade); ele PEDE, e o main valida posse, missão
+   * viva e formato antes de escrever pelo lane main-owned.
+   */
+  paneOperatorInput: 'orch:panes.operatorInput',
   paneSpawnResult: 'orch:pane.spawnResult',
   paneRecoveryResult: 'orch:pane.recoveryResult',
   browserOpenResult: 'orch:browser.openResult',

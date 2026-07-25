@@ -109,6 +109,23 @@ function workerCount(squad: Squad): string {
     : `${workers} agentes`;
 }
 
+/**
+ * Estado durável da missão no instante do clique. O wizard guarda o plano de
+ * quando compilou, e entre isso e "Começar" a missão pode ter bloqueado — é
+ * essa defasagem que decide entre aprovar e retomar. Falha de leitura devolve
+ * null para o chamador seguir com o que tem.
+ */
+async function currentMissionSnapshot(
+  missionId: string,
+): Promise<Mission | null> {
+  try {
+    const missions = await window.nexus.orch.listMissions();
+    return missions.find((candidate) => candidate.id === missionId) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** FALE HUMANO also applies to the wizard: never leak queue jargon in the UI. */
 function humanPromptQueueActivity(kind: string): string {
   switch (kind) {
@@ -1074,6 +1091,22 @@ export function MissionWizard() {
     if (!contract?.goal) {
       setError('Contrato de intenção ausente antes do despacho.');
       return false;
+    }
+    // Uma missão que já bloqueou (kickoff sem recibo, provider fora, boot que
+    // não chegou a ocioso) não despacha por aprovação: approveIntent recusa
+    // sair de blocked_* e o erro cru de IPC vazava para o usuário sem saída.
+    // A retomada main-owned é o caminho sancionado — ela re-arma o estado e
+    // revalida squad, contrato e runtime antes de qualquer spawn.
+    const live = await currentMissionSnapshot(planned.id);
+    if ((live ?? planned).status === 'blocked') {
+      const { reopenMission } = await import('../orch/mission-reopen');
+      const resumed = await reopenMission(live ?? planned);
+      if (!resumed.ok) {
+        setError(resumed.error ?? 'Não deu pra retomar a missão bloqueada.');
+        return false;
+      }
+      discardAndClose();
+      return true;
     }
     // The main-owned bootstrap derives the roster exclusively from the saved
     // squad. Persist the exact roster reviewed in this wizard before approval

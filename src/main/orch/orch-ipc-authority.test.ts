@@ -38,6 +38,12 @@ const harness = vi.hoisted(() => {
     paneSnapshots,
     ompSessions,
     agentSessions,
+    /** Teclado do operador: posse de sessão, missões e o que chegou ao PTY. */
+    operatorInput: {
+      ownedSessions: new Map<string, { missionId?: string }>(),
+      missions: new Map<string, { status: string }>(),
+      writes: [] as Array<{ sessionId: string; data: string }>,
+    },
     scopeChangeListeners,
     dialog: {
       showMessageBox: vi.fn(
@@ -332,6 +338,12 @@ vi.mock('../pty/pty-manager', () => ({
       : null,
   listAgentSessions: vi.fn(() => [...harness.agentSessions]),
   orchTerminateSession: harness.terminatePty,
+  getOwnedAgentSessionInfo: (owner: { id: number }, sessionId: string) =>
+    harness.operatorInput.ownedSessions.get(`${owner.id}:${sessionId}`) ?? null,
+  orchWriteSession: vi.fn((sessionId: string, data: string) => {
+    harness.operatorInput.writes.push({ sessionId, data });
+    return true;
+  }),
 }));
 vi.mock('./renderer-mission-authority', () => ({
   RendererMissionAuthority: class {
@@ -378,6 +390,11 @@ vi.mock('./project-domain-store-registry', () => ({
   ProjectDomainStoreRegistry: class {},
   configureProjectDomainStoreRegistry: vi.fn(() => harness.projectStores),
   disposeProjectDomainStoreRegistry: vi.fn(),
+  getProjectDomainStores: vi.fn(() => ({
+    missions: {
+      get: (missionId: string) => harness.operatorInput.missions.get(missionId),
+    },
+  })),
 }));
 vi.mock('./project-scoped-broadcast', () => ({
   broadcastToProject: vi.fn(),
@@ -2769,5 +2786,75 @@ describe('orchestration init/close epoch serialization', () => {
 
     vi.mocked(stopOrchestrationCoordinator).mockResolvedValueOnce();
     await closeOrchestration();
+  });
+});
+
+describe('teclado do operador em pane de missão', () => {
+  function setup() {
+    const handler = harness.handlers.get(ORCH_CHANNELS.paneOperatorInput);
+    if (!handler) throw new Error('missing paneOperatorInput handler');
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    harness.operatorInput.ownedSessions.clear();
+    harness.operatorInput.missions.clear();
+    harness.operatorInput.writes.length = 0;
+    return { handler, sender };
+  }
+
+  function livePane(sender: { id: number }, sessionId = 'pty-1') {
+    harness.operatorInput.ownedSessions.set(`${sender.id}:${sessionId}`, {
+      missionId: 'mission-1',
+    });
+    harness.operatorInput.missions.set('mission-1', { status: 'running' });
+    return sessionId;
+  }
+
+  it('entrega a digitação do operador pelo lane main-owned', async () => {
+    const { handler, sender } = setup();
+    const sessionId = livePane(sender);
+    expect(handler({ sender }, { sessionId, data: 'ola\r' })).toBe(
+      true,
+    );
+    expect(harness.operatorInput.writes).toEqual([
+      { sessionId, data: 'ola\r' },
+    ]);
+  });
+
+  it('recusa bracketed paste: injeção orquestrada não entra por aqui', async () => {
+    const { handler, sender } = setup();
+    const sessionId = livePane(sender);
+    expect(
+      handler({ sender }, { sessionId, data: '\x1b[200~kickoff\x1b[201~' }),
+    ).toBe(false);
+    expect(harness.operatorInput.writes).toEqual([]);
+  });
+
+  it('recusa sessão que este renderer não apresenta', async () => {
+    const { handler, sender } = setup();
+    livePane(sender);
+    expect(
+      handler({ sender }, { sessionId: 'pty-de-outro', data: 'x' }),
+    ).toBe(false);
+    expect(harness.operatorInput.writes).toEqual([]);
+  });
+
+  it('recusa missão encerrada', async () => {
+    const { handler, sender } = setup();
+    const sessionId = livePane(sender);
+    harness.operatorInput.missions.set('mission-1', { status: 'done' });
+    expect(
+      handler({ sender }, { sessionId, data: 'x' }),
+    ).toBe(false);
+    expect(harness.operatorInput.writes).toEqual([]);
+  });
+
+  it('recusa payload acima do teto de digitação', async () => {
+    const { handler, sender } = setup();
+    const sessionId = livePane(sender);
+    expect(
+      handler({ sender }, { sessionId, data: 'a'.repeat(4_097) }),
+    ).toBe(false);
+    expect(harness.operatorInput.writes).toEqual([]);
   });
 });

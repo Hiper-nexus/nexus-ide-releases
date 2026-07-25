@@ -338,6 +338,48 @@ export function getScrollbackExcerpt(paneId: string, max = 2_400): string {
 }
 
 /**
+ * Missões que já receberam UMA retomada automática nesta sessão do renderer.
+ *
+ * O beco circular documentado no bootstrap: missão bloqueada → seal nulo →
+ * spawn persistido recusado → pane morto → nova tentativa de spawn. A saída
+ * sancionada é a retomada main-owned (re-arma para running e revalida tudo),
+ * então a primeira recusa roteia para ela. Uma única vez por missão: se a
+ * retomada também não sustentar a missão, repetir automaticamente viraria o
+ * mesmo loop com outro nome — as tentativas seguintes ficam com o operador.
+ */
+const missionAutoResumeSpent = new Set<string>();
+
+async function routeBlockedMissionToResume(
+  host: Host,
+  missionId: string,
+  options: { readonly manual?: boolean } = {},
+): Promise<boolean> {
+  // A cota de UMA tentativa vale só para o caminho automático; um clique do
+  // operador é decisão nova e sempre pode tentar de novo.
+  if (!options.manual && missionAutoResumeSpent.has(missionId)) return false;
+  missionAutoResumeSpent.add(missionId);
+  try {
+    const missions = await window.nexus.orch.listMissions();
+    const mission = missions.find((candidate) => candidate.id === missionId);
+    if (!mission || mission.status !== 'blocked') return false;
+    host.term.writeln(
+      '\r\n\x1b[36m[nexus] missão bloqueada — retomando pela autoridade principal…\x1b[0m',
+    );
+    const { reopenMission } = await import('../orch/mission-reopen');
+    const resumed = await reopenMission(mission);
+    if (!resumed.ok) {
+      host.term.writeln(
+        `\r\n\x1b[31m[nexus] retomada recusada: ${resumed.error ?? 'motivo desconhecido'}\x1b[0m`,
+      );
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Ensure cli-agent panes pin a vault account before spawn so failover and
  * multi-account isolation always know which credential is in use.
  */
@@ -430,6 +472,14 @@ function startSpawn(
           host.term.writeln(
             '\r\n\x1b[33m[nexus] token de spawn expirado limpo — use Reiniciar de novo.\x1b[0m',
           );
+        }
+        // Seal nulo por missão bloqueada: repetir o spawn persistido é o beco
+        // circular. A retomada main-owned é quem re-arma e cria processo novo.
+        if (
+          missionId &&
+          /persisted mission pane authority/i.test(res.error)
+        ) {
+          void routeBlockedMissionToResume(host, missionId);
         }
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         return null;
@@ -546,6 +596,23 @@ function startSpawn(
         // already exist and must paint immediately, not wait for the preload
         // recovery backstop.
         void window.nexus.pty.replay(res.sessionId);
+        // O replay foi desenhado na grade do spawn headless (120 colunas);
+        // reescrito num xterm mais estreito ele vira lixo permanente no
+        // scrollback. Depois do replay: zera o terminal e força SIGWINCH
+        // duplo — o TUI fullscreen repinta o quadro inteiro na largura real.
+        const adoptedSessionId = res.sessionId;
+        setTimeout(() => {
+          if (host.disposed || host.sessionId !== adoptedSessionId) return;
+          try {
+            host.term.reset();
+            const cols = host.term.cols;
+            const rows = host.term.rows;
+            window.nexus.pty.resize(adoptedSessionId, cols, Math.max(2, rows - 1));
+            window.nexus.pty.resize(adoptedSessionId, cols, rows);
+          } catch {
+            // Repintura é cosmética; a sessão continua íntegra sem ela.
+          }
+        }, 350);
       }
 
       // After mount: inject either same-account continue or cross-account pack.
@@ -587,7 +654,19 @@ function startSpawn(
         host.inputVisibility.onUserInput();
         if (host.opened) webglPool.touch(pane.id);
         flushTerminalOutput(host.term);
-        if (host.sessionId) window.nexus.pty.write(host.sessionId, data);
+        if (!host.sessionId) return;
+        // Pane de missão não aceita escrita do renderer — a posse é do main.
+        // O teclado do operador entra pedindo, não escrevendo: sem esse desvio
+        // a tecla era descartada em silêncio e o terminal parecia morto.
+        // O vínculo vem do orchStore quando o pane restaurado chega sem ele.
+        if (pane.kind === 'cli-agent' && missionId) {
+          void window.nexus.orch.sendPaneOperatorInput({
+            sessionId: host.sessionId,
+            data,
+          });
+          return;
+        }
+        window.nexus.pty.write(host.sessionId, data);
       });
       host.cleanups.push(() => input.dispose());
       return res.sessionId;
@@ -1200,7 +1279,18 @@ export function respawnWithResume(
   const host = hosts.get(pane.id);
   if (!host || host.disposed) return;
   if (isMainControlledMissionPane(pane.id, pane)) {
-    reportMainOwnedLifecycleOnly(host, 'Reiniciar ou trocar conta');
+    // Numa missão bloqueada, "Reiniciar" É a intenção de retomar — encaminha
+    // para o caminho sancionado em vez de repetir a recusa até virar spam.
+    const missionId =
+      pane.missionId ?? useOrchStore.getState().paneMissions[pane.id];
+    void (async () => {
+      const routed = missionId
+        ? await routeBlockedMissionToResume(host, missionId, { manual: true })
+        : false;
+      if (!routed) {
+        reportMainOwnedLifecycleOnly(host, 'Reiniciar ou trocar conta');
+      }
+    })();
     return;
   }
   host.cleanups.forEach((fn) => fn());

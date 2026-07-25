@@ -212,7 +212,7 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-a', prompt: 'Execute a missão aprovada.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100 },
+      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
     );
     await vi.advanceTimersByTimeAsync(10);
 
@@ -232,7 +232,7 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-busy', prompt: 'Não intercale.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100 },
+      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
     );
     await vi.advanceTimersByTimeAsync(51);
 
@@ -240,6 +240,63 @@ describe('main-owned mission kickoff acceptance', () => {
       accepted: false,
       reason: 'boot_timeout',
       cta: expect.stringMatching(/retomar/i),
+    });
+    expect(value.writes).toEqual([]);
+    expect(value.blocked).toEqual(['boot_timeout']);
+  });
+
+  it('espera o provider nascer antes de cobrar ociosidade', async () => {
+    vi.useFakeTimers();
+    const value = harness();
+    // "spawning" é processo que ainda não emitiu byte nenhum. Cobrar a janela
+    // de ocioso aqui recusava um CLI que só estava demorando a subir.
+    value.state = 'spawning';
+
+    const result = runMissionKickoffAcceptance(
+      { sessionId: 'session-lenta', prompt: 'Nasça primeiro.' },
+      value.ports,
+      {
+        bootBirthWindowMs: 5_000,
+        bracketedPasteWindowMs: 0,
+        bootIdleWindowMs: 50,
+        pasteSettleMs: 10,
+        acceptanceWindowMs: 100,
+      },
+    );
+
+    // Muito além da janela de ocioso, ainda sem nascer: não pode ter recusado.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(value.blocked).toEqual([]);
+    expect(value.writes).toEqual([]);
+
+    // O primeiro byte chega tarde e o kickoff segue normalmente.
+    value.state = 'idle';
+    value.stateTap?.('session-lenta', 'idle');
+    await vi.advanceTimersByTimeAsync(11);
+    value.dataTap?.('session-lenta', 'pronto');
+    value.state = 'busy';
+    value.stateTap?.('session-lenta', 'busy');
+    await vi.advanceTimersByTimeAsync(200);
+
+    await expect(result).resolves.toMatchObject({ accepted: true });
+    expect(value.blocked).toEqual([]);
+  });
+
+  it('recusa quando o provider nunca nasce dentro da janela', async () => {
+    vi.useFakeTimers();
+    const value = harness();
+    value.state = 'spawning';
+
+    const result = runMissionKickoffAcceptance(
+      { sessionId: 'session-natimorta', prompt: 'Nunca nasce.' },
+      value.ports,
+      { bootBirthWindowMs: 500, bootIdleWindowMs: 50, acceptanceWindowMs: 100 },
+    );
+    await vi.advanceTimersByTimeAsync(501);
+
+    await expect(result).resolves.toMatchObject({
+      accepted: false,
+      reason: 'boot_timeout',
     });
     expect(value.writes).toEqual([]);
     expect(value.blocked).toEqual(['boot_timeout']);
@@ -253,7 +310,7 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-awaiting-input', prompt: 'Não confirme o modal.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100 },
+      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
     );
     await vi.advanceTimersByTimeAsync(51);
 
@@ -278,7 +335,7 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-no-output', prompt: 'Exija prova.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100 },
+      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
     );
     await vi.advanceTimersByTimeAsync(111);
 
@@ -292,7 +349,7 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-exit', prompt: 'Execute.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100 },
+      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
     );
 
     value.state = null;
@@ -311,7 +368,7 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-write-fail', prompt: 'Execute.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100 },
+      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
     );
 
     await expect(result).resolves.toMatchObject({
@@ -327,7 +384,7 @@ describe('main-owned mission kickoff acceptance', () => {
     const result = runMissionKickoffAcceptance(
       { sessionId: 'session-drift', prompt: 'Execute.' },
       value.ports,
-      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100 },
+      { pasteSettleMs: 10, bootIdleWindowMs: 50, acceptanceWindowMs: 100, bracketedPasteWindowMs: 0 },
     );
 
     value.authorized = false;
