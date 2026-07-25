@@ -22,6 +22,33 @@ Data: 2026-07-25
   de HOME isolado, o Nexus recusa o spawn explicando o que fazer, em vez de
   entregar um orquestrador mudo que trava a missão inteira sem dizer por quê.
 
+### A missão finalmente começa
+
+- **Diálogo de confiança da pasta não trava mais o orquestrador**: o HOME
+  efêmero nascia sem o registro de confiança do diretório, então o CLI abria
+  "Do you trust the files in this folder?" e esperava uma tecla que ninguém ia
+  mandar. A missão ficava "Ao vivo" com o agente parado na tela de boas-vindas
+  para sempre. Agora o pane carrega a confiança que você já concedeu no perfil
+  real — só as flags, só daquela pasta. Pasta nunca confiada continua
+  perguntando: o Nexus não inventa confiança que ninguém deu.
+- **Squad built-in volta a iniciar missão**: antes de despachar, o wizard
+  precisa persistir o roster revisado (o bootstrap deriva o time do squad
+  salvo). Ele tentava salvar por cima do built-in, que é imutável, e o
+  despacho morria calado — clicar "Começar" não fazia nada nos 11 NEXUS
+  ORIGINALS. Agora o built-in vira uma cópia editável com id novo, exatamente
+  como o erro mandava fazer, e a missão despacha com o id da cópia.
+
+### Terminal desenha o histórico na largura certa
+
+- **Pane reaberto não volta mais embaralhado**: o conteúdo salvo era reescrito
+  antes da primeira medição do pane, numa grade na largura padrão. Como a
+  interface do agente desenha caixas com posição absoluta, a moldura caía por
+  cima do texto quebrado — letras duplicadas, espaços comidos e caracteres
+  soltos empilhados na borda. O histórico agora só é reescrito depois que o
+  terminal conhece a largura real. Panes cujo histórico já foi salvo
+  corrompido seguem feios até serem fechados: o que está estragado é o
+  arquivo, não o desenho.
+
 ### Encerrar missão viva volta a funcionar
 
 - **A confirmação não briga mais com a própria missão**: encerrar re-conferia,
