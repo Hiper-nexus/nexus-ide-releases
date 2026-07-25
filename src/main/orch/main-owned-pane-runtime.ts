@@ -21,6 +21,10 @@ import {
   requiresReadOnlyNativeAuthority,
   supportsEnforceableReadOnlyNativeAuthority,
 } from "../pty/autonomous-cli-policy";
+import {
+  requiresSpawnGate,
+  shouldUseEphemeralHome,
+} from "./spawn-home-policy";
 import { canListPane, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
 import { sameProjectScope } from "./project-scoped-broadcast";
 import type { BoundSpawnAuthority } from "./spawn-authority";
@@ -312,6 +316,16 @@ export function spawnMainOwnedMissionPane(
     effort: options.effort,
     accountId: options.accountId,
     model: options.model,
+    // A decisão de credencial do Claude depende do HOME que o spawn hook vai
+    // aplicar: no HOME efêmero o CLI não alcança a linhagem nativa.
+    isolatedHome: shouldUseEphemeralHome(
+      adapter,
+      requiresSpawnGate({
+        role: options.role,
+        allowedTools: options.allowedTools,
+        allowedSkills: options.allowedSkills,
+      }),
+    ),
   });
   if (!prepared.ok) return { requestId, ok: false, error: prepared.error };
   if (!prepared.overrides.binPath && !isAdapterInstalled(adapter.id)) {

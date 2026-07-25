@@ -2007,15 +2007,16 @@ export function registerOrchIpc(): void {
       };
     }
     requireLiveRendererWorkspaceScope(event.sender, scope);
-    const currentCandidate = prepareMissionRuntimeTermination({
-      scope,
-      suite,
-      missionId: parsed.data.missionId,
-      reason: 'operator-close',
-    });
-    if (currentCandidate.fence !== candidate.fence) {
-      throw new Error("mission runtime changed while confirmation was open");
-    }
+    // O operador aprova ENCERRAR ESTA MISSÃO, não o inventário de sessões que
+    // o modal exibiu. Reconferir aqui o fence de runtime (que hasheia
+    // updatedAt/intentVersion e a lista física) derrubava o encerramento a
+    // cada escrita durável ou spawn/exit ocorrido nos segundos do modal — ou
+    // seja, justamente nas missões VIVAS, as que mais escrevem. O que precisa
+    // continuar valendo é a identidade da autoridade: o mesmo escopo de
+    // workspace (recheado na linha acima, igual ao caminho de remoção).
+    // O inventário é re-derivado do estado físico atual por
+    // closeMissionRuntimePreservingHistory, que segue exigindo prova de saída
+    // para cada processo que encontrar e recusa missão inexistente/concluída.
     return closeMissionRuntimePreservingHistory({
       scope,
       suite,

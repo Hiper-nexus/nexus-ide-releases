@@ -221,6 +221,27 @@ describe('prepareAccountForSpawn', () => {
     expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
   });
 
+  it('a MESMA conta nativa recebe token env quando o pane roda em HOME isolado', () => {
+    // "Linhagem compartilhada" só existe no HOME real. Um pane gated
+    // (orquestrador) roda em HOME efêmero, onde o CLI NÃO enxerga o login do
+    // Keychain: sem token env ele abre "Not logged in · Run /login" com a
+    // máquina autenticada — verificado na mão. Ali o snapshot é a única ponte.
+    const account = addActiveClaudeAccount('Claude Max');
+    expect(account).not.toBeNull();
+
+    const result = prepareAccountForSpawn('claude', account!.id, undefined, {
+      isolatedHome: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      account,
+      apiKey: null,
+      authEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'claude-access' },
+    });
+    expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
+  });
+
   it('conta SECUNDÁRIA recebe OAuth process-scoped sem trocar o slot do keychain', () => {
     const account = addActiveClaudeAccount('Claude Max');
     expect(account).not.toBeNull();

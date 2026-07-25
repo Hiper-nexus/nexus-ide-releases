@@ -187,6 +187,7 @@ vi.mock("../adapters/adapter-registry", () => ({
           bin: "claude",
           install: { command: "npm install claude" },
           quirks: { mcpAutoload: true },
+          env: { passthrough: [], ephemeralHome: false },
           control: {
             permission: {
               arg: "--permission-mode",
@@ -426,6 +427,9 @@ describe("registerPtyIpc account fail-fast", () => {
       effort: persisted.effort,
       accountId: persisted.accountId,
       model: persisted.model,
+      // Orquestrador é gated ⇒ HOME efêmero ⇒ a credencial do Claude precisa
+      // viajar por env (o CLI não alcança o Keychain de lá).
+      isolatedHome: true,
     });
   });
 

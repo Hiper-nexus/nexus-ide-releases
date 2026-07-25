@@ -78,6 +78,8 @@ vi.mock("../adapters/adapter-registry", () => ({
     id: "codex",
     label: "Codex",
     install: { command: "npm install -g codex" },
+    quirks: { mcpAutoload: false },
+    env: { passthrough: [], ephemeralHome: false },
   })),
   isAdapterInstalled: vi.fn(() => true),
 }));

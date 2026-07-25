@@ -12,6 +12,9 @@ const spawnDeps = vi.hoisted(() => ({
   listAccounts: vi.fn((): Array<Record<string, unknown>> => []),
   getActiveAccount: vi.fn(),
   ensureSubscriptionActive: vi.fn(() => true),
+  activeClaudeAuthEnv: vi.fn<() => Record<string, string> | null>(() => ({
+    CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
+  })),
 }));
 
 const claudeAdapter = {
@@ -151,7 +154,7 @@ vi.mock('../adapters/subscription-auth', () => ({
 }));
 
 vi.mock('./account-store', () => ({
-  activeClaudeAuthEnv: () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active' }),
+  activeClaudeAuthEnv: spawnDeps.activeClaudeAuthEnv,
   accountKey: () => 'sk-active-other-account',
   ensureSubscriptionActive: spawnDeps.ensureSubscriptionActive,
   getActiveAccount: spawnDeps.getActiveAccount,
@@ -177,6 +180,9 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.listAccounts.mockReturnValue([]);
     spawnDeps.getActiveAccount.mockReset();
     spawnDeps.ensureSubscriptionActive.mockReturnValue(true);
+    spawnDeps.activeClaudeAuthEnv.mockReturnValue({
+      CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
+    });
   });
 
   it('does not block OMP before its own multi-provider auth broker can start', () => {
@@ -215,7 +221,10 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(result).toMatchObject({
       ok: true,
       overrides: {
-        keyEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active' },
+        // HOME real: nenhum token env. O CLI usa e RENOVA a linhagem nativa;
+        // um snapshot estático com precedência sobre o login expira em horas
+        // (401 no respawn de failover).
+        keyEnv: {},
         suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
       },
     });
@@ -229,11 +238,39 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(result).toMatchObject({
       ok: true,
       overrides: {
-        keyEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active' },
+        keyEnv: {},
         suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
       },
     });
     expect(spawnDeps.runtimeKey).not.toHaveBeenCalled();
+  });
+
+  it('pane com HOME isolado recebe o token nativo — lá é a única ponte', () => {
+    // Regressão do orquestrador mudo: pane gated roda em HOME efêmero, onde o
+    // CLI não enxerga o login do Keychain. Sem token env ele abre
+    // "Not logged in · Run /login" com a máquina autenticada (a identidade
+    // projetada ainda escreve "Welcome back", mascarando a causa).
+    const result = prepareProviderSpawn('claude', { isolatedHome: true });
+
+    expect(result).toMatchObject({
+      ok: true,
+      overrides: {
+        keyEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active' },
+        suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+      },
+    });
+  });
+
+  it('HOME isolado sem credencial nativa legível recusa o spawn com motivo', () => {
+    // Fail-closed: recusar com motivo é melhor do que entregar um orquestrador
+    // mudo em /login, que trava a missão sem explicar nada.
+    spawnDeps.activeClaudeAuthEnv.mockReturnValue(null);
+
+    const result = prepareProviderSpawn('claude', { isolatedHome: true });
+
+    expect(result).toMatchObject({ ok: false });
+    if (result.ok) throw new Error('expected a refused claude spawn');
+    expect(result.error).toMatch(/credencial nativa do Claude/i);
   });
 
   it('injects Kimi API credentials through the official transient-model env', () => {
@@ -298,6 +335,8 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(spawnDeps.prepareAccount).toHaveBeenCalledWith(
       'claude',
       'acct-selected',
+      undefined,
+      { isolatedHome: false },
     );
     expect(spawnDeps.resolveAuthStrategy).not.toHaveBeenCalled();
   });

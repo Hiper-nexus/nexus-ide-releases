@@ -496,7 +496,7 @@ export function prepareAccountForSpawn(
   adapterId: string,
   accountId: string,
   now = Date.now(),
-  options?: { allowCoolingProbe?: boolean },
+  options?: { allowCoolingProbe?: boolean; isolatedHome?: boolean },
 ): AccountSpawnPreparation {
   const account = getAccount(accountId);
   if (!account || account.adapterId !== adapterId) {
@@ -553,7 +553,27 @@ export function prepareAccountForSpawn(
     account.email &&
     nativeEmail.trim().toLowerCase() === account.email.trim().toLowerCase()
   ) {
-    return { ok: true, account, apiKey: null, authEnv: {} };
+    // …MAS "linhagem compartilhada" só existe quando o pane roda no HOME REAL.
+    // Um pane gated (orquestrador, allowedTools/Skills) roda num HOME efêmero,
+    // e ali o CLI NÃO enxerga o login do Keychain: sem token env ele abre
+    // "Not logged in · Run /login" mesmo com a máquina autenticada — a
+    // identidade projetada no .claude.json ainda mostra "Welcome back", o que
+    // mascarava a causa. Verificado na mão: HOME efêmero + identidade + sem
+    // token = exatamente essa tela. Nesse caso o snapshot é a ÚNICA ponte.
+    if (!options?.isolatedHome) {
+      return { ok: true, account, apiKey: null, authEnv: {} };
+    }
+    const nativeEnv = activeClaudeAuthEnv();
+    if (!nativeEnv) {
+      return {
+        ok: false,
+        error:
+          `não foi possível ler a credencial nativa do Claude para "${account.label}" ` +
+          '(Keychain indisponível). Desbloqueie o login keychain ou rode `claude` ' +
+          'num terminal para renovar a sessão',
+      };
+    }
+    return { ok: true, account, apiKey: null, authEnv: nativeEnv };
   }
   const authEnv = subscriptionAuthEnv(account);
   if (!authEnv) {

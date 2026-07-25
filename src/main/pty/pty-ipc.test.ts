@@ -175,6 +175,7 @@ vi.mock("../adapters/adapter-registry", () => ({
           bin: "claude",
           install: { command: "npm install claude" },
           quirks: { mcpAutoload: true },
+          env: { passthrough: [], ephemeralHome: false },
           control: {
             permission: {
               arg: "--permission-mode",
@@ -362,6 +363,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(providerDeps.prepareProviderSpawn).toHaveBeenCalledWith("claude", {
       effort: undefined,
       accountId: "acct-selected",
+      isolatedHome: expect.any(Boolean),
     });
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });

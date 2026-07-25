@@ -68,6 +68,47 @@ export interface EphemeralHome {
   mcpConfigPath: string;
 }
 
+/**
+ * Confiança de pasta que o usuário JÁ concedeu ao Claude no HOME real.
+ *
+ * O CLI guarda a decisão por diretório em `~/.claude.json` →
+ * `projects[<cwd>].hasTrustDialogAccepted`. O HOME efêmero nasce sem esse
+ * registro, então o pane parava no diálogo "Do you trust the files in this
+ * folder?" e ESPERAVA uma tecla que ninguém ia mandar: a missão ficava "ao
+ * vivo" com o orquestrador nunca saindo da tela de boas-vindas.
+ *
+ * Carregamos apenas o que já É verdade no perfil real — mesma disciplina do
+ * carryNativeClaudeAuth. Pasta que o usuário nunca confiou continua abrindo o
+ * diálogo; o Nexus não inventa confiança que ninguém deu.
+ */
+function readNativeProjectTrust(
+  realHome: string,
+  cwd: string | undefined,
+): Record<string, unknown> {
+  if (!cwd) return {};
+  try {
+    const parsed: unknown = JSON.parse(
+      fs.readFileSync(path.join(realHome, '.claude.json'), 'utf8'),
+    );
+    const projects = (parsed as { projects?: unknown })?.projects;
+    if (!projects || typeof projects !== 'object') return {};
+    const entry = (projects as Record<string, unknown>)[cwd];
+    if (!entry || typeof entry !== 'object') return {};
+    const trusted = (entry as Record<string, unknown>).hasTrustDialogAccepted;
+    if (trusted !== true) return {};
+    return {
+      projects: {
+        [cwd]: {
+          hasTrustDialogAccepted: true,
+          hasCompletedProjectOnboarding: true,
+        },
+      },
+    };
+  } catch {
+    return {};
+  }
+}
+
 export interface EphemeralHomeOptions {
   /**
    * Projetar a identidade OAuth NATIVA no overlay (oauthAccount/userID do
@@ -78,6 +119,12 @@ export interface EphemeralHomeOptions {
    * terceiro. Default fail-closed: sem projeção.
    */
   readonly carryNativeClaudeAuth?: boolean;
+  /**
+   * cwd do pane. Usado só para carregar a confiança de pasta que o usuário já
+   * concedeu no HOME real — sem isso o CLI trava no diálogo de trust e a
+   * missão nunca sai da tela de boas-vindas.
+   */
+  readonly cwd?: string;
 }
 
 /**
@@ -218,9 +265,17 @@ export function prepareEphemeralHome(
   const nativeAuth = options.carryNativeClaudeAuth
     ? readNativeClaudeAuthIdentity(os.homedir())
     : {};
+  // A confiança de pasta viaja para QUALQUER família (inclusive GLM/LongCat):
+  // ela não é credencial, é uma decisão que o usuário já tomou sobre o próprio
+  // diretório — e sem ela nenhum pane gated consegue começar a trabalhar.
+  const projectTrust = readNativeProjectTrust(os.homedir(), options.cwd);
   fs.writeFileSync(
     path.join(dir, '.claude.json'),
-    JSON.stringify({ hasCompletedOnboarding: true, ...nativeAuth }),
+    JSON.stringify({
+      hasCompletedOnboarding: true,
+      ...nativeAuth,
+      ...projectTrust,
+    }),
     { mode: 0o600 },
   );
   if (options.carryNativeClaudeAuth) {

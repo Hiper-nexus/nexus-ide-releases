@@ -32,6 +32,7 @@ import {
   launchLibrePanes,
   launchSquadMission,
 } from '../orch/mission-launcher';
+import { applySquadEdit } from '../../shared/squad-edit';
 import { balanceSquadRosterCli } from '../orch/squad-roster';
 import { CloseButton } from './CloseButton';
 import { MissionWizardReview } from './MissionWizardReview';
@@ -674,19 +675,65 @@ export function MissionWizard() {
     return false;
   }
 
-  async function saveRoster() {
-    if (!selectedSquad) return;
-    if (!validateWorkerToolScopes(roster)) return;
-    const res = await window.nexus.orch.saveSquad({
-      ...selectedSquad,
-      agents: roster,
-    });
+  /**
+   * Persiste o roster revisado — a autoridade durável de lançamento, já que o
+   * bootstrap main-owned deriva o time EXCLUSIVAMENTE do squad salvo.
+   *
+   * Squad built-in é imutável no main: salvar por cima devolve "managed
+   * built-in squads cannot be edited; duplicate with a new id" e o despacho
+   * morria aí — toda missão iniciada a partir de um NEXUS ORIGINAL ficava
+   * presa em "Pronta" sem nunca abrir o orquestrador. `applySquadEdit` já faz
+   * o que o próprio erro manda: built-in vira CÓPIA com id novo
+   * (`builtin: false`), squad de usuário continua salvo no lugar.
+   *
+   * Devolve o squad persistido (com o id novo quando houve cópia) ou null.
+   */
+  async function persistRoster(): Promise<Squad | null> {
+    if (!selectedSquad) return null;
+    if (!validateWorkerToolScopes(roster)) return null;
+    let persisted: Squad;
+    try {
+      persisted = applySquadEdit(
+        {
+          id: selectedSquad.id,
+          name: selectedSquad.name,
+          createdAt: selectedSquad.createdAt,
+          builtin: selectedSquad.builtin,
+          orchestratorInstructions: selectedSquad.orchestratorInstructions,
+          nativeInstructions: selectedSquad.nativeInstructions,
+          agents: roster.map((agent) => ({ ...agent })),
+        },
+        { agents: roster },
+        `squad-${crypto.randomUUID()}`,
+      ) as Squad;
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : 'Roster inválido.';
+      setError(message);
+      useToastStore.getState().push('error', 'Não deu pra salvar', message);
+      return null;
+    }
+    const res = await window.nexus.orch.saveSquad(persisted);
     setRosterSaved(res.ok);
     if (!res.ok) {
-      useToastStore
-        .getState()
-        .push('error', 'Não deu pra salvar', res.error);
+      setError(res.error ?? 'Não foi possível salvar o roster revisado.');
+      useToastStore.getState().push('error', 'Não deu pra salvar', res.error);
+      return null;
     }
+    if (persisted.id !== selectedSquad.id) {
+      // A cópia precisa existir no catálogo local antes de virar a seleção —
+      // mesmo rito do caminho do arquiteto.
+      const hydratePath = hasNewWsStep
+        ? wsPath.trim()
+        : (useWorkspaceStore.getState().current?.path ?? wsPath.trim());
+      await useOrchStore.getState().hydrate(hydratePath);
+      setSquadId(persisted.id);
+    }
+    return persisted;
+  }
+
+  async function saveRoster() {
+    await persistRoster();
   }
 
   if (!open) return null;
@@ -1031,33 +1078,27 @@ export function MissionWizard() {
     // The main-owned bootstrap derives the roster exclusively from the saved
     // squad. Persist the exact roster reviewed in this wizard before approval
     // so a transient renderer object can never become hidden launch authority.
+    let launchSquad: Squad = { ...selectedSquad, agents: roster };
     if (!rosterSaved) {
-      const saved = await window.nexus.orch.saveSquad({
-        ...selectedSquad,
-        agents: roster,
-      });
-      if (!saved.ok) {
-        setError(
-          saved.error ??
-            'Não foi possível salvar o roster revisado antes do despacho.',
-        );
-        return false;
-      }
-      setRosterSaved(true);
+      const persisted = await persistRoster();
+      if (!persisted) return false;
+      launchSquad = persisted;
     }
     // Squad reusado no agêntico: as instruções salvas ainda abrem com a
     // missão ANTIGA ("# Missão Clone Overclock…") — retarget para o objetivo
     // do contrato antes do kickoff, senão o orquestrador recebe duas missões.
+    // Sempre o squad PERSISTIDO: se o built-in virou cópia, é o id da cópia
+    // que o bootstrap main-owned vai encontrar no catálogo.
     const effectiveSquad: Squad = {
-      ...selectedSquad,
+      ...launchSquad,
       agents: roster,
       orchestratorInstructions:
         mode === 'agentic'
           ? retargetSquadInstructions(
-              selectedSquad.orchestratorInstructions,
+              launchSquad.orchestratorInstructions,
               contract.goal,
             )
-          : selectedSquad.orchestratorInstructions,
+          : launchSquad.orchestratorInstructions,
     };
     const {
       compactMissionContext,
