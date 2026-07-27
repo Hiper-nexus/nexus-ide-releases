@@ -534,11 +534,12 @@ let realMissionProductWizardGesture:
 window.addEventListener(
   'click',
   (event) => {
-    if (
-      !realMissionProductWizardE2EPrepared ||
-      !event.isTrusted ||
-      realMissionProductWizardGesture !== null
-    ) {
+    if (!realMissionProductWizardE2EPrepared || !event.isTrusted) {
+      return;
+    }
+    // One successful gesture owns the whole causal chain. A failed/rejected
+    // gesture must not poison later trusted clicks (operator retry).
+    if (realMissionProductWizardGesture !== null) {
       return;
     }
     const launch = event
@@ -572,6 +573,12 @@ window.addEventListener(
           runId: (raw as { runId: string }).runId,
           capability,
         };
+      })
+      .catch((error: unknown) => {
+        // Allow a later trusted click to mint a fresh one-shot capability.
+        realMissionProductWizardGesture = null;
+        realMissionProductWizardCapability = null;
+        throw error;
       });
     // The renderer cannot observe this promise. Attach a rejection handler so
     // a failed gate does not become an unhandled preload rejection; the awaited

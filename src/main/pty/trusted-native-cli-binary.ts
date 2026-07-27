@@ -379,20 +379,31 @@ function assertPinnedVersion(
     env: MINIMAL_DARWIN_PROBE_ENV,
     cwd: "/var/empty",
   });
-  const observed = `${probe.stdout ?? ""}${probe.stderr ?? ""}`.trim();
+  // Codex may append sandbox WARNINGs after the version line when PATH is
+  // minimal (e.g. "could not create PATH aliases: Operation not permitted").
+  // Only the first non-empty stdout line is the version receipt.
+  const versionLine =
+    (probe.stdout ?? "")
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? "";
   if (
     probe.error ||
     probe.status !== 0 ||
     probe.signal ||
-    observed !== expected
+    versionLine !== expected
   ) {
+    const observed = `${probe.stdout ?? ""}${probe.stderr ?? ""}`.trim();
     const detail = [
       probe.error ? `error=${probe.error.message}` : null,
       probe.status !== null && probe.status !== 0
         ? `status=${probe.status}`
         : null,
       probe.signal ? `signal=${probe.signal}` : null,
-      observed ? `observed=${JSON.stringify(observed.slice(0, 120))}` : null,
+      versionLine
+        ? `versionLine=${JSON.stringify(versionLine.slice(0, 80))}`
+        : null,
+      observed ? `observed=${JSON.stringify(observed.slice(0, 160))}` : null,
     ]
       .filter(Boolean)
       .join(" ");
