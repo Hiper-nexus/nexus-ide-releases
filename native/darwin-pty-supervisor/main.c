@@ -59,8 +59,22 @@ extern char **environ;
 #define NEXUS_PACKAGED_HELPER_SUFFIX                                      \
   "/Contents/Resources/nexus-pty-supervisor"
 #define NEXUS_MAIN_EXECUTABLE_SUFFIX "/Contents/MacOS/nexus-ide"
+/* Base Helper.app remains the documented utility identity. Electron also
+ * routes utilityProcess.fork through Helper (Plugin); GPU/Renderer helpers
+ * share the same Team + com.nexuside.app.helper identifier. Launch
+ * authorization must accept every signed helper under this .app so PTY
+ * spawns from the pty-host utility process are not rejected. */
 #define NEXUS_UTILITY_EXECUTABLE_SUFFIX                                   \
   "/Contents/Frameworks/NexusIDE Helper.app/Contents/MacOS/NexusIDE Helper"
+#define NEXUS_UTILITY_PLUGIN_EXECUTABLE_SUFFIX                            \
+  "/Contents/Frameworks/NexusIDE Helper (Plugin).app/Contents/MacOS/"     \
+  "NexusIDE Helper (Plugin)"
+#define NEXUS_UTILITY_GPU_EXECUTABLE_SUFFIX                               \
+  "/Contents/Frameworks/NexusIDE Helper (GPU).app/Contents/MacOS/"        \
+  "NexusIDE Helper (GPU)"
+#define NEXUS_UTILITY_RENDERER_EXECUTABLE_SUFFIX                          \
+  "/Contents/Frameworks/NexusIDE Helper (Renderer).app/Contents/MacOS/"   \
+  "NexusIDE Helper (Renderer)"
 
 #ifndef NEXUS_TEST_TRACED_AUTH_HOLD_MS
 #define NEXUS_TEST_TRACED_AUTH_HOLD_MS 0
@@ -1567,8 +1581,19 @@ static enum nexus_helper_signing_mode current_helper_signing_mode(void) {
   return mode;
 }
 
-static bool derive_packaged_code_paths(char main_path[PATH_MAX],
-                                       char utility_path[PATH_MAX]) {
+static bool join_app_root_suffix(char output[PATH_MAX], const char *app_root,
+                                 size_t app_root_length, const char *suffix) {
+  size_t suffix_length = strlen(suffix);
+  if (app_root_length + suffix_length >= PATH_MAX) {
+    return false;
+  }
+  memcpy(output, app_root, app_root_length);
+  memcpy(output + app_root_length, suffix, suffix_length + 1);
+  return true;
+}
+
+static bool derive_packaged_app_root(char app_root[PATH_MAX],
+                                    size_t *app_root_length) {
   char self[PATH_MAX];
   if (executable_path(self) != 0) {
     return false;
@@ -1580,16 +1605,26 @@ static bool derive_packaged_code_paths(char main_path[PATH_MAX],
              NEXUS_PACKAGED_HELPER_SUFFIX) != 0) {
     return false;
   }
-  size_t app_root_length = self_length - suffix_length;
-  if (app_root_length + strlen(NEXUS_MAIN_EXECUTABLE_SUFFIX) >= PATH_MAX ||
-      app_root_length + strlen(NEXUS_UTILITY_EXECUTABLE_SUFFIX) >= PATH_MAX) {
+  *app_root_length = self_length - suffix_length;
+  if (*app_root_length >= PATH_MAX) {
     return false;
   }
-  memcpy(main_path, self, app_root_length);
-  strcpy(main_path + app_root_length, NEXUS_MAIN_EXECUTABLE_SUFFIX);
-  memcpy(utility_path, self, app_root_length);
-  strcpy(utility_path + app_root_length, NEXUS_UTILITY_EXECUTABLE_SUFFIX);
+  memcpy(app_root, self, *app_root_length);
+  app_root[*app_root_length] = '\0';
   return true;
+}
+
+static bool derive_packaged_code_paths(char main_path[PATH_MAX],
+                                       char utility_path[PATH_MAX]) {
+  char app_root[PATH_MAX];
+  size_t app_root_length = 0;
+  if (!derive_packaged_app_root(app_root, &app_root_length)) {
+    return false;
+  }
+  return join_app_root_suffix(main_path, app_root, app_root_length,
+                              NEXUS_MAIN_EXECUTABLE_SUFFIX) &&
+         join_app_root_suffix(utility_path, app_root, app_root_length,
+                              NEXUS_UTILITY_EXECUTABLE_SUFFIX);
 }
 
 static bool load_stable_process_record(const struct responsibility_api *api,
@@ -1603,6 +1638,7 @@ static bool load_stable_process_record(const struct responsibility_api *api,
 static bool packaged_nexus_process_matches(
     const struct responsibility_api *api, pid_t pid, const char *main_path,
     const char *utility_path) {
+  (void)utility_path; /* base Helper path still derived for callers; all helpers checked below */
   struct process_record process;
   if (!load_stable_process_record(api, pid, &process)) {
     return false;
@@ -1611,15 +1647,38 @@ static bool packaged_nexus_process_matches(
                                NEXUS_TEAM_IDENTIFIER)) {
     return true;
   }
-  if (!live_code_matches_static(pid, utility_path,
-                                NEXUS_UTILITY_HELPER_IDENTIFIER,
-                                NEXUS_TEAM_IDENTIFIER)) {
+
+  char app_root[PATH_MAX];
+  size_t app_root_length = 0;
+  if (!derive_packaged_app_root(app_root, &app_root_length)) {
     return false;
   }
-  struct process_record parent;
-  return load_stable_process_record(api, process.ppid, &parent) &&
-         live_code_matches_static(parent.pid, main_path, NEXUS_APP_IDENTIFIER,
-                                  NEXUS_TEAM_IDENTIFIER);
+
+  static const char *const helper_suffixes[] = {
+      NEXUS_UTILITY_EXECUTABLE_SUFFIX,
+      NEXUS_UTILITY_PLUGIN_EXECUTABLE_SUFFIX,
+      NEXUS_UTILITY_GPU_EXECUTABLE_SUFFIX,
+      NEXUS_UTILITY_RENDERER_EXECUTABLE_SUFFIX,
+  };
+  char helper_path[PATH_MAX];
+  for (size_t index = 0;
+       index < sizeof(helper_suffixes) / sizeof(helper_suffixes[0]);
+       index += 1) {
+    if (!join_app_root_suffix(helper_path, app_root, app_root_length,
+                              helper_suffixes[index])) {
+      continue;
+    }
+    if (!live_code_matches_static(pid, helper_path,
+                                  NEXUS_UTILITY_HELPER_IDENTIFIER,
+                                  NEXUS_TEAM_IDENTIFIER)) {
+      continue;
+    }
+    struct process_record parent;
+    return load_stable_process_record(api, process.ppid, &parent) &&
+           live_code_matches_static(parent.pid, main_path, NEXUS_APP_IDENTIFIER,
+                                    NEXUS_TEAM_IDENTIFIER);
+  }
+  return false;
 }
 
 static bool direct_parent_is_apple_perl(
