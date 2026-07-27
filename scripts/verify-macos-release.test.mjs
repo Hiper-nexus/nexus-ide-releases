@@ -3,10 +3,15 @@ import { describe, expect, it } from 'vitest';
 import {
   assertPackagedSmokeOutput,
   assertMatchingReleaseArchitectures,
+  assertNoBundledNodePtySpawnHelpers,
   assertReleaseArtifacts,
+  assertResponsibilitySupervisorSignatureMetadata,
+  assertSingleResponsibilitySupervisorPath,
   assertSignatureMetadata,
+  buildCodesignSliceInvocations,
   buildFusesReadInvocation,
   expectedEntitlementKeysForPath,
+  expectedMachOArchitecturesForPath,
   parseCodesignMetadata,
   parseLipoArchitectures,
 } from './verify-macos-release.mjs';
@@ -125,17 +130,28 @@ describe('macOS release artifact contract', () => {
     )).toEqual([]);
   });
 
-  it('requires both renderer and functional readiness proof from the real app', () => {
-    expect(() => assertPackagedSmokeOutput('[smoke] renderer-mounted\n')).toThrow(
+  it('requires renderer, functional, and main-owned shutdown proof from the real app', () => {
+    expect(() => assertPackagedSmokeOutput('[smoke] renderer-mounted\n', 'darwin')).toThrow(
       /functional-ready/,
     );
-    expect(() => assertPackagedSmokeOutput('[smoke] functional-ready\n')).toThrow(
+    expect(() => assertPackagedSmokeOutput('[smoke] functional-ready\n', 'darwin')).toThrow(
       /renderer-mounted/,
     );
     expect(() => assertPackagedSmokeOutput([
       '[smoke] renderer-mounted',
       '[smoke] functional-ready',
-    ].join('\n'))).not.toThrow();
+    ].join('\n'), 'darwin')).toThrow(/shutdown-complete/);
+    expect(() => assertPackagedSmokeOutput([
+      '[smoke] renderer-mounted',
+      '[smoke] functional-ready',
+      '[smoke] shutdown-complete',
+    ].join('\n'), 'darwin')).toThrow(/darwin-pty-supervisor-ready/);
+    expect(() => assertPackagedSmokeOutput([
+      '[smoke] renderer-mounted',
+      '[smoke] functional-ready',
+      '[smoke] darwin-pty-supervisor-ready',
+      '[smoke] shutdown-complete',
+    ].join('\n'), 'darwin')).not.toThrow();
   });
 
   it('reads Electron fuses with the locked local CLI and current Node', () => {
@@ -172,5 +188,191 @@ describe('macOS release artifact contract', () => {
         'arm64',
       ),
     ).toThrow(/single-architecture/i);
+  });
+
+  it('rejects empty, unknown, and duplicate lipo architecture output', () => {
+    expect(() => parseLipoArchitectures(' \n')).toThrow(
+      /did not report any/i,
+    );
+    expect(() =>
+      parseLipoArchitectures('arm64 i386\n'),
+    ).toThrow(/unsupported.*i386/i);
+    expect(() =>
+      parseLipoArchitectures('arm64 arm64\n'),
+    ).toThrow(/duplicate.*arm64/i);
+  });
+
+  it('requires universal architecture only for the exact native supervisor path', () => {
+    const app = '/tmp/NexusIDE.app';
+    expect(expectedMachOArchitecturesForPath(
+      `${app}/Contents/Resources/nexus-pty-supervisor`,
+      app,
+      'arm64',
+    )).toEqual(['arm64', 'x86_64']);
+    expect(expectedMachOArchitecturesForPath(
+      `${app}/Contents/Resources/tools/nexus-pty-supervisor`,
+      app,
+      'arm64',
+    )).toEqual(['arm64']);
+    expect(expectedMachOArchitecturesForPath(
+      `${app}/Contents/Resources/nexus-pty-supervisor-copy`,
+      app,
+      'arm64',
+    )).toEqual(['arm64']);
+    expect(expectedMachOArchitecturesForPath(
+      `${app}/Contents/MacOS/nexus-ide`,
+      app,
+      'arm64',
+    )).toEqual(['arm64']);
+  });
+
+  it('verifies signatures, metadata, and entitlements for every expected slice', () => {
+    const binary = '/tmp/NexusIDE.app/Contents/Resources/nexus-pty-supervisor';
+    const invocations = buildCodesignSliceInvocations(
+      binary,
+      ['arm64', 'x86_64'],
+    );
+
+    expect(invocations).toEqual([
+      {
+        architecture: 'arm64',
+        verify: {
+          command: '/usr/bin/codesign',
+          args: [
+            '--verify',
+            '--strict',
+            '--verbose=2',
+            '-a',
+            'arm64',
+            binary,
+          ],
+        },
+        metadata: {
+          command: '/usr/bin/codesign',
+          args: [
+            '-dv',
+            '--verbose=4',
+            '-a',
+            'arm64',
+            binary,
+          ],
+        },
+        entitlements: {
+          command: '/usr/bin/codesign',
+          args: [
+            '-d',
+            '--entitlements',
+            '-',
+            '--xml',
+            '-a',
+            'arm64',
+            binary,
+          ],
+        },
+      },
+      {
+        architecture: 'x86_64',
+        verify: {
+          command: '/usr/bin/codesign',
+          args: [
+            '--verify',
+            '--strict',
+            '--verbose=2',
+            '-a',
+            'x86_64',
+            binary,
+          ],
+        },
+        metadata: {
+          command: '/usr/bin/codesign',
+          args: [
+            '-dv',
+            '--verbose=4',
+            '-a',
+            'x86_64',
+            binary,
+          ],
+        },
+        entitlements: {
+          command: '/usr/bin/codesign',
+          args: [
+            '-d',
+            '--entitlements',
+            '-',
+            '--xml',
+            '-a',
+            'x86_64',
+            binary,
+          ],
+        },
+      },
+    ]);
+  });
+
+  it('requires one responsibility supervisor at the exact Resources path', () => {
+    const app = '/tmp/NexusIDE.app';
+    const exact =
+      `${app}/Contents/Resources/nexus-pty-supervisor`;
+    expect(assertSingleResponsibilitySupervisorPath([exact], app)).toBe(exact);
+    expect(() =>
+      assertSingleResponsibilitySupervisorPath([], app),
+    ).toThrow(/exactly one/i);
+    expect(() =>
+      assertSingleResponsibilitySupervisorPath(
+        [exact, `${app}/Contents/Resources/tools/nexus-pty-supervisor`],
+        app,
+      ),
+    ).toThrow(/exactly one/i);
+    expect(() =>
+      assertSingleResponsibilitySupervisorPath(
+        [`${app}/Contents/Resources/tools/nexus-pty-supervisor`],
+        app,
+      ),
+    ).toThrow(/exactly one/i);
+  });
+
+  it('requires zero bundled node-pty spawn-helper entries', () => {
+    expect(() => assertNoBundledNodePtySpawnHelpers([])).not.toThrow();
+    expect(() =>
+      assertNoBundledNodePtySpawnHelpers([
+        '/tmp/NexusIDE.app/Contents/Resources/app.asar.unpacked/node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/spawn-helper',
+      ]),
+    ).toThrow(/forbidden node-pty spawn-helper/i);
+  });
+
+  it('requires the exact helper identifier and hardened runtime flag', () => {
+    const metadata = parseCodesignMetadata([
+      'Identifier=nexus-pty-supervisor',
+      'CodeDirectory v=20500 size=777 flags=0x10000(runtime) hashes=12+7 location=embedded',
+      'Authority=Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+      'Timestamp=23 Jul 2026 at 08:49:41',
+      'TeamIdentifier=35P5XL3JN6',
+    ].join('\n'));
+    expect(metadata).toMatchObject({
+      identifier: 'nexus-pty-supervisor',
+      codeDirectoryFlags: 0x10000,
+      codeDirectoryFlagNames: ['runtime'],
+    });
+    expect(() =>
+      assertResponsibilitySupervisorSignatureMetadata(
+        metadata,
+        '35P5XL3JN6',
+        'Developer ID Application: Cleofas Pereira rocha',
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertResponsibilitySupervisorSignatureMetadata(
+        { ...metadata, identifier: 'nexus-pty-supervisor-copy' },
+        '35P5XL3JN6',
+        'Developer ID Application: Cleofas Pereira rocha',
+      ),
+    ).toThrow(/Identifier/);
+    expect(() =>
+      assertResponsibilitySupervisorSignatureMetadata(
+        { ...metadata, codeDirectoryFlags: 0 },
+        '35P5XL3JN6',
+        'Developer ID Application: Cleofas Pereira rocha',
+      ),
+    ).toThrow(/hardened runtime/i);
   });
 });

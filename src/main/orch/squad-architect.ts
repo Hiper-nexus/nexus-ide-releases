@@ -1,16 +1,22 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { chatViaBrainChain } from '../voice/jarvis-brain';
-import { listAdapterInfos } from '../adapters/adapter-registry';
-import { listSquads, saveSquad } from './squad-store';
-import { pickReusableSquad } from './squad-reuse';
+import fs from "node:fs";
+import path from "node:path";
+import { chatViaBrainChain } from "../voice/jarvis-brain";
+import {
+  listSquads,
+  normalizeEphemeralSquadCandidate,
+} from "./squad-store";
+import { pickReusableSquad } from "./squad-reuse";
 import {
   enrichedBlockForArchitect,
   loadEnrichedCatalog,
-} from './harness-enrich';
-import type { Squad } from '../../shared/orch-types';
-import { diagnoseWithDoctorGrok } from '../runtime/doctor-diagnostic-engine';
-import { getOrchSettings } from '../persistence/settings-store';
+} from "./harness-enrich";
+import type { Squad } from "../../shared/orch-types";
+import { diagnoseWithDoctorGrok } from "../runtime/doctor-diagnostic-engine";
+import { getOrchSettings } from "../persistence/settings-store";
+import { orchestrationEvidenceOf } from "../../shared/adapter-types";
+import { assessStandardSquadReadiness } from "./squad-runtime-policy";
+import { liveSquadRuntimeInventory } from "./squad-runtime-inventory";
+import { applyGuidedSquadSkillPolicy } from "./guided-squad-skills";
 
 /**
  * Squad Architect — lê o workspace (stack, estrutura, README) e GERA um squad
@@ -47,31 +53,38 @@ Regras:
   app/os testes de verdade e tentar quebrar as entregas — não só ler código.
 - Inclua um reviewer de Segurança sempre que o projeto tocar auth,
   pagamentos, APIs expostas, rede ou dados de usuário.
-- Inclua um UX/UI Designer (category reviewer, cli claude) sempre que o
+- Inclua um UX/UI Designer (category reviewer, em uma CLI de worker não-Claude)
+  sempre que o
   projeto tiver interface (web, mobile, desktop): ele critica hierarquia,
   acessibilidade, estados vazios e polish das entregas de UI, com mandato
   explícito de rejeitar o visual genérico de IA (sparkles, gradiente roxo,
   glassmorphism, card grids idênticos) e usar a skill impeccable quando
   disponível.
 - NÃO inclua o orquestrador na lista (ele é adicionado automaticamente).
-- DISTRIBUA os workers entre as CLIs INSTALADAS listadas no perfil (custo e
-  diversidade): executores em CLIs rápidas/baratas; reviewer/architect nas
-  mais capazes. Nunca coloque todos na mesma CLI.
+- Claude é reservado globalmente ao Maestro: nunca atribua Claude a executor,
+  reviewer, scout ou architect.
+- A lista de CLIs instaladas não é uma lista de workers guided. Atribua
+  executor, reviewer, scout e architect SOMENTE a linhas marcadas
+  "worker guided: qualificado" no perfil runtime. Painel, terminal, handoff ou
+  rota experimental não substituem confinamento autônomo. Se houver uma única
+  CLI qualificada, todos os workers podem e devem usar essa CLI.
 - Use somente CLI/modelo/effort declarados no perfil runtime; não invente nem
   use catálogos memorizados. Prefira effort econômico em trabalho mecânico e o
   maior effort realmente disponível em revisão/arquitetura crítica.
 - Quando a missão exigir GERAR ou EDITAR imagem, spritesheet, avatar ou desktop
-  pet, escolha um executor com geração visual nativa: priorize Codex com as
-  skills imagegen/hatch-pet e depois Grok com sua ferramenta de imagem. Claude
-  pode implementar/revisar código e contrato visual, mas NÃO deve ser escalado
-  como gerador de imagem sem uma ferramenta de mídia Nexus explicitamente
-  declarada no arsenal. Nunca atribua geração visual a uma CLI sem capacidade.
+  pet, escolha um executor Codex governado. O main concede a ele a skill
+  nexus-visual-media e exatamente as tools nexus_media_providers e
+  nexus_image_generate. Não prometa imagegen/hatch-pet, geração nativa da CLI
+  ou API key ambiente: esses caminhos não pertencem à autoridade da missão.
+  Claude pode implementar/revisar código e contrato visual, mas NÃO deve ser
+  escalado como gerador de imagem. Nunca atribua geração visual a uma CLI sem
+  a ferramenta de mídia Nexus explicitamente declarada no arsenal.
 - Desktop pet v2 NÃO é uma imagem única: é um pipeline 8x11 com 9 estados de
   animação (idle, running-right, running-left, waving, jumping, failed,
   waiting, running, review), 16 direções de olhar e até 13 trabalhos visuais.
-  O executor visual líder deve carregar a skill hatch-pet, criar uma base
-  canônica e aterrar TODAS as linhas nela. Outro gerador é apenas fallback de
-  linha completa, nunca fonte de células avulsas misturadas. Exija validação
+  O executor visual líder deve usar nexus-visual-media, criar uma base canônica
+  e aterrar TODAS as linhas nela. Outro gerador é apenas fallback de linha
+  completa, nunca fonte de células avulsas misturadas. Exija validação
   determinística, contact sheet, motion preview e spriteVersionNumber 2.
 - Instruções: cite a stack e os diretórios REAIS do perfil, e SEMPRE inclua
   os comandos reais de build/test/lint do projeto (extraia dos manifests,
@@ -79,38 +92,41 @@ Regras:
   gates que o orquestrador vai cobrar em cada handoff.`;
 
 const ARCHITECT_JSON_SCHEMA = {
-  type: 'object',
+  type: "object",
   additionalProperties: false,
   properties: {
-    name: { type: 'string' },
-    orchestratorInstructions: { type: 'string' },
+    name: { type: "string" },
+    orchestratorInstructions: { type: "string" },
     agents: {
-      type: 'array',
+      type: "array",
       minItems: 3,
       maxItems: 6,
       items: {
-        type: 'object',
+        type: "object",
         additionalProperties: false,
         properties: {
-          id: { type: 'string' },
-          agentName: { type: 'string' },
-          category: { type: 'string', enum: ['executor', 'reviewer', 'scout', 'architect'] },
-          cli: { type: 'string' },
-          model: { type: 'string' },
-          effort: { type: 'string' },
+          id: { type: "string" },
+          agentName: { type: "string" },
+          category: {
+            type: "string",
+            enum: ["executor", "reviewer", "scout", "architect"],
+          },
+          cli: { type: "string" },
+          model: { type: "string" },
+          effort: { type: "string" },
         },
-        required: ['id', 'agentName', 'category', 'cli', 'model'],
+        required: ["id", "agentName", "category", "cli", "model"],
       },
     },
   },
-  required: ['name', 'orchestratorInstructions', 'agents'],
+  required: ["name", "orchestratorInstructions", "agents"],
 } as const;
 
 function readSafe(file: string): string {
   try {
-    return fs.readFileSync(file, 'utf8').slice(0, MAX_FILE_CHARS);
+    return fs.readFileSync(file, "utf8").slice(0, MAX_FILE_CHARS);
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -120,30 +136,30 @@ function profileWorkspace(root: string): string {
   try {
     const entries = fs.readdirSync(root, { withFileTypes: true }).slice(0, 60);
     parts.push(
-      '## estrutura (1º nível)\n' +
+      "## estrutura (1º nível)\n" +
         entries
-          .map((e) => `${e.isDirectory() ? 'dir ' : 'file'} ${e.name}`)
-          .join('\n'),
+          .map((e) => `${e.isDirectory() ? "dir " : "file"} ${e.name}`)
+          .join("\n"),
     );
   } catch {
     // sem leitura da raiz — segue só com manifests
   }
   const manifests = [
-    'package.json',
-    'pyproject.toml',
-    'requirements.txt',
-    'go.mod',
-    'Cargo.toml',
-    'composer.json',
-    'Gemfile',
-    'pom.xml',
-    'README.md',
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "go.mod",
+    "Cargo.toml",
+    "composer.json",
+    "Gemfile",
+    "pom.xml",
+    "README.md",
   ];
   for (const m of manifests) {
     const content = readSafe(path.join(root, m));
     if (content) parts.push(`## ${m}\n${content}`);
   }
-  return parts.join('\n\n').slice(0, 16_000);
+  return parts.join("\n\n").slice(0, 16_000);
 }
 
 export interface ArchitectResult {
@@ -170,31 +186,55 @@ function assertSquadDesignAuthority(options: SquadDesignOptions): void {
   options.assertCurrentAuthority?.();
   if (!options.signal?.aborted) return;
   if (options.signal.reason instanceof Error) throw options.signal.reason;
-  throw new Error('squad design authority was revoked');
+  throw new Error("squad design authority was revoked");
 }
+
+const NO_VERIFIED_MAESTRO_ERROR =
+  "Nenhum Maestro com orquestração verificada está pronto. " +
+  "Instale, ative ou autentique Claude Code ou Codex e confira Configurações › Providers. " +
+  "Integrações experimentais só podem ser escolhidas manualmente na revisão.";
 
 function deterministicSquadFallback(
   workspacePath: string,
   intent: string | undefined,
   reason: string,
   options: SquadDesignOptions = {},
+  recoveredFromFailure = true,
 ): ArchitectResult {
   assertSquadDesignAuthority(options);
-  const adapters = listAdapterInfos().filter(
-    (adapter) => adapter.installed && adapter.id !== 'shell',
-  );
+  const inventory = liveSquadRuntimeInventory();
+  const { adapters, workerAdapters, verifiedOrchestrators } = inventory;
   if (adapters.length === 0) {
-    return { ok: false, error: `${reason}; nenhuma CLI instalada para fallback` };
+    return {
+      ok: false,
+      error:
+        `${reason}; nenhuma CLI está pronta para execução autônoma. ` +
+        "Confira instalação, provider habilitado, autenticação e contas disponíveis.",
+    };
   }
-  const pick = (index: number) => adapters[index % adapters.length];
+  if (verifiedOrchestrators.length === 0) {
+    return { ok: false, error: `${reason}; ${NO_VERIFIED_MAESTRO_ERROR}` };
+  }
+  if (workerAdapters.length === 0) {
+    return {
+      ok: false,
+      error:
+        `${reason}; nenhuma CLI de worker está pronta. ` +
+        "Claude permanece reservado ao Maestro. Nesta versão, o guided automático exige Codex autenticado com escrita autônoma confinada. " +
+        "Kimi, OpenCode, Grok, AGY e OMP continuam disponíveis somente em painéis, terminais ou fluxos manuais/experimentais conforme a capability declarada.",
+    };
+  }
+  const pick = (index: number) => workerAdapters[index % workerAdapters.length];
   const worker = (
     id: string,
     agentName: string,
-    category: 'executor' | 'reviewer' | 'scout' | 'architect',
+    category: "executor" | "reviewer" | "scout" | "architect",
     index: number,
     preferredAdapterId?: string,
   ) => {
-    const adapter = adapters.find((item) => item.id === preferredAdapterId) ?? pick(index);
+    const adapter =
+      workerAdapters.find((item) => item.id === preferredAdapterId) ??
+      pick(index);
     return {
       id,
       agentName,
@@ -203,67 +243,109 @@ function deterministicSquadFallback(
       model: adapter.models.default || adapter.models.list[0],
     };
   };
-  const objective = intent?.trim() || `Manter e evoluir ${path.basename(workspacePath)}`;
-  const visual = /\b(ui|ux|visual|interface|desktop|pet|site|landing|web|mobile|react|electron)\b/i.test(
-    objective,
-  );
-  const imageGeneration = /\b(pet|imagem|image|sprite|spritesheet|avatar|ilustra|gerar\s+(?:uma\s+)?(?:foto|arte))\b/i.test(
-    objective,
-  );
+  const objective =
+    intent?.trim() || `Manter e evoluir ${path.basename(workspacePath)}`;
+  const visual =
+    /\b(ui|ux|visual|interface|desktop|pet|site|landing|web|mobile|react|electron)\b/i.test(
+      objective,
+    );
+  const imageGeneration =
+    /\b(pet|imagem|image|sprite|spritesheet|avatar|ilustra|gerar\s+(?:uma\s+)?(?:foto|arte))\b/i.test(
+      objective,
+    );
   const visualExecutor = imageGeneration
-    ? ['codex', 'grok'].find((id) => adapters.some((adapter) => adapter.id === id))
+    ? workerAdapters.some((adapter) => adapter.id === "codex")
+      ? "codex"
+      : undefined
     : undefined;
+  if (imageGeneration && !visualExecutor) {
+    return {
+      ok: false,
+      error:
+        `${reason}; a geração visual governada exige o worker Codex qualificado. ` +
+        "Instale, ative ou autentique Codex e configure um provider em Configurações › Mídia.",
+    };
+  }
   const agents = [
     worker(
-      'executor',
-      imageGeneration ? 'Executor visual' : 'Executor principal',
-      'executor',
+      "executor",
+      imageGeneration ? "Executor visual" : "Executor principal",
+      "executor",
       0,
       visualExecutor,
     ),
-    worker('qa', 'QA de execução', 'reviewer', 1),
-    worker('reviewer', 'Revisor sênior', 'reviewer', 2),
-    ...(visual ? [worker('ux', 'UX e validação visual', 'reviewer', 3)] : []),
+    worker("qa", "QA de execução", "reviewer", 1),
+    worker("reviewer", "Revisor sênior", "reviewer", 2),
+    ...(visual ? [worker("ux", "UX e validação visual", "reviewer", 3)] : []),
   ];
-  const orchestrator = adapters.find((adapter) => adapter.orchestratorCapable) ?? adapters[0];
-  // `saveSquad` is the authority-bearing global effect. Keep this assertion
-  // outside the error-normalization block so revocation fails closed instead
-  // of being disguised as a recoverable model/fallback error.
+  const preferredOrchestratorId = getOrchSettings().defaultAdapterId;
+  const orchestrator =
+    verifiedOrchestrators.find(
+      (adapter) => adapter.id === preferredOrchestratorId,
+    ) ?? verifiedOrchestrators[0];
+  const candidate = {
+    id: `agentic-fallback-${Date.now()}`,
+    name: visual ? "Execução + QA Visual" : "Execução + QA",
+    createdAt: String(Date.now()),
+    builtin: false,
+    orchestratorInstructions: [
+      `# Missão\n${objective}`,
+      "Inspecione os manifests e use os comandos reais de build, lint e teste do workspace.",
+      "Delegue execução e revisão em paralelo quando os escopos não se sobrepuserem.",
+      "Não declare conclusão sem evidência local dos testes e pós-condições da entrega.",
+      visual
+        ? "A entrega visual exige QA da imagem/interface, estados completos e comparação com a referência anexada."
+        : "",
+      imageGeneration
+        ? `A geração do asset visual deve ser liderada por ${visualExecutor} com a skill nexus-visual-media e somente as tools Nexus autorizadas. Para pet v2, trate como pipeline 8x11: base canônica, 9 linhas de animação, 16 direções, até 13 jobs visuais, QA incremental, contact sheet e motion preview. Nunca use imagegen/hatch-pet, API key ambiente ou geração nativa fora do workspace governado. Nunca misture células avulsas de geradores diferentes. Claude pode implementar/revisar, mas não gerar o asset.`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    agents: [
+      {
+        id: "orch",
+        agentName: "Maestro",
+        category: "orchestrator",
+        cli: orchestrator.id,
+        model: orchestrator.models.default || orchestrator.models.list[0],
+      },
+      ...agents,
+    ],
+  };
+  const readiness = assessStandardSquadReadiness(
+    candidate.agents,
+    inventory.policy,
+    inventory.verifiedOrchestratorCliIds,
+  );
+  if (!readiness.ok) {
+    return {
+      ok: false,
+      error: `${reason}; fallback sem capacidade standard: ${readiness.detail}`,
+    };
+  }
+  // Designing is read-only. The returned candidate remains main-owned and
+  // ephemeral until either launch creates a hidden runtime snapshot or the
+  // operator explicitly chooses "Salvar configuração".
   assertSquadDesignAuthority(options);
   try {
-    const squad = saveSquad({
-      id: `agentic-fallback-${Date.now()}`,
-      name: visual ? 'Execução + QA Visual' : 'Execução + QA',
-      createdAt: String(Date.now()),
-      builtin: false,
-      orchestratorInstructions: [
-        `# Missão\n${objective}`,
-        'Inspecione os manifests e use os comandos reais de build, lint e teste do workspace.',
-        'Delegue execução e revisão em paralelo quando os escopos não se sobrepuserem.',
-        'Não declare conclusão sem evidência local dos testes e pós-condições da entrega.',
-        visual
-          ? 'A entrega visual exige QA da imagem/interface, estados completos e comparação com a referência anexada.'
-          : '',
-        imageGeneration
-          ? `A geração do asset visual deve ser liderada por ${visualExecutor ?? 'um executor com ferramenta de mídia comprovada'}. Para pet v2, carregue hatch-pet e trate como pipeline 8x11: base canônica, 9 linhas de animação, 16 direções, até 13 jobs visuais, QA incremental, contact sheet e motion preview. Codex é a primeira opção; Grok é fallback visual por linha inteira. Nunca misture células avulsas de geradores diferentes. Claude sem ferramenta de mídia pode implementar/revisar, mas não gerar o asset.`
-          : '',
-      ].filter(Boolean).join('\n\n'),
-      agents: [
-        {
-          id: 'orch',
-          agentName: 'Maestro',
-          category: 'orchestrator',
-          cli: orchestrator.id,
-          model: orchestrator.models.default || orchestrator.models.list[0],
-        },
-        ...agents,
-      ],
-    });
-    console.warn(`[orch doctor] ${reason}; squad determinístico criado: ${squad.name}`);
+    const squad = applyGuidedSquadSkillPolicy(
+      normalizeEphemeralSquadCandidate(candidate),
+      { objective },
+    );
+    if (recoveredFromFailure) {
+      console.warn(
+        `[orch doctor] ${reason}; squad determinístico criado: ${squad.name}`,
+      );
+    }
     return {
       ok: true,
       squad,
-      warning: `${reason}. O Doctor montou um time determinístico com o catálogo local.`,
+      ...(recoveredFromFailure
+        ? {
+            warning: `${reason}. O Doctor montou um time determinístico com o catálogo local.`,
+          }
+        : {}),
     };
   } catch (cause) {
     return {
@@ -273,7 +355,7 @@ function deterministicSquadFallback(
   }
 }
 
-/** Analisa o workspace e salva um squad sob medida. */
+/** Analisa o workspace e devolve um candidato de squad ainda não persistido. */
 export async function designSquadForWorkspace(
   workspacePath: string,
   options: SquadDesignOptions = {},
@@ -292,19 +374,19 @@ export async function designSquadFromIntent(
 ): Promise<ArchitectResult> {
   assertSquadDesignAuthority(options);
   const clean = intent.trim();
-  if (!clean) return { ok: false, error: 'descreva o objetivo da missão' };
+  if (!clean) return { ok: false, error: "descreva o objetivo da missão" };
   // Reuso de um squad salvo é OPT-IN. Modo Agêntico = "desenhe um time novo
   // para este objetivo do zero"; substituir isso silenciosamente pelo squad de
   // usuário mais recente (ex.: o roster de OUTRO projeto que por acaso tem
   // todos os clis instalados) atropelava exatamente esse pedido. Quem quer um
   // squad salvo escolhe no Modo Squad. Só reusa quando o chamador pede.
   if (options.preferSavedSquad) {
-    const installed = new Set(
-      listAdapterInfos()
-        .filter((adapter) => adapter.installed && adapter.id !== 'shell')
-        .map((adapter) => adapter.id),
+    const inventory = liveSquadRuntimeInventory();
+    const saved = pickReusableSquad(
+      listSquads(),
+      inventory.policy,
+      inventory.verifiedOrchestratorCliIds,
     );
-    const saved = pickReusableSquad(listSquads(), installed);
     if (saved) {
       assertSquadDesignAuthority(options);
       return {
@@ -320,8 +402,9 @@ export async function designSquadFromIntent(
   return deterministicSquadFallback(
     workspacePath,
     clean.slice(0, 4_000),
-    'Time montado localmente',
+    "Time montado localmente",
     options,
+    false,
   );
 }
 
@@ -332,31 +415,42 @@ async function designSquad(opts: {
 }): Promise<ArchitectResult> {
   const { workspacePath, intent, options } = opts;
   assertSquadDesignAuthority(options);
-  const installed = listAdapterInfos()
-    .filter((a) => a.installed && a.id !== 'shell')
-    .map((a) => `${a.id} [models: ${a.models.list.join(', ') || a.models.default}]`)
-    .join('\n');
+  const inventory = liveSquadRuntimeInventory();
+  const { adapters, workerAdapters, verifiedOrchestrators } = inventory;
+  if (verifiedOrchestrators.length === 0) {
+    return { ok: false, error: NO_VERIFIED_MAESTRO_ERROR };
+  }
+  const guidedWorkerIds = new Set(workerAdapters.map((adapter) => adapter.id));
+  const runtimeCatalog = adapters
+    .map(
+      (adapter) =>
+        `${adapter.id} [models: ${adapter.models.list.join(", ") || adapter.models.default}; ` +
+        `orquestração: ${orchestrationEvidenceOf(adapter)}; ` +
+        `worker guided: ${guidedWorkerIds.has(adapter.id) ? "qualificado" : "não qualificado (somente painel/terminal/manual)"}]`,
+    )
+    .join("\n");
   const intentBlock = intent
     ? `OBJETIVO DO USUÁRIO (a missão deste squad — desenhe o time PARA isto):\n` +
       `"""${intent}"""\n\n` +
       `Regra extra: as orchestratorInstructions DEVEM abrir declarando este ` +
       `objetivo como a missão, e o primeiro passo do orquestrador é decompô-lo ` +
       `e delegar — sem re-perguntar o que fazer.\n\n`
-    : '';
+    : "";
   // Arsenal enriquecido (harness-enrich): o arquiteto cita agents/skills
   // REAIS instalados em vez de inventar papéis genéricos.
   const enriched = enrichedBlockForArchitect(loadEnrichedCatalog(), 4_000);
   assertSquadDesignAuthority(options);
   const profile =
     intentBlock +
-    `CATÁLOGO RUNTIME DE CLIs/MODELOS (fonte de verdade):\n${installed || 'nenhuma'}\n\n` +
-    (enriched ? `${enriched}\n\n` : '') +
+    `CATÁLOGO RUNTIME DE CLIs/MODELOS (fonte de verdade):\n${runtimeCatalog || "nenhuma"}\n\n` +
+    (enriched ? `${enriched}\n\n` : "") +
     profileWorkspace(workspacePath);
   const doctor = getOrchSettings();
-  const viaAutoChain = () => chatViaBrainChain(
+  const viaAutoChain = () =>
+    chatViaBrainChain(
       [
-        { role: 'system', content: ARCHITECT_PROMPT },
-        { role: 'user', content: `PERFIL DO PROJETO:\n\n${profile}` },
+        { role: "system", content: ARCHITECT_PROMPT },
+        { role: "user", content: `PERFIL DO PROJETO:\n\n${profile}` },
       ],
       2_000,
       undefined,
@@ -365,7 +459,7 @@ async function designSquad(opts: {
       throw new Error(err instanceof Error ? err.message : String(err));
     });
   let raw: string;
-  if (doctor.doctorAdapterId === 'grok') {
+  if (doctor.doctorAdapterId === "grok") {
     try {
       raw = await diagnoseWithDoctorGrok({
         cwd: workspacePath,
@@ -380,7 +474,7 @@ async function designSquad(opts: {
     } catch (grokError) {
       assertSquadDesignAuthority(options);
       console.warn(
-        '[orch doctor] Grok indisponível; usando seleção automática:',
+        "[orch doctor] Grok indisponível; usando seleção automática:",
         grokError instanceof Error ? grokError.message : String(grokError),
       );
       raw = await viaAutoChain();
@@ -396,7 +490,7 @@ async function designSquad(opts: {
     return deterministicSquadFallback(
       workspacePath,
       intent,
-      'o modelo não devolveu JSON',
+      "o modelo não devolveu JSON",
       options,
     );
   }
@@ -408,54 +502,87 @@ async function designSquad(opts: {
   try {
     parsed = JSON.parse(match[0]);
   } catch {
-    console.warn('[orch] arquiteto devolveu JSON inválido:', raw.slice(-200));
+    console.warn("[orch] arquiteto devolveu JSON inválido:", raw.slice(-200));
     return deterministicSquadFallback(
       workspacePath,
       intent,
-      'JSON inválido do modelo (resposta truncada?)',
+      "JSON inválido do modelo (resposta truncada?)",
       options,
     );
   }
-  if (!parsed.name || !Array.isArray(parsed.agents) || parsed.agents.length === 0) {
+  if (
+    !parsed.name ||
+    !Array.isArray(parsed.agents) ||
+    parsed.agents.length === 0
+  ) {
     return deterministicSquadFallback(
       workspacePath,
       intent,
-      'squad gerado incompleto',
+      "squad gerado incompleto",
       options,
     );
   }
 
   const workspaceName = path.basename(workspacePath);
+  const preferredOrchestratorId = getOrchSettings().defaultAdapterId;
+  const orchestrator =
+    verifiedOrchestrators.find(
+      (adapter) => adapter.id === preferredOrchestratorId,
+    ) ?? verifiedOrchestrators[0];
   // Intent mode ganha id próprio (por nome gerado) — dois squads agênticos no
   // mesmo workspace não podem colidir no id `custom-<workspace>`.
   const idBase = intent
-    ? `agentic-${parsed.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now() % 100_000}`
-    : `custom-${workspaceName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+    ? `agentic-${parsed.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now() % 100_000}`
+    : `custom-${workspaceName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   const candidate = {
     id: idBase.slice(0, 64),
     name: parsed.name.slice(0, 80),
     createdAt: String(Date.now()),
     builtin: false,
-    orchestratorInstructions: (parsed.orchestratorInstructions ?? '').slice(0, 20_000),
+    orchestratorInstructions: (parsed.orchestratorInstructions ?? "").slice(
+      0,
+      20_000,
+    ),
     agents: [
       {
-        id: 'orch',
-        agentName: 'Maestro',
-        category: 'orchestrator',
-        cli: 'claude',
-        effort: 'high',
+        id: "orch",
+        agentName: "Maestro",
+        category: "orchestrator",
+        cli: orchestrator.id,
+        model: orchestrator.models.default || orchestrator.models.list[0],
+        effort: "high",
       },
       ...parsed.agents.slice(0, 6),
     ],
   };
+  const readiness = assessStandardSquadReadiness(
+    candidate.agents,
+    inventory.policy,
+    inventory.verifiedOrchestratorCliIds,
+  );
+  if (!readiness.ok) {
+    return deterministicSquadFallback(
+      workspacePath,
+      intent,
+      `squad gerado sem capacidade standard: ${readiness.detail}`,
+      options,
+    );
+  }
   assertSquadDesignAuthority(options);
   try {
-    // saveSquad aplica withAllowlists (normalizador canônico): os workers
-    // gerados aqui não carregam `allowedTools`, e é lá que ganham o `[]` que os
-    // faz passar o fire-gate do wizard. Não normalizamos aqui para não duplicar
-    // a regra — a persistência é o único ponto de normalização.
-    const squad = saveSquad(candidate);
-    console.log(`[orch] squad sob medida criado: ${squad.name} (${squad.agents.length} agentes)`);
+    // Apply the same canonical allowlist normalization as global persistence,
+    // but keep the candidate out of SQLite/the reusable catalog.
+    const squad = applyGuidedSquadSkillPolicy(
+      normalizeEphemeralSquadCandidate(candidate),
+      {
+        objective:
+          intent ??
+          `${parsed.name}\n${parsed.orchestratorInstructions ?? ""}`,
+      },
+    );
+    console.log(
+      `[orch] candidato de squad criado: ${squad.name} (${squad.agents.length} agentes)`,
+    );
     return { ok: true, squad };
   } catch (err) {
     return {

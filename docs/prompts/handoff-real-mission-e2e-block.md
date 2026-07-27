@@ -1,5 +1,17 @@
 # HANDOFF — Resolver bug final do real-mission e2e release gate (nexus-ide v0.19.27)
 
+> **Registro histórico — não usar como runbook.** Este diagnóstico descreve
+> uma implementação obsoleta que permitia ao processo main fabricar o artefato,
+> o commit e o handoff do worker. O receipt v4 atual entra pelo Guided Planner
+> de produção e exige três PTYs físicos (orquestrador, executor e QA), dois
+> dispatches sequenciais, dois `nexus_handoff_submit` no boundary HTTP MCP,
+> integração do executor e `worktree_validated_no_change` main-owned para o QA.
+> A cobertura é `guided-delivery-core`: QA físico está coberto; PREVC e o
+> merge-review council continuam fixtures explícitas, portanto não é
+> `full-flow`. Os helpers que fabricavam plano/artefato/commit/handoff no main
+> foram removidos. Qualquer orientação abaixo para restaurá-los deve ser
+> ignorada.
+
 ## TL;DR do estado
 O **PREVC está 100% funcionando** (verificado no event ledger). O **merge integra com sucesso**. Mas a missão termina **`blocked`** e o gate falha com `code=mission-blocked`. Dois fixes foram tentados; o Fix 2 (que eu achei que desbloquearia) **não resolveu** — então o block vem de outro lugar. Falta encontrar **onde** `mission.status` vira `'blocked'`.
 

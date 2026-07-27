@@ -10,6 +10,12 @@ import {
 import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionStore } from './mission-store';
 import { compileIntentContract } from '../../shared/mission-intent';
+import { plannedTaskId } from './task-store';
+import {
+  MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
+  MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
+} from './mission-orchestrator-exit-policy';
+import { hashMissionIntentContract } from './mission-pane-authority';
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -33,6 +39,300 @@ afterEach(() => {
 });
 
 describe('scoped mission store', () => {
+  it('publishes v+1 for native reapproval without rewriting dead-graph history', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'dead-graph-reapproval' });
+    let now = 100;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-dead-graph',
+    });
+    const contract = {
+      ...compileIntentContract({
+        goal: 'Entregar o fluxo completo com segurança',
+        intentVersion: 2,
+        acceptanceCriteria: ['Fluxo implementado', 'Fluxo validado'],
+      }),
+      approvedAt: 50,
+      approvalReviewSha256: 'a'.repeat(64),
+      dispatchedAt: 60,
+      squadRevisionHash: 'b'.repeat(64),
+      orchestratorRuntime: {
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+        readOnly: false as const,
+        nativeReadOnly: true as const,
+      },
+      spentSteps: 7,
+      spentTokens: 9_000,
+    };
+    const mission = store.create({
+      title: 'Dead graph',
+      squadId: 'squad-runtime-v2',
+      intentState: 'executing',
+      intentVersion: 2,
+      intentContract: contract,
+      orchestratorSessionId: 'session-v2',
+    });
+    store.setStatus(mission.id, 'running');
+    const db = runtimeManager.open(scope).db;
+    db.prepare(
+      `INSERT INTO tasks
+         (id, mission_id, title, detail, status, priority, created_at, updated_at)
+       VALUES ('task-v2', ?, 'Executar v2', '', 'running', 0, 1, 1)`,
+    ).run(mission.id);
+    db.prepare(
+      `INSERT INTO task_dispatch_queue
+         (id, task_id, mission_id, intent_version, state,
+          lease_token_hash, lease_owner, lease_expires_at, worker_id,
+          created_at, updated_at)
+       VALUES (
+         'dispatch-v2', 'task-v2', ?, 2, 'running',
+         ?, 'main', 10_000, 'worker-v2', 1, 1
+       )`,
+    ).run(mission.id, 'c'.repeat(64));
+
+    const blocked = store.block(mission.id, 'technical');
+    expect(blocked).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      intentVersion: 2,
+    });
+    if (!blocked) throw new Error('mission must exist');
+    const historyBefore = {
+      tasks: db
+        .prepare('SELECT * FROM tasks WHERE mission_id = ? ORDER BY id')
+        .all(mission.id),
+      dispatches: db
+        .prepare(
+          'SELECT * FROM task_dispatch_queue WHERE mission_id = ? ORDER BY id',
+        )
+        .all(mission.id),
+    };
+
+    const reapproval = store.publishDeadGraphReapprovalRevision(
+      mission.id,
+      blocked,
+    );
+
+    expect(reapproval).toMatchObject({
+      status: 'pending',
+      intentState: 'awaiting_approval',
+      intentVersion: 3,
+      orchestratorSessionId: undefined,
+      milestones: [
+        {
+          id: 'step-1',
+          label: 'Fluxo implementado',
+          status: 'pending',
+          evidenceIds: [],
+        },
+        {
+          id: 'step-2',
+          label: 'Fluxo validado',
+          status: 'pending',
+          evidenceIds: [],
+        },
+      ],
+      intentContract: {
+        goal: contract.goal,
+        intentVersion: 3,
+      },
+    });
+    expect(reapproval.intentContract).not.toHaveProperty('approvedAt');
+    expect(reapproval.intentContract).not.toHaveProperty(
+      'approvalReviewSha256',
+    );
+    expect(reapproval.intentContract).not.toHaveProperty('dispatchedAt');
+    expect(reapproval.intentContract).not.toHaveProperty('squadRevisionHash');
+    expect(reapproval.intentContract).not.toHaveProperty(
+      'orchestratorRuntime',
+    );
+    expect(reapproval.intentContract).not.toHaveProperty('spentSteps');
+    expect(reapproval.intentContract).not.toHaveProperty('spentTokens');
+    const oldPlanTaskId = plannedTaskId(mission.id, 2, 'implementation');
+    const newPlanTaskId = plannedTaskId(mission.id, 3, 'implementation');
+    expect(newPlanTaskId).not.toBe(oldPlanTaskId);
+    expect(plannedTaskId(mission.id, 3, 'implementation')).toBe(
+      newPlanTaskId,
+    );
+    expect({
+      tasks: db
+        .prepare('SELECT * FROM tasks WHERE mission_id = ? ORDER BY id')
+        .all(mission.id),
+      dispatches: db
+        .prepare(
+          'SELECT * FROM task_dispatch_queue WHERE mission_id = ? ORDER BY id',
+        )
+        .all(mission.id),
+    }).toEqual(historyBefore);
+    expect(historyBefore.tasks).toEqual([
+      expect.objectContaining({ id: 'task-v2', status: 'failed' }),
+    ]);
+    expect(historyBefore.dispatches).toEqual([
+      expect.objectContaining({ id: 'dispatch-v2', state: 'superseded' }),
+    ]);
+
+    expect(() =>
+      store.publishDeadGraphReapprovalRevision(mission.id, blocked),
+    ).toThrow(/CAS changed/i);
+  });
+
+  it('refuses dead-graph revision publication without terminal dispatch and pane proof', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'dead-graph-fail-closed' });
+    let sequence = 0;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: (prefix) => `${prefix}-${++sequence}`,
+    });
+    const contract = {
+      ...compileIntentContract({
+        goal: 'Não duplicar execução',
+        intentVersion: 1,
+      }),
+      approvedAt: 1,
+      dispatchedAt: 2,
+    };
+    const shell = store.create({
+      title: 'Bootstrap only',
+      squadId: 'squad-a',
+      intentState: 'executing',
+      intentVersion: 1,
+      intentContract: contract,
+    });
+    store.setStatus(shell.id, 'running');
+    const bootstrapBlocked = store.update(shell.id, { status: 'blocked' });
+    if (!bootstrapBlocked) throw new Error('mission must exist');
+    expect(() =>
+      store.publishDeadGraphReapprovalRevision(shell.id, bootstrapBlocked),
+    ).toThrow(/invalidated current dispatch/i);
+
+    const db = runtimeManager.open(scope).db;
+    db.prepare(
+      `INSERT INTO tasks
+         (id, mission_id, title, detail, status, priority, created_at, updated_at)
+       VALUES ('task-terminal', ?, 'Terminal', '', 'failed', 0, 1, 1)`,
+    ).run(shell.id);
+    db.prepare(
+      `INSERT INTO task_dispatch_queue
+         (id, task_id, mission_id, intent_version, state,
+          lease_token_hash, lease_owner, lease_expires_at, worker_id,
+          created_at, updated_at)
+       VALUES (
+         'dispatch-terminal', 'task-terminal', ?, 1, 'failed',
+         ?, 'main', 10_000, 'worker-terminal', 1, 1
+       )`,
+    ).run(shell.id, 'd'.repeat(64));
+    db.prepare(
+      `INSERT INTO mission_panes
+         (id, mission_id, adapter_id, title, role, scope_json, created_at)
+       VALUES (
+         'pane-row-terminal', ?, 'codex', 'Old worker', 'worker', ?, 1
+       )`,
+    ).run(
+      shell.id,
+      JSON.stringify({
+        schemaVersion: 2,
+        coordinationScope: scope,
+        executionScope: scope,
+      }),
+    );
+
+    expect(() =>
+      store.publishDeadGraphReapprovalRevision(shell.id, bootstrapBlocked),
+    ).toThrow(/proven pane teardown/i);
+    expect(store.get(shell.id)).toMatchObject({
+      status: 'blocked',
+      intentVersion: 1,
+    });
+  });
+
+  it('promotes plan with a main-only squad CAS and keeps renderer patches unable to rebind it', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'plan-promotion-cas' });
+    let now = 100;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-plan-cas',
+    });
+    const planContract = {
+      ...compileIntentContract({
+        goal: 'Produzir PRD antes da implementação',
+        intentVersion: 1,
+        lane: 'plan',
+        acceptanceCriteria: ['PRD validado', 'Arquitetura validada'],
+      }),
+      approvedAt: 90,
+      dispatchedAt: 95,
+    };
+    const plan = store.create({
+      title: 'Planejamento',
+      squadId: 'mission-runtime-plan-v1',
+      intentState: 'dispatched',
+      intentVersion: 1,
+      intentContract: planContract,
+    });
+    const standardContract = {
+      ...compileIntentContract({
+        goal: planContract.goal,
+        intentVersion: 2,
+        lane: 'standard',
+        acceptanceCriteria: planContract.acceptanceCriteria,
+      }),
+      approvedAt: 110,
+      squadRevisionHash: 'a'.repeat(64),
+    };
+
+    expect(() =>
+      store.update(plan.id, { squadId: 'renderer-forged' } as never),
+    ).toThrow(/Unrecognized key.*squadId/i);
+
+    const promoted = store.commitPlanPromotionRevision(
+      plan.id,
+      plan,
+      'agentic-runtime-standard-v2',
+      standardContract,
+    );
+    expect(promoted).toMatchObject({
+      squadId: 'agentic-runtime-standard-v2',
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentVersion: 2,
+      milestones: [
+        {
+          id: 'step-1',
+          label: 'PRD validado',
+          status: 'pending',
+          evidenceIds: [],
+        },
+        {
+          id: 'step-2',
+          label: 'Arquitetura validada',
+          status: 'pending',
+          evidenceIds: [],
+        },
+      ],
+    });
+    expect(promoted.intentContract).toMatchObject({
+      lane: 'standard',
+      intentVersion: 2,
+      squadRevisionHash: 'a'.repeat(64),
+    });
+
+    expect(() =>
+      store.commitPlanPromotionRevision(
+        plan.id,
+        plan,
+        'agentic-runtime-stale-v3',
+        { ...standardContract, intentVersion: 2 },
+      ),
+    ).toThrow(/CAS changed/i);
+    expect(store.get(plan.id)?.squadId).toBe(
+      'agentic-runtime-standard-v2',
+    );
+  });
+
   it('rejects intentVersion skew and clones nested contract arrays', () => {
     const runtimeManager = manager();
     const store = createScopedMissionStore(runtimeManager, testProjectScope());
@@ -142,6 +442,121 @@ describe('scoped mission store', () => {
     });
     expect(reopened.remove('mission-stable')).toBe(true);
     expect(reopened.remove('mission-stable')).toBe(false);
+  });
+
+  it('completes Driver-owned status and intent in one CAS projection', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'driver-complete-atomic' });
+    let now = 100;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-driver-complete',
+    });
+    const mission = store.create({
+      title: 'PREVC complete',
+      intentState: 'executing',
+      intentVersion: 3,
+    });
+    const running = store.setStatus(mission.id, 'running')!;
+    const changed = vi.fn();
+    const unsubscribe = store.onChange(changed);
+
+    const completed = store.completeFromMissionDriver(mission.id, {
+      expectedUpdatedAt: running.updatedAt,
+      expectedIntentVersion: 3,
+    });
+
+    expect(completed).toMatchObject({
+      status: 'done',
+      intentState: 'done',
+      intentVersion: 3,
+    });
+    expect(changed).toHaveBeenCalledOnce();
+    expect(
+      runtimeManager
+        .open(scope)
+        .db.prepare(
+          'SELECT status, intent_state, updated_at FROM missions WHERE id = ?',
+        )
+        .get(mission.id),
+    ).toEqual({
+      status: 'done',
+      intent_state: 'done',
+      updated_at: completed?.updatedAt,
+    });
+    unsubscribe();
+  });
+
+  it('rejects stale Driver completion without changing either projection', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'driver-complete-stale' });
+    let now = 200;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-driver-stale',
+    });
+    const mission = store.create({
+      title: 'PREVC stale',
+      intentState: 'executing',
+      intentVersion: 4,
+    });
+    const running = store.setStatus(mission.id, 'running')!;
+    store.update(mission.id, { description: 'concurrent authority change' });
+    const changed = vi.fn();
+    const unsubscribe = store.onChange(changed);
+
+    expect(
+      store.completeFromMissionDriver(mission.id, {
+        expectedUpdatedAt: running.updatedAt,
+        expectedIntentVersion: 4,
+      }),
+    ).toBeNull();
+    expect(store.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+      description: 'concurrent authority change',
+    });
+    expect(changed).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it('rolls back both terminal fields when the atomic Driver write fails', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'driver-complete-failure' });
+    let now = 300;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-driver-failure',
+    });
+    const mission = store.create({
+      title: 'PREVC failure',
+      intentState: 'validating',
+      intentVersion: 5,
+    });
+    const running = store.setStatus(mission.id, 'running')!;
+    runtimeManager.open(scope).db.exec(
+      `CREATE TRIGGER reject_driver_completion
+       BEFORE UPDATE OF status, intent_state ON missions
+       WHEN NEW.id = 'mission-driver-failure' AND NEW.status = 'done'
+       BEGIN
+         SELECT RAISE(ABORT, 'injected completion failure');
+       END`,
+    );
+    const changed = vi.fn();
+    const unsubscribe = store.onChange(changed);
+
+    expect(() =>
+      store.completeFromMissionDriver(mission.id, {
+        expectedUpdatedAt: running.updatedAt,
+        expectedIntentVersion: 5,
+      }),
+    ).toThrow(/injected completion failure/i);
+    expect(store.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'validating',
+    });
+    expect(changed).not.toHaveBeenCalled();
+    unsubscribe();
   });
 
   it('preserves explicit technical blocks and defaults only unspecified blocks to user', () => {
@@ -411,6 +826,230 @@ describe('scoped mission store', () => {
       },
     });
     expect(reopened.hasCurrentKickoffAcceptance(mission.id)).toBe(false);
+  });
+
+  it('bloqueia atomicamente a saída física do Maestro antes do primeiro dispatch', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'orchestrator-exit' });
+    let now = 9_000;
+    let sequence = 0;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++sequence}`,
+    });
+    const createRunningMission = (
+      sessionId: string,
+      title: string,
+      kickoffAccepted = true,
+    ) => {
+      const contract = {
+        ...compileIntentContract({
+          goal: `Entregar ${title} com delegação física`,
+          intentVersion: 1,
+        }),
+        approvedAt: 8_000,
+        dispatchedAt: 8_500,
+        squadRevisionHash: 'a'.repeat(64),
+      };
+      const created = store.create({
+        title,
+        intentState: 'dispatched',
+        intentVersion: 1,
+        intentContract: contract,
+        orchestratorSessionId: sessionId,
+      });
+      store.setStatus(created.id, 'running');
+      if (kickoffAccepted) {
+        store.recordKickoffAcceptance({
+          missionId: created.id,
+          intentVersion: 1,
+          orchestratorSessionId: sessionId,
+          promptHash: 'b'.repeat(64),
+        });
+      }
+      return created;
+    };
+    const exitInput = (
+      target: ReturnType<typeof createRunningMission>,
+      orchestratorSessionId: string,
+      outputTail: string,
+      observation:
+        | 'physical_exit'
+        | 'missing_session_reconcile' = 'physical_exit',
+    ) => {
+      const current = store.get(target.id)!;
+      return {
+        missionId: target.id,
+        orchestratorSessionId,
+        intentVersion: current.intentVersion!,
+        intentContractHash: hashMissionIntentContract(current.intentContract),
+        squadRevisionHash: current.intentContract!.squadRevisionHash!,
+        observation,
+        outputTail,
+      };
+    };
+
+    const mission = createRunningMission('orch-exited', 'Missão interrompida');
+    store.ensureDriveRuntimeState(mission.id, 8_900);
+    now = 9_100;
+    expect(
+      store.blockOrchestratorPreDispatchExit({
+        ...exitInput(mission, 'orch-exited', 'autoridade obsoleta'),
+        intentContractHash: 'f'.repeat(64),
+      }),
+    ).toBeNull();
+    expect(store.get(mission.id)?.status).toBe('running');
+
+    const blocked = store.blockOrchestratorPreDispatchExit(
+      exitInput(
+        mission,
+        'orch-exited',
+        'Planejando delegação\npassword=nao-persistir\núltima linha segura',
+      ),
+    );
+
+    expect(blocked).toMatchObject({
+      id: mission.id,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      orchestratorSessionId: 'orch-exited',
+    });
+    expect(blocked?.description).toContain(
+      MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
+    );
+    expect(blocked?.description).toContain(
+      MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
+    );
+    expect(store.getDriveRuntimeState(mission.id)).toMatchObject({
+      lastActionKind: 'orchestrator_exit',
+      lastOutcome: 'failed',
+      lastError: MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
+    });
+
+    const db = runtimeManager.open(scope).db;
+    const event = db
+      .prepare(
+        `SELECT event_type, payload_json, origin
+           FROM mission_events
+          WHERE mission_id = ?`,
+      )
+      .get(mission.id) as {
+      event_type: string;
+      payload_json: string;
+      origin: string;
+    };
+    expect(event).toMatchObject({
+      event_type: 'agent.finished',
+      origin: 'system',
+    });
+    const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      event: 'orchestrator.pre_dispatch_exit',
+      reason: MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
+      sessionId: 'orch-exited',
+      intentVersion: 1,
+      phase: 'before_first_dispatch',
+    });
+    expect(payload.outputTail).toContain('última linha segura');
+    expect(payload.outputTail).not.toContain('nao-persistir');
+
+    expect(
+      store.blockOrchestratorPreDispatchExit(
+        exitInput(mission, 'orch-exited', 'evento repetido'),
+      ),
+    ).toBeNull();
+    expect(
+      db
+        .prepare(
+          'SELECT COUNT(*) AS value FROM mission_events WHERE mission_id = ?',
+        )
+        .get(mission.id),
+    ).toEqual({ value: 1 });
+
+    // "Retomar missão" rearma a mesma revisão como running/executing antes
+    // do replacement Maestro. Uma segunda saída ainda sem dispatch deve
+    // bloquear de novo, sem depender do antigo estado `dispatched`.
+    store.setOrchestratorSession(mission.id, null);
+    store.update(mission.id, {
+      status: 'running',
+      intentState: 'executing',
+    });
+    store.setOrchestratorSession(mission.id, 'orch-retry');
+    const rearmed = store.get(mission.id)!;
+    expect(
+      store.blockOrchestratorPreDispatchExit(
+        exitInput(rearmed, 'orch-retry', 'replacement também encerrou'),
+      ),
+    ).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      orchestratorSessionId: 'orch-retry',
+    });
+    expect(
+      db
+        .prepare(
+          'SELECT COUNT(*) AS value FROM mission_events WHERE mission_id = ?',
+        )
+        .get(mission.id),
+    ).toEqual({ value: 2 });
+
+    const alreadyDispatched = createRunningMission(
+      'orch-with-dispatch',
+      'Missão já delegada',
+    );
+    db.prepare(
+      `INSERT INTO tasks
+         (id, mission_id, title, detail, status, priority, created_at, updated_at)
+       VALUES ('task-already-dispatched', ?, 'Worker', '', 'running', 0, 1, 1)`,
+    ).run(alreadyDispatched.id);
+    db.prepare(
+      `INSERT INTO task_dispatch_queue
+         (id, task_id, mission_id, intent_version, state,
+          lease_token_hash, lease_owner, lease_expires_at, worker_id,
+          created_at, updated_at)
+       VALUES (
+         'dispatch-already-created', 'task-already-dispatched', ?, 1, 'claimed',
+         ?, 'main', 99_000, 'worker-a', 1, 1
+       )`,
+    ).run(alreadyDispatched.id, 'c'.repeat(64));
+    expect(
+      store.blockOrchestratorPreDispatchExit(
+        exitInput(
+          alreadyDispatched,
+          'orch-with-dispatch',
+          'Maestro encerrou após delegar',
+        ),
+      ),
+    ).toBeNull();
+    expect(store.get(alreadyDispatched.id)).toMatchObject({
+      status: 'running',
+      intentState: 'dispatched',
+    });
+
+    const exitedDuringKickoff = createRunningMission(
+      'orch-during-kickoff',
+      'Missão sem recibo ainda',
+      false,
+    );
+    expect(
+      store.blockOrchestratorPreDispatchExit(
+        exitInput(
+          exitedDuringKickoff,
+          'orch-during-kickoff',
+          'CLI encerrou durante o kickoff',
+        ),
+      ),
+    ).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionStore(runtimeManager, scope);
+    expect(reopened.get(mission.id)).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
   });
 
   it('notifies only observers bound to the mutated scope', () => {

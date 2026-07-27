@@ -12,7 +12,7 @@ describe('ProgressiveOnboarding mission-first', () => {
     document.body.innerHTML = '';
   });
 
-  it('recomenda missão, lança esse contrato por padrão e mantém terminal explícito', () => {
+  it('abre a missão guiada em um clique e mantém terminal e avançado explícitos', () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -27,20 +27,12 @@ describe('ProgressiveOnboarding mission-first', () => {
       );
     });
 
-    const featured = [
-      ...host.querySelectorAll<HTMLButtonElement>('.prog-onb__feature-card'),
-    ];
-    expect(featured[0]?.textContent).toContain('Missão Nexus');
-    expect(featured[0]?.textContent).toContain('Recomendado');
-    expect(featured[1]?.textContent).toContain('Nexus Squad');
-    expect(host.textContent).toContain('Abrir um terminal só');
+    expect(host.textContent).toContain('Começar uma missão');
+    expect(host.textContent).toContain('Abrir só o terminal');
+    expect(host.textContent).toContain('Configuração avançada');
+    expect(host.textContent).not.toContain('Layout do terminal');
+    expect(host.textContent).not.toContain('Agentes (opcional)');
 
-    for (let step = 0; step < 3; step += 1) {
-      const next = host.querySelector<HTMLButtonElement>(
-        '.prog-onb__actions .prog-onb__primary',
-      );
-      act(() => next?.click());
-    }
     act(() => {
       host.querySelector<HTMLButtonElement>('[data-testid="launch-primary"]')
         ?.click();
@@ -51,6 +43,36 @@ describe('ProgressiveOnboarding mission-first', () => {
       paneCount: 1,
       agentDistribution: 'one-of-each',
       openWithoutAi: false,
+    });
+    act(() => root.unmount());
+  });
+
+  it('continua num workspace recente direto para o mesmo contrato agentic', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const onLaunch = vi.fn();
+    act(() => {
+      root.render(
+        <ProgressiveOnboarding
+          recents={[{ path: '/repo/nexus', label: 'Nexus' }]}
+          onLaunch={onLaunch}
+          onSkip={vi.fn()}
+          onOpenTerminalOnly={vi.fn()}
+        />,
+      );
+    });
+
+    const recent = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Nexus'),
+    );
+    act(() => recent?.click());
+    expect(onLaunch).toHaveBeenCalledWith({
+      mode: 'missions',
+      paneCount: 1,
+      agentDistribution: 'one-of-each',
+      openWithoutAi: false,
+      recentWorkspacePath: '/repo/nexus',
     });
     act(() => root.unmount());
   });

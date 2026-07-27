@@ -1876,6 +1876,7 @@
 .rank-race__bar {
   position: absolute;
   inset: 0 auto 0 0;
+  width: 100%;
   border-radius: 2px;
   background: linear-gradient(
     90deg,
@@ -1883,8 +1884,8 @@
     var(--accent)
   );
   box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 35%, transparent);
-  min-width: 2px;
-  transition: width 180ms var(--ease-out-expo, ease-out);
+  transform-origin: left center;
+  transition: transform 180ms var(--ease-out-expo, ease-out);
 }
 
 .rank-race__bar[data-cost='low'] {

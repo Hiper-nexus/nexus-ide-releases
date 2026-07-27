@@ -15,8 +15,10 @@ function row(
   ppid: number,
   pgid: number,
   startedAt = STARTED_AT,
+  sid = 10,
+  tty = 'ttys001',
 ): ProcessTableRow {
-  return { pid, ppid, pgid, startedAt };
+  return { pid, ppid, pgid, sid, tty, startedAt };
 }
 
 function capture(rows: ProcessTableRow[]): ProcessTableCapture {
@@ -42,9 +44,9 @@ describe('PTY descendant physical authority', () => {
 
   it('captures a detached process-group daemon through its parent chain', () => {
     expect(parseProcessTable(
-      ' 10 1 10 Mon Jul 13 12:54:47 2026\n' +
-      ' 20 10 20 Mon Jul 13 12:54:47 2026\n' +
-      ' 30 20 30 Mon Jul 13 12:54:47 2026\n',
+      ' 10 1 10 10 ttys001 Mon Jul 13 12:54:47 2026\n' +
+      ' 20 10 20 10 ttys001 Mon Jul 13 12:54:47 2026\n' +
+      ' 30 20 30 30 ?? Mon Jul 13 12:54:47 2026\n',
     )).toHaveLength(3);
     const snapshot = collectDescendantRows(10, [
       row(10, 1, 10),
@@ -91,8 +93,14 @@ describe('PTY descendant physical authority', () => {
         row(20, 10, 20),
         daemon,
       ]))
+      .mockResolvedValueOnce(capture([
+        row(10, 1, 10),
+        row(20, 10, 20),
+        daemon,
+      ]))
       .mockResolvedValueOnce(capture([row(20, 10, 20), daemon]))
       .mockResolvedValueOnce(capture([daemon]))
+      .mockResolvedValueOnce(capture([]))
       .mockResolvedValueOnce(capture([]));
     const sendSignal = vi.fn();
     const killRoot = vi.fn((signal: 'SIGTERM' | 'SIGKILL') => {
@@ -121,6 +129,8 @@ describe('PTY descendant physical authority', () => {
     expect(sendSignal.mock.calls).toEqual([
       [20, 'SIGTERM'],
       [30, 'SIGTERM'],
+      [20, 'SIGTERM'],
+      [30, 'SIGTERM'],
       [30, 'SIGKILL'],
     ]);
     expect(killRoot.mock.calls).toEqual([
@@ -132,9 +142,18 @@ describe('PTY descendant physical authority', () => {
   it('does not SIGKILL a recycled PID and accepts only the changed identity as gone', async () => {
     const rootExit = deferred();
     const original = row(30, 20, 30);
-    const recycled = row(30, 1, 77, 'Tue Jul 14 09:00:00 2026');
+    const recycled = row(
+      30,
+      1,
+      77,
+      'Tue Jul 14 09:00:00 2026',
+      77,
+      '?',
+    );
     const readTable = vi.fn()
       .mockResolvedValueOnce(capture([row(10, 1, 10), original]))
+      .mockResolvedValueOnce(capture([recycled]))
+      .mockResolvedValueOnce(capture([recycled]))
       .mockResolvedValueOnce(capture([recycled]))
       .mockResolvedValueOnce(capture([recycled]))
       .mockResolvedValueOnce(capture([recycled]));
@@ -165,9 +184,18 @@ describe('PTY descendant physical authority', () => {
   it('never signals a PID recycled between ancestry snapshot and first SIGTERM', async () => {
     const rootExit = deferred();
     const original = row(30, 20, 30);
-    const recycled = row(30, 1, 88, 'Tue Jul 14 09:00:00 2026');
+    const recycled = row(
+      30,
+      1,
+      88,
+      'Tue Jul 14 09:00:00 2026',
+      88,
+      '?',
+    );
     const readTable = vi.fn()
       .mockResolvedValueOnce(capture([row(10, 1, 10), original]))
+      .mockResolvedValueOnce(capture([recycled]))
+      .mockResolvedValueOnce(capture([recycled]))
       .mockResolvedValueOnce(capture([recycled]))
       .mockResolvedValueOnce(capture([recycled]))
       .mockResolvedValueOnce(capture([recycled]));
@@ -193,6 +221,131 @@ describe('PTY descendant physical authority', () => {
     await expect(pending).resolves.toMatchObject({ ok: true });
     expect(sendSignal).not.toHaveBeenCalledWith(30, 'SIGTERM');
     expect(sendSignal).not.toHaveBeenCalledWith(30, 'SIGKILL');
+  });
+
+  it('fails closed for a child forked after the first snapshot and reparented before exit proof', async () => {
+    const rootExit = deferred();
+    const macRoot = row(10, 1, 10, STARTED_AT, 0);
+    const lateChild = row(40, 1, 10, STARTED_AT, 0);
+    const detachedLateChild = row(40, 1, 40, STARTED_AT, 0, '?');
+    const readTable = vi.fn()
+      // Initial ancestry snapshot and immediate identity fence are clean.
+      .mockResolvedValueOnce(capture([macRoot]))
+      .mockResolvedValueOnce(capture([macRoot]))
+      // The child appears only after SIGTERM. The initially exclusive PTY
+      // proves lineage even though it has already been reparented from PID 10.
+      .mockResolvedValueOnce(capture([macRoot, lateChild]))
+      // It then detaches its TTY and changes PGID. PID + start time retain the
+      // exact identity through escalation and final proof.
+      .mockResolvedValueOnce(capture([detachedLateChild]))
+      .mockResolvedValueOnce(capture([detachedLateChild]))
+      .mockResolvedValueOnce(capture([detachedLateChild]));
+    const sendSignal = vi.fn();
+    const killRoot = vi.fn((signal: 'SIGTERM' | 'SIGKILL') => {
+      if (signal === 'SIGKILL') rootExit.resolve();
+    });
+
+    const pending = terminatePtyProcessTree({
+      rootPid: 10,
+      ownsRoot: () => true,
+      killRoot,
+      rootExited: rootExit.promise,
+    }, {
+      platform: 'darwin',
+      readTable,
+      sendSignal,
+      termTimeoutMs: 10,
+      killTimeoutMs: 10,
+    });
+    await vi.advanceTimersByTimeAsync(20);
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      rootExited: true,
+      descendantsExited: false,
+      error: expect.stringMatching(/descendente/i),
+    });
+    expect(sendSignal.mock.calls).toEqual([
+      [40, 'SIGTERM'],
+      [40, 'SIGKILL'],
+      [40, 'SIGKILL'],
+    ]);
+  });
+
+  it('proves a late reparented child only after the tracked identity disappears', async () => {
+    const rootExit = deferred();
+    const macRoot = row(10, 1, 10, STARTED_AT, 0);
+    const lateChild = row(40, 1, 10, STARTED_AT, 0);
+    const detachedLateChild = row(40, 1, 40, STARTED_AT, 0, '?');
+    const readTable = vi.fn()
+      .mockResolvedValueOnce(capture([macRoot]))
+      .mockResolvedValueOnce(capture([macRoot]))
+      .mockResolvedValueOnce(capture([macRoot, lateChild]))
+      .mockResolvedValueOnce(capture([detachedLateChild]))
+      .mockResolvedValueOnce(capture([]))
+      .mockResolvedValueOnce(capture([]));
+    const sendSignal = vi.fn();
+    const killRoot = vi.fn((signal: 'SIGTERM' | 'SIGKILL') => {
+      if (signal === 'SIGKILL') rootExit.resolve();
+    });
+
+    const pending = terminatePtyProcessTree({
+      rootPid: 10,
+      ownsRoot: () => true,
+      killRoot,
+      rootExited: rootExit.promise,
+    }, {
+      platform: 'darwin',
+      readTable,
+      sendSignal,
+      termTimeoutMs: 10,
+      killTimeoutMs: 10,
+    });
+    await vi.advanceTimersByTimeAsync(20);
+
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+    expect(sendSignal.mock.calls).toEqual([
+      [40, 'SIGTERM'],
+      [40, 'SIGKILL'],
+    ]);
+  });
+
+  it('fails closed when an intermediate late-fork inventory is unavailable', async () => {
+    const rootExit = deferred();
+    const readTable = vi.fn()
+      .mockResolvedValueOnce(capture([row(10, 1, 10)]))
+      .mockResolvedValueOnce(capture([row(10, 1, 10)]))
+      .mockRejectedValueOnce(new Error('ps unavailable'))
+      .mockResolvedValueOnce(capture([]))
+      .mockResolvedValueOnce(capture([]))
+      .mockResolvedValueOnce(capture([]));
+    const killRoot = vi.fn((signal: 'SIGTERM' | 'SIGKILL') => {
+      if (signal === 'SIGKILL') rootExit.resolve();
+    });
+
+    const pending = terminatePtyProcessTree({
+      rootPid: 10,
+      ownsRoot: () => true,
+      killRoot,
+      rootExited: rootExit.promise,
+    }, {
+      platform: 'linux',
+      readTable,
+      termTimeoutMs: 10,
+      killTimeoutMs: 10,
+    });
+    await vi.advanceTimersByTimeAsync(20);
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      rootExited: true,
+      descendantsExited: true,
+      error: expect.stringMatching(/revalidação/i),
+    });
   });
 
   it('fails closed when the platform cannot prove descendant exit', async () => {

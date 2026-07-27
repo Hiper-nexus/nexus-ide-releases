@@ -84,6 +84,9 @@ import {
 } from "./live-runtime-config";
 import { requiresVoiceCommandConfirmation } from "../jarvis/guardrails";
 import { ensureAllDefaultWakeModelsInstalled } from "./ensure-wake-models";
+import { isCurrentProcessSmokeTest } from "../smoke-core";
+import { isCurrentProcessRealMissionE2E } from "../../shared/real-mission-e2e";
+import { shouldAllowVoiceCapture } from "./voice-capture-policy";
 
 /**
  * Wires the voice pipeline into IPC. Every renderer payload is zod-validated
@@ -221,6 +224,7 @@ function resolvePttTarget(): WebContents | null {
 }
 
 function sendPttAction(channel: string): void {
+  if (!voiceCaptureAllowed()) return;
   const target = resolvePttTarget();
   if (!target) return;
   if (target.isDestroyed() || target.isCrashed()) return;
@@ -500,6 +504,27 @@ function stopLiveAndRelease(
   }
 }
 
+/**
+ * Idempotent privacy teardown after ownership was already released.
+ * No renderer can use this path to stop another window: callers only reach it
+ * when there is no active owner at all.
+ */
+function stopUnownedLiveSession(): ReturnType<JarvisLiveSession["getState"]> {
+  try {
+    liveTransport.hardStop();
+  } catch (err) {
+    logVoice(
+      "warn",
+      "live.unownedTeardownTransportFail",
+      "socket sem owner falhou ao encerrar",
+      { error: err instanceof Error ? err.message : String(err) },
+    );
+  } finally {
+    liveTransportAffinity = null;
+  }
+  return liveSession.stop();
+}
+
 function releaseUnavailableLiveOwner(owner: WebContents): void {
   if (activeLiveOwnership?.owner !== owner) return;
   try {
@@ -574,6 +599,10 @@ function acceptLiveEvent(owner: WebContents): boolean {
 }
 
 function wireHotkey(): void {
+  if (!voiceCaptureAllowed()) {
+    disposeVoiceHotkey();
+    return;
+  }
   const config = getVoiceConfig();
   const mainKeyCode = config.input.pushToTalkKey?.code ?? "Space";
   const mode = registerVoiceHotkey(config.input.shortcut, mainKeyCode, {
@@ -584,12 +613,22 @@ function wireHotkey(): void {
   setHotkeyMode(mode);
 }
 
+function voiceCaptureAllowed(): boolean {
+  return shouldAllowVoiceCapture({
+    isPackaged: app.isPackaged === true,
+    isSmokeTest: isCurrentProcessSmokeTest(),
+    isRealMissionE2E: isCurrentProcessRealMissionE2E(),
+    disableVoiceCaptureEnv: process.env.NEXUS_DISABLE_VOICE_CAPTURE,
+  });
+}
+
 /** Runtime snapshot + whether the OS actually accepted the accelerator. */
 function fullInfo(): VoiceRuntimeInfo {
   const aec = getAecRuntimeStatus(app.isPackaged ? process.resourcesPath : undefined);
   return {
     ...buildRuntimeInfo(),
-    hotkeyArmed: isVoiceHotkeyArmed(),
+    captureAllowed: voiceCaptureAllowed(),
+    hotkeyArmed: voiceCaptureAllowed() && isVoiceHotkeyArmed(),
     wakeLockHolderPid: wakeLockHolder(),
     aec: {
       backend: aec.backend,
@@ -618,7 +657,9 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     arch: process.arch,
   });
   nativeAecRuntime.stop();
-  nativeAecRuntime = startNativeAecRuntime(aec);
+  nativeAecRuntime = voiceCaptureAllowed()
+    ? startNativeAecRuntime(aec)
+    : { stop() {} };
   // The module-level controller is created before app registration. Rebuild it
   // once so packaged native AEC is actually wired into the live audio path.
   liveTransport.hardStop();
@@ -632,6 +673,13 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     "voice.restart",
     `=== ${restartMarker} ${new Date().toISOString()} ===`,
   );
+  if (!voiceCaptureAllowed()) {
+    logVoice(
+      "info",
+      "voice.captureDisabled",
+      "captura de voz desabilitada por política de automação/desenvolvimento",
+    );
+  }
   const wakeModels = ensureAllDefaultWakeModelsInstalled();
   logVoice("info", "wake.defaultModels", "modelos wake padrão verificados", {
     en: Boolean(wakeModels.en),
@@ -701,6 +749,14 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   ipcMain.handle(
     VOICE_CHANNELS.transcribe,
     async (_event, raw): Promise<TranscribeResult> => {
+      if (!voiceCaptureAllowed()) {
+        return {
+          ok: false,
+          needsKey: false,
+          error: "voice capture disabled",
+          attempts: [],
+        };
+      }
       const parsed = transcribeRequestSchema.safeParse(raw);
       if (!parsed.success) {
         return {
@@ -755,6 +811,13 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   // Wake word "Hey Jarvis" (openWakeWord/onnx, sem conta): o renderer faz
   // stream dos frames PCM; a detecção volta somente ao owner capturado.
   ipcMain.on(VOICE_CHANNELS.wakeAudio, (event, raw: unknown) => {
+    if (!voiceCaptureAllowed()) {
+      const ownership = wakeOwnership;
+      if (ownership?.owner === event.sender) {
+        releaseWakeOwnership(ownership.generation);
+      }
+      return;
+    }
     if (!getVoiceConfig().wakeWord.enabled) return;
     const ownership = acceptWakeFrame(event.sender);
     if (!ownership) return;
@@ -853,6 +916,15 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
       // frames recebidos durante a init e processa quando ela completar.
     }
     wakeEngine.feed(frame);
+  });
+  ipcMain.on(VOICE_CHANNELS.wakeStop, (event) => {
+    const ownership = wakeOwnership;
+    // Never let an unrelated renderer disarm another project's detector.
+    if (ownership && ownership.owner !== event.sender) return;
+    if (ownership) releaseWakeOwnership(ownership.generation);
+    else disposeWakeEngineOnly();
+    wakeLockWarned = false;
+    releaseWakeLock();
   });
 
   // Eventos do pipeline vindos do renderer (mic do wake morreu/reconstruiu,
@@ -1041,6 +1113,9 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
   );
 
   ipcMain.handle(VOICE_CHANNELS.liveStart, async (event, raw) => {
+    if (!voiceCaptureAllowed()) {
+      throw new Error("voice capture disabled");
+    }
     const scope = getRendererWorkspaceScope(event.sender);
     if (!scope)
       throw new Error("voice session requires an authorized project scope");
@@ -1079,19 +1154,22 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     const scope = getRendererWorkspaceScope(event.sender);
     if (!scope)
       throw new Error("voice prewarm requires an authorized project scope");
-    const claimed = claimLiveOwnership(event.sender, scope);
-    try {
-      liveSession.start({ reason: "wake" });
-      await liveTransport.onStart({ prewarm: true });
-      requireLiveOwnership(event.sender);
-      return liveSession.getState();
-    } catch (err) {
-      if (claimed) releaseUnavailableLiveOwner(event.sender);
-      throw err;
-    }
+    // This channel is passive lifecycle work, not an explicit voice turn.
+    // Building realtime candidates resolves encrypted credentials through
+    // Electron safeStorage; on macOS that synchronous Keychain hop can block
+    // the whole main process (window IPC and CDP included). Keep the API as a
+    // compatibility no-op and connect on liveStart after a real wake/PTT.
+    logVoice(
+      "info",
+      "live.prewarmDeferred",
+      "prewarm adiado até o primeiro turno explícito",
+      { projectId: scope.projectId },
+    );
+    return liveSession.getState();
   });
 
   ipcMain.handle(VOICE_CHANNELS.liveStop, (event) => {
+    if (!activeLiveOwnership) return stopUnownedLiveSession();
     requireLiveOwnership(event.sender);
     return stopLiveAndRelease(event.sender, false);
   });
@@ -1109,6 +1187,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
     return liveSession.getState();
   });
   ipcMain.handle(VOICE_CHANNELS.liveHardTeardown, (event) => {
+    if (!activeLiveOwnership) return stopUnownedLiveSession();
     requireLiveOwnership(event.sender);
     logVoice("warn", "live.hardTeardown", "destruindo socket — sem reconexão");
     return stopLiveAndRelease(event.sender, true);

@@ -12,6 +12,7 @@ import {
   type OmpChildLike,
   type OmpSpawnFn,
 } from './omp-rpc-service';
+import { redactGenericCredentials } from './omp-output-redaction';
 
 /**
  * Lógica pura do login OAuth de assinaturas do oh-my-pi
@@ -53,6 +54,19 @@ export function parseAuthBrokerList(json: unknown): OmpAuthBrokerEntry[] {
 export function extractOAuthUrl(text: string): string | null {
   const match = /https:\/\/\S+/.exec(text);
   return match ? match[0] : null;
+}
+
+export function sanitizeOmpAuthDiagnostic(text: string): string {
+  return redactGenericCredentials(text).replace(/https:\/\/\S+/g, (raw) => {
+    try {
+      const url = new URL(raw);
+      return `${url.origin}${url.pathname}${
+        url.search ? '?[REDACTED]' : ''
+      }${url.hash ? '#[REDACTED]' : ''}`;
+    } catch {
+      return 'https://[REDACTED]';
+    }
+  });
 }
 
 /** Decodifica chunk preservando UTF-8 multibyte em boundary de pipe. */
@@ -109,6 +123,7 @@ export class OmpLoginFlow {
       {
         cwd: deps.cwd ?? homedir(),
         env: deps.env ?? buildOmpChildEnv(),
+        detached: false,
       },
     );
 
@@ -181,7 +196,7 @@ export class OmpLoginFlow {
     this.emit({
       phase: 'error',
       providerId: this.providerId,
-      message: message.slice(0, 2000),
+      message: sanitizeOmpAuthDiagnostic(message).slice(0, 2000),
     });
   }
 
@@ -202,7 +217,7 @@ export class OmpLoginFlow {
   }
 
   private rememberDiagnostic(text: string): void {
-    this.diagnosticTail.push(text.slice(0, 300));
+    this.diagnosticTail.push(sanitizeOmpAuthDiagnostic(text).slice(0, 300));
     if (this.diagnosticTail.length > DIAGNOSTIC_TAIL_LINES) {
       this.diagnosticTail.shift();
     }

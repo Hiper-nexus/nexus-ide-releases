@@ -1,4 +1,12 @@
-import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
+import {
+  describe,
+  expect,
+  it,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  vi,
+} from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -6,14 +14,24 @@ import { buildFileTools } from '../tools-files';
 import { testProjectScope } from './scope-fixture';
 
 const workspace = vi.hoisted(() => ({ current: '' }));
+const missionLookup = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock('../../persistence/workspace-store', () => ({
   activeWorkspaceOrNull: () => workspace.current,
+}));
+vi.mock('../project-domain-store-registry', () => ({
+  getProjectDomainStores: () => ({
+    missions: { get: missionLookup.get },
+  }),
 }));
 
 const testDir = path.join(os.tmpdir(), 'nexus-fase4-test-files');
 const wsDir = path.join(testDir, 'workspace');
 
 describe('tools-files', () => {
+  beforeEach(() => {
+    missionLookup.get.mockReset();
+  });
+
   beforeAll(() => {
     workspace.current = wsDir;
     fs.mkdirSync(wsDir, { recursive: true });
@@ -93,6 +111,86 @@ describe('tools-files', () => {
     expect(
       fs.readFileSync(path.join(wsDir, 'generated', 'nested', 'result.txt'), 'utf8'),
     ).toBe('scoped');
+  });
+
+  it.each([
+    '.agents/skills/post-scan/SKILL.md',
+    'packages/app/.codex/skills/post-scan/SKILL.md',
+  ])(
+    'denies governed post-scan skill creation at %s before touching disk',
+    async (relativePath) => {
+      missionLookup.get.mockReturnValue({ intentContract: { lane: 'build' } });
+      const target = path.join(wsDir, ...relativePath.split('/'));
+      fs.rmSync(path.join(wsDir, relativePath.split('/')[0]), {
+        recursive: true,
+        force: true,
+      });
+      const write = buildFileTools().find(
+        (tool) => tool.name === 'nexus_file_write',
+      )!;
+
+      await expect(
+        write.handler(
+          { path: relativePath, content: '# must-not-land' },
+          {
+            ...fakeCtx(),
+            role: 'worker',
+            missionId: 'mission-governed',
+            governedNativeProvider: 'codex',
+          },
+        ),
+      ).rejects.toThrow(/Codex control path/i);
+      expect(fs.existsSync(target)).toBe(false);
+    },
+  );
+
+  it('fails closed without mutating the file when mission authority is missing', async () => {
+    const target = path.join(wsDir, 'missing-mission-write.txt');
+    fs.rmSync(target, { force: true });
+    missionLookup.get.mockReturnValue(null);
+    const write = buildFileTools().find((tool) => tool.name === 'nexus_file_write')!;
+
+    await expect(
+      write.handler(
+        { path: 'missing-mission-write.txt', content: 'must-not-land' },
+        { ...fakeCtx(), missionId: 'missing-mission' },
+      ),
+    ).rejects.toThrow(/mission authority unavailable; file write denied/i);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('fails closed without mutating the file when mission lookup throws', async () => {
+    const target = path.join(wsDir, 'failed-mission-lookup-write.txt');
+    fs.rmSync(target, { force: true });
+    missionLookup.get.mockImplementation(() => {
+      throw new Error('database unavailable');
+    });
+    const write = buildFileTools().find((tool) => tool.name === 'nexus_file_write')!;
+
+    await expect(
+      write.handler(
+        { path: 'failed-mission-lookup-write.txt', content: 'must-not-land' },
+        { ...fakeCtx(), missionId: 'mission-with-failed-lookup' },
+      ),
+    ).rejects.toThrow(/mission authority unavailable; file write denied/i);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('uses the plan-lane writable-path policy before mutating the file', async () => {
+    const target = path.join(wsDir, 'src', 'plan-lane-denied.ts');
+    fs.rmSync(target, { force: true });
+    missionLookup.get.mockReturnValue({
+      intentContract: { lane: 'plan' },
+    });
+    const write = buildFileTools().find((tool) => tool.name === 'nexus_file_write')!;
+
+    await expect(
+      write.handler(
+        { path: 'src/plan-lane-denied.ts', content: 'must-not-land' },
+        { ...fakeCtx(), missionId: 'plan-mission' },
+      ),
+    ).rejects.toThrow(/plan lane denies write/i);
+    expect(fs.existsSync(target)).toBe(false);
   });
 
   it('rejects creation through a symbolic-link parent outside the workspace', async () => {

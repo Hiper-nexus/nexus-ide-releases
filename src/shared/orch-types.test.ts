@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { squadSchema, squadsFileSchema } from './orch-types';
+import {
+  isEngineGeneratedSquadId,
+  isMissionRuntimeSquadId,
+  squadSchema,
+  squadsFileSchema,
+} from './orch-types';
 
 /**
  * Guards the squads.json shape: epoch-ms createdAt, workers without a `cli`
@@ -84,5 +89,21 @@ describe('squadSchema (squads.json compat)', () => {
     });
     expect(file.squads[0].agents).toHaveLength(2);
     expect(file.squads[0].builtin).toBe(true);
+  });
+});
+
+describe('mission runtime squad identities', () => {
+  const uuid = '123e4567-e89b-42d3-a456-426614174000';
+
+  it('keeps agentic runtime snapshots guided', () => {
+    const id = `agentic-runtime-${uuid}`;
+    expect(isMissionRuntimeSquadId(id)).toBe(true);
+    expect(isEngineGeneratedSquadId(id)).toBe(true);
+  });
+
+  it('keeps manual runtime snapshots on their specialty orchestrator path', () => {
+    const id = `mission-runtime-${uuid}`;
+    expect(isMissionRuntimeSquadId(id)).toBe(true);
+    expect(isEngineGeneratedSquadId(id)).toBe(false);
   });
 });

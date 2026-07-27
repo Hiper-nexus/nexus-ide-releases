@@ -3,11 +3,9 @@
  * the clickable "Plano pronto" toast action.
  */
 import type { Mission } from '../../shared/orch-types';
-import { askConfirm } from '../state/confirm-store';
 import { useOrchStore } from '../state/orch-store';
 import { usePlanLaneMetricsStore } from '../state/plan-lane-metrics-store';
 import { useToastStore } from '../state/toast-store';
-import { ensureOrchestratorAfterPlanPromote } from './plan-promote-notify';
 
 export interface PromotePlanFlowResult {
   ok: boolean;
@@ -24,10 +22,6 @@ const promoting = new Set<string>();
  */
 export async function promotePlanMissionToExecution(
   mission: Mission,
-  options?: {
-    /** Skip the confirm dialog (toast CTA already is an explicit click). */
-    skipConfirm?: boolean;
-  },
 ): Promise<PromotePlanFlowResult> {
   if (mission.intentContract?.lane !== 'plan') {
     return { ok: false, error: 'Missão não está em lane plan.' };
@@ -38,20 +32,13 @@ export async function promotePlanMissionToExecution(
   if (promoting.has(mission.id)) {
     return { ok: false, error: 'Promoção já em curso para esta missão.' };
   }
-  // Lock before confirm so toast + rail cannot interleave two promotes.
+  // Lock before IPC so toast + rail cannot interleave two promotes. The main
+  // process owns the single native review; the renderer must not add a second
+  // cosmetic confirm in front of that exact authority boundary.
   promoting.add(mission.id);
   try {
-    if (!options?.skipConfirm) {
-      const ok = await askConfirm({
-        title: 'Executar o plano?',
-        body:
-          'A missão sai do modo design (só plan.md) e passa a permitir worktrees, ' +
-          'código e shell sob o PREVC. O plan.md permanece no workspace.',
-        confirmLabel: 'Executar plano',
-      });
-      if (!ok) return { ok: false, cancelled: true };
-    }
-    // Re-read store after confirm — toast may have promoted while dialog was open.
+    // Re-read immediately before native review — another surface may already
+    // have promoted the mission.
     const latest =
       useOrchStore.getState().missions.find((m) => m.id === mission.id) ??
       mission;
@@ -67,22 +54,11 @@ export async function promotePlanMissionToExecution(
     const updated = await window.nexus.orch.promotePlanLane({
       missionId: latest.id,
     });
-    const goal =
-      updated.intentContract?.goal?.trim() ||
-      latest.intentContract?.goal?.trim() ||
-      latest.description ||
-      '';
     usePlanLaneMetricsStore.getState().notePlanPromoted();
-    const result = await ensureOrchestratorAfterPlanPromote({
-      mission: updated,
-      goal,
-    });
     const detail =
-      result === 'injected'
-        ? 'PREVC ativo; orquestrador focado e notificado.'
-        : result === 'reopened'
-          ? 'PREVC ativo; panes reabertos e kickoff injectado.'
-          : 'PREVC ativo. Sem pane vivo — reabra a missão se precisar do kickoff.';
+      updated.status === 'running'
+        ? 'PREVC ativo; plano selado e nova sessão de execução iniciada.'
+        : 'Promoção registrada; o Nexus está materializando a execução.';
     useToastStore.getState().push('success', 'Plano → código', detail);
     return { ok: true, detail };
   } catch (cause) {

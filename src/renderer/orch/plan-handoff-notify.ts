@@ -16,7 +16,9 @@ export interface PlanHandoffReady {
 
 /**
  * Detect handoffs that appeared (by id) for missions still in lane=plan.
- * Only success|partial count as "design delivered".
+ * Only an exact physical success from the current plan session is actionable.
+ * This renderer check is UX filtering only; main repeats the authoritative
+ * provenance validation and selects the payload itself.
  */
 export function detectNewPlanHandoffs(
   prev: readonly Handoff[],
@@ -36,9 +38,23 @@ export function detectNewPlanHandoffs(
   for (const h of next) {
     if (prevIds.has(h.id)) continue;
     if (!h.missionId) continue;
-    if (h.status !== 'success' && h.status !== 'partial') continue;
+    if (h.status !== 'success') continue;
     const mission = planMissions.get(h.missionId);
     if (!mission) continue;
+    const provenance = h.mcpProvenance;
+    if (
+      h.authorityOrigin !== 'agent' ||
+      !h.sessionId ||
+      mission.orchestratorSessionId !== h.sessionId ||
+      !provenance ||
+      provenance.toolName !== 'nexus_handoff_submit' ||
+      provenance.missionId !== mission.id ||
+      provenance.sessionId !== h.sessionId ||
+      (provenance.workerIncarnationId ?? undefined) !==
+        (h.workerIncarnationId ?? undefined)
+    ) {
+      continue;
+    }
     out.push({
       missionId: mission.id,
       title: mission.title?.trim() || mission.description?.slice(0, 48) || mission.id,
@@ -79,7 +95,7 @@ export function notifyPlanHandoffsReady(
             return;
           }
           // Toast click is the confirm — skip second dialog.
-          await promotePlanMissionToExecution(mission, { skipConfirm: true });
+          await promotePlanMissionToExecution(mission);
         },
       },
     });

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { isModelId } from '../../shared/model-id';
 
 /**
  * Descoberta VIVA de modelos por CLI: "saiu modelo novo → aparece no Nexus"
@@ -32,8 +33,6 @@ const TTL_MS = 5 * 60_000;
 const FAILURE_TTL_MS = 60_000;
 const EXEC_TIMEOUT_MS = 4_000;
 const MAX_MODELS = 64;
-const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,127}$/;
-
 interface CacheEntry {
   readonly models: readonly string[];
   readonly fetchedAt: number;
@@ -57,7 +56,7 @@ export function sanitizeDiscoveredModels(raw: readonly string[]): string[] {
   for (const id of raw) {
     if (typeof id !== 'string') continue;
     const trimmed = id.trim();
-    if (!MODEL_ID_PATTERN.test(trimmed)) continue;
+    if (!isModelId(trimmed)) continue;
     if (unique.includes(trimmed)) continue;
     unique.push(trimmed);
     if (unique.length >= MAX_MODELS) break;

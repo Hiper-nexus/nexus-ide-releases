@@ -29,7 +29,11 @@ import {
   type ContextDraftStatus,
 } from './context-draft-store';
 import { validateContextAuthorityContent } from './context-ingestor';
-import { inspectContextReadiness } from './context-doctor';
+import {
+  BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET,
+  inspectContextReadiness,
+  isExactBundledDesignSystemSensor,
+} from './context-doctor';
 import { buildProjectSymbolIndex } from './symbol-index';
 
 const MAX_SOURCE_BYTES = 16 * 1024 * 1024;
@@ -396,6 +400,13 @@ export class ContextKnowledgeService {
     ]);
     for (const entry of status) {
       if (allowed.has(entry.path)) continue;
+      if (
+        entry.path === BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET &&
+        isExactBundledDesignSystemSensor(this.scope)
+      ) {
+        allowed.add(entry.path);
+        continue;
+      }
       if (
         entry.status.includes('D') &&
         entry.path.startsWith('.context/nexus/attestations/') &&

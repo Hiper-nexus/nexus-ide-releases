@@ -51,6 +51,7 @@ type Bridge = typeof import('./remote-bridge');
 let bridge: Bridge;
 let home: string;
 let url: string;
+let previousHome: string | undefined;
 let previousTokenTtl: string | undefined;
 const projectScope = {
   version: 1 as const,
@@ -223,6 +224,7 @@ async function authenticate(device: DeviceCredential): Promise<WebSocket> {
 
 beforeAll(async () => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-'));
+  previousHome = process.env.HOME;
   process.env.HOME = home;
   previousTokenTtl = process.env.NEXUS_REMOTE_TOKEN_TTL_MS;
   process.env.NEXUS_REMOTE_TOKEN_TTL_MS = '500';
@@ -235,11 +237,20 @@ beforeAll(async () => {
   url = `wss://127.0.0.1:${info.port}`;
 });
 
-afterAll(() => {
-  bridge.stopRemoteBridge();
-  if (previousTokenTtl === undefined) delete process.env.NEXUS_REMOTE_TOKEN_TTL_MS;
-  else process.env.NEXUS_REMOTE_TOKEN_TTL_MS = previousTokenTtl;
-  fs.rmSync(home, { recursive: true, force: true });
+afterAll(async () => {
+  try {
+    await bridge.stopRemoteBridge();
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousTokenTtl === undefined) {
+      delete process.env.NEXUS_REMOTE_TOKEN_TTL_MS;
+    } else {
+      process.env.NEXUS_REMOTE_TOKEN_TTL_MS = previousTokenTtl;
+    }
+    vi.restoreAllMocks();
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 describe('remote bridge', () => {

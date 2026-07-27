@@ -19,7 +19,7 @@ import {
 } from './remote-spawn';
 
 afterEach(() => {
-  delete process.env.NEXUS_REMOTE_TEST_SECRET;
+  vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
 
@@ -61,7 +61,7 @@ describe('remote-spawn target validation', () => {
   });
 
   it('spawns ssh with an allowlisted environment that excludes app secrets', async () => {
-    process.env.NEXUS_REMOTE_TEST_SECRET = 'must-not-reach-ssh';
+    vi.stubEnv('NEXUS_REMOTE_TEST_SECRET', 'must-not-reach-ssh');
 
     await detectRemoteClis('dev@example.com');
 

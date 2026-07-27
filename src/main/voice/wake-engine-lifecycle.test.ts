@@ -101,4 +101,26 @@ describe('WakeEngine lifecycle', () => {
     await expect(disposal).resolves.toBeUndefined();
     expect(ortDeps.sessions.every((session) => session.release.mock.calls.length === 1)).toBe(true);
   });
+
+  it('processes at most one queued audio chunk per main-loop turn', async () => {
+    ortDeps.firstMelRun.promise = Promise.resolve({
+      output: { data: new Float32Array(32 * 76) },
+    });
+    const engine = new WakeEngine(vi.fn());
+    await engine.init();
+
+    const embeddedWake = ortDeps.sessions[2]!;
+    const baselineRuns = embeddedWake.run.mock.calls.length;
+    engine.feed(new Float32Array(1280 * 3).fill(0.1));
+
+    // Registered after feed(), this callback must run before the second drain
+    // slice. The old unbounded while-loop processed all three chunks first.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(embeddedWake.run.mock.calls.length - baselineRuns).toBe(1);
+
+    await vi.waitFor(() => {
+      expect(embeddedWake.run.mock.calls.length - baselineRuns).toBe(3);
+    });
+    await engine.dispose();
+  });
 });

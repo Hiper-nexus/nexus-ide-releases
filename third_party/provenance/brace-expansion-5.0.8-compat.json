@@ -1,0 +1,76 @@
+{
+  "source": "juliangruber/brace-expansion",
+  "upstreamVersion": "5.0.8",
+  "upstreamCommit": "96a63c0011c0288846ad41773c73e3fbd0906b59",
+  "upstreamTag": "v5.0.8",
+  "upstreamTagObject": "b5a8ce86ce38e90a087fb2a30d01749fa695fd64",
+  "upstreamRepository": "https://github.com/juliangruber/brace-expansion",
+  "npmPackage": "brace-expansion@5.0.8",
+  "npmIntegrity": "sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==",
+  "npmTarballSha256": "a03b06e66d862d0278b1ff45b66427f245f99c665800dc9bd790c0c13d2247fe",
+  "license": "MIT",
+  "copyright": [
+    "Copyright Julian Gruber <julian@juliangruber.com>",
+    "TypeScript port Copyright Isaac Z. Schlueter <i@izs.me>"
+  ],
+  "licenseFile": "third_party/licenses/brace-expansion-MIT.txt",
+  "importedAt": "2026-07-26",
+  "rationale": "Temporary compatibility packaging for GHSA-mh99-v99m-4gvg. The patched 5.0.8 algorithm is used unchanged while a narrow export adapter supports legacy callable CommonJS consumers and modern named-export consumers.",
+  "removalCriteria": "Remove after patched compatible maintenance releases are published and consumed throughout Electron Forge's complete maker tree, with npm audit remaining at zero.",
+  "upstreamTracking": [
+    "https://github.com/juliangruber/brace-expansion/pull/129",
+    "https://github.com/juliangruber/brace-expansion/pull/130",
+    "https://github.com/juliangruber/brace-expansion/pull/134",
+    "https://github.com/juliangruber/brace-expansion/pull/135"
+  ],
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/96a63c0011c0288846ad41773c73e3fbd0906b59/dist/commonjs/index.js",
+      "originalPath": "dist/commonjs/index.js",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/index.js",
+      "originalSha256": "994eb761eca1c861f586ce6ab31bc2e7a6bc020dc4d6636d5e8b778c366d133f",
+      "type": "copied",
+      "changeSummary": "Exact byte-for-byte copy from the brace-expansion 5.0.8 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/96a63c0011c0288846ad41773c73e3fbd0906b59/dist/commonjs/index.js.map",
+      "originalPath": "dist/commonjs/index.js.map",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/index.js.map",
+      "originalSha256": "0afb8cf2894beb3e47aa2c889efffdb811b0c7e36d6522cc14897c2757d5c8e2",
+      "type": "copied",
+      "changeSummary": "Exact source map from the brace-expansion 5.0.8 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/96a63c0011c0288846ad41773c73e3fbd0906b59/dist/commonjs/index.d.ts",
+      "originalPath": "dist/commonjs/index.d.ts",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/index.d.ts",
+      "originalSha256": "0b4d0e7e8998ac3219939db9646bbcb4757f134d62a3226e5686b1e19a1fec3e",
+      "type": "copied",
+      "changeSummary": "Exact type declarations from the brace-expansion 5.0.8 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/96a63c0011c0288846ad41773c73e3fbd0906b59/dist/commonjs/index.d.ts.map",
+      "originalPath": "dist/commonjs/index.d.ts.map",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/index.d.ts.map",
+      "originalSha256": "b3be0847ad40bba64997b91b4d4542d7a2d8365cfb4e74eaa572b90c1276c342",
+      "type": "copied",
+      "changeSummary": "Exact declaration source map from the brace-expansion 5.0.8 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/96a63c0011c0288846ad41773c73e3fbd0906b59/dist/commonjs/package.json",
+      "originalPath": "dist/commonjs/package.json",
+      "nexusPath": "third_party/brace-expansion-compat/upstream/dist/commonjs/package.json",
+      "originalSha256": "8005a3491db7d92f36ac66369861589f9c47123d3a7c71e643fc2c06168cd45a",
+      "type": "copied",
+      "changeSummary": "Exact CommonJS package boundary from the brace-expansion 5.0.8 npm tarball."
+    },
+    {
+      "upstreamUrl": "https://github.com/juliangruber/brace-expansion/blob/96a63c0011c0288846ad41773c73e3fbd0906b59/LICENSE",
+      "originalPath": "LICENSE",
+      "nexusPath": "third_party/brace-expansion-compat/LICENSE",
+      "originalSha256": "9c63a23124d68cd30cd316a94a1a0bca34f032786df6df69fc4b5f136bac8d2e",
+      "type": "copied",
+      "changeSummary": "Exact license text from the brace-expansion 5.0.8 npm tarball."
+    }
+  ]
+}

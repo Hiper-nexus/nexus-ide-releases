@@ -107,6 +107,17 @@ async function releaseSessions(
 }
 
 /**
+ * ONNX's Node binding exposes promises, but model creation/run may still spend
+ * meaningful time in native work before settling them. A real-time mic can
+ * otherwise keep chaining promise continuations forever and starve Electron's
+ * main-loop tasks (window events, IPC and CDP). Force a macrotask boundary
+ * between bounded pieces of wake work.
+ */
+function yieldMainLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
  * Sanidade barata do custom.onnx ANTES de entregá-lo ao runtime nativo — um
  * ONNX malformado pode ABORTAR o processo (SIGTRAP), não só lançar em JS.
  * Retorna null se o arquivo é plausível, ou o motivo da rejeição
@@ -191,6 +202,7 @@ async function probeWakeHeadFalsePositive(
     });
     const score = (outNoise[wake.outputNames[0]].data as Float32Array)[0] ?? 0;
     peak = Math.max(peak, Number.isFinite(score) ? score : 1);
+    await yieldMainLoop();
   }
   return peak;
 }
@@ -220,6 +232,7 @@ export class WakeEngine {
   private busy = false;
   private ready = false;
   private disposed = false;
+  private drainImmediate: ReturnType<typeof setImmediate> | null = null;
   private droppedSinceWarn = 0;
   private peakScore = 0;
   private peakSource: WakeScoreTelemetry['source'] = 'embedded';
@@ -248,16 +261,23 @@ export class WakeEngine {
     let officialWake: ort.InferenceSession | null = null;
     let installed = false;
     try {
+      await yieldMainLoop();
+      if (this.disposed) return;
       mel = await ort.InferenceSession.create(fromB64(MELSPEC_ONNX_B64), opts);
       if (this.disposed) return;
+      await yieldMainLoop();
       emb = await ort.InferenceSession.create(fromB64(EMBEDDING_ONNX_B64), opts);
       if (this.disposed) return;
+      await yieldMainLoop();
       baseWake = await ort.InferenceSession.create(fromB64(HEY_JARVIS_ONNX_B64), opts);
       if (this.disposed) return;
+      await yieldMainLoop();
       customWake = await this.loadCustomWakeModel(opts);
       if (this.disposed) return;
+      await yieldMainLoop();
       officialWake = await this.loadOfficialWakeModel(opts);
       if (this.disposed) return;
+      await yieldMainLoop();
       const seeded = await this.seedBuffers(mel, emb);
       if (this.disposed) return;
 
@@ -272,7 +292,7 @@ export class WakeEngine {
       installed = true;
       // Frames que chegaram DURANTE a init ficaram na fila — processa agora
       // (antes disso os primeiros segundos de áudio eram perdidos em silêncio).
-      if (this.pcmQueue.length >= CHUNK && !this.busy) void this.drain();
+      this.scheduleDrain();
     } finally {
       if (!installed) {
         await releaseSessions([mel, emb, baseWake, customWake, officialWake]);
@@ -403,6 +423,7 @@ export class WakeEngine {
       );
       features.push(embedding);
       if (features.length >= EMB_WINDOW) break; // 16 bastam para semear
+      await yieldMainLoop();
     }
     while (features.length < EMB_WINDOW) {
       features.push(new Float32Array(96));
@@ -452,6 +473,10 @@ export class WakeEngine {
   async dispose(): Promise<void> {
     this.disposed = true;
     this.ready = false;
+    if (this.drainImmediate) {
+      clearImmediate(this.drainImmediate);
+      this.drainImmediate = null;
+    }
     this.pcmQueue.clear();
     this.rawTail = new Float32Array(0);
     this.melFrames = [];
@@ -511,22 +536,42 @@ export class WakeEngine {
     // Ainda inicializando: os frames ficam na fila (com o mesmo cap) e são
     // processados quando init() completar.
     if (!this.ready || this.busy) return;
-    void this.drain();
+    this.scheduleDrain();
   }
 
-  private async drain(): Promise<void> {
+  /**
+   * Process one 80 ms chunk per event-loop turn. Inference slower than realtime
+   * is handled by the bounded drop-oldest ring; it must never be "caught up" by
+   * an unbounded microtask loop that makes Electron unresponsive.
+   */
+  private scheduleDrain(): void {
+    if (
+      this.disposed ||
+      !this.ready ||
+      this.busy ||
+      this.drainImmediate ||
+      this.pcmQueue.length < CHUNK
+    ) {
+      return;
+    }
+    this.drainImmediate = setImmediate(() => {
+      this.drainImmediate = null;
+      void this.drainOne();
+    });
+  }
+
+  private async drainOne(): Promise<void> {
+    if (this.disposed || !this.ready || this.busy) return;
     this.busy = true;
     try {
-      while (!this.disposed && this.pcmQueue.length >= CHUNK) {
-        const chunk = this.pcmQueue.shift(CHUNK);
-        if (!chunk) break;
-        await this.processChunk(chunk);
-      }
+      const chunk = this.pcmQueue.shift(CHUNK);
+      if (chunk) await this.processChunk(chunk);
     } catch (err) {
       console.warn('[wake] inference error:', err instanceof Error ? err.message : err);
       this.reset();
     } finally {
       this.busy = false;
+      this.scheduleDrain();
     }
   }
 

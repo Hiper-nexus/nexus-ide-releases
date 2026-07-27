@@ -19,6 +19,7 @@ import {
   waitForOmpSessionReady,
   type OmpAutoApprovalRecord,
   type OmpChildLike,
+  type OmpRpcSessionConfig,
   type OmpRpcSessionDeps,
 } from './omp-rpc-service';
 
@@ -33,7 +34,11 @@ class FakeOmpProcess implements OmpChildLike {
   /** Linhas NDJSON escritas pelo host no stdin, já parseadas quando JSON. */
   readonly written: string[] = [];
   readonly kills: string[] = [];
-  pid = 4242;
+  pid: number | undefined;
+
+  constructor(pid: number | undefined) {
+    this.pid = pid;
+  }
 
   stdin = {
     write: (data: string) => {
@@ -76,6 +81,10 @@ class FakeOmpProcess implements OmpChildLike {
     this.emitter.emit('stdout:data', bytes);
   }
 
+  emitStderr(raw: string): void {
+    this.emitter.emit('stderr:data', raw);
+  }
+
   /** Emite um frame JSON completo com o \n do protocolo. */
   emitFrame(frame: object): void {
     this.emitStdout(`${JSON.stringify(frame)}\n`);
@@ -83,6 +92,10 @@ class FakeOmpProcess implements OmpChildLike {
 
   exit(code: number | null): void {
     this.emitter.emit('exit', code);
+  }
+
+  fail(error: Error): void {
+    this.emitter.emit('error', error);
   }
 
   /** Última linha JSON escrita no stdin com o type pedido. */
@@ -107,9 +120,22 @@ interface Harness {
 function createHarness(
   overrides: Partial<OmpRpcSessionDeps> & {
     approvalPolicy?: 'yolo' | 'safe';
+    /** null models Node spawn failure before a PID is allocated. */
+    processPid?: number | null;
+    sessionConfig?: Partial<
+      Pick<OmpRpcSessionConfig, 'env' | 'credentialSecrets'>
+    >;
   } = {},
 ): Harness {
-  const proc = new FakeOmpProcess();
+  const {
+    approvalPolicy,
+    processPid,
+    sessionConfig,
+    ...dependencyOverrides
+  } = overrides;
+  const proc = new FakeOmpProcess(
+    processPid === null ? undefined : (processPid ?? 4242),
+  );
   const pushes: OmpRpcPushEvent[] = [];
   const dispatched: Array<{ toolName: string; args: Record<string, unknown> }> = [];
   const audits: OmpAutoApprovalRecord[] = [];
@@ -149,14 +175,47 @@ function createHarness(
     requestTimeoutMs: 500,
     uiResponseTimeoutMs: 200,
     killGraceMs: 50,
-    ...overrides,
+    processInventoryIntervalMs: 30_000,
+    captureProcessTree: async (rootPid) => ({
+      root: {
+        pid: rootPid,
+        ppid: 1,
+        pgid: rootPid,
+        sid: rootPid,
+        tty: '??',
+        startedAt: 'Mon Jan  1 00:00:00 2024',
+      },
+      descendants: [],
+      inventory: [
+        {
+          pid: rootPid,
+          ppid: 1,
+          pgid: rootPid,
+          sid: rootPid,
+          tty: '??',
+          startedAt: 'Mon Jan  1 00:00:00 2024',
+        },
+      ],
+      capturedAtMs: Date.UTC(2025, 0, 1),
+    }),
+    terminateProcessTree: async (input) => {
+      input.killRoot('SIGTERM');
+      return {
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+        error: 'fake root has not emitted exit',
+      };
+    },
+    ...dependencyOverrides,
   };
   const session = new OmpRpcSession(
     {
       sessionId: 'sess-1',
       workspaceRoot: '/tmp/workspace',
-      approvalPolicy: overrides.approvalPolicy ?? 'yolo',
+      approvalPolicy: approvalPolicy ?? 'yolo',
       binPath: '/usr/local/bin/omp',
+      ...sessionConfig,
     },
     deps,
   );
@@ -264,6 +323,29 @@ describe('argv e env do spawn', () => {
       '--approval-mode',
       'always-ask',
     ]);
+  });
+
+  it('isola extensões, regras e skills externas somente no worker governado', () => {
+    expect(ompControlArgs(true)).toEqual([
+      '--mode',
+      'rpc-ui',
+      '--approval-mode',
+      'always-ask',
+      '--no-extensions',
+      '--no-rules',
+      '--tools=read,bash,edit,ast_grep,ast_edit,ask,debug,eval,github,glob,grep,lsp,inspect_image,browser,checkpoint,rewind,hub,todo,web_search,write,memory_edit,retain,recall,reflect,learn,manage_skill,yield,goal',
+      '--no-skills',
+    ]);
+    expect(ompControlArgs(false)).not.toContain('--no-skills');
+    expect(ompControlArgs(false).some((arg) => arg.startsWith('--tools='))).toBe(
+      false,
+    );
+    const governedTools = ompControlArgs(true)
+      .find((arg) => arg.startsWith('--tools='))
+      ?.slice('--tools='.length)
+      .split(',');
+    expect(governedTools).toBeDefined();
+    expect(governedTools).not.toContain('task');
   });
 
   it('env do filho é allowlist (sem segredos de outros adapters)', () => {
@@ -571,6 +653,131 @@ describe('handshake e ciclo de vida', () => {
       const refresh = proc.lastWritten('get_state');
       expect(refresh).toBeDefined();
     });
+  });
+
+  it('redacts exact launch credentials and generic secrets before logs, pushes, previews, audit and host dispatch', async () => {
+    const syntheticCredential = 'nexus-synthetic-credential-92XY';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const harness = createHarness({
+        sessionConfig: {
+          env: {
+            PATH: '/usr/bin',
+            XAI_API_KEY: syntheticCredential,
+          },
+          credentialSecrets: [syntheticCredential],
+        },
+      });
+      await becomeIdle(harness);
+
+      const splitAt = Math.floor(syntheticCredential.length / 2);
+      harness.proc.emitFrame({
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'text_delta',
+          contentIndex: 0,
+          delta: `before ${syntheticCredential.slice(0, splitAt)}`,
+        },
+      });
+      harness.proc.emitFrame({
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'text_delta',
+          contentIndex: 0,
+          delta: `${syntheticCredential.slice(splitAt)} after`,
+        },
+      });
+      harness.proc.emitFrame({ type: 'message_end' });
+      harness.proc.emitFrame({
+        type: 'tool_execution_start',
+        toolCallId: 'tool-redaction',
+        toolName: 'nexus_mission_get',
+        args: {
+          missionId: syntheticCredential,
+          authorization: 'Bearer synthetic-bearer-value',
+        },
+      });
+      harness.proc.emitFrame({
+        type: 'host_tool_call',
+        id: 'host-redaction',
+        toolCallId: 'host-redaction',
+        toolName: 'nexus_mission_get',
+        arguments: { missionId: syntheticCredential },
+      });
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1));
+      harness.proc.emitFrame({
+        type: 'extension_ui_request',
+        id: 'ui-redaction',
+        method: 'confirm',
+        title: `Allow ${syntheticCredential}`,
+      });
+      harness.proc.emitStderr(
+        `provider error: ${syntheticCredential.slice(0, splitAt)}`,
+      );
+      harness.proc.emitStderr(
+        `${syntheticCredential.slice(splitAt)}\n`,
+      );
+      harness.proc.emitStdout(`invalid diagnostic ${syntheticCredential}\n`);
+      harness.proc.exit(1);
+
+      const outward = JSON.stringify({
+        pushes: harness.pushes,
+        dispatched: harness.dispatched,
+        audits: harness.audits,
+        snapshot: harness.session.snapshot(),
+        warnings: warn.mock.calls,
+      });
+      expect(outward).not.toContain(syntheticCredential);
+      expect(outward).not.toContain('synthetic-bearer-value');
+      expect(outward).toContain('[REDACTED]');
+      expect(harness.dispatched[0]?.args).toEqual({
+        missionId: '[REDACTED]',
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('discards per-session redaction tails on dispose instead of retaining them for replay', async () => {
+    const syntheticCredential = 'nexus-dispose-credential-41ZZ';
+    const splitAt = Math.floor(syntheticCredential.length / 2);
+    const harness = createHarness({
+      sessionConfig: {
+        env: {
+          PATH: '/usr/bin',
+          XAI_API_KEY: syntheticCredential,
+        },
+      },
+    });
+    await becomeIdle(harness);
+    harness.proc.emitFrame({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'text_delta',
+        contentIndex: 0,
+        delta: syntheticCredential.slice(0, splitAt),
+      },
+    });
+
+    await harness.session.terminate();
+    // A late physical chunk after logical revocation is ignored, and the
+    // retained prefix was cleared rather than flushed into the renderer.
+    harness.proc.emitFrame({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'text_delta',
+        contentIndex: 0,
+        delta: syntheticCredential.slice(splitAt),
+      },
+    });
+    const replayable = JSON.stringify(harness.pushes);
+    expect(replayable).not.toContain(syntheticCredential);
+    expect(replayable).not.toContain(
+      syntheticCredential.slice(0, splitAt),
+    );
+    expect(replayable).not.toContain(
+      syntheticCredential.slice(splitAt),
+    );
   });
 
   it('prompt durante streaming inclui streamingBehavior (nunca falha por omissão)', async () => {
@@ -974,5 +1181,166 @@ describe('extension_ui_request — política safe', () => {
     });
     // Depois do timeout a resposta do usuário não é mais aceita.
     expect(harness.session.respondUi('ui_10', { confirmed: true })).toBe(false);
+  });
+});
+
+describe('fence físico da árvore OMP', () => {
+  it('prova child-never-spawned quando error ocorre sem PID', async () => {
+    const terminateProcessTree = vi.fn<
+      NonNullable<OmpRpcSessionDeps['terminateProcessTree']>
+    >();
+    const captureProcessTree = vi.fn<
+      NonNullable<OmpRpcSessionDeps['captureProcessTree']>
+    >();
+    const harness = createHarness({
+      processPid: null,
+      terminateProcessTree,
+      captureProcessTree,
+    });
+
+    harness.proc.fail(
+      Object.assign(new Error('spawn /missing/omp ENOENT'), {
+        code: 'ENOENT',
+      }),
+    );
+
+    await expect(harness.session.terminate()).resolves.toEqual({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+    expect(terminateProcessTree).not.toHaveBeenCalled();
+    expect(harness.proc.kills).toEqual([]);
+    expect(harness.session.state).toBe('exited');
+    expect(harness.pushes).toContainEqual({ kind: 'exit', code: null });
+  });
+
+  it('só conclui terminate após o callback exato do root e a prova dos descendentes', async () => {
+    const terminateProcessTree = vi.fn(
+      async (
+        input: Parameters<
+          NonNullable<OmpRpcSessionDeps['terminateProcessTree']>
+        >[0],
+      ) => {
+        input.killRoot('SIGTERM');
+        await input.rootExited;
+        return {
+          ok: true,
+          rootExited: true,
+          descendantsExited: true,
+        };
+      },
+    );
+    const harness = createHarness({ terminateProcessTree });
+    let settled = false;
+    const termination = harness.session.terminate().then((proof) => {
+      settled = true;
+      return proof;
+    });
+
+    await Promise.resolve();
+    expect(harness.proc.kills).toEqual(['SIGTERM']);
+    expect(settled).toBe(false);
+
+    harness.proc.exit(0);
+    await expect(termination).resolves.toEqual({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+    expect(terminateProcessTree).toHaveBeenCalledOnce();
+  });
+
+  it('retries a same-second first inventory and proves a later natural clean exit', async () => {
+    const root = {
+      pid: 4242,
+      ppid: 1,
+      pgid: 4242,
+      sid: 4242,
+      tty: '??',
+      startedAt: 'Sat Jul 25 12:00:00 2026',
+    };
+    const startedAtMs = Date.parse(root.startedAt);
+    const captureProcessTree = vi
+      .fn()
+      .mockResolvedValueOnce({
+        root,
+        descendants: [],
+        inventory: [root],
+        capturedAtMs: startedAtMs + 500,
+      })
+      .mockResolvedValueOnce({
+        root,
+        descendants: [],
+        inventory: [root],
+        capturedAtMs: startedAtMs + 2_500,
+      })
+      .mockResolvedValue({
+        root: null,
+        descendants: [],
+        inventory: [],
+        capturedAtMs: startedAtMs + 4_000,
+      });
+    const harness = createHarness({
+      captureProcessTree,
+      processInventoryIntervalMs: 100,
+    });
+
+    await vi.waitFor(() => {
+      expect(captureProcessTree).toHaveBeenCalledTimes(2);
+    });
+    harness.proc.exit(0);
+
+    await expect(harness.session.terminate()).resolves.toEqual({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+    expect(captureProcessTree).toHaveBeenCalledTimes(4);
+  });
+
+  it('fails closed after natural crash while a captured descendant remains alive', async () => {
+    const root = {
+      pid: 4242,
+      ppid: 1,
+      pgid: 4242,
+      sid: 4242,
+      tty: '??',
+      startedAt: 'Sat Jul 25 11:00:00 2026',
+    };
+    const child = {
+      pid: 4243,
+      ppid: 4242,
+      pgid: 4242,
+      sid: 4242,
+      tty: '??',
+      startedAt: 'Sat Jul 25 11:00:01 2026',
+    };
+    const captureProcessTree = vi
+      .fn()
+      .mockResolvedValueOnce({
+        root,
+        descendants: [child],
+        inventory: [root, child],
+        capturedAtMs: Date.parse('Sat Jul 25 11:00:10 2026'),
+      })
+      .mockResolvedValue({
+        root: null,
+        descendants: [],
+        inventory: [child],
+        capturedAtMs: Date.parse('Sat Jul 25 11:00:20 2026'),
+      });
+    const harness = createHarness({ captureProcessTree });
+    await vi.waitFor(() => {
+      expect(captureProcessTree).toHaveBeenCalledOnce();
+    });
+    harness.proc.exit(137);
+
+    await expect(harness.session.terminate()).resolves.toMatchObject({
+      ok: false,
+      rootExited: true,
+      descendantsExited: false,
+      error: expect.stringMatching(/pós-exit.*descendentes/i),
+    });
   });
 });

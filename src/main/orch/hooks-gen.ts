@@ -96,17 +96,22 @@ function readNativeProjectTrust(
     if (!entry || typeof entry !== 'object') return {};
     const trusted = (entry as Record<string, unknown>).hasTrustDialogAccepted;
     if (trusted !== true) return {};
-    return {
-      projects: {
-        [cwd]: {
-          hasTrustDialogAccepted: true,
-          hasCompletedProjectOnboarding: true,
-        },
-      },
-    };
+    return exactProjectTrust(cwd);
   } catch {
     return {};
   }
+}
+
+function exactProjectTrust(cwd: string | undefined): Record<string, unknown> {
+  if (!cwd) return {};
+  return {
+    projects: {
+      [cwd]: {
+        hasTrustDialogAccepted: true,
+        hasCompletedProjectOnboarding: true,
+      },
+    },
+  };
 }
 
 export interface EphemeralHomeOptions {
@@ -121,10 +126,16 @@ export interface EphemeralHomeOptions {
   readonly carryNativeClaudeAuth?: boolean;
   /**
    * cwd do pane. Usado só para carregar a confiança de pasta que o usuário já
-   * concedeu no HOME real — sem isso o CLI trava no diálogo de trust e a
-   * missão nunca sai da tela de boas-vindas.
+   * concedeu no HOME real ou a confiança efêmera de uma missão selada.
    */
   readonly cwd?: string;
+  /**
+   * A aprovação nativa e selada da missão autoriza o Claude a confiar somente
+   * no cwd canônico daquela execução. O caller precisa provar a autoridade
+   * main-owned antes de ligar esta flag. A decisão existe apenas neste HOME
+   * efêmero e nunca é sincronizada para o perfil real.
+   */
+  readonly approvedMissionProjectTrust?: boolean;
 }
 
 /**
@@ -265,10 +276,13 @@ export function prepareEphemeralHome(
   const nativeAuth = options.carryNativeClaudeAuth
     ? readNativeClaudeAuthIdentity(os.homedir())
     : {};
-  // A confiança de pasta viaja para QUALQUER família (inclusive GLM/LongCat):
-  // ela não é credencial, é uma decisão que o usuário já tomou sobre o próprio
-  // diretório — e sem ela nenhum pane gated consegue começar a trabalhar.
-  const projectTrust = readNativeProjectTrust(os.homedir(), options.cwd);
+  // Uma missão main-owned, selada e já aprovada pode projetar trust para o cwd
+  // exato dentro deste overlay descartável. Nos demais fluxos, carregamos apenas
+  // uma decisão que já existia no perfil real; o helper nunca amplia confiança
+  // por padrão e nunca escreve o ~/.claude.json real.
+  const projectTrust = options.approvedMissionProjectTrust
+    ? exactProjectTrust(options.cwd)
+    : readNativeProjectTrust(os.homedir(), options.cwd);
   fs.writeFileSync(
     path.join(dir, '.claude.json'),
     JSON.stringify({

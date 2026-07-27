@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertMissionOrchestratorEvidence,
   canonicalMissionOrchestratorRuntime,
   preferredMissionOrchestratorAdapterId,
   sameMissionOrchestratorRuntime,
@@ -61,5 +62,29 @@ describe('mission orchestrator runtime authority', () => {
     expect(
       preferredMissionOrchestratorAdapterId({ cli: 'codex' }, 'claude'),
     ).toBe('codex');
+  });
+
+  it('permite experimental apenas no roster salvo e bloqueia promoção automática', () => {
+    expect(() =>
+      assertMissionOrchestratorEvidence({
+        evidence: 'experimental',
+        selection: 'saved-roster',
+        label: 'Kimi',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertMissionOrchestratorEvidence({
+        evidence: 'experimental',
+        selection: 'automatic',
+        label: 'Kimi',
+      }),
+    ).toThrow(/experimental.*promovido automaticamente.*verificado/i);
+    expect(() =>
+      assertMissionOrchestratorEvidence({
+        evidence: 'unsupported',
+        selection: 'saved-roster',
+        label: 'Aider',
+      }),
+    ).toThrow(/não tem evidência válida/i);
   });
 });

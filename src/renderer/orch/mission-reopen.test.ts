@@ -524,6 +524,36 @@ describe('reopenMission soft / multi', () => {
     expect(setPanes).not.toHaveBeenCalled();
   });
 
+  it('opens the review wizard shell when main publishes a fresh reapproval revision', async () => {
+    resumeMissionBootstrap.mockResolvedValueOnce({
+      ok: false,
+      missionId: 'mission-dead-graph',
+      reason: 'review_required',
+      intentVersion: 3,
+      error: 'Revise a nova versão e aprove novamente.',
+      cta: 'Revisar e aprovar',
+    });
+
+    const result = await reopenMission({
+      id: 'mission-dead-graph',
+      title: 'Dead graph',
+      description: '',
+      status: 'blocked',
+      squadId: 'squad-a',
+      intentState: 'blocked_technical',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    expect(result).toEqual({ ok: true, panes: 0, intentShell: true });
+    expect(listMissionPanes).not.toHaveBeenCalled();
+    expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
+    expect(terminalMocks.markPersistedAuthorityOnSpawn).not.toHaveBeenCalled();
+    expect(setPanes).not.toHaveBeenCalled();
+  });
+
   it('does not prepare panes when persisted composition cannot be read', async () => {
     listMissionPanes.mockRejectedValueOnce(new Error('runtime indisponível'));
 

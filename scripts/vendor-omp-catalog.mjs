@@ -9,6 +9,10 @@
  * main process consome (id, name, api, cost, contextWindow, maxTokens,
  * reasoning, input) para src/vendor/omp/catalog/models-rich.json.
  *
+ * Modelos que chegaram pelo catálogo dinâmico depois desse SHA ficam em
+ * RELEASE_AUDITED_MODEL_OVERLAYS. Cada entrada exige evidência do seletor
+ * exato no OMP release-pinned e mantém a geração do JSON determinística.
+ *
  * Uso (re-sync):
  *   git clone https://github.com/can1357/oh-my-pi /tmp/oh-my-pi
  *   git -C /tmp/oh-my-pi checkout <SHA-pinado>
@@ -42,6 +46,32 @@ const PROVIDERS = [
 
 /** Do openrouter (catálogo agregador, ~370 modelos) só interessam estas famílias. */
 const OPENROUTER_FAMILY_FILTER = /claude|gpt|glm|deepseek|kimi|grok|gemini/i;
+
+/**
+ * Entradas do catálogo dinâmico auditadas contra o OMP 17.0.4 local.
+ * Evidência (2026-07-26): `omp models find claude-opus-5 --json
+ * --no-extensions` retornou o seletor exato `anthropic/claude-opus-5` e os
+ * metadados abaixo.
+ */
+const RELEASE_AUDITED_MODEL_OVERLAYS = {
+  anthropic: {
+    'claude-opus-5': {
+      id: 'claude-opus-5',
+      name: 'Claude Opus 5',
+      api: 'anthropic-messages',
+      cost: {
+        input: 5,
+        output: 25,
+        cacheRead: 0.5,
+        cacheWrite: 6.25,
+      },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      input: ['text', 'image'],
+    },
+  },
+};
 
 /** Campos preservados no recorte — manter em sincronia com RichModelEntry. */
 function pickFields(entry) {
@@ -94,10 +124,14 @@ function main() {
       console.error(`aviso: provider "${providerId}" ausente na fonte — pulando`);
       continue;
     }
+    const candidates = {
+      ...models,
+      ...(RELEASE_AUDITED_MODEL_OVERLAYS[providerId] ?? {}),
+    };
     const kept = {};
-    for (const modelId of Object.keys(models).sort()) {
+    for (const modelId of Object.keys(candidates).sort()) {
       if (providerId === 'openrouter' && !OPENROUTER_FAMILY_FILTER.test(modelId)) continue;
-      kept[modelId] = pickFields(models[modelId]);
+      kept[modelId] = pickFields(candidates[modelId]);
     }
     if (Object.keys(kept).length === 0) continue;
     slim[providerId] = kept;

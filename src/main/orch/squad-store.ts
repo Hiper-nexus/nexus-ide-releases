@@ -4,7 +4,12 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { Db } from '../persistence/db';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
-import { squadSchema, squadsFileSchema } from '../../shared/orch-types';
+import {
+  isMissionRuntimeSquadId,
+  squadSchema,
+  squadsFileSchema,
+} from '../../shared/orch-types';
+import { NEXUS_PLAN_SQUAD_ID } from '../../shared/builtin-squad-ids';
 import {
   PET_STUDIO_SQUAD,
   PET_STUDIO_SQUAD_ID,
@@ -20,6 +25,7 @@ import {
   snapshotSquadAuthority,
   type SquadAuthoritySnapshot,
 } from './squad-authority-snapshot';
+import { applyGuidedSquadSkillPolicy } from './guided-squad-skills';
 
 /**
  * Squad store. SQLite is authoritative. The in-memory map is a read cache that
@@ -34,6 +40,8 @@ interface SquadRow {
   builtin: number;
   orchestrator_instructions: string;
   native_instructions?: string;
+  runtime_source_squad_id?: string;
+  runtime_source_squad_hash?: string;
   roster_json: string;
 }
 
@@ -98,7 +106,21 @@ function normalizeUserSquad(squad: Squad): Squad {
   };
 }
 
-function assertManagedSavePolicy(parsed: Squad): Squad {
+/**
+ * Validate and normalize a main-designed squad without publishing it to the
+ * reusable catalog. Agentic design is a draft operation: only the explicit
+ * "Salvar configuração" action may create a global squad. Mission launch
+ * seals a separate hidden runtime copy.
+ */
+export function normalizeEphemeralSquadCandidate(raw: unknown): Squad {
+  const parsed = squadSchema.parse(raw);
+  return assertManagedSavePolicy(parsed);
+}
+
+function assertManagedSavePolicy(
+  parsed: Squad,
+  authority: 'global' | 'mission-runtime' = 'global',
+): Squad {
   if (parsed.id === PET_STUDIO_SQUAD_ID) {
     // Pet Studio is app-managed and repaired to the immutable canonical
     // definition. No renderer/user bytes can influence its executable roster.
@@ -114,6 +136,23 @@ function assertManagedSavePolicy(parsed: Squad): Squad {
     throw new Error(
       'managed built-in squads cannot be saved through the user store',
     );
+  }
+  const hasRuntimeLineage =
+    parsed.runtimeSourceSquadId !== undefined ||
+    parsed.runtimeSourceSquadRevisionHash !== undefined;
+  if (authority === 'global') {
+    if (isMissionRuntimeSquadId(parsed.id)) {
+      throw new Error('mission runtime squads are immutable');
+    }
+    if (hasRuntimeLineage) {
+      throw new Error('mission runtime squad lineage is main-owned');
+    }
+  } else if (
+    !isMissionRuntimeSquadId(parsed.id) ||
+    !parsed.runtimeSourceSquadId ||
+    !parsed.runtimeSourceSquadRevisionHash
+  ) {
+    throw new Error('mission runtime squad requires exact main-owned lineage');
   }
   return normalizeUserSquad(parsed);
 }
@@ -307,6 +346,9 @@ export function initSquadStore(database: Db | null): void {
         builtin: row.builtin === 1,
         orchestratorInstructions: row.orchestrator_instructions,
         nativeInstructions: row.native_instructions || undefined,
+        runtimeSourceSquadId: row.runtime_source_squad_id || undefined,
+        runtimeSourceSquadRevisionHash:
+          row.runtime_source_squad_hash || undefined,
         agents: parseJsonColumn<SquadAgent[]>(row.roster_json, []),
       };
       const parsed = squadSchema.safeParse(candidate);
@@ -373,8 +415,9 @@ function writeSquad(database: Db, squad: Squad): void {
   database.prepare(
     `INSERT OR REPLACE INTO squads
        (id, name, created_at, builtin, orchestrator_instructions,
-        native_instructions, roster_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        native_instructions, runtime_source_squad_id,
+        runtime_source_squad_hash, roster_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     squad.id,
     squad.name,
@@ -382,6 +425,8 @@ function writeSquad(database: Db, squad: Squad): void {
     squad.builtin ? 1 : 0,
     squad.orchestratorInstructions,
     squad.nativeInstructions ?? '',
+    squad.runtimeSourceSquadId ?? null,
+    squad.runtimeSourceSquadRevisionHash ?? null,
     JSON.stringify(squad.agents),
   );
 }
@@ -415,6 +460,80 @@ export function getSquad(id: string): Squad | null {
 export function prepareSquadSave(raw: unknown): PreparedSquadSave {
   const parsed = squadSchema.parse(raw);
   const squad = assertManagedSavePolicy(parsed);
+  const canonicalJson = canonicalSquadJson(squad);
+  const candidate = Object.freeze({
+    squad,
+    snapshot: snapshotSquadAuthority(squad),
+    canonicalJson,
+    canonicalSha256: sha256(canonicalJson),
+    expectedTarget: currentTargetExpectation(squad.id),
+  });
+  preparedSquadSaves.add(candidate);
+  return candidate;
+}
+
+/**
+ * Prepare a one-flow runtime copy under main-owned lineage.
+ *
+ * The source is resolved from the authoritative catalog by the caller. Manual
+ * snapshots must preserve its semantic playbook exactly; guided snapshots may
+ * retarget a generated playbook to the current goal, except that the
+ * app-managed planning template can never claim lineage with substituted
+ * instructions.
+ */
+export function prepareMissionRuntimeSquadSave(
+  raw: unknown,
+  sourceSquad: Squad,
+  guided: boolean,
+  sourceAuthority: 'catalog' | 'ephemeral' = 'catalog',
+): PreparedSquadSave {
+  const parsed = squadSchema.parse(raw);
+  const currentSource = squads.get(sourceSquad.id);
+  if (
+    (sourceAuthority === 'catalog' && !currentSource) ||
+    (currentSource !== undefined &&
+      snapshotSquadAuthority(currentSource).hash !==
+        snapshotSquadAuthority(sourceSquad).hash)
+  ) {
+    throw new Error('mission runtime source squad changed before persistence');
+  }
+  if (isMissionRuntimeSquadId(sourceSquad.id)) {
+    throw new Error('mission runtime snapshots cannot be chained');
+  }
+  const sourceSnapshot = snapshotSquadAuthority(sourceSquad);
+  if (
+    parsed.runtimeSourceSquadId !== sourceSquad.id ||
+    parsed.runtimeSourceSquadRevisionHash !== sourceSnapshot.hash
+  ) {
+    throw new Error('mission runtime squad lineage does not match its source');
+  }
+  const playbookMustMatch =
+    !guided || sourceSquad.id === NEXUS_PLAN_SQUAD_ID;
+  if (
+    parsed.name !== sourceSquad.name ||
+    parsed.nativeInstructions !== sourceSquad.nativeInstructions ||
+    (playbookMustMatch &&
+      parsed.orchestratorInstructions !== sourceSquad.orchestratorInstructions)
+  ) {
+    throw new Error(
+      'mission runtime squad content does not match its reviewed source',
+    );
+  }
+  // Agentic drafts may be reviewed/edited by the renderer before launch.
+  // Recompute capability authority from the exact main-owned source and
+  // reviewed categories so renderer/model allowlist bytes can neither widen
+  // nor remove the governed grants captured by the seal. Manual/catalog
+  // launches keep their explicit policies.
+  const governed =
+    guided && sourceAuthority === 'ephemeral'
+      ? applyGuidedSquadSkillPolicy(parsed, {
+          objective:
+            `${sourceSquad.name}\n` +
+            `${sourceSquad.orchestratorInstructions}\n` +
+            `${sourceSquad.nativeInstructions ?? ''}`,
+        })
+      : parsed;
+  const squad = assertManagedSavePolicy(governed, 'mission-runtime');
   const canonicalJson = canonicalSquadJson(squad);
   const candidate = Object.freeze({
     squad,
@@ -462,7 +581,7 @@ export function saveSquad(raw: unknown): Squad {
 }
 
 export function deleteSquad(id: string): boolean {
-  if (MANAGED_SQUAD_IDS.has(id)) return false;
+  if (MANAGED_SQUAD_IDS.has(id) || isMissionRuntimeSquadId(id)) return false;
   const current = squads.get(id);
   if (!current || current.builtin) return false;
   const database = requireWritableDb();
@@ -512,7 +631,18 @@ export function listAgents(): Array<SquadAgent & { squadId: string }> {
 
 /** Serialize all squads in the JSON file format. */
 export function exportSquadsJson(): string {
-  return JSON.stringify({ squads: listSquads() }, null, 2);
+  // Runtime snapshots are immutable mission evidence, not reusable catalog
+  // configuration. Keep them available to mission bootstrap/history while
+  // excluding them from the user's normal squads export.
+  return JSON.stringify(
+    {
+      squads: listSquads().filter(
+        (squad) => !isMissionRuntimeSquadId(squad.id),
+      ),
+    },
+    null,
+    2,
+  );
 }
 
 /**

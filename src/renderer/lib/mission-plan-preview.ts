@@ -162,7 +162,7 @@ export function buildRosterCostPreview(input: {
     return {
       lines,
       complete: false,
-      totalLabel: 'Consultando preços do roster…',
+      totalLabel: 'Consultando preços do time…',
       caveat:
         'A faixa só aparece depois que todos os modelos forem conferidos no catálogo.',
     };
@@ -176,7 +176,7 @@ export function buildRosterCostPreview(input: {
       lines,
       complete: false,
       totalLabel:
-        'Indisponível: pelo menos um modelo do roster não tem preço no catálogo.',
+        'Indisponível: pelo menos um modelo do time não tem preço no catálogo.',
       caveat:
         'O Nexus não preenche preço ausente nem trata modelo sem catálogo como gratuito.',
     };
@@ -192,12 +192,12 @@ export function buildRosterCostPreview(input: {
     lines,
     complete: true,
     totalLabel:
-      `Faixa de referência do roster: ${formatUsd(rateMin)}–` +
+      `Faixa de referência do time: ${formatUsd(rateMin)}–` +
       `${formatUsd(rateMax)} por 1M tokens. Estimativa total indisponível ` +
       'antes do plano por agente.',
     caveat:
-      'Os contadores de tokens do contrato são um ledger operacional, não a ' +
-      'fatura do provider; usá-los como consumo previsto inventaria precisão.',
+      'Os limites de tokens do plano são controles operacionais; eles não ' +
+      'representam a cobrança do provedor nem permitem prever o custo total.',
   };
 }
 
@@ -207,13 +207,13 @@ export function forecastMissionWaves(input: {
 }): MissionWavePreview[] {
   const standardExecutionDetail =
     input.maxWorkers <= 0
-      ? 'Nenhum especialista adicional pode ser despachado nesta missão.'
+      ? 'Nenhum especialista adicional pode ser iniciado nesta missão.'
       : input.maxWorkers === 1
         ? '1 especialista pode executar a tarefa sem paralelismo.'
         : `Até ${input.maxWorkers} especialistas podem trabalhar em paralelo onde não houver conflito.`;
   const opsExecutionDetail =
     input.maxWorkers <= 0
-      ? 'Nenhum especialista adicional pode ser despachado nesta operação.'
+      ? 'Nenhum especialista adicional pode ser iniciado nesta operação.'
       : input.maxWorkers === 1
         ? '1 especialista atua dentro das autorizações concedidas.'
         : `Até ${input.maxWorkers} especialistas atuam dentro das autorizações concedidas.`;
@@ -299,9 +299,9 @@ export function missionReviewP0P3Status(
   }
   return {
     kind: 'not-controlled',
-    label: 'Ainda não garantido pelo motor.',
+    label: 'Ainda não confirmado.',
     detail:
-      'O time pode incluir reviewers, mas o Nexus só confirma a revisão ' +
+      'O time pode incluir revisores, mas o Nexus só confirma a revisão ' +
       'automática quando ela existir como etapa controlada no plano de execução.',
   };
 }

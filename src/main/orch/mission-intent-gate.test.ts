@@ -399,6 +399,51 @@ describe('mission intent gate', () => {
     ).toBe(false);
   });
 
+  it('keeps terminal handoff replay closed until the physical dispatcher proves it', () => {
+    const blocked: Mission = {
+      ...dispatched,
+      status: 'blocked',
+    };
+    const done: Mission = {
+      ...dispatched,
+      status: 'done',
+    };
+    expect(
+      assertMissionIntentAllowsTool('nexus_handoff_submit', {
+        mission: blocked,
+        role: 'worker',
+        sessionId: 'worker-session',
+      }).ok,
+    ).toBe(false);
+    expect(
+      assertMissionIntentAllowsTool('nexus_handoff_submit', {
+        mission: done,
+        role: 'worker',
+        sessionId: 'worker-session',
+      }).ok,
+    ).toBe(false);
+    expect(
+      assertMissionIntentAllowsTool('nexus_handoff_submit', {
+        mission: blocked,
+        role: 'user',
+        sessionId: 'worker-session',
+      }).ok,
+    ).toBe(false);
+    expect(
+      assertMissionIntentAllowsTool('nexus_handoff_submit', {
+        mission: {
+          ...blocked,
+          intentContract: {
+            ...blocked.intentContract!,
+            approvedAt: undefined,
+          },
+        },
+        role: 'worker',
+        sessionId: 'worker-session',
+      }).ok,
+    ).toBe(false);
+  });
+
   it('ledger esgotado não bloqueia tools — steps/tokens são telemetria', () => {
     // Caso de campo 17/07: o teto sintético travava missão real no bootstrap.
     const exhausted: Mission = {

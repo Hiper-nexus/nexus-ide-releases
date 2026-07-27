@@ -6,9 +6,15 @@ import { z } from 'zod';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   ensureWorkspaceDirectory,
+  openWorkspaceFileForRead,
   readWorkspaceTextFile,
   writeWorkspaceTextFile,
 } from '../orch/workspace-file';
+import {
+  isInsidePath,
+  resolvePathCandidateForScope,
+  resolveRootForScope,
+} from '../orch/workspace-path';
 import { detectContextConflicts } from './ambiguity-engine';
 import { canonicalJson } from './canonical-json';
 import {
@@ -22,7 +28,9 @@ const POLICY_PATH = '.context/config/policy.json';
 const SENSORS_PATH = '.context/config/sensors.json';
 const DESIGN_SYSTEM_SENSOR_SOURCE_NAME = 'design-system-sensor.mjs';
 const DESIGN_SYSTEM_SENSOR_TARGET_DIR = '.context/nexus/sensors';
-const DESIGN_SYSTEM_SENSOR_TARGET = `${DESIGN_SYSTEM_SENSOR_TARGET_DIR}/${DESIGN_SYSTEM_SENSOR_SOURCE_NAME}`;
+const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
+export const BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET =
+  `${DESIGN_SYSTEM_SENSOR_TARGET_DIR}/${DESIGN_SYSTEM_SENSOR_SOURCE_NAME}`;
 const REQUIRED_BUSINESS_DOCS = [
   '.context/docs/project-overview.md',
   '.context/docs/business-model.md',
@@ -186,29 +194,410 @@ const DEFAULT_POLICY = Object.freeze({
   }),
 });
 
-const DEFAULT_SENSORS = Object.freeze({
-  schemaVersion: 1,
-  sensors: Object.freeze([
-    Object.freeze({
-      id: 'typecheck',
-      command: Object.freeze(['npm', 'run', 'typecheck']),
-      timeoutMs: 15 * 60_000,
-      network: false,
-    }),
-    Object.freeze({
-      id: 'unit',
-      command: Object.freeze(['npm', 'test', '--', '--run']),
-      timeoutMs: 15 * 60_000,
-      network: false,
-    }),
-    Object.freeze({
-      id: 'design-system',
-      command: Object.freeze(['node', DESIGN_SYSTEM_SENSOR_TARGET]),
-      timeoutMs: 60_000,
-      network: false,
-    }),
-  ]),
+const RECOMMENDED_PACKAGE_SENSOR_IDS = ['typecheck', 'unit'] as const;
+type RecommendedPackageSensorId =
+  (typeof RECOMMENDED_PACKAGE_SENSOR_IDS)[number];
+type JavascriptPackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
+
+const RECOMMENDED_PACKAGE_SENSOR_SCRIPTS =
+  Object.freeze<Record<RecommendedPackageSensorId, string>>({
+    typecheck: 'typecheck',
+    unit: 'test',
+  });
+const DESIGN_SYSTEM_SENSOR = Object.freeze({
+  id: 'design-system',
+  command: Object.freeze(['node', BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET]),
+  timeoutMs: 60_000,
+  network: false as const,
 });
+
+interface PackageManifestCapabilities {
+  readonly cwd: string;
+  readonly scripts: ReadonlySet<string>;
+  readonly packageManager?: JavascriptPackageManager;
+}
+
+interface PackageCwdResolution {
+  readonly cwd: string;
+  readonly exists: boolean;
+}
+
+function workspaceRelativePath(root: string, absolutePath: string): string {
+  const relative = path.relative(root, absolutePath);
+  return relative === '' ? '.' : relative;
+}
+
+function pathExistsWithoutFollowing(candidate: string): boolean {
+  try {
+    fs.lstatSync(candidate);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+/**
+ * Canonicalizes an existing cwd and validates the deepest existing ancestor
+ * for a future cwd. A not-yet-created project directory remains valid
+ * declarative authority; traversal or a symlink ancestor escaping the
+ * workspace never does.
+ */
+function resolvePackageCwd(
+  scope: ProjectExecutionScope,
+  requestedCwd?: string,
+): PackageCwdResolution {
+  const root = resolveRootForScope(scope);
+  const candidate = resolvePathCandidateForScope(scope, requestedCwd ?? '.');
+  let existing = candidate;
+  while (!pathExistsWithoutFollowing(existing)) {
+    if (existing === root) {
+      throw new Error('sensor cwd has no existing workspace ancestor');
+    }
+    const parent = path.dirname(existing);
+    if (parent === existing) {
+      throw new Error('sensor cwd escapes project scope');
+    }
+    existing = parent;
+  }
+  const existingReal = fs.realpathSync(existing);
+  if (!isInsidePath(root, existingReal)) {
+    throw new Error('sensor cwd escapes project scope');
+  }
+  const stat = fs.statSync(existingReal);
+  if (!stat.isDirectory()) throw new Error('sensor cwd is not a directory');
+  const suffix = path.relative(existing, candidate);
+  const cwd = path.resolve(existingReal, suffix);
+  if (!isInsidePath(root, cwd)) {
+    throw new Error('sensor cwd escapes project scope');
+  }
+  return Object.freeze({
+    cwd,
+    exists: existing === candidate,
+  });
+}
+
+function readBoundedPackageManifest(
+  scope: ProjectExecutionScope,
+  relativePackagePath: string,
+): unknown {
+  const handle = openWorkspaceFileForRead(scope, relativePackagePath);
+  try {
+    const initialSize = handle.stat.size;
+    if (initialSize > MAX_PACKAGE_MANIFEST_BYTES) {
+      throw new Error('package manifest exceeds 1 MiB');
+    }
+    const buffer = Buffer.alloc(initialSize + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const bytesRead = fs.readSync(
+        handle.fd,
+        buffer,
+        offset,
+        buffer.length - offset,
+        offset,
+      );
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const finalStat = fs.fstatSync(handle.fd);
+    if (
+      offset > MAX_PACKAGE_MANIFEST_BYTES ||
+      offset !== initialSize ||
+      finalStat.size !== initialSize
+    ) {
+      throw new Error('package manifest changed during bounded read');
+    }
+    return JSON.parse(buffer.subarray(0, offset).toString('utf8'));
+  } finally {
+    handle.close();
+  }
+}
+
+function readPackageManifest(
+  scope: ProjectExecutionScope,
+  location: PackageCwdResolution,
+): PackageManifestCapabilities | undefined {
+  if (!location.exists) return undefined;
+  const relativePackagePath = path.join(
+    workspaceRelativePath(scope.rootRealPath, location.cwd),
+    'package.json',
+  );
+  try {
+    const raw = readBoundedPackageManifest(scope, relativePackagePath);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const scripts = (raw as { readonly scripts?: unknown }).scripts;
+    const packageManagerValue =
+      (raw as { readonly packageManager?: unknown }).packageManager;
+    const packageManagerMatch =
+      typeof packageManagerValue === 'string'
+        ? /^(npm|pnpm|yarn|bun)(?:@|$)/u.exec(
+            packageManagerValue.trim().toLowerCase(),
+          )
+        : null;
+    return Object.freeze({
+      cwd: location.cwd,
+      scripts: new Set(
+        scripts && typeof scripts === 'object' && !Array.isArray(scripts)
+          ? Object.entries(scripts)
+              .filter(([, command]) => (
+                typeof command === 'string' && command.trim().length > 0
+              ))
+              .map(([name]) => name)
+          : [],
+      ),
+      packageManager:
+        packageManagerMatch?.[1] as JavascriptPackageManager | undefined,
+    });
+  } catch {
+    // A malformed or unreadable package manifest cannot confer capability.
+    return undefined;
+  }
+}
+
+function packageCommand(
+  command: readonly string[],
+): {
+  readonly kind: 'package';
+  readonly manager: JavascriptPackageManager;
+  readonly script?: string;
+} | {
+  readonly kind: 'custom';
+} {
+  const executable = path.basename(command[0] ?? '')
+    .toLowerCase()
+    .replace(/\.(?:cmd|exe)$/u, '');
+  if (!['npm', 'pnpm', 'yarn', 'bun'].includes(executable)) {
+    return { kind: 'custom' };
+  }
+  const manager = executable as JavascriptPackageManager;
+  const first = command[1];
+  const second = command[2];
+  if (manager === 'npm') {
+    if (first === 'test') {
+      return { kind: 'package', manager, script: 'test' };
+    }
+    if (
+      (first === 'run' || first === 'run-script') &&
+      second
+    ) {
+      return { kind: 'package', manager, script: second };
+    }
+    return { kind: 'package', manager };
+  }
+  if (manager === 'bun') {
+    // `bun test` invokes Bun's test runner; only `bun run test` executes the
+    // package script declared by the project.
+    if (first === 'run' && second) {
+      return { kind: 'package', manager, script: second };
+    }
+    return { kind: 'package', manager };
+  }
+  if (first === 'run' && second) {
+    return { kind: 'package', manager, script: second };
+  }
+  if (first) {
+    return { kind: 'package', manager, script: first };
+  }
+  return { kind: 'package', manager };
+}
+
+function packageFileExists(
+  scope: ProjectExecutionScope,
+  cwd: string,
+  filename: string,
+): boolean {
+  return fileExistsWithoutFollowing(
+    scope,
+    path.join(
+      workspaceRelativePath(scope.rootRealPath, cwd),
+      filename,
+    ),
+  );
+}
+
+function detectJavascriptPackageManager(
+  scope: ProjectExecutionScope,
+  manifest: PackageManifestCapabilities,
+): JavascriptPackageManager {
+  if (manifest.packageManager) return manifest.packageManager;
+  if (
+    packageFileExists(scope, manifest.cwd, 'pnpm-lock.yaml') ||
+    packageFileExists(scope, manifest.cwd, 'pnpm-workspace.yaml')
+  ) {
+    return 'pnpm';
+  }
+  if (packageFileExists(scope, manifest.cwd, 'yarn.lock')) return 'yarn';
+  if (
+    packageFileExists(scope, manifest.cwd, 'bun.lock') ||
+    packageFileExists(scope, manifest.cwd, 'bun.lockb')
+  ) {
+    return 'bun';
+  }
+  return 'npm';
+}
+
+function defaultPackageSensor(
+  id: RecommendedPackageSensorId,
+  manager: JavascriptPackageManager,
+): Readonly<SensorDefinition> {
+  const script = RECOMMENDED_PACKAGE_SENSOR_SCRIPTS[id];
+  const command =
+    manager === 'bun'
+      ? [manager, 'run', script]
+      : script === 'test'
+        ? [manager, 'test']
+        : [manager, 'run', script];
+  return Object.freeze({
+    id,
+    command: Object.freeze(command),
+    timeoutMs: 15 * 60_000,
+    network: false as const,
+  });
+}
+
+function isNexusDefaultPackageSensor(sensor: SensorDefinition): boolean {
+  if (sensor.cwd !== undefined) return false;
+  if (
+    !RECOMMENDED_PACKAGE_SENSOR_IDS.includes(
+      sensor.id as RecommendedPackageSensorId,
+    )
+  ) {
+    return false;
+  }
+  const id = sensor.id as RecommendedPackageSensorId;
+  const defaults: readonly (readonly string[])[] = [
+    ...(['npm', 'pnpm', 'yarn', 'bun'] as const).map(
+      (manager) => defaultPackageSensor(id, manager).command,
+    ),
+    ...(id === 'unit'
+      ? [Object.freeze(['npm', 'test', '--', '--run'])]
+      : []),
+  ];
+  return defaults.some(
+    (command) => canonicalJson(command) === canonicalJson(sensor.command),
+  );
+}
+
+function sensorCapabilityExists(
+  scope: ProjectExecutionScope,
+  sensor: SensorDefinition,
+): boolean {
+  let location: PackageCwdResolution;
+  let manifest: PackageManifestCapabilities | undefined;
+  try {
+    location = resolvePackageCwd(scope, sensor.cwd);
+    manifest = readPackageManifest(scope, location);
+  } catch {
+    // Traversal, symlink escape, or a malformed/oversized manifest can never
+    // confer package capability.
+    return false;
+  }
+  if (
+    RECOMMENDED_PACKAGE_SENSOR_IDS.includes(
+      sensor.id as RecommendedPackageSensorId,
+    )
+  ) {
+    const command = packageCommand(sensor.command);
+    if (command.kind === 'package') {
+      const expected =
+        RECOMMENDED_PACKAGE_SENSOR_SCRIPTS[
+          sensor.id as RecommendedPackageSensorId
+        ];
+      // Recommended package gates cannot borrow the authority of a differently
+      // named script. Additional argv remains deliberate, versioned project
+      // authority and is passed without a shell by SensorBroker.
+      if (command.script !== expected) {
+        return false;
+      }
+      if (
+        !manifest?.scripts.has(expected) &&
+        isNexusDefaultPackageSensor(sensor)
+      ) return false;
+    }
+  }
+  if (
+    sensor.id === DESIGN_SYSTEM_SENSOR.id &&
+    canonicalJson(sensor.command) === canonicalJson(DESIGN_SYSTEM_SENSOR.command)
+  ) {
+    return isExactBundledDesignSystemSensor(scope);
+  }
+  return true;
+}
+
+/**
+ * Filters declarative configuration by capabilities that physically exist in
+ * this checkout. It prevents legacy npm defaults from becoming contract
+ * authority in a greenfield repository with no package scripts.
+ */
+export function applicableContextSensors(
+  scope: ProjectExecutionScope,
+  sensors: readonly SensorDefinition[],
+): readonly SensorDefinition[] {
+  return Object.freeze(
+    sensors.filter((sensor) => sensorCapabilityExists(scope, sensor)),
+  );
+}
+
+/** Implicit PREVC gates supported by this checkout and its sensor config. */
+export function recommendedProjectSensorIds(
+  scope: ProjectExecutionScope,
+  sensors: readonly SensorDefinition[],
+): readonly string[] {
+  const applicable = new Set(
+    applicableContextSensors(scope, sensors).map((sensor) => sensor.id),
+  );
+  return Object.freeze(
+    RECOMMENDED_PACKAGE_SENSOR_IDS.filter((id) => applicable.has(id)),
+  );
+}
+
+function defaultSensorsForScope(scope: ProjectExecutionScope) {
+  const location = resolvePackageCwd(scope);
+  const manifest = readPackageManifest(scope, location);
+  const scripts = manifest?.scripts ?? new Set<string>();
+  const manager = manifest
+    ? detectJavascriptPackageManager(scope, manifest)
+    : 'npm';
+  return Object.freeze({
+    schemaVersion: 1 as const,
+    sensors: Object.freeze([
+      ...(scripts.has('typecheck')
+        ? [defaultPackageSensor('typecheck', manager)]
+        : []),
+      ...(scripts.has('test')
+        ? [defaultPackageSensor('unit', manager)]
+        : []),
+      DESIGN_SYSTEM_SENSOR,
+    ]),
+  });
+}
+
+function expectedPackageSensorIds(
+  scope: ProjectExecutionScope,
+  sensors: readonly SensorDefinition[],
+): ReadonlySet<RecommendedPackageSensorId> {
+  const manifests = new Map<string, PackageManifestCapabilities>();
+  const candidates = [undefined, ...sensors.map((sensor) => sensor.cwd)];
+  for (const cwd of candidates) {
+    try {
+      const location = resolvePackageCwd(scope, cwd);
+      const manifest = readPackageManifest(scope, location);
+      if (manifest) manifests.set(manifest.cwd, manifest);
+    } catch {
+      // Unsafe or unavailable cwd is not project capability.
+    }
+  }
+  const expected = new Set<RecommendedPackageSensorId>();
+  for (const manifest of manifests.values()) {
+    for (const id of RECOMMENDED_PACKAGE_SENSOR_IDS) {
+      if (manifest.scripts.has(RECOMMENDED_PACKAGE_SENSOR_SCRIPTS[id])) {
+        expected.add(id);
+      }
+    }
+  }
+  return expected;
+}
 
 function designSystemSensorSourceCandidates(): string[] {
   const candidates: string[] = [];
@@ -217,7 +606,12 @@ function designSystemSensorSourceCandidates(): string[] {
   }
   try {
     const here = fileURLToPath(import.meta.url);
-    candidates.push(path.resolve(here, `../../../scripts/${DESIGN_SYSTEM_SENSOR_SOURCE_NAME}`));
+    candidates.push(
+      path.resolve(
+        path.dirname(here),
+        `../../../scripts/${DESIGN_SYSTEM_SENSOR_SOURCE_NAME}`,
+      ),
+    );
   } catch {
     // import.meta.url may not be a file URL in some bundled environments.
   }
@@ -234,6 +628,25 @@ function resolveDesignSystemSensorSourcePath(): string | undefined {
     }
   }
   return undefined;
+}
+
+/** Exact bundled bytes only; used by the finite context-commit allowlist. */
+export function isExactBundledDesignSystemSensor(
+  scope: ProjectExecutionScope,
+): boolean {
+  const source = resolveDesignSystemSensorSourcePath();
+  if (!source) return false;
+  const target = path.join(
+    scope.rootRealPath,
+    BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET,
+  );
+  try {
+    const targetStat = fs.lstatSync(target);
+    if (targetStat.isSymbolicLink() || !targetStat.isFile()) return false;
+    return fs.readFileSync(source).equals(fs.readFileSync(target));
+  } catch {
+    return false;
+  }
 }
 
 function sha256(value: string): string {
@@ -371,17 +784,27 @@ export function ensureContextScaffold(
   // sensors.json is portable and does not depend on the app install path.
   const sensorSource = resolveDesignSystemSensorSourcePath();
   if (sensorSource) {
-    const sensorTargetAbsolute = path.join(scope.rootRealPath, DESIGN_SYSTEM_SENSOR_TARGET);
+    const sensorTargetAbsolute = path.join(
+      scope.rootRealPath,
+      BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET,
+    );
     try {
-      fs.copyFileSync(sensorSource, sensorTargetAbsolute);
-    } catch {
-      // Best-effort: the sensor command will fail clearly if the file is missing.
+      fs.copyFileSync(
+        sensorSource,
+        sensorTargetAbsolute,
+        fs.constants.COPYFILE_EXCL,
+      );
+      created.push(BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        // Best-effort: the sensor command will fail clearly if unavailable.
+      }
     }
   }
 
   for (const [relative, value] of [
     [POLICY_PATH, DEFAULT_POLICY],
-    [SENSORS_PATH, DEFAULT_SENSORS],
+    [SENSORS_PATH, defaultSensorsForScope(scope)],
   ] as const) {
     if (fileExistsWithoutFollowing(scope, relative)) continue;
     const result = writeWorkspaceTextFile(
@@ -422,16 +845,36 @@ export function inspectContextReadiness(
   } else if (sensors?.error) {
     blockers.push({ code: 'invalid-sensors', message: 'Configuração de sensores inválida.', details: [sensors.error] });
   } else if (sensors?.data) {
-    sensorIds = sensors.data.sensors.map((sensor) => sensor.id).sort();
-    const missing = ['typecheck', 'unit'].filter((id) => !sensorIds.includes(id));
-    if (missing.length > 0) {
-      // WARNING, não blocker (caso de campo 17/07: "toda hora um limite
-      // diferente"): exigir typecheck E unit trancava o freeze de qualquer
-      // projeto sem exatamente esses dois sensores — e sem freeze, TUDO trava.
-      // Os sensores que existirem seguem rodando no PREVC; o que falta é
-      // recomendado, não obrigatório. Não afeta o contextRevision (o hash usa
-      // o arquivo de sensores como está).
-      warnings.push({ code: 'missing-required-sensors', message: 'Sensores recomendados ausentes (typecheck/unit) — os configurados seguem valendo.', details: missing });
+    sensorIds = applicableContextSensors(scope, sensors.data.sensors)
+      .map((sensor) => sensor.id)
+      .sort();
+    const missing = RECOMMENDED_PACKAGE_SENSOR_IDS.filter(
+      (id) => !sensorIds.includes(id),
+    );
+    const expected = expectedPackageSensorIds(
+      scope,
+      sensors.data.sensors,
+    );
+    const missingExpected = missing.filter((id) => expected.has(id));
+    const missingOptional = missing.filter((id) => !expected.has(id));
+    if (missingExpected.length > 0) {
+      blockers.push({
+        code: 'missing-required-sensors',
+        message:
+          'O projeto declara scripts de validação sem sensores aplicáveis e canônicos.',
+        details: missingExpected,
+      });
+    }
+    if (missingOptional.length > 0) {
+      // A stack que não expõe esses scripts não deve ser forçada a adotá-los.
+      // Quando o script nasce depois do scaffold, porém, o ramo acima bloqueia
+      // o freeze até a configuração versionada ser reconciliada.
+      warnings.push({
+        code: 'missing-required-sensors',
+        message:
+          'Sensores recomendados ausentes porque a stack não expõe esses scripts.',
+        details: missingOptional,
+      });
     }
   }
 

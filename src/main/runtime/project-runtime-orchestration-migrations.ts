@@ -188,7 +188,159 @@ CREATE INDEX idx_handoffs_authority_origin
   ON handoffs(mission_id, authority_origin, created_at);
 `;
 
-export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] = [
+/**
+ * A direct `ScopedHandoffStore.submit` remains valid untrusted delivery
+ * metadata, but cannot impersonate a physical MCP tool invocation. Only the
+ * handoff tool boundary inserts this one-to-one receipt in the same
+ * transaction as the handoff row.
+ */
+const HANDOFF_MCP_PROVENANCE_SCHEMA = `
+CREATE TABLE handoff_mcp_receipts (
+  receipt_id             TEXT PRIMARY KEY,
+  handoff_id             TEXT NOT NULL UNIQUE,
+  tool_call_id           TEXT NOT NULL UNIQUE,
+  tool_name              TEXT NOT NULL CHECK (tool_name = 'nexus_handoff_submit'),
+  source                 TEXT NOT NULL CHECK (
+    source IN ('http-mcp', 'omp-rpc-stdio')
+  ),
+  mission_id             TEXT NOT NULL,
+  session_id             TEXT NOT NULL,
+  worker_incarnation_id  TEXT,
+  authority_sha256       TEXT NOT NULL CHECK (length(authority_sha256) = 64),
+  worktree_head_sha      TEXT CHECK (
+    worktree_head_sha IS NULL OR length(worktree_head_sha) IN (40, 64)
+  ),
+  issued_at              INTEGER NOT NULL CHECK (issued_at >= 0),
+  FOREIGN KEY (handoff_id) REFERENCES handoffs(id) ON DELETE CASCADE,
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_handoff_mcp_receipts_worker
+  ON handoff_mcp_receipts(
+    mission_id, session_id, worker_incarnation_id, issued_at
+  );
+
+CREATE TRIGGER handoff_mcp_receipt_immutable
+BEFORE UPDATE ON handoff_mcp_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'handoff MCP receipt is immutable');
+END;
+`;
+
+/**
+ * Physical handoff retries are keyed independently from their payload. This
+ * makes a divergent retry collide with the original logical operation while
+ * retaining the full pre-compaction argument digest for exact comparison.
+ *
+ * Columns stay nullable only for migration compatibility. Current physical
+ * writes require both values and replay of a legacy row fails closed because
+ * the immutable v21 receipt cannot be safely backfilled.
+ */
+const HANDOFF_IDEMPOTENCY_IDENTITY_SCHEMA = `
+ALTER TABLE handoff_mcp_receipts ADD COLUMN raw_payload_sha256 TEXT
+  CHECK (raw_payload_sha256 IS NULL OR length(raw_payload_sha256) = 64);
+ALTER TABLE handoff_mcp_receipts ADD COLUMN logical_operation_key TEXT
+  CHECK (logical_operation_key IS NULL OR length(logical_operation_key) = 64);
+
+CREATE UNIQUE INDEX idx_handoff_mcp_receipts_logical_operation
+  ON handoff_mcp_receipts(logical_operation_key)
+  WHERE logical_operation_key IS NOT NULL;
+`;
+
+/**
+ * Consumption is stronger than transport delivery:
+ *
+ * - a terminal/orchestrator ACK is bound to the exact accepted delivery
+ *   attempt and physical orchestrator session;
+ * - every sealed dependency edge gets an immutable receipt only after the
+ *   downstream worker accepted the prompt containing that handoff result.
+ *
+ * The nullable handoff columns preserve old audit rows. Current completion
+ * authority is fail-closed and requires these bindings for new completions.
+ */
+const HANDOFF_RESULT_CONSUMPTION_SCHEMA = `
+ALTER TABLE handoffs ADD COLUMN consumed_by_session TEXT;
+ALTER TABLE handoffs ADD COLUMN consumed_delivery_attempt_id TEXT;
+
+CREATE TABLE task_dependency_consumption_receipts (
+  mission_id                     TEXT NOT NULL,
+  consumer_task_id               TEXT NOT NULL,
+  dependency_task_id             TEXT NOT NULL,
+  handoff_id                     TEXT NOT NULL,
+  consumer_session_id            TEXT NOT NULL,
+  consumer_worker_incarnation_id TEXT NOT NULL,
+  prompt_sha256                  TEXT NOT NULL CHECK (length(prompt_sha256) = 64),
+  handoff_summary_sha256         TEXT NOT NULL CHECK (length(handoff_summary_sha256) = 64),
+  consumed_at                    INTEGER NOT NULL CHECK (consumed_at >= 0),
+  PRIMARY KEY (consumer_task_id, dependency_task_id),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE,
+  FOREIGN KEY (consumer_task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (dependency_task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (handoff_id) REFERENCES handoffs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_task_dependency_consumption_mission
+  ON task_dependency_consumption_receipts(
+    mission_id, consumer_task_id, consumed_at
+  );
+
+CREATE TRIGGER task_dependency_consumption_immutable
+BEFORE UPDATE ON task_dependency_consumption_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'task dependency consumption receipt is immutable');
+END;
+`;
+
+/**
+ * Invalid legacy worktree rows cannot be silently discarded: they may still
+ * describe an unmerged checkout containing user work. Recovery therefore
+ * copies the exact worktree and merge payloads into an immutable audit row
+ * before it resets only the scoped coordinator projection. No Git path or ref
+ * is removed by this migration or by the recovery transaction.
+ */
+const WORKTREE_STATE_QUARANTINE_SCHEMA = `
+CREATE TABLE worktree_state_quarantine (
+  id                    TEXT PRIMARY KEY CHECK (length(id) = 64),
+  scope_key             TEXT NOT NULL,
+  source_revision       INTEGER NOT NULL CHECK (source_revision >= 0),
+  source_records_json   TEXT NOT NULL,
+  source_updated_at     INTEGER NOT NULL CHECK (source_updated_at >= 0),
+  merge_revision        INTEGER CHECK (
+    merge_revision IS NULL OR merge_revision >= 0
+  ),
+  merge_state_json      TEXT,
+  merge_updated_at      INTEGER CHECK (
+    merge_updated_at IS NULL OR merge_updated_at >= 0
+  ),
+  reason                TEXT NOT NULL CHECK (
+    reason IN ('relocated-runtime-binding', 'terminal-legacy-state')
+  ),
+  quarantined_at        INTEGER NOT NULL CHECK (quarantined_at >= 0),
+  CHECK (
+    (merge_revision IS NULL AND merge_state_json IS NULL AND merge_updated_at IS NULL)
+    OR
+    (merge_revision IS NOT NULL AND merge_state_json IS NOT NULL AND merge_updated_at IS NOT NULL)
+  )
+);
+
+CREATE INDEX idx_worktree_state_quarantine_scope
+  ON worktree_state_quarantine(scope_key, quarantined_at);
+
+CREATE TRIGGER worktree_state_quarantine_immutable_update
+BEFORE UPDATE ON worktree_state_quarantine
+BEGIN
+  SELECT RAISE(ABORT, 'worktree state quarantine records are immutable');
+END;
+
+CREATE TRIGGER worktree_state_quarantine_immutable_delete
+BEFORE DELETE ON worktree_state_quarantine
+BEGIN
+  SELECT RAISE(ABORT, 'worktree state quarantine records are immutable');
+END;
+`;
+
+export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] =
+  [
     {
       id: '015-mission-route-reservations',
       schemaVersion: 15,
@@ -225,4 +377,28 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
       appVersion: '0.19.27',
       sql: HANDOFF_AUTHORITY_ORIGIN_SCHEMA,
     },
-];
+    {
+      id: '021-handoff-mcp-provenance',
+      schemaVersion: 21,
+      appVersion: '0.19.31',
+      sql: HANDOFF_MCP_PROVENANCE_SCHEMA,
+    },
+    {
+      id: '022-handoff-result-consumption',
+      schemaVersion: 22,
+      appVersion: '0.19.31',
+      sql: HANDOFF_RESULT_CONSUMPTION_SCHEMA,
+    },
+    {
+      id: '023-worktree-state-quarantine',
+      schemaVersion: 23,
+      appVersion: '0.19.31',
+      sql: WORKTREE_STATE_QUARANTINE_SCHEMA,
+    },
+    {
+      id: '024-handoff-idempotency-identity',
+      schemaVersion: 24,
+      appVersion: '0.19.31',
+      sql: HANDOFF_IDEMPOTENCY_IDENTITY_SCHEMA,
+    },
+  ];

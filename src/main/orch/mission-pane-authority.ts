@@ -28,6 +28,11 @@ function sha256(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
+/** Hash format carried by every main-owned physical mission authority seal. */
+export function hashMissionIntentContract(value: unknown): string {
+  return sha256(value);
+}
+
 export function createMissionPaneAuthoritySeal(input: {
   readonly mission: Mission;
   readonly squad: Squad;
@@ -52,7 +57,7 @@ export function createMissionPaneAuthoritySeal(input: {
   ) {
     return null;
   }
-  const intentContractHash = sha256(intentContract);
+  const intentContractHash = hashMissionIntentContract(intentContract);
   return Object.freeze({
     intentVersion,
     intentContractHash,

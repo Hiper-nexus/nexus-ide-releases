@@ -11,6 +11,12 @@ import {
   purgeOwnedSessionRoot,
   type ArtifactPurgeResult,
 } from "./ephemeral-artifact-purge";
+import {
+  resolveGovernedCliProfile,
+  stripExecutableProfileConfig,
+  type GovernedCliProfileOptions,
+} from "./governed-cli-profile";
+import { ensureSkillsForCli } from "./skill-mirror";
 
 /**
  * Injeção REAL do servidor MCP embutido do Nexus nos CLIs não-Claude, para que
@@ -30,12 +36,7 @@ import {
  */
 
 export type McpInjectionKind =
-  | "codex"
-  | "agy"
-  | "opencode"
-  | "kimi"
-  | "grok"
-  | "omp";
+  "codex" | "agy" | "opencode" | "kimi" | "grok" | "omp";
 type NexusMcpAdapter = Pick<CliPtyAdapter, "quirks">;
 type NexusMcpAdapterLike = {
   quirks: { mcpAutoload?: boolean; nexusMcp?: unknown };
@@ -78,10 +79,22 @@ const CODEX_MCP_TOKEN_ENV_VAR = "NEXUS_MCP_TOKEN";
  */
 export const CODEX_MCP_TOOL_TIMEOUT_SEC = 45;
 
-export function codexMcpArgs(url: string, _legacyToken?: string): string[] {
-  const serverName =
-    `nexus_${randomBytes(CODEX_MCP_SERVER_RANDOM_BYTES).toString("hex")}`;
-  return [
+export interface CodexMcpArgsOptions {
+  /**
+   * The native mission approval already authorized this exact main-owned,
+   * bearer-bound server. Pre-approve only its tools; ambient/user MCP servers
+   * remain outside this random namespace and keep their provider policy.
+   */
+  readonly approveBoundTools?: boolean;
+}
+
+export function codexMcpArgs(
+  url: string,
+  _legacyToken?: string,
+  options: CodexMcpArgsOptions = {},
+): string[] {
+  const serverName = `nexus_${randomBytes(CODEX_MCP_SERVER_RANDOM_BYTES).toString("hex")}`;
+  const args = [
     "-c",
     `mcp_servers.${serverName}.url=${JSON.stringify(url)}`,
     "-c",
@@ -89,6 +102,13 @@ export function codexMcpArgs(url: string, _legacyToken?: string): string[] {
     "-c",
     `mcp_servers.${serverName}.tool_timeout_sec=${CODEX_MCP_TOOL_TIMEOUT_SEC}`,
   ];
+  if (options.approveBoundTools) {
+    args.push(
+      "-c",
+      `mcp_servers.${serverName}.default_tools_approval_mode="approve"`,
+    );
+  }
+  return args;
 }
 
 export interface GeminiMcpFragment {
@@ -110,7 +130,7 @@ export interface AgyMcpFragment {
   };
 }
 
-export interface AgyMcpConfigOptions {
+export interface AgyMcpConfigOptions extends GovernedCliProfileOptions {
   home?: string;
   artifactRoot?: string;
   /**
@@ -126,7 +146,10 @@ export interface AgyMcpConfigResult {
   configPaths: [string, string];
 }
 
-const activeAgyHomes = new Map<string, { homeDir: string; realHome: string }>();
+const activeAgyHomes = new Map<
+  string,
+  { homeDir: string; realHome: string; syncBack: boolean }
+>();
 
 export function purgeStaleAgyMcpConfigs(
   options: AgyMcpConfigOptions = {},
@@ -188,13 +211,15 @@ export function mergeGeminiSettings(
 function mergeAgyMcpConfig(
   existing: unknown,
   fragment: AgyMcpFragment,
+  strict = false,
 ): Record<string, unknown> {
-  const base =
+  const original =
     existing && typeof existing === "object"
       ? { ...(existing as Record<string, unknown>) }
       : {};
+  const base = strict ? stripExecutableProfileConfig(original) : original;
   const previous =
-    base.mcpServers && typeof base.mcpServers === "object"
+    !strict && base.mcpServers && typeof base.mcpServers === "object"
       ? (base.mcpServers as Record<string, unknown>)
       : {};
   return {
@@ -284,24 +309,65 @@ function linkDirectoryEntries(
   }
 }
 
+function linkSelectedEntries(
+  source: string,
+  target: string,
+  allowed: ReadonlySet<string>,
+): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(source, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!allowed.has(entry.name)) continue;
+    linkDirectoryEntry(
+      entry,
+      path.join(source, entry.name),
+      path.join(target, entry.name),
+    );
+  }
+}
+
 function buildAgyHomeOverlay(
   realHome: string,
   homeDir: string,
   geminiSource?: string,
+  governed = false,
 ): void {
   ensurePrivateDirectory(homeDir);
-  linkDirectoryEntries(realHome, homeDir, new Set([".gemini", ".nexus"]));
+  if (governed) {
+    linkSelectedEntries(realHome, homeDir, new Set([".gitconfig"]));
+  } else {
+    linkDirectoryEntries(realHome, homeDir, new Set([".gemini", ".nexus"]));
+  }
 
   const realGemini = path.resolve(
     geminiSource ?? path.join(realHome, ".gemini"),
   );
   const privateGemini = path.join(homeDir, ".gemini");
   ensurePrivateDirectory(privateGemini);
-  linkDirectoryEntries(
-    realGemini,
-    privateGemini,
-    new Set(["config", "antigravity-cli"]),
-  );
+  if (governed) {
+    linkSelectedEntries(
+      realGemini,
+      privateGemini,
+      new Set([
+        "google_accounts.json",
+        "history",
+        "installation_id",
+        "oauth_creds.json",
+        "projects.json",
+        "state.json",
+      ]),
+    );
+  } else {
+    linkDirectoryEntries(
+      realGemini,
+      privateGemini,
+      new Set(["config", "antigravity-cli"]),
+    );
+  }
 }
 
 function writeAgyConfigOverlay(
@@ -310,6 +376,7 @@ function writeAgyConfigOverlay(
   relativeDir: string,
   fragment: AgyMcpFragment,
   geminiSource?: string,
+  governed = false,
 ): string {
   const geminiRoot = path.resolve(
     geminiSource ?? path.join(realHome, ".gemini"),
@@ -317,13 +384,28 @@ function writeAgyConfigOverlay(
   const sourceDir = path.join(geminiRoot, relativeDir);
   const targetDir = path.join(homeDir, ".gemini", relativeDir);
   ensurePrivateDirectory(targetDir);
-  linkDirectoryEntries(sourceDir, targetDir, new Set(["mcp_config.json"]));
+  linkDirectoryEntries(
+    sourceDir,
+    targetDir,
+    governed
+      ? new Set([
+          "agents",
+          "commands",
+          "extensions",
+          "hooks",
+          "mcp_config.json",
+          "plugins",
+          "sidecars",
+          "skills",
+        ])
+      : new Set(["mcp_config.json"]),
+  );
 
   const sourceConfig = path.join(sourceDir, "mcp_config.json");
   const targetConfig = path.join(targetDir, "mcp_config.json");
   writeJsonAtomic(
     targetConfig,
-    mergeAgyMcpConfig(readJson(sourceConfig), fragment),
+    mergeAgyMcpConfig(readJson(sourceConfig), fragment, governed),
   );
   return targetConfig;
 }
@@ -353,9 +435,10 @@ export function prepareAgyMcpConfig(
   cleanupAgyMcpConfig(token);
   ensurePrivateDirectory(artifactRoot);
   fs.rmSync(homeDir, { recursive: true, force: true });
+  const policy = resolveGovernedCliProfile(token, options);
 
   try {
-    buildAgyHomeOverlay(realHome, homeDir, geminiSource);
+    buildAgyHomeOverlay(realHome, homeDir, geminiSource, policy.governed);
     const fragment = agyMcpFragment(url, token);
     const modern = writeAgyConfigOverlay(
       realHome,
@@ -363,6 +446,7 @@ export function prepareAgyMcpConfig(
       "config",
       fragment,
       geminiSource,
+      policy.governed,
     );
     const cli = writeAgyConfigOverlay(
       realHome,
@@ -370,8 +454,28 @@ export function prepareAgyMcpConfig(
       "antigravity-cli",
       fragment,
       geminiSource,
+      policy.governed,
     );
-    activeAgyHomes.set(token, { homeDir, realHome });
+    if (policy.governed) {
+      const skillDirs = [
+        path.join(homeDir, ".gemini", "config", "skills"),
+        path.join(homeDir, ".gemini", "antigravity", "skills"),
+        path.join(homeDir, ".gemini", "antigravity-cli", "skills"),
+        path.join(homeDir, ".gemini", "antigravity-ide", "skills"),
+      ];
+      for (const skillDir of skillDirs) ensurePrivateDirectory(skillDir);
+      ensureSkillsForCli("agy", {
+        home: realHome,
+        allowedSkills: [...policy.allowedSkills],
+        targetDirs: skillDirs,
+        includeCliTarget: false,
+      });
+    }
+    activeAgyHomes.set(token, {
+      homeDir,
+      realHome,
+      syncBack: !policy.governed,
+    });
     return {
       homeDir,
       geminiHomeDir: path.join(homeDir, ".gemini"),
@@ -404,7 +508,7 @@ export interface OmpMcpFragment {
   };
 }
 
-export interface OmpMcpConfigOptions {
+export interface OmpMcpConfigOptions extends GovernedCliProfileOptions {
   home?: string;
   artifactRoot?: string;
 }
@@ -414,7 +518,10 @@ export interface OmpMcpConfigResult {
   configPath: string;
 }
 
-const activeOmpHomes = new Map<string, { homeDir: string; realHome: string }>();
+const activeOmpHomes = new Map<
+  string,
+  { homeDir: string; realHome: string; syncBack: boolean }
+>();
 
 export function ompMcpFragment(url: string, token: string): OmpMcpFragment {
   return {
@@ -432,13 +539,15 @@ export function ompMcpFragment(url: string, token: string): OmpMcpFragment {
 export function mergeOmpMcpConfig(
   existing: unknown,
   fragment: OmpMcpFragment,
+  strict = false,
 ): Record<string, unknown> {
-  const base =
+  const original =
     existing && typeof existing === "object"
       ? { ...(existing as Record<string, unknown>) }
       : {};
+  const base = strict ? stripExecutableProfileConfig(original) : original;
   const previous =
-    base.mcpServers && typeof base.mcpServers === "object"
+    !strict && base.mcpServers && typeof base.mcpServers === "object"
       ? (base.mcpServers as Record<string, unknown>)
       : {};
   return {
@@ -461,14 +570,28 @@ export function purgeStaleOmpMcpConfigs(
   );
 }
 
-function buildOmpHomeOverlay(realHome: string, homeDir: string): void {
+function buildOmpHomeOverlay(
+  realHome: string,
+  homeDir: string,
+  governed = false,
+): void {
   ensurePrivateDirectory(homeDir);
-  linkDirectoryEntries(realHome, homeDir, new Set([".omp", ".nexus"]));
+  if (governed) {
+    linkSelectedEntries(realHome, homeDir, new Set([".gitconfig"]));
+  } else {
+    linkDirectoryEntries(realHome, homeDir, new Set([".omp", ".nexus"]));
+  }
 
   const realOmp = path.join(realHome, ".omp");
   const privateOmp = path.join(homeDir, ".omp");
   ensurePrivateDirectory(privateOmp);
-  linkDirectoryEntries(realOmp, privateOmp, new Set(["agent"]));
+  linkDirectoryEntries(
+    realOmp,
+    privateOmp,
+    governed
+      ? new Set(["agent", "extensions", "hooks", "plugins", "rules", "skills"])
+      : new Set(["agent"]),
+  );
 
   // Garante que a árvore REAL exista antes do overlay: assim `agent.db`,
   // `sessions/` e `blobs/` viram symlinks e toda escrita do pane persiste
@@ -478,7 +601,21 @@ function buildOmpHomeOverlay(realHome: string, homeDir: string): void {
   fs.mkdirSync(path.join(realAgent, "blobs"), { recursive: true });
   const privateAgent = path.join(privateOmp, "agent");
   ensurePrivateDirectory(privateAgent);
-  linkDirectoryEntries(realAgent, privateAgent, new Set(["mcp.json"]));
+  linkDirectoryEntries(
+    realAgent,
+    privateAgent,
+    governed
+      ? new Set([
+          "agents",
+          "extensions",
+          "hooks",
+          "mcp.json",
+          "plugins",
+          "rules",
+          "skills",
+        ])
+      : new Set(["mcp.json"]),
+  );
 }
 
 /**
@@ -504,16 +641,35 @@ export function prepareOmpMcpConfig(
   cleanupOmpMcpConfig(token);
   ensurePrivateDirectory(artifactRoot);
   fs.rmSync(homeDir, { recursive: true, force: true });
+  const policy = resolveGovernedCliProfile(token, options);
 
   try {
-    buildOmpHomeOverlay(realHome, homeDir);
+    buildOmpHomeOverlay(realHome, homeDir, policy.governed);
     const configPath = path.join(homeDir, ".omp", "agent", "mcp.json");
     const realConfig = path.join(realHome, ".omp", "agent", "mcp.json");
     writeJsonAtomic(
       configPath,
-      mergeOmpMcpConfig(readJson(realConfig), ompMcpFragment(url, token)),
+      mergeOmpMcpConfig(
+        readJson(realConfig),
+        ompMcpFragment(url, token),
+        policy.governed,
+      ),
     );
-    activeOmpHomes.set(token, { homeDir, realHome });
+    if (policy.governed) {
+      const skillsDir = path.join(homeDir, ".omp", "agent", "skills");
+      ensurePrivateDirectory(skillsDir);
+      ensureSkillsForCli("omp", {
+        home: realHome,
+        allowedSkills: [...policy.allowedSkills],
+        targetDirs: [skillsDir],
+        includeCliTarget: false,
+      });
+    }
+    activeOmpHomes.set(token, {
+      homeDir,
+      realHome,
+      syncBack: !policy.governed,
+    });
     return { homeDir, configPath };
   } catch (error) {
     fs.rmSync(homeDir, { recursive: true, force: true });
@@ -529,15 +685,17 @@ export function cleanupOmpMcpConfig(token: string): void {
   // Arquivos NOVOS que o omp tenha criado direto em `agent/` do overlay
   // (primeiro uso sem `agent.db` real, caches novos) voltam para o perfil
   // verdadeiro antes do purge — o mcp.json com o bearer nunca.
-  try {
-    syncBackOverlayAuth(
-      path.join(session.homeDir, ".omp", "agent"),
-      path.join(session.realHome, ".omp", "agent"),
-      new Set(),
-      new Set(["mcp.json"]),
-    );
-  } catch {
-    // Never let a sync-back failure block teardown.
+  if (session.syncBack) {
+    try {
+      syncBackOverlayAuth(
+        path.join(session.homeDir, ".omp", "agent"),
+        path.join(session.realHome, ".omp", "agent"),
+        new Set(),
+        new Set(["mcp.json"]),
+      );
+    } catch {
+      // Never let a sync-back failure block teardown.
+    }
   }
   try {
     fs.rmSync(session.homeDir, { recursive: true, force: true });
@@ -553,15 +711,17 @@ export function cleanupAgyMcpConfig(token: string): void {
   activeAgyHomes.delete(token);
   // Persist a fresh in-pane AGY login (.gemini/antigravity[-cli]) before the
   // overlay is removed, skipping the token-bearing mcp_config.json at any depth.
-  try {
-    syncBackOverlayAuth(
-      path.join(session.homeDir, ".gemini"),
-      path.join(session.realHome, ".gemini"),
-      new Set(),
-      new Set(["mcp_config.json"]),
-    );
-  } catch {
-    // Never let a sync-back failure block teardown.
+  if (session.syncBack) {
+    try {
+      syncBackOverlayAuth(
+        path.join(session.homeDir, ".gemini"),
+        path.join(session.realHome, ".gemini"),
+        new Set(),
+        new Set(["mcp_config.json"]),
+      );
+    } catch {
+      // Never let a sync-back failure block teardown.
+    }
   }
   try {
     fs.rmSync(session.homeDir, { recursive: true, force: true });

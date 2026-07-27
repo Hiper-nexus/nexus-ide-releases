@@ -19,6 +19,16 @@ describe('paneSessionView', () => {
 
   it('usa palavras humanas (não glifos)', () => {
     expect(paneSessionView('busy').chip).toBe('Trabalho');
-    expect(paneSessionView('exited').chip).toBe('Morto');
+    expect(paneSessionView('exited').chip).toBe('Encerrado');
+  });
+
+  it('explica uma saída quando há evidência operacional bloqueada ou falha', () => {
+    expect(paneSessionView('exited', { outcome: 'blocked' }).chip).toBe(
+      'Bloqueado',
+    );
+    expect(paneSessionView('exited', { outcome: 'failed' }).chip).toBe(
+      'Falhou',
+    );
+    expect(paneSessionView('idle', { outcome: 'failed' }).chip).toBe('Pronto');
   });
 });

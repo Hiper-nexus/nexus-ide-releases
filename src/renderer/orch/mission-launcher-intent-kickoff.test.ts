@@ -26,7 +26,7 @@ const squad = {
       id: 'w1',
       agentName: 'Worker',
       category: 'executor' as const,
-      cli: 'claude',
+      cli: 'codex',
     },
   ],
   createdAt: '1',
@@ -47,6 +47,12 @@ describe('intent-first kickoff vs monstro playbook', () => {
     expect(prompt).toContain('Missão autorizada');
     expect(prompt).toContain('You are the orchestrator.');
     expect(prompt).toContain('Worker (executor');
+    expect(prompt).toMatch(
+      /workers mission-bound.*somente o Codex builtin/i,
+    );
+    expect(prompt).toMatch(/Kimi, OMP, Grok, AGY, OpenCode ou Claude.*falha fechado/i);
+    expect(prompt).toMatch(/Terminal\/manual/i);
+    expect(prompt).not.toMatch(/slots?\s+omp|Diversidade de motores/i);
     // Doctor is on-demand, not forced pre-goal bootstrap.
     expect(prompt).toMatch(/context_doctor.*sob demanda/i);
     expect(prompt).not.toMatch(/Pipeline obrigatório/i);

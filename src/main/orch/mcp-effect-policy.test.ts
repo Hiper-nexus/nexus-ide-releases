@@ -76,6 +76,7 @@ describe('MCP effect policy', () => {
       'nexus_review_submit',
       'nexus_sensor_run',
       'nexus_workflow_advance',
+      'nexus_workflow_prepare_execution',
       'nexus_validation_run',
       'nexus_merge_task',
     ]) {

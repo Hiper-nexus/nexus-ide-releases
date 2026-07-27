@@ -88,7 +88,7 @@ describe('mission kickoff context/PREVC contract', () => {
       id: 'nexus-pet-studio',
       name: 'Pet Studio',
       orchestratorInstructions:
-        '# Pet Studio\nCrie o pet de `/tmp/cat.png` com hatch-pet.',
+        '# Pet Studio\nCrie o pet de `/tmp/cat.png` com nexus-pet-studio.',
       agents: [
         {
           id: 'pet-maker',
@@ -106,7 +106,7 @@ describe('mission kickoff context/PREVC contract', () => {
     );
 
     expect(prompt).toContain('/tmp/cat.png');
-    expect(prompt).toContain('hatch-pet');
+    expect(prompt).toContain('nexus-pet-studio');
     expect(prompt).toContain('Permaneça nesta sessão');
     expect(prompt).toContain('nexus_handoff_submit uma única vez');
     expect(prompt).toContain('spritesheet.webp e pet.json');

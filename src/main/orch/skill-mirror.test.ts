@@ -38,25 +38,37 @@ describe('ensureSkillsForCli', () => {
 
     expect(result.mirrored).toBeGreaterThanOrEqual(2);
     expect(
-      fs.existsSync(path.join(home, '.codex', 'skills', 'impeccable', 'SKILL.md')),
+      fs.existsSync(
+        path.join(home, '.codex', 'skills', 'impeccable', 'SKILL.md'),
+      ),
     ).toBe(true);
     expect(
-      fs.existsSync(path.join(home, '.codex', 'skills', 'ponytail', 'SKILL.md')),
+      fs.existsSync(
+        path.join(home, '.codex', 'skills', 'ponytail', 'SKILL.md'),
+      ),
     ).toBe(true);
     expect(
       fs.existsSync(path.join(home, '.codex', 'skills', 'archify', 'SKILL.md')),
     ).toBe(true);
     expect(
-      fs.existsSync(path.join(home, '.codex', 'skills', 'bmad-templates', 'SKILL.md')),
+      fs.existsSync(
+        path.join(home, '.codex', 'skills', 'bmad-templates', 'SKILL.md'),
+      ),
     ).toBe(true);
     expect(
-      fs.existsSync(path.join(home, '.codex', 'skills', 'grilling', 'SKILL.md')),
+      fs.existsSync(
+        path.join(home, '.codex', 'skills', 'grilling', 'SKILL.md'),
+      ),
     ).toBe(true);
     expect(
-      fs.existsSync(path.join(home, '.codex', 'skills', 'bridgeward', 'SKILL.md')),
+      fs.existsSync(
+        path.join(home, '.codex', 'skills', 'bridgeward', 'SKILL.md'),
+      ),
     ).toBe(true);
     expect(
-      fs.existsSync(path.join(home, '.codex', 'skills', 'bridgesecurity', 'SKILL.md')),
+      fs.existsSync(
+        path.join(home, '.codex', 'skills', 'bridgesecurity', 'SKILL.md'),
+      ),
     ).toBe(true);
   });
 
@@ -88,6 +100,77 @@ describe('ensureSkillsForCli', () => {
     expect(fs.existsSync(path.join(home, '.codex', 'skills'))).toBe(false);
   });
 
+  it('mirrors the exact granted set into the Codex governed namespace', () => {
+    const home = tmpRoot();
+    const source = tmpRoot();
+    writeSkill(source, 'check-work');
+    writeSkill(source, 'blocked');
+
+    ensureSkillsForCli('codex', {
+      home,
+      sourceDirs: [source],
+      allowedSkills: ['impeccable', 'check-work', 'not-installed'],
+    });
+
+    const target = path.join(home, '.codex', 'skills');
+    expect(fs.readdirSync(target).sort()).toEqual([
+      'check-work',
+      'impeccable',
+    ]);
+    expect(fs.existsSync(path.join(target, 'blocked'))).toBe(false);
+    expect(fs.existsSync(path.join(target, 'not-installed'))).toBe(false);
+  });
+
+  it('materializes the governed Nexus visual skill without private imagegen dependencies', () => {
+    const home = tmpRoot();
+    const isolated = path.join(tmpRoot(), 'provider-skills');
+
+    ensureSkillsForCli('codex', {
+      home,
+      sourceDirs: [],
+      allowedSkills: ['nexus-visual-media'],
+      targetDirs: [isolated],
+      includeCliTarget: false,
+    });
+
+    const target = path.join(
+      isolated,
+      'nexus-visual-media',
+      'SKILL.md',
+    );
+    const body = fs.readFileSync(target, 'utf8');
+    expect(body).toContain('nexus_media_providers');
+    expect(body).toContain('nexus_image_generate');
+    expect(body).toContain('Do not use native image-generation tools');
+    expect(fs.existsSync(path.join(isolated, 'imagegen'))).toBe(false);
+    expect(fs.existsSync(path.join(isolated, 'hatch-pet'))).toBe(false);
+  });
+
+  it('materializes the dedicated Pet Studio workflow entirely inside the workspace', () => {
+    const home = tmpRoot();
+    const isolated = path.join(tmpRoot(), 'provider-skills');
+
+    ensureSkillsForCli('codex', {
+      home,
+      sourceDirs: [],
+      allowedSkills: ['nexus-pet-studio'],
+      targetDirs: [isolated],
+      includeCliTarget: false,
+    });
+
+    const body = fs.readFileSync(
+      path.join(isolated, 'nexus-pet-studio', 'SKILL.md'),
+      'utf8',
+    );
+    expect(body).toContain(
+      'artifacts/nexus-pet-studio/<missionId>/<pet-id>',
+    );
+    expect(body).toContain('8-column × 11-row');
+    expect(body).toContain('Never write to `~/.codex/pets`');
+    expect(body).toContain('nexus_image_generate');
+    expect(body).toContain('load_workspace_dependencies');
+  });
+
   it('copies only allowlisted skills when a skill allowlist is present', () => {
     const home = tmpRoot();
     const source = tmpRoot();
@@ -101,11 +184,15 @@ describe('ensureSkillsForCli', () => {
     });
 
     const target = path.join(home, '.gemini', 'antigravity', 'skills');
-    expect(fs.existsSync(path.join(target, 'impeccable', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(target, 'impeccable', 'SKILL.md'))).toBe(
+      true,
+    );
     expect(
       fs.existsSync(path.join(target, 'security-best-practices', 'SKILL.md')),
     ).toBe(false);
-    expect(fs.existsSync(path.join(target, 'ponytail', 'SKILL.md'))).toBe(false);
+    expect(fs.existsSync(path.join(target, 'ponytail', 'SKILL.md'))).toBe(
+      false,
+    );
   });
 
   it('mirrors into Claude ephemeral homes for gated Claude-like workers', () => {
@@ -126,7 +213,9 @@ describe('ensureSkillsForCli', () => {
       ),
     ).toBe(true);
     expect(
-      fs.existsSync(path.join(home, '.claude', 'skills', 'impeccable', 'SKILL.md')),
+      fs.existsSync(
+        path.join(home, '.claude', 'skills', 'impeccable', 'SKILL.md'),
+      ),
     ).toBe(true);
   });
 
@@ -140,9 +229,13 @@ describe('ensureSkillsForCli', () => {
       sourceDirs: [source],
     });
 
-    expect(result.targetDirs).toContain(path.join(home, '.kimi-code', 'skills'));
+    expect(result.targetDirs).toContain(
+      path.join(home, '.kimi-code', 'skills'),
+    );
     expect(
-      fs.existsSync(path.join(home, '.kimi-code', 'skills', 'impeccable', 'SKILL.md')),
+      fs.existsSync(
+        path.join(home, '.kimi-code', 'skills', 'impeccable', 'SKILL.md'),
+      ),
     ).toBe(true);
   });
 
@@ -161,8 +254,38 @@ describe('ensureSkillsForCli', () => {
     );
     expect(
       fs.existsSync(
-        path.join(home, '.config', 'opencode', 'skills', 'impeccable', 'SKILL.md'),
+        path.join(
+          home,
+          '.config',
+          'opencode',
+          'skills',
+          'impeccable',
+          'SKILL.md',
+        ),
       ),
     ).toBe(true);
+  });
+
+  it('writes only granted skills to an isolated governed target', () => {
+    const home = tmpRoot();
+    const source = tmpRoot();
+    const isolated = path.join(tmpRoot(), 'provider-skills');
+    writeSkill(source, 'allowed');
+    writeSkill(source, 'blocked');
+
+    const result = ensureSkillsForCli('codex', {
+      home,
+      sourceDirs: [source],
+      allowedSkills: ['allowed'],
+      targetDirs: [isolated],
+      includeCliTarget: false,
+    });
+
+    expect(result.targetDirs).toEqual([isolated]);
+    expect(fs.existsSync(path.join(isolated, 'allowed', 'SKILL.md'))).toBe(
+      true,
+    );
+    expect(fs.existsSync(path.join(isolated, 'blocked'))).toBe(false);
+    expect(fs.existsSync(path.join(home, '.codex', 'skills'))).toBe(false);
   });
 });

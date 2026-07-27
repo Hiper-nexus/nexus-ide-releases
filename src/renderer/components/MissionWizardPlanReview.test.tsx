@@ -119,10 +119,74 @@ describe('MissionWizardPlanReview', () => {
     expect(host.textContent).toContain('Corrigir total duplicado no carrinho');
     expect(host.textContent).toMatch(/Ondas previstas/i);
     expect(host.textContent).toMatch(/até 2 especialistas/i);
-    expect(host.textContent).toMatch(/Custo estimado do roster/i);
+    expect(host.textContent).toMatch(/Custo estimado do time/i);
+    expect(host.textContent).toMatch(/Agentes em paralelo:\s*2/i);
     expect(host.textContent).toContain('$1 entrada / $8 saída por 1M tokens');
-    expect(host.textContent).toMatch(/Review P0–P3 automático ao final/i);
-    expect(host.textContent).toContain('Ainda não garantido');
+    expect(host.textContent).toMatch(
+      /Revisão técnica automática ao final/i,
+    );
+    expect(host.textContent).toContain('revisão independente');
+    expect(host.textContent).toContain('validação final');
+    expect(host.textContent).not.toContain('Workers simultâneos');
+    expect(host.textContent).not.toContain('CUSTO ESTIMADO DO ROSTER');
+    expect(host.textContent).not.toContain('PREVC');
+    expect(host.querySelectorAll('.wizard__plan-card > h3')).toHaveLength(4);
+    expect(host.textContent).toContain('Ainda não confirmado');
+    expect(host.textContent).toContain(
+      'A próxima janela é a única autorização para começar a missão.',
+    );
+    expect(
+      Array.from(host.querySelectorAll('button')).some(
+        (button) => button.textContent === 'Enviar para aprovação',
+      ),
+    ).toBe(true);
+    expect(host.textContent).not.toContain('Confirmar e começar');
+
+    act(() => root.unmount());
+  });
+
+  it('announces both invalid-contract and asynchronous launch errors', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <MissionWizardPlanReview
+          mission={{ ...mission, intentContract: undefined }}
+          squad={squad}
+          roster={squad.agents}
+          adapters={[adapter]}
+          error={null}
+          spawning={false}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onStart={vi.fn()}
+        />,
+      );
+    });
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      'contrato de intenção válido',
+    );
+
+    await act(async () => {
+      root.render(
+        <MissionWizardPlanReview
+          mission={mission}
+          squad={squad}
+          roster={squad.agents}
+          adapters={[adapter]}
+          error="O despacho falhou com segurança."
+          spawning={false}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onStart={vi.fn()}
+        />,
+      );
+    });
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      'O despacho falhou com segurança.',
+    );
 
     act(() => root.unmount());
   });

@@ -5,7 +5,7 @@ import {
   multiAccountAddCopy,
   sessionChoiceBlurb,
 } from './multi-account-copy';
-import { isFileAuthAdapter } from '../../../main/adapters/managed-credentials';
+import { isFileAuthAdapter } from '../../../shared/file-auth-adapters';
 
 /** Mirrors main `supportsSessionSnapshot` without loading account-store/DB. */
 function supportsSessionSnapshot(adapterId: string): boolean {

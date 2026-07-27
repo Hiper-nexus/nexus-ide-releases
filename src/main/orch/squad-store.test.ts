@@ -11,15 +11,18 @@ import {
   applyPreparedSquadSave,
   applyPreparedSquadsImport,
   deleteSquad,
+  exportSquadsJson,
   getSquad,
   importSquadsJson,
   importLegacySquadsJson,
   initSquadStore,
   isSquadStoreReadOnly,
+  prepareMissionRuntimeSquadSave,
   prepareSquadSave,
   prepareSquadsImport,
   saveSquad,
 } from './squad-store';
+import { snapshotSquadAuthority } from './squad-authority-snapshot';
 
 /**
  * Real-path regression test for "não consigo iniciar squad".
@@ -59,6 +62,8 @@ function makeDb(): Db {
       builtin                   INTEGER NOT NULL DEFAULT 0,
       orchestrator_instructions TEXT NOT NULL DEFAULT '',
       native_instructions       TEXT NOT NULL DEFAULT '',
+      runtime_source_squad_id    TEXT,
+      runtime_source_squad_hash  TEXT,
       roster_json               TEXT NOT NULL DEFAULT '[]'
     );
   `);
@@ -79,8 +84,9 @@ function insertRawSquad(
   db.prepare(
     `INSERT INTO squads
        (id, name, created_at, builtin, orchestrator_instructions,
-        native_instructions, roster_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        native_instructions, runtime_source_squad_id,
+        runtime_source_squad_hash, roster_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     squad.id,
     squad.name,
@@ -88,6 +94,8 @@ function insertRawSquad(
     squad.builtin ? 1 : 0,
     squad.orchestratorInstructions ?? '',
     '',
+    null,
+    null,
     JSON.stringify(squad.agents),
   );
 }
@@ -246,6 +254,188 @@ describe('squad-store load path self-heals existing squads', () => {
 });
 
 describe('squad-store save path', () => {
+  it('persists one immutable runtime snapshot with exact main-owned lineage', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const source = saveSquad({
+      id: 'runtime-source',
+      name: 'Runtime source',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '# Source contract',
+      nativeInstructions: 'Native source',
+      agents: [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'claude',
+        },
+        {
+          id: 'worker',
+          agentName: 'Worker',
+          category: 'executor',
+          cli: 'codex',
+        },
+      ],
+    });
+    const sourceHash = snapshotSquadAuthority(source).hash;
+    const runtime = {
+      ...source,
+      id: 'mission-runtime-123e4567-e89b-42d3-a456-426614174000',
+      createdAt: '2',
+      runtimeSourceSquadId: source.id,
+      runtimeSourceSquadRevisionHash: sourceHash,
+    };
+
+    const prepared = prepareMissionRuntimeSquadSave(runtime, source, false);
+    const saved = applyPreparedSquadSave(prepared);
+
+    expect(saved).toMatchObject({
+      id: runtime.id,
+      runtimeSourceSquadId: source.id,
+      runtimeSourceSquadRevisionHash: sourceHash,
+    });
+    expect(
+      db.prepare(
+        `SELECT runtime_source_squad_id, runtime_source_squad_hash
+           FROM squads WHERE id = ?`,
+      ).get(runtime.id),
+    ).toEqual({
+      runtime_source_squad_id: source.id,
+      runtime_source_squad_hash: sourceHash,
+    });
+    expect(() => prepareSquadSave({ ...saved, name: 'Overwrite' })).toThrow(
+      /runtime squads are immutable/i,
+    );
+    expect(deleteSquad(runtime.id)).toBe(false);
+    expect(getSquad(runtime.id)?.name).toBe(source.name);
+    const exported = JSON.parse(exportSquadsJson()) as { squads: Squad[] };
+    expect(exported.squads.some((squad) => squad.id === runtime.id)).toBe(false);
+    expect(exported.squads.some((squad) => squad.id === source.id)).toBe(true);
+  });
+
+  it('recomputes guided draft skills before sealing the runtime snapshot', () => {
+    const source: Squad = {
+      id: 'agentic-draft-guided-skills',
+      name: 'Interface segura',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions:
+        '# Missão\nImplementar interface React com autenticação, gerar avatar e executar QA.',
+      agents: [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'claude',
+        },
+        {
+          id: 'frontend',
+          agentName: 'Executor Frontend',
+          category: 'executor',
+          cli: 'codex',
+        },
+        {
+          id: 'qa',
+          agentName: 'QA de execução',
+          category: 'reviewer',
+          cli: 'codex',
+        },
+      ],
+    };
+    const runtime: Squad = {
+      ...source,
+      id: 'agentic-runtime-123e4567-e89b-42d3-a456-426614174001',
+      createdAt: '2',
+      runtimeSourceSquadId: source.id,
+      runtimeSourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+      agents: source.agents.map((agent) => ({
+        ...agent,
+        allowedSkills: ['renderer-injected-skill'],
+        allowedTools: ['nexus_git_push'],
+      })),
+    };
+
+    const prepared = prepareMissionRuntimeSquadSave(
+      runtime,
+      source,
+      true,
+      'ephemeral',
+    );
+    const frontend = prepared.squad.agents.find(
+      (agent) => agent.id === 'frontend',
+    );
+
+    expect(frontend?.allowedSkills).toEqual(
+      expect.arrayContaining(['ponytail', 'impeccable']),
+    );
+    expect(frontend?.allowedTools).toEqual([
+      'nexus_media_providers',
+      'nexus_image_generate',
+    ]);
+    expect(
+      prepared.squad.agents.flatMap((agent) => agent.allowedSkills ?? []),
+    ).not.toContain('renderer-injected-skill');
+    expect(prepared.snapshot.agents.map((agent) => agent.allowedSkills)).toEqual(
+      prepared.squad.agents.map((agent) => agent.allowedSkills),
+    );
+    expect(prepared.snapshot.agents.map((agent) => agent.allowedTools)).toEqual(
+      prepared.squad.agents.map((agent) => agent.allowedTools),
+    );
+    expect(
+      prepared.squad.agents
+        .filter((agent) => agent.id !== 'frontend')
+        .every((agent) =>
+          agent.category === 'orchestrator'
+            ? agent.allowedTools === null
+            : agent.allowedTools?.length === 0,
+        ),
+    ).toBe(true);
+  });
+
+  it('rejects forged or stale runtime lineage before persistence', () => {
+    const db = makeDb();
+    openDb = db;
+    initSquadStore(db);
+    const source = saveSquad({
+      id: 'runtime-source-stale',
+      name: 'Source',
+      createdAt: '1',
+      builtin: false,
+      orchestratorInstructions: '# Exact',
+      agents: [
+        {
+          id: 'orch',
+          agentName: 'Maestro',
+          category: 'orchestrator',
+          cli: 'claude',
+        },
+      ],
+    });
+    const runtime = {
+      ...source,
+      id: 'agentic-runtime-123e4567-e89b-42d3-a456-426614174000',
+      runtimeSourceSquadId: source.id,
+      runtimeSourceSquadRevisionHash: '0'.repeat(64),
+    };
+
+    expect(() =>
+      prepareMissionRuntimeSquadSave(runtime, source, true),
+    ).toThrow(/lineage does not match/i);
+
+    const exactRuntime = {
+      ...runtime,
+      runtimeSourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+    };
+    saveSquad({ ...source, orchestratorInstructions: '# Concurrent change' });
+    expect(() =>
+      prepareMissionRuntimeSquadSave(exactRuntime, source, true),
+    ).toThrow(/source squad changed/i);
+    expect(getSquad(exactRuntime.id)).toBeNull();
+  });
+
   it('prepares the final executable squad once and persists exactly what was reviewed', () => {
     const db = makeDb();
     openDb = db;

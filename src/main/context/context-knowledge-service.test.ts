@@ -6,7 +6,11 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { ensureContextScaffold, inspectContextReadiness } from './context-doctor';
+import {
+  BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET,
+  ensureContextScaffold,
+  inspectContextReadiness,
+} from './context-doctor';
 import { inspectContextAttestations } from './context-attestation';
 import { ContextKnowledgeService } from './context-knowledge-service';
 import { buildProjectSymbolIndex } from './symbol-index';
@@ -305,6 +309,9 @@ describe('ContextKnowledgeService autonomous authority workflow', () => {
     expect(git(root, 'show', '--format=', '--name-only', 'HEAD')).toContain(
       '.context/docs/business-model.md',
     );
+    expect(git(root, 'show', '--format=', '--name-only', 'HEAD')).toContain(
+      BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET,
+    );
   });
 
   it('supersedes an older uncommitted draft when newer reviewed authority replaces it', () => {
@@ -387,6 +394,21 @@ describe('ContextKnowledgeService autonomous authority workflow', () => {
     git(root, 'add', 'src/prestaged.ts');
 
     expect(() => service.commitApplied()).toThrow(/staged/i);
+    expect(git(root, 'log', '-1', '--pretty=%s')).toBe('baseline');
+  });
+
+  it('allows only the exact bundled design-system sensor in the finite context commit', () => {
+    const { root, service } = fixture();
+    initializeGit(root);
+    applyCompleteContext(root, service);
+    fs.appendFileSync(
+      path.join(root, BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET),
+      '\n// unreviewed mutation\n',
+    );
+
+    expect(() => service.commitApplied()).toThrow(
+      new RegExp(`unexpected context change.*${BUNDLED_DESIGN_SYSTEM_SENSOR_TARGET.replaceAll('.', '\\.')}`, 'i'),
+    );
     expect(git(root, 'log', '-1', '--pretty=%s')).toBe('baseline');
   });
 });

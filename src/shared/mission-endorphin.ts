@@ -5,7 +5,6 @@ import type { Mission, MissionStatus } from './orch-types';
  */
 
 export type MissionEndorphinKind =
-  | 'launched'
   | 'handoff'
   | 'milestone'
   | 'green'
@@ -50,17 +49,9 @@ export function missionEndorphinForTransition(
       label: next.title,
     };
   }
-  // Lançamento (ou retomada): a frota entrou em campo — pico de dopamina que
-  // faltava. Cobre pending/blocked → running.
-  if (next.status === 'running' && prev !== 'running') {
-    return {
-      missionId: next.id,
-      title: next.title,
-      kind: 'launched',
-      kicker: 'Frota em campo',
-      label: next.title,
-    };
-  }
+  // `running` is an authorization/scheduling state, not physical kickoff
+  // proof. The orchestrator can still fail preflight or reject the prompt
+  // after this transition, so celebrating here would lie to the operator.
   return null;
 }
 

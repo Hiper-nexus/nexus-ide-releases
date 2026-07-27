@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
@@ -32,7 +32,7 @@ function TerminalPaneLeaf({ pane }: Props) {
   // here restarts border animations and reads as terminal flicker.
   const sessionState = useSessionStateStore((s) => s.displayStates.get(pane.id));
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const slot = slotRef.current;
     if (slot) attachHost(pane, slot);
     // No teardown here: the host lives beyond this wrapper. Reconciliation in
@@ -40,7 +40,7 @@ function TerminalPaneLeaf({ pane }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.id]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isFocused) focusHost(pane.id);
     else blurHost(pane.id);
   }, [isFocused, pane.id]);

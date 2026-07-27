@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { ompModelAuthRoute } from './model-auth-readiness';
 
 /**
  * Subscription-auth priority (user directive): CLIs signed in via their own
@@ -52,6 +53,48 @@ export function resolveAuthStrategy(input: {
 
 const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, { value: boolean; at: number }>();
+let claudeRefreshInFlight: Promise<ClaudeAuthRefreshResult> | null = null;
+
+export interface SubscriptionAuthDetectionOptions {
+  /**
+   * The macOS Keychain fallback is intentionally opt-out. Spawn/readiness
+   * callers retain the authoritative probe, while renderer snapshots can
+   * explicitly stay on the non-blocking metadata path.
+   */
+  probeClaudeKeychain?: boolean;
+  /** Test seam for proving that a non-blocking caller never enters Keychain. */
+  claudeKeychainProbe?: () => boolean;
+}
+
+export interface ClaudeAuthRefreshResult {
+  value: boolean;
+  cacheUpdated: boolean;
+}
+
+function subscriptionCacheKey(adapterId: string, model?: string): string {
+  return adapterId === 'omp' || adapterId === 'omp-rpc'
+    ? `${adapterId}\u0000${model?.trim() ?? ''}`
+    : adapterId;
+}
+
+function cachedSubscriptionAuth(
+  adapterId: string,
+  model?: string,
+): boolean | null {
+  const hit = cache.get(subscriptionCacheKey(adapterId, model));
+  return hit && Date.now() - hit.at < CACHE_TTL_MS ? hit.value : null;
+}
+
+function cacheSubscriptionAuth(
+  adapterId: string,
+  value: boolean,
+  model?: string,
+): void {
+  cache.set(subscriptionCacheKey(adapterId, model), {
+    value,
+    at: Date.now(),
+  });
+}
 
 function existsAt(home: string, ...segments: string[]): boolean {
   try {
@@ -63,19 +106,52 @@ function existsAt(home: string, ...segments: string[]): boolean {
 }
 
 /** Claude Code stores its OAuth session in the login keychain on macOS. */
-function claudeKeychainHas(): boolean {
+export function claudeKeychainHas(
+  execImpl: typeof execFileSync = execFileSync,
+): boolean {
   if (process.platform !== 'darwin') return false;
   try {
-    execFileSync(
+    execImpl(
       'security',
       ['find-generic-password', '-s', 'Claude Code-credentials'],
-      { stdio: 'pipe' },
+      {
+        stdio: 'pipe',
+        timeout: 5_000,
+        killSignal: 'SIGKILL',
+      },
     );
     return true;
   } catch {
     // Keychain can fail inside packaged Electron (TCC) even when the CLI works.
     return false;
   }
+}
+
+/**
+ * Non-blocking equivalent for UI/readiness refreshes. `security` may still
+ * wait on a locked login keychain, but its process and deadline never block
+ * Electron's main event loop.
+ */
+export function claudeKeychainHasAsync(
+  execImpl: typeof execFile = execFile,
+): Promise<boolean> {
+  if (process.platform !== 'darwin') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      execImpl(
+        'security',
+        ['find-generic-password', '-s', 'Claude Code-credentials'],
+        {
+          timeout: 5_000,
+          killSignal: 'SIGKILL',
+          windowsHide: true,
+        },
+        (error) => resolve(error === null),
+      );
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 /** Email of the active Claude OAuth account from ~/.claude.json, if any. */
@@ -105,9 +181,86 @@ function existsInEnv(envVar: string, ...segments: string[]): boolean {
   return false;
 }
 
+/**
+ * OMP owns its credential vault in a local SQLite database. Read only exact
+ * provider presence metadata — never credential payloads — so Nexus can
+ * distinguish a usable broker route from an interactive-login dead end.
+ *
+ * The provider aliases are release-pinned by model-auth-readiness.ts. Unknown
+ * model providers and older/newer DB layouts report unauthenticated until
+ * reviewed.
+ */
+function ompHasEnabledCredentialForProviders(
+  home: string,
+  providerIds: readonly string[],
+): boolean {
+  if (providerIds.length === 0) return false;
+  const databasePath = path.join(home, '.omp', 'agent', 'agent.db');
+  if (!existsAt(home, '.omp', 'agent', 'agent.db')) return false;
+  type ReadonlyDatabase = {
+    pragma(source: string, options?: { simple?: boolean }): unknown;
+    prepare(source: string): { get(...params: string[]): unknown };
+    close(): void;
+  };
+  let database: ReadonlyDatabase | null = null;
+  try {
+    const Database = require('better-sqlite3') as new (
+      file: string,
+      options: { readonly: boolean; fileMustExist: boolean },
+    ) => ReadonlyDatabase;
+    database = new Database(databasePath, {
+      readonly: true,
+      fileMustExist: true,
+    });
+    database.pragma('query_only = ON');
+    if (database.pragma('query_only', { simple: true }) !== 1) {
+      return false;
+    }
+    const placeholders = providerIds.map(() => '?').join(', ');
+    const row = database
+      .prepare(
+        `SELECT 1 AS ready
+           FROM auth_credentials
+          WHERE provider IN (${placeholders})
+            AND (disabled_cause IS NULL OR disabled_cause = '')
+          LIMIT 1`,
+      )
+      .get(...providerIds) as { ready?: unknown } | undefined;
+    return row?.ready === 1;
+  } catch {
+    return false;
+  } finally {
+    try {
+      database?.close();
+    } catch {
+      // Read-only detection never owns recovery or mutation.
+    }
+  }
+}
+
+/**
+ * Exact OMP broker readiness for one provider/model reference. A credential
+ * for Anthropic is not evidence that OpenAI Codex, xAI or any other route can
+ * start. Local release-pinned providers are credentialless by definition.
+ */
+export function isOmpVaultAuthReadyForModel(
+  model: string | null | undefined,
+  home = os.homedir(),
+): boolean {
+  const route = ompModelAuthRoute(model);
+  if (!route) return false;
+  if (route.credentialless) return true;
+  return ompHasEnabledCredentialForProviders(
+    home,
+    route.brokerProviderIds,
+  );
+}
+
 export function detectSubscriptionAuth(
   adapterId: string,
   home = os.homedir(),
+  model?: string,
+  options: SubscriptionAuthDetectionOptions = {},
 ): boolean {
   const exists = (...segments: string[]) => existsAt(home, ...segments);
   switch (adapterId) {
@@ -118,7 +271,8 @@ export function detectSubscriptionAuth(
       return (
         claudeOauthEmail(home) !== null ||
         exists('.claude', '.credentials.json') ||
-        claudeKeychainHas()
+        (options.probeClaudeKeychain !== false &&
+          (options.claudeKeychainProbe ?? claudeKeychainHas)())
       );
     case 'codex':
       // ChatGPT session file (the launcher's xconta model swaps this file).
@@ -165,6 +319,9 @@ export function detectSubscriptionAuth(
         exists('.local', 'share', 'opencode', 'auth.json') ||
         exists('Library', 'Application Support', 'opencode', 'auth.json')
       );
+    case 'omp':
+    case 'omp-rpc':
+      return isOmpVaultAuthReadyForModel(model, home);
     case 'aider':
       // Aider has no native OAuth/subscription session; it consumes provider
       // API keys. Treating its config directory as login would suppress every
@@ -178,15 +335,86 @@ export function detectSubscriptionAuth(
 }
 
 /** Whether the CLI has a live subscription/OAuth session (cached 60s). */
-export function hasSubscriptionAuth(adapterId: string): boolean {
-  const hit = cache.get(adapterId);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
-  const value = detectSubscriptionAuth(adapterId);
-  cache.set(adapterId, { value, at: Date.now() });
+export function hasSubscriptionAuth(
+  adapterId: string,
+  model?: string,
+): boolean {
+  const hit = cachedSubscriptionAuth(adapterId, model);
+  if (hit !== null) return hit;
+  const value = detectSubscriptionAuth(adapterId, os.homedir(), model);
+  cacheSubscriptionAuth(adapterId, value, model);
   return value;
+}
+
+/**
+ * Presence view for renderer/provider snapshots.
+ *
+ * A cold Claude lookup uses only file metadata and the existing cache. It
+ * deliberately does not cache a negative result: an immediate spawn still
+ * performs the authoritative Keychain probe and cannot accidentally inject an
+ * API key over a native subscription. The async refresher below later updates
+ * the status snapshot without freezing the IPC request.
+ */
+export function hasSubscriptionAuthForStatus(
+  adapterId: string,
+  model?: string,
+  home = os.homedir(),
+): boolean {
+  const hit = cachedSubscriptionAuth(adapterId, model);
+  if (hit !== null) return hit;
+  if (adapterId !== 'claude') return hasSubscriptionAuth(adapterId, model);
+
+  const fileBacked = detectSubscriptionAuth(
+    adapterId,
+    home,
+    model,
+    { probeClaudeKeychain: false },
+  );
+  if (fileBacked) cacheSubscriptionAuth(adapterId, true, model);
+  return fileBacked;
+}
+
+/**
+ * Warm Claude's status cache outside the renderer's request-critical path.
+ * Concurrent list calls share one `security` process. Failures remain
+ * fail-closed and are cached for the normal short TTL.
+ */
+export function refreshClaudeSubscriptionAuthCache(
+  home = os.homedir(),
+  keychainProbe: () => Promise<boolean> = claudeKeychainHasAsync,
+): Promise<ClaudeAuthRefreshResult> {
+  const cached = cachedSubscriptionAuth('claude');
+  if (cached !== null) {
+    return Promise.resolve({ value: cached, cacheUpdated: false });
+  }
+
+  const fileBacked = detectSubscriptionAuth(
+    'claude',
+    home,
+    undefined,
+    { probeClaudeKeychain: false },
+  );
+  if (fileBacked) {
+    cacheSubscriptionAuth('claude', true);
+    return Promise.resolve({ value: true, cacheUpdated: true });
+  }
+
+  if (claudeRefreshInFlight) return claudeRefreshInFlight;
+  claudeRefreshInFlight = Promise.resolve()
+    .then(keychainProbe)
+    .catch(() => false)
+    .then((value) => {
+      cacheSubscriptionAuth('claude', value);
+      return { value, cacheUpdated: true };
+    })
+    .finally(() => {
+      claudeRefreshInFlight = null;
+    });
+  return claudeRefreshInFlight;
 }
 
 /** Test hook. */
 export function resetSubscriptionAuthCacheForTests(): void {
   cache.clear();
+  claudeRefreshInFlight = null;
 }

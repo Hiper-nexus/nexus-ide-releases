@@ -442,7 +442,7 @@ describe('Jarvis MCP result propagation', () => {
     });
   });
 
-  it('forwards voice confirmation when an intent plan is ready', async () => {
+  it('requests the final approval when an intent plan is ready', async () => {
     missionWizardState.open = true;
     missionWizardState.presetSquadId = 'navalha';
     missionWizardState.visibleStep = 'intent-plan';
@@ -455,7 +455,7 @@ describe('Jarvis MCP result propagation', () => {
     expect(missionWizardState.requestVoiceLaunch).toHaveBeenCalledOnce();
     expect(execution.toolResult).toMatchObject({
       ok: true,
-      summary: expect.stringMatching(/plano confirmado/i),
+      summary: expect.stringMatching(/aprovação final/i),
     });
   });
 

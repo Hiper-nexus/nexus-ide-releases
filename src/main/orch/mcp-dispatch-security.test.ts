@@ -1,26 +1,35 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { PET_STUDIO_SQUAD } from "../../shared/pet-studio";
 import {
   clearAuditLogForTests,
   configureAuditLogRuntime,
   disposeAuditLogRuntime,
   readAuditLog,
-} from '../jarvis/audit-log';
-import { clearAll as clearAllPermissions } from '../jarvis/permissions';
-import { mintToken, resetGateForTests } from './gate';
-import { dispatchToolCall } from './mcp-dispatch';
-import type { McpDispatchOptions } from './mcp-dispatch';
-import type { IntentGateMissionResolver } from './mcp-dispatch';
-import type { McpRegistry, McpToolDef } from './mcp-protocol';
-import { testProjectScope } from './__tests__/scope-fixture';
-import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+} from "../jarvis/audit-log";
+import { clearAll as clearAllPermissions } from "../jarvis/permissions";
+import { bindTokenToSession, mintToken, resetGateForTests } from "./gate";
+import { dispatchToolCall } from "./mcp-dispatch";
+import type { McpDispatchOptions } from "./mcp-dispatch";
+import type { IntentGateMissionResolver } from "./mcp-dispatch";
+import type { McpRegistry, McpToolDef } from "./mcp-protocol";
+import { testProjectScope } from "./__tests__/scope-fixture";
+import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
   bumpMissionPromptIntent,
   peekMissionPromptQueue,
   resetMissionPromptQueues,
-} from './mission-prompt-queue-registry';
+} from "./mission-prompt-queue-registry";
 
 /**
  * Production workflow authority seam: the real PREVC registry is not booted in
@@ -30,14 +39,14 @@ import {
  */
 const workflowRegistryMocks = vi.hoisted(() => ({
   getContextWorkflowService: vi.fn((): unknown => {
-    throw new Error('context workflow service is not initialized');
+    throw new Error("context workflow service is not initialized");
   }),
 }));
 
-vi.mock('../context/context-workflow-registry', async (importOriginal) => {
+vi.mock("../context/context-workflow-registry", async (importOriginal) => {
   const original =
     await importOriginal<
-      typeof import('../context/context-workflow-registry')
+      typeof import("../context/context-workflow-registry")
     >();
   return {
     ...original,
@@ -45,7 +54,7 @@ vi.mock('../context/context-workflow-registry', async (importOriginal) => {
   };
 });
 
-const testDir = path.join(os.tmpdir(), 'nexus-mcp-dispatch-security');
+const testDir = path.join(os.tmpdir(), "nexus-mcp-dispatch-security");
 const auditScope = testProjectScope({ rootRealPath: testDir });
 const auditContext = { scope: auditScope } as const;
 let auditManager: ProjectRuntimeManager;
@@ -53,45 +62,67 @@ let auditManager: ProjectRuntimeManager;
 function registryWith(tool: McpToolDef): McpRegistry {
   return {
     tools: [tool],
-    serverName: 'nexus-security-test',
-    serverVersion: '0.0.1',
+    serverName: "nexus-security-test",
+    serverVersion: "0.0.1",
   };
 }
 
 function userContext() {
   resetGateForTests();
   return mintToken({
-    label: 'security-test',
-    role: 'user',
+    label: "security-test",
+    role: "user",
     scope: auditScope,
   });
 }
 
-const TEST_MISSION_ID = 'mission-security-test';
-const TEST_CONTEXT_REVISION = 'context-revision-security-test';
+const TEST_MISSION_ID = "mission-security-test";
+const TEST_CONTEXT_REVISION = "context-revision-security-test";
 
 function missionContext(
   contextRevision?: string,
   allowedTools: string[] | null = null,
+  governedNativeProvider?: "codex",
 ) {
   resetGateForTests();
   return mintToken({
-    label: 'security-test',
-    role: 'worker',
+    label: "security-test",
+    role: "worker",
     missionId: TEST_MISSION_ID,
     contextRevision,
+    providerId: governedNativeProvider,
+    governedNativeProvider,
     scope: auditScope,
     allowedTools,
+    allowedSkills: null,
   });
 }
 
 function orchestratorMissionContext() {
   resetGateForTests();
   return mintToken({
-    label: 'security-test-orchestrator',
-    role: 'orchestrator',
+    label: "security-test-orchestrator",
+    role: "orchestrator",
     missionId: TEST_MISSION_ID,
     scope: auditScope,
+  });
+}
+
+function petStudioMissionContext() {
+  resetGateForTests();
+  const maker = PET_STUDIO_SQUAD.agents[0]!;
+  return mintToken({
+    label: maker.agentName,
+    role: "orchestrator",
+    missionId: TEST_MISSION_ID,
+    agentName: maker.agentName,
+    providerId: "codex",
+    petStudioMediaAuthority: true,
+    petStudioAuthoritySource: "legacy-squad",
+    petStudioSquadId: PET_STUDIO_SQUAD.id,
+    scope: auditScope,
+    allowedTools: [...(maker.allowedTools ?? [])],
+    allowedSkills: [...(maker.allowedSkills ?? [])],
   });
 }
 
@@ -101,21 +132,21 @@ function dispatchedMissionFixture(): NonNullable<
   return {
     mission: {
       id: TEST_MISSION_ID,
-      title: 'Security test mission',
-      description: 'dispatched for security tests',
-      status: 'running' as const,
+      title: "Security test mission",
+      description: "dispatched for security tests",
+      status: "running" as const,
       milestones: [],
-      learnings: '',
-      intentState: 'dispatched' as const,
+      learnings: "",
+      intentState: "dispatched" as const,
       intentVersion: 1,
       intentContract: {
         version: 1 as const,
-        source: 'typed' as const,
-        goal: 'security test goal',
-        acceptanceCriteria: ['ok'],
-        risk: 'normal' as const,
-        executionMode: 'assisted' as const,
-        contextPolicy: 'on-demand' as const,
+        source: "typed" as const,
+        goal: "security test goal",
+        acceptanceCriteria: ["ok"],
+        risk: "normal" as const,
+        executionMode: "assisted" as const,
+        contextPolicy: "on-demand" as const,
         intentVersion: 1,
         approvedAt: Date.now(),
         budgets: {
@@ -142,8 +173,8 @@ function opsMissionFixture(): NonNullable<
       ...base.mission,
       intentContract: {
         ...base.mission.intentContract!,
-        goal: 'fazer backup na VPS e subir a landing page',
-        lane: 'ops' as const,
+        goal: "fazer backup na VPS e subir a landing page",
+        lane: "ops" as const,
         budgets: {
           ...base.mission.intentContract!.budgets,
           maxWorkers: 0,
@@ -154,12 +185,12 @@ function opsMissionFixture(): NonNullable<
 }
 
 function workflowOptions(
-  options: Pick<McpDispatchOptions, 'confirm'> = {},
+  options: Pick<McpDispatchOptions, "confirm"> = {},
 ): McpDispatchOptions {
   return {
     ...options,
     resolveWorkflowAuthority: (_scope, missionId) => {
-      if (missionId !== TEST_MISSION_ID) throw new Error('wrong test mission');
+      if (missionId !== TEST_MISSION_ID) throw new Error("wrong test mission");
       return {
         contextRevision: TEST_CONTEXT_REVISION,
         assertExecutionEffectAllowed: () => undefined,
@@ -174,12 +205,44 @@ function workflowOptions(
   };
 }
 
-describe('MCP dispatch effect safety', () => {
+function opsWorkflowOptions(
+  options: Pick<McpDispatchOptions, "confirm"> = {},
+): McpDispatchOptions {
+  return {
+    ...workflowOptions(options),
+    resolveWorkflowAuthority: (_scope, missionId) => {
+      if (missionId !== TEST_MISSION_ID) throw new Error("wrong test mission");
+      return {
+        contextRevision: undefined,
+        assertExecutionEffectAllowed: () => undefined,
+      };
+    },
+    resolveMissionForIntentGate: (_scope, missionId) =>
+      missionId === TEST_MISSION_ID ? opsMissionFixture() : null,
+  };
+}
+
+function standardWorkflowOptions(
+  options: Pick<McpDispatchOptions, "confirm"> = {},
+): McpDispatchOptions {
+  return {
+    ...workflowOptions(options),
+    resolveWorkflowAuthority: (_scope, missionId) => {
+      if (missionId !== TEST_MISSION_ID) throw new Error("wrong test mission");
+      return {
+        contextRevision: undefined,
+        assertExecutionEffectAllowed: () => undefined,
+      };
+    },
+  };
+}
+
+describe("MCP dispatch effect safety", () => {
   beforeAll(() => {
     fs.mkdirSync(testDir, { recursive: true });
     auditManager = new ProjectRuntimeManager({
-      baseDir: path.join(testDir, 'audit-runtime'),
-      appVersion: 'security-test',
+      baseDir: path.join(testDir, "audit-runtime"),
+      appVersion: "security-test",
     });
     configureAuditLogRuntime(auditManager);
   });
@@ -189,13 +252,16 @@ describe('MCP dispatch effect safety', () => {
     clearAuditLogForTests(auditContext);
     workflowRegistryMocks.getContextWorkflowService.mockReset();
     workflowRegistryMocks.getContextWorkflowService.mockImplementation(() => {
-      throw new Error('context workflow service is not initialized');
+      throw new Error("context workflow service is not initialized");
     });
-    auditManager.open(auditScope).db.prepare(
-      `INSERT OR IGNORE INTO missions
+    auditManager
+      .open(auditScope)
+      .db.prepare(
+        `INSERT OR IGNORE INTO missions
          (id, title, description, status, milestones_json, created_at, updated_at)
        VALUES (?, ?, '', 'running', '[]', ?, ?)`,
-    ).run(TEST_MISSION_ID, 'Security test mission', Date.now(), Date.now());
+      )
+      .run(TEST_MISSION_ID, "Security test mission", Date.now(), Date.now());
     clearAllPermissions();
     resetMissionPromptQueues();
   });
@@ -206,25 +272,25 @@ describe('MCP dispatch effect safety', () => {
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('denies workspace and process effects for read-only agents before handlers run', async () => {
+  it("denies workspace and process effects for read-only agents before handlers run", async () => {
     const confirm = vi.fn(async () => true);
     const deniedCases: Array<{
       toolName: string;
       args: Record<string, unknown>;
     }> = [
       {
-        toolName: 'nexus_file_write',
-        args: { path: 'src/read-only-denied.ts', content: 'blocked' },
+        toolName: "nexus_file_write",
+        args: { path: "src/read-only-denied.ts", content: "blocked" },
       },
-      { toolName: 'nexus_terminal_run', args: { command: 'npm test' } },
-      { toolName: 'nexus_git_add', args: { paths: ['src/index.ts'] } },
-      { toolName: 'nexus_git_commit', args: { message: 'must not run' } },
-      { toolName: 'nexus_git_push', args: {} },
-      { toolName: 'nexus_route_task', args: { task: 'mint forbidden route' } },
-      { toolName: 'nexus_pane_spawn', args: {} },
+      { toolName: "nexus_terminal_run", args: { command: "npm test" } },
+      { toolName: "nexus_git_add", args: { paths: ["src/index.ts"] } },
+      { toolName: "nexus_git_commit", args: { message: "must not run" } },
+      { toolName: "nexus_git_push", args: {} },
+      { toolName: "nexus_route_task", args: { task: "mint forbidden route" } },
+      { toolName: "nexus_pane_spawn", args: {} },
       {
-        toolName: 'nexus_context_draft_apply',
-        args: { draftId: 'draft-read-only-denied' },
+        toolName: "nexus_context_draft_apply",
+        args: { draftId: "draft-read-only-denied" },
       },
     ];
 
@@ -232,8 +298,8 @@ describe('MCP dispatch effect safety', () => {
       const handler = vi.fn(async () => ({ shouldNotRun: true }));
       resetGateForTests();
       const context = mintToken({
-        label: 'read-only-security-test',
-        role: 'worker',
+        label: "read-only-security-test",
+        role: "worker",
         missionId: TEST_MISSION_ID,
         contextRevision: TEST_CONTEXT_REVISION,
         readOnly: true,
@@ -242,11 +308,11 @@ describe('MCP dispatch effect safety', () => {
       });
 
       const result = await dispatchToolCall(
-        'http-mcp',
+        "http-mcp",
         registryWith({
           name: toolName,
           description: toolName,
-          inputSchema: { type: 'object', properties: {} },
+          inputSchema: { type: "object", properties: {} },
           handler,
         }),
         toolName,
@@ -258,48 +324,222 @@ describe('MCP dispatch effect safety', () => {
       expect(result, toolName).toMatchObject({
         ok: false,
         denied: true,
-        error: expect.stringContaining('read-only'),
+        error: expect.stringContaining("read-only"),
       });
       expect(handler, toolName).not.toHaveBeenCalled();
     }
     expect(confirm).not.toHaveBeenCalled();
   });
 
-  it('skips per-action confirmation for an approved mission (autopilot)', async () => {
+  it("dispatches image generation only for the exact Pet Studio media marker", async () => {
+    const handler = vi.fn(async () => ({ generated: true }));
+    const confirm = vi.fn(async () => true);
+    const tool: McpToolDef = {
+      name: "nexus_image_generate",
+      description: "image",
+      inputSchema: {
+        type: "object",
+        properties: { prompt: { type: "string" } },
+        required: ["prompt"],
+      },
+      requiresConfirm: true,
+      handler,
+    };
+    const pet = petStudioMissionContext();
+    const accepted = await dispatchToolCall(
+      "http-mcp",
+      registryWith(tool),
+      tool.name,
+      { prompt: "canonical pet base" },
+      pet,
+      standardWorkflowOptions({ confirm }),
+    );
+
+    expect(accepted).toMatchObject({
+      ok: true,
+      tool: "nexus_image_generate",
+      result: { generated: true },
+    });
+    expect(handler).toHaveBeenCalledOnce();
+    // The already-approved autopilot mission does not add a second modal.
+    expect(confirm).not.toHaveBeenCalled();
+
+    handler.mockClear();
+    confirm.mockClear();
+    resetGateForTests();
+    const maker = PET_STUDIO_SQUAD.agents[0]!;
+    const ordinary = mintToken({
+      label: "ordinary-orchestrator",
+      role: "orchestrator",
+      missionId: TEST_MISSION_ID,
+      scope: auditScope,
+      allowedTools: [...(maker.allowedTools ?? [])],
+    });
+    const denied = await dispatchToolCall(
+      "http-mcp",
+      registryWith(tool),
+      tool.name,
+      { prompt: "must not run" },
+      ordinary,
+      standardWorkflowOptions({ confirm }),
+    );
+
+    expect(denied).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining("outside this agent's allowlist"),
+    });
+    expect(handler).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      toolName: "nexus_file_write",
+      args: {
+        path: ".agents/skills/post-scan/SKILL.md",
+        content: "# injected",
+      },
+      error: "Codex control path",
+    },
+    {
+      toolName: "nexus_editor_apply_patch",
+      args: {
+        patch:
+          "[packages/app/.codex/skills/post-scan/SKILL.md#1A2B]\n" +
+          "INS.HEAD:\n+# injected\n",
+      },
+      error: "Codex control path",
+    },
+    {
+      toolName: "nexus_terminal_run",
+      args: { command: "mkdir -p .agents/skills/post-scan" },
+      error: "inherited Codex process sandbox",
+    },
+    {
+      toolName: "nexus_bg_run",
+      args: { command: "mkdir -p .codex/skills/post-scan" },
+      error: "inherited Codex process sandbox",
+    },
+    {
+      toolName: "nexus_git_branch_switch",
+      args: { name: "attacker-with-new-skill" },
+      error: "inherited Codex process sandbox",
+    },
+  ])(
+    "closes the null/null, no-PREVC SkillsWatcher bypass through $toolName",
+    async ({ toolName, args, error }) => {
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      const confirm = vi.fn(async () => true);
+      const context = missionContext(undefined, null, "codex");
+      expect(context).toMatchObject({
+        allowedTools: null,
+        allowedSkills: null,
+        governedNativeProvider: "codex",
+      });
+      expect(context.contextRevision).toBeUndefined();
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: toolName,
+          description: toolName,
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        toolName,
+        args,
+        context,
+        standardWorkflowOptions({ confirm }),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringContaining(error),
+      });
+      expect(handler).not.toHaveBeenCalled();
+      expect(confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it("blocks an initially unbound worker on both the first and repeated main-owned process call", async () => {
+    const handler = vi.fn(async () => ({ shouldNotRun: true }));
+    const confirm = vi.fn(async () => true);
+    const registry = registryWith({
+      name: "nexus_terminal_run",
+      description: "terminal",
+      inputSchema: { type: "object", properties: {} },
+      handler,
+    });
+    const context = missionContext(undefined, null, "codex");
+
+    const first = await dispatchToolCall(
+      "http-mcp",
+      registry,
+      "nexus_terminal_run",
+      { command: "npm test" },
+      context,
+      standardWorkflowOptions({ confirm }),
+    );
+    const repeated = await dispatchToolCall(
+      "http-mcp",
+      registry,
+      "nexus_terminal_run",
+      { command: "npm test" },
+      context,
+      standardWorkflowOptions({ confirm }),
+    );
+
+    expect(first).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining("inherited Codex process sandbox"),
+    });
+    expect(repeated).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining("inherited Codex process sandbox"),
+    });
+    expect(context.contextRevision).toBeUndefined();
+    expect(handler).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("skips per-action confirmation for an approved mission (autopilot)", async () => {
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const confirm = vi.fn(async () => true);
     const registry = registryWith({
-      name: 'nexus_terminal_run',
-      description: 'terminal',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_terminal_run",
+      description: "terminal",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
     const context = missionContext();
     const args = { command: 'ssh vps "hostname && uptime"' };
 
     const first = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_terminal_run',
+      "nexus_terminal_run",
       args,
       context,
-      workflowOptions({ confirm }),
+      opsWorkflowOptions({ confirm }),
     );
     const second = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_terminal_run',
+      "nexus_terminal_run",
       args,
       context,
-      workflowOptions({ confirm }),
+      opsWorkflowOptions({ confirm }),
     );
     const testRun = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_terminal_run',
-      { command: 'npm test' },
+      "nexus_terminal_run",
+      { command: "npm test" },
       context,
-      workflowOptions({ confirm }),
+      opsWorkflowOptions({ confirm }),
     );
 
     expect(first.ok).toBe(true);
@@ -310,65 +550,67 @@ describe('MCP dispatch effect safety', () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
-  it('requires fresh per-action consent for persistent cron mutations', async () => {
+  it("requires fresh per-action consent for persistent cron mutations", async () => {
     const handler = vi.fn(async () => ({ created: true }));
     const confirm = vi.fn(async () => false);
     const registry = registryWith({
-      name: 'nexus_cron',
-      description: 'persistent cron',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_cron",
+      description: "persistent cron",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_cron',
-      { action: 'create', name: 'nightly' },
-      missionContext(undefined, ['nexus_cron']),
+      "nexus_cron",
+      { action: "create", name: "nightly" },
+      missionContext(undefined, ["nexus_cron"]),
       workflowOptions({ confirm }),
     );
 
-    expect(result).toMatchObject({ ok: false, error: 'user_denied' });
+    expect(result).toMatchObject({ ok: false, error: "user_denied" });
     expect(confirm).toHaveBeenCalledOnce();
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('passes an exact one-shot consent receipt to an approved cron mutation', async () => {
-    const handler = vi.fn(async (
-      _args: Record<string, unknown>,
-      _ctx: unknown,
-      invocation?: {
-        exactUserConsent?: {
-          toolName: string;
-          action: string;
-          grantedAt: number;
-          receiptId: string;
-        };
-      },
-    ) => invocation?.exactUserConsent);
+  it("passes an exact one-shot consent receipt to an approved cron mutation", async () => {
+    const handler = vi.fn(
+      async (
+        _args: Record<string, unknown>,
+        _ctx: unknown,
+        invocation?: {
+          exactUserConsent?: {
+            toolName: string;
+            action: string;
+            grantedAt: number;
+            receiptId: string;
+          };
+        },
+      ) => invocation?.exactUserConsent,
+    );
     const confirm = vi.fn(async () => true);
     const registry = registryWith({
-      name: 'nexus_cron',
-      description: 'persistent cron',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_cron",
+      description: "persistent cron",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_cron',
-      { action: 'create', name: 'nightly' },
-      missionContext(undefined, ['nexus_cron']),
+      "nexus_cron",
+      { action: "create", name: "nightly" },
+      missionContext(undefined, ["nexus_cron"]),
       workflowOptions({ confirm }),
     );
 
     expect(result).toMatchObject({
       ok: true,
       result: {
-        toolName: 'cron',
-        action: 'create',
+        toolName: "cron",
+        action: "create",
         grantedAt: expect.any(Number),
         receiptId: expect.stringMatching(
           /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -379,22 +621,22 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('keeps cron list observational inside an approved mission', async () => {
+  it("keeps cron list observational inside an approved mission", async () => {
     const handler = vi.fn(async () => []);
     const confirm = vi.fn(async () => false);
     const registry = registryWith({
-      name: 'nexus_cron',
-      description: 'persistent cron',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_cron",
+      description: "persistent cron",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_cron',
-      { action: 'list' },
-      missionContext(undefined, ['nexus_cron']),
+      "nexus_cron",
+      { action: "list" },
+      missionContext(undefined, ["nexus_cron"]),
       workflowOptions({ confirm }),
     );
 
@@ -403,59 +645,59 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('still requires confirmation for destructive commands in an approved mission', async () => {
+  it("still requires confirmation for destructive commands in an approved mission", async () => {
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const confirm = vi.fn(async () => false);
     const registry = registryWith({
-      name: 'nexus_terminal_run',
-      description: 'terminal',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_terminal_run",
+      description: "terminal",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_terminal_run',
-      { command: 'rm -rf ~/projeto' },
+      "nexus_terminal_run",
+      { command: "rm -rf ~/projeto" },
       missionContext(),
-      workflowOptions({ confirm }),
+      opsWorkflowOptions({ confirm }),
     );
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe('user_denied');
+    expect(result.error).toBe("user_denied");
     expect(confirm).toHaveBeenCalledOnce();
     expect(handler).not.toHaveBeenCalled();
   });
 
   it.each([
-    'nexus_catalog_install',
-    'catalog_install',
-    'nexus_agent_spec_write',
-    'agent_spec_write',
-    'nexus_squad_save',
-    'squad_save',
+    "nexus_catalog_install",
+    "catalog_install",
+    "nexus_agent_spec_write",
+    "agent_spec_write",
+    "nexus_squad_save",
+    "squad_save",
   ])(
-    'routes global instruction mutation %s exclusively to exact native review',
+    "routes global instruction mutation %s exclusively to exact native review",
     async (toolName) => {
       const handler = vi.fn(async () => ({ ok: true }));
       const confirm = vi.fn(async () => true);
       const registry = registryWith({
         name: toolName,
-        description: 'global instruction mutation',
-        inputSchema: { type: 'object', properties: {} },
+        description: "global instruction mutation",
+        inputSchema: { type: "object", properties: {} },
         handler,
       });
 
       const result = await dispatchToolCall(
-        'http-mcp',
+        "http-mcp",
         registry,
         toolName,
-        toolName.includes('catalog')
-          ? { kind: 'agent', slug: 'reviewer' }
-          : toolName.includes('squad')
-            ? { squad: { id: 'reviewers', name: 'Reviewers', agents: [] } }
-            : { name: 'reviewer', systemPrompt: 'sensitive suffix' },
+        toolName.includes("catalog")
+          ? { kind: "agent", slug: "reviewer" }
+          : toolName.includes("squad")
+            ? { squad: { id: "reviewers", name: "Reviewers", agents: [] } }
+            : { name: "reviewer", systemPrompt: "sensitive suffix" },
         missionContext(undefined, [toolName]),
         workflowOptions({ confirm }),
       );
@@ -463,20 +705,20 @@ describe('MCP dispatch effect safety', () => {
       expect(result).toMatchObject({
         ok: false,
         denied: true,
-        error: expect.stringContaining('renderer_exact_confirmation_required'),
+        error: expect.stringContaining("renderer_exact_confirmation_required"),
       });
       expect(confirm).not.toHaveBeenCalled();
       expect(handler).not.toHaveBeenCalled();
     },
   );
 
-  it('denies at the intent gate (no modal) when the mission has no current approval', async () => {
+  it("denies at the intent gate (no modal) when the mission has no current approval", async () => {
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const confirm = vi.fn(async () => true);
     const registry = registryWith({
-      name: 'nexus_terminal_run',
-      description: 'terminal',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_terminal_run",
+      description: "terminal",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
     const options = workflowOptions({ confirm });
@@ -496,10 +738,10 @@ describe('MCP dispatch effect safety', () => {
     };
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_terminal_run',
-      { command: 'npm test' },
+      "nexus_terminal_run",
+      { command: "npm test" },
       missionContext(),
       options,
     );
@@ -512,19 +754,19 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('blocks an unbound user effect before confirmation or handler execution', async () => {
+  it("blocks an unbound user effect before confirmation or handler execution", async () => {
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const confirm = vi.fn(async () => true);
     const result = await dispatchToolCall(
-      'ipc-renderer',
+      "ipc-renderer",
       registryWith({
-        name: 'nexus_terminal_run',
-        description: 'terminal',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_terminal_run",
+        description: "terminal",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_terminal_run',
-      { command: 'npm test' },
+      "nexus_terminal_run",
+      { command: "npm test" },
       userContext(),
       { confirm },
     );
@@ -532,29 +774,29 @@ describe('MCP dispatch effect safety', () => {
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      error: expect.stringContaining('missionId and contextRevision'),
+      error: expect.stringContaining("missionId and contextRevision"),
     });
     expect(confirm).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('denies unbound bootstrap and handoff effects at the dispatch boundary', async () => {
-    for (const toolName of [
-      'nexus_context_doctor',
-      'nexus_handoff_submit',
-    ]) {
+  it("denies unbound bootstrap and handoff effects at the dispatch boundary", async () => {
+    for (const toolName of ["nexus_context_doctor", "nexus_handoff_submit"]) {
       const handler = vi.fn(async () => ({ ok: true }));
       const result = await dispatchToolCall(
-        'http-mcp',
+        "http-mcp",
         registryWith({
           name: toolName,
-          description: 'mission-bound effect',
-          inputSchema: { type: 'object', properties: {} },
+          description: "mission-bound effect",
+          inputSchema: { type: "object", properties: {} },
           handler,
         }),
         toolName,
-        toolName === 'nexus_handoff_submit'
-          ? { status: 'partial', summary: 'A real handoff summary for the test.' }
+        toolName === "nexus_handoff_submit"
+          ? {
+              status: "partial",
+              summary: "A real handoff summary for the test.",
+            }
           : {},
         userContext(),
       );
@@ -562,28 +804,28 @@ describe('MCP dispatch effect safety', () => {
       expect(result).toMatchObject({
         ok: false,
         denied: true,
-        error: expect.stringContaining('mission'),
+        error: expect.stringContaining("mission"),
       });
       expect(handler).not.toHaveBeenCalled();
     }
   });
 
-  it('allows memory_retain as a missionless free-pane effect (bootstrap exemption)', async () => {
+  it("allows memory_retain as a missionless free-pane effect (bootstrap exemption)", async () => {
     // A memória agentic é compartilhada por todas as CLIs hospedadas; retain
     // precisa rodar em pane livre (sem missão). A exención é ESTREITA por nome:
     // o teste acima prova que context_doctor (também bootstrap-authority) segue
     // bloqueado sem missão.
     const handler = vi.fn(async () => ({ ok: true }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_memory_retain',
-        description: 'agentic memory retain',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_memory_retain",
+        description: "agentic memory retain",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_memory_retain',
-      { content: 'projeto usa better-sqlite3', kind: 'fact' },
+      "nexus_memory_retain",
+      { content: "projeto usa better-sqlite3", kind: "fact" },
       userContext(),
     );
 
@@ -591,7 +833,7 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('allows context_draft_review from an unbound independent reviewer pane', async () => {
+  it("allows context_draft_review from an unbound independent reviewer pane", async () => {
     // Drafts de contexto de projeto têm missionId nulo e o reviewer pane é
     // deliberadamente spawnado sem vínculo de missão (independência do autor;
     // cli-context-draft-reviewer só vincula quando o draft tem missão). A
@@ -600,24 +842,24 @@ describe('MCP dispatch effect safety', () => {
     // nome, como memory_retain — context_doctor segue bloqueado sem missão.
     resetGateForTests();
     const reviewerContext = mintToken({
-      label: 'context-reviewer-test',
-      role: 'worker',
+      label: "context-reviewer-test",
+      role: "worker",
       scope: auditScope,
     });
     const handler = vi.fn(async () => ({ ok: true }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_context_draft_review',
-        description: 'independent context draft review',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_context_draft_review",
+        description: "independent context draft review",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_context_draft_review',
+      "nexus_context_draft_review",
       {
-        draftId: 'draft-test-1',
-        decision: 'approve',
-        rationale: 'sources re-verified against the checkout.',
+        draftId: "draft-test-1",
+        decision: "approve",
+        rationale: "sources re-verified against the checkout.",
       },
       reviewerContext,
     );
@@ -626,19 +868,19 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('allows a confirmed renderer UI action without mission authority', async () => {
+  it("allows a confirmed renderer UI action without mission authority", async () => {
     const handler = vi.fn(async () => ({ ok: true }));
     const confirm = vi.fn(async () => true);
     const result = await dispatchToolCall(
-      'ipc-renderer',
+      "ipc-renderer",
       registryWith({
-        name: 'nexus_ui_action',
-        description: 'bounded main-authorized Nexus UI action',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_ui_action",
+        description: "bounded main-authorized Nexus UI action",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_ui_action',
-      { action: 'click', ref: 'u1e1' },
+      "nexus_ui_action",
+      { action: "click", ref: "u1e1" },
       userContext(),
       { confirm },
     );
@@ -648,19 +890,19 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('rejects UI action authority outside the renderer user boundary', async () => {
+  it("rejects UI action authority outside the renderer user boundary", async () => {
     const handler = vi.fn(async () => ({ ok: true }));
     const confirm = vi.fn(async () => true);
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_ui_action',
-        description: 'bounded main-authorized Nexus UI action',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_ui_action",
+        description: "bounded main-authorized Nexus UI action",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_ui_action',
-      { action: 'click', ref: 'u1e1' },
+      "nexus_ui_action",
+      { action: "click", ref: "u1e1" },
       userContext(),
       { confirm },
     );
@@ -668,25 +910,25 @@ describe('MCP dispatch effect safety', () => {
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      error: expect.stringContaining('renderer user authority'),
+      error: expect.stringContaining("renderer user authority"),
     });
     expect(confirm).not.toHaveBeenCalled();
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('ignores stale registry confirmation metadata for read-only policy', async () => {
-    const handler = vi.fn(async () => ({ text: 'safe' }));
+  it("ignores stale registry confirmation metadata for read-only policy", async () => {
+    const handler = vi.fn(async () => ({ text: "safe" }));
     const confirm = vi.fn(async () => true);
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_pane_read',
-        description: 'read',
+        name: "nexus_pane_read",
+        description: "read",
         requiresConfirm: true,
-        inputSchema: { type: 'object', properties: {} },
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_pane_read',
+      "nexus_pane_read",
       {},
       userContext(),
       { confirm },
@@ -697,53 +939,59 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('keeps handoff submission prompt-free for a mission-bound worker', async () => {
+  it("cannot turn a direct main dispatch into a physical handoff receipt", async () => {
     const handler = vi.fn(async () => ({ stopGateSatisfied: false }));
     const confirm = vi.fn(async () => true);
+    const ctx = missionContext();
+    bindTokenToSession(ctx.token, "session-handoff-worker");
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_handoff_submit',
-        description: 'handler-owned handoff authority',
+        name: "nexus_handoff_submit",
+        description: "handler-owned handoff authority",
         requiresConfirm: true,
-        inputSchema: { type: 'object', properties: {} },
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_handoff_submit',
-      { status: 'partial', summary: 'A bounded test handoff summary.' },
-      missionContext(),
+      "nexus_handoff_submit",
+      { status: "partial", summary: "A bounded test handoff summary." },
+      ctx,
       workflowOptions({ confirm }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/physical agent transport boundary/i),
+    });
+    expect(result.effectMayHaveCommitted).toBeUndefined();
     expect(confirm).not.toHaveBeenCalled();
-    expect(handler).toHaveBeenCalledOnce();
+    expect(handler).not.toHaveBeenCalled();
   });
 
-  it('denies orchestrator delegation before intent dispatch (intent-first)', async () => {
-    const handler = vi.fn(async () => ({ paneId: 'pane-worker' }));
+  it("denies orchestrator delegation before intent dispatch (intent-first)", async () => {
+    const handler = vi.fn(async () => ({ paneId: "pane-worker" }));
     const confirm = vi.fn(async () => true);
     // Pre-dispatch mission: no approved contract — must not spawn workers.
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_pane_spawn',
-        description: 'handler-owned bounded delegation',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_pane_spawn",
+        description: "handler-owned bounded delegation",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_pane_spawn',
-      { agentName: 'worker-a', prompt: 'Inspect the dirty checkout.' },
+      "nexus_pane_spawn",
+      { agentName: "worker-a", prompt: "Inspect the dirty checkout." },
       orchestratorMissionContext(),
       {
         confirm,
         resolveMissionForIntentGate: () => ({
           mission: {
             ...dispatchedMissionFixture().mission,
-            status: 'pending',
-            intentState: 'awaiting_goal',
+            status: "pending",
+            intentState: "awaiting_goal",
             intentContract: undefined,
-            description: '',
+            description: "",
           },
           taskCount: 0,
           workerPaneCount: 0,
@@ -754,24 +1002,24 @@ describe('MCP dispatch effect safety', () => {
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      error: expect.stringContaining('dispatch_required'),
+      error: expect.stringContaining("dispatch_required"),
     });
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('lets a mission orchestrator delegate only after intent dispatch', async () => {
-    const handler = vi.fn(async () => ({ paneId: 'pane-worker' }));
+  it("lets a mission orchestrator delegate only after intent dispatch", async () => {
+    const handler = vi.fn(async () => ({ paneId: "pane-worker" }));
     const confirm = vi.fn(async () => true);
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_pane_spawn',
-        description: 'handler-owned bounded delegation',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_pane_spawn",
+        description: "handler-owned bounded delegation",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_pane_spawn',
-      { agentName: 'worker-a', prompt: 'Inspect the dirty checkout.' },
+      "nexus_pane_spawn",
+      { agentName: "worker-a", prompt: "Inspect the dirty checkout." },
       orchestratorMissionContext(),
       { confirm, ...workflowOptions() },
     );
@@ -781,21 +1029,21 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('revalidates the exact intent after asynchronous confirmation', async () => {
+  it("revalidates the exact intent after asynchronous confirmation", async () => {
     const handler = vi.fn(async () => ({ bytes: 1 }));
     let current = dispatchedMissionFixture();
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_terminal_run',
-        description: 'terminal',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_terminal_run",
+        description: "terminal",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_terminal_run',
+      "nexus_terminal_run",
       // Comando destrutivo: mesmo com missão aprovada o modal dispara — é o
       // caminho onde a revalidação pós-confirmação continua existindo.
-      { command: 'rm -rf /tmp/nexus-revalidate-intent' },
+      { command: "rm -rf /tmp/nexus-revalidate-intent" },
       missionContext(),
       {
         ...workflowOptions(),
@@ -804,8 +1052,8 @@ describe('MCP dispatch effect safety', () => {
             ...current,
             mission: {
               ...current.mission,
-              status: 'pending',
-              intentState: 'ready_to_start',
+              status: "pending",
+              intentState: "ready_to_start",
               intentVersion: 2,
               intentContract: {
                 ...current.mission.intentContract!,
@@ -824,24 +1072,24 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('revalidates the frozen workflow revision after confirmation', async () => {
-    const handler = vi.fn(async () => ({ exitCode: 0 }));
+  it("revalidates the frozen workflow revision after confirmation", async () => {
+    const handler = vi.fn(async () => ({ created: true }));
     let revision = TEST_CONTEXT_REVISION;
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_terminal_run',
-        description: 'terminal',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_cron",
+        description: "persistent cron",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_terminal_run',
-      { command: 'rm -rf /tmp/nexus-revalidate-revision' },
-      missionContext(TEST_CONTEXT_REVISION),
+      "nexus_cron",
+      { action: "create", name: "revision-race" },
+      missionContext(TEST_CONTEXT_REVISION, ["nexus_cron"]),
       {
         ...workflowOptions(),
         confirm: async () => {
-          revision = 'new-context-revision';
+          revision = "new-context-revision";
           return true;
         },
         resolveWorkflowAuthority: () => ({
@@ -855,23 +1103,23 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('fails closed when PREVC changes while an effect handler is awaiting', async () => {
+  it("fails closed when PREVC changes while an effect handler is awaiting", async () => {
     let revision = TEST_CONTEXT_REVISION;
     const handler = vi.fn(async () => {
-      revision = 'context-revision-refrozen-during-effect';
+      revision = "context-revision-refrozen-during-effect";
       return { exitCode: 0 };
     });
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_terminal_run',
-        description: 'terminal',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_file_write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_terminal_run',
-      { command: 'npm test -- --runInBand' },
+      "nexus_file_write",
+      { path: "src/prevc-race.ts", content: "export {};" },
       missionContext(TEST_CONTEXT_REVISION),
       {
         ...workflowOptions(),
@@ -884,32 +1132,32 @@ describe('MCP dispatch effect safety', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: expect.stringContaining('workflow_authority_revoked'),
+      error: expect.stringContaining("workflow_authority_revoked"),
       effectMayHaveCommitted: true,
     });
     expect(handler).toHaveBeenCalledOnce();
     const entries = readAuditLog(auditContext);
-    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'error']);
+    expect(entries.map((entry) => entry.result)).toEqual(["intent", "error"]);
     expect(entries[0]?.invocation_id).toBe(entries[1]?.invocation_id);
   });
 
-  it('fails closed without leaking store details when budget reservation fails', async () => {
+  it("fails closed without leaking store details when budget reservation fails", async () => {
     const handler = vi.fn(async () => ({ bytes: 1 }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_file_write',
-        description: 'write',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_file_write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_file_write',
-      { path: 'src/a.ts', content: 'x' },
+      "nexus_file_write",
+      { path: "src/a.ts", content: "x" },
       missionContext(),
       {
         ...workflowOptions({ confirm: async () => true }),
         reserveMissionBudget: () => {
-          throw new Error('sqlite failed at /private/secret/runtime.sqlite3');
+          throw new Error("sqlite failed at /private/secret/runtime.sqlite3");
         },
       },
     );
@@ -917,16 +1165,16 @@ describe('MCP dispatch effect safety', () => {
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      error: 'budget_reservation_unavailable',
+      error: "budget_reservation_unavailable",
     });
-    expect(result.error).not.toContain('/private/secret');
+    expect(result.error).not.toContain("/private/secret");
     expect(handler).not.toHaveBeenCalled();
     const entries = readAuditLog(auditContext);
-    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'error']);
+    expect(entries.map((entry) => entry.result)).toEqual(["intent", "error"]);
     expect(entries[0]?.invocation_id).toBe(entries[1]?.invocation_id);
   });
 
-  it('never reserves budget when the correlated intent insert fails', async () => {
+  it("never reserves budget when the correlated intent insert fails", async () => {
     const db = auditManager.open(auditScope).db;
     const reserveMissionBudget = vi.fn();
     db.exec(`
@@ -939,15 +1187,15 @@ describe('MCP dispatch effect safety', () => {
     `);
     try {
       const result = await dispatchToolCall(
-        'http-mcp',
+        "http-mcp",
         registryWith({
-          name: 'nexus_file_write',
-          description: 'write',
-          inputSchema: { type: 'object', properties: {} },
+          name: "nexus_file_write",
+          description: "write",
+          inputSchema: { type: "object", properties: {} },
           handler: async () => ({ bytes: 1 }),
         }),
-        'nexus_file_write',
-        { path: 'src/a.ts', content: 'x' },
+        "nexus_file_write",
+        { path: "src/a.ts", content: "x" },
         missionContext(),
         {
           ...workflowOptions({ confirm: async () => true }),
@@ -955,47 +1203,47 @@ describe('MCP dispatch effect safety', () => {
         },
       );
 
-      expect(result).toMatchObject({ ok: false, error: 'audit_unavailable' });
+      expect(result).toMatchObject({ ok: false, error: "audit_unavailable" });
       expect(reserveMissionBudget).not.toHaveBeenCalled();
       expect(readAuditLog(auditContext)).toEqual([]);
     } finally {
-      db.exec('DROP TRIGGER IF EXISTS reject_effect_intent_audit');
+      db.exec("DROP TRIGGER IF EXISTS reject_effect_intent_audit");
     }
   });
 
-  it('reserves budget before the handler and keeps the charge when the handler fails', async () => {
+  it("reserves budget before the handler and keeps the charge when the handler fails", async () => {
     const order: string[] = [];
     const handler = vi.fn(async () => {
-      order.push('handler');
-      throw new Error('effect failed');
+      order.push("handler");
+      throw new Error("effect failed");
     });
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_pane_spawn',
-        description: 'spawn',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_pane_spawn",
+        description: "spawn",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_pane_spawn',
-      { agentName: 'worker-a' },
+      "nexus_pane_spawn",
+      { agentName: "worker-a" },
       orchestratorMissionContext(),
       {
         ...workflowOptions(),
         reserveMissionBudget: () => {
-          expect(readAuditLog(auditContext).map((entry) => entry.result)).toEqual([
-            'intent',
-          ]);
-          order.push('reserve');
+          expect(
+            readAuditLog(auditContext).map((entry) => entry.result),
+          ).toEqual(["intent"]);
+          order.push("reserve");
         },
       },
     );
 
     expect(result).toMatchObject({ ok: false, effectMayHaveCommitted: true });
-    expect(order).toEqual(['reserve', 'handler']);
+    expect(order).toEqual(["reserve", "handler"]);
   });
 
-  it('serializes concurrent reservations at maxSteps', async () => {
+  it("serializes concurrent reservations at maxSteps", async () => {
     let releaseFirst!: () => void;
     const firstHandler = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -1017,7 +1265,7 @@ describe('MCP dispatch effect safety', () => {
     const handler = vi.fn(async () => {
       handlerCalls += 1;
       if (handlerCalls === 1) await firstHandler;
-      return { paneId: 'worker' };
+      return { paneId: "worker" };
     });
     const options: McpDispatchOptions = {
       ...workflowOptions(),
@@ -1029,7 +1277,7 @@ describe('MCP dispatch effect safety', () => {
       reserveMissionBudget: () => {
         const contract = state.mission.intentContract!;
         if ((contract.spentSteps ?? 0) >= (contract.budgets.maxSteps ?? 500)) {
-          throw new Error('budget_exhausted: maxSteps reached');
+          throw new Error("budget_exhausted: maxSteps reached");
         }
         state = {
           ...state,
@@ -1045,19 +1293,29 @@ describe('MCP dispatch effect safety', () => {
       },
     };
     const registry = registryWith({
-      name: 'nexus_pane_spawn',
-      description: 'spawn',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_pane_spawn",
+      description: "spawn",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
 
     const dispatchContext = orchestratorMissionContext();
     const first = dispatchToolCall(
-      'http-mcp', registry, 'nexus_pane_spawn', {}, dispatchContext, options,
+      "http-mcp",
+      registry,
+      "nexus_pane_spawn",
+      {},
+      dispatchContext,
+      options,
     );
     await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
     const second = await dispatchToolCall(
-      'http-mcp', registry, 'nexus_pane_spawn', {}, dispatchContext, options,
+      "http-mcp",
+      registry,
+      "nexus_pane_spawn",
+      {},
+      dispatchContext,
+      options,
     );
     releaseFirst();
     const firstResult = await first;
@@ -1066,27 +1324,27 @@ describe('MCP dispatch effect safety', () => {
     expect(second).toMatchObject({
       ok: false,
       denied: true,
-      error: expect.stringContaining('budget_exhausted'),
+      error: expect.stringContaining("budget_exhausted"),
     });
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects pre-contract delegation from an unbound user or worker', async () => {
-    const handler = vi.fn(async () => ({ paneId: 'must-not-spawn' }));
+  it("rejects pre-contract delegation from an unbound user or worker", async () => {
+    const handler = vi.fn(async () => ({ paneId: "must-not-spawn" }));
     const registry = registryWith({
-      name: 'nexus_pane_spawn',
-      description: 'bounded delegation',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_pane_spawn",
+      description: "bounded delegation",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
     const awaitingOpts: McpDispatchOptions = {
       resolveMissionForIntentGate: () => ({
         mission: {
           ...dispatchedMissionFixture().mission,
-          status: 'pending',
-          intentState: 'awaiting_goal',
+          status: "pending",
+          intentState: "awaiting_goal",
           intentContract: undefined,
-          description: '',
+          description: "",
         },
         taskCount: 0,
         workerPaneCount: 0,
@@ -1094,10 +1352,20 @@ describe('MCP dispatch effect safety', () => {
     };
 
     const fromUser = await dispatchToolCall(
-      'http-mcp', registry, 'nexus_pane_spawn', {}, userContext(), awaitingOpts,
+      "http-mcp",
+      registry,
+      "nexus_pane_spawn",
+      {},
+      userContext(),
+      awaitingOpts,
     );
     const fromWorker = await dispatchToolCall(
-      'http-mcp', registry, 'nexus_pane_spawn', {}, missionContext(), awaitingOpts,
+      "http-mcp",
+      registry,
+      "nexus_pane_spawn",
+      {},
+      missionContext(),
+      awaitingOpts,
     );
 
     expect(fromUser).toMatchObject({ ok: false, denied: true });
@@ -1105,20 +1373,28 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('permits repository sync only from the renderer-owned user path', async () => {
-    const handler = vi.fn(async () => ({ status: 'up_to_date' }));
+  it("permits repository sync only from the renderer-owned user path", async () => {
+    const handler = vi.fn(async () => ({ status: "up_to_date" }));
     const registry = registryWith({
-      name: 'nexus_git_sync',
-      description: 'narrow local fast-forward',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_git_sync",
+      description: "narrow local fast-forward",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
 
     const fromRenderer = await dispatchToolCall(
-      'ipc-renderer', registry, 'nexus_git_sync', {}, userContext(),
+      "ipc-renderer",
+      registry,
+      "nexus_git_sync",
+      {},
+      userContext(),
     );
     const fromAgent = await dispatchToolCall(
-      'http-mcp', registry, 'nexus_git_sync', {}, missionContext(),
+      "http-mcp",
+      registry,
+      "nexus_git_sync",
+      {},
+      missionContext(),
     );
 
     expect(fromRenderer).toMatchObject({ ok: true });
@@ -1126,28 +1402,28 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('lets the exact orchestrator block a mission when bootstrap cannot freeze', async () => {
-    const handler = vi.fn(async () => ({ status: 'blocked' }));
+  it("lets the exact orchestrator block a mission when bootstrap cannot freeze", async () => {
+    const handler = vi.fn(async () => ({ status: "blocked" }));
     // Fail-safe demotion to blocked is allowed even before intent dispatch.
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_mission_set_status',
-        description: 'mission status guarded by its handler',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_mission_set_status",
+        description: "mission status guarded by its handler",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_mission_set_status',
-      { missionId: TEST_MISSION_ID, status: 'blocked' },
+      "nexus_mission_set_status",
+      { missionId: TEST_MISSION_ID, status: "blocked" },
       orchestratorMissionContext(),
       {
         resolveMissionForIntentGate: () => ({
           mission: {
             ...dispatchedMissionFixture().mission,
-            status: 'pending',
-            intentState: 'awaiting_goal',
+            status: "pending",
+            intentState: "awaiting_goal",
             intentContract: undefined,
-            description: '',
+            description: "",
           },
           taskCount: 0,
           workerPaneCount: 0,
@@ -1159,7 +1435,7 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('ops lane runs execution effects without a frozen PREVC contract', async () => {
+  it("ops lane runs execution effects without a frozen PREVC contract", async () => {
     // PREVC degrada, não bloqueia: sem contrato congelado a autoridade de
     // produção é permissiva e a lane ops executa normalmente.
     workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
@@ -1167,14 +1443,14 @@ describe('MCP dispatch effect safety', () => {
     });
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_terminal_run',
-        description: 'terminal',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_terminal_run",
+        description: "terminal",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_terminal_run',
+      "nexus_terminal_run",
       { command: 'ssh vps "tar czf /backups/www.tgz /var/www"' },
       missionContext(),
       {
@@ -1189,21 +1465,21 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('standard lane executes without a frozen contract (PREVC degrades, never blocks)', async () => {
+  it("standard lane executes without a frozen contract (PREVC degrades, never blocks)", async () => {
     workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
       getMissionWorkflow: () => ({ contract: null, workflow: null }),
     });
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_terminal_run',
-        description: 'terminal',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_terminal_run",
+        description: "terminal",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_terminal_run',
-      { command: 'npm test' },
+      "nexus_terminal_run",
+      { command: "npm test" },
       missionContext(),
       {
         confirm: async () => true,
@@ -1217,21 +1493,21 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('file_write executes without a frozen contract', async () => {
+  it("file_write executes without a frozen contract", async () => {
     workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
       getMissionWorkflow: () => ({ contract: null, workflow: null }),
     });
     const handler = vi.fn(async () => ({ bytes: 1 }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_file_write',
-        description: 'write',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_file_write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_file_write',
-      { path: 'src/a.ts', content: 'x' },
+      "nexus_file_write",
+      { path: "src/a.ts", content: "x" },
       missionContext(),
       {
         confirm: async () => true,
@@ -1245,21 +1521,21 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('keeps .context/ read-only without a frozen contract (path target)', async () => {
+  it("keeps .context/ read-only without a frozen contract (path target)", async () => {
     workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
       getMissionWorkflow: () => ({ contract: null, workflow: null }),
     });
     const handler = vi.fn(async () => ({ bytes: 1 }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_file_write',
-        description: 'write',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_file_write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_file_write',
-      { path: '.context/config/policy.json', content: 'x' },
+      "nexus_file_write",
+      { path: ".context/config/policy.json", content: "x" },
       missionContext(),
       {
         confirm: async () => true,
@@ -1273,27 +1549,27 @@ describe('MCP dispatch effect safety', () => {
       ok: false,
       denied: true,
       error: expect.stringContaining(
-        'versioned context authority is read-only to executors',
+        "versioned context authority is read-only to executors",
       ),
     });
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('keeps .context/ read-only without a frozen contract (hashline patch target)', async () => {
+  it("keeps .context/ read-only without a frozen contract (hashline patch target)", async () => {
     workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
       getMissionWorkflow: () => ({ contract: null, workflow: null }),
     });
     const handler = vi.fn(async () => ({ ok: true }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_editor_apply_patch',
-        description: 'hashline patch',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_editor_apply_patch",
+        description: "hashline patch",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_editor_apply_patch',
-      { patch: '[.context/config/policy.json#1a2b]\nINS.TAIL:\n+{}\n' },
+      "nexus_editor_apply_patch",
+      { patch: "[.context/config/policy.json#1a2b]\nINS.TAIL:\n+{}\n" },
       missionContext(),
       {
         confirm: async () => true,
@@ -1307,34 +1583,34 @@ describe('MCP dispatch effect safety', () => {
       ok: false,
       denied: true,
       error: expect.stringContaining(
-        'versioned context authority is read-only to executors',
+        "versioned context authority is read-only to executors",
       ),
     });
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('frozen contract outside the execution stage still blocks execution effects', async () => {
+  it("frozen contract outside the execution stage still blocks execution effects", async () => {
     // Com contrato congelado o PREVC funciona como antes: stage errado bloqueia.
     workflowRegistryMocks.getContextWorkflowService.mockReturnValue({
       getMissionWorkflow: () => ({
         contract: { contract: { contextRevision: TEST_CONTEXT_REVISION } },
-        workflow: { stage: 'planning' },
+        workflow: { stage: "planning" },
       }),
       assertMutationAllowed: () => {
-        throw new Error('code mutation blocked during workflow stage planning');
+        throw new Error("code mutation blocked during workflow stage planning");
       },
     });
     const handler = vi.fn(async () => ({ bytes: 1 }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_file_write',
-        description: 'write',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_file_write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_file_write',
-      { path: 'src/a.ts', content: 'x' },
+      "nexus_file_write",
+      { path: "src/a.ts", content: "x" },
       missionContext(),
       {
         confirm: async () => true,
@@ -1348,24 +1624,24 @@ describe('MCP dispatch effect safety', () => {
       ok: false,
       denied: true,
       error: expect.stringContaining(
-        'code mutation blocked during workflow stage planning',
+        "code mutation blocked during workflow stage planning",
       ),
     });
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('ops lane still denies repo code mutations at the intent gate', async () => {
+  it("ops lane still denies repo code mutations at the intent gate", async () => {
     const handler = vi.fn(async () => ({ bytes: 1 }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_file_write',
-        description: 'write',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_file_write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_file_write',
-      { path: 'src/a.ts', content: 'x' },
+      "nexus_file_write",
+      { path: "src/a.ts", content: "x" },
       missionContext(),
       {
         confirm: async () => true,
@@ -1382,26 +1658,26 @@ describe('MCP dispatch effect safety', () => {
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      error: expect.stringContaining('lane ops'),
+      error: expect.stringContaining("lane ops"),
     });
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('binds PREVC effects to the frozen context without a human prompt', async () => {
+  it("binds PREVC effects to the frozen context without a human prompt", async () => {
     const handler = vi.fn(async (_args, ctx) => ({
       contextRevision: ctx.contextRevision,
     }));
     const confirm = vi.fn(async () => true);
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_sensor_run',
-        description: 'PREVC sensor authority',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_sensor_run",
+        description: "PREVC sensor authority",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_sensor_run',
-      { missionId: TEST_MISSION_ID, sensorId: 'unit' },
+      "nexus_sensor_run",
+      { missionId: TEST_MISSION_ID, sensorId: "unit" },
       missionContext(),
       workflowOptions({ confirm }),
     );
@@ -1415,64 +1691,68 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it('marks a failed PREVC handler as possibly committed without conflating it with confirmation', async () => {
+  it("marks a failed PREVC handler as possibly committed without conflating it with confirmation", async () => {
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_sensor_run',
-        description: 'PREVC sensor authority',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_sensor_run",
+        description: "PREVC sensor authority",
+        inputSchema: { type: "object", properties: {} },
         handler: async () => {
-          throw new Error('sensor receipt transport failed');
+          throw new Error("sensor receipt transport failed");
         },
       }),
-      'nexus_sensor_run',
-      { missionId: TEST_MISSION_ID, sensorId: 'unit' },
+      "nexus_sensor_run",
+      { missionId: TEST_MISSION_ID, sensorId: "unit" },
       missionContext(),
       workflowOptions(),
     );
 
     expect(result).toMatchObject({
       ok: false,
-      error: 'sensor receipt transport failed',
+      error: "sensor receipt transport failed",
       userAuthorized: false,
       effectMayHaveCommitted: true,
     });
   });
 
-  it('aborts an executing bootstrap handler when a newer intent preempts it', async () => {
+  it("aborts an executing bootstrap handler when a newer intent preempts it", async () => {
     let releaseStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       releaseStarted = resolve;
     });
     let receivedSignal: AbortSignal | undefined;
-    const handler = vi.fn(async (
-      _args: Record<string, unknown>,
-      _ctx: unknown,
-      invocation?: { signal?: AbortSignal },
-    ) => {
-      receivedSignal = invocation?.signal;
-      releaseStarted();
-      await new Promise<void>((_resolve, reject) => {
-        if (invocation?.signal?.aborted) {
-          reject(new Error('aborted'));
-          return;
-        }
-        invocation?.signal?.addEventListener(
-          'abort', () => reject(new Error('aborted')), { once: true },
-        );
-      });
-      return { refreshed: true };
-    });
+    const handler = vi.fn(
+      async (
+        _args: Record<string, unknown>,
+        _ctx: unknown,
+        invocation?: { signal?: AbortSignal },
+      ) => {
+        receivedSignal = invocation?.signal;
+        releaseStarted();
+        await new Promise<void>((_resolve, reject) => {
+          if (invocation?.signal?.aborted) {
+            reject(new Error("aborted"));
+            return;
+          }
+          invocation?.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("aborted")),
+            { once: true },
+          );
+        });
+        return { refreshed: true };
+      },
+    );
     const pending = dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_code_map_refresh',
-        description: 'warm orientation',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_code_map_refresh",
+        description: "warm orientation",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_code_map_refresh',
+      "nexus_code_map_refresh",
       {},
       orchestratorMissionContext(),
       workflowOptions(),
@@ -1483,83 +1763,80 @@ describe('MCP dispatch effect safety', () => {
     expect(receivedSignal?.aborted).toBe(true);
     expect(result).toMatchObject({
       ok: false,
-      error: expect.stringContaining('intent_preempted'),
+      error: expect.stringContaining("intent_preempted"),
       effectMayHaveCommitted: true,
     });
   });
 
-  it('allows a mission-bound read-only child while its orchestrator awaits review', async () => {
+  it("allows a mission-bound read-only child while its orchestrator awaits review", async () => {
     let releaseParent!: () => void;
     const parentWait = new Promise<void>((resolve) => {
       releaseParent = resolve;
     });
     const parentHandler = vi.fn(async () => {
       await parentWait;
-      return { paneId: 'reviewer-pane' };
+      return { paneId: "reviewer-pane" };
     });
-    const childGetHandler = vi.fn(async () => ({ status: 'proposed' }));
-    const childReviewHandler = vi.fn(async () => ({ status: 'approved' }));
+    const childGetHandler = vi.fn(async () => ({ status: "proposed" }));
+    const childReviewHandler = vi.fn(async () => ({ status: "approved" }));
     const parentContext = orchestratorMissionContext();
     const parent = dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_context_draft_review_run',
-        description: 'spawn and await an independent reviewer',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_context_draft_review_run",
+        description: "spawn and await an independent reviewer",
+        inputSchema: { type: "object", properties: {} },
         handler: parentHandler,
       }),
-      'nexus_context_draft_review_run',
-      { draftId: 'draft-security-test' },
+      "nexus_context_draft_review_run",
+      { draftId: "draft-security-test" },
       parentContext,
       workflowOptions(),
     );
     await vi.waitFor(() => expect(parentHandler).toHaveBeenCalledOnce());
 
     const childContext = mintToken({
-      label: 'context-reviewer-security-test',
-      role: 'worker',
+      label: "context-reviewer-security-test",
+      role: "worker",
       missionId: TEST_MISSION_ID,
       readOnly: true,
       scope: auditScope,
-      allowedTools: [
-        'nexus_context_draft_get',
-        'nexus_context_draft_review',
-      ],
+      allowedTools: ["nexus_context_draft_get", "nexus_context_draft_review"],
     });
     const childRegistry: McpRegistry = {
-      serverName: 'nexus-security-test',
-      serverVersion: '0.0.1',
+      serverName: "nexus-security-test",
+      serverVersion: "0.0.1",
       tools: [
         {
-          name: 'nexus_context_draft_get',
-          description: 'read the bound context draft',
-          inputSchema: { type: 'object', properties: {} },
+          name: "nexus_context_draft_get",
+          description: "read the bound context draft",
+          inputSchema: { type: "object", properties: {} },
           handler: childGetHandler,
         },
         {
-          name: 'nexus_context_draft_review',
-          description: 'persist the independent review verdict',
-          inputSchema: { type: 'object', properties: {} },
+          name: "nexus_context_draft_review",
+          description: "persist the independent review verdict",
+          inputSchema: { type: "object", properties: {} },
           handler: childReviewHandler,
         },
       ],
     };
     const childGet = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       childRegistry,
-      'nexus_context_draft_get',
-      { draftId: 'draft-security-test' },
+      "nexus_context_draft_get",
+      { draftId: "draft-security-test" },
       childContext,
       workflowOptions(),
     );
     const childReview = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       childRegistry,
-      'nexus_context_draft_review',
+      "nexus_context_draft_review",
       {
-        draftId: 'draft-security-test',
-        decision: 'approve',
-        rationale: 'The bound sources and hashes match the proposed content.',
+        draftId: "draft-security-test",
+        decision: "approve",
+        rationale: "The bound sources and hashes match the proposed content.",
       },
       childContext,
       workflowOptions(),
@@ -1571,73 +1848,85 @@ describe('MCP dispatch effect safety', () => {
     expect(childReviewHandler).toHaveBeenCalledOnce();
     expect(
       peekMissionPromptQueue(auditScope, TEST_MISSION_ID).executing?.body,
-    ).toBe(
-      'nexus_context_draft_review_run',
-    );
+    ).toBe("nexus_context_draft_review_run");
 
     releaseParent();
     await expect(parent).resolves.toMatchObject({ ok: true });
   });
 
-  it('blocks a stale token whose revision differs from the frozen contract', async () => {
+  it("blocks a stale token whose revision differs from the frozen contract", async () => {
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_terminal_run',
-        description: 'terminal',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_terminal_run",
+        description: "terminal",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_terminal_run',
-      { command: 'npm test' },
-      missionContext('stale-context-revision'),
+      "nexus_terminal_run",
+      { command: "npm test" },
+      missionContext("stale-context-revision"),
       workflowOptions({ confirm: async () => true }),
     );
 
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      error: expect.stringContaining('does not match the frozen mission'),
+      error: expect.stringContaining("does not match the frozen mission"),
     });
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('keeps read-only calls prompt-free across repeated invocations', async () => {
-    const handler = vi.fn(async () => ({ text: 'safe' }));
+  it("keeps read-only calls prompt-free across repeated invocations", async () => {
+    const handler = vi.fn(async () => ({ text: "safe" }));
     const confirm = vi.fn(async () => true);
     const registry = registryWith({
-      name: 'nexus_pane_read',
-      description: 'read',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_pane_read",
+      description: "read",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
     const context = userContext();
 
-    await dispatchToolCall('http-mcp', registry, 'nexus_pane_read', {}, context, {
-      confirm,
-    });
-    await dispatchToolCall('http-mcp', registry, 'nexus_pane_read', {}, context, {
-      confirm,
-    });
+    await dispatchToolCall(
+      "http-mcp",
+      registry,
+      "nexus_pane_read",
+      {},
+      context,
+      {
+        confirm,
+      },
+    );
+    await dispatchToolCall(
+      "http-mcp",
+      registry,
+      "nexus_pane_read",
+      {},
+      context,
+      {
+        confirm,
+      },
+    );
 
     expect(handler).toHaveBeenCalledTimes(2);
     expect(confirm).not.toHaveBeenCalled();
   });
 
-  it('does not start a handler when scoped audit persistence is unavailable', async () => {
-    const handler = vi.fn(async () => ({ text: 'must not run' }));
+  it("does not start a handler when scoped audit persistence is unavailable", async () => {
+    const handler = vi.fn(async () => ({ text: "must not run" }));
     disposeAuditLogRuntime();
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_pane_read',
-        description: 'read',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_pane_read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
         handler,
       }),
-      'nexus_pane_read',
+      "nexus_pane_read",
       {},
       userContext(),
     );
@@ -1645,59 +1934,59 @@ describe('MCP dispatch effect safety', () => {
     expect(handler).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: false,
-      error: expect.stringContaining('audit_unavailable'),
+      error: expect.stringContaining("audit_unavailable"),
     });
     configureAuditLogRuntime(auditManager);
   });
 
-  it('routes audit events from the immutable dispatch context, not global UI state', async () => {
+  it("routes audit events from the immutable dispatch context, not global UI state", async () => {
     const scopeB = testProjectScope({
       rootRealPath: testDir,
-      checkoutId: 'checkout-security-b',
+      checkoutId: "checkout-security-b",
     });
     clearAuditLogForTests({ scope: scopeB });
     const registry = registryWith({
-      name: 'nexus_pane_read',
-      description: 'read',
-      inputSchema: { type: 'object', properties: {} },
-      handler: async () => ({ text: 'ok' }),
+      name: "nexus_pane_read",
+      description: "read",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => ({ text: "ok" }),
     });
     const contextA = userContext();
     const contextB = mintToken({
-      label: 'security-test-b',
-      role: 'user',
+      label: "security-test-b",
+      role: "user",
       scope: scopeB,
     });
 
     await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_pane_read',
+      "nexus_pane_read",
       {},
       contextA,
     );
     await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_pane_read',
+      "nexus_pane_read",
       {},
       contextB,
     );
 
-    expect(readAuditLog(auditContext).map((entry) => entry.checkout_id)).toEqual([
-      auditScope.checkoutId,
-    ]);
-    expect(readAuditLog({ scope: scopeB }).map((entry) => entry.checkout_id)).toEqual([
-      scopeB.checkoutId,
-    ]);
+    expect(
+      readAuditLog(auditContext).map((entry) => entry.checkout_id),
+    ).toEqual([auditScope.checkoutId]);
+    expect(
+      readAuditLog({ scope: scopeB }).map((entry) => entry.checkout_id),
+    ).toEqual([scopeB.checkoutId]);
   });
 
-  it('persists a correlated intent before starting an effectful handler', async () => {
+  it("persists a correlated intent before starting an effectful handler", async () => {
     let entriesSeenByHandler = readAuditLog(auditContext);
     const registry = registryWith({
-      name: 'nexus_file_write',
-      description: 'write',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_file_write",
+      description: "write",
+      inputSchema: { type: "object", properties: {} },
       handler: async () => {
         entriesSeenByHandler = readAuditLog(auditContext);
         return { bytes: 1 };
@@ -1705,10 +1994,10 @@ describe('MCP dispatch effect safety', () => {
     });
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_file_write',
-      { path: 'src/a.ts', content: 'x' },
+      "nexus_file_write",
+      { path: "src/a.ts", content: "x" },
       missionContext(),
       workflowOptions({ confirm: async () => true }),
     );
@@ -1716,32 +2005,32 @@ describe('MCP dispatch effect safety', () => {
     expect(result.ok).toBe(true);
     expect(entriesSeenByHandler).toHaveLength(1);
     expect(entriesSeenByHandler[0]).toMatchObject({
-      tool: 'nexus_file_write',
-      result: 'intent',
+      tool: "nexus_file_write",
+      result: "intent",
       user_authorized: true,
-      project_id: 'project-test',
-      checkout_id: 'checkout-test',
+      project_id: "project-test",
+      checkout_id: "checkout-test",
       context_revision: TEST_CONTEXT_REVISION,
     });
     const entries = readAuditLog(auditContext);
-    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
+    expect(entries.map((entry) => entry.result)).toEqual(["intent", "ok"]);
     expect(entries[0].invocation_id).toBeTruthy();
     expect(entries[1].invocation_id).toBe(entries[0].invocation_id);
   });
 
-  it('reports effectMayHaveCommitted when outcome auditing fails after the handler ran', async () => {
+  it("reports effectMayHaveCommitted when outcome auditing fails after the handler ran", async () => {
     const unavailableAuditManager = new ProjectRuntimeManager({
-      baseDir: path.join(testDir, 'unavailable-audit-runtime'),
-      appVersion: 'security-test',
+      baseDir: path.join(testDir, "unavailable-audit-runtime"),
+      appVersion: "security-test",
       databaseFactory: (() => {
-        throw new Error('audit database unavailable');
+        throw new Error("audit database unavailable");
       }) as never,
     });
     let effectApplied = false;
     const registry = registryWith({
-      name: 'nexus_file_write',
-      description: 'write',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_file_write",
+      description: "write",
+      inputSchema: { type: "object", properties: {} },
       handler: async () => {
         effectApplied = true;
         configureAuditLogRuntime(unavailableAuditManager);
@@ -1750,10 +2039,10 @@ describe('MCP dispatch effect safety', () => {
     });
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_file_write',
-      { path: 'src/a.ts', content: 'x' },
+      "nexus_file_write",
+      { path: "src/a.ts", content: "x" },
       missionContext(),
       workflowOptions({ confirm: async () => true }),
     );
@@ -1763,59 +2052,61 @@ describe('MCP dispatch effect safety', () => {
     expect(effectApplied).toBe(true);
     expect(result).toMatchObject({
       ok: false,
-      tool: 'nexus_file_write',
+      tool: "nexus_file_write",
       effectMayHaveCommitted: true,
-      error: expect.stringContaining('audit_unavailable'),
+      error: expect.stringContaining("audit_unavailable"),
     });
-    expect(readAuditLog(auditContext).map((entry) => entry.result)).toEqual(['intent']);
+    expect(readAuditLog(auditContext).map((entry) => entry.result)).toEqual([
+      "intent",
+    ]);
   });
 
-  it('reports effectMayHaveCommitted when an effectful handler throws after starting', async () => {
+  it("reports effectMayHaveCommitted when an effectful handler throws after starting", async () => {
     const registry = registryWith({
-      name: 'nexus_terminal_run',
-      description: 'terminal',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_terminal_run",
+      description: "terminal",
+      inputSchema: { type: "object", properties: {} },
       handler: async () => {
-        throw new Error('connection dropped after write');
+        throw new Error("connection dropped after write");
       },
     });
 
     const result = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registry,
-      'nexus_terminal_run',
-      { command: 'deploy' },
+      "nexus_terminal_run",
+      { command: "deploy" },
       missionContext(),
-      workflowOptions({ confirm: async () => true }),
+      opsWorkflowOptions({ confirm: async () => true }),
     );
 
     expect(result).toMatchObject({
       ok: false,
       effectMayHaveCommitted: true,
-      error: 'connection dropped after write',
+      error: "connection dropped after write",
     });
     const entries = readAuditLog(auditContext);
-    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'error']);
+    expect(entries.map((entry) => entry.result)).toEqual(["intent", "error"]);
     expect(entries[1].invocation_id).toBe(entries[0].invocation_id);
   });
 
-  it('closes the correlated audit intent when caller authority disappears after the effect', async () => {
+  it("closes the correlated audit intent when caller authority disappears after the effect", async () => {
     const caller = new AbortController();
     const registry = registryWith({
-      name: 'nexus_file_write',
-      description: 'write',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_file_write",
+      description: "write",
+      inputSchema: { type: "object", properties: {} },
       handler: async () => {
-        caller.abort('renderer destroyed');
+        caller.abort("renderer destroyed");
         return { bytes: 1 };
       },
     });
 
     const result = await dispatchToolCall(
-      'ipc-renderer',
+      "ipc-renderer",
       registry,
-      'nexus_file_write',
-      { path: 'src/a.ts', content: 'x' },
+      "nexus_file_write",
+      { path: "src/a.ts", content: "x" },
       missionContext(),
       {
         ...workflowOptions({ confirm: async () => true }),
@@ -1827,15 +2118,15 @@ describe('MCP dispatch effect safety', () => {
     expect(result).toMatchObject({
       ok: false,
       denied: true,
-      error: 'session_authority_revoked',
+      error: "session_authority_revoked",
       effectMayHaveCommitted: true,
     });
     const entries = readAuditLog(auditContext);
-    expect(entries.map((entry) => entry.result)).toEqual(['intent', 'error']);
+    expect(entries.map((entry) => entry.result)).toEqual(["intent", "error"]);
     expect(entries[1].invocation_id).toBe(entries[0].invocation_id);
   });
 
-  it('joins a same-tool warm bootstrap retry instead of denying prompt_queue_busy', async () => {
+  it("joins a same-tool warm bootstrap retry instead of denying prompt_queue_busy", async () => {
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -1847,24 +2138,32 @@ describe('MCP dispatch effect safety', () => {
       return { checked: true };
     });
     const registry = registryWith({
-      name: 'nexus_context_doctor',
-      description: 'idempotent context check',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_context_doctor",
+      description: "idempotent context check",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
 
     const dispatchContext = orchestratorMissionContext();
     const first = dispatchToolCall(
-      'http-mcp', registry, 'nexus_context_doctor', {},
-      dispatchContext, workflowOptions(),
+      "http-mcp",
+      registry,
+      "nexus_context_doctor",
+      {},
+      dispatchContext,
+      workflowOptions(),
     );
     await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
 
     // Retry do MESMO tool: faz join (segue direto para o handler) em vez de
     // cancelar com prompt_queue_busy.
     const second = await dispatchToolCall(
-      'http-mcp', registry, 'nexus_context_doctor', {},
-      dispatchContext, workflowOptions(),
+      "http-mcp",
+      registry,
+      "nexus_context_doctor",
+      {},
+      dispatchContext,
+      workflowOptions(),
     );
 
     expect(second).toMatchObject({ ok: true });
@@ -1873,7 +2172,7 @@ describe('MCP dispatch effect safety', () => {
     await expect(first).resolves.toMatchObject({ ok: true });
   });
 
-  it('still denies a different warm tool while the bootstrap slot is busy', async () => {
+  it("still denies a different warm tool while the bootstrap slot is busy", async () => {
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -1886,14 +2185,14 @@ describe('MCP dispatch effect safety', () => {
 
     const dispatchContext = orchestratorMissionContext();
     const first = dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_context_doctor',
-        description: 'idempotent context check',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_context_doctor",
+        description: "idempotent context check",
+        inputSchema: { type: "object", properties: {} },
         handler: doctorHandler,
       }),
-      'nexus_context_doctor',
+      "nexus_context_doctor",
       {},
       dispatchContext,
       workflowOptions(),
@@ -1901,14 +2200,14 @@ describe('MCP dispatch effect safety', () => {
     await vi.waitFor(() => expect(doctorHandler).toHaveBeenCalledTimes(1));
 
     const second = await dispatchToolCall(
-      'http-mcp',
+      "http-mcp",
       registryWith({
-        name: 'nexus_code_map_refresh',
-        description: 'warm orientation',
-        inputSchema: { type: 'object', properties: {} },
+        name: "nexus_code_map_refresh",
+        description: "warm orientation",
+        inputSchema: { type: "object", properties: {} },
         handler: mapHandler,
       }),
-      'nexus_code_map_refresh',
+      "nexus_code_map_refresh",
       {},
       dispatchContext,
       workflowOptions(),
@@ -1917,26 +2216,26 @@ describe('MCP dispatch effect safety', () => {
     expect(second).toMatchObject({
       ok: false,
       denied: true,
-      error: 'prompt_queue_busy',
+      error: "prompt_queue_busy",
     });
     expect(mapHandler).not.toHaveBeenCalled();
     const secondIntent = readAuditLog(auditContext).at(-2);
     const secondOutcome = readAuditLog(auditContext).at(-1);
     expect(secondIntent).toMatchObject({
-      tool: 'nexus_code_map_refresh',
-      result: 'intent',
+      tool: "nexus_code_map_refresh",
+      result: "intent",
     });
     expect(secondOutcome).toMatchObject({
-      tool: 'nexus_code_map_refresh',
-      result: 'error',
-      error: 'prompt_queue_busy',
+      tool: "nexus_code_map_refresh",
+      result: "error",
+      error: "prompt_queue_busy",
     });
     expect(secondOutcome?.invocation_id).toBe(secondIntent?.invocation_id);
     releaseFirst();
     await expect(first).resolves.toMatchObject({ ok: true });
   });
 
-  it('still denies a duplicate freeze while freeze is executing (not idempotent)', async () => {
+  it("still denies a duplicate freeze while freeze is executing (not idempotent)", async () => {
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -1946,28 +2245,36 @@ describe('MCP dispatch effect safety', () => {
       return { frozen: true };
     });
     const registry = registryWith({
-      name: 'nexus_mission_freeze_contract',
-      description: 'freeze the mission contract',
-      inputSchema: { type: 'object', properties: {} },
+      name: "nexus_mission_freeze_contract",
+      description: "freeze the mission contract",
+      inputSchema: { type: "object", properties: {} },
       handler,
     });
 
     const dispatchContext = orchestratorMissionContext();
     const first = dispatchToolCall(
-      'http-mcp', registry, 'nexus_mission_freeze_contract', {},
-      dispatchContext, workflowOptions(),
+      "http-mcp",
+      registry,
+      "nexus_mission_freeze_contract",
+      {},
+      dispatchContext,
+      workflowOptions(),
     );
     await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
 
     const second = await dispatchToolCall(
-      'http-mcp', registry, 'nexus_mission_freeze_contract', {},
-      dispatchContext, workflowOptions(),
+      "http-mcp",
+      registry,
+      "nexus_mission_freeze_contract",
+      {},
+      dispatchContext,
+      workflowOptions(),
     );
 
     expect(second).toMatchObject({
       ok: false,
       denied: true,
-      error: 'prompt_queue_busy',
+      error: "prompt_queue_busy",
     });
     expect(handler).toHaveBeenCalledTimes(1);
     releaseFirst();

@@ -14,12 +14,15 @@ import { clearLocalAudioGate } from './live-local-audio-gate';
 import {
   livePlayer,
   resetPendingRealtimeAudioOut,
+  setDropRealtimeAudioOut,
   setRealtimeTurnActive,
   setSuppressRealtimeAudioOut,
   turnExecution,
+  wakeMic,
 } from './voice-session-state';
 import { logVoiceEvent } from './voice-live-ipc';
 import { haltJarvisNarration } from './narration-control';
+import { powerOffJarvisInput } from './jarvis-power-authority';
 
 export function isResponseMuted(): boolean {
   return useVoiceStore.getState().responseMuted;
@@ -50,10 +53,18 @@ export function stopJarvisSpeech(): void {
 }
 
 /**
- * Power off: cut audio, cancel follow-ups, tear down Live ownership.
- * Wake word / PTT stay available so the user can wake her again.
+ * Power off: cut audio, stop every mic/capture path and tear down Live.
+ * Only an explicit HUD/voice-button/PTT gesture may reactivate input.
  */
 export async function powerOffJarvis(): Promise<void> {
+  // Publish the fail-closed authority before any asynchronous teardown. This
+  // synchronously stops the controller-owned capture and makes late wake/live
+  // callbacks inert even if main no longer has a Live owner.
+  powerOffJarvisInput();
+  wakeMic.cancelPassiveWake();
+  wakeMic.cancelUtterance();
+  wakeMic.stop();
+
   // Invalida TODO token de turno em voo ANTES do teardown: os caminhos de
   // continuidade (releaseAfterLiveProviderAnswer / follow-ups) checam o token
   // via canReopen — sem isto, um turno terminando logo após o clique reabria
@@ -68,6 +79,7 @@ export async function powerOffJarvis(): Promise<void> {
   resetPendingRealtimeAudioOut();
   // Keep Live PCM suppressed through teardown so late chunks cannot speak.
   setSuppressRealtimeAudioOut(true);
+  setDropRealtimeAudioOut(true);
   clearLocalAudioGate();
   livePlayer?.stop();
 
@@ -92,8 +104,10 @@ export async function powerOffJarvis(): Promise<void> {
   resetPendingRealtimeAudioOut();
 
   useVoiceStore.getState().setStatus('idle');
-  useVoiceStore
-    .getState()
-    .setNote(stopped ? 'Jarvis desligada' : 'Áudio parado');
-  logVoiceEvent('info', 'voice.powerOff', stopped ? 'live stopped' : 'audio only');
+  useVoiceStore.getState().setNote('Jarvis desligada');
+  logVoiceEvent(
+    stopped ? 'info' : 'warn',
+    'voice.powerOff',
+    stopped ? 'wake, capture e live desligados' : 'wake e capture desligados; live sem confirmação',
+  );
 }

@@ -22,7 +22,7 @@
     ],
     "headless": [
       "kimi",
-      "-y",
+      "--auto",
       "--output-format",
       "text",
       "-p",
@@ -100,7 +100,7 @@
       "arg": "",
       "modes": {},
       "yolo": [
-        "-y"
+        "--auto"
       ],
       "default": ""
     }

@@ -7,10 +7,13 @@ import type { SpawnRequest, PaneSessionState } from "../../shared/types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
 import type { MissionPaneAuthoritySeal } from "../../shared/orch-types";
+import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import type { CliPtyAdapter } from "../../shared/adapter-types";
 import { resolvePlaceholders } from "../../shared/adapter-types";
 import type { BoundSpawnAuthority } from "../orch/spawn-authority";
 import {
+  isMissionBoundCodexWorkspaceAuthority,
+  isPetStudioNativeWorkspaceAuthority,
   requiresReadOnlyNativeAuthority,
   secureAutonomousCliArgs,
 } from "./autonomous-cli-policy";
@@ -27,6 +30,33 @@ import {
 } from "../terminal/shell-integration-env";
 import { scrubManagedSessionAuth } from "../adapters/managed-credentials";
 import { resolveSpawnBinary } from "../path-resolver";
+import {
+  isBuiltinAdapter,
+  resolveAdapterBinary,
+} from "../adapters/adapter-registry";
+import {
+  governedOmpArgs,
+  resolveGovernedCliProfile,
+} from "../orch/governed-cli-profile";
+import {
+  prepareCodexGovernedSession,
+  type CodexGovernedProcessSandbox,
+} from "../orch/cli-mcp-session-config";
+import { requiresSpawnGate } from "../orch/spawn-home-policy";
+import {
+  codexGovernedSandboxLaunchMode,
+  sealCodexPrivateProcessEnvironment,
+} from "./codex-native-authority";
+import {
+  qualifyTrustedNativeConfinementLaunch,
+  revalidateTrustedNativeConfinementLaunch,
+  type TrustedNativeConfinementLaunch,
+} from "./trusted-native-cli-binary";
+import {
+  currentDarwinPtySupervisorRuntime,
+  resolveDarwinPtySupervisor,
+} from "./darwin-pty-supervisor";
+import { buildScopedExecPlan } from "../runtime/process-sandbox";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -106,24 +136,25 @@ interface PhysicalTerminationFlight {
   readonly session: Session;
   readonly exited: Promise<void>;
   readonly resolveExited: () => void;
-  rootExit:
-    | { readonly exitCode: number; readonly signal?: number }
-    | null;
+  rootExit: { readonly exitCode: number; readonly signal?: number } | null;
   physicalTreeProven: boolean;
   revocationPublished: boolean;
   attempt: Promise<boolean> | null;
 }
-const physicalTerminationFlights = new Map<
-  string,
-  PhysicalTerminationFlight
->();
+const physicalTerminationFlights = new Map<string, PhysicalTerminationFlight>();
+let allSessionsTerminationFlight: Promise<TerminateAllSessionsResult> | null =
+  null;
+let allSessionsTerminationInProgress = false;
+let allSessionsTerminationSealed = false;
 let counter = 0;
 const MISSION_ORCHESTRATOR_GRANT_TTL_MS = 120_000;
 
 let ptyHost: PtyHost | null = null;
 let agentHookEndpointPath: string | null = null;
 
-export function configureAgentHookEndpointPath(endpointPath: string | null): void {
+export function configureAgentHookEndpointPath(
+  endpointPath: string | null,
+): void {
   if (
     endpointPath !== null &&
     (!path.isAbsolute(endpointPath) || endpointPath.includes("\0"))
@@ -593,11 +624,11 @@ function finalizeSession(
 ): void {
   const s = sessions.get(sessionId);
   if (!s) return;
-  const pendingTermination = physicalTerminationFlights.get(sessionId);
-  if (
-    pendingTermination?.session === s &&
-    !pendingTermination.physicalTreeProven
-  ) {
+  let pendingTermination = physicalTerminationFlights.get(sessionId);
+  if (!pendingTermination || pendingTermination.session !== s) {
+    pendingTermination = ensurePhysicalTerminationFlight(sessionId, s);
+  }
+  if (!pendingTermination.physicalTreeProven) {
     pendingTermination.rootExit ??= {
       exitCode,
       ...(signal === undefined ? {} : { signal }),
@@ -605,6 +636,14 @@ function finalizeSession(
     pendingTermination.resolveExited();
     // Root exit alone does not release the agent/worktree exclusivity: a
     // captured detached descendant may still hold write authority.
+    //
+    // A natural exit may race immediately ahead of app shutdown. Ask the host
+    // for its stable responsibility receipt now, while retaining this exact
+    // main-owned identity in the shutdown inventory. On Darwin the signed
+    // supervisor only exits after its whole responsibility cohort is empty.
+    if (!pendingTermination.attempt) {
+      void orchTerminateSession(sessionId);
+    }
     return;
   }
   sessions.delete(sessionId);
@@ -621,11 +660,7 @@ function finalizeSession(
   if (canSend(s.wc)) {
     s.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
   }
-  fireTaps(
-    exitTaps,
-    sessionId,
-    s.agent ? cloneAgentInfo(s.agent) : null,
-  );
+  fireTaps(exitTaps, sessionId, s.agent ? cloneAgentInfo(s.agent) : null);
   const termination = physicalTerminationFlights.get(sessionId);
   if (termination?.session === s) {
     physicalTerminationFlights.delete(sessionId);
@@ -635,7 +670,7 @@ function finalizeSession(
 
 export interface SpawnedSession {
   sessionId: string;
-  resumeMode?: 'exact' | 'latest' | 'unsupported';
+  resumeMode?: "exact" | "latest" | "unsupported";
 }
 
 /** Spawn a shell PTY. */
@@ -644,6 +679,9 @@ export function spawnSession(
   req: SpawnRequest,
   authority: ShellSpawnAuthority,
 ): SpawnedSession {
+  if (allSessionsTerminationInProgress) {
+    throw new Error("PTY shutdown is in progress; new sessions are blocked");
+  }
   const trusted = requireTrustedShellAuthority(authority);
   const shell = trusted.shell;
   const cwd = trusted.cwd;
@@ -721,6 +759,22 @@ function normalizeAgentModel(adapter: CliPtyAdapter, model: string): string {
   return model;
 }
 
+function configOverrideValues(args: readonly string[]): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if ((arg === "-c" || arg === "--config") && args[index + 1]) {
+      values.push(args[index + 1]!);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--config=")) {
+      values.push(arg.slice("--config=".length));
+    }
+  }
+  return values;
+}
+
 function assertExclusiveOrchestratorProcessAvailable(
   adapter: CliPtyAdapter,
   authority: BoundSpawnAuthority,
@@ -751,6 +805,9 @@ export function spawnAgentSession(
   overrides: AgentSpawnOverrides = {},
   authority: BoundSpawnAuthority,
 ): SpawnedSession {
+  if (allSessionsTerminationInProgress) {
+    throw new Error("PTY shutdown is in progress; new sessions are blocked");
+  }
   const cwd = requireTrustedAgentCwd(authority);
   assertExclusiveOrchestratorProcessAvailable(adapter, authority);
   const model = normalizeAgentModel(
@@ -767,7 +824,7 @@ export function spawnAgentSession(
   // Absolute path only — bare names re-search PATH inside the PTY host, which
   // often has a minimal Finder PATH and misses ~/.kimi-code/bin, Homebrew, etc.
   const resolvedBin = resolveSpawnBinary(adapter.bin, overrides.binPath);
-  const bin = resolvedBin?.binPath ?? null;
+  let bin = resolvedBin?.binPath ?? null;
   if (!bin || !path.isAbsolute(bin)) {
     throw new Error(
       `${adapter.label}: missing absolute binary path for spawn ` +
@@ -796,7 +853,8 @@ export function spawnAgentSession(
   }
   // Resume only when the captured provider session belongs to this account.
   // Cross-account failover must spawn fresh + inject a continuity pack instead.
-  let resumeMode: SpawnedSession['resumeMode'];
+  let resumeMode: SpawnedSession["resumeMode"];
+  let trustedResumeArgs: string[] = [];
   if (req.resume) {
     if (authority.source === "persisted-pane") {
       if (
@@ -821,10 +879,13 @@ export function spawnAgentSession(
         );
       }
       args.push(...adapter.spawn.resumeIdArgs, captured);
+      trustedResumeArgs = [...adapter.spawn.resumeIdArgs, captured];
       resumeMode = "exact";
     } else {
       const captured =
-        !req.resumeLatestOnly && req.paneId && adapter.spawn.resumeIdArgs?.length
+        !req.resumeLatestOnly &&
+        req.paneId &&
+        adapter.spawn.resumeIdArgs?.length
           ? (resumeSessionLookup?.(
               authority.scope,
               req.paneId,
@@ -834,6 +895,7 @@ export function spawnAgentSession(
           : null;
       if (captured) {
         args.push(...adapter.spawn.resumeIdArgs!, captured);
+        trustedResumeArgs = [...adapter.spawn.resumeIdArgs!, captured];
         resumeMode = "exact";
       } else if (adapter.spawn.resumeArgs.length > 0) {
         args.push(...adapter.spawn.resumeArgs);
@@ -847,9 +909,11 @@ export function spawnAgentSession(
   // Telemetria real: dita o session id do provider em spawns FRESCOS (num
   // resume o CLI decide o id — a atribuição fica com o watcher de transcript).
   let dictatedSessionId: string | null = null;
+  let trustedSessionArgs: string[] = [];
   if (adapter.spawn.sessionIdArg && !req.resume) {
     dictatedSessionId = randomUUID();
     args.push(adapter.spawn.sessionIdArg, dictatedSessionId);
+    trustedSessionArgs = [adapter.spawn.sessionIdArg, dictatedSessionId];
   }
   if (overrides.extraArgs && overrides.extraArgs.length > 0) {
     args.push(...overrides.extraArgs);
@@ -877,6 +941,77 @@ export function spawnAgentSession(
   const decoration = agentSpawnHook
     ? agentSpawnHook(adapter, req, authority, preparedEnvSnapshot)
     : null;
+  const trustedWorkspaceConfigOverrides =
+    adapter.id === "codex" && decoration
+      ? configOverrideValues(decoration.extraArgs)
+      : [];
+  const trustedDecorationArgs = decoration
+    ? [...decoration.extraArgs]
+    : [];
+  const nativeReadOnly = requiresReadOnlyNativeAuthority({
+    source: authority.source,
+    adapterId: adapter.id,
+    role: authority.context?.role,
+    missionId: authority.context?.missionId,
+    squadId: authority.context?.squadId,
+    agentName: authority.context?.agentName,
+    allowedTools: authority.context?.allowedTools,
+    allowedSkills: authority.context?.allowedSkills,
+    contextRevision: authority.context?.contextRevision,
+    authoritySeal: authority.context?.authoritySeal,
+    readOnly: authority.context?.readOnly,
+    nativeReadOnly: authority.context?.nativeReadOnly,
+  });
+  const petStudioWritableOrchestrator =
+    isPetStudioNativeWorkspaceAuthority({
+      source: authority.source,
+      adapterId: adapter.id,
+      role: authority.context?.role,
+      missionId: authority.context?.missionId,
+      squadId: authority.context?.squadId,
+      agentName: authority.context?.agentName,
+      allowedTools: authority.context?.allowedTools,
+      allowedSkills: authority.context?.allowedSkills,
+      contextRevision: authority.context?.contextRevision,
+      authoritySeal: authority.context?.authoritySeal,
+      readOnly: authority.context?.readOnly,
+      nativeReadOnly: authority.context?.nativeReadOnly,
+    });
+  const missionBoundWritableWorker =
+    isMissionBoundCodexWorkspaceAuthority({
+      source: authority.source,
+      adapterId: adapter.id,
+      role: authority.context?.role,
+      missionId: authority.context?.missionId,
+      squadId: authority.context?.squadId,
+      agentName: authority.context?.agentName,
+      allowedTools: authority.context?.allowedTools,
+      allowedSkills: authority.context?.allowedSkills,
+      contextRevision: authority.context?.contextRevision,
+      authoritySeal: authority.context?.authoritySeal,
+      readOnly: authority.context?.readOnly,
+      nativeReadOnly: authority.context?.nativeReadOnly,
+    });
+  if (
+    authority.source === "persisted-pane" &&
+    authority.context?.squadId === PET_STUDIO_SQUAD_ID &&
+    !petStudioWritableOrchestrator
+  ) {
+    decoration?.onSpawnFailed?.();
+    throw new Error(
+      "persisted Pet Studio resume requires its exact current main-owned " +
+        "Codex maker authority and pane seal",
+    );
+  }
+  const writableWorkerIntent = Boolean(
+    authority.context?.role === "worker" &&
+      authority.context?.readOnly !== true &&
+      authority.context?.nativeReadOnly !== true &&
+      (authority.context?.missionId?.trim() ||
+        authority.context?.contextRevision),
+  );
+  const governedWorkspaceWriter =
+    missionBoundWritableWorker || petStudioWritableOrchestrator;
   if (decoration) {
     Object.assign(env, decoration.env);
     args.push(...decoration.extraArgs);
@@ -884,36 +1019,205 @@ export function spawnAgentSession(
   // Managed-home env from keyEnv must survive overlays that only care about MCP
   // config content (e.g. OpenCode XDG_DATA_HOME). Grok/Kimi intentionally
   // replace *_HOME with an ephemeral overlay built FROM that managed home.
-  for (const homeKey of [
-    'CODEX_HOME',
-    'XDG_DATA_HOME',
-  ] as const) {
+  for (const homeKey of ["CODEX_HOME", "XDG_DATA_HOME"] as const) {
     const value = overrides.keyEnv?.[homeKey];
     if (value) env[homeKey] = value;
+  }
+  const governedProfile = Boolean(
+    decoration &&
+      (requiresSpawnGate(authority.context) ||
+        missionBoundWritableWorker),
+  );
+  let trustedCodexPermissionProfile: string | undefined;
+  let codexProcessSandbox: CodexGovernedProcessSandbox | undefined;
+  if (governedProfile) {
+    try {
+      const token = decoration!.env.NEXUS_MCP_TOKEN;
+      if (!token) {
+        throw new Error("governed CLI spawn is missing its main-owned bearer");
+      }
+      const policy = resolveGovernedCliProfile(token);
+      if (adapter.id === "codex") {
+        const codex = prepareCodexGovernedSession(token, {
+          providerHome: env.CODEX_HOME,
+          allowedSkills: [...policy.allowedSkills],
+          cwd,
+          workspaceRoot: authority.scope.rootRealPath,
+          codexResumeSessionId:
+            resumeMode === "exact"
+              ? trustedResumeArgs[trustedResumeArgs.length - 1]
+              : undefined,
+          codexNativeAuthority: governedWorkspaceWriter
+            ? "workspace-write"
+            : nativeReadOnly
+              ? "read-only"
+              : undefined,
+        });
+        Object.assign(env, codex.env);
+        args.push(...codex.extraArgs);
+        trustedCodexPermissionProfile =
+          codex.codexPermissionProfile;
+        codexProcessSandbox = codex.codexProcessSandbox;
+      } else if (adapter.id === "omp") {
+        args.push(...governedOmpArgs(policy.allowedSkills));
+      }
+    } catch (error) {
+      decoration?.onSpawnFailed?.();
+      throw error;
+    }
   }
   // Adapter-enforced argv is included before the autonomous policy. The final
   // policy removes inherited YOLO/bypass flags and is therefore the last word.
   args.push(...adapter.spawn.extraArgs);
-  const nativeReadOnly = requiresReadOnlyNativeAuthority({
-    source: authority.source,
-    role: authority.context?.role,
-    contextRevision: authority.context?.contextRevision,
-    readOnly: authority.context?.readOnly,
-    nativeReadOnly: authority.context?.nativeReadOnly,
-  });
   const unattendedNexusMcp = Boolean(
     adapter.id === "codex" &&
-      authority.context?.role === "orchestrator" &&
-      authority.context.missionId &&
-      authority.context.readOnly !== true &&
-      authority.context.nativeReadOnly === true,
-  );
-  args = secureAutonomousCliArgs(
-    adapter,
-    args,
+    authority.context?.missionId &&
     nativeReadOnly,
-    { unattendedNexusMcp },
   );
+  const enforceWorkspaceWriteSandbox =
+    writableWorkerIntent || petStudioWritableOrchestrator;
+  const trustedCodexExternalProcessSandbox = Boolean(
+    adapter.id === "codex" &&
+      codexProcessSandbox &&
+      process.platform === "darwin" &&
+      codexGovernedSandboxLaunchMode(process.platform) === "outer-process",
+  );
+  let trustedNativeRuntimeReadPaths: string[] = [];
+  let trustedNativeLaunch: TrustedNativeConfinementLaunch | null = null;
+  try {
+    if (writableWorkerIntent && !authority.coordinationScope) {
+      throw new Error(
+        "mission-bound writable worker requires a main-owned coordination scope",
+      );
+    }
+    if (
+      writableWorkerIntent &&
+      authority.scope.rootRealPath ===
+        authority.coordinationScope?.rootRealPath
+    ) {
+      throw new Error(
+        "mission-bound writable worker requires a physically distinct execution worktree",
+      );
+    }
+    if (
+      (nativeReadOnly || enforceWorkspaceWriteSandbox) &&
+      !isBuiltinAdapter(adapter.id)
+    ) {
+      throw new Error(
+        `adapter ${adapter.id} is not a trusted builtin for native confinement`,
+      );
+    }
+    if (nativeReadOnly || enforceWorkspaceWriteSandbox) {
+      if (
+        req.resume &&
+        trustedResumeArgs.length === 0
+      ) {
+        throw new Error(
+          "governed native confinement resume requires an exact main-owned provider session",
+        );
+      }
+      trustedNativeLaunch = qualifyTrustedNativeConfinementLaunch({
+        adapterId: adapter.id,
+        requestedBinPath: bin,
+        canonicalBinPath: resolveAdapterBinary(adapter.id),
+      });
+      bin = trustedNativeLaunch.executablePath;
+      trustedNativeRuntimeReadPaths = [
+        ...trustedNativeLaunch.runtimeReadPaths,
+      ];
+    }
+    args = secureAutonomousCliArgs(adapter, args, nativeReadOnly, {
+      unattendedNexusMcp,
+      enforceWorkspaceWriteSandbox,
+      trustedWorkspaceConfigOverrides,
+      trustedWorkspaceModel: model || undefined,
+      trustedResumeArgs,
+      trustedSessionArgs,
+      trustedDecorationArgs,
+      trustedCodexPermissionProfile,
+      trustedCodexExternalProcessSandbox,
+    });
+  } catch (error) {
+    decoration?.onSpawnFailed?.();
+    throw error;
+  }
+
+  let spawnFile = bin;
+  let spawnArgs = args;
+  let spawnCwd = cwd;
+  let spawnEnv = cleanEnv(env);
+  if (codexProcessSandbox) {
+    try {
+      if (adapter.id !== "codex" || !trustedCodexPermissionProfile) {
+        throw new Error(
+          "Codex outer sandbox requires a sealed native permission profile",
+        );
+      }
+      if (
+        process.platform === "darwin" &&
+        trustedNativeLaunch?.providerNetworkProcessPaths.length !== 1
+      ) {
+        throw new Error(
+          "Codex outer sandbox requires one pinned provider network process",
+        );
+      }
+      spawnEnv = cleanEnv(
+        sealCodexPrivateProcessEnvironment(spawnEnv, codexProcessSandbox),
+      );
+      if (
+        codexGovernedSandboxLaunchMode(process.platform) === "outer-process"
+      ) {
+        // The utility process inserts this exact main-owned helper as the
+        // Seatbelt target before it launches the authenticated vendor-native.
+        // Resolve it under the same dev/packaged signature policy in Main so
+        // the profile grants read authority to this file only, never to its
+        // containing Resources/build directory.
+        const darwinPtySupervisorReadPaths =
+          process.platform === "darwin"
+            ? [
+                resolveDarwinPtySupervisor(
+                  currentDarwinPtySupervisorRuntime(__dirname),
+                ),
+              ]
+            : [];
+        const plan = buildScopedExecPlan({
+          platform: process.platform,
+          executable: bin,
+          args,
+          cwd,
+          rootRealPath: authority.scope.rootRealPath,
+          sandboxDir: codexProcessSandbox.sandboxDir,
+          privateHome: codexProcessSandbox.processHome,
+          privateTmp: codexProcessSandbox.processTmp,
+          env: spawnEnv,
+          readOnlyRoot: nativeReadOnly,
+          // Codex's pinned vendor-native process needs the provider API and
+          // loopback Nexus MCP. The inherited Seatbelt denies network to every
+          // other descendant, including shell/package tools. Codex's inner
+          // Seatbelt is disabled to avoid an unusable nested profile.
+          sandboxProfile: "workspace-only",
+          networkAllowedProcessPaths:
+            process.platform === "darwin"
+              ? trustedNativeLaunch?.providerNetworkProcessPaths
+              : undefined,
+          extraReadPaths: [
+            ...codexProcessSandbox.providerStatePaths,
+            ...trustedNativeRuntimeReadPaths,
+            ...darwinPtySupervisorReadPaths,
+          ],
+          extraWritePaths: codexProcessSandbox.providerStatePaths,
+          protectedWritePaths: codexProcessSandbox.protectedWritePaths,
+        });
+        spawnFile = plan.file;
+        spawnArgs = plan.args;
+        spawnCwd = plan.cwd;
+        spawnEnv = cleanEnv(plan.env);
+      }
+    } catch (error) {
+      decoration?.onSpawnFailed?.();
+      throw error;
+    }
+  }
 
   const idleMs =
     adapter.stateParsing.idle.type === "timeout"
@@ -922,20 +1226,25 @@ export function spawnAgentSession(
 
   const spec: PtySpawnSpec = {
     sessionId,
-    file: bin,
-    args,
-    cwd,
+    file: spawnFile,
+    args: spawnArgs,
+    cwd: spawnCwd,
     cols: req.cols,
     rows: req.rows,
-    env: cleanEnv(env),
+    env: spawnEnv,
+    ...(trustedNativeLaunch
+      ? { darwinExecutableSeal: trustedNativeLaunch.darwinExecutableSeal }
+      : {}),
   };
   let session!: Session;
   let proc: PtyProcHandle;
   try {
-    proc = requireHost().spawn(
-      spec,
-      sessionHandlers(sessionId, () => session),
-    );
+    const host = requireHost();
+    const handlers = sessionHandlers(sessionId, () => session);
+    if (trustedNativeLaunch) {
+      revalidateTrustedNativeConfinementLaunch(trustedNativeLaunch);
+    }
+    proc = host.spawn(spec, handlers);
   } catch (err) {
     // The host itself is unavailable (never initialized / failed to fork), so
     // no session will exist — free the minted token + on-disk artifacts here,
@@ -1238,7 +1547,9 @@ export function getOwnedAgentSessionInfo(
 }
 
 /** Trusted main-process lookup for internal services that receive an exact PTY id. */
-export function getAgentSessionInfo(sessionId: string): OwnedAgentSessionInfo | null {
+export function getAgentSessionInfo(
+  sessionId: string,
+): OwnedAgentSessionInfo | null {
   const info = sessions.get(sessionId)?.agent;
   return info ? cloneAgentInfo(info) : null;
 }
@@ -1249,9 +1560,8 @@ export function listAgentSessionsForPane(
 ): OwnedAgentSessionInfo[] {
   return [...sessions.values()]
     .map((session) => session.agent)
-    .filter(
-      (info): info is OwnedAgentSessionInfo =>
-        Boolean(info && info.paneId === paneId),
+    .filter((info): info is OwnedAgentSessionInfo =>
+      Boolean(info && info.paneId === paneId),
     )
     .map(cloneAgentInfo);
 }
@@ -1260,9 +1570,7 @@ export function listAgentSessionsForPane(
 export function listAgentSessions(): OwnedAgentSessionInfo[] {
   return [...sessions.values()]
     .map((session) => session.agent)
-    .filter(
-      (info): info is OwnedAgentSessionInfo => Boolean(info),
-    )
+    .filter((info): info is OwnedAgentSessionInfo => Boolean(info))
     .map(cloneAgentInfo);
 }
 
@@ -1344,22 +1652,13 @@ export function rollbackOwnedAgentSessionMission(
 }
 
 function destroySession(sessionId: string, session: Session): void {
-  if (physicalTerminationFlights.get(sessionId)?.session === session) {
-    // Never let an older fire-and-forget close path manufacture an exit while
-    // the authority-critical lane is waiting for the host's real exit event.
-    try {
-      session.proc.kill("SIGKILL");
-    } catch {
-      // The host exit/host-down event remains the only physical proof.
-    }
-    return;
-  }
-  finalizeSession(sessionId, 0);
-  try {
-    session.proc.kill();
-  } catch {
-    // Already dead.
-  }
+  // Closing a pane/renderer is a logical request, never physical proof. Route
+  // it through the same host-owned process-tree fence used by replacement and
+  // app shutdown. The session stays registered and inert until the exact root
+  // callback plus descendant receipt arrive; terminateAllSessions can
+  // therefore still inventory/await a close racing with WebContents teardown.
+  if (sessions.get(sessionId) !== session) return;
+  void orchTerminateSession(sessionId);
 }
 
 export function writeSession(
@@ -1459,12 +1758,6 @@ export function liveSessionSummary(wc?: WebContents): {
   return { total, busy };
 }
 
-export function killAllSessions(): void {
-  for (const [id, session] of [...sessions]) {
-    destroySession(id, session);
-  }
-}
-
 /**
  * Trusted main-process write used by the orchestration layer (MCP pane_write,
  * idle handoff delivery, voice→orchestrator routing). Bypasses WebContents
@@ -1520,6 +1813,34 @@ export interface OrchTerminateSessionOptions {
   readonly killTimeoutMs?: number;
 }
 
+function ensurePhysicalTerminationFlight(
+  sessionId: string,
+  session: Session,
+): PhysicalTerminationFlight {
+  const existing = physicalTerminationFlights.get(sessionId);
+  if (existing?.session === session) return existing;
+  let resolveExited!: () => void;
+  const flight: PhysicalTerminationFlight = {
+    sessionId,
+    session,
+    exited: new Promise<void>((resolve) => {
+      resolveExited = resolve;
+    }),
+    resolveExited: () => resolveExited(),
+    rootExit: null,
+    physicalTreeProven: false,
+    revocationPublished: true,
+    attempt: null,
+  };
+  physicalTerminationFlights.set(sessionId, flight);
+  fireTaps(
+    terminationTaps,
+    sessionId,
+    session.agent ? cloneAgentInfo(session.agent) : null,
+  );
+  return flight;
+}
+
 function boundedTerminationTimeout(
   value: number | undefined,
   fallback: number,
@@ -1553,14 +1874,8 @@ async function drivePhysicalTermination(
   flight: PhysicalTerminationFlight,
   options: OrchTerminateSessionOptions,
 ): Promise<boolean> {
-  const termTimeoutMs = boundedTerminationTimeout(
-    options.termTimeoutMs,
-    1_500,
-  );
-  const killTimeoutMs = boundedTerminationTimeout(
-    options.killTimeoutMs,
-    1_500,
-  );
+  const termTimeoutMs = boundedTerminationTimeout(options.termTimeoutMs, 1_500);
+  const killTimeoutMs = boundedTerminationTimeout(options.killTimeoutMs, 1_500);
   try {
     const proof = await flight.session.proc.terminate({
       termTimeoutMs,
@@ -1575,11 +1890,7 @@ async function drivePhysicalTermination(
     const rootExit = flight.rootExit;
     if (!rootExit) return false;
     flight.physicalTreeProven = true;
-    finalizeSession(
-      flight.sessionId,
-      rootExit.exitCode,
-      rootExit.signal,
-    );
+    finalizeSession(flight.sessionId, rootExit.exitCode, rootExit.signal);
     return sessions.get(flight.sessionId) !== flight.session;
   } catch {
     // A missing/broken process-inventory lane is never physical exit proof.
@@ -1599,52 +1910,142 @@ export function orchTerminateSession(
 ): Promise<boolean> {
   const session = sessions.get(sessionId);
   if (!session) return Promise.resolve(true);
-  const existing = physicalTerminationFlights.get(sessionId);
-  if (existing?.session === session && existing.attempt) {
-    return existing.attempt;
-  }
-  let resolveExited!: () => void;
-  const flight =
-    existing?.session === session
-      ? existing
-      : {
-          sessionId,
-          session,
-          exited: new Promise<void>((resolve) => {
-            resolveExited = resolve;
-          }),
-          resolveExited: () => resolveExited(),
-          rootExit: null,
-          physicalTreeProven: false,
-          revocationPublished: false,
-          attempt: null,
-        };
-  physicalTerminationFlights.set(sessionId, flight);
-  if (!flight.revocationPublished) {
-    flight.revocationPublished = true;
-    fireTaps(
-      terminationTaps,
-      sessionId,
-      session.agent ? cloneAgentInfo(session.agent) : null,
-    );
-  }
+  const flight = ensurePhysicalTerminationFlight(sessionId, session);
+  if (flight.attempt) return flight.attempt;
   // A termination listener is not expected to drive the PTY, but preserve
   // single-flight semantics even if one does so synchronously.
-  if (flight.attempt) return flight.attempt;
-  const attempt = drivePhysicalTermination(flight, options).finally(
-    () => {
-      // A stubborn process stays registered/inert and may be retried by the
-      // trailing reconciler. Only finalizeSession removes the flight.
-      if (
-        physicalTerminationFlights.get(sessionId) === flight &&
-        flight.attempt === attempt
-      ) {
-        flight.attempt = null;
-      }
-    },
-  );
+  let settleAttempt!: (result: boolean) => void;
+  const pendingAttempt = new Promise<boolean>((resolve) => {
+    settleAttempt = resolve;
+  });
+  let attempt!: Promise<boolean>;
+  attempt = pendingAttempt.finally(() => {
+    // A stubborn process stays registered/inert and may be retried by the
+    // trailing reconciler. Only finalizeSession removes the flight.
+    if (
+      physicalTerminationFlights.get(sessionId) === flight &&
+      flight.attempt === attempt
+    ) {
+      flight.attempt = null;
+    }
+  });
   flight.attempt = attempt;
+  // Set the flight before calling the host: a deterministic/failing host can
+  // publish onExit synchronously from terminate(), and that callback must join
+  // this attempt rather than start a duplicate physical termination.
+  void drivePhysicalTermination(flight, options).then(
+    settleAttempt,
+    () => settleAttempt(false),
+  );
   return attempt;
+}
+
+export interface TerminateAllSessionsResult {
+  readonly ok: boolean;
+  readonly attemptedSessionIds: readonly string[];
+  readonly terminatedSessionIds: readonly string[];
+  readonly failedSessionIds: readonly string[];
+}
+
+/** Close PTY admission synchronously before any asynchronous shutdown work. */
+export function sealPtySessionAdmissionForShutdown(): void {
+  allSessionsTerminationInProgress = true;
+}
+
+/**
+ * App-shutdown fence. Capture the complete main-owned inventory while new
+ * spawns are synchronously blocked, then drive every physical process-tree
+ * termination concurrently through the same proof lane used by replacement
+ * spawning. A failed session remains registered and authority-revoked so the
+ * caller can report it and retry without manufacturing an exit.
+ */
+export function terminateAllSessions(
+  options: OrchTerminateSessionOptions = {},
+): Promise<TerminateAllSessionsResult> {
+  if (allSessionsTerminationFlight) return allSessionsTerminationFlight;
+  sealPtySessionAdmissionForShutdown();
+  const attemptedSessionIds = [...sessions.keys()];
+
+  let completedWithPhysicalProof = false;
+  let flight!: Promise<TerminateAllSessionsResult>;
+  flight = (async () => {
+    const outcomes = new Map<string, boolean>();
+    await Promise.all(
+      attemptedSessionIds.map(async (sessionId) => {
+        try {
+          outcomes.set(
+            sessionId,
+            await orchTerminateSession(sessionId, options),
+          );
+        } catch {
+          // Invalid host responses/options are not physical-exit proof. The
+          // still-registered inventory below remains authoritative.
+          outcomes.set(sessionId, false);
+        }
+      }),
+    );
+    const failed = new Set(
+      attemptedSessionIds.filter(
+        (sessionId) =>
+          outcomes.get(sessionId) !== true || sessions.has(sessionId),
+      ),
+    );
+    // The spawn fence should make this impossible, but an unexpected inventory
+    // entry is itself a shutdown failure and must be surfaced by exact id.
+    for (const sessionId of sessions.keys()) failed.add(sessionId);
+    const failedSessionIds = [...failed];
+    const terminatedSessionIds = attemptedSessionIds.filter(
+      (sessionId) => !failed.has(sessionId),
+    );
+    const result = {
+      ok: failedSessionIds.length === 0 && sessions.size === 0,
+      attemptedSessionIds,
+      terminatedSessionIds,
+      failedSessionIds,
+    };
+    completedWithPhysicalProof = result.ok;
+    if (completedWithPhysicalProof) {
+      // Keep the spawn fence closed across the promise continuation in
+      // shutdownPtyRuntimeWithProof and the subsequent host destruction. A
+      // queued IPC/microtask must not create a process outside the proven
+      // inventory in that gap.
+      allSessionsTerminationSealed = true;
+    }
+    return result;
+  })().finally(() => {
+    if (
+      allSessionsTerminationFlight === flight &&
+      !completedWithPhysicalProof
+    ) {
+      // A shutdown attempt permanently revokes PTY spawn admission for this
+      // process lifetime, even when physical proof fails and the app remains
+      // open to report/retry. OMP uses the same sticky fail-closed contract;
+      // reopening only this lane would let a new process escape the retained
+      // shutdown inventory. Clear only the completed flight so a retry can
+      // drive the still-registered sessions again.
+      allSessionsTerminationFlight = null;
+    }
+  });
+  allSessionsTerminationFlight = flight;
+  return flight;
+}
+
+/**
+ * Test-only isolation hook. Production's successful shutdown seal is
+ * intentionally irreversible: replacing/restarting the host must never reopen
+ * process admission after the physical inventory was declared complete.
+ */
+export function __resetPtyShutdownLifecycleForTests(): void {
+  if (
+    sessions.size > 0 ||
+    physicalTerminationFlights.size > 0 ||
+    (allSessionsTerminationInProgress && !allSessionsTerminationSealed)
+  ) {
+    throw new Error("cannot reset PTY lifecycle with active physical authority");
+  }
+  allSessionsTerminationFlight = null;
+  allSessionsTerminationInProgress = false;
+  allSessionsTerminationSealed = false;
 }
 
 /** Current lifecycle state of a session, or null if it is gone. */

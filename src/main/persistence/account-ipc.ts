@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import type { WebContents } from 'electron';
+import { handleTrusted } from '../security/trusted-ipc';
 import {
   ACCOUNT_CHANNELS,
   addAccountSchema,
@@ -72,7 +73,7 @@ export function registerAccountIpc(): void {
     return { ok: true, supported: supportsSessionSnapshot(parsed.data.adapterId) };
   });
 
-  ipcMain.handle(ACCOUNT_CHANNELS.add, (_e, raw) => {
+  handleTrusted(ACCOUNT_CHANNELS.add, (_e, raw) => {
     const parsed = addAccountSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid account' };
     try {
@@ -86,7 +87,7 @@ export function registerAccountIpc(): void {
     }
   });
 
-  ipcMain.handle(ACCOUNT_CHANNELS.addActiveClaude, (_e, raw) => {
+  handleTrusted(ACCOUNT_CHANNELS.addActiveClaude, (_e, raw) => {
     const parsed = addActiveClaudeSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid label' };
     try {
@@ -106,7 +107,7 @@ export function registerAccountIpc(): void {
     }
   });
 
-  ipcMain.handle(ACCOUNT_CHANNELS.addActiveSession, (_e, raw) => {
+  handleTrusted(ACCOUNT_CHANNELS.addActiveSession, (_e, raw) => {
     const parsed = addActiveSessionSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid request' };
     if (!supportsSessionSnapshot(parsed.data.adapterId)) {
@@ -151,14 +152,14 @@ export function registerAccountIpc(): void {
     }
   });
 
-  ipcMain.handle(ACCOUNT_CHANNELS.rename, (_e, raw) => {
+  handleTrusted(ACCOUNT_CHANNELS.rename, (_e, raw) => {
     const parsed = renameAccountSchema.safeParse(raw);
     if (!parsed.success) return { ok: false };
     renameAccount(parsed.data.id, parsed.data.label);
     return { ok: true };
   });
 
-  ipcMain.handle(ACCOUNT_CHANNELS.remove, (_e, raw) => {
+  handleTrusted(ACCOUNT_CHANNELS.remove, (_e, raw) => {
     const parsed = accountIdSchema.safeParse(raw);
     if (!parsed.success) return { ok: false };
     try {
@@ -172,7 +173,7 @@ export function registerAccountIpc(): void {
     }
   });
 
-  ipcMain.handle(ACCOUNT_CHANNELS.activate, (_e, raw) => {
+  handleTrusted(ACCOUNT_CHANNELS.activate, (_e, raw) => {
     const parsed = accountIdSchema.safeParse(raw);
     if (!parsed.success) return { ok: false };
     const ok = activateAccount(parsed.data.id);

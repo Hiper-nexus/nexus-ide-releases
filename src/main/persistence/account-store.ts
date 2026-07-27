@@ -6,6 +6,7 @@ import type { Account, AccountInfo, AccountMode } from '../../shared/account-typ
 import {
   deleteSecret,
   getSecret,
+  hasCachedSecret,
   hasSecret,
   setSecret,
 } from './secrets-store';
@@ -638,18 +639,23 @@ export function startClaudeSubscriptionFreshness(
 ): () => void {
   const tick = (): void => {
     for (const account of listAccounts('claude')) {
-      // Read-back for the native lineage (keychain → vault): the CLI rotates
-      // it on its own. Distinct from the refresh skip in
-      // ensureFreshClaudeSubscription — we never ROTATE the native account,
-      // but we do track its rotation so the vault snapshot stays restorable.
-      syncClaudeBlobFromKeychainIfNative(account);
+      // Cold boot must never open the macOS Keychain or decrypt the vault.
+      // `security`/safeStorage are synchronous and can wait indefinitely for a
+      // hidden SecurityAgent prompt, freezing Electron's main loop. Refresh
+      // only credentials already unlocked by an explicit account/spawn flow.
+      // Native-lineage read-back remains on those explicit flows above.
+      if (!hasCachedSecret(CRED_PREFIX + account.id)) continue;
       void ensureFreshClaudeSubscription(account.id);
     }
   };
-  tick();
+  const initial = setTimeout(tick, 0);
+  initial.unref?.();
   const timer = setInterval(tick, intervalMs);
   timer.unref?.();
-  return () => clearInterval(timer);
+  return () => {
+    clearTimeout(initial);
+    clearInterval(timer);
+  };
 }
 
 /**

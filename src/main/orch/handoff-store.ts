@@ -1,19 +1,26 @@
-import type Database from 'better-sqlite3';
-import { z } from 'zod';
+import type Database from "better-sqlite3";
+import { isDeepStrictEqual } from "node:util";
+import { z } from "zod";
+import {
+  hasCurrentApprovedDispatchContract,
+  missionIntentContractSchema,
+  reserveEffectfulSpend,
+} from "../../shared/mission-intent";
 import {
   handoffStatusSchema,
   handoffDeliveryStateSchema,
   type Handoff,
   type HandoffEvidenceBinding,
-} from '../../shared/orch-types';
-import type { ProjectExecutionScope } from '../../shared/types';
+  type HandoffMcpProvenance,
+} from "../../shared/orch-types";
+import type { ProjectExecutionScope } from "../../shared/types";
 import {
   parseWorkflowState,
   type EvidenceBinding,
-} from '../context/prevc-engine';
-import { parseReviewReport } from '../context/review-council';
-import { parseTrustedEvidence } from '../context/sensor-broker';
-import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+} from "../context/prevc-engine";
+import { parseReviewReport } from "../context/review-council";
+import { parseTrustedEvidence } from "../context/sensor-broker";
+import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
   encodeJsonArray,
   parseJsonArray,
@@ -22,7 +29,18 @@ import {
   type ScopedEntity,
   type ScopedStoreChangeListener,
   type ScopedStoreOptions,
-} from './scoped-store';
+} from "./scoped-store";
+import {
+  consumeAgentTransportPhysicalReceipt,
+  inspectCurrentAgentTransportPhysicalReceipt,
+  type AgentTransportPhysicalReceipt,
+} from "./http-mcp-boundary";
+import {
+  commitTaskDispatchHandoffInTransaction,
+  resolveCommittedTaskDispatchHandoffReplayInTransaction,
+} from "./task-dispatch-handoff-authority";
+import type { TaskDispatchRecord } from "./task-dispatch-codec";
+import { handoffLogicalOperationKey } from "./handoff-payload-identity";
 
 const identifierSchema = z
   .string()
@@ -41,8 +59,13 @@ const evidenceIdsSchema = z
   .array(identifierSchema)
   .max(256)
   .refine((ids) => new Set(ids).size === ids.length, {
-    message: 'evidenceIds must be unique',
+    message: "evidenceIds must be unique",
   });
+const PHYSICAL_HANDOFF_SPEND_INTENT_STATES = new Set([
+  "dispatched",
+  "executing",
+  "validating",
+]);
 
 const submitHandoffInputSchema = z
   .object({
@@ -57,11 +80,50 @@ const submitHandoffInputSchema = z
   })
   .strict();
 
-const nullableHashSchema = z.string().regex(/^[a-f0-9]{64}$/).nullable();
+const nullableHashSchema = z
+  .string()
+  .regex(/^[a-f0-9]{64}$/)
+  .nullable();
 const nullableCommitSchema = z
   .string()
   .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
   .nullable();
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+const commitSchema = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+
+const mcpBoundaryOptionsSchema = z
+  .object({
+    worktreeHeadSha: commitSchema.optional(),
+    rawPayloadSha256: sha256Schema,
+  })
+  .strict();
+
+const mcpAuditIntentPayloadSchema = z
+  .object({
+    project_id: identifierSchema,
+    checkout_id: identifierSchema,
+    source: z.enum(["http-mcp", "omp-rpc-stdio"]),
+    invocation_id: identifierSchema,
+  })
+  .passthrough();
+
+const mcpReceiptRowSchema = z
+  .object({
+    receipt_id: identifierSchema,
+    handoff_id: identifierSchema,
+    tool_call_id: identifierSchema,
+    tool_name: z.literal("nexus_handoff_submit"),
+    source: z.enum(["http-mcp", "omp-rpc-stdio"]),
+    mission_id: identifierSchema,
+    session_id: identifierSchema,
+    worker_incarnation_id: identifierSchema.nullable(),
+    authority_sha256: sha256Schema,
+    worktree_head_sha: commitSchema.nullable(),
+    raw_payload_sha256: sha256Schema.nullable(),
+    logical_operation_key: sha256Schema.nullable(),
+    issued_at: z.number().int().nonnegative(),
+  })
+  .strict();
 
 const handoffRowSchema = z
   .object({
@@ -70,7 +132,7 @@ const handoffRowSchema = z
     session_id: identifierSchema.nullable(),
     worker_incarnation_id: identifierSchema.nullable(),
     from_agent: agentLabelSchema.nullable(),
-    authority_origin: z.enum(['agent', 'operator-confirmed']),
+    authority_origin: z.enum(["agent", "operator-confirmed"]),
     status: handoffStatusSchema,
     summary: z.string().min(1).max(65_536),
     artifacts_json: z.string(),
@@ -92,25 +154,27 @@ const handoffRowSchema = z
   .strict();
 
 const deliveryAttemptStateSchema = z.enum([
-  'reserved',
-  'pasted',
-  'accepted',
-  'failed',
+  "reserved",
+  "pasted",
+  "accepted",
+  "failed",
 ]);
 
-const deliveryAttemptRowSchema = z.object({
-  id: identifierSchema,
-  handoff_id: identifierSchema,
-  mission_id: identifierSchema,
-  orchestrator_session_id: identifierSchema,
-  attempt_no: z.number().int().positive(),
-  state: deliveryAttemptStateSchema,
-  started_at: z.number().int().nonnegative(),
-  accept_deadline_at: z.number().int().nonnegative().nullable(),
-  accepted_at: z.number().int().nonnegative().nullable(),
-  failed_at: z.number().int().nonnegative().nullable(),
-  failure_code: z.string().max(256).nullable(),
-}).strict();
+const deliveryAttemptRowSchema = z
+  .object({
+    id: identifierSchema,
+    handoff_id: identifierSchema,
+    mission_id: identifierSchema,
+    orchestrator_session_id: identifierSchema,
+    attempt_no: z.number().int().positive(),
+    state: deliveryAttemptStateSchema,
+    started_at: z.number().int().nonnegative(),
+    accept_deadline_at: z.number().int().nonnegative().nullable(),
+    accepted_at: z.number().int().nonnegative().nullable(),
+    failed_at: z.number().int().nonnegative().nullable(),
+    failure_code: z.string().max(256).nullable(),
+  })
+  .strict();
 
 export interface HandoffDeliveryAttempt {
   readonly id: string;
@@ -136,14 +200,14 @@ const currentWorkflowRowSchema = z
   .strict();
 
 const BINDING_KEYS: readonly (keyof EvidenceBinding)[] = [
-  'projectId',
-  'checkoutId',
-  'missionId',
-  'contractHash',
-  'contextHash',
-  'baseSha',
-  'headSha',
-  'diffHash',
+  "projectId",
+  "checkoutId",
+  "missionId",
+  "contractHash",
+  "contextHash",
+  "baseSha",
+  "headSha",
+  "diffHash",
 ];
 
 const HANDOFF_SELECT = `
@@ -158,6 +222,23 @@ const HANDOFF_SELECT = `
 export type ScopedHandoff = ScopedEntity<Handoff>;
 export type SubmitHandoffInput = z.input<typeof submitHandoffInputSchema>;
 
+export interface PhysicalHandoffDispatchTransition {
+  readonly sessionId: string;
+  readonly workerIncarnationId: string;
+  readonly detail: string;
+}
+
+export interface PhysicalHandoffCommitResult {
+  readonly handoff: ScopedHandoff;
+  readonly taskDispatch: TaskDispatchRecord;
+  readonly replayed: boolean;
+}
+
+export interface PhysicalHandoffSubmitResult {
+  readonly handoff: ScopedHandoff;
+  readonly replayed: boolean;
+}
+
 export interface ListHandoffsFilter {
   missionId?: string;
   includeDelivered?: boolean;
@@ -170,7 +251,7 @@ interface ResolvedEvidence {
 
 function parseBoundedJson(raw: string, label: string): unknown {
   try {
-    if (Buffer.byteLength(raw, 'utf8') > 4 * 1024 * 1024) {
+    if (Buffer.byteLength(raw, "utf8") > 4 * 1024 * 1024) {
       throw new Error(`${label} exceeds 4 MiB`);
     }
     return JSON.parse(raw) as unknown;
@@ -198,11 +279,14 @@ function cloneHandoff(handoff: ScopedHandoff): ScopedHandoff {
   return {
     ...handoff,
     artifacts: parseJsonArray(
-      encodeJsonArray(handoff.artifacts, 'handoff artifacts'),
-      'handoff artifacts',
+      encodeJsonArray(handoff.artifacts, "handoff artifacts"),
+      "handoff artifacts",
     ),
     evidenceIds: [...handoff.evidenceIds],
     evidenceBinding: cloneBinding(handoff.evidenceBinding),
+    mcpProvenance: handoff.mcpProvenance
+      ? Object.freeze({ ...handoff.mcpProvenance })
+      : undefined,
   };
 }
 
@@ -265,6 +349,7 @@ function assertEvidenceMatches(
 
 export class ScopedHandoffStore {
   readonly #binding: ScopedStoreBinding;
+  readonly #dispatchChangeListeners = new Set<ScopedStoreChangeListener>();
 
   constructor(
     runtimeManager: ProjectRuntimeManager,
@@ -282,39 +367,263 @@ export class ScopedHandoffStore {
     return this.#binding.onChange(listener);
   }
 
+  onDispatchChange(listener: ScopedStoreChangeListener): () => void {
+    this.#dispatchChangeListeners.add(listener);
+    return () => this.#dispatchChangeListeners.delete(listener);
+  }
+
   submit(rawInput: SubmitHandoffInput): ScopedHandoff {
-    return this.#submit(rawInput, 'agent');
+    return this.#submit(rawInput, "agent").handoff;
+  }
+
+  /**
+   * Exact durable-write boundary for `nexus_handoff_submit`.
+   *
+   * The MCP dispatcher owns `toolCallId` and the bearer fingerprint. A normal
+   * main-process `submit()` cannot add this receipt, so it cannot satisfy a
+   * release proof that requires physical MCP provenance.
+   */
+  submitFromPhysicalAgentBoundary(
+    rawInput: SubmitHandoffInput,
+    physicalReceipt: AgentTransportPhysicalReceipt,
+    rawOptions: z.input<typeof mcpBoundaryOptionsSchema>,
+  ): ScopedHandoff {
+    return this.submitFromPhysicalAgentBoundaryWithReplay(
+      rawInput,
+      physicalReceipt,
+      rawOptions,
+    ).handoff;
+  }
+
+  /**
+   * Result-bearing variant used by the MCP tool so post-commit recovery can
+   * distinguish a first write from an exact replay even without a dispatch.
+   */
+  submitFromPhysicalAgentBoundaryWithReplay(
+    rawInput: SubmitHandoffInput,
+    physicalReceipt: AgentTransportPhysicalReceipt,
+    rawOptions: z.input<typeof mcpBoundaryOptionsSchema>,
+  ): PhysicalHandoffSubmitResult {
+    const committed = this.#submit(rawInput, "agent", {
+      physicalReceipt,
+      options: mcpBoundaryOptionsSchema.parse(rawOptions),
+    });
+    return {
+      handoff: committed.handoff,
+      replayed: committed.replayed,
+    };
+  }
+
+  /**
+   * The only production port that may both persist a physical worker handoff
+   * and advance/block its running dispatch. All rows commit in one immediate
+   * SQLite transaction; any receipt/audit/CAS failure rolls the handoff back.
+   */
+  submitFromPhysicalAgentBoundaryAndTransitionDispatch(
+    rawInput: SubmitHandoffInput,
+    physicalReceipt: AgentTransportPhysicalReceipt,
+    rawOptions: z.input<typeof mcpBoundaryOptionsSchema>,
+    transition: PhysicalHandoffDispatchTransition,
+  ): PhysicalHandoffCommitResult {
+    const committed = this.#submit(rawInput, "agent", {
+      physicalReceipt,
+      options: mcpBoundaryOptionsSchema.parse(rawOptions),
+      dispatchTransition: transition,
+    });
+    if (!committed.taskDispatch) {
+      throw new Error("physical handoff transaction lost its dispatch result");
+    }
+    return {
+      handoff: committed.handoff,
+      taskDispatch: committed.taskDispatch,
+      replayed: committed.replayed,
+    };
   }
 
   /** Main-only semantic boundary used after an exact native operator click. */
   submitOperatorConfirmed(rawInput: SubmitHandoffInput): ScopedHandoff {
-    return this.#submit(rawInput, 'operator-confirmed');
+    return this.#submit(rawInput, "operator-confirmed").handoff;
   }
 
   #submit(
     rawInput: SubmitHandoffInput,
-    authorityOrigin: 'agent' | 'operator-confirmed',
-  ): ScopedHandoff {
+    authorityOrigin: "agent" | "operator-confirmed",
+    mcpBoundary?: {
+      readonly physicalReceipt: AgentTransportPhysicalReceipt;
+      readonly options: z.infer<typeof mcpBoundaryOptionsSchema>;
+      readonly dispatchTransition?: PhysicalHandoffDispatchTransition;
+    },
+  ): {
+    readonly handoff: ScopedHandoff;
+    readonly taskDispatch?: TaskDispatchRecord;
+    readonly replayed: boolean;
+  } {
     const input = submitHandoffInputSchema.parse(rawInput);
+    if (
+      mcpBoundary &&
+      (!input.missionId ||
+        !input.sessionId ||
+        (input.workerIncarnationId !== undefined &&
+          input.workerIncarnationId.length === 0))
+    ) {
+      throw new Error(
+        "MCP handoff provenance requires missionId and physical sessionId",
+      );
+    }
     const artifactsJson = encodeJsonArray(
       input.artifacts ?? [],
-      'handoff artifacts',
+      "handoff artifacts",
     );
     const evidenceIds = input.evidenceIds ?? [];
     const evidenceIdsJson = encodeJsonArray(
       evidenceIds,
-      'handoff evidence IDs',
+      "handoff evidence IDs",
     );
-    const id = this.#binding.makeId('handoff');
+    const logicalOperationKey = mcpBoundary
+      ? handoffLogicalOperationKey({
+          scope: this.#binding.scope,
+          missionId: input.missionId!,
+          sessionId: input.sessionId!,
+          workerIncarnationId: input.workerIncarnationId,
+        })
+      : undefined;
     const createdAt = this.#binding.now();
     const db = this.#binding.writeDatabase();
 
     const insert = db.transaction(() => {
-      const resolved = this.#resolveEvidence(
-        db,
-        input.missionId,
-        evidenceIds,
-      );
+      const receiptExpectation = mcpBoundary
+        ? {
+            projectId: this.#binding.scope.projectId,
+            checkoutId: this.#binding.scope.checkoutId,
+            missionId: input.missionId!,
+            sessionId: input.sessionId!,
+            workerIncarnationId: input.workerIncarnationId,
+            worktreeHeadSha: mcpBoundary.options.worktreeHeadSha,
+            rawPayloadSha256: mcpBoundary.options.rawPayloadSha256,
+          }
+        : undefined;
+      const inspectedReceipt =
+        mcpBoundary && receiptExpectation
+          ? inspectCurrentAgentTransportPhysicalReceipt(
+              mcpBoundary.physicalReceipt,
+              receiptExpectation,
+            )
+          : undefined;
+      if (
+        mcpBoundary &&
+        receiptExpectation &&
+        logicalOperationKey &&
+        inspectedReceipt
+      ) {
+        const committedReceipt = this.#findCommittedPhysicalReceipt(
+          db,
+          input.missionId!,
+          input.sessionId!,
+          input.workerIncarnationId,
+          logicalOperationKey,
+        );
+        if (committedReceipt) {
+          const dispatchReplay = mcpBoundary.dispatchTransition
+            ? resolveCommittedTaskDispatchHandoffReplayInTransaction(
+                db,
+                this.#binding.coordinates,
+                {
+                  sessionId: mcpBoundary.dispatchTransition.sessionId,
+                  workerIncarnationId:
+                    mcpBoundary.dispatchTransition.workerIncarnationId,
+                  expectedStatus:
+                    input.status === "success" ? "success" : "non-success",
+                },
+                createdAt,
+              )
+            : undefined;
+          if (
+            mcpBoundary.dispatchTransition &&
+            (!dispatchReplay ||
+              dispatchReplay.taskDispatch.handoffId !==
+                committedReceipt.handoff_id)
+          ) {
+            throw new ScopedStoreCorruptionError(
+              "physical handoff receipt/dispatch replay binding",
+            );
+          }
+          if (
+            dispatchReplay &&
+            (dispatchReplay.physicalAuthority.source !==
+              committedReceipt.source ||
+              dispatchReplay.physicalAuthority.worktreeHeadSha !==
+                (committedReceipt.worktree_head_sha ?? undefined))
+          ) {
+            throw new ScopedStoreCorruptionError(
+              "physical handoff replay authority",
+            );
+          }
+          this.#assertCorrelatedMcpAuditIntent(db, inspectedReceipt);
+          const handoff = this.#assertExactPhysicalReplay(
+            db,
+            committedReceipt,
+            input,
+            artifactsJson,
+            evidenceIdsJson,
+            inspectedReceipt.source,
+            mcpBoundary.options.worktreeHeadSha,
+            mcpBoundary.options.rawPayloadSha256,
+            logicalOperationKey,
+            mcpBoundary.dispatchTransition?.detail,
+            dispatchReplay?.taskDispatch,
+          );
+          const replayReceipt = consumeAgentTransportPhysicalReceipt(
+            mcpBoundary.physicalReceipt,
+            receiptExpectation,
+          );
+          if (!isDeepStrictEqual(replayReceipt, inspectedReceipt)) {
+            throw new ScopedStoreCorruptionError(
+              "physical handoff replay receipt authority",
+            );
+          }
+          return {
+            handoff,
+            taskDispatch: dispatchReplay?.taskDispatch,
+            replayed: true,
+          };
+        }
+        if (mcpBoundary.dispatchTransition) {
+          const unexpectedReplay =
+            resolveCommittedTaskDispatchHandoffReplayInTransaction(
+              db,
+              this.#binding.coordinates,
+              {
+                sessionId: mcpBoundary.dispatchTransition.sessionId,
+                workerIncarnationId:
+                  mcpBoundary.dispatchTransition.workerIncarnationId,
+                expectedStatus:
+                  input.status === "success" ? "success" : "non-success",
+              },
+              createdAt,
+            );
+          if (unexpectedReplay) {
+            throw new ScopedStoreCorruptionError(
+              "committed dispatch handoff without idempotency identity",
+            );
+          }
+        }
+      }
+      const consumedReceipt =
+        mcpBoundary && receiptExpectation
+          ? consumeAgentTransportPhysicalReceipt(
+              mcpBoundary.physicalReceipt,
+              receiptExpectation,
+            )
+          : undefined;
+      if (consumedReceipt) {
+        this.#assertCorrelatedMcpAuditIntent(db, consumedReceipt);
+        this.#reservePhysicalHandoffSpendInTransaction(
+          db,
+          input.missionId!,
+        );
+      }
+      const resolved = this.#resolveEvidence(db, input.missionId, evidenceIds);
+      const id = this.#binding.makeId("handoff");
       const handoff: ScopedHandoff = {
         id,
         missionId: input.missionId,
@@ -322,15 +631,31 @@ export class ScopedHandoffStore {
         workerIncarnationId: input.workerIncarnationId,
         fromAgent: input.fromAgent,
         authorityOrigin,
+        mcpProvenance: consumedReceipt
+          ? Object.freeze({
+              receiptId: consumedReceipt.toolCallId,
+              toolCallId: consumedReceipt.toolCallId,
+              toolName: consumedReceipt.toolName,
+              source: consumedReceipt.source,
+              missionId: consumedReceipt.missionId,
+              sessionId: consumedReceipt.sessionId,
+              workerIncarnationId: consumedReceipt.workerIncarnationId,
+              authoritySha256: consumedReceipt.authoritySha256,
+              worktreeHeadSha: mcpBoundary?.options.worktreeHeadSha,
+              rawPayloadSha256: mcpBoundary?.options.rawPayloadSha256,
+              logicalOperationKey,
+              issuedAt: consumedReceipt.issuedAt,
+            } satisfies HandoffMcpProvenance)
+          : undefined,
         status: input.status,
-        claimTrust: 'untrusted',
+        claimTrust: "untrusted",
         summary: input.summary,
-        artifacts: parseJsonArray(artifactsJson, 'handoff artifacts'),
+        artifacts: parseJsonArray(artifactsJson, "handoff artifacts"),
         evidenceIds: [...resolved.evidenceIds],
-        evidenceTrust: resolved.binding ? 'nexus-trusted' : 'unverified',
+        evidenceTrust: resolved.binding ? "nexus-trusted" : "unverified",
         evidenceBinding: resolved.binding,
         delivered: false,
-        deliveryState: 'queued',
+        deliveryState: "queued",
         createdAt,
         ...this.#binding.coordinates,
       };
@@ -362,12 +687,289 @@ export class ScopedHandoffStore {
         resolved.binding?.workflowRevision ?? null,
         handoff.createdAt,
       );
-      return handoff;
+      if (handoff.mcpProvenance) {
+        db.prepare(
+          `INSERT INTO handoff_mcp_receipts
+             (receipt_id, handoff_id, tool_call_id, tool_name, source,
+              mission_id, session_id, worker_incarnation_id,
+              authority_sha256, worktree_head_sha, raw_payload_sha256,
+              logical_operation_key, issued_at)
+           VALUES (?, ?, ?, 'nexus_handoff_submit', ?,
+                   ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          handoff.mcpProvenance.receiptId,
+          handoff.id,
+          handoff.mcpProvenance.toolCallId,
+          handoff.mcpProvenance.source,
+          handoff.mcpProvenance.missionId,
+          handoff.mcpProvenance.sessionId,
+          handoff.mcpProvenance.workerIncarnationId ?? null,
+          handoff.mcpProvenance.authoritySha256,
+          handoff.mcpProvenance.worktreeHeadSha ?? null,
+          handoff.mcpProvenance.rawPayloadSha256,
+          handoff.mcpProvenance.logicalOperationKey,
+          handoff.mcpProvenance.issuedAt,
+        );
+      }
+      const taskDispatch = mcpBoundary?.dispatchTransition
+        ? commitTaskDispatchHandoffInTransaction(
+            db,
+            this.#binding.coordinates,
+            {
+              sessionId: mcpBoundary.dispatchTransition.sessionId,
+              workerIncarnationId:
+                mcpBoundary.dispatchTransition.workerIncarnationId,
+              handoffId: handoff.id,
+              outcome: handoff.status === "success" ? "accept" : "block",
+              detail: mcpBoundary.dispatchTransition.detail,
+            },
+            createdAt,
+          )
+        : undefined;
+      return { handoff, taskDispatch, replayed: false };
     });
 
-    const handoff = insert.immediate();
-    this.#binding.emitChange();
-    return cloneHandoff(handoff);
+    const committed = insert.immediate();
+    if (!committed.replayed) {
+      this.#binding.emitChange();
+      if (committed.taskDispatch) this.#emitDispatchChange();
+    }
+    return {
+      handoff: cloneHandoff(committed.handoff),
+      ...(committed.taskDispatch
+        ? { taskDispatch: committed.taskDispatch }
+        : {}),
+      replayed: committed.replayed,
+    };
+  }
+
+  #findCommittedPhysicalReceipt(
+    db: Database.Database,
+    missionId: string,
+    sessionId: string,
+    workerIncarnationId: string | undefined,
+    logicalOperationKey: string,
+  ): z.infer<typeof mcpReceiptRowSchema> | null {
+    const rawRows = db
+      .prepare(
+        `SELECT receipt_id, handoff_id, tool_call_id, tool_name, source,
+                mission_id, session_id, worker_incarnation_id,
+                authority_sha256, worktree_head_sha, raw_payload_sha256,
+                logical_operation_key, issued_at
+         FROM handoff_mcp_receipts
+         WHERE mission_id = ? AND session_id = ?
+           AND worker_incarnation_id IS ?`,
+      )
+      .all(missionId, sessionId, workerIncarnationId ?? null);
+    if (rawRows.length === 0) return null;
+    if (rawRows.length !== 1) {
+      throw new ScopedStoreCorruptionError(
+        "physical handoff logical operation identity",
+      );
+    }
+    let row: z.infer<typeof mcpReceiptRowSchema>;
+    try {
+      row = mcpReceiptRowSchema.parse(rawRows[0]);
+    } catch (error) {
+      throw new ScopedStoreCorruptionError("physical handoff receipt replay", {
+        cause: error,
+      });
+    }
+    if (!row.logical_operation_key || !row.raw_payload_sha256) {
+      throw new Error(
+        "handoff replay recusado: receipt legado não possui identidade canônica verificável",
+      );
+    }
+    if (row.logical_operation_key !== logicalOperationKey) {
+      throw new Error(
+        "handoff replay recusado: identidade lógica diverge do commit existente",
+      );
+    }
+    return row;
+  }
+
+  #assertExactPhysicalReplay(
+    db: Database.Database,
+    committedReceipt: z.infer<typeof mcpReceiptRowSchema>,
+    input: z.infer<typeof submitHandoffInputSchema>,
+    artifactsJson: string,
+    evidenceIdsJson: string,
+    replaySource: "http-mcp" | "omp-rpc-stdio",
+    replayWorktreeHeadSha: string | undefined,
+    replayRawPayloadSha256: string,
+    logicalOperationKey: string,
+    transitionDetail: string | undefined,
+    taskDispatch: TaskDispatchRecord | undefined,
+  ): ScopedHandoff {
+    const handoffId = committedReceipt.handoff_id;
+    const raw = db.prepare(`${HANDOFF_SELECT} WHERE id = ?`).get(handoffId);
+    let row: z.infer<typeof handoffRowSchema>;
+    try {
+      row = handoffRowSchema.parse(raw);
+    } catch (error) {
+      throw new ScopedStoreCorruptionError("physical handoff replay", {
+        cause: error,
+      });
+    }
+    const exactPayload =
+      row.mission_id === input.missionId &&
+      row.session_id === input.sessionId &&
+      row.worker_incarnation_id === input.workerIncarnationId &&
+      row.from_agent === input.fromAgent &&
+      row.authority_origin === "agent" &&
+      row.status === input.status &&
+      row.summary === input.summary &&
+      isDeepStrictEqual(
+        parseJsonArray(row.artifacts_json, "handoff replay artifacts"),
+        parseJsonArray(artifactsJson, "handoff retry artifacts"),
+      ) &&
+      isDeepStrictEqual(
+        parseJsonArray(row.evidence_ids_json, "handoff replay evidence IDs"),
+        parseJsonArray(evidenceIdsJson, "handoff retry evidence IDs"),
+      );
+    const exactPhysicalBoundary =
+      replaySource === committedReceipt.source &&
+      replayWorktreeHeadSha ===
+        (committedReceipt.worktree_head_sha ?? undefined) &&
+      replayRawPayloadSha256 === committedReceipt.raw_payload_sha256 &&
+      logicalOperationKey === committedReceipt.logical_operation_key;
+    const exactDispatchOutcome =
+      !taskDispatch ||
+      (taskDispatch.handoffId === handoffId &&
+        (input.status === "success" ||
+          (transitionDetail !== undefined &&
+            taskDispatch.lastError === transitionDetail.slice(0, 65_536))));
+    if (!exactPayload || !exactPhysicalBoundary || !exactDispatchOutcome) {
+      throw new Error(
+        "handoff replay recusado: payload raw, origem física ou estado diverge do commit existente",
+      );
+    }
+    return this.#fromRow(row, db);
+  }
+
+  #reservePhysicalHandoffSpendInTransaction(
+    db: Database.Database,
+    missionId: string,
+  ): void {
+    const row = db
+      .prepare(
+        `SELECT status, intent_state, intent_version, intent_contract_json
+         FROM missions WHERE id = ?`,
+      )
+      .get(missionId) as
+      | {
+          readonly status: string;
+          readonly intent_state: string;
+          readonly intent_version: number;
+          readonly intent_contract_json: string | null;
+        }
+      | undefined;
+    if (!row || !row.intent_contract_json) {
+      throw new Error(
+        "approval_required: physical handoff mission authority is unavailable",
+      );
+    }
+    let contract: z.infer<typeof missionIntentContractSchema>;
+    try {
+      contract = missionIntentContractSchema.parse(
+        JSON.parse(row.intent_contract_json),
+      );
+    } catch (error) {
+      throw new ScopedStoreCorruptionError(
+        "physical handoff mission intent contract",
+        { cause: error },
+      );
+    }
+    if (
+      row.status !== "running" ||
+      !PHYSICAL_HANDOFF_SPEND_INTENT_STATES.has(row.intent_state) ||
+      !hasCurrentApprovedDispatchContract({
+        intentContract: contract,
+        intentVersion: row.intent_version,
+      })
+    ) {
+      throw new Error(
+        "approval_required: physical handoff mission authority changed before commit",
+      );
+    }
+    const reserved = reserveEffectfulSpend(
+      contract,
+      "nexus_handoff_submit",
+    );
+    if (!reserved.ok) throw new Error(reserved.error);
+    const updated = db
+      .prepare(
+        `UPDATE missions
+         SET intent_contract_json = ?, updated_at = ?
+         WHERE id = ? AND status = 'running' AND intent_state = ?
+           AND intent_version = ? AND intent_contract_json = ?`,
+      )
+      .run(
+        JSON.stringify(reserved.contract),
+        this.#binding.now(),
+        missionId,
+        row.intent_state,
+        row.intent_version,
+        row.intent_contract_json,
+      );
+    if (updated.changes !== 1) {
+      throw new Error(
+        "physical handoff budget reservation lost mission authority CAS",
+      );
+    }
+  }
+
+  #emitDispatchChange(): void {
+    for (const listener of [...this.#dispatchChangeListeners]) {
+      try {
+        listener(this.#binding.coordinates);
+      } catch (error) {
+        console.warn("[orch] handoff dispatch listener threw:", error);
+      }
+    }
+  }
+
+  #assertCorrelatedMcpAuditIntent(
+    db: Database.Database,
+    receipt: {
+      readonly source: "http-mcp" | "omp-rpc-stdio";
+      readonly toolCallId: string;
+      readonly missionId: string;
+      readonly sessionId: string;
+    },
+  ): void {
+    const rows = db
+      .prepare(
+        `SELECT payload_json
+         FROM audit_events
+         WHERE mission_id = ?
+           AND actor = ?
+           AND action = 'nexus_handoff_submit'
+           AND outcome = 'intent'`,
+      )
+      .all(receipt.missionId, receipt.sessionId) as Array<{
+      payload_json: string;
+    }>;
+    const matches = rows.filter((row) => {
+      try {
+        const payload = mcpAuditIntentPayloadSchema.parse(
+          parseBoundedJson(row.payload_json, "handoff MCP audit intent"),
+        );
+        return (
+          payload.project_id === this.#binding.scope.projectId &&
+          payload.checkout_id === this.#binding.scope.checkoutId &&
+          payload.source === receipt.source &&
+          payload.invocation_id === receipt.toolCallId
+        );
+      } catch {
+        return false;
+      }
+    });
+    if (matches.length !== 1) {
+      throw new Error(
+        "handoff_provenance: exact durable physical agent audit intent is required",
+      );
+    }
   }
 
   list(rawFilter: ListHandoffsFilter = {}): ScopedHandoff[] {
@@ -381,11 +983,11 @@ export class ScopedHandoffStore {
     const clauses: string[] = [];
     const params: unknown[] = [];
     if (filter.missionId !== undefined) {
-      clauses.push('mission_id = ?');
+      clauses.push("mission_id = ?");
       params.push(filter.missionId);
     }
-    if (!filter.includeDelivered) clauses.push('delivered = 0');
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    if (!filter.includeDelivered) clauses.push("delivered = 0");
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const db = this.#binding.readDatabase();
     const rows = db
       .prepare(
@@ -432,54 +1034,69 @@ export class ScopedHandoffStore {
     const handoffId = identifierSchema.parse(input.handoffId);
     const missionId = identifierSchema.parse(input.missionId);
     const sessionId = identifierSchema.parse(input.orchestratorSessionId);
-    const maxAttempts = z.number().int().positive().max(16).parse(input.maxAttempts);
+    const maxAttempts = z
+      .number()
+      .int()
+      .positive()
+      .max(16)
+      .parse(input.maxAttempts);
     const now = this.#binding.now();
     const db = this.#binding.writeDatabase();
-    const attempt = db.transaction(() => {
-      const handoff = db.prepare(
-        `SELECT h.mission_id, h.delivery_state, m.orch_session_id
+    const attempt = db
+      .transaction(() => {
+        const handoff = db
+          .prepare(
+            `SELECT h.mission_id, h.delivery_state, m.orch_session_id
          FROM handoffs AS h
          JOIN missions AS m ON m.id = h.mission_id
          WHERE h.id = ?`,
-      ).get(handoffId) as {
-        mission_id: string | null;
-        delivery_state: string;
-        orch_session_id: string | null;
-      } | undefined;
-      if (!handoff || handoff.mission_id !== missionId) {
-        throw new Error('handoff delivery scope/mission mismatch');
-      }
-      if (handoff.orch_session_id !== sessionId) {
-        throw new Error('handoff delivery orchestrator session is stale');
-      }
-      if (handoff.delivery_state !== 'queued') {
-        throw new Error(`handoff delivery is already ${handoff.delivery_state}`);
-      }
-      // A process restart loses the in-memory acceptance observer. Preserve
-      // the attempt as failed evidence before reserving the bounded retry.
-      db.prepare(
-        `UPDATE handoff_delivery_attempts
+          )
+          .get(handoffId) as
+          | {
+              mission_id: string | null;
+              delivery_state: string;
+              orch_session_id: string | null;
+            }
+          | undefined;
+        if (!handoff || handoff.mission_id !== missionId) {
+          throw new Error("handoff delivery scope/mission mismatch");
+        }
+        if (handoff.orch_session_id !== sessionId) {
+          throw new Error("handoff delivery orchestrator session is stale");
+        }
+        if (handoff.delivery_state !== "queued") {
+          throw new Error(
+            `handoff delivery is already ${handoff.delivery_state}`,
+          );
+        }
+        // A process restart loses the in-memory acceptance observer. Preserve
+        // the attempt as failed evidence before reserving the bounded retry.
+        db.prepare(
+          `UPDATE handoff_delivery_attempts
          SET state = 'failed', failed_at = ?, failure_code = ?
          WHERE handoff_id = ? AND state IN ('reserved', 'pasted')`,
-      ).run(now, 'acceptance_observer_lost', handoffId);
-      const latest = db.prepare(
-        `SELECT COALESCE(MAX(attempt_no), 0) AS attempt_no
+        ).run(now, "acceptance_observer_lost", handoffId);
+        const latest = db
+          .prepare(
+            `SELECT COALESCE(MAX(attempt_no), 0) AS attempt_no
          FROM handoff_delivery_attempts WHERE handoff_id = ?`,
-      ).get(handoffId) as { attempt_no: number };
-      const attemptNo = latest.attempt_no + 1;
-      if (attemptNo > maxAttempts) {
-        throw new Error('handoff delivery attempt budget exhausted');
-      }
-      const id = this.#binding.makeId('handoff-delivery');
-      db.prepare(
-        `INSERT INTO handoff_delivery_attempts (
+          )
+          .get(handoffId) as { attempt_no: number };
+        const attemptNo = latest.attempt_no + 1;
+        if (attemptNo > maxAttempts) {
+          throw new Error("handoff delivery attempt budget exhausted");
+        }
+        const id = this.#binding.makeId("handoff-delivery");
+        db.prepare(
+          `INSERT INTO handoff_delivery_attempts (
            id, handoff_id, mission_id, orchestrator_session_id,
            attempt_no, state, started_at
          ) VALUES (?, ?, ?, ?, ?, 'reserved', ?)`,
-      ).run(id, handoffId, missionId, sessionId, attemptNo, now);
-      return this.#deliveryAttemptFromDatabase(db, id);
-    }).immediate();
-    if (!attempt) throw new Error('handoff delivery attempt was not persisted');
+        ).run(id, handoffId, missionId, sessionId, attemptNo, now);
+        return this.#deliveryAttemptFromDatabase(db, id);
+      })
+      .immediate();
+    if (!attempt) throw new Error("handoff delivery attempt was not persisted");
     this.#binding.emitChange();
     return attempt;
   }
@@ -491,22 +1108,30 @@ export class ScopedHandoffStore {
   }): HandoffDeliveryAttempt {
     const attemptId = identifierSchema.parse(input.attemptId);
     const handoffId = identifierSchema.parse(input.handoffId);
-    const deadline = z.number().int().nonnegative().parse(input.acceptDeadlineAt);
+    const deadline = z
+      .number()
+      .int()
+      .nonnegative()
+      .parse(input.acceptDeadlineAt);
     const now = this.#binding.now();
-    if (deadline < now) throw new Error('handoff acceptance deadline is already expired');
+    if (deadline < now)
+      throw new Error("handoff acceptance deadline is already expired");
     const db = this.#binding.writeDatabase();
-    const result = db.prepare(
-      `UPDATE handoff_delivery_attempts
+    const result = db
+      .prepare(
+        `UPDATE handoff_delivery_attempts
        SET state = 'pasted', accept_deadline_at = ?
        WHERE id = ? AND handoff_id = ? AND state = 'reserved'
          AND orchestrator_session_id = (
            SELECT orch_session_id FROM missions
            WHERE id = handoff_delivery_attempts.mission_id
          )`,
-    ).run(deadline, attemptId, handoffId);
-    if (result.changes !== 1) throw new Error('handoff paste attempt lost CAS');
+      )
+      .run(deadline, attemptId, handoffId);
+    if (result.changes !== 1) throw new Error("handoff paste attempt lost CAS");
     const attempt = this.#deliveryAttemptFromDatabase(db, attemptId);
-    if (!attempt) throw new Error('handoff delivery attempt disappeared after paste');
+    if (!attempt)
+      throw new Error("handoff delivery attempt disappeared after paste");
     this.#binding.emitChange();
     return attempt;
   }
@@ -519,11 +1144,14 @@ export class ScopedHandoffStore {
     const attemptId = identifierSchema.parse(input.attemptId);
     const handoffId = identifierSchema.parse(input.handoffId);
     const failureCode = identifierSchema.parse(input.failureCode);
-    const result = this.#binding.writeDatabase().prepare(
-      `UPDATE handoff_delivery_attempts
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE handoff_delivery_attempts
        SET state = 'failed', failed_at = ?, failure_code = ?
        WHERE id = ? AND handoff_id = ? AND state IN ('reserved', 'pasted')`,
-    ).run(this.#binding.now(), failureCode, attemptId, handoffId);
+      )
+      .run(this.#binding.now(), failureCode, attemptId, handoffId);
     if (result.changes > 0) this.#binding.emitChange();
     return result.changes === 1;
   }
@@ -536,9 +1164,11 @@ export class ScopedHandoffStore {
     const handoffId = identifierSchema.parse(input.handoffId);
     const now = this.#binding.now();
     const db = this.#binding.writeDatabase();
-    const accepted = db.transaction(() => {
-      const result = db.prepare(
-        `UPDATE handoff_delivery_attempts
+    const accepted = db
+      .transaction(() => {
+        const result = db
+          .prepare(
+            `UPDATE handoff_delivery_attempts
          SET state = 'accepted', accepted_at = ?
          WHERE id = ? AND handoff_id = ? AND state = 'pasted'
            AND accept_deadline_at >= ?
@@ -546,18 +1176,22 @@ export class ScopedHandoffStore {
              SELECT orch_session_id FROM missions
              WHERE id = handoff_delivery_attempts.mission_id
            )`,
-      ).run(now, attemptId, handoffId, now);
-      if (result.changes !== 1) return false;
-      const handoff = db.prepare(
-        `UPDATE handoffs
+          )
+          .run(now, attemptId, handoffId, now);
+        if (result.changes !== 1) return false;
+        const handoff = db
+          .prepare(
+            `UPDATE handoffs
          SET delivered = 1, delivery_state = 'submitted', submitted_at = ?
          WHERE id = ? AND delivery_state = 'queued'`,
-      ).run(now, handoffId);
-      if (handoff.changes !== 1) {
-        throw new Error('handoff submission lost delivery-attempt CAS');
-      }
-      return true;
-    }).immediate();
+          )
+          .run(now, handoffId);
+        if (handoff.changes !== 1) {
+          throw new Error("handoff submission lost delivery-attempt CAS");
+        }
+        return true;
+      })
+      .immediate();
     if (accepted) this.#binding.emitChange();
     return accepted;
   }
@@ -565,19 +1199,25 @@ export class ScopedHandoffStore {
   listDeliveryAttempts(rawHandoffId: string): HandoffDeliveryAttempt[] {
     const handoffId = identifierSchema.parse(rawHandoffId);
     const db = this.#binding.readDatabase();
-    return db.prepare(
-      `SELECT * FROM handoff_delivery_attempts
+    return db
+      .prepare(
+        `SELECT * FROM handoff_delivery_attempts
        WHERE handoff_id = ? ORDER BY attempt_no ASC`,
-    ).all(handoffId).map((row) => this.#deliveryAttemptFromRow(row));
+      )
+      .all(handoffId)
+      .map((row) => this.#deliveryAttemptFromRow(row));
   }
 
   acknowledgeMission(rawMissionId: string): number {
     const missionId = identifierSchema.parse(rawMissionId);
-    const result = this.#binding.writeDatabase().prepare(
-      `UPDATE handoffs
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE handoffs
        SET delivery_state = 'acknowledged', acknowledged_at = ?
        WHERE mission_id = ? AND delivery_state = 'submitted'`,
-    ).run(this.#binding.now(), missionId);
+      )
+      .run(this.#binding.now(), missionId);
     if (result.changes > 0) this.#binding.emitChange();
     return result.changes;
   }
@@ -585,16 +1225,106 @@ export class ScopedHandoffStore {
   markConsumed(rawId: string, rawMissionId: string): boolean {
     const id = identifierSchema.parse(rawId);
     const missionId = identifierSchema.parse(rawMissionId);
-    const result = this.#binding.writeDatabase().prepare(
-      `UPDATE handoffs
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE handoffs
        SET delivery_state = 'consumed',
            acknowledged_at = COALESCE(acknowledged_at, ?), consumed_at = ?
        WHERE id = ? AND mission_id = ?
          AND delivery_state IN ('submitted', 'acknowledged')`,
-    ).run(this.#binding.now(), this.#binding.now(), id, missionId);
+      )
+      .run(this.#binding.now(), this.#binding.now(), id, missionId);
     if (result.changes === 0) return false;
     this.#binding.emitChange();
     return true;
+  }
+
+  /**
+   * Explicit orchestrator consumption ACK bound to the exact accepted
+   * handoff-delivery attempt. Generic/main-owned `markConsumed` remains for
+   * legacy non-scheduler flows, but cannot satisfy verified-plan completion.
+   */
+  markConsumedAfterAcceptedDelivery(
+    rawId: string,
+    rawMissionId: string,
+    rawOrchestratorSessionId: string,
+  ): boolean {
+    const id = identifierSchema.parse(rawId);
+    const missionId = identifierSchema.parse(rawMissionId);
+    const orchestratorSessionId = identifierSchema.parse(
+      rawOrchestratorSessionId,
+    );
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const outcome = db
+      .transaction(() => {
+        const mission = db
+          .prepare(`SELECT orch_session_id FROM missions WHERE id = ?`)
+          .get(missionId) as
+          { readonly orch_session_id: string | null } | undefined;
+        if (mission?.orch_session_id !== orchestratorSessionId) return 0;
+        const attempts = db
+          .prepare(
+            `SELECT id, accepted_at
+             FROM handoff_delivery_attempts
+             WHERE handoff_id = ? AND mission_id = ?
+               AND orchestrator_session_id = ?
+               AND state = 'accepted' AND accepted_at IS NOT NULL
+             ORDER BY accepted_at DESC, id DESC
+             LIMIT 2`,
+          )
+          .all(id, missionId, orchestratorSessionId) as Array<{
+          readonly id: string;
+          readonly accepted_at: number;
+        }>;
+        if (attempts.length !== 1 || attempts[0]!.accepted_at > now) {
+          return 0;
+        }
+        const current = db
+          .prepare(
+            `SELECT delivery_state, consumed_by_session,
+                    consumed_delivery_attempt_id
+             FROM handoffs WHERE id = ? AND mission_id = ?`,
+          )
+          .get(id, missionId) as
+          | {
+              readonly delivery_state: string;
+              readonly consumed_by_session: string | null;
+              readonly consumed_delivery_attempt_id: string | null;
+            }
+          | undefined;
+        if (
+          current?.delivery_state === "consumed" &&
+          current.consumed_by_session === orchestratorSessionId &&
+          current.consumed_delivery_attempt_id === attempts[0]!.id
+        ) {
+          return 2;
+        }
+        const result = db
+          .prepare(
+            `UPDATE handoffs
+             SET delivery_state = 'consumed',
+                 acknowledged_at = COALESCE(acknowledged_at, ?),
+                 consumed_at = ?,
+                 consumed_by_session = ?,
+                 consumed_delivery_attempt_id = ?
+             WHERE id = ? AND mission_id = ? AND delivered = 1
+               AND (
+                 delivery_state IN ('submitted', 'acknowledged')
+                 OR (
+                   delivery_state = 'consumed'
+                   AND consumed_by_session IS NULL
+                   AND consumed_delivery_attempt_id IS NULL
+                 )
+               )`,
+          )
+          .run(now, now, orchestratorSessionId, attempts[0]!.id, id, missionId);
+        return result.changes === 1 ? 1 : 0;
+      })
+      .immediate();
+    if (outcome === 1) this.#binding.emitChange();
+    return outcome > 0;
   }
 
   hasTrustedFromSession(
@@ -602,9 +1332,10 @@ export class ScopedHandoffStore {
     rawWorkerIncarnationId?: string,
   ): boolean {
     const sessionId = identifierSchema.parse(rawSessionId);
-    const workerIncarnationId = rawWorkerIncarnationId === undefined
-      ? undefined
-      : identifierSchema.parse(rawWorkerIncarnationId);
+    const workerIncarnationId =
+      rawWorkerIncarnationId === undefined
+        ? undefined
+        : identifierSchema.parse(rawWorkerIncarnationId);
     const db = this.#binding.readDatabase();
     const rows = db
       .prepare(
@@ -613,14 +1344,14 @@ export class ScopedHandoffStore {
          ORDER BY created_at DESC, id DESC`,
       )
       .all(sessionId);
-    return rows.some(
-      (row) => {
-        const handoff = this.#fromRow(row, db);
-        return handoff.evidenceTrust === 'nexus-trusted' &&
-          (workerIncarnationId === undefined ||
-            handoff.workerIncarnationId === workerIncarnationId);
-      },
-    );
+    return rows.some((row) => {
+      const handoff = this.#fromRow(row, db);
+      return (
+        handoff.evidenceTrust === "nexus-trusted" &&
+        (workerIncarnationId === undefined ||
+          handoff.workerIncarnationId === workerIncarnationId)
+      );
+    });
   }
 
   /** Compatibility alias with fail-closed trusted semantics. */
@@ -632,9 +1363,9 @@ export class ScopedHandoffStore {
     db: Database.Database,
     id: string,
   ): HandoffDeliveryAttempt | null {
-    const row = db.prepare(
-      `SELECT * FROM handoff_delivery_attempts WHERE id = ?`,
-    ).get(id);
+    const row = db
+      .prepare(`SELECT * FROM handoff_delivery_attempts WHERE id = ?`)
+      .get(id);
     return row ? this.#deliveryAttemptFromRow(row) : null;
   }
 
@@ -643,7 +1374,9 @@ export class ScopedHandoffStore {
     try {
       row = deliveryAttemptRowSchema.parse(raw);
     } catch (error) {
-      throw new ScopedStoreCorruptionError('handoff delivery attempt', { cause: error });
+      throw new ScopedStoreCorruptionError("handoff delivery attempt", {
+        cause: error,
+      });
     }
     return Object.freeze({
       id: row.id,
@@ -678,13 +1411,13 @@ export class ScopedHandoffStore {
     try {
       row = currentWorkflowRowSchema.parse(rawRow);
     } catch (error) {
-      throw new ScopedStoreCorruptionError('handoff workflow binding', {
+      throw new ScopedStoreCorruptionError("handoff workflow binding", {
         cause: error,
       });
     }
-    const workflow = asCorruption('handoff workflow state', () =>
+    const workflow = asCorruption("handoff workflow state", () =>
       parseWorkflowState(
-        parseBoundedJson(row.workflow_json, 'handoff workflow state'),
+        parseBoundedJson(row.workflow_json, "handoff workflow state"),
       ),
     );
     if (
@@ -695,7 +1428,7 @@ export class ScopedHandoffStore {
       workflow.binding.contextHash !== row.context_revision ||
       workflow.revision !== row.workflow_revision
     ) {
-      throw new ScopedStoreCorruptionError('handoff workflow binding');
+      throw new ScopedStoreCorruptionError("handoff workflow binding");
     }
     return { binding: workflow.binding, revision: workflow.revision };
   }
@@ -707,51 +1440,51 @@ export class ScopedHandoffStore {
   ): ResolvedEvidence {
     if (evidenceIds.length === 0) return { evidenceIds: [] };
     if (!missionId) {
-      throw new Error('trusted handoff evidence requires missionId');
+      throw new Error("trusted handoff evidence requires missionId");
     }
     const current = this.#currentBinding(db, missionId);
     if (!current) {
       throw new Error(
-        'handoff evidence requires a mission with a frozen current workflow',
+        "handoff evidence requires a mission with a frozen current workflow",
       );
     }
     for (const evidenceId of evidenceIds) {
       const sensorRow = db
-        .prepare('SELECT evidence_json FROM sensor_evidence WHERE id = ?')
+        .prepare("SELECT evidence_json FROM sensor_evidence WHERE id = ?")
         .get(evidenceId) as { evidence_json: string } | undefined;
       if (sensorRow) {
-        const evidence = asCorruption('sensor evidence', () =>
+        const evidence = asCorruption("sensor evidence", () =>
           parseTrustedEvidence(
-            parseBoundedJson(sensorRow.evidence_json, 'sensor evidence'),
+            parseBoundedJson(sensorRow.evidence_json, "sensor evidence"),
           ),
         );
         if (evidence.id !== evidenceId) {
-          throw new ScopedStoreCorruptionError('sensor evidence identity');
+          throw new ScopedStoreCorruptionError("sensor evidence identity");
         }
         assertEvidenceMatches(evidenceId, evidence, current.binding);
         continue;
       }
 
-      const reviewId = evidenceId.startsWith('review:')
-        ? evidenceId.slice('review:'.length)
-        : '';
+      const reviewId = evidenceId.startsWith("review:")
+        ? evidenceId.slice("review:".length)
+        : "";
       const reviewRow = reviewId
         ? (db
             .prepare(
-              'SELECT report_json FROM review_reports WHERE review_id = ?',
+              "SELECT report_json FROM review_reports WHERE review_id = ?",
             )
             .get(reviewId) as { report_json: string } | undefined)
         : undefined;
       if (!reviewRow) {
         throw new Error(`trusted evidence "${evidenceId}" not found`);
       }
-      const report = asCorruption('review evidence', () =>
+      const report = asCorruption("review evidence", () =>
         parseReviewReport(
-          parseBoundedJson(reviewRow.report_json, 'review evidence'),
+          parseBoundedJson(reviewRow.report_json, "review evidence"),
         ),
       );
       if (`review:${report.reviewId}` !== evidenceId) {
-        throw new ScopedStoreCorruptionError('review evidence identity');
+        throw new ScopedStoreCorruptionError("review evidence identity");
       }
       assertEvidenceMatches(evidenceId, report.binding, current.binding);
     }
@@ -766,16 +1499,16 @@ export class ScopedHandoffStore {
     try {
       row = handoffRowSchema.parse(rawRow);
     } catch (error) {
-      throw new ScopedStoreCorruptionError('handoff', { cause: error });
+      throw new ScopedStoreCorruptionError("handoff", { cause: error });
     }
     let evidenceIds: string[];
     try {
       evidenceIds = evidenceIdsSchema.parse(
-        parseJsonArray(row.evidence_ids_json, 'handoff evidence IDs'),
+        parseJsonArray(row.evidence_ids_json, "handoff evidence IDs"),
       );
     } catch (error) {
       if (error instanceof ScopedStoreCorruptionError) throw error;
-      throw new ScopedStoreCorruptionError('handoff evidence IDs', {
+      throw new ScopedStoreCorruptionError("handoff evidence IDs", {
         cause: error,
       });
     }
@@ -794,9 +1527,10 @@ export class ScopedHandoffStore {
           evidenceIds.length === 0 ||
           bindingFields.some((value) => value === null))) ||
       (!wasTrusted &&
-        (evidenceIds.length > 0 || bindingFields.some((value) => value !== null)))
+        (evidenceIds.length > 0 ||
+          bindingFields.some((value) => value !== null)))
     ) {
-      throw new ScopedStoreCorruptionError('handoff evidence binding');
+      throw new ScopedStoreCorruptionError("handoff evidence binding");
     }
     const evidenceBinding = wasTrusted
       ? Object.freeze({
@@ -825,6 +1559,18 @@ export class ScopedHandoffStore {
         isCurrent = false;
       }
     }
+    const mcpProvenance = this.#mcpProvenanceFromDatabase(db, row.id);
+    if (
+      mcpProvenance &&
+      (mcpProvenance.missionId !== row.mission_id ||
+        mcpProvenance.sessionId !== row.session_id ||
+        (mcpProvenance.workerIncarnationId ?? null) !==
+          row.worker_incarnation_id)
+    ) {
+      throw new ScopedStoreCorruptionError(
+        "handoff MCP provenance authority binding",
+      );
+    }
     return {
       id: row.id,
       missionId: row.mission_id ?? undefined,
@@ -832,16 +1578,17 @@ export class ScopedHandoffStore {
       workerIncarnationId: row.worker_incarnation_id ?? undefined,
       fromAgent: row.from_agent ?? undefined,
       authorityOrigin: row.authority_origin,
+      mcpProvenance,
       status: row.status,
-      claimTrust: 'untrusted',
+      claimTrust: "untrusted",
       summary: row.summary,
-      artifacts: parseJsonArray(row.artifacts_json, 'handoff artifacts'),
+      artifacts: parseJsonArray(row.artifacts_json, "handoff artifacts"),
       evidenceIds,
       evidenceTrust: !wasTrusted
-        ? 'unverified'
+        ? "unverified"
         : isCurrent
-          ? 'nexus-trusted'
-          : 'stale',
+          ? "nexus-trusted"
+          : "stale",
       evidenceBinding,
       delivered: row.delivered === 1,
       deliveryState: row.delivery_state,
@@ -851,6 +1598,47 @@ export class ScopedHandoffStore {
       createdAt: row.created_at,
       ...this.#binding.coordinates,
     };
+  }
+
+  #mcpProvenanceFromDatabase(
+    db: Database.Database,
+    handoffId: string,
+  ): HandoffMcpProvenance | undefined {
+    const raw = db
+      .prepare(
+        `SELECT receipt_id, handoff_id, tool_call_id, tool_name, source,
+                mission_id, session_id, worker_incarnation_id,
+                authority_sha256, worktree_head_sha, raw_payload_sha256,
+                logical_operation_key, issued_at
+         FROM handoff_mcp_receipts WHERE handoff_id = ?`,
+      )
+      .get(handoffId);
+    if (!raw) return undefined;
+    let row: z.infer<typeof mcpReceiptRowSchema>;
+    try {
+      row = mcpReceiptRowSchema.parse(raw);
+    } catch (error) {
+      throw new ScopedStoreCorruptionError("handoff MCP provenance", {
+        cause: error,
+      });
+    }
+    if (row.handoff_id !== handoffId) {
+      throw new ScopedStoreCorruptionError("handoff MCP provenance identity");
+    }
+    return Object.freeze({
+      receiptId: row.receipt_id,
+      toolCallId: row.tool_call_id,
+      toolName: row.tool_name,
+      source: row.source,
+      missionId: row.mission_id,
+      sessionId: row.session_id,
+      workerIncarnationId: row.worker_incarnation_id ?? undefined,
+      authoritySha256: row.authority_sha256,
+      worktreeHeadSha: row.worktree_head_sha ?? undefined,
+      rawPayloadSha256: row.raw_payload_sha256 ?? undefined,
+      logicalOperationKey: row.logical_operation_key ?? undefined,
+      issuedAt: row.issued_at,
+    });
   }
 }
 

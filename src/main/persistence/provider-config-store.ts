@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { BrowserWindow, dialog, ipcMain, net } from 'electron';
 import type { WebContents } from 'electron';
+import { handleTrusted } from '../security/trusted-ipc';
 import {
   hasSensitiveChange,
   sensitiveChanges,
@@ -76,13 +77,24 @@ import {
   modelInfoForAdapter,
 } from '../adapters/model-catalog';
 import {
+  detectSubscriptionAuth,
   hasSubscriptionAuth,
+  hasSubscriptionAuthForStatus,
+  refreshClaudeSubscriptionAuthCache,
   resolveAuthStrategy,
 } from '../adapters/subscription-auth';
 import {
   KIMI_TRANSIENT_MODEL_ENV_KEYS,
   buildKimiApiKeyRuntimeEnv,
 } from '../adapters/kimi-runtime-env';
+import {
+  buildOmpSelectedProviderKeyEnv,
+  hasOmpSelectedProviderKey,
+} from '../adapters/omp-provider-keys';
+import {
+  isCredentiallessOpenCodeModel,
+  isProviderAuthReadyForModel,
+} from '../adapters/model-auth-readiness';
 import {
   activeClaudeAuthEnv,
   accountKey,
@@ -267,15 +279,74 @@ function nativeKeyEnv(
   return envVar ? { [envVar]: key } : {};
 }
 
-function authDecision(adapterId: string) {
+function authDecision(
+  adapterId: string,
+  selectedModel?: string,
+  options: {
+    statusSnapshot?: boolean;
+    /** Authority-critical spawn checks must not trust the 60s UI cache. */
+    authoritative?: boolean;
+  } = {},
+) {
   const adapter = getAdapter(adapterId);
   const authMethod =
     adapter?.kind === 'cli-pty' ? adapter.auth.method : 'api_key';
+  const effectiveModel = effectiveProviderModel(adapterId, selectedModel);
+  const ompAdapter = adapterId === 'omp' || adapterId === 'omp-rpc';
   return resolveAuthStrategy({
     authMethod,
-    hasStoredKey: hasRuntimeKey(adapterId),
-    subscriptionAuthed: hasSubscriptionAuth(adapterId),
+    hasStoredKey: ompAdapter
+      ? hasOmpSelectedProviderKey(effectiveModel)
+      : hasRuntimeKey(adapterId),
+    subscriptionAuthed: options.authoritative
+      ? detectSubscriptionAuth(
+          adapterId,
+          os.homedir(),
+          ompAdapter ? effectiveModel : undefined,
+        )
+      : options.statusSnapshot
+        ? hasSubscriptionAuthForStatus(
+            adapterId,
+            ompAdapter ? effectiveModel : undefined,
+          )
+        : hasSubscriptionAuth(
+            adapterId,
+            ompAdapter ? effectiveModel : undefined,
+          ),
   });
+}
+
+export function providerAuthStrategy(
+  adapterId: string,
+  selectedModel?: string,
+): ProviderSettingsInfo['authStrategy'] {
+  return authDecision(adapterId, selectedModel).strategy;
+}
+
+/**
+ * Uncached readiness for the final autonomous spawn boundary. Renderer/status
+ * snapshots deliberately use the short cache; process creation must observe
+ * the OMP vault as it exists now.
+ */
+export function providerAuthStrategyAuthoritative(
+  adapterId: string,
+  selectedModel?: string,
+): ProviderSettingsInfo['authStrategy'] {
+  return authDecision(adapterId, selectedModel, {
+    authoritative: true,
+  }).strategy;
+}
+
+function effectiveProviderModel(
+  adapterId: string,
+  selectedModel?: string,
+): string | undefined {
+  const adapter = getAdapter(adapterId);
+  return (
+    selectedModel?.trim() ||
+    configFor(adapterId).defaultModel.trim() ||
+    adapter?.models.default
+  );
 }
 
 /**
@@ -310,7 +381,15 @@ function resolveApiKey(adapterId: string, upstream?: string): string | null {
 }
 
 /** Exported for the pre-spawn credential probe (pty/pre-spawn-probe.ts). */
-export function hasRuntimeKey(adapterId: string): boolean {
+export function hasRuntimeKey(
+  adapterId: string,
+  selectedModel?: string,
+): boolean {
+  if (adapterId === 'omp' || adapterId === 'omp-rpc') {
+    return hasOmpSelectedProviderKey(
+      effectiveProviderModel(adapterId, selectedModel),
+    );
+  }
   // Provider readiness is queried during boot. Do not decrypt the vault here:
   // on macOS that crosses into SecItemCopyMatching and can block Electron's
   // main thread while the Keychain session is locked or stale. Presence in
@@ -374,21 +453,27 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
   return { ready: true, reason: 'ready' };
 }
 
-export function providerReadiness(adapterId: string): ProviderReadiness {
+export function providerReadiness(
+  adapterId: string,
+  selectedModel?: string,
+): ProviderReadiness {
   const infrastructure = providerInfrastructureReadiness(adapterId);
   if (!infrastructure.ready) return infrastructure;
 
   const adapter = getAdapter(adapterId);
   if (!adapter) return infrastructure;
 
-  const decision = authDecision(adapterId);
+  const effectiveModel = effectiveProviderModel(adapterId, selectedModel);
+  const decision = authDecision(adapterId, selectedModel);
   if (decision.strategy === 'login-needed') {
-    // OMP is a multi-provider broker with its own credential vault. Nexus
-    // cannot reduce that vault to one adapter key synchronously, and blocking
-    // here prevents both `/login` and the OMP Accounts panel from ever
-    // starting. The OMP runtime remains the source of truth and reports a
-    // provider-specific auth error when no usable credential exists.
-    if (adapterId === 'omp' || adapterId === 'omp-rpc') {
+    const credentiallessReady =
+      adapterId !== 'omp' &&
+      adapterId !== 'omp-rpc' &&
+      isProviderAuthReadyForModel(
+        { adapterId, authStrategy: decision.strategy },
+        effectiveModel,
+      );
+    if (credentiallessReady) {
       return { ready: true, reason: 'ready' };
     }
     return {
@@ -404,8 +489,8 @@ export function providerReadiness(adapterId: string): ProviderReadiness {
   return { ready: true, reason: 'ready' };
 }
 
-export function isProviderReady(adapterId: string): boolean {
-  return providerReadiness(adapterId).ready;
+export function isProviderReady(adapterId: string, model?: string): boolean {
+  return providerReadiness(adapterId, model).ready;
 }
 
 type PreparedAccount = Extract<
@@ -465,6 +550,11 @@ function buildProviderSpawnOverrides(
 ): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
   const adapter = getAdapter(adapterId);
+  const credentiallessOpenCode =
+    isCredentiallessOpenCodeModel(
+      adapterId,
+      effectiveProviderModel(adapterId, perSpawn.model),
+    );
   // Control flags (permission mode / effort / verbose) always apply, whatever
   // the auth/routing path — they're how the user turns on auto-operation.
   // Prefer: (1) valid user absolute override, (2) valid discovery cache,
@@ -501,7 +591,10 @@ function buildProviderSpawnOverrides(
   // loop. Its vault is used only when the user explicitly pins that account.
   const account =
     preparedAccount?.account ??
-    (!perSpawn.accountId && adapterId !== 'claude' && listAccounts(adapterId).length > 0
+    (!perSpawn.accountId &&
+    !credentiallessOpenCode &&
+    adapterId !== 'claude' &&
+    listAccounts(adapterId).length > 0
       ? getActiveAccount(adapterId)
       : null);
   if (account) {
@@ -597,15 +690,19 @@ function buildProviderSpawnOverrides(
   // Subscription-first (user directive): an authenticated subscription CLI
   // never receives an API key — and inherited key vars are stripped so they
   // cannot hijack billing. The key only flows when there is no subscription.
-  const decision = authDecision(adapterId);
+  const decision = authDecision(adapterId, perSpawn.model);
   // `getKey()` may synchronously cross the macOS Keychain boundary. Keep that
   // effect behind the exact API-key decision so a healthy native subscription
   // can never stall the Electron main thread on an irrelevant vault prompt.
-  const key = decision.injectKey
+  const key = decision.injectKey && adapterId !== 'omp'
     ? resolveApiKey(adapterId, cfg.upstream)
     : null;
   const keyEnv =
-    decision.injectKey && adapter && key
+    decision.injectKey && adapterId === 'omp'
+      ? buildOmpSelectedProviderKeyEnv(
+          effectiveProviderModel(adapterId, perSpawn.model),
+        )
+      : decision.injectKey && adapter && key
       ? nativeKeyEnv(adapterId, key, perSpawn.model)
       : decision.strategy === 'subscription' && adapterId === 'claude'
         ? nativeClaudeSubscriptionEnv(perSpawn.isolatedHome === true)
@@ -630,7 +727,7 @@ export function prepareProviderSpawn(
 ): ProviderSpawnPreparation {
   const readiness = perSpawn.accountId
     ? providerInfrastructureReadiness(adapterId)
-    : providerReadiness(adapterId);
+    : providerReadiness(adapterId, perSpawn.model);
   if (!readiness.ready) return { ok: false, error: readiness.reason };
 
   let preparedAccount: PreparedAccount | null = null;
@@ -672,7 +769,10 @@ export function providerSpawnOverrides(
   return prepared.overrides;
 }
 
-function toInfo(adapterId: string): ProviderSettingsInfo | null {
+function toInfo(
+  adapterId: string,
+  options: { nonBlockingAuth?: boolean } = {},
+): ProviderSettingsInfo | null {
   const adapter = getAdapter(adapterId);
   if (!adapter) return null;
   const cfg = configFor(adapterId);
@@ -710,6 +810,19 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     (m) => !staticIds.includes(m),
   );
   const models = [...staticIds, ...discovered];
+  const authReadyModels = models.filter((model) => {
+    const strategy = authDecision(adapterId, model, {
+      statusSnapshot: options.nonBlockingAuth === true,
+    }).strategy;
+    if (adapterId === 'omp' || adapterId === 'omp-rpc') {
+      return strategy !== 'login-needed';
+    }
+    return isProviderAuthReadyForModel(
+      { adapterId, authStrategy: strategy },
+      model,
+    );
+  });
+  const defaultModel = cfg.defaultModel || adapter.models.default;
   return {
     adapterId,
     label: adapter.label,
@@ -720,13 +833,14 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     canAutoInstall: cliInstallRecipeFor(adapterId) !== null,
     binPath: cfg.binPath,
     detectedBin,
-    defaultModel: cfg.defaultModel || adapter.models.default,
+    defaultModel,
     models,
+    authReadyModels,
     modelInfo: modelInfoForAdapter(loadModelCatalog(), adapterId, models),
     customModels: getCustomModels(adapterId),
     extraArgs: cfg.extraArgs,
     keyEnvVar: primaryKeyEnvVar(adapter),
-    hasKey: hasRuntimeKey(adapterId),
+    hasKey: hasRuntimeKey(adapterId, defaultModel),
     // Prefer vault mask; if only the launcher has the key, mask that instead
     // so Settings doesn't look "empty" while readiness is already true.
     keyMasked: (() => {
@@ -743,7 +857,9 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
     loginHint:
       adapter.kind === 'cli-pty' ? adapter.auth.loginHint : undefined,
     secureStorageAvailable: isSecureStorageAvailable({ probe: false }),
-    authStrategy: authDecision(adapterId).strategy,
+    authStrategy: authDecision(adapterId, defaultModel, {
+      statusSnapshot: options.nonBlockingAuth === true,
+    }).strategy,
     upstream: cfg.upstream || 'anthropic',
     routable: isRoutable(adapterId),
     upstreams: listUpstreamProviders().map((p) => ({
@@ -766,14 +882,20 @@ function toInfo(adapterId: string): ProviderSettingsInfo | null {
   };
 }
 
-export function listProviderSettings(): ProviderSettingsInfo[] {
+export function listProviderSettings(
+  options: { nonBlockingAuth?: boolean } = {},
+): ProviderSettingsInfo[] {
   return listAdapters()
-    .map((a) => toInfo(a.id))
+    .map((a) => toInfo(a.id, options))
     .filter((info): info is ProviderSettingsInfo => info !== null);
 }
 
+function listProviderSettingsForRenderer(): ProviderSettingsInfo[] {
+  return listProviderSettings({ nonBlockingAuth: true });
+}
+
 function broadcast(): void {
-  const snapshot = listProviderSettings();
+  const snapshot = listProviderSettingsForRenderer();
   for (const wc of listeners) {
     if (!wc.isDestroyed()) wc.send(PROVIDER_CHANNELS.changed, snapshot);
   }
@@ -1049,7 +1171,7 @@ export async function maybeOfferFirstRunProvisioning(
 export function registerProviderIpc(): void {
   load();
 
-  ipcMain.handle(PROVIDER_CHANNELS.installCli, async (_e, raw) => {
+  handleTrusted(PROVIDER_CHANNELS.installCli, async (_e, raw) => {
     const parsed = z
       .object({ adapterId: z.string().min(1).max(64) })
       .safeParse(raw);
@@ -1114,12 +1236,18 @@ export function registerProviderIpc(): void {
       listAdapters().map((a) => a.id),
       () => broadcast(),
     );
-    return listProviderSettings();
+    // A Keychain-only Claude login is warmed asynchronously. The immediate
+    // provider snapshot is cache/file-metadata based and therefore cannot
+    // freeze this IPC request behind `security` for up to five seconds.
+    void refreshClaudeSubscriptionAuthCache().then(({ cacheUpdated }) => {
+      if (cacheUpdated) broadcast();
+    });
+    return listProviderSettingsForRenderer();
   });
 
-  ipcMain.handle(PROVIDER_CHANNELS.setConfig, async (_event, raw) => {
+  handleTrusted(PROVIDER_CHANNELS.setConfig, async (_event, raw) => {
     const parsed = providerConfigPatchSchema.safeParse(raw);
-    if (!parsed.success) return listProviderSettings();
+    if (!parsed.success) return listProviderSettingsForRenderer();
     const { adapterId, ...patch } = parsed.data;
     const current = configFor(adapterId);
 
@@ -1157,10 +1285,10 @@ export function registerProviderIpc(): void {
     configs.set(adapterId, merged);
     persist();
     broadcast();
-    return listProviderSettings();
+    return listProviderSettingsForRenderer();
   });
 
-  ipcMain.handle(PROVIDER_CHANNELS.setKey, (_event, raw) => {
+  handleTrusted(PROVIDER_CHANNELS.setKey, (_event, raw) => {
     const parsed = setKeySchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid key request' };
     const result = setKey(parsed.data.adapterId, parsed.data.key);
@@ -1168,27 +1296,27 @@ export function registerProviderIpc(): void {
     return result;
   });
 
-  ipcMain.handle(PROVIDER_CHANNELS.addModel, (_event, raw) => {
+  handleTrusted(PROVIDER_CHANNELS.addModel, (_event, raw) => {
     const parsed = addModelSchema.safeParse(raw);
     if (parsed.success) {
       addCustomModel(parsed.data.adapterId, parsed.data.model);
       broadcast();
       notifyAdaptersChanged(); // refresh roster + Modo Livre picker
     }
-    return listProviderSettings();
+    return listProviderSettingsForRenderer();
   });
 
-  ipcMain.handle(PROVIDER_CHANNELS.removeModel, (_event, raw) => {
+  handleTrusted(PROVIDER_CHANNELS.removeModel, (_event, raw) => {
     const parsed = addModelSchema.safeParse(raw);
     if (parsed.success) {
       removeCustomModel(parsed.data.adapterId, parsed.data.model);
       broadcast();
       notifyAdaptersChanged();
     }
-    return listProviderSettings();
+    return listProviderSettingsForRenderer();
   });
 
-  ipcMain.handle(
+  handleTrusted(
     PROVIDER_CHANNELS.testKey,
     async (_event, raw): Promise<TestConnectionResult> => {
       const parsed = setKeySchema

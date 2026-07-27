@@ -29,6 +29,8 @@ interface Harness {
   exitTap?: (sessionId: string) => void;
   injectable: boolean;
   injectabilityTap?: (sessionId: string) => void;
+  turnStartSequence: number;
+  turnStartTap?: (sessionId: string, sequence: number) => void;
   ports: MissionKickoffAcceptancePorts;
 }
 
@@ -41,6 +43,7 @@ function harness(
   value.writes = [];
   value.blocked = [];
   value.injectable = true;
+  value.turnStartSequence = 0;
   value.ports = {
     getState: () => value.state,
     write: (_sessionId, data, options) => {
@@ -64,14 +67,28 @@ function harness(
       value.injectabilityTap = tap;
       return () => { value.injectabilityTap = undefined; };
     },
+    getTurnStartSequence: () => value.turnStartSequence,
+    onTurnStart: (tap) => {
+      value.turnStartTap = tap;
+      return () => { value.turnStartTap = undefined; };
+    },
     isAuthorized: () => value.authorized,
     block: async (reason) => { value.blocked.push(reason); },
   };
   return value;
 }
 
+function emitTurnStart(
+  value: Harness,
+  sessionId: string,
+): void {
+  value.turnStartSequence += 1;
+  value.turnStartTap?.(sessionId, value.turnStartSequence);
+}
+
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
 
 describe('main-owned mission kickoff acceptance', () => {
@@ -185,8 +202,11 @@ describe('main-owned mission kickoff acceptance', () => {
     );
 
     expect(prompt).toContain(imagePath);
-    expect(prompt).toContain('hatch-pet');
-    expect(prompt).toContain('pacote final instalável');
+    expect(prompt).toContain('nexus-pet-studio');
+    expect(prompt).toContain(
+      'artifacts/nexus-pet-studio/mission-pet/<pet-id>',
+    );
+    expect(prompt).toContain('pacote pronto para o Nexus validar e instalar');
     expect(prompt).toContain('nexus_handoff_submit uma única vez');
     expect(prompt).toMatch(/evidências verificáveis/i);
     expect(base.budgets.maxWorkers).toBe(0);
@@ -198,13 +218,14 @@ describe('main-owned mission kickoff acceptance', () => {
     expect(prompt).not.toMatch(/\bmerge\b/i);
   });
 
-  it('writes paste and Enter passively and accepts only real post-submit output+busy', async () => {
+  it('writes paste and Enter passively and accepts a native post-submit turn boundary', async () => {
     vi.useFakeTimers();
     const value = harness((current, data) => {
       if (data === '\r') {
         current.dataTap?.('session-a', 'CLI iniciou a missão');
         current.state = 'busy';
         current.stateTap?.('session-a', 'busy');
+        emitTurnStart(current, 'session-a');
       }
       return true;
     });
@@ -276,6 +297,7 @@ describe('main-owned mission kickoff acceptance', () => {
     value.dataTap?.('session-lenta', 'pronto');
     value.state = 'busy';
     value.stateTap?.('session-lenta', 'busy');
+    emitTurnStart(value, 'session-lenta');
     await vi.advanceTimersByTimeAsync(200);
 
     await expect(result).resolves.toMatchObject({ accepted: true });
@@ -322,10 +344,47 @@ describe('main-owned mission kickoff acceptance', () => {
     expect(value.writes).toEqual([]);
   });
 
-  it('does not accept a busy edge without PTY output after Enter', async () => {
+  it('waits for a recognized boot prompt to settle before pasting the mission', async () => {
+    vi.useFakeTimers();
+    const value = harness((current, data) => {
+      if (data === '\r') emitTurnStart(current, 'session-boot-prompt');
+      return true;
+    });
+    value.injectable = false;
+
+    const result = runMissionKickoffAcceptance(
+      {
+        sessionId: 'session-boot-prompt',
+        prompt: 'Somente depois do diálogo.',
+      },
+      value.ports,
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 100,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(40);
+    expect(value.writes).toEqual([]);
+
+    value.injectable = true;
+    value.injectabilityTap?.('session-boot-prompt');
+    await vi.advanceTimersByTimeAsync(11);
+
+    await expect(result).resolves.toEqual({ accepted: true });
+    expect(value.writes.map((entry) => entry.data)).toEqual([
+      expect.stringContaining('Somente depois do diálogo.'),
+      '\r',
+    ]);
+  });
+
+  it('does not accept PTY output+busy without a native turn boundary', async () => {
     vi.useFakeTimers();
     const value = harness((current, data) => {
       if (data === '\r') {
+        current.dataTap?.('session-no-output', 'repaint after Enter');
         current.state = 'busy';
         current.stateTap?.('session-no-output', 'busy');
       }
@@ -340,6 +399,125 @@ describe('main-owned mission kickoff acceptance', () => {
     await vi.advanceTimersByTimeAsync(111);
 
     await expect(result).resolves.toMatchObject({ accepted: false, reason: 'timeout' });
+    expect(value.blocked).toEqual(['timeout']);
+  });
+
+  it('accepts a silent provider only after its native turn boundary', async () => {
+    vi.useFakeTimers();
+    const value = harness((current, data) => {
+      if (data === '\r') emitTurnStart(current, 'session-silent');
+      return true;
+    });
+
+    const result = runMissionKickoffAcceptance(
+      { sessionId: 'session-silent', prompt: 'Raciocine em silêncio.' },
+      value.ports,
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(11);
+
+    await expect(result).resolves.toEqual({ accepted: true });
+    expect(value.writes.at(-1)).toEqual({ data: '\r', passive: true });
+  });
+
+  it('ignores a stale prompt boundary observed before Enter', async () => {
+    vi.useFakeTimers();
+    const value = harness((current, data) => {
+      if (data !== '\r') emitTurnStart(current, 'session-stale');
+      return true;
+    });
+
+    const result = runMissionKickoffAcceptance(
+      { sessionId: 'session-stale', prompt: 'Exija uma borda nova.' },
+      value.ports,
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(111);
+
+    await expect(result).resolves.toMatchObject({
+      accepted: false,
+      reason: 'timeout',
+    });
+    expect(value.blocked).toEqual(['timeout']);
+  });
+
+  it('ignores a native turn boundary from another physical session', async () => {
+    vi.useFakeTimers();
+    const value = harness((current, data) => {
+      if (data === '\r') current.turnStartTap?.('session-other', 1);
+      return true;
+    });
+
+    const result = runMissionKickoffAcceptance(
+      { sessionId: 'session-target', prompt: 'Somente esta sessão.' },
+      value.ports,
+      {
+        pasteSettleMs: 10,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(111);
+
+    await expect(result).resolves.toMatchObject({
+      accepted: false,
+      reason: 'timeout',
+    });
+  });
+
+  it('never accepts real-mission repaint busy before Enter', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('NEXUS_REAL_MISSION_E2E', '1');
+    const value = harness((current, data) => {
+      if (data !== '\r') {
+        current.dataTap?.('session-real', 'composer repaint');
+        current.state = 'busy';
+        current.stateTap?.('session-real', 'busy');
+        setTimeout(() => {
+          current.state = 'idle';
+          current.stateTap?.('session-real', 'idle');
+        }, 20);
+      } else {
+        // Even post-Enter repaint/output is transport evidence only.
+        current.dataTap?.('session-real', 'screen repaint');
+        current.state = 'busy';
+        current.stateTap?.('session-real', 'busy');
+      }
+      return true;
+    });
+
+    const result = runMissionKickoffAcceptance(
+      { sessionId: 'session-real', prompt: 'Não aceite repaint.' },
+      value.ports,
+      {
+        pasteSettleMs: 10,
+        pasteIdleWindowMs: 100,
+        bootIdleWindowMs: 50,
+        acceptanceWindowMs: 100,
+        bracketedPasteWindowMs: 0,
+      },
+    );
+    await vi.advanceTimersByTimeAsync(125);
+
+    await expect(result).resolves.toMatchObject({
+      accepted: false,
+      reason: 'timeout',
+    });
+    expect(value.writes.map((entry) => entry.data)).toEqual([
+      expect.stringContaining('Não aceite repaint.'),
+      '\r',
+    ]);
     expect(value.blocked).toEqual(['timeout']);
   });
 

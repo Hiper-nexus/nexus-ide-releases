@@ -17,8 +17,12 @@ describe('launchPetHatchMission', () => {
     expect(result.squad?.agents).toHaveLength(1);
     expect(result.squad?.agents[0]).toMatchObject({
       cli: 'codex',
-      allowedTools: ['load_workspace_dependencies'],
-      allowedSkills: ['hatch-pet'],
+      allowedTools: [
+        'load_workspace_dependencies',
+        'nexus_media_providers',
+        'nexus_image_generate',
+      ],
+      allowedSkills: ['nexus-pet-studio'],
     });
     expect(launchSquad).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'nexus-pet-studio' }),
@@ -66,7 +70,11 @@ describe('launchPetHatchMission', () => {
         builtin: true,
         agents: [
           expect.objectContaining({
-            allowedTools: ['load_workspace_dependencies'],
+            allowedTools: [
+              'load_workspace_dependencies',
+              'nexus_media_providers',
+              'nexus_image_generate',
+            ],
           }),
         ],
       }),
@@ -78,7 +86,11 @@ describe('launchPetHatchMission', () => {
           expect.objectContaining({
             id: 'pet-maker',
             cli: 'codex',
-            allowedTools: ['load_workspace_dependencies'],
+            allowedTools: [
+              'load_workspace_dependencies',
+              'nexus_media_providers',
+              'nexus_image_generate',
+            ],
           }),
         ],
       }),

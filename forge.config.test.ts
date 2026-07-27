@@ -34,10 +34,26 @@ describe('Linux sandbox packaging', () => {
 });
 
 describe('native terminal packaging', () => {
-  it('unpacks complete node-pty packages, including helpers and conpty bindings', () => {
+  it('unpacks complete node-pty packages without naming a mutable spawn-helper', () => {
     expect(forgeConfig.packagerConfig?.asar).toMatchObject({
       unpackDir: '**/node_modules/@lydell/{node-pty,node-pty-*}',
     });
+    expect(
+      (forgeConfig.packagerConfig?.asar as { unpack?: string }).unpack,
+    ).not.toContain('spawn-helper');
+  });
+
+  it('ships the signed responsibility supervisor on Darwin build hosts', () => {
+    const resources = forgeConfig.packagerConfig?.extraResource;
+    if (process.platform === 'darwin') {
+      expect(resources).toContain(
+        'resources/native/darwin/nexus-pty-supervisor',
+      );
+    } else {
+      expect(resources).not.toContain(
+        'resources/native/darwin/nexus-pty-supervisor',
+      );
+    }
   });
 });
 

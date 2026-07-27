@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { ipcMain } from 'electron';
 import type { WebContents } from 'electron';
+import { handleTrusted } from '../security/trusted-ipc';
 import {
   DEFAULT_AUDIO_SETTINGS,
   DEFAULT_INTEGRATIONS_SETTINGS,
@@ -195,7 +196,7 @@ export function registerSettingsIpc(): void {
 
   ipcMain.handle(SETTINGS_CHANNELS.get, () => current);
 
-  ipcMain.handle(SETTINGS_CHANNELS.set, (_event, raw) => {
+  handleTrusted(SETTINGS_CHANNELS.set, (_event, raw) => {
     const parsed = terminalSettingsPatchSchema.safeParse(raw);
     if (!parsed.success) return current;
     const next = { ...current, ...parsed.data };
@@ -214,7 +215,7 @@ export function registerSettingsIpc(): void {
 
   ipcMain.handle(SETTINGS_CHANNELS.orchGet, () => orchSettings);
 
-  ipcMain.handle(SETTINGS_CHANNELS.orchSet, (_event, raw) => {
+  handleTrusted(SETTINGS_CHANNELS.orchSet, (_event, raw) => {
     const parsed = orchSettingsSchema.safeParse({ ...orchSettings, ...(raw ?? {}) });
     if (parsed.success) {
       persist(snapshot({ orch: parsed.data }));
@@ -225,7 +226,7 @@ export function registerSettingsIpc(): void {
 
   ipcMain.handle(SETTINGS_CHANNELS.audioGet, () => audioSettings);
 
-  ipcMain.handle(SETTINGS_CHANNELS.audioSet, (_event, raw) => {
+  handleTrusted(SETTINGS_CHANNELS.audioSet, (_event, raw) => {
     const parsed = audioSettingsPatchSchema.safeParse(raw);
     if (!parsed.success) return audioSettings;
     const next = { ...audioSettings, ...parsed.data };
@@ -240,7 +241,7 @@ export function registerSettingsIpc(): void {
 
   ipcMain.handle(SETTINGS_CHANNELS.uiGet, () => uiSettings);
 
-  ipcMain.handle(SETTINGS_CHANNELS.uiSet, (_event, raw) => {
+  handleTrusted(SETTINGS_CHANNELS.uiSet, (_event, raw) => {
     const parsed = uiSettingsPatchSchema.safeParse(raw);
     if (!parsed.success) return uiSettings;
     const next = { ...uiSettings, ...parsed.data };

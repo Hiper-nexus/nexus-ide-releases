@@ -1,17 +1,49 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Squad } from "../../shared/orch-types";
+import type { AdapterInfo } from "../../shared/adapter-types";
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { AgentGateContext } from "./gate";
 import type { ProjectDomainStoreSuite } from "./project-domain-store-registry";
 import { plannedTaskId } from "./task-store";
 import {
   planMissionTasks,
+  sealMainOwnedMissionTaskPlan,
   type MissionTaskPlanAuthorityDeps,
 } from "./mission-task-plan-authority";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 
 const scope = testProjectScope();
+
+function adapterInfo(
+  id: string,
+  overrides: Partial<AdapterInfo> = {},
+): AdapterInfo {
+  const codex = id === "codex";
+  return {
+    id,
+    kind: "cli-pty",
+    label: id,
+    icon: "",
+    models: { list: [`${id}-model`], default: `${id}-model` },
+    installed: true,
+    installCommand: "",
+    idleTimeoutMs: 800,
+    orchestratorCapable: codex,
+    autonomousWorkspaceWriteCapable: codex,
+    orchestrationEvidence: codex ? "verified" : "unsupported",
+    capabilities: {
+      launchable: true,
+      promptInjectable: true,
+      statusObservable: true,
+      resumable: true,
+      autonomousReadOnly: codex,
+      governedWriter: codex,
+      verifiedMaestro: codex,
+    },
+    ...overrides,
+  };
+}
 
 const squad: Squad = {
   id: "squad-a",
@@ -36,7 +68,13 @@ const squad: Squad = {
       id: "reviewer",
       agentName: "Reviewer",
       category: "reviewer",
-      cli: "glm",
+      cli: "codex",
+    },
+    {
+      id: "architect",
+      agentName: "Architect",
+      category: "architect",
+      cli: "codex",
     },
     {
       id: "claude-reviewer",
@@ -76,6 +114,7 @@ function harness(
     mission?: Record<string, unknown> | null;
     worktrees?: readonly unknown[];
     liveSquad?: Squad;
+    adapterOverrides?: Readonly<Record<string, AdapterInfo>>;
   } = {},
 ) {
   const createPlanAtomically = vi.fn(
@@ -128,6 +167,10 @@ function harness(
   } as unknown as Pick<ProjectDomainStoreSuite, "missions" | "tasks">;
   const deps: MissionTaskPlanAuthorityDeps = {
     getSquad: vi.fn(() => options.liveSquad ?? squad),
+    getAdapterInfo: vi.fn(
+      (adapterId) =>
+        options.adapterOverrides?.[adapterId] ?? adapterInfo(adapterId),
+    ),
     listMissionWorktrees: vi.fn(() => options.worktrees ?? []),
   };
   return { suite, deps, createPlanAtomically };
@@ -148,6 +191,85 @@ const validTask = {
 };
 
 describe("mission task plan authority", () => {
+  it("lets trusted main seal the approved plan before an orchestrator session exists", () => {
+    const contract = compileIntentContract({
+      goal: "Executar antes do bootstrap físico",
+      intentVersion: 7,
+    });
+    const mission = {
+      id: "mission-a",
+      status: "pending",
+      description: contract.goal,
+      intentState: "ready_to_start",
+      intentVersion: 7,
+      orchestratorSessionId: undefined,
+      squadId: squad.id,
+      intentContract: {
+        ...contract,
+        approvedAt: 1,
+        approvalReviewSha256: "a".repeat(64),
+        dispatchedAt: undefined,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    };
+    const { suite, deps, createPlanAtomically } = harness({ mission });
+
+    const result = sealMainOwnedMissionTaskPlan(
+      { missionId: "mission-a", tasks: [validTask] },
+      scope,
+      suite,
+      deps,
+      {
+        kind: "approved-preflight",
+        intentVersion: 7,
+        approvedAt: 1,
+        approvalReviewSha256: "a".repeat(64),
+      },
+    );
+
+    expect(createPlanAtomically).toHaveBeenCalledOnce();
+    expect(result.planned[0]).toMatchObject({
+      plannerId: "build",
+      agentRef: "builder",
+      executionMode: "isolated_worktree",
+    });
+  });
+
+  it("does not let an ordinary caller seal a merely approved pending mission", () => {
+    const contract = compileIntentContract({
+      goal: "Não despachar antes do receipt",
+      intentVersion: 7,
+    });
+    const pendingMission = {
+      id: "mission-a",
+      status: "pending",
+      description: contract.goal,
+      intentState: "ready_to_start",
+      intentVersion: 7,
+      orchestratorSessionId: undefined,
+      squadId: squad.id,
+      intentContract: {
+        ...contract,
+        approvedAt: 1,
+        dispatchedAt: undefined,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    };
+    const { suite, deps, createPlanAtomically } = harness({
+      mission: pendingMission,
+    });
+
+    expect(() =>
+      sealMainOwnedMissionTaskPlan(
+        { missionId: "mission-a", tasks: [validTask] },
+        scope,
+        suite,
+        deps,
+      ),
+    ).toThrow(/exact main-owned approved preflight/i);
+    expect(createPlanAtomically).not.toHaveBeenCalled();
+  });
+
   it("resolves the sticky roster, seals deterministic ids and returns the store response", () => {
     const { suite, deps, createPlanAtomically } = harness();
     const result = planMissionTasks(
@@ -280,10 +402,6 @@ describe("mission task plan authority", () => {
       /isolated_worktree requires explicit ownership\.files/,
     ],
     [
-      { ...validTask, executionMode: "read_only" },
-      /read_only is restricted to scout\/reviewer/,
-    ],
-    [
       {
         ...validTask,
         agentRef: "omp-scout",
@@ -291,6 +409,15 @@ describe("mission task plan authority", () => {
         executionMode: "read_only",
       },
       /read_only requires a mechanically confined CLI/,
+    ],
+    [
+      {
+        ...validTask,
+        agentRef: "omp-scout",
+        category: "scout",
+        executionMode: "isolated_worktree",
+      },
+      /governed writer/,
     ],
   ])(
     "rejects an invalid roster/execution row without persisting it",
@@ -307,6 +434,95 @@ describe("mission task plan authority", () => {
       expect(createPlanAtomically).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ["executor", "builder"],
+    ["reviewer", "reviewer"],
+    ["architect", "architect"],
+  ] as const)(
+    "allows a mechanically confined %s to contribute through read_only",
+    (category, agentRef) => {
+      const { suite, deps, createPlanAtomically } = harness();
+
+      expect(() =>
+        planMissionTasks(
+          {
+            missionId: "mission-a",
+            tasks: [
+              {
+                ...validTask,
+                agentRef,
+                category,
+                executionMode: "read_only",
+                ownership: {
+                  files: ["src"],
+                  symbols: [],
+                  domains: ["guided-advisory"],
+                },
+              },
+            ],
+          },
+          orchestratorContext(),
+          suite,
+          deps,
+        ),
+      ).not.toThrow();
+      expect(createPlanAtomically).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("allows a read-only-only qualification only for reviewer/scout tasks", () => {
+    const readOnlyCodex = adapterInfo("codex", {
+      autonomousWorkspaceWriteCapable: false,
+      capabilities: {
+        launchable: true,
+        promptInjectable: true,
+        statusObservable: true,
+        resumable: true,
+        autonomousReadOnly: true,
+        governedWriter: false,
+        verifiedMaestro: false,
+      },
+    });
+    const options = {
+      adapterOverrides: { codex: readOnlyCodex },
+    } as const;
+
+    const accepted = harness(options);
+    expect(() =>
+      planMissionTasks(
+        {
+          missionId: "mission-a",
+          tasks: [{
+            ...validTask,
+            agentRef: "reviewer",
+            category: "reviewer",
+            executionMode: "read_only",
+          }],
+        },
+        orchestratorContext(),
+        accepted.suite,
+        accepted.deps,
+      ),
+    ).not.toThrow();
+    expect(accepted.createPlanAtomically).toHaveBeenCalledOnce();
+
+    for (const task of [
+      { ...validTask, executionMode: "read_only" },
+      { ...validTask, executionMode: "isolated_worktree" },
+    ]) {
+      const rejected = harness(options);
+      expect(() =>
+        planMissionTasks(
+          { missionId: "mission-a", tasks: [task] },
+          orchestratorContext(),
+          rejected.suite,
+          rejected.deps,
+        ),
+      ).toThrow(/reviewer\/scout|governed writer/i);
+      expect(rejected.createPlanAtomically).not.toHaveBeenCalled();
+    }
+  });
 
   it("requires a closed dependency graph before the atomic store call", () => {
     const { suite, deps, createPlanAtomically } = harness();

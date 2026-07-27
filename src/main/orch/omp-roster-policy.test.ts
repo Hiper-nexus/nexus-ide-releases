@@ -48,7 +48,7 @@ describe('resolveStickyOmpAdapter', () => {
     const result = resolveStickyOmpAdapter({
       rosterCli: 'omp',
       requestedAdapterId: 'omp',
-      requestedModel: 'xai/grok-4.5',
+      requestedModel: 'xai-oauth/grok-4.5',
       rosterModel: 'zai/glm-5',
       rosterEffort: 'medium',
       requestedEffort: undefined,
@@ -56,7 +56,7 @@ describe('resolveStickyOmpAdapter', () => {
       ompParticipation: 'prefer',
     });
     expect(result.adapterId).toBe('omp');
-    expect(result.model).toBe('xai/grok-4.5');
+    expect(result.model).toBe('xai-oauth/grok-4.5');
     expect(result.sticky).toBe(false);
   });
 

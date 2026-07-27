@@ -11,6 +11,10 @@ export interface ProcessTableRow {
   readonly pid: number;
   readonly ppid: number;
   readonly pgid: number;
+  /** POSIX session id when the platform exposes it (`0` on modern macOS). */
+  readonly sid: number;
+  /** Controlling terminal name, or `??`/`?` when detached. */
+  readonly tty: string;
   /** `ps lstart` text, retained for delayed PID-reuse fencing. */
   readonly startedAt: string;
 }
@@ -24,6 +28,8 @@ export interface ProcessTableCapture {
 export interface DescendantSnapshot {
   readonly root: ProcessTableRow | null;
   readonly descendants: readonly ProcessTableRow[];
+  /** Full inventory used to establish closed, PTY-owned POSIX sessions. */
+  readonly inventory: readonly ProcessTableRow[];
   readonly capturedAtMs: number;
 }
 
@@ -69,13 +75,17 @@ interface PtyProcessTreeTerminationInput {
 export function parseProcessTable(psOutput: string): ProcessTableRow[] {
   const rows: ProcessTableRow[] = [];
   for (const line of psOutput.split('\n')) {
-    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/);
+    const match = line.match(
+      /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/,
+    );
     if (!match) continue;
     rows.push({
       pid: Number(match[1]),
       ppid: Number(match[2]),
       pgid: Number(match[3]),
-      startedAt: match[4],
+      sid: Number(match[4]),
+      tty: match[5],
+      startedAt: match[6],
     });
   }
   return rows;
@@ -89,7 +99,7 @@ function readFreshProcessTable(
   return new Promise((resolve, reject) => {
     execFile(
       'ps',
-      ['-axo', 'pid=,ppid=,pgid=,lstart='],
+      ['-axo', 'pid=,ppid=,pgid=,sess=,tty=,lstart='],
       {
         encoding: 'utf8',
         maxBuffer: PS_MAX_BUFFER_BYTES,
@@ -184,7 +194,12 @@ export function collectDescendantRows(
       // `ps` must describe one physical identity per PID. Any duplicate,
       // including a child outside the selected tree, makes the inventory
       // internally inconsistent and therefore unusable as kill authority.
-      return { root: null, descendants: [], capturedAtMs };
+      return {
+        root: null,
+        descendants: [],
+        inventory: table,
+        capturedAtMs,
+      };
     }
     seenPids.add(row.pid);
     if (row.pid === rootPid) {
@@ -197,7 +212,14 @@ export function collectDescendantRows(
   }
   // A missing root means the number is vacated/reused; never seed a PPID walk
   // from a stale PID and signal unrelated processes.
-  if (!root) return { root: null, descendants: [], capturedAtMs };
+  if (!root) {
+    return {
+      root: null,
+      descendants: [],
+      inventory: table,
+      capturedAtMs,
+    };
+  }
 
   const descendants: ProcessTableRow[] = [];
   const queue = [rootPid];
@@ -210,7 +232,7 @@ export function collectDescendantRows(
       queue.push(child.pid);
     }
   }
-  return { root, descendants, capturedAtMs };
+  return { root, descendants, inventory: table, capturedAtMs };
 }
 
 export async function captureDescendantSnapshot(
@@ -287,10 +309,7 @@ function capturedIdentityState(
   if (matches.length === 0) return 'gone';
   if (matches.length !== 1) return 'ambiguous';
   const current = matches[0];
-  if (
-    current.startedAt !== expected.startedAt ||
-    current.pgid !== expected.pgid
-  ) {
+  if (current.startedAt !== expected.startedAt) {
     return 'gone';
   }
   return hasUnambiguousStartIdentity(expected, snapshotCapturedAtMs)
@@ -298,21 +317,193 @@ function capturedIdentityState(
     : 'ambiguous';
 }
 
-function signalDescendants(
+interface TrackedDescendant {
+  readonly row: ProcessTableRow;
+  readonly observedAtMs: number;
+}
+
+function processIdentityKey(row: ProcessTableRow): string {
+  // PGID, SID, PPID and TTY may all change while the same process is alive.
+  // PID + kernel start time is the stable identity fence available from ps.
+  return `${row.pid}:${row.startedAt}`;
+}
+
+function uniqueRowsByPid(
+  rows: readonly ProcessTableRow[],
+): Map<number, ProcessTableRow> | null {
+  const byPid = new Map<number, ProcessTableRow>();
+  for (const row of rows) {
+    if (byPid.has(row.pid)) return null;
+    byPid.set(row.pid, row);
+  }
+  return byPid;
+}
+
+function addTrackedDescendant(
+  tracked: Map<string, TrackedDescendant>,
+  row: ProcessTableRow,
+  observedAtMs: number,
+): void {
+  const key = processIdentityKey(row);
+  if (!tracked.has(key)) {
+    tracked.set(key, { row, observedAtMs });
+  }
+}
+
+function establishAuthorizedSessions(
   snapshot: DescendantSnapshot,
+): Set<number> {
+  const treeRows = [
+    ...(snapshot.root ? [snapshot.root] : []),
+    ...snapshot.descendants,
+  ];
+  const treeKeys = new Set(treeRows.map(processIdentityKey));
+  const candidates = new Set(
+    treeRows
+      .filter((row) => row.sid === row.pid)
+      .map((row) => row.sid),
+  );
+  const authorized = new Set<number>();
+  for (const sid of candidates) {
+    const members = snapshot.inventory.filter((row) => row.sid === sid);
+    if (
+      members.length > 0 &&
+      members.every((row) => treeKeys.has(processIdentityKey(row)))
+    ) {
+      authorized.add(sid);
+    }
+  }
+  return authorized;
+}
+
+function isControllingTerminal(tty: string): boolean {
+  return tty !== '?' && tty !== '??' && tty !== '-';
+}
+
+function establishAuthorizedTerminals(
+  snapshot: DescendantSnapshot,
+): Set<string> {
+  const treeRows = [
+    ...(snapshot.root ? [snapshot.root] : []),
+    ...snapshot.descendants,
+  ];
+  const treeKeys = new Set(treeRows.map(processIdentityKey));
+  const candidates = new Set(
+    treeRows
+      .map((row) => row.tty)
+      .filter(isControllingTerminal),
+  );
+  const authorized = new Set<string>();
+  for (const tty of candidates) {
+    const members = snapshot.inventory.filter((row) => row.tty === tty);
+    if (
+      members.length > 0 &&
+      members.every((row) => treeKeys.has(processIdentityKey(row)))
+    ) {
+      authorized.add(tty);
+    }
+  }
+  return authorized;
+}
+
+/**
+ * Extends kill authority only through a currently identity-fenced parent or
+ * through a POSIX session / controlling terminal proven closed around this PTY
+ * tree at the first inventory. Those relationships survive ordinary PPID
+ * reparenting. Unknown rows are never swept merely because they share a
+ * numeric process group.
+ */
+function discoverLateDescendants(
+  rootPid: number,
+  root: ProcessTableRow,
+  rootObservedAtMs: number,
+  tracked: Map<string, TrackedDescendant>,
+  authorizedSessions: Set<number>,
+  authorizedTerminals: Set<string>,
+  capture: ProcessTableCapture,
+): boolean {
+  const byPid = uniqueRowsByPid(capture.rows);
+  if (!byPid) return false;
+
+  const childrenByPpid = new Map<number, ProcessTableRow[]>();
+  for (const row of capture.rows) {
+    const siblings = childrenByPpid.get(row.ppid);
+    if (siblings) siblings.push(row);
+    else childrenByPpid.set(row.ppid, [row]);
+  }
+
+  const discovered = new Map<number, ProcessTableRow>();
+  const queue: ProcessTableRow[] = [];
+  const enqueue = (row: ProcessTableRow): void => {
+    // The root PID is controlled only through the exact node-pty handle.
+    if (row.pid === rootPid || discovered.has(row.pid)) return;
+    discovered.set(row.pid, row);
+    queue.push(row);
+  };
+
+  if (
+    capturedIdentityState(root, rootObservedAtMs, capture.rows) ===
+    'live'
+  ) {
+    for (const child of childrenByPpid.get(rootPid) ?? []) enqueue(child);
+  }
+  for (const expected of tracked.values()) {
+    if (
+      capturedIdentityState(
+        expected.row,
+        expected.observedAtMs,
+        capture.rows,
+      ) !== 'live'
+    ) {
+      continue;
+    }
+    const current = byPid.get(expected.row.pid);
+    if (!current) continue;
+    enqueue(current);
+    for (const child of childrenByPpid.get(current.pid) ?? []) enqueue(child);
+  }
+  for (const row of capture.rows) {
+    if (
+      authorizedSessions.has(row.sid) ||
+      authorizedTerminals.has(row.tty)
+    ) {
+      enqueue(row);
+    }
+  }
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    for (const child of childrenByPpid.get(current.pid) ?? []) enqueue(child);
+  }
+
+  // A newly observed descendant that is itself a session leader establishes a
+  // durable lineage boundary for later scans. Do not dynamically authorize a
+  // different TTY: only the initially exclusive PTY slave is trusted.
+  for (const row of discovered.values()) {
+    addTrackedDescendant(tracked, row, capture.capturedAtMs);
+    if (row.sid === row.pid) authorizedSessions.add(row.sid);
+  }
+  return true;
+}
+
+function signalDescendants(
+  tracked: ReadonlyMap<string, TrackedDescendant>,
   signal: 'SIGTERM' | 'SIGKILL',
   sendSignal: SignalSender,
-  currentRows?: readonly ProcessTableRow[],
+  currentRows: readonly ProcessTableRow[],
 ): void {
-  for (const row of snapshot.descendants) {
+  for (const expected of tracked.values()) {
     if (
-      currentRows &&
-      capturedIdentityState(row, snapshot.capturedAtMs, currentRows) !==
+      capturedIdentityState(
+        expected.row,
+        expected.observedAtMs,
+        currentRows,
+      ) !==
         'live'
     ) {
       continue;
     }
-    sendSignal(row.pid, signal);
+    sendSignal(expected.row.pid, signal);
   }
 }
 
@@ -330,10 +521,12 @@ function proofError(
 }
 
 /**
- * Authority-critical PTY teardown. The process tree is snapshotted before the
- * root is signalled; delayed escalation is fenced by PID + lstart + PGID; the
- * result is successful only after a final bounded physical inventory proves
- * every captured descendant gone.
+ * Authority-critical PTY teardown. Every bounded inventory extends the
+ * authorized tree through identity-fenced parents and PTY-owned POSIX
+ * sessions/terminals. This closes the one-shot snapshot gap where a late child
+ * could be reparented before escalation. Delayed signals are fenced by PID +
+ * lstart (PGID/SID are mutable), and success requires every identity discovered
+ * during teardown to be absent from the final inventory.
  *
  * No process-group-wide signal is used: `killpg` can cross authority boundaries
  * after PGID reuse. Unsupported inventory platforms deliberately fail closed.
@@ -399,15 +592,39 @@ export async function terminatePtyProcessTree(
     );
   }
 
+  const tracked = new Map<string, TrackedDescendant>();
+  for (const row of snapshot.descendants) {
+    addTrackedDescendant(tracked, row, snapshot.capturedAtMs);
+  }
+  const authorizedSessions = establishAuthorizedSessions(snapshot);
+  const authorizedTerminals = establishAuthorizedTerminals(snapshot);
+  let inventoryReliable = true;
+  const observe = async (): Promise<ProcessTableCapture | null> => {
+    const capture = await readBeforeDeadline(readTable, snapshotTimeoutMs);
+    if (
+      !capture ||
+      !discoverLateDescendants(
+        input.rootPid,
+        snapshot.root!,
+        snapshot.capturedAtMs,
+        tracked,
+        authorizedSessions,
+        authorizedTerminals,
+        capture,
+      )
+    ) {
+      inventoryReliable = false;
+      return null;
+    }
+    return capture;
+  };
+
   // Re-read immediately before the first signal. Even the short interval after
-  // the ancestry snapshot is enough for a PID to exit and be recycled.
-  const preTermCapture = await readBeforeDeadline(
-    readTable,
-    snapshotTimeoutMs,
-  );
+  // the ancestry snapshot is enough for a PID to exit, recycle, or fork.
+  const preTermCapture = await observe();
   if (preTermCapture) {
     signalDescendants(
-      snapshot,
+      tracked,
       'SIGTERM',
       sendSignal,
       preTermCapture.rows,
@@ -418,15 +635,27 @@ export async function terminatePtyProcessTree(
   } catch {
     // Bounded force attempt below remains authoritative.
   }
-  await delay(termTimeoutMs);
 
-  const escalationCapture = await readBeforeDeadline(
-    readTable,
-    snapshotTimeoutMs,
-  );
+  // Split each grace window around a fresh inventory. A child forked by a
+  // signal handler is therefore discovered and signalled within the original
+  // caller-provided budget instead of adding an unbounded retry loop.
+  const termFirstWaitMs = Math.floor(termTimeoutMs / 2);
+  await delay(termFirstWaitMs);
+  const termSweepCapture = await observe();
+  if (termSweepCapture) {
+    signalDescendants(
+      tracked,
+      'SIGTERM',
+      sendSignal,
+      termSweepCapture.rows,
+    );
+  }
+  await delay(termTimeoutMs - termFirstWaitMs);
+
+  const escalationCapture = await observe();
   if (escalationCapture) {
     signalDescendants(
-      snapshot,
+      tracked,
       'SIGKILL',
       sendSignal,
       escalationCapture.rows,
@@ -439,12 +668,21 @@ export async function terminatePtyProcessTree(
       // Final root callback and inventory decide the proof.
     }
   }
-  await delay(killTimeoutMs);
 
-  const finalCapture = await readBeforeDeadline(
-    readTable,
-    snapshotTimeoutMs,
-  );
+  const killFirstWaitMs = Math.floor(killTimeoutMs / 2);
+  await delay(killFirstWaitMs);
+  const killSweepCapture = await observe();
+  if (killSweepCapture) {
+    signalDescendants(
+      tracked,
+      'SIGKILL',
+      sendSignal,
+      killSweepCapture.rows,
+    );
+  }
+  await delay(killTimeoutMs - killFirstWaitMs);
+
+  const finalCapture = await observe();
   if (!finalCapture) {
     return proofError(
       rootExited,
@@ -452,19 +690,19 @@ export async function terminatePtyProcessTree(
       'O inventário final de processos falhou; exclusividade física mantida.',
     );
   }
-  const descendantsExited = snapshot.descendants.every(
-    (row) =>
+  const descendantsExited = [...tracked.values()].every(
+    (expected) =>
       capturedIdentityState(
-        row,
-        snapshot.capturedAtMs,
+        expected.row,
+        expected.observedAtMs,
         finalCapture.rows,
       ) === 'gone',
   );
-  if (!preTermCapture) {
+  if (!inventoryReliable || !preTermCapture) {
     return proofError(
       rootExited,
       descendantsExited,
-      'A revalidação de identidade pré-SIGTERM falhou; exclusividade física mantida.',
+      'Uma revalidação de identidade durante o teardown falhou; exclusividade física mantida.',
     );
   }
   if (!rootExited || !descendantsExited) {

@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { shouldCreateWindowOnActivate } from './app-lifecycle';
+import {
+  restoreMainWindowOnActivate,
+  shouldCreateWindowOnActivate,
+} from './app-lifecycle';
 
 describe('macOS activate lifecycle', () => {
   it('constructs the native window before optional window integrations', () => {
@@ -27,12 +30,72 @@ describe('macOS activate lifecycle', () => {
     expect(source.slice(failedGuard, bootstrap)).toContain('return;');
   });
 
+  it('installs the packaged renderer protocol before the first window navigates', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
+    const readyStart = source.indexOf('app.whenReady().then(async () => {');
+    const protocolInstall = source.indexOf(
+      'installRendererProtocol(',
+      readyStart,
+    );
+    const windowAttempt = source.indexOf(
+      'const mainWindow = createMainWindow();',
+      readyStart,
+    );
+
+    expect(readyStart).toBeGreaterThanOrEqual(0);
+    expect(protocolInstall).toBeGreaterThan(readyStart);
+    expect(protocolInstall).toBeLessThan(windowAttempt);
+  });
+
   it('keeps the native window explicitly visible on launch', () => {
     const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
     expect(source).toContain('show: false');
     expect(source).toContain('showNativeWindow();');
     expect(source).toContain('ensureRegularMacOSActivation();');
     expect(source).toContain("win.webContents.once('did-finish-load', ensureMacDockPresence)");
+  });
+
+  it('keeps mount recovery on a Main-owned deadline across renderer lifecycle changes', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'window.ts'), 'utf-8');
+    const mountedStart = source.indexOf('const onMounted =');
+    const mountedEnd = source.indexOf(
+      'ipcMain.on(WINDOW_CHANNELS.mounted',
+      mountedStart,
+    );
+    const destroyedStart = source.indexOf("wc.once('destroyed'", mountedEnd);
+    const destroyedEnd = source.indexOf('// Dev only:', destroyedStart);
+    const finishedStart = source.indexOf("wc.on('did-finish-load'");
+    const pollStart = source.indexOf('const poll = setInterval', finishedStart);
+    const navigationStart = source.indexOf(
+      "wc.on('did-start-navigation'",
+      pollStart,
+    );
+
+    expect(source.slice(mountedStart, mountedEnd)).toContain(
+      'commitRendererBoot();',
+    );
+    const commitStart = source.indexOf('const commitRendererBoot =');
+    const commitEnd = source.indexOf('// Renderer → main mount signal', commitStart);
+    expect(source.slice(commitStart, commitEnd)).toContain(
+      'stopMountMonitoring();',
+    );
+    expect(source.slice(destroyedStart, destroyedEnd)).toContain(
+      'stopMountMonitoring();',
+    );
+    expect(source.slice(finishedStart, pollStart)).toContain(
+      'if (mounted) return;',
+    );
+    expect(source.slice(finishedStart, pollStart)).toContain(
+      'mountWatchdog.arm();',
+    );
+    const navigationBlock = source.slice(navigationStart);
+    expect(navigationBlock).toContain('details.isMainFrame');
+    expect(navigationBlock).toContain('details.isSameDocument');
+    expect(navigationBlock).toContain('stopMountMonitoring();');
+    expect(navigationBlock).toContain('startLoadWatchdog();');
+    expect(source.slice(finishedStart, pollStart)).not.toContain(
+      'clearInterval(loadWatchdog)',
+    );
   });
 
   it('sets regular macOS activation before creating the first window', () => {
@@ -124,6 +187,67 @@ describe('macOS activate lifecycle', () => {
     ).toBe(false);
   });
 
+  it('restores and focuses an existing hidden main window on activate', () => {
+    const calls: string[] = [];
+    const window = {
+      isDestroyed: () => false,
+      isMinimized: () => true,
+      restore: () => calls.push('restore'),
+      show: () => calls.push('show'),
+      focus: () => calls.push('focus-window'),
+    };
+
+    expect(
+      restoreMainWindowOnActivate(
+        {
+          isShutdownInProgress: false,
+          isShutdownComplete: false,
+        },
+        window,
+        () => calls.push('focus-app'),
+      ),
+    ).toBe(true);
+    expect(calls).toEqual([
+      'restore',
+      'show',
+      'focus-app',
+      'focus-window',
+    ]);
+  });
+
+  it('never restores a window after shutdown starts or after destruction', () => {
+    const calls: string[] = [];
+    const window = {
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      restore: () => calls.push('restore'),
+      show: () => calls.push('show'),
+      focus: () => calls.push('focus-window'),
+    };
+
+    expect(
+      restoreMainWindowOnActivate(
+        {
+          isShutdownInProgress: true,
+          isShutdownComplete: false,
+        },
+        window,
+        () => calls.push('focus-app'),
+      ),
+    ).toBe(false);
+    expect(
+      restoreMainWindowOnActivate(
+        {
+          isShutdownInProgress: false,
+          isShutdownComplete: false,
+        },
+        { ...window, isDestroyed: () => true },
+        () => calls.push('focus-app'),
+      ),
+    ).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
   it('does not dispose keep-awake before the user confirms quit', () => {
     const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
     const beforeQuit = source.indexOf('app.on("before-quit"');
@@ -133,5 +257,125 @@ describe('macOS activate lifecycle', () => {
     expect(source.slice(beforeQuit, confirmation)).not.toContain(
       'disposeAgentAwakeService()',
     );
+  });
+
+  it('proves every PTY and OMP tree before declaring quit complete', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
+    const shutdownStart = source.indexOf('function shutdown(): Promise<void>');
+    const physicalFence = source.indexOf(
+      'await shutdownOrchestrationRuntimesWithProof({',
+      shutdownStart,
+    );
+    const ompFence = source.indexOf(
+      'terminateAllOmpSessions: disposeAllOmpRpcSessions,',
+      physicalFence,
+    );
+    const completion = source.indexOf(
+      'shutdownComplete = true;',
+      ompFence,
+    );
+
+    expect(shutdownStart).toBeGreaterThanOrEqual(0);
+    expect(physicalFence).toBeGreaterThan(shutdownStart);
+    expect(ompFence).toBeGreaterThan(physicalFence);
+    expect(completion).toBeGreaterThan(ompFence);
+    expect(source).not.toMatch(/^\s*disposeAllOmpRpcSessions\(\);/m);
+    expect(source).not.toContain('killAllSessions();');
+    expect(source).not.toContain('app.exit(');
+  });
+
+  it('keeps the app open with an actionable retry when safe shutdown fails', () => {
+    const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
+    const shutdownUiSource = fs.readFileSync(
+      path.join(__dirname, 'app-shutdown-ui.ts'),
+      'utf-8',
+    );
+    const beforeQuit = source.indexOf('app.on("before-quit"');
+    const failure = source.indexOf(
+      'shutdownNotices.showFailure(error);',
+      beforeQuit,
+    );
+
+    expect(failure).toBeGreaterThan(beforeQuit);
+    expect(source.slice(beforeQuit, failure)).toContain(
+      'shutdownPromise = null;',
+    );
+    expect(shutdownUiSource).toContain(
+      '"Manter o NexusIDE aberto", "Tentar novamente"',
+    );
+    expect(shutdownUiSource).toContain('deps.revokeQuitAuthorization();');
+  });
+
+  it('routes confirmed process-bearing window close through the physical app shutdown lane', () => {
+    const windowSource = fs.readFileSync(
+      path.join(__dirname, 'window.ts'),
+      'utf-8',
+    );
+    const closeSource = fs.readFileSync(
+      path.join(__dirname, 'close-authorization.ts'),
+      'utf-8',
+    );
+    const mainSource = fs.readFileSync(
+      path.join(__dirname, 'main.ts'),
+      'utf-8',
+    );
+
+    const confirmation = windowSource.indexOf(
+      'completeConfirmedWindowClose({',
+    );
+    const closeHandler = windowSource.indexOf("win.on('close'");
+    const globalInventory = windowSource.indexOf(
+      'const summary = liveRuntimeProcessSummary();',
+      closeHandler,
+    );
+    const appQuit = windowSource.indexOf(
+      'quitApp: () => app.quit()',
+      confirmation,
+    );
+    expect(globalInventory).toBeGreaterThan(closeHandler);
+    expect(confirmation).toBeGreaterThanOrEqual(0);
+    expect(appQuit).toBeGreaterThan(confirmation);
+    expect(windowSource).not.toContain('windowCloseAuthorized');
+    const admissionSeal = closeSource.indexOf('deps.sealRuntimeAdmission();');
+    const authorization = closeSource.indexOf('authorizeAppQuit();');
+    const quit = closeSource.indexOf('deps.quitApp();');
+    expect(admissionSeal).toBeLessThan(authorization);
+    expect(authorization).toBeLessThan(quit);
+    const zeroSnapshot = windowSource.indexOf(
+      '// Even a zero snapshot can have queued orchestration.',
+      closeHandler,
+    );
+    expect(windowSource.indexOf('beginSafeAppShutdown();', zeroSnapshot))
+      .toBeGreaterThan(zeroSnapshot);
+    const cancelGuard = windowSource.indexOf(
+      'if (response !== 1 || win.isDestroyed()) return;',
+      confirmation,
+    );
+    expect(windowSource.indexOf('beginSafeAppShutdown();', cancelGuard))
+      .toBeGreaterThan(cancelGuard);
+
+    const shutdownFunction = mainSource.indexOf(
+      'function shutdown(): Promise<void>',
+    );
+    const beforeQuit = mainSource.indexOf('app.on("before-quit"');
+    const physicalProof = mainSource.indexOf(
+      'await shutdownOrchestrationRuntimesWithProof({',
+      shutdownFunction,
+    );
+    const completion = mainSource.indexOf(
+      'shutdownComplete = true;',
+      physicalProof,
+    );
+    const shutdownCall = mainSource.indexOf('void shutdown()', beforeQuit);
+    const sealBeforeShutdown = mainSource.indexOf(
+      'sealRuntimeProcessAdmissionForShutdown();',
+      beforeQuit,
+    );
+    expect(physicalProof).toBeGreaterThan(shutdownFunction);
+    expect(physicalProof).toBeLessThan(beforeQuit);
+    expect(completion).toBeGreaterThan(physicalProof);
+    expect(sealBeforeShutdown).toBeGreaterThan(beforeQuit);
+    expect(sealBeforeShutdown).toBeLessThan(shutdownCall);
+    expect(shutdownCall).toBeGreaterThan(beforeQuit);
   });
 });

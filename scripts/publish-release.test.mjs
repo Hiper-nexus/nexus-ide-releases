@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { makeValidRealMissionEvidence } from './test-support/real-mission-evidence.mjs';
 
 import {
   CANONICAL_RELEASE_REPO,
@@ -14,8 +15,10 @@ import {
   buildGitHubReleaseViewArgs,
   classifyGitHubReleaseResult,
   describeLocalReleaseAssets,
+  assertPublishPhysicalCandidate,
   loadReusableReleaseCandidate,
   publishManualRelease,
+  publishManualReleaseTestCore,
   resolveSecurityAssets,
   stageReleaseAssets,
   verifyRemoteMain,
@@ -33,10 +36,86 @@ afterAll(() => {
 });
 
 describe('manual GitHub release publication', () => {
+  it('keeps publication effects outside caller-controlled production seams', () => {
+    expect(() =>
+      publishManualRelease({ github: {} }),
+    ).toThrow(/rejects dependency override/i);
+    const inherited = Object.create({
+      runCandidateGate: async () => ({}),
+      github: {},
+      repositoryPublisher: {},
+    });
+    expect(() => publishManualRelease(inherited)).toThrow(
+      /rejects dependency override/i,
+    );
+  });
+
+  it('rejects literal/private evidence even when receipt booleans claim physical UI', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-publish-physical-'));
+    publicationRoots.push(root);
+    const evidencePath = path.join(root, 'evidence.json');
+    const privateEvidence = makeValidRealMissionEvidence({
+      appVersion: '1.2.3',
+      commitSha: 'a'.repeat(40),
+      artifactSha256: 'b'.repeat(64),
+      launchSurface: 'private-runner',
+    });
+    fs.writeFileSync(evidencePath, JSON.stringify(privateEvidence));
+    expect(() =>
+      assertPublishPhysicalCandidate({
+        evidencePath,
+        receipt: {
+          version: '1.2.3',
+          commitSha: 'a'.repeat(40),
+          artifacts: {
+            zip: { sha256: 'b'.repeat(64) },
+            e2eEvidence: {
+              sha256: digest(fs.readFileSync(evidencePath)),
+            },
+          },
+          verification: {
+            physicalProductWizard: true,
+          },
+        },
+      }),
+    ).toThrow(/product-wizard|physical/i);
+  });
+
+  it('rejects a literal single-mission flag when the physical inventory disagrees', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-publish-inventory-'));
+    publicationRoots.push(root);
+    const evidencePath = path.join(root, 'evidence.json');
+    const evidence = makeValidRealMissionEvidence();
+    evidence.missionInventory.observedMissionCount = 2;
+    evidence.missionInventory.observedMissionIds.push('mission-extra');
+    evidence.missionInventory.exactSingleProductMission = false;
+    fs.writeFileSync(evidencePath, JSON.stringify(evidence));
+
+    expect(() =>
+      assertPublishPhysicalCandidate({
+        evidencePath,
+        receipt: {
+          version: '1.2.3',
+          commitSha: 'a'.repeat(40),
+          artifacts: {
+            zip: { sha256: evidence.release.artifact.sha256 },
+            e2eEvidence: {
+              sha256: digest(fs.readFileSync(evidencePath)),
+            },
+          },
+          verification: {
+            physicalProductWizard: true,
+            singleProductMission: true,
+          },
+        },
+      }),
+    ).toThrow(/inventory|product-wizard|physical/i);
+  });
+
   it('requires the repository-pinned Node patch before touching GitHub', async () => {
     let inspected = false;
     await expect(
-      publishManualRelease({
+      publishManualReleaseTestCore({
         root: '/unused',
         environment: publishEnvironment(),
         authority: releaseAuthority(),
@@ -451,7 +530,7 @@ describe('manual GitHub release publication', () => {
       fixture,
       events,
     });
-    const result = await publishManualRelease({
+    const result = await publishManualReleaseTestCore({
       root: '/unused',
       environment: publishEnvironment(),
       version: '1.2.3',
@@ -517,7 +596,7 @@ describe('manual GitHub release publication', () => {
         ),
       ],
     ]);
-    await publishManualRelease({
+    await publishManualReleaseTestCore({
       root: '/unused',
       environment: publishEnvironment(),
       version: '1.2.3',
@@ -578,7 +657,7 @@ describe('manual GitHub release publication', () => {
         ),
       ],
     ]);
-    const result = await publishManualRelease({
+    const result = await publishManualReleaseTestCore({
       root: '/unused',
       environment: publishEnvironment(),
       version: '1.2.3',
@@ -637,7 +716,7 @@ describe('manual GitHub release publication', () => {
         ),
       ],
     ]);
-    await publishManualRelease({
+    await publishManualReleaseTestCore({
       root: '/unused',
       environment: publishEnvironment(),
       version: '1.2.3',
@@ -679,7 +758,7 @@ describe('manual GitHub release publication', () => {
       fixture.release.canonicalAssets,
     );
     delete canonical.snapshot.assets[0].digest;
-    await expect(publishManualRelease({
+    await expect(publishManualReleaseTestCore({
       root: '/unused',
       environment: publishEnvironment(),
       version: '1.2.3',
@@ -707,7 +786,7 @@ describe('manual GitHub release publication', () => {
   it('fails closed when the public mirror is ahead of canonical', async () => {
     const fixture = publicationFixture();
     let candidateTouched = false;
-    await expect(publishManualRelease({
+    await expect(publishManualReleaseTestCore({
       root: '/unused',
       environment: publishEnvironment(),
       version: '1.2.3',
@@ -759,7 +838,7 @@ describe('manual GitHub release publication', () => {
       fixture.release.publicAssets,
     );
     mirror.snapshot.publishedAt = '2026-07-23T00:00:01.000Z';
-    await expect(publishManualRelease({
+    await expect(publishManualReleaseTestCore({
       root: '/unused',
       environment: publishEnvironment(),
       version: '1.2.3',
@@ -798,7 +877,7 @@ describe('manual GitHub release publication', () => {
         { name: 'foreign.bin', size: 1, sha256: 'f'.repeat(64) },
       ],
     );
-    await expect(publishManualRelease({
+    await expect(publishManualReleaseTestCore({
       root: '/unused',
       environment: publishEnvironment(),
       version: '1.2.3',
@@ -863,6 +942,13 @@ function publicationFixture() {
   const canonicalAssets = describeLocalReleaseAssets(canonicalAssetPaths);
   const publicAssetPaths = canonicalAssetPaths.slice(0, 2);
   const publicAssets = describeLocalReleaseAssets(publicAssetPaths);
+  const physicalEvidence = makeValidRealMissionEvidence({
+    appVersion: '1.2.3',
+    commitSha: 'a'.repeat(40),
+    artifactSha256: canonicalAssets[1].sha256,
+  });
+  const evidencePath = path.join(root, 'physical-evidence.json');
+  fs.writeFileSync(evidencePath, JSON.stringify(physicalEvidence));
   return {
     candidate: {
       receipt: {
@@ -872,7 +958,22 @@ function publicationFixture() {
         tagObjectSha: 'e'.repeat(40),
         tagSignerFingerprint: null,
         tagSignatureVerified: false,
+        artifacts: {
+          zip: {
+            name: path.basename(canonicalAssetPaths[1]),
+            sha256: canonicalAssets[1].sha256,
+          },
+          e2eEvidence: {
+            name: path.basename(evidencePath),
+            sha256: digest(fs.readFileSync(evidencePath)),
+          },
+        },
+        verification: {
+          physicalProductWizard: true,
+          singleProductMission: true,
+        },
       },
+      evidencePath,
     },
     release: {
       canonicalAssetPaths,
@@ -1051,13 +1152,26 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
       components: [],
     }),
   ];
-  const evidence = 'evidence';
+  const dmgArtifact = artifactOverrides.dmg ?? {
+    name: 'NexusIDE.dmg',
+    sha256: 'b'.repeat(64),
+  };
+  const zipArtifact = artifactOverrides.zip ?? {
+    name: 'NexusIDE.zip',
+    sha256: 'c'.repeat(64),
+  };
+  const physicalEvidence = makeValidRealMissionEvidence({
+    appVersion: '1.2.3',
+    commitSha: 'a'.repeat(40),
+    artifactSha256: zipArtifact.sha256,
+  });
+  const evidence = JSON.stringify(physicalEvidence);
   fs.writeFileSync(
     path.join(securityDir, 'real-mission-evidence.json'),
     evidence,
   );
   const receipt = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     verifiedAt: '2026-07-23T00:00:00.000Z',
     version: '1.2.3',
     tag: 'v1.2.3',
@@ -1067,14 +1181,8 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
     tagSignatureVerified: false,
     architecture: 'arm64',
     artifacts: {
-      dmg: artifactOverrides.dmg ?? {
-        name: 'NexusIDE.dmg',
-        sha256: 'b'.repeat(64),
-      },
-      zip: artifactOverrides.zip ?? {
-        name: 'NexusIDE.zip',
-        sha256: 'c'.repeat(64),
-      },
+      dmg: dmgArtifact,
+      zip: zipArtifact,
       e2eEvidence: {
         name: 'real-mission-evidence.json',
         sha256: digest(evidence),
@@ -1083,6 +1191,8 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
     verification: {
       signedNotarized: true,
       realMissionE2E: true,
+      physicalProductWizard: true,
+      singleProductMission: true,
       sameCommitAndArtifacts: true,
       tagSignatureVerified: false,
     },
@@ -1104,10 +1214,18 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
       generatedAt: '2026-07-23T00:00:00.000Z',
       runtime: { node: 'v22.23.1', npm: '12.0.0' },
       files,
+      verification: {
+        physicalProductWizard: true,
+      },
       releaseArtifacts: {
+        signingIdentity:
+          'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
         dmg: receipt.artifacts.dmg,
         zip: receipt.artifacts.zip,
-        e2eEvidence: receipt.artifacts.e2eEvidence,
+        e2eEvidence: {
+          ...receipt.artifacts.e2eEvidence,
+          bytes: Buffer.byteLength(evidence),
+        },
       },
     };
   fs.writeFileSync(

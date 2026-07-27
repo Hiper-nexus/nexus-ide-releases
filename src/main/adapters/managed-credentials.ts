@@ -1,6 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  isFileAuthAdapter,
+  type FileAuthAdapterId,
+} from '../../shared/file-auth-adapters';
+
+export { isFileAuthAdapter };
+export type { FileAuthAdapterId };
 
 /**
  * File-backed subscription credentials (Codex/Grok/Kimi/OpenCode/AGY).
@@ -11,13 +18,6 @@ import path from 'node:path';
  *
  * Claude stays on keychain + CLAUDE_CODE_OAUTH_TOKEN (see account-store).
  */
-
-export type FileAuthAdapterId =
-  | 'codex'
-  | 'grok'
-  | 'kimi'
-  | 'opencode'
-  | 'agy';
 
 export interface ManagedAuthCapture {
   blob: string;
@@ -201,10 +201,6 @@ export const MANAGED_PROVIDER_SPECS: Record<FileAuthAdapterId, ManagedProviderSp
     systemHome: (home = os.homedir()) => path.join(home, '.gemini'),
   },
 };
-
-export function isFileAuthAdapter(adapterId: string): adapterId is FileAuthAdapterId {
-  return adapterId in MANAGED_PROVIDER_SPECS;
-}
 
 export function managedAccountsRoot(
   adapterId: string,

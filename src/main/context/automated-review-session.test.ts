@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AutomatedReviewSessionRegistry } from './automated-review-session';
+import { testProjectScope } from '../orch/__tests__/scope-fixture';
 
 const binding = {
   projectId: 'project-a', checkoutId: 'checkout-a', missionId: 'mission-a',
@@ -125,5 +126,153 @@ describe('automated review session registry', () => {
 
     await expect(waiting).rejects.toThrow(/authority revoked/i);
     registry.close(id);
+  });
+
+  it('binds the rendered surface to the exact mission checkout and active session', () => {
+    const registry = new AutomatedReviewSessionRegistry();
+    const scope = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'checkout-a',
+      rootRealPath: '/workspace',
+    });
+    const executionScope = { ...scope, rootRealPath: '/candidate' };
+    const id = registry.open({
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+      requiresDesignInspection: true,
+      risk: 'medium',
+      binding,
+      author: {
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      },
+      persist: () => {},
+    });
+    const surface = {
+      paneId: 'browser-review',
+      previewId: 'preview-review',
+      url: 'http://127.0.0.1:1234/',
+      missionId: 'mission-a',
+      scope,
+      executionScope,
+    };
+
+    registry.bindDesignSurface(id, surface);
+    expect(
+      registry.findActiveDesignSurface({
+        reviewSessionId: id,
+        paneId: 'browser-review',
+        missionId: 'mission-a',
+        scope,
+        executionScope,
+      }),
+    ).toMatchObject({ paneId: 'browser-review', previewId: 'preview-review' });
+    expect(
+      registry.findActiveDesignSurface({
+        reviewSessionId: id,
+        paneId: 'browser-other',
+        missionId: 'mission-a',
+        scope,
+        executionScope,
+      }),
+    ).toBeNull();
+    expect(() =>
+      registry.bindDesignSurface(id, {
+        ...surface,
+        paneId: 'browser-other',
+      }),
+    ).toThrow(/already bound/i);
+
+    registry.close(id);
+    expect(
+      registry.findActiveDesignSurface({
+        reviewSessionId: id,
+        paneId: 'browser-review',
+        missionId: 'mission-a',
+        scope,
+        executionScope,
+      }),
+    ).toBeNull();
+  });
+
+  it('requires read and screenshot from each physical reviewer in a design quorum', async () => {
+    const registry = new AutomatedReviewSessionRegistry();
+    const scope = testProjectScope({
+      projectId: 'project-a',
+      checkoutId: 'checkout-a',
+      rootRealPath: '/workspace',
+    });
+    const id = registry.open({
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+      requiresDesignInspection: true,
+      risk: 'critical',
+      binding,
+      author: {
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      },
+      persist: () => {},
+    });
+    registry.bindDesignSurface(id, {
+      paneId: 'browser-review',
+      previewId: 'preview-review',
+      url: 'http://127.0.0.1:1234/',
+      missionId: 'mission-a',
+      scope,
+      executionScope: { ...scope, rootRealPath: '/candidate' },
+    });
+    registry.recordDesignInspection(
+      id,
+      'review-session-a',
+      'browser-review',
+      'read',
+    );
+    registry.recordDesignInspection(
+      id,
+      'review-session-a',
+      'browser-review',
+      'screenshot',
+    );
+    registry.submit(id, {
+      id: 'reviewer-a',
+      sessionId: 'review-session-a',
+      provider: 'claude',
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+    }, []);
+
+    expect(() =>
+      registry.submit(id, {
+        id: 'reviewer-b',
+        sessionId: 'review-session-b',
+        provider: 'agy',
+        missionId: 'mission-a',
+        checkoutPath: '/candidate',
+      }, []),
+    ).toThrow(/this reviewer session.*read and screenshot/i);
+
+    registry.recordDesignInspection(
+      id,
+      'review-session-b',
+      'browser-review',
+      'read',
+    );
+    registry.recordDesignInspection(
+      id,
+      'review-session-b',
+      'browser-review',
+      'screenshot',
+    );
+    registry.submit(id, {
+      id: 'reviewer-b',
+      sessionId: 'review-session-b',
+      provider: 'agy',
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+    }, []);
+    await expect(registry.wait(id, 100)).resolves.toMatchObject({ ready: true });
   });
 });

@@ -1,7 +1,17 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
-import type { WorkspaceInfo, WorkspaceState } from '../../shared/workspace-types';
+import type {
+  WorkspaceInfo,
+  WorkspaceState,
+} from '../../shared/workspace-types';
 import { setActiveWorkspacePath } from './active-workspace';
+import {
+  abandonWorkspaceLayoutAfterMainSwitch,
+  detachWorkspaceLayout,
+  hasAttachedWorkspaceLayout,
+  prepareWorkspaceLayoutSwitch,
+  switchWorkspaceLayout,
+} from './layout-store';
 
 /**
  * Renderer mirror of the workspace onboarding state (current + recents). The
@@ -22,23 +32,160 @@ interface WorkspaceStore {
   remove(path: string): Promise<void>;
 }
 
-function apply(
-  set: (partial: Partial<WorkspaceStore>) => void,
-  state: WorkspaceState,
-): void {
+type WorkspaceSet = (partial: Partial<WorkspaceStore>) => void;
+type WorkspaceGet = () => WorkspaceStore;
+
+function apply(set: WorkspaceSet, state: WorkspaceState): void {
   setActiveWorkspacePath(state.current?.path ?? null);
   set({ current: state.current, recents: state.recents });
 }
 
-export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
+function workspacePath(state: WorkspaceState): string | null {
+  return state.current?.path ?? null;
+}
+
+/*
+ * Workspace mutations are serialized because each one changes the
+ * renderer-scoped Main authority. This queue also prevents two rapid recent
+ * clicks from interleaving canonical responses and layout loads.
+ */
+let transitionTail: Promise<void> = Promise.resolve();
+let pendingRendererMutations = 0;
+
+function serializeTransition<T>(work: () => Promise<T>): Promise<T> {
+  pendingRendererMutations += 1;
+  const result = transitionTail.then(work);
+  transitionTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result.finally(() => {
+    pendingRendererMutations = Math.max(0, pendingRendererMutations - 1);
+  });
+}
+
+async function activateCanonicalWorkspace(
+  set: WorkspaceSet,
+  state: WorkspaceState,
+): Promise<void> {
+  const path = workspacePath(state);
+  // Project-scoped stores may consult this holder while the target layout is
+  // hydrating, but the visible workspace mirror changes only after hydration.
+  setActiveWorkspacePath(path);
+  if (path) {
+    await switchWorkspaceLayout(path);
+  } else {
+    detachWorkspaceLayout();
+  }
+  apply(set, state);
+}
+
+async function restoreOutgoingWorkspace(
+  previousPath: string | null,
+  previousLayoutPath: string | null,
+): Promise<void> {
+  setActiveWorkspacePath(previousPath);
+  if (previousPath) {
+    await switchWorkspaceLayout(previousLayoutPath ?? previousPath);
+  } else {
+    detachWorkspaceLayout();
+  }
+}
+
+/**
+ * Renderer-owned workspace changes have one strict order:
+ * outgoing layout sync flush → Main authority mutation → canonical path
+ * response → target layout hydration → renderer state publication.
+ */
+function mutateWorkspace(
+  set: WorkspaceSet,
+  get: WorkspaceGet,
+  invoke: () => Promise<WorkspaceState>,
+  shouldPrepareLayout: (currentPath: string | null) => boolean = () => true,
+): Promise<void> {
+  return serializeTransition(async () => {
+    const previousPath = get().current?.path ?? null;
+    const prepared =
+      shouldPrepareLayout(previousPath) && hasAttachedWorkspaceLayout();
+    const previousLayoutPath = prepared ? prepareWorkspaceLayoutSwitch() : null;
+    let state: WorkspaceState;
+    try {
+      state = await invoke();
+    } catch (cause) {
+      if (prepared) {
+        await restoreOutgoingWorkspace(previousPath, previousLayoutPath).catch(
+          (restoreCause) => {
+            console.warn(
+              '[workspace] failed to restore outgoing layout:',
+              restoreCause,
+            );
+          },
+        );
+      }
+      throw cause;
+    }
+
+    const nextPath = workspacePath(state);
+    if (!prepared && nextPath === previousPath) {
+      // Removing another recent workspace only changes list metadata. It must
+      // not interrupt or rehydrate the active pane tree.
+      apply(set, state);
+      return;
+    }
+    if (!prepared) {
+      // Defensive fallback for a surprising Main response. Its old authority
+      // is already gone, so cancel stale persistence instead of writing under
+      // the wrong scope.
+      abandonWorkspaceLayoutAfterMainSwitch();
+    }
+
+    try {
+      await activateCanonicalWorkspace(set, state);
+    } catch (cause) {
+      // Main has already committed this canonical state. Keep the renderer's
+      // workspace mirror aligned even when layout I/O fails; switchWorkspaceLayout
+      // detaches persistence on failure so old panes cannot leak into it.
+      apply(set, state);
+      throw cause;
+    }
+  });
+}
+
+function receiveMainState(
+  set: WorkspaceSet,
+  get: WorkspaceGet,
+  state: WorkspaceState,
+): void {
+  // Renderer-owned IPC handlers broadcast before returning the same state.
+  // Their direct response owns the ordered transition and will apply it.
+  if (pendingRendererMutations > 0) return;
+
+  if (workspacePath(state) === (get().current?.path ?? null)) {
+    apply(set, state);
+    return;
+  }
+
+  // An unsolicited Main-owned change cannot flush the old layout because Main
+  // has already revoked its scope. Adopt it without issuing a stale save.
+  void serializeTransition(async () => {
+    abandonWorkspaceLayoutAfterMainSwitch();
+    try {
+      await activateCanonicalWorkspace(set, state);
+    } catch (cause) {
+      apply(set, state);
+      console.warn('[workspace] failed to adopt main workspace state:', cause);
+    }
+  });
+}
+
+export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   current: null,
   recents: [],
   hydrated: false,
 
   hydrate: async () => {
     try {
-      const state = await window.nexus.workspace.get();
-      apply(set, state);
+      await mutateWorkspace(set, get, () => window.nexus.workspace.get());
     } catch (err) {
       console.warn('[workspace] hydrate failed:', err);
     } finally {
@@ -46,12 +193,21 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
     }
   },
 
-  receive: (state) => apply(set, state),
+  receive: (state) => receiveMainState(set, get, state),
 
-  pick: async () => apply(set, await window.nexus.workspace.pick()),
-  open: async (path) => apply(set, await window.nexus.workspace.open(path)),
-  close: async () => apply(set, await window.nexus.workspace.close()),
-  remove: async (path) => apply(set, await window.nexus.workspace.remove(path)),
+  pick: async () =>
+    mutateWorkspace(set, get, () => window.nexus.workspace.pick()),
+  open: async (path) =>
+    mutateWorkspace(set, get, () => window.nexus.workspace.open(path)),
+  close: async () =>
+    mutateWorkspace(set, get, () => window.nexus.workspace.close()),
+  remove: async (path) =>
+    mutateWorkspace(
+      set,
+      get,
+      () => window.nexus.workspace.remove(path),
+      (currentPath) => currentPath === path,
+    ),
 }));
 
 /** Boot hook: hydrate once and follow main-process broadcasts. */

@@ -27,7 +27,7 @@ const SECRET_VALUE_RE =
 const COMMAND_SECRET_RE =
   /(--?(token|secret|password|pass|api-key|authorization|cookie|credential)\b|Bearer\s+|(?=[A-Za-z_][A-Za-z0-9_]*=)[A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD|PASS|API_KEY|CREDENTIAL|AUTH|BEARER)[A-Za-z0-9_]*=)/i;
 
-export type AuditSource = 'http-mcp' | 'ipc-renderer' | 'jarvis-voice';
+export type AuditSource = 'http-mcp' | 'omp-rpc-stdio' | 'ipc-renderer' | 'jarvis-voice';
 export type AuditResult = 'intent' | 'ok' | 'error' | 'denied';
 
 export interface AuditContext {
@@ -205,7 +205,12 @@ function validateContext(context: AuditContext): ValidAuditContext {
 }
 
 function isAuditSource(value: unknown): value is AuditSource {
-  return value === 'http-mcp' || value === 'ipc-renderer' || value === 'jarvis-voice';
+  return (
+    value === 'http-mcp' ||
+    value === 'omp-rpc-stdio' ||
+    value === 'ipc-renderer' ||
+    value === 'jarvis-voice'
+  );
 }
 
 function isAuditResult(value: unknown): value is AuditResult {

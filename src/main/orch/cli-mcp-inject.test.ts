@@ -46,15 +46,15 @@ afterEach(() => {
 describe("supportsMcpInjection", () => {
   const adapter = (
     nexusMcp:
-      | 'none'
-      | 'autoload'
-      | 'codex'
-      | 'agy'
-      | 'opencode'
-      | 'kimi'
-      | 'grok'
-      | 'omp',
-    mcpAutoload = nexusMcp === 'autoload',
+      | "none"
+      | "autoload"
+      | "codex"
+      | "agy"
+      | "opencode"
+      | "kimi"
+      | "grok"
+      | "omp",
+    mcpAutoload = nexusMcp === "autoload",
   ) => ({
     quirks: {
       altScreen: false,
@@ -105,9 +105,7 @@ describe("codexMcpArgs", () => {
     expect(args[3]).toBe(
       `mcp_servers.${serverName}.bearer_token_env_var="NEXUS_MCP_TOKEN"`,
     );
-    expect(args[5]).toBe(
-      `mcp_servers.${serverName}.tool_timeout_sec=45`,
-    );
+    expect(args[5]).toBe(`mcp_servers.${serverName}.tool_timeout_sec=45`);
     expect(serialized).not.toContain(token);
     expect(serialized).not.toContain("Bearer ");
     expect(serialized).not.toContain("http_headers");
@@ -123,6 +121,25 @@ describe("codexMcpArgs", () => {
     expect(name(first)).toMatch(/^nexus_[0-9a-f]{12}$/);
     expect(name(second)).toMatch(/^nexus_[0-9a-f]{12}$/);
     expect(name(first)).not.toBe(name(second));
+  });
+
+  it("pré-aprova somente o namespace efêmero explicitamente autorizado", () => {
+    const args = codexMcpArgs(
+      "http://127.0.0.1:5123/mcp",
+      undefined,
+      { approveBoundTools: true },
+    );
+    const serverName = args[1]?.match(
+      /^mcp_servers\.(nexus_[0-9a-f]{12})\.url=/,
+    )?.[1];
+
+    expect(args).toContain(
+      `mcp_servers.${serverName}.default_tools_approval_mode="approve"`,
+    );
+    expect(args.join(" ")).not.toContain(
+      "apps._default.default_tools_approval_mode",
+    );
+    expect(args.join(" ")).not.toContain("approval_policy=");
   });
 });
 
@@ -303,6 +320,80 @@ describe("prepareAgyMcpConfig", () => {
     expect(fs.existsSync(second.homeDir)).toBe(false);
     expect(fs.readFileSync(marker, "utf8")).toBe("preservar");
   });
+
+  it("remove MCPs/plugins/skills externos do overlay governado", () => {
+    const root = makeTempDir();
+    const realHome = path.join(root, "real-home");
+    const artifacts = path.join(root, "artifacts");
+    writeJson(path.join(realHome, ".gemini", "config", "mcp_config.json"), {
+      mcpServers: { external: { command: "external-mcp" } },
+    });
+    writeJson(
+      path.join(realHome, ".gemini", "antigravity-cli", "mcp_config.json"),
+      { mcpServers: { external: { command: "external-mcp" } } },
+    );
+    writeJson(
+      path.join(
+        realHome,
+        ".gemini",
+        "config",
+        "plugins",
+        "external",
+        "plugin.json",
+      ),
+      { name: "external-plugin" },
+    );
+    fs.mkdirSync(
+      path.join(realHome, ".gemini", "config", "skills", "allowed"),
+      { recursive: true },
+    );
+    fs.writeFileSync(
+      path.join(realHome, ".gemini", "config", "skills", "allowed", "SKILL.md"),
+      "# allowed",
+    );
+    fs.mkdirSync(
+      path.join(realHome, ".gemini", "config", "skills", "blocked"),
+      { recursive: true },
+    );
+    fs.writeFileSync(
+      path.join(realHome, ".gemini", "config", "skills", "blocked", "SKILL.md"),
+      "# blocked",
+    );
+    const token = "agy-governed-token";
+    preparedTokens.push(token);
+
+    const result = prepareAgyMcpConfig("http://127.0.0.1:4321/mcp", token, {
+      home: realHome,
+      artifactRoot: artifacts,
+      governed: true,
+      allowedSkills: ["allowed"],
+    });
+
+    for (const configPath of result.configPaths) {
+      const raw = fs.readFileSync(configPath, "utf8");
+      expect(raw).not.toContain("external-mcp");
+      expect(Object.keys(JSON.parse(raw).mcpServers)).toEqual(["nexus"]);
+    }
+    expect(
+      fs.existsSync(path.join(result.geminiHomeDir, "config", "plugins")),
+    ).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(
+          result.geminiHomeDir,
+          "config",
+          "skills",
+          "allowed",
+          "SKILL.md",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(result.geminiHomeDir, "config", "skills", "blocked"),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("prepareOmpMcpConfig", () => {
@@ -314,7 +405,10 @@ describe("prepareOmpMcpConfig", () => {
       headers: { Authorization: "Bearer tok-omp" },
     });
     const merged = mergeOmpMcpConfig(
-      { mcpServers: { user: { type: "stdio", command: "x" } }, disabledServers: ["y"] },
+      {
+        mcpServers: { user: { type: "stdio", command: "x" } },
+        disabledServers: ["y"],
+      },
       frag,
     ) as {
       mcpServers: Record<string, unknown>;
@@ -360,7 +454,10 @@ describe("prepareOmpMcpConfig", () => {
     // mcp.json privado: 0600, com merge do server do usuário + nexus.
     expect(mode(result.configPath)).toBe(0o600);
     const config = JSON.parse(fs.readFileSync(result.configPath, "utf8")) as {
-      mcpServers: Record<string, { url?: string; headers?: Record<string, string> }>;
+      mcpServers: Record<
+        string,
+        { url?: string; headers?: Record<string, string> }
+      >;
     };
     expect(config.mcpServers.userServer).toEqual({
       type: "stdio",
@@ -420,6 +517,70 @@ describe("prepareOmpMcpConfig", () => {
     cleanupOmpMcpConfig(second);
     expect(fs.existsSync(b.homeDir)).toBe(false);
   });
+
+  it("mantém apenas Nexus e skills explicitamente concedidas no HOME governado", () => {
+    const root = makeTempDir();
+    const realHome = path.join(root, "real-home");
+    const artifacts = path.join(root, "omp-artifacts");
+    writeJson(path.join(realHome, ".omp", "agent", "mcp.json"), {
+      mcpServers: { external: { type: "stdio", command: "external-mcp" } },
+      plugins: ["external-plugin"],
+    });
+    fs.mkdirSync(path.join(realHome, ".omp", "agent", "plugins", "external"), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(realHome, ".omp", "agent", "skills", "allowed"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(realHome, ".omp", "agent", "skills", "allowed", "SKILL.md"),
+      "# allowed",
+    );
+    fs.mkdirSync(path.join(realHome, ".omp", "agent", "skills", "blocked"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(realHome, ".omp", "agent", "skills", "blocked", "SKILL.md"),
+      "# blocked",
+    );
+    const token = "omp-governed-token";
+    preparedOmpTokens.push(token);
+
+    const result = prepareOmpMcpConfig("http://127.0.0.1:4321/mcp", token, {
+      home: realHome,
+      artifactRoot: artifacts,
+      governed: true,
+      allowedSkills: ["allowed"],
+    });
+    const raw = fs.readFileSync(result.configPath, "utf8");
+    const config = JSON.parse(raw) as {
+      mcpServers: Record<string, unknown>;
+    };
+
+    expect(Object.keys(config.mcpServers)).toEqual(["nexus"]);
+    expect(raw).not.toContain("external-mcp");
+    expect(raw).not.toContain("external-plugin");
+    expect(
+      fs.existsSync(path.join(result.homeDir, ".omp", "agent", "plugins")),
+    ).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(
+          result.homeDir,
+          ".omp",
+          "agent",
+          "skills",
+          "allowed",
+          "SKILL.md",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(result.homeDir, ".omp", "agent", "skills", "blocked"),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("purgeStaleAgyMcpConfigs", () => {
@@ -446,7 +607,8 @@ describe("purgeStaleAgyMcpConfigs", () => {
     expect(fs.existsSync(stale)).toBe(false);
     expect(fs.existsSync(staleSymlink)).toBe(false);
     expect(fs.readFileSync(outsideMarker, "utf8")).toBe("outside-safe");
-    expect(fs.readFileSync(path.join(unrelated, "marker.txt"), "utf8"))
-      .toBe("unrelated-safe");
+    expect(fs.readFileSync(path.join(unrelated, "marker.txt"), "utf8")).toBe(
+      "unrelated-safe",
+    );
   });
 });

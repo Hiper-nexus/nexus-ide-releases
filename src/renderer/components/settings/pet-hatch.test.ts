@@ -30,11 +30,13 @@ describe('hatchPetIntent', () => {
   it('produz um briefing visual curto com referência, skill e destino', () => {
     const intent = hatchPetIntent('/Users/x/Pictures/Meu Gato.png');
     expect(intent).toContain('/Users/x/Pictures/Meu Gato.png');
-    expect(intent).toContain('hatch-pet');
+    expect(intent).toContain('nexus-pet-studio');
     expect(intent).toContain('3D toy premium');
     expect(intent).toContain('#FF00FF');
-    expect(intent).toContain('~/.codex/pets/meu-gato/');
-    expect(intent).toContain('Codex v2');
+    expect(intent).toContain('Use o id meu-gato');
+    expect(intent).toContain('artifacts/nexus-pet-studio/<missionId>');
+    expect(intent).toContain('workflow governado v2');
+    expect(intent).toContain('nunca escreva em ~/.codex/pets');
     expect(intent).not.toContain('nexus_context_doctor');
     expect(intent).not.toContain('reviewer');
     expect(intent).not.toContain('~/.claude/skills');

@@ -2,7 +2,7 @@ import { BrowserWindow, dialog, ipcMain } from "electron";
 import type { WebContents } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
@@ -12,7 +12,10 @@ import {
   missionPaneRecoveryResultSchema,
   panesSyncSchema,
   squadSchema,
+  isEngineGeneratedSquadId,
+  isMissionRuntimeSquadId,
   type Mission,
+  type Squad,
 } from "../../shared/orch-types";
 import { getDb } from "../persistence/db";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
@@ -29,6 +32,7 @@ import {
   deleteSquad,
   onSquadsChange,
   exportSquadsJson,
+  prepareMissionRuntimeSquadSave,
   prepareSquadSave,
   prepareSquadsImport,
   MAX_SQUADS_IMPORT_BYTES,
@@ -147,8 +151,11 @@ import {
   bootstrapMissionOrchestratorForScope,
   bootstrapMissionOrchestratorFromRenderer,
   rearmBlockedMissionFromRenderer,
+  restartMissionOrchestratorAfterPlanPromotionForScope,
   resumeBlockedMissionBootstrapFromRenderer,
+  stopMissionOrchestratorBeforePlanPromotionForScope,
 } from './mission-orchestrator-bootstrap';
+import { ensureGuidedMissionPlanForScope } from './guided-mission-planner';
 import {
   snapshotSquadAuthority,
   squadAuthorityReviewStrings,
@@ -159,8 +166,14 @@ import {
   prepareMissionRuntimeTermination,
   settleMissionRuntimeDemotion,
 } from './mission-runtime-termination';
+import {
+  applyExclusiveOrchestratorReplacement,
+  prepareExclusiveOrchestratorReplacement,
+  type ExclusiveOrchestratorReplacementCandidate,
+} from './exclusive-orchestrator-replacement';
 import { issueImmediateSquadSpawnGrant } from './spawn-authority';
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
+import { commitPromotedPlanToGit } from "./promoted-plan-git-authority";
 
 /**
  * Renderer-facing IPC for the orchestration domain, plus the domain
@@ -171,7 +184,7 @@ const listeners = new Set<WebContents>();
 const missionRemovalConfirmations = new WeakSet<WebContents>();
 const missionAuthorityConfirmations = new WeakSet<WebContents>();
 const immediateSquadConfirmations = new WeakSet<WebContents>();
-const squadMutationConfirmations = new WeakSet<WebContents>();
+const squadDeleteConfirmations = new WeakSet<WebContents>();
 const operatorAttestationConfirmations = new WeakSet<WebContents>();
 const catalogInstallConfirmations = new WeakSet<WebContents>();
 const catalogInstallTargets = new Set<string>();
@@ -201,6 +214,17 @@ let orchestrationReady = false;
 let orchestrationClosing = false;
 let orchestrationShutdownBlocked = false;
 let disposeSquadBroadcast: (() => void) | null = null;
+const SQUAD_DESIGN_DRAFT_TTL_MS = 15 * 60_000;
+const MAX_SQUAD_DESIGN_DRAFTS = 64;
+const squadDesignDrafts = new Map<
+  string,
+  {
+    readonly ownerId: number;
+    readonly scopeKey: string;
+    readonly squad: Squad;
+    readonly expiresAt: number;
+  }
+>();
 
 function projectExecutionScopeKey(scope: ProjectExecutionScope): string {
   return [
@@ -211,6 +235,53 @@ function projectExecutionScopeKey(scope: ProjectExecutionScope): string {
     scope.rootRealPath,
     scope.identitySource,
   ].join('\0');
+}
+
+function pruneSquadDesignDrafts(now = Date.now()): void {
+  for (const [token, draft] of squadDesignDrafts) {
+    if (draft.expiresAt <= now) squadDesignDrafts.delete(token);
+  }
+  while (squadDesignDrafts.size >= MAX_SQUAD_DESIGN_DRAFTS) {
+    const oldest = squadDesignDrafts.keys().next().value;
+    if (typeof oldest !== 'string') break;
+    squadDesignDrafts.delete(oldest);
+  }
+}
+
+function rememberSquadDesignDraft(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  squad: Squad,
+): string {
+  pruneSquadDesignDrafts();
+  const token = randomBytes(32).toString('base64url');
+  squadDesignDrafts.set(token, {
+    ownerId: owner.id,
+    scopeKey: projectExecutionScopeKey(scope),
+    squad: squadSchema.parse(structuredClone(squad)),
+    expiresAt: Date.now() + SQUAD_DESIGN_DRAFT_TTL_MS,
+  });
+  return token;
+}
+
+function resolveSquadDesignDraft(
+  owner: WebContents,
+  scope: ProjectExecutionScope,
+  token: string | undefined,
+  squadId: string,
+): Squad | null {
+  if (!token) return null;
+  pruneSquadDesignDrafts();
+  const draft = squadDesignDrafts.get(token);
+  if (
+    !draft ||
+    draft.ownerId !== owner.id ||
+    draft.scopeKey !== projectExecutionScopeKey(scope) ||
+    draft.squad.id !== squadId
+  ) {
+    return null;
+  }
+  return squadSchema.parse(structuredClone(draft.squad));
 }
 
 interface RendererAsyncAuthorityFence {
@@ -346,6 +417,16 @@ const agentSpecWriteSchema = z.object({
 });
 const AGENT_SPEC_WRITE_TOOL = "nexus_agent_spec_write";
 
+const missionRuntimeSquadSaveSchema = z
+  .object({
+    squad: squadSchema,
+    purpose: z.literal('mission-runtime'),
+    guided: z.boolean(),
+    sourceSquadId: z.string().min(1).max(128),
+    designDraftToken: z.string().min(32).max(128).optional(),
+  })
+  .strict();
+
 function safeDialogLabel(value: string, maxChars = 256): string {
   return value
     .replace(/[\0-\x1f\x7f\u202a-\u202e\u2066-\u2069]+/g, " ")
@@ -356,7 +437,7 @@ function safeDialogLabel(value: string, maxChars = 256): string {
 const OPERATOR_DIALOG_FORBIDDEN =
   /[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u;
 const MAX_OPERATOR_DIALOG_CHARS = 16_000;
-const MISSION_APPROVAL_DIALOG_LINES = 12;
+const MISSION_APPROVAL_DIALOG_LINES = 9;
 const MAX_MISSION_APPROVAL_DIALOG_CHARS = 1_800;
 
 function assertExactOperatorDialog(detail: string): string {
@@ -383,55 +464,127 @@ function dialogDigest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-function compactDialogList(
-  values: readonly string[],
-  maxChars: number,
+function dialogTextDigest(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function missionAuthorityReviewDigest(
+  candidate: RendererMissionAuthorityCandidate,
 ): string {
-  if (values.length === 0) return '(nenhum)';
-  return compactDialogText(values.join(' · '), maxChars);
+  const { fence: _runtimeFence, ...reviewedAuthority } = candidate;
+  return dialogDigest(reviewedAuthority);
+}
+
+interface MissionAuthorityDialogReview {
+  readonly detail: string;
+  readonly reviewSha256: string;
 }
 
 function missionAuthorityDialogDetail(
   scope: ProjectExecutionScope,
   candidate: RendererMissionAuthorityCandidate,
-): string {
+  action: "approve" | "promote",
+  replacement?: ExclusiveOrchestratorReplacementCandidate,
+): MissionAuthorityDialogReview {
   const budgets = candidate.budgets;
-  const criteria = candidate.acceptanceCriteria.map((criterion, index) =>
-    `${index + 1}. ${compactDialogText(criterion, 100)}`,
+  const roster = candidate.squad.agents;
+  const maestro =
+    roster.find((agent) => agent.category === 'orchestrator') ?? null;
+  const workers = roster.filter(
+    (agent) => agent.category !== 'orchestrator',
   );
-  const attachmentPaths = candidate.attachmentPaths.map((attachment, index) =>
-    `${index + 1}. ${compactDialogText(attachment, 100)}`,
+  const permissionReview = {
+    deniedTools: candidate.deniedTools,
+    agents: roster.map((agent) => ({
+      id: agent.id,
+      allowedTools: agent.allowedTools,
+      allowedSkills: agent.allowedSkills,
+    })),
+  };
+  const grantedToolCount = roster.reduce(
+    (total, agent) => total + (agent.allowedTools?.length ?? 0),
+    0,
   );
-  const attachmentContents = candidate.attachmentSnapshots.map(
-    (attachment) =>
-      `${compactDialogText(path.basename(attachment.path), 32)} ` +
-      `SHA-256=${attachment.sha256} Bytes: ${attachment.size}`,
+  const grantedSkillCount = roster.reduce(
+    (total, agent) => total + (agent.allowedSkills?.length ?? 0),
+    0,
   );
-  const deniedTools = candidate.deniedTools.map((tool) =>
-    compactDialogText(tool, 128),
-  );
-  const roster = candidate.squad.agents.map(
-    (agent) =>
-      `${compactDialogText(agent.agentName, 32)} ` +
-      `(${compactDialogText(agent.category, 32)}, ` +
-      `cli=${compactDialogText(agent.cli, 48)}, ` +
-      `model=${compactDialogText(agent.model ?? 'default', 80)}, ` +
-      `effort=${compactDialogText(agent.effort ?? 'default', 32)})`,
-  );
+  const unrestrictedToolAgents = roster.filter(
+    (agent) => agent.allowedTools === null,
+  ).length;
+  const unrestrictedSkillAgents = roster.filter(
+    (agent) => agent.allowedSkills === null,
+  ).length;
   const runtime = candidate.orchestratorRuntime;
+  const orchestratorEvidence =
+    candidate.orchestratorEvidence === 'verified'
+      ? 'verificada'
+      : candidate.orchestratorEvidence === 'experimental'
+        ? 'experimental (gate incompleto)'
+        : 'não suportada';
+  const promotedPlan = candidate.promotedPlan;
+  const hasQualifiedCodexWorkspaceWriter =
+    (candidate.lane === 'standard' || action === 'promote') &&
+    candidate.executionMode !== 'manual' &&
+    candidate.squad.agents.some(
+      (agent) => agent.category === 'executor' && agent.cli === 'codex',
+    );
+  const installNetworkAuthority = {
+    enabled: false,
+    reason: hasQualifiedCodexWorkspaceWriter
+      ? 'codex-shell-network-denied-use-main-owned-mcp'
+      : 'no-qualified-codex-workspace-writer',
+    providerNetwork: 'pinned-vendor-process-only',
+    workspaceWriteWorkersNetwork: false,
+    readOnlyWorkersNetwork: false,
+    remotePackageInstall: false,
+    dependencyCapability: 'bundled-runtime-paths-only',
+    dependencyTool: 'load_workspace_dependencies',
+    mainOwnedTerminalAndBackground: false,
+  };
+  const installNetworkReview = hasQualifiedCodexWorkspaceWriter
+    ? `Rede de shell: desativada · provider/MCP somente no binário Codex fixado · runtime empacotado via load_workspace_dependencies; instalação remota de pacotes indisponível · SHA-256=${dialogDigest(installNetworkAuthority)}`
+    : `Rede: desativada · sem executor Codex workspace-write; read-only/main terminal sem rede · SHA-256=${dialogDigest(installNetworkAuthority)}`;
+  const promotedPlanReview = promotedPlan
+    ? `handoff=${compactDialogText(promotedPlan.handoffId, 36)} · digest=${promotedPlan.digest} · receipt=${compactDialogText(promotedPlan.physicalReceipt.receiptId, 36)}`
+    : 'direto (sem promoção)';
+  const evidenceReview = {
+    evidenceAttached: candidate.evidenceAttached,
+    attachmentPaths: candidate.attachmentPaths,
+    attachmentSnapshots: candidate.attachmentSnapshots,
+  };
+  const replacementReview = replacement
+    ? `${replacement.entries.length} missão(ões)/${replacement.entries.reduce((total, entry) => total + entry.sessionIds.length, 0)} sessão(ões) · SHA=${dialogDigest(replacement)}`
+    : 'nenhuma';
+  const { fence: _runtimeFence, ...reviewedAuthority } = candidate;
+  const fullReview = {
+    version: 1,
+    action,
+    workspace: {
+      version: scope.version,
+      installationId: scope.installationId,
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+      rootRealPath: scope.rootRealPath,
+      identitySource: scope.identitySource,
+    },
+    authority: reviewedAuthority,
+    replacement: replacement ?? null,
+    installNetwork: installNetworkAuthority,
+  };
+  const reviewSha256 = dialogDigest(fullReview);
+  const laneReview =
+    action === 'promote' ? `${candidate.lane}→standard` : candidate.lane;
   const lines = [
     `Workspace: ${compactDialogText(scope.rootRealPath, 100)}`,
-    `Missão: ${compactDialogText(candidate.title, 64)} · ID=${compactDialogText(candidate.missionId, 48)}`,
-    `Objetivo: ${compactDialogText(candidate.goal, 90)} · SHA-256=${dialogDigest(candidate.goal)}`,
-    `Execução: lane=${compactDialogText(candidate.lane, 24)} · modo=${compactDialogText(candidate.executionMode, 24)} · contexto=${compactDialogText(candidate.contextPolicy, 24)} · risco=${compactDialogText(candidate.risk, 24)} · intenção=${candidate.intentVersion} · evidência=${candidate.evidenceAttached ? 'sim' : 'não'}`,
-    `Limites: ${budgets.maxWorkers} worker(s) · ${budgets.planningTokens} tokens de planejamento · ${budgets.executionTokens} tokens de execução${budgets.maxSteps === undefined ? '' : ` · ${budgets.maxSteps} etapas`}`,
-    `Critérios (${criteria.length} critério(s)): ${compactDialogList(criteria, 100)} · SHA-256=${dialogDigest(candidate.acceptanceCriteria)}`,
-    `Anexos (${attachmentPaths.length}): ${compactDialogList(attachmentPaths, 70)} · conteúdo=${compactDialogList(attachmentContents, 100)} · SHA-256=${dialogDigest(candidate.attachmentSnapshots)}`,
-    `Ferramentas negadas (${deniedTools.length}): ${compactDialogList(deniedTools, 80)}`,
-    `Squad: ${compactDialogText(candidate.squad.name, 60)} (${compactDialogText(candidate.squad.id, 40)}) · Hash do squad=${candidate.squad.hash}`,
-    `Roster (${roster.length} agente(s)): ${compactDialogList(roster, 100)}`,
-    `Runtime: adapter=${compactDialogText(runtime.adapterId, 24)} · model=${compactDialogText(runtime.model ?? '(default explícito)', 40)} · account=${compactDialogText(runtime.accountId ?? '(sem conta gerenciada)', 40)} · effort=${compactDialogText(runtime.effort ?? '(default explícito)', 20)} · Nexus MCP readOnly=${String(runtime.readOnly)} · provider nativeReadOnly=${String(runtime.nativeReadOnly)}`,
-    'Instruções e capacidades integrais estão vinculadas ao hash do squad; revise-as no editor. Esta autorização vale para o resumo e os hashes acima; qualquer mudança exige nova confirmação.',
+    `Missão: ${compactDialogText(candidate.title, 64)} · ID=${compactDialogText(candidate.missionId, 48)} · intenção=v${candidate.intentVersion}`,
+    `Objetivo: ${compactDialogText(candidate.goal, 96)} · SHA-256=${dialogTextDigest(candidate.goal)}`,
+    `Execução: risco=${candidate.risk} · lane=${laneReview} · modo=${candidate.executionMode} · orçamento P${budgets.planningTokens}/E${budgets.executionTokens}/W${budgets.maxWorkers}${budgets.maxSteps === undefined ? '' : `/S${budgets.maxSteps}`}`,
+    `Maestro/workers: ${compactDialogText(maestro?.agentName ?? '(ausente)', 28)}/${compactDialogText(runtime.adapterId, 20)} · workers=${workers.length} · ${orchestratorEvidence} · model=${compactDialogText(runtime.model ?? 'default', 28)} · squad=${compactDialogText(candidate.squad.name, 32)} (${compactDialogText(candidate.squad.id, 64)}) SHA-256=${candidate.squad.hash} · trocas=${replacementReview}`,
+    `Critérios/permissões: critérios=${candidate.acceptanceCriteria.length} SHA=${dialogDigest(candidate.acceptanceCriteria)} · negadas=${candidate.deniedTools.length}, tools=${grantedToolCount}+${unrestrictedToolAgents} irrestrito(s), skills=${grantedSkillCount}+${unrestrictedSkillAgents} irrestrito(s) · SHA=${dialogDigest(permissionReview)}`,
+    `Evidências/plano: evidência=${candidate.evidenceAttached ? 'sim' : 'não'} · anexos=${candidate.attachmentPaths.length} SHA=${dialogDigest(evidenceReview)} · plano=${promotedPlanReview}`,
+    installNetworkReview,
+    `Review integral: SHA-256=${reviewSha256} · qualquer mudança exige nova aprovação`,
   ];
   if (lines.length !== MISSION_APPROVAL_DIALOG_LINES) {
     throw new Error('mission approval dialog line budget is inconsistent');
@@ -440,7 +593,7 @@ function missionAuthorityDialogDetail(
   if (detail.length > MAX_MISSION_APPROVAL_DIALOG_CHARS) {
     throw new Error('mission approval dialog exceeds the compact size budget');
   }
-  return detail;
+  return Object.freeze({ detail, reviewSha256 });
 }
 
 async function confirmClarifyAnswer(
@@ -681,7 +834,8 @@ async function confirmMissionAuthorityChange(
   scope: ProjectExecutionScope,
   candidate: RendererMissionAuthorityCandidate,
   action: "approve" | "promote",
-): Promise<boolean> {
+  replacement?: ExclusiveOrchestratorReplacementCandidate,
+): Promise<string | null> {
   const window = BrowserWindow.fromWebContents(owner);
   if (!window || window.isDestroyed()) {
     throw new Error("renderer window is unavailable");
@@ -692,21 +846,41 @@ async function confirmMissionAuthorityChange(
   missionAuthorityConfirmations.add(owner);
   try {
     const isPromotion = action === "promote";
+    const isExperimental =
+      !isPromotion && candidate.orchestratorEvidence === "experimental";
+    const review = missionAuthorityDialogDetail(
+      scope,
+      candidate,
+      action,
+      replacement,
+    );
     const result = await dialog.showMessageBox(window, {
-      type: candidate.risk === "destructive" ? "warning" : "question",
+      type:
+        candidate.risk === "destructive" || isExperimental
+          ? "warning"
+          : "question",
       title: isPromotion
         ? "Nexus IDE — promover plano"
         : "Nexus IDE — iniciar missão",
-      buttons: ["Negar", isPromotion ? "Promover e executar" : "Aprovar e iniciar"],
+      buttons: [
+        "Negar",
+        isPromotion
+          ? "Promover e executar"
+          : isExperimental
+            ? "Aprovar experimental e iniciar"
+            : "Aprovar e iniciar",
+      ],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
       message: isPromotion
         ? "Permitir que este plano passe a executar mudanças?"
+        : isExperimental
+          ? "Aprovar esta rota experimental e liberar a execução?"
         : "Aprovar esta missão e liberar sua execução?",
-      detail: missionAuthorityDialogDetail(scope, candidate),
+      detail: review.detail,
     });
-    return result.response === 1;
+    return result.response === 1 ? review.reviewSha256 : null;
   } finally {
     missionAuthorityConfirmations.delete(owner);
   }
@@ -830,6 +1004,10 @@ async function confirmImmediateSquadLaunch(
       );
     }
     const roster = rosterLines.join("\n");
+    const petStudioBoundary =
+      candidate.squad.id === PET_STUDIO_SQUAD_ID
+        ? "\nPet Studio: o Codex pode escrever somente neste workspace, sem rede de subprocessos; .agents/.codex continuam protegidos. Geração de mídia pode exigir confirmação de provider/custo. O Nexus valida os bytes e instala um id novo em ~/.codex/pets sem sobrescrever pets existentes.\n"
+        : "";
     const result = await dialog.showMessageBox(window, {
       type: "warning",
       title: "Nexus IDE — iniciar squad imediato",
@@ -856,6 +1034,7 @@ async function confirmImmediateSquadLaunch(
         `effort=${safeDialogLabel(candidate.effort ?? "default", 32)}\n` +
         `Roster:\n${roster}\n\n` +
         `Hash exato (fixa instruções e capacidades integrais): ${candidate.squad.hash}\n` +
+        petStudioBoundary +
         "O grant é opaco, de uso único e preso ao conteúdo fixado pelo hash acima.",
     });
     return result.response === 1;
@@ -865,9 +1044,9 @@ async function confirmImmediateSquadLaunch(
 }
 
 /**
- * Roster that never expands worker authority: every non-orchestrator agent
- * carries an explicit allowlist (array, possibly empty = block all) with no
- * wildcard. Only such NEW squads may save without the native dialog.
+ * A mission snapshot may skip the separate "save globally" ceremony only
+ * when every worker is fenced by an explicit, wildcard-free Nexus tool list.
+ * The orchestrator remains the sole delegation authority.
  */
 function squadSaveIsAuthorityFenced(squad: {
   readonly agents: ReadonlyArray<{
@@ -875,11 +1054,14 @@ function squadSaveIsAuthorityFenced(squad: {
     readonly allowedTools?: readonly string[] | null;
   }>;
 }): boolean {
-  return squad.agents.every(
-    (agent) =>
-      agent.category === 'orchestrator' ||
-      (Array.isArray(agent.allowedTools) &&
-        !agent.allowedTools.includes('*')),
+  return (
+    squad.agents.filter((agent) => agent.category === 'orchestrator').length === 1 &&
+    squad.agents.every(
+      (agent) =>
+        agent.category === 'orchestrator' ||
+        (Array.isArray(agent.allowedTools) &&
+          !agent.allowedTools.includes('*')),
+    )
   );
 }
 
@@ -1264,10 +1446,9 @@ async function confirmSquadsImport(
   return result.response === 1;
 }
 
-async function confirmSquadMutation(
+async function confirmSquadDelete(
   owner: WebContents,
   scope: ProjectExecutionScope,
-  action: 'save' | 'delete',
   snapshot: SquadAuthoritySnapshot,
 ): Promise<boolean> {
   assertSquadReviewable(snapshot);
@@ -1275,37 +1456,33 @@ async function confirmSquadMutation(
   if (!window || window.isDestroyed()) {
     throw new Error('renderer window is unavailable');
   }
-  if (squadMutationConfirmations.has(owner)) {
-    throw new Error('squad mutation confirmation is already pending');
+  if (squadDeleteConfirmations.has(owner)) {
+    throw new Error('squad deletion confirmation is already pending');
   }
-  squadMutationConfirmations.add(owner);
+  squadDeleteConfirmations.add(owner);
   try {
     const result = await dialog.showMessageBox(window, {
       type: 'warning',
-      title: action === 'save' ? 'Nexus IDE — salvar squad' : 'Nexus IDE — excluir squad',
-      buttons: ['Cancelar', action === 'save' ? 'Salvar squad' : 'Excluir squad'],
+      title: 'Nexus IDE — excluir squad',
+      buttons: ['Cancelar', 'Excluir squad'],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
-      message:
-        action === 'save'
-          ? 'Salvar exatamente este roster e contrato global?'
-          : 'Excluir exatamente este squad global?',
+      message: 'Excluir exatamente este squad global?',
       // Native message boxes grow to fit their `detail` and never scroll, so
       // dumping the full roster JSON here overflowed off-screen (worse on small
-      // displays). Show a bounded, readable summary; the exact bytes being
-      // saved are pinned by the hash below, so transparency is preserved
-      // without an unusable wall of text.
-      detail: summarizeSquadMutationForDialog(scope, snapshot),
+      // displays). Show a bounded, readable summary; the hash pins the exact
+      // squad being deleted without an unusable wall of text.
+      detail: summarizeSquadDeletionForDialog(scope, snapshot),
     });
     return result.response === 1;
   } finally {
-    squadMutationConfirmations.delete(owner);
+    squadDeleteConfirmations.delete(owner);
   }
 }
 
 /** Bounded, human-readable confirmation body; exactness is pinned by the hash. */
-function summarizeSquadMutationForDialog(
+function summarizeSquadDeletionForDialog(
   scope: ProjectExecutionScope,
   snapshot: SquadAuthoritySnapshot,
 ): string {
@@ -1344,6 +1521,10 @@ export function configureRendererMissionAuthority(
     undefined,
     undefined,
     bootstrapMissionOrchestratorForScope,
+    undefined,
+    undefined,
+    undefined,
+    ensureGuidedMissionPlanForScope,
   );
   projectDomainStores.onChange((scope, store) => {
     broadcastProjectStore(scope, store);
@@ -1364,7 +1545,9 @@ export function configureRendererMissionAuthority(
     // outro Codex nem repita imagens: se houver uma única missão Pet Studio e
     // um único pacote v2 novo e válido, fecha a missão existente. A semente
     // acontece antes para que running -> done ainda dispare o balão do pet.
-    for (const recovery of reconcileCompletedPetStudioMissions(suite)) {
+    for (const recovery of reconcileCompletedPetStudioMissions(suite, {
+      workspaceRoot: scope.rootRealPath,
+    })) {
       if (recovery.completed) {
         console.log(
           `[pet-studio] recovered ${recovery.missionId} from ${recovery.packageDir}`,
@@ -1553,6 +1736,7 @@ export async function closeOrchestration(): Promise<void> {
     projectDomainStores = null;
     rendererMissionAuthority = null;
     lastMissionsByScope.clear();
+    squadDesignDrafts.clear();
     orchestrationReady = false;
     orchestrationShutdownBlocked = false;
   })();
@@ -1745,7 +1929,7 @@ export function registerOrchIpc(): void {
       const orchestrator =
         currentMatches[0].agents.find(
           (agent) => agent.category === "orchestrator",
-        ) ?? currentMatches[0].agents[0];
+        ) ?? null;
       if (!orchestrator) {
         throw new Error("saved squad has no orchestrator");
       }
@@ -1801,18 +1985,39 @@ export function registerOrchIpc(): void {
       event.sender,
       parsed.data,
     );
-    const approved = await confirmMissionAuthorityChange(
+    const replacement = prepareExclusiveOrchestratorReplacement({
+      incomingMissionId: candidate.missionId,
+      incomingAdapterId: candidate.orchestratorRuntime.adapterId,
+    });
+    const approvalReviewSha256 = await confirmMissionAuthorityChange(
       event.sender,
       scope,
       candidate,
       "approve",
+      replacement.entries.length > 0 ? replacement : undefined,
     );
-    if (!approved) throw new Error("user_denied");
+    if (!approvalReviewSha256) throw new Error("user_denied");
+    requireLiveRendererWorkspaceScope(event.sender, scope);
+    const currentCandidate = authority.missionApprovalCandidateFromRenderer(
+      event.sender,
+      parsed.data,
+    );
+    if (currentCandidate.fence !== candidate.fence) {
+      throw new Error(
+        'approval_stale: mission intent, attachments, squad or runtime changed while native confirmation was open',
+      );
+    }
+    await applyExclusiveOrchestratorReplacement({
+      incomingMissionId: candidate.missionId,
+      incomingAdapterId: candidate.orchestratorRuntime.adapterId,
+      expectedFence: replacement.fence,
+    });
     requireLiveRendererWorkspaceScope(event.sender, scope);
     return authority.approveIntentFromRenderer(
       event.sender,
       parsed.data,
       candidate.fence,
+      approvalReviewSha256,
     );
   });
 
@@ -1840,9 +2045,11 @@ export function registerOrchIpc(): void {
     return rearmBlockedMissionFromRenderer(event.sender, parsed.data);
   });
 
-  const missionPromotePlanSchema = z.object({
-    missionId: z.string().min(1).max(128),
-  });
+  const missionPromotePlanSchema = z
+    .object({
+      missionId: z.string().min(1).max(128),
+    })
+    .strict();
   ipcMain.handle(ORCH_CHANNELS.missionPromotePlanLane, async (event, raw) => {
     const parsed = missionPromotePlanSchema.safeParse(raw);
     if (!parsed.success) throw new Error("invalid promote plan lane payload");
@@ -1852,19 +2059,87 @@ export function registerOrchIpc(): void {
       event.sender,
       parsed.data,
     );
-    const approved = await confirmMissionAuthorityChange(
+    if (!candidate.promotedPlan) {
+      throw new Error(
+        'plan_handoff_missing: a promoção exige um PRD/plano físico revisável',
+      );
+    }
+    const approvalReviewSha256 = await confirmMissionAuthorityChange(
       event.sender,
       scope,
       candidate,
       "promote",
     );
-    if (!approved) throw new Error("user_denied");
+    if (!approvalReviewSha256) throw new Error("user_denied");
     requireLiveRendererWorkspaceScope(event.sender, scope);
-    return authority.promotePlanLaneFromRenderer(
+    const candidateBeforeTeardown =
+      authority.planPromotionCandidateFromRenderer(
+        event.sender,
+        parsed.data,
+      );
+    if (candidateBeforeTeardown.fence !== candidate.fence) {
+      throw new Error(
+        'promotion_stale: mission, saved squad or runtime changed while native confirmation was open',
+      );
+    }
+    const stopped =
+      await stopMissionOrchestratorBeforePlanPromotionForScope(
+        scope,
+        candidate.missionId,
+        candidate.intentVersion,
+      );
+    if (!stopped.ok) throw new Error(stopped.error);
+    requireLiveRendererWorkspaceScope(event.sender, scope);
+    const candidateAfterTeardown =
+      authority.planPromotionCandidateAfterTeardownFromMain(
+        event.sender,
+        parsed.data,
+        candidate.promotedPlan,
+      );
+    if (
+      missionAuthorityReviewDigest(candidateAfterTeardown) !==
+      missionAuthorityReviewDigest(candidate)
+    ) {
+      throw new Error(
+        'promotion_stale: reviewed mission authority changed during physical teardown',
+      );
+    }
+    const stoppedStores = getProjectDomainStores(scope);
+    const stoppedMission = stoppedStores.missions.get(candidate.missionId);
+    if (
+      !stoppedMission ||
+      stoppedMission.orchestratorSessionId !== undefined ||
+      stoppedStores.missionPanes.list(candidate.missionId).length > 0
+    ) {
+      throw new Error(
+        'promotion_runtime_reappeared: plan runtime was not durably stopped',
+      );
+    }
+    commitPromotedPlanToGit(
+      scope,
+      candidateAfterTeardown.promotedPlan!,
+    );
+    const promoted = authority.promotePlanLaneFromRenderer(
       event.sender,
       parsed.data,
-      candidate.fence,
+      candidateAfterTeardown.fence,
+      candidateAfterTeardown.promotedPlan!,
+      approvalReviewSha256,
     );
+    const intentVersion = promoted.intentVersion;
+    if (!Number.isInteger(intentVersion)) {
+      throw new Error('promoted mission has no exact intent revision');
+    }
+    const restarted =
+      await restartMissionOrchestratorAfterPlanPromotionForScope(
+        scope,
+        promoted.id,
+        intentVersion!,
+      );
+    if (!restarted.ok) {
+      throw new Error(restarted.error);
+    }
+    return getProjectDomainStores(scope).missions.get(promoted.id) ?? promoted;
   });
 
   ipcMain.handle(ORCH_CHANNELS.missionKickoffSubmit, (event, raw) =>
@@ -2184,6 +2459,25 @@ export function registerOrchIpc(): void {
       // A same-key caller may have joined another renderer's flight or hit the
       // bounded cache; its own live authority still gates the returned value.
       requireLiveRendererWorkspaceScope(event.sender, scope);
+      if (
+        value &&
+        typeof value === 'object' &&
+        (value as { ok?: unknown }).ok === true &&
+        (value as { squad?: unknown }).squad
+      ) {
+        const squad = squadSchema.parse(
+          (value as { squad: unknown }).squad,
+        );
+        return {
+          ...(value as Record<string, unknown>),
+          squad,
+          designDraftToken: rememberSquadDesignDraft(
+            event.sender,
+            scope,
+            squad,
+          ),
+        };
+      }
       return value;
     } catch (err) {
       return {
@@ -2202,42 +2496,140 @@ export function registerOrchIpc(): void {
   });
 
   ipcMain.handle(ORCH_CHANNELS.squadSave, async (event, raw) => {
-    const parsed = squadSchema.safeParse(raw);
-    if (!parsed.success) {
+    const runtimeRequest = missionRuntimeSquadSaveSchema.safeParse(raw);
+    const globalRequest = runtimeRequest.success
+      ? null
+      : squadSchema.safeParse(raw);
+    if (!runtimeRequest.success && !globalRequest?.success) {
       return { ok: false, error: "invalid squad payload" };
     }
     try {
       const scope = requireLiveRendererWorkspaceScope(event.sender);
-      const existing = listSquads().find((squad) => squad.id === parsed.data.id);
-      if (parsed.data.builtin || existing?.builtin) {
+
+      if (runtimeRequest.success) {
+        const draftSourceSquad = runtimeRequest.data.designDraftToken
+          ? resolveSquadDesignDraft(
+              event.sender,
+              scope,
+              runtimeRequest.data.designDraftToken,
+              runtimeRequest.data.sourceSquadId,
+            )
+          : null;
+        const catalogSourceSquad = runtimeRequest.data.designDraftToken
+          ? null
+          : listSquads().find(
+              (squad) => squad.id === runtimeRequest.data.sourceSquadId,
+            );
+        const sourceSquad = catalogSourceSquad ?? draftSourceSquad;
+        if (!sourceSquad) {
+          throw new Error('mission runtime source squad is unavailable');
+        }
+        const guided =
+          draftSourceSquad !== null ||
+          isEngineGeneratedSquadId(sourceSquad.id);
+        if (runtimeRequest.data.guided !== guided) {
+          throw new Error(
+            'mission runtime guided identity does not match its main-owned source',
+          );
+        }
+        const sourceSnapshot = snapshotSquadAuthority(sourceSquad);
+        // The renderer supplies reviewed content, never a durable identity.
+        // Main resolves the reviewed source, seals its lineage, creates a
+        // collision-resistant hidden identity and refuses every later
+        // overwrite of that namespace.
+        const runtimeSquad: Squad = {
+          ...runtimeRequest.data.squad,
+          id:
+            `${guided ? 'agentic' : 'mission'}-runtime-` +
+            randomUUID(),
+          createdAt: String(Date.now()),
+          builtin: false,
+          runtimeSourceSquadId: sourceSquad.id,
+          runtimeSourceSquadRevisionHash: sourceSnapshot.hash,
+          agents: runtimeRequest.data.squad.agents.map((agent) => ({
+            ...agent,
+          })),
+        };
+        if (!isMissionRuntimeSquadId(runtimeSquad.id)) {
+          throw new Error('main generated an invalid mission runtime squad id');
+        }
+        const candidate = prepareMissionRuntimeSquadSave(
+          runtimeSquad,
+          sourceSquad,
+          guided,
+          catalogSourceSquad ? 'catalog' : 'ephemeral',
+        );
+        if (
+          listSquads().some((squad) => squad.id === candidate.squad.id) ||
+          !squadSaveIsAuthorityFenced(candidate.squad)
+        ) {
+          throw new Error(
+            'mission runtime squad must be new and authority-fenced',
+          );
+        }
+        const saved = applyPreparedSquadSave(candidate);
+        if (
+          draftSourceSquad &&
+          runtimeRequest.data.designDraftToken
+        ) {
+          squadDesignDrafts.delete(runtimeRequest.data.designDraftToken);
+        }
+        return { ok: true, squad: saved };
+      }
+
+      if (!globalRequest || !globalRequest.success) {
+        throw new Error('invalid global squad payload');
+      }
+      const parsed = globalRequest.data;
+      const existingInput = listSquads().find(
+        (squad) => squad.id === parsed.id,
+      );
+      if (
+        parsed.id !== PET_STUDIO_SQUAD_ID &&
+        (parsed.builtin || existingInput?.builtin)
+      ) {
         throw new Error(
           'managed built-in squads cannot be edited; duplicate with a new id',
         );
       }
-      const candidate = prepareSquadSave(parsed.data);
-      assertSquadNotExecuting(event.sender, candidate.squad.id);
-      // Single human gate: a saved squad is inert authority — any mission
-      // that uses it re-presents the exact roster hash in the mission
-      // approval dialog, and the bootstrap blocks on squadRevisionHash drift.
-      // A brand-new id with a fenced roster (every worker with an explicit,
-      // wildcard-free allowlist) therefore saves silently; the native dialog
-      // remains for OVERWRITING an existing squad (retargets authority the
-      // user may have trusted) and for rosters that expand worker authority.
-      const decidedByMain =
-        !existing && squadSaveIsAuthorityFenced(candidate.squad);
-      if (!decidedByMain) {
-        const approved = await confirmSquadMutation(
-          event.sender,
-          scope,
-          'save',
-          candidate.snapshot,
+      const candidate = prepareSquadSave(parsed);
+
+      // Pet Studio is immutable app-owned data. Repairing it writes no
+      // renderer authority and must not add a second modal before its mission.
+      if (candidate.squad.id === PET_STUDIO_SQUAD_ID) {
+        const current = listSquads().find(
+          (squad) => squad.id === PET_STUDIO_SQUAD_ID,
         );
-        if (!approved) return { ok: false, error: 'user_denied' };
-        requireLiveRendererWorkspaceScope(event.sender, scope);
+        if (
+          current &&
+          snapshotSquadAuthority(current).hash === candidate.snapshot.hash
+        ) {
+          return { ok: true, squad: current };
+        }
         assertSquadNotExecuting(event.sender, candidate.squad.id);
+        const saved = applyPreparedSquadSave(candidate);
+        return { ok: true, squad: saved };
       }
-      applyPreparedSquadSave(candidate);
-      return { ok: true };
+
+      const existing = listSquads().find(
+        (squad) => squad.id === candidate.squad.id,
+      );
+      if (
+        isMissionRuntimeSquadId(candidate.squad.id) ||
+        (existing && isMissionRuntimeSquadId(existing.id))
+      ) {
+        throw new Error('mission runtime squads are immutable');
+      }
+      // Saving reusable configuration is an inert draft operation: it spawns
+      // no process, grants no token and spends no budget. Execution still
+      // creates an immutable runtime copy and requires the single native
+      // mission approval with the exact roster and hashes. Delete/import keep
+      // their destructive confirmations.
+      assertSquadNotExecuting(event.sender, candidate.squad.id);
+      requireLiveRendererWorkspaceScope(event.sender, scope);
+      assertSquadNotExecuting(event.sender, candidate.squad.id);
+      const saved = applyPreparedSquadSave(candidate);
+      return { ok: true, squad: saved };
     } catch (err) {
       return {
         ok: false,
@@ -2260,11 +2652,13 @@ export function registerOrchIpc(): void {
           'managed built-in squads cannot be deleted; duplicate to customize',
         );
       }
+      if (isMissionRuntimeSquadId(existing.id)) {
+        throw new Error('mission runtime squads are immutable');
+      }
       const snapshot = snapshotSquadAuthority(existing);
-      const approved = await confirmSquadMutation(
+      const approved = await confirmSquadDelete(
         event.sender,
         scope,
-        'delete',
         snapshot,
       );
       if (!approved) return { ok: false, error: 'user_denied' };

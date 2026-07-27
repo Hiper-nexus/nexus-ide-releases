@@ -81,6 +81,16 @@ malicious behavior. Claude will not execute commands without your approval.
   2. No, exit
 `;
 
+/** Claude Code 2.1.220 workspace trust copy observed in the physical E2E. */
+const CLAUDE_TRUST_PROMPT_220 = `
+Quick safety check: Is this a project you created or one you trust?
+
+/tmp/nexus-final-e2e
+
+› 1. Yes, I trust this folder
+  2. No, exit
+`;
+
 function signature(name: string) {
   const found = BUILTIN_PROMPT_SIGNATURES.find((item) => item.name === name);
   if (!found) throw new Error(`missing signature ${name}`);
@@ -232,6 +242,42 @@ describe('CLI prompt autoresponder', () => {
       );
       expect(responder.observe(`session-${adapterId}`, CLAUDE_TRUST_PROMPT)).toBeNull();
     }
+  });
+
+  it('recognizes the Claude 2.1.220 quick-safety trust dialog', () => {
+    expect(
+      matchesPromptSignature(
+        CLAUDE_TRUST_PROMPT_220,
+        signature('claude-workspace-trust-quick-safety-check'),
+      ),
+    ).toBe(true);
+
+    for (const adapterId of ['claude', 'glm', 'longcat'] as const) {
+      const responder = new CliPromptAutoResponder();
+      responder.bind(`session-${adapterId}`, adapterId);
+      expect(
+        responder.observe(`session-${adapterId}`, CLAUDE_TRUST_PROMPT_220),
+      ).toBe(ACCEPT_FIRST_OPTION_BY_NUMBER);
+      expect(
+        responder.observe(`session-${adapterId}`, CLAUDE_TRUST_PROMPT_220),
+      ).toBeNull();
+    }
+  });
+
+  it('defers on the partial Claude 2.1.220 banner and force-accepts option 1', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-claude', 'claude');
+
+    expect(
+      responder.observe(
+        'session-claude',
+        'Quick safety check: Is this a project\n',
+      ),
+    ).toBeNull();
+    expect(responder.shouldDeferInjection('session-claude')).toBe(true);
+    expect(responder.forceAcceptResponse('session-claude')).toEqual({
+      response: ACCEPT_FIRST_OPTION_BY_NUMBER,
+    });
   });
 
   it('defers injection on the trust banner and force-accepts with option 1 (never Down+Enter)', () => {

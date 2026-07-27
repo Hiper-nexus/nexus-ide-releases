@@ -1,30 +1,19 @@
-import { useEffect } from 'react';
-import { create } from 'zustand';
-import type { CostSnapshot } from '../../shared/cost-types';
-import { getActiveWorkspacePath } from './active-workspace';
-import { useWorkspaceStore } from './workspace-store';
+import { useEffect } from "react";
+import { create } from "zustand";
+import type { CostSnapshot } from "../../shared/cost-types";
+import { getActiveWorkspacePath } from "./active-workspace";
+import { useWorkspaceStore } from "./workspace-store";
 
 /**
  * Renderer mirror of the main-process cost tracker (same pattern as
- * provider-store / account-store).
- *
- * TODO(orchestrator): `window.nexus.cost` does not exist yet — the preload
- * bridge is wired during integration. Until NexusApi grows a `cost` member,
- * we cast through the narrow CostApi shape below and no-op when absent, so
- * this file compiles and the app runs before the bridge lands.
+ * provider-store / account-store). The preload bridge (`window.nexus.cost`)
+ * is the real integration; the optional-chain guard only covers a stale
+ * preload in dev/hot-reload, which surfaces as the explicit unavailable
+ * state below instead of a silent no-op.
  */
 
-interface CostApi {
-  snapshot(): Promise<CostSnapshot>;
-  setCap(
-    paneId: string,
-    capUsd: number | null,
-  ): Promise<{ ok: boolean; error?: string }>;
-  onChanged(cb: (snapshot: CostSnapshot) => void): () => void;
-}
-
-function costApi(): CostApi | undefined {
-  return (window.nexus as unknown as { cost?: CostApi }).cost;
+function costApi() {
+  return window.nexus?.cost;
 }
 
 export const EMPTY_COST_SNAPSHOT: CostSnapshot = {
@@ -57,7 +46,7 @@ export const useCostStore = create<CostStore>((set) => ({
       if (getActiveWorkspacePath() === workspacePath) set({ snapshot });
     } catch (err) {
       if (getActiveWorkspacePath() === workspacePath) {
-        console.warn('[cost] hydrate failed:', err);
+        console.warn("[cost] hydrate failed:", err);
       }
     }
   },
@@ -67,7 +56,7 @@ export const useCostStore = create<CostStore>((set) => ({
 
   setCap: async (paneId, capUsd) => {
     const api = costApi();
-    if (!api) return { ok: false, error: 'cost bridge not wired' };
+    if (!api) return { ok: false, error: "cost bridge not wired" };
     return api.setCap(paneId, capUsd);
   },
 }));

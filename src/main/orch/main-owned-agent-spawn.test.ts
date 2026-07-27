@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const registryDeps = vi.hoisted(() => ({
+  assertMissionSpawnAuthorityCurrent: vi.fn(),
   assertPendingSpawnGrantActive: vi.fn(),
   assertPendingRecoverySpawnGrantActive: vi.fn(),
   bindPendingSpawnSession: vi.fn(() => true),
@@ -8,8 +9,13 @@ const registryDeps = vi.hoisted(() => ({
   attachSessionScope: vi.fn(),
   attachOrchMeta: vi.fn(),
 }));
+const missionDeps = vi.hoisted(() => ({
+  mission: null as { id: string; squadId?: string } | null,
+}));
 
 vi.mock("./pane-registry", () => ({
+  assertMissionSpawnAuthorityCurrent:
+    registryDeps.assertMissionSpawnAuthorityCurrent,
   assertPendingSpawnGrantActive:
     registryDeps.assertPendingSpawnGrantActive,
   assertPendingRecoverySpawnGrantActive:
@@ -20,11 +26,22 @@ vi.mock("./pane-registry", () => ({
   attachSessionScope: registryDeps.attachSessionScope,
   attachOrchMeta: registryDeps.attachOrchMeta,
 }));
+vi.mock("./mission-store", () => ({
+  createScopedMissionStore: () => ({
+    get: () => missionDeps.mission,
+  }),
+}));
+vi.mock("../../shared/mission-intent", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../shared/mission-intent")>()),
+  hasCurrentDispatchAuthority: () => true,
+}));
 
 import {
   assertMainOwnedAgentSpawnGrantActive,
+  bindMissionLaunchAuthority,
   settleSpawnedMainOwnedAgentSession,
 } from "./main-owned-agent-spawn";
+import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 
 const scope = {
   version: 1 as const,
@@ -36,8 +53,17 @@ const scope = {
 };
 
 const owner = { id: 7 };
+const authoritySeal = {
+  intentVersion: 1,
+  intentContractHash: "intent-contract-hash",
+  contextRevision: "context-revision-a",
+  contractHash: "contract-hash",
+  squadRevisionHash: "squad-revision-hash",
+};
 const pending = {
   missionId: "mission-a",
+  contextRevision: authoritySeal.contextRevision,
+  authoritySeal,
   agentName: "worker-a",
   role: "worker" as const,
   scope,
@@ -87,8 +113,50 @@ const persistedPane = {
 describe("main-owned agent spawn boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    missionDeps.mission = null;
     registryDeps.bindPendingSpawnSession.mockReturnValue(true);
     registryDeps.bindPendingRecoverySpawnSession.mockReturnValue(true);
+  });
+
+  it("derives persisted squad identity only from the current scoped mission", () => {
+    missionDeps.mission = {
+      id: "mission-pet",
+      squadId: PET_STUDIO_SQUAD_ID,
+    };
+    const persistedAuthority = {
+      ...authority,
+      source: "persisted-pane" as const,
+      context: {
+        ...authority.context,
+        missionId: "mission-pet",
+        role: "orchestrator" as const,
+        squadId: undefined,
+      },
+    };
+
+    const rebound = bindMissionLaunchAuthority(
+      {} as never,
+      persistedAuthority,
+      "mission-pet",
+    );
+
+    expect(rebound.context).toMatchObject({
+      missionId: "mission-pet",
+      squadId: PET_STUDIO_SQUAD_ID,
+    });
+    expect(() =>
+      bindMissionLaunchAuthority(
+        {} as never,
+        {
+          ...persistedAuthority,
+          context: {
+            ...persistedAuthority.context,
+            squadId: "renderer-lookalike",
+          },
+        },
+        "mission-pet",
+      ),
+    ).toThrow(/mission squad does not match spawn authority/i);
   });
 
   it("uses one pre-effect fence for pending and recovery grants", () => {
@@ -102,6 +170,16 @@ describe("main-owned agent spawn boundary", () => {
     expect(
       registryDeps.assertPendingSpawnGrantActive,
     ).toHaveBeenCalledWith("spawn-a", owner);
+    expect(
+      registryDeps.assertMissionSpawnAuthorityCurrent,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        missionId: "mission-a",
+        scope,
+        contextRevision: authoritySeal.contextRevision,
+        authoritySeal,
+      }),
+    );
     expect(
       registryDeps.assertPendingRecoverySpawnGrantActive,
     ).toHaveBeenCalledWith("spawn-a", owner);

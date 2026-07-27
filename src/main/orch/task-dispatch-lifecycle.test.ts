@@ -8,11 +8,15 @@ const mocks = vi.hoisted(() => ({
   heartbeat: vi.fn(),
   blockExpired: vi.fn(),
   blockSessionExit: vi.fn(),
+  refineBootstrapSessionExitBlock: vi.fn(),
   list: vi.fn(),
+  getDispatch: vi.fn(),
   getContextBySession: vi.fn(),
   getAgentSessionInfo: vi.fn(),
   getExternalWorkerSessionInfo: vi.fn(),
   onScope: vi.fn(),
+  onChange: vi.fn(),
+  closeWorker: vi.fn(async () => true),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -39,7 +43,13 @@ vi.mock('./external-worker-session-registry', () => ({
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
-  requireProjectDomainStoreRegistry: () => ({ onScope: mocks.onScope }),
+  requireProjectDomainStoreRegistry: () => ({
+    onScope: mocks.onScope,
+    onChange: mocks.onChange,
+  }),
+}));
+vi.mock('./pane-registry', () => ({
+  requestMissionWorkerPaneRetirement: mocks.closeWorker,
 }));
 
 import {
@@ -47,6 +57,7 @@ import {
   reconcileTaskDispatchLifecycle,
   shutdownTaskDispatchLifecycle,
   TASK_DISPATCH_ACTIVITY_THROTTLE_MS,
+  TASK_DISPATCH_SESSION_EXIT_REASON,
 } from './task-dispatch-lifecycle';
 
 const scope = testProjectScope();
@@ -56,7 +67,9 @@ const suite = {
     heartbeat: mocks.heartbeat,
     blockExpired: mocks.blockExpired,
     blockSessionExit: mocks.blockSessionExit,
+    refineBootstrapSessionExitBlock: mocks.refineBootstrapSessionExitBlock,
     list: mocks.list,
+    get: mocks.getDispatch,
   },
 };
 
@@ -71,6 +84,7 @@ describe('main-owned task dispatch lifecycle', () => {
       listener(scope, suite);
       return vi.fn();
     });
+    mocks.onChange.mockReturnValue(vi.fn());
     mocks.getContextBySession.mockReturnValue({
       role: 'worker', missionId: 'mission-a',
       workerIncarnationId: 'worker-incarnation-a', scope,
@@ -78,6 +92,7 @@ describe('main-owned task dispatch lifecycle', () => {
     mocks.heartbeat.mockReturnValue({ taskId: 'task-a', missionId: 'mission-a' });
     mocks.blockSessionExit.mockReturnValue({ taskId: 'task-a', state: 'blocked' });
     mocks.list.mockReturnValue([]);
+    mocks.getDispatch.mockReturnValue(null);
     mocks.getAgentSessionInfo.mockReturnValue(null);
     mocks.getExternalWorkerSessionInfo.mockReturnValue(null);
     prepareTaskDispatchLifecycle({ now: () => now });
@@ -124,8 +139,28 @@ describe('main-owned task dispatch lifecycle', () => {
     expect(mocks.blockSessionExit).toHaveBeenCalledWith({
       sessionId: 'session-a',
       workerIncarnationId: 'worker-incarnation-a',
-      reason: 'O worker encerrou sem entregar um handoff confiável.',
+      reason: TASK_DISPATCH_SESSION_EXIT_REASON,
     });
+    expect(mocks.refineBootstrapSessionExitBlock).not.toHaveBeenCalled();
+  });
+
+  it('does not bypass the exit fence when the real-mission harness is enabled', () => {
+    const previous = process.env.NEXUS_REAL_MISSION_E2E;
+    process.env.NEXUS_REAL_MISSION_E2E = '1';
+    try {
+      mocks.exitTap?.('session-a');
+      expect(mocks.blockSessionExit).toHaveBeenCalledWith({
+        sessionId: 'session-a',
+        workerIncarnationId: 'worker-incarnation-a',
+        reason: TASK_DISPATCH_SESSION_EXIT_REASON,
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEXUS_REAL_MISSION_E2E;
+      } else {
+        process.env.NEXUS_REAL_MISSION_E2E = previous;
+      }
+    }
   });
 
   it('resolve o scope OMP no exit mesmo se o gate já foi liberado', () => {
@@ -143,7 +178,7 @@ describe('main-owned task dispatch lifecycle', () => {
     expect(mocks.blockSessionExit).toHaveBeenCalledWith({
       sessionId: 'omp-session',
       workerIncarnationId: 'worker-incarnation-omp',
-      reason: 'O worker encerrou sem entregar um handoff confiável.',
+      reason: TASK_DISPATCH_SESSION_EXIT_REASON,
     });
   });
 
@@ -241,6 +276,32 @@ describe('main-owned task dispatch lifecycle', () => {
       taskId: 'task-current',
       revision: 4,
       reason: expect.stringMatching(/reiniciou.*provar.*pane/i),
+    });
+  });
+
+  it('retires a terminal dispatch through its exact physical identity', async () => {
+    const terminal = {
+      id: 'dispatch-terminal',
+      taskId: 'task-terminal',
+      missionId: 'mission-a',
+      revision: 5,
+      state: 'completed',
+      paneId: 'pane-terminal',
+      sessionId: 'session-terminal',
+      workerIncarnationId: 'worker-incarnation-terminal',
+      leaseExpiresAt: 10_000,
+    };
+    mocks.list.mockReturnValue([terminal]);
+    mocks.getDispatch.mockReturnValue(terminal);
+
+    await reconcileTaskDispatchLifecycle(now);
+
+    expect(mocks.closeWorker).toHaveBeenCalledWith({
+      paneId: 'pane-terminal',
+      sessionId: 'session-terminal',
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-incarnation-terminal',
+      scope,
     });
   });
 });

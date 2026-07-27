@@ -117,6 +117,9 @@ interface BrowserEntry {
   title: string;
   loading: boolean;
   error?: string;
+  /** Exact main-owned URL fence for an automated read-only design review. */
+  exactNavigationLock?: string;
+  restoringExactNavigation: boolean;
   allowedPrivateTargets: Map<string, Set<string>>;
   resolveHostname: BrowserAddressResolver;
   networkProxy: PinnedBrowserProxy;
@@ -145,6 +148,7 @@ const MOBILE_EMULATION_USER_AGENT =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 const originalUserAgents = new Map<string, string>();
+const BROWSER_DESTROY_PROOF_TIMEOUT_MS = 2_000;
 let browserRuntimeManager: ProjectRuntimeManager | null = null;
 let unsubscribeBrowserScopeChanges: (() => void) | null = null;
 
@@ -530,6 +534,47 @@ function isSyntacticallySafeNavigation(rawUrl: string): boolean {
   }
 }
 
+function exactNavigationAllowed(entry: BrowserEntry, rawUrl: string): boolean {
+  if (!entry.exactNavigationLock) return true;
+  try {
+    return (
+      normalizeBrowserUrl(rawUrl, { allowAboutBlank: true }) ===
+      entry.exactNavigationLock
+    );
+  } catch {
+    return false;
+  }
+}
+
+function reportBlockedExactNavigation(
+  paneId: string,
+  entry: BrowserEntry,
+  rawUrl: string,
+  restore: boolean,
+): void {
+  entry.error =
+    `automated design-review navigation blocked: ${safeTargetLabel(rawUrl)}`;
+  emitState(entry);
+  if (
+    !restore ||
+    !entry.exactNavigationLock ||
+    entry.restoringExactNavigation
+  ) {
+    return;
+  }
+  entry.restoringExactNavigation = true;
+  void loadBrowserForEntry(paneId, entry, entry.exactNavigationLock)
+    .catch((error) => {
+      entry.error =
+        `automated design-review preview restore failed: ` +
+        `${error instanceof Error ? error.message : String(error)}`;
+      emitState(entry);
+    })
+    .finally(() => {
+      entry.restoringExactNavigation = false;
+    });
+}
+
 function stateOf(paneId: string, entry: BrowserEntry): BrowserPaneState {
   const fallback: BrowserPaneState = {
     paneId,
@@ -676,6 +721,7 @@ async function createEntry(
     allowedPrivateTargets,
     resolveHostname,
     networkProxy,
+    restoringExactNavigation: false,
   };
   const key = browserKey(scope, paneId);
   browsers.set(key, entry);
@@ -686,6 +732,12 @@ async function createEntry(
   // Keep WebRTC from opening direct UDP sockets around the session proxy.
   wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
   wc.setWindowOpenHandler(({ url }) => {
+    if (entry.exactNavigationLock) {
+      if (!exactNavigationAllowed(entry, url)) {
+        reportBlockedExactNavigation(paneId, entry, url, false);
+      }
+      return { action: 'deny' };
+    }
     void loadBrowserForEntry(paneId, entry, url).catch((err) => {
       entry.error = err instanceof Error ? err.message : String(err);
       emitState(entry);
@@ -693,10 +745,26 @@ async function createEntry(
     return { action: 'deny' };
   });
   wc.on('will-navigate', (event, url) => {
-    if (!isSyntacticallySafeNavigation(url)) event.preventDefault();
+    if (
+      !isSyntacticallySafeNavigation(url) ||
+      !exactNavigationAllowed(entry, url)
+    ) {
+      event.preventDefault();
+      if (!exactNavigationAllowed(entry, url)) {
+        reportBlockedExactNavigation(paneId, entry, url, false);
+      }
+    }
   });
   wc.on('will-redirect', (event, url) => {
-    if (!isSyntacticallySafeNavigation(url)) event.preventDefault();
+    if (
+      !isSyntacticallySafeNavigation(url) ||
+      !exactNavigationAllowed(entry, url)
+    ) {
+      event.preventDefault();
+      if (!exactNavigationAllowed(entry, url)) {
+        reportBlockedExactNavigation(paneId, entry, url, false);
+      }
+    }
   });
   wc.on('did-start-loading', () => {
     entry.loading = true;
@@ -713,6 +781,10 @@ async function createEntry(
   });
   wc.on('did-navigate', (_event, url) => {
     entry.url = url;
+    if (!exactNavigationAllowed(entry, url)) {
+      reportBlockedExactNavigation(paneId, entry, url, true);
+      return;
+    }
     entry.error = undefined;
     // Annotations and the picker session both point at the OLD document —
     // rects and selectors stop meaning anything after a real navigation.
@@ -724,6 +796,10 @@ async function createEntry(
     // is just as gone. Hash-only hops keep the design state.
     const previousUrl = entry.url;
     entry.url = url;
+    if (!exactNavigationAllowed(entry, url)) {
+      reportBlockedExactNavigation(paneId, entry, url, true);
+      return;
+    }
     if (shouldResetDesignForUrlChange(previousUrl, url)) {
       resetDesignPaneState(entry, key, { sameDocument: true });
     }
@@ -818,6 +894,11 @@ async function loadBrowserForEntry(
     options.privateAccessConfirmed === true,
     options,
   );
+  if (!exactNavigationAllowed(entry, url)) {
+    throw new Error(
+      'automated design-review browser is locked to another local preview URL',
+    );
+  }
   assertCurrentAuthority();
   entry.url = url;
   entry.error = undefined;
@@ -853,6 +934,41 @@ export async function loadBrowser(
     title: redactBrowserLabel(state.title),
     ...(state.error ? { error: redactBrowserLabel(state.error) } : {}),
   };
+}
+
+export function lockBrowserToExactUrl(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  rawUrl: string,
+): void {
+  const entry = withEntry(paneId, scope);
+  const exactUrl = normalizeBrowserUrl(rawUrl);
+  const currentUrl = entry.view.webContents.getURL() || entry.url;
+  if (currentUrl !== exactUrl) {
+    throw new Error(
+      'automated design-review browser is not at its approved local preview URL',
+    );
+  }
+  entry.exactNavigationLock = exactUrl;
+}
+
+export function assertBrowserAtExactUrl(
+  paneId: string,
+  scope: ProjectExecutionScope,
+  rawUrl: string,
+): void {
+  const entry = withEntry(paneId, scope);
+  const expected = normalizeBrowserUrl(rawUrl);
+  const current = entry.view.webContents.getURL() || entry.url;
+  if (
+    entry.exactNavigationLock !== expected ||
+    current !== expected ||
+    entry.error
+  ) {
+    throw new Error(
+      'automated design-review browser left its approved local preview URL',
+    );
+  }
 }
 
 async function loadBrowserWithUserConfirmation(
@@ -1380,15 +1496,15 @@ function applyPendingBounds(entry: BrowserEntry): void {
   setBrowserBounds(entry, pending.bounds);
 }
 
-export function destroyBrowser(
+function detachBrowserEntry(
   paneId: string,
   scope: ProjectExecutionScope,
-): void {
+): BrowserEntry | null {
   const key = browserKey(scope, paneId);
   const entry = browsers.get(key);
   if (!entry) {
     pendingBoundsByKey.delete(key);
-    return;
+    return null;
   }
   assertEntryScope(entry, scope);
   browsers.delete(key);
@@ -1402,12 +1518,109 @@ export function destroyBrowser(
   } catch {
     // Already detached.
   }
+  return entry;
+}
+
+export function destroyBrowser(
+  paneId: string,
+  scope: ProjectExecutionScope,
+): void {
+  const entry = detachBrowserEntry(paneId, scope);
+  if (!entry) return;
   try {
     entry.view.webContents.close();
   } catch {
     // Already destroyed.
   }
   void entry.networkProxy.close();
+}
+
+function closeWebContentsWithProof(entry: BrowserEntry): Promise<void> {
+  const webContents = entry.view.webContents;
+  if (webContents.isDestroyed()) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      webContents.removeListener('destroyed', onDestroyed);
+    };
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onDestroyed = () => settle();
+    const timer = setTimeout(() => {
+      if (webContents.isDestroyed()) {
+        settle();
+        return;
+      }
+      settle(
+        new Error(
+          `browser pane ${entry.paneId} WebContents did not terminate`,
+        ),
+      );
+    }, BROWSER_DESTROY_PROOF_TIMEOUT_MS);
+    timer.unref();
+    webContents.once('destroyed', onDestroyed);
+    try {
+      webContents.close({ waitForBeforeUnload: false });
+      if (webContents.isDestroyed()) settle();
+    } catch (error) {
+      settle(
+        new Error(
+          `browser pane ${entry.paneId} WebContents close failed: ` +
+            `${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    }
+  });
+}
+
+/**
+ * Strong teardown used by privileged automated-review surfaces. Authority is
+ * revoked from the runtime map first, then both the WebContents destruction
+ * and pinned network-proxy shutdown are awaited and verified.
+ */
+export async function destroyBrowserWithProof(
+  paneId: string,
+  scope: ProjectExecutionScope,
+): Promise<void> {
+  const entry = detachBrowserEntry(paneId, scope);
+  if (!entry) {
+    throw new Error(
+      `browser pane ${paneId} disappeared before physical exit proof`,
+    );
+  }
+  const webContents = entry.view.webContents;
+  const [webContentsResult, proxyResult] = await Promise.allSettled([
+    closeWebContentsWithProof(entry),
+    Promise.resolve().then(() => entry.networkProxy.close()),
+  ]);
+  const failures: string[] = [];
+  if (webContentsResult.status === 'rejected') {
+    failures.push(
+      webContentsResult.reason instanceof Error
+        ? webContentsResult.reason.message
+        : String(webContentsResult.reason),
+    );
+  }
+  if (!webContents.isDestroyed()) {
+    failures.push(`browser pane ${paneId} WebContents remains alive`);
+  }
+  if (proxyResult.status === 'rejected') {
+    failures.push(
+      `browser pane ${paneId} network proxy close failed: ` +
+        `${proxyResult.reason instanceof Error
+          ? proxyResult.reason.message
+          : String(proxyResult.reason)}`,
+    );
+  }
+  if (failures.length > 0) {
+    throw new Error(failures.join('; '));
+  }
 }
 
 export function destroyBrowsersFor(wc: WebContents): void {

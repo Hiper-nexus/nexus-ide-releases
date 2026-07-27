@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
-import type { Squad } from "../../shared/orch-types";
+import type { Handoff, Mission, Squad } from "../../shared/orch-types";
 import { testProjectScope } from "./__tests__/scope-fixture";
 
 const deps = vi.hoisted(() => ({
@@ -21,12 +21,14 @@ const deps = vi.hoisted(() => ({
   setMissionOrchestratorSession: vi.fn(),
   rebindMissionOrchestratorSession: vi.fn(),
   updateMission: vi.fn(),
+  commitPlanPromotionRevision: vi.fn(),
   removeMission: vi.fn(),
   recordMissionPane: vi.fn(),
   removeMissionPane: vi.fn(),
   findMissionPaneByPaneId: vi.fn(),
   listMissionPanes: vi.fn(),
   listHandoffs: vi.fn(),
+  getHandoff: vi.fn(),
   listTasks: vi.fn(),
   forScope: vi.fn(),
   orientationEnsure: vi.fn(),
@@ -34,6 +36,7 @@ const deps = vi.hoisted(() => ({
   validateAttachmentPaths: vi.fn(),
   snapshotAttachmentPaths: vi.fn(),
   requestMissionOrchestratorBootstrap: vi.fn(),
+  ensureMissionPlanBeforeBootstrap: vi.fn(),
   resolveOrchestratorRuntime: vi.fn(),
 }));
 
@@ -160,6 +163,39 @@ const approvedRuntime = Object.freeze({
   readOnly: false as const,
   nativeReadOnly: true as const,
 });
+
+function physicalPlanHandoff(
+  sessionId: string,
+  issuedAt: number,
+): Handoff {
+  return {
+    id: `handoff-${sessionId}`,
+    missionId: mission.id,
+    sessionId,
+    fromAgent: "Maestro",
+    authorityOrigin: "agent",
+    mcpProvenance: {
+      receiptId: `receipt-${sessionId}`,
+      toolCallId: `tool-${sessionId}`,
+      toolName: "nexus_handoff_submit",
+      source: "http-mcp",
+      missionId: mission.id,
+      sessionId,
+      authoritySha256: "a".repeat(64),
+      issuedAt,
+    },
+    status: "success",
+    claimTrust: "untrusted",
+    summary: "# PRD\nPlano físico aprovado.",
+    artifacts: [{ path: "plan.md" }],
+    evidenceIds: [],
+    evidenceTrust: "unverified",
+    delivered: false,
+    deliveryState: "queued",
+    createdAt: issuedAt,
+  };
+}
+
 const authority = new RendererMissionAuthority(
   { forScope: deps.forScope } as never,
   () => "context-revision-a",
@@ -170,7 +206,21 @@ const authority = new RendererMissionAuthority(
   () => savedSquad,
   deps.resolveOrchestratorRuntime,
   deps.snapshotAttachmentPaths,
+  deps.ensureMissionPlanBeforeBootstrap,
+  () => undefined,
 );
+
+function useStatefulMission(initial: Mission): () => Mission {
+  let current = initial;
+  deps.getMission.mockImplementation(() => current);
+  deps.updateMission.mockImplementation(
+    (_missionId: string, patch: Partial<Mission>) => {
+      current = { ...current, ...patch };
+      return current;
+    },
+  );
+  return () => current;
+}
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -207,6 +257,7 @@ beforeEach(() => {
   deps.removeMission.mockReturnValue(true);
   deps.listMissionPanes.mockReturnValue([]);
   deps.listHandoffs.mockReturnValue([]);
+  deps.getHandoff.mockReturnValue(null);
   deps.listTasks.mockReturnValue([]);
   deps.recordMissionPane.mockReturnValue({
     id: "mpane-new",
@@ -215,7 +266,7 @@ beforeEach(() => {
   });
   deps.orientationEnsure.mockResolvedValue({ status: "ready" });
   deps.validateAttachmentPaths.mockImplementation((paths: string[]) =>
-    paths.map((item) => `/validated/${item.split('/').at(-1)}`),
+    paths.map((item) => `/validated/${item.split("/").at(-1)}`),
   );
   deps.snapshotAttachmentPaths.mockImplementation((paths: string[]) =>
     paths.map((attachmentPath) => ({
@@ -228,7 +279,23 @@ beforeEach(() => {
     ok: true,
     missionId: mission.id,
   });
+  deps.ensureMissionPlanBeforeBootstrap.mockReturnValue(undefined);
   deps.resolveOrchestratorRuntime.mockReturnValue(approvedRuntime);
+  deps.commitPlanPromotionRevision.mockImplementation(
+    (
+      missionId: string,
+      _expected: Mission,
+      squadId: string,
+      intentContract: Mission["intentContract"],
+    ) =>
+      deps.updateMission(missionId, {
+        squadId,
+        status: "pending",
+        intentState: "ready_to_start",
+        intentVersion: intentContract?.intentVersion,
+        intentContract,
+      }),
+  );
   deps.forScope.mockReturnValue({
     missions: {
       create: deps.createMission,
@@ -236,6 +303,8 @@ beforeEach(() => {
       setOrchestratorSession: deps.setMissionOrchestratorSession,
       rebindOrchestratorSession: deps.rebindMissionOrchestratorSession,
       update: deps.updateMission,
+      commitPlanPromotionRevision:
+        deps.commitPlanPromotionRevision,
       remove: deps.removeMission,
     },
     missionPanes: {
@@ -244,7 +313,7 @@ beforeEach(() => {
       findByPaneId: deps.findMissionPaneByPaneId,
       list: deps.listMissionPanes,
     },
-    handoffs: { list: deps.listHandoffs },
+    handoffs: { list: deps.listHandoffs, get: deps.getHandoff },
     tasks: { list: deps.listTasks },
   });
 });
@@ -257,8 +326,9 @@ describe("renderer mission authority", () => {
       intentState: "awaiting_goal",
     });
 
-    expect(authority.missionRemovalCandidateFromRenderer(owner, "mission-a"))
-      .toEqual({ missionId: "mission-a", title: "Review" });
+    expect(
+      authority.missionRemovalCandidateFromRenderer(owner, "mission-a"),
+    ).toEqual({ missionId: "mission-a", title: "Review" });
     expect(authority.removeMissionFromRenderer(owner, "mission-a")).toBe(true);
     expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
   });
@@ -441,17 +511,26 @@ describe("renderer mission authority", () => {
         dispatchedAt: undefined,
       },
     };
-    deps.getMission.mockReturnValueOnce(awaitingApproval);
-    deps.updateMission.mockImplementationOnce(
-      (_missionId: string, patch: Record<string, unknown>) => ({
-        ...awaitingApproval,
-        ...patch,
-      }),
-    );
+    const currentMission = useStatefulMission(awaitingApproval);
 
-    const result = authority.approveIntentFromRenderer(owner, {
-      missionId: mission.id,
+    const approvalReviewSha256 = "c".repeat(64);
+    deps.ensureMissionPlanBeforeBootstrap.mockImplementationOnce(() => {
+      expect(currentMission()).toMatchObject({
+        status: "pending",
+        intentState: "ready_to_start",
+        intentContract: {
+          approvedAt: expect.any(Number),
+          approvalReviewSha256,
+          dispatchedAt: undefined,
+        },
+      });
     });
+    const result = authority.approveIntentFromRenderer(
+      owner,
+      { missionId: mission.id },
+      undefined,
+      approvalReviewSha256,
+    );
 
     expect(result).toMatchObject({
       status: "running",
@@ -459,6 +538,7 @@ describe("renderer mission authority", () => {
       intentContract: {
         intentVersion: 1,
         approvedAt: expect.any(Number),
+        approvalReviewSha256,
         dispatchedAt: expect.any(Number),
         orchestratorRuntime: approvedRuntime,
       },
@@ -466,10 +546,188 @@ describe("renderer mission authority", () => {
     expect(deps.updateMission).toHaveBeenCalledWith(
       mission.id,
       expect.objectContaining({
-        status: "running",
-        intentState: "dispatched",
+        status: "pending",
+        intentState: "ready_to_start",
+        intentContract: expect.objectContaining({
+          approvedAt: expect.any(Number),
+          approvalReviewSha256,
+          dispatchedAt: undefined,
+        }),
       }),
     );
+    expect(deps.updateMission).toHaveBeenLastCalledWith(
+      mission.id,
+      expect.objectContaining({
+        status: "running",
+        intentState: "dispatched",
+        intentContract: expect.objectContaining({
+          dispatchedAt: expect.any(Number),
+        }),
+      }),
+    );
+    expect(deps.ensureMissionPlanBeforeBootstrap).toHaveBeenCalledWith(
+      scope,
+      mission.id,
+    );
+    expect(
+      deps.ensureMissionPlanBeforeBootstrap.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      deps.updateMission.mock.invocationCallOrder.at(-1)!,
+    );
+    expect(
+      deps.ensureMissionPlanBeforeBootstrap.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      deps.requestMissionOrchestratorBootstrap.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("rejects a malformed native-review receipt before any mission mutation", () => {
+    expect(() =>
+      authority.approveIntentFromRenderer(
+        owner,
+        { missionId: mission.id },
+        undefined,
+        "renderer-forged",
+      ),
+    ).toThrow(/approval_review_receipt_invalid/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+    expect(deps.requestMissionOrchestratorBootstrap).not.toHaveBeenCalled();
+    expect(deps.updateMission).not.toHaveBeenCalledWith(mission.id, {
+      status: "running",
+    });
+  });
+
+  it("rechecks every standard worker after native review before dispatch", () => {
+    const guidedSquad = {
+      ...savedSquad,
+      id: "agentic-review-squad",
+    };
+    const awaitingApproval = {
+      ...approvedMission,
+      squadId: guidedSquad.id,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    const assertStandardSquadReadiness = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error(
+          "squad_runtime_unavailable:executor-unavailable: Aider sem handoff físico",
+        );
+      });
+    const gatedAuthority = new RendererMissionAuthority(
+      { forScope: deps.forScope } as never,
+      () => "context-revision-a",
+      () => true,
+      deps.resolvePaneActivity,
+      deps.validateAttachmentPaths,
+      deps.requestMissionOrchestratorBootstrap,
+      () => guidedSquad,
+      deps.resolveOrchestratorRuntime,
+      deps.snapshotAttachmentPaths,
+      deps.ensureMissionPlanBeforeBootstrap,
+      assertStandardSquadReadiness,
+    );
+    deps.getMission.mockReturnValue(awaitingApproval);
+
+    const candidate = gatedAuthority.missionApprovalCandidateFromRenderer(
+      owner,
+      { missionId: mission.id },
+    );
+    expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(1);
+
+    expect(() =>
+      gatedAuthority.approveIntentFromRenderer(
+        owner,
+        { missionId: mission.id },
+        candidate.fence,
+      ),
+    ).toThrow(/executor-unavailable.*handoff físico/i);
+    expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(2);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+    expect(deps.requestMissionOrchestratorBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("preserves specialty squad contracts outside the beginner guided planner", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    const guidedOnlyReadiness = vi.fn(() => {
+      throw new Error("guided readiness must not govern specialty squads");
+    });
+    const specialtyAuthority = new RendererMissionAuthority(
+      { forScope: deps.forScope } as never,
+      () => "context-revision-a",
+      () => true,
+      deps.resolvePaneActivity,
+      deps.validateAttachmentPaths,
+      deps.requestMissionOrchestratorBootstrap,
+      () => savedSquad,
+      deps.resolveOrchestratorRuntime,
+      deps.snapshotAttachmentPaths,
+      deps.ensureMissionPlanBeforeBootstrap,
+      guidedOnlyReadiness,
+    );
+    deps.getMission.mockReturnValue(awaitingApproval);
+
+    expect(() =>
+      specialtyAuthority.missionApprovalCandidateFromRenderer(owner, {
+        missionId: mission.id,
+      }),
+    ).not.toThrow();
+    expect(guidedOnlyReadiness).not.toHaveBeenCalled();
+  });
+
+  it("persists a technical block and rejects the launcher before bootstrap when the plan cannot be sealed", () => {
+    const awaitingApproval = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "awaiting_approval" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    useStatefulMission(awaitingApproval);
+    deps.ensureMissionPlanBeforeBootstrap.mockImplementationOnce(() => {
+      throw new Error("guided_plan_route_unavailable");
+    });
+
+    expect(() =>
+      authority.approveIntentFromRenderer(owner, {
+        missionId: mission.id,
+      }),
+    ).toThrow(/guided_plan_preflight_blocked.*route_unavailable/i);
+    expect(deps.requestMissionOrchestratorBootstrap).not.toHaveBeenCalled();
+    expect(deps.updateMission).toHaveBeenLastCalledWith(
+      mission.id,
+      expect.objectContaining({
+        status: "blocked",
+        intentState: "blocked_technical",
+        description: expect.stringMatching(
+          /execução não iniciada.*guided_plan_route_unavailable.*CTA/is,
+        ),
+      }),
+    );
+    expect(
+      deps.updateMission.mock.calls.some(
+        ([, patch]) => (patch as Partial<Mission>).status === "running",
+      ),
+    ).toBe(false);
   });
 
   it("fence de aprovação invalida mudança de intent durante confirmação nativa", () => {
@@ -658,7 +916,10 @@ describe("renderer mission authority", () => {
       missionId: mission.id,
       attachmentPaths: ["/staged/a.png"],
     };
-    const candidate = authority.missionApprovalCandidateFromRenderer(owner, input);
+    const candidate = authority.missionApprovalCandidateFromRenderer(
+      owner,
+      input,
+    );
     deps.snapshotAttachmentPaths.mockImplementation((paths: string[]) =>
       paths.map((attachmentPath) => ({
         path: attachmentPath,
@@ -684,6 +945,9 @@ describe("renderer mission authority", () => {
       deps.requestMissionOrchestratorBootstrap,
       () => liveSquad,
       deps.resolveOrchestratorRuntime,
+      undefined,
+      undefined,
+      () => undefined,
     );
     const awaitingApproval = {
       ...approvedMission,
@@ -702,7 +966,8 @@ describe("renderer mission authority", () => {
     );
     liveSquad = {
       ...savedSquad,
-      orchestratorInstructions: "## Política alterada\nExecute algo não exibido.",
+      orchestratorInstructions:
+        "## Política alterada\nExecute algo não exibido.",
     };
 
     expect(() =>
@@ -712,6 +977,175 @@ describe("renderer mission authority", () => {
         candidate.fence,
       ),
     ).toThrow(/approval.*stale|squad.*changed/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("recusa promover plan pré-dispatch sem handoff físico", () => {
+    const planMission = {
+      ...approvedMission,
+      status: "pending" as const,
+      intentState: "ready_to_start" as const,
+      intentVersion: 1,
+      orchestratorSessionId: undefined,
+      intentContract: {
+        ...approvedMission.intentContract,
+        lane: "plan" as const,
+        intentVersion: 1,
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    };
+    deps.getMission.mockReturnValue(planMission);
+    expect(() =>
+      authority.planPromotionCandidateFromRenderer(owner, {
+        missionId: planMission.id,
+      }),
+    ).toThrow(/plan_handoff_missing|dispatch físico/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["dispatched", "running"],
+    ["executing", "running"],
+    ["validating", "running"],
+  ] as const)(
+    "promove plan ativo em %s para v+1 não executável e preserva o vínculo a encerrar",
+    (intentState, status) => {
+      const activePlan = {
+        ...approvedMission,
+        status,
+        intentState,
+        intentVersion: 7,
+        intentContract: {
+          ...approvedMission.intentContract,
+          lane: "plan" as const,
+          intentVersion: 7,
+          approvedAt: 700,
+          dispatchedAt: 701,
+        },
+      };
+      const handoff = physicalPlanHandoff("pty-a", 800);
+      deps.listHandoffs.mockReturnValue([handoff]);
+      deps.getHandoff.mockReturnValue(handoff);
+      deps.getMission.mockReturnValue(activePlan);
+      deps.updateMission.mockImplementation(
+        (_missionId: string, patch: Record<string, unknown>) => ({
+          ...deps.getMission(),
+          ...patch,
+        }),
+      );
+
+      const candidate = authority.planPromotionCandidateFromRenderer(owner, {
+        missionId: activePlan.id,
+      });
+      deps.getMission.mockReturnValue({
+        ...activePlan,
+        orchestratorSessionId: undefined,
+      });
+      const detachedCandidate =
+        authority.planPromotionCandidateAfterTeardownFromMain(
+          owner,
+          { missionId: activePlan.id },
+          candidate.promotedPlan!,
+        );
+      const promoted = authority.promotePlanLaneFromRenderer(
+        owner,
+        { missionId: activePlan.id },
+        detachedCandidate.fence,
+        detachedCandidate.promotedPlan!,
+        "d".repeat(64),
+      );
+
+      expect(promoted).toMatchObject({
+        status: "pending",
+        intentState: "ready_to_start",
+        intentVersion: 8,
+        orchestratorSessionId: undefined,
+        intentContract: {
+          lane: "standard",
+          intentVersion: 8,
+          approvedAt: expect.any(Number),
+          approvalReviewSha256: "d".repeat(64),
+        },
+      });
+      expect(promoted.intentContract?.dispatchedAt).toBeUndefined();
+    },
+  );
+
+  it("recusa se o runtime do plano mudar durante a revisão nativa", () => {
+    const activePlan = {
+      ...approvedMission,
+      status: "running" as const,
+      intentState: "executing" as const,
+      intentVersion: 4,
+      orchestratorSessionId: "pty-plan-v4",
+      intentContract: {
+        ...approvedMission.intentContract,
+        lane: "plan" as const,
+        intentVersion: 4,
+        approvedAt: 800,
+        dispatchedAt: 801,
+      },
+    };
+    const handoff = physicalPlanHandoff("pty-plan-v4", 900);
+    deps.listHandoffs.mockReturnValue([handoff]);
+    deps.getHandoff.mockReturnValue(handoff);
+    deps.getMission.mockReturnValue(activePlan);
+    const candidate = authority.planPromotionCandidateFromRenderer(owner, {
+      missionId: activePlan.id,
+    });
+    deps.getMission.mockReturnValue({
+      ...activePlan,
+      orchestratorSessionId: undefined,
+      intentContract: {
+        ...activePlan.intentContract,
+        goal: "Objetivo alterado durante o teardown",
+      },
+    });
+    expect(() =>
+      authority.promotePlanLaneFromRenderer(
+        owner,
+        { missionId: activePlan.id },
+        candidate.fence,
+        candidate.promotedPlan!,
+      ),
+    ).toThrow(/promotion.*stale|intent.*changed/i);
+    expect(deps.updateMission).not.toHaveBeenCalled();
+  });
+
+  it("invalida a revisão se somente a sessão do orquestrador for substituída", () => {
+    const activePlan = {
+      ...approvedMission,
+      intentVersion: 4,
+      orchestratorSessionId: "pty-plan-v4-a",
+      intentContract: {
+        ...approvedMission.intentContract,
+        lane: "plan" as const,
+        intentVersion: 4,
+      },
+    };
+    const handoff = physicalPlanHandoff("pty-plan-v4-a", 900);
+    deps.listHandoffs.mockReturnValue([handoff]);
+    deps.getHandoff.mockReturnValue(handoff);
+    deps.getMission
+      .mockReturnValueOnce(activePlan)
+      .mockReturnValueOnce({
+        ...activePlan,
+        orchestratorSessionId: "pty-plan-v4-b",
+      });
+
+    const candidate = authority.planPromotionCandidateFromRenderer(owner, {
+      missionId: activePlan.id,
+    });
+
+    expect(() =>
+      authority.promotePlanLaneFromRenderer(
+        owner,
+        { missionId: activePlan.id },
+        candidate.fence,
+        candidate.promotedPlan!,
+      ),
+    ).toThrow(/promotion_runtime_live|promotion.*stale/i);
     expect(deps.updateMission).not.toHaveBeenCalled();
   });
 
@@ -726,13 +1160,7 @@ describe("renderer mission authority", () => {
         dispatchedAt: undefined,
       },
     };
-    deps.getMission.mockReturnValueOnce(awaitingApproval);
-    deps.updateMission.mockImplementationOnce(
-      (_missionId: string, patch: Record<string, unknown>) => ({
-        ...awaitingApproval,
-        ...patch,
-      }),
-    );
+    useStatefulMission(awaitingApproval);
     let rendererPresent = true;
     let bootstrapFinished = false;
     deps.requestMissionOrchestratorBootstrap.mockImplementationOnce(
@@ -770,30 +1198,24 @@ describe("renderer mission authority", () => {
         dispatchedAt: undefined,
       },
     };
-    deps.getMission.mockReturnValueOnce(awaitingApproval);
-    deps.updateMission.mockImplementationOnce(
-      (_missionId: string, patch: Record<string, unknown>) => ({
-        ...awaitingApproval,
-        ...patch,
-      }),
-    );
+    useStatefulMission(awaitingApproval);
 
     const result = authority.approveIntentFromRenderer(owner, {
       missionId: mission.id,
       evidenceAttached: true,
-      attachmentPaths: ['/staged/print.png'],
+      attachmentPaths: ["/staged/print.png"],
     });
 
     expect(deps.validateAttachmentPaths).toHaveBeenCalledWith([
-      '/staged/print.png',
+      "/staged/print.png",
     ]);
     expect(result.intentContract).toMatchObject({
       evidenceAttached: true,
-      attachmentPaths: ['/validated/print.png'],
+      attachmentPaths: ["/validated/print.png"],
       attachmentSnapshots: [
         {
-          path: '/validated/print.png',
-          sha256: 'a'.repeat(64),
+          path: "/validated/print.png",
+          sha256: "a".repeat(64),
           size: 128,
         },
       ],
@@ -802,7 +1224,7 @@ describe("renderer mission authority", () => {
       mission.id,
       expect.objectContaining({
         intentContract: expect.objectContaining({
-          attachmentPaths: ['/validated/print.png'],
+          attachmentPaths: ["/validated/print.png"],
         }),
       }),
     );
@@ -819,20 +1241,14 @@ describe("renderer mission authority", () => {
         dispatchedAt: undefined,
       },
     };
-    deps.getMission.mockReturnValueOnce(awaitingApproval);
-    deps.updateMission.mockImplementationOnce(
-      (_missionId: string, patch: Record<string, unknown>) => ({
-        ...awaitingApproval,
-        ...patch,
-      }),
-    );
+    useStatefulMission(awaitingApproval);
 
     const result = authority.approveIntentFromRenderer(owner, {
       missionId: mission.id,
     });
 
     expect(deps.validateAttachmentPaths).not.toHaveBeenCalled();
-    expect(result.intentContract).not.toHaveProperty('attachmentPaths');
+    expect(result.intentContract).not.toHaveProperty("attachmentPaths");
   });
 
   it("blocks final approval when promised evidence is still missing", () => {
@@ -865,13 +1281,7 @@ describe("renderer mission authority", () => {
         evidenceAttached: false,
       },
     };
-    deps.getMission.mockReturnValueOnce(waitingWithContract);
-    deps.updateMission.mockImplementationOnce(
-      (_missionId: string, patch: Record<string, unknown>) => ({
-        ...waitingWithContract,
-        ...patch,
-      }),
-    );
+    useStatefulMission(waitingWithContract);
 
     const result = authority.approveIntentFromRenderer(owner, {
       missionId: mission.id,
@@ -953,9 +1363,11 @@ describe("renderer mission authority", () => {
         "preflight",
       );
     });
-    expect(authority.cancelPreparationFromRenderer(owner, {
-      missionId: mission.id,
-    })).toEqual({ cancelled: true });
+    expect(
+      authority.cancelPreparationFromRenderer(owner, {
+        missionId: mission.id,
+      }),
+    ).toEqual({ cancelled: true });
     await expect(pending).rejects.toThrow(/cancelled by a newer intent/i);
     expect(observedSignal?.aborted).toBe(true);
     expect(peekMissionPromptQueue(scope, mission.id).cancelled).toHaveLength(1);
@@ -963,9 +1375,11 @@ describe("renderer mission authority", () => {
 
   it("does not expose another workspace mission prompt queue", () => {
     deps.getMission.mockReturnValueOnce(null);
-    expect(() => authority.getPromptQueueFromRenderer(owner, {
-      missionId: "mission-b",
-    })).toThrow(/mission not found/i);
+    expect(() =>
+      authority.getPromptQueueFromRenderer(owner, {
+        missionId: "mission-b",
+      }),
+    ).toThrow(/mission not found/i);
   });
 
   it("never accepts renderer-authored done and scopes other edits", () => {
@@ -1032,7 +1446,11 @@ describe("renderer mission authority", () => {
     expect(() =>
       authority.updateMissionFromRenderer(owner, "mission-a", {
         milestones: [
-          { id: "atalho", label: "Um único passo arbitrário", status: "pending" },
+          {
+            id: "atalho",
+            label: "Um único passo arbitrário",
+            status: "pending",
+          },
         ],
       }),
     ).toThrow(/milestones.*intent contract.*main-owned/i);
@@ -1073,7 +1491,7 @@ describe("renderer mission authority", () => {
       source: "typed" as const,
       goal: "Sensitive goal",
       acceptanceCriteria: ["Done"],
-      risk: "elevated" as const,
+      risk: "sensitive" as const,
       executionMode: "autopilot" as const,
       contextPolicy: "on-demand" as const,
       intentVersion: 1,
@@ -1083,27 +1501,33 @@ describe("renderer mission authority", () => {
         maxWorkers: 2,
       },
     };
-    deps.getMission.mockReturnValueOnce({
+    useStatefulMission({
       ...mission,
       orchestratorSessionId: undefined,
       intentState: "awaiting_approval",
       intentVersion: 1,
       intentContract,
-    });
-    deps.updateMission.mockImplementationOnce((_id, patch) => ({
-      ...mission,
-      ...patch,
-    }));
+    } as Mission);
 
     authority.approveIntentFromRenderer(owner, { missionId: "mission-a" });
 
     expect(deps.updateMission).toHaveBeenCalledWith(
       "mission-a",
       expect.objectContaining({
+        status: "pending",
+        intentState: "ready_to_start",
+        intentContract: expect.objectContaining({
+          approvedAt: expect.any(Number),
+          dispatchedAt: undefined,
+        }),
+      }),
+    );
+    expect(deps.updateMission).toHaveBeenLastCalledWith(
+      "mission-a",
+      expect.objectContaining({
         status: "running",
         intentState: "dispatched",
         intentContract: expect.objectContaining({
-          approvedAt: expect.any(Number),
           dispatchedAt: expect.any(Number),
         }),
       }),

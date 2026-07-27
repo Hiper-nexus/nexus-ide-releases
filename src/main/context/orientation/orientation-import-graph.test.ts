@@ -4,6 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectExecutionScope } from '../../../shared/types';
+import {
+  GUIDED_GREENFIELD_BRIEF_PATH,
+  renderGuidedGreenfieldBrief,
+} from '../../runtime/guided-greenfield-brief';
 import { DEFAULT_ORIENTATION_LIMITS } from './orientation-types';
 import { buildOrientationImportGraph } from './orientation-import-graph';
 import { walkOrientationTree } from './orientation-walker';
@@ -11,6 +15,7 @@ import { computeBlastRadius } from './orientation-blast-radius';
 import {
   buildContextBootstrapProposals,
   isAutoReviewableBootstrapProposal,
+  isMechanicallyReviewableBootstrapProposal,
 } from './orientation-bootstrap-context';
 import { ProjectOrientationService } from './orientation-service';
 
@@ -40,6 +45,51 @@ afterEach(() => {
 });
 
 describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => {
+  it('projects a canonical empty-workspace brief into five honest docs and one invariant', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-greenfield-context-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-greenfield-context-cache-'));
+    roots.push(root, cacheRoot);
+    const scope = scopeFor(root);
+    write(root, GUIDED_GREENFIELD_BRIEF_PATH, renderGuidedGreenfieldBrief({
+      goal: 'Entregar o produto aprovado',
+      acceptanceCriteria: ['O fluxo aprovado funciona de ponta a ponta'],
+    }));
+
+    const map = await new ProjectOrientationService({
+      cacheRoot,
+      includeContextSummary: false,
+    }).ensure(scope, { reason: 'mcp' });
+    const proposals = buildContextBootstrapProposals(scope, map);
+
+    expect(proposals.map((proposal) => proposal.targetPath).sort()).toEqual([
+      '.context/docs/architecture.md',
+      '.context/docs/business-model.md',
+      '.context/docs/domain-glossary.md',
+      '.context/docs/project-overview.md',
+      '.context/docs/testing.md',
+      '.context/nexus/invariants/greenfield-authority-integrity.json',
+    ]);
+    expect(
+      proposals.every((proposal) =>
+        isMechanicallyReviewableBootstrapProposal(scope, proposal)),
+    ).toBe(true);
+    expect(
+      proposals.filter((proposal) => proposal.targetPath.endsWith('.md'))
+        .every((proposal) =>
+          proposal.content.includes('Explicit unknowns') &&
+          proposal.content.includes('PRODUCT.md')),
+    ).toBe(true);
+    expect(proposals.map((proposal) => proposal.content).join('\n')).not.toMatch(
+      /\b(?:React|Node\.js|PostgreSQL|subscription|per-seat)\b/i,
+    );
+    expect(
+      isMechanicallyReviewableBootstrapProposal(scope, {
+        ...proposals[0]!,
+        content: `${proposals[0]!.content}\nInvented stack: React`,
+      }),
+    ).toBe(false);
+  });
+
   it('builds import edges and expands blast radius', async () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-igraph-')));
     const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-igraph-cache-'));

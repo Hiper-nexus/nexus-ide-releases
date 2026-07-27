@@ -42,7 +42,12 @@ export function publishFinalValidationHandoff(
   }).filter(
     (handoff) =>
       handoff.fromAgent === FINAL_VALIDATION_AGENT &&
+      handoff.status === 'success' &&
+      handoff.sessionId === undefined &&
+      handoff.workerIncarnationId === undefined &&
+      handoff.mcpProvenance === undefined &&
       handoff.evidenceTrust === 'nexus-trusted' &&
+      handoff.evidenceBinding?.missionId === input.missionId &&
       handoff.evidenceBinding?.workflowRevision === input.workflowRevision,
   );
   if (evidenceIds.length === 0) {

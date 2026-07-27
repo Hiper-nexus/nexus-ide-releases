@@ -21,6 +21,11 @@ export function asyncHandler(
   };
 }
 
+/** Final 404 response: avoids Express's branded HTML fallback. */
+export const notFoundHandler: RequestHandler = (_req, res) => {
+  res.status(404).json({ ok: false, error: 'não encontrado' });
+};
+
 // A ASSINATURA de 4 argumentos é o que faz o Express tratar como middleware
 // de erro — não remova o parâmetro não usado.
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {

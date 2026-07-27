@@ -203,6 +203,12 @@ export async function reopenMission(
         soft: false,
       });
     }
+    if (resumed.reason === 'review_required') {
+      // Main physically retired the dead graph and published a fresh
+      // awaiting_approval revision. Re-enter the native review wizard; never
+      // restore an old pane or describe this as a resumed execution.
+      return { ok: true, panes: 0, intentShell: true };
+    }
     return { ok: false, error: resumed.error };
   }
 

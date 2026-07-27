@@ -1,38 +1,42 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { AdapterInfo } from '../../shared/types';
-import type { Squad } from '../../shared/orch-types';
-import { useHomeStore } from '../state/home-store';
-import { useOrchStore } from '../state/orch-store';
-import { useLayoutStore } from '../state/layout-store';
-import { useWorkspaceStore } from '../state/workspace-store';
-import { useMissionWizardStore } from '../state/mission-wizard-store';
-import { useVoiceStore } from '../voice/voice-store';
-import { useSettingsStore } from '../state/settings-store';
-import { listPanes } from '../lib/split-tree';
-import { isMissingModelKeyError } from '../lib/credential-errors';
-import { formatShortcut } from '../lib/platform';
-import { PixelIcon } from './PixelIcon';
-import { AgentAvatar } from './AgentAvatar';
-import { EndorphinPresence } from './EndorphinPresence';
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AccountInfo } from "../../shared/account-types";
+import type { AdapterInfo } from "../../shared/types";
+import type { ProviderSettingsInfo } from "../../shared/provider-settings-types";
+import type { Squad } from "../../shared/orch-types";
+import { useHomeStore } from "../state/home-store";
+import { useOrchStore } from "../state/orch-store";
+import { useLayoutStore } from "../state/layout-store";
+import { useWorkspaceStore } from "../state/workspace-store";
+import { useMissionWizardStore } from "../state/mission-wizard-store";
+import { useSettingsStore } from "../state/settings-store";
+import { listPanes } from "../lib/split-tree";
+import { formatShortcut } from "../lib/platform";
+import { PixelIcon } from "./PixelIcon";
+import { AgentAvatar } from "./AgentAvatar";
+import { EndorphinPresence } from "./EndorphinPresence";
 import {
   homeCliBeat,
   homeReadyBeat,
+  homeSetupBeat,
   homeWarmingBeat,
-} from '../../shared/endorphin';
+} from "../../shared/endorphin";
+import { missionRuntimeReadiness } from "../orch/mission-runtime-readiness";
 
 /**
  * Home deck — the ops-deck empty state rendered over the pane area when a
  * workspace opens without a saved mission. Non-modal: the shell pane stays
  * live underneath and one click dismisses into it. Answers "what can I run
- * right now?" with live operational status (detected CLIs, MCP, squads) and
- * one-click mission starts.
+ * right now?" with a goal-first path. Infrastructure and saved teams remain
+ * available under progressive disclosure for experienced users.
  */
 
 function workerCount(squad: Squad): string {
-  const workers = squad.agents.filter((a) => a.category !== 'orchestrator').length;
-  const hasOrch = squad.agents.some((a) => a.category === 'orchestrator');
+  const workers = squad.agents.filter(
+    (a) => a.category !== "orchestrator",
+  ).length;
+  const hasOrch = squad.agents.some((a) => a.category === "orchestrator");
   return hasOrch
-    ? `orquestrador + ${workers} agente${workers === 1 ? '' : 's'}`
+    ? `orquestrador + ${workers} agente${workers === 1 ? "" : "s"}`
     : `${workers} agentes`;
 }
 
@@ -42,55 +46,102 @@ export function HomeDeck() {
   const squads = useOrchStore((s) => s.squads);
   const mcpInfo = useOrchStore((s) => s.mcpInfo);
   const workspace = useWorkspaceStore((s) => s.current);
-  const openWizard = useMissionWizardStore((s) => s.openForMission);
+  const openAgentic = useMissionWizardStore((s) => s.openForAgentic);
   const openForSquad = useMissionWizardStore((s) => s.openForSquad);
-  const openVoiceSettings = useVoiceStore((s) => s.openSettings);
   const openSettings = useSettingsStore((s) => s.toggleDrawer);
   const addShellPane = useLayoutStore((s) => s.addShellPane);
   const paneCount = useLayoutStore((s) => listPanes(s.root).length);
   const viewKind = useLayoutStore((s) => s.viewKind);
 
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderSettingsInfo[]>([]);
+  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [adaptersLoaded, setAdaptersLoaded] = useState(false);
-  const [designing, setDesigning] = useState(false);
-  const [designNote, setDesignNote] = useState<string | null>(null);
+  const [adaptersError, setAdaptersError] = useState<string | null>(null);
+  const [adapterLoadAttempt, setAdapterLoadAttempt] = useState(0);
+  const primaryActionRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
-    void window.nexus.adapters
-      .list()
-      .then((next) => {
-        if (!cancelled) setAdapters(next);
-      })
-      .catch(() => {
-        if (!cancelled) setAdapters([]);
-      })
-      .finally(() => {
-        if (!cancelled) setAdaptersLoaded(true);
-      });
+    let requestRevision = 0;
+    const refreshInventory = (): void => {
+      const revision = ++requestRevision;
+      setAdaptersLoaded(false);
+      setAdaptersError(null);
+      void Promise.all([
+        window.nexus.adapters.list(),
+        window.nexus.providers.list(),
+        window.nexus.accounts.list(),
+      ])
+        .then(([nextAdapters, nextProviders, nextAccounts]) => {
+          if (cancelled || revision !== requestRevision) return;
+          setAdapters(nextAdapters);
+          setProviders(nextProviders);
+          setAccounts(nextAccounts);
+        })
+        .catch((cause) => {
+          if (cancelled || revision !== requestRevision) return;
+          setAdapters([]);
+          setProviders([]);
+          setAccounts([]);
+          setAdaptersError(
+            cause instanceof Error && cause.message.trim()
+              ? cause.message
+              : "O inventário operacional de providers não respondeu.",
+          );
+        })
+        .finally(() => {
+          if (!cancelled && revision === requestRevision) {
+            setAdaptersLoaded(true);
+          }
+        });
+    };
+    // Changed events already carry authoritative snapshots. Re-invoking every
+    // list endpoint from their listeners creates a feedback loop because the
+    // provider list schedules discovery and broadcasts its result. Consume the
+    // pushed data directly so Home never flickers back to "Verificando…" after
+    // it becomes ready.
+    const stopAdapters = window.nexus.adapters.onChanged((next) => {
+      if (!cancelled) setAdapters(next);
+    });
+    const stopProviders = window.nexus.providers.onChanged((next) => {
+      if (!cancelled) setProviders(next);
+    });
+    const stopAccounts = window.nexus.accounts.onChanged((next) => {
+      if (!cancelled) setAccounts(next);
+    });
+    refreshInventory();
     return () => {
       cancelled = true;
+      requestRevision += 1;
+      stopAdapters();
+      stopProviders();
+      stopAccounts();
     };
-  }, [visible]);
+  }, [visible, adapterLoadAttempt]);
 
   // Anything spawning panes (missions, agents, orchestration) takes over.
   useEffect(() => {
     if (visible && paneCount > 1) hide();
   }, [visible, paneCount, hide]);
 
+  useEffect(() => {
+    if (visible && adaptersLoaded) primaryActionRef.current?.focus();
+  }, [visible, adaptersLoaded]);
+
   // Escape dispensa o Home para o terminal ao fundo — saída sempre à mão.
   useEffect(() => {
     if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') hide();
+      if (e.key === "Escape") hide();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [visible, hide]);
 
-  const installed = useMemo(
-    () => adapters.filter((a) => a.installed),
-    [adapters],
+  const readiness = useMemo(
+    () => missionRuntimeReadiness(adapters, providers, accounts),
+    [accounts, adapters, providers],
   );
   // Seus squads (custom) primeiro — os originais re-semeiam sozinhos, então
   // nunca podem empurrar um squad seu para fora da lista.
@@ -101,18 +152,36 @@ export function HomeDeck() {
         .slice(0, 6),
     [squads],
   );
-  const needsCli = adaptersLoaded && installed.length === 0;
-  const isReady = adaptersLoaded && installed.length > 0 && Boolean(mcpInfo?.running);
+  const adapterLoadFailed = adaptersLoaded && adaptersError !== null;
+  const adaptersLoading = !adaptersLoaded;
+  const needsCli =
+    adaptersLoaded &&
+    !adapterLoadFailed &&
+    readiness.detectedAdapters.length === 0;
+  const needsExecutionSetup =
+    adaptersLoaded &&
+    !adapterLoadFailed &&
+    readiness.detectedAdapters.length > 0 &&
+    !readiness.hasOperationalRoute;
+  const isReady =
+    adaptersLoaded &&
+    !adapterLoadFailed &&
+    readiness.hasOperationalRoute &&
+    Boolean(mcpInfo?.running);
   const beat = isReady
-    ? homeReadyBeat(installed.length, mcpInfo?.toolCount ?? 0)
+    ? homeReadyBeat(readiness.detectedAdapters.length, mcpInfo?.toolCount ?? 0)
     : needsCli
       ? homeCliBeat()
-      : homeWarmingBeat();
+      : needsExecutionSetup
+        ? homeSetupBeat()
+        : homeWarmingBeat();
 
   function openTerminalFromHome(): void {
     const panes = listPanes(useLayoutStore.getState().root);
     const loneShell =
-      panes.length === 1 && panes[0]?.kind === 'shell' && !panes[0].orchRequestId;
+      panes.length === 1 &&
+      panes[0]?.kind === "shell" &&
+      !panes[0].orchRequestId;
     hide();
     if (loneShell) {
       useLayoutStore.getState().focus(panes[0]!.id);
@@ -125,7 +194,7 @@ export function HomeDeck() {
 
   return (
     <div
-      className={`home-deck${isReady ? ' home-deck--armed' : ''}`}
+      className={`home-deck${isReady ? " home-deck--armed" : ""}`}
       role="region"
       aria-label="Início do workspace"
     >
@@ -133,7 +202,7 @@ export function HomeDeck() {
         <header className="home-deck__head">
           <EndorphinPresence
             className="home-deck__presence endorphin-presence--row"
-            mood={isReady ? 'celebrating' : needsCli ? 'idle' : 'idle'}
+            mood={isReady ? "celebrating" : needsCli ? "idle" : "idle"}
             size={48}
           />
           <div className="home-deck__title-wrap">
@@ -142,12 +211,12 @@ export function HomeDeck() {
             ) : null}
             <h1 className="home-deck__title">{beat.title}</h1>
             <p className="home-deck__ws" title={workspace?.path}>
-              {workspace?.name ?? 'workspace'}
+              {workspace?.name ?? "workspace"}
             </p>
             {isReady ? (
               <span className="home-deck__ready-chip" role="status">
                 <i className="home-deck__dot" aria-hidden="true" />
-                Online
+                Rota verificada
               </span>
             ) : null}
           </div>
@@ -161,136 +230,189 @@ export function HomeDeck() {
           </button>
         </header>
 
-        <div className="home-deck__status" aria-label="Estado do sistema">
-          <span className={`home-deck__stat ${installed.length > 0 ? 'home-deck__stat--live' : ''}`}>
-            <i className="home-deck__dot" aria-hidden="true" />
-            {adaptersLoaded
-              ? `${installed.length} CLI${installed.length === 1 ? '' : 's'} pronta${installed.length === 1 ? '' : 's'}`
-              : 'Verificando CLIs'}
-          </span>
-          <span className={`home-deck__stat ${mcpInfo?.running ? 'home-deck__stat--live' : ''}`}>
-            <i className="home-deck__dot" aria-hidden="true" />
-            {mcpInfo?.running
-              ? `MCP online · ${mcpInfo.toolCount} ferramentas`
-              : mcpInfo
-                ? 'MCP indisponível'
-                : 'MCP conectando'}
-          </span>
-        </div>
-
         <section className="home-deck__next" aria-labelledby="home-next-title">
           <div className="home-deck__next-copy">
             <p className="home-deck__next-label">Próxima ação</p>
             <h2 id="home-next-title">
-              {needsCli ? 'Configurar uma CLI de IA' : 'Iniciar uma missão'}
+              {adaptersLoading
+                ? "Verificando suas IAs"
+                : adapterLoadFailed
+                  ? "Não consegui verificar suas IAs"
+                  : needsCli
+                    ? "Conectar uma IA"
+                    : needsExecutionSetup
+                      ? "Concluir configuração"
+                      : "O que você quer criar?"}
             </h2>
-            <p>
-              {beat.line ??
-                (needsCli
-                  ? 'Ative pelo menos um provider para abrir agentes e squads neste workspace.'
-                  : 'Defina o objetivo e escolha um squad, ou deixe o Nexus montar a equipe a partir deste projeto.')}
+            <p
+              role={
+                adapterLoadFailed
+                  ? "alert"
+                  : adaptersLoading
+                    ? "status"
+                    : undefined
+              }
+              aria-live={
+                adapterLoadFailed
+                  ? "assertive"
+                  : adaptersLoading
+                    ? "polite"
+                    : undefined
+              }
+            >
+              {adaptersLoading
+                ? "Lendo os providers locais antes de liberar uma missão."
+                : adapterLoadFailed
+                  ? `Falha ao carregar os providers: ${adaptersError}`
+                  : (beat.line ??
+                    (needsCli
+                      ? "Escolha uma conta compatível para começar."
+                      : needsExecutionSetup
+                        ? "Habilite e autentique um Maestro verificado e um worker com escrita autônoma confinada."
+                        : "Descreva o resultado. O Nexus transforma a ideia em plano, equipe, implementação e verificação."))}
             </p>
           </div>
           <div className="home-deck__actions">
             <button
+              ref={primaryActionRef}
               className="home-deck__cta"
-              onClick={needsCli ? openSettings : openWizard}
-              autoFocus
+              onClick={
+                adapterLoadFailed
+                  ? () => setAdapterLoadAttempt((attempt) => attempt + 1)
+                  : needsCli || needsExecutionSetup
+                    ? openSettings
+                    : () => openAgentic()
+              }
+              disabled={adaptersLoading}
             >
-              <PixelIcon name={needsCli ? 'config' : 'mission'} />
-              {needsCli ? 'Configurar provider' : 'Iniciar missão'}
+              <PixelIcon
+                name={
+                  adaptersLoading
+                    ? "agent"
+                    : adapterLoadFailed
+                      ? "restart"
+                      : needsCli
+                        ? "config"
+                        : needsExecutionSetup
+                          ? "config"
+                          : "mission"
+                }
+              />
+              {adaptersLoading
+                ? "Verificando…"
+                : adapterLoadFailed
+                  ? "Tentar novamente"
+                  : needsCli
+                    ? "Conectar uma IA"
+                    : needsExecutionSetup
+                      ? "Configurar execução"
+                      : "Descrever objetivo"}
             </button>
-            <button
-              className="home-deck__btn"
-              disabled={designing}
-              title="Analisa a stack e os arquivos deste projeto e gera um squad com os papéis certos"
-              onClick={() => {
-                if (!workspace?.path) return;
-                setDesigning(true);
-                setDesignNote('Analisando o projeto…');
-                void window.nexus.orch
-                  .designSquad(workspace.path)
-                  .then((res) => {
-                    if (res.ok && res.squad) {
-                      setDesignNote(null);
-                      openForSquad(res.squad.id);
-                    } else {
-                      const error = res.error ?? 'Não consegui gerar o squad.';
-                      if (isMissingModelKeyError(error)) {
-                        setDesignNote('Configure uma key de modelo para gerar o squad.');
-                        openVoiceSettings();
-                      } else {
-                        setDesignNote(error);
-                      }
-                    }
-                  })
-                  .catch((cause) => {
-                    setDesignNote(
-                      cause instanceof Error
-                        ? cause.message
-                        : 'Não foi possível analisar este projeto.',
-                    );
-                  })
-                  .finally(() => setDesigning(false));
-              }}
-            >
-              <PixelIcon name="sparkle" />
-              {designing ? 'Analisando…' : 'Criar squad sob medida'}
-            </button>
-            <button
-              className="home-deck__btn"
-              onClick={openTerminalFromHome}
-            >
+            <button className="home-deck__btn" onClick={openTerminalFromHome}>
               <PixelIcon name="terminal" />
               Abrir terminal
             </button>
           </div>
         </section>
-        {designNote && <p className="home-deck__notice" role="status">{designNote}</p>}
 
-        {featured.length > 0 && (
-          <section className="home-deck__squads" aria-label="Squads prontos">
-            <h2 className="home-deck__section-title">Squads prontos</h2>
-            <ul className="home-deck__squad-list">
-              {featured.map((s) => (
-                <li key={s.id}>
-                  <button
-                    className="home-deck__squad"
-                    onClick={() => openForSquad(s.id)}
-                  >
-                    <span
-                      className="agent-avatar-group home-deck__squad-avatars"
-                      aria-label="Agentes do squad"
+        <details className="home-deck__advanced">
+          <summary>Detalhes do ambiente e equipes salvas</summary>
+          <div
+            className="home-deck__status"
+            aria-label="Estado técnico do ambiente"
+          >
+            <span
+              className={`home-deck__stat ${readiness.detectedAdapters.length > 0 ? "home-deck__stat--live" : ""}`}
+            >
+              <i className="home-deck__dot" aria-hidden="true" />
+              {adapterLoadFailed
+                ? "Falha ao verificar CLIs"
+                : adaptersLoaded
+                  ? `${readiness.detectedAdapters.length} CLI${readiness.detectedAdapters.length === 1 ? "" : "s"} detectada${readiness.detectedAdapters.length === 1 ? "" : "s"}`
+                  : "Verificando CLIs"}
+            </span>
+            <span
+              className={`home-deck__stat ${readiness.verifiedMaestros.length > 0 ? "home-deck__stat--live" : ""}`}
+            >
+              <i className="home-deck__dot" aria-hidden="true" />
+              {readiness.verifiedMaestros.length > 0
+                ? `${readiness.verifiedMaestros.length} Maestro${readiness.verifiedMaestros.length === 1 ? "" : "s"} autenticado${readiness.verifiedMaestros.length === 1 ? "" : "s"} e verificado${readiness.verifiedMaestros.length === 1 ? "" : "s"}`
+                : "Nenhum Maestro autenticado e verificado"}
+            </span>
+            <span
+              className={`home-deck__stat ${readiness.qualifiedWorkers.length > 0 ? "home-deck__stat--live" : ""}`}
+            >
+              <i className="home-deck__dot" aria-hidden="true" />
+              {readiness.qualifiedWorkers.length > 0
+                ? `${readiness.qualifiedWorkers.length} worker${readiness.qualifiedWorkers.length === 1 ? "" : "s"} com escrita confinada`
+                : "Nenhum worker autenticado com escrita confinada"}
+            </span>
+            <span
+              className={`home-deck__stat ${mcpInfo?.running ? "home-deck__stat--live" : ""}`}
+            >
+              <i className="home-deck__dot" aria-hidden="true" />
+              {mcpInfo?.running
+                ? `MCP online · ${mcpInfo.toolCount} ferramentas`
+                : mcpInfo
+                  ? "MCP indisponível"
+                  : "MCP conectando"}
+            </span>
+          </div>
+
+          {featured.length > 0 && (
+            <section className="home-deck__squads" aria-label="Equipes salvas">
+              <h2 className="home-deck__section-title">Equipes salvas</h2>
+              <ul className="home-deck__squad-list">
+                {featured.map((s) => (
+                  <li key={s.id}>
+                    <button
+                      className="home-deck__squad"
+                      onClick={() => openForSquad(s.id)}
                     >
-                      {s.agents.slice(0, 5).map((agent) => (
-                        <AgentAvatar
-                          key={agent.id}
-                          category={agent.category}
-                          state="offline"
-                          size="card"
-                          label={agent.agentName}
-                          className="home-deck__squad-avatar"
-                        />
-                      ))}
-                    </span>
-                    <span className="home-deck__squad-name">{s.name}</span>
-                    <span className="home-deck__squad-meta">{workerCount(s)}</span>
-                    <span className="home-deck__squad-go" aria-hidden="true">
-                      <PixelIcon name="chevron" size={10} />
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+                      <span
+                        className="agent-avatar-group home-deck__squad-avatars"
+                        aria-label="Pessoas da equipe"
+                      >
+                        {s.agents.slice(0, 5).map((agent) => (
+                          <AgentAvatar
+                            key={agent.id}
+                            category={agent.category}
+                            state="offline"
+                            size="card"
+                            label={agent.agentName}
+                            className="home-deck__squad-avatar"
+                          />
+                        ))}
+                      </span>
+                      <span className="home-deck__squad-name">{s.name}</span>
+                      <span className="home-deck__squad-meta">
+                        {workerCount(s)}
+                      </span>
+                      <span className="home-deck__squad-go" aria-hidden="true">
+                        <PixelIcon name="chevron" size={10} />
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </details>
 
         <footer className="home-deck__foot">
           <span className="home-deck__keys">
-            {viewKind === 'canvas' ? (
-              <><kbd>{formatShortcut('mod', 'K')}</kbd> comandos · <kbd>F</kbd> centralizar · arraste panes</>
+            {viewKind === "canvas" ? (
+              <>
+                <kbd>{formatShortcut("mod", "K")}</kbd> comandos · <kbd>F</kbd>{" "}
+                centralizar · arraste panes
+              </>
             ) : (
-              <><kbd>{formatShortcut('mod', 'K')}</kbd> comandos · <kbd>{formatShortcut('mod', 'N')}</kbd> missão · <kbd>{formatShortcut('mod', 'D')}</kbd> dividir · <kbd>{formatShortcut('mod', '1-9')}</kbd> focar</>
+              <>
+                <kbd>{formatShortcut("mod", "K")}</kbd> comandos ·{" "}
+                <kbd>{formatShortcut("mod", "N")}</kbd> missão ·{" "}
+                <kbd>{formatShortcut("mod", "D")}</kbd> dividir ·{" "}
+                <kbd>{formatShortcut("mod", "1-9")}</kbd> focar
+              </>
             )}
           </span>
           <button className="home-deck__dismiss" onClick={hide}>

@@ -93,6 +93,45 @@ describe('native Claude auth in the ephemeral HOME', () => {
     expect(stub.projects).toBeUndefined();
   });
 
+  it('projeta confiança só no overlay para o cwd de uma missão já aprovada', () => {
+    const realProfile = JSON.stringify({
+      projects: {
+        '/work/projeto': { hasTrustDialogAccepted: false },
+        '/work/outro': { hasTrustDialogAccepted: true },
+      },
+    });
+    fs.writeFileSync(path.join(home, '.claude.json'), realProfile);
+
+    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
+      cwd: '/work/projeto',
+      approvedMissionProjectTrust: true,
+    });
+
+    const stub = JSON.parse(
+      fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
+    ) as { projects?: Record<string, Record<string, unknown>> };
+    expect(stub.projects).toEqual({
+      '/work/projeto': {
+        hasTrustDialogAccepted: true,
+        hasCompletedProjectOnboarding: true,
+      },
+    });
+    expect(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')).toBe(
+      realProfile,
+    );
+  });
+
+  it('não projeta confiança aprovada sem um cwd exato', () => {
+    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
+      approvedMissionProjectTrust: true,
+    });
+
+    const stub = JSON.parse(
+      fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(stub.projects).toBeUndefined();
+  });
+
   it('never carries the native identity without the flag (GLM/LongCat)', () => {
     fs.writeFileSync(
       path.join(home, '.claude.json'),

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
   type OmpRpcPushEvent,
@@ -9,6 +9,16 @@ import {
   type OmpChildLike,
   type OmpRpcSessionDeps,
 } from './omp-rpc-service';
+import { testProjectScope } from '../orch/__tests__/scope-fixture';
+import {
+  bindTokenToSession,
+  mintToken,
+  resetGateForTests,
+} from '../orch/gate';
+import {
+  runInsideOmpRpcHostCall,
+  type OmpRpcPhysicalHostCall,
+} from '../orch/http-mcp-boundary';
 
 /**
  * Testes do serviço OmpRpcSession com um processo FAKE (EventEmitter):
@@ -92,6 +102,8 @@ interface Harness {
   deps: OmpRpcSessionDeps;
 }
 
+const activeHarnesses = new Set<Harness>();
+
 function createHarness(
   overrides: Partial<OmpRpcSessionDeps> & {
     approvalPolicy?: 'yolo' | 'safe';
@@ -137,6 +149,23 @@ function createHarness(
     requestTimeoutMs: 500,
     uiResponseTimeoutMs: 200,
     killGraceMs: 50,
+    // A fake child must never trigger the production `ps` inventory against
+    // its illustrative PID. Keeping this seam local also makes the suite
+    // independent from host load.
+    captureProcessTree: async () => null,
+    // Most cases exercise transport/host-tool behavior, not process-tree
+    // termination. This faithful fake waits for the exact child exit emitted
+    // by afterEach, so dispose remains physically settled without background
+    // timers or synthetic success-before-exit.
+    terminateProcessTree: async (input) => {
+      input.killRoot('SIGTERM');
+      await input.rootExited;
+      return {
+        ok: true,
+        rootExited: true,
+        descendantsExited: true,
+      };
+    },
     ...overrides,
   };
   const session = new OmpRpcSession(
@@ -148,8 +177,26 @@ function createHarness(
     },
     deps,
   );
-  return { proc, session, pushes, dispatched, audits, deps };
+  const harness = { proc, session, pushes, dispatched, audits, deps };
+  activeHarnesses.add(harness);
+  return harness;
 }
+
+afterEach(async () => {
+  // Sessions schedule a rolling physical-inventory refresh by design. Every
+  // fake session must cross the same physical exit boundary before the next
+  // case, otherwise a later fake-timer test can inherit a self-rescheduling
+  // timer and hang the whole file.
+  const harnesses = [...activeHarnesses];
+  activeHarnesses.clear();
+  for (const harness of harnesses) {
+    harness.proc.exit(0);
+    await harness.session.terminate();
+  }
+  // Fail-safe for an assertion/timeout inside a fake-timer case: never leak
+  // Vitest's mocked clock into the following lifecycle assertions.
+  vi.useRealTimers();
+});
 
 /** Handshake padrão: ready + drena o bootstrap (set_host_tools/get_state). */
 async function becomeIdle(harness: Harness): Promise<void> {
@@ -194,6 +241,64 @@ async function becomeIdle(harness: Harness): Promise<void> {
 
 
 describe('host_tool_call → dispatcher com gate', () => {
+  it('liga o frame físico do child ao gate OMP e consome a capacidade uma só vez', async () => {
+    resetGateForTests();
+    const ctx = mintToken({
+      label: 'omp physical child',
+      role: 'worker',
+      providerId: 'omp',
+      missionId: 'mission-omp-physical',
+      workerIncarnationId: 'worker-omp-physical',
+      scope: testProjectScope(),
+      allowedTools: ['nexus_pane_list'],
+    });
+    bindTokenToSession(ctx.token, 'sess-1');
+    let physicalCall: OmpRpcPhysicalHostCall | undefined;
+    let operations = 0;
+    const harness = createHarness({
+      dispatchHostTool: async (toolName, _args, receivedPhysicalCall) => {
+        physicalCall = receivedPhysicalCall;
+        return runInsideOmpRpcHostCall(
+          receivedPhysicalCall,
+          ctx,
+          toolName,
+          async () => {
+            operations += 1;
+            return { ok: true, result: { panes: [] } };
+          },
+        );
+      },
+    });
+
+    try {
+      await becomeIdle(harness);
+      harness.proc.emitFrame({
+        type: 'host_tool_call',
+        id: 'host_physical_1',
+        toolCallId: 'toolu_physical_1',
+        toolName: 'nexus_pane_list',
+        arguments: {},
+      });
+      await vi.waitFor(() => {
+        expect(harness.proc.lastWritten('host_tool_result')).toBeDefined();
+      });
+
+      expect(operations).toBe(1);
+      expect(physicalCall).toBeDefined();
+      expect(() =>
+        runInsideOmpRpcHostCall(
+          physicalCall!,
+          ctx,
+          'nexus_pane_list',
+          () => undefined,
+        ),
+      ).toThrow(/physical OMP RPC host call/i);
+    } finally {
+      harness.session.dispose();
+      resetGateForTests();
+    }
+  });
+
   it('roteia pelo dispatcher injetado e devolve host_tool_result', async () => {
     const harness = createHarness();
     await becomeIdle(harness);
@@ -347,14 +452,38 @@ describe('dispose e saída do processo', () => {
   it('dispose envia SIGTERM e escala para SIGKILL após o grace', async () => {
     vi.useFakeTimers();
     try {
-      const harness = createHarness({ killGraceMs: 50 });
+      const terminateProcessTree = vi.fn(
+        async (
+          input: Parameters<
+            NonNullable<OmpRpcSessionDeps['terminateProcessTree']>
+          >[0],
+        ) => {
+          input.killRoot('SIGTERM');
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 50);
+          });
+          input.killRoot('SIGKILL');
+          await input.rootExited;
+          return {
+            ok: true,
+            rootExited: true,
+            descendantsExited: true,
+          };
+        },
+      );
+      const harness = createHarness({
+        killGraceMs: 50,
+        terminateProcessTree,
+      });
       harness.proc.emitFrame({ type: 'ready' });
       harness.session.dispose();
       expect(harness.proc.kills).toEqual(['SIGTERM']);
-      vi.advanceTimersByTime(60);
+      await vi.advanceTimersByTimeAsync(60);
       expect(harness.proc.kills).toEqual(['SIGTERM', 'SIGKILL']);
       harness.proc.exit(137);
+      await vi.runAllTimersAsync();
       expect(harness.session.state).toBe('exited');
+      expect(terminateProcessTree).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }

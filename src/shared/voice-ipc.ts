@@ -146,6 +146,11 @@ export interface VoiceApiKeyStatus {
 /** Secret-free runtime snapshot the renderer renders from. Never carries keys. */
 export interface VoiceRuntimeInfo {
   enabled: boolean;
+  /**
+   * Main-owned runtime gate. False for release automation and for the explicit
+   * dev-only capture kill-switch; it never mutates the persisted voice config.
+   */
+  captureAllowed?: boolean;
   routing: VoiceRouting;
   speakMode: VoiceSpeakMode;
   shortcut: string;

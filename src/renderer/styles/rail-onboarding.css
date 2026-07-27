@@ -10,11 +10,12 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-elevated) 92%, var(--bg) 8%);
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--bg-bar) 82%, var(--bg) 18%);
   overflow: hidden;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+  box-shadow: none;
 }
 
 .activity-rail__search {
@@ -72,8 +73,8 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px 0 10px;
+  gap: 6px;
+  padding: 6px 0 10px;
 }
 
 /* Perguntas estruturadas do orquestrador: o ledger é durável no main; este
@@ -545,68 +546,6 @@
   z-index: 2;
 }
 
-.mission-rail__pin {
-  position: absolute;
-  top: 7px;
-  right: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-dim);
-  opacity: 0;
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 1;
-}
-
-.mission-rail__block {
-  position: absolute;
-  top: 7px;
-  right: 50px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-dim);
-  opacity: 0;
-  cursor: pointer;
-  font-size: 11px;
-  line-height: 1;
-}
-
-.mission-rail__row:hover .mission-rail__pin,
-.mission-rail__pin:focus-visible,
-.mission-rail__row:hover .mission-rail__block,
-.mission-rail__block:focus-visible {
-  opacity: 1;
-}
-
-.mission-rail__pin:hover {
-  color: var(--gold, #e0af68);
-  background: var(--accent-soft);
-}
-
-.mission-rail__block:hover {
-  color: var(--danger, #f7768e);
-  background: var(--accent-soft);
-}
-
-.mission-rail__block:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
 /* Account switcher (rail footer / chrome) */
 .account-switcher {
   position: relative;
@@ -893,7 +832,8 @@
 }
 
 .account-switcher__restart {
-  border-bottom: 1px solid color-mix(in srgb, var(--border, #333) 80%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--border, #333) 80%, transparent);
   padding-bottom: 4px;
   margin-bottom: 4px;
 }
@@ -910,16 +850,13 @@
   color: var(--danger);
 }
 .mission-rail__head {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 8px;
-  padding: 10px 12px 10px;
+  padding: 10px 10px 9px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--bg-elevated) 88%, var(--accent) 4%) 0%,
-    transparent 100%
-  );
+  background: transparent;
 }
 
 .mission-rail__head-top {
@@ -934,7 +871,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 /* Section label — secondary to workspace name */
@@ -965,6 +902,78 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
+}
+
+.mission-rail__operations {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 44%, transparent);
+}
+
+.mission-rail__operations > summary {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  list-style: none;
+  user-select: none;
+}
+
+.mission-rail__operations > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mission-rail__operations > summary::after {
+  content: '›';
+  margin-left: auto;
+  font-size: 13px;
+  transition: transform 160ms var(--ease-out-quart);
+}
+
+.mission-rail__operations[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.mission-rail__operations > summary:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.mission-rail__operations > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.mission-rail__operations-alert {
+  color: var(--warn);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.mission-rail__operations-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 10px 10px;
+  animation: rail-reveal 160ms var(--ease-out-quart);
+}
+
+@keyframes rail-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .mission-rail__chip {
@@ -1056,7 +1065,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 10px 8px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
@@ -1093,6 +1102,16 @@
   border-color: var(--accent);
   box-shadow: 0 1px 0 color-mix(in srgb, #000 25%, transparent);
 }
+
+.mission-rail__head-actions .mission-rail__new {
+  min-height: 40px;
+  padding: 0 11px;
+  justify-content: center;
+}
+
+.mission-rail__head-actions .mission-rail__new span {
+  display: inline;
+}
 .mission-rail__new--primary:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
@@ -1101,8 +1120,8 @@
   transform: translateY(1px);
 }
 .mission-rail__board-btn {
-  min-width: 28px;
-  min-height: 28px;
+  min-width: 32px;
+  min-height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1130,31 +1149,169 @@
   .mission-rail__new:active {
     transform: none;
   }
+  .mission-rail__operations > summary::after {
+    transition: none;
+  }
+  .mission-rail__operations-body {
+    animation: none;
+  }
 }
 
 .mission-rail__list {
   list-style: none;
   margin: 0;
-  padding: var(--space-2);
+  padding: 2px 6px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 1px;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
 }
-/* O X de remover fica SOBRE o item (que é ele próprio um botão — não pode
-   aninhar). A linha é relativa; o X acende no hover ou com foco no teclado. */
+/* As ações ficam sobre o item, que é ele próprio um botão e não pode conter
+   outros botões. A linha relativa ancora o grupo sem sobrepor seus slots. */
 .mission-rail__row {
   position: relative;
 }
+
+.mission-rail__row[data-action-count='1'] > .mission-rail__item {
+  padding-right: 41px;
+}
+
+.mission-rail__row[data-action-count='2'] > .mission-rail__item {
+  padding-right: 77px;
+}
+
+.mission-rail__row[data-action-count='3'] > .mission-rail__item,
+.mission-rail__row[data-action-count='4'] > .mission-rail__item {
+  padding-right: 111px;
+}
+
+/* Quatro ações só existem em lane plan pendente/em curso. A quarta ocupa
+   uma segunda linha curta em vez de espremer o título da missão. */
+.mission-rail__row[data-action-count='4'] > .mission-rail__item {
+  min-height: 75px;
+}
+
+.mission-rail__row-actions {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 1;
+  width: 100px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ease-out-quart);
+}
+
+.mission-rail__row[data-action-count='1'] > .mission-rail__row-actions {
+  width: 32px;
+}
+
+.mission-rail__row[data-action-count='2'] > .mission-rail__row-actions {
+  width: 66px;
+}
+
+.mission-rail__row:hover > .mission-rail__row-actions,
+.mission-rail__row-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mission-rail__row-action {
+  position: static;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-bar) 88%, transparent);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  transition:
+    background-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
+}
+
+.mission-rail__row-action--promote:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mission-rail__row-action--block:hover,
+.mission-rail__row-action--remove:hover {
+  color: var(--danger);
+  background: var(--accent-soft);
+}
+
+.mission-rail__row-action--pin:hover {
+  color: var(--gold);
+  background: var(--accent-soft);
+}
+
+.mission-rail__row-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.mission-rail__row-action:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .mission-rail__row-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* O rail cai de 248 para 210px neste breakpoint. Duas colunas de ações
+   preservam a largura do título e a altura reservada evita sobreposição. */
+@media (max-width: 1120px) {
+  .mission-rail__row[data-action-count='2'] > .mission-rail__item,
+  .mission-rail__row[data-action-count='3'] > .mission-rail__item,
+  .mission-rail__row[data-action-count='4'] > .mission-rail__item {
+    padding-right: 77px;
+  }
+
+  .mission-rail__row[data-action-count='3'] > .mission-rail__item,
+  .mission-rail__row[data-action-count='4'] > .mission-rail__item {
+    min-height: 75px;
+  }
+
+  .mission-rail__row[data-action-count='3'] > .mission-rail__row-actions,
+  .mission-rail__row[data-action-count='4'] > .mission-rail__row-actions {
+    width: 66px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-rail__row-actions,
+  .mission-rail__row-action {
+    transition: none;
+  }
+}
+
 .mission-rail__item {
   width: 100%;
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  min-height: 44px;
-  padding: 8px 44px 8px 8px;
+  min-height: 40px;
+  padding: 7px 44px 7px 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
@@ -1166,78 +1323,40 @@
     border-color 140ms var(--ease-out-quart);
 }
 .mission-rail__item--idle {
-  background: color-mix(in srgb, var(--bg-elevated) 78%, var(--bg));
-  border-color: color-mix(in srgb, var(--border-strong) 70%, transparent);
+  background: transparent;
+  border-color: transparent;
 }
-/* Na fila: âmbar no card */
+/* Seções se diferenciam pelo estado textual/dot; não por um mosaico de cards. */
 .activity-rail__section--queue .mission-rail__item--idle {
-  border-color: color-mix(in srgb, var(--warn) 32%, var(--border));
-  background: color-mix(in srgb, var(--warn) 8%, var(--bg-elevated));
+  border-color: transparent;
+  background: transparent;
 }
 .activity-rail__section--queue .mission-rail__item--idle:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--warn) 50%, var(--border));
-  background: color-mix(in srgb, var(--warn) 14%, var(--bg-elevated));
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
 }
-/* Em progresso: ciano no card */
 .activity-rail__section--active .mission-rail__item--idle {
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+  border-color: transparent;
+  background: transparent;
 }
-/* Concluídas: verde suave + menos ênfase */
 .activity-rail__section--done .mission-rail__item--idle {
-  border-color: color-mix(in srgb, var(--ok) 22%, var(--border));
-  background: color-mix(in srgb, var(--ok) 6%, var(--bg-elevated));
-  opacity: 0.92;
+  border-color: transparent;
+  background: transparent;
+  opacity: 0.76;
 }
 .mission-rail__item:hover:not(:disabled) {
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
   .mission-rail__item {
     transition: none;
   }
 }
-.mission-rail__remove {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-dim);
-  opacity: 0;
-  cursor: pointer;
-  transition:
-    opacity 120ms var(--ease-out-quart),
-    background-color 120ms var(--ease-out-quart),
-    color 120ms var(--ease-out-quart);
-}
-.mission-rail__row:hover .mission-rail__remove,
-.mission-rail__remove:focus-visible {
-  opacity: 1;
-}
-.mission-rail__remove:hover {
-  background: var(--accent-soft);
-  color: var(--danger);
-}
-.mission-rail__remove:disabled {
-  opacity: 0;
-  cursor: default;
-}
-@media (prefers-reduced-motion: reduce) {
-  .mission-rail__remove { transition: none; }
-}
 /* Missão ao vivo no grid: accent forte (workspace NÃO usa isto) */
 .mission-rail__item--active {
-  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated));
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  box-shadow: none;
 }
 .mission-rail__item--active .mission-rail__dot {
   background: var(--live);
@@ -1250,8 +1369,17 @@
 .mission-rail__item--active .mission-rail__item-meta {
   color: color-mix(in srgb, var(--accent) 70%, var(--text-dim));
 }
-.mission-rail__item:disabled { opacity: 0.6; cursor: default; }
-.mission-rail__dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: 0 0 8px; }
+.mission-rail__item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.mission-rail__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex: 0 0 8px;
+}
 /* Estados nos tokens --state-* (base.css) — um estado, uma cor, em TODA
    superfície: trabalhando = ciano (pulsa), feito = verde, bloqueado = âmbar,
    falha = vermelho, pendente = dim. */
@@ -1260,12 +1388,22 @@
   box-shadow: 0 0 6px var(--accent-glow);
   animation: state-breathe 2.2s ease-in-out infinite;
 }
-.mission-rail__dot--done { background: var(--state-done); }
-.mission-rail__dot--failed { background: var(--state-failed); }
-.mission-rail__dot--blocked { background: var(--state-blocked); }
-.mission-rail__dot--pending { background: var(--state-pending); }
+.mission-rail__dot--done {
+  background: var(--state-done);
+}
+.mission-rail__dot--failed {
+  background: var(--state-failed);
+}
+.mission-rail__dot--blocked {
+  background: var(--state-blocked);
+}
+.mission-rail__dot--pending {
+  background: var(--state-pending);
+}
 @media (prefers-reduced-motion: reduce) {
-  .mission-rail__dot--running { animation: none; }
+  .mission-rail__dot--running {
+    animation: none;
+  }
 }
 .mission-rail__item-body {
   display: flex;
@@ -1317,9 +1455,9 @@
   flex: 0 0 auto;
   max-width: none;
   margin-top: 0;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid transparent;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -1330,33 +1468,151 @@
 }
 .mission-rail__status--live {
   color: var(--live);
-  border-color: color-mix(in srgb, var(--live) 45%, transparent);
-  background: color-mix(in srgb, var(--live) 14%, transparent);
+  background: transparent;
 }
 .mission-rail__status--running {
   color: var(--state-running);
-  border-color: color-mix(in srgb, var(--state-running) 42%, transparent);
-  background: color-mix(in srgb, var(--state-running) 12%, transparent);
+  background: transparent;
 }
 .mission-rail__status--blocked {
   color: var(--state-blocked);
-  border-color: color-mix(in srgb, var(--state-blocked) 45%, transparent);
-  background: color-mix(in srgb, var(--state-blocked) 12%, transparent);
+  background: transparent;
 }
 .mission-rail__status--done {
   color: var(--state-done);
-  border-color: color-mix(in srgb, var(--state-done) 40%, transparent);
-  background: color-mix(in srgb, var(--state-done) 10%, transparent);
+  background: transparent;
 }
 .mission-rail__status--failed {
   color: var(--state-failed);
-  border-color: color-mix(in srgb, var(--state-failed) 45%, transparent);
-  background: color-mix(in srgb, var(--state-failed) 12%, transparent);
+  background: transparent;
 }
 .mission-rail__status--pending {
   color: var(--text-dim);
-  border-color: color-mix(in srgb, var(--border-strong) 80%, transparent);
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: transparent;
+}
+
+.mission-rail__agents {
+  list-style: none;
+  margin: 1px 0 4px 17px;
+  padding: 0 4px 0 10px;
+  border-left: 1px solid
+    color-mix(in srgb, var(--border-strong) 72%, transparent);
+}
+
+.mission-rail__agents > li {
+  animation: rail-agent-in 160ms var(--ease-out-quart) both;
+}
+
+.mission-rail__agents > li:nth-child(2) {
+  animation-delay: 24ms;
+}
+
+.mission-rail__agents > li:nth-child(3) {
+  animation-delay: 48ms;
+}
+
+@keyframes rail-agent-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mission-rail__agents > li {
+    animation: none;
+  }
+}
+
+.mission-rail__agent {
+  appearance: none;
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 7px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-rail__agent--focused {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--text);
+}
+
+.mission-rail__agent:hover,
+.mission-rail__agent:focus-visible {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
+}
+
+.mission-rail__agent:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+}
+
+.mission-rail__agent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--state-pending);
+}
+
+.mission-rail__agent-dot--busy {
+  background: var(--state-running);
+  box-shadow: 0 0 5px var(--accent-glow);
+}
+
+.mission-rail__agent-dot--spawning {
+  background: var(--warn);
+}
+
+.mission-rail__agent-dot--idle {
+  background: var(--state-ready);
+}
+
+.mission-rail__agent-dot--exited {
+  background: var(--state-failed);
+}
+
+.mission-rail__agent-dot--hibernated {
+  background: var(--state-pending);
+}
+
+.mission-rail__agent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.mission-rail__agent-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.mission-rail__agent-role {
+  color: var(--text);
+}
+
+.mission-rail__agent-state {
+  color: var(--text-dim);
 }
 .mission-rail__note {
   margin: 0;
@@ -1406,11 +1662,19 @@
   animation: onb-rise 200ms var(--ease-out-quint);
 }
 @keyframes onb-rise {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .onb__panel { animation: none; }
+  .onb__panel {
+    animation: none;
+  }
 }
 .onb__head {
   display: flex;
@@ -1450,11 +1714,18 @@
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  transition: border-color 120ms var(--ease-out-quart), color 120ms var(--ease-out-quart);
+  transition:
+    border-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
 }
-.onb__skip-x:hover { border-color: var(--border-strong); color: var(--text); }
+.onb__skip-x:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
 
-.onb__section { margin-bottom: 20px; }
+.onb__section {
+  margin-bottom: 20px;
+}
 .onb__section-title {
   display: flex;
   align-items: center;
@@ -1476,8 +1747,14 @@
   border: 1px solid var(--border-strong);
   color: var(--text-dim);
 }
-.onb__pill--ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
-.onb__pill--warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.onb__pill--ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+}
+.onb__pill--warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 50%, transparent);
+}
 
 .onb__cli-row {
   display: flex;
@@ -1497,9 +1774,13 @@
   border: 1px solid var(--border);
   background: var(--bg);
 }
-.onb__cli--ok { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.onb__cli--ok {
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
 
-.onb__missing { margin-top: 12px; }
+.onb__missing {
+  margin-top: 12px;
+}
 .onb__missing > summary {
   cursor: pointer;
   font-size: 12px;
@@ -1603,7 +1884,9 @@
   font-size: 13px;
   color: var(--text-dim);
 }
-.onb__victory--done { color: var(--text); }
+.onb__victory--done {
+  color: var(--text);
+}
 .onb__check {
   flex: none;
   display: inline-flex;
@@ -1639,7 +1922,9 @@
   border-radius: var(--radius-md);
   cursor: pointer;
 }
-.onb__skip:hover { color: var(--text); }
+.onb__skip:hover {
+  color: var(--text);
+}
 .onb__cta {
   font-size: 13px;
   font-weight: 600;
@@ -1651,8 +1936,13 @@
   cursor: pointer;
   transition: background-color 120ms var(--ease-out-quart);
 }
-.onb__cta:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-.onb__cta:disabled { opacity: 0.5; cursor: not-allowed; }
+.onb__cta:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.onb__cta:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* Erro do auto-install do CTA primário (sem CLI detectada): alerta inline
    logo abaixo do footer, não toast — o contexto é a decisão em curso. */

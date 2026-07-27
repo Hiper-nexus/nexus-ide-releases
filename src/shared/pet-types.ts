@@ -92,7 +92,7 @@ export const PET_PRESETS: readonly PetPreset[] = [
 
 /**
  * Spritesheet no contrato Codex v2 (8 colunas × 11 linhas; spriteVersionNumber
- * 2 do hatch-pet): o pet criado no Codex funciona aqui sem conversão. A imagem
+ * 2 do Nexus Pet Studio): o pet criado no Codex funciona aqui sem conversão. A imagem
  * vive como data URL nas prefs — funciona sob a CSP (img-src data:) e não
  * depende de ~/.codex continuar existindo.
  */
@@ -158,7 +158,7 @@ export const SHEET_NEUTRAL = { row: 0, col: 6 } as const;
  * Linhas de "look" do contrato v2: 16 direções em passos de 22,5°, no
  * sentido horário a partir de CIMA (000=cima, 090=direita da tela,
  * 180=baixo, 270=esquerda). Direções 0-7 moram na linha 9 (000-157.5),
- * 8-15 na linha 10 (180-337.5) — ver look-mechanics do hatch-pet.
+ * 8-15 na linha 10 (180-337.5) — contrato look-mechanics do Pet Studio.
  */
 export const SHEET_LOOK = {
   rowA: 9,
@@ -213,7 +213,7 @@ export interface PetPrefs {
   preset: PetPreset;
   /** Pixel-grid do pet custom (gerado localmente de uma imagem do usuário). */
   customGrid: PetCustomGrid | null;
-  /** Spritesheet Codex v2 importado (ex.: pet criado no Codex/hatch-pet). */
+  /** Spritesheet Codex v2 importado (ex.: pet criado no Nexus Pet Studio). */
   sheet: PetSheet | null;
   /** Canto superior-esquerdo da janela do pet, em coordenadas de tela. */
   position: PetPosition | null;

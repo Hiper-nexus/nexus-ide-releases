@@ -131,10 +131,27 @@ async function spawnCliRpcAgentPane(
       );
     }
     if (
+      authority.context?.role === "worker" &&
+      authority.context.contextRevision &&
+      authority.context.readOnly !== true
+    ) {
+      throw new Error(
+        `adapter ${adapter.id} RPC cannot enforce workspace-write authority ` +
+          "for a revision-bound writable worker",
+      );
+    }
+    if (
       requiresReadOnlyNativeAuthority({
         source: authority.source,
+        adapterId: adapter.id,
         role: authority.context?.role,
+        missionId: authority.context?.missionId,
+        squadId: authority.context?.squadId,
+        agentName: authority.context?.agentName,
+        allowedTools: authority.context?.allowedTools,
+        allowedSkills: authority.context?.allowedSkills,
         contextRevision: authority.context?.contextRevision,
+        authoritySeal: authority.context?.authoritySeal,
         readOnly: authority.context?.readOnly,
         nativeReadOnly: authority.context?.nativeReadOnly,
       })
@@ -222,8 +239,15 @@ function spawnCliPtyAgentPane(
     } = spawn;
     const nativeReadOnly = requiresReadOnlyNativeAuthority({
       source: authority.source,
+      adapterId: adapter.id,
       role: authority.context?.role,
+      missionId: authority.context?.missionId,
+      squadId: authority.context?.squadId,
+      agentName: authority.context?.agentName,
+      allowedTools: authority.context?.allowedTools,
+      allowedSkills: authority.context?.allowedSkills,
       contextRevision: authority.context?.contextRevision,
+      authoritySeal: authority.context?.authoritySeal,
       readOnly: authority.context?.readOnly,
       nativeReadOnly: authority.context?.nativeReadOnly,
     });

@@ -27,7 +27,6 @@ interface Burst {
 
 const CELEBRATING_KINDS: ReadonlySet<MissionEndorphinKind> = new Set([
   'green',
-  'launched',
   'milestone',
   'handoff',
 ]);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  authorizeAutomatedReviewBrowserAccess,
   authorizePaneAccess,
   canListPane,
   type CallerCtx,
@@ -136,5 +137,78 @@ describe('authorizePaneAccess — user-opened browser pane', () => {
   it('keeps mission agents out of a user-owned browser surface', () => {
     expect(authorizePaneAccess(orchestrator, userOpenedBrowser, 'read').allow).toBe(false);
     expect(authorizePaneAccess(worker, userOpenedBrowser, 'read').allow).toBe(false);
+  });
+});
+
+describe('authorizeAutomatedReviewBrowserAccess', () => {
+  const boundBrowser = pane({
+    paneId: 'browser-review',
+    sessionId: null,
+    kind: 'browser',
+    missionId: 'm1',
+    role: undefined,
+  });
+  const grant = {
+    paneId: 'browser-review',
+    missionId: 'm1',
+    scope,
+  };
+
+  it('allows only read/wait on the exact mission and pane binding', () => {
+    expect(
+      authorizeAutomatedReviewBrowserAccess(worker, boundBrowser, 'read', grant),
+    ).toEqual({ allow: true });
+    expect(
+      authorizeAutomatedReviewBrowserAccess(worker, boundBrowser, 'wait', grant),
+    ).toEqual({ allow: true });
+    expect(
+      authorizeAutomatedReviewBrowserAccess(worker, boundBrowser, 'write', grant)
+        .allow,
+    ).toBe(false);
+    expect(
+      authorizeAutomatedReviewBrowserAccess(worker, boundBrowser, 'close', grant)
+        .allow,
+    ).toBe(false);
+  });
+
+  it('rejects pane, mission, scope and caller-role substitution', () => {
+    expect(
+      authorizeAutomatedReviewBrowserAccess(
+        worker,
+        pane({ ...boundBrowser, paneId: 'browser-other' }),
+        'read',
+        grant,
+      ).allow,
+    ).toBe(false);
+    expect(
+      authorizeAutomatedReviewBrowserAccess(
+        { ...worker, missionId: 'm2' },
+        boundBrowser,
+        'read',
+        grant,
+      ).allow,
+    ).toBe(false);
+    expect(
+      authorizeAutomatedReviewBrowserAccess(
+        worker,
+        pane({
+          ...boundBrowser,
+          scope: testProjectScope({
+            projectId: 'project-a',
+            checkoutId: 'checkout-b',
+          }),
+        }),
+        'read',
+        grant,
+      ).allow,
+    ).toBe(false);
+    expect(
+      authorizeAutomatedReviewBrowserAccess(
+        orchestrator,
+        boundBrowser,
+        'read',
+        grant,
+      ).allow,
+    ).toBe(false);
   });
 });

@@ -102,9 +102,15 @@ describe('NavalhaGO arm path (intent-first)', () => {
       [
         {
           id: 'claude',
+          kind: 'cli-pty',
           label: 'Claude',
+          icon: 'C',
+          models: { list: ['default'], default: 'default' },
           installed: true,
-          quirks: { mcpAutoload: true },
+          installCommand: '',
+          idleTimeoutMs: 800,
+          orchestratorCapable: true,
+          orchestrationEvidence: 'verified',
         },
       ] as never,
     );

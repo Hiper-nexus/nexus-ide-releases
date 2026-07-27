@@ -14,6 +14,7 @@ import {
   type OmpAuthPushEvent,
 } from '../../shared/omp-auth-types';
 import { OmpLoginFlow, parseAuthBrokerList } from './omp-auth';
+import { redactGenericCredentials } from './omp-output-redaction';
 import {
   closeOmpAuthWindow,
   disposeOmpAuthWindow,
@@ -34,6 +35,7 @@ import { buildOmpChildEnv, resolveOmpBin } from './omp-rpc-service';
  */
 
 const LIST_TIMEOUT_MS = 10_000;
+const TOKEN_PROBE_TIMEOUT_MS = 5_000;
 const TOKEN_PROBE_CONCURRENCY = 6;
 
 /** Assinaturas mais usadas primeiro; o resto depois, alfabético. */
@@ -102,20 +104,48 @@ async function listBrokerProviders(
  * totalmente ignorado — o stdout É o token e nunca pode tocar este processo
  * (nem heap, nem log).
  */
-function probeToken(binPath: string, providerId: string): Promise<boolean> {
+export function probeOmpTokenPresence(
+  binPath: string,
+  providerId: string,
+  options: {
+    spawnImpl?: typeof spawn;
+    timeoutMs?: number;
+  } = {},
+): Promise<boolean> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
+    let timer: NodeJS.Timeout | null = null;
+    let settled = false;
+    const finish = (connected: boolean): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(connected);
+    };
     try {
-      child = spawn(binPath, ['token', providerId], {
+      child = (options.spawnImpl ?? spawn)(
+        binPath,
+        ['token', providerId],
+        {
         stdio: 'ignore',
         env: buildOmpChildEnv(),
-      });
+        },
+      );
     } catch {
-      resolve(false);
+      finish(false);
       return;
     }
-    child.on('error', () => resolve(false));
-    child.on('exit', (code) => resolve(code === 0));
+    child.once('error', () => finish(false));
+    child.once('exit', (code) => finish(code === 0));
+    timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // A concurrent exit may already have reaped the process.
+      }
+      finish(false);
+    }, options.timeoutMs ?? TOKEN_PROBE_TIMEOUT_MS);
+    timer.unref?.();
   });
 }
 
@@ -153,7 +183,9 @@ function sortProviders(entries: OmpAuthBrokerEntry[]): OmpAuthBrokerEntry[] {
 }
 
 function toError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return redactGenericCredentials(
+    err instanceof Error ? err.message : String(err),
+  );
 }
 
 function watchOwner(owner: WebContents): void {
@@ -192,7 +224,7 @@ async function listProviders(): Promise<OmpAuthListResult> {
   const connected = await mapLimit(
     entries,
     TOKEN_PROBE_CONCURRENCY,
-    (entry) => probeToken(binPath, entry.id),
+    (entry) => probeOmpTokenPresence(binPath, entry.id),
   );
   const connectedById = new Map(
     entries.map((entry, index) => [entry.id, connected[index] === true]),

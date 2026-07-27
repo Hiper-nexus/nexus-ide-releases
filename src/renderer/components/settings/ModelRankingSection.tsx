@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { PublicModelRankingEntry } from '../../../shared/eval-ranking-types';
-import type { QuotaFleetSnapshot } from '../../../shared/quota-types';
-import { useProviderStore } from '../../state/provider-store';
-import { useQuotaStore } from '../../state/quota-store';
+import { useEffect, useMemo, useState } from "react";
+import type { PublicModelRankingEntry } from "../../../shared/eval-ranking-types";
+import type { QuotaFleetSnapshot } from "../../../shared/quota-types";
+import { useProviderStore } from "../../state/provider-store";
+import { useQuotaStore } from "../../state/quota-store";
 import {
   RADAR_AXES,
   SORT_LABELS,
@@ -21,8 +21,8 @@ import {
   scoreOrZero,
   sortEntries,
   sortEntriesWithQuota,
-} from './ranking-view';
-import { ProviderLogo } from '../ProviderLogo';
+} from "./ranking-view";
+import { ProviderLogo } from "../ProviderLogo";
 
 /**
  * Per-adapter free capacity 0..1 for ranking blend. Uses freest account of each
@@ -77,7 +77,11 @@ function RaceChart({
   const max = Math.max(1, ...rows.map((r) => scoreOrZero(r, sort)));
 
   return (
-    <div className="rank-race" role="list" aria-label={`Corrida por ${SORT_LABELS[sort]}`}>
+    <div
+      className="rank-race"
+      role="list"
+      aria-label={`Corrida por ${SORT_LABELS[sort]}`}
+    >
       {rows.map((entry, index) => {
         const score = scoreOf(entry, sort);
         const width = score === null ? 0 : (score / max) * 100;
@@ -89,7 +93,7 @@ function RaceChart({
             key={entry.id}
             type="button"
             role="listitem"
-            className={`rank-race__row ${active ? 'rank-race__row--active' : ''} ${live ? '' : 'rank-race__row--ghost'}`}
+            className={`rank-race__row ${active ? "rank-race__row--active" : ""} ${live ? "" : "rank-race__row--ghost"}`}
             onClick={() => onSelect(entry.id)}
             aria-pressed={active}
             title={
@@ -114,8 +118,11 @@ function RaceChart({
                   <span className="rank-race__missing"> · off-machine</span>
                 )}
                 {estimate !== null && (
-                  <span className="rank-estimate" title="scores de fixture offline, não auditoria real">
-                    {' '}
+                  <span
+                    className="rank-estimate"
+                    title="scores de fixture offline, não auditoria real"
+                  >
+                    {" "}
                     · {estimate}
                   </span>
                 )}
@@ -124,15 +131,18 @@ function RaceChart({
             <span className="rank-race__track" aria-hidden="true">
               <span
                 className="rank-race__bar"
-                style={{ width: `${width}%` }}
+                style={{ transform: `scaleX(${width / 100})` }}
                 data-cost={costLabel(entry)}
               />
               <span className="rank-race__ticks">
-                <i /><i /><i /><i />
+                <i />
+                <i />
+                <i />
+                <i />
               </span>
             </span>
             <span className="rank-race__score">
-              {score === null ? '—' : score}
+              {score === null ? "—" : score}
               <span className="rank-race__eff" title="eficiência overall/custo">
                 η{costEfficiency(entry)}
               </span>
@@ -156,7 +166,8 @@ function RadarChart({
   const cy = size / 2;
   const r = 88;
   const main = radarPoints(entry, cx, cy, r);
-  const ghostPts = ghost && ghost.id !== entry.id ? radarPoints(ghost, cx, cy, r) : null;
+  const ghostPts =
+    ghost && ghost.id !== entry.id ? radarPoints(ghost, cx, cy, r) : null;
   const rings = [0.25, 0.5, 0.75, 1];
 
   return (
@@ -175,9 +186,19 @@ function RadarChart({
             <stop offset="70%" stopColor="var(--accent)" stopOpacity="0.05" />
             <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
           </radialGradient>
-          <linearGradient id="rank-poly-fill" x1="0%" y1="0%" x2="100%" y2="100%">
+          <linearGradient
+            id="rank-poly-fill"
+            x1="0%"
+            y1="0%"
+            x2="100%"
+            y2="100%"
+          >
             <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.35" />
-            <stop offset="100%" stopColor="var(--ok, #5fd38d)" stopOpacity="0.12" />
+            <stop
+              offset="100%"
+              stopColor="var(--ok, #5fd38d)"
+              stopOpacity="0.12"
+            />
           </linearGradient>
         </defs>
 
@@ -230,11 +251,16 @@ function RadarChart({
       </svg>
       <div className="rank-radar__caption">
         <span className="rank-radar__identity">
-          <ProviderLogo adapterId={entry.adapterId} label={entry.adapterId} size="sm" />
+          <ProviderLogo
+            adapterId={entry.adapterId}
+            label={entry.adapterId}
+            size="sm"
+          />
           <span className="rank-radar__identity-copy">
             <strong>{entry.modelId}</strong>
             <span>
-              overall {entry.overall} · η{costEfficiency(entry)} · {costLabel(entry)}
+              overall {entry.overall} · η{costEfficiency(entry)} ·{" "}
+              {costLabel(entry)}
             </span>
           </span>
         </span>
@@ -255,22 +281,46 @@ function MissionPicks({
   entries: PublicModelRankingEntry[];
   onSelect: (id: string) => void;
 }) {
-  const missions: Array<{ key: SortKey | 'value'; label: string; pick: PublicModelRankingEntry | null }> = [
-    { key: 'coding', label: SORT_MISSION.coding, pick: pickForDimension(entries, 'coding') },
-    { key: 'reasoning', label: SORT_MISSION.reasoning, pick: pickForDimension(entries, 'reasoning') },
-    { key: 'frontend', label: SORT_MISSION.frontend, pick: pickForDimension(entries, 'frontend') },
-    { key: 'security', label: SORT_MISSION.security, pick: pickForDimension(entries, 'security') },
-    { key: 'value', label: 'Melhor custo / overall', pick: pickValue(entries) },
+  const missions: Array<{
+    key: SortKey | "value";
+    label: string;
+    pick: PublicModelRankingEntry | null;
+  }> = [
+    {
+      key: "coding",
+      label: SORT_MISSION.coding,
+      pick: pickForDimension(entries, "coding"),
+    },
+    {
+      key: "reasoning",
+      label: SORT_MISSION.reasoning,
+      pick: pickForDimension(entries, "reasoning"),
+    },
+    {
+      key: "frontend",
+      label: SORT_MISSION.frontend,
+      pick: pickForDimension(entries, "frontend"),
+    },
+    {
+      key: "security",
+      label: SORT_MISSION.security,
+      pick: pickForDimension(entries, "security"),
+    },
+    { key: "value", label: "Melhor custo / overall", pick: pickValue(entries) },
   ];
 
   return (
-    <div className="rank-missions" role="list" aria-label="Picks do motor por tipo de missão">
+    <div
+      className="rank-missions"
+      role="list"
+      aria-label="Picks do motor por tipo de missão"
+    >
       {missions.map((m) => {
         if (!m.pick) return null;
         const score =
-          m.key === 'value'
+          m.key === "value"
             ? m.pick.overall
-            : scoreOf(m.pick, m.key) ?? m.pick.overall;
+            : (scoreOf(m.pick, m.key) ?? m.pick.overall);
         return (
           <button
             key={m.key}
@@ -286,7 +336,7 @@ function MissionPicks({
                 size="sm"
               />
               <span className="rank-missions__kind">
-                {m.key === 'value' ? 'Value' : SORT_LABELS[m.key]}
+                {m.key === "value" ? "Value" : SORT_LABELS[m.key]}
               </span>
             </span>
             <span className="rank-missions__model">{m.pick.modelId}</span>
@@ -302,10 +352,10 @@ function MissionPicks({
 
 export function ModelRankingSection() {
   const [snapshot, setSnapshot] = useState<Awaited<
-    ReturnType<NonNullable<typeof window.nexus>['ranking']['public']>
+    ReturnType<NonNullable<typeof window.nexus>["ranking"]["public"]>
   > | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sort, setSort] = useState<SortKey>('overall');
+  const [sort, setSort] = useState<SortKey>("overall");
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -327,8 +377,8 @@ export function ModelRankingSection() {
     let cancelled = false;
     setLoading(true);
     const publicRanking = window.nexus?.ranking?.public;
-    if (typeof publicRanking !== 'function') {
-      setError('API de ranking indisponível neste build.');
+    if (typeof publicRanking !== "function") {
+      setError("API de ranking indisponível neste build.");
       setLoading(false);
       return;
     }
@@ -341,7 +391,7 @@ export function ModelRankingSection() {
           if (prev && data.entries.some((e) => e.id === prev)) return prev;
           const top = sortEntriesWithQuota(
             data.entries,
-            'overall',
+            "overall",
             quotaAvailabilityByAdapter(useQuotaStore.getState().snapshot),
           )[0];
           return top?.id ?? null;
@@ -362,7 +412,7 @@ export function ModelRankingSection() {
 
   const rows = useMemo(() => {
     if (!snapshot) return [];
-    if (sort === 'overall') {
+    if (sort === "overall") {
       return sortEntriesWithQuota(snapshot.entries, sort, quotaByAdapter);
     }
     return sortEntries(snapshot.entries, sort);
@@ -375,7 +425,10 @@ export function ModelRankingSection() {
 
   const leader = useMemo(() => {
     if (!snapshot) return null;
-    return sortEntriesWithQuota(snapshot.entries, 'overall', quotaByAdapter)[0] ?? null;
+    return (
+      sortEntriesWithQuota(snapshot.entries, "overall", quotaByAdapter)[0] ??
+      null
+    );
   }, [snapshot, quotaByAdapter]);
 
   const liveCount = useMemo(
@@ -391,9 +444,8 @@ export function ModelRankingSection() {
         </h3>
         <p className="settings-detail__hint">
           Nexus-eval multi-eixo alimenta o roteador de missões. Escolha a
-          dimensão da corrida, inspecione o radar do modelo e veja quem o
-          motor mandaria para cada tipo de tarefa — não só uma tabela de
-          números.
+          dimensão da corrida, inspecione o radar do modelo e veja quem o motor
+          mandaria para cada tipo de tarefa — não só uma tabela de números.
         </p>
       </header>
 
@@ -449,7 +501,7 @@ export function ModelRankingSection() {
               <button
                 key={key}
                 type="button"
-                className={`rank-ops__chip ${sort === key ? 'rank-ops__chip--on' : ''}`}
+                className={`rank-ops__chip ${sort === key ? "rank-ops__chip--on" : ""}`}
                 onClick={() => setSort(key)}
                 title={SORT_MISSION[key]}
               >
@@ -477,7 +529,9 @@ export function ModelRankingSection() {
               {selected ? (
                 <RadarChart entry={selected} ghost={leader} />
               ) : (
-                <p className="rank-ops__status">Selecione um modelo na corrida.</p>
+                <p className="rank-ops__status">
+                  Selecione um modelo na corrida.
+                </p>
               )}
             </div>
           </div>
@@ -491,12 +545,14 @@ export function ModelRankingSection() {
                   size="sm"
                 />
                 <span className="rank-ops__detail-identity">
-                  <span className="rank-ops__detail-name">{selected.modelId}</span>
+                  <span className="rank-ops__detail-name">
+                    {selected.modelId}
+                  </span>
                   <span className="rank-ops__detail-adapter">
                     {selected.adapterId}
                     {installed.has(selected.adapterId)
-                      ? ' · CLI pronta neste host'
-                      : ' · CLI não detectada / off'}
+                      ? " · CLI detectada neste host"
+                      : " · CLI não detectada / off"}
                   </span>
                 </span>
               </div>
@@ -505,9 +561,11 @@ export function ModelRankingSection() {
                   const v = scoreOf(selected, key);
                   return (
                     <div key={key} className="rank-ops__dim-cell">
-                      <span className="rank-ops__dim-label">{SORT_LABELS[key]}</span>
+                      <span className="rank-ops__dim-label">
+                        {SORT_LABELS[key]}
+                      </span>
                       <span className="rank-ops__dim-val">
-                        {v === null ? '—' : v}
+                        {v === null ? "—" : v}
                       </span>
                       <span
                         className="rank-ops__dim-bar"
@@ -524,14 +582,14 @@ export function ModelRankingSection() {
                 fonte {selected.source}
                 {estimateBadge(selected) !== null && (
                   <span className="rank-estimate">
-                    {' '}
+                    {" "}
                     · {estimateBadge(selected)}
                   </span>
-                )}{' '}
-                · conf{' '}
+                )}{" "}
+                · conf{" "}
                 {selected.confidence !== undefined
                   ? `${Math.round(selected.confidence * 100)}%`
-                  : '—'}{' '}
+                  : "—"}{" "}
                 · avaliado {formatEvalTime(selected.evaluatedAt)}
               </p>
             </div>

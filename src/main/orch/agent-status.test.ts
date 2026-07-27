@@ -19,12 +19,14 @@ vi.mock('../pty/pty-manager', () => ({
 import {
   __resetAgentStatusForTests,
   applyCanonicalHookEvent,
+  getAgentTurnStartSequence,
   getAgentSemanticStatus,
   isSessionInjectableIdle,
   paneStateForStatus,
   resetAgentStatusOnExit,
   semanticStatusForEvent,
   tapAgentSemanticStatus,
+  tapAgentTurnStart,
 } from './agent-status';
 
 const start: CanonicalHookEvent = { kind: 'status', type: 'start' };
@@ -32,6 +34,7 @@ const userSubmit: CanonicalHookEvent = {
   kind: 'status',
   type: 'start',
   clearsAwaitingInput: true,
+  promptSubmitted: true,
 };
 const stop: CanonicalHookEvent = { kind: 'status', type: 'stop' };
 const failure: CanonicalHookEvent = { kind: 'status', type: 'error' };
@@ -162,6 +165,42 @@ describe('applyCanonicalHookEvent', () => {
     expect(harness.publish).toHaveBeenCalledTimes(3);
   });
 
+  it('emits every explicit prompt submission with a monotonic content-free sequence', () => {
+    const starts: unknown[] = [];
+    tapAgentTurnStart((entry) => starts.push(entry));
+
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: userSubmit,
+      now: 100,
+    });
+    // Same semantic state is still a distinct native turn boundary.
+    applyCanonicalHookEvent({
+      sessionId: 'pty-1',
+      event: userSubmit,
+      now: 200,
+    });
+    // A generic start/tool lifecycle assertion is not prompt-submission proof.
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: start, now: 300 });
+
+    expect(starts).toEqual([
+      {
+        sessionId: 'pty-1',
+        paneId: 'pty-1',
+        sequence: 1,
+        observedAt: 100,
+      },
+      {
+        sessionId: 'pty-1',
+        paneId: 'pty-1',
+        sequence: 2,
+        observedAt: 200,
+      },
+    ]);
+    expect(getAgentTurnStartSequence('pty-1')).toBe(2);
+    expect(JSON.stringify(starts)).not.toContain('prompt');
+  });
+
   it('maps error to the error status while releasing the pane to idle', () => {
     applyCanonicalHookEvent({ sessionId: 'pty-1', event: start });
     applyCanonicalHookEvent({ sessionId: 'pty-1', event: failure });
@@ -204,6 +243,7 @@ describe('resetAgentStatusOnExit', () => {
     resetAgentStatusOnExit('pty-9');
 
     expect(getAgentSemanticStatus('pane-9')).toBeNull();
+    expect(getAgentTurnStartSequence('pty-9')).toBe(0);
     expect(transitions).toEqual(['working', 'idle']);
   });
 

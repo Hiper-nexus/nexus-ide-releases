@@ -263,23 +263,27 @@ const config: ForgeConfig = {
       'resources/model-ranking.json',
       // Pacote de ~15 pets Codex v2 offline (manifest + sheets/*.webp).
       'resources/pets',
+      ...(process.platform === 'darwin'
+        ? ['resources/native/darwin/nexus-pty-supervisor']
+        : []),
     ],
     // App icon (nó-nexus pixel: anel + núcleo aceso + satélites): packager
     // appends .icns on macOS. Read at build time from the project root — not
     // shipped inside the asar.
     icon: 'assets/icon',
     // Natives cannot execute from inside the asar: unpack .node binaries and
-    // node-pty's spawn-helper executable. Using packager's own asar.unpack
+    // their adjacent shared libraries. node-pty's mutable spawn-helper is
+    // deliberately deleted by the pinned install patch; macOS starts at
+    // Apple's /usr/bin/perl instead. Using packager's own asar.unpack
     // (instead of the AutoUnpackNativesPlugin) keeps the ElectronAsarIntegrity
     // hash in Info.plist consistent — the plugin repacks the asar AFTER the
     // hash is computed, which trips the integrity fuse into a silent hang.
     asar: {
       // *.dylib: onnxruntime-node (wake word) dlopens libonnxruntime beside
       // its .node binding — both must live outside the asar.
-      unpack: '**/{*.node,*.dylib,*.so*,*.wasm,spawn-helper,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**}',
-      // node-pty also ships an executable helper on POSIX and multiple conpty
-      // bindings on Windows. Unpack the complete platform package so runtime
-      // resolution never depends on per-file glob behavior.
+      unpack: '**/{*.node,*.dylib,*.so*,*.wasm,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**}',
+      // Keep the complete platform package adjacent to its native binding.
+      // Release verification separately requires zero spawn-helper entries.
       unpackDir: '**/node_modules/@lydell/{node-pty,node-pty-*}',
     },
     // plugin-vite's default ignore ships ONLY the .vite bundles, silently

@@ -179,6 +179,9 @@ function resolveSensorCwd(
     : root;
   const resolved = fs.realpathSync(candidate);
   if (!isWithin(root, resolved)) throw new Error('sensor cwd escapes project scope');
+  if (!fs.statSync(resolved).isDirectory()) {
+    throw new Error('sensor cwd is not a directory');
+  }
   return resolved;
 }
 

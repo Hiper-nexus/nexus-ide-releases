@@ -222,7 +222,7 @@ describe('manual release security artifacts', () => {
     })).toThrow(/build toolchain.*1 vulnerabilidade/i);
   });
 
-  it('finalizes the manifest with fresh DMG, ZIP and bound E2E evidence hashes', () => {
+  it('never finalizes a structurally valid but synthetic physical receipt', () => {
     const root = tempRoot();
     const artifacts = path.join(root, 'artifacts');
     buildReleaseSecurityArtifacts({
@@ -262,25 +262,75 @@ describe('manual release security artifacts', () => {
       JSON.stringify(makeValidRealMissionEvidence()),
     );
 
-    const finalized = finalizeReleaseSecurityArtifacts({
-      securityDir: artifacts,
+    expect(() =>
+      finalizeReleaseSecurityArtifacts({
+        securityDir: artifacts,
+        root,
+        dmgPath: dmg,
+        zipPath: zip,
+        evidencePath: evidence,
+        commitSha: 'a'.repeat(40),
+        version: '1.2.3',
+        ...securityAuthority,
+        expectedE2EArtifactSha256: shaFor('zip'),
+        expectedSigningIdentity:
+          'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+        now: () => new Date('2026-07-23T01:00:00.000Z'),
+      }),
+    ).toThrow(/live verified runtime proof/i);
+  });
+
+  it('never finalizes private-runner evidence as release security proof', () => {
+    const root = tempRoot();
+    const artifacts = path.join(root, 'artifacts');
+    buildReleaseSecurityArtifacts({
       root,
-      dmgPath: dmg,
-      zipPath: zip,
-      evidencePath: evidence,
+      outDir: artifacts,
+      runCommand: (args) => ({
+        status: 0,
+        stdout: JSON.stringify(
+          args[0] === 'audit'
+            ? { metadata: { vulnerabilities: { total: 0 } } }
+            : { bomFormat: 'CycloneDX', components: [] },
+        ),
+        stderr: '',
+      }),
       commitSha: 'a'.repeat(40),
-      version: '1.2.3',
       ...securityAuthority,
-      expectedE2EArtifactSha256: shaFor('zip'),
-      expectedSigningIdentity:
-        'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
-      now: () => new Date('2026-07-23T01:00:00.000Z'),
+      runtime: { node: 'v22.23.1', npm: '12.0.0' },
     });
-    expect(finalized.releaseArtifacts).toMatchObject({
-      dmg: { sha256: shaFor('dmg') },
-      zip: { sha256: shaFor('zip') },
-      e2eEvidence: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) },
-    });
+    const dmg = path.join(root, 'NexusIDE.dmg');
+    const zip = path.join(root, 'NexusIDE.zip');
+    const evidence = path.join(root, 'private-runner.json');
+    fs.writeFileSync(dmg, 'dmg');
+    fs.writeFileSync(zip, 'zip');
+    fs.writeFileSync(
+      evidence,
+      JSON.stringify(
+        makeValidRealMissionEvidence({
+          launchSurface: 'private-runner',
+        }),
+      ),
+    );
+
+    expect(() =>
+      finalizeReleaseSecurityArtifacts({
+        securityDir: artifacts,
+        root,
+        dmgPath: dmg,
+        zipPath: zip,
+        evidencePath: evidence,
+        commitSha: 'a'.repeat(40),
+        version: '1.2.3',
+        ...securityAuthority,
+        expectedE2EArtifactSha256: shaFor('zip'),
+        expectedSigningIdentity:
+          'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+      }),
+    ).toThrow(/product-wizard|diagnostic-only|physical/i);
+    expect(
+      fs.existsSync(path.join(artifacts, 'real-mission-evidence.json')),
+    ).toBe(false);
   });
 
   it('rejects a structurally forged PASS receipt during finalization', () => {

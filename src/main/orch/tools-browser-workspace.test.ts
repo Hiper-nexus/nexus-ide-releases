@@ -16,7 +16,36 @@ const stubs = vi.hoisted(() => ({
   requestBrowserPane: vi.fn(async () => ({ ok: true, paneId: 'browser-1' })),
   requestPaneClose: vi.fn(async () => true),
   loadBrowser: vi.fn(async () => ({ url: 'https://example.com' })),
-  captureBrowserScreenshot: vi.fn(async () => ({ path: '/runtime/shot.png' })),
+  readBrowserPage: vi.fn(async () => ({
+    paneId: 'browser-1',
+    url: 'http://127.0.0.1:1234/',
+    bodyText: '',
+  })),
+  inspectBrowserElement: vi.fn(async () => ({ paneId: 'browser-1', ref: 'r1' })),
+  waitForBrowser: vi.fn(async () => ({
+    paneId: 'browser-1',
+    matched: true as const,
+    condition: 'load' as const,
+    elapsedMs: 1,
+  })),
+  captureBrowserScreenshot: vi.fn(async () => ({
+    path: '/runtime/shot.png',
+    url: 'http://127.0.0.1:1234/',
+  })),
+  assertBrowserAtExactUrl: vi.fn(),
+  resolveReviewAuthority: vi.fn(() => null as {
+    reviewSessionId: string;
+    reviewerSessionId: string;
+    surface: {
+      paneId: string;
+      previewId: string;
+      url: string;
+      missionId: string;
+      scope: ProjectExecutionScope;
+      executionScope: ProjectExecutionScope;
+    };
+  } | null),
+  recordReviewInspection: vi.fn(),
 }));
 
 vi.mock('./workspace-path', () => ({
@@ -29,13 +58,17 @@ vi.mock('./preview-server', () => ({
   listPreviews: stubs.listPreviews,
 }));
 vi.mock('../browser/browser-manager', () => ({
+  assertBrowserAtExactUrl: stubs.assertBrowserAtExactUrl,
   captureBrowserScreenshot: stubs.captureBrowserScreenshot,
   clickBrowserElement: vi.fn(),
   fillBrowserElement: vi.fn(),
   inspectBrowserElement: vi.fn(),
   loadBrowser: stubs.loadBrowser,
-  readBrowserPage: vi.fn(),
-  waitForBrowser: vi.fn(),
+  readBrowserPage: stubs.readBrowserPage,
+  waitForBrowser: stubs.waitForBrowser,
+  scrollBrowserPane: vi.fn(),
+  pressBrowserKey: vi.fn(),
+  hoverBrowserElement: vi.fn(),
 }));
 vi.mock('../perf/perf-ipc', () => ({ collectPerfSnapshot: vi.fn() }));
 vi.mock('./pane-registry', () => ({
@@ -52,6 +85,11 @@ vi.mock('./tool-util', () => ({
     if (typeof args[key] !== 'string' || !args[key]) throw new Error(`missing ${key}`);
     return args[key] as string;
   },
+  strArray: () => [],
+}));
+vi.mock('./automated-review-browser-authority', () => ({
+  resolveAutomatedReviewBrowserAuthority: stubs.resolveReviewAuthority,
+  recordAutomatedReviewBrowserInspection: stubs.recordReviewInspection,
 }));
 
 import { buildBrowserTools } from './tools-browser';
@@ -73,6 +111,16 @@ describe('preview tool workspace confinement', () => {
     stubs.resolveCwdForScope.mockReturnValue('/workspace/a/dist');
     stubs.requestBrowserPane.mockResolvedValue({ ok: true, paneId: 'browser-1' });
     stubs.requestPaneClose.mockResolvedValue(true);
+    stubs.resolveReviewAuthority.mockReturnValue(null);
+    stubs.readBrowserPage.mockResolvedValue({
+      paneId: 'browser-1',
+      url: 'http://127.0.0.1:1234/',
+      bodyText: '',
+    });
+    stubs.captureBrowserScreenshot.mockResolvedValue({
+      path: '/runtime/shot.png',
+      url: 'http://127.0.0.1:1234/',
+    });
   });
 
   it('serves only the canonical directory resolved inside the captured scope', async () => {
@@ -105,6 +153,110 @@ describe('preview tool workspace confinement', () => {
     expect(stubs.requestBrowserPane).toHaveBeenCalledWith(
       expect.objectContaining({ scope }),
     );
+  });
+
+  it('never opens a new pane for a common worker', async () => {
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
+    const worker = {
+      role: 'worker',
+      scope,
+      missionId: 'mission-a',
+    } as never;
+
+    await expect(
+      tool.handler(
+        { paneId: 'browser-1', url: 'http://127.0.0.1:1234/' },
+        worker,
+      ),
+    ).rejects.toThrow(/workers cannot open browser panes/i);
+    expect(stubs.requestBrowserPane).not.toHaveBeenCalled();
+    expect(stubs.loadBrowser).not.toHaveBeenCalled();
+  });
+
+  it('lets a verified reviewer reload only its already-bound local pane and URL', async () => {
+    const url = 'http://127.0.0.1:1234/';
+    const authority = {
+      reviewSessionId: '11111111-1111-4111-8111-111111111111',
+      reviewerSessionId: 'reviewer-session',
+      surface: {
+        paneId: 'browser-review',
+        previewId: 'preview-review',
+        url,
+        missionId: 'mission-a',
+        scope,
+        executionScope: scope,
+      },
+    };
+    stubs.resolveReviewAuthority.mockReturnValue(authority);
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
+    const worker = {
+      role: 'worker',
+      scope,
+      missionId: 'mission-a',
+    } as never;
+
+    await expect(
+      tool.handler({ paneId: 'browser-review', url }, worker),
+    ).resolves.toMatchObject({ ok: true, paneId: 'browser-review' });
+    expect(stubs.requestBrowserPane).not.toHaveBeenCalled();
+    expect(stubs.loadBrowser).toHaveBeenCalledWith(
+      'browser-review',
+      url,
+      expect.objectContaining({
+        scope,
+        privateAccessConfirmed: false,
+      }),
+    );
+    expect(stubs.recordReviewInspection).toHaveBeenCalledWith(
+      authority,
+      'open',
+    );
+
+    stubs.loadBrowser.mockClear();
+    await expect(
+      tool.handler(
+        { paneId: 'browser-review', url: 'https://attacker.example/' },
+        worker,
+      ),
+    ).rejects.toThrow(/differs from its bound local preview/i);
+    expect(stubs.loadBrowser).not.toHaveBeenCalled();
+  });
+
+  it('does not count a browser read whose document URL diverged from the bound preview', async () => {
+    const url = 'http://127.0.0.1:1234/';
+    const authority = {
+      reviewSessionId: '11111111-1111-4111-8111-111111111111',
+      reviewerSessionId: 'reviewer-session',
+      surface: {
+        paneId: 'browser-review',
+        previewId: 'preview-review',
+        url,
+        missionId: 'mission-a',
+        scope,
+        executionScope: scope,
+      },
+    };
+    stubs.resolveReviewAuthority.mockReturnValue(authority);
+    stubs.readBrowserPage.mockResolvedValueOnce({
+      paneId: 'browser-review',
+      url: 'https://attacker.example/',
+      bodyText: 'not the candidate render',
+    });
+    const tool = buildBrowserTools().find(
+      (item) => item.name === 'nexus_browser_read',
+    )!;
+
+    await expect(
+      tool.handler(
+        { paneId: 'browser-review' },
+        {
+          role: 'worker',
+          scope,
+          missionId: 'mission-a',
+        } as never,
+      ),
+    ).rejects.toThrow(/read came from another URL/i);
+    expect(stubs.recordReviewInspection).not.toHaveBeenCalled();
   });
 
   it('closes a newly created blank pane when caller authority expires before navigation', async () => {

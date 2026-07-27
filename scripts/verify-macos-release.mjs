@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { listPackage } from '@electron/asar';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const DEFAULT_BUNDLE_ID = 'com.nexuside.app';
 export const DEFAULT_SIGNING_IDENTITY =
   'Developer ID Application: Cleofas Pereira rocha';
+export const RESPONSIBILITY_SUPERVISOR_NAME = 'nexus-pty-supervisor';
+const CS_RUNTIME_FLAG = 0x10000;
+const SUPPORTED_MACHO_ARCHITECTURES = new Set(['arm64', 'x86_64']);
 
 const REQUIRED_FUSES = [
   'RunAsNode is Disabled',
@@ -61,10 +65,16 @@ export function assertReleaseArtifacts(paths) {
 
 export function parseCodesignMetadata(output) {
   const authorities = [];
+  let identifier = '';
   let teamIdentifier = '';
   let secureTimestamp = '';
   let signedTime = '';
+  let codeDirectoryFlags = 0;
+  let codeDirectoryFlagNames = [];
   for (const line of output.split(/\r?\n/u)) {
+    if (line.startsWith('Identifier=')) {
+      identifier = line.slice('Identifier='.length).trim();
+    }
     if (line.startsWith('Authority=')) {
       authorities.push(line.slice('Authority='.length).trim());
     }
@@ -77,8 +87,24 @@ export function parseCodesignMetadata(output) {
     if (line.startsWith('Signed Time=')) {
       signedTime = line.slice('Signed Time='.length).trim();
     }
+    const flags = /\bflags=0x([0-9a-f]+)(?:\(([^)]*)\))?/iu.exec(line);
+    if (flags) {
+      codeDirectoryFlags = Number.parseInt(flags[1], 16);
+      codeDirectoryFlagNames = (flags[2] ?? '')
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean);
+    }
   }
-  return { authorities, teamIdentifier, secureTimestamp, signedTime };
+  return {
+    identifier,
+    authorities,
+    teamIdentifier,
+    secureTimestamp,
+    signedTime,
+    codeDirectoryFlags,
+    codeDirectoryFlagNames,
+  };
 }
 
 export function assertSignatureMetadata(metadata, teamId, identityName) {
@@ -138,8 +164,19 @@ export function expectedEntitlementKeysForPath(filePath, appPath) {
   return [];
 }
 
-export function assertPackagedSmokeOutput(output) {
-  for (const proof of ['[smoke] renderer-mounted', '[smoke] functional-ready']) {
+export function assertPackagedSmokeOutput(
+  output,
+  platform = process.platform,
+) {
+  const required = [
+    '[smoke] renderer-mounted',
+    '[smoke] functional-ready',
+    '[smoke] shutdown-complete',
+  ];
+  if (platform === 'darwin') {
+    required.push('[smoke] darwin-pty-supervisor-ready');
+  }
+  for (const proof of required) {
     if (!output.includes(proof)) {
       throw new Error(`artifact smoke lacked ${proof} proof`);
     }
@@ -147,12 +184,145 @@ export function assertPackagedSmokeOutput(output) {
 }
 
 export function parseLipoArchitectures(output) {
-  return [...new Set(
-    String(output)
-      .trim()
-      .split(/\s+/u)
-      .filter((value) => value === 'arm64' || value === 'x86_64'),
+  const normalized = String(output).trim();
+  if (!normalized) {
+    throw new Error('lipo did not report any Mach-O architectures');
+  }
+  const architectures = normalized.split(/\s+/u);
+  const unsupported = [...new Set(
+    architectures.filter(
+      (architecture) => !SUPPORTED_MACHO_ARCHITECTURES.has(architecture),
+    ),
   )].sort();
+  if (unsupported.length !== 0) {
+    throw new Error(
+      `lipo reported unsupported Mach-O architecture(s): ` +
+        unsupported.join(', '),
+    );
+  }
+  const seen = new Set();
+  const duplicates = [...new Set(
+    architectures.filter((architecture) => {
+      if (seen.has(architecture)) return true;
+      seen.add(architecture);
+      return false;
+    }),
+  )].sort();
+  if (duplicates.length !== 0) {
+    throw new Error(
+      `lipo reported duplicate Mach-O architecture(s): ` +
+        duplicates.join(', '),
+    );
+  }
+  return [...architectures].sort();
+}
+
+export function buildCodesignSliceInvocations(binaryPath, architectures) {
+  const expectedArchitectures = parseLipoArchitectures(
+    architectures.join(' '),
+  );
+  return expectedArchitectures.map((architecture) => ({
+    architecture,
+    verify: {
+      command: '/usr/bin/codesign',
+      args: [
+        '--verify',
+        '--strict',
+        '--verbose=2',
+        '-a',
+        architecture,
+        binaryPath,
+      ],
+    },
+    metadata: {
+      command: '/usr/bin/codesign',
+      args: [
+        '-dv',
+        '--verbose=4',
+        '-a',
+        architecture,
+        binaryPath,
+      ],
+    },
+    entitlements: {
+      command: '/usr/bin/codesign',
+      args: [
+        '-d',
+        '--entitlements',
+        '-',
+        '--xml',
+        '-a',
+        architecture,
+        binaryPath,
+      ],
+    },
+  }));
+}
+
+export function expectedMachOArchitecturesForPath(
+  candidate,
+  appPath,
+  expectedArchitecture,
+) {
+  const responsibilitySupervisor = path.join(
+    path.resolve(appPath),
+    'Contents',
+    'Resources',
+    RESPONSIBILITY_SUPERVISOR_NAME,
+  );
+  if (path.resolve(candidate) === responsibilitySupervisor) {
+    return ['arm64', 'x86_64'];
+  }
+  return [expectedArchitecture];
+}
+
+export function assertSingleResponsibilitySupervisorPath(paths, appPath) {
+  const expected = path.join(
+    path.resolve(appPath),
+    'Contents',
+    'Resources',
+    RESPONSIBILITY_SUPERVISOR_NAME,
+  );
+  const normalized = paths.map((candidate) => path.resolve(candidate));
+  if (normalized.length !== 1 || normalized[0] !== expected) {
+    throw new Error(
+      `release must contain exactly one ${RESPONSIBILITY_SUPERVISOR_NAME} ` +
+        `at ${expected}; found ${normalized.join(', ') || '<none>'}`,
+    );
+  }
+  return expected;
+}
+
+export function assertNoBundledNodePtySpawnHelpers(paths) {
+  const forbidden = paths.filter(
+    (candidate) => path.basename(candidate) === 'spawn-helper',
+  );
+  if (forbidden.length !== 0) {
+    throw new Error(
+      `release contains forbidden node-pty spawn-helper entries: ` +
+        forbidden.join(', '),
+    );
+  }
+}
+
+export function assertResponsibilitySupervisorSignatureMetadata(
+  metadata,
+  teamId,
+  identityName,
+) {
+  assertSignatureMetadata(metadata, teamId, identityName);
+  if (metadata.identifier !== RESPONSIBILITY_SUPERVISOR_NAME) {
+    throw new Error(
+      `responsibility supervisor Identifier mismatch: expected ` +
+        `${RESPONSIBILITY_SUPERVISOR_NAME}, got ` +
+        `${metadata.identifier || '<missing>'}`,
+    );
+  }
+  if ((metadata.codeDirectoryFlags & CS_RUNTIME_FLAG) !== CS_RUNTIME_FLAG) {
+    throw new Error(
+      'responsibility supervisor is missing the hardened runtime code flag',
+    );
+  }
 }
 
 export function assertMatchingReleaseArchitectures(
@@ -217,6 +387,22 @@ async function collectRegularFiles(root) {
   return files;
 }
 
+async function collectEntriesNamed(root, name) {
+  const matches = [];
+  async function visit(directory) {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.name === name) matches.push(candidate);
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
+        await visit(candidate);
+      }
+    }
+  }
+  await visit(root);
+  return matches;
+}
+
 async function discoverArtifacts(root) {
   const candidates = await collectRegularFiles(root);
   return assertReleaseArtifacts(candidates);
@@ -250,10 +436,12 @@ function readPlistValue(infoPlist, key) {
   ]).stdout.trim();
 }
 
-function readEntitlements(binaryPath) {
-  const xml = runChecked('/usr/bin/codesign', [
+function readEntitlements(binaryPath, invocation) {
+  const command = invocation?.command ?? '/usr/bin/codesign';
+  const args = invocation?.args ?? [
     '-d', '--entitlements', '-', '--xml', binaryPath,
-  ]).stdout.trim();
+  ];
+  const xml = runChecked(command, args).stdout.trim();
   if (!xml) return {};
   const json = runChecked('/usr/bin/plutil', [
     '-convert', 'json', '-o', '-', '-',
@@ -261,32 +449,138 @@ function readEntitlements(binaryPath) {
   return JSON.parse(json);
 }
 
-function assertExactEntitlements(binaryPath, appPath) {
-  const actual = Object.keys(readEntitlements(binaryPath)).sort();
+function assertExactEntitlements(
+  binaryPath,
+  appPath,
+  invocation,
+  architecture = '',
+) {
+  const actual = Object.keys(
+    readEntitlements(binaryPath, invocation),
+  ).sort();
   const expected = expectedEntitlementKeysForPath(binaryPath, appPath).sort();
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(
-      `entitlements mismatch for ${binaryPath}: expected ${expected.join(', ') || '<none>'}; got ${actual.join(', ') || '<none>'}`,
+      `entitlements mismatch for ${binaryPath}` +
+        `${architecture ? ` [${architecture}]` : ''}: expected ` +
+        `${expected.join(', ') || '<none>'}; got ` +
+        `${actual.join(', ') || '<none>'}`,
     );
   }
 }
 
+function verifyCodesignSlices(
+  binaryPath,
+  appPath,
+  signing,
+  architectures,
+  assertMetadata,
+) {
+  for (const invocation of buildCodesignSliceInvocations(
+    binaryPath,
+    architectures,
+  )) {
+    runChecked(invocation.verify.command, invocation.verify.args);
+    const metadata = parseCodesignMetadata(
+      runChecked(
+        invocation.metadata.command,
+        invocation.metadata.args,
+      ).combined,
+    );
+    assertMetadata(metadata, signing.teamId, signing.identityName);
+    assertExactEntitlements(
+      binaryPath,
+      appPath,
+      invocation.entitlements,
+      invocation.architecture,
+    );
+  }
+}
+
+async function verifyResponsibilitySupervisor(appPath, signing) {
+  const supervisorPath = assertSingleResponsibilitySupervisorPath(
+    await collectEntriesNamed(appPath, RESPONSIBILITY_SUPERVISOR_NAME),
+    appPath,
+  );
+  const stats = await fs.lstat(supervisorPath);
+  const expectedRealPath = path.join(
+    await fs.realpath(appPath),
+    'Contents',
+    'Resources',
+    RESPONSIBILITY_SUPERVISOR_NAME,
+  );
+  if (
+    stats.isSymbolicLink() ||
+    !stats.isFile() ||
+    (stats.mode & 0o111) === 0 ||
+    (await fs.realpath(supervisorPath)) !== expectedRealPath
+  ) {
+    throw new Error(
+      'responsibility supervisor must be one exact regular executable file',
+    );
+  }
+  const fileType = runChecked('/usr/bin/file', ['-b', supervisorPath]).stdout;
+  if (!fileType.includes('Mach-O')) {
+    throw new Error('responsibility supervisor is not a Mach-O executable');
+  }
+  const architectures = parseLipoArchitectures(
+    runChecked('/usr/bin/lipo', ['-archs', supervisorPath]).stdout,
+  );
+  if (JSON.stringify(architectures) !== JSON.stringify(['arm64', 'x86_64'])) {
+    throw new Error(
+      `responsibility supervisor must be universal arm64+x86_64; got ` +
+        `${architectures.join(',') || '<none>'}`,
+    );
+  }
+  runChecked('/usr/bin/codesign', [
+    '--verify',
+    '--strict',
+    '--verbose=2',
+    supervisorPath,
+  ]);
+  const metadata = parseCodesignMetadata(
+    runChecked('/usr/bin/codesign', [
+      '-dv',
+      '--verbose=4',
+      supervisorPath,
+    ]).combined,
+  );
+  assertResponsibilitySupervisorSignatureMetadata(
+    metadata,
+    signing.teamId,
+    signing.identityName,
+  );
+  assertExactEntitlements(supervisorPath, appPath);
+  return supervisorPath;
+}
+
 async function verifyMachOBinaries(appPath, signing, expectedArchitecture) {
+  const responsibilitySupervisor = await verifyResponsibilitySupervisor(
+    appPath,
+    signing,
+  );
   const files = await collectRegularFiles(appPath);
   let count = 0;
+  let responsibilitySupervisorIdentityCount = 0;
   for (const candidate of files) {
     const fileType = runChecked('/usr/bin/file', ['-b', candidate]).stdout;
     if (!fileType.includes('Mach-O')) continue;
     const architectures = parseLipoArchitectures(
       runChecked('/usr/bin/lipo', ['-archs', candidate]).stdout,
     );
+    const expectedArchitectures = expectedMachOArchitecturesForPath(
+      candidate,
+      appPath,
+      expectedArchitecture,
+    );
     if (
-      architectures.length !== 1 ||
-      architectures[0] !== expectedArchitecture
+      JSON.stringify(architectures) !==
+      JSON.stringify(expectedArchitectures)
     ) {
       throw new Error(
-        `Mach-O architecture mismatch for ${candidate}: expected only ` +
-          `${expectedArchitecture}, got ${architectures.join(',') || '<none>'}`,
+        `Mach-O architecture mismatch for ${candidate}: expected exactly ` +
+          `${expectedArchitectures.join(',')}, got ` +
+          `${architectures.join(',') || '<none>'}`,
       );
     }
     count += 1;
@@ -296,10 +590,33 @@ async function verifyMachOBinaries(appPath, signing, expectedArchitecture) {
     const metadata = parseCodesignMetadata(runChecked('/usr/bin/codesign', [
       '-dv', '--verbose=4', candidate,
     ]).combined);
+    if (metadata.identifier === RESPONSIBILITY_SUPERVISOR_NAME) {
+      responsibilitySupervisorIdentityCount += 1;
+      if (path.resolve(candidate) !== responsibilitySupervisor) {
+        throw new Error(
+          `responsibility supervisor identity was copied outside its exact path: ${candidate}`,
+        );
+      }
+    }
     assertSignatureMetadata(metadata, signing.teamId, signing.identityName);
     assertExactEntitlements(candidate, appPath);
+    verifyCodesignSlices(
+      candidate,
+      appPath,
+      signing,
+      expectedArchitectures,
+      path.resolve(candidate) === responsibilitySupervisor
+        ? assertResponsibilitySupervisorSignatureMetadata
+        : assertSignatureMetadata,
+    );
   }
   if (count === 0) throw new Error(`no Mach-O files found in ${appPath}`);
+  if (responsibilitySupervisorIdentityCount !== 1) {
+    throw new Error(
+      `release must contain exactly one signed responsibility supervisor; ` +
+        `found ${responsibilitySupervisorIdentityCount}`,
+    );
+  }
 }
 
 async function verifyApp(appPath, expected, signing) {
@@ -312,6 +629,18 @@ async function verifyApp(appPath, expected, signing) {
   if (version !== expected.version) {
     throw new Error(`bundle version mismatch: expected ${expected.version}, got ${version}`);
   }
+  assertNoBundledNodePtySpawnHelpers(
+    [
+      ...(await collectEntriesNamed(appPath, 'spawn-helper')),
+      ...listPackage(
+        path.join(appPath, 'Contents', 'Resources', 'app.asar'),
+      )
+        .filter((entry) =>
+          /(?:^|\/)spawn-helper$/u.test(entry.replaceAll('\\', '/')),
+        )
+        .map((entry) => `app.asar:${entry}`),
+    ],
+  );
 
   runChecked('/usr/bin/codesign', [
     '--verify', '--deep', '--strict', '--verbose=2', appPath,
@@ -341,7 +670,7 @@ async function verifyApp(appPath, expected, signing) {
   const smoke = runChecked(process.execPath, [
     path.join(scriptDir, 'smoke-packaged-app.mjs'), '--app', appPath,
   ]).combined;
-  assertPackagedSmokeOutput(smoke);
+  assertPackagedSmokeOutput(smoke, 'darwin');
   const mainExecutable = path.join(
     appPath,
     'Contents',

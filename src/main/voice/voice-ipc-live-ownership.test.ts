@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VOICE_CHANNELS } from "../../shared/voice-channels";
 import type { ProjectExecutionScope } from "../../shared/types";
 
@@ -506,7 +506,38 @@ beforeEach(() => {
   registerVoiceIpc(runtimeManager);
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("Voice Live IPC ownership", () => {
+  it.each([
+    ["real mission", "NEXUS_REAL_MISSION_E2E"],
+    ["explicit dev kill-switch", "NEXUS_DISABLE_VOICE_CAPTURE"],
+  ])("does not arm wake or Live during %s automation", async (_label, envName) => {
+    closeVoiceIpc();
+    vi.stubEnv(envName, "1");
+    hotkeyDeps.registerVoiceHotkey.mockClear();
+    registerVoiceIpc(runtimeManager);
+
+    const owner = new TestRenderer(80);
+    scopeDeps.scopes.set(owner.id, scopeA);
+    electronDeps.focusedWindow = { webContents: owner };
+
+    expect(invoke(VOICE_CHANNELS.getInfo, owner)).toMatchObject({
+      captureAllowed: false,
+      hotkeyArmed: false,
+    });
+    send(VOICE_CHANNELS.wakeAudio, owner, pcmFrame());
+    expect(wakeEngineDeps.instances).toHaveLength(0);
+    expect(hotkeyDeps.registerVoiceHotkey).not.toHaveBeenCalled();
+    await expect(
+      Promise.resolve().then(() =>
+        invoke(VOICE_CHANNELS.liveStart, owner, { reason: "wake" }),
+      ),
+    ).rejects.toThrow(/voice capture disabled/i);
+  });
+
   it("binds classic conversation and memory to the request scope", async () => {
     const owner = new TestRenderer(81);
     scopeDeps.scopes.set(owner.id, scopeA);
@@ -659,6 +690,28 @@ describe("Voice Live IPC ownership", () => {
       });
     },
   );
+
+  it("keeps passive prewarm credential-free and leaves ownership unclaimed", async () => {
+    const ownerA = new TestRenderer(93);
+    const ownerB = new TestRenderer(94);
+    scopeDeps.scopes.set(ownerA.id, scopeA);
+    scopeDeps.scopes.set(ownerB.id, scopeB);
+
+    await expect(
+      invoke(VOICE_CHANNELS.livePrewarm, ownerA, { enabled: true }),
+    ).resolves.toMatchObject({ status: "dormant" });
+    expect(liveTransportDeps.onStart).not.toHaveBeenCalled();
+
+    // A passive mount must not reserve Live authority. The first explicit turn
+    // can still claim it for its current project.
+    await expect(
+      invoke(VOICE_CHANNELS.liveStart, ownerB, { reason: "wake" }),
+    ).resolves.toMatchObject({ status: "listening" });
+    expect(liveTransportDeps.onStart).toHaveBeenCalledWith({
+      greeting: undefined,
+      freshTurn: true,
+    });
+  });
 
   it("claims live ownership from smokeTest without a prior liveStart", async () => {
     const owner = new TestRenderer(99);
@@ -823,6 +876,28 @@ describe("Voice Live IPC ownership", () => {
       invoke(VOICE_CHANNELS.liveQuiesce, owner, { reason: "classic-tts" }),
     ).toMatchObject({ status: expect.any(String) });
     expect(liveTransportDeps.hardStop).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["stop", VOICE_CHANNELS.liveStop],
+    ["hard teardown", VOICE_CHANNELS.liveHardTeardown],
+  ])("treats repeated %s without an owner as a privacy-safe success", async (_label, channel) => {
+    const owner = new TestRenderer(405);
+    scopeDeps.scopes.set(owner.id, scopeA);
+
+    await invoke(VOICE_CHANNELS.liveStart, owner, { reason: "manual" });
+    await invoke(VOICE_CHANNELS.liveQuiesce, owner, { reason: "classic-action" });
+
+    expect(invoke(channel, owner)).toMatchObject({
+      status: "dormant",
+      sessionId: null,
+      realtimeReady: false,
+    });
+    expect(invoke(channel, owner)).toMatchObject({
+      status: "dormant",
+      sessionId: null,
+      realtimeReady: false,
+    });
   });
 
   it.each([
@@ -1134,6 +1209,45 @@ describe("Voice PTT and wake multi-window isolation", () => {
 
     expect(windowA.send).not.toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
     expect(windowB.send).not.toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
+  });
+
+  it("releases wake ownership and rejects its late detector callback on stop", () => {
+    voiceConfig.wakeWord.enabled = true;
+    const owner = new TestRenderer(763);
+    scopeDeps.scopes.set(owner.id, scopeA);
+    electronDeps.focusedWindow = { webContents: owner };
+
+    send(VOICE_CHANNELS.wakeAudio, owner, pcmFrame());
+    const engine = wakeEngineDeps.instances[0]!;
+    const staleDetected = wakeEngineDeps.lastOnDetected;
+
+    send(VOICE_CHANNELS.wakeStop, owner);
+    send(VOICE_CHANNELS.wakeStop, owner);
+
+    expect(engine.dispose).toHaveBeenCalledOnce();
+    staleDetected?.();
+    expect(owner.send).not.toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
+
+    // Explicit renderer reactivation resumes PCM and claims a fresh generation.
+    send(VOICE_CHANNELS.wakeAudio, owner, pcmFrame());
+    expect(wakeEngineDeps.instances).toHaveLength(2);
+  });
+
+  it("does not let another renderer stop the current wake owner", () => {
+    voiceConfig.wakeWord.enabled = true;
+    const owner = new TestRenderer(764);
+    const unrelated = new TestRenderer(765);
+    scopeDeps.scopes.set(owner.id, scopeA);
+    scopeDeps.scopes.set(unrelated.id, scopeB);
+    electronDeps.focusedWindow = { webContents: owner };
+
+    send(VOICE_CHANNELS.wakeAudio, owner, pcmFrame());
+    const engine = wakeEngineDeps.instances[0]!;
+    send(VOICE_CHANNELS.wakeStop, unrelated);
+
+    expect(engine.dispose).not.toHaveBeenCalled();
+    wakeEngineDeps.lastOnDetected?.();
+    expect(owner.send).toHaveBeenCalledWith(VOICE_CHANNELS.wakeDetected);
   });
 
   it("disposes the previous WakeEngine on a valid intentional owner switch", () => {

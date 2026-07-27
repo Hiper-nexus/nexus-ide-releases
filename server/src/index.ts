@@ -10,8 +10,9 @@ import { buildWebhookRouter } from './billing/webhook-routes';
 import { buildLicenseRouter } from './billing/license-routes';
 import { buildTeamRouter } from './team/team-routes';
 import { buildWebPages } from './web/pages';
-import { errorHandler } from './middleware/errors';
+import { errorHandler, notFoundHandler } from './middleware/errors';
 import { rateLimit } from './middleware/rate-limit';
+import { securityHeaders } from './middleware/security-headers';
 import { buildCronRouter } from './cron/cron-routes';
 import { buildSyncRouter } from './sync/sync-routes';
 import { parseEnv } from './env';
@@ -60,6 +61,7 @@ export interface ServerBootDependencies {
 export function createApp(deps?: AppDeps, options: AppOptions = {}): Express {
   const app = express();
   app.disable('x-powered-by');
+  app.use(securityHeaders);
   // Um proxy/LB na frente (deploy padrão): sem isso o rate-limit veria o IP
   // do proxy para TODOS os usuários (bucket único = DoS global). Ajuste se a
   // topologia tiver mais saltos.
@@ -93,6 +95,7 @@ export function createApp(deps?: AppDeps, options: AppOptions = {}): Express {
     app.use('/v1', buildWebhookRouter({ db: deps.db, env: deps.env, stripe: deps.stripe }));
   }
   app.use(buildWebPages());
+  app.use(notFoundHandler);
   app.use(errorHandler); // rejeição async → 500 JSON (nunca request pendurada)
   return app;
 }

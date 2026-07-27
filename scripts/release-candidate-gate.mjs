@@ -2,11 +2,14 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { runPackagedRealMission } from './e2e-real-mission.mjs';
+import {
+  assertRealMissionReleaseEvidence,
+  assertVerifiedRealMissionRuntimeProof,
+  runPackagedRealMissionProductWizard,
+} from './e2e-real-mission.mjs';
 import {
   assertReleaseSecurityManifest,
   buildReleaseSecurityArtifactsWithPinnedNpm,
@@ -17,6 +20,11 @@ import {
   collectReleaseRepositoryState,
   readAndAssertReleaseAuthority,
 } from './release-authority.mjs';
+import {
+  closePrivateArtifactSnapshot,
+  openPrivateArtifactSnapshot,
+  verifyPrivateArtifactSnapshot,
+} from './private-artifact-snapshot.mjs';
 
 export { assertReleaseRepositoryState } from './release-authority.mjs';
 
@@ -24,6 +32,36 @@ const EXPECTED_TEAM_ID = '35P5XL3JN6';
 const EXPECTED_PROFILE = 'nexus-notary';
 const EXPECTED_IDENTITY =
   'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)';
+const RELEASE_CANDIDATE_PRODUCTION_AUTHORITY = Symbol(
+  'release-candidate-production-authority',
+);
+const AUTHORITATIVE_RELEASE_CANDIDATES = new WeakMap();
+
+export function assertAuthoritativeReleaseCandidate(candidate) {
+  if (
+    !candidate ||
+    typeof candidate !== 'object' ||
+    !AUTHORITATIVE_RELEASE_CANDIDATES.has(candidate)
+  ) {
+    throw new Error(
+      'release candidate requires live authority from this physical gate run',
+    );
+  }
+  const authority = AUTHORITATIVE_RELEASE_CANDIDATES.get(candidate);
+  const currentReceiptSha256 = createHash('sha256')
+    .update(JSON.stringify(candidate.receipt))
+    .digest('hex');
+  if (
+    currentReceiptSha256 !== authority.receiptSha256 ||
+    candidate.evidencePath !== authority.evidencePath ||
+    candidate.artifacts?.dmg !== authority.dmgPath ||
+    candidate.artifacts?.zip !== authority.zipPath ||
+    candidate.runtimeProof !== authority.runtimeProof
+  ) {
+    throw new Error('live release candidate authority was mutated');
+  }
+  return candidate;
+}
 
 function sha256File(filePath) {
   return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
@@ -106,6 +144,7 @@ function defaultRunChecked(command, args, options = {}) {
     shell: false,
     timeout: options.timeout ?? 30 * 60_000,
     maxBuffer: 64 * 1024 * 1024,
+    ...(options.stdio ? { stdio: options.stdio } : {}),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -204,19 +243,39 @@ async function findSinglePackagedApp(root) {
   return apps[0];
 }
 
-async function withExtractedZipApp(zipPath, callback, runChecked) {
-  const temporaryRoot = await fsp.mkdtemp(
-    path.join(os.tmpdir(), 'nexus-release-e2e-'),
-  );
+async function withExtractedZipApp(
+  zipPath,
+  expectedSha256,
+  callback,
+  runChecked,
+) {
+  const snapshot = openPrivateArtifactSnapshot(zipPath, {
+    prefix: 'nexus-release-e2e-',
+  });
   try {
+    if (snapshot.sha256 !== expectedSha256) {
+      throw new Error(
+        'private ZIP snapshot diverges from the signed candidate seal',
+      );
+    }
+    const extractionRoot = path.join(snapshot.temporaryRoot, 'extracted');
+    await fsp.mkdir(extractionRoot, { mode: 0o700 });
     runChecked(
       '/usr/bin/ditto',
-      ['-x', '-k', zipPath, temporaryRoot],
-      { timeout: 5 * 60_000 },
+      ['-x', '-k', '/dev/fd/3', extractionRoot],
+      {
+        timeout: 5 * 60_000,
+        stdio: ['ignore', 'pipe', 'pipe', snapshot.fd],
+      },
     );
-    return await callback(await findSinglePackagedApp(temporaryRoot));
+    verifyPrivateArtifactSnapshot(snapshot);
+    const result = await callback(
+      await findSinglePackagedApp(extractionRoot),
+    );
+    verifyPrivateArtifactSnapshot(snapshot);
+    return result;
   } finally {
-    await fsp.rm(temporaryRoot, { recursive: true, force: true });
+    closePrivateArtifactSnapshot(snapshot);
   }
 }
 
@@ -302,16 +361,33 @@ function readBuildReceipt(root) {
   return JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
 }
 
-export async function runReleaseCandidateGate(options = {}) {
+async function runReleaseCandidateGateCore(
+  options = {},
+  productionAuthority = null,
+) {
+  const authoritative =
+    productionAuthority === RELEASE_CANDIDATE_PRODUCTION_AUTHORITY;
   const root = path.resolve(options.root ?? process.cwd());
   const environment = options.environment ?? process.env;
   const runChecked = options.runChecked ?? defaultRunChecked;
-  const runE2E = options.runE2E ?? runPackagedRealMission;
+  const runUiE2E = authoritative
+    ? runPackagedRealMissionProductWizard
+    : options.runUiE2E;
   const extractE2EApp =
     options.extractE2EApp ??
-    ((zipPath, callback) =>
-      withExtractedZipApp(zipPath, callback, runChecked));
+    ((zipPath, expectedSha256, callback) =>
+      withExtractedZipApp(
+        zipPath,
+        expectedSha256,
+        callback,
+        runChecked,
+      ));
   const now = options.now ?? (() => new Date());
+  if (!authoritative && typeof runUiE2E !== 'function') {
+    throw new Error(
+      'test core requires an explicit non-authoritative UI exerciser',
+    );
+  }
   assertPublishEnvironment(environment);
   const authority =
     options.authority ?? readAndAssertReleaseAuthority(root);
@@ -419,41 +495,78 @@ export async function runReleaseCandidateGate(options = {}) {
     'real-mission-evidence.json',
   );
   const e2eArtifactSha256 = artifactSeal.zip.sha256;
-  await extractE2EApp(artifacts.zip, async (appPath) => {
-    await runE2E(appPath, {
+  const releaseBinding = {
+    appVersion: version,
+    commitSha: state.commitSha,
+    artifact: {
+      sha256: e2eArtifactSha256,
+      identity: EXPECTED_IDENTITY,
+    },
+  };
+  const assertBoundProductWizardEvidence = () => {
+    const evidence = assertRealMissionReleaseEvidence(
+      JSON.parse(fs.readFileSync(evidencePath, 'utf8')),
+    );
+    if (
+      evidence.release?.appVersion !== version ||
+      evidence.release?.commitSha !== state.commitSha ||
+      evidence.release?.artifact?.sha256 !== artifactSeal.zip.sha256 ||
+      evidence.release?.artifact?.identity !== EXPECTED_IDENTITY
+    ) {
+      throw new Error(
+        'physical product-wizard evidence is not bound to this exact ZIP, commit, version and signing identity',
+      );
+    }
+    return evidence;
+  };
+  let runtimeProof = null;
+  await extractE2EApp(
+    artifacts.zip,
+    artifactSeal.zip.sha256,
+    async (appPath) => {
+    const uiRun = await runUiE2E(appPath, {
       evidencePath,
       environment,
-      releaseBinding: {
-        appVersion: version,
-        commitSha: state.commitSha,
-        artifact: {
-          sha256: e2eArtifactSha256,
-          identity: EXPECTED_IDENTITY,
-        },
-      },
+      releaseBinding,
+      ...(authoritative
+        ? {}
+        : { launchSurface: 'product-wizard' }),
     });
-  });
+    if (authoritative) {
+      assertVerifiedRealMissionRuntimeProof(uiRun?.runtimeProof, {
+        evidence: uiRun?.evidence,
+        releaseBinding,
+      });
+      runtimeProof = uiRun.runtimeProof;
+    }
+    assertBoundProductWizardEvidence();
+    },
+  );
+  const productWizardEvidence = assertBoundProductWizardEvidence();
   assertCandidateArtifactSeal(artifactSeal);
 
-  finalizeReleaseSecurityArtifacts({
-    root,
-    securityDir,
-    dmgPath: artifacts.dmg,
-    zipPath: artifacts.zip,
-    evidencePath,
-    commitSha: state.commitSha,
-    version,
-    tagObjectSha: state.tagObjectSha,
-    tagSignerFingerprint: state.tagSignerFingerprint,
-    tagSignatureVerified: state.tagSignatureVerified,
-    expectedE2EArtifactSha256: e2eArtifactSha256,
-    expectedSigningIdentity: EXPECTED_IDENTITY,
-    now,
-  });
+  if (authoritative) {
+    finalizeReleaseSecurityArtifacts({
+      root,
+      securityDir,
+      dmgPath: artifacts.dmg,
+      zipPath: artifacts.zip,
+      evidencePath,
+      commitSha: state.commitSha,
+      version,
+      tagObjectSha: state.tagObjectSha,
+      tagSignerFingerprint: state.tagSignerFingerprint,
+      tagSignatureVerified: state.tagSignatureVerified,
+      expectedE2EArtifactSha256: e2eArtifactSha256,
+      expectedSigningIdentity: EXPECTED_IDENTITY,
+      runtimeProof,
+      now,
+    });
+  }
   assertCandidateArtifactSeal(artifactSeal);
   const securityAssets = describeSecurityAssets(securityDir);
   const receipt = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     verifiedAt: now().toISOString(),
     version,
     tag: state.tag,
@@ -480,13 +593,86 @@ export async function runReleaseCandidateGate(options = {}) {
     verification: {
       signedNotarized: true,
       realMissionE2E: true,
+      physicalProductWizard: authoritative,
+      singleProductMission:
+        productWizardEvidence.missionInventory.exactSingleProductMission,
       sameCommitAndArtifacts: true,
       tagSignatureVerified: state.tagSignatureVerified,
     },
   };
   const receiptPath = path.join(securityDir, 'release-candidate-receipt.json');
-  writeJson(receiptPath, receipt);
-  return { receipt, receiptPath, artifacts, evidencePath };
+  if (authoritative) {
+    writeJson(receiptPath, receipt);
+  }
+  const candidate = {
+    receipt,
+    receiptPath: authoritative ? receiptPath : null,
+    artifacts,
+    evidencePath,
+    runtimeProof,
+  };
+  if (authoritative) {
+    AUTHORITATIVE_RELEASE_CANDIDATES.set(candidate, Object.freeze({
+      receiptSha256: createHash('sha256')
+        .update(JSON.stringify(receipt))
+        .digest('hex'),
+      evidencePath,
+      dmgPath: artifacts.dmg,
+      zipPath: artifacts.zip,
+      runtimeProof,
+    }));
+  }
+  return candidate;
+}
+
+/**
+ * Production authority surface: only root/environment are caller-selected.
+ * Process runners, clocks, repository state and receipt writers are fixed.
+ */
+export function runReleaseCandidateGate(options = {}) {
+  const allowed = new Set(['root', 'environment']);
+  if (options === null || typeof options !== 'object') {
+    throw new Error(
+      'sealed release candidate gate rejects dependency override: prototype',
+    );
+  }
+  const prototype = Object.getPrototypeOf(options);
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  const keys = Reflect.ownKeys(descriptors);
+  const unexpected = keys.find(
+    (key) =>
+      typeof key !== 'string' ||
+      !allowed.has(key) ||
+      descriptors[key]?.get !== undefined ||
+      descriptors[key]?.set !== undefined,
+  );
+  if (
+    (prototype !== Object.prototype && prototype !== null) ||
+    unexpected !== undefined
+  ) {
+    throw new Error(
+      `sealed release candidate gate rejects dependency override: ${String(unexpected ?? 'prototype')}`,
+    );
+  }
+  const sealedOptions = {
+    ...(descriptors.root ? { root: descriptors.root.value } : {}),
+    ...(descriptors.environment
+      ? { environment: descriptors.environment.value }
+      : {}),
+  };
+  return runReleaseCandidateGateCore(
+    sealedOptions,
+    RELEASE_CANDIDATE_PRODUCTION_AUTHORITY,
+  );
+}
+
+/**
+ * Unit-test core. It can exercise validation branches with fakes, but it
+ * never writes release-candidate-receipt.json and always returns
+ * physicalProductWizard=false.
+ */
+export function runReleaseCandidateGateTestCore(options = {}) {
+  return runReleaseCandidateGateCore(options, null);
 }
 
 async function main() {

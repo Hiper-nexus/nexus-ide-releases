@@ -23,8 +23,9 @@ let child: UtilityProcess | null = null;
 let bridge: PtyHostBridge | null = null;
 
 /** Built sibling of main.js — `.vite/build/pty-host-entry.js`, inside the asar
- * in a packaged app (utilityProcess can load app code from the asar; only the
- * node-pty .node/spawn-helper are unpacked, exactly as for the main process). */
+ * in a packaged app. The utilityProcess can load app code from the asar; only
+ * the node-pty .node binding is unpacked. Its mutable Darwin spawn-helper is
+ * forbidden, and the native binding starts Apple's /usr/bin/perl instead. */
 function hostEntryPath(): string {
   return path.join(__dirname, 'pty-host-entry.js');
 }

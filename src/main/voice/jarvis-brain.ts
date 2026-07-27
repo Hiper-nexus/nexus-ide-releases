@@ -61,7 +61,7 @@ Action types:
 - {"type":"open_workspace","workspaceName":"<approximate name>"} - open a
   recent project/workspace.
 - {"type":"design_squad"} - create a custom squad for the current project (opens review; ask confirmation).
-- {"type":"confirm_squad"} - confirm and launch the squad currently on the review wizard ("sim" / "inicia").
+- {"type":"confirm_squad"} - use the squad currently on the review wizard and advance to the mission objective ("sim" / "usar" / "continuar"); execution still requires the native mission approval.
 - {"type":"new_mission"} - open a new mission flow without naming a squad.
 - {"type":"new_agentic_mission","intent":"<optional objective>"} - open a new mission directly in Agentic mode. Use this, never voice settings or design_squad, when the user asks to start/create a mission in "modo agêntico". It opens the objective step; it does not launch a squad.
 - {"type":"new_workspace"} - open the new workspace wizard (folder + setup).

@@ -737,7 +737,13 @@ export class WakeMic {
   }
 
   stop(): void {
-    if (!this.running && !this.restarting) return;
+    if (!this.running && !this.restarting) {
+      // Main may still retain a detector generation after the renderer graph
+      // already stopped (or while a late teardown repeats). Release it
+      // idempotently so no stale callback can re-wake this window.
+      window.nexus.voice.stopWake();
+      return;
+    }
     this.running = false;
     this.restarting = false;
     this.dead = false;
@@ -756,6 +762,7 @@ export class WakeMic {
     this.uttActive = false;
     this.onLevel?.(0);
     this.teardownGraph();
+    window.nexus.voice.stopWake();
     console.log('[wake] mic do wake word desligado');
     this.log('info', 'mic.stopped', 'wake mic desligado');
   }

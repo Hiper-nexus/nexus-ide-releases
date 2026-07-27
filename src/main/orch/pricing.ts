@@ -19,6 +19,8 @@ export interface ModelPrice {
 export const DEFAULT_PRICE: ModelPrice = { inputPerM: 3, outputPerM: 15 };
 
 export const MODEL_PRICES: Record<string, ModelPrice> = {
+  // Claude Opus 5 public API list price (distinct from the Opus 4 family).
+  'claude-opus-5': { inputPerM: 5, outputPerM: 25 },
   'claude-opus': { inputPerM: 15, outputPerM: 75 },
   'claude-sonnet': { inputPerM: 3, outputPerM: 15 },
   'claude-haiku': { inputPerM: 1, outputPerM: 5 },

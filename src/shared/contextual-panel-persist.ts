@@ -2,14 +2,16 @@ import {
   contextualPanelStateSchema,
   type ContextualPanelState,
   type ContextualTab,
-} from './contextual-panel';
+} from "./contextual-panel";
 
 /**
  * Pure persistence for ContextualPanel tab/width/visible per workspace.
  * Storage is injected so unit tests drive the real helpers without browser.
  */
 
-export const CONTEXTUAL_PANEL_STORAGE_PREFIX = 'nexus.contextualPanel.v1:';
+export const CONTEXTUAL_PANEL_STORAGE_PREFIX = "nexus.contextualPanel.v2:";
+export const LEGACY_CONTEXTUAL_PANEL_STORAGE_PREFIX =
+  "nexus.contextualPanel.v1:";
 
 export interface KeyValueStorage {
   getItem(key: string): string | null;
@@ -17,33 +19,82 @@ export interface KeyValueStorage {
   removeItem(key: string): void;
 }
 
-export function contextualPanelStorageKey(workspaceId: string): string {
+function storageKey(
+  prefix: string,
+  workspaceId: string,
+): string {
   const id = workspaceId.trim();
-  if (!id) throw new Error('workspaceId required for panel persistence');
-  return `${CONTEXTUAL_PANEL_STORAGE_PREFIX}${id}`;
+  if (!id) throw new Error("workspaceId required for panel persistence");
+  return `${prefix}${id}`;
 }
 
-/** Load persisted panel UI state for a workspace; null if missing/corrupt. */
+export function contextualPanelStorageKey(workspaceId: string): string {
+  return storageKey(CONTEXTUAL_PANEL_STORAGE_PREFIX, workspaceId);
+}
+
+function parseStoredState(
+  raw: string | null,
+  workspaceId: string,
+): ContextualPanelState | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return contextualPanelStateSchema.parse({
+      ...parsed,
+      workspaceId,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function persistedFields(
+  state: ContextualPanelState,
+): Partial<ContextualPanelState> {
+  return {
+    activeTab: state.activeTab,
+    widthPx: state.widthPx,
+    visible: state.visible,
+    workspaceId: state.workspaceId,
+  };
+}
+
+/**
+ * Load panel UI state for a workspace.
+ *
+ * v1 kept the drawer permanently open by default. Its one-time migration keeps
+ * the user's tab and width, closes the drawer for the new canvas-first shell,
+ * and writes v2 so later explicit visibility choices remain durable.
+ */
 export function loadContextualPanelState(
   workspaceId: string,
   storage: KeyValueStorage,
 ): Partial<ContextualPanelState> | null {
   try {
-    const raw = storage.getItem(contextualPanelStorageKey(workspaceId));
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-    // Merge with defaults via schema so partials are valid.
-    const merged = contextualPanelStateSchema.parse({
-      ...parsed,
+    const currentKey = contextualPanelStorageKey(workspaceId);
+    const current = parseStoredState(storage.getItem(currentKey), workspaceId);
+    if (current) return persistedFields(current);
+
+    const legacyKey = storageKey(
+      LEGACY_CONTEXTUAL_PANEL_STORAGE_PREFIX,
+      workspaceId,
+    );
+    const legacy = parseStoredState(storage.getItem(legacyKey), workspaceId);
+    if (!legacy) return null;
+
+    const migrated = contextualPanelStateSchema.parse({
+      ...legacy,
+      visible: false,
       workspaceId,
     });
-    return {
-      activeTab: merged.activeTab,
-      widthPx: merged.widthPx,
-      visible: merged.visible,
-      workspaceId: merged.workspaceId,
-    };
+    try {
+      storage.setItem(currentKey, JSON.stringify(migrated));
+      storage.removeItem(legacyKey);
+    } catch {
+      // Storage may be read-only/private. The in-memory migration still works.
+    }
+    return persistedFields(migrated);
   } catch {
     return null;
   }
@@ -52,7 +103,7 @@ export function loadContextualPanelState(
 /** Persist tab/width/visible for a workspace (fail-soft on quota). */
 export function saveContextualPanelState(
   workspaceId: string,
-  state: Pick<ContextualPanelState, 'activeTab' | 'widthPx' | 'visible'>,
+  state: Pick<ContextualPanelState, "activeTab" | "widthPx" | "visible">,
   storage: KeyValueStorage,
 ): void {
   try {
@@ -79,6 +130,9 @@ export function clearContextualPanelState(
 ): void {
   try {
     storage.removeItem(contextualPanelStorageKey(workspaceId));
+    storage.removeItem(
+      storageKey(LEGACY_CONTEXTUAL_PANEL_STORAGE_PREFIX, workspaceId),
+    );
   } catch {
     /* ignore */
   }
@@ -87,7 +141,7 @@ export function clearContextualPanelState(
 /** Browser localStorage adapter; null outside browser. */
 export function browserLocalStorage(): KeyValueStorage | null {
   try {
-    if (typeof localStorage === 'undefined') return null;
+    if (typeof localStorage === "undefined") return null;
     return localStorage;
   } catch {
     return null;

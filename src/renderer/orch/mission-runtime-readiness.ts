@@ -1,0 +1,111 @@
+import type { AccountInfo } from "../../shared/account-types";
+import type { ProviderSettingsInfo } from "../../shared/provider-settings-types";
+import type { AdapterInfo } from "../../shared/types";
+import { orchestrationEvidenceOf } from "../../shared/adapter-types";
+
+export interface MissionRuntimeReadiness {
+  readonly detectedAdapters: readonly AdapterInfo[];
+  readonly authenticatedAdapters: readonly AdapterInfo[];
+  readonly verifiedMaestros: readonly AdapterInfo[];
+  readonly qualifiedWorkers: readonly AdapterInfo[];
+  readonly hasOperationalRoute: boolean;
+}
+
+function providerFor(
+  adapterId: string,
+  providers: readonly ProviderSettingsInfo[],
+): ProviderSettingsInfo | null {
+  return providers.find((provider) => provider.adapterId === adapterId) ?? null;
+}
+
+function hasAvailableManagedAccount(
+  adapterId: string,
+  accounts: readonly AccountInfo[],
+  preferredAccountId?: string | null,
+): boolean {
+  const candidates = accounts.filter(
+    (account) =>
+      account.adapterId === adapterId &&
+      account.hasCredential &&
+      !account.onCooldown,
+  );
+  if (preferredAccountId?.trim()) {
+    const preferred = candidates.find(
+      (account) => account.id === preferredAccountId,
+    );
+    if (preferred) return true;
+  }
+  // Main uses the preferred account first, then the active account, then any
+  // usable managed account. Renderer readiness mirrors that fallback order
+  // without ever receiving credential material.
+  return candidates.some((account) => account.active) || candidates.length > 0;
+}
+
+/**
+ * Secret-free renderer check for the exact model/provider snapshot produced by
+ * main. Process creation still performs the authoritative uncached check.
+ */
+export function isAdapterModelAuthenticated(
+  adapter: AdapterInfo,
+  providers: readonly ProviderSettingsInfo[],
+  selectedModel?: string | null,
+  accounts: readonly AccountInfo[] = [],
+  preferredAccountId?: string | null,
+): boolean {
+  const provider = providerFor(adapter.id, providers);
+  if (
+    !adapter.installed ||
+    !provider ||
+    !provider.enabled ||
+    !provider.installed
+  ) {
+    return false;
+  }
+  const model =
+    selectedModel?.trim() ||
+    provider.defaultModel.trim() ||
+    adapter.models.default.trim();
+  if (!model || !provider.models.includes(model)) return false;
+  const managedAccountReady = hasAvailableManagedAccount(
+    adapter.id,
+    accounts,
+    preferredAccountId,
+  );
+  if (Array.isArray(provider.authReadyModels)) {
+    return provider.authReadyModels.includes(model) || managedAccountReady;
+  }
+  // Rolling compatibility for an older main snapshot. The final spawn
+  // boundary remains authoritative and fail-closed.
+  return provider.authStrategy !== "login-needed" || managedAccountReady;
+}
+
+export function missionRuntimeReadiness(
+  adapters: readonly AdapterInfo[],
+  providers: readonly ProviderSettingsInfo[],
+  accounts: readonly AccountInfo[] = [],
+): MissionRuntimeReadiness {
+  const detectedAdapters = adapters.filter((adapter) => adapter.installed);
+  const authenticatedAdapters = detectedAdapters.filter((adapter) =>
+    isAdapterModelAuthenticated(adapter, providers, undefined, accounts),
+  );
+  const verifiedMaestros = authenticatedAdapters.filter(
+    (adapter) =>
+      adapter.kind === "cli-pty" &&
+      adapter.orchestratorCapable &&
+      orchestrationEvidenceOf(adapter) === "verified",
+  );
+  const qualifiedWorkers = authenticatedAdapters.filter(
+    (adapter) =>
+      adapter.id !== "claude" &&
+      adapter.kind === "cli-pty" &&
+      adapter.autonomousWorkspaceWriteCapable === true,
+  );
+  return Object.freeze({
+    detectedAdapters: Object.freeze(detectedAdapters),
+    authenticatedAdapters: Object.freeze(authenticatedAdapters),
+    verifiedMaestros: Object.freeze(verifiedMaestros),
+    qualifiedWorkers: Object.freeze(qualifiedWorkers),
+    hasOperationalRoute:
+      verifiedMaestros.length > 0 && qualifiedWorkers.length > 0,
+  });
+}

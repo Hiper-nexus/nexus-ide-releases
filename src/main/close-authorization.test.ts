@@ -1,9 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   authorizeAppQuit,
   closeNeedsConfirmation,
+  completeConfirmedWindowClose,
   isAppQuitAuthorized,
   resetCloseAuthorizationForTest,
+  revokeAppQuitAuthorization,
 } from './close-authorization';
 
 beforeEach(resetCloseAuthorizationForTest);
@@ -27,6 +29,66 @@ describe('close authorization', () => {
   it('remembers an authorized app quit for the window close phase', () => {
     expect(isAppQuitAuthorized()).toBe(false);
     authorizeAppQuit();
+    expect(isAppQuitAuthorized()).toBe(true);
+    revokeAppQuitAuthorization();
+    expect(isAppQuitAuthorized()).toBe(false);
+  });
+
+  it('routes a confirmed Darwin window close with a mission agent through app shutdown', () => {
+    const order: string[] = [];
+    const quitApp = () => {
+      order.push(isAppQuitAuthorized() ? 'authorized-quit' : 'unsafe-quit');
+    };
+    const sealRuntimeAdmission = () => order.push('admission-sealed');
+
+    expect(
+      completeConfirmedWindowClose({
+        sealRuntimeAdmission,
+        quitApp,
+      }),
+    ).toBe('app-shutdown');
+    expect(order).toEqual(['admission-sealed', 'authorized-quit']);
+    expect(isAppQuitAuthorized()).toBe(true);
+  });
+
+  it('requires fresh confirmation after a failed shutdown revokes authorization', () => {
+    const quitApp = vi.fn();
+    const sealRuntimeAdmission = vi.fn();
+    completeConfirmedWindowClose({
+      sealRuntimeAdmission,
+      quitApp,
+    });
+    expect(quitApp).toHaveBeenCalledOnce();
+
+    revokeAppQuitAuthorization();
+    expect(
+      closeNeedsConfirmation({
+        sessionCount: 1,
+        authorized: isAppQuitAuthorized(),
+        smokeTest: false,
+      }),
+    ).toBe(true);
+
+    completeConfirmedWindowClose({
+      sealRuntimeAdmission,
+      quitApp,
+    });
+    expect(quitApp).toHaveBeenCalledTimes(2);
+    expect(sealRuntimeAdmission).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes an empty sole window through sealed app shutdown without a modal', () => {
+    const quitApp = vi.fn();
+    const sealRuntimeAdmission = vi.fn();
+
+    expect(
+      completeConfirmedWindowClose({
+        sealRuntimeAdmission,
+        quitApp,
+      }),
+    ).toBe('app-shutdown');
+    expect(sealRuntimeAdmission).toHaveBeenCalledOnce();
+    expect(quitApp).toHaveBeenCalledOnce();
     expect(isAppQuitAuthorized()).toBe(true);
   });
 });

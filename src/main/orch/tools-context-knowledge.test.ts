@@ -102,6 +102,7 @@ describe('native context knowledge MCP tools', () => {
         'nexus_context_draft_review_run',
         'nexus_context_draft_apply',
         'nexus_context_commit',
+        'nexus_workflow_prepare_execution',
         'nexus_merge_status',
         'nexus_merge_retry',
       ]),

@@ -3,6 +3,7 @@ import {
   type McpToolDef,
 } from './mcp-protocol';
 import {
+  assertBrowserAtExactUrl,
   captureBrowserScreenshot,
   clickBrowserElement,
   fillBrowserElement,
@@ -20,6 +21,40 @@ import { requestBrowserPane, requestPaneClose } from './pane-registry';
 import { authorizePaneRef, num, requireStr, str, strArray } from './tool-util';
 import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor } from './gate';
+import {
+  recordAutomatedReviewBrowserInspection,
+  resolveAutomatedReviewBrowserAuthority,
+  type AutomatedReviewBrowserAuthority,
+} from './automated-review-browser-authority';
+import type { AgentGateContext } from './gate';
+import type { PaneAction } from './pane-authz';
+
+function authorizeBrowserPane(
+  ctx: AgentGateContext,
+  paneId: string,
+  action: PaneAction,
+): AutomatedReviewBrowserAuthority | null {
+  const reviewAuthority = resolveAutomatedReviewBrowserAuthority(
+    ctx,
+    paneId,
+    action,
+  );
+  if (reviewAuthority) return reviewAuthority;
+  authorizePaneRef(ctx, paneId, action);
+  return null;
+}
+
+function assertReviewSurfaceCurrent(
+  ctx: AgentGateContext,
+  authority: AutomatedReviewBrowserAuthority | null,
+): void {
+  if (!authority) return;
+  assertBrowserAtExactUrl(
+    authority.surface.paneId,
+    ctx.scope,
+    authority.surface.url,
+  );
+}
 
 const previewStartTool: McpToolDef = {
   name: 'nexus_preview_start',
@@ -69,12 +104,47 @@ const browserOpenTool: McpToolDef = {
     'the only private targets trusted automatically.',
   inputSchema: {
     type: 'object',
-    properties: { url: { type: 'string' }, title: { type: 'string' } },
+    properties: {
+      url: { type: 'string' },
+      title: { type: 'string' },
+      paneId: {
+        type: 'string',
+        description:
+          'Required only for a main-provisioned automated design-review pane.',
+      },
+    },
     required: ['url'],
   },
   handler: async (args, ctx, invocation) => {
     if (ctx.role === 'worker') {
-      throw new Error('not authorized: workers cannot open browser panes');
+      const paneId = requireStr(args, 'paneId');
+      const reviewAuthority = resolveAutomatedReviewBrowserAuthority(
+        ctx,
+        paneId,
+        'read',
+      );
+      if (!reviewAuthority) {
+        throw new Error('not authorized: workers cannot open browser panes');
+      }
+      const url = requireStr(args, 'url');
+      if (url !== reviewAuthority.surface.url) {
+        throw new Error(
+          'not authorized: automated reviewer URL differs from its bound local preview',
+        );
+      }
+      assertMcpInvocationCurrent(invocation);
+      const state = await loadBrowser(paneId, reviewAuthority.surface.url, {
+        scope: ctx.scope,
+        // This is already a process-minted preview. Never convert the review
+        // capability into a generic localhost/private-network confirmation.
+        privateAccessConfirmed: false,
+        signal: invocation?.signal,
+        assertCurrentAuthority: invocation?.assertCurrentAuthority,
+      });
+      assertMcpInvocationCurrent(invocation);
+      assertReviewSurfaceCurrent(ctx, reviewAuthority);
+      recordAutomatedReviewBrowserInspection(reviewAuthority, 'open');
+      return { ok: true, paneId, state };
     }
     const url = requireStr(args, 'url');
     const result = await requestBrowserPane({
@@ -146,11 +216,27 @@ const browserScreenshotTool: McpToolDef = {
   },
   handler: async (args, ctx, invocation) => {
     const paneId = requireStr(args, 'paneId');
-    authorizePaneRef(ctx, paneId, 'read');
-    return captureBrowserScreenshot(paneId, ctx.scope, ctx.missionId, {
-      signal: invocation?.signal,
-      assertCurrentAuthority: invocation?.assertCurrentAuthority,
-    });
+    const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
+    assertReviewSurfaceCurrent(ctx, reviewAuthority);
+    const result = await captureBrowserScreenshot(
+      paneId,
+      ctx.scope,
+      ctx.missionId,
+      {
+        signal: invocation?.signal,
+        assertCurrentAuthority: invocation?.assertCurrentAuthority,
+      },
+    );
+    if (reviewAuthority) {
+      assertReviewSurfaceCurrent(ctx, reviewAuthority);
+      if (result.url !== reviewAuthority.surface.url) {
+        throw new Error(
+          'automated design-review screenshot came from another URL',
+        );
+      }
+      recordAutomatedReviewBrowserInspection(reviewAuthority, 'screenshot');
+    }
+    return result;
   },
 };
 
@@ -170,11 +256,20 @@ const browserReadTool: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
-    authorizePaneRef(ctx, paneId, 'read');
-    return readBrowserPage(paneId, ctx.scope, {
+    const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
+    assertReviewSurfaceCurrent(ctx, reviewAuthority);
+    const result = await readBrowserPage(paneId, ctx.scope, {
       maxChars: num(args, 'maxChars'),
       maxElements: num(args, 'maxElements'),
     });
+    if (reviewAuthority) {
+      assertReviewSurfaceCurrent(ctx, reviewAuthority);
+      if (result.url !== reviewAuthority.surface.url) {
+        throw new Error('automated design-review read came from another URL');
+      }
+      recordAutomatedReviewBrowserInspection(reviewAuthority, 'read');
+    }
+    return result;
   },
 };
 
@@ -189,8 +284,18 @@ const browserInspectTool: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
-    authorizePaneRef(ctx, paneId, 'read');
-    return inspectBrowserElement(paneId, ctx.scope, requireStr(args, 'ref'));
+    const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
+    assertReviewSurfaceCurrent(ctx, reviewAuthority);
+    const result = await inspectBrowserElement(
+      paneId,
+      ctx.scope,
+      requireStr(args, 'ref'),
+    );
+    if (reviewAuthority) {
+      assertReviewSurfaceCurrent(ctx, reviewAuthority);
+      recordAutomatedReviewBrowserInspection(reviewAuthority, 'inspect');
+    }
+    return result;
   },
 };
 
@@ -258,17 +363,23 @@ const browserWaitTool: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
-    authorizePaneRef(ctx, paneId, 'wait');
+    const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'wait');
+    assertReviewSurfaceCurrent(ctx, reviewAuthority);
     const condition = args.condition;
     if (condition !== 'load' && condition !== 'text' && condition !== 'ref') {
       throw new Error('invalid browser wait condition');
     }
-    return waitForBrowser(paneId, ctx.scope, {
+    const result = await waitForBrowser(paneId, ctx.scope, {
       condition,
       value: str(args, 'value'),
       ref: str(args, 'ref'),
       timeoutMs: num(args, 'timeoutMs'),
     });
+    if (reviewAuthority) {
+      assertReviewSurfaceCurrent(ctx, reviewAuthority);
+      recordAutomatedReviewBrowserInspection(reviewAuthority, 'wait');
+    }
+    return result;
   },
 };
 

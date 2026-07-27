@@ -7,7 +7,12 @@ import {
 } from '../../shared/adapter-types';
 import type { Adapter } from '../../shared/adapter-types';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
-import { mergeAdapters, broadcastToListeners } from './adapter-registry';
+import {
+  adapterCapabilityMatrixForAdapter,
+  mergeAdapters,
+  broadcastToListeners,
+  orchestrationEvidenceForAdapter,
+} from './adapter-registry';
 
 // ── Minimal valid cli-pty adapter for reuse across tests ────────────────────
 
@@ -330,6 +335,24 @@ describe('builtin adapters', () => {
       .toBe(true);
   });
 
+  it('ships the official Claude Opus 5 id in Claude and the verified OMP catalog', () => {
+    const claude = BUILTIN_ADAPTERS.find(
+      (adapter) => (adapter as { id?: string }).id === 'claude',
+    ) as { models?: { list?: string[]; default?: string } } | undefined;
+    const omp = BUILTIN_ADAPTERS.find(
+      (adapter) => (adapter as { id?: string }).id === 'omp',
+    ) as { models?: { list?: string[] } } | undefined;
+    const ompRpc = BUILTIN_ADAPTERS.find(
+      (adapter) => (adapter as { id?: string }).id === 'omp-rpc',
+    ) as { models?: { list?: string[] } } | undefined;
+
+    expect(claude?.models?.list?.[0]).toBe('claude-opus-5');
+    expect(claude?.models?.list).toContain('claude-opus-5');
+    expect(claude?.models?.default).toBe('claude-sonnet-5');
+    expect(omp?.models?.list).toContain('anthropic/claude-opus-5');
+    expect(ompRpc?.models?.list).toContain('anthropic/claude-opus-5');
+  });
+
   it('uses the xAI CLI official API-key variable for Grok', () => {
     const grok = BUILTIN_ADAPTERS.find(
       (adapter) => (adapter as { id?: string }).id === 'grok',
@@ -373,19 +396,132 @@ describe('builtin adapters', () => {
     ]);
   });
 
-  it('uses Kimi Code non-interactive prompt mode for headless (not legacy --print)', () => {
+  it('uses Kimi Code fully autonomous prompt mode for headless (not legacy --print)', () => {
     // Real kimi-code (`kimi --help`): -p is already non-interactive; --print/--quiet
     // are kimi-cli legacy docs and do not exist on current @moonshot-ai/kimi-code.
-    // -y auto-approves tools so eval/headless workers do not hang on confirmations.
+    // Kimi 0.29.1 documents -y as allowing follow-up questions; --auto is the
+    // no-question permission mode required by autonomous workers.
     expect(builtin('kimi')?.spawn?.headless).toEqual([
       'kimi',
-      '-y',
+      '--auto',
       '--output-format',
       'text',
       '-p',
       '{{PROMPT}}',
     ]);
-    expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['-y']);
+    expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['--auto']);
+  });
+
+  it('separates declared MCP routes from operational orchestration evidence', () => {
+    const parsed = (id: string) => {
+      const raw = BUILTIN_ADAPTERS.find(
+        (adapter) => (adapter as { id?: string }).id === id,
+      );
+      const result = adapterSchema.safeParse(raw);
+      if (!result.success) throw result.error;
+      return result.data;
+    };
+
+    expect(orchestrationEvidenceForAdapter(parsed('claude'), 'builtin')).toBe(
+      'verified',
+    );
+    expect(orchestrationEvidenceForAdapter(parsed('codex'), 'builtin')).toBe(
+      'verified',
+    );
+    expect(orchestrationEvidenceForAdapter(parsed('kimi'), 'builtin')).toBe(
+      'unsupported',
+    );
+    expect(orchestrationEvidenceForAdapter(parsed('grok'), 'builtin')).toBe(
+      'unsupported',
+    );
+    expect(orchestrationEvidenceForAdapter(parsed('omp'), 'builtin')).toBe(
+      'unsupported',
+    );
+    expect(orchestrationEvidenceForAdapter(parsed('opencode'), 'builtin')).toBe(
+      'unsupported',
+    );
+    expect(orchestrationEvidenceForAdapter(parsed('glm'), 'builtin')).toBe(
+      'unsupported',
+    );
+    expect(orchestrationEvidenceForAdapter(parsed('longcat'), 'builtin')).toBe(
+      'unsupported',
+    );
+    expect(orchestrationEvidenceForAdapter(parsed('aider'), 'builtin')).toBe(
+      'unsupported',
+    );
+    expect(orchestrationEvidenceForAdapter(parsed('claude'), 'user')).toBe(
+      'experimental',
+    );
+  });
+
+  it('projects an explicit capability ladder without letting adapters self-qualify authority', () => {
+    const parsed = (id: string) => {
+      const raw = BUILTIN_ADAPTERS.find(
+        (adapter) => (adapter as { id?: string }).id === id,
+      );
+      const result = adapterSchema.safeParse(raw);
+      if (!result.success) throw result.error;
+      return result.data;
+    };
+
+    expect(
+      adapterCapabilityMatrixForAdapter(parsed('claude'), 'builtin'),
+    ).toEqual({
+      launchable: true,
+      promptInjectable: true,
+      statusObservable: true,
+      resumable: true,
+      autonomousReadOnly: true,
+      governedWriter: false,
+      verifiedMaestro: true,
+    });
+    expect(
+      adapterCapabilityMatrixForAdapter(parsed('codex'), 'builtin'),
+    ).toEqual({
+      launchable: true,
+      promptInjectable: true,
+      statusObservable: true,
+      resumable: true,
+      autonomousReadOnly: true,
+      governedWriter: true,
+      verifiedMaestro: true,
+    });
+    expect(
+      adapterCapabilityMatrixForAdapter(parsed('kimi'), 'builtin'),
+    ).toEqual({
+      launchable: true,
+      promptInjectable: true,
+      statusObservable: true,
+      resumable: true,
+      autonomousReadOnly: false,
+      governedWriter: false,
+      verifiedMaestro: false,
+    });
+    expect(
+      adapterCapabilityMatrixForAdapter(parsed('aider'), 'builtin'),
+    ).toEqual({
+      launchable: true,
+      promptInjectable: true,
+      statusObservable: true,
+      resumable: false,
+      autonomousReadOnly: false,
+      governedWriter: false,
+      verifiedMaestro: false,
+    });
+
+    // Even the exact builtin declaration loses every release qualification
+    // when it came from the user adapter directory.
+    expect(
+      adapterCapabilityMatrixForAdapter(parsed('codex'), 'user'),
+    ).toMatchObject({
+      launchable: true,
+      promptInjectable: true,
+      statusObservable: true,
+      resumable: true,
+      autonomousReadOnly: false,
+      governedWriter: false,
+      verifiedMaestro: false,
+    });
   });
 
   it.each([

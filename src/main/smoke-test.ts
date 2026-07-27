@@ -1,19 +1,71 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { app, ipcMain } from 'electron';
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { app, ipcMain } from "electron";
 
 import {
   createSmokeSettler,
   gracefulSmokeExit,
   isCurrentProcessSmokeTest,
   SMOKE_TIMEOUT_MS,
-} from './smoke-core';
-import { WINDOW_CHANNELS } from '../shared/channels';
+} from "./smoke-core";
+import { WINDOW_CHANNELS } from "../shared/channels";
 import {
   FUNCTIONAL_SMOKE_FILE_CONTENT,
   parseFunctionalSmokeResult,
-} from '../shared/smoke-types';
-import { grantWorkspacePathFromTrustedMain } from './persistence/workspace-store';
+} from "../shared/smoke-types";
+import { grantWorkspacePathFromTrustedMain } from "./persistence/workspace-store";
+import {
+  authenticatedDarwinSupervisorCommand,
+  currentDarwinPtySupervisorRuntime,
+  DARWIN_PTY_PROVIDER_PROBE_MODE,
+  DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
+  resolvePackagedDarwinPtySmokeProviderSeal,
+} from "./pty/darwin-pty-supervisor";
+import { createRealPtyHost } from "./pty/pty-host-client";
+import { proveDarwinPtyPipelineForSmoke } from "./pty/darwin-pty-smoke";
+
+export function proveDarwinPtySupervisorForSmoke(
+  options: {
+    readonly platform?: NodeJS.Platform;
+    readonly buildCommand?: () => {
+      readonly file: string;
+      readonly args: string[];
+    };
+    readonly spawn?: typeof spawnSync;
+  } = {},
+): boolean {
+  if ((options.platform ?? process.platform) !== "darwin") return false;
+  const command =
+    options.buildCommand?.() ??
+    (() => {
+      const runtime = currentDarwinPtySupervisorRuntime(__dirname);
+      const seal = resolvePackagedDarwinPtySmokeProviderSeal(runtime);
+      return authenticatedDarwinSupervisorCommand(runtime, seal, [
+        DARWIN_PTY_PROVIDER_PROBE_MODE,
+      ]);
+    })();
+  const result = (options.spawn ?? spawnSync)(command.file, command.args, {
+    cwd: process.cwd(),
+    env: process.env,
+    encoding: "utf8",
+    timeout: 10_000,
+    killSignal: "SIGTERM",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (
+    result.error ||
+    result.status !== 0 ||
+    result.signal !== null ||
+    !result.stdout?.includes(DARWIN_PTY_PROVIDER_PROBE_RECEIPT)
+  ) {
+    throw new Error(
+      `Darwin PTY supervisor probe failed: ` +
+        `${result.error?.message ?? result.stderr ?? result.signal ?? result.status}`,
+    );
+  }
+  return true;
+}
 
 // CI smoke test: `NexusIDE --smoke-test` boots the app for real (full main
 // init + window + renderer bundle) and exits 0 only after React commits a real
@@ -41,38 +93,68 @@ export function initSmokeTest(): void {
     (line, isError) => (isError ? console.error(line) : console.log(line)),
   );
 
+  try {
+    proveDarwinPtySupervisorForSmoke();
+  } catch (error) {
+    settle("functional-failed", smokeErrorMessage(error));
+    return;
+  }
+
   // Registering a listener suppresses Electron's blocking exception dialog,
   // turning a post-import crash into a clean non-zero exit.
-  process.on('uncaughtException', (err) => {
-    settle('uncaught-exception', err instanceof Error ? (err.stack ?? err.message) : String(err));
+  process.on("uncaughtException", (err) => {
+    settle(
+      "uncaught-exception",
+      err instanceof Error ? (err.stack ?? err.message) : String(err),
+    );
   });
 
   setTimeout(() => {
-    settle('timeout', `functional smoke did not complete within ${SMOKE_TIMEOUT_MS}ms`);
+    settle(
+      "timeout",
+      `functional smoke did not complete within ${SMOKE_TIMEOUT_MS}ms`,
+    );
   }, SMOKE_TIMEOUT_MS);
 
-  app.on('browser-window-created', (_event, win) => {
+  app.on("browser-window-created", (_event, win) => {
     const wc = win.webContents;
+    const darwinPtyPipelineProof = proveDarwinPtyPipelineForSmoke(
+      createRealPtyHost(),
+      {
+        cwd: process.cwd(),
+        environment: process.env,
+      },
+    );
+    void darwinPtyPipelineProof
+      .then((ready) => {
+        if (ready) console.log("[smoke] darwin-pty-supervisor-ready");
+      })
+      .catch((error) => {
+        settle("functional-failed", smokeErrorMessage(error));
+      });
     const removeListeners = () => {
       ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
-      ipcMain.removeListener(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
+      ipcMain.removeListener(
+        WINDOW_CHANNELS.functionalSmokeResult,
+        onFunctionalResult,
+      );
     };
     const onFunctionalResult = (event: Electron.IpcMainEvent, raw: unknown) => {
       if (event.sender !== wc) return;
       const result = parseFunctionalSmokeResult(raw);
       if (!result) {
         removeListeners();
-        settle('functional-failed', 'invalid-report');
+        settle("functional-failed", "invalid-report");
         return;
       }
       if (!result.ok) {
         removeListeners();
-        settle('functional-failed', result.failedProbe);
+        settle("functional-failed", result.failedProbe);
         return;
       }
       removeListeners();
       settle(
-        'functional-ready',
+        "functional-ready",
         `${result.probes.length} probes, ${result.toolCount} tools, ${result.adapterCount} adapters`,
       );
     };
@@ -83,51 +165,70 @@ export function initSmokeTest(): void {
       if (event.sender !== wc) return;
       ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
       if (report?.ok === false) {
-        ipcMain.removeListener(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
+        ipcMain.removeListener(
+          WINDOW_CHANNELS.functionalSmokeResult,
+          onFunctionalResult,
+        );
         settle(
-          'renderer-failed',
-          typeof report.error === 'string' ? report.error : 'React error boundary mounted',
+          "renderer-failed",
+          typeof report.error === "string"
+            ? report.error
+            : "React error boundary mounted",
         );
         return;
       }
-      console.log('[smoke] renderer-mounted');
-      try {
-        const workspacePath = path.join(app.getPath('userData'), 'functional-smoke-workspace');
-        fs.mkdirSync(workspacePath, { recursive: true, mode: 0o700 });
-        fs.writeFileSync(
-          path.join(workspacePath, 'smoke.txt'),
-          FUNCTIONAL_SMOKE_FILE_CONTENT,
-          { encoding: 'utf8', mode: 0o600 },
-        );
-        const canonicalWorkspacePath = grantWorkspacePathFromTrustedMain(wc, workspacePath);
-        if (!canonicalWorkspacePath) {
-          throw new Error('could not grant smoke workspace');
-        }
-        wc.send(WINDOW_CHANNELS.functionalSmokeRun, {
-          workspacePath: canonicalWorkspacePath,
+      console.log("[smoke] renderer-mounted");
+      void darwinPtyPipelineProof
+        .then(() => {
+          const workspacePath = path.join(
+            app.getPath("userData"),
+            "functional-smoke-workspace",
+          );
+          fs.mkdirSync(workspacePath, { recursive: true, mode: 0o700 });
+          fs.writeFileSync(
+            path.join(workspacePath, "smoke.txt"),
+            FUNCTIONAL_SMOKE_FILE_CONTENT,
+            { encoding: "utf8", mode: 0o600 },
+          );
+          const canonicalWorkspacePath = grantWorkspacePathFromTrustedMain(
+            wc,
+            workspacePath,
+          );
+          if (!canonicalWorkspacePath) {
+            throw new Error("could not grant smoke workspace");
+          }
+          wc.send(WINDOW_CHANNELS.functionalSmokeRun, {
+            workspacePath: canonicalWorkspacePath,
+          });
+        })
+        .catch((error) => {
+          console.error(
+            `[smoke] workspace setup error: ${smokeErrorMessage(error)}`,
+          );
+          ipcMain.removeListener(
+            WINDOW_CHANNELS.functionalSmokeResult,
+            onFunctionalResult,
+          );
+          settle("functional-failed", "workspace-open");
         });
-      } catch (error) {
-        console.error(
-          `[smoke] workspace setup error: ${smokeErrorMessage(error)}`,
-        );
-        ipcMain.removeListener(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
-        settle('functional-failed', 'workspace-open');
-      }
     };
     ipcMain.on(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
     ipcMain.on(WINDOW_CHANNELS.mounted, onMounted);
-    win.once('closed', () => {
+    win.once("closed", () => {
       removeListeners();
     });
-    win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, _url, isMainFrame) => {
-      if (isMainFrame) {
-        settle('renderer-failed', `${errorCode} ${errorDescription}`);
-      }
-    });
+    win.webContents.on(
+      "did-fail-load",
+      (_e, errorCode, errorDescription, _url, isMainFrame) => {
+        if (isMainFrame) {
+          settle("renderer-failed", `${errorCode} ${errorDescription}`);
+        }
+      },
+    );
   });
 }
 
 function smokeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/[\r\n]+/gu, ' ').slice(0, 512);
+  return message.replace(/[\r\n]+/gu, " ").slice(0, 512);
 }

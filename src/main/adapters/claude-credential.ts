@@ -27,7 +27,14 @@ export function readActiveClaudeCredential(): string | null {
     const out = execFileSync(
       'security',
       ['find-generic-password', '-s', CLAUDE_KEYCHAIN_SERVICE, '-w'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        // Explicit account operations may consult the Keychain, but a locked
+        // or stale login session must not freeze Electron's main process.
+        timeout: 5_000,
+        killSignal: 'SIGKILL',
+      },
     );
     const trimmed = out.trim();
     return trimmed.length > 0 ? trimmed : null;
@@ -70,6 +77,8 @@ export function writeActiveClaudeCredential(blob: string): boolean {
     const res = spawnSync('security', ['-i'], {
       input: cmd,
       stdio: ['pipe', 'ignore', 'ignore'],
+      timeout: 5_000,
+      killSignal: 'SIGKILL',
     });
     if (res.status !== 0) {
       console.warn('[claude-credential] failed to restore credential (status %d)', res.status);

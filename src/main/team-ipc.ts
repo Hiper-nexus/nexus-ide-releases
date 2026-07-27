@@ -1,6 +1,6 @@
-import { ipcMain } from 'electron';
 import { TEAM_CHANNELS } from '../shared/channels';
 import { apiFetch } from './api-client';
+import { handleTrusted } from './security/trusted-ipc';
 
 type Envelope = { ok?: boolean; data?: unknown; error?: string } | null;
 
@@ -17,11 +17,11 @@ async function call(path: string, method = 'GET', body?: unknown) {
 }
 
 export function registerTeamIpc(): void {
-  ipcMain.handle(TEAM_CHANNELS.get, () => call('/v1/team'));
-  ipcMain.handle(TEAM_CHANNELS.join, (_event, code: unknown) =>
+  handleTrusted(TEAM_CHANNELS.get, () => call('/v1/team'));
+  handleTrusted(TEAM_CHANNELS.join, (_event, code: unknown) =>
     call('/v1/team/join', 'POST', { code: String(code ?? '') }));
-  ipcMain.handle(TEAM_CHANNELS.invite, () => call('/v1/team/invites', 'POST'));
-  ipcMain.handle(TEAM_CHANNELS.remove, (_event, accountId: unknown) =>
+  handleTrusted(TEAM_CHANNELS.invite, () => call('/v1/team/invites', 'POST'));
+  handleTrusted(TEAM_CHANNELS.remove, (_event, accountId: unknown) =>
     call(`/v1/team/members/${encodeURIComponent(String(accountId ?? ''))}`, 'DELETE'));
-  ipcMain.handle(TEAM_CHANNELS.leave, () => call('/v1/team/leave', 'POST'));
+  handleTrusted(TEAM_CHANNELS.leave, () => call('/v1/team/leave', 'POST'));
 }

@@ -133,6 +133,7 @@ const WORKFLOW_AUTHORITY_TOOLS = new Set([
   'sensor_run',
   'validation_run',
   'workflow_advance',
+  'workflow_prepare_execution',
   'worktree_create',
 ]);
 

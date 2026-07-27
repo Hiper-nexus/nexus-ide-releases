@@ -13,43 +13,88 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.30',
-  date: '2026-07-25',
-  codename: 'Encerra e Entra',
+  version: '0.19.31',
+  date: '2026-07-26',
+  codename: 'Missão Cumprida',
   summary:
-    'O orquestrador volta a nascer autenticado e a começar de verdade: nem tela de login, nem diálogo de confiança da pasta, nem squad built-in que não despacha. E encerrar uma missão viva volta a funcionar.',
+    'Uma única aprovação leva o objetivo do PRD à entrega: o Nexus distribui trabalho real ao squad, comprova que cada resultado chegou ao próximo agente e só conclui depois de revisão e QA.',
   highlights: [
     {
-      title: 'O pane abre logado',
+      title: 'Fluxo único, sem modal cosmético',
       detail:
-        'O orquestrador roda num HOME isolado, e de lá o CLI não enxerga o login da máquina — a credencial só chega pelo ambiente do processo. Ela era justamente retirada quando a conta escolhida É o login nativo, então o pane abria em "Not logged in" escrevendo "Welcome back". A decisão agora conhece o HOME que o pane vai receber.',
+        'Salvar o squad virou uma opção inline e a missão usa uma única revisão nativa compacta de autoridade, selada por recibo integral. O wizard revela complexidade aos poucos e acompanha o trabalho numa linha contínua, sem a sequência salvar, confirmar e confirmar de novo.',
     },
     {
-      title: 'A missão realmente começa',
+      title: 'Squad inteiro trabalha e entrega',
       detail:
-        'O pane carrega a confiança de pasta que você já concedeu, em vez de parar no diálogo "Do you trust the files in this folder?" esperando uma tecla que ninguém manda. E squad built-in vira cópia editável na hora de despachar, em vez de travar o botão Começar.',
+        'Cada identidade do roster executável recebe uma tarefa governada. Pesquisa alimenta execução, revisão alimenta correção e QA valida o resultado; recibos por dependência provam que o próximo agente recebeu o handoff antes de a missão poder terminar.',
     },
     {
-      title: 'Encerrar missão viva',
+      title: 'PRD preservado até o código',
       detail:
-        'A confirmação parou de brigar com a própria missão: qualquer escrita durável feita enquanto você lia o modal invalidava a aprovação. Quanto mais viva a missão, mais impossível encerrá-la.',
+        'A promoção de plano para execução sela o handoff físico, conteúdo, artifacts e hashes. A sessão de implementação recebe o PRD exato, sem depender de texto refeito pelo renderer nem de uma sessão já encerrada.',
+    },
+    {
+      title: 'Claude Opus 5 e OMP reais',
+      detail:
+        'Claude Opus 5 aparece no catálogo, roteamento e preços. As integrações de Claude CLI e OMP validam o identificador do modelo; o Nexus verifica somente a sessão do provider exigido, sem ler nem copiar o conteúdo das credenciais.',
     },
   ],
   fixes: [
     {
-      title: 'Histórico do terminal na largura certa',
+      title: 'Orquestração confinada por CLI',
       detail:
-        'O conteúdo salvo de um pane era reescrito antes da primeira medição, numa grade estreita: a moldura da interface do agente caía por cima do texto quebrado. Agora o histórico só volta depois que o terminal conhece a largura real.',
+        'Claude e Codex continuam como Maestros verificados. Escrita autônoma guiada usa somente o Codex builtin qualificado, com sandbox workspace-write fixado e sem bypass; Kimi, OpenCode, OMP e rotas ainda não qualificadas permanecem disponíveis no uso direto/manual.',
     },
     {
-      title: 'Falha de credencial com motivo',
+      title: 'Uma aprovação, limitada à missão',
       detail:
-        'Pane de HOME isolado sem credencial legível recusa o spawn explicando o que fazer, em vez de entregar um orquestrador mudo que trava a missão inteira sem dizer por quê.',
+        'O Codex não repete prompts de MCP depois da aprovação nativa: somente o servidor efêmero e bearer-bound daquela missão recebe autoaprovação. HOME, temp, filesystem e rede seguem no perfil privado; panes diretos e MCPs ambientais não herdam a decisão.',
     },
     {
-      title: 'HOME real sem token de ambiente',
+      title: 'Greenfield com ownership e gates reais',
       detail:
-        'Onde o CLI cuida da própria sessão, o Nexus não injeta mais um instantâneo estático que expira em horas e tem precedência sobre o login — a origem do erro de credencial expirada ao reabrir um pane.',
+        'Arquivos novos citados explicitamente no objetivo entram como caminhos exatos no selo, sem abrir globs ou árvores reservadas. O Doctor só autoriza sensores compatíveis com scripts, package manager e cwd reais, sem inventar comandos npm em projeto vazio.',
+    },
+    {
+      title: 'Reviewer e QA avançam após saída natural',
+      detail:
+        'Uma folha visual remanescente só é aposentada quando a ausência física e toda a identidade do worker coincidem. Isso libera a vaga seguinte no mesmo passe sem aceitar sessão substituta, duplicata, outro workspace ou OMP ainda vivo.',
+    },
+    {
+      title: 'Saída com prova física',
+      detail:
+        'Substituir ou encerrar um Maestro revoga dispatch e exige prova de ausência de descendentes. Fechar a última janela considera PTYs, OMP headless e spawns em voo; no macOS, um helper universal assinado também alcança processos daemonizados e falha fechado se não puder provar o encerramento.',
+    },
+    {
+      title: 'PREVC antes do primeiro worker',
+      detail:
+        'Missões guiadas congelam no Main o contrato exato aprovado antes de qualquer worker, claim, worktree ou efeito de execução. Se o contexto ainda não existe, somente o Maestro de bootstrap nativamente read-only e revisores independentes confinados podem preceder o freeze; até a conta do worker fica atrás do gate.',
+    },
+    {
+      title: 'Roster e squads sem desaparecer',
+      detail:
+        'O Maestro revisado na missão vence um default global antigo. Squads gerados e salvos recebem uma cópia estável que volta a aparecer no seletor, sem o sumiço causado pelos ids efêmeros do engine.',
+    },
+    {
+      title: 'Toolchain auditado sem vulnerabilidades',
+      detail:
+        'O Electron Forge inteiro usa a correção upstream de brace-expansion 5.0.8 por um pacote de compatibilidade local com fonte, licença, hashes e provenance. As APIs legadas de minimatch continuam cobertas e as auditorias npm de produção e build ficam em zero.',
+    },
+    {
+      title: 'Interface Nexus mais fluida',
+      detail:
+        'Rail hierárquico, painel contextual redimensionável, revisão progressiva e estados de fan-out mais discretos organizam a missão sem copiar a identidade visual do Orca. O design system Nexus continua sendo a fonte de verdade.',
+    },
+    {
+      title: 'Handoffs idempotentes até quando a resposta se perde',
+      detail:
+        'Entrega, receipt e transição do dispatch são atômicos. Um retry exato apenas relê o handoff já persistido e consome seu receipt one-shot; tentativa divergente, reutilizada ou sem a mesma prova física falha fechado, sem duplicar delivery.',
+    },
+    {
+      title: 'A release precisa provar a missão no app',
+      detail:
+        'O candidato empacotado só avança quando uma única missão no MissionWizard visível completa a cadeia executor → revisor → QA com quatro PTYs, três handoffs, uma aprovação Nexus e nenhum prompt MCP do Codex. O runner interno permanece um diagnóstico separado e não repete a missão no gate.',
     },
   ],
 };

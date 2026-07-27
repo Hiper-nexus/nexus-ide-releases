@@ -239,7 +239,7 @@
 }
 
 .git-scm__code[data-status='D'] {
-  color: #f87171;
+  color: var(--danger, #ff7a90);
 }
 
 .git-scm__name {

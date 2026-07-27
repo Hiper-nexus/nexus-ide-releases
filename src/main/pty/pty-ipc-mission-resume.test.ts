@@ -63,6 +63,7 @@ const authorityDeps = vi.hoisted(() => {
     bindPendingRecoverySpawnSession: vi.fn(() => true),
     assertPendingSpawnGrantActive: vi.fn(),
     assertPendingRecoverySpawnGrantActive: vi.fn(),
+    assertMissionSpawnAuthorityCurrent: vi.fn(),
     attachOrchMeta: vi.fn(),
     attachSessionScope: vi.fn(),
     hasLivePaneSession: vi.fn((_paneId: string) => false),
@@ -150,6 +151,8 @@ vi.mock("../orch/pane-registry", () => ({
     authorityDeps.assertPendingSpawnGrantActive,
   assertPendingRecoverySpawnGrantActive:
     authorityDeps.assertPendingRecoverySpawnGrantActive,
+  assertMissionSpawnAuthorityCurrent:
+    authorityDeps.assertMissionSpawnAuthorityCurrent,
   attachOrchMeta: authorityDeps.attachOrchMeta,
   attachSessionScope: authorityDeps.attachSessionScope,
   hasLivePaneSession: authorityDeps.hasLivePaneSession,
@@ -1000,7 +1003,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("spawns one exact persisted RPC worker only under its recovery grant", async () => {
+  it("refuses to recreate a persisted writable RPC worker without native confinement", async () => {
     const persisted = {
       id: "mpane-orch-rpc-recovery",
       missionId: "mission-a",
@@ -1068,26 +1071,17 @@ describe("registerPtyIpc account fail-fast", () => {
       },
     );
 
-    expect(result).toEqual({ ok: true, sessionId: "omp-created" });
-    expect(ompDeps.spawnOmpRpcPane).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paneId: persisted.paneId,
-        title: persisted.title,
-        agentName: persisted.agentName,
-        missionId: persisted.missionId,
-        allowedTools: persisted.allowedTools,
-        assertAuthority: expect.any(Function),
-      }),
-    );
-    expect(
-      authorityDeps.assertPendingRecoverySpawnGrantActive,
-    ).toHaveBeenCalledWith(requestId, sender);
+    expect(result).toEqual({
+      ok: false,
+      error: expect.stringMatching(/cannot enforce workspace-write authority/i),
+    });
+    expect(ompDeps.spawnOmpRpcPane).not.toHaveBeenCalled();
     expect(
       authorityDeps.bindPendingRecoverySpawnSession,
-    ).toHaveBeenCalledWith(requestId, sender, "omp-created");
+    ).not.toHaveBeenCalled();
   });
 
-  it("blocks recovery while a live OMP runtime still owns the persisted pane", async () => {
+  it("fails closed on a legacy live OMP writable worker before replacement", async () => {
     const persisted = {
       id: "mpane-orch-rpc-duplicate",
       missionId: "mission-a",
@@ -1156,9 +1150,12 @@ describe("registerPtyIpc account fail-fast", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: expect.stringMatching(/live physical mission process/i),
+      error: expect.stringMatching(/cannot enforce workspace-write authority/i),
     });
     expect(ompDeps.spawnOmpRpcPane).not.toHaveBeenCalled();
+    expect(
+      authorityDeps.bindPendingRecoverySpawnSession,
+    ).not.toHaveBeenCalled();
   });
 
   it("does not turn an RPC mission resume into a fresh provider process", async () => {

@@ -27,9 +27,19 @@ import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
 import { getAxTree, performAxAction } from './ax-tree';
 import { runFunctionalSmokeProbes } from './functional-smoke';
-import { runRealMissionE2E } from './real-mission-e2e';
+import {
+  prepareRealMissionProductWizardE2E,
+  runRealMissionE2E,
+} from './real-mission-e2e';
 import {
   REAL_MISSION_E2E_CHANNELS,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_READY_EVENT,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_READY_STORAGE_KEY,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_STEP_MESSAGE,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_STEP_RESULT_MESSAGE,
+  idSchema,
+  productWizardGestureCapabilitySchema,
+  productWizardStepSchema,
 } from '../shared/real-mission-e2e';
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
 import type { UpdateState } from '../shared/update-ipc';
@@ -507,6 +517,164 @@ ipcRenderer.on(OMP_AUTH_CHANNELS.event, (_e, envelope: OmpAuthEventEnvelope) =>
   ompAuthEventListeners.forEach((cb) => cb(envelope)),
 );
 
+let realMissionProductWizardE2EPrepared = false;
+let realMissionProductWizardCapability: string | null = null;
+let realMissionProductWizardGesture:
+  | Promise<{ runId: string; capability: string }>
+  | null = null;
+
+/**
+ * Security boundary for the physical product-wizard gate.
+ *
+ * Renderer code can see the marker and can call the public bridge, but it
+ * cannot mint a trusted DOM event or read the capability retained in preload's
+ * isolated world. The outer release runner still authenticates the resulting
+ * main-owned evidence separately; Event.isTrusted is only the causal UI edge.
+ */
+window.addEventListener(
+  'click',
+  (event) => {
+    if (
+      !realMissionProductWizardE2EPrepared ||
+      !event.isTrusted ||
+      realMissionProductWizardGesture !== null
+    ) {
+      return;
+    }
+    const launch = event
+      .composedPath()
+      .find(
+        (candidate): candidate is HTMLElement =>
+          candidate instanceof HTMLElement &&
+          candidate.dataset.nexusRealMissionWizardLaunch === 'true',
+      );
+    if (!launch || launch.getAttribute('aria-disabled') === 'true') return;
+
+    realMissionProductWizardGesture = ipcRenderer
+      .invoke(REAL_MISSION_E2E_CHANNELS.beginProductWizardGesture, {
+        source: 'trusted-mission-wizard-launch',
+      })
+      .then((raw: unknown) => {
+        if (
+          !raw ||
+          typeof raw !== 'object' ||
+          Array.isArray(raw) ||
+          (raw as { ok?: unknown }).ok !== true ||
+          typeof (raw as { runId?: unknown }).runId !== 'string'
+        ) {
+          throw new Error('main rejected the trusted product wizard gesture');
+        }
+        const capability = productWizardGestureCapabilitySchema.parse(
+          (raw as { capability?: unknown }).capability,
+        );
+        realMissionProductWizardCapability = capability;
+        return {
+          runId: (raw as { runId: string }).runId,
+          capability,
+        };
+      });
+    // The renderer cannot observe this promise. Attach a rejection handler so
+    // a failed gate does not become an unhandled preload rejection; the awaited
+    // record call below will surface the same closed failure to the wizard.
+    void realMissionProductWizardGesture.catch(() => undefined);
+  },
+  true,
+);
+
+async function recordRealMissionProductWizardStepFromPreload(input: {
+  readonly missionId: string;
+  readonly step: 'mission-armed' | 'intent-submitted' | 'approval-returned';
+}): Promise<{ ok: true; inactive?: true }> {
+  if (!realMissionProductWizardE2EPrepared) {
+    return { ok: true, inactive: true };
+  }
+  const gesture = realMissionProductWizardGesture;
+  if (!gesture) {
+    throw new Error('trusted product wizard gesture was not observed');
+  }
+  await gesture;
+  const capability = realMissionProductWizardCapability;
+  // Consume before IPC. A timeout, main rejection or renderer replay can never
+  // reuse preload authority.
+  realMissionProductWizardCapability = null;
+  if (!capability) {
+    throw new Error('trusted product wizard capability is unavailable');
+  }
+  const raw = (await ipcRenderer.invoke(
+    REAL_MISSION_E2E_CHANNELS.recordProductWizardStep,
+    { ...input, capability },
+  )) as unknown;
+  if (
+    !raw ||
+    typeof raw !== 'object' ||
+    Array.isArray(raw) ||
+    (raw as { ok?: unknown }).ok !== true
+  ) {
+    throw new Error('main rejected the product wizard causal step');
+  }
+  const next = (raw as { nextCapability?: unknown }).nextCapability;
+  if (next !== undefined) {
+    realMissionProductWizardCapability =
+      productWizardGestureCapabilitySchema.parse(next);
+  }
+  return { ok: true };
+}
+
+window.addEventListener('message', (event) => {
+  if (event.source !== window) return;
+  const raw = event.data as unknown;
+  if (
+    !raw ||
+    typeof raw !== 'object' ||
+    Array.isArray(raw) ||
+    Object.keys(raw).length !== 4 ||
+    (raw as { type?: unknown }).type !==
+      REAL_MISSION_E2E_PRODUCT_WIZARD_STEP_MESSAGE
+  ) {
+    return;
+  }
+  const requestId = (raw as { requestId?: unknown }).requestId;
+  const missionId = idSchema.safeParse(
+    (raw as { missionId?: unknown }).missionId,
+  );
+  const step = productWizardStepSchema.safeParse(
+    (raw as { step?: unknown }).step,
+  );
+  if (
+    typeof requestId !== 'string' ||
+    !/^[a-f0-9-]{36}$/u.test(requestId) ||
+    !missionId.success ||
+    !step.success
+  ) {
+    return;
+  }
+  void recordRealMissionProductWizardStepFromPreload({
+    missionId: missionId.data,
+    step: step.data,
+  })
+    .then((result) => {
+      window.postMessage(
+        {
+          type: REAL_MISSION_E2E_PRODUCT_WIZARD_STEP_RESULT_MESSAGE,
+          requestId,
+          ok: true,
+          inactive: result.inactive === true,
+        },
+        '*',
+      );
+    })
+    .catch(() => {
+      window.postMessage(
+        {
+          type: REAL_MISSION_E2E_PRODUCT_WIZARD_STEP_RESULT_MESSAGE,
+          requestId,
+          ok: false,
+        },
+        '*',
+      );
+    });
+});
+
 const api: NexusApi = {
   pet: {
     getPrefs: () => ipcRenderer.invoke(PET_CHANNELS.getPrefs),
@@ -697,6 +865,7 @@ const api: NexusApi = {
     stopSpeak: () => ipcRenderer.invoke(VOICE_CHANNELS.speakStop),
     sendWakeAudio: (chunk: ArrayBuffer) =>
       ipcRenderer.send(VOICE_CHANNELS.wakeAudio, chunk),
+    stopWake: () => ipcRenderer.send(VOICE_CHANNELS.wakeStop),
     logVoice: (payload) => ipcRenderer.send(VOICE_CHANNELS.logEvent, payload),
     openMicSettings: () => ipcRenderer.send(VOICE_CHANNELS.openMicSettings),
     openSoundSettings: () => ipcRenderer.send(VOICE_CHANNELS.openSoundSettings),
@@ -878,7 +1047,19 @@ const api: NexusApi = {
         ORCH_CHANNELS.squadDesign,
         intent ? { workspacePath, intent } : workspacePath,
       ),
-    saveSquad: (squad) => ipcRenderer.invoke(ORCH_CHANNELS.squadSave, squad),
+    saveSquad: (squad, options) =>
+      ipcRenderer.invoke(
+        ORCH_CHANNELS.squadSave,
+        options?.purpose === 'mission-runtime'
+          ? {
+              squad,
+              purpose: 'mission-runtime',
+              guided: options.guided === true,
+              sourceSquadId: options.sourceSquadId,
+              designDraftToken: options.designDraftToken,
+            }
+          : squad,
+      ),
     deleteSquad: (id) => ipcRenderer.invoke(ORCH_CHANNELS.squadDelete, id),
     exportSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadExport),
     importSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadImport),
@@ -1282,6 +1463,35 @@ ipcRenderer.on(WINDOW_CHANNELS.functionalSmokeRun, (_event, payload: unknown) =>
 });
 
 let realMissionE2EStarted = false;
+ipcRenderer.on(
+  REAL_MISSION_E2E_CHANNELS.prepareProductWizard,
+  (_event, payload: unknown) => {
+    if (realMissionProductWizardE2EPrepared) return;
+    realMissionProductWizardE2EPrepared = true;
+    void prepareRealMissionProductWizardE2E(api, payload, {
+      prepareFixture: (rendererFailureToken) =>
+        ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.prepareFixture, {
+          rendererFailureToken,
+        }),
+      observeMission: (missionId) =>
+        ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.observe, { missionId }),
+    })
+      .then(() => {
+        // This signal only opens a modal at a main-selected fixture. It carries
+        // no mission id, coverage label, counter or execution authority.
+        window.sessionStorage.setItem(
+          REAL_MISSION_E2E_PRODUCT_WIZARD_READY_STORAGE_KEY,
+          '1',
+        );
+        window.dispatchEvent(
+          new Event(REAL_MISSION_E2E_PRODUCT_WIZARD_READY_EVENT),
+        );
+      })
+      .catch(() => {
+        console.error('[real-mission] product-wizard-setup-failed');
+      });
+  },
+);
 ipcRenderer.on(REAL_MISSION_E2E_CHANNELS.run, (_event, payload: unknown) => {
   if (realMissionE2EStarted) return;
   realMissionE2EStarted = true;

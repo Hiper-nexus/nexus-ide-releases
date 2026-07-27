@@ -67,6 +67,34 @@ function evidence(
 }
 
 describe('merge validation coordinator', () => {
+  it('keeps the merge boundary on the same frozen execution precondition as the guided scheduler', async () => {
+    const runSensor = vi.fn();
+    const runReview = vi.fn();
+    const service = {
+      scope: { projectId: 'project-a', checkoutId: 'checkout-a' },
+      getMissionWorkflow: vi
+        .fn()
+        .mockReturnValueOnce({ contract: null, workflow: null })
+        .mockReturnValueOnce({
+          contract: { contract: {} },
+          workflow: { stage: 'review-primary' },
+        }),
+    } as never;
+    const coordinator = new MergeValidationCoordinator(service, {
+      runSensor,
+      runReview,
+    });
+
+    await expect(
+      coordinator.validate(validationContext()),
+    ).rejects.toThrow(/no frozen workflow/i);
+    await expect(
+      coordinator.validate(validationContext()),
+    ).rejects.toThrow(/only during execution/i);
+    expect(runSensor).not.toHaveBeenCalled();
+    expect(runReview).not.toHaveBeenCalled();
+  });
+
   it('rejects a sensor result bound to another candidate before review', async () => {
     const contract = {
       contract: {

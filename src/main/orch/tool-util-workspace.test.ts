@@ -9,7 +9,9 @@ const stubs = vi.hoisted(() => ({
   })),
   requestPaneClose: vi.fn(async () => true),
   waitForIdle: vi.fn(async () => 'idle'),
-  preSpawnProbe: vi.fn<() => Promise<void>>(async () => undefined),
+  preSpawnProbe: vi.fn<
+    (adapterId: string, options?: { model?: string }) => Promise<void>
+  >(async () => undefined),
   writeSession: vi.fn(() => true),
   terminateSession: vi.fn(async () => true),
   sessionState: vi.fn(() => 'busy'),
@@ -50,6 +52,8 @@ vi.mock('./pane-registry', () => ({
   getPaneAuthzInfo: vi.fn(),
   requestPaneClose: stubs.requestPaneClose,
   requestPaneSpawn: stubs.requestPaneSpawn,
+  resolveCurrentMissionSpawnAuthoritySeal:
+    stubs.resolveMissionPaneAuthoritySeal,
   waitForIdle: stubs.waitForIdle,
 }));
 vi.mock('./pane-authz', () => ({ authorizePaneAccess: vi.fn() }));
@@ -85,13 +89,43 @@ vi.mock('./agent-status', () => ({
   ),
 }));
 vi.mock('../adapters/adapter-registry', () => ({
-  getAdapter: vi.fn((id: string) => ({
-    id,
-    kind: 'cli-pty',
-    bin: id,
-    models: { default: 'provider/model', list: ['provider/model'] },
-    quirks: {},
-  })),
+  getAdapter: vi.fn((id: string) =>
+    id === 'codex'
+      ? {
+          id: 'codex',
+          kind: 'cli-pty',
+          bin: 'codex',
+          spawn: { interactive: ['codex'], extraArgs: [] },
+          models: { default: 'provider/model', list: ['provider/model'] },
+          quirks: { nexusMcp: 'codex' },
+          control: {
+            permission: {
+              arg: '--ask-for-approval',
+              modes: {
+                auto: 'never',
+                default: 'on-request',
+                untrusted: 'untrusted',
+              },
+              yolo: ['--dangerously-bypass-approvals-and-sandbox'],
+              safe: [
+                '--sandbox',
+                'workspace-write',
+                '--ask-for-approval',
+                'on-request',
+              ],
+              default: '',
+            },
+          },
+        }
+      : {
+          id,
+          kind: 'cli-pty',
+          bin: id,
+          models: { default: 'provider/model', list: ['provider/model'] },
+          quirks: {},
+        },
+  ),
+  isBuiltinAdapter: vi.fn((id: string) => id === 'codex'),
   isAdapterInstalled: vi.fn(() => false),
 }));
 vi.mock('../adapters/omp-rpc-ipc', () => ({
@@ -118,6 +152,8 @@ vi.mock('./project-domain-store-registry', () => ({
 vi.mock('./squad-store', () => ({ listSquads: stubs.listSquads }));
 vi.mock('./mission-pane-authority', () => ({
   resolveMissionPaneAuthoritySeal: stubs.resolveMissionPaneAuthoritySeal,
+  sameMissionPaneAuthoritySeal: (left: unknown, right: unknown) =>
+    JSON.stringify(left) === JSON.stringify(right),
 }));
 vi.mock('./legacy-handoff', () => ({ LEGACY_MARKER: 'marker' }));
 vi.mock('./ponytail', () => ({ PONYTAIL_RULES: '' }));
@@ -136,6 +172,11 @@ import {
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const scope = testProjectScope();
+const taskExecutionScope = {
+  ...scope,
+  checkoutId: 'checkout-task-1',
+  rootRealPath: '/workspace/.nexus/worktrees/task-1',
+};
 
 describe('agent pane workspace confinement', () => {
   beforeEach(() => {
@@ -160,6 +201,166 @@ describe('agent pane workspace confinement', () => {
       executionScope: scope,
       scope,
     });
+  });
+
+  it('passes the resolved selected model into the credential probe', async () => {
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'codex',
+      model: 'provider/model',
+      scope,
+    });
+
+    expect(stubs.preSpawnProbe).toHaveBeenCalledWith('codex', {
+      model: 'provider/model',
+      failClosed: true,
+    });
+  });
+
+  it('binds main-owned mission workers to the durable pane seal revision', async () => {
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'codex',
+      missionId: 'm1',
+      role: 'worker',
+      scope,
+      executionScope: taskExecutionScope,
+    });
+
+    expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        missionId: 'm1',
+        role: 'worker',
+        contextRevision: 'context-revision',
+        authoritySeal: {
+          intentVersion: 1,
+          intentContractHash: 'intent-contract-hash',
+          contextRevision: 'context-revision',
+          contractHash: 'contract-hash',
+          squadRevisionHash: 'squad-revision-hash',
+        },
+      }),
+    );
+  });
+
+  it('rejects revision-bound writable workers without a distinct execution worktree before probing', async () => {
+    await expect(
+      spawnPaneAndMaybePrompt({
+        adapterId: 'codex',
+        missionId: 'm1',
+        role: 'worker',
+        scope,
+      }),
+    ).rejects.toThrow(/physically distinct.*execution worktree/i);
+
+    await expect(
+      spawnPaneAndMaybePrompt({
+        adapterId: 'codex',
+        missionId: 'm1',
+        role: 'worker',
+        scope,
+        executionScope: scope,
+      }),
+    ).rejects.toThrow(/physically distinct.*execution worktree/i);
+
+    expect(stubs.preSpawnProbe).not.toHaveBeenCalled();
+    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
+  });
+
+  it('rejects revision-bound writable OMP at the release boundary before RPC, credential probe or PTY', async () => {
+    await expect(
+      spawnPaneAndMaybePrompt({
+        adapterId: 'omp',
+        missionId: 'm1',
+        role: 'worker',
+        scope,
+        executionScope: taskExecutionScope,
+      }),
+    ).rejects.toThrow(/governed_worker_spawn_unsupported/i);
+
+    expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
+    expect(stubs.preSpawnProbe).not.toHaveBeenCalled();
+    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
+  });
+
+  it.each(['claude', 'kimi', 'omp', 'grok'])(
+    'rejects legacy %s mission workers even when read-only bypassed the old contextRevision gate',
+    async (adapterId) => {
+      await expect(
+        spawnPaneAndMaybePrompt({
+          adapterId,
+          missionId: 'm1',
+          role: 'worker',
+          readOnly: true,
+          scope,
+          executionScope: scope,
+        }),
+      ).rejects.toThrow(/governed_worker_spawn_unsupported.*codex/i);
+    },
+  );
+
+  it('treats an unlabelled mission pane as a worker instead of a role bypass', async () => {
+    await expect(
+      spawnPaneAndMaybePrompt({
+        adapterId: 'omp',
+        missionId: 'm1',
+        readOnly: true,
+        scope,
+      }),
+    ).rejects.toThrow(/governed_worker_spawn_unsupported/i);
+
+    expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
+    expect(stubs.preSpawnProbe).not.toHaveBeenCalled();
+    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
+  });
+
+  it('preserves a non-mission manual Kimi Terminal pane', async () => {
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'kimi',
+      role: 'worker',
+      scope,
+    });
+
+    expect(stubs.preSpawnProbe).toHaveBeenCalledWith('kimi', {
+      model: undefined,
+      failClosed: true,
+    });
+    expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ adapterId: 'kimi' }),
+    );
+  });
+
+  it('preserves an explicitly identified mission Maestro outside the worker boundary', async () => {
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'claude',
+      missionId: 'm1',
+      role: 'orchestrator',
+      scope,
+    });
+
+    expect(stubs.preSpawnProbe).toHaveBeenCalledWith('claude', {
+      model: undefined,
+      failClosed: true,
+    });
+    expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapterId: 'claude',
+        missionId: 'm1',
+        role: 'orchestrator',
+      }),
+    );
+  });
+
+  it('rejects a stale caller contextRevision before any pane process exists', async () => {
+    await expect(
+      spawnPaneAndMaybePrompt({
+        adapterId: 'codex',
+        missionId: 'm1',
+        role: 'worker',
+        contextRevision: 'stale-context-revision',
+        scope,
+      }),
+    ).rejects.toThrow(/contextRevision is stale/i);
+
+    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
   });
 
   it('does not request a pane when no safe workspace can be resolved', async () => {
@@ -221,6 +422,7 @@ describe('agent pane workspace confinement', () => {
         role: 'worker',
         prompt: 'do not paste after revoke',
         scope,
+        executionScope: taskExecutionScope,
       },
       {
         invocation: {
@@ -257,6 +459,24 @@ describe('agent pane workspace confinement', () => {
     ).rejects.toThrow('database unavailable');
 
     expect(onPaneCreated).toHaveBeenCalledWith('pane-1', 'session-1');
+  });
+
+  it('does not schedule an OMP auto-companion for a revision-bound writable worker', async () => {
+    stubs.orchSettings.ompAutoSpawn = true;
+    try {
+      await spawnPaneAndMaybePrompt({
+        adapterId: 'codex',
+        missionId: 'm1',
+        role: 'worker',
+        scope,
+        executionScope: taskExecutionScope,
+      });
+
+      expect(stubs.requestPaneSpawn).toHaveBeenCalledOnce();
+      expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
+    } finally {
+      stubs.orchSettings.ompAutoSpawn = false;
+    }
   });
 });
 
@@ -304,7 +524,6 @@ describe('omp rpc spawn transaction', () => {
 
     await spawnPaneAndMaybePrompt({
       adapterId: 'omp',
-      missionId: 'm1',
       role: 'worker',
       prompt: 'execute',
       scope,
@@ -322,6 +541,48 @@ describe('omp rpc spawn transaction', () => {
     );
   });
 
+  it('exposes the exact wrapped prompt only after OMP proves acceptance', async () => {
+    const onPaneCreated = vi.fn();
+    const onPromptAccepted = vi.fn();
+    stubs.ompRpcSpawn.mockImplementationOnce(
+      async (input: {
+        prompt?: string;
+        onSessionReady?: (paneId: string, sessionId: string) => void;
+        onAccepted?: (paneId: string, sessionId: string) => void;
+      }) => {
+        input.onSessionReady?.('omp-rpc:pane-accepted', 'omp-session-accepted');
+        expect(onPromptAccepted).not.toHaveBeenCalled();
+        input.onAccepted?.('omp-rpc:pane-accepted', 'omp-session-accepted');
+        return {
+          paneId: 'omp-rpc:pane-accepted',
+          sessionId: 'omp-session-accepted',
+        };
+      },
+    );
+
+    await spawnPaneAndMaybePrompt(
+      {
+        adapterId: 'omp',
+        role: 'worker',
+        prompt: 'Use o resultado advisory confirmado.',
+        scope,
+      },
+      { onPaneCreated, onPromptAccepted },
+    );
+
+    expect(onPaneCreated).toHaveBeenCalledWith(
+      'omp-rpc:pane-accepted',
+      'omp-session-accepted',
+    );
+    expect(onPromptAccepted).toHaveBeenCalledOnce();
+    expect(onPromptAccepted).toHaveBeenCalledWith(
+      'omp-rpc:pane-accepted',
+      'omp-session-accepted',
+      expect.stringContaining('Use o resultado advisory confirmado.'),
+    );
+    expect(onPromptAccepted.mock.calls[0]?.[2]).toContain('marker');
+  });
+
   it('fails closed before any OMP spawn when read-only is required', async () => {
     for (const transport of ['auto', 'pty'] as const) {
       stubs.orchSettings.ompMissionTransport = transport;
@@ -334,7 +595,7 @@ describe('omp rpc spawn transaction', () => {
           readOnly: true,
           scope,
         }),
-      ).rejects.toThrow(/omp.*read-only/i);
+      ).rejects.toThrow(/governed_worker_spawn_unsupported/i);
     }
 
     expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
@@ -363,7 +624,6 @@ describe('omp rpc spawn transaction', () => {
       spawnPaneAndMaybePrompt(
         {
           adapterId: 'omp',
-          missionId: 'm1',
           role: 'worker',
           prompt: 'execute',
           scope,
@@ -396,7 +656,7 @@ describe('agent prompt injection', () => {
       // First CR leaves the session idle → second CR retries (boot-menu recovery).
       stubs.sessionState.mockReturnValue('idle');
       const pending = injectPrompt('session-1', 'line one\nline two');
-      await vi.advanceTimersByTimeAsync(249);
+      await vi.advanceTimersByTimeAsync(499);
       expect(stubs.writeSession).toHaveBeenCalledOnce();
       await vi.advanceTimersByTimeAsync(1);
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
@@ -450,7 +710,7 @@ describe('agent prompt injection', () => {
 
       current = false;
       controller.abort('session_authority_revoked');
-      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(500);
 
       await rejected;
       expect(stubs.terminateSession).toHaveBeenCalledWith('session-1');
@@ -475,7 +735,7 @@ describe('agent prompt injection', () => {
       const rejected = expect(pending).rejects.toThrow(
         'session_authority_revoked',
       );
-      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(500);
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
         2,
         'session-1',
@@ -500,7 +760,7 @@ describe('agent prompt injection', () => {
     try {
       stubs.sessionState.mockReturnValue('busy');
       const pending = injectPrompt('session-1', 'go');
-      await vi.advanceTimersByTimeAsync(650);
+      await vi.advanceTimersByTimeAsync(900);
       await pending;
       expect(stubs.writeSession).toHaveBeenCalledTimes(2); // paste + one CR
     } finally {
@@ -513,7 +773,7 @@ describe('agent prompt injection', () => {
     try {
       stubs.sessionState.mockReturnValue('idle');
       const pending = deliverAgentPrompt('session-1', 'quick task');
-      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(500);
       expect(stubs.writeSession).toHaveBeenNthCalledWith(
         2,
         'session-1',
@@ -526,7 +786,7 @@ describe('agent prompt injection', () => {
       stubs.sessionState.mockReturnValue('idle');
       for (const tap of [...stubs.stateTaps]) tap('session-1', 'idle');
       await vi.advanceTimersByTimeAsync(400);
-      await pending;
+      await expect(pending).resolves.toBe(true);
 
       expect(stubs.writeSession).toHaveBeenCalledTimes(2); // prompt + one CR
       expect(stubs.stateTaps).toHaveLength(0);

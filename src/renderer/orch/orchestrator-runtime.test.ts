@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { AccountInfo } from '../../shared/account-types';
 import type { AdapterInfo } from '../../shared/types';
 import {
-  isOrchestratorCapableAdapter,
+  automaticOrchestratorAdapterId,
+  isDeclaredOrchestratorAdapter,
+  isVerifiedOrchestratorAdapter,
   resolveOrchestratorRuntime,
 } from './orchestrator-runtime';
 
@@ -30,28 +32,49 @@ function adapter(patch: Partial<AdapterInfo> = {}): AdapterInfo {
     models: { list: ['default'], default: 'default' },
     installed: true,
     orchestratorCapable: true,
+    orchestrationEvidence: 'verified',
     installCommand: '',
     idleTimeoutMs: 800,
     ...patch,
   };
 }
 
-describe('isOrchestratorCapableAdapter', () => {
-  it('derives eligibility from adapter metadata instead of a stale provider list', () => {
+describe('orchestrator route evidence', () => {
+  it('separates a declared route from a verified automatic Maestro', () => {
+    const experimental = adapter({
+      id: 'third-party-mcp',
+      orchestratorCapable: true,
+      orchestrationEvidence: 'experimental',
+    });
     expect(
-      isOrchestratorCapableAdapter(
-        adapter({ id: 'third-party-mcp', orchestratorCapable: true }),
-      ),
+      isDeclaredOrchestratorAdapter(experimental),
     ).toBe(true);
+    expect(isVerifiedOrchestratorAdapter(experimental)).toBe(false);
+    expect(isVerifiedOrchestratorAdapter(adapter())).toBe(true);
     expect(
-      isOrchestratorCapableAdapter(
+      isDeclaredOrchestratorAdapter(
         adapter({ id: 'aider', orchestratorCapable: false }),
       ),
     ).toBe(false);
-    expect(isOrchestratorCapableAdapter(adapter({ installed: false }))).toBe(false);
+    expect(isDeclaredOrchestratorAdapter(adapter({ installed: false }))).toBe(false);
     expect(
-      isOrchestratorCapableAdapter(adapter({ kind: 'api-provider' })),
+      isDeclaredOrchestratorAdapter(adapter({ kind: 'api-provider' })),
     ).toBe(false);
+  });
+
+  it('nunca usa o primeiro adapter experimental como fallback automático', () => {
+    const kimi = adapter({
+      id: 'kimi',
+      orchestrationEvidence: 'experimental',
+    });
+    const codex = adapter({ id: 'codex' });
+
+    expect(
+      automaticOrchestratorAdapterId([kimi, codex], 'kimi'),
+    ).toBe('codex');
+    expect(
+      automaticOrchestratorAdapterId([kimi], 'kimi'),
+    ).toBeNull();
   });
 });
 

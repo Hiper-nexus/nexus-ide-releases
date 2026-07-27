@@ -158,15 +158,21 @@ function safeGetDirectories(candidate) {
 }
 
 const SOURCE_RE = /\.(?:[cm]?[jt]sx?)$/i;
-const SOURCE_EXTENSIONS = [
+const TYPESCRIPT_SOURCE_EXTENSIONS = [
   '.ts',
   '.tsx',
-  '.js',
-  '.jsx',
   '.mts',
   '.cts',
+];
+const JAVASCRIPT_SOURCE_EXTENSIONS = [
+  '.js',
+  '.jsx',
   '.mjs',
   '.cjs',
+];
+const SOURCE_EXTENSIONS = [
+  ...TYPESCRIPT_SOURCE_EXTENSIONS,
+  ...JAVASCRIPT_SOURCE_EXTENSIONS,
 ];
 const IGNORED_DIRS = new Set([
   '.git',
@@ -240,19 +246,35 @@ function matchFileSystemEntries(candidate) {
   return { files, directories };
 }
 
-function scriptsFromConfig(config) {
+function hasSupportedSourceExtension(candidate, extensions) {
+  const lower = candidate.toLowerCase();
+  return extensions.some((extension) => lower.endsWith(extension));
+}
+
+function scriptsFromConfig(config, options) {
   const scripts = new Set();
-  const configuredFiles = Array.isArray(config.files) ? config.files.slice(0, limits.maxProjectFiles) : [];
+  const rawConfiguredFiles = Array.isArray(config.files) ? config.files : null;
+  if (rawConfiguredFiles && rawConfiguredFiles.length > limits.maxProjectFiles) {
+    fail('LSP project-file limit exceeded');
+  }
+  const configuredFiles = rawConfiguredFiles || [];
+  const sourceExtensions = options.allowJs === true
+    ? SOURCE_EXTENSIONS
+    : TYPESCRIPT_SOURCE_EXTENSIONS;
   for (const configured of configuredFiles) {
     if (typeof configured !== 'string') continue;
     const file = safeRealFile(path.resolve(root, configured));
-    if (file && file.kind === 'workspace' && SOURCE_RE.test(file.absolute)) {
+    if (
+      file &&
+      file.kind === 'workspace' &&
+      hasSupportedSourceExtension(file.absolute, sourceExtensions)
+    ) {
       scripts.add(file.absolute);
     }
   }
   const includes = Array.isArray(config.include)
     ? config.include.filter((value) => typeof value === 'string').slice(0, 128)
-    : configuredFiles.length > 0
+    : rawConfiguredFiles
       ? []
       : ['**/*'];
   if (includes.length > 0) {
@@ -271,7 +293,7 @@ function scriptsFromConfig(config) {
     ];
     const matched = ts.matchFiles(
       root,
-      SOURCE_EXTENSIONS,
+      sourceExtensions,
       excludes,
       includes,
       ts.sys.useCaseSensitiveFileNames,
@@ -282,7 +304,11 @@ function scriptsFromConfig(config) {
     );
     for (const candidate of matched) {
       const file = safeRealFile(candidate);
-      if (file && file.kind === 'workspace' && SOURCE_RE.test(file.absolute)) {
+      if (
+        file &&
+        file.kind === 'workspace' &&
+        hasSupportedSourceExtension(file.absolute, sourceExtensions)
+      ) {
         scripts.add(file.absolute);
       }
       if (scripts.size > limits.maxProjectFiles) {
@@ -295,7 +321,7 @@ function scriptsFromConfig(config) {
 
 function safeProjectConfig() {
   const defaults = {
-    allowJs: true,
+    allowJs: false,
     checkJs: false,
     jsx: ts.JsxEmit.Preserve,
     module: ts.ModuleKind.NodeNext,
@@ -305,14 +331,27 @@ function safeProjectConfig() {
     target: ts.ScriptTarget.ES2022,
     types: [],
   };
-  const configPath = path.join(root, 'tsconfig.json');
-  const configText = safeRead(configPath);
+  const dedicatedConfigPath = path.join(root, 'tsconfig.lsp.json');
+  const defaultConfigPath = path.join(root, 'tsconfig.json');
+  const dedicatedConfigText = safeRead(dedicatedConfigPath);
+  const configPath =
+    dedicatedConfigText === undefined ? defaultConfigPath : dedicatedConfigPath;
+  const configText =
+    dedicatedConfigText === undefined
+      ? safeRead(defaultConfigPath)
+      : dedicatedConfigText;
   if (configText === undefined || Buffer.byteLength(configText, 'utf8') > limits.maxConfigBytes) {
-    return { options: defaults, scripts: scanWorkspaceScripts() };
+    return {
+      options: { ...defaults, allowJs: true },
+      scripts: scanWorkspaceScripts(),
+    };
   }
   const parsedText = ts.parseConfigFileTextToJson(configPath, configText);
   if (parsedText.error || !parsedText.config || typeof parsedText.config !== 'object') {
-    return { options: defaults, scripts: scanWorkspaceScripts() };
+    return {
+      options: { ...defaults, allowJs: true },
+      scripts: scanWorkspaceScripts(),
+    };
   }
   const compilerJson =
     parsedText.config.compilerOptions && typeof parsedText.config.compilerOptions === 'object'
@@ -333,7 +372,10 @@ function safeProjectConfig() {
     }
   }
   if (Array.isArray(options.types)) options.types = options.types.slice(0, 32);
-  return { options, scripts: scriptsFromConfig(parsedText.config) };
+  return {
+    options,
+    scripts: scriptsFromConfig(parsedText.config, options),
+  };
 }
 
 function relativeResultPath(fileName) {

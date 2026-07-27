@@ -1,13 +1,13 @@
-import { createHash } from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import type { ProjectExecutionScope } from '../../shared/types';
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import type { ProjectExecutionScope } from "../../shared/types";
 import {
   GitCommandError,
   ProcessGitRunner,
   assertSafeLocalGitConfig,
   type GitRunner,
-} from './git-command';
+} from "./git-command";
 import {
   ACTIVE_WORKTREE_STATUSES as ACTIVE_STATUSES,
   OwnershipOverlapError,
@@ -29,31 +29,36 @@ import {
   type IntegrationCheckoutSnapshot,
   type IntegrationCheckoutInspection,
   type PreparedWorktreeIntegration,
+  type PreparedWorktreeNoChangeValidation,
   type WorktreeManagerOptions,
   type WorktreeRecord,
   type WorktreeStateSnapshot,
   type WorktreeStateStore,
-} from './worktree-contract';
-import { validateWorktreeStateSnapshot } from './worktree-state';
-import { materializeGitWorktree } from './worktree-cow';
+} from "./worktree-contract";
+import { validateWorktreeStateSnapshot } from "./worktree-state";
+import { materializeGitWorktree } from "./worktree-cow";
 
-export * from './git-command';
-export * from './worktree-contract';
-export { cowWorktreeAvailable, materializeGitWorktree } from './worktree-cow';
+export * from "./git-command";
+export * from "./worktree-contract";
+export { cowWorktreeAvailable, materializeGitWorktree } from "./worktree-cow";
 
 const MAX_CAS_ATTEMPTS = 16;
 export const INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER =
-  '[NEXUS_INTERRUPTED_WORKTREE_RESERVATION]';
+  "[NEXUS_INTERRUPTED_WORKTREE_RESERVATION]";
 
 function assertExecutorOwnershipIsNotAuthority(files: readonly string[]): void {
   const protectedFile = files.find((file) => {
-    const normalized = file.replaceAll('\\', '/');
-    return normalized === '.nexus/project.json' ||
-      normalized === '.context' ||
-      normalized.startsWith('.context/');
+    const normalized = file.replaceAll("\\", "/");
+    return (
+      normalized === ".nexus/project.json" ||
+      normalized === ".context" ||
+      normalized.startsWith(".context/")
+    );
   });
   if (protectedFile) {
-    throw new Error(`executor worktrees cannot own context authority: ${protectedFile}`);
+    throw new Error(
+      `executor worktrees cannot own context authority: ${protectedFile}`,
+    );
   }
 }
 
@@ -62,8 +67,8 @@ type RepositorySnapshot = IntegrationCheckoutInspection;
 function isInside(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return (
-    relative === '' ||
-    (relative !== '..' &&
+    relative === "" ||
+    (relative !== ".." &&
       !relative.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relative))
   );
@@ -101,14 +106,14 @@ export class WorktreeManager {
   constructor(options: WorktreeManagerOptions) {
     if (
       !options.stateStore ||
-      typeof options.stateStore.read !== 'function' ||
-      typeof options.stateStore.compareAndSwap !== 'function'
+      typeof options.stateStore.read !== "function" ||
+      typeof options.stateStore.compareAndSwap !== "function"
     ) {
-      throw new Error('a durable worktree state store is required');
+      throw new Error("a durable worktree state store is required");
     }
     this.runtimeRoot = ensureDirectory(path.resolve(options.runtimeRoot));
     this.worktreesRoot = ensureDirectory(
-      path.join(this.runtimeRoot, 'worktrees'),
+      path.join(this.runtimeRoot, "worktrees"),
       this.runtimeRoot,
     );
     this.#stateStore = options.stateStore;
@@ -117,12 +122,12 @@ export class WorktreeManager {
   }
 
   scopeKey(
-    scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+    scope: Pick<ProjectExecutionScope, "projectId" | "checkoutId">,
   ): string {
     return digest(
-      'worktree-scope',
-      assertIdentifier(scope.projectId, 'projectId'),
-      assertIdentifier(scope.checkoutId, 'checkoutId'),
+      "worktree-scope",
+      assertIdentifier(scope.projectId, "projectId"),
+      assertIdentifier(scope.checkoutId, "checkoutId"),
     );
   }
 
@@ -139,8 +144,8 @@ export class WorktreeManager {
     scope: ProjectExecutionScope,
   ): readonly WorktreeRecord[] {
     const scopeKey = this.scopeKey(scope);
-    const taskKeys = this.#snapshot(scopeKey).records
-      .filter((record) => record.status === 'reserved')
+    const taskKeys = this.#snapshot(scopeKey)
+      .records.filter((record) => record.status === "reserved")
       .map((record) => record.taskKey);
     return Object.freeze(
       taskKeys.map((taskKey) =>
@@ -151,25 +156,29 @@ export class WorktreeManager {
 
   create(input: CreateWorktreeInput): WorktreeRecord {
     const repository = this.#repositorySnapshot(input.scope, true);
-    const missionId = assertIdentifier(input.missionId, 'missionId');
-    const taskId = assertIdentifier(input.taskId, 'taskId');
-    const workerId = assertIdentifier(input.workerId, 'workerId');
+    const missionId = assertIdentifier(input.missionId, "missionId");
+    const taskId = assertIdentifier(input.taskId, "taskId");
+    const workerId = assertIdentifier(input.workerId, "workerId");
     const taskKey = worktreeTaskKey(missionId, taskId);
     const scopeKey = this.scopeKey(input.scope);
     const ownership = normalizeOwnership(input.ownership);
     assertExecutorOwnershipIsNotAuthority(ownership.files);
     const dependencies = Object.freeze(
-      [...new Set((input.dependsOn ?? []).map((dependency) =>
-        worktreeTaskKey(dependency.missionId, dependency.taskId),
-      ))].sort(),
+      [
+        ...new Set(
+          (input.dependsOn ?? []).map((dependency) =>
+            worktreeTaskKey(dependency.missionId, dependency.taskId),
+          ),
+        ),
+      ].sort(),
     );
     if (dependencies.includes(taskKey)) {
-      throw new Error('a task cannot depend on itself');
+      throw new Error("a task cannot depend on itself");
     }
 
-    const projectKey = digest('worktree-project', input.scope.projectId);
+    const projectKey = digest("worktree-project", input.scope.projectId);
     const checkoutKey = digest(
-      'worktree-checkout',
+      "worktree-checkout",
       input.scope.projectId,
       input.scope.checkoutId,
     );
@@ -200,7 +209,7 @@ export class WorktreeManager {
       baseSha: repository.headSha,
       ownership,
       dependencies,
-      status: 'reserved',
+      status: "reserved",
       createdAt: now,
       updatedAt: now,
     });
@@ -213,7 +222,7 @@ export class WorktreeManager {
           existing.integrationRef !== repository.integrationRef
         ) {
           throw new WorktreeStateConflictError(
-            'task worktree belongs to another checkout root',
+            "task worktree belongs to another checkout root",
           );
         }
         if (existing.workerId !== workerId) {
@@ -226,10 +235,10 @@ export class WorktreeManager {
           !sameValues(existing.dependencies, dependencies)
         ) {
           throw new WorktreeStateConflictError(
-            'task ownership and dependencies are immutable after reservation',
+            "task ownership and dependencies are immutable after reservation",
           );
         }
-        if (existing.status === 'ready' || existing.status === 'queued') {
+        if (existing.status === "ready" || existing.status === "queued") {
           return { records, result: { record: existing, isNew: false } };
         }
         throw new WorktreeStateConflictError(
@@ -243,8 +252,8 @@ export class WorktreeManager {
         );
         if (
           !dependencyRecord ||
-          dependencyRecord.status === 'failed' ||
-          dependencyRecord.status === 'abandoned'
+          dependencyRecord.status === "failed" ||
+          dependencyRecord.status === "abandoned"
         ) {
           throw new WorktreeStateConflictError(
             `explicit dependency is unavailable: ${dependency}`,
@@ -270,7 +279,7 @@ export class WorktreeManager {
         )
       ) {
         throw new WorktreeStateConflictError(
-          'derived worktree path or branch is already reserved',
+          "derived worktree path or branch is already reserved",
         );
       }
       return {
@@ -287,20 +296,20 @@ export class WorktreeManager {
     try {
       this.#assertRepositoryUnchanged(repository, true);
       if (fs.existsSync(worktreePath)) {
-        throw new Error('derived worktree path already exists');
+        throw new Error("derived worktree path already exists");
       }
       const branchExists = this.#git.run(
         repository.rootRealPath,
-        ['show-ref', '--verify', '--quiet', branchRef],
+        ["show-ref", "--verify", "--quiet", branchRef],
         { allowFailure: true },
       );
       if (branchExists.status === 0) {
-        throw new Error('derived Nexus branch already exists');
+        throw new Error("derived Nexus branch already exists");
       }
       if (branchExists.status !== 1) {
         throw new GitCommandError(
-          'Git could not verify the derived branch',
-          ['show-ref', '--verify', '--quiet', branchRef],
+          "Git could not verify the derived branch",
+          ["show-ref", "--verify", "--quiet", branchRef],
           branchExists,
         );
       }
@@ -316,13 +325,13 @@ export class WorktreeManager {
       this.#assertRepositoryUnchanged(repository, true);
       return this.#transition(scopeKey, taskKey, (record) => ({
         ...record,
-        status: 'ready',
+        status: "ready",
         updatedAt: this.#timestamp(),
       }));
     } catch (error) {
       this.#transition(scopeKey, taskKey, (record) => ({
         ...record,
-        status: 'failed',
+        status: "failed",
         failureReason: this.#failureMessage(error),
         updatedAt: this.#timestamp(),
       }));
@@ -351,7 +360,7 @@ export class WorktreeManager {
       record.checkoutId !== scope.checkoutId
     ) {
       throw new WorktreeStateConflictError(
-        'worktree record does not belong to the requested scope root',
+        "worktree record does not belong to the requested scope root",
       );
     }
     return record;
@@ -373,27 +382,35 @@ export class WorktreeManager {
     return this.#prepareIntegration(scope, missionId, taskId, true);
   }
 
-  #prepareIntegration(
+  /**
+   * Inspect the honest "QA passed without a correction" branch.
+   *
+   * `null` means there are real committed changes and the ordinary MergeQueue
+   * must handle them. A dirty worktree, empty commit, dependency drift, or
+   * primary-HEAD drift is an error — none can be reclassified as no-change.
+   */
+  prepareNoChangeValidation(
     scope: ProjectExecutionScope,
     missionId: string,
     taskId: string,
-    allowTerminalRecovery: boolean,
-  ): PreparedWorktreeIntegration {
+  ): PreparedWorktreeNoChangeValidation | null {
     const record = this.get(scope, missionId, taskId);
-    const isOrdinarilyReady =
-      record?.status === 'ready' || record?.status === 'queued';
-    const isRecoverable =
-      allowTerminalRecovery &&
-      (record?.status === 'failed' || record?.status === 'integrated');
-    if (!record || (!isOrdinarilyReady && !isRecoverable)) {
-      throw new WorktreeStateConflictError('task worktree is not ready');
+    const isFresh = record?.status === "ready";
+    const isAlreadyValidated =
+      record?.status === "integrated" &&
+      record.taskHeadSha === record.baseSha &&
+      record.integratedSha === record.baseSha;
+    if (!record || (!isFresh && !isAlreadyValidated)) {
+      throw new WorktreeStateConflictError(
+        "task worktree is not ready for no-change validation",
+      );
     }
     const records = this.#snapshot(record.scopeKey).records;
     for (const dependency of record.dependencies) {
       const dependencyRecord = records.find(
         (candidate) => candidate.taskKey === dependency,
       );
-      if (dependencyRecord?.status !== 'integrated') {
+      if (dependencyRecord?.status !== "integrated") {
         throw new WorktreeStateConflictError(
           `task dependency is not integrated: ${dependency}`,
         );
@@ -402,32 +419,164 @@ export class WorktreeManager {
     const taskHeadSha = this.#assertWorktree(record);
     const ancestor = this.#git.run(
       record.worktreePath,
-      ['merge-base', '--is-ancestor', record.baseSha, taskHeadSha],
+      ["merge-base", "--is-ancestor", record.baseSha, taskHeadSha],
       { allowFailure: true },
     );
     if (ancestor.status !== 0) {
       throw new WorktreeStateConflictError(
-        'task HEAD no longer descends from its frozen base SHA',
+        "task HEAD no longer descends from its frozen base SHA",
+      );
+    }
+    const changedFiles = this.#git
+      .run(record.worktreePath, [
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-only",
+        "-z",
+        "--diff-filter=ACDMRTUXB",
+        record.baseSha,
+        taskHeadSha,
+      ])
+      .stdout.split("\0")
+      .filter(Boolean);
+    if (changedFiles.length > 0) return null;
+    if (taskHeadSha !== record.baseSha) {
+      throw new WorktreeStateConflictError(
+        "validation-only task created an empty commit instead of preserving HEAD",
+      );
+    }
+    const integration = this.integrationSnapshot(record);
+    if (integration.headSha !== record.baseSha) {
+      throw new WorktreeStateConflictError(
+        "primary checkout changed after validation worktree creation",
+      );
+    }
+    const diff = this.#git.run(record.worktreePath, [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--binary",
+      "--full-index",
+      record.baseSha,
+      taskHeadSha,
+    ]).stdout;
+    return Object.freeze({
+      record,
+      taskHeadSha,
+      integrationHeadSha: integration.headSha,
+      changedFiles: Object.freeze([]) as readonly [],
+      diffHash: createHash("sha256").update(diff).digest("hex"),
+    });
+  }
+
+  /**
+   * Durable no-change terminal marker. Re-proves Git immediately before the
+   * CAS; normal executor work still cannot reach integration without a diff.
+   */
+  markValidatedNoChange(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+    expectedTaskHeadSha: string,
+    expectedIntegrationHeadSha: string,
+  ): WorktreeRecord {
+    const prepared = this.prepareNoChangeValidation(scope, missionId, taskId);
+    if (
+      !prepared ||
+      prepared.taskHeadSha !==
+        assertSha(expectedTaskHeadSha, "expected task HEAD") ||
+      prepared.integrationHeadSha !==
+        assertSha(expectedIntegrationHeadSha, "expected integration HEAD")
+    ) {
+      throw new WorktreeStateConflictError(
+        "no-change validation Git identity changed before finalization",
+      );
+    }
+    const taskKey = worktreeTaskKey(missionId, taskId);
+    return this.#transition(this.scopeKey(scope), taskKey, (record) => {
+      if (
+        record.status === "integrated" &&
+        record.taskHeadSha === prepared.taskHeadSha &&
+        record.integratedSha === prepared.integrationHeadSha
+      ) {
+        return record;
+      }
+      if (
+        record.status !== "ready" ||
+        record.baseSha !== prepared.taskHeadSha ||
+        prepared.taskHeadSha !== prepared.integrationHeadSha
+      ) {
+        throw new WorktreeStateConflictError(
+          "worktree state changed before no-change finalization",
+        );
+      }
+      return {
+        ...record,
+        status: "integrated",
+        taskHeadSha: prepared.taskHeadSha,
+        integratedSha: prepared.integrationHeadSha,
+        failureReason: undefined,
+        updatedAt: this.#timestamp(),
+      };
+    });
+  }
+
+  #prepareIntegration(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+    allowTerminalRecovery: boolean,
+  ): PreparedWorktreeIntegration {
+    const record = this.get(scope, missionId, taskId);
+    const isOrdinarilyReady =
+      record?.status === "ready" || record?.status === "queued";
+    const isRecoverable =
+      allowTerminalRecovery &&
+      (record?.status === "failed" || record?.status === "integrated");
+    if (!record || (!isOrdinarilyReady && !isRecoverable)) {
+      throw new WorktreeStateConflictError("task worktree is not ready");
+    }
+    const records = this.#snapshot(record.scopeKey).records;
+    for (const dependency of record.dependencies) {
+      const dependencyRecord = records.find(
+        (candidate) => candidate.taskKey === dependency,
+      );
+      if (dependencyRecord?.status !== "integrated") {
+        throw new WorktreeStateConflictError(
+          `task dependency is not integrated: ${dependency}`,
+        );
+      }
+    }
+    const taskHeadSha = this.#assertWorktree(record);
+    const ancestor = this.#git.run(
+      record.worktreePath,
+      ["merge-base", "--is-ancestor", record.baseSha, taskHeadSha],
+      { allowFailure: true },
+    );
+    if (ancestor.status !== 0) {
+      throw new WorktreeStateConflictError(
+        "task HEAD no longer descends from its frozen base SHA",
       );
     }
     const changedFiles = Object.freeze(
       this.#git
         .run(record.worktreePath, [
-          'diff',
-          '--no-ext-diff',
-          '--no-textconv',
-          '--name-only',
-          '-z',
-          '--diff-filter=ACDMRTUXB',
+          "diff",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--name-only",
+          "-z",
+          "--diff-filter=ACDMRTUXB",
           record.baseSha,
           taskHeadSha,
         ])
-        .stdout.split('\0')
+        .stdout.split("\0")
         .filter(Boolean)
         .map(normalizeFileOwnership),
     );
     if (changedFiles.length === 0) {
-      throw new WorktreeStateConflictError('task has no committed changes');
+      throw new WorktreeStateConflictError("task has no committed changes");
     }
     const undeclared = changedFiles.filter(
       (file) =>
@@ -437,11 +586,11 @@ export class WorktreeManager {
     );
     if (undeclared.length > 0) throw new OwnershipViolationError(undeclared);
     const diff = this.#git.run(record.worktreePath, [
-      'diff',
-      '--no-ext-diff',
-      '--no-textconv',
-      '--binary',
-      '--full-index',
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--binary",
+      "--full-index",
       record.baseSha,
       taskHeadSha,
     ]).stdout;
@@ -449,7 +598,7 @@ export class WorktreeManager {
       record,
       taskHeadSha,
       changedFiles,
-      diffHash: createHash('sha256').update(diff).digest('hex'),
+      diffHash: createHash("sha256").update(diff).digest("hex"),
     });
   }
 
@@ -459,23 +608,23 @@ export class WorktreeManager {
     taskId: string,
     expectedTaskHeadSha: string,
   ): WorktreeRecord {
-    const expectedHead = assertSha(expectedTaskHeadSha, 'task head SHA');
+    const expectedHead = assertSha(expectedTaskHeadSha, "task head SHA");
     const prepared = this.prepareRecoveryIntegration(scope, missionId, taskId);
     if (prepared.taskHeadSha !== expectedHead) {
       throw new WorktreeStateConflictError(
-        'task HEAD changed before the retry could be reopened',
+        "task HEAD changed before the retry could be reopened",
       );
     }
     const taskKey = worktreeTaskKey(missionId, taskId);
     return this.#transition(this.scopeKey(scope), taskKey, (record) => {
-      if (record.status !== 'failed' || record.integratedSha !== undefined) {
+      if (record.status !== "failed" || record.integratedSha !== undefined) {
         throw new WorktreeStateConflictError(
-          'only a failed, non-integrated task can be reopened for retry',
+          "only a failed, non-integrated task can be reopened for retry",
         );
       }
       return {
         ...record,
-        status: 'ready',
+        status: "ready",
         taskHeadSha: undefined,
         integratedSha: undefined,
         failureReason: undefined,
@@ -491,25 +640,25 @@ export class WorktreeManager {
     expectedTaskHeadSha: string,
     integratedSha: string,
   ): WorktreeRecord {
-    const expectedHead = assertSha(expectedTaskHeadSha, 'task head SHA');
-    const exactIntegratedSha = assertSha(integratedSha, 'integrated SHA');
+    const expectedHead = assertSha(expectedTaskHeadSha, "task head SHA");
+    const exactIntegratedSha = assertSha(integratedSha, "integrated SHA");
     const taskKey = worktreeTaskKey(missionId, taskId);
     return this.#transition(this.scopeKey(scope), taskKey, (record) => {
       if (
         record.taskHeadSha !== expectedHead ||
         (record.integratedSha !== undefined &&
           record.integratedSha !== exactIntegratedSha) ||
-        (record.status !== 'failed' &&
-          record.status !== 'queued' &&
-          record.status !== 'integrated')
+        (record.status !== "failed" &&
+          record.status !== "queued" &&
+          record.status !== "integrated")
       ) {
         throw new WorktreeStateConflictError(
-          'worktree state does not match the recovered integration',
+          "worktree state does not match the recovered integration",
         );
       }
       return {
         ...record,
-        status: 'integrated',
+        status: "integrated",
         integratedSha: exactIntegratedSha,
         failureReason: undefined,
         updatedAt: this.#timestamp(),
@@ -520,7 +669,7 @@ export class WorktreeManager {
   integrationSnapshot(record: WorktreeRecord): IntegrationCheckoutSnapshot {
     const snapshot = this.inspectIntegration(record);
     if (!snapshot.clean) {
-      throw new WorktreeStateConflictError('primary checkout must be clean');
+      throw new WorktreeStateConflictError("primary checkout must be clean");
     }
     const { rootRealPath, integrationRef, headSha } = snapshot;
     return Object.freeze({ rootRealPath, integrationRef, headSha });
@@ -528,12 +677,15 @@ export class WorktreeManager {
 
   inspectIntegration(record: WorktreeRecord): IntegrationCheckoutInspection {
     const snapshot = this.#repositorySnapshot(
-      { projectId: record.projectId, checkoutId: record.checkoutId,
-        rootRealPath: record.rootRealPath } as ProjectExecutionScope,
+      {
+        projectId: record.projectId,
+        checkoutId: record.checkoutId,
+        rootRealPath: record.rootRealPath,
+      } as ProjectExecutionScope,
       false,
     );
     if (snapshot.integrationRef !== record.integrationRef) {
-      throw new WorktreeStateConflictError('integration branch changed');
+      throw new WorktreeStateConflictError("integration branch changed");
     }
     return Object.freeze({ ...snapshot });
   }
@@ -545,7 +697,7 @@ export class WorktreeManager {
     const snapshot = this.integrationSnapshot(record);
     if (snapshot.headSha !== expectedHeadSha) {
       throw new WorktreeStateConflictError(
-        'integration HEAD changed during validation',
+        "integration HEAD changed during validation",
       );
     }
     return snapshot;
@@ -559,13 +711,13 @@ export class WorktreeManager {
   ): WorktreeRecord {
     const taskKey = worktreeTaskKey(missionId, taskId);
     return this.#transition(this.scopeKey(scope), taskKey, (record) => {
-      if (record.status !== 'ready' && record.status !== 'queued') {
-        throw new WorktreeStateConflictError('task cannot enter merge queue');
+      if (record.status !== "ready" && record.status !== "queued") {
+        throw new WorktreeStateConflictError("task cannot enter merge queue");
       }
       return {
         ...record,
-        status: 'queued',
-        taskHeadSha: assertSha(taskHeadSha, 'task head SHA'),
+        status: "queued",
+        taskHeadSha: assertSha(taskHeadSha, "task head SHA"),
         updatedAt: this.#timestamp(),
       };
     });
@@ -579,15 +731,15 @@ export class WorktreeManager {
   ): WorktreeRecord {
     const taskKey = worktreeTaskKey(missionId, taskId);
     return this.#transition(this.scopeKey(scope), taskKey, (record) => {
-      if (record.status !== 'queued' || !record.taskHeadSha) {
+      if (record.status !== "queued" || !record.taskHeadSha) {
         throw new WorktreeStateConflictError(
-          'only a queued task can be marked integrated',
+          "only a queued task can be marked integrated",
         );
       }
       return {
         ...record,
-        status: 'integrated',
-        integratedSha: assertSha(integratedSha, 'integrated SHA'),
+        status: "integrated",
+        integratedSha: assertSha(integratedSha, "integrated SHA"),
         failureReason: undefined,
         updatedAt: this.#timestamp(),
       };
@@ -603,16 +755,16 @@ export class WorktreeManager {
   ): WorktreeRecord {
     const taskKey = worktreeTaskKey(missionId, taskId);
     return this.#transition(this.scopeKey(scope), taskKey, (record) => {
-      if (record.status === 'integrated' || record.status === 'abandoned') {
+      if (record.status === "integrated" || record.status === "abandoned") {
         throw new WorktreeStateConflictError(
           `cannot fail a task that is already ${record.status}`,
         );
       }
       return {
         ...record,
-        status: 'failed',
+        status: "failed",
         ...(integratedSha
-          ? { integratedSha: assertSha(integratedSha, 'integrated SHA') }
+          ? { integratedSha: assertSha(integratedSha, "integrated SHA") }
           : {}),
         failureReason: this.#failureMessage(reason),
         updatedAt: this.#timestamp(),
@@ -623,7 +775,7 @@ export class WorktreeManager {
   #repositorySnapshot(
     scope: Pick<
       ProjectExecutionScope,
-      'projectId' | 'checkoutId' | 'rootRealPath'
+      "projectId" | "checkoutId" | "rootRealPath"
     >,
     requireClean: boolean,
   ): RepositorySnapshot {
@@ -634,47 +786,47 @@ export class WorktreeManager {
       rootRealPath !== expectedRoot ||
       !fs.statSync(rootRealPath).isDirectory()
     ) {
-      throw new Error('scope root is not canonical');
+      throw new Error("scope root is not canonical");
     }
     const topLevel = fs.realpathSync(
-      gitOutput(this.#git, rootRealPath, ['rev-parse', '--show-toplevel']),
+      gitOutput(this.#git, rootRealPath, ["rev-parse", "--show-toplevel"]),
     );
     if (topLevel !== rootRealPath) {
-      throw new Error('scope root must equal the canonical Git top-level');
+      throw new Error("scope root must equal the canonical Git top-level");
     }
     this.#assertSafeRepositoryConfig(rootRealPath);
     let integrationRef: string;
     try {
       integrationRef = gitOutput(this.#git, rootRealPath, [
-        'symbolic-ref',
-        '--quiet',
-        'HEAD',
+        "symbolic-ref",
+        "--quiet",
+        "HEAD",
       ]);
     } catch (error) {
-      throw new Error('primary checkout must be on an integration branch', {
+      throw new Error("primary checkout must be on an integration branch", {
         cause: error,
       });
     }
-    if (!integrationRef.startsWith('refs/heads/')) {
-      throw new Error('primary checkout has an invalid integration ref');
+    if (!integrationRef.startsWith("refs/heads/")) {
+      throw new Error("primary checkout has an invalid integration ref");
     }
     const headSha = assertSha(
       gitOutput(this.#git, rootRealPath, [
-        'rev-parse',
-        '--verify',
-        'HEAD^{commit}',
+        "rev-parse",
+        "--verify",
+        "HEAD^{commit}",
       ]),
-      'integration HEAD',
+      "integration HEAD",
     );
     const clean =
       this.#git.run(rootRealPath, [
-        'status',
-        '--porcelain=v1',
-        '-z',
-        '--untracked-files=all',
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
       ]).stdout.length === 0;
     if (requireClean && !clean) {
-      throw new Error('primary checkout must be clean');
+      throw new Error("primary checkout must be clean");
     }
     return Object.freeze({ rootRealPath, integrationRef, headSha, clean });
   }
@@ -685,8 +837,8 @@ export class WorktreeManager {
   ): void {
     const current = this.#repositorySnapshot(
       {
-        projectId: '',
-        checkoutId: '',
+        projectId: "",
+        checkoutId: "",
         rootRealPath: expected.rootRealPath,
       } as ProjectExecutionScope,
       requireClean,
@@ -696,7 +848,7 @@ export class WorktreeManager {
       current.headSha !== expected.headSha
     ) {
       throw new WorktreeStateConflictError(
-        'primary checkout changed after base SHA was frozen',
+        "primary checkout changed after base SHA was frozen",
       );
     }
   }
@@ -704,54 +856,54 @@ export class WorktreeManager {
   #assertWorktree(record: WorktreeRecord): string {
     const real = fs.realpathSync(record.worktreePath);
     if (real !== record.worktreePath || !fs.statSync(real).isDirectory()) {
-      throw new WorktreeStateConflictError('task worktree path changed');
+      throw new WorktreeStateConflictError("task worktree path changed");
     }
     const topLevel = fs.realpathSync(
-      gitOutput(this.#git, real, ['rev-parse', '--show-toplevel']),
+      gitOutput(this.#git, real, ["rev-parse", "--show-toplevel"]),
     );
     if (topLevel !== real) {
-      throw new WorktreeStateConflictError('task worktree Git root changed');
+      throw new WorktreeStateConflictError("task worktree Git root changed");
     }
     const branchRef = gitOutput(this.#git, real, [
-      'symbolic-ref',
-      '--quiet',
-      'HEAD',
+      "symbolic-ref",
+      "--quiet",
+      "HEAD",
     ]);
     if (branchRef !== record.branchRef) {
-      throw new WorktreeStateConflictError('task worktree branch changed');
+      throw new WorktreeStateConflictError("task worktree branch changed");
     }
     const repositoryCommonDirectory = fs.realpathSync(
       gitOutput(this.#git, record.rootRealPath, [
-        'rev-parse',
-        '--path-format=absolute',
-        '--git-common-dir',
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
       ]),
     );
     const worktreeCommonDirectory = fs.realpathSync(
       gitOutput(this.#git, real, [
-        'rev-parse',
-        '--path-format=absolute',
-        '--git-common-dir',
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
       ]),
     );
     if (worktreeCommonDirectory !== repositoryCommonDirectory) {
       throw new WorktreeStateConflictError(
-        'task worktree is not linked to the frozen repository',
+        "task worktree is not linked to the frozen repository",
       );
     }
     this.#assertSafeRepositoryConfig(real);
     const status = this.#git.run(real, [
-      'status',
-      '--porcelain=v1',
-      '-z',
-      '--untracked-files=all',
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
     ]).stdout;
     if (status.length > 0) {
-      throw new WorktreeStateConflictError('task worktree must be clean');
+      throw new WorktreeStateConflictError("task worktree must be clean");
     }
     return assertSha(
-      gitOutput(this.#git, real, ['rev-parse', '--verify', 'HEAD^{commit}']),
-      'task HEAD',
+      gitOutput(this.#git, real, ["rev-parse", "--verify", "HEAD^{commit}"]),
+      "task HEAD",
     );
   }
 
@@ -767,11 +919,11 @@ export class WorktreeManager {
       );
       if (index < 0) {
         throw new WorktreeStateConflictError(
-          'reserved worktree state record disappeared',
+          "reserved worktree state record disappeared",
         );
       }
       const current = snapshot.records[index];
-      if (current.status !== 'reserved') return cloneRecord(current);
+      if (current.status !== "reserved") return cloneRecord(current);
 
       let next: WorktreeRecord;
       try {
@@ -781,7 +933,7 @@ export class WorktreeManager {
           current.rootRealPath !== scope.rootRealPath
         ) {
           throw new WorktreeStateConflictError(
-            'reserved worktree does not belong to the requested scope',
+            "reserved worktree does not belong to the requested scope",
           );
         }
         const repository = this.#repositorySnapshot(scope, true);
@@ -790,25 +942,25 @@ export class WorktreeManager {
           repository.headSha !== current.baseSha
         ) {
           throw new WorktreeStateConflictError(
-            'primary checkout changed after the reserved base was frozen',
+            "primary checkout changed after the reserved base was frozen",
           );
         }
         const taskHeadSha = this.#assertWorktree(current);
         if (taskHeadSha !== current.baseSha) {
           throw new WorktreeStateConflictError(
-            'reserved worktree HEAD diverged from its frozen base',
+            "reserved worktree HEAD diverged from its frozen base",
           );
         }
         next = cloneRecord({
           ...current,
-          status: 'ready',
+          status: "ready",
           failureReason: undefined,
           updatedAt: this.#timestamp(),
         });
       } catch (error) {
         next = cloneRecord({
           ...current,
-          status: 'failed',
+          status: "failed",
           failureReason: this.#failureMessage(
             `${INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER} ` +
               `reserved worktree reconciliation failed closed: ` +
@@ -826,11 +978,7 @@ export class WorktreeManager {
         { scopeKey, worktreesRoot: this.worktreesRoot },
       ).records;
       if (
-        this.#stateStore.compareAndSwap(
-          scopeKey,
-          snapshot.revision,
-          validated,
-        )
+        this.#stateStore.compareAndSwap(scopeKey, snapshot.revision, validated)
       ) {
         return next;
       }
@@ -838,7 +986,7 @@ export class WorktreeManager {
       // identity rather than applying a decision computed from stale state.
     }
     throw new WorktreeStateConflictError(
-      'reserved worktree reconciliation CAS could not converge',
+      "reserved worktree reconciliation CAS could not converge",
     );
   }
 
@@ -854,16 +1002,17 @@ export class WorktreeManager {
       });
     } catch (error) {
       throw new WorktreeStateConflictError(
-        error instanceof Error ? error.message : 'invalid worktree state',
+        error instanceof Error ? error.message : "invalid worktree state",
       );
     }
   }
 
   #mutate<T>(
     scopeKey: string,
-    update: (
-      records: readonly WorktreeRecord[],
-    ) => { records: readonly WorktreeRecord[]; result: T },
+    update: (records: readonly WorktreeRecord[]) => {
+      records: readonly WorktreeRecord[];
+      result: T;
+    },
   ): T {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
       const snapshot = this.#snapshot(scopeKey);
@@ -876,21 +1025,17 @@ export class WorktreeManager {
         ).records;
       } catch (error) {
         throw new WorktreeStateConflictError(
-          error instanceof Error ? error.message : 'invalid worktree state',
+          error instanceof Error ? error.message : "invalid worktree state",
         );
       }
       if (
-        this.#stateStore.compareAndSwap(
-          scopeKey,
-          snapshot.revision,
-          records,
-        )
+        this.#stateStore.compareAndSwap(scopeKey, snapshot.revision, records)
       ) {
         return next.result;
       }
     }
     throw new WorktreeStateConflictError(
-      'worktree persistence CAS could not converge',
+      "worktree persistence CAS could not converge",
     );
   }
 
@@ -902,7 +1047,9 @@ export class WorktreeManager {
     return this.#mutate(scopeKey, (records) => {
       const index = records.findIndex((record) => record.taskKey === taskKey);
       if (index < 0) {
-        throw new WorktreeStateConflictError('worktree state record disappeared');
+        throw new WorktreeStateConflictError(
+          "worktree state record disappeared",
+        );
       }
       const updated = cloneRecord(update(records[index]));
       return {
@@ -917,7 +1064,7 @@ export class WorktreeManager {
   #timestamp(): number {
     const value = this.#now();
     if (!Number.isSafeInteger(value) || value < 0) {
-      throw new Error('worktree clock returned an invalid timestamp');
+      throw new Error("worktree clock returned an invalid timestamp");
     }
     return value;
   }
@@ -925,14 +1072,14 @@ export class WorktreeManager {
   #failureMessage(error: unknown): string {
     try {
       const value = error instanceof Error ? error.message : error;
-      const message = (typeof value === 'string' ? value : String(value))
-        .replaceAll('\0', ' ')
+      const message = (typeof value === "string" ? value : String(value))
+        .replaceAll("\0", " ")
         .slice(0, 2_048);
       return message.trim().length > 0
         ? message
-        : 'worktree operation failed with an unknown error';
+        : "worktree operation failed with an unknown error";
     } catch {
-      return 'worktree operation failed with an unknown error';
+      return "worktree operation failed with an unknown error";
     }
   }
 }

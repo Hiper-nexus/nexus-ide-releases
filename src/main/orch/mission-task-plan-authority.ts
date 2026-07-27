@@ -1,5 +1,12 @@
 import type { AgentCategory, Squad, SquadAgent } from "../../shared/orch-types";
-import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
+import {
+  adapterCapabilityMatrixOf,
+  type AdapterInfo,
+} from "../../shared/adapter-types";
+import {
+  hasCurrentApprovedDispatchContract,
+  hasCurrentDispatchAuthority,
+} from "../../shared/mission-intent";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   assertCurrentMissionOrchestratorSession,
@@ -13,14 +20,20 @@ import { encodeTaskScheduleDetail } from "./mission-scheduler-meta";
 import {
   assertClosedAcyclicPlanDependencies,
   supportsMechanicallyReadOnlyCli,
+  supportsMechanicallyWorkspaceWriteCli,
   type PlannedExecutionMode,
 } from "./mission-scheduler-plan";
 import type { ProjectDomainStoreSuite } from "./project-domain-store-registry";
 import { getSquad } from "./squad-store";
-import { plannedTaskId, type ScopedTaskRecord } from "./task-store";
+import {
+  plannedTaskId,
+  type ApprovedPreflightTaskPlanAuthority,
+  type ScopedTaskRecord,
+} from "./task-store";
 import { childMissionId } from "./tools-panes";
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
+import { listAdapterInfos } from "../adapters/adapter-registry";
 
 type WorkerCategory = Exclude<AgentCategory, "orchestrator">;
 
@@ -33,6 +46,7 @@ interface ParsedPlanTask extends PlannerTaskInput {
 
 export interface MissionTaskPlanAuthorityDeps {
   readonly getSquad: (squadId: string) => Squad | null;
+  readonly getAdapterInfo: (adapterId: string) => AdapterInfo | null;
   readonly listMissionWorktrees: (
     scope: ProjectExecutionScope,
     missionId: string,
@@ -54,12 +68,29 @@ export interface MissionTaskPlanResult {
   }>[];
 }
 
+export interface MainOwnedMissionTaskPlanInput {
+  readonly missionId: string;
+  readonly tasks: readonly unknown[];
+}
+
+/**
+ * Exact approval snapshot that lets trusted Main seal a plan before dispatch.
+ *
+ * This is deliberately a separate, explicit capability from the ordinary
+ * running-mission path. The MCP/orchestrator boundary never receives it, so a
+ * worker cannot turn a merely approved mission into execution authority.
+ */
+export type MainOwnedApprovedPreflightAuthority =
+  ApprovedPreflightTaskPlanAuthority;
+
 const DEFAULT_DEPS: MissionTaskPlanAuthorityDeps = Object.freeze({
   // Keep the store lookup lazy. Several IPC shells replace squad-store with a
   // deliberately narrow test double and never exercise planning; touching the
   // export while this module is imported makes unrelated handlers fail during
   // collection instead of at the actual planning boundary.
   getSquad: (squadId: string) => getSquad(squadId),
+  getAdapterInfo: (adapterId: string) =>
+    listAdapterInfos().find((adapter) => adapter.id === adapterId) ?? null,
   listMissionWorktrees: (scope: ProjectExecutionScope, missionId: string) =>
     requireWorktreeRuntimeRegistry().listMission(scope, missionId),
 });
@@ -98,6 +129,7 @@ function resolveRosterAgent(
   mode: PlannedExecutionMode,
   ownershipFiles: readonly string[],
   squad: Squad,
+  getAdapterInfo: MissionTaskPlanAuthorityDeps["getAdapterInfo"],
 ): SquadAgent {
   const matches = squad.agents.filter(
     (agent) => agent.id === agentRef || agent.agentName === agentRef,
@@ -122,21 +154,63 @@ function resolveRosterAgent(
         "Claude OAuth session exclusive to the orchestrator; choose another roster worker",
     );
   }
+  const adapterInfo = getAdapterInfo(assignedAgent.cli);
+  const capabilities = adapterCapabilityMatrixOf(adapterInfo);
+  if (
+    !adapterInfo ||
+    adapterInfo.kind !== "cli-pty" ||
+    !capabilities.launchable ||
+    !capabilities.promptInjectable ||
+    !capabilities.statusObservable
+  ) {
+    throw new Error(
+      `task ${taskId} cannot use ${assignedAgent.id}: CLI ${assignedAgent.cli} ` +
+        "does not have a main-owned automatic launch/prompt/status route",
+    );
+  }
   if (mode === "isolated_worktree" && ownershipFiles.length === 0) {
     throw new Error(
       `task ${taskId} isolated_worktree requires explicit ownership.files`,
     );
   }
-  if (mode === "read_only" && category !== "scout" && category !== "reviewer") {
-    throw new Error(`task ${taskId} read_only is restricted to scout/reviewer`);
+  if (mode === "isolated_worktree" && !capabilities.governedWriter) {
+    throw new Error(
+      `task ${taskId} isolated_worktree requires a release-qualified governed writer`,
+    );
   }
+  if (
+    mode === "isolated_worktree" &&
+    !supportsMechanicallyWorkspaceWriteCli(assignedAgent.cli)
+  ) {
+    throw new Error(
+      `task ${taskId} governed writer is not release-enabled at the physical dispatch boundary`,
+    );
+  }
+  if (mode === "read_only" && !capabilities.autonomousReadOnly) {
+    throw new Error(
+      `task ${taskId} read_only requires a mechanically confined CLI; ` +
+        `${assignedAgent.cli} is not eligible`,
+    );
+  }
+  if (
+    mode === "read_only" &&
+    !capabilities.governedWriter &&
+    category !== "reviewer" &&
+    category !== "scout"
+  ) {
+    throw new Error(
+      `task ${taskId} read_only-only CLI is restricted to reviewer/scout`,
+    );
+  }
+  // Keep the id-level dispatch backstop in the plan seal too. A future
+  // release may add an AdapterInfo qualification only together with the
+  // physical spawn/claim/complete checks for that exact CLI.
   if (
     mode === "read_only" &&
     !supportsMechanicallyReadOnlyCli(assignedAgent.cli)
   ) {
     throw new Error(
-      `task ${taskId} read_only requires a mechanically confined CLI; ` +
-        `${assignedAgent.cli} is not eligible`,
+      `task ${taskId} read_only capability is not release-enabled at the physical dispatch boundary`,
     );
   }
   return assignedAgent;
@@ -146,6 +220,7 @@ function parsePlanTask(
   raw: unknown,
   index: number,
   squad: Squad,
+  deps: Pick<MissionTaskPlanAuthorityDeps, "getAdapterInfo">,
 ): ParsedPlanTask {
   if (!raw || typeof raw !== "object") {
     throw new Error(`invalid task at index ${index}`);
@@ -193,6 +268,7 @@ function parsePlanTask(
     mode,
     ownership.files,
     squad,
+    deps.getAdapterInfo,
   );
   return {
     id,
@@ -232,21 +308,75 @@ export function planMissionTasks(
       : undefined;
   const missionId = childMissionId(ctx, requestedMissionId);
   if (!missionId) throw new Error("missionId is required for plan");
-  if (deps.listMissionWorktrees(ctx.scope, missionId).length > 0) {
-    throw new Error(
-      "mission task plan is sealed after the first worktree allocation",
-    );
-  }
   const rawTasks = Array.isArray(args.tasks) ? args.tasks : [];
-  if (rawTasks.length === 0) throw new Error("tasks[] is required for plan");
-  if (rawTasks.length > 64) throw new Error("at most 64 tasks per plan");
 
   const mission = suite.missions.get(missionId);
   if (mission) {
     assertCurrentMissionOrchestratorSession(ctx, mission);
   }
-  if (!mission?.intentContract || !hasCurrentDispatchAuthority(mission)) {
-    throw new Error("task plan requires a running approved mission");
+  return sealMainOwnedMissionTaskPlan(
+    {
+      missionId,
+      tasks: rawTasks,
+    },
+    ctx.scope,
+    suite,
+    deps,
+  );
+}
+
+/**
+ * Trusted-main seal for an immutable task plan.
+ *
+ * Unlike the MCP entry point above, this boundary does not require an
+ * orchestrator session: approval/bootstrap code runs before that physical
+ * session exists. It still derives every authority-bearing field from the
+ * current approved mission + exact saved squad, refuses any prior worktree,
+ * and persists the plan atomically through ScopedTaskStore.
+ *
+ * Keep this export main-process-only. Renderer/CLI callers must enter through
+ * their own authority boundary (`planMissionTasks` for MCP).
+ */
+export function sealMainOwnedMissionTaskPlan(
+  input: MainOwnedMissionTaskPlanInput,
+  scope: ProjectExecutionScope,
+  suite: Pick<ProjectDomainStoreSuite, "missions" | "tasks">,
+  deps: MissionTaskPlanAuthorityDeps = DEFAULT_DEPS,
+  authority?: MainOwnedApprovedPreflightAuthority,
+): MissionTaskPlanResult {
+  const missionId = input.missionId;
+  if (deps.listMissionWorktrees(scope, missionId).length > 0) {
+    throw new Error(
+      "mission task plan is sealed after the first worktree allocation",
+    );
+  }
+  const rawTasks = [...input.tasks];
+  if (rawTasks.length === 0) throw new Error("tasks[] is required for plan");
+  if (rawTasks.length > 64) throw new Error("at most 64 tasks per plan");
+
+  const mission = suite.missions.get(missionId);
+  const contract = mission?.intentContract;
+  const exactApprovedPreflight = Boolean(
+    mission &&
+      contract &&
+      authority?.kind === "approved-preflight" &&
+      mission.status === "pending" &&
+      mission.intentState === "ready_to_start" &&
+      mission.orchestratorSessionId === undefined &&
+      contract.dispatchedAt === undefined &&
+      hasCurrentApprovedDispatchContract(mission) &&
+      mission.intentVersion === authority.intentVersion &&
+      contract.intentVersion === authority.intentVersion &&
+      contract.approvedAt === authority.approvedAt &&
+      contract.approvalReviewSha256 === authority.approvalReviewSha256,
+  );
+  if (
+    !mission?.intentContract ||
+    (!hasCurrentDispatchAuthority(mission) && !exactApprovedPreflight)
+  ) {
+    throw new Error(
+      "task plan requires a running approved mission or an exact main-owned approved preflight",
+    );
   }
   if (!mission.squadId) {
     throw new Error("task plan requires mission bound to a saved squad");
@@ -264,7 +394,9 @@ export function planMissionTasks(
     );
   }
 
-  const inputs = rawTasks.map((raw, index) => parsePlanTask(raw, index, squad));
+  const inputs = rawTasks.map((raw, index) =>
+    parsePlanTask(raw, index, squad, deps),
+  );
   const requiredWorkerAgentRef =
     mission.intentContract.requiredWorkerAgentRef;
   if (requiredWorkerAgentRef) {
@@ -317,6 +449,9 @@ export function planMissionTasks(
     intentVersion,
     squad: { id: squad.id, agents: squad.agents },
     rows,
+    ...(exactApprovedPreflight && authority
+      ? { approvedPreflight: authority }
+      : {}),
   });
   return Object.freeze({
     missionId,

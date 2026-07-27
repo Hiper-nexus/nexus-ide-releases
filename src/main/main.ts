@@ -20,7 +20,10 @@ import {
   shouldUseUserDataOverride,
 } from "./smoke-core";
 import { isCurrentProcessRealMissionE2E } from "../shared/real-mission-e2e";
-import { shouldCreateWindowOnActivate } from "./app-lifecycle";
+import {
+  restoreMainWindowOnActivate,
+  shouldCreateWindowOnActivate,
+} from "./app-lifecycle";
 import {
   startMacOSDockWatchdog,
   stopMacOSDockWatchdog,
@@ -113,7 +116,6 @@ import {
 import { registerLayoutIpc } from "./persistence/layout-ipc";
 import { registerAdapterIpc } from "./adapters/adapter-ipc";
 import { registerVoiceIpc, closeVoiceIpc } from "./voice/voice-ipc";
-import { configureVoiceLogWorkspaceResolver } from "./voice/voice-log";
 import { registerVisionIpc } from "./vision/ipc-bridge";
 import {
   initAdapterRegistry,
@@ -138,6 +140,8 @@ import {
   closeOrchestration,
   configureRendererMissionAuthority,
 } from "./orch/orch-ipc";
+import { quiesceOrchestrationCoordinator } from "./orch/orchestration-coordinator";
+import { reconcileMissionOrchestratorExits } from "./orch/mission-orchestrator-exit-lifecycle";
 import { ProjectRuntimeManager } from "./runtime/project-runtime-manager";
 import {
   buildMultiPcBackendStatus,
@@ -154,10 +158,17 @@ import {
 } from "./runtime/worktree-runtime-registry";
 import {
   configureAgentHookEndpointPath,
-  killAllSessions,
-  liveSessionSummary,
+  terminateAllSessions,
 } from "./pty/pty-manager";
+import {
+  liveRuntimeProcessSummary,
+  sealRuntimeProcessAdmissionForShutdown,
+} from "./runtime-process-inventory";
 import { shutdownPtyHost } from "./pty/pty-host-client";
+import {
+  shutdownOrchestrationRuntimesWithProof,
+} from "./app-shutdown";
+import { createShutdownNoticeController } from "./app-shutdown-ui";
 import {
   ensureCommandBlockTracking,
   setCommandBlockPersistHook,
@@ -296,7 +307,6 @@ import { wireDeepLinks, consumeLaunchDeepLink } from "./deep-link";
 import { initAutoUpdater } from "./updater";
 import { stopRemoteBridge } from "./remote/remote-bridge";
 import { initSmokeTest } from "./smoke-test";
-import { initRealMissionE2E } from "./real-mission-e2e";
 import {
   disposeAgentAwakeService,
   getAgentAwakeService,
@@ -323,9 +333,16 @@ import {
   authorizeAppQuit,
   closeNeedsConfirmation,
   isAppQuitAuthorized,
+  revokeAppQuitAuthorization,
 } from "./close-authorization";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
+
+function traceBootstrap(phase: string): void {
+  if (process.env.NEXUS_BOOT_TRACE === '1') {
+    console.info(`[bootstrap] ${phase}`);
+  }
+}
 
 function knownCronScopes() {
   const state = getWorkspaceState();
@@ -357,10 +374,6 @@ if (process.platform === "win32") {
 }
 
 function bootstrap(): void {
-  installRendererProtocol(
-    protocol,
-    path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`),
-  );
   // MUST run before the adapter registry probes for installed CLIs: a
   // Finder/dmg launch has a minimal PATH that hides claude/codex/kimi/grok.
   resolveUserPath();
@@ -463,7 +476,9 @@ function bootstrap(): void {
   registerPerfIpc();
   registerLayoutIpc(projectRuntimeManager);
   registerAdapterIpc();
+  traceBootstrap('before voice IPC');
   registerVoiceIpc(projectRuntimeManager);
+  traceBootstrap('after voice IPC');
   // The window is created by the app-ready handler before bootstrap starts.
   // Keep the rest of registration below it so account/secrets/billing cannot
   // delay the first visible UI.
@@ -471,9 +486,6 @@ function bootstrap(): void {
   registerOrchIpc();
   registerAuthProbeIpc();
   registerWorkspaceIpc();
-  configureVoiceLogWorkspaceResolver(
-    () => getWorkspaceState().current?.path ?? null,
-  );
   registerOrientationIpc();
   registerContextDraftIpc();
   registerProviderIpc();
@@ -485,14 +497,18 @@ function bootstrap(): void {
   registerMcpIpc();
   registerOpsIpc();
   registerEvalRankingIpc();
+  traceBootstrap('after secondary IPC registration');
   // Telemetria REAL de tokens (transcript watchers → SQLite). Convive com o
   // cost-tracker heurístico: a UI prefere o real quando ele existe.
   initUsageTelemetry(projectRuntimeManager);
+  traceBootstrap('after usage telemetry');
   // Tokens das contas Claude secundárias renovados em background — spawn e
   // failover sempre encontram credencial viva no vault (mata o "401 OAuth
   // access token has expired" em respawn horas depois).
   if (!isAutomatedReleaseTest()) {
+    traceBootstrap('before Claude subscription freshness');
     startClaudeSubscriptionFreshness();
+    traceBootstrap('after Claude subscription freshness');
   }
   // Piloto automático de máquina nova: oferta única, diálogo nativo com os
   // comandos exatos, instalação em sequência. Atrasado para não competir com
@@ -536,6 +552,7 @@ function bootstrap(): void {
     resolveGenericApiKeyCandidates: (adapterId, accountId) =>
       resolveProviderApiKeyCandidates(adapterId, accountId),
   });
+  traceBootstrap('after quota service');
   registerNotesIpc(projectRuntimeManager);
   registerBillingIpc();
   registerTeamIpc();
@@ -543,7 +560,9 @@ function bootstrap(): void {
   // real Keychain. License sync is useful in normal launches, but it can block
   // inside SecItemCopyMatching — window already open above.
   if (!isAutomatedReleaseTest()) {
+    traceBootstrap('before license sync');
     syncLicenseOnBoot();
+    traceBootstrap('after license sync');
   }
   registerOnboardingIpc();
   registerPipeIpc(); // also calls initPanePipes()
@@ -563,6 +582,7 @@ function bootstrap(): void {
   registerOmpAuthIpc();
   registerRemoteIpc();
   registerIntegrationsIpc();
+  traceBootstrap('after remaining IPC registration');
   // Desktop pet (opt-in): companion flutuante que reage à frota. Depois da
   // janela principal — o pet só existe enquanto houver uma janela de app.
   initDesktopPet();
@@ -584,13 +604,22 @@ function bootstrap(): void {
   initAutoUpdater({
     networkEnabled: !isAutomatedReleaseTest(),
   });
+  traceBootstrap('complete');
 }
 
 function isAutomatedReleaseTest(): boolean {
   return isCurrentProcessSmokeTest() || isCurrentProcessRealMissionE2E();
 }
 
-initRealMissionE2E();
+let realMissionE2EInitialization: Promise<void> = Promise.resolve();
+if (isCurrentProcessRealMissionE2E()) {
+  // Keep the release harness and its fixture-only dependencies out of every
+  // ordinary desktop launch. Start loading immediately, then fence window
+  // creation below so the mounted event cannot outrun its IPC observers.
+  realMissionE2EInitialization = import('./real-mission-e2e').then(
+    ({ initRealMissionE2E }) => initRealMissionE2E(),
+  );
+}
 initSmokeTest();
 
 // Single-instance + protocolo nexus:// precisam ser registrados ANTES do
@@ -599,6 +628,29 @@ if (!wireDeepLinks()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
+    await realMissionE2EInitialization;
+    // `protocol.handle` requires app.ready, but must exist before the first
+    // BrowserWindow starts navigating. Installing it later in bootstrap made
+    // every packaged launch fail its first nexus-app:// request and recover
+    // only through the window watchdog.
+    try {
+      installRendererProtocol(
+        protocol,
+        path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`),
+      );
+    } catch (error) {
+      console.error('[main] renderer protocol installation failed:', error);
+      try {
+        dialog.showErrorBox(
+          'NexusIDE bloqueou a inicialização',
+          'A interface local não pôde ser registrada com segurança. Reinicie o app.',
+        );
+      } catch {
+        // No renderer is created when its protocol precondition failed.
+      }
+      app.quit();
+      return;
+    }
     // No service initialization belongs before this call. Some macOS APIs
     // (notably Keychain-backed providers) can block the Electron main thread;
     // the native window/Dock item must already exist before touching them.
@@ -729,22 +781,39 @@ if (!wireDeepLinks()) {
 let quitPromptOpen = false;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | null = null;
+const shutdownNotices = createShutdownNoticeController({
+  isShutdownComplete: () => shutdownComplete,
+  focusApp: () => app.focus({ steal: true }),
+  showMessageBox: (options) => dialog.showMessageBox(options),
+  revokeQuitAuthorization: revokeAppQuitAuthorization,
+  authorizeQuit: authorizeAppQuit,
+  requestQuit: () => app.quit(),
+  restartDockWatchdog: startMacOSDockWatchdog,
+});
 
 app.on("activate", () => {
   startMacOSDockWatchdog();
+  const mainWindows = BrowserWindow.getAllWindows().filter(
+    (win) => !isPetWindow(win),
+  );
+  const lifecycleState = {
+    isShutdownInProgress: shutdownPromise !== null,
+    isShutdownComplete: shutdownComplete,
+  };
   if (
     shouldCreateWindowOnActivate({
-      isShutdownInProgress: shutdownPromise !== null,
-      isShutdownComplete: shutdownComplete,
+      ...lifecycleState,
       // O pet não conta como janela de app: com ele vivo, o clique no Dock
       // ainda precisa reabrir a janela principal.
-      windowCount: BrowserWindow.getAllWindows().filter(
-        (win) => !isPetWindow(win),
-      ).length,
+      windowCount: mainWindows.length,
     })
   ) {
     createMainWindow();
+    return;
   }
+  restoreMainWindowOnActivate(lifecycleState, mainWindows[0], () => {
+    app.focus?.({ steal: true });
+  });
 });
 
 app.on("browser-window-created", (_event, win) => {
@@ -797,15 +866,20 @@ function shutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     stopMacOSDockWatchdog();
-    // Quiesce every orchestration participant and await its real settlement
-    // before destroying PTY/OMP services or the project stores it can touch.
+    // Quiesce periodic orchestration before physical teardown, but retain its
+    // exact exit observer and stores until PTY + OMP proofs and reconciliation
+    // are complete. A failed OMP proof must leave the next retry operational.
     await stopCronLoop();
     await closeAllDesignWritebacks();
-    await closeOrchestration();
-    killAllSessions();
-    disposeAllOmpRpcSessions();
+    await shutdownOrchestrationRuntimesWithProof({
+      quiesceOrchestration: quiesceOrchestrationCoordinator,
+      terminateAllSessions,
+      shutdownPtyHost,
+      reconcileOrchestratorExits: reconcileMissionOrchestratorExits,
+      terminateAllOmpSessions: disposeAllOmpRpcSessions,
+      closeOrchestration,
+    });
     disposeAllOmpAuthFlows();
-    shutdownPtyHost();
     stopRemoteBridge();
     configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});
@@ -827,12 +901,19 @@ function shutdown(): Promise<void> {
     projectRuntimeManager?.closeAll();
     projectRuntimeManager = null;
     shutdownComplete = true;
+    if (isCurrentProcessSmokeTest()) {
+      // Reader-visible release evidence: the app itself reached the end of the
+      // fail-closed shutdown lane. The external harness still checks exit(0)
+      // and the remaining Electron process group, but it never treats a root
+      // process disappearing on its own as PTY teardown proof.
+      console.log("[smoke] shutdown-complete: physical PTY inventory proven");
+    }
   })();
   return shutdownPromise;
 }
 
 app.on("before-quit", (event) => {
-  const summary = liveSessionSummary();
+  const summary = liveRuntimeProcessSummary();
   if (
     closeNeedsConfirmation({
       sessionCount: summary.total,
@@ -852,7 +933,7 @@ app.on("before-quit", (event) => {
     const options = {
       type: "warning" as const,
       title: "Sair do NexusIDE?",
-      message: `${summary.total} terminal${summary.total === 1 ? "" : "is"} ainda em execução`,
+      message: `${summary.total} processo${summary.total === 1 ? "" : "s"} ainda em execução`,
       detail:
         summary.busy > 0
           ? `${summary.busy} ainda estão trabalhando. Sair encerra esses processos e tarefas.`
@@ -869,6 +950,7 @@ app.on("before-quit", (event) => {
       .then(({ response }) => {
         quitPromptOpen = false;
         if (response !== 1) return;
+        sealRuntimeProcessAdmissionForShutdown();
         authorizeAppQuit();
         app.quit();
       })
@@ -879,23 +961,28 @@ app.on("before-quit", (event) => {
   }
   if (!shutdownComplete) {
     event.preventDefault();
-    // shutdown() aguarda cleanups async (design write-backs, hook server);
-    // um deles pendurado deixaria o app vivo para sempre após o usuário já
-    // ter confirmado a saída. Teto duro: depois dele, sair de qualquer jeito.
-    const forceExit = setTimeout(() => {
-      console.error("[main] shutdown timed out — forcing exit");
-      app.exit(1);
+    // Close child admission before the first shutdown await. This makes the
+    // zero-inventory snapshot stable against queued IPC/scheduler spawns.
+    sealRuntimeProcessAdmissionForShutdown();
+    if (shutdownPromise) return;
+    // A demora vira feedback nativo, nunca licença para matar o PTY host sem
+    // prova. O fluxo permanece aberto e seguro até concluir ou falhar.
+    const slowNotice = setTimeout(() => {
+      console.error("[main] shutdown is still waiting for safe completion");
+      shutdownNotices.showSlowNotice();
     }, 10_000);
     void shutdown()
       .then(() => {
-        clearTimeout(forceExit);
+        clearTimeout(slowNotice);
         authorizeAppQuit();
         app.quit();
       })
       .catch((error) => {
-        clearTimeout(forceExit);
-        console.error("[main] shutdown failed:", error);
-        app.exit(1);
+        clearTimeout(slowNotice);
+        // A rejected promise must not poison retries. PTY failures leave the
+        // exact sessions registered/inert, so a second attempt can prove them.
+        shutdownPromise = null;
+        shutdownNotices.showFailure(error);
       });
   }
 });

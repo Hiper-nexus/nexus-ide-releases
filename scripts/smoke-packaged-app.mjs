@@ -8,6 +8,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const TIMEOUT_MS = 70_000;
+const GRACEFUL_CLOSE_TIMEOUT_MS = 8_000;
+const PROCESS_TREE_POLL_MS = 50;
 const MAX_LOG_CHARS = 32_000;
 const PACKAGED_MAIN_BUNDLE_PATH = '.vite/build/main.js';
 const PACKAGED_NOTICE_PATH = 'THIRD_PARTY_NOTICES.md';
@@ -41,6 +43,7 @@ const SENSITIVE_ENVIRONMENT_KEY =
 
 export {
   TIMEOUT_MS,
+  GRACEFUL_CLOSE_TIMEOUT_MS,
   PRODUCT_NAME,
   EXECUTABLE_NAME,
   PACKAGED_SMOKE_ARGUMENT,
@@ -379,25 +382,48 @@ export function inspectPackagedMainBundle(resourcesDir) {
     bundle = extractAsarFile(asarPath, PACKAGED_MAIN_BUNDLE_PATH);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    let declaredMain = null;
     try {
-      const entries = listPackage(asarPath);
-      let declaredMain = null;
-      try {
-        const packageJson = JSON.parse(
-          extractAsarFile(asarPath, 'package.json').toString('utf8'),
-        );
-        declaredMain = packageJson?.main ?? null;
-      } catch {
-        // Fall back to the conventional Vite path when package metadata is
-        // unavailable; the original extraction error remains authoritative.
-      }
-      const fallbackPath = resolvePackagedMainBundlePath(entries, declaredMain);
-      if (fallbackPath) {
-        bundle = extractAsarFile(asarPath, fallbackPath);
-      }
+      const packageJson = JSON.parse(
+        extractAsarFile(asarPath, 'package.json').toString('utf8'),
+      );
+      declaredMain = packageJson?.main ?? null;
     } catch {
-      // Preserve the original extraction error below; a corrupt archive is
-      // still a hard release failure, not a reason to hide the root cause.
+      // Fall back to the conventional Vite path when package metadata is
+      // unavailable; the original extraction error remains authoritative.
+    }
+    if (typeof declaredMain === 'string') {
+      const directDeclaredPath = declaredMain
+        .replaceAll('\\', '/')
+        .replace(/^\.\//u, '')
+        .replace(/^\/+/, '');
+      if (
+        directDeclaredPath.length > 0 &&
+        !directDeclaredPath.split('/').includes('..')
+      ) {
+        try {
+          // The normal Forge archive stores package.json and its declared main
+          // at the same root. Read that exact path first; enumerating a large
+          // archive is only needed for the historical nested-root variant.
+          bundle = extractAsarFile(asarPath, directDeclaredPath);
+        } catch {
+          // Try the package-root variation below.
+        }
+      }
+    }
+    if (!bundle) {
+      try {
+        const fallbackPath = resolvePackagedMainBundlePath(
+          listPackage(asarPath),
+          declaredMain,
+        );
+        if (fallbackPath) {
+          bundle = extractAsarFile(asarPath, fallbackPath);
+        }
+      } catch {
+        // Preserve the original extraction error below; a corrupt archive is
+        // still a hard release failure, not a reason to hide the root cause.
+      }
     }
     if (!bundle) {
       throw new Error(`could not inspect packaged main bundle: ${message}`);
@@ -575,16 +601,28 @@ export function requiredNativeArtifactGlobs({ platform, arch }) {
       ],
     });
   }
-  // @lydell/node-pty ships spawn-helper for macOS, while its Linux prebuild
-  // uses openpty directly and intentionally contains only pty.node.
-  if (platform === 'darwin') {
-    artifacts.push({
-      id: 'node-pty-spawn-helper',
-      anyOf: [`${prebuildDir}/spawn-helper`],
-      executable: true,
-    });
-  }
   return artifacts;
+}
+
+export async function assertNoBundledNodePtySpawnHelper(unpackedRoot) {
+  const forbidden = await findFileByName(unpackedRoot, /^spawn-helper$/u);
+  if (forbidden) {
+    throw new Error(
+      `packaged Darwin runtime contains forbidden node-pty spawn-helper: ${forbidden}`,
+    );
+  }
+  const asarPath = path.join(path.dirname(unpackedRoot), 'app.asar');
+  if (await pathExists(asarPath)) {
+    const forbiddenAsarEntry = listPackage(asarPath).find((entry) =>
+      /(?:^|\/)spawn-helper$/u.test(entry.replaceAll('\\', '/')),
+    );
+    if (forbiddenAsarEntry) {
+      throw new Error(
+        `packaged Darwin asar contains forbidden node-pty spawn-helper: ` +
+          forbiddenAsarEntry,
+      );
+    }
+  }
 }
 
 /**
@@ -595,6 +633,9 @@ export async function assertNativeArtifactsPresent(
   unpackedRoot,
   { platform = process.platform, arch = process.arch } = {},
 ) {
+  if (platform === 'darwin') {
+    await assertNoBundledNodePtySpawnHelper(unpackedRoot);
+  }
   const specs = requiredNativeArtifactGlobs({ platform, arch });
   const found = {};
   const missing = [];
@@ -668,7 +709,10 @@ async function findFileByName(root, fileNamePattern) {
 
 /**
  * Live PIDs that still belong to the smoke process group (or are direct
- * descendants of `rootPid`). Used to prove spawn-helper / zsh orphans are gone.
+ * descendants of `rootPid`). Used to prove PTY/provider orphans are gone.
+ *
+ * Throws when the operating-system inventory cannot be read. An unreadable
+ * process table is not equivalent to an empty process tree.
  *
  * @returns {number[]}
  */
@@ -682,7 +726,7 @@ export function listProcessTreePids(
   if (!rootPid || rootPid <= 0 || platform === 'win32') return [];
   const result = runSync(
     'ps',
-    ['-axo', 'pid=,ppid=,pgid='],
+    ['-axo', 'pid=,ppid=,pgid=,stat='],
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -690,22 +734,38 @@ export function listProcessTreePids(
       env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
     },
   );
-  if (result.status !== 0 || typeof result.stdout !== 'string') return [];
-  /** @type {Map<number, { ppid: number, pgid: number }>} */
+  if (
+    result.error ||
+    result.status !== 0 ||
+    typeof result.stdout !== 'string'
+  ) {
+    const detail =
+      result.error?.message ??
+      `ps exited ${String(result.status)}`;
+    throw new Error(`process-tree inventory failed: ${detail}`);
+  }
+  /** @type {Map<number, { ppid: number, pgid: number, zombie: boolean }>} */
   const rows = new Map();
   for (const line of result.stdout.split('\n')) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/u.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*$/u.exec(line);
     if (!match) continue;
+    // A killed direct child remains as a Z zombie until this Node process can
+    // service SIGCHLD. killProcessTree deliberately polls synchronously, so
+    // counting that already-dead bookkeeping entry creates a deterministic
+    // false leak that disappears as soon as the event loop resumes.
     rows.set(Number(match[1]), {
       ppid: Number(match[2]),
       pgid: Number(match[3]),
+      // Retain zombies as ancestry nodes so an unusual still-attached live
+      // child cannot evade the walk; omit only the dead identity from proof.
+      zombie: match[4].startsWith('Z'),
     });
   }
   if (!rows.has(rootPid)) {
     // Root already gone: still collect orphans that kept the same process group.
     const leftovers = [];
     for (const [pid, row] of rows) {
-      if (row.pgid === rootPid) leftovers.push(pid);
+      if (row.pgid === rootPid && !row.zombie) leftovers.push(pid);
     }
     return leftovers.sort((a, b) => a - b);
   }
@@ -721,7 +781,9 @@ export function listProcessTreePids(
       }
     }
   }
-  return [...live].sort((a, b) => a - b);
+  return [...live]
+    .filter((pid) => !rows.get(pid)?.zombie)
+    .sort((a, b) => a - b);
 }
 
 function sleepMs(ms, sleep = (n) => {
@@ -737,10 +799,15 @@ function sleepMs(ms, sleep = (n) => {
  *
  * On POSIX the child is spawned detached (new process group). Escalate
  * SIGTERM → SIGKILL so real-mission can flush evidence on before-quit, then
- * re-scan `ps` until spawn-helper / zsh descendants exit (or timeout).
+ * re-scan `ps` until PTY/provider descendants exit (or timeout).
  * On Windows use taskkill /T.
  *
- * @returns {{ ok: boolean, remainingPids: number[], signalled: string[] }}
+ * @returns {{
+ *   ok: boolean,
+ *   remainingPids: number[],
+ *   signalled: string[],
+ *   inventoryError?: string,
+ * }}
  */
 export function killProcessTree(
   pid,
@@ -783,12 +850,26 @@ export function killProcessTree(
     }
   };
 
+  let inventoryError = null;
+  const readInventory = () => {
+    try {
+      return listPids(pid, { platform, runSync });
+    } catch (error) {
+      inventoryError =
+        error instanceof Error ? error.message : String(error);
+      return null;
+    }
+  };
   const waitUntilGone = (budgetMs) => {
     const deadline = Date.now() + budgetMs;
-    let remaining = listPids(pid, { platform, runSync });
-    while (remaining.length > 0 && Date.now() < deadline) {
+    let remaining = readInventory();
+    while (
+      remaining !== null &&
+      remaining.length > 0 &&
+      Date.now() < deadline
+    ) {
       sleep(pollMs);
-      remaining = listPids(pid, { platform, runSync });
+      remaining = readInventory();
     }
     return remaining;
   };
@@ -796,13 +877,13 @@ export function killProcessTree(
   // Soft stop first: Electron before-quit + real-mission evidence flush.
   signalGroup('SIGTERM');
   let remaining = waitUntilGone(termGraceMs);
-  if (remaining.length === 0) {
+  if (remaining !== null && remaining.length === 0 && !inventoryError) {
     return { ok: true, remainingPids: [], signalled };
   }
 
   // Hard stop process group + root, then re-check for orphans.
   signalGroup('SIGKILL');
-  for (const orphan of remaining) {
+  for (const orphan of remaining ?? []) {
     try {
       kill(orphan, 'SIGKILL');
       signalled.push(`orphan:${orphan}:SIGKILL`);
@@ -812,9 +893,10 @@ export function killProcessTree(
   }
   remaining = waitUntilGone(killGraceMs);
   return {
-    ok: remaining.length === 0,
-    remainingPids: remaining,
+    ok: remaining !== null && remaining.length === 0 && !inventoryError,
+    remainingPids: remaining ?? [pid],
     signalled,
+    ...(inventoryError ? { inventoryError } : {}),
   };
 }
 
@@ -857,9 +939,15 @@ export async function runPackagedSmoke(
     platform = process.platform,
     arch = process.arch,
     timeoutMs = TIMEOUT_MS,
+    gracefulCloseTimeoutMs = GRACEFUL_CLOSE_TIMEOUT_MS,
     spawnImpl = spawn,
     env = process.env,
     killTree = killProcessTree,
+    listTreePids = listProcessTreePids,
+    requireGracefulClose =
+      platform === 'darwin' &&
+      process.platform === 'darwin' &&
+      spawnImpl === spawn,
     inspectMainBundle = inspectPackagedMainBundle,
     inspectLegalArtifacts = inspectPackagedLegalArtifacts,
     inspectWakeModel = inspectPackagedWakeModel,
@@ -883,7 +971,13 @@ export async function runPackagedSmoke(
 
   let output = '';
   let runtimeExecuted = false;
-  /** @type {{ ok: boolean, remainingPids: number[], signalled: string[] } | null} */
+  let shutdownMode = null;
+  /** @type {{
+   *   ok: boolean,
+   *   remainingPids: number[],
+   *   signalled: string[],
+   *   inventoryError?: string,
+   * } | null} */
   let treeProof = null;
 
   try {
@@ -896,14 +990,23 @@ export async function runPackagedSmoke(
       runtimeExecuted = true;
       let settled = false;
       let readySeen = false;
+      let shutdownProofSeen = false;
+      let naturalCloseSeen = false;
+      let naturalExitCode = null;
+      let naturalSignalCode = null;
       let timeout;
+      let gracefulCloseTimeout;
+      let naturalTreePoll;
       const finish = (fn, value) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
+        clearTimeout(gracefulCloseTimeout);
+        clearTimeout(naturalTreePoll);
         fn(value);
       };
       const reapTree = () => {
+        shutdownMode = 'external-reap';
         treeProof = killTree(child.pid, { platform }) ?? {
           ok: true,
           remainingPids: [],
@@ -911,25 +1014,144 @@ export async function runPackagedSmoke(
         };
         if (!treeProof.ok) {
           process.stderr.write(
-            `[smoke] process-tree still live after kill: pids=${treeProof.remainingPids.join(',')}\n`,
+            `[smoke] process-tree proof failed after kill: ` +
+              `pids=${treeProof.remainingPids.join(',')}` +
+              (treeProof.inventoryError
+                ? ` inventory=${treeProof.inventoryError}`
+                : '') +
+              `\n`,
           );
         }
+        return treeProof;
+      };
+      const rejectOrphanedTree = () => {
+        finish(
+          reject,
+          new Error(
+            `packaged smoke left orphan processes after termination: ` +
+              treeProof.remainingPids.join(','),
+          ),
+        );
+      };
+      const finishNaturalClose = () => {
+        shutdownMode = 'graceful';
+        treeProof = {
+          ok: true,
+          remainingPids: [],
+          signalled: [],
+        };
+        if (naturalExitCode !== 0 || naturalSignalCode) {
+          finish(
+            reject,
+            new Error(
+              `packaged smoke did not prove a successful natural close after ` +
+                `functional-ready (exit=${String(naturalExitCode)}, ` +
+                `signal=${naturalSignalCode ?? 'none'}, mode=${shutdownMode})`,
+            ),
+          );
+          return;
+        }
+        if (requireGracefulClose && !shutdownProofSeen) {
+          finish(
+            reject,
+            new Error(
+              `packaged smoke exited without its main-owned shutdown-complete proof`,
+            ),
+          );
+          return;
+        }
+        finish(resolve, 0);
+      };
+      const proveNaturalTreeExit = ({ scheduleRetry = true } = {}) => {
+        let remainingPids;
+        try {
+          remainingPids = listTreePids(child.pid, { platform });
+        } catch (error) {
+          const inventoryError =
+            error instanceof Error ? error.message : String(error);
+          reapTree();
+          finish(
+            reject,
+            new Error(
+              `packaged smoke could not prove natural process-tree exit: ` +
+                inventoryError,
+            ),
+          );
+          return false;
+        }
+        if (remainingPids.length === 0) {
+          finishNaturalClose();
+          return true;
+        }
+        if (scheduleRetry && !settled) {
+          naturalTreePoll = setTimeout(
+            () => proveNaturalTreeExit(),
+            Math.min(PROCESS_TREE_POLL_MS, gracefulCloseTimeoutMs),
+          );
+          naturalTreePoll.unref?.();
+        }
+        return false;
+      };
+      const onGracefulCloseTimeout = () => {
+        if (settled) return;
+        // The root may have closed just before the deadline while one helper
+        // was still draining. Take one final read-only inventory before using
+        // any signal.
+        if (
+          naturalCloseSeen &&
+          proveNaturalTreeExit({ scheduleRetry: false })
+        ) {
+          return;
+        }
+        reapTree();
+        if (!treeProof.ok) {
+          rejectOrphanedTree();
+          return;
+        }
+        if (requireGracefulClose) {
+          const captured = output.trim();
+          finish(
+            reject,
+            new Error(
+              `packaged smoke reached functional-ready but did not close ` +
+                `gracefully within ${gracefulCloseTimeoutMs}ms; its process ` +
+                `tree required external reaping` +
+                (captured ? `\n${captured}` : ''),
+            ),
+          );
+          return;
+        }
+        // Linux/Windows CI historically tolerates a browser helper that keeps
+        // Electron alive after the functional contract has passed. Preserve
+        // that contract, but only after a bounded graceful-close opportunity
+        // and a successful whole-tree reap.
+        finish(resolve, 0);
       };
       const append = (chunk) => {
         output = (output + chunk.toString()).slice(-MAX_LOG_CHARS);
-        // The functional proof is the release contract. Some Linux images
-        // leave a browser helper alive after the app has proved readiness;
-        // terminate the isolated smoke process tree at that point instead of
-        // turning a valid proof into a timeout. Wait for close + tree proof
-        // before resolving so spawn-helper/zsh cannot outlive the smoke.
+        if (output.includes('[smoke] shutdown-complete')) {
+          shutdownProofSeen = true;
+        }
+        // functional-ready starts app.quit(), whose fail-closed shutdown must
+        // finish its own PTY proof. Killing here races that proof and can
+        // manufacture PhysicalPtyShutdownError. Give the app one short,
+        // bounded window to close itself before the cross-platform reaper is
+        // allowed to intervene.
         if (!settled && !readySeen && output.includes('[smoke] functional-ready')) {
           readySeen = true;
-          reapTree();
+          gracefulCloseTimeout = setTimeout(
+            onGracefulCloseTimeout,
+            gracefulCloseTimeoutMs,
+          );
+          gracefulCloseTimeout.unref?.();
         }
       };
       child.stdout?.on('data', append);
       child.stderr?.on('data', append);
-      child.once('error', (error) => finish(reject, error));
+      child.once('error', (error) => {
+        reapTree();
+        finish(reject, error);
+      });
 
       timeout = setTimeout(() => {
         reapTree();
@@ -944,24 +1166,27 @@ export async function runPackagedSmoke(
       }, timeoutMs);
       timeout.unref?.();
 
-      child.once('close', (exitCode) => {
-        // If ready fired but close raced before kill finished, re-check tree.
-        if (readySeen && (!treeProof || !treeProof.ok)) {
+      child.once('close', (exitCode, signalCode) => {
+        if (settled) return;
+        if (!readySeen) {
+          // Startup/functional failure is not permission to leave detached
+          // Electron helpers behind.
           reapTree();
-        }
-        if (readySeen && treeProof && !treeProof.ok) {
-          finish(
-            reject,
-            new Error(
-              `packaged smoke left orphan processes after termination: ` +
-                treeProof.remainingPids.join(','),
-            ),
-          );
+          if (!treeProof.ok) {
+            rejectOrphanedTree();
+            return;
+          }
+          finish(resolve, exitCode);
           return;
         }
-        // Functional-ready path always counts as success once the tree is dead,
-        // even if Electron's exit code is non-zero after a forced kill.
-        finish(resolve, readySeen ? 0 : exitCode);
+
+        naturalCloseSeen = true;
+        naturalExitCode = exitCode;
+        naturalSignalCode = signalCode;
+        // `close` proves the root and its inherited stdio closed, but a helper
+        // with independent stdio can still be finishing. Poll read-only until
+        // the same bounded deadline instead of racing that last graceful exit.
+        proveNaturalTreeExit();
       });
     });
 
@@ -972,7 +1197,8 @@ export async function runPackagedSmoke(
       process.stdout.write(
         `\n[smoke] process-tree ok=${treeProof.ok} ` +
           `remaining=${treeProof.remainingPids.length} ` +
-          `signalled=${treeProof.signalled.join(',') || 'none'}\n`,
+          `signalled=${treeProof.signalled.join(',') || 'none'} ` +
+          `shutdown=${shutdownMode ?? 'unknown'}\n`,
       );
     }
 
@@ -984,7 +1210,7 @@ export async function runPackagedSmoke(
     process.stdout.write(
       `\n[smoke] validation-matrix\n${formatValidationMatrix(matrix)}\n`,
     );
-    return { code, output, matrix, target, treeProof };
+    return { code, output, matrix, target, treeProof, shutdownMode };
   } finally {
     await fs.rm(userData, { recursive: true, force: true });
   }

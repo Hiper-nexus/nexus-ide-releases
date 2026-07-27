@@ -1,10 +1,16 @@
 {
   "version": 1,
-  "updatedAt": "2026-07-21T21:00:00.000Z",
+  "updatedAt": "2026-07-25T23:30:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5",
       "models": [
+        {
+          "id": "claude-opus-5",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
         {
           "id": "claude-fable-5",
           "availability": "api-only",

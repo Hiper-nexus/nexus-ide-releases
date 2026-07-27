@@ -4,6 +4,7 @@ import {
 } from '../../shared/mission-intent';
 import {
   canMarkMilestoneDone,
+  type Handoff,
   type MissionPaneSpec,
   type PaneSnapshot,
 } from '../../shared/orch-types';
@@ -12,6 +13,7 @@ import {
   renderMissionCompact,
 } from '../../shared/mission-context-compact';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { milestoneValidationEvidenceId } from '../context/context-workflow-service';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { onHandoffSubmitted } from './idle-delivery';
 import {
@@ -45,6 +47,7 @@ import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
 } from './project-domain-store-registry';
+import { inspectGuidedPrevcPostMergeAuthority } from './prevc-autopilot-coordinator';
 import { sameProjectScope } from './project-scoped-broadcast';
 
 /**
@@ -98,70 +101,19 @@ export function findDeadMissionPane(
   );
 }
 
-/** Dispatch states where the worker's output is already engine-owned. */
-const WORKER_DELIVERED_DISPATCH_STATES: ReadonlySet<string> = new Set([
-  'handoff_ready',
-  'merging',
-  'completed',
-]);
-
-export interface MissionPaneDispatchSignal {
-  readonly state: string;
-  readonly workerIncarnationId?: string | null;
-  readonly paneId?: string | null;
-}
-
 /**
- * Workers are one-shot per dispatch: once the handoff is accepted the engine
- * owns the result (handoff_ready → merging → completed) and the worker CLI
- * exiting is the expected lifecycle, never a failure to recover from.
- * Counting such a pane as "dead" made the driver burn maxRespawnAttempts on
- * futile respawns and block missions whose work had already been integrated
- * (release gate + field audit "respawn loop").
- *
- * Durable pane rows are reused across respawns/replan (stable paneId — see
- * countLiveMissionWorkerSlots / findDeadMissionPane), so a single pane can
- * carry many historical dispatches: a superseded/blocked/failed attempt plus
- * a fresh one. Only the CURRENT work matters, so this looks at the most recent
- * matching dispatch (dispatches arrive oldest→newest from
- * taskDispatches.list, ORDER BY created_at ASC), never `every()` over the
- * whole history — otherwise one stale non-delivered attempt would keep a pane
- * whose latest dispatch is already delivered "actionable" and reintroduce the
- * very respawn loop this fixes. Preferring worker-incarnation identity over
- * paneId keeps the match tied to the exact generation when available. A pane
- * with no matching dispatch (legacy/manual rows) and orchestrators always stay
- * actionable.
+ * Only orchestrators are recoverable by the mission driver. Workers are
+ * one-shot effects owned by the durable dispatch lifecycle: a live worker
+ * stays untouched, an exact exit is blocked by task-dispatch-lifecycle, and a
+ * lost exit is fenced by lease expiry. Recovering a worker from the renderer
+ * mirror is unsafe because a freshly spawned physical PTY can exist before
+ * its visual snapshot; the old logic interpreted that short gap as "dead" and
+ * terminated the healthy worker while trying to replace it.
  */
 export function actionableMissionPanes(
   persisted: readonly MissionPaneSpec[],
-  dispatches: readonly MissionPaneDispatchSignal[],
 ): MissionPaneSpec[] {
-  return persisted.filter((pane) => {
-    if (pane.role !== 'worker') return true;
-    // Prefer the latest dispatch bound by exact worker incarnation; fall back
-    // to the latest bound by durable paneId only when no incarnation matched.
-    let latestByIncarnation: MissionPaneDispatchSignal | null = null;
-    let latestByPane: MissionPaneDispatchSignal | null = null;
-    for (const dispatch of dispatches) {
-      if (
-        dispatch.workerIncarnationId !== undefined &&
-        dispatch.workerIncarnationId !== null &&
-        pane.workerIncarnationId !== undefined &&
-        dispatch.workerIncarnationId === pane.workerIncarnationId
-      ) {
-        latestByIncarnation = dispatch;
-      } else if (
-        dispatch.paneId !== undefined &&
-        dispatch.paneId !== null &&
-        dispatch.paneId === pane.paneId
-      ) {
-        latestByPane = dispatch;
-      }
-    }
-    const current = latestByIncarnation ?? latestByPane;
-    if (!current) return true;
-    return !WORKER_DELIVERED_DISPATCH_STATES.has(current.state);
-  });
+  return persisted.filter((pane) => pane.role === 'orchestrator');
 }
 
 /**
@@ -262,7 +214,6 @@ export function loadDriveState(
   }
   const persistedPanes = actionableMissionPanes(
     stores.missionPanes.list(missionId).filter((pane) => pane.paneId),
-    stores.taskDispatches.list(missionId),
   );
   const snapshots = listPaneSnapshots();
   // Absence is actionable only after the exact workspace has been mirrored.
@@ -280,6 +231,25 @@ export function loadDriveState(
     ) !== null;
   const workflowService = getContextWorkflowService(scope);
   const missionWorkflow = workflowService.getMissionWorkflow(missionId);
+  const currentStep = mission.milestones.find(
+    (milestone) => milestone.status !== 'done',
+  );
+  const expectedEvidenceId =
+    currentStep && missionWorkflow.workflow
+      ? milestoneValidationEvidenceId(
+          missionId,
+          currentStep.id,
+          missionWorkflow.workflow.binding,
+        )
+      : null;
+  const trustedEvidenceIds = new Set(
+    collectFinalPrevcEvidenceIds(
+      missionId,
+      missionWorkflow.workflow?.revision ?? null,
+      expectedEvidenceId,
+      handoffs,
+    ),
+  );
   const completionVerified = workflowService.isMissionDriverComplete(
     missionId,
     mission.milestones.map((milestone) => milestone.id),
@@ -313,6 +283,7 @@ export function loadDriveState(
       evidenceTrust: handoff.evidenceTrust,
       evidenceIds: handoff.evidenceIds,
     })),
+    trustedEvidenceIds,
     signals: {
       iteration,
       startedAt,
@@ -328,6 +299,68 @@ export function loadDriveState(
 }
 
 type DomainStores = ReturnType<typeof getProjectDomainStores>;
+interface FinalPrevcStepAuthority {
+  readonly workflowRevision: number;
+  readonly evidenceId: string;
+}
+type FinalPrevcHandoffAuthority = (
+  scope: ProjectExecutionScope,
+  missionId: string,
+  stepId: string,
+) => FinalPrevcStepAuthority | null;
+
+function currentFinalPrevcStepAuthority(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  stepId: string,
+): FinalPrevcStepAuthority | null {
+  const inspection = inspectGuidedPrevcPostMergeAuthority(scope, missionId);
+  if (!inspection.ready) return null;
+  inspection.assertCurrentAuthority();
+  const workflow =
+    getContextWorkflowService(scope).getMissionWorkflow(missionId).workflow;
+  if (!workflow) return null;
+  return Object.freeze({
+    workflowRevision: workflow.revision,
+    evidenceId: milestoneValidationEvidenceId(
+      missionId,
+      stepId,
+      workflow.binding,
+    ),
+  });
+}
+
+const MILESTONE_ATTESTATION_ID = /^milestone:[0-9a-f]{64}$/;
+
+function collectFinalPrevcEvidenceIds(
+  missionId: string,
+  workflowRevision: number | null,
+  expectedEvidenceId: string | null,
+  handoffs: readonly Handoff[],
+): string[] {
+  if (workflowRevision === null || expectedEvidenceId === null) return [];
+  for (const handoff of handoffs) {
+    if (
+      handoff.fromAgent !== 'nexus-prevc-autopilot' ||
+      handoff.sessionId !== undefined ||
+      handoff.workerIncarnationId !== undefined ||
+      handoff.mcpProvenance !== undefined ||
+      handoff.status !== 'success' ||
+      handoff.evidenceTrust !== 'nexus-trusted' ||
+      handoff.evidenceBinding?.missionId !== missionId ||
+      handoff.evidenceBinding.workflowRevision !== workflowRevision ||
+      handoff.evidenceIds.length === 0 ||
+      !handoff.evidenceIds.includes(expectedEvidenceId) ||
+      handoff.evidenceIds.some(
+        (evidenceId) => !MILESTONE_ATTESTATION_ID.test(evidenceId),
+      )
+    ) {
+      continue;
+    }
+    return [expectedEvidenceId];
+  }
+  return [];
+}
 
 /**
  * Production apply ports: real handoff stall signal, PREVC advanceWorkflow via
@@ -341,22 +374,28 @@ export function createProductionApplyPorts(
   ) => DomainStores = getProjectDomainStores,
   recoverPane = requestMissionPaneRecovery,
   paneSnapshots = listPaneSnapshots,
+  hasFinalPrevcAuthority: FinalPrevcHandoffAuthority =
+    currentFinalPrevcStepAuthority,
 ): ApplyActionPorts {
   const collectTrusted = (
     scope: ProjectExecutionScope,
     missionId: string,
+    stepId: string,
   ): string[] => {
-    const trustedIds: string[] = [];
-    for (const handoff of getStores(scope).handoffs.list({
+    // Worker/agent handoffs may legitimately resolve current Nexus evidence,
+    // but they are not completion authority. Only the Main-owned final PREVC
+    // receipt, after the exact sealed plan is terminal, may feed Ralph steps.
+    const authority = hasFinalPrevcAuthority(scope, missionId, stepId);
+    if (!authority) return [];
+    return collectFinalPrevcEvidenceIds(
       missionId,
-      includeDelivered: true,
-    })) {
-      if (handoff.evidenceTrust !== 'nexus-trusted') continue;
-      for (const evidenceId of handoff.evidenceIds) {
-        trustedIds.push(evidenceId);
-      }
-    }
-    return trustedIds;
+      authority.workflowRevision,
+      authority.evidenceId,
+      getStores(scope).handoffs.list({
+        missionId,
+        includeDelivered: true,
+      }),
+    );
   };
 
   return {
@@ -379,7 +418,6 @@ export function createProductionApplyPorts(
       const mission = stores.missions.get(missionId);
       const persisted = actionableMissionPanes(
         stores.missionPanes.list(missionId).filter((pane) => pane.paneId),
-        stores.taskDispatches.list(missionId),
       );
       const snapshots = snapshotsForScope(scope, paneSnapshots());
       const dead = findDeadMissionPane(missionId, persisted, snapshots);
@@ -474,7 +512,7 @@ export function createProductionApplyPorts(
       if (!step) {
         throw new Error(`advance rejected: step ${stepId} not found`);
       }
-      const trustedIds = collectTrusted(scope, missionId);
+      const trustedIds = collectTrusted(scope, missionId, stepId);
       const trustSet = new Set(trustedIds);
       // Only unused trusted evidence may be inherited (no reuse across steps).
       const unused = unusedTrustedEvidenceIds(mission.milestones, trustSet);
@@ -542,10 +580,41 @@ export function createProductionApplyPorts(
         );
       }
       const current = stores.missions.get(missionId);
-      if (current?.status === 'done') return;
-      const updated = stores.missions.setStatus(missionId, 'done');
+      if (!current) {
+        throw new Error(`complete rejected: mission ${missionId} vanished`);
+      }
+      if (current.status === 'done') {
+        if (current.intentState === 'done') return;
+        throw new Error(
+          'complete rejected: terminal mission has inconsistent intent state',
+        );
+      }
+      if (
+        current.milestones.length !== mission.milestones.length ||
+        current.milestones.some(
+          (step, index) =>
+            step.id !== mission.milestones[index]?.id ||
+            step.status !== 'done' ||
+            step.evidenceIds.length === 0,
+        )
+      ) {
+        throw new Error(
+          'complete rejected: milestone authority changed after PREVC proof',
+        );
+      }
+      const updated = stores.missions.completeFromMissionDriver(missionId, {
+        expectedUpdatedAt: current.updatedAt,
+        expectedIntentVersion: current.intentVersion ?? 0,
+      });
       if (!updated) {
-        throw new Error(`complete rejected: setStatus failed for ${missionId}`);
+        throw new Error(
+          `complete rejected: mission completion CAS changed for ${missionId}`,
+        );
+      }
+      if (updated.status !== 'done' || updated.intentState !== 'done') {
+        throw new Error(
+          `complete rejected: terminal projection failed for ${missionId}`,
+        );
       }
     },
     appendLearning: (missionId, scope, entry) => {

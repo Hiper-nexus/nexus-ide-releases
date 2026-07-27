@@ -6,7 +6,11 @@ import {
   type ScheduleOwnership,
 } from "./mission-scheduler";
 import { decodeTaskScheduleDetail } from "./mission-scheduler-meta";
-import { supportsMechanicallyReadOnlyCli } from "./mission-scheduler-plan";
+import {
+  supportsMechanicallyReadOnlyCli,
+  supportsMechanicallyWorkspaceWriteCli,
+} from "./mission-scheduler-plan";
+import { isRoutableModelResolution } from "./task-router";
 import { ScopedStoreBinding, ScopedStoreCorruptionError } from "./scoped-store";
 import {
   sealedPlanDispatchSchema,
@@ -222,10 +226,19 @@ export function claimTaskDispatch(
           );
         }
         if (
+          executionMode === "isolated_worktree" &&
+          !supportsMechanicallyWorkspaceWriteCli(routeContract.adapterId)
+        ) {
+          throw new Error(
+            "dispatch isolated_worktree exige CLI com sandbox de workspace confiável",
+          );
+        }
+        if (
           sealedAgent.model &&
-          routeContract.model !== sealedAgent.model &&
-          !routeContract.model?.startsWith(`${sealedAgent.model}-`) &&
-          !routeContract.model?.startsWith(`${sealedAgent.model}.`)
+          !isRoutableModelResolution(
+            sealedAgent.model,
+            routeContract.model,
+          )
         ) {
           throw new Error(
             "dispatch modelo diverge da família do roster selado",

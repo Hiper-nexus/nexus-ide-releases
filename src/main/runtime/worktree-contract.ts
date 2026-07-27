@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
-import path from 'node:path';
-import type { ProjectExecutionScope } from '../../shared/types';
-import type { GitRunner } from './git-command';
+import { createHash } from "node:crypto";
+import path from "node:path";
+import type { ProjectExecutionScope } from "../../shared/types";
+import type { GitRunner } from "./git-command";
 
 export const SHA_PATTERN = /^[a-f0-9]{40,64}$/;
 export const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
@@ -13,23 +13,18 @@ export interface WorktreeOwnership {
 }
 
 export type WorktreeStatus =
-  | 'reserved'
-  | 'ready'
-  | 'queued'
-  | 'integrated'
-  | 'failed'
-  | 'abandoned';
+  "reserved" | "ready" | "queued" | "integrated" | "failed" | "abandoned";
 
 export const ACTIVE_WORKTREE_STATUSES = new Set<WorktreeStatus>([
-  'reserved',
-  'ready',
-  'queued',
+  "reserved",
+  "ready",
+  "queued",
 ]);
 export const ALL_WORKTREE_STATUSES = new Set<WorktreeStatus>([
   ...ACTIVE_WORKTREE_STATUSES,
-  'integrated',
-  'failed',
-  'abandoned',
+  "integrated",
+  "failed",
+  "abandoned",
 ]);
 
 export interface WorktreeRecord {
@@ -92,14 +87,26 @@ export interface PreparedWorktreeIntegration {
   readonly diffHash: string;
 }
 
+/**
+ * Physical proof that a validation-capable worktree stayed clean and exactly
+ * on the integration HEAD it was created from. This is not a merge candidate:
+ * it exists so a green QA pass can be receipted without an empty commit.
+ */
+export interface PreparedWorktreeNoChangeValidation {
+  readonly record: WorktreeRecord;
+  readonly taskHeadSha: string;
+  readonly integrationHeadSha: string;
+  readonly changedFiles: readonly [];
+  readonly diffHash: string;
+}
+
 export interface IntegrationCheckoutSnapshot {
   readonly rootRealPath: string;
   readonly integrationRef: string;
   readonly headSha: string;
 }
 
-export interface IntegrationCheckoutInspection
-  extends IntegrationCheckoutSnapshot {
+export interface IntegrationCheckoutInspection extends IntegrationCheckoutSnapshot {
   readonly clean: boolean;
 }
 
@@ -118,7 +125,7 @@ export class OwnershipOverlapError extends Error {
 
   constructor(conflictingTaskKey: string, overlap: WorktreeOwnership) {
     super(`worktree ownership overlaps active task ${conflictingTaskKey}`);
-    this.name = 'OwnershipOverlapError';
+    this.name = "OwnershipOverlapError";
     this.conflictingTaskKey = conflictingTaskKey;
     this.files = overlap.files;
     this.symbols = overlap.symbols;
@@ -130,40 +137,40 @@ export class OwnershipViolationError extends Error {
   readonly undeclaredFiles: readonly string[];
 
   constructor(files: readonly string[]) {
-    super(`task changed files outside its ownership: ${files.join(', ')}`);
-    this.name = 'OwnershipViolationError';
+    super(`task changed files outside its ownership: ${files.join(", ")}`);
+    this.name = "OwnershipViolationError";
     this.undeclaredFiles = Object.freeze([...files]);
   }
 }
 
 export class WorktreeWorkerConflictError extends Error {
   constructor() {
-    super('mission task worktree is already owned by another worker');
-    this.name = 'WorktreeWorkerConflictError';
+    super("mission task worktree is already owned by another worker");
+    this.name = "WorktreeWorkerConflictError";
   }
 }
 
 export class WorktreeStateConflictError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'WorktreeStateConflictError';
+    this.name = "WorktreeStateConflictError";
   }
 }
 
 export function digest(domain: string, ...values: string[]): string {
-  return createHash('sha256')
+  return createHash("sha256")
     .update(domain)
-    .update('\0')
-    .update(values.join('\0'))
-    .digest('hex');
+    .update("\0")
+    .update(values.join("\0"))
+    .digest("hex");
 }
 
 export function assertIdentifier(value: string, label: string): string {
   if (
-    typeof value !== 'string' ||
+    typeof value !== "string" ||
     value.trim().length === 0 ||
     value.length > 256 ||
-    value.includes('\0')
+    value.includes("\0")
   ) {
     throw new Error(`invalid ${label}`);
   }
@@ -176,17 +183,17 @@ export function assertSha(value: string, label: string): string {
 }
 
 export function normalizeFileOwnership(value: string): string {
-  const raw = assertIdentifier(value, 'owned file').replaceAll('\\', '/');
-  if (raw.startsWith('/') || /^[a-zA-Z]:\//.test(raw)) {
+  const raw = assertIdentifier(value, "owned file").replaceAll("\\", "/");
+  if (raw.startsWith("/") || /^[a-zA-Z]:\//.test(raw)) {
     throw new Error(`owned file must be repository-relative: ${value}`);
   }
   const normalized = path.posix.normalize(raw);
   if (
-    normalized === '.' ||
-    normalized === '..' ||
-    normalized.startsWith('../') ||
-    normalized === '.git' ||
-    normalized.startsWith('.git/')
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized === ".git" ||
+    normalized.startsWith(".git/")
   ) {
     throw new Error(`owned file escapes repository: ${value}`);
   }
@@ -207,18 +214,18 @@ function normalizedList(
 export function normalizeOwnership(
   value: WorktreeOwnership,
 ): WorktreeOwnership {
-  if (!value || typeof value !== 'object') {
-    throw new Error('ownership is required');
+  if (!value || typeof value !== "object") {
+    throw new Error("ownership is required");
   }
-  const files = normalizedList(value.files, 'file', normalizeFileOwnership);
-  const symbols = normalizedList(value.symbols, 'symbol', (item) =>
-    assertIdentifier(item, 'owned symbol'),
+  const files = normalizedList(value.files, "file", normalizeFileOwnership);
+  const symbols = normalizedList(value.symbols, "symbol", (item) =>
+    assertIdentifier(item, "owned symbol"),
   );
-  const domains = normalizedList(value.domains, 'domain', (item) =>
-    assertIdentifier(item, 'owned domain').toLocaleLowerCase('en-US'),
+  const domains = normalizedList(value.domains, "domain", (item) =>
+    assertIdentifier(item, "owned domain").toLocaleLowerCase("en-US"),
   );
   if (files.length + symbols.length + domains.length === 0) {
-    throw new Error('at least one ownership claim is required');
+    throw new Error("at least one ownership claim is required");
   }
   return Object.freeze({ files, symbols, domains });
 }
@@ -255,12 +262,12 @@ export function fileOwnershipClaimsOverlap(
   left: string,
   right: string,
 ): boolean {
-  const normalizedLeft = left.replaceAll('\\', '/').replace(/\/+$/, '');
-  const normalizedRight = right.replaceAll('\\', '/').replace(/\/+$/, '');
+  const normalizedLeft = left.replaceAll("\\", "/").replace(/\/+$/, "");
+  const normalizedRight = right.replaceAll("\\", "/").replace(/\/+$/, "");
   if (normalizedLeft === normalizedRight) return true;
   const isDirectoryClaim = (file: string): boolean => {
-    const basename = file.split('/').pop() ?? file;
-    return !basename.includes('.');
+    const basename = file.split("/").pop() ?? file;
+    return !basename.includes(".");
   };
   return (
     (isDirectoryClaim(normalizedLeft) &&
@@ -284,9 +291,7 @@ export function sameValues(
   );
 }
 
-export function cloneWorktreeRecord(
-  record: WorktreeRecord,
-): WorktreeRecord {
+export function cloneWorktreeRecord(record: WorktreeRecord): WorktreeRecord {
   return Object.freeze({
     ...record,
     ownership: Object.freeze({
@@ -300,8 +305,8 @@ export function cloneWorktreeRecord(
 
 export function worktreeTaskKey(missionId: string, taskId: string): string {
   return digest(
-    'mission-task',
-    assertIdentifier(missionId, 'missionId'),
-    assertIdentifier(taskId, 'taskId'),
+    "mission-task",
+    assertIdentifier(missionId, "missionId"),
+    assertIdentifier(taskId, "taskId"),
   );
 }

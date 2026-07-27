@@ -16,7 +16,6 @@ import { assertMainTaskDispatcherAuthority } from './task-dispatch-authority';
 import { automatedReviewSessions } from '../context/automated-review-session';
 import {
   normalizeWorkflowIdentity,
-  type WorkflowIdentity,
 } from '../context/context-workflow-service';
 import {
   assertOrchestratorMission,
@@ -25,20 +24,13 @@ import {
   rotateContextRevisionAuthority,
 } from './gate';
 import { MergeValidationCoordinator } from '../context/merge-validation-coordinator';
-import { CliAutomatedReviewer } from '../context/cli-automated-reviewer';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { CliContextDraftReviewer } from '../context/cli-context-draft-reviewer';
 import { inspectConfiguredNexusReadiness } from '../runtime/nexus-doctor';
 import {
-  autopilotActionFor,
-  canAutopilotAdvanceTo,
-  missionPlanIntegrated,
-} from '../context/prevc-autopilot-policy';
-import {
   runContextBootstrapAutopilot,
   type ContextBootstrapAutopilotResult,
 } from '../context/context-bootstrap-autopilot';
-import { publishFinalValidationHandoff } from './final-validation-handoff';
 import { bindFreezeDraftToApprovedIntent } from './mission-freeze-authority';
 import { getAgentSessionInfo } from '../pty/pty-manager';
 import { requestPaneClose } from './pane-registry';
@@ -48,6 +40,11 @@ import {
   sameMissionPaneAuthoritySeal,
 } from './mission-pane-authority';
 import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
+import {
+  drivePrevcAutopilot,
+  runPrevcCouncilReview,
+  runPrevcFinalValidation,
+} from './prevc-autopilot-coordinator';
 
 // Doctor is an idempotent project operation, not a fan-out primitive. Several
 // model retries used to launch independent reviewers for the same drafts.
@@ -348,213 +345,6 @@ function invocationAuthority(
   invocation?: McpToolInvocation,
 ): () => void {
   return () => assertMcpInvocationCurrent(invocation);
-}
-
-function nextWorkflowStage(route: readonly string[], stage: string): string {
-  const index = route.indexOf(stage);
-  if (index < 0) throw new Error('workflow stage is outside its frozen route');
-  return route[index + 1] ?? 'complete';
-}
-
-async function runCouncilReview(
-  ctx: AgentGateContext,
-  missionId: string,
-  assertCurrentAuthority: () => void = () => {},
-  signal?: AbortSignal,
-) {
-  assertCurrentAuthority();
-  const service = getContextWorkflowService(ctx.scope);
-  const mission = service.getMissionWorkflow(missionId);
-  if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
-  const reviewer = new CliAutomatedReviewer();
-  const result = await reviewer.run({
-    scope: ctx.scope,
-    checkoutPath: ctx.scope.rootRealPath,
-    contract: mission.contract.contract,
-    binding: mission.workflow.binding,
-    author: mission.contract.author,
-    contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
-    persist: (report) => {
-      assertCurrentAuthority();
-      return service.recordMergeReviewReport(report);
-    },
-    ...(signal ? { signal } : {}),
-    assertCurrentAuthority,
-  });
-  assertCurrentAuthority();
-  return result;
-}
-
-async function runFinalValidation(
-  ctx: AgentGateContext,
-  missionId: string,
-  assertCurrentAuthority: () => void = () => {},
-  signal?: AbortSignal,
-) {
-  assertCurrentAuthority();
-  const service = getContextWorkflowService(ctx.scope);
-  const mission = service.getMissionWorkflow(missionId);
-  if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
-  const sensorEvidence = [];
-  for (const sensorId of mission.contract.contract.requiredSensors) {
-    assertCurrentAuthority();
-    const evidence = await service.runSensor(missionId, sensorId, {
-      ...(signal ? { signal } : {}),
-      assertCurrentAuthority,
-    });
-    assertCurrentAuthority();
-    sensorEvidence.push(evidence);
-    if (evidence.exitCode !== 0 || evidence.timedOut) {
-      return { ready: false, reason: `sensor failed: ${sensorId}`, sensorEvidence, review: null };
-    }
-  }
-  assertCurrentAuthority();
-  const worktrees = requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId);
-  const panes = getProjectDomainStores(ctx.scope).missionPanes.list(missionId);
-  const authors: WorkflowIdentity[] = worktrees.map((worktree) => {
-    const pane = panes.find((candidate) =>
-      candidate.role === 'worker' &&
-      candidate.agentName === worktree.workerId &&
-      candidate.cwd === worktree.worktreePath);
-    if (!pane) throw new Error(`code author identity missing for task ${worktree.taskId}`);
-    return normalizeWorkflowIdentity({
-      id: worktree.workerId,
-      sessionId: pane.paneId ?? pane.id,
-      provider: pane.adapterId,
-    });
-  });
-  if (authors.length === 0) throw new Error('final validation has no integrated code author');
-  assertCurrentAuthority();
-  const reviewer = new CliAutomatedReviewer();
-  const review = await reviewer.run({
-    scope: ctx.scope,
-    checkoutPath: ctx.scope.rootRealPath,
-    contract: mission.contract.contract,
-    binding: mission.workflow.binding,
-    author: authors[0],
-    additionalAuthors: authors.slice(1),
-    contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
-    persist: (report) => {
-      assertCurrentAuthority();
-      return service.recordMergeReviewReport(report);
-    },
-    ...(signal ? { signal } : {}),
-    assertCurrentAuthority,
-  });
-  assertCurrentAuthority();
-  return { ready: review.ready, reason: review.gate.reason, sensorEvidence, review };
-}
-
-async function drivePrevcAutopilot(
-  ctx: AgentGateContext,
-  missionId: string,
-  allowExecutionExit: boolean,
-  assertCurrentAuthority: () => void = () => {},
-  signal?: AbortSignal,
-) {
-  const service = getContextWorkflowService(ctx.scope);
-  const transitions: string[] = [];
-  let validatedEvidenceIds: readonly string[] = [];
-  for (let guard = 0; guard < 8; guard += 1) {
-    assertCurrentAuthority();
-    const mission = service.getMissionWorkflow(missionId);
-    if (!mission.contract || !mission.workflow) throw new Error('mission has no frozen workflow');
-    const { stage, route } = mission.workflow;
-    const workflowRevision = mission.workflow.revision;
-    const tasks = getProjectDomainStores(ctx.scope).tasks.list(missionId);
-    const worktrees = requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId);
-    const planIntegrated = missionPlanIntegrated(tasks.map((task) => task.id), worktrees);
-    const action = autopilotActionFor(stage, allowExecutionExit, planIntegrated);
-    if (action === 'complete') return { state: 'complete', transitions };
-    if (action === 'wait-execution') {
-      return { state: 'execution', transitions, reason: 'planned tasks are not all integrated' };
-    }
-    const advanceCurrentStage = () => {
-      assertCurrentAuthority();
-      const next = workflowStageSchema.parse(nextWorkflowStage(route, stage));
-      if (!canAutopilotAdvanceTo(next)) return null;
-      service.advance(missionId, next);
-      transitions.push(`${stage}->${next}`);
-      return next;
-    };
-    const awaitingFinalReceipt = () => ({
-      state: stage,
-      transitions,
-      reason: 'final PREVC transition awaits the atomic mission-step receipt',
-    });
-    const publishFinalReceiptEvidence = () => {
-      assertCurrentAuthority();
-      const currentEvidenceIds = service.listCurrentPersistedEvidenceIds(missionId);
-      const recoveredAttestations = currentEvidenceIds.filter((id) =>
-        id.startsWith('milestone:'));
-      const evidenceIds = validatedEvidenceIds.length > 0
-        ? validatedEvidenceIds
-        : recoveredAttestations.length > 0
-          ? recoveredAttestations
-          : currentEvidenceIds;
-      publishFinalValidationHandoff(
-        {
-          missionId,
-          workflowRevision,
-          evidenceIds,
-        },
-        getProjectDomainStores(ctx.scope).handoffs,
-      );
-    };
-    if (stage === 'execution') {
-      if (!advanceCurrentStage()) return awaitingFinalReceipt();
-      continue;
-    }
-    if (stage === 'planning') {
-      if (!advanceCurrentStage()) return awaitingFinalReceipt();
-      continue;
-    }
-    if (action === 'review') {
-      const review = await runCouncilReview(
-        ctx,
-        missionId,
-        assertCurrentAuthority,
-        signal,
-      );
-      assertCurrentAuthority();
-      if (!review.ready) return { state: stage, transitions, reason: review.gate.reason };
-      if (!advanceCurrentStage()) return awaitingFinalReceipt();
-      continue;
-    }
-    if (action === 'validate') {
-      const validation = await runFinalValidation(
-        ctx,
-        missionId,
-        assertCurrentAuthority,
-        signal,
-      );
-      assertCurrentAuthority();
-      if (!validation.ready) return { state: stage, transitions, reason: validation.reason };
-      validatedEvidenceIds = [
-        ...validation.sensorEvidence.map((evidence) => evidence.id),
-        ...(validation.review?.evidenceIds ?? []),
-      ];
-      validatedEvidenceIds = service.recordMilestoneValidationEvidence(
-        missionId,
-        validatedEvidenceIds,
-      );
-      assertCurrentAuthority();
-      if (!advanceCurrentStage()) {
-        publishFinalReceiptEvidence();
-        return awaitingFinalReceipt();
-      }
-      continue;
-    }
-    if (stage === 'confirmation') {
-      if (!advanceCurrentStage()) {
-        publishFinalReceiptEvidence();
-        return awaitingFinalReceipt();
-      }
-      continue;
-    }
-    return { state: stage, transitions, reason: 'stage requires explicit operator action' };
-  }
-  throw new Error('PREVC autopilot transition guard exceeded');
 }
 
 function markMergedTaskDone(
@@ -1005,13 +795,13 @@ const freezeTool: McpToolDef = {
       undefined,
       frozen.contract.contextRevision,
     );
-    const autopilot = await drivePrevcAutopilot(
-      ctx,
-      input.missionId,
-      false,
+    const autopilot = await drivePrevcAutopilot({
+      scope: ctx.scope,
+      missionId: input.missionId,
+      allowExecutionExit: false,
       assertCurrentAuthority,
-      invocation?.signal,
-    );
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+    });
     assertCurrentAuthority();
     return {
       ...service.getMissionWorkflow(input.missionId),
@@ -1057,13 +847,13 @@ const refreezeTool: McpToolDef = {
       previousRevision,
       frozen.contract.contextRevision,
     );
-    const autopilot = await drivePrevcAutopilot(
-      ctx,
-      parsed.missionId,
-      false,
+    const autopilot = await drivePrevcAutopilot({
+      scope: ctx.scope,
+      missionId: parsed.missionId,
+      allowExecutionExit: false,
       assertCurrentAuthority,
-      invocation?.signal,
-    );
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+    });
     assertCurrentAuthority();
     return { ...service.getMissionWorkflow(parsed.missionId), autopilot };
   },
@@ -1148,6 +938,53 @@ const advanceTool: McpToolDef = {
     const input = z.object({ missionId: identifier, next: workflowStageSchema }).strict().parse(args);
     assertMission(ctx, input.missionId);
     return getContextWorkflowService(ctx.scope).advance(input.missionId, input.next);
+  },
+};
+
+const prepareExecutionTool: McpToolDef = {
+  name: 'nexus_workflow_prepare_execution',
+  description:
+    'Advance a Main-frozen guided PREVC workflow through deterministic planning and required independent reviews, stopping at execution. Never freezes or refreezes a contract.',
+  inputSchema: {
+    type: 'object',
+    properties: { missionId: { type: 'string' } },
+    required: ['missionId'],
+  },
+  handler: async (args, ctx, invocation) => {
+    if (ctx.role === 'worker') {
+      throw new Error('only an orchestrator can prepare workflow execution');
+    }
+    const missionId = identifier.parse(args.missionId);
+    assertMission(ctx, missionId);
+    const service = getContextWorkflowService(ctx.scope);
+    const before = service.getMissionWorkflow(missionId);
+    if (!before.contract || !before.workflow) {
+      throw new Error(
+        'guided_prevc_required: Main did not freeze the mission contract',
+      );
+    }
+    if (before.workflow.stage === 'execution') {
+      return Object.freeze({
+        state: 'execution',
+        transitions: Object.freeze([]),
+      });
+    }
+    const assertCurrentAuthority = invocationAuthority(invocation);
+    const result = await drivePrevcAutopilot({
+      scope: ctx.scope,
+      missionId,
+      allowExecutionExit: false,
+      assertCurrentAuthority,
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+    });
+    assertCurrentAuthority();
+    const after = service.getMissionWorkflow(missionId);
+    if (after.workflow?.stage !== 'execution') {
+      throw new Error(
+        `guided_prevc_not_at_execution: workflow terminou em ${after.workflow?.stage ?? 'missing'}`,
+      );
+    }
+    return result;
   },
 };
 
@@ -1349,13 +1186,13 @@ const mergeTaskTool: McpToolDef = {
     // advancement runs afterwards under the same fence; a later block stops
     // the autopilot but never creates Git-rollback/task-done disagreement.
     assertCurrentAuthority();
-    const autopilot = await drivePrevcAutopilot(
-      ctx,
-      input.missionId,
-      true,
+    const autopilot = await drivePrevcAutopilot({
+      scope: ctx.scope,
+      missionId: input.missionId,
+      allowExecutionExit: true,
       assertCurrentAuthority,
-      invocation?.signal,
-    );
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+    });
     assertCurrentAuthority();
     return Object.freeze({ ...integrated, autopilot });
   },
@@ -1442,13 +1279,13 @@ const mergeRetryTool: McpToolDef = {
       },
     });
     assertCurrentAuthority();
-    const autopilot = await drivePrevcAutopilot(
-      ctx,
-      input.missionId,
-      true,
+    const autopilot = await drivePrevcAutopilot({
+      scope: ctx.scope,
+      missionId: input.missionId,
+      allowExecutionExit: true,
       assertCurrentAuthority,
-      invocation?.signal,
-    );
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+    });
     assertCurrentAuthority();
     return Object.freeze({ ...integrated, autopilot });
   },
@@ -1476,64 +1313,12 @@ const validationRunTool: McpToolDef = {
     if (!mission.workflow.stage.startsWith('validation')) {
       throw new Error('final validation is not allowed in the current workflow stage');
     }
-    const sensorEvidence = [];
-    for (const sensorId of mission.contract.contract.requiredSensors) {
-      assertCurrentAuthority();
-      const evidence = await service.runSensor(missionId, sensorId, {
-        ...(invocation?.signal ? { signal: invocation.signal } : {}),
-        assertCurrentAuthority,
-      });
-      assertCurrentAuthority();
-      sensorEvidence.push(evidence);
-      if (evidence.exitCode !== 0 || evidence.timedOut) {
-        return {
-          ready: false,
-          reason: `sensor failed: ${sensorId}`,
-          sensorEvidence,
-          review: null,
-        };
-      }
-    }
-    const reviewer = new CliAutomatedReviewer();
-    const worktrees = requireWorktreeRuntimeRegistry().listMission(ctx.scope, missionId);
-    const panes = getProjectDomainStores(ctx.scope).missionPanes.list(missionId);
-    const authors: WorkflowIdentity[] = worktrees.map((worktree) => {
-      const pane = panes.find(
-        (candidate) =>
-          candidate.role === 'worker' &&
-          candidate.agentName === worktree.workerId &&
-          candidate.cwd === worktree.worktreePath,
-      );
-      if (!pane) throw new Error(`code author identity missing for task ${worktree.taskId}`);
-      return normalizeWorkflowIdentity({
-        id: worktree.workerId,
-        sessionId: pane.paneId ?? pane.id,
-        provider: pane.adapterId,
-      });
-    });
-    if (authors.length === 0) throw new Error('final validation has no integrated code author');
-    const review = await reviewer.run({
+    return runPrevcFinalValidation({
       scope: ctx.scope,
-      checkoutPath: ctx.scope.rootRealPath,
-      contract: mission.contract.contract,
-      binding: mission.workflow.binding,
-      author: authors[0],
-      additionalAuthors: authors.slice(1),
-      contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
-      persist: (report) => {
-        assertCurrentAuthority();
-        service.recordMergeReviewReport(report);
-      },
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+      missionId,
       assertCurrentAuthority,
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
     });
-    assertCurrentAuthority();
-    return {
-      ready: review.ready,
-      reason: review.gate.reason,
-      sensorEvidence,
-      review,
-    };
   },
 };
 
@@ -1562,20 +1347,11 @@ const planReviewRunTool: McpToolDef = {
     ) {
       throw new Error('plan review is not allowed in the current workflow stage');
     }
-    const reviewer = new CliAutomatedReviewer();
-    const review = await reviewer.run({
+    const review = await runPrevcCouncilReview({
       scope: ctx.scope,
-      checkoutPath: ctx.scope.rootRealPath,
-      contract: mission.contract.contract,
-      binding: mission.workflow.binding,
-      author: mission.contract.author,
-      contextMarkdown: service.compileMissionSnapshot(missionId).markdown,
-      persist: (report) => {
-        assertCurrentAuthority();
-        service.recordMergeReviewReport(report);
-      },
-      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+      missionId,
       assertCurrentAuthority,
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
     });
     assertCurrentAuthority();
     return { ready: review.ready, reason: review.gate.reason, review };
@@ -1601,6 +1377,7 @@ export function buildContextTools(): McpToolDef[] {
     reviewTool,
     sensorTool,
     advanceTool,
+    prepareExecutionTool,
     worktreeCreateTool,
     worktreeGetTool,
     mergeReviewSubmitTool,

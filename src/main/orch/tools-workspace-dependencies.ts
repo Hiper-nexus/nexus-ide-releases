@@ -17,7 +17,7 @@ export function buildWorkspaceDependencyTools(
       name: 'load_workspace_dependencies',
       description:
         'Load exact bundled runtime paths for Python/Pillow, Node.js, pnpm and Git. ' +
-        'Call this before hatch-pet or any skill that requires workspace dependencies.',
+        'Call this before nexus-pet-studio or any skill that requires workspace dependencies.',
       inputSchema: {
         type: 'object',
         properties: {},

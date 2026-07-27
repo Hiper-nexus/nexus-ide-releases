@@ -2,16 +2,11 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
 
 const mocks = vi.hoisted(() => ({
-  askConfirm: vi.fn(async () => true),
   promotePlanLane: vi.fn(),
-  ensure: vi.fn(async () => 'injected' as const),
   bump: vi.fn(),
   push: vi.fn(),
 }));
 
-vi.mock('../state/confirm-store', () => ({
-  askConfirm: mocks.askConfirm,
-}));
 vi.mock('../state/plan-lane-metrics-store', () => ({
   bumpPlanLaneMetric: mocks.bump,
   usePlanLaneMetricsStore: {
@@ -25,10 +20,6 @@ vi.mock('../state/toast-store', () => ({
     getState: () => ({ push: mocks.push }),
   },
 }));
-vi.mock('./plan-promote-notify', () => ({
-  ensureOrchestratorAfterPlanPromote: mocks.ensure,
-}));
-
 import { promotePlanMissionToExecution } from './plan-promote-flow';
 
 function planMission(): Mission {
@@ -36,7 +27,8 @@ function planMission(): Mission {
     id: 'm-plan',
     title: 'Auth plan',
     description: 'Desenhar auth',
-    status: 'running',
+    status: 'pending',
+    intentState: 'ready_to_start',
     milestones: [],
     learnings: '',
     createdAt: 1,
@@ -64,9 +56,9 @@ function planMission(): Mission {
 describe('promotePlanMissionToExecution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.askConfirm.mockResolvedValue(true);
     mocks.promotePlanLane.mockResolvedValue({
       ...planMission(),
+      status: 'running',
       intentContract: {
         ...planMission().intentContract!,
         lane: 'standard',
@@ -79,17 +71,15 @@ describe('promotePlanMissionToExecution', () => {
     } as unknown as Window & typeof globalThis;
   });
 
-  it('skips confirm when skipConfirm is true', async () => {
-    const result = await promotePlanMissionToExecution(planMission(), {
-      skipConfirm: true,
-    });
-    expect(mocks.askConfirm).not.toHaveBeenCalled();
+  it('uses only the main-owned native promotion review', async () => {
+    const result = await promotePlanMissionToExecution(planMission());
     expect(result.ok).toBe(true);
+    expect(mocks.promotePlanLane).toHaveBeenCalledTimes(1);
     expect(mocks.bump).toHaveBeenCalled();
     expect(mocks.push).toHaveBeenCalledWith(
       'success',
       'Plano → código',
-      expect.stringContaining('PREVC'),
+      expect.stringContaining('nova sessão'),
     );
   });
 
@@ -106,19 +96,45 @@ describe('promotePlanMissionToExecution', () => {
       };
     });
     const m = planMission();
-    const a = promotePlanMissionToExecution(m, { skipConfirm: true });
-    const b = await promotePlanMissionToExecution(m, { skipConfirm: true });
+    const a = promotePlanMissionToExecution(m);
+    const b = await promotePlanMissionToExecution(m);
     expect(b.ok).toBe(false);
     expect(b.error).toMatch(/em curso/i);
     release();
     await a;
   });
 
-  it('returns cancelled when operator declines confirm', async () => {
-    mocks.askConfirm.mockResolvedValue(false);
+  it('promotes an already-dispatched plan through the main-owned runtime restart', async () => {
+    const mission = {
+      ...planMission(),
+      status: 'running' as const,
+      intentState: 'executing' as const,
+      orchestratorSessionId: 'pty-plan-v1',
+      intentContract: {
+        ...planMission().intentContract!,
+        approvedAt: 100,
+        dispatchedAt: 101,
+      },
+    };
+
+    const result = await promotePlanMissionToExecution(mission);
+
+    expect(result.ok).toBe(true);
+    expect(mocks.promotePlanLane).toHaveBeenCalledWith({
+      missionId: mission.id,
+    });
+    expect(mocks.push).toHaveBeenCalledWith(
+      'success',
+      'Plano → código',
+      expect.stringContaining('nova sessão'),
+    );
+  });
+
+  it('surfaces denial from the single native authority boundary', async () => {
+    mocks.promotePlanLane.mockRejectedValueOnce(new Error('user_denied'));
     const result = await promotePlanMissionToExecution(planMission());
-    expect(result).toEqual({ ok: false, cancelled: true });
-    expect(mocks.promotePlanLane).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: false, error: 'user_denied' });
+    expect(mocks.promotePlanLane).toHaveBeenCalledTimes(1);
   });
 
   it('rejects non-plan missions', async () => {

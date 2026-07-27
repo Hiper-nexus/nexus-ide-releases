@@ -3,8 +3,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const spawnDeps = vi.hoisted(() => ({
   prepareAccount: vi.fn(),
   runtimeKey: vi.fn<() => string | null>(() => 'sk-global-other-account'),
-  subscriptionAuthed: vi.fn(() => true),
-  resolveAuthStrategy: vi.fn(() => ({
+  launcherKey: vi.fn<(providerId: string) => string | null>(() => null),
+  subscriptionAuthed: vi.fn<
+    (adapterId: string, model?: string) => boolean
+  >(() => true),
+  subscriptionStatusAuthed: vi.fn<
+    (adapterId: string, model?: string) => boolean
+  >(() => true),
+  resolveAuthStrategy: vi.fn<
+    (input: {
+      authMethod: string;
+      hasStoredKey: boolean;
+      subscriptionAuthed: boolean;
+    }) => {
+      strategy: string;
+      injectKey: boolean;
+      suppressKeyEnv: boolean;
+    }
+  >(() => ({
     strategy: 'subscription',
     injectKey: false,
     suppressKeyEnv: true,
@@ -26,6 +42,11 @@ const claudeAdapter = {
   auth: { method: 'oauth', loginHint: 'claude /login' },
   env: {
     passthrough: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+  },
+  models: {
+    flag: '--model',
+    list: ['claude-sonnet'],
+    default: 'claude-sonnet',
   },
 };
 
@@ -62,6 +83,40 @@ const ompAdapter = {
   install: { command: 'brew install can1357/tap/omp' },
   auth: { method: 'oauth', loginHint: 'omp auth-broker login' },
   env: { passthrough: [] },
+  models: {
+    flag: '--model',
+    list: [
+      'anthropic/claude-sonnet-4-6',
+      'openai-codex/gpt-5.5',
+      'zai/glm-5',
+    ],
+    default: 'anthropic/claude-sonnet-4-6',
+  },
+};
+
+const opencodeAdapter = {
+  ...kimiAdapter,
+  id: 'opencode',
+  label: 'OpenCode',
+  bin: 'opencode',
+  install: { command: 'brew install anomalyco/tap/opencode' },
+  auth: {
+    method: 'api_key',
+    envVarFallback: 'ANTHROPIC_API_KEY',
+    loginHint: 'opencode auth login',
+  },
+  env: {
+    passthrough: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'],
+  },
+  models: {
+    flag: '--model',
+    list: [
+      'opencode/big-pickle',
+      'opencode/north-mini-code-free',
+      'openrouter/openai/gpt-5',
+    ],
+    default: 'opencode/big-pickle',
+  },
 };
 
 vi.mock('electron', () => ({
@@ -78,6 +133,8 @@ vi.mock('../adapters/adapter-registry', () => ({
         ? kimiAdapter
         : id === 'omp'
           ? ompAdapter
+          : id === 'opencode'
+            ? opencodeAdapter
           : null,
   isBinResolvable: () => true,
   getAdapterResolvedBin: (id: string) =>
@@ -85,21 +142,30 @@ vi.mock('../adapters/adapter-registry', () => ({
       ? '/usr/local/bin/claude'
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
-        : id === 'omp'
-          ? '/usr/local/bin/omp'
-          : null,
+      : id === 'omp'
+        ? '/usr/local/bin/omp'
+        : id === 'opencode'
+          ? '/opt/homebrew/bin/opencode'
+        : null,
   resolveAdapterBinary: (id: string) =>
     id === 'claude'
       ? '/usr/local/bin/claude'
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
-        : id === 'omp'
-          ? '/usr/local/bin/omp'
-          : null,
+      : id === 'omp'
+        ? '/usr/local/bin/omp'
+        : id === 'opencode'
+          ? '/opt/homebrew/bin/opencode'
+        : null,
   rescanAdapterBinaries: vi.fn(() => []),
-  listAdapters: () => [claudeAdapter, kimiAdapter, ompAdapter],
+  listAdapters: () => [
+    claudeAdapter,
+    kimiAdapter,
+    ompAdapter,
+    opencodeAdapter,
+  ],
   notifyAdaptersChanged: vi.fn(),
-  primaryKeyEnvVar: (adapter: typeof claudeAdapter | typeof kimiAdapter) =>
+  primaryKeyEnvVar: (adapter: { auth: { envVarFallback?: string } }) =>
     'envVarFallback' in adapter.auth
       ? adapter.auth.envVarFallback
       : null,
@@ -140,7 +206,7 @@ vi.mock('../adapters/provider-test', () => ({ testProviderKey: vi.fn() }));
 vi.mock('../adapters/launcher-provider-manager', () => ({
   buildProviderRoutingEnv: () => ({}),
   listUpstreamProviders: () => [],
-  loadLauncherProviderKey: () => null,
+  loadLauncherProviderKey: spawnDeps.launcherKey,
 }));
 
 vi.mock('../adapters/model-catalog', () => ({
@@ -150,6 +216,11 @@ vi.mock('../adapters/model-catalog', () => ({
 
 vi.mock('../adapters/subscription-auth', () => ({
   hasSubscriptionAuth: spawnDeps.subscriptionAuthed,
+  hasSubscriptionAuthForStatus: spawnDeps.subscriptionStatusAuthed,
+  refreshClaudeSubscriptionAuthCache: vi.fn(async () => ({
+    value: true,
+    cacheUpdated: false,
+  })),
   resolveAuthStrategy: spawnDeps.resolveAuthStrategy,
 }));
 
@@ -163,7 +234,9 @@ vi.mock('./account-store', () => ({
 }));
 
 import {
+  listProviderSettings,
   prepareProviderSpawn,
+  providerAuthStrategy,
   providerReadiness,
 } from './provider-config-store';
 
@@ -171,7 +244,9 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     spawnDeps.runtimeKey.mockReturnValue('sk-global-other-account');
+    spawnDeps.launcherKey.mockReturnValue(null);
     spawnDeps.subscriptionAuthed.mockReturnValue(true);
+    spawnDeps.subscriptionStatusAuthed.mockReturnValue(true);
     spawnDeps.resolveAuthStrategy.mockReturnValue({
       strategy: 'subscription',
       injectKey: false,
@@ -185,7 +260,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     });
   });
 
-  it('does not block OMP before its own multi-provider auth broker can start', () => {
+  it('blocks login-needed OMP before any pane or RPC worker can start', () => {
     spawnDeps.subscriptionAuthed.mockReturnValue(false);
     spawnDeps.runtimeKey.mockReturnValue(null);
     spawnDeps.resolveAuthStrategy.mockReturnValue({
@@ -194,8 +269,171 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
       suppressKeyEnv: false,
     });
 
-    expect(providerReadiness('omp')).toEqual({ ready: true, reason: 'ready' });
-    expect(prepareProviderSpawn('omp')).toMatchObject({ ok: true });
+    expect(providerAuthStrategy('omp')).toBe('login-needed');
+    expect(providerReadiness('omp')).toMatchObject({ ready: false });
+    expect(prepareProviderSpawn('omp')).toMatchObject({ ok: false });
+  });
+
+  it('scopes OMP readiness to the exact selected provider/model', () => {
+    spawnDeps.subscriptionAuthed.mockImplementation(
+      (_adapterId: string, model?: string) =>
+        model === 'openai-codex/gpt-5.5',
+    );
+    spawnDeps.resolveAuthStrategy.mockImplementation(
+      ({ subscriptionAuthed, hasStoredKey }) => ({
+        strategy: subscriptionAuthed
+          ? 'subscription'
+          : hasStoredKey
+            ? 'api-key'
+            : 'login-needed',
+        injectKey: !subscriptionAuthed && hasStoredKey,
+        suppressKeyEnv: subscriptionAuthed,
+      }),
+    );
+
+    expect(
+      providerReadiness('omp', 'openai-codex/gpt-5.5'),
+    ).toMatchObject({ ready: true });
+    expect(
+      providerReadiness('omp', 'anthropic/claude-sonnet-4-6'),
+    ).toMatchObject({ ready: false });
+    expect(spawnDeps.subscriptionAuthed).toHaveBeenCalledWith(
+      'omp',
+      'openai-codex/gpt-5.5',
+    );
+  });
+
+  it('injects only the selected OMP provider key family', () => {
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.launcherKey.mockImplementation((providerId: string) =>
+      providerId === 'glm' ? 'selected-provider-key' : null,
+    );
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'api-key',
+      injectKey: true,
+      suppressKeyEnv: false,
+    });
+
+    const result = prepareProviderSpawn('omp', { model: 'zai/glm-5' });
+
+    expect(result).toMatchObject({
+      ok: true,
+      overrides: {
+        keyEnv: {
+          ZAI_API_KEY: 'selected-provider-key',
+        },
+      },
+    });
+    if (!result.ok) throw new Error('expected an OMP spawn');
+    expect(result.overrides.keyEnv).not.toHaveProperty('ANTHROPIC_API_KEY');
+    expect(result.overrides.keyEnv).not.toHaveProperty('OPENAI_API_KEY');
+    expect(result.overrides.keyEnv).not.toHaveProperty('OPENROUTER_API_KEY');
+    expect(spawnDeps.launcherKey).toHaveBeenCalledWith('glm');
+    expect(spawnDeps.launcherKey).not.toHaveBeenCalledWith('anthropic');
+  });
+
+  it('allows credentialless OpenCode only for an exact pinned first-party free model', () => {
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.subscriptionStatusAuthed.mockReturnValue(false);
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'login-needed',
+      injectKey: false,
+      suppressKeyEnv: false,
+    });
+
+    expect(providerReadiness('opencode')).toEqual({
+      ready: true,
+      reason: 'ready',
+    });
+    expect(
+      listProviderSettings().find(
+        (provider) => provider.adapterId === 'opencode',
+      )?.authStrategy,
+    ).toBe('login-needed');
+    expect(
+      prepareProviderSpawn('opencode', {
+        model: 'opencode/north-mini-code-free',
+      }),
+    ).toMatchObject({
+      ok: true,
+      overrides: {
+        binPath: '/opt/homebrew/bin/opencode',
+        keyEnv: {},
+        suppressEnv: [],
+      },
+    });
+  });
+
+  it('builds provider snapshots exclusively from the non-blocking auth status path', () => {
+    vi.clearAllMocks();
+    listProviderSettings({ nonBlockingAuth: true });
+
+    expect(spawnDeps.subscriptionStatusAuthed).toHaveBeenCalled();
+    expect(spawnDeps.subscriptionAuthed).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'openrouter/openai/gpt-5',
+    'opencode/unreviewed-free',
+    'other/opencode/big-pickle',
+  ])(
+    'keeps unauthenticated OpenCode blocked for non-allowlisted model %s',
+    (model) => {
+      spawnDeps.subscriptionAuthed.mockReturnValue(false);
+      spawnDeps.runtimeKey.mockReturnValue(null);
+      spawnDeps.resolveAuthStrategy.mockReturnValue({
+        strategy: 'login-needed',
+        injectKey: false,
+        suppressKeyEnv: false,
+      });
+
+      expect(providerReadiness('opencode', model)).toMatchObject({
+        ready: false,
+      });
+      expect(prepareProviderSpawn('opencode', { model })).toMatchObject({
+        ok: false,
+      });
+    },
+  );
+
+  it('does not activate a stale implicit OpenCode account for a credentialless model', () => {
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'login-needed',
+      injectKey: false,
+      suppressKeyEnv: false,
+    });
+    spawnDeps.listAccounts.mockReturnValue([
+      {
+        id: 'stale-opencode',
+        adapterId: 'opencode',
+        label: 'Stale OpenCode',
+        mode: 'subscription',
+        upstream: 'anthropic',
+        createdAt: 1,
+      },
+    ]);
+    spawnDeps.getActiveAccount.mockReturnValue({
+      id: 'stale-opencode',
+      adapterId: 'opencode',
+      label: 'Stale OpenCode',
+      mode: 'subscription',
+      upstream: 'anthropic',
+      createdAt: 1,
+    });
+
+    expect(
+      prepareProviderSpawn('opencode', {
+        model: 'opencode/big-pickle',
+      }),
+    ).toMatchObject({
+      ok: true,
+      overrides: { keyEnv: {}, suppressEnv: [] },
+    });
+    expect(spawnDeps.getActiveAccount).not.toHaveBeenCalled();
+    expect(spawnDeps.ensureSubscriptionActive).not.toHaveBeenCalled();
   });
 
   it('keeps the native Claude session authoritative for unpinned panes', () => {

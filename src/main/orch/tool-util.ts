@@ -18,7 +18,10 @@ import {
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
-import { getAdapter } from '../adapters/adapter-registry';
+import {
+  getAdapter,
+  isBuiltinAdapter,
+} from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import { resolveRoutableModel } from './task-router';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -35,15 +38,12 @@ import {
   spawnMissionOmpRpcWorker,
   terminateOmpRpcSession,
 } from '../adapters/omp-rpc-ipc';
-import { isAdapterInstalled } from '../adapters/adapter-registry';
-import { hasAvailableAccount } from '../persistence/account-store';
 import {
-  buildOmpAutoSpawnPrompt,
-  shouldAutoSpawnOmpCompanion,
-} from './omp-roster-policy';
+  supportsEnforceableReadOnlyNativeAuthority,
+  supportsEnforceableWorkspaceWriteNativeAuthority,
+} from '../pty/autonomous-cli-policy';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
-import { OmpAutoCompanionSingleFlight } from './omp-auto-companion-single-flight';
 import { assertSafePtyPrompt } from './pty-prompt-safety';
 import { isSessionInjectableIdle } from './agent-status';
 import { listSquads } from './squad-store';
@@ -53,12 +53,18 @@ import {
   type McpToolInvocation,
 } from './mcp-protocol';
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
+import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
+import { isReleaseQualifiedMissionWorkerCli } from './squad-runtime-policy';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
 /** Shared argument helpers + pane-spawn plumbing for the MCP toolset. */
 
-const PROMPT_SETTLE_MS = 250;
+// Interactive agent editors need one repaint after bracketed paste before
+// Enter. Claude and Codex both exhibit swallowed submits below ~500 ms on a
+// cold TUI; Orca uses the same bounded settle without weakening acceptance
+// proof or any authority recheck.
+const PROMPT_SETTLE_MS = 500;
 /** Janela para provar o submit: sessão ainda idle depois disto → CR comido. */
 const ENTER_RETRY_MS = 400;
 const AGENT_BOOT_TIMEOUT_MS = 20_000;
@@ -71,8 +77,6 @@ const BOOT_PROMPT_HOLD_MS = 5_000;
  * blind to idle panes: stall needs busy, login-stuck needs a busy transition).
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
-const ompAutoCompanionFlights = new OmpAutoCompanionSingleFlight();
-
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -343,7 +347,7 @@ export async function deliverAgentPrompt(
   sessionId: string,
   prompt: string,
   invocation?: McpToolInvocation,
-): Promise<void> {
+): Promise<boolean> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await waitOutBootPrompts(sessionId);
@@ -358,7 +362,7 @@ export async function deliverAgentPrompt(
           invocation,
         )
       ) {
-        return;
+        return true;
       }
     } catch (error) {
       lastError = error;
@@ -371,7 +375,7 @@ export async function deliverAgentPrompt(
   if (isCurrentProcessRealMissionE2E()) {
     const state = getSessionState(sessionId);
     if (state !== null && state !== 'exited') {
-      return;
+      return false;
     }
   }
   if (lastError instanceof Error) throw lastError;
@@ -389,6 +393,8 @@ export interface SpawnToolOptions {
   title?: string;
   missionId?: string;
   contextRevision?: string;
+  /** Complete main-owned mission/workflow/squad revision; never renderer-authored. */
+  authoritySeal?: MissionPaneAuthoritySeal;
   agentName?: string;
   workerIncarnationId?: string;
   /** Squad role category (scout/executor/reviewer/…) — tiers the charters. */
@@ -414,14 +420,24 @@ export interface SpawnToolOptions {
  */
 export interface SpawnPaneHooks {
   readonly onPaneCreated?: (paneId: string, sessionId: string) => void;
+  /**
+   * Fires only after the exact final prompt (including the worker handoff
+   * contract) has crossed the transport acceptance boundary.
+   */
+  readonly onPromptAccepted?: (
+    paneId: string,
+    sessionId: string,
+    prompt: string,
+  ) => void;
   /** Exact dispatch authority propagated across asynchronous preflight. */
   readonly invocation?: McpToolInvocation;
 }
 
 function requireMissionPaneAuthoritySeal(options: SpawnToolOptions) {
   if (!options.missionId) return undefined;
-  const stores = getProjectDomainStores(options.scope);
-  const mission = stores.missions.get(options.missionId);
+  const mission = getProjectDomainStores(options.scope).missions.get(
+    options.missionId,
+  );
   const squads = listSquads().filter(
     (candidate) => candidate.id === mission?.squadId,
   );
@@ -432,6 +448,28 @@ function requireMissionPaneAuthoritySeal(options: SpawnToolOptions) {
   if (!seal) {
     throw new Error(
       'mission pane authority seal is unavailable; replane and approve the current mission revision',
+    );
+  }
+  if (
+    options.contextRevision !== undefined &&
+    options.contextRevision !== seal.contextRevision
+  ) {
+    throw new Error(
+      'mission pane contextRevision is stale; replane and approve the current revision',
+    );
+  }
+  if (
+    options.authoritySeal &&
+    (
+      options.authoritySeal.intentVersion !== seal.intentVersion ||
+      options.authoritySeal.intentContractHash !== seal.intentContractHash ||
+      options.authoritySeal.contextRevision !== seal.contextRevision ||
+      options.authoritySeal.contractHash !== seal.contractHash ||
+      options.authoritySeal.squadRevisionHash !== seal.squadRevisionHash
+    )
+  ) {
+    throw new Error(
+      'stale mission pane authority; replane and approve the current revision',
     );
   }
   return seal;
@@ -515,75 +553,35 @@ export function withHandoffContract(
 }
 
 /**
- * Fire-and-forget: after a non-omp worker starts, ensure one Oh My Pi worker
- * is also running on the mission — no Maestro/human required.
+ * Last physical boundary before a governed worker can reach credential probes,
+ * RPC, or PTY creation. Persisted rosters, sticky routes, legacy receipts and
+ * callers without a contextRevision are data — none of them can widen this
+ * release-owned allowlist.
+ *
+ * Manual Terminal panes have no missionId and remain multi-provider. An
+ * explicitly identified mission orchestrator is also outside the worker
+ * boundary (Maestro has its own read-only/delegation authority).
  */
-function scheduleOmpAutoCompanion(
-  options: SpawnToolOptions,
-  workspaceRoot: string,
+export function assertReleaseQualifiedMissionWorkerSpawn(
+  options: Pick<
+    SpawnToolOptions,
+    'adapterId' | 'missionId' | 'role' | 'readOnly'
+  >,
 ): void {
-  if (options.suppressOmpAutoSpawn) return;
-  if (!options.missionId) return;
-  // An unconfined companion would silently widen a read-only task.
-  if (options.readOnly === true) return;
-  const settings = getOrchSettings();
-  let missionHasOmp = false;
-  try {
-    missionHasOmp = getProjectDomainStores(options.scope)
-      .missionPanes.list(options.missionId)
-      .some((pane) => pane.adapterId === 'omp');
-  } catch {
-    missionHasOmp = false;
-  }
-  if (
-    !shouldAutoSpawnOmpCompanion({
-      ompParticipation: settings.ompParticipation,
-      ompAutoSpawn: settings.ompAutoSpawn,
-      ompInstalled: isAdapterInstalled('omp'),
-      ompAvailable: hasAvailableAccount('omp'),
-      justSpawnedAdapterId: options.adapterId,
-      missionHasOmp,
-      role: options.role,
-    })
-  ) {
-    return;
-  }
-  const missionId = options.missionId;
-  const prompt = buildOmpAutoSpawnPrompt({
-    missionId,
-    goalHint: options.prompt ?? options.title,
-  });
-  const missionKey = [
-    options.scope.projectId,
-    options.scope.checkoutId,
-    missionId,
-  ].join(':');
-  ompAutoCompanionFlights.start(
-    missionKey,
-    async () => {
-      await spawnPaneAndMaybePrompt({
-        adapterId: 'omp',
-        model: getAdapter('omp')?.models.default,
-        effort: 'medium',
-        cwd: workspaceRoot,
-        executionScope: options.executionScope ?? options.scope,
-        scope: options.scope,
-        missionId,
-        agentName: 'Oh My Pi (auto)',
-        title: 'Oh My Pi · auto',
-        role: 'worker',
-        prompt,
-        allowedTools: null,
-        allowedSkills: null,
-        suppressOmpAutoSpawn: true,
-      });
-    },
-    (err) => {
-      console.warn(
-        '[spawn] omp auto-companion falhou (missão segue sem ele):',
-        err instanceof Error ? err.message : err,
-      );
-    },
+  if (!options.missionId || options.role === 'orchestrator') return;
+  const adapter = getAdapter(options.adapterId);
+  const qualified =
+    adapter?.kind === 'cli-pty' &&
+    isReleaseQualifiedMissionWorkerCli(adapter.id) &&
+    isBuiltinAdapter(adapter.id) &&
+    supportsEnforceableWorkspaceWriteNativeAuthority(adapter) &&
+    (options.readOnly !== true ||
+      supportsEnforceableReadOnlyNativeAuthority(adapter));
+  if (qualified) return;
+  throw new Error(
+    `governed_worker_spawn_unsupported: ${options.adapterId} não pode executar ` +
+      'como worker autônomo de missão nesta release; use o adapter Codex builtin ' +
+      'qualificado ou abra esse CLI manualmente no Terminal fora da missão',
   );
 }
 
@@ -607,17 +605,40 @@ export async function spawnPaneAndMaybePrompt(
     throw new Error(`adapter ${options.adapterId} is not spawnable as a pane`);
   }
   const adapter = resolvedAdapter;
+  const authoritySeal = requireMissionPaneAuthoritySeal(options);
+  assertReleaseQualifiedMissionWorkerSpawn(options);
+  const contextRevision =
+    authoritySeal?.contextRevision ?? options.contextRevision;
+  const revisionBoundWritableWorker =
+    options.role === 'worker' &&
+    Boolean(contextRevision) &&
+    options.readOnly !== true;
+  if (
+    revisionBoundWritableWorker &&
+    (!options.executionScope ||
+      options.executionScope.rootRealPath === options.scope.rootRealPath)
+  ) {
+    throw new Error(
+      'workspace_write_scope_invalid: revision-bound writable worker ' +
+        'requires a physically distinct main-owned execution worktree',
+    );
+  }
+  if (
+    revisionBoundWritableWorker &&
+    (adapter.id !== 'codex' ||
+      !isBuiltinAdapter(adapter.id) ||
+      !supportsEnforceableWorkspaceWriteNativeAuthority(adapter))
+  ) {
+    throw new Error(
+      `workspace_write_unsupported: ${adapter.id} não oferece sandbox ` +
+        'nativo builtin confiável para worker autônomo isolado',
+    );
+  }
   if (options.adapterId === 'omp' && options.readOnly === true) {
     throw new Error(
       'OMP does not provide enforceable read-only native confinement',
     );
   }
-  // Pre-spawn credential probe (Overclock F-256 harvest): a spawn with a
-  // missing credential used to surface as a dead pane or a mute login TUI.
-  // Fail here — before any pane exists — with a typed, actionable error.
-  // Cheap (<50ms, no network) and never judges what it cannot prove.
-  await assertPreSpawnProbe(options.adapterId);
-  assertMcpInvocationCurrent(hooks.invocation);
   // Circuit half-open / closed only for auto traffic; explicit spawns still try.
   // Failures below trip the breaker for future routeTask multi-score.
   // Defesa em profundidade contra modelo-fantasma (caso de campo 17/07): a
@@ -643,17 +664,30 @@ export async function spawnPaneAndMaybePrompt(
         `usando a variante real ${modelResolution.model ?? '(default)'}.`,
     );
   }
+  // Pre-spawn credential probe (Overclock F-256 harvest): judge the exact
+  // effective model before a pane exists. This matters for OpenCode: its
+  // pinned first-party free models need no credential, while external models
+  // on the same installed CLI remain fail-closed.
+  await assertPreSpawnProbe(options.adapterId, {
+    model: effectiveModel,
+    failClosed: true,
+  });
+  assertMcpInvocationCurrent(hooks.invocation);
   // Agent CLIs can read and execute native tools. Pin every orchestrated spawn
   // to the active workspace before the renderer/PTY boundary; never inherit
   // pty-manager's user-shell fallback to HOME.
   const safeOptions: SpawnToolOptions = {
     ...options,
     model: effectiveModel,
+    // The durable pane seal is the authoritative mission revision. Main-owned
+    // scheduler spawns do not originate from an MCP AgentGateContext, so
+    // carrying this value here prevents a writable worker from being silently
+    // downgraded to the native read-only policy.
+    contextRevision,
+    authoritySeal,
     executionScope: options.executionScope ?? options.scope,
     cwd: resolveCwdForScope(options.executionScope ?? options.scope, options.cwd),
   };
-  const authoritySeal = requireMissionPaneAuthoritySeal(options);
-
   // Oh My Pi dual transport: rpc-ui for deterministic lifecycle, PTY for full
   // MCP inject. `auto` prefers rpc and falls back to PTY on failure.
   if (options.adapterId === 'omp' && options.role !== 'orchestrator') {
@@ -689,7 +723,10 @@ export async function spawnPaneAndMaybePrompt(
             // agent_start and a same-turn handoff.
             hooks.onPaneCreated?.(paneId, sessionId);
           },
-          onAccepted: (paneId) => {
+          onAccepted: (paneId, sessionId) => {
+            if (prompt) {
+              hooks.onPromptAccepted?.(paneId, sessionId, prompt);
+            }
             // Persist composition only after agent_start. A rejected prompt
             // must not leave a dead pane identity that blocks safe recovery.
             if (options.missionId) {
@@ -796,11 +833,18 @@ export async function spawnPaneAndMaybePrompt(
       }
       // 'idle' or 'timeout' (slow boot): deliver and prove acceptance —
       // a swallowed brief used to leave a zombie worker no watchdog can see.
-      await deliverAgentPrompt(
+      const promptAccepted = await deliverAgentPrompt(
         result.sessionId,
         prompt,
         hooks.invocation,
       );
+      if (promptAccepted) {
+        hooks.onPromptAccepted?.(result.paneId, result.sessionId, prompt);
+      } else if (hooks.onPromptAccepted) {
+        throw new Error(
+          'agent prompt remained live without physical acceptance proof',
+        );
+      }
     } catch (error) {
       // Never leave a mute zombie pane occupying a mission worker slot. The
       // durable row remains as audit history, but a fenced worker incarnation
@@ -813,11 +857,6 @@ export async function spawnPaneAndMaybePrompt(
       throw error;
     }
   }
-  // Zero-friction: first non-omp mission worker also pulls Oh My Pi online.
-  scheduleOmpAutoCompanion(
-    options,
-    safeOptions.cwd ?? options.scope.rootRealPath,
-  );
   return { paneId: result.paneId, sessionId: result.sessionId };
 }
 

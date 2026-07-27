@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useLayoutEffect, useRef } from 'react';
 import {
   NodeResizer,
   Handle,
@@ -67,7 +67,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
         : 'conectando';
 
   // Attach (or re-attach after snapshot) the terminal into this slot.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (pane.kind === 'browser') return undefined;
     const slot = slotRef.current;
     if (!slot || isSnapshot) return undefined;
@@ -84,7 +84,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.id, isSnapshot]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (pane.kind !== 'browser' && isFocused && !isSnapshot) focusHost(id);
     else if (pane.kind !== 'browser') blurHost(id);
   }, [isFocused, id, isSnapshot, pane.kind]);

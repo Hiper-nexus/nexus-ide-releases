@@ -25,8 +25,8 @@ export function petSlugFromImagePath(imagePath: string): string {
 }
 
 /**
- * Objetivo do worker visual. A skill é referenciada pelo nome: cada CLI deve
- * resolver a instalação no próprio CODEX_HOME/CLAUDE_HOME, sem caminho cruzado.
+ * Objetivo do worker visual. A skill é referenciada pelo nome e materializada
+ * pelo main no perfil governado; nenhum HOME real vira destino do worker.
  */
 export function hatchPetIntent(imagePath: string): string {
   const slug = petSlugFromImagePath(imagePath);
@@ -35,8 +35,8 @@ export function hatchPetIntent(imagePath: string): string {
     'Use a imagem como fonte canônica da identidade; preserve os traços mais reconhecíveis sem fazer um retrato literal.',
     'Estilo 3D toy premium, formas arredondadas, proporções compactas e detalhes legíveis em 192×208.',
     'Pose única centralizada, corpo inteiro e com margem sobre fundo magenta puro #FF00FF; sem cenário, texto, logotipo, borda, sombra, reflexo ou magenta no personagem.',
-    'Carregue a skill hatch-pet pelo nome e execute o workflow completo do Codex v2, incluindo geração, montagem e QA.',
-    `Empacote o resultado aprovado em ~/.codex/pets/${slug}/ e informe os caminhos de spritesheet.webp e pet.json.`,
+    'Carregue a skill nexus-pet-studio pelo nome e execute o workflow governado v2 completo, incluindo geração Nexus, montagem no workspace e QA.',
+    `Use o id ${slug}. Grave o pacote somente no output de artifacts/nexus-pet-studio/<missionId> informado pelo kickoff; nunca escreva em ~/.codex/pets. Informe os caminhos de spritesheet.webp e pet.json para o Nexus validar e instalar.`,
   ].join('\n');
 }
 

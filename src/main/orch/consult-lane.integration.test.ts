@@ -9,7 +9,7 @@ import {
   canCompleteConsultLane,
   compileIntentContract,
 } from '../../shared/mission-intent';
-import { buildIntentDispatchKickoffPrompt } from '../../renderer/orch/mission-launcher';
+import { buildIntentDispatchKickoffPrompt } from '../../shared/mission-dispatch-kickoff';
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
 import type { Mission, Squad } from '../../shared/orch-types';
 

@@ -57,7 +57,7 @@ describe('SensorBroker', () => {
       [
         {
           id: 'unit',
-          command: ['npm', 'test', '--', '--run'],
+          command: ['npm', 'test'],
           timeoutMs: 30_000,
           network: false,
         },
@@ -80,7 +80,7 @@ describe('SensorBroker', () => {
     });
 
     expect(runProcess).toHaveBeenCalledWith(
-      expect.objectContaining({ command: ['npm', 'test', '--', '--run'] }),
+      expect.objectContaining({ command: ['npm', 'test'] }),
       root,
       expect.objectContaining({ projectId: 'project-a' }),
       expect.any(Object),
@@ -93,7 +93,7 @@ describe('SensorBroker', () => {
       missionId: 'mission-a',
       sensorId: 'unit',
       ...gitState,
-      command: ['npm', 'test', '--', '--run'],
+      command: ['npm', 'test'],
       exitCode: 0,
     });
     expect(evidence.sensorConfigHash).toMatch(/^[a-f0-9]{64}$/);

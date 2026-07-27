@@ -4,7 +4,7 @@ import path from 'node:path';
 
 /**
  * Logger persistente do pipeline de voz. Escreve em ~/.nexus/logs/voice.log
- * (com rotação) E espelha no console — assim o dev vê no terminal e o app
+ * (com rotação) e espelha no console — assim o dev vê no terminal e o app
  * empacotado deixa evidência em disco. Motivo: o `console.log` do processo
  * main do app empacotado NÃO vai parar no log unificado do macOS, e o do
  * renderer só vive no DevTools. Resultado: quando o mic do wake "ensaordece"
@@ -27,13 +27,6 @@ export interface VoiceLogEntry {
 
 /** Caminho padrão (display/diagnóstico). logVoice resolve o path a cada call. */
 export const VOICE_LOG_FILE = path.join(os.homedir(), '.nexus', 'logs', 'voice.log');
-let workspaceResolver: (() => string | null) | null = null;
-
-export function configureVoiceLogWorkspaceResolver(
-  resolver: (() => string | null) | null,
-): void {
-  workspaceResolver = resolver;
-}
 
 /** Override de teste (NEXUS_VOICE_LOG_FILE) ou padrão. */
 function resolveLogFile(): string {
@@ -75,20 +68,11 @@ function appendVoiceLine(file: string, line: string, maxBytes: number): void {
   }
 }
 
-function resolveWorkspaceLogFile(): string | null {
-  try {
-    const workspace = workspaceResolver?.();
-    return workspace
-      ? path.join(workspace, '.nexus', 'logs', 'voice.log')
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Anexa um evento ao voice.log (rotacionando se necessário) e espelha no
- * console. Falha silenciosamente — jamais propaga exceção.
+ * console. O log é exclusivamente global: observabilidade do próprio Nexus
+ * nunca pode criar arquivos dentro do projeto, sujar o Git ou contaminar uma
+ * baseline greenfield. Falha silenciosamente — jamais propaga exceção.
  */
 export function logVoice(
   level: VoiceLogLevel,
@@ -104,8 +88,5 @@ export function logVoice(
     data,
   });
   consoleMirror(level, line);
-  const files = new Set([resolveLogFile(), resolveWorkspaceLogFile()]);
-  for (const file of files) {
-    if (file) appendVoiceLine(file, line, resolveMaxBytes());
-  }
+  appendVoiceLine(resolveLogFile(), line, resolveMaxBytes());
 }

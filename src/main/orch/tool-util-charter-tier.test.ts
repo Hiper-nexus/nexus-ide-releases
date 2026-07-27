@@ -10,11 +10,18 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('./workspace-path', () => ({ resolveCwdForScope: vi.fn() }));
 vi.mock('./pane-registry', () => ({
   getPaneAuthzInfo: vi.fn(),
+  listPaneSnapshots: vi.fn(() => []),
+  requestMissionPaneClose: vi.fn(async () => true),
+  requestPaneClose: vi.fn(async () => true),
   requestPaneSpawn: vi.fn(),
   waitForIdle: vi.fn(),
 }));
 vi.mock('./pane-authz', () => ({ authorizePaneAccess: vi.fn() }));
-vi.mock('../pty/pty-manager', () => ({ orchWriteSession: vi.fn(() => true) }));
+vi.mock('../pty/pty-manager', () => ({
+  getAgentSessionInfo: vi.fn(() => null),
+  getSessionState: vi.fn(() => null),
+  orchWriteSession: vi.fn(() => true),
+}));
 vi.mock('../adapters/adapter-registry', () => ({ getAdapter: vi.fn() }));
 vi.mock('./legacy-handoff', () => ({ LEGACY_MARKER: 'marker' }));
 vi.mock('./ponytail', () => ({ PONYTAIL_RULES: '[PONYTAIL]' }));

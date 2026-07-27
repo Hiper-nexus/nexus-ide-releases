@@ -7,6 +7,7 @@
  * callbacks. pty-host-client.ts wires it to the real utilityProcess.
  */
 import type { PtyProcessTreeTerminationProof } from './pty-descendant-termination';
+import type { DarwinTrustedExecutableSeal } from './trusted-native-cli-binary';
 
 /** Fully-resolved spawn request. The main process builds file/args/env (the
  * security-relevant work); the host only executes it. */
@@ -18,6 +19,11 @@ export interface PtySpawnSpec {
   cols: number;
   rows: number;
   env: Record<string, string>;
+  /**
+   * Main-authenticated Mach-O identity. On Darwin the utility host must route
+   * this through the native suspended/live-code verifier; it is never advisory.
+   */
+  darwinExecutableSeal?: DarwinTrustedExecutableSeal;
 }
 
 export type PtyKillSignal = 'SIGTERM' | 'SIGKILL';
@@ -92,6 +98,164 @@ export interface PtyHostBridge {
 
 const TERMINATION_PROCESS_SCAN_BUDGET_MS = 4_000;
 const TERMINATION_TRANSPORT_MARGIN_MS = 500;
+export const PRE_SPAWN_FAILURE_TOMBSTONE_TTL_MS = 120_000;
+export const PRE_SPAWN_FAILURE_TOMBSTONE_LIMIT = 256;
+export const PHYSICAL_EXIT_RECEIPT_TTL_MS = 300_000;
+export const PHYSICAL_EXIT_RECEIPT_LIMIT = 512;
+
+interface PreSpawnFailureTombstoneOptions {
+  readonly ttlMs?: number;
+  readonly maxEntries?: number;
+  readonly now?: () => number;
+}
+
+/**
+ * Bounded, short-lived host evidence that a specific session failed before
+ * nodePty.spawn was called. This is intentionally one-shot: it may prove an
+ * empty process tree for that exact session once, but an arbitrary missing
+ * session remains a fail-closed termination.
+ */
+export class PreSpawnFailureTombstones {
+  private readonly entries = new Map<string, number>();
+  private readonly ttlMs: number;
+  private readonly maxEntries: number;
+  private readonly now: () => number;
+
+  constructor(options: PreSpawnFailureTombstoneOptions = {}) {
+    this.ttlMs = options.ttlMs ?? PRE_SPAWN_FAILURE_TOMBSTONE_TTL_MS;
+    this.maxEntries =
+      options.maxEntries ?? PRE_SPAWN_FAILURE_TOMBSTONE_LIMIT;
+    this.now = options.now ?? Date.now;
+    if (
+      !Number.isFinite(this.ttlMs) ||
+      this.ttlMs <= 0 ||
+      !Number.isInteger(this.maxEntries) ||
+      this.maxEntries <= 0
+    ) {
+      throw new Error('invalid pre-spawn failure tombstone bounds');
+    }
+  }
+
+  record(sessionId: string): void {
+    const now = this.now();
+    this.prune(now);
+    this.entries.delete(sessionId);
+    while (this.entries.size >= this.maxEntries) {
+      const oldest = this.entries.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
+    this.entries.set(sessionId, now + this.ttlMs);
+  }
+
+  forget(sessionId: string): void {
+    this.entries.delete(sessionId);
+  }
+
+  consume(sessionId: string): boolean {
+    this.prune(this.now());
+    if (!this.entries.has(sessionId)) return false;
+    this.entries.delete(sessionId);
+    return true;
+  }
+
+  size(): number {
+    this.prune(this.now());
+    return this.entries.size;
+  }
+
+  private prune(now: number): void {
+    for (const [sessionId, expiresAt] of this.entries) {
+      if (expiresAt <= now) this.entries.delete(sessionId);
+    }
+  }
+}
+
+interface PhysicalExitReceiptOptions {
+  readonly ttlMs?: number;
+  readonly maxEntries?: number;
+  readonly now?: () => number;
+}
+
+interface PhysicalExitReceipt {
+  readonly proof: PtyProcessTreeTerminationProof;
+  readonly expiresAt: number;
+}
+
+/**
+ * Stable, bounded host evidence for a process tree whose exact native
+ * supervisor has already exited. A terminate request can arrive one event-loop
+ * turn after node-pty's exit callback (or be retried by Main); deleting the
+ * host entry must not turn that proven cohort into an "unknown session".
+ *
+ * Only complete root+descendant proofs are accepted. Unlike the negative
+ * pre-spawn fact above, a physical exit receipt is deliberately reusable:
+ * retries ask about the same immutable, opaque session id and must receive the
+ * same answer until Main has crossed its shutdown fence.
+ */
+export class PhysicalExitReceipts {
+  private readonly entries = new Map<string, PhysicalExitReceipt>();
+  private readonly ttlMs: number;
+  private readonly maxEntries: number;
+  private readonly now: () => number;
+
+  constructor(options: PhysicalExitReceiptOptions = {}) {
+    this.ttlMs = options.ttlMs ?? PHYSICAL_EXIT_RECEIPT_TTL_MS;
+    this.maxEntries = options.maxEntries ?? PHYSICAL_EXIT_RECEIPT_LIMIT;
+    this.now = options.now ?? Date.now;
+    if (
+      !Number.isFinite(this.ttlMs) ||
+      this.ttlMs <= 0 ||
+      !Number.isInteger(this.maxEntries) ||
+      this.maxEntries <= 0
+    ) {
+      throw new Error('invalid physical-exit receipt bounds');
+    }
+  }
+
+  record(
+    sessionId: string,
+    proof: PtyProcessTreeTerminationProof,
+  ): void {
+    if (!proof.ok || !proof.rootExited || !proof.descendantsExited) return;
+    const now = this.now();
+    this.prune(now);
+    this.entries.delete(sessionId);
+    while (this.entries.size >= this.maxEntries) {
+      const oldest = this.entries.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
+    this.entries.set(sessionId, {
+      proof: Object.freeze({
+        ok: true,
+        rootExited: true,
+        descendantsExited: true,
+      }),
+      expiresAt: now + this.ttlMs,
+    });
+  }
+
+  forget(sessionId: string): void {
+    this.entries.delete(sessionId);
+  }
+
+  read(sessionId: string): PtyProcessTreeTerminationProof | null {
+    this.prune(this.now());
+    return this.entries.get(sessionId)?.proof ?? null;
+  }
+
+  size(): number {
+    this.prune(this.now());
+    return this.entries.size;
+  }
+
+  private prune(now: number): void {
+    for (const [sessionId, receipt] of this.entries) {
+      if (receipt.expiresAt <= now) this.entries.delete(sessionId);
+    }
+  }
+}
 
 /**
  * Build the main-side bridge. `dispatchEvent`/`handleHostDown` are driven by the

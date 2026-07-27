@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Adapter } from '../../shared/adapter-types';
+import { MODEL_ID_PATTERN } from '../../shared/model-id';
 
 export interface CliModelCacheSource {
   adapterId: string;
@@ -29,7 +30,7 @@ export const CLI_MODEL_CACHE_SOURCES: CliModelCacheSource[] = [
   },
 ];
 
-const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{1,127}$/;
+const MODEL_ID = MODEL_ID_PATTERN;
 
 function modelId(value: unknown): string | null {
   if (!value || typeof value !== 'object') return null;

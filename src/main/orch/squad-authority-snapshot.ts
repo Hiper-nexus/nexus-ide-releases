@@ -18,6 +18,8 @@ export interface SquadAuthoritySnapshot {
   readonly builtin: boolean;
   readonly orchestratorInstructions: string;
   readonly nativeInstructions: string | null;
+  readonly runtimeSourceSquadId?: string | null;
+  readonly runtimeSourceSquadRevisionHash?: string | null;
   readonly agents: readonly SquadAuthorityAgentSnapshot[];
   readonly hash: string;
 }
@@ -30,6 +32,14 @@ export function snapshotSquadAuthority(squad: Squad): SquadAuthoritySnapshot {
     builtin: squad.builtin,
     orchestratorInstructions: squad.orchestratorInstructions,
     nativeInstructions: squad.nativeInstructions ?? null,
+    ...(squad.runtimeSourceSquadId &&
+    squad.runtimeSourceSquadRevisionHash
+      ? {
+          runtimeSourceSquadId: squad.runtimeSourceSquadId,
+          runtimeSourceSquadRevisionHash:
+            squad.runtimeSourceSquadRevisionHash,
+        }
+      : {}),
     agents: squad.agents.map((agent) => ({
       id: agent.id,
       agentName: agent.agentName,
@@ -69,6 +79,8 @@ export function squadAuthorityReviewStrings(
     String(snapshot.builtin),
     snapshot.orchestratorInstructions,
     snapshot.nativeInstructions ?? '',
+    snapshot.runtimeSourceSquadId ?? '',
+    snapshot.runtimeSourceSquadRevisionHash ?? '',
     ...snapshot.agents.flatMap((agent) => [
       agent.id,
       agent.agentName,

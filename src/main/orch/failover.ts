@@ -416,6 +416,7 @@ function performSwitch(req: SwitchRequest): void {
       reason: prepareError
         ? `${hit.reason} (falha na conta: ${prepareError})`
         : hit.reason,
+      kind: hit.kind,
       switched: false,
       fromAccountId,
       missionId: authority.missionId,
@@ -462,6 +463,7 @@ function performSwitch(req: SwitchRequest): void {
     fromAccountLabel: fromLabel,
     toAccountLabel: next.label,
     reason: `${hit.reason}${req.reasonSuffix}`,
+    kind: hit.kind,
     switched: true,
     toAccountId: next.id,
     fromAccountId,

@@ -28,7 +28,10 @@ interface FakeSessionOptions {
   sessionId: string;
   workspaceRoot?: string;
   model?: { provider: string; modelId: string };
+  env?: Record<string, string>;
   approvalPolicy?: 'safe' | 'yolo';
+  governed?: boolean;
+  credentialSecrets?: readonly string[];
 }
 
 type FakePushEvent = { kind: string; [key: string]: unknown };
@@ -46,6 +49,16 @@ const h = vi.hoisted(() => {
     readonly sessionId: string;
     state = 'ready';
     disposed = false;
+    terminateImpl: () => Promise<{
+      ok: boolean;
+      rootExited: boolean;
+      descendantsExited: boolean;
+      error?: string;
+    }> = async () => ({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
 
     constructor(options: FakeSessionOptions, callbacks: FakeSessionCallbacks) {
       this.options = options;
@@ -56,6 +69,16 @@ const h = vi.hoisted(() => {
 
     dispose(): void {
       this.disposed = true;
+    }
+
+    async terminate(): Promise<{
+      ok: boolean;
+      rootExited: boolean;
+      descendantsExited: boolean;
+      error?: string;
+    }> {
+      this.disposed = true;
+      return this.terminateImpl();
     }
 
     snapshot(): { state: string } {
@@ -74,11 +97,41 @@ const h = vi.hoisted(() => {
     }
   }
 
+  const resolveOmpBin = vi.fn(async () => ({ binPath: '/fake/omp' }));
+  const preflightOmpRpcSpawn = vi.fn(async (selectedModel?: string) => {
+    const modelRef =
+      selectedModel || 'anthropic/claude-sonnet-4-6';
+    const slash = modelRef.indexOf('/');
+    if (slash <= 0 || slash === modelRef.length - 1) {
+      throw new Error(
+        `modelo omp malformado: "${modelRef}" (formato esperado: provider/modelId)`,
+      );
+    }
+    const resolved = await resolveOmpBin();
+    return {
+      modelRef,
+      model: {
+        provider: modelRef.slice(0, slash),
+        modelId: modelRef.slice(slash + 1),
+      },
+      binPath: resolved.binPath,
+      keyEnv: {},
+      credentialScope: {
+        modelProvider: modelRef.slice(0, slash),
+        source: 'broker',
+        authorityProviderId: modelRef.slice(0, slash),
+        envNames: [] as string[],
+      },
+    };
+  });
+
   return {
     FakeOmpRpcSession,
     getAllWindows: vi.fn((): unknown[] => []),
     ipcHandle: vi.fn(),
-    resolveOmpBin: vi.fn(async () => ({ binPath: '/fake/omp' })),
+    resolveOmpBin,
+    buildOmpChildEnv: vi.fn(() => ({ PATH: '/usr/bin', NO_COLOR: '1' })),
+    preflightOmpRpcSpawn,
     waitForOmpSessionReady: vi.fn(async () => undefined),
     mintToken: vi.fn((input: {
       missionId?: string;
@@ -91,6 +144,7 @@ const h = vi.hoisted(() => {
     bindTokenToSession: vi.fn(),
     releaseSession: vi.fn(),
     releaseSessionByToken: vi.fn(),
+    isCurrentGateContext: vi.fn(() => true),
     dispatchToolCall: vi.fn(),
     buildToolset: vi.fn((): unknown[] => []),
     auditSuccess: vi.fn(),
@@ -106,14 +160,19 @@ vi.mock('electron', () => ({
 }));
 vi.mock('./omp-rpc-service', () => ({
   OmpRpcSession: h.FakeOmpRpcSession,
+  buildOmpChildEnv: h.buildOmpChildEnv,
   resolveOmpBin: h.resolveOmpBin,
   waitForOmpSessionReady: h.waitForOmpSessionReady,
+}));
+vi.mock('../pty/pre-spawn-probe', () => ({
+  preflightOmpRpcSpawn: h.preflightOmpRpcSpawn,
 }));
 vi.mock('../orch/gate', () => ({
   mintToken: h.mintToken,
   bindTokenToSession: h.bindTokenToSession,
   releaseSession: h.releaseSession,
   releaseSessionByToken: h.releaseSessionByToken,
+  isCurrentGateContext: h.isCurrentGateContext,
 }));
 vi.mock('../orch/mcp-dispatch', () => ({ dispatchToolCall: h.dispatchToolCall }));
 vi.mock('../orch/tools', () => ({ buildToolset: h.buildToolset }));
@@ -125,13 +184,16 @@ vi.mock('../pty/pty-manager', () => ({
 }));
 
 import {
+  __resetOmpRpcLifecycleForTests,
   disposeAllOmpRpcSessions,
   isSafeOmpMissionPreflightFailure,
+  liveOmpRpcRuntimeSummary,
   listOmpRpcSessions,
   registerOmpRpcIpc,
   spawnMissionOmpRpcWorker,
 } from './omp-rpc-ipc';
 import { getExternalWorkerSessionInfo } from '../orch/external-worker-session-registry';
+import { mintOmpRpcPhysicalHostCall } from '../orch/http-mcp-boundary';
 
 type FakeWebContents = WebContents & {
   send: ReturnType<typeof vi.fn>;
@@ -208,8 +270,9 @@ beforeEach(() => {
   h.getAllWindows.mockReturnValue([]);
 });
 
-afterEach(() => {
-  disposeAllOmpRpcSessions();
+afterEach(async () => {
+  await disposeAllOmpRpcSessions();
+  __resetOmpRpcLifecycleForTests();
   for (const owner of boundOwners.splice(0)) {
     clearRendererWorkspaceScope(owner);
   }
@@ -336,12 +399,18 @@ describe('R4 — parseOmpModelRef fail-loud (via spawnMissionOmpRpcWorker)', () 
     });
   });
 
-  it('modelo ausente ou vazio segue undefined (default do omp é escolha legítima)', async () => {
+  it('modelo ausente ou vazio é fixado no default exato antes do spawn', async () => {
     await spawnMissionOmpRpcWorker({ ...missionInput });
     await spawnMissionOmpRpcWorker({ ...missionInput, model: '' });
     expect(h.FakeOmpRpcSession.instances.map((i) => i.options.model)).toEqual([
-      undefined,
-      undefined,
+      {
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-6',
+      },
+      {
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-6',
+      },
     ]);
   });
 
@@ -369,9 +438,64 @@ describe('R4 — parseOmpModelRef fail-loud (via spawnMissionOmpRpcWorker)', () 
     expect(h.releaseSession).not.toHaveBeenCalled();
     expect(h.releaseSessionByToken).not.toHaveBeenCalled();
   });
+
+  it('falha de auth provider/model no preflight ocorre antes de token/processo', async () => {
+    h.preflightOmpRpcSpawn.mockRejectedValueOnce(
+      new Error(
+        '[missing-credential] omp: conecte openai-codex antes de iniciar',
+      ),
+    );
+    const failure = await spawnMissionOmpRpcWorker({
+      ...missionInput,
+      model: 'openai-codex/gpt-5.5',
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/missing-credential/);
+    expect(isSafeOmpMissionPreflightFailure(failure)).toBe(true);
+    expect(h.mintToken).not.toHaveBeenCalled();
+    expect(h.FakeOmpRpcSession.instances).toHaveLength(0);
+  });
 });
 
 describe('mission spawn transaction cleanup', () => {
+  it('shutdown revoga mission spawn enquanto resolveOmpBin está pendente', async () => {
+    let resolveBin!: (value: { binPath: string }) => void;
+    h.resolveOmpBin.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBin = resolve;
+      }),
+    );
+
+    const spawnOutcome = spawnMissionOmpRpcWorker(missionInput).catch(
+      (error: unknown) => error,
+    );
+    expect(h.resolveOmpBin).toHaveBeenCalledOnce();
+    expect(liveOmpRpcRuntimeSummary()).toEqual({ total: 1, busy: 1 });
+
+    let shutdownSettled = false;
+    const shutdown = disposeAllOmpRpcSessions().then((result) => {
+      shutdownSettled = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(shutdownSettled).toBe(false);
+
+    resolveBin({ binPath: '/fake/omp' });
+    const failure = await spawnOutcome;
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/revoked by shutdown/i);
+    expect(isSafeOmpMissionPreflightFailure(failure)).toBe(true);
+    expect(h.mintToken).not.toHaveBeenCalled();
+    expect(h.FakeOmpRpcSession.instances).toHaveLength(0);
+    await expect(shutdown).resolves.toEqual({
+      ok: true,
+      attemptedSessionIds: [],
+      terminatedSessionIds: [],
+      failedSessionIds: [],
+    });
+  });
+
   it('binds child cwd and MCP host tools to the task worktree, not the coordination checkout', async () => {
     const coordinationScope = {
       ...scopeA,
@@ -390,6 +514,7 @@ describe('mission spawn transaction cleanup', () => {
     });
 
     expect(lastSession().options.workspaceRoot).toBe('/wt');
+    expect(lastSession().options.governed).toBe(true);
     expect(h.mintToken).toHaveBeenLastCalledWith(
       expect.objectContaining({
         scope: coordinationScope,
@@ -398,16 +523,32 @@ describe('mission spawn transaction cleanup', () => {
     );
 
     const dispatchHostTool = lastSession().callbacks.dispatchHostTool as
-      | ((toolName: string, args: Record<string, unknown>) => Promise<unknown>)
+      | ((
+          toolName: string,
+          args: Record<string, unknown>,
+          physicalCall: ReturnType<typeof mintOmpRpcPhysicalHostCall>,
+        ) => Promise<unknown>)
       | undefined;
     expect(dispatchHostTool).toBeTypeOf('function');
     h.dispatchToolCall.mockResolvedValueOnce({ ok: true, result: {} });
-    await dispatchHostTool?.('nexus_file_write', {
-      path: 'src/worker.ts',
-      content: 'worktree only',
-    });
+    const sessionId = lastSession().sessionId;
+    const gateCtx = h.mintToken.mock.results.at(-1)?.value;
+    gateCtx.sessionId = sessionId;
+    await dispatchHostTool?.(
+      'nexus_file_write',
+      {
+        path: 'src/worker.ts',
+        content: 'worktree only',
+      },
+      mintOmpRpcPhysicalHostCall({
+        sessionId,
+        childPid: 4242,
+        callId: 'host-call-worktree',
+        toolName: 'nexus_file_write',
+      }),
+    );
     expect(h.dispatchToolCall).toHaveBeenLastCalledWith(
-      'http-mcp',
+      'omp-rpc-stdio',
       expect.anything(),
       'nexus_file_write',
       expect.objectContaining({ path: 'src/worker.ts' }),
@@ -750,7 +891,213 @@ describe('R1b — controle e listagem de sessões escopados por projeto', () => 
   });
 });
 
+describe('model switch credential scope', () => {
+  async function startOwnedPanel(owner: FakeWebContents) {
+    bindScope(owner, scopeA);
+    registerOmpRpcIpc();
+    const result = (await ipcHandler(OMP_RPC_CHANNELS.start)(
+      { sender: owner },
+      {
+        approvalPolicy: 'safe',
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-sonnet-4-6',
+        },
+      },
+    )) as OmpRpcStartResult;
+    if (!result.ok) throw new Error(result.error);
+    return result;
+  }
+
+  it('runs exact auth preflight before sending set_model to the process', async () => {
+    const owner = fakeWebContents(47);
+    const started = await startOwnedPanel(owner);
+    const setModelSpy = vi.spyOn(lastSession(), 'setModel');
+    h.preflightOmpRpcSpawn.mockRejectedValueOnce(
+      new Error('provider escolhido sem login'),
+    );
+
+    const result = (await ipcHandler(OMP_RPC_CHANNELS.setModel)(
+      { sender: owner },
+      {
+        sessionId: started.sessionId,
+        provider: 'openrouter',
+        modelId: 'openai/gpt-5',
+      },
+    )) as { ok: boolean; error?: string };
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'provider escolhido sem login',
+    });
+    expect(h.preflightOmpRpcSpawn).toHaveBeenLastCalledWith(
+      'openrouter/openai/gpt-5',
+    );
+    expect(setModelSpy).not.toHaveBeenCalled();
+  });
+
+  it('requires restart when a live switch would widen or replace launcher credentials', async () => {
+    const owner = fakeWebContents(48);
+    h.preflightOmpRpcSpawn.mockResolvedValueOnce({
+      modelRef: 'anthropic/claude-sonnet-4-6',
+      model: {
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-6',
+      },
+      binPath: '/fake/omp',
+      keyEnv: { ANTHROPIC_API_KEY: 'initial-provider-key' },
+      credentialScope: {
+        modelProvider: 'anthropic',
+        source: 'launcher',
+        authorityProviderId: 'anthropic',
+        envNames: ['ANTHROPIC_API_KEY'],
+      },
+    });
+    const started = await startOwnedPanel(owner);
+    const setModelSpy = vi.spyOn(lastSession(), 'setModel');
+    h.preflightOmpRpcSpawn.mockResolvedValueOnce({
+      modelRef: 'zai/glm-5',
+      model: { provider: 'zai', modelId: 'glm-5' },
+      binPath: '/fake/omp',
+      keyEnv: {
+        ZAI_API_KEY: 'other-provider-key',
+      },
+      credentialScope: {
+        modelProvider: 'zai',
+        source: 'launcher',
+        authorityProviderId: 'glm',
+        envNames: ['ZAI_API_KEY'],
+      },
+    });
+
+    const result = (await ipcHandler(OMP_RPC_CHANNELS.setModel)(
+      { sender: owner },
+      {
+        sessionId: started.sessionId,
+        provider: 'zai',
+        modelId: 'glm-5',
+      },
+    )) as { ok: boolean; error?: string };
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/outro escopo de credencial.*reinicie/i);
+    expect(setModelSpy).not.toHaveBeenCalled();
+  });
+
+  it('allows an exact preflighted switch when credential scope is unchanged', async () => {
+    const owner = fakeWebContents(49);
+    const started = await startOwnedPanel(owner);
+    const setModelSpy = vi.spyOn(lastSession(), 'setModel');
+
+    const result = (await ipcHandler(OMP_RPC_CHANNELS.setModel)(
+      { sender: owner },
+      {
+        sessionId: started.sessionId,
+        provider: 'anthropic',
+        modelId: 'claude-opus-5',
+      },
+    )) as { ok: boolean; error?: string };
+
+    expect(result).toEqual({ ok: true });
+    expect(setModelSpy).toHaveBeenCalledWith(
+      'anthropic',
+      'claude-opus-5',
+    );
+  });
+
+  it('requires restart between broker providers even when both launcher envs are empty', async () => {
+    const owner = fakeWebContents(490);
+    const started = await startOwnedPanel(owner);
+    const setModelSpy = vi.spyOn(lastSession(), 'setModel');
+
+    const result = (await ipcHandler(OMP_RPC_CHANNELS.setModel)(
+      { sender: owner },
+      {
+        sessionId: started.sessionId,
+        provider: 'openai-codex',
+        modelId: 'gpt-5.5',
+      },
+    )) as { ok: boolean; error?: string };
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/outro escopo de credencial.*reinicie/i);
+    expect(setModelSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('renderer start authority', () => {
+  it('inventories pending drawer preflight and refuses a destroyed owner', async () => {
+    const owner = fakeWebContents(49);
+    bindScope(owner, scopeA);
+    registerOmpRpcIpc();
+    let resolveBin!: (value: { binPath: string }) => void;
+    h.resolveOmpBin.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBin = resolve;
+      }),
+    );
+
+    const startOutcome = Promise.resolve(
+      ipcHandler(OMP_RPC_CHANNELS.start)(
+        { sender: owner },
+        { approvalPolicy: 'safe' },
+      ),
+    ) as Promise<OmpRpcStartResult>;
+    expect(liveOmpRpcRuntimeSummary()).toEqual({ total: 1, busy: 1 });
+
+    owner.__setDestroyed(true);
+    resolveBin({ binPath: '/fake/omp' });
+    await expect(startOutcome).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/owner.*disappeared|owner.*unavailable/i),
+    });
+    expect(h.mintToken).not.toHaveBeenCalled();
+    expect(h.FakeOmpRpcSession.instances).toHaveLength(0);
+    expect(liveOmpRpcRuntimeSummary()).toEqual({ total: 0, busy: 0 });
+  });
+
+  it('shutdown revoga start do drawer enquanto resolveOmpBin está pendente', async () => {
+    const owner = fakeWebContents(50);
+    bindScope(owner, scopeA);
+    registerOmpRpcIpc();
+    let resolveBin!: (value: { binPath: string }) => void;
+    h.resolveOmpBin.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBin = resolve;
+      }),
+    );
+
+    const startOutcome = Promise.resolve(
+      ipcHandler(OMP_RPC_CHANNELS.start)(
+        { sender: owner },
+        { approvalPolicy: 'safe' },
+      ),
+    ) as Promise<OmpRpcStartResult>;
+    expect(h.resolveOmpBin).toHaveBeenCalledOnce();
+
+    let shutdownSettled = false;
+    const shutdown = disposeAllOmpRpcSessions().then((result) => {
+      shutdownSettled = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(shutdownSettled).toBe(false);
+
+    resolveBin({ binPath: '/fake/omp' });
+    await expect(startOutcome).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/revoked by shutdown/i),
+    });
+    expect(h.mintToken).not.toHaveBeenCalled();
+    expect(h.FakeOmpRpcSession.instances).toHaveLength(0);
+    await expect(shutdown).resolves.toEqual({
+      ok: true,
+      attemptedSessionIds: [],
+      terminatedSessionIds: [],
+      failedSessionIds: [],
+    });
+  });
+
   it.each([
     {
       approvalPolicy: 'safe',

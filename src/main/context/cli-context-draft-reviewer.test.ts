@@ -11,7 +11,15 @@ const selectionDeps = vi.hoisted(() => ({
     {
       id: string;
       kind: 'cli-pty';
-      quirks: { mcpAutoload: boolean };
+      bin?: string;
+      spawn?: {
+        interactive: string[];
+        extraArgs: string[];
+      };
+      quirks: {
+        mcpAutoload: boolean;
+        nexusMcp?: 'codex';
+      };
       control?: {
         permission: {
           arg?: string;
@@ -23,6 +31,7 @@ const selectionDeps = vi.hoisted(() => ({
       };
     }
   >(),
+  builtinIds: new Set<string>(),
   routeTask: vi.fn(
     (_task: string, candidates: Array<{ id: string; installed: boolean }>) => {
       const candidate = candidates.find((item) => item.installed);
@@ -58,6 +67,7 @@ vi.mock('../persistence/provider-config-store', () => ({
 }));
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: (id: string) => selectionDeps.adapters.get(id) ?? null,
+  isBuiltinAdapter: (id: string) => selectionDeps.builtinIds.has(id),
 }));
 vi.mock('../orch/task-router', () => ({
   routeTask: selectionDeps.routeTask,
@@ -135,6 +145,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   selectionDeps.providers.length = 0;
   selectionDeps.adapters.clear();
+  selectionDeps.builtinIds.clear();
   paneDeps.snapshots.length = 0;
   resetContextDraftReviewResumeLedger();
 });
@@ -144,7 +155,7 @@ describe('CLI context draft reviewer', () => {
     expect(DEFAULT_CONTEXT_DRAFT_REVIEW_TIMEOUT_MS).toBe(120_000);
   });
 
-  it('selects one installed MCP-capable CLI outside the author provider', () => {
+  it('fails closed instead of routing a Codex-authored draft to legacy Claude', () => {
     selectionDeps.providers.push(
       {
         adapterId: 'codex',
@@ -209,15 +220,11 @@ describe('CLI context draft reviewer', () => {
       quirks: { mcpAutoload: true },
     });
 
-    expect(selectIndependentContextReviewerRoute('codex')).toEqual({
-      adapterId: 'claude',
-      model: 'review-model',
-      effort: 'high',
-    });
+    expect(selectIndependentContextReviewerRoute('codex')).toBeNull();
     const candidates = selectionDeps.routeTask.mock.calls[0]?.[1] as Array<{
       id: string;
     }>;
-    expect(candidates.map((item) => item.id)).toEqual(['claude']);
+    expect(candidates).toEqual([]);
   });
 
   it('accepts Codex only when its enforceable read-only policy is declared', () => {
@@ -229,20 +236,34 @@ describe('CLI context draft reviewer', () => {
       kind: 'cli-pty',
       models: ['review-model'],
     });
+    selectionDeps.builtinIds.add('codex');
     selectionDeps.adapters.set('codex', {
       id: 'codex',
       kind: 'cli-pty',
-      quirks: { mcpAutoload: false },
+      bin: 'codex',
+      spawn: {
+        interactive: ['codex'],
+        extraArgs: [],
+      },
+      quirks: {
+        mcpAutoload: false,
+        nexusMcp: 'codex',
+      },
       control: {
         permission: {
+          arg: '--ask-for-approval',
           safe: [
             '--sandbox',
             'workspace-write',
             '--ask-for-approval',
             'on-request',
           ],
-          yolo: [],
-          modes: {},
+          yolo: ['--dangerously-bypass-approvals-and-sandbox'],
+          modes: {
+            auto: 'never',
+            default: 'on-request',
+            untrusted: 'untrusted',
+          },
           default: '',
         },
       },
@@ -251,6 +272,54 @@ describe('CLI context draft reviewer', () => {
     expect(selectIndependentContextReviewerRoute('claude')).toMatchObject({
       adapterId: 'codex',
     });
+  });
+
+  it('rejects a user Codex lookalike from independent read-only review', () => {
+    selectionDeps.providers.push({
+      adapterId: 'codex',
+      enabled: true,
+      installed: true,
+      authStrategy: 'subscription',
+      kind: 'cli-pty',
+      models: ['review-model'],
+    });
+    selectionDeps.adapters.set('codex', {
+      id: 'codex',
+      kind: 'cli-pty',
+      bin: 'codex',
+      spawn: {
+        interactive: ['codex'],
+        extraArgs: [],
+      },
+      quirks: {
+        mcpAutoload: false,
+        nexusMcp: 'codex',
+      },
+      control: {
+        permission: {
+          arg: '--ask-for-approval',
+          safe: [
+            '--sandbox',
+            'workspace-write',
+            '--ask-for-approval',
+            'on-request',
+          ],
+          yolo: ['--dangerously-bypass-approvals-and-sandbox'],
+          modes: {
+            auto: 'never',
+            default: 'on-request',
+            untrusted: 'untrusted',
+          },
+          default: '',
+        },
+      },
+    });
+
+    expect(selectIndependentContextReviewerRoute('claude')).toBeNull();
+    const candidates = selectionDeps.routeTask.mock.calls[0]?.[1] as Array<{
+      id: string;
+    }>;
+    expect(candidates).toEqual([]);
   });
 
   it.each(['approved', 'rejected'] as const)(
@@ -477,7 +546,9 @@ describe('CLI context draft reviewer', () => {
       missionId: draft.missionId ?? undefined,
     });
     const spawn = vi.fn();
-    const deliverPrompt = vi.fn(async (_sessionId: string, _prompt: string) => undefined);
+    const deliverPrompt = vi.fn(
+      async (_sessionId: string, _prompt: string) => true,
+    );
     let reads = 0;
     const reviewer = new CliContextDraftReviewer({
       readDraft: () => {
@@ -572,7 +643,7 @@ describe('CLI context draft reviewer', () => {
       scope,
       missionId: draft.missionId ?? undefined,
     });
-    const deliverPrompt = vi.fn(async () => undefined);
+    const deliverPrompt = vi.fn(async () => true);
     let reads = 0;
     const reviewer = new CliContextDraftReviewer({
       readDraft: () => {

@@ -13,7 +13,10 @@ import {
   createContextAttestation,
   writeContextAttestation,
 } from './context-attestation';
-import { ContextWorkflowService } from './context-workflow-service';
+import {
+  ContextWorkflowService,
+  milestoneValidationEvidenceId,
+} from './context-workflow-service';
 import { processSandboxRuntimeAvailable } from '../runtime/process-sandbox-capability';
 import { inspectGitBinding } from './git-binding';
 import type { EvidenceBinding } from './prevc-engine';
@@ -180,6 +183,63 @@ function recordTrustedSensor(
   );
 }
 
+function recordMilestoneAttestationForTest(
+  manager: ProjectRuntimeManager,
+  scope: ReturnType<typeof testProjectScope>,
+  binding: EvidenceBinding,
+  stepId: string,
+  sourceEvidenceIds: readonly string[] = [`source:${stepId}`],
+): string {
+  const id = milestoneValidationEvidenceId(binding.missionId, stepId, binding);
+  const digest = id.slice('milestone:'.length);
+  const sources = [...new Set(sourceEvidenceIds)].sort();
+  const nowIso = '2026-07-12T00:00:00.000Z';
+  const evidence = {
+    id,
+    producer: 'nexus' as const,
+    projectId: scope.projectId,
+    checkoutId: scope.checkoutId,
+    missionId: binding.missionId,
+    sensorId: 'nexus-milestone-attestation',
+    baseSha: binding.baseSha,
+    headSha: binding.headSha,
+    diffHash: binding.diffHash,
+    contextHash: binding.contextHash,
+    contractHash: binding.contractHash,
+    sensorConfigHash: digest,
+    command: [
+      'nexus-internal',
+      'attest-final-validation',
+      stepId,
+      ...sources,
+    ],
+    exitCode: 0,
+    stdoutHash: createHash('sha256')
+      .update(JSON.stringify({ stepId, sources }))
+      .digest('hex'),
+    stderrHash: createHash('sha256').update('').digest('hex'),
+    timedOut: false,
+    truncated: false,
+    startedAt: nowIso,
+    finishedAt: nowIso,
+  };
+  manager.open(scope).db.prepare(
+    `INSERT INTO sensor_evidence
+       (id, mission_id, sensor_id, head_sha, diff_hash, passed,
+        evidence_json, created_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+  ).run(
+    id,
+    binding.missionId,
+    evidence.sensorId,
+    binding.headSha,
+    binding.diffHash,
+    JSON.stringify(evidence),
+    Date.parse(nowIso),
+  );
+  return id;
+}
+
 beforeEach(() => {
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-workflow-runtime-'));
 });
@@ -191,6 +251,113 @@ afterEach(() => {
 });
 
 describe('native context workflow service', () => {
+  it('does not turn a Doctor warning or stale npm defaults into contract authority', () => {
+    const { root, service } = fixture();
+    fs.writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ name: 'greenfield-without-scripts' }),
+    );
+    fs.writeFileSync(
+      path.join(root, '.context/config/sensors.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        sensors: [
+          {
+            id: 'typecheck',
+            command: ['npm', 'run', 'typecheck'],
+            timeoutMs: 60_000,
+            network: false,
+          },
+          {
+            id: 'unit',
+            command: ['npm', 'test'],
+            timeoutMs: 60_000,
+            network: false,
+          },
+        ],
+      }),
+    );
+    git(root, 'add', 'package.json', '.context/config/sensors.json');
+    git(root, 'commit', '-qm', 'remove unavailable package capabilities');
+
+    const readiness = service.inspectReadiness();
+    expect(readiness.ready).toBe(true);
+    expect(readiness.sensorIds).toEqual([]);
+    expect(readiness.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'missing-required-sensors',
+        details: ['typecheck', 'unit'],
+      }),
+    );
+
+    const draft = {
+      missionId: 'mission-a',
+      goal: 'Create one plain text result file',
+      acceptanceCriteria: [{
+        id: 'works',
+        statement: 'The exact text file exists',
+        requiredSensorIds: [],
+        invariantRefs: [],
+        requiredArtifactIds: [],
+      }],
+    };
+    expect(() =>
+      service.freezeContract(
+        { ...draft, requestedSensors: ['typecheck'] },
+        { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+      ),
+    ).toThrow(/unknown sensor: typecheck/i);
+
+    const frozen = service.freezeContract(
+      draft,
+      { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+    );
+    expect(frozen.contract.requiredSensors).toEqual([]);
+  });
+
+  it('refuses to freeze when package gates exist without applicable configured sensors', () => {
+    const { root, service } = fixture();
+    fs.writeFileSync(
+      path.join(root, '.context/config/sensors.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        sensors: [
+          {
+            id: 'lint',
+            command: ['npm', 'run', 'lint'],
+            timeoutMs: 60_000,
+            network: false,
+          },
+        ],
+      }),
+    );
+
+    const readiness = service.inspectReadiness();
+    expect(readiness.ready).toBe(false);
+    expect(readiness.blockers).toContainEqual(
+      expect.objectContaining({
+        code: 'missing-required-sensors',
+        details: ['typecheck', 'unit'],
+      }),
+    );
+    expect(() =>
+      service.freezeContract(
+        {
+          missionId: 'mission-a',
+          goal: 'Change behavior without bypassing project validation',
+          acceptanceCriteria: [{
+            id: 'works',
+            statement: 'Project validation remains authoritative',
+            requiredSensorIds: [],
+            invariantRefs: [],
+            requiredArtifactIds: [],
+          }],
+        },
+        { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+      ),
+    ).toThrow(/context is not ready/i);
+  });
+
   it('derives one replay-safe current validation attestation per milestone', () => {
     const { manager, scope, service } = fixture();
     const stepIds = ['step-a', 'step-b', 'step-c', 'step-d', 'step-e'];
@@ -253,6 +420,47 @@ describe('native context workflow service', () => {
     expect(new Set(first)).toHaveLength(stepIds.length);
     expect(service.listCurrentPersistedEvidenceIds('mission-a'))
       .toEqual(expect.arrayContaining([...first]));
+
+    const stepAEvidence = milestoneValidationEvidenceId(
+      'mission-a',
+      'step-a',
+      binding,
+    );
+    const stepBEvidence = milestoneValidationEvidenceId(
+      'mission-a',
+      'step-b',
+      binding,
+    );
+    createScopedHandoffStore(manager, scope, {
+      idFactory: () => 'handoff-milestone-bundle',
+    }).submit({
+      missionId: 'mission-a',
+      status: 'success',
+      summary: 'Final validation attestations for every pending milestone.',
+      evidenceIds: [...first],
+    });
+
+    expect(() =>
+      service.advanceMissionStep('mission-a', 'step-a', [stepBEvidence]),
+    ).toThrow(/exactly one matching milestone attestation/i);
+    expect(() =>
+      service.advanceMissionStep(
+        'mission-a',
+        'step-a',
+        [stepAEvidence, stepBEvidence],
+      ),
+    ).toThrow(/exactly one matching milestone attestation/i);
+    expect(
+      manager.open(scope).db.prepare(
+        'SELECT COUNT(*) AS count FROM mission_step_receipts',
+      ).get(),
+    ).toEqual({ count: 0 });
+    expect(
+      service.advanceMissionStep('mission-a', 'step-a', [stepAEvidence]),
+    ).toMatchObject({
+      stepId: 'step-a',
+      evidenceIds: [stepAEvidence],
+    });
   });
 
   it('gates mutation, requires independent review and computes done itself', async () => {
@@ -274,6 +482,7 @@ describe('native context workflow service', () => {
       { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
     );
     expect(frozen.workflow.stage).toBe('execution');
+    expect(frozen.contract.requiredSensors).toEqual(['typecheck', 'unit']);
     expect(() => service.assertMutationAllowed('mission-a', 'nexus_file_write', { path: 'src/a.ts' }))
       .not.toThrow();
     expect(() => service.assertMutationAllowed('mission-a', 'nexus_file_write', {
@@ -383,17 +592,21 @@ describe('native context workflow service', () => {
         ]),
       );
     }
-    const evidenceIds = service.listPersistedEvidenceIds('mission-a');
+    const sourceEvidenceIds = service.listPersistedEvidenceIds('mission-a');
+    const [stepEvidenceId] = service.recordMilestoneValidationEvidence(
+      'mission-a',
+      sourceEvidenceIds,
+    );
     createScopedHandoffStore(manager, scope, {
       idFactory: () => 'handoff-step-a',
     }).submit({
       missionId: 'mission-a',
       status: 'success',
       summary: 'Trusted evidence ready for the final milestone.',
-      evidenceIds: [...evidenceIds],
+      evidenceIds: [stepEvidenceId!],
     });
     expect(() =>
-      service.advanceMissionStep('mission-a', 'step-a', evidenceIds),
+      service.advanceMissionStep('mission-a', 'step-a', [stepEvidenceId!]),
     ).toThrow(/required Nexus artifact.*artifact-required/i);
     expect(
       createScopedMissionStore(manager, scope)
@@ -420,7 +633,7 @@ describe('native context workflow service', () => {
     const advanced = service.advanceMissionStep(
       'mission-a',
       'step-a',
-      evidenceIds,
+      [stepEvidenceId!],
     );
     expect(advanced.toStage).toBe('complete');
     expect(service.isMissionDriverComplete('mission-a', ['step-a'])).toBe(true);
@@ -500,13 +713,20 @@ describe('native context workflow service', () => {
       'sensor-before-integration',
       'preflight',
     );
+    const stepAEvidence = recordMilestoneAttestationForTest(
+      manager,
+      scope,
+      frozen.workflow.binding,
+      'step-a',
+      ['sensor-before-integration'],
+    );
     createScopedHandoffStore(manager, scope, {
       idFactory: () => 'handoff-step-a',
     }).submit({
       missionId: 'mission-a',
       status: 'success',
       summary: 'Implementation evidence bound before integration.',
-      evidenceIds: ['sensor-before-integration'],
+      evidenceIds: [stepAEvidence],
     });
 
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
@@ -517,7 +737,7 @@ describe('native context workflow service', () => {
     const first = service.advanceMissionStep(
       'mission-a',
       'step-a',
-      ['sensor-before-integration'],
+      [stepAEvidence],
     );
     expect(first).toMatchObject({
       fromStage: 'execution',
@@ -534,18 +754,25 @@ describe('native context workflow service', () => {
       findings: [],
     });
     const reviewEvidence = `review:${review.report.reviewId}`;
+    const stepBEvidence = recordMilestoneAttestationForTest(
+      manager,
+      scope,
+      integrated.binding,
+      'step-b',
+      [reviewEvidence],
+    );
     createScopedHandoffStore(manager, scope, {
       idFactory: () => 'handoff-step-b',
     }).submit({
       missionId: 'mission-a',
       status: 'success',
       summary: 'Review checkpoint is bound to the integrated diff.',
-      evidenceIds: [reviewEvidence],
+      evidenceIds: [stepBEvidence],
     });
     const checkpoint = service.advanceMissionStep(
       'mission-a',
       'step-b',
-      [reviewEvidence],
+      [stepBEvidence],
     );
     expect(checkpoint).toMatchObject({
       fromStage: 'validation-primary',
@@ -561,16 +788,23 @@ describe('native context workflow service', () => {
       findings: [],
     });
     const finalEvidence = `review:${finalReview.report.reviewId}`;
+    const stepCEvidence = recordMilestoneAttestationForTest(
+      manager,
+      scope,
+      integrated.binding,
+      'step-c',
+      [finalEvidence],
+    );
     createScopedHandoffStore(manager, scope, {
       idFactory: () => 'handoff-step-c',
     }).submit({
       missionId: 'mission-a',
       status: 'success',
       summary: 'Final review is bound to the integrated diff.',
-      evidenceIds: [finalEvidence],
+      evidenceIds: [stepCEvidence],
     });
     expect(
-      service.advanceMissionStep('mission-a', 'step-c', [finalEvidence]),
+      service.advanceMissionStep('mission-a', 'step-c', [stepCEvidence]),
     ).toMatchObject({ toStage: 'complete' });
     expect(service.isMissionDriverComplete('mission-a', ['step-a', 'step-b', 'step-c']))
       .toBe(true);
@@ -612,8 +846,15 @@ describe('native context workflow service', () => {
       });
 
     recordTrustedSensor(manager, scope, frozen.workflow.binding, 'sensor-plan', 'preflight');
-    submitHandoff('handoff-plan', ['sensor-plan']);
-    expect(service.advanceMissionStep('mission-a', 'step-plan', ['sensor-plan']))
+    const planAttestation = recordMilestoneAttestationForTest(
+      manager,
+      scope,
+      frozen.workflow.binding,
+      'step-plan',
+      ['sensor-plan'],
+    );
+    submitHandoff('handoff-plan', [planAttestation]);
+    expect(service.advanceMissionStep('mission-a', 'step-plan', [planAttestation]))
       .toMatchObject({ fromStage: 'planning', toStage: 'review-primary' });
 
     const preReview = service.submitReview({
@@ -622,18 +863,33 @@ describe('native context workflow service', () => {
       findings: [],
     });
     const preReviewEvidence = `review:${preReview.report.reviewId}`;
-    submitHandoff('handoff-review', [preReviewEvidence]);
-    expect(service.advanceMissionStep('mission-a', 'step-review', [preReviewEvidence]))
+    const reviewBinding = service.getMissionWorkflow('mission-a').workflow!.binding;
+    const reviewAttestation = recordMilestoneAttestationForTest(
+      manager,
+      scope,
+      reviewBinding,
+      'step-review',
+      [preReviewEvidence],
+    );
+    submitHandoff('handoff-review', [reviewAttestation]);
+    expect(service.advanceMissionStep('mission-a', 'step-review', [reviewAttestation]))
       .toMatchObject({ fromStage: 'review-primary', toStage: 'execution' });
 
     const executionBinding = service.getMissionWorkflow('mission-a').workflow!.binding;
     recordTrustedSensor(manager, scope, executionBinding, 'sensor-execute', 'preflight');
-    submitHandoff('handoff-execute', ['sensor-execute']);
+    const executionAttestation = recordMilestoneAttestationForTest(
+      manager,
+      scope,
+      executionBinding,
+      'step-execute',
+      ['sensor-execute'],
+    );
+    submitHandoff('handoff-execute', [executionAttestation]);
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src/security.ts'), 'export const hardened = true;\n');
     git(root, 'add', 'src/security.ts');
     git(root, 'commit', '-qm', 'harden authorization');
-    expect(service.advanceMissionStep('mission-a', 'step-execute', ['sensor-execute']))
+    expect(service.advanceMissionStep('mission-a', 'step-execute', [executionAttestation]))
       .toMatchObject({ fromStage: 'execution', toStage: 'validation-primary' });
 
     const integrated = service.getMissionWorkflow('mission-a').workflow!;
@@ -646,12 +902,28 @@ describe('native context workflow service', () => {
       findings: [],
     });
     const finalReviewEvidence = `review:${finalReview.report.reviewId}`;
-    submitHandoff('handoff-validate', [finalReviewEvidence]);
-    expect(service.advanceMissionStep('mission-a', 'step-validate', [finalReviewEvidence]))
+    const validationAttestation = recordMilestoneAttestationForTest(
+      manager,
+      scope,
+      integrated.binding,
+      'step-validate',
+      [finalReviewEvidence],
+    );
+    submitHandoff('handoff-validate', [validationAttestation]);
+    expect(service.advanceMissionStep('mission-a', 'step-validate', [validationAttestation]))
       .toMatchObject({ fromStage: 'validation-primary', toStage: 'confirmation' });
 
-    submitHandoff('handoff-confirm', ['sensor-current-unit']);
-    expect(service.advanceMissionStep('mission-a', 'step-confirm', ['sensor-current-unit']))
+    const confirmationBinding =
+      service.getMissionWorkflow('mission-a').workflow!.binding;
+    const confirmationAttestation = recordMilestoneAttestationForTest(
+      manager,
+      scope,
+      confirmationBinding,
+      'step-confirm',
+      ['sensor-current-unit'],
+    );
+    submitHandoff('handoff-confirm', [confirmationAttestation]);
+    expect(service.advanceMissionStep('mission-a', 'step-confirm', [confirmationAttestation]))
       .toMatchObject({ fromStage: 'confirmation', toStage: 'complete' });
     expect(service.isMissionDriverComplete('mission-a', stepIds)).toBe(true);
   });
@@ -731,5 +1003,95 @@ describe('native context workflow service', () => {
     // Revision é estrutural (estágios completados + 1): rota recomeçada = 1.
     expect(current.workflow?.revision).toBe(1);
     expect(current.workflow?.completedStages).toEqual([]);
+  });
+
+  it('refreeze adds newly reconciled package gates without dropping prior sensors', () => {
+    const { root, service } = fixture();
+    const author = {
+      id: 'author-a',
+      sessionId: 'author-session',
+      provider: 'codex' as const,
+    };
+    fs.writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ name: 'greenfield-before-stack' }),
+    );
+    fs.writeFileSync(
+      path.join(root, '.context/config/sensors.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        sensors: [{
+          id: 'project-proof',
+          command: ['/usr/bin/true'],
+          timeoutMs: 60_000,
+          network: false,
+        }],
+      }),
+    );
+    git(root, 'add', 'package.json', '.context/config/sensors.json');
+    git(root, 'commit', '-qm', 'freeze before package stack exists');
+
+    const frozen = service.freezeContract(
+      {
+        missionId: 'mission-a',
+        goal: 'Create the package stack safely',
+        acceptanceCriteria: [{
+          id: 'works',
+          statement: 'The package stack keeps all validation authority',
+          requiredSensorIds: [],
+          invariantRefs: [],
+          requiredArtifactIds: [],
+        }],
+        requestedSensors: ['project-proof'],
+      },
+      author,
+    );
+    expect(frozen.contract.requiredSensors).toEqual(['project-proof']);
+
+    fs.writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({
+        name: 'greenfield-after-stack',
+        scripts: {
+          typecheck: 'tsc --noEmit',
+          test: 'vitest run',
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(root, '.context/config/sensors.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        sensors: [
+          {
+            id: 'project-proof',
+            command: ['/usr/bin/true'],
+            timeoutMs: 60_000,
+            network: false,
+          },
+          {
+            id: 'typecheck',
+            command: ['npm', 'run', 'typecheck'],
+            timeoutMs: 60_000,
+            network: false,
+          },
+          {
+            id: 'unit',
+            command: ['npm', 'test'],
+            timeoutMs: 60_000,
+            network: false,
+          },
+        ],
+      }),
+    );
+    git(root, 'add', 'package.json', '.context/config/sensors.json');
+    git(root, 'commit', '-qm', 'reconcile package stack sensors');
+
+    const refrozen = service.refreezeContract('mission-a', author);
+    expect(refrozen.contract.requiredSensors).toEqual([
+      'project-proof',
+      'typecheck',
+      'unit',
+    ]);
   });
 });

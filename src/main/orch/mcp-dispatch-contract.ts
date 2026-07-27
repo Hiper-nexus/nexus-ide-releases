@@ -2,6 +2,9 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import type { AuditSource } from '../jarvis/audit-log';
 import type { PermissionScope } from '../jarvis/permissions';
 import type { AgentGateContext } from './gate';
+import type {
+  GuidedPrevcMcpFenceResolver,
+} from './guided-prevc-mcp-fence';
 
 export type McpDispatchSource = AuditSource;
 
@@ -56,6 +59,20 @@ export interface IntentGateMissionResolver {
   } | null;
 }
 
+export interface CommittedPhysicalHandoffReplayCandidate {
+  readonly missionId: string;
+  readonly sessionId: string;
+  readonly workerIncarnationId?: string;
+  readonly rawPayloadSha256: string;
+  readonly handoffStatus: "success" | "partial" | "blocked" | "failed";
+  readonly missionStatus: "blocked" | "done";
+}
+
+export type CommittedPhysicalHandoffReplayCandidateResolver = (
+  scope: ProjectExecutionScope,
+  candidate: CommittedPhysicalHandoffReplayCandidate,
+) => boolean;
+
 export type MissionBudgetReserver = (
   scope: ProjectExecutionScope,
   missionId: string,
@@ -87,8 +104,19 @@ export interface McpDispatchOptions {
   resolveWorkflowAuthority?: WorkflowAuthorityResolver;
   /** Internal seam for intent-gate tests; production resolves scoped stores. */
   resolveMissionForIntentGate?: IntentGateMissionResolver;
+  /**
+   * Internal seam for terminal lost-response replay tests. Returning true is
+   * only an admission hint; the handoff store must still re-prove the exact
+   * physical receipt, durable audit, payload and dispatch in one transaction.
+   */
+  resolveCommittedPhysicalHandoffReplayCandidate?: CommittedPhysicalHandoffReplayCandidateResolver;
   /** Internal seam; production reserves synchronously in the scoped store. */
   reserveMissionBudget?: MissionBudgetReserver;
+  /**
+   * Internal dispatch-test seam. Production compiles the exact guided PREVC
+   * fence from scoped stores/workflow on every authority checkpoint.
+   */
+  resolveGuidedPrevcMcpFence?: GuidedPrevcMcpFenceResolver;
 }
 
 export function permissionScopeForTool(

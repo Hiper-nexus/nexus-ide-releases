@@ -64,6 +64,17 @@ export interface AgentStatusApplyResult {
 }
 
 /**
+ * Content-free proof that the provider accepted a prompt and opened a turn.
+ * The sequence is main-owned and monotonic within one physical PTY session.
+ */
+export interface AgentTurnStartEntry {
+  sessionId: string;
+  paneId: string;
+  sequence: number;
+  observedAt: number;
+}
+
+/**
  * Pure event → status mapping. Returns null for events without status
  * content (kind session / ignore), leaving the pane untouched.
  */
@@ -107,9 +118,13 @@ export function paneStateForStatus(status: AgentSemanticStatus): PaneSessionStat
 const statusByPane = new Map<string, AgentSemanticStatusEntry>();
 /** sessionId → paneId learned while applying events (exit-time resolution). */
 const paneBySession = new Map<string, string>();
+/** Explicit UserPromptSubmit count, scoped to the physical PTY session. */
+const turnStartSequenceBySession = new Map<string, number>();
 
 export type AgentSemanticStatusTap = (entry: AgentSemanticStatusEntry) => void;
 const statusTaps = new Set<AgentSemanticStatusTap>();
+export type AgentTurnStartTap = (entry: AgentTurnStartEntry) => void;
+const turnStartTaps = new Set<AgentTurnStartTap>();
 
 /**
  * Transition-only tap — fires exclusively when a pane's semantic status
@@ -119,6 +134,19 @@ const statusTaps = new Set<AgentSemanticStatusTap>();
 export function tapAgentSemanticStatus(cb: AgentSemanticStatusTap): () => void {
   statusTaps.add(cb);
   return () => statusTaps.delete(cb);
+}
+
+/**
+ * Event-level UserPromptSubmit tap. Unlike the transition-only status tap,
+ * every native submission fires even when the pane was already `working`.
+ */
+export function tapAgentTurnStart(cb: AgentTurnStartTap): () => void {
+  turnStartTaps.add(cb);
+  return () => turnStartTaps.delete(cb);
+}
+
+export function getAgentTurnStartSequence(sessionId: string): number {
+  return turnStartSequenceBySession.get(sessionId) ?? 0;
 }
 
 export function getAgentSemanticStatus(
@@ -200,6 +228,31 @@ export function applyCanonicalHookEvent(input: {
     // re-arms while the agent keeps working; the pty layer dedupes IPC.
     publishSessionActivityState(sessionId, paneStateForStatus(next));
 
+    // UserPromptSubmit is a provider-native turn boundary. Keep it separate
+    // from generic `start` events: PreToolUse/tool completion and TUI repaint
+    // may also assert working but do not prove that a prompt was submitted.
+    if (
+      event.kind === 'status' &&
+      event.type === 'start' &&
+      event.promptSubmitted === true
+    ) {
+      const sequence = getAgentTurnStartSequence(sessionId) + 1;
+      turnStartSequenceBySession.set(sessionId, sequence);
+      const turnStart: AgentTurnStartEntry = {
+        sessionId,
+        paneId,
+        sequence,
+        observedAt: entry.updatedAt,
+      };
+      for (const tap of turnStartTaps) {
+        try {
+          tap(turnStart);
+        } catch (err) {
+          console.warn('[agent-status] turn-start tap threw:', err);
+        }
+      }
+    }
+
     const transitioned = prev?.status !== next;
     if (transitioned) {
       for (const tap of statusTaps) {
@@ -225,6 +278,7 @@ export function resetAgentStatusOnExit(sessionId: string, now = Date.now()): voi
   try {
     const paneId = paneBySession.get(sessionId);
     paneBySession.delete(sessionId);
+    turnStartSequenceBySession.delete(sessionId);
     if (!paneId) return;
     const prev = statusByPane.get(paneId);
     if (!prev) return;
@@ -253,5 +307,7 @@ export function resetAgentStatusOnExit(sessionId: string, now = Date.now()): voi
 export function __resetAgentStatusForTests(): void {
   statusByPane.clear();
   paneBySession.clear();
+  turnStartSequenceBySession.clear();
   statusTaps.clear();
+  turnStartTaps.clear();
 }

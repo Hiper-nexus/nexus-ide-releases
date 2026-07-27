@@ -6,7 +6,12 @@ import type {
   PaneSnapshot,
 } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
-import { getAdapter, isAdapterInstalled } from "../adapters/adapter-registry";
+import {
+  getAdapter,
+  isAdapterInstalled,
+  isBuiltinAdapter,
+  resolveAdapterBinary,
+} from "../adapters/adapter-registry";
 import {
   isFileAuthAdapter,
   trackManagedSession,
@@ -18,18 +23,22 @@ import {
   spawnMainOwnedAgentSession,
 } from "../pty/pty-manager";
 import {
+  isMissionBoundCodexWorkspaceAuthority,
   requiresReadOnlyNativeAuthority,
   supportsEnforceableReadOnlyNativeAuthority,
+  supportsEnforceableWorkspaceWriteNativeAuthority,
 } from "../pty/autonomous-cli-policy";
 import {
   requiresSpawnGate,
   shouldUseEphemeralHome,
 } from "./spawn-home-policy";
+import { assertTrustedNativeConfinementBinary } from "../pty/trusted-native-cli-binary";
 import { canListPane, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
 import { sameProjectScope } from "./project-scoped-broadcast";
 import type { BoundSpawnAuthority } from "./spawn-authority";
 import { makeId } from "./store-util";
 import { resolveCwdForScope } from "./workspace-path";
+import { sameMissionPaneAuthoritySeal } from "./mission-pane-authority";
 
 export interface PaneOrchMeta {
   missionId?: string;
@@ -92,6 +101,12 @@ export interface MainOwnedPaneHooks {
     sessionId: string,
     scope: Readonly<ProjectExecutionScope>,
   ): void;
+  assertMissionAuthorityCurrent(input: {
+    readonly missionId: string;
+    readonly scope: Readonly<ProjectExecutionScope>;
+    readonly contextRevision: string;
+    readonly authoritySeal: MissionPaneAuthoritySeal;
+  }): void;
   panesChanged(): void;
 }
 
@@ -218,6 +233,7 @@ export function fallbackPendingSpawnToMain(
       executionScope: pending.meta.executionScope,
       readOnly: pending.meta.readOnly,
       nativeReadOnly: pending.meta.nativeReadOnly,
+      authoritySeal: pending.meta.authoritySeal,
     },
     hooks,
   );
@@ -240,6 +256,10 @@ export function retainClaimedPendingSpawn(
     agent.missionId !== pending.meta.missionId ||
     agent.role !== pending.meta.role ||
     agent.workerIncarnationId !== pending.meta.workerIncarnationId ||
+    !sameMissionPaneAuthoritySeal(
+      agent.authoritySeal,
+      pending.meta.authoritySeal,
+    ) ||
     !sameProjectScope(agent.scope, expectedScope)
   ) {
     return null;
@@ -279,6 +299,51 @@ export function spawnMainOwnedMissionPane(
 ): OrchPaneSpawnResult {
   const requestId = makeId("orchspawn");
   const paneId = makeId("pane");
+  const authoritySeal = options.authoritySeal;
+  if (!authoritySeal) {
+    return {
+      requestId,
+      ok: false,
+      error:
+        "mission pane authority seal is unavailable; replane and approve " +
+        "the current mission revision",
+    };
+  }
+  if (
+    options.contextRevision !== undefined &&
+    options.contextRevision !== authoritySeal.contextRevision
+  ) {
+    return {
+      requestId,
+      ok: false,
+      error:
+        "mission pane contextRevision diverges from its main-owned " +
+        "authority seal",
+    };
+  }
+  const sealedAuthority = Object.freeze({ ...authoritySeal });
+  try {
+    hooks.assertMissionAuthorityCurrent({
+      missionId: options.missionId,
+      scope: options.scope,
+      contextRevision: sealedAuthority.contextRevision,
+      authoritySeal: sealedAuthority,
+    });
+  } catch (error) {
+    return {
+      requestId,
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "mission pane authority is stale",
+    };
+  }
+  options = {
+    ...options,
+    contextRevision: sealedAuthority.contextRevision,
+    authoritySeal: sealedAuthority,
+  };
   const adapter = getAdapter(options.adapterId);
   if (!adapter) {
     return {
@@ -293,17 +358,69 @@ export function spawnMainOwnedMissionPane(
       ok: false,
       error:
         `adapter ${options.adapterId} has no main-owned PTY transport ` +
-        "(RPC mission workers use the dedicated OMP lane)",
+      "(RPC mission workers use the dedicated OMP lane)",
+    };
+  }
+  const executionScope = options.executionScope ?? options.scope;
+  const writableMissionWorkerIntent =
+    options.role === "worker" &&
+    Boolean(options.missionId?.trim()) &&
+    options.readOnly !== true &&
+    options.nativeReadOnly !== true;
+  const missionBoundWritableWorker =
+    writableMissionWorkerIntent &&
+    isMissionBoundCodexWorkspaceAuthority({
+      source: "pending",
+      adapterId: adapter.id,
+      role: options.role,
+      missionId: options.missionId,
+      contextRevision: options.contextRevision,
+      authoritySeal: options.authoritySeal,
+      readOnly: options.readOnly,
+      nativeReadOnly: options.nativeReadOnly,
+    });
+  if (
+    writableMissionWorkerIntent &&
+    (!options.executionScope ||
+      executionScope.rootRealPath === options.scope.rootRealPath)
+  ) {
+    return {
+      requestId,
+      ok: false,
+      error:
+        "mission-bound writable worker requires a physically distinct " +
+        "main-owned execution worktree",
+    };
+  }
+  if (
+    writableMissionWorkerIntent &&
+    (adapter.id !== "codex" ||
+      !isBuiltinAdapter(adapter.id) ||
+      !supportsEnforceableWorkspaceWriteNativeAuthority(adapter))
+  ) {
+    return {
+      requestId,
+      ok: false,
+      error:
+        `adapter ${adapter.id} cannot enforce trusted workspace-write authority; ` +
+        "isolated worker spawn refused before provider preparation",
     };
   }
   const nativeReadOnly = requiresReadOnlyNativeAuthority({
     source: "pending",
+    adapterId: adapter.id,
     role: options.role,
+    missionId: options.missionId,
     contextRevision: options.contextRevision,
+    authoritySeal: options.authoritySeal,
     readOnly: options.readOnly,
     nativeReadOnly: options.nativeReadOnly,
   });
-  if (nativeReadOnly && !supportsEnforceableReadOnlyNativeAuthority(adapter)) {
+  if (
+    nativeReadOnly &&
+    (!isBuiltinAdapter(adapter.id) ||
+      !supportsEnforceableReadOnlyNativeAuthority(adapter))
+  ) {
     return {
       requestId,
       ok: false,
@@ -328,14 +445,42 @@ export function spawnMainOwnedMissionPane(
     ),
   });
   if (!prepared.ok) return { requestId, ok: false, error: prepared.error };
-  if (!prepared.overrides.binPath && !isAdapterInstalled(adapter.id)) {
+  let preparedOverrides = prepared.overrides;
+  if (nativeReadOnly || missionBoundWritableWorker) {
+    if (!preparedOverrides.binPath) {
+      return {
+        requestId,
+        ok: false,
+        error: `${adapter.label} has no canonical executable for native confinement`,
+      };
+    }
+    try {
+      preparedOverrides = {
+        ...preparedOverrides,
+        binPath: assertTrustedNativeConfinementBinary({
+          adapterId: adapter.id,
+          requestedBinPath: preparedOverrides.binPath,
+          canonicalBinPath: resolveAdapterBinary(adapter.id),
+        }),
+      };
+    } catch (error) {
+      return {
+        requestId,
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "native confinement executable verification failed",
+      };
+    }
+  }
+  if (!preparedOverrides.binPath && !isAdapterInstalled(adapter.id)) {
     return {
       requestId,
       ok: false,
       error: `${adapter.label} not found. Install: ${adapter.install.command}`,
     };
   }
-  const executionScope = options.executionScope ?? options.scope;
   const cwd = resolveCwdForScope(executionScope, options.cwd);
   const context = Object.freeze({
     missionId: options.missionId,
@@ -373,7 +518,7 @@ export function spawnMainOwnedMissionPane(
         missionId: options.missionId,
       },
       adapter,
-      prepared.overrides,
+      preparedOverrides,
       authority,
     );
     if (options.accountId && isFileAuthAdapter(adapter.id)) {

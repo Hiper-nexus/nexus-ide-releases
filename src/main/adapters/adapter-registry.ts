@@ -6,7 +6,12 @@ import {
   adapterSchema,
   hasNexusMcpCapability,
 } from '../../shared/adapter-types';
-import type { Adapter, AdapterInfo } from '../../shared/adapter-types';
+import type {
+  Adapter,
+  AdapterCapabilityMatrix,
+  AdapterInfo,
+  OrchestrationEvidence,
+} from '../../shared/adapter-types';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { ADAPTER_CHANNELS } from '../../shared/channels';
 import {
@@ -34,9 +39,103 @@ import {
   seedLocalModelCatalogFromPublished,
 } from './model-catalog';
 import { invalidateAdapterHotCache } from './adapter-hot-cache';
+import {
+  supportsEnforceableReadOnlyNativeAuthority,
+  supportsEnforceableWorkspaceWriteNativeAuthority,
+} from '../pty/autonomous-cli-policy';
 
 const USER_ADAPTER_DIR = path.join(os.homedir(), '.nexus', 'plugins', 'adapters');
 const NEXUS_DIR = path.join(os.homedir(), '.nexus');
+type AdapterOrigin = 'builtin' | 'user';
+
+/**
+ * These builtins completed Nexus' real governed coordinator gate. Keep this
+ * allowlist deliberately small: declaring MCP metadata never promotes a CLI.
+ */
+const VERIFIED_ORCHESTRATOR_BUILTINS = new Set(['claude', 'codex']);
+
+export function orchestrationEvidenceForAdapter(
+  adapter: Adapter,
+  origin: AdapterOrigin,
+): OrchestrationEvidence {
+  if (
+    adapter.kind !== 'cli-pty' ||
+    !hasNexusMcpCapability(adapter.quirks) ||
+    // The production Maestro is always confined independently from Nexus MCP.
+    // A declared route without provider-native read-only enforcement cannot
+    // ever pass that boundary, so presenting it as an experimental Maestro is
+    // a dead-end rather than an honest capability.
+    !supportsEnforceableReadOnlyNativeAuthority(adapter)
+  ) {
+    return 'unsupported';
+  }
+  if (
+    origin === 'builtin' &&
+    VERIFIED_ORCHESTRATOR_BUILTINS.has(adapter.id)
+  ) {
+    return 'verified';
+  }
+  return 'experimental';
+}
+
+function hasPromptTemplate(adapter: Adapter): boolean {
+  if (adapter.kind === 'cli-rpc') return true;
+  if (adapter.kind !== 'cli-pty') return false;
+  if (adapter.promptInjection.method === 'stdin') return true;
+  return adapter.spawn.headless.some((arg) => arg.includes('{{PROMPT}}'));
+}
+
+/**
+ * Project adapter mechanics and Nexus-owned release qualifications separately.
+ *
+ * User adapters may describe launch/prompt/status/resume mechanics because
+ * those fields only select host integration code. They can never self-award
+ * unattended read/write or Maestro authority.
+ */
+export function adapterCapabilityMatrixForAdapter(
+  adapter: Adapter,
+  origin: AdapterOrigin,
+): AdapterCapabilityMatrix {
+  const launchable =
+    adapter.kind === 'cli-pty' || adapter.kind === 'cli-rpc';
+  const promptInjectable = launchable && hasPromptTemplate(adapter);
+  const statusObservable =
+    adapter.kind === 'cli-rpc' ||
+    (adapter.kind === 'cli-pty' &&
+      (adapter.stateParsing.idle.type === 'regex' ||
+        adapter.stateParsing.idle.type === 'timeout'));
+  const resumable =
+    adapter.kind === 'cli-pty' &&
+    (adapter.spawn.resumeArgs.length > 0 ||
+      (adapter.spawn.resumeIdArgs?.length ?? 0) > 0);
+  const nexusMcpCapable =
+    adapter.kind === 'cli-pty' &&
+    hasNexusMcpCapability(adapter.quirks);
+  const releaseOwnedBase =
+    origin === 'builtin' &&
+    adapter.kind === 'cli-pty' &&
+    promptInjectable &&
+    statusObservable &&
+    nexusMcpCapable;
+  const autonomousReadOnly =
+    releaseOwnedBase &&
+    supportsEnforceableReadOnlyNativeAuthority(adapter);
+  const governedWriter =
+    releaseOwnedBase &&
+    supportsEnforceableWorkspaceWriteNativeAuthority(adapter);
+  const verifiedMaestro =
+    releaseOwnedBase &&
+    orchestrationEvidenceForAdapter(adapter, origin) === 'verified';
+  return Object.freeze({
+    launchable,
+    promptInjectable,
+    statusObservable,
+    resumable,
+    autonomousReadOnly,
+    governedWriter,
+    verifiedMaestro,
+  });
+}
 
 /** Validate and load a single raw JSON object as an adapter. */
 function parseAdapter(raw: unknown, source: string): Adapter | null {
@@ -139,6 +238,7 @@ export interface AdapterBinResolution {
 function toAdapterInfo(
   adapter: Adapter,
   resolution: AdapterBinResolution,
+  origin: AdapterOrigin,
 ): AdapterInfo {
   // cli-rpc shares the CLI install/auth surface with cli-pty (same binary).
   const installCommand =
@@ -151,6 +251,7 @@ function toAdapterInfo(
     (m) => !adapter.models.list.includes(m),
   );
   const modelList = [...adapter.models.list, ...custom];
+  const capabilities = adapterCapabilityMatrixForAdapter(adapter, origin);
   return {
     id: adapter.id,
     kind: adapter.kind,
@@ -169,12 +270,16 @@ function toAdapterInfo(
     orchestratorCapable:
       adapter.kind === 'cli-pty' &&
       hasNexusMcpCapability(adapter.quirks),
+    autonomousWorkspaceWriteCapable: capabilities.governedWriter,
+    orchestrationEvidence: orchestrationEvidenceForAdapter(adapter, origin),
+    capabilities,
   };
 }
 
 // ── Registry state ──────────────────────────────────────────────────────────
 
 let registry = new Map<string, Adapter>();
+let adapterOrigins = new Map<string, AdapterOrigin>();
 /** Discovery cache: installed flag + absolute bin path for spawn. */
 let installedCache = new Map<string, AdapterBinResolution>();
 const listeners = new Set<WebContents>();
@@ -212,7 +317,16 @@ function reload(): void {
   const catalog = loadModelCatalog();
   const discovered = discoverCliModels();
   const discoveredEfforts = discoverCliEfforts();
-  registry = mergeAdapters(loadBuiltins(), loadUserAdapters());
+  const builtins = loadBuiltins();
+  const userAdapters = loadUserAdapters();
+  registry = mergeAdapters(builtins, userAdapters);
+  const userIds = new Set(userAdapters.map((adapter) => adapter.id));
+  adapterOrigins = new Map(
+    [...registry.keys()].map((id) => [
+      id,
+      userIds.has(id) ? 'user' : 'builtin',
+    ]),
+  );
   registry = new Map(
     [...registry.entries()].map(([id, adapter]) => [
       id,
@@ -353,6 +467,11 @@ export function getAdapter(id: string): Adapter | null {
   return registry.get(id) ?? null;
 }
 
+/** User adapters may override builtin ids; security qualifications never do. */
+export function isBuiltinAdapter(id: string): boolean {
+  return adapterOrigins.get(id) === 'builtin';
+}
+
 /** Every loaded adapter (full config) — used by the provider settings hub. */
 export function listAdapters(): Adapter[] {
   return [...registry.values()];
@@ -432,6 +551,7 @@ export function listAdapterInfos(): AdapterInfo[] {
     toAdapterInfo(
       a,
       installedCache.get(a.id) ?? { installed: false, binPath: null },
+      adapterOrigins.get(a.id) ?? 'user',
     ),
   );
 }

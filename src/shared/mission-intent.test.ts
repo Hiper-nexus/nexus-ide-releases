@@ -21,6 +21,7 @@ import {
   isHumanWaitIntentState,
   isRecoveryEligibleIntentState,
   missionBlockPatch,
+  missionIntentContractSchema,
   resolveDispatchAuthorizedAt,
   resolveMissionBlockingIntentState,
   resolveEffectiveIntentState,
@@ -44,6 +45,57 @@ const baseMission = (over: Partial<Mission> = {}): Mission => ({
 });
 
 describe('mission intent transitions', () => {
+  it('canonicalizes approval text before PREVC freezes the same authority', () => {
+    const boundaryGoal = `${'x'.repeat(199)} continua`;
+    const derived = compileIntentContract({
+      goal: `  ${boundaryGoal}  `,
+      intentVersion: 1,
+    });
+    expect(derived.goal).toBe(boundaryGoal);
+    expect(derived.acceptanceCriteria[0]).toBe(
+      `Objetivo concluído conforme: ${boundaryGoal}`,
+    );
+    expect(derived.acceptanceCriteria[0]).not.toMatch(/\s$/);
+
+    const longGoal = `${'y'.repeat(500)} requisito-final`;
+    const longDerived = compileIntentContract({
+      goal: longGoal,
+      intentVersion: 1,
+    });
+    expect(longDerived.acceptanceCriteria[0]).toContain('requisito-final');
+    expect(longDerived.acceptanceCriteria[0]).toHaveLength(
+      'Objetivo concluído conforme: '.length + longGoal.length,
+    );
+
+    const explicit = compileIntentContract({
+      goal: 'Entrega explícita',
+      acceptanceCriteria: ['  Resultado integrado e validado  '],
+      intentVersion: 1,
+    });
+    expect(explicit.acceptanceCriteria).toEqual([
+      'Resultado integrado e validado',
+    ]);
+  });
+
+  it('accepts only an exact optional SHA-256 native-review receipt', () => {
+    const contract = compileIntentContract({
+      goal: 'Ship with an auditable approval',
+      intentVersion: 1,
+    });
+    expect(
+      missionIntentContractSchema.safeParse({
+        ...contract,
+        approvalReviewSha256: 'a'.repeat(64),
+      }).success,
+    ).toBe(true);
+    expect(
+      missionIntentContractSchema.safeParse({
+        ...contract,
+        approvalReviewSha256: 'A'.repeat(64),
+      }).success,
+    ).toBe(false);
+  });
+
   it('walks the happy path select → goal → compile → start', () => {
     expect(transitionIntentState({ from: 'draft', event: 'select_squad' })).toEqual({
       ok: true,
@@ -442,7 +494,7 @@ describe('budget and parent/child ceilings', () => {
     });
     expect(hasApprovedDispatchContract(c)).toBe(true);
     expect(c.budgets.maxWorkers).toBe(0);
-    expect(c.acceptanceCriteria.join('\n')).toContain('hatch-pet');
+    expect(c.acceptanceCriteria.join('\n')).toContain('nexus-pet-studio');
     expect(c.acceptanceCriteria.join('\n')).not.toMatch(/workers?|PREVC/i);
     expect(c.deniedTools).toEqual(
       expect.arrayContaining(['pane_spawn', 'route_task', 'worktree_merge']),

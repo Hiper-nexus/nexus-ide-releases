@@ -5,6 +5,7 @@ import {
   OmpLoginFlow,
   extractOAuthUrl,
   parseAuthBrokerList,
+  sanitizeOmpAuthDiagnostic,
 } from './omp-auth';
 import type { OmpChildLike } from './omp-rpc-service';
 
@@ -66,14 +67,20 @@ interface Harness {
   flow: OmpLoginFlow;
   events: OmpAuthPushEvent[];
   spawnArgs: string[];
+  spawnEnv: Record<string, string>;
 }
 
 function createHarness(
-  overrides: { loginTimeoutMs?: number; providerId?: string } = {},
+  overrides: {
+    loginTimeoutMs?: number;
+    providerId?: string;
+    useDefaultEnv?: boolean;
+  } = {},
 ): Harness {
   const proc = new FakeLoginProcess();
   const events: OmpAuthPushEvent[] = [];
   const spawnArgs: string[] = [];
+  let spawnEnv: Record<string, string> = {};
   const flow = new OmpLoginFlow(
     {
       flowId: 'flow-1',
@@ -84,16 +91,25 @@ function createHarness(
       onEvent: (event) => {
         events.push(event);
       },
-      spawnImpl: (_bin, args) => {
+      spawnImpl: (_bin, args, options) => {
         spawnArgs.push(...args);
+        spawnEnv = { ...options.env };
         return proc;
       },
-      env: { PATH: '/usr/bin' },
+      ...(overrides.useDefaultEnv ? {} : { env: { PATH: '/usr/bin' } }),
       cwd: '/tmp',
       loginTimeoutMs: overrides.loginTimeoutMs ?? 5_000,
     },
   );
-  return { proc, flow, events, spawnArgs };
+  return {
+    proc,
+    flow,
+    events,
+    spawnArgs,
+    get spawnEnv() {
+      return spawnEnv;
+    },
+  };
 }
 
 describe('parseAuthBrokerList', () => {
@@ -142,10 +158,41 @@ describe('extractOAuthUrl', () => {
   });
 });
 
+describe('sanitizeOmpAuthDiagnostic', () => {
+  it('remove parâmetros OAuth e credenciais genéricas de mensagens de erro', () => {
+    const sanitized = sanitizeOmpAuthDiagnostic(
+      'failed https://auth.example.test/oauth?state=synthetic-state ' +
+        'Authorization=Bearer synthetic-bearer',
+    );
+    expect(sanitized).toContain(
+      'https://auth.example.test/oauth?[REDACTED]',
+    );
+    expect(sanitized).not.toContain('synthetic-state');
+    expect(sanitized).not.toContain('synthetic-bearer');
+  });
+});
+
 describe('OmpLoginFlow', () => {
   it('spawna `omp auth-broker login <id>` com stdin em pipe (nunca fechado)', () => {
     const { spawnArgs } = createHarness({ providerId: 'openai-codex' });
     expect(spawnArgs).toEqual(['auth-broker', 'login', 'openai-codex']);
+  });
+
+  it('auth-broker never receives launcher/provider keys', () => {
+    const { spawnEnv } = createHarness({ useDefaultEnv: true });
+    for (const forbidden of [
+      'ANTHROPIC_API_KEY',
+      'OPENAI_API_KEY',
+      'OPENROUTER_API_KEY',
+      'ZAI_API_KEY',
+      'ZHIPUAI_API_KEY',
+      'XAI_API_KEY',
+      'DEEPSEEK_API_KEY',
+      'MOONSHOT_API_KEY',
+      'GEMINI_API_KEY',
+    ]) {
+      expect(spawnEnv).not.toHaveProperty(forbidden);
+    }
   });
 
   it('awaiting-auth na 1ª URL https do stdout, done no exit 0', () => {
@@ -190,6 +237,20 @@ describe('OmpLoginFlow', () => {
     if (event.phase === 'error') {
       expect(event.message).toContain('código 1');
       expect(event.message).toContain('browser did not open');
+    }
+  });
+
+  it('erro nunca devolve a query da URL OAuth guardada no tail', () => {
+    const { proc, events } = createHarness();
+    proc.emitStdout(
+      'https://auth.example.test/oauth?state=synthetic-state-value\n',
+    );
+    proc.exit(1);
+    const error = events.find((event) => event.phase === 'error');
+    expect(error?.phase).toBe('error');
+    if (error?.phase === 'error') {
+      expect(error.message).not.toContain('synthetic-state-value');
+      expect(error.message).toContain('?[REDACTED]');
     }
   });
 

@@ -1,0 +1,189 @@
+import type { AgentCategory } from "../../shared/orch-types";
+
+export const GUIDED_MISSION_PLANNER_TASK_ID = "guided-execution";
+export const GUIDED_MISSION_QA_TASK_ID = "guided-quality-gate";
+
+export const GUIDED_TASK_DOMAINS = Object.freeze({
+  advisory: "guided-advisory",
+  independentReview: "guided-independent-review",
+  isolatedAdvisory: "guided-isolated-advisory",
+  implementation: "guided-implementation",
+  qualityGate: "guided-quality-gate",
+} as const);
+
+export type GuidedTaskKind =
+  | "advisory"
+  | "independent-review"
+  | "isolated-advisory"
+  | "implementation"
+  | "quality-gate";
+
+type GuidedWorkerCategory = Exclude<AgentCategory, "orchestrator">;
+
+export interface GuidedTaskKindInput {
+  /**
+   * The immutable planner identity is present at seal/receipt boundaries.
+   * Schedule-only callers may omit it only when they use the result to add a
+   * safety fence (for example, requiring PREVC), never to grant completion.
+   */
+  readonly plannerId?: string;
+  readonly agentCategory?: GuidedWorkerCategory;
+  readonly executionMode?: "isolated_worktree" | "read_only";
+  readonly domains: readonly string[];
+  readonly label?: string;
+}
+
+const GUIDED_DOMAIN_SET = new Set<string>(Object.values(GUIDED_TASK_DOMAINS));
+
+function invalidGuidedTask(input: GuidedTaskKindInput, detail: string): never {
+  const label = input.label?.trim();
+  throw new Error(
+    `guided_task_kind_invalid${label ? ` (${label})` : ""}: ${detail}`,
+  );
+}
+
+export function hasGuidedTaskDomain(domains: readonly string[]): boolean {
+  return domains.some((domain) => GUIDED_DOMAIN_SET.has(domain));
+}
+
+/**
+ * Canonical, fail-closed interpretation of the authority-bearing Guided
+ * schedule strings. A non-Guided schedule returns null. Once any Guided
+ * marker is present, the full category/mode/sequential contract must match.
+ */
+export function parseGuidedTaskKind(
+  input: GuidedTaskKindInput,
+): GuidedTaskKind | null {
+  const guidedDomains = input.domains.filter((domain) =>
+    GUIDED_DOMAIN_SET.has(domain),
+  );
+  if (guidedDomains.length === 0) {
+    if (
+      input.plannerId === GUIDED_MISSION_PLANNER_TASK_ID ||
+      input.plannerId === GUIDED_MISSION_QA_TASK_ID
+    ) {
+      invalidGuidedTask(
+        input,
+        "identidade canônica sem o domínio Guided correspondente",
+      );
+    }
+    return null;
+  }
+  if (guidedDomains.length !== 1) {
+    invalidGuidedTask(input, "a tarefa deve possuir um único domínio Guided");
+  }
+  if (!input.domains.includes("sequential-only")) {
+    invalidGuidedTask(input, "o domínio Guided exige sequential-only");
+  }
+  if (!input.agentCategory || !input.executionMode) {
+    invalidGuidedTask(
+      input,
+      "categoria e modo de execução selados são obrigatórios",
+    );
+  }
+
+  const domain = guidedDomains[0]!;
+  let kind: GuidedTaskKind;
+  switch (domain) {
+    case GUIDED_TASK_DOMAINS.advisory:
+      if (
+        input.executionMode !== "read_only" ||
+        input.agentCategory === "reviewer"
+      ) {
+        invalidGuidedTask(
+          input,
+          "advisory exige executor/scout/architect em read_only",
+        );
+      }
+      kind = "advisory";
+      break;
+    case GUIDED_TASK_DOMAINS.independentReview:
+      if (
+        input.executionMode !== "read_only" ||
+        input.agentCategory !== "reviewer"
+      ) {
+        invalidGuidedTask(
+          input,
+          "revisão independente exige reviewer em read_only",
+        );
+      }
+      kind = "independent-review";
+      break;
+    case GUIDED_TASK_DOMAINS.isolatedAdvisory:
+      if (input.executionMode !== "isolated_worktree") {
+        invalidGuidedTask(
+          input,
+          "advisory isolado exige isolated_worktree",
+        );
+      }
+      kind = "isolated-advisory";
+      break;
+    case GUIDED_TASK_DOMAINS.implementation:
+      if (
+        input.executionMode !== "isolated_worktree" ||
+        input.agentCategory !== "executor"
+      ) {
+        invalidGuidedTask(
+          input,
+          "implementação exige executor em isolated_worktree",
+        );
+      }
+      kind = "implementation";
+      break;
+    case GUIDED_TASK_DOMAINS.qualityGate:
+      if (
+        (input.executionMode !== "isolated_worktree" &&
+          input.executionMode !== "read_only") ||
+        input.agentCategory !== "reviewer"
+      ) {
+        invalidGuidedTask(
+          input,
+          "quality gate exige reviewer em isolated_worktree ou read_only",
+        );
+      }
+      kind = "quality-gate";
+      break;
+    default:
+      return invalidGuidedTask(input, `domínio Guided desconhecido: ${domain}`);
+  }
+
+  if (
+    (input.plannerId === GUIDED_MISSION_PLANNER_TASK_ID &&
+      kind !== "implementation") ||
+    (input.plannerId === GUIDED_MISSION_QA_TASK_ID &&
+      kind !== "quality-gate") ||
+    (kind === "implementation" &&
+      input.plannerId !== undefined &&
+      input.plannerId !== GUIDED_MISSION_PLANNER_TASK_ID) ||
+    (kind === "quality-gate" &&
+      input.plannerId !== undefined &&
+      input.plannerId !== GUIDED_MISSION_QA_TASK_ID)
+  ) {
+    invalidGuidedTask(
+      input,
+      "plannerId e identidade Guided canônica não correspondem",
+    );
+  }
+  return kind;
+}
+
+export function isGuidedDeliveryTaskKind(
+  kind: GuidedTaskKind | null,
+): boolean {
+  return (
+    kind === "isolated-advisory" ||
+    kind === "implementation" ||
+    kind === "quality-gate"
+  );
+}
+
+export function hasGuidedDeliveryTaskDomain(
+  domains: readonly string[],
+): boolean {
+  return domains.some(
+    (domain) =>
+      domain === GUIDED_TASK_DOMAINS.isolatedAdvisory ||
+      domain === GUIDED_TASK_DOMAINS.implementation ||
+      domain === GUIDED_TASK_DOMAINS.qualityGate,
+  );
+}

@@ -26,6 +26,16 @@ describe('Home Deck layout invariants', () => {
     );
   });
 
+  it('uses a continuous surface instead of a decorative grid or ghost card', () => {
+    expect(rule(homeDeckCss, '.home-deck')).not.toContain(
+      'repeating-linear-gradient',
+    );
+    expect(rule(homeDeckCss, '.home-deck__panel')).toContain(
+      'background: transparent',
+    );
+    expect(rule(homeDeckCss, '.home-deck__panel')).toContain('box-shadow: none');
+  });
+
   it('centers the deck inside the pane area after the mission rail', () => {
     expect(rule(baseCss, '.app__body')).toContain(
       '--mission-rail-width: 248px',
@@ -36,5 +46,12 @@ describe('Home Deck layout invariants', () => {
     expect(rule(homeDeckCss, '.home-deck')).toContain(
       'left: calc(var(--app-body-inset) + var(--mission-rail-width) + var(--app-body-inset))',
     );
+  });
+
+  it('keeps the opened contextual panel above the Home empty state', () => {
+    expect(homeDeckCss).toMatch(
+      /\.app__body > \.mission-rail,\s*\.app__body > \.files,\s*\.app__body > \.ctx-panel\s*\{[^}]*z-index:\s*31/,
+    );
+    expect(rule(homeDeckCss, '.home-deck')).toContain('z-index: 30');
   });
 });

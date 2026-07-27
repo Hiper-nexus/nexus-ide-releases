@@ -10,6 +10,7 @@ import { getOrchSettings } from "../persistence/settings-store";
 import {
   assertPendingRecoverySpawnGrantActive,
   assertPendingSpawnGrantActive,
+  assertMissionSpawnAuthorityCurrent,
   attachOrchMeta,
   attachSessionScope,
   bindPendingRecoverySpawnSession,
@@ -71,7 +72,7 @@ function immediateRuntimeRequest(
   };
 }
 
-function bindMissionLaunchAuthority(
+export function bindMissionLaunchAuthority(
   runtimeManager: ProjectRuntimeManager | null,
   authority: BoundSpawnAuthority,
   requestedMissionId: string | undefined,
@@ -113,7 +114,14 @@ function bindMissionLaunchAuthority(
     }
     return Object.freeze({
       ...authority,
-      context: Object.freeze({ ...authority.context, missionId }),
+      context: Object.freeze({
+        ...authority.context,
+        missionId,
+        // The renderer/persisted pane never authors squad identity. Rebind it
+        // from the current scoped mission so specialized native policy (Pet
+        // Studio resume) can require the exact current squad + pane seal.
+        ...(mission.squadId ? { squadId: mission.squadId } : {}),
+      }),
     });
   }
 
@@ -553,6 +561,19 @@ export function assertMainOwnedAgentSpawnGrantActive(input: {
 }): void {
   if (input.pending && input.requestId) {
     assertPendingSpawnGrantActive(input.requestId, input.owner);
+    if (
+      input.pending.missionId &&
+      (input.pending.role === "orchestrator" ||
+        input.pending.role === "worker") &&
+      input.pending.scope
+    ) {
+      assertMissionSpawnAuthorityCurrent({
+        missionId: input.pending.missionId,
+        scope: input.pending.scope,
+        contextRevision: input.pending.contextRevision,
+        authoritySeal: input.pending.authoritySeal,
+      });
+    }
   }
   if (input.recovery && input.requestId) {
     assertPendingRecoverySpawnGrantActive(input.requestId, input.owner);
@@ -577,6 +598,10 @@ function attachSpawnedSessionAuthority(input: {
     executionScope: input.persistedPane.executionScope,
     allowedTools: input.persistedPane.allowedTools,
     allowedSkills: input.persistedPane.allowedSkills,
+    contextRevision: input.persistedPane.authoritySeal?.contextRevision,
+    authoritySeal: input.persistedPane.authoritySeal
+      ? Object.freeze({ ...input.persistedPane.authoritySeal })
+      : undefined,
   });
 }
 

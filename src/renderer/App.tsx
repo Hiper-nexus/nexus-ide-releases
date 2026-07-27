@@ -71,11 +71,16 @@ import { useFailoverController } from './orch/failover-controller';
 import { useAccountRestartController } from './orch/account-restart-controller';
 import { Toasts } from './components/Toasts';
 import { useVoiceStore } from './voice/voice-store';
+import {
+  REAL_MISSION_E2E_PRODUCT_WIZARD_ACTIVE_STORAGE_KEY,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_READY_EVENT,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_READY_STORAGE_KEY,
+  REAL_MISSION_E2E_SQUAD_ID,
+} from '../shared/real-mission-e2e';
 import { UpdateNotifier } from './components/UpdateModal';
 import { requestPaneClose } from './terminal/pane-close-guard';
 import { NexusMark } from './components/NexusMark';
 import { PixelIcon } from './components/PixelIcon';
-import { ModeLauncher } from './components/ModeLauncher';
 import { ContextualPanel } from './components/ContextualPanel';
 import {
   EditorPanelBody,
@@ -93,8 +98,6 @@ import {
 import { MissionJournalPanel } from './components/product/MissionJournalPanel';
 import { FanoutComparePanel } from './components/FanoutComparePanel';
 import { GitPanelBody } from './components/GitPanelBody';
-import type { LAUNCHER_MODES } from '../shared/progressive-onboarding';
-import type { ContextualTab } from '../shared/contextual-panel';
 import { applyProgressiveLaunchIfPending } from './lib/progressive-launch';
 import { useProductFlags } from './lib/use-product-flags';
 import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
@@ -144,9 +147,6 @@ export function App() {
   const paletteOpen = useCommandPaletteStore((s) => s.open);
   const confirmOpen = useConfirmStore((s) => s.pending !== null);
   const cheatsheetOpen = useCheatsheetStore((s) => s.open);
-  const [launcherMode, setLauncherMode] = useState<
-    (typeof LAUNCHER_MODES)[number]['id']
-  >('terminal');
   const suppressBrowserPanes =
     settingsDrawerOpen ||
     missionWizardOpen ||
@@ -161,8 +161,7 @@ export function App() {
     paletteOpen ||
     confirmOpen ||
     cheatsheetOpen;
-
-  useVoiceController();
+  useVoiceController(workspaceHydrated && currentWorkspace !== null);
   useOrchBridge();
   useSettingsController();
   useWorkspaceController();
@@ -175,6 +174,39 @@ export function App() {
   useOnboardingSync();
   useFailoverController();
   useAccountRestartController();
+
+  useEffect(() => {
+    const openPhysicalProductWizard = () => {
+      if (
+        window.sessionStorage.getItem(
+          REAL_MISSION_E2E_PRODUCT_WIZARD_READY_STORAGE_KEY,
+        ) !== '1'
+      ) {
+        return;
+      }
+      window.sessionStorage.removeItem(
+        REAL_MISSION_E2E_PRODUCT_WIZARD_READY_STORAGE_KEY,
+      );
+      window.sessionStorage.setItem(
+        REAL_MISSION_E2E_PRODUCT_WIZARD_ACTIVE_STORAGE_KEY,
+        '1',
+      );
+      useHomeStore.getState().hide();
+      useMissionWizardStore
+        .getState()
+        .openForSquad(REAL_MISSION_E2E_SQUAD_ID);
+    };
+    window.addEventListener(
+      REAL_MISSION_E2E_PRODUCT_WIZARD_READY_EVENT,
+      openPhysicalProductWizard,
+    );
+    openPhysicalProductWizard();
+    return () =>
+      window.removeEventListener(
+        REAL_MISSION_E2E_PRODUCT_WIZARD_READY_EVENT,
+        openPhysicalProductWizard,
+      );
+  }, []);
 
   // Each workspace owns its pane layout: entering one loads ITS saved tree;
   // leaving to the launcher detaches. A real mission layout restores silently;
@@ -222,6 +254,13 @@ export function App() {
       // Confirm pendente = modal: nenhum atalho global dispara por baixo do
       // dialog (cinto extra além do capture-stop do próprio ConfirmDialog).
       if (useConfirmStore.getState().pending) return;
+      // O wizard é modal: atalhos de workspace/panes não podem executar por
+      // baixo dele enquanto a pessoa edita ou revisa a missão.
+      if (useMissionWizardStore.getState().open) return;
+      // Other hard dialogs (agent picker, update, etc.) own the keyboard while
+      // mounted. Keep this generic so a future modal cannot accidentally let
+      // workspace shortcuts mutate panes behind it.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       // ⌘, — macOS-standard settings shortcut (works with no pane focused).
@@ -266,11 +305,11 @@ export function App() {
         useMissionWizardStore.getState().openForAgentic();
         return;
       }
-      // ⌘N — nova missão (a ação primária merece o atalho primário).
+      // ⌘N — nova missão guiada (objetivo primeiro, sem expor o seletor técnico).
       if (e.key.toLowerCase() === 'n' && !e.shiftKey && !e.altKey) {
         if (!useWorkspaceStore.getState().current) return;
         e.preventDefault();
-        useMissionWizardStore.getState().openForMission();
+        useMissionWizardStore.getState().openForAgentic();
         return;
       }
       // ⌘1-9 — foca o N-ésimo pane (ordem do grid). Frota sem mouse.
@@ -463,57 +502,6 @@ export function App() {
     return <BootScreen />;
   }
 
-  const ctxTabForMode = (
-    id: (typeof LAUNCHER_MODES)[number]['id'],
-  ): ContextualTab => {
-    if (id === 'skills') return 'skills';
-    if (id === 'marketplace') return 'marketplace';
-    if (id === 'memory') return 'memory';
-    if (id === 'missions' || id === 'swarm') return 'mission';
-    // Activity stream é a superfície default: modo Terminal abre na aba Missão.
-    if (id === 'terminal') return 'mission';
-    return 'editor';
-  };
-
-  /** Tabs relevantes por modo — as demais ficam ocultas (auto-hide). */
-  const relevantTabsForMode = (
-    id: (typeof LAUNCHER_MODES)[number]['id'],
-  ): readonly ContextualTab[] | undefined => {
-    switch (id) {
-      case 'terminal':
-        return ['mission', 'search', 'editor', 'git', 'browser'];
-      case 'missions':
-      case 'swarm':
-        return ['mission', 'handoff', 'git', 'search'];
-      case 'board':
-        return ['mission', 'handoff'];
-      case 'memory':
-        return ['memory', 'mission'];
-      case 'skills':
-        return ['skills', 'marketplace'];
-      case 'marketplace':
-        return ['marketplace', 'skills'];
-      default:
-        return undefined;
-    }
-  };
-
-  const onModeSelect = (id: (typeof LAUNCHER_MODES)[number]['id']) => {
-    setLauncherMode(id);
-    if (id === 'missions') {
-      useMissionWizardStore.getState().openForMission();
-      return;
-    }
-    if (id === 'board') {
-      const orch = useOrchStore.getState();
-      if (!orch.boardOpen) orch.toggleBoard();
-      return;
-    }
-    if (id === 'swarm') {
-      useOrchStore.getState().openPanel('missions');
-    }
-  };
-
   return (
     <div className="app">
       <WorkspaceBar
@@ -521,7 +509,6 @@ export function App() {
         onOpenIntegrations={() => useIntegrationsStore.getState().show()}
         onOpenMediaStudio={() => useMediaStudioStore.getState().show()}
       />
-      <ModeLauncher activeId={launcherMode} onSelect={onModeSelect} />
       {/*
         Direct children of .app__body must stay: mission-rail, files, grid/canvas.
         Existing CSS (home-deck z-index, flex growth) targets those selectors.
@@ -539,9 +526,17 @@ export function App() {
         <ContextualPanel
           flagEnabled={productFlags[FEATURE_FLAG_IDS.contextualPanel] !== false}
           workspaceId={currentWorkspace?.path}
-          activeTab={ctxTabForMode(launcherMode)}
-          relevantTabs={relevantTabsForMode(launcherMode)}
-          initial={{ visible: true }}
+          initial={{ visible: false }}
+          relevantTabs={[
+            'mission',
+            'editor',
+            'git',
+            'search',
+            'skills',
+            'marketplace',
+            'browser',
+            'memory',
+          ]}
           children={{
             search: <SearchPanelBody />,
             skills: <SkillsPanelBody />,

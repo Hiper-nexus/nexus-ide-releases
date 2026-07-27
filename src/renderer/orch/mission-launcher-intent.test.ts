@@ -38,6 +38,19 @@ const squad = {
   builtin: false,
 } satisfies Squad;
 
+const verifiedClaudeAdapter = {
+  id: 'claude',
+  kind: 'cli-pty' as const,
+  label: 'Claude',
+  icon: 'C',
+  models: { list: ['default'], default: 'default' },
+  installed: true,
+  installCommand: '',
+  idleTimeoutMs: 800,
+  orchestratorCapable: true,
+  orchestrationEvidence: 'verified' as const,
+};
+
 describe('intent-first kickoff packing', () => {
   it('keeps the goal scoped while preserving the Nexus autopilot protocol', () => {
     const prompt = buildIntentDispatchKickoffPrompt({
@@ -89,6 +102,25 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).not.toContain(AUTO_DERIVED_CRITERION_PREFIX);
     expect(prompt).toContain('validado pelo PREVC');
     expect(prompt).toMatch(/proporcional ao objetivo/i);
+  });
+
+  it('makes the Main-frozen guided PREVC stage a hard pre-dispatch gate', () => {
+    const prompt = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-guided-prevc',
+      goal: 'Entregar a missão guiada',
+      acceptanceCriteria: ['Entrega validada'],
+      risk: 'sensitive',
+      maxWorkers: 2,
+      guidedPrevcRequired: true,
+    });
+
+    expect(prompt).toContain('já congelou o contrato PREVC exato');
+    expect(prompt).toContain('nexus_workflow_prepare_execution');
+    expect(prompt).toContain('stage=execution');
+    expect(prompt).toMatch(/não execute worker/i);
+    expect(prompt).not.toMatch(/PREVC é best-effort/i);
+    expect(prompt).not.toMatch(/Sem contrato congelado, exige nota durável/i);
   });
 
   it('keeps user-provided criteria verbatim', () => {
@@ -167,6 +199,8 @@ describe('orientationForKickoff', () => {
     expect(prompt).toContain('lane=plan');
     expect(prompt).toContain('nexus_plan_write');
     expect(prompt).toContain('plan.md');
+    expect(prompt).toContain('PRD/plano completo e exato');
+    expect(prompt).toContain('não pedirá redelivery');
     expect(prompt).toContain('Executar plano');
     expect(prompt).not.toContain('nexus_merge_task');
     expect(prompt).not.toContain('nexus_mission_freeze_contract');
@@ -305,6 +339,26 @@ vi.mock('../state/home-store', () => ({
 }));
 
 describe('intent-first arming dependencies', () => {
+  it('falha fechado antes de qualquer efeito quando o squad não tem Maestro', async () => {
+    vi.stubGlobal('window', { nexus: {} });
+    const workerOnly: Squad = {
+      ...squad,
+      agents: [
+        {
+          ...squad.agents[1]!,
+          category: 'reviewer',
+        },
+      ],
+    };
+
+    await expect(
+      launchSquadMission(workerOnly, [verifiedClaudeAdapter]),
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Este squad não tem Maestro.',
+    });
+  });
+
   it('arms without loading accounts or quota providers', async () => {
     const accountsList = vi.fn(async () => {
       throw new Error('accounts unavailable');
@@ -323,7 +377,9 @@ describe('intent-first arming dependencies', () => {
         orch: { armMission },
       },
     });
-    await expect(launchSquadMission(squad, [])).resolves.toMatchObject({
+    await expect(
+      launchSquadMission(squad, [verifiedClaudeAdapter]),
+    ).resolves.toMatchObject({
       ok: true,
       armed: true,
       missionId: 'mission-armed',
@@ -331,6 +387,73 @@ describe('intent-first arming dependencies', () => {
     expect(armMission).toHaveBeenCalledOnce();
     expect(accountsList).not.toHaveBeenCalled();
     expect(quotaSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('prefers the reviewed Maestro over a stale global default when arming', async () => {
+    const armMission = vi.fn(async () => ({ id: 'mission-codex-roster' }));
+    vi.stubGlobal('window', {
+      nexus: {
+        settings: {
+          orchGet: vi.fn(async () => ({
+            intentFirstMissionRuntimeV1: true,
+            defaultAdapterId: 'claude',
+          })),
+        },
+        orch: { armMission },
+      },
+    });
+    const codexSquad: Squad = {
+      ...squad,
+      agents: squad.agents.map((agent) =>
+        agent.category === 'orchestrator'
+          ? { ...agent, cli: 'codex', model: 'gpt-5.6-sol' }
+          : { ...agent },
+      ),
+    };
+    const verifiedCodexAdapter = {
+      ...verifiedClaudeAdapter,
+      id: 'codex',
+      label: 'Codex',
+      models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
+    };
+
+    await expect(
+      launchSquadMission(codexSquad, [verifiedCodexAdapter]),
+    ).resolves.toMatchObject({
+      ok: true,
+      armed: true,
+      missionId: 'mission-codex-roster',
+    });
+    expect(armMission).toHaveBeenCalledWith({
+      title: codexSquad.name,
+      squadId: codexSquad.id,
+    });
+  });
+
+  it('arms an experimental Maestro inertly and defers consent to native approval', async () => {
+    const armMission = vi.fn(async () => ({ id: 'mission-experimental' }));
+    vi.stubGlobal('window', {
+      nexus: {
+        settings: {
+          orchGet: vi.fn(async () => ({ intentFirstMissionRuntimeV1: true })),
+        },
+        orch: { armMission },
+      },
+    });
+
+    await expect(
+      launchSquadMission(squad, [
+        {
+          ...verifiedClaudeAdapter,
+          orchestrationEvidence: 'experimental',
+        },
+      ]),
+    ).resolves.toMatchObject({
+      ok: true,
+      armed: true,
+      missionId: 'mission-experimental',
+    });
+    expect(armMission).toHaveBeenCalledOnce();
   });
 
   it('preflights the provider before authorizing dispatch', async () => {
@@ -357,6 +480,51 @@ describe('intent-first arming dependencies', () => {
       }),
     ).resolves.toMatchObject({ ok: false });
     expect(authorizeDispatch).not.toHaveBeenCalled();
+  });
+
+  it('mantém rota experimental bloqueada fora do fluxo de aprovação nativa', async () => {
+    const bootstrapMissionOrchestrator = vi.fn();
+    vi.stubGlobal('window', {
+      nexus: {
+        settings: {
+          orchGet: vi.fn(async () => ({
+            intentFirstMissionRuntimeV1: true,
+            defaultAdapterId: 'claude',
+          })),
+        },
+        accounts: { list: vi.fn(async () => []) },
+        quota: { snapshot: vi.fn(async () => null) },
+        orch: { bootstrapMissionOrchestrator },
+      },
+    });
+
+    await expect(
+      launchSquadMission(
+        squad,
+        [
+          {
+            id: 'claude',
+            kind: 'cli-pty',
+            label: 'Claude experimental',
+            icon: 'C',
+            models: { list: ['default'], default: 'default' },
+            installed: true,
+            installCommand: '',
+            idleTimeoutMs: 800,
+            orchestratorCapable: true,
+            orchestrationEvidence: 'experimental',
+          },
+        ],
+        {
+          existingMissionId: 'mission-approved-later',
+          goalPrompt: 'goal',
+        },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/experimental.*aprovação nativa/i),
+    });
+    expect(bootstrapMissionOrchestrator).not.toHaveBeenCalled();
   });
 
   it('fails closed when approved dispatch has no goal-scoped kickoff', async () => {

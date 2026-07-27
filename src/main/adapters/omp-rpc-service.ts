@@ -1,7 +1,7 @@
 import { execFile, spawn as nodeSpawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { buildOmpInheritedKeyEnv } from './omp-provider-keys';
+import { buildOmpSelectedProviderKeyEnv } from './omp-provider-keys';
 import { StringDecoder } from 'node:string_decoder';
 import {
   OMP_RPC_SUPPORTED_VERSION,
@@ -32,6 +32,24 @@ import {
   type OmpRpcUiResponse,
 } from '../../shared/omp-rpc-types';
 import { z } from 'zod';
+import {
+  mintOmpRpcPhysicalHostCall,
+  type OmpRpcPhysicalHostCall,
+} from '../orch/http-mcp-boundary';
+import { governedOmpArgs } from '../orch/governed-cli-profile';
+import {
+  captureDescendantSnapshot,
+  terminatePtyProcessTree,
+  type DescendantSnapshot,
+  type ProcessTableRow,
+  type PtyProcessTreeTerminationProof,
+} from '../pty/pty-descendant-termination';
+import {
+  currentDarwinPtySupervisorRuntime,
+  isProvenDarwinPtySupervisorExit,
+  supervisedPtyCommand,
+} from '../pty/darwin-pty-supervisor';
+import { OmpChildOutputRedactor } from './omp-output-redaction';
 
 /**
  * Sessão de agente oh-my-pi de primeira classe: hospeda `omp --mode rpc-ui`
@@ -79,7 +97,13 @@ export interface OmpChildLike {
   stderr?: {
     on(event: 'data', cb: (chunk: Buffer | string) => void): unknown;
   } | null;
-  on(event: 'exit', cb: (code: number | null) => void): unknown;
+  on(
+    event: 'exit',
+    cb: (
+      code: number | null,
+      signal?: NodeJS.Signals | number | null,
+    ) => void,
+  ): unknown;
   on(event: 'error', cb: (err: Error) => void): unknown;
   kill(signal?: NodeJS.Signals): boolean;
   pid?: number;
@@ -88,8 +112,36 @@ export interface OmpChildLike {
 export type OmpSpawnFn = (
   binPath: string,
   args: string[],
-  options: { cwd: string; env: Record<string, string> },
+  options: {
+    cwd: string;
+    env: Record<string, string>;
+    /** Dedicated POSIX session/process group used as a durable lineage fence. */
+    detached: boolean;
+  },
 ) => OmpChildLike;
+
+export interface OmpProcessTreeTerminationInput {
+  readonly rootPid: number;
+  readonly ownsRoot: () => boolean;
+  readonly killRoot: (signal: 'SIGTERM' | 'SIGKILL') => void;
+  readonly rootExited: Promise<void>;
+}
+
+export interface OmpProcessTreeTerminationOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly snapshotTimeoutMs?: number;
+  readonly termTimeoutMs?: number;
+  readonly killTimeoutMs?: number;
+}
+
+export type OmpProcessTreeTerminator = (
+  input: OmpProcessTreeTerminationInput,
+  options?: OmpProcessTreeTerminationOptions,
+) => Promise<PtyProcessTreeTerminationProof>;
+
+export type OmpProcessTreeCapture = (
+  rootPid: number,
+) => Promise<DescendantSnapshot | null>;
 
 export interface OmpHostToolDispatchResult {
   ok: boolean;
@@ -129,6 +181,7 @@ export interface OmpRpcSessionDeps {
   dispatchHostTool: (
     toolName: string,
     args: Record<string, unknown>,
+    physicalCall: OmpRpcPhysicalHostCall,
   ) => Promise<OmpHostToolDispatchResult>;
   /**
    * Trilha de auditoria de cada auto-resposta em yolo. Se lançar, a decisão
@@ -138,9 +191,21 @@ export interface OmpRpcSessionDeps {
   /** Push de eventos já estreitados para o renderer. */
   onPush: (event: OmpRpcPushEvent) => void;
   spawnImpl?: OmpSpawnFn;
+  /**
+   * Test seam for the production/default spawn path. Unlike `spawnImpl`, this
+   * preserves the native-supervisor receipt contract.
+   */
+  defaultSpawnImplForTest?: OmpSpawnFn;
+  /** Test seam paired with `defaultSpawnImplForTest`. */
+  runtimePlatformForTest?: NodeJS.Platform;
   requestTimeoutMs?: number;
   uiResponseTimeoutMs?: number;
   killGraceMs?: number;
+  /** Test seam; production reuses the authority-critical PTY tree inventory. */
+  terminateProcessTree?: OmpProcessTreeTerminator;
+  /** Test seam for the same bounded process-table inventory. */
+  captureProcessTree?: OmpProcessTreeCapture;
+  processInventoryIntervalMs?: number;
 }
 
 export interface OmpRpcSessionConfig {
@@ -148,9 +213,20 @@ export interface OmpRpcSessionConfig {
   workspaceRoot: string;
   approvalPolicy: OmpApprovalPolicy;
   binPath: string;
+  /**
+   * Governed mission workers must not inherit user-installed extensions,
+   * rules or skills. Direct/panel sessions intentionally keep the user's full
+   * OMP profile and therefore leave this unset.
+   */
+  governed?: boolean;
   /** Modelo inicial aplicado via set_model após o ready. */
   model?: { provider: string; modelId: string };
   env?: Record<string, string>;
+  /**
+   * Exact main-owned credential values for child-output redaction. Values stay
+   * inside the session object and are never serialized, logged or rendered.
+   */
+  credentialSecrets?: readonly string[];
 }
 
 interface PendingRequest {
@@ -232,7 +308,11 @@ async function probeLoginShellPath(execImpl: ExecFileFn): Promise<string> {
   const shell = process.env.SHELL ?? '/bin/bash';
   let resolved = process.env.PATH ?? '';
   try {
-    const out = await execText(execImpl, shell, ['-l', '-c', 'printf "%s" "$PATH"']);
+    const out = await execText(execImpl, shell, [
+      '-l',
+      '-c',
+      'printf "%s" "$PATH"',
+    ]);
     resolved = out.trim() || resolved;
   } catch {
     // Heavy profiles timing out must not lock out standard installations.
@@ -253,7 +333,12 @@ async function whichBin(
   const lookup = process.platform === 'win32' ? 'where' : 'which';
   try {
     const out = await execText(execImpl, lookup, [bin], env);
-    return out.split('\n').map((line) => line.trim()).find(Boolean) ?? null;
+    return (
+      out
+        .split('\n')
+        .map((line) => line.trim())
+        .find(Boolean) ?? null
+    );
   } catch {
     return null;
   }
@@ -362,8 +447,10 @@ export async function waitForOmpSessionReady(
     }
     if (
       session.state === 'idle' &&
-      (session.bootstrapStatus === undefined || session.bootstrapStatus === 'ready')
-    ) return;
+      (session.bootstrapStatus === undefined ||
+        session.bootstrapStatus === 'ready')
+    )
+      return;
     await new Promise((resolve) => setTimeout(resolve, sleepMs));
   }
   throw new Error('timeout aguardando omp --mode rpc-ui ficar pronto');
@@ -376,6 +463,7 @@ export async function waitForOmpSessionReady(
  */
 export function buildOmpChildEnv(
   source: NodeJS.ProcessEnv = process.env,
+  model?: string | null,
 ): Record<string, string> {
   const allow = [
     'PATH',
@@ -393,13 +481,18 @@ export function buildOmpChildEnv(
     if (typeof value === 'string') env[key] = value;
   }
   for (const [key, value] of Object.entries(source)) {
-    if (typeof value === 'string' && (key.startsWith('LC_') || key.startsWith('XDG_'))) {
+    if (
+      typeof value === 'string' &&
+      (key.startsWith('LC_') || key.startsWith('XDG_'))
+    ) {
       env[key] = value;
     }
   }
-  // Herança de chaves do vault (nunca do ambiente): o omp nasce com as API
-  // keys que o usuário já guardou no Nexus — zero login extra para elas.
-  Object.assign(env, buildOmpInheritedKeyEnv());
+  // Credenciais nunca são herdadas do ambiente e jamais fazem fan-out do
+  // vault. Quando há um modelo exato, entra somente a família de chave
+  // release-pinned daquele provider. Sem modelo (auth-broker/list/token), não
+  // entra nenhuma launcher key.
+  Object.assign(env, buildOmpSelectedProviderKeyEnv(model));
   env.NO_COLOR = '1';
   return env;
 }
@@ -407,8 +500,14 @@ export function buildOmpChildEnv(
 /** Argv do processo: rpc-ui + aprovação SEMPRE no host (always-ask), para que
  * cada aprovação passe pelo auto-responder auditado (yolo) ou pelo usuário
  * (safe) — nunca é decidida silenciosamente dentro do CLI. */
-export function ompControlArgs(): string[] {
-  return ['--mode', 'rpc-ui', '--approval-mode', 'always-ask'];
+export function ompControlArgs(governed = false): string[] {
+  return [
+    '--mode',
+    'rpc-ui',
+    '--approval-mode',
+    'always-ask',
+    ...(governed ? governedOmpArgs([]) : []),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -422,6 +521,8 @@ export class OmpRpcSession {
   private readonly deps: OmpRpcSessionDeps;
   private readonly config: OmpRpcSessionConfig;
   private readonly proc: OmpChildLike;
+  private readonly darwinResponsibilitySupervisor: boolean;
+  private readonly childOutputRedactor: OmpChildOutputRedactor;
 
   private lifecycle: OmpRpcSessionLifecycle = 'spawning';
   private stdoutBuffer = '';
@@ -442,8 +543,27 @@ export class OmpRpcSession {
   private lastIsStreaming = false;
   private sessionName: string | null = null;
   private exitCode: number | null = null;
-  private killTimer: NodeJS.Timeout | null = null;
   private disposed = false;
+  private physicalRootExited = false;
+  private physicalRootSignal: NodeJS.Signals | number | null | undefined;
+  /** Spawn emitted `error` before Node assigned any OS process identity. */
+  private childNeverSpawned = false;
+  private resolvePhysicalRootExit!: () => void;
+  private readonly physicalRootExit = new Promise<void>((resolve) => {
+    this.resolvePhysicalRootExit = resolve;
+  });
+  private terminationFlight: Promise<PtyProcessTreeTerminationProof> | null =
+    null;
+  private successfulTermination: PtyProcessTreeTerminationProof | null = null;
+  private initialInventoryFlight: Promise<DescendantSnapshot | null> | null =
+    null;
+  private initialPhysicalSnapshot: DescendantSnapshot | null = null;
+  private readonly trackedPhysicalRows = new Map<string, ProcessTableRow>();
+  private readonly authorizedSessionIds = new Set<number>();
+  private readonly authorizedProcessGroups = new Set<number>();
+  private readonly authorizedTerminals = new Set<string>();
+  private inventoryCompromised = false;
+  private inventoryTimer: NodeJS.Timeout | null = null;
   private bootstrapLifecycle: 'pending' | 'ready' | 'failed' = 'pending';
   private bootstrapFailure: string | null = null;
   private pendingAgentStart: PendingAgentStart | null = null;
@@ -454,18 +574,46 @@ export class OmpRpcSession {
     this.config = config;
     this.deps = deps;
 
-    const spawnImpl: OmpSpawnFn =
-      deps.spawnImpl ??
-      ((binPath, args, options) =>
-        nodeSpawn(binPath, args, {
+    const runtimePlatform =
+      deps.runtimePlatformForTest ?? process.platform;
+    this.darwinResponsibilitySupervisor =
+      deps.spawnImpl === undefined && runtimePlatform === 'darwin';
+    const defaultSpawnImpl: OmpSpawnFn =
+      deps.defaultSpawnImplForTest ??
+      ((binPath, args, options) => {
+        const command = supervisedPtyCommand(
+          currentDarwinPtySupervisorRuntime(__dirname),
+          binPath,
+          args,
+        );
+        return nodeSpawn(command.file, command.args, {
           cwd: options.cwd,
           env: options.env,
           stdio: 'pipe',
-        }) as unknown as OmpChildLike);
+          detached: options.detached,
+        }) as unknown as OmpChildLike;
+      });
+    const spawnImpl: OmpSpawnFn =
+      deps.spawnImpl ?? defaultSpawnImpl;
+    const childEnv =
+      config.env ??
+      buildOmpChildEnv(
+        process.env,
+        config.model
+          ? `${config.model.provider}/${config.model.modelId}`
+          : undefined,
+      );
+    this.childOutputRedactor = new OmpChildOutputRedactor(
+      config.credentialSecrets,
+      childEnv,
+    );
 
-    this.proc = spawnImpl(config.binPath, ompControlArgs(), {
+    this.proc = spawnImpl(config.binPath, ompControlArgs(config.governed), {
       cwd: config.workspaceRoot,
-      env: config.env ?? buildOmpChildEnv(),
+      env: childEnv,
+      // The dedicated POSIX session/process group gives natural exits a
+      // durable lineage boundary even after the root has been reaped.
+      detached: runtimePlatform !== 'win32',
     });
 
     // UTF-8 multibyte pode cair num boundary de chunk do pipe; um StringDecoder
@@ -477,22 +625,52 @@ export class OmpRpcSession {
       this.onStdout(decodeStreamChunk(this.stdoutDecoder, chunk)),
     );
     this.proc.stderr?.on('data', (chunk) => {
-      const text = decodeStreamChunk(this.stderrDecoder, chunk).trim();
+      if (this.disposed || this.lifecycle === 'exited') return;
+      const text = this.childOutputRedactor.stream(
+        'stderr',
+        decodeStreamChunk(this.stderrDecoder, chunk),
+      ).trim();
       if (text) {
-        console.warn(`[omp-rpc:${this.sessionId}] stderr: ${text.slice(0, 400)}`);
+        console.warn(
+          `[omp-rpc:${this.sessionId}] stderr: ${text.slice(0, 400)}`,
+        );
         this.rememberDiagnostic(text);
       }
     });
-    this.proc.on('exit', (code) => this.onExit(code));
+    this.proc.on('exit', (code, signal) =>
+      this.onExit(code, true, signal),
+    );
     this.proc.on('error', (err) => {
-      console.warn(`[omp-rpc:${this.sessionId}] processo falhou:`, err);
+      const safeMessage = this.redactChildText(err.message);
+      console.warn(
+        `[omp-rpc:${this.sessionId}] processo falhou: ${safeMessage}`,
+      );
       this.push({
         kind: 'notice',
         level: 'error',
-        message: `processo omp falhou: ${err.message}`,
+        message: `processo omp falhou: ${safeMessage}`,
       });
-      this.onExit(null);
+      // ENOENT/EACCES-style spawn failures have no OS PID and therefore no
+      // possible descendant tree. This is explicit proof that the child never
+      // existed. Errors after a PID was assigned remain fail-closed until the
+      // exact exit callback and process inventory prove physical teardown.
+      if (this.physicalRootPid() === null && !this.physicalRootExited) {
+        this.childNeverSpawned = true;
+        this.physicalRootExited = true;
+        this.resolvePhysicalRootExit();
+        if (this.inventoryTimer) {
+          clearTimeout(this.inventoryTimer);
+          this.inventoryTimer = null;
+        }
+      }
+      this.onExit(null, false);
     });
+    if (!this.darwinResponsibilitySupervisor) {
+      this.initialInventoryFlight = this.captureAndTrackPhysicalInventory();
+      void this.initialInventoryFlight.finally(() => {
+        this.schedulePhysicalInventoryRefresh();
+      });
+    }
   }
 
   get state(): OmpRpcSessionLifecycle {
@@ -554,10 +732,14 @@ export class OmpRpcSession {
     timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   ): Promise<void> {
     if (this.lifecycle !== 'idle' || this.bootstrapLifecycle !== 'ready') {
-      throw new Error('sessão omp precisa estar idle e com bootstrap concluído');
+      throw new Error(
+        'sessão omp precisa estar idle e com bootstrap concluído',
+      );
     }
     if (this.pendingAgentStart) {
-      throw new Error('já existe um prompt aguardando agent_start nesta sessão omp');
+      throw new Error(
+        'já existe um prompt aguardando agent_start nesta sessão omp',
+      );
     }
     const command: OmpRpcCommand = { type: 'prompt', message };
     let requestId = '';
@@ -576,7 +758,9 @@ export class OmpRpcSession {
         const timer = setTimeout(() => {
           if (this.pendingAgentStart?.requestId !== issuedId) return;
           this.settlePendingAgentStart(
-            new Error('O worker OMP recebeu o prompt, mas não iniciou o agente a tempo.'),
+            new Error(
+              'O worker OMP recebeu o prompt, mas não iniciou o agente a tempo.',
+            ),
           );
         }, timeoutMs);
         timer.unref?.();
@@ -591,7 +775,8 @@ export class OmpRpcSession {
       });
       const data = response.data;
       if (
-        data && typeof data === 'object' &&
+        data &&
+        typeof data === 'object' &&
         (data as { agentInvoked?: unknown }).agentInvoked === false
       ) {
         this.settlePendingAgentStart(
@@ -605,7 +790,8 @@ export class OmpRpcSession {
       }
       await startPromise;
     } catch (error) {
-      const normalized = error instanceof Error ? error : new Error(String(error));
+      const normalized =
+        error instanceof Error ? error : new Error(String(error));
       if (this.readPendingAgentStart()?.requestId === requestId) {
         this.settlePendingAgentStart(normalized);
       }
@@ -627,9 +813,11 @@ export class OmpRpcSession {
     const parsed = ompAvailableModelsDataSchema.safeParse(response.data);
     if (!parsed.success) return [];
     return parsed.data.models.map((model) => ({
-      provider: model.provider,
-      id: model.id,
-      ...(model.name ? { name: model.name } : {}),
+      provider: this.redactChildText(model.provider),
+      id: this.redactChildText(model.id),
+      ...(model.name
+        ? { name: this.redactChildText(model.name) }
+        : {}),
     }));
   }
 
@@ -642,29 +830,423 @@ export class OmpRpcSession {
     return true;
   }
 
-  /** SIGTERM → grace → SIGKILL; rejeita pendências e solta o processo. */
-  dispose(): void {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.settlePendingAgentStart(new Error('sessão encerrada antes de agent_start'));
-    this.rejectAllPending(new Error('sessão encerrada'));
-    for (const requestId of [...this.pendingUi.keys()]) this.settleUi(requestId);
-    if (this.lifecycle === 'exited') return;
-    try {
-      this.proc.kill('SIGTERM');
-    } catch {
-      // Processo já morto — o exit handler cuida do resto.
-    }
-    this.killTimer = setTimeout(() => {
-      if (this.lifecycle !== 'exited') {
+  /**
+   * Begin logical revocation and physical process-tree termination.
+   *
+   * Success is authority-critical: it comes only from the shared process
+   * inventory proving both the exact root callback and every captured/late
+   * descendant absent. Callers may retry a failed proof, but failure never
+   * turns into synthetic success.
+   */
+  async terminate(
+    options: OmpProcessTreeTerminationOptions = {},
+  ): Promise<PtyProcessTreeTerminationProof> {
+    if (this.successfulTermination) return this.successfulTermination;
+    if (this.terminationFlight) return this.terminationFlight;
+    this.beginLogicalDispose();
+    const root = this.proc;
+    const rootPid =
+      typeof root.pid === 'number' && Number.isInteger(root.pid)
+        ? root.pid
+        : -1;
+    const terminateProcessTree: OmpProcessTreeTerminator =
+      this.deps.terminateProcessTree ??
+      ((input, deps) => terminatePtyProcessTree(input, deps));
+    const operation = (async (): Promise<PtyProcessTreeTerminationProof> => {
+      if (this.childNeverSpawned) {
+        return Object.freeze({
+          ok: true,
+          rootExited: true,
+          descendantsExited: true,
+        });
+      }
+      if (this.physicalRootExited) {
+        return this.proveNaturalProcessTreeExit();
+      }
+      if (this.darwinResponsibilitySupervisor) {
         try {
-          this.proc.kill('SIGKILL');
-        } catch {
-          // Nada a salvar.
+          if (!root.kill('SIGTERM')) {
+            throw new Error(
+              'o supervisor Darwin recusou o pedido de encerramento',
+            );
+          }
+          await this.physicalRootExit;
+          return this.proveDarwinResponsibilitySupervisorExit();
+        } catch (error) {
+          return Object.freeze({
+            ok: false,
+            rootExited: this.physicalRootExited,
+            descendantsExited: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : `Darwin responsibility teardown failed: ${String(error)}`,
+          });
         }
       }
-    }, this.deps.killGraceMs ?? DEFAULT_KILL_GRACE_MS);
-    this.killTimer.unref?.();
+      let proof: PtyProcessTreeTerminationProof;
+      try {
+        proof = await terminateProcessTree(
+          {
+            rootPid,
+            ownsRoot: () =>
+              this.proc === root &&
+              (rootPid === -1 || this.proc.pid === rootPid),
+            killRoot: (signal) => {
+              root.kill(signal);
+            },
+            rootExited: this.physicalRootExit,
+          },
+          {
+            termTimeoutMs:
+              options.termTimeoutMs ??
+              this.deps.killGraceMs ??
+              DEFAULT_KILL_GRACE_MS,
+            ...(options.killTimeoutMs !== undefined
+              ? { killTimeoutMs: options.killTimeoutMs }
+              : {}),
+            ...(options.snapshotTimeoutMs !== undefined
+              ? { snapshotTimeoutMs: options.snapshotTimeoutMs }
+              : {}),
+            ...(options.platform !== undefined
+              ? { platform: options.platform }
+              : {}),
+          },
+        );
+      } catch (error) {
+        proof = Object.freeze({
+          ok: false,
+          rootExited: this.physicalRootExited,
+          descendantsExited: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : `OMP process-tree termination failed: ${String(error)}`,
+        });
+      }
+      // The root may have exited naturally between the initial check and the
+      // terminator's first ps capture. A spawn-time/rolling inventory plus the
+      // dedicated POSIX lineage can still prove that cleanly without turning
+      // a race into an unrecoverable authority leak.
+      if (!proof.ok && this.physicalRootExited) {
+        const naturalProof = await this.proveNaturalProcessTreeExit();
+        if (naturalProof.ok) return naturalProof;
+      }
+      return proof;
+    })();
+    this.terminationFlight = operation;
+    const proof = await operation;
+    if (proof.ok && proof.rootExited && proof.descendantsExited) {
+      this.successfulTermination = proof;
+    }
+    if (this.terminationFlight === operation) {
+      this.terminationFlight = null;
+    }
+    return proof;
+  }
+
+  /**
+   * Fire-and-observe compatibility entrypoint. It initiates the same physical
+   * fence but deliberately returns no success signal; inventory ownership must
+   * stay with the caller until `terminate()` resolves with a complete proof.
+   */
+  dispose(): void {
+    void this.terminate().then((proof) => {
+      if (!proof.ok) {
+        console.warn(
+          `[omp-rpc:${this.sessionId}] process-tree exit not proven: ` +
+            (proof.error ?? 'unknown physical teardown failure'),
+        );
+      }
+    });
+  }
+
+  private beginLogicalDispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.inventoryTimer) {
+      clearTimeout(this.inventoryTimer);
+      this.inventoryTimer = null;
+    }
+    this.settlePendingAgentStart(
+      new Error('sessão encerrada antes de agent_start'),
+    );
+    this.rejectAllPending(new Error('sessão encerrada'));
+    for (const requestId of [...this.pendingUi.keys()])
+      this.settleUi(requestId);
+    // Do not flush a possible partial credential prefix into replay while a
+    // physical process is being revoked.
+    this.childOutputRedactor.clear();
+  }
+
+  private physicalRootPid(): number | null {
+    return typeof this.proc.pid === 'number' &&
+      Number.isInteger(this.proc.pid) &&
+      this.proc.pid > 0
+      ? this.proc.pid
+      : null;
+  }
+
+  private physicalIdentityKey(row: ProcessTableRow): string {
+    return `${row.pid}:${row.startedAt}`;
+  }
+
+  private hasUnambiguousPhysicalIdentity(
+    row: ProcessTableRow,
+    capturedAtMs: number,
+  ): boolean {
+    const startedAtMs = Date.parse(row.startedAt);
+    return (
+      Number.isFinite(startedAtMs) &&
+      startedAtMs < Math.floor(capturedAtMs / 1_000) * 1_000
+    );
+  }
+
+  private uniquePhysicalRows(
+    rows: readonly ProcessTableRow[],
+  ): Map<number, ProcessTableRow> | null {
+    const byPid = new Map<number, ProcessTableRow>();
+    for (const row of rows) {
+      if (byPid.has(row.pid)) return null;
+      byPid.set(row.pid, row);
+    }
+    return byPid;
+  }
+
+  private recordPhysicalSnapshot(snapshot: DescendantSnapshot): void {
+    const rootPid = this.physicalRootPid();
+    const structurallyValid =
+      snapshot.root !== null &&
+      rootPid !== null &&
+      snapshot.root.pid === rootPid &&
+      this.uniquePhysicalRows(snapshot.inventory) !== null &&
+      this.hasUnambiguousPhysicalIdentity(
+        snapshot.root,
+        snapshot.capturedAtMs,
+      );
+    if (!structurallyValid) {
+      // `ps lstart` has one-second resolution. A first same-second capture is
+      // expected immediately after spawn and must be retried, not turned into
+      // permanent corruption. Once an exact baseline exists, however, any
+      // duplicate/mismatch is an authority break and remains fail-closed.
+      if (this.initialPhysicalSnapshot) this.inventoryCompromised = true;
+      return;
+    }
+    if (
+      !snapshot.root ||
+      rootPid === null ||
+      snapshot.root.pid !== rootPid
+    ) {
+      return;
+    }
+    if (!this.initialPhysicalSnapshot) {
+      this.initialPhysicalSnapshot = snapshot;
+      const treeRows = [snapshot.root, ...snapshot.descendants];
+      const treeKeys = new Set(
+        treeRows.map((row) => this.physicalIdentityKey(row)),
+      );
+      const authorizeBoundary = (
+        value: number | string,
+        members: readonly ProcessTableRow[],
+        target: Set<number> | Set<string>,
+      ): void => {
+        if (
+          members.length > 0 &&
+          members.every((row) =>
+            treeKeys.has(this.physicalIdentityKey(row)),
+          )
+        ) {
+          (target as Set<number | string>).add(value);
+        }
+      };
+      if (snapshot.root.sid > 0 && snapshot.root.sid === snapshot.root.pid) {
+        authorizeBoundary(
+          snapshot.root.sid,
+          snapshot.inventory.filter((row) => row.sid === snapshot.root!.sid),
+          this.authorizedSessionIds,
+        );
+      }
+      if (
+        snapshot.root.pgid > 0 &&
+        snapshot.root.pgid === snapshot.root.pid
+      ) {
+        authorizeBoundary(
+          snapshot.root.pgid,
+          snapshot.inventory.filter(
+            (row) => row.pgid === snapshot.root!.pgid,
+          ),
+          this.authorizedProcessGroups,
+        );
+      }
+      if (
+        snapshot.root.tty !== '?' &&
+        snapshot.root.tty !== '??' &&
+        snapshot.root.tty !== '-'
+      ) {
+        authorizeBoundary(
+          snapshot.root.tty,
+          snapshot.inventory.filter(
+            (row) => row.tty === snapshot.root!.tty,
+          ),
+          this.authorizedTerminals,
+        );
+      }
+    } else if (
+      this.initialPhysicalSnapshot.root?.startedAt !== snapshot.root.startedAt
+    ) {
+      this.inventoryCompromised = true;
+      return;
+    }
+    for (const row of snapshot.descendants) {
+      this.trackedPhysicalRows.set(this.physicalIdentityKey(row), row);
+    }
+    for (const row of snapshot.inventory) {
+      if (
+        this.authorizedSessionIds.has(row.sid) ||
+        this.authorizedProcessGroups.has(row.pgid) ||
+        this.authorizedTerminals.has(row.tty)
+      ) {
+        this.trackedPhysicalRows.set(this.physicalIdentityKey(row), row);
+      }
+    }
+  }
+
+  private async captureAndTrackPhysicalInventory(): Promise<DescendantSnapshot | null> {
+    const rootPid = this.physicalRootPid();
+    if (rootPid === null) {
+      this.inventoryCompromised = true;
+      return null;
+    }
+    const capture =
+      this.deps.captureProcessTree ??
+      ((pid: number) => captureDescendantSnapshot(pid));
+    try {
+      const snapshot = await capture(rootPid);
+      if (snapshot?.root) this.recordPhysicalSnapshot(snapshot);
+      return snapshot;
+    } catch {
+      this.inventoryCompromised = true;
+      return null;
+    }
+  }
+
+  private schedulePhysicalInventoryRefresh(): void {
+    if (this.disposed || this.physicalRootExited || this.inventoryTimer) return;
+    const intervalMs = this.deps.processInventoryIntervalMs ?? 1_000;
+    if (
+      !Number.isInteger(intervalMs) ||
+      intervalMs < 100 ||
+      intervalMs > 30_000
+    ) {
+      this.inventoryCompromised = true;
+      return;
+    }
+    this.inventoryTimer = setTimeout(() => {
+      this.inventoryTimer = null;
+      if (this.disposed || this.physicalRootExited) return;
+      void this.captureAndTrackPhysicalInventory().finally(() => {
+        this.schedulePhysicalInventoryRefresh();
+      });
+    }, intervalMs);
+    this.inventoryTimer.unref?.();
+  }
+
+  private physicalRowsAreGone(rows: readonly ProcessTableRow[]): boolean {
+    const byPid = this.uniquePhysicalRows(rows);
+    const initialRoot = this.initialPhysicalSnapshot?.root;
+    if (!byPid || !initialRoot) return false;
+    const currentRoot = byPid.get(initialRoot.pid);
+    if (currentRoot?.startedAt === initialRoot.startedAt) return false;
+    for (const expected of this.trackedPhysicalRows.values()) {
+      if (byPid.get(expected.pid)?.startedAt === expected.startedAt) {
+        return false;
+      }
+    }
+    return !rows.some(
+      (row) =>
+        this.authorizedSessionIds.has(row.sid) ||
+        this.authorizedProcessGroups.has(row.pgid) ||
+        this.authorizedTerminals.has(row.tty),
+    );
+  }
+
+  private async proveNaturalProcessTreeExit(): Promise<PtyProcessTreeTerminationProof> {
+    if (this.darwinResponsibilitySupervisor) {
+      return this.proveDarwinResponsibilitySupervisorExit();
+    }
+    await this.initialInventoryFlight;
+    const rootPid = this.physicalRootPid();
+    const hasClosedLineage =
+      this.authorizedSessionIds.size > 0 ||
+      this.authorizedProcessGroups.size > 0 ||
+      this.authorizedTerminals.size > 0;
+    if (
+      !this.physicalRootExited ||
+      rootPid === null ||
+      !this.initialPhysicalSnapshot?.root ||
+      this.inventoryCompromised ||
+      !hasClosedLineage
+    ) {
+      return Object.freeze({
+        ok: false,
+        rootExited: this.physicalRootExited,
+        descendantsExited: false,
+        error:
+          'O inventário OMP anterior ao exit não estabeleceu uma linhagem física fechada.',
+      });
+    }
+    const capture =
+      this.deps.captureProcessTree ??
+      ((pid: number) => captureDescendantSnapshot(pid));
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let snapshot: DescendantSnapshot | null;
+      try {
+        snapshot = await capture(rootPid);
+      } catch {
+        snapshot = null;
+      }
+      if (!snapshot || !this.physicalRowsAreGone(snapshot.inventory)) {
+        return Object.freeze({
+          ok: false,
+          rootExited: true,
+          descendantsExited: false,
+          error:
+            'O inventário pós-exit do OMP não provou todos os descendentes ausentes.',
+        });
+      }
+      if (attempt === 0) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 25);
+          timer.unref?.();
+        });
+      }
+    }
+    return Object.freeze({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+  }
+
+  private proveDarwinResponsibilitySupervisorExit(): PtyProcessTreeTerminationProof {
+    const ok =
+      this.physicalRootExited &&
+      isProvenDarwinPtySupervisorExit({
+        exitCode: this.exitCode,
+        signal: this.physicalRootSignal,
+      });
+    return Object.freeze({
+      ok,
+      rootExited: this.physicalRootExited,
+      descendantsExited: ok,
+      ...(!ok
+        ? {
+            error:
+              'O supervisor Darwin não produziu uma saída normal verificável; ' +
+              'a ausência dos processos sob responsabilidade não foi provada.',
+          }
+        : {}),
+    });
   }
 
   // ------------------------------------------------------------------
@@ -678,7 +1260,10 @@ export class OmpRpcSession {
       const newline = chunk.indexOf('\n', offset);
       if (newline < 0) {
         const suffix = chunk.slice(offset);
-        if (this.stdoutBuffer.length + suffix.length > OMP_RPC_MAX_FRAME_CHARS) {
+        if (
+          this.stdoutBuffer.length + suffix.length >
+          OMP_RPC_MAX_FRAME_CHARS
+        ) {
           this.failTransport('frame NDJSON excedeu o limite de 1 MiB');
           return;
         }
@@ -706,17 +1291,23 @@ export class OmpRpcSession {
       value = JSON.parse(trimmed);
     } catch {
       // Human diagnostics are tolerated, but only inside the bounded frame.
-      this.rememberDiagnostic(trimmed);
+      const safeDiagnostic = this.redactChildText(trimmed);
+      this.rememberDiagnostic(safeDiagnostic);
       console.warn(
         `[omp-rpc:${this.sessionId}] linha NDJSON inválida ignorada: ` +
-          trimmed.slice(0, 200),
+          safeDiagnostic.slice(0, 200),
       );
       return;
     }
     try {
       this.routeFrame(value);
     } catch (err) {
-      console.warn(`[omp-rpc:${this.sessionId}] frame não processado:`, err);
+      console.warn(
+        `[omp-rpc:${this.sessionId}] frame não processado: ` +
+          this.redactChildText(
+            err instanceof Error ? err.message : String(err),
+          ),
+      );
     }
   }
 
@@ -851,6 +1442,7 @@ export class OmpRpcSession {
       }
       case 'agent_end': {
         if (ompAgentEndFrameSchema.safeParse(value).success) {
+          this.flushAssistantText();
           this.lifecycle = 'idle';
           this.lastIsStreaming = false;
           this.pushStatus();
@@ -864,16 +1456,25 @@ export class OmpRpcSession {
         if (!parsed.success) return;
         const event = parsed.data.assistantMessageEvent;
         if (event.type === 'text_delta' && typeof event.delta === 'string') {
-          this.push({ kind: 'text-delta', delta: event.delta });
+          const delta = this.childOutputRedactor.stream(
+            'assistant-text',
+            event.delta,
+          );
+          if (delta) this.push({ kind: 'text-delta', delta });
         } else if (
           event.type === 'thinking_delta' &&
           typeof event.delta === 'string'
         ) {
-          this.push({ kind: 'thinking-delta', delta: event.delta });
+          const delta = this.childOutputRedactor.stream(
+            'assistant-thinking',
+            event.delta,
+          );
+          if (delta) this.push({ kind: 'thinking-delta', delta });
         }
         return;
       }
       case 'message_end':
+        this.flushAssistantText();
         this.push({ kind: 'message-end' });
         return;
       case 'tool_execution_start': {
@@ -883,7 +1484,9 @@ export class OmpRpcSession {
           kind: 'tool',
           toolCallId: parsed.data.toolCallId,
           name: parsed.data.toolName,
-          argsPreview: previewArgs(parsed.data.args),
+          argsPreview: previewArgs(
+            this.childOutputRedactor.value(parsed.data.args),
+          ),
           status: 'running',
         });
         return;
@@ -918,7 +1521,8 @@ export class OmpRpcSession {
       }
       case 'host_tool_cancel': {
         const parsed = ompHostToolCancelFrameSchema.safeParse(value);
-        if (parsed.success) this.rememberCancelledHostCall(parsed.data.targetId);
+        if (parsed.success)
+          this.rememberCancelledHostCall(parsed.data.targetId);
         return;
       }
       case 'prompt_result': {
@@ -927,7 +1531,8 @@ export class OmpRpcSession {
           const pendingStart = this.pendingAgentStart;
           if (
             pendingStart &&
-            (parsed.data.id === undefined || parsed.data.id === pendingStart.requestId)
+            (parsed.data.id === undefined ||
+              parsed.data.id === pendingStart.requestId)
           ) {
             this.settlePendingAgentStart(
               new Error('O prompt OMP foi local-only e não iniciou o agente.'),
@@ -960,31 +1565,41 @@ export class OmpRpcSession {
   private async bootstrap(): Promise<void> {
     try {
       if (this.deps.hostTools.length > 0) {
-        await this.request({
-          type: 'set_host_tools',
-          tools: this.deps.hostTools,
-        }, undefined, true);
+        await this.request(
+          {
+            type: 'set_host_tools',
+            tools: this.deps.hostTools,
+          },
+          undefined,
+          true,
+        );
       }
       if (this.config.model) {
-        await this.request({
-          type: 'set_model',
-          provider: this.config.model.provider,
-          modelId: this.config.model.modelId,
-        }, undefined, true);
+        await this.request(
+          {
+            type: 'set_model',
+            provider: this.config.model.provider,
+            modelId: this.config.model.modelId,
+          },
+          undefined,
+          true,
+        );
       }
       await this.request({ type: 'get_state' }, undefined, true);
       this.pushStatus();
       this.bootstrapLifecycle = 'ready';
     } catch (err) {
       this.bootstrapLifecycle = 'failed';
-      this.bootstrapFailure = err instanceof Error ? err.message : String(err);
-      console.warn(`[omp-rpc:${this.sessionId}] bootstrap falhou:`, err);
+      this.bootstrapFailure = this.redactChildText(
+        err instanceof Error ? err.message : String(err),
+      );
+      console.warn(
+        `[omp-rpc:${this.sessionId}] bootstrap falhou: ${this.bootstrapFailure}`,
+      );
       this.push({
         kind: 'notice',
         level: 'warning',
-        message: `bootstrap da sessão omp incompleto: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        message: `bootstrap da sessão omp incompleto: ${this.bootstrapFailure}`,
       });
     }
     if (this.lifecycle === 'ready' && this.bootstrapLifecycle === 'ready') {
@@ -998,7 +1613,10 @@ export class OmpRpcSession {
         try {
           this.proc.stdin?.write(line);
         } catch (err) {
-          console.warn(`[omp-rpc:${this.sessionId}] flush pós-bootstrap falhou:`, err);
+          console.warn(
+            `[omp-rpc:${this.sessionId}] flush pós-bootstrap falhou:`,
+            err,
+          );
         }
       }
     }
@@ -1016,7 +1634,11 @@ export class OmpRpcSession {
     if (frame.success) pending.resolve(frame);
     else {
       pending.reject(
-        new Error(frame.error ?? `${pending.command} falhou sem detalhe`),
+        new Error(
+          this.redactChildText(
+            frame.error ?? `${pending.command} falhou sem detalhe`,
+          ),
+        ),
       );
     }
   }
@@ -1027,14 +1649,25 @@ export class OmpRpcSession {
       await this.request({ type: 'get_state' });
       this.pushStatus();
     } catch (err) {
-      console.warn(`[omp-rpc:${this.sessionId}] get_state falhou:`, err);
+      console.warn(
+        `[omp-rpc:${this.sessionId}] get_state falhou: ` +
+          this.redactChildText(
+            err instanceof Error ? err.message : String(err),
+          ),
+      );
     }
   }
 
   private applyStateData(data: unknown): void {
     const parsed = ompSessionStateSchema.safeParse(data);
     if (!parsed.success) return;
-    this.lastModel = parsed.data.model ?? this.lastModel;
+    this.lastModel = parsed.data.model
+      ? {
+          ...parsed.data.model,
+          provider: this.redactChildText(parsed.data.model.provider),
+          id: this.redactChildText(parsed.data.model.id),
+        }
+      : this.lastModel;
     this.lastContextUsage = parsed.data.contextUsage
       ? {
           tokens: parsed.data.contextUsage.tokens,
@@ -1043,7 +1676,10 @@ export class OmpRpcSession {
         }
       : this.lastContextUsage;
     this.lastIsStreaming = parsed.data.isStreaming;
-    this.sessionName = parsed.data.sessionName ?? this.sessionName;
+    this.sessionName =
+      parsed.data.sessionName == null
+        ? this.sessionName
+        : this.redactChildText(parsed.data.sessionName);
     // isStreaming corrige deriva se algum agent_start/agent_end se perdeu.
     if (this.lifecycle === 'busy' && !parsed.data.isStreaming) {
       this.lifecycle = 'idle';
@@ -1055,26 +1691,37 @@ export class OmpRpcSession {
   /** Últimas linhas humanas (stderr + stdout não-NDJSON) — o motivo REAL de
    * uma morte prematura, que antes era engolido ("código 1" seco). */
   private rememberDiagnostic(text: string): void {
-    this.diagnosticTail.push(text.slice(0, 300));
+    this.diagnosticTail.push(this.redactChildText(text).slice(0, 300));
     if (this.diagnosticTail.length > 6) this.diagnosticTail.shift();
   }
 
-  private onExit(code: number | null): void {
+  private onExit(
+    code: number | null,
+    physical: boolean,
+    signal?: NodeJS.Signals | number | null,
+  ): void {
+    if (physical && !this.physicalRootExited) {
+      this.physicalRootExited = true;
+      this.physicalRootSignal = signal;
+      this.resolvePhysicalRootExit();
+      if (this.inventoryTimer) {
+        clearTimeout(this.inventoryTimer);
+        this.inventoryTimer = null;
+      }
+    }
     if (this.lifecycle === 'exited') return;
     this.lifecycle = 'exited';
     this.settlePendingAgentStart(
       new Error('processo omp encerrou antes de agent_start'),
     );
     this.exitCode = code;
-    if (this.killTimer) {
-      clearTimeout(this.killTimer);
-      this.killTimer = null;
-    }
     this.rejectAllPending(new Error('processo omp encerrou'));
-    for (const requestId of [...this.pendingUi.keys()]) this.settleUi(requestId);
+    for (const requestId of [...this.pendingUi.keys()])
+      this.settleUi(requestId);
     this.cancelledHostCalls.clear();
     this.activeHostCalls.clear();
     this.stdoutBuffer = '';
+    this.childOutputRedactor.clearStreams();
     if (code !== null && code !== 0 && this.diagnosticTail.length > 0) {
       this.push({
         kind: 'notice',
@@ -1083,6 +1730,7 @@ export class OmpRpcSession {
       });
     }
     this.push({ kind: 'exit', code: this.exitCode });
+    this.childOutputRedactor.clear();
   }
 
   private settlePendingAgentStart(error?: Error): void {
@@ -1174,7 +1822,7 @@ export class OmpRpcSession {
     const timeoutMs =
       typeof request.timeout === 'number' && request.timeout > 0
         ? request.timeout
-        : this.deps.uiResponseTimeoutMs ?? DEFAULT_UI_RESPONSE_TIMEOUT_MS;
+        : (this.deps.uiResponseTimeoutMs ?? DEFAULT_UI_RESPONSE_TIMEOUT_MS);
     const timer = setTimeout(() => {
       if (!this.pendingUi.has(request.id)) return;
       this.settleUi(request.id);
@@ -1246,9 +1894,12 @@ export class OmpRpcSession {
         sessionId: this.sessionId,
         requestId: request.id,
         method: request.method,
-        title,
+        title: this.redactChildText(title),
         decision,
-        detail,
+        detail:
+          detail === undefined
+            ? undefined
+            : this.redactChildText(detail),
       });
     } catch (err) {
       // Sem auditoria não há aprovação automática: degrada para deny.
@@ -1304,7 +1955,11 @@ export class OmpRpcSession {
     }
     if (this.activeHostCalls.size >= OMP_RPC_MAX_ACTIVE_HOST_CALLS) {
       this.writeFrame(
-        hostToolResult(callId, 'limite de host tools concorrentes excedido', true),
+        hostToolResult(
+          callId,
+          'limite de host tools concorrentes excedido',
+          true,
+        ),
       );
       return;
     }
@@ -1312,11 +1967,25 @@ export class OmpRpcSession {
     let frame: OmpHostToolResultFrame;
     try {
       if (!this.deps.hostTools.some((tool) => tool.name === toolName)) {
-        frame = hostToolResult(callId, `host tool desconhecida: ${toolName}`, true);
+        frame = hostToolResult(
+          callId,
+          `host tool desconhecida: ${toolName}`,
+          true,
+        );
       } else {
         let outcome: OmpHostToolDispatchResult;
         try {
-          outcome = await this.deps.dispatchHostTool(toolName, args);
+          const physicalCall = mintOmpRpcPhysicalHostCall({
+            sessionId: this.sessionId,
+            childPid: this.proc.pid,
+            callId,
+            toolName,
+          });
+          outcome = await this.deps.dispatchHostTool(
+            toolName,
+            this.childOutputRedactor.value(args),
+            physicalCall,
+          );
         } catch (err) {
           outcome = {
             ok: false,
@@ -1350,7 +2019,7 @@ export class OmpRpcSession {
 
   private push(event: OmpRpcPushEvent): void {
     try {
-      this.deps.onPush(event);
+      this.deps.onPush(this.redactPushEvent(event));
     } catch (err) {
       console.warn(`[omp-rpc:${this.sessionId}] push falhou:`, err);
     }
@@ -1368,6 +2037,78 @@ export class OmpRpcSession {
       sessionName: this.sessionName,
       autoApprovals: this.autoApprovals,
     });
+  }
+
+  private redactChildText(value: string): string {
+    return this.childOutputRedactor.text(value);
+  }
+
+  private flushAssistantText(): void {
+    const text = this.childOutputRedactor.flush('assistant-text');
+    if (text) this.push({ kind: 'text-delta', delta: text });
+    const thinking = this.childOutputRedactor.flush('assistant-thinking');
+    if (thinking) this.push({ kind: 'thinking-delta', delta: thinking });
+  }
+
+  private redactPushEvent(event: OmpRpcPushEvent): OmpRpcPushEvent {
+    switch (event.kind) {
+      case 'status':
+        return {
+          ...event,
+          model: event.model
+            ? {
+                provider: this.redactChildText(event.model.provider),
+                id: this.redactChildText(event.model.id),
+              }
+            : null,
+          sessionName:
+            event.sessionName === null
+              ? null
+              : this.redactChildText(event.sessionName),
+        };
+      case 'text-delta':
+      case 'thinking-delta':
+        return { ...event, delta: this.redactChildText(event.delta) };
+      case 'tool':
+        return {
+          ...event,
+          name: this.redactChildText(event.name),
+          argsPreview: this.redactChildText(event.argsPreview),
+        };
+      case 'ui-request':
+        return {
+          ...event,
+          title: this.redactChildText(event.title),
+          message:
+            event.message === null
+              ? null
+              : this.redactChildText(event.message),
+          options:
+            event.options === null
+              ? null
+              : event.options.map((option) =>
+                  this.redactChildText(option),
+                ),
+          placeholder:
+            event.placeholder === null
+              ? null
+              : this.redactChildText(event.placeholder),
+        };
+      case 'auto-approval':
+        return {
+          ...event,
+          title: this.redactChildText(event.title),
+        };
+      case 'notice':
+        return {
+          ...event,
+          message: this.redactChildText(event.message),
+        };
+      case 'open-url':
+        return { ...event, url: this.redactChildText(event.url) };
+      default:
+        return event;
+    }
   }
 }
 

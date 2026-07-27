@@ -14,6 +14,7 @@ import {
   createScopedSandboxHome,
   type SandboxProfile,
 } from '../runtime/process-sandbox';
+import { assertGovernedWorkspaceControlBoundary } from './governed-workspace-control-boundary';
 
 /**
  * Terminal execution MCP tools for Jarvis agent.
@@ -176,6 +177,7 @@ const terminalRun: McpToolDef = {
   },
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
+    assertGovernedWorkspaceControlBoundary(ctx, terminalRun.name);
     const executionScope = executionScopeFor(ctx);
     const command = requireStr(args, 'command');
     const cwd = resolveCwdForScope(executionScope, str(args, 'cwd'));

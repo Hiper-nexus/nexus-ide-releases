@@ -15,8 +15,9 @@ export const PET_STUDIO_SQUAD: Squad = {
   orchestratorInstructions:
     '# Pet Studio\n' +
     'Você é o único criador visual desta missão. Use a imagem fornecida ' +
-    'como fonte canônica, carregue a skill hatch-pet pelo nome e conclua ' +
-    'tudo nesta sessão Codex. Gere, valide e empacote o pet final; não ' +
+    'como fonte canônica, carregue a skill nexus-pet-studio pelo nome e ' +
+    'conclua tudo nesta sessão Codex. Gere e valide o pacote dentro do ' +
+    'workspace; o Nexus fará a instalação final depois do handoff. Não ' +
     'delegue nem pare em prompts ou imagens intermediárias.',
   agents: [
     {
@@ -25,10 +26,14 @@ export const PET_STUDIO_SQUAD: Squad = {
       category: 'orchestrator',
       cli: 'codex',
       effort: 'high',
-      // Pet Studio needs the same runtime loader that Codex Desktop injects
-      // for hatch-pet. Every generic Nexus workflow tool stays hidden.
-      allowedTools: ['load_workspace_dependencies'],
-      allowedSkills: ['hatch-pet'],
+      // The dedicated maker gets only workspace dependencies plus Nexus-owned
+      // media. It never receives the private Codex imagegen/home path.
+      allowedTools: [
+        'load_workspace_dependencies',
+        'nexus_media_providers',
+        'nexus_image_generate',
+      ],
+      allowedSkills: ['nexus-pet-studio'],
     },
   ],
 };

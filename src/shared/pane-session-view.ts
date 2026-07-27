@@ -15,6 +15,15 @@ export interface PaneSessionView {
   readonly mod: PaneSessionState;
 }
 
+/**
+ * Durable mission evidence may explain why an already-ended process stopped.
+ * Keep this deliberately narrow: a normal exit is not success, and worker
+ * prose cannot promote a pane to "concluído".
+ */
+export interface PaneSessionOutcome {
+  readonly outcome?: 'blocked' | 'failed';
+}
+
 const VIEWS: Record<PaneSessionState, Omit<PaneSessionView, 'state'>> = {
   idle: {
     chip: 'Pronto',
@@ -32,8 +41,8 @@ const VIEWS: Record<PaneSessionState, Omit<PaneSessionView, 'state'>> = {
     mod: 'spawning',
   },
   exited: {
-    chip: 'Morto',
-    tip: 'Processo encerrado — use Reiniciar',
+    chip: 'Encerrado',
+    tip: 'Sessão encerrada — reinicie somente se ainda houver trabalho',
     mod: 'exited',
   },
   hibernated: {
@@ -43,7 +52,26 @@ const VIEWS: Record<PaneSessionState, Omit<PaneSessionView, 'state'>> = {
   },
 };
 
-export function paneSessionView(state: PaneSessionState): PaneSessionView {
+export function paneSessionView(
+  state: PaneSessionState,
+  context: PaneSessionOutcome = {},
+): PaneSessionView {
+  if (state === 'exited' && context.outcome === 'blocked') {
+    return {
+      state,
+      chip: 'Bloqueado',
+      tip: 'Agente encerrou após reportar um bloqueio',
+      mod: 'exited',
+    };
+  }
+  if (state === 'exited' && context.outcome === 'failed') {
+    return {
+      state,
+      chip: 'Falhou',
+      tip: 'Agente encerrou após reportar uma falha',
+      mod: 'exited',
+    };
+  }
   return { state, ...VIEWS[state] };
 }
 
@@ -55,5 +83,5 @@ export const FLEET_SEG_LABEL = {
   working: 'trabalhando',
   ready: 'pronto',
   sleeping: 'dormindo',
-  down: 'morto',
+  down: 'encerrado',
 } as const;

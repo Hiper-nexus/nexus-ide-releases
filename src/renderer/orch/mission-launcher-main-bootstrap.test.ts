@@ -159,29 +159,29 @@ describe('approved mission main-owned presentation', () => {
           installCommand: 'npm i -g codex',
           idleTimeoutMs: 800,
           orchestratorCapable: true,
+          orchestrationEvidence: 'experimental',
         },
       ],
       {
         existingMissionId: 'mission-approved',
         goalPrompt: 'renderer copy must not become authority',
+        adapterId: 'codex',
         authorizeDispatch,
       },
     );
 
     expect(result).toEqual({
-      ok: true,
+      ok: false,
       paneId: 'pane-main-orch',
       missionId: 'mission-approved',
+      error: 'Sem borda idle→busy. Próxima ação: Retomar missão.',
     });
     expect(authorizeDispatch).toHaveBeenCalledOnce();
     expect(window.nexus.orch.bootstrapMissionOrchestrator).toHaveBeenCalledWith({
       missionId: 'mission-approved',
     });
     expect(window.nexus.orch.bootstrapMissionOrchestrator).toHaveBeenCalledTimes(1);
-    expect(harness.conflictingOrchestratorPanes).toHaveBeenCalledWith('codex');
-    expect(harness.conflictingOrchestratorPanes).not.toHaveBeenCalledWith(
-      'claude',
-    );
+    expect(harness.conflictingOrchestratorPanes).not.toHaveBeenCalled();
     expect(harness.killConflictingOrchestrators).not.toHaveBeenCalled();
     expect(window.nexus.orch.updateMission).not.toHaveBeenCalled();
     expect(window.nexus.orch.bindMissionOrchestrator).not.toHaveBeenCalled();
@@ -205,17 +205,31 @@ describe('approved mission main-owned presentation', () => {
       'pane-main-orch',
       20_000,
     );
-    expect(harness.toast).toHaveBeenCalledWith(
-      'error',
-      'Kickoff não foi aceito',
-      expect.objectContaining({
-        detail: 'Sem borda idle→busy.',
-        action: expect.objectContaining({ label: 'Retomar missão' }),
-      }),
-    );
+    expect(harness.toast).not.toHaveBeenCalled();
   });
 
-  it('keeps the old runtime and creates no replacement when displacement is denied', async () => {
+  it('leaves exclusive replacement to the single main-owned approval', async () => {
+    vi.mocked(
+      window.nexus.orch.bootstrapMissionOrchestrator,
+    ).mockResolvedValueOnce({
+      ok: true,
+      missionId: 'mission-approved',
+      pane: {
+        paneId: 'pane-main-orch',
+        sessionId: 'pty-main-orch',
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        accountId: 'account-main',
+        effort: 'high',
+        cwd: '/workspace/a',
+        title: 'Squad salvo · orq',
+        agentName: 'Maestro',
+        role: 'orchestrator',
+      },
+      kickoff: {
+        accepted: true,
+      },
+    });
     harness.conflictingOrchestratorPanes.mockReturnValue([
       {
         id: 'pane-old',
@@ -226,9 +240,6 @@ describe('approved mission main-owned presentation', () => {
       } as PaneModel,
     ]);
     harness.paneMissions = { 'pane-old': 'mission-old' };
-    vi.mocked(window.nexus.orch.updateMission).mockRejectedValueOnce(
-      new Error('user_denied'),
-    );
     const authorizeDispatch = vi.fn(async () => undefined);
 
     const result = await launchSquadMission(
@@ -244,6 +255,7 @@ describe('approved mission main-owned presentation', () => {
           installCommand: 'npm i -g codex',
           idleTimeoutMs: 800,
           orchestratorCapable: true,
+          orchestrationEvidence: 'verified',
         },
       ],
       {
@@ -254,15 +266,16 @@ describe('approved mission main-owned presentation', () => {
     );
 
     expect(result).toEqual({
-      ok: false,
-      error: expect.stringMatching(/não foi encerrado.*user_denied/i),
+      ok: true,
+      paneId: 'pane-main-orch',
+      missionId: 'mission-approved',
     });
     expect(authorizeDispatch).toHaveBeenCalledOnce();
-    expect(
-      window.nexus.orch.bootstrapMissionOrchestrator,
-    ).not.toHaveBeenCalled();
+    expect(window.nexus.orch.bootstrapMissionOrchestrator).toHaveBeenCalledOnce();
+    expect(window.nexus.orch.updateMission).not.toHaveBeenCalled();
+    expect(harness.conflictingOrchestratorPanes).not.toHaveBeenCalled();
     expect(harness.killConflictingOrchestrators).not.toHaveBeenCalled();
-    expect(harness.setPanes).not.toHaveBeenCalled();
+    expect(harness.setPanes).toHaveBeenCalled();
   });
 
   it('mutates no prior mission when authorization of the incoming mission fails', async () => {
@@ -293,6 +306,7 @@ describe('approved mission main-owned presentation', () => {
           installCommand: 'npm i -g codex',
           idleTimeoutMs: 800,
           orchestratorCapable: true,
+          orchestrationEvidence: 'verified',
         },
       ],
       {

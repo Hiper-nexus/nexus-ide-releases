@@ -7,6 +7,7 @@ import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   isPrepareProjectPlaceholderGoal,
+  missionBlockPatch,
   missionStatusForIntent,
   PREPARE_PROJECT_PLACEHOLDER_GOAL,
   synthesizeImmediateDispatchContract,
@@ -14,12 +15,21 @@ import {
   type MissionAttachmentSnapshot,
   type MissionOrchestratorRuntimeSnapshot,
   type MissionIntentSource,
+  type PromotedPlanSnapshot,
 } from "../../shared/mission-intent";
 import {
   missionGoalNeedsFutureEvidence,
   MISSION_EVIDENCE_WAIT_MESSAGE,
 } from "../../shared/mission-evidence";
+import {
+  GUIDED_PLAN_BLOCK_CTA,
+  GUIDED_PLAN_BLOCK_MARKER,
+} from "../../shared/guided-mission-plan";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
+import {
+  NEXUS_PLAN_SQUAD_ID,
+  NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+} from "../../shared/builtin-squad-ids";
 import {
   bumpMissionPromptIntent,
   cancelMissionPrompt,
@@ -30,6 +40,8 @@ import {
   startMissionPrompt,
 } from "./mission-prompt-queue-registry";
 import {
+  isEngineGeneratedSquadId,
+  isMissionRuntimeSquadId,
   normalizeMilestones,
   type Mission,
   type MissionOrchestratorBootstrapResult,
@@ -79,12 +91,19 @@ import {
 } from "./squad-authority-snapshot";
 import {
   canonicalMissionOrchestratorRuntime,
+  missionOrchestratorEvidence,
   missionOrchestratorRuntimeReviewStrings,
   resolveProductionMissionOrchestratorRuntime,
   sameMissionOrchestratorRuntime,
   type ResolvedMissionOrchestratorRuntime,
 } from "./mission-orchestrator-runtime";
 import { resolveMissionPaneAuthoritySeal } from "./mission-pane-authority";
+import type { OrchestrationEvidence } from "../../shared/adapter-types";
+import {
+  revalidatePhysicalPlanHandoff,
+  selectPhysicalPlanHandoff,
+} from "./plan-promotion-authority";
+import { assertLiveGuidedSquadReadiness } from "./squad-runtime-inventory";
 
 export interface RendererMissionCreateInput {
   title: string;
@@ -148,6 +167,13 @@ export interface RendererMissionAuthorityCandidate {
   readonly attachmentSnapshots: readonly MissionAttachmentSnapshot[];
   readonly squad: SquadAuthoritySnapshot;
   readonly orchestratorRuntime: MissionOrchestratorRuntimeSnapshot;
+  /** Main-owned evidence shown in the native approval dialog. */
+  readonly orchestratorEvidence: OrchestrationEvidence;
+  /**
+   * Main-selected physical PRD/plan. Present only for plan → standard review;
+   * never accepted from renderer input.
+   */
+  readonly promotedPlan?: PromotedPlanSnapshot;
   readonly intentVersion: number;
   readonly budgets: {
     readonly planningTokens: number;
@@ -174,11 +200,26 @@ interface MissionApprovalFenceInput {
   readonly attachmentSnapshots: readonly MissionAttachmentSnapshot[];
   readonly squadRevisionHash: string;
   readonly orchestratorRuntime: MissionOrchestratorRuntimeSnapshot;
+  readonly orchestratorEvidence: OrchestrationEvidence;
+  readonly promotedPlan?: PromotedPlanSnapshot;
 }
 
 const MAX_NATIVE_MISSION_REVIEW_CHARS = 6_000;
 const INVISIBLE_AUTHORITY_TEXT =
   /[\0-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]/;
+const APPROVAL_REVIEW_SHA256 = /^[a-f0-9]{64}$/;
+
+function validateApprovalReviewSha256(
+  value: string | undefined,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (!APPROVAL_REVIEW_SHA256.test(value)) {
+    throw new Error(
+      "approval_review_receipt_invalid: expected an exact lowercase SHA-256",
+    );
+  }
+  return value;
+}
 
 /** Control-character validation without a length veto (hash-pinned content). */
 function assertVisibleAuthorityText(values: readonly string[]): void {
@@ -215,7 +256,8 @@ function attachmentSnapshotReviewStrings(
   snapshots: readonly MissionAttachmentSnapshot[],
 ): string[] {
   return snapshots.map(
-    (snapshot) => `${snapshot.path}\nSHA-256 ${snapshot.sha256}\n${snapshot.size} bytes`,
+    (snapshot) =>
+      `${snapshot.path}\nSHA-256 ${snapshot.sha256}\n${snapshot.size} bytes`,
   );
 }
 
@@ -227,7 +269,9 @@ function assertAttachmentSnapshotPaths(
     snapshots.length !== paths.length ||
     snapshots.some((snapshot, index) => snapshot.path !== paths[index])
   ) {
-    throw new Error('attachment snapshot does not match canonical attachment paths');
+    throw new Error(
+      "attachment snapshot does not match canonical attachment paths",
+    );
   }
 }
 
@@ -246,6 +290,11 @@ function missionAuthorityFence(
         intentState: mission.intentState ?? null,
         intentVersion: mission.intentVersion ?? 0,
         intentContract: mission.intentContract ?? null,
+        squadId: mission.squadId ?? null,
+        // Promotion tears down this exact v1 runtime after the native review.
+        // A pane replacement while the dialog is open must invalidate the
+        // candidate even when the human-facing intent bytes did not change.
+        orchestratorSessionId: mission.orchestratorSessionId ?? null,
         approval: approval ?? null,
       }),
     )
@@ -354,11 +403,16 @@ export class RendererMissionAuthority {
     scope: ProjectExecutionScope,
     missionId: string,
   ) => Promise<MissionOrchestratorBootstrapResult>;
+  readonly #ensureMissionPlanBeforeBootstrap: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => unknown;
   readonly #resolveSquad: (squadId: string) => Squad | null;
   readonly #resolveOrchestratorRuntime: (
     squad: Squad,
     orchestrator: Squad["agents"][number],
   ) => ResolvedMissionOrchestratorRuntime;
+  readonly #assertStandardSquadReadiness: (squad: Squad) => void;
 
   constructor(
     stores: ProjectDomainStoreRegistry,
@@ -366,8 +420,8 @@ export class RendererMissionAuthority {
       scope: ProjectExecutionScope,
       missionId: string,
     ): string | undefined =>
-      getContextWorkflowService(scope).getMissionWorkflow(missionId)
-        .contract?.contract.contextRevision,
+      getContextWorkflowService(scope).getMissionWorkflow(missionId).contract
+        ?.contract.contextRevision,
     allowImmediateDispatch = (squadId: string): boolean =>
       squadId === PET_STUDIO_SQUAD_ID ||
       getOrchSettings().intentFirstMissionRuntimeV1 === false,
@@ -387,11 +441,17 @@ export class RendererMissionAuthority {
     resolveOrchestratorRuntime: (
       squad: Squad,
       orchestrator: Squad["agents"][number],
-    ) => ResolvedMissionOrchestratorRuntime =
-      resolveProductionMissionOrchestratorRuntime,
+    ) => ResolvedMissionOrchestratorRuntime = resolveProductionMissionOrchestratorRuntime,
     snapshotAttachmentPaths: (
       paths: readonly string[] | undefined,
-    ) => MissionAttachmentSnapshot[] | undefined = snapshotDroppedAttachmentPaths,
+    ) =>
+      MissionAttachmentSnapshot[] | undefined = snapshotDroppedAttachmentPaths,
+    ensureMissionPlanBeforeBootstrap: (
+      scope: ProjectExecutionScope,
+      missionId: string,
+    ) => unknown = () => undefined,
+    assertStandardSquadReadiness: (squad: Squad) => void =
+      assertLiveGuidedSquadReadiness,
   ) {
     this.#stores = stores;
     this.#resolveContextRevision = resolveContextRevision;
@@ -403,21 +463,21 @@ export class RendererMissionAuthority {
     this.#resolveSquad = resolveSquad;
     this.#resolveOrchestratorRuntime = resolveOrchestratorRuntime;
     this.#snapshotAttachmentPaths = snapshotAttachmentPaths;
+    this.#ensureMissionPlanBeforeBootstrap = ensureMissionPlanBeforeBootstrap;
+    this.#assertStandardSquadReadiness = assertStandardSquadReadiness;
   }
 
-  #attachmentsForApproval(
-    paths: readonly string[] | undefined,
-  ): {
+  #attachmentsForApproval(paths: readonly string[] | undefined): {
     readonly present: boolean;
     readonly paths: string[];
     readonly snapshots: MissionAttachmentSnapshot[];
   } {
-    const canonical = paths === undefined
-      ? []
-      : this.#validateAttachmentPaths(paths) ?? [];
-    const snapshots = paths === undefined
-      ? []
-      : this.#snapshotAttachmentPaths(canonical) ?? [];
+    const canonical =
+      paths === undefined ? [] : (this.#validateAttachmentPaths(paths) ?? []);
+    const snapshots =
+      paths === undefined
+        ? []
+        : (this.#snapshotAttachmentPaths(canonical) ?? []);
     assertAttachmentSnapshotPaths(canonical, snapshots);
     return {
       present: paths !== undefined,
@@ -426,7 +486,17 @@ export class RendererMissionAuthority {
     };
   }
 
-  #runtimeForSquad(squad: Squad): MissionOrchestratorRuntimeSnapshot {
+  #runtimeForSquad(
+    squad: Squad,
+    requireGuidedWorkers = false,
+    planPromotion = false,
+  ): MissionOrchestratorRuntimeSnapshot {
+    if (
+      requireGuidedWorkers &&
+      (planPromotion || isEngineGeneratedSquadId(squad.id))
+    ) {
+      this.#assertStandardSquadReadiness(squad);
+    }
     const orchestrator =
       squad.agents.find((agent) => agent.category === "orchestrator") ?? null;
     if (!orchestrator) {
@@ -437,6 +507,27 @@ export class RendererMissionAuthority {
     return canonicalMissionOrchestratorRuntime(
       this.#resolveOrchestratorRuntime(squad, orchestrator),
     );
+  }
+
+  /**
+   * The PRD shortcut runs in an immutable `mission-runtime-*` copy, so its
+   * current id is intentionally not the builtin template id. Main-owned,
+   * hash-sealed lineage is the only sanctioned bridge from that planning
+   * runtime to the app-managed delivery squad.
+   */
+  #executionSquadForPlanPromotion(current: Mission): Squad | null {
+    const sourceSquad = current.squadId
+      ? this.#resolveSquad(current.squadId)
+      : null;
+    if (!sourceSquad) return null;
+    const cameFromPlanningTemplate =
+      sourceSquad.id === NEXUS_PLAN_SQUAD_ID ||
+      (isMissionRuntimeSquadId(sourceSquad.id) &&
+        sourceSquad.runtimeSourceSquadId === NEXUS_PLAN_SQUAD_ID &&
+        sourceSquad.runtimeSourceSquadRevisionHash !== undefined);
+    return cameFromPlanningTemplate
+      ? this.#resolveSquad(NEXUS_STORY_IMPLEMENTATION_SQUAD_ID)
+      : sourceSquad;
   }
 
   updateMissionFromRenderer(
@@ -503,7 +594,9 @@ export class RendererMissionAuthority {
         );
       }
       if (current.status === "blocked" || current.status === "failed") {
-        throw new Error("blocked/failed mission lifecycle is immutable until explicit resume");
+        throw new Error(
+          "blocked/failed mission lifecycle is immutable until explicit resume",
+        );
       }
       if (
         expectedFence === undefined ||
@@ -514,10 +607,7 @@ export class RendererMissionAuthority {
         );
       }
     }
-    if (
-      patch.milestones &&
-      current.intentContract
-    ) {
+    if (patch.milestones && current.intentContract) {
       throw new Error(
         "mission milestones are derived from the intent contract and main-owned",
       );
@@ -540,7 +630,9 @@ export class RendererMissionAuthority {
     const current = this.#stores.forScope(scope).missions.get(missionId);
     if (!current) throw new Error("mission not found");
     if (patch.status !== "blocked" && patch.status !== "failed") {
-      throw new Error("only blocked/failed demotion can request native confirmation");
+      throw new Error(
+        "only blocked/failed demotion can request native confirmation",
+      );
     }
     if (
       current.status === "done" ||
@@ -554,7 +646,9 @@ export class RendererMissionAuthority {
       patch.intentContract !== undefined ||
       patch.intentVersion !== undefined
     ) {
-      throw new Error("intent fields are only mutable via intent authority APIs");
+      throw new Error(
+        "intent fields are only mutable via intent authority APIs",
+      );
     }
     const description = patch.description ?? current.description;
     assertMissionAuthorityTitle(patch.title ?? current.title);
@@ -632,8 +726,7 @@ export class RendererMissionAuthority {
       suite.handoffs.list({
         missionId: mission.id,
         includeDelivered: true,
-      }).length > 0 ||
-      suite.tasks.list(mission.id).length > 0;
+      }).length > 0 || suite.tasks.list(mission.id).length > 0;
     if (hasDurableActivity) {
       throw new Error(
         "missão com atividade durável é preservada: panes, handoffs, tasks e receipts não podem ser apagados",
@@ -693,7 +786,9 @@ export class RendererMissionAuthority {
     // prepare-project is ONLY granted by prepareProjectFromRenderer — never via submit.
     const rawPolicy = input.contextPolicy;
     const contextPolicy =
-      rawPolicy === "none" || rawPolicy === "minimal" || rawPolicy === "on-demand"
+      rawPolicy === "none" ||
+      rawPolicy === "minimal" ||
+      rawPolicy === "on-demand"
         ? rawPolicy
         : "on-demand";
     const canReplacePlannedMilestones =
@@ -765,7 +860,9 @@ export class RendererMissionAuthority {
       // dispatchable objective yet. Keep the mission human-waiting so recovery
       // and handoff supervisors cannot mistake it for authorized work.
       const intentState =
-        needsFutureEvidence && !evidenceAttached ? "awaiting_goal" : compiled.to;
+        needsFutureEvidence && !evidenceAttached
+          ? "awaiting_goal"
+          : compiled.to;
       const status = missionStatusForIntent(intentState) ?? current.status;
       updated = missions.update(input.missionId, {
         description: contract.goal,
@@ -797,10 +894,12 @@ export class RendererMissionAuthority {
       squadId: updated.squadId,
       intentState: updated.intentState ?? "intent_compiling",
       intentVersion: nextVersion,
-      reason:
-        missionGoalNeedsFutureEvidence(contract.goal, input.evidenceAttached === true)
-          ? "awaiting_evidence"
-          : risk,
+      reason: missionGoalNeedsFutureEvidence(
+        contract.goal,
+        input.evidenceAttached === true,
+      )
+        ? "awaiting_evidence"
+        : risk,
     });
     return updated;
   }
@@ -948,11 +1047,16 @@ export class RendererMissionAuthority {
       throw new Error("mission is terminal");
     }
     const contract = current.intentContract;
-    if (!contract?.goal?.trim() || isPrepareProjectPlaceholderGoal(contract.goal)) {
+    if (
+      !contract?.goal?.trim() ||
+      isPrepareProjectPlaceholderGoal(contract.goal)
+    ) {
       throw new Error("intent_required: compile a real goal before approval");
     }
     if (contract.intentVersion !== current.intentVersion) {
-      throw new Error("stale_intent: contract intent version does not match the mission");
+      throw new Error(
+        "stale_intent: contract intent version does not match the mission",
+      );
     }
     const requestedAttachmentPaths =
       input.attachmentPaths === undefined
@@ -974,10 +1078,18 @@ export class RendererMissionAuthority {
     const reviewedAttachmentSnapshots = attachments.snapshots;
     const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
     if (!squad) {
-      throw new Error("squad_required: saved squad is unavailable for approval");
+      throw new Error(
+        "squad_required: saved squad is unavailable for approval",
+      );
     }
     const squadSnapshot = snapshotSquadAuthority(squad);
-    const orchestratorRuntime = this.#runtimeForSquad(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(
+      squad,
+      (contract.lane ?? "standard") === "standard",
+    );
+    const orchestratorEvidence = missionOrchestratorEvidence(
+      orchestratorRuntime.adapterId,
+    );
     // The approval dialog shows a bounded summary; squad instructions and
     // capabilities are pinned by the squad hash, not displayed. They must
     // still be free of invisible control characters (they can surface in
@@ -991,7 +1103,10 @@ export class RendererMissionAuthority {
       ...deniedTools,
       ...reviewedAttachments,
       ...attachmentSnapshotReviewStrings(reviewedAttachmentSnapshots),
-      ...missionOrchestratorRuntimeReviewStrings(orchestratorRuntime),
+      ...missionOrchestratorRuntimeReviewStrings(
+        orchestratorRuntime,
+        orchestratorEvidence,
+      ),
     ]);
     assertVisibleAuthorityText(squadAuthorityReviewStrings(squadSnapshot));
     const approvalSnapshot = {
@@ -1000,6 +1115,7 @@ export class RendererMissionAuthority {
       attachmentSnapshots: reviewedAttachmentSnapshots,
       squadRevisionHash: squadSnapshot.hash,
       orchestratorRuntime,
+      orchestratorEvidence,
     };
     return Object.freeze({
       missionId: current.id,
@@ -1014,10 +1130,13 @@ export class RendererMissionAuthority {
       evidenceAttached,
       attachmentPaths: Object.freeze(reviewedAttachments),
       attachmentSnapshots: Object.freeze(
-        reviewedAttachmentSnapshots.map((snapshot) => Object.freeze({ ...snapshot })),
+        reviewedAttachmentSnapshots.map((snapshot) =>
+          Object.freeze({ ...snapshot }),
+        ),
       ),
       squad: squadSnapshot,
       orchestratorRuntime: Object.freeze({ ...orchestratorRuntime }),
+      orchestratorEvidence,
       intentVersion: current.intentVersion ?? contract.intentVersion,
       budgets: Object.freeze({ ...contract.budgets }),
       fence: missionAuthorityFence(current, approvalSnapshot),
@@ -1028,7 +1147,9 @@ export class RendererMissionAuthority {
     owner: WebContents,
     input: RendererMissionApproveIntentInput,
     expectedFence?: string,
+    approvalReviewSha256?: string,
   ): Mission {
+    const reviewReceipt = validateApprovalReviewSha256(approvalReviewSha256);
     const scope = requireRendererWorkspaceScope(owner);
     const missions = this.#stores.forScope(scope).missions;
     const current = missions.get(input.missionId);
@@ -1055,14 +1176,21 @@ export class RendererMissionAuthority {
     const evidenceAttached =
       (input.evidenceAttached === undefined
         ? current.intentContract?.evidenceAttached === true
-        : input.evidenceAttached === true) ||
-      attachmentPaths.length > 0;
+        : input.evidenceAttached === true) || attachmentPaths.length > 0;
     const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
     if (!squad) {
-      throw new Error("squad_required: saved squad is unavailable for approval");
+      throw new Error(
+        "squad_required: saved squad is unavailable for approval",
+      );
     }
     const squadSnapshot = snapshotSquadAuthority(squad);
-    const orchestratorRuntime = this.#runtimeForSquad(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(
+      squad,
+      (current.intentContract?.lane ?? "standard") === "standard",
+    );
+    const orchestratorEvidence = missionOrchestratorEvidence(
+      orchestratorRuntime.adapterId,
+    );
     if (
       expectedFence !== undefined &&
       missionAuthorityFence(current, {
@@ -1071,6 +1199,7 @@ export class RendererMissionAuthority {
         attachmentSnapshots: attachments.snapshots,
         squadRevisionHash: squadSnapshot.hash,
         orchestratorRuntime,
+        orchestratorEvidence,
       }) !== expectedFence
     ) {
       throw new Error(
@@ -1084,7 +1213,11 @@ export class RendererMissionAuthority {
       const approved = transitionIntentState({ from, event: "approve" });
       if (!approved.ok) throw new Error(approved.reason);
       nextState = approved.to;
-    } else if (from === "awaiting_goal" || from === "draft" || from === "legacy") {
+    } else if (
+      from === "awaiting_goal" ||
+      from === "draft" ||
+      from === "legacy"
+    ) {
       // Plan step can still surface a compiled contract while the mission shell
       // is human-waiting (e.g. evidence false-positive, soft-restore, or
       // prepare-project). Explicit "Começar" with a real goal should dispatch
@@ -1095,12 +1228,7 @@ export class RendererMissionAuthority {
           "intent_required: descreva o objetivo e compile o plano antes de começar",
         );
       }
-      if (
-        missionGoalNeedsFutureEvidence(
-          goal,
-          evidenceAttached,
-        )
-      ) {
+      if (missionGoalNeedsFutureEvidence(goal, evidenceAttached)) {
         throw new Error(`evidence_required: ${MISSION_EVIDENCE_WAIT_MESSAGE}`);
       }
       // Synthetic compile_ok: contract already exists; advance to ready_to_start.
@@ -1108,7 +1236,9 @@ export class RendererMissionAuthority {
     } else if (from !== "ready_to_start") {
       if (from === "dispatched" || from === "executing") {
         if (!hasCurrentDispatchAuthority(current)) {
-          throw new Error("approval_required: current intent is not authorized");
+          throw new Error(
+            "approval_required: current intent is not authorized",
+          );
         }
         if (
           !sameMissionOrchestratorRuntime(
@@ -1120,20 +1250,16 @@ export class RendererMissionAuthority {
             "approval_required: orchestrator runtime changed; revise and approve again",
           );
         }
-        this.#continueMainOwnedBootstrap(scope, current.id);
-        return current;
+        return this.#continueMainOwnedBootstrap(scope, current.id) ?? current;
       }
       throw new Error(
         `approval_required: cannot dispatch from intent state ${from}`,
       );
     }
-    if (nextState === "ready_to_start") {
-      const started = transitionIntentState({
-        from: nextState,
-        event: "start",
-      });
-      if (!started.ok) throw new Error(started.reason);
-      nextState = started.to;
+    if (nextState !== "ready_to_start") {
+      throw new Error(
+        `approval_required: cannot preflight from intent state ${nextState}`,
+      );
     }
 
     if (!current.intentContract?.goal) {
@@ -1172,7 +1298,10 @@ export class RendererMissionAuthority {
         : {}),
       intentVersion: contractVersion,
       approvedAt,
-      dispatchedAt: approvedAt,
+      approvalReviewSha256: reviewReceipt,
+      // Approval authorizes Main to seal the deterministic plan; it does not
+      // authorize a provider, scheduler or worker effect yet.
+      dispatchedAt: undefined,
       acceptanceCriteria: [...current.intentContract.acceptanceCriteria],
       budgets: { ...current.intentContract.budgets },
       deniedTools: current.intentContract.deniedTools
@@ -1181,9 +1310,12 @@ export class RendererMissionAuthority {
       squadRevisionHash: squadSnapshot.hash,
       orchestratorRuntime: { ...orchestratorRuntime },
     };
-    const status = missionStatusForIntent(nextState) ?? "running";
+    // Approval is not launch. Keep the mission pending while the synchronous
+    // main-owned planner proves a sealed task receipt. Only a successful
+    // preflight may publish `running`; otherwise the durable transition is
+    // pending → blocked and the UI never celebrates a fleet that did not start.
     const updated = missions.update(input.missionId, {
-      status,
+      status: "pending",
       intentState: nextState,
       intentVersion: contractVersion,
       intentContract: contract,
@@ -1206,14 +1338,135 @@ export class RendererMissionAuthority {
       intentVersion: contractVersion,
       reason: "user_start",
     });
-    this.#continueMainOwnedBootstrap(scope, updated.id);
-    return updated;
+    return (
+      this.#continueMainOwnedBootstrap(scope, updated.id, {
+        promoteToRunning: true,
+        approvedPreflight: {
+          intentVersion: contractVersion,
+          approvedAt,
+          approvalReviewSha256: reviewReceipt,
+        },
+      }) ?? updated
+    );
   }
 
   #continueMainOwnedBootstrap(
     scope: ProjectExecutionScope,
     missionId: string,
-  ): void {
+    options: {
+      promoteToRunning?: boolean;
+      approvedPreflight?: {
+        readonly intentVersion: number;
+        readonly approvedAt: number;
+        readonly approvalReviewSha256?: string;
+      };
+    } = {},
+  ): Mission | null {
+    // Guided Planner is a synchronous main-owned preflight: no provider,
+    // kickoff or scheduler effect may start while the current approved intent
+    // lacks its immutable task receipt.
+    try {
+      this.#ensureMissionPlanBeforeBootstrap(scope, missionId);
+    } catch (error) {
+      const missions = this.#stores.forScope(scope).missions;
+      const current = missions.get(missionId);
+      if (!current) {
+        throw new Error(
+          "guided_plan_preflight_failed: a missão desapareceu antes do bloqueio durável",
+          { cause: error },
+        );
+      }
+      const detail = (error instanceof Error ? error.message : String(error))
+        .trim()
+        .slice(0, 2_048);
+      const note =
+        `${GUIDED_PLAN_BLOCK_MARKER}\n` +
+        `## Execução não iniciada\nO Nexus não conseguiu selar uma tarefa ` +
+        `segura antes de abrir qualquer CLI. ${detail || "Preflight sem detalhe."} ` +
+        `CTA: ${GUIDED_PLAN_BLOCK_CTA}.`;
+      const description = current.description.includes(GUIDED_PLAN_BLOCK_MARKER)
+        ? current.description
+        : [current.description.trim(), note]
+            .filter(Boolean)
+            .join("\n\n")
+            .slice(0, 65_536);
+      const blocked = missions.update(missionId, {
+        ...missionBlockPatch("technical"),
+        description,
+      });
+      if (!blocked) {
+        throw new Error(
+          "guided_plan_preflight_failed: o plano falhou e o bloqueio durável não pôde ser persistido",
+          { cause: error },
+        );
+      }
+      emitMissionIntentEvent({
+        name: "intent_gate_denied",
+        missionId: blocked.id,
+        squadId: blocked.squadId,
+        intentState: blocked.intentState,
+        intentVersion: blocked.intentVersion,
+        reason: "guided_plan_preflight_failed",
+      });
+      console.warn(
+        `[mission-authority] guided plan blocked ${missionId}:`,
+        error,
+      );
+      // The durable store already carries the actionable blocked snapshot.
+      // Reject this one-shot IPC so the renderer stops before resolving
+      // conflicting orchestrators or performing any other post-approval work.
+      throw new Error(
+        `guided_plan_preflight_blocked: ${detail || "preflight sem detalhe"}`,
+        { cause: error },
+      );
+    }
+    let ready: Mission | null = null;
+    if (options.promoteToRunning) {
+      const missions = this.#stores.forScope(scope).missions;
+      const current = missions.get(missionId);
+      const contract = current?.intentContract;
+      const expected = options.approvedPreflight;
+      if (
+        !current ||
+        !contract ||
+        !expected ||
+        current.status !== "pending" ||
+        current.intentState !== "ready_to_start" ||
+        current.intentVersion !== expected.intentVersion ||
+        contract.intentVersion !== expected.intentVersion ||
+        contract.approvedAt !== expected.approvedAt ||
+        contract.approvalReviewSha256 !== expected.approvalReviewSha256 ||
+        contract.dispatchedAt !== undefined ||
+        !hasCurrentApprovedDispatchContract(current)
+      ) {
+        throw new Error(
+          "guided_plan_preflight_stale: a aprovação mudou antes do despacho",
+        );
+      }
+      const started = transitionIntentState({
+        from: current.intentState,
+        event: "start",
+      });
+      if (!started.ok) throw new Error(started.reason);
+      ready = missions.update(missionId, {
+        status: "running",
+        intentState: started.to,
+        intentContract: {
+          ...contract,
+          dispatchedAt: Date.now(),
+        },
+      });
+      if (!ready) {
+        throw new Error(
+          "guided_plan_preflight_failed: o plano foi selado, mas a missão desapareceu antes do bootstrap",
+        );
+      }
+      if (!hasCurrentDispatchAuthority(ready)) {
+        throw new Error(
+          "guided_plan_preflight_failed: o receipt foi selado, mas a autoridade de despacho não foi persistida",
+        );
+      }
+    }
     try {
       void this.#requestMissionOrchestratorBootstrap(scope, missionId).catch(
         (error) => {
@@ -1233,6 +1486,7 @@ export class RendererMissionAuthority {
         error,
       );
     }
+    return ready;
   }
 
   /**
@@ -1244,8 +1498,30 @@ export class RendererMissionAuthority {
     owner: WebContents,
     input: { missionId: string },
   ): RendererMissionAuthorityCandidate {
+    return this.#planPromotionCandidate(owner, input);
+  }
+
+  /**
+   * Main-only second read after plan-v1 teardown. The expected snapshot was
+   * selected before the native review; this method reloads that exact durable
+   * handoff without asking the revoked session to redeliver anything.
+   */
+  planPromotionCandidateAfterTeardownFromMain(
+    owner: WebContents,
+    input: { missionId: string },
+    expectedPlan: PromotedPlanSnapshot,
+  ): RendererMissionAuthorityCandidate {
+    return this.#planPromotionCandidate(owner, input, expectedPlan);
+  }
+
+  #planPromotionCandidate(
+    owner: WebContents,
+    input: { missionId: string },
+    expectedPlan?: PromotedPlanSnapshot,
+  ): RendererMissionAuthorityCandidate {
     const scope = requireRendererWorkspaceScope(owner);
-    const current = this.#stores.forScope(scope).missions.get(input.missionId);
+    const stores = this.#stores.forScope(scope);
+    const current = stores.missions.get(input.missionId);
     if (!current) throw new Error("mission not found");
     if (current.status === "done" || current.status === "failed") {
       throw new Error("mission is terminal");
@@ -1265,12 +1541,36 @@ export class RendererMissionAuthority {
     const deniedTools = contract.deniedTools ? [...contract.deniedTools] : [];
     const attachments = this.#attachmentsForApproval(contract.attachmentPaths);
     const attachmentPaths = attachments.paths;
-    const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
+    const squad = this.#executionSquadForPlanPromotion(current);
     if (!squad) {
-      throw new Error("squad_required: saved squad is unavailable for promotion");
+      throw new Error(
+        "squad_required: saved squad is unavailable for promotion",
+      );
     }
     const squadSnapshot = snapshotSquadAuthority(squad);
-    const orchestratorRuntime = this.#runtimeForSquad(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(squad, true, true);
+    const orchestratorEvidence = missionOrchestratorEvidence(
+      orchestratorRuntime.adapterId,
+    );
+    const promotedPlan =
+      expectedPlan === undefined
+        ? selectPhysicalPlanHandoff({
+            mission: current,
+            handoffs: stores.handoffs,
+          })
+        : revalidatePhysicalPlanHandoff({
+            mission: current,
+            expected: expectedPlan,
+            handoffs: stores.handoffs,
+          });
+    if (
+      expectedPlan !== undefined &&
+      current.orchestratorSessionId !== undefined
+    ) {
+      throw new Error(
+        "promotion_runtime_reappeared: a sessão plan voltou após o teardown",
+      );
+    }
     assertNativeMissionReviewable([
       contract.goal,
       ...acceptanceCriteria,
@@ -1278,7 +1578,10 @@ export class RendererMissionAuthority {
       ...attachmentPaths,
       ...attachmentSnapshotReviewStrings(attachments.snapshots),
       ...squadAuthorityReviewStrings(squadSnapshot),
-      ...missionOrchestratorRuntimeReviewStrings(orchestratorRuntime),
+      ...missionOrchestratorRuntimeReviewStrings(
+        orchestratorRuntime,
+        orchestratorEvidence,
+      ),
     ]);
     return Object.freeze({
       missionId: current.id,
@@ -1297,6 +1600,8 @@ export class RendererMissionAuthority {
       ),
       squad: squadSnapshot,
       orchestratorRuntime: Object.freeze({ ...orchestratorRuntime }),
+      orchestratorEvidence,
+      promotedPlan,
       intentVersion: current.intentVersion ?? contract.intentVersion,
       budgets: Object.freeze({ ...defaultBudgetsForRisk(risk) }),
       fence: missionAuthorityFence(current, {
@@ -1305,6 +1610,8 @@ export class RendererMissionAuthority {
         attachmentSnapshots: attachments.snapshots,
         squadRevisionHash: squadSnapshot.hash,
         orchestratorRuntime,
+        orchestratorEvidence,
+        promotedPlan,
       }),
     });
   }
@@ -1312,10 +1619,14 @@ export class RendererMissionAuthority {
   promotePlanLaneFromRenderer(
     owner: WebContents,
     input: { missionId: string },
-    expectedFence?: string,
+    expectedFence: string,
+    expectedPlan: PromotedPlanSnapshot,
+    approvalReviewSha256?: string,
   ): Mission {
+    const reviewReceipt = validateApprovalReviewSha256(approvalReviewSha256);
     const scope = requireRendererWorkspaceScope(owner);
-    const missions = this.#stores.forScope(scope).missions;
+    const stores = this.#stores.forScope(scope);
+    const missions = stores.missions;
     const current = missions.get(input.missionId);
     if (!current) throw new Error("mission not found");
     if (current.status === "done" || current.status === "failed") {
@@ -1330,21 +1641,37 @@ export class RendererMissionAuthority {
     if (!contract.goal?.trim()) {
       throw new Error("intent_required: plan mission has empty goal");
     }
-    const squad = current.squadId ? this.#resolveSquad(current.squadId) : null;
+    if (current.orchestratorSessionId !== undefined) {
+      throw new Error(
+        "promotion_runtime_live: a sessão plan precisa estar fisicamente encerrada",
+      );
+    }
+    const promotedPlan = revalidatePhysicalPlanHandoff({
+      mission: current,
+      expected: expectedPlan,
+      handoffs: stores.handoffs,
+    });
+    const squad = this.#executionSquadForPlanPromotion(current);
     if (!squad) {
-      throw new Error("squad_required: saved squad is unavailable for promotion");
+      throw new Error(
+        "squad_required: saved squad is unavailable for promotion",
+      );
     }
     const squadSnapshot = snapshotSquadAuthority(squad);
-    const orchestratorRuntime = this.#runtimeForSquad(squad);
+    const orchestratorRuntime = this.#runtimeForSquad(squad, true, true);
+    const orchestratorEvidence = missionOrchestratorEvidence(
+      orchestratorRuntime.adapterId,
+    );
     const attachments = this.#attachmentsForApproval(contract.attachmentPaths);
     if (
-      expectedFence !== undefined &&
       missionAuthorityFence(current, {
         evidenceAttached: contract.evidenceAttached === true,
         attachmentPaths: contract.attachmentPaths ?? [],
         attachmentSnapshots: attachments.snapshots,
         squadRevisionHash: squadSnapshot.hash,
         orchestratorRuntime,
+        orchestratorEvidence,
+        promotedPlan,
       }) !== expectedFence
     ) {
       throw new Error(
@@ -1360,8 +1687,13 @@ export class RendererMissionAuthority {
       intentVersion: nextVersion,
       risk,
       budgets: defaultBudgetsForRisk(risk),
-      approvedAt: contract.approvedAt ?? now,
-      dispatchedAt: now,
+      // The native promotion click approves revision v+1, but it does not
+      // authorize the still-live plan-v1 PTY to inherit code authority. Keep
+      // the new revision non-executable until main has physically closed v1,
+      // sealed the v2 plan and started a freshly sealed orchestrator.
+      approvedAt: now,
+      approvalReviewSha256: reviewReceipt,
+      dispatchedAt: undefined,
       acceptanceCriteria: [...contract.acceptanceCriteria],
       deniedTools: contract.deniedTools ? [...contract.deniedTools] : undefined,
       attachmentPaths: contract.attachmentPaths
@@ -1372,26 +1704,19 @@ export class RendererMissionAuthority {
         : undefined,
       squadRevisionHash: squadSnapshot.hash,
       orchestratorRuntime: { ...orchestratorRuntime },
+      promotedPlan: {
+        ...promotedPlan,
+        physicalReceipt: { ...promotedPlan.physicalReceipt },
+        artifacts: structuredClone(promotedPlan.artifacts),
+      },
     };
-    // Stay dispatched/executing if already working; otherwise ready_to_start
-    // so the operator can press start again with full code authority.
-    const intentState =
-      current.intentState === "dispatched" ||
-      current.intentState === "executing" ||
-      current.intentState === "validating"
-        ? current.intentState
-        : "ready_to_start";
-    const status =
-      missionStatusForIntent(intentState) ??
-      (intentState === "ready_to_start" ? "pending" : current.status);
-    const updated = missions.update(input.missionId, {
-      intentContract: nextContract,
-      intentVersion: nextVersion,
-      intentState,
-      status,
-      milestones: normalizeMilestones(contract.acceptanceCriteria),
-    });
-    if (!updated) throw new Error("mission not found");
+    const intentState = "ready_to_start" as const;
+    const updated = missions.commitPlanPromotionRevision(
+      input.missionId,
+      current,
+      squad.id,
+      nextContract,
+    );
     bumpMissionPromptIntent(scope, updated.id, nextVersion);
     emitMissionIntentEvent({
       name: "plan_approved",
@@ -1512,9 +1837,7 @@ export class RendererMissionAuthority {
         input.squadId,
       );
       if (!consumed) {
-        throw new Error(
-          "failed to consume the orchestrator promotion grant",
-        );
+        throw new Error("failed to consume the orchestrator promotion grant");
       }
       emitMissionIntentEvent({
         name: "task_dispatched",
@@ -1598,9 +1921,7 @@ export class RendererMissionAuthority {
           intentVersion: 1,
           now,
           profile:
-            input.squadId === PET_STUDIO_SQUAD_ID
-              ? 'pet-studio'
-              : 'standard',
+            input.squadId === PET_STUDIO_SQUAD_ID ? "pet-studio" : "standard",
         }),
         squadRevisionHash: snapshotSquadAuthority(savedSquad).hash,
       };

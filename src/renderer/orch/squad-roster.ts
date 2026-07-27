@@ -1,22 +1,25 @@
-import type { AdapterInfo } from '../../shared/types';
-import type { SquadAgent } from '../../shared/orch-types';
-import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
+import type { AdapterInfo } from "../../shared/types";
+import type { SquadAgent } from "../../shared/orch-types";
+import { defaultSquadModelForAdapter } from "../../shared/squad-model-defaults";
 
-const LEGACY_ORCHESTRATOR_CLI = 'claude';
+const LEGACY_ORCHESTRATOR_CLI = "claude";
 
 const WORKER_CLI_ORDER = [
-  'codex',
-  'omp',
-  'agy',
-  'grok',
-  'kimi',
-  'opencode',
-  'aider',
-  'glm',
-  'longcat',
+  "codex",
+  "omp",
+  "agy",
+  "grok",
+  "kimi",
+  "opencode",
+  "aider",
+  "glm",
+  "longcat",
 ];
 
-type RosterAdapter = Pick<AdapterInfo, 'id' | 'installed'> & {
+type RosterAdapter = Pick<
+  AdapterInfo,
+  "id" | "installed" | "autonomousWorkspaceWriteCapable"
+> & {
   enabled?: boolean;
 };
 
@@ -36,17 +39,15 @@ function sortWorkerCliIds(ids: string[]): string[] {
   });
 }
 
-export function workerCliPool(
-  adapters: RosterAdapter[],
-  orchestratorAdapterId = LEGACY_ORCHESTRATOR_CLI,
-): string[] {
+export function workerCliPool(adapters: RosterAdapter[]): string[] {
   const candidates = adapters.filter(
     (adapter) =>
-      adapter.id !== orchestratorAdapterId && adapter.enabled !== false,
+      adapter.id !== LEGACY_ORCHESTRATOR_CLI &&
+      adapter.enabled !== false &&
+      adapter.installed &&
+      adapter.autonomousWorkspaceWriteCapable === true,
   );
-  const installed = candidates.filter((adapter) => adapter.installed);
-  const source = installed.length > 0 ? installed : candidates;
-  return sortWorkerCliIds(unique(source.map((adapter) => adapter.id)));
+  return sortWorkerCliIds(unique(candidates.map((adapter) => adapter.id)));
 }
 
 export function balanceSquadRosterCli(
@@ -54,11 +55,11 @@ export function balanceSquadRosterCli(
   adapters: RosterAdapter[],
   orchestratorAdapterId = LEGACY_ORCHESTRATOR_CLI,
 ): SquadAgent[] {
-  const pool = workerCliPool(adapters, orchestratorAdapterId);
+  const pool = workerCliPool(adapters);
   let workerIndex = 0;
 
   return agents.map((agent) => {
-    if (agent.category === 'orchestrator') {
+    if (agent.category === "orchestrator") {
       return agent.cli === orchestratorAdapterId
         ? {
             ...agent,

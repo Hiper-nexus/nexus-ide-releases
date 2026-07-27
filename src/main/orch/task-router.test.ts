@@ -98,7 +98,7 @@ describe('routeTask', () => {
     );
     expect(decision!.tier).toBe('critical');
     expect(decision!.adapterId).toBe('claude');
-    expect(decision!.model).toBe('claude-opus-4-8');
+    expect(decision!.model).toBe('claude-opus-5');
     expect(decision!.effort).toBe('xhigh');
     expect(decision!.reason).toContain('evitou');
   });
@@ -202,7 +202,7 @@ describe('routeTask', () => {
     );
     expect(decision!.tier).toBe('critical');
     expect(decision!.adapterId).toBe('claude');
-    expect(decision!.model).toBe('claude-opus-4-8');
+    expect(decision!.model).toBe('claude-opus-5');
   });
 
   it('keeps stronger critical candidates ahead of cheap fallback models', () => {
@@ -213,7 +213,7 @@ describe('routeTask', () => {
 
     expect(decision!.tier).toBe('critical');
     expect(decision!.adapterId).toBe('claude');
-    expect(decision!.model).toBe('claude-opus-4-8');
+    expect(decision!.model).toBe('claude-opus-5');
     expect(decision!.reason).toContain('evitou');
   });
 

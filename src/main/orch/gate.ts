@@ -1,5 +1,14 @@
 import { randomBytes } from "node:crypto";
+import {
+  PET_STUDIO_SQUAD,
+  PET_STUDIO_SQUAD_ID,
+} from "../../shared/pet-studio";
 import type { ProjectExecutionScope } from "../../shared/types";
+import {
+  internalPrevcReviewerAllowsTool,
+  isExactInternalPrevcReviewerProfile,
+  type InternalPrevcReviewerAuthority,
+} from "./prevc-reviewer-profile";
 
 /**
  * Skill-gate — the server-side half of the dual enforcement described in
@@ -9,7 +18,7 @@ import type { ProjectExecutionScope } from "../../shared/types";
  * whether the client-side PreToolUse hook was bypassed.
  *
  * Allowlist semantics: `null` = unrestricted, and
- * handoff_submit / handoff_list / ToolSearch are always allowed.
+ * handoff_submit / handoff_list / handoff_ack / ToolSearch are always allowed.
  */
 
 export type GateRole = "orchestrator" | "worker" | "user";
@@ -28,6 +37,24 @@ export interface AgentGateContext {
   agentName?: string;
   /** Concrete CLI/provider identity, captured by main at spawn. */
   providerId?: string;
+  /**
+   * Main-owned marker that this bearer belongs to a writable mission Codex
+   * worker. Main-process MCP handlers use it to avoid bypassing that worker's
+   * native confinement, independently of PREVC and allowlist availability.
+   */
+  governedNativeProvider?: "codex";
+  /**
+   * Narrow main-owned exception for the canonical single-session Pet Studio.
+   * It permits only nexus_image_generate through the orchestrator role gate;
+   * native confinement, allowlists, mission intent and confirmation still run.
+   */
+  petStudioMediaAuthority?: true;
+  /**
+   * Main-owned proof that this exact read-only worker profile belongs to an
+   * active Nexus PREVC reviewer. It is derived at the physical spawn boundary,
+   * never from prompt text or a caller-supplied MCP argument.
+   */
+  internalPrevcReviewerAuthority?: InternalPrevcReviewerAuthority;
   readOnly?: boolean;
   /** Immutable project/checkout authority captured before the PTY starts. */
   scope: Readonly<ProjectExecutionScope>;
@@ -46,6 +73,7 @@ export const MAX_STOP_ATTEMPTS = 3;
 const ALWAYS_ALLOWED = new Set([
   "handoff_submit",
   "handoff_list",
+  "handoff_ack",
   "worker_heartbeat",
   "toolsearch",
 ]);
@@ -117,11 +145,16 @@ export function isToolAllowedForRole(
   role: GateRole,
   allowedTools: string[] | null,
   toolName: string,
+  petStudioMediaAuthority = false,
 ): boolean {
+  const canonical = canonicalToolName(toolName);
   if (
     role === "orchestrator" &&
-    ORCHESTRATOR_DENIED_TOOLS.has(canonicalToolName(toolName))
-  ) return false;
+    ORCHESTRATOR_DENIED_TOOLS.has(canonical) &&
+    !(petStudioMediaAuthority && canonical === "image_generate")
+  ) {
+    return false;
+  }
   return isToolAllowed(allowedTools, toolName);
 }
 
@@ -173,6 +206,14 @@ export interface MintTokenInput {
   agentName?: string;
   workerIncarnationId?: string;
   providerId?: string;
+  governedNativeProvider?: "codex";
+  petStudioMediaAuthority?: true;
+  /** Main-owned spawn proof consumed only while minting the Pet marker. */
+  petStudioAuthoritySource?: "legacy-squad" | "persisted-pane";
+  petStudioSquadId?: string;
+  internalPrevcReviewerAuthority?: InternalPrevcReviewerAuthority;
+  /** Main-owned active-session/draft proof consumed only while minting. */
+  internalPrevcReviewerAuthoritySource?: "verified-active-profile";
   readOnly?: boolean;
   scope: ProjectExecutionScope;
   executionScope?: ProjectExecutionScope;
@@ -198,6 +239,72 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
     throw new Error('invalid worker incarnation authority');
   }
   if (
+    input.governedNativeProvider !== undefined &&
+    (
+      input.providerId !== input.governedNativeProvider ||
+      input.role !== 'worker' ||
+      !input.missionId?.trim() ||
+      input.readOnly === true
+    )
+  ) {
+    throw new Error(
+      'governed native provider requires a matching writable mission worker',
+    );
+  }
+  if (input.petStudioMediaAuthority) {
+    const maker = PET_STUDIO_SQUAD.agents[0];
+    const validSource =
+      input.petStudioSquadId === PET_STUDIO_SQUAD_ID &&
+      (input.petStudioAuthoritySource === "legacy-squad" ||
+        (input.petStudioAuthoritySource === "persisted-pane" &&
+          Boolean(input.missionId?.trim())));
+    const sameCapabilities = (
+      actual: readonly string[] | null | undefined,
+      expected: readonly string[] | null | undefined,
+    ): boolean =>
+      actual !== null &&
+      actual !== undefined &&
+      expected !== null &&
+      expected !== undefined &&
+      actual.length === expected.length &&
+      expected.every((capability, index) => actual[index] === capability);
+    if (
+      !maker ||
+      !validSource ||
+      input.providerId !== "codex" ||
+      input.role !== "orchestrator" ||
+      input.agentName !== maker.agentName ||
+      input.readOnly === true ||
+      !sameCapabilities(input.allowedTools, maker.allowedTools) ||
+      !sameCapabilities(input.allowedSkills, maker.allowedSkills)
+    ) {
+      throw new Error(
+        "Pet Studio media authority requires the exact writable main-owned Codex maker profile",
+      );
+    }
+  }
+  if (
+    input.internalPrevcReviewerAuthority !== undefined &&
+    (
+      input.internalPrevcReviewerAuthoritySource !==
+        "verified-active-profile" ||
+      !isExactInternalPrevcReviewerProfile({
+        authority: input.internalPrevcReviewerAuthority,
+        role: input.role,
+        missionId: input.missionId,
+        agentName: input.agentName,
+        providerId: input.providerId,
+        readOnly: input.readOnly,
+        allowedTools: input.allowedTools,
+        allowedSkills: input.allowedSkills,
+      })
+    )
+  ) {
+    throw new Error(
+      "internal PREVC reviewer authority requires an exact active main-owned profile",
+    );
+  }
+  if (
     executionScope.installationId !== input.scope.installationId ||
     executionScope.projectId !== input.scope.projectId ||
     executionScope.checkoutId !== input.scope.checkoutId
@@ -212,11 +319,25 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
     workerIncarnationId,
     agentName: input.agentName,
     providerId: input.providerId,
+    governedNativeProvider: input.governedNativeProvider,
+    petStudioMediaAuthority: input.petStudioMediaAuthority,
+    internalPrevcReviewerAuthority:
+      input.internalPrevcReviewerAuthority
+        ? Object.freeze({ ...input.internalPrevcReviewerAuthority })
+        : undefined,
     readOnly: input.readOnly === true,
     scope: Object.freeze({ ...input.scope }),
     executionScope: Object.freeze({ ...executionScope }),
-    allowedTools: input.allowedTools ?? null,
-    allowedSkills: input.allowedSkills ?? null,
+    // Snapshot caller-owned arrays at the mint boundary. Mutating spawn
+    // metadata afterwards must never widen an already-issued bearer.
+    allowedTools:
+      input.allowedTools === null || input.allowedTools === undefined
+        ? null
+        : [...input.allowedTools],
+    allowedSkills:
+      input.allowedSkills === null || input.allowedSkills === undefined
+        ? null
+        : [...input.allowedSkills],
     stopAttempts: 0,
     handoffSubmitted: false,
   };
@@ -224,6 +345,45 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
   contexts.set(ctx.token, ctx);
   abortByToken.set(ctx.token, new AbortController());
   return ctx;
+}
+
+/**
+ * Exact MCP vocabulary for a main-owned internal reviewer. This check runs in
+ * addition to the ordinary allowlist so the global handoff escape hatches
+ * cannot widen a reviewer token after its PREVC stage has ended.
+ */
+export function isInternalPrevcReviewerToolAllowed(
+  ctx: Pick<
+    AgentGateContext,
+    "internalPrevcReviewerAuthority" | "allowedTools"
+  >,
+  toolName: string,
+): boolean {
+  if (!ctx.internalPrevcReviewerAuthority) return true;
+  return internalPrevcReviewerAllowsTool(
+    ctx.internalPrevcReviewerAuthority,
+    ctx.allowedTools,
+    toolName,
+  );
+}
+
+/** Claude-family hook spelling of the same exact reviewer vocabulary. */
+export function isInternalPrevcReviewerHookToolAllowed(
+  ctx: Pick<
+    AgentGateContext,
+    "internalPrevcReviewerAuthority" | "allowedTools"
+  >,
+  hookToolName: string,
+): boolean {
+  if (!ctx.internalPrevcReviewerAuthority) return true;
+  const normalized = hookToolName.trim().toLowerCase();
+  // Native discovery is not an MCP effect and is required to find the seven
+  // namespaced tools. No other native tool receives this exception.
+  if (normalized === "toolsearch") return true;
+  const nexusTool = normalized.startsWith("mcp__nexus__")
+    ? normalized.slice("mcp__nexus__".length)
+    : normalized;
+  return isInternalPrevcReviewerToolAllowed(ctx, nexusTool);
 }
 
 export function executionScopeFor(

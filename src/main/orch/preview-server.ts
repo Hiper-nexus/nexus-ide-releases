@@ -73,6 +73,7 @@ class ForbiddenPreviewPathError extends Error {}
 const runningById = new Map<string, RunningPreview>();
 const previewIdByKey = new Map<string, string>();
 const startingByKey = new Map<string, Promise<PreviewStartResult>>();
+const stoppingById = new Map<string, Promise<boolean>>();
 
 function previewKey(root: string, scope: PreviewScope): string {
   return JSON.stringify([scope.projectId, scope.checkoutId, root]);
@@ -267,11 +268,51 @@ async function createPreview(
 
 export function stopPreview(id: string, scope: PreviewScope): boolean {
   const entry = runningById.get(id);
-  if (!entry || !isOwnedBy(entry, scope)) return false;
+  if (!entry || !isOwnedBy(entry, scope) || stoppingById.has(id)) return false;
   runningById.delete(id);
   if (previewIdByKey.get(entry.key) === id) previewIdByKey.delete(entry.key);
   entry.server.close();
   return true;
+}
+
+/**
+ * Main-owned teardown used by privileged automated review. Unlike the public
+ * tool response, this does not report success until the loopback listener has
+ * emitted physical close proof.
+ */
+export async function stopPreviewWithProof(
+  id: string,
+  scope: PreviewScope,
+): Promise<boolean> {
+  const entry = runningById.get(id);
+  if (!entry || !isOwnedBy(entry, scope)) return false;
+  const pending = stoppingById.get(id);
+  if (pending) return pending;
+  const stopping = (async () => {
+    await new Promise<void>((resolve, reject) => {
+      try {
+        entry.server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+        entry.server.closeIdleConnections?.();
+      } catch (error) {
+        reject(error);
+      }
+    });
+    if (runningById.get(id) === entry) runningById.delete(id);
+    if (previewIdByKey.get(entry.key) === id) previewIdByKey.delete(entry.key);
+    return true;
+  })();
+  stoppingById.set(id, stopping);
+  try {
+    return await stopping;
+  } finally {
+    if (stoppingById.get(id) === stopping) stoppingById.delete(id);
+  }
 }
 
 export function stopAllPreviews(): void {
@@ -279,6 +320,7 @@ export function stopAllPreviews(): void {
   runningById.clear();
   previewIdByKey.clear();
   startingByKey.clear();
+  stoppingById.clear();
 }
 
 export function listPreviews(scope: PreviewScope): PreviewDescriptor[] {
@@ -321,6 +363,34 @@ export function isRunningPreviewUrlForScope(
       const relative = path.relative(root, entry.root);
       return !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);
     });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stronger form used by the automated design-review capability: both the
+ * opaque main-minted preview id and its exact loopback URL must still resolve
+ * to one running preview rooted inside the reviewer's execution checkout.
+ */
+export function isRunningPreviewDescriptorForScope(
+  id: string,
+  raw: string | URL,
+  scope: ProjectExecutionScope,
+): boolean {
+  const entry = runningById.get(id);
+  if (!entry || !isOwnedBy(entry, scope)) return false;
+  try {
+    const url = typeof raw === 'string' ? new URL(raw) : raw;
+    const expected = describePreview(entry).url;
+    if (url.href !== expected) return false;
+    const root = fs.realpathSync.native(path.resolve(scope.rootRealPath));
+    const relative = path.relative(root, entry.root);
+    return (
+      !path.isAbsolute(relative) &&
+      relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`)
+    );
   } catch {
     return false;
   }

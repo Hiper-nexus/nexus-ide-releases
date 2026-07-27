@@ -1,4 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 const EXECUTABLE_GIT_CONFIG_PATTERN =
@@ -15,6 +18,8 @@ const ALLOWED_GIT_ENV_OVERRIDES = new Set([
 export interface GitRunOptions {
   readonly allowFailure?: boolean;
   readonly env?: NodeJS.ProcessEnv;
+  /** Nexus-owned temporary index; never points at a workspace/user index. */
+  readonly privateIndexFile?: string;
   readonly timeoutMs?: number;
 }
 
@@ -30,6 +35,45 @@ export interface GitRunner {
     args: readonly string[],
     options?: GitRunOptions,
   ): GitResult;
+}
+
+export interface PrivateGitIndex {
+  readonly path: string;
+  dispose(): void;
+}
+
+export function createPrivateGitIndex(): PrivateGitIndex {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'nexus-git-index-'),
+  );
+  const directoryRealPath = fs.realpathSync(directory);
+  const indexPath = path.join(directoryRealPath, 'index');
+  return Object.freeze({
+    path: indexPath,
+    dispose: () => {
+      fs.rmSync(directoryRealPath, { recursive: true, force: true });
+    },
+  });
+}
+
+function assertPrivateIndexPath(indexFile: string): string {
+  const resolved = path.resolve(indexFile);
+  const parent = path.dirname(resolved);
+  const tempRoot = fs.realpathSync(os.tmpdir());
+  const parentReal = fs.realpathSync(parent);
+  const parentStat = fs.lstatSync(parent);
+  if (
+    path.basename(resolved) !== 'index' ||
+    !path.basename(parent).startsWith('nexus-git-index-') ||
+    parentStat.isSymbolicLink() ||
+    !parentStat.isDirectory() ||
+    parentReal !== parent ||
+    (parentReal !== tempRoot &&
+      !parentReal.startsWith(`${tempRoot}${path.sep}`))
+  ) {
+    throw new Error('unsafe private Git index path');
+  }
+  return resolved;
 }
 
 export class GitCommandError extends Error {
@@ -73,6 +117,9 @@ export class ProcessGitRunner implements GitRunner {
         throw new GitCommandError(`unsafe Git environment override: ${key}`, args);
       }
       env[key] = value;
+    }
+    if (options.privateIndexFile) {
+      env.GIT_INDEX_FILE = assertPrivateIndexPath(options.privateIndexFile);
     }
     env.GIT_CONFIG_NOSYSTEM = '1';
     env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null';

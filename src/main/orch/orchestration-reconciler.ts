@@ -41,6 +41,7 @@ interface ParticipantState {
   readonly participant: OrchestrationReconcileParticipant;
   dueAt: number;
   inFlight: ParticipantFlight | null;
+  lastWarningFingerprint: string | null;
 }
 
 interface ParticipantFlight {
@@ -51,6 +52,21 @@ interface ParticipantFlight {
 
 const DEFAULT_PARTICIPANT_TIMEOUT_MS = 30_000;
 const DEFAULT_SHUTDOWN_SETTLEMENT_TIMEOUT_MS = 30_000;
+
+function warningFingerprint(message: string, error: unknown): string {
+  let detail: string;
+  try {
+    detail =
+      error instanceof Error
+        ? `${error.name}:${error.message}`
+        : typeof error === 'string'
+          ? error
+          : JSON.stringify(error);
+  } catch {
+    detail = String(error);
+  }
+  return `${message}\0${detail ?? String(error)}`.slice(0, 8_192);
+}
 
 export function createOrchestrationReconciler(
   participants: readonly OrchestrationReconcileParticipant[],
@@ -103,6 +119,7 @@ export function createOrchestrationReconciler(
       participant,
       dueAt: Number.POSITIVE_INFINITY,
       inFlight: null,
+      lastWarningFingerprint: null,
     });
   }
 
@@ -157,6 +174,17 @@ export function createOrchestrationReconciler(
     return error;
   };
 
+  const reportParticipantWarning = (
+    state: ParticipantState,
+    message: string,
+    error: unknown,
+  ) => {
+    const fingerprint = warningFingerprint(message, error);
+    if (state.lastWarningFingerprint === fingerprint) return;
+    state.lastWarningFingerprint = fingerprint;
+    reportWarning(message, error);
+  };
+
   const startParticipant = (
     state: ParticipantState,
     runAt: number,
@@ -181,10 +209,15 @@ export function createOrchestrationReconciler(
     );
     flight.settlement = outcome.then((settled) => {
       if (!settled.ok && flight.detachedReason === null) {
-        reportWarning(
+        reportParticipantWarning(
+          state,
           `[orchestration-reconciler] participant ${state.participant.id} failed:`,
           settled.error,
         );
+      } else if (settled.ok) {
+        // A healthy pass closes the incident. If the same failure returns
+        // later it is a new episode and deserves one fresh diagnostic.
+        state.lastWarningFingerprint = null;
       }
       if (state.inFlight !== flight) return;
       state.inFlight = null;
@@ -263,7 +296,8 @@ export function createOrchestrationReconciler(
           const flight = startParticipant(state, runAt);
           const outcome = await waitForParticipant(state, flight);
           if (outcome === 'timed-out') {
-            reportWarning(
+            reportParticipantWarning(
+              state,
               `[orchestration-reconciler] participant ${state.participant.id} timed out:`,
               timeoutError(
                 state.participant,

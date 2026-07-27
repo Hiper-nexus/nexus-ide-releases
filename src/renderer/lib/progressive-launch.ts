@@ -59,7 +59,7 @@ export function applyProgressiveLaunchIfPending(): boolean {
   }
 
   if (plan.mode === 'missions' && !plan.openWithoutAi) {
-    useMissionWizardStore.getState().openForMission();
+    useMissionWizardStore.getState().openForAgentic();
     useHomeStore.getState().hide();
   } else if (plan.mode === 'board') {
     const orch = useOrchStore.getState();
