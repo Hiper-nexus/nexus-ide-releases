@@ -1696,11 +1696,24 @@ static bool direct_parent_is_apple_perl(
  * this helper becomes a new responsibility root. The provider is born only
  * afterwards and can inherit only the new helper-owned responsibility.
  */
+static void launch_auth_diag(const char *reason, pid_t a, pid_t b) {
+  /* File-backed so redacted PTY tails still leave a local diagnosis path. */
+  FILE *out = fopen("/tmp/nexus-pty-launch-auth-fail.log", "a");
+  if (out == NULL) {
+    return;
+  }
+  fprintf(out, "launch-auth-fail reason=%s a=%d b=%d self=%d\n", reason,
+          (int)a, (int)b, (int)getpid());
+  fclose(out);
+}
+
 static bool consume_main_owned_launch_authorization(
     const struct responsibility_api *api) {
   struct process_record self;
   if (!load_stable_process_record(api, getpid(), &self) ||
       self.responsible_pid <= 0 || self.responsible_pid == self.pid) {
+    launch_auth_diag("self_or_self_responsible", self.pid,
+                     self.responsible_pid);
     return false;
   }
 
@@ -1711,6 +1724,7 @@ static bool consume_main_owned_launch_authorization(
       responsible_record.responsible_pid != responsible_record.pid ||
       responsible_record.responsible_unique_id !=
           self.responsible_unique_id) {
+    launch_auth_diag("responsible_not_root", self.responsible_pid, 0);
     return false;
   }
   CFDictionaryRef responsible =
@@ -1725,11 +1739,13 @@ static bool consume_main_owned_launch_authorization(
     CFRelease(responsible);
   }
   if (responsible_is_supervisor) {
+    launch_auth_diag("responsible_is_supervisor", self.responsible_pid, 0);
     return false;
   }
 
   enum nexus_helper_signing_mode mode = current_helper_signing_mode();
   if (mode == NEXUS_HELPER_SIGNING_INVALID) {
+    launch_auth_diag("helper_signing_invalid", 0, 0);
     return false;
   }
 
@@ -1746,12 +1762,23 @@ static bool consume_main_owned_launch_authorization(
 
   char main_path[PATH_MAX];
   char utility_path[PATH_MAX];
-  if (!has_apple_stage_zero ||
-      !derive_packaged_code_paths(main_path, utility_path) ||
-      !packaged_nexus_process_matches(api, stage_zero.ppid, main_path,
-                                      utility_path) ||
-      !packaged_nexus_process_matches(api, self.responsible_pid, main_path,
+  if (!has_apple_stage_zero) {
+    launch_auth_diag("parent_not_apple_perl", getppid(), 0);
+    return false;
+  }
+  if (!derive_packaged_code_paths(main_path, utility_path)) {
+    launch_auth_diag("derive_packaged_paths", 0, 0);
+    return false;
+  }
+  if (!packaged_nexus_process_matches(api, stage_zero.ppid, main_path,
                                       utility_path)) {
+    launch_auth_diag("stage0_ppid_not_packaged", stage_zero.ppid,
+                     stage_zero.pid);
+    return false;
+  }
+  if (!packaged_nexus_process_matches(api, self.responsible_pid, main_path,
+                                      utility_path)) {
+    launch_auth_diag("responsible_not_packaged", self.responsible_pid, 0);
     return false;
   }
   return true;
