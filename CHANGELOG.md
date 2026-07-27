@@ -4,6 +4,15 @@
 
 Data: 2026-07-26
 
+### Hotfix de release (quit / smoke)
+
+- **Quit com shell vivo deixa de travar na prova PTY**: o shutdown do app
+  usa uma janela generosa de término e, quando o host Darwin já entregou a
+  prova física de ausência, o main adota essa prova mesmo se o evento de
+  exit chegar atrasado no port. O smoke empacotado aguarda até 45s pelo
+  `shutdown-complete` em vez de matar o app no meio da prova.
+
+
 ### Da ideia à entrega em um único fluxo
 
 - **Uma aprovação com autoridade real**: salvar o squad deixou de abrir um

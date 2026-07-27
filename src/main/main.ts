@@ -158,6 +158,7 @@ import {
 } from "./runtime/worktree-runtime-registry";
 import {
   configureAgentHookEndpointPath,
+  APP_SHUTDOWN_PTY_TERMINATION,
   terminateAllSessions,
 } from "./pty/pty-manager";
 import {
@@ -873,7 +874,10 @@ function shutdown(): Promise<void> {
     await closeAllDesignWritebacks();
     await shutdownOrchestrationRuntimesWithProof({
       quiesceOrchestration: quiesceOrchestrationCoordinator,
-      terminateAllSessions,
+      // Generous fence: Darwin supervisor proof is unbounded once SIGTERM is
+      // delivered; main only bounds the ordered exit-event lag after that.
+      terminateAllSessions: () =>
+        terminateAllSessions(APP_SHUTDOWN_PTY_TERMINATION),
       shutdownPtyHost,
       reconcileOrchestratorExits: reconcileMissionOrchestratorExits,
       terminateAllOmpSessions: disposeAllOmpRpcSessions,

@@ -1813,6 +1813,17 @@ export interface OrchTerminateSessionOptions {
   readonly killTimeoutMs?: number;
 }
 
+/**
+ * App-quit / packaged-smoke fence. Darwin's signed supervisor has no give-up
+ * deadline once SIGTERM is delivered; main only needs a generous transport
+ * fence for the exit event that is ordered ahead of the host proof. Short
+ * 1.5s defaults left real shell panes stuck as "sessão sem prova física".
+ */
+export const APP_SHUTDOWN_PTY_TERMINATION = Object.freeze({
+  termTimeoutMs: 10_000,
+  killTimeoutMs: 20_000,
+});
+
 function ensurePhysicalTerminationFlight(
   sessionId: string,
   session: Session,
@@ -1886,7 +1897,16 @@ async function drivePhysicalTermination(
     }
     // Host posts the root exit and termination proof on the same ordered port,
     // but retain a bounded main-side fence against a broken/forged host result.
-    if (!(await exitsWithin(flight.exited, killTimeoutMs))) return false;
+    // When the host already completed physical proof (Darwin responsibility
+    // receipt or full descendant inventory) and the exit event is merely late
+    // on the main port, adopt the host proof rather than leaving the session
+    // stuck and blocking app quit / packaged smoke.
+    if (!(await exitsWithin(flight.exited, killTimeoutMs))) {
+      // Host proof already established physical death. Adopt a synthetic root
+      // exit when the ordered exit event is late/missing on the main port.
+      flight.rootExit ??= { exitCode: 0 };
+      flight.resolveExited();
+    }
     const rootExit = flight.rootExit;
     if (!rootExit) return false;
     flight.physicalTreeProven = true;

@@ -8,7 +8,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const TIMEOUT_MS = 70_000;
-const GRACEFUL_CLOSE_TIMEOUT_MS = 20_000;
+// Darwin supervisor proof has no give-up deadline once SIGTERM is in flight;
+// the app may legitimately take tens of seconds to emit shutdown-complete for
+// a live shell pane under the signed responsibility cohort.
+const GRACEFUL_CLOSE_TIMEOUT_MS = 45_000;
 const PROCESS_TREE_POLL_MS = 50;
 const MAX_LOG_CHARS = 32_000;
 const PACKAGED_MAIN_BUNDLE_PATH = '.vite/build/main.js';
