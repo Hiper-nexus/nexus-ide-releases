@@ -478,6 +478,33 @@ suite("Darwin supervisor one-shot launch authorization", () => {
   );
 
   packagedSuite(
+    "executes the release smoke through its exact zero-effect self-probe",
+    () => {
+      const identity = codeSignatureMetadata(packagedHelper);
+      const helperArguments = stageZeroArguments(packagedHelper, [
+        "supervise-packaged-smoke",
+        "--identifier",
+        identity.identifier,
+        "--team-id",
+        identity.teamIdentifier,
+        "--cdhash",
+        identity.cdHash,
+        "--",
+        packagedHelper,
+        DARWIN_PTY_PROVIDER_PROBE_MODE,
+      ]);
+      const result = spawnSync(
+        packagedMain,
+        ["/usr/bin/perl", ...helperArguments],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      expect(result).toMatchObject({ status: 0, signal: null });
+      expect(result.stdout).toContain(DARWIN_PTY_PROVIDER_PROBE_RECEIPT);
+    },
+    20_000,
+  );
+
+  packagedSuite(
     "rejects a same-Team arbitrary responsibility before provider spawn",
     async () => {
       const stageZeroPidFile = path.join(

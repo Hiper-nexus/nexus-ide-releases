@@ -58,8 +58,7 @@ export interface DarwinAdHocSmokeExecutableSeal {
 }
 
 export type DarwinPtyExecutableSeal =
-  | DarwinTrustedExecutableSeal
-  | DarwinAdHocSmokeExecutableSeal;
+  DarwinTrustedExecutableSeal | DarwinAdHocSmokeExecutableSeal;
 
 /**
  * Stage zero is source passed directly in argv to Apple's root/SIP-owned Perl
@@ -551,9 +550,7 @@ function hasExactNexusRequirement(
   return (
     cdHash !== undefined &&
     CDHASH_PATTERN.test(cdHash) &&
-    metadata.designatedRequirement
-      .toLowerCase()
-      .includes(`cdhash h"${cdHash}"`)
+    metadata.designatedRequirement.toLowerCase().includes(`cdhash h"${cdHash}"`)
   );
 }
 
@@ -563,11 +560,7 @@ export function satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
   utilityHelper: DarwinCodeSignatureMetadata,
 ): boolean {
   return (
-    hasExactNexusRequirement(
-      helper,
-      DARWIN_PTY_SUPERVISOR_IDENTIFIER,
-      null,
-    ) &&
+    hasExactNexusRequirement(helper, DARWIN_PTY_SUPERVISOR_IDENTIFIER, null) &&
     hasExactNexusRequirement(app, NEXUS_APP_BUNDLE_IDENTIFIER, null) &&
     hasExactNexusRequirement(
       utilityHelper,
@@ -707,10 +700,7 @@ function assertAppOwnedSignature(
   const utilityHelper = readCodeSignatureMetadata(utilityFile.realPath);
   const releaseSigned =
     satisfiesPackagedDarwinSupervisorSignaturePolicy(helper, app) &&
-    hasExactNexusRequirement(
-      utilityHelper,
-      NEXUS_UTILITY_HELPER_IDENTIFIER,
-    );
+    hasExactNexusRequirement(utilityHelper, NEXUS_UTILITY_HELPER_IDENTIFIER);
   const localSmokeAdHoc =
     trustProfile === DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE &&
     satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
@@ -968,10 +958,48 @@ function localAdHocSmokeSupervisorArgs(
   ];
 }
 
+function packagedReleaseSmokeSupervisorArgs(
+  runtime: DarwinPtySupervisorRuntime,
+  seal: DarwinTrustedExecutableSeal,
+  file: string,
+  args: readonly string[],
+): string[] {
+  if (
+    !runtime.packaged ||
+    runtime.trustProfile !== DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE ||
+    file !== seal.executablePath ||
+    args.length !== 1 ||
+    args[0] !== DARWIN_PTY_PROVIDER_PROBE_MODE ||
+    !path.isAbsolute(seal.executablePath) ||
+    seal.executablePath.includes("\0") ||
+    seal.identifier !== DARWIN_PTY_SUPERVISOR_IDENTIFIER ||
+    seal.teamIdentifier !== NEXUS_APPLE_TEAM_ID ||
+    !CDHASH_PATTERN.test(seal.cdHash) ||
+    !SHA256_PATTERN.test(seal.sha256)
+  ) {
+    throw new Error(
+      "Darwin release trust is restricted to the packaged smoke provider probe",
+    );
+  }
+  return [
+    "supervise-packaged-smoke",
+    "--identifier",
+    seal.identifier,
+    "--team-id",
+    seal.teamIdentifier,
+    "--cdhash",
+    seal.cdHash,
+    "--",
+    seal.executablePath,
+    DARWIN_PTY_PROVIDER_PROBE_MODE,
+  ];
+}
+
 /**
- * Direct main-process half of the packaged smoke. Team-signed artifacts keep
- * the production authenticated launcher; only an explicitly profiled,
- * entirely ad-hoc package reaches the zero-effect local smoke mode.
+ * Direct main-process half of the packaged smoke. This does not launch a CLI:
+ * it can only trace-exec the exact packaged helper into its zero-effect probe.
+ * Real provider launches remain on the authorization-consuming authenticated
+ * launcher; the smoke has no mission authority to consume.
  */
 export function packagedDarwinPtySmokeSupervisorCommand(
   runtime: DarwinPtySupervisorRuntime,
@@ -1003,19 +1031,13 @@ export function packagedDarwinPtySmokeSupervisorCommand(
   }
   const helperArgs =
     seal.teamIdentifier === null
-      ? localAdHocSmokeSupervisorArgs(
-          runtime,
-          seal,
-          seal.executablePath,
-          [DARWIN_PTY_PROVIDER_PROBE_MODE],
-        )
-      : authenticatedSupervisorArgs(seal, [
+      ? localAdHocSmokeSupervisorArgs(runtime, seal, seal.executablePath, [
+          DARWIN_PTY_PROVIDER_PROBE_MODE,
+        ])
+      : packagedReleaseSmokeSupervisorArgs(runtime, seal, seal.executablePath, [
           DARWIN_PTY_PROVIDER_PROBE_MODE,
         ]);
-  return stageZeroSupervisorCommand(
-    helper,
-    helperArgs,
-  );
+  return stageZeroSupervisorCommand(helper, helperArgs);
 }
 
 function stageZeroSupervisorCommand(
@@ -1134,12 +1156,7 @@ export function supervisedPtyCommand(
     return packagedDarwinPtySmokeSupervisorCommand(runtime, seal);
   }
   if (seal?.teamIdentifier === null) {
-    const helperArgs = localAdHocSmokeSupervisorArgs(
-      runtime,
-      seal,
-      file,
-      args,
-    );
+    const helperArgs = localAdHocSmokeSupervisorArgs(runtime, seal, file, args);
     return stageZeroSupervisorCommand(
       resolveDarwinPtySupervisorSeal(runtime),
       helperArgs,

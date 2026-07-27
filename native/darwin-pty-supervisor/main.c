@@ -864,6 +864,27 @@ static bool parse_local_smoke_invocation(
   return true;
 }
 
+/*
+ * A distributable package uses the same zero-effect self-probe as the local
+ * package smoke, but carries the Nexus Developer ID Team. This parser is
+ * deliberately separate from the general authenticated launcher: it admits
+ * only the exact, Team-signed helper as its own provider in provider-probe
+ * mode. It can therefore prove the packaged PTY route without minting a
+ * mission launch authorization for an arbitrary provider.
+ */
+static bool parse_packaged_smoke_invocation(
+    int argc, char **argv, struct sealed_code_identity *identity,
+    int *command_index) {
+  if (!parse_sealed_invocation(argc, argv, identity, command_index) ||
+      argc != *command_index + 2 ||
+      strcmp(identity->identifier, NEXUS_SUPERVISOR_IDENTIFIER) != 0 ||
+      strcmp(identity->team_identifier, NEXUS_TEAM_IDENTIFIER) != 0 ||
+      strcmp(argv[*command_index + 1], "provider-probe") != 0) {
+    return false;
+  }
+  return true;
+}
+
 static int executable_path(char output[PATH_MAX]) {
   uint32_t buffer_size = PATH_MAX;
   if (_NSGetExecutablePath(output, &buffer_size) != 0) {
@@ -883,7 +904,8 @@ static int executable_path(char output[PATH_MAX]) {
 
 static int bootstrap_disclaimed_supervisor_mode(int argc, char **argv,
                                                 const char *internal_mode,
-                                                int command_index) {
+                                                int command_index,
+                                                bool require_launch_authorization) {
   if (argc <= command_index || argv[command_index][0] == '\0') {
     fputs("nexus-pty-supervisor: invalid bootstrap invocation\n", stderr);
     return NEXUS_EXIT_USAGE;
@@ -907,7 +929,8 @@ static int bootstrap_disclaimed_supervisor_mode(int argc, char **argv,
           stderr);
     return NEXUS_EXIT_PRIVATE_API;
   }
-  if (!consume_main_owned_launch_authorization(&api)) {
+  if (require_launch_authorization &&
+      !consume_main_owned_launch_authorization(&api)) {
     fputs("nexus-pty-supervisor: launch authorization rejected before "
           "responsibility disclaim\n",
           stderr);
@@ -980,7 +1003,7 @@ static int bootstrap_disclaimed_supervisor(int argc, char **argv) {
     return NEXUS_EXIT_USAGE;
   }
   return bootstrap_disclaimed_supervisor_mode(argc, argv, "__run-disclaimed",
-                                              3);
+                                              3, true);
 }
 
 static int bootstrap_authenticated_supervisor(int argc, char **argv) {
@@ -995,7 +1018,7 @@ static int bootstrap_authenticated_supervisor(int argc, char **argv) {
     return NEXUS_EXIT_USAGE;
   }
   return bootstrap_disclaimed_supervisor_mode(
-      argc, argv, "__run-disclaimed-authenticated", command_index);
+      argc, argv, "__run-disclaimed-authenticated", command_index, true);
 }
 
 static int bootstrap_local_smoke_supervisor(int argc, char **argv) {
@@ -1009,7 +1032,27 @@ static int bootstrap_local_smoke_supervisor(int argc, char **argv) {
     return NEXUS_EXIT_USAGE;
   }
   return bootstrap_disclaimed_supervisor_mode(
-      argc, argv, "__run-disclaimed-local-smoke", command_index);
+      argc, argv, "__run-disclaimed-local-smoke", command_index, true);
+}
+
+static int bootstrap_packaged_smoke_supervisor(int argc, char **argv) {
+  struct sealed_code_identity identity;
+  int command_index = 0;
+  if (!parse_packaged_smoke_invocation(argc, argv, &identity, &command_index)) {
+    fprintf(stderr,
+            "usage: %s supervise-packaged-smoke --identifier "
+            NEXUS_SUPERVISOR_IDENTIFIER " --team-id " NEXUS_TEAM_IDENTIFIER
+            " --cdhash <40hex> -- <packaged-helper> provider-probe\n",
+            argv[0]);
+    return NEXUS_EXIT_USAGE;
+  }
+  /*
+   * This is a release-candidate health probe, not a provider launch. The
+   * parser above confines it to the verified self image and provider-probe;
+   * stage zero validates both exec images before any probe instruction runs.
+   */
+  return bootstrap_disclaimed_supervisor_mode(
+      argc, argv, "__run-disclaimed-packaged-smoke", command_index, false);
 }
 
 static bool install_signal_handlers(void) {
@@ -2169,6 +2212,35 @@ static int run_disclaimed_local_smoke_supervisor(int argc, char **argv) {
   return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity);
 }
 
+static int run_disclaimed_packaged_smoke_supervisor(int argc, char **argv) {
+  struct sealed_code_identity identity;
+  int command_index = 0;
+  if (!parse_packaged_smoke_invocation(argc, argv, &identity, &command_index)) {
+    fputs("nexus-pty-supervisor: invalid packaged smoke invocation\n", stderr);
+    return NEXUS_EXIT_USAGE;
+  }
+  char self[PATH_MAX];
+  char provider[PATH_MAX];
+  CFDictionaryRef live_helper = copy_live_signing_information(getpid());
+  bool live_helper_matches =
+      signing_information_matches(live_helper, &identity);
+  if (live_helper != NULL) {
+    CFRelease(live_helper);
+  }
+  if (!live_helper_matches ||
+      current_helper_signing_mode() != NEXUS_HELPER_SIGNING_PACKAGED ||
+      executable_path(self) != 0 ||
+      realpath(argv[command_index], provider) == NULL ||
+      strcmp(self, provider) != 0 ||
+      !has_suffix(self, NEXUS_PACKAGED_HELPER_SUFFIX)) {
+    fputs("nexus-pty-supervisor: packaged smoke requires the exact "
+          "Team-signed helper as its zero-effect provider\n",
+          stderr);
+    return NEXUS_EXIT_CODE_IDENTITY;
+  }
+  return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity);
+}
+
 static void print_usage(const char *program) {
   fprintf(stderr,
           "usage:\n"
@@ -2178,9 +2250,12 @@ static void print_usage(const char *program) {
           "<absolute-command> [args...]\n"
           "  %s supervise-local-smoke --cdhash <40hex> -- "
           "<packaged-helper> provider-probe\n"
+          "  %s supervise-packaged-smoke --identifier "
+          NEXUS_SUPERVISOR_IDENTIFIER " --team-id " NEXUS_TEAM_IDENTIFIER
+          " --cdhash <40hex> -- <packaged-helper> provider-probe\n"
           "  %s inventory [--responsible-unique-id <uint64>]\n"
           "  %s provider-probe\n",
-          program, program, program, program, program);
+          program, program, program, program, program, program);
 }
 
 int main(int argc, char **argv) {
@@ -2193,6 +2268,9 @@ int main(int argc, char **argv) {
   if (argc >= 2 && strcmp(argv[1], "supervise-local-smoke") == 0) {
     return bootstrap_local_smoke_supervisor(argc, argv);
   }
+  if (argc >= 2 && strcmp(argv[1], "supervise-packaged-smoke") == 0) {
+    return bootstrap_packaged_smoke_supervisor(argc, argv);
+  }
   if (argc >= 2 && strcmp(argv[1], "__run-disclaimed") == 0) {
     return run_disclaimed_supervisor(argc, argv);
   }
@@ -2201,6 +2279,10 @@ int main(int argc, char **argv) {
   }
   if (argc >= 2 && strcmp(argv[1], "__run-disclaimed-local-smoke") == 0) {
     return run_disclaimed_local_smoke_supervisor(argc, argv);
+  }
+  if (argc >= 2 &&
+      strcmp(argv[1], "__run-disclaimed-packaged-smoke") == 0) {
+    return run_disclaimed_packaged_smoke_supervisor(argc, argv);
   }
   if (argc >= 2 && strcmp(argv[1], "inventory") == 0) {
     return inventory_mode(argc, argv);
