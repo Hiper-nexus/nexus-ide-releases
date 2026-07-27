@@ -203,20 +203,24 @@ async function terminateDarwinResponsibilitySupervisor(
     return failedTerminationProof(error);
   }
   const observation = await entry.exitObservation;
-  if (!isProvenDarwinPtySupervisorExit(observation)) {
+  if (isProvenDarwinPtySupervisorExit(observation)) {
     return {
-      ok: false,
+      ok: true,
       rootExited: true,
-      descendantsExited: false,
-      error:
-        `O supervisor Darwin saiu por sinal ${observation.signal}; ` +
-        'a prova de responsabilidade não foi emitida.',
+      descendantsExited: true,
     };
   }
+  // Root is gone (exitObservation resolved). Surface rootExited so main can
+  // finish quit inventory even when the observation is non-canonical; do not
+  // claim descendantsExited without a proven receipt.
   return {
-    ok: true,
+    ok: false,
     rootExited: true,
-    descendantsExited: true,
+    descendantsExited: false,
+    error:
+      `O supervisor Darwin saiu sem recibo canônico ` +
+      `(exitCode=${String(observation.exitCode)}, ` +
+      `signal=${String(observation.signal ?? 'none')}).`,
   };
 }
 

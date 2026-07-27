@@ -783,6 +783,13 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     expect(isProvenDarwinPtySupervisorExit({ exitCode: 0, signal: 9 })).toBe(
       false,
     );
+    // Cooperative SIGTERM teardown may leave signal=15 with status 0.
+    expect(isProvenDarwinPtySupervisorExit({ exitCode: 0, signal: 15 })).toBe(
+      true,
+    );
+    expect(
+      isProvenDarwinPtySupervisorExit({ exitCode: 0, signal: "SIGTERM" }),
+    ).toBe(true);
     expect(
       isProvenDarwinPtySupervisorExit({ exitCode: null, signal: null }),
     ).toBe(false);

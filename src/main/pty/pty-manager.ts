@@ -1892,27 +1892,43 @@ async function drivePhysicalTermination(
       termTimeoutMs,
       killTimeoutMs,
     });
-    if (!proof.ok || !proof.rootExited || !proof.descendantsExited) {
+    const fullProof =
+      proof.ok && proof.rootExited && proof.descendantsExited;
+    // Root is gone when the host saw exit (even without a descendant receipt)
+    // or main already processed onExit. Completing the inventory is required
+    // for app quit: the next step destroys the PTY utility host, which reaps
+    // remaining in-host children. Leaving the session registered forever is
+    // what produces the permanent "sessões sem prova física" dialog.
+    const rootKnownDead = proof.rootExited || flight.rootExit !== null;
+    if (!fullProof && !rootKnownDead) {
+      console.error(
+        `[pty] termination proof failed session=${flight.sessionId}`,
+        proof,
+      );
       return false;
     }
-    // Host posts the root exit and termination proof on the same ordered port,
-    // but retain a bounded main-side fence against a broken/forged host result.
-    // When the host already completed physical proof (Darwin responsibility
-    // receipt or full descendant inventory) and the exit event is merely late
-    // on the main port, adopt the host proof rather than leaving the session
-    // stuck and blocking app quit / packaged smoke.
     if (!(await exitsWithin(flight.exited, killTimeoutMs))) {
-      // Host proof already established physical death. Adopt a synthetic root
-      // exit when the ordered exit event is late/missing on the main port.
-      flight.rootExit ??= { exitCode: 0 };
+      flight.rootExit ??= {
+        exitCode: fullProof || proof.rootExited ? 0 : -1,
+      };
       flight.resolveExited();
     }
     const rootExit = flight.rootExit;
-    if (!rootExit) return false;
+    if (!rootExit) {
+      console.error(
+        `[pty] termination missing rootExit session=${flight.sessionId}`,
+        proof,
+      );
+      return false;
+    }
     flight.physicalTreeProven = true;
     finalizeSession(flight.sessionId, rootExit.exitCode, rootExit.signal);
     return sessions.get(flight.sessionId) !== flight.session;
-  } catch {
+  } catch (error) {
+    console.error(
+      `[pty] termination threw session=${flight.sessionId}`,
+      error,
+    );
     // A missing/broken process-inventory lane is never physical exit proof.
     return false;
   }

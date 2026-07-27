@@ -360,23 +360,28 @@ const DARWIN_STAGE_ZERO_SIGNAL_EXIT_MAX = 159;
  * Stage zero relays a signal-killed helper as 128+signal. The signed helper
  * deliberately collapses proven provider statuses in that range to 125, so an
  * observed 129..159 can only be ambiguous/unproven and must remain fail-closed.
- * A direct signal on stage zero is rejected through the separate signal field.
+ *
+ * A normal exit status of 0 is accepted even when node-pty also surfaces
+ * SIGTERM (15): after cooperative stage-zero teardown the status is the
+ * proof channel, and a residual signal field must not block app quit.
+ * SIGKILL (9) on a zero status remains fail-closed — that is not cooperative.
  */
 export function isProvenDarwinPtySupervisorExit(
   observation: DarwinPtySupervisorExitObservation,
 ): boolean {
-  return (
-    Number.isInteger(observation.exitCode) &&
-    observation.exitCode! >= 0 &&
-    observation.exitCode! <= 255 &&
-    !(
-      observation.exitCode! >= DARWIN_STAGE_ZERO_SIGNAL_EXIT_MIN &&
-      observation.exitCode! <= DARWIN_STAGE_ZERO_SIGNAL_EXIT_MAX
-    ) &&
-    (observation.signal === undefined ||
-      observation.signal === null ||
-      observation.signal === 0)
-  );
+  if (!Number.isInteger(observation.exitCode)) return false;
+  const code = observation.exitCode!;
+  if (code < 0 || code > 255) return false;
+  if (
+    code >= DARWIN_STAGE_ZERO_SIGNAL_EXIT_MIN &&
+    code <= DARWIN_STAGE_ZERO_SIGNAL_EXIT_MAX
+  ) {
+    return false;
+  }
+  const signal = observation.signal;
+  if (signal === undefined || signal === null || signal === 0) return true;
+  if (code === 0 && (signal === 15 || signal === "SIGTERM")) return true;
+  return false;
 }
 
 export function currentDarwinPtySupervisorRuntime(
