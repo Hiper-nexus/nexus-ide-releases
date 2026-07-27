@@ -133,6 +133,7 @@ vi.mock("./darwin-pty-supervisor", () => ({
     if (darwinSupervisorTrust.error) throw darwinSupervisorTrust.error;
     return darwinSupervisorTrust.readPath;
   },
+  resolvePackagedDarwinLaunchAuthorizationReadPaths: () => [],
 }));
 
 import {

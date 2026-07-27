@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -17,7 +18,9 @@ import {
   DARWIN_PTY_PROVIDER_PROBE_MODE,
   DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
   DARWIN_PTY_STAGE_ZERO_SOURCE,
+  resolvePackagedDarwinLaunchAuthorizationReadPaths,
 } from "../src/main/pty/darwin-pty-supervisor.ts";
+import { buildMacosSeatbeltPlan } from "../src/main/runtime/process-sandbox.ts";
 
 const isDarwin = process.platform === "darwin";
 const suite = isDarwin ? describe : describe.skip;
@@ -43,6 +46,9 @@ let helper = "";
 let packagedHelper = "";
 let packagedMain = "";
 let packagedUtility = "";
+let packagedUtilityPlugin = "";
+let packagedUtilityGpu = "";
+let packagedUtilityRenderer = "";
 let sameTeamArbitrary = "";
 
 function codeSignatureMetadata(target) {
@@ -296,6 +302,33 @@ function buildPackagedAuthorizationFixtures() {
     "MacOS",
     "NexusIDE Helper",
   );
+  packagedUtilityPlugin = path.join(
+    appRoot,
+    "Contents",
+    "Frameworks",
+    "NexusIDE Helper (Plugin).app",
+    "Contents",
+    "MacOS",
+    "NexusIDE Helper (Plugin)",
+  );
+  packagedUtilityGpu = path.join(
+    appRoot,
+    "Contents",
+    "Frameworks",
+    "NexusIDE Helper (GPU).app",
+    "Contents",
+    "MacOS",
+    "NexusIDE Helper (GPU)",
+  );
+  packagedUtilityRenderer = path.join(
+    appRoot,
+    "Contents",
+    "Frameworks",
+    "NexusIDE Helper (Renderer).app",
+    "Contents",
+    "MacOS",
+    "NexusIDE Helper (Renderer)",
+  );
   packagedHelper = path.join(
     appRoot,
     "Contents",
@@ -306,6 +339,9 @@ function buildPackagedAuthorizationFixtures() {
   for (const target of [
     packagedMain,
     packagedUtility,
+    packagedUtilityPlugin,
+    packagedUtilityGpu,
+    packagedUtilityRenderer,
     packagedHelper,
     sameTeamArbitrary,
   ]) {
@@ -332,9 +368,15 @@ function buildPackagedAuthorizationFixtures() {
   ]);
   copyFileSync(unsigned, packagedMain);
   copyFileSync(unsigned, packagedUtility);
+  copyFileSync(unsigned, packagedUtilityPlugin);
+  copyFileSync(unsigned, packagedUtilityGpu);
+  copyFileSync(unsigned, packagedUtilityRenderer);
   copyFileSync(unsigned, sameTeamArbitrary);
   signFixture(packagedMain, "com.nexuside.app");
   signFixture(packagedUtility, "com.nexuside.app.helper");
+  signFixture(packagedUtilityPlugin, "com.nexuside.app.helper");
+  signFixture(packagedUtilityGpu, "com.nexuside.app.helper");
+  signFixture(packagedUtilityRenderer, "com.nexuside.app.helper");
   signFixture(sameTeamArbitrary, "com.nexuside.same-team-arbitrary");
 
   buildDarwinPtySupervisor({ output: packagedHelper });
@@ -472,6 +514,114 @@ suite("Darwin supervisor one-shot launch authorization", () => {
         { encoding: "utf8", timeout: 10_000 },
       );
       expect(result).toMatchObject({ status: 0, signal: null });
+      expect(result.stdout).toContain(DARWIN_PTY_PROVIDER_PROBE_RECEIPT);
+    },
+    20_000,
+  );
+
+  packagedSuite(
+    "keeps authenticated launch authorization readable inside Seatbelt",
+    () => {
+      const workspace = path.join(fixtureRoot, "seatbelt-workspace");
+      const sandbox = path.join(fixtureRoot, "seatbelt-runtime");
+      mkdirSync(workspace, { recursive: true });
+      mkdirSync(sandbox, { recursive: true });
+      const identity = codeSignatureMetadata(packagedHelper);
+      const helperArguments = stageZeroArguments(
+        packagedHelper,
+        authenticatedArguments(identity, packagedHelper, [
+          DARWIN_PTY_PROVIDER_PROBE_MODE,
+        ]),
+      );
+      const runtime = {
+        platform: "darwin",
+        packaged: true,
+        resourcesPath: path.dirname(packagedHelper),
+        cwd: workspace,
+        moduleDir: path.join(
+          path.dirname(path.dirname(packagedHelper)),
+          "app.asar",
+          ".vite",
+          "build",
+        ),
+      };
+      const launchAuthorizationReads =
+        resolvePackagedDarwinLaunchAuthorizationReadPaths(runtime);
+      expect(launchAuthorizationReads).toEqual([
+        realpathSync.native(
+          path.dirname(path.dirname(path.dirname(packagedHelper))),
+        ),
+      ]);
+
+      const oldMachOOnlyPlan = buildMacosSeatbeltPlan(
+        {
+          platform: "darwin",
+          executable: "/usr/bin/perl",
+          args: helperArguments,
+          cwd: workspace,
+          rootRealPath: workspace,
+          sandboxDir: sandbox,
+          env: { PATH: "/usr/bin:/bin" },
+          extraReadPaths: [
+            packagedHelper,
+            packagedMain,
+            packagedUtility,
+            packagedUtilityPlugin,
+            packagedUtilityGpu,
+            packagedUtilityRenderer,
+          ],
+        },
+        "/usr/bin/sandbox-exec",
+      );
+      const oldResult = spawnSync(
+        packagedMain,
+        [packagedUtility, oldMachOOnlyPlan.file, ...oldMachOOnlyPlan.args],
+        {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: oldMachOOnlyPlan.env,
+        },
+      );
+      expect(oldResult).toMatchObject({ status: 76, signal: null });
+      expect(oldResult.stderr).toContain(
+        "launch authorization rejected before responsibility disclaim",
+      );
+
+      const plan = buildMacosSeatbeltPlan(
+        {
+          platform: "darwin",
+          executable: "/usr/bin/perl",
+          args: helperArguments,
+          cwd: workspace,
+          rootRealPath: workspace,
+          sandboxDir: sandbox,
+          env: { PATH: "/usr/bin:/bin" },
+          extraReadPaths: [
+            packagedHelper,
+            ...launchAuthorizationReads,
+          ],
+        },
+        "/usr/bin/sandbox-exec",
+      );
+      const result = spawnSync(
+        packagedMain,
+        [packagedUtility, plan.file, ...plan.args],
+        {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: plan.env,
+        },
+      );
+      expect(
+        result.status,
+        JSON.stringify({
+          status: result.status,
+          signal: result.signal,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        }),
+      ).toBe(0);
+      expect(result.signal).toBe(null);
       expect(result.stdout).toContain(DARWIN_PTY_PROVIDER_PROBE_RECEIPT);
     },
     20_000,

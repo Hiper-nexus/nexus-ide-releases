@@ -156,6 +156,13 @@ validação. O processo vivo que autoriza o spawn precisa coincidir com o
 executável principal selado ou com o `NexusIDE Helper.app` exato. No segundo
 caso, seu pai vivo também precisa coincidir com o executável principal do mesmo
 bundle. Identificador, Team ID e CDHash são comparados em todos esses vínculos.
+Quando o provider fica sob o Seatbelt externo do Codex, o perfil concede leitura
+somente ao `.app` assinado que contém os executáveis Main/Helper usados nessa
+comparação. A raiz do bundle é necessária porque `SecStaticCodeCreateWithPath`
+e `SecStaticCodeCheckValidity` também consultam metadados e recursos selados da
+assinatura; liberar apenas os Mach-O falha fechado. O grant continua
+somente-leitura e cobre código imutável do próprio produto, sem relaxar
+identifier, Team, CDHash ou o vínculo de pai vivo.
 Os caminhos fixos do repositório existem apenas no modo de desenvolvimento
 explicitamente separado.
 

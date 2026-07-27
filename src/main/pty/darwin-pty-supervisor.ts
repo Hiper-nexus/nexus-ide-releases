@@ -17,6 +17,12 @@ export const NEXUS_APPLE_TEAM_ID = "35P5XL3JN6";
 const NEXUS_UTILITY_HELPER_BUNDLE_NAME = "NexusIDE Helper.app";
 const NEXUS_UTILITY_HELPER_EXECUTABLE_NAME = "NexusIDE Helper";
 const NEXUS_MAIN_EXECUTABLE_NAME = "nexus-ide";
+const NEXUS_ELECTRON_HELPER_EXECUTABLES = Object.freeze([
+  ["NexusIDE Helper.app", "NexusIDE Helper"],
+  ["NexusIDE Helper (Plugin).app", "NexusIDE Helper (Plugin)"],
+  ["NexusIDE Helper (GPU).app", "NexusIDE Helper (GPU)"],
+  ["NexusIDE Helper (Renderer).app", "NexusIDE Helper (Renderer)"],
+] as const);
 
 export interface DarwinPtySupervisorRuntime {
   readonly platform: NodeJS.Platform;
@@ -865,6 +871,63 @@ function resolveDarwinPtySupervisorSeal(
         }`,
     );
   }
+}
+
+/**
+ * Exact packaged code root read by the native launch-authorization gate.
+ *
+ * Governed Codex runs the stage-zero/helper chain inside Seatbelt. The native
+ * helper asks Security.framework to compare live Main/utility CDHashes with
+ * the static bundle images before it disclaims responsibility. Static-code
+ * validation also reads sealed bundle metadata, so granting only the Mach-O
+ * files is insufficient. The application bundle is immutable signed product
+ * code, not provider data; expose it read-only while preserving the native
+ * identifier, Team, CDHash and parent-chain checks.
+ */
+export function resolvePackagedDarwinLaunchAuthorizationReadPaths(
+  runtime: DarwinPtySupervisorRuntime,
+): string[] {
+  if (
+    runtime.platform !== "darwin" ||
+    !runtime.packaged ||
+    !runtime.resourcesPath ||
+    !path.isAbsolute(runtime.resourcesPath)
+  ) {
+    return [];
+  }
+  const resourcesRoot = fs.realpathSync(runtime.resourcesPath);
+  const contentsRoot = path.dirname(resourcesRoot);
+  const appRoot = path.dirname(contentsRoot);
+  if (
+    path.basename(resourcesRoot) !== "Resources" ||
+    path.basename(contentsRoot) !== "Contents" ||
+    path.extname(appRoot) !== ".app"
+  ) {
+    throw new Error("resourcesPath is not inside a macOS application bundle");
+  }
+
+  const candidates = [
+    path.join(contentsRoot, "MacOS", NEXUS_MAIN_EXECUTABLE_NAME),
+    ...NEXUS_ELECTRON_HELPER_EXECUTABLES.map(([bundleName, executableName]) =>
+      path.join(
+        contentsRoot,
+        "Frameworks",
+        bundleName,
+        "Contents",
+        "MacOS",
+        executableName,
+      ),
+    ),
+  ];
+  for (const candidate of candidates) {
+    const file = requireRegularExecutable(candidate);
+    if (file.realPath !== candidate) {
+      throw new Error(
+        "launch-authorization executable escaped its exact bundle path",
+      );
+    }
+  }
+  return [appRoot];
 }
 
 export function resolveDarwinPtySupervisor(

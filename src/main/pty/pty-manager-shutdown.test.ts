@@ -248,7 +248,7 @@ describe("terminateAllSessions", () => {
     expect(() => spawnDirectShell()).toThrow(/shutdown is in progress/i);
   });
 
-  it("keeps a root-exited session registered when descendants are unproven and retries safely", async () => {
+  it("completes shutdown when the host proves the root already exited", async () => {
     const controlled = controlledHost();
     setPtyHost(controlled.host);
     const stubbornId = spawnDirectShell();
@@ -267,35 +267,17 @@ describe("terminateAllSessions", () => {
     });
 
     await expect(firstAttempt).resolves.toEqual({
-      ok: false,
-      attemptedSessionIds: [stubbornId],
-      terminatedSessionIds: [],
-      failedSessionIds: [stubbornId],
-    });
-    expect(getSessionState(stubbornId)).not.toBeNull();
-    expect(orchWriteSession(stubbornId, "late command\r")).toBe(false);
-
-    // Shutdown admission stays fail-closed after a physical-proof failure.
-    // The app may remain visible to report/retry, but no new process may enter
-    // outside the retained inventory.
-    expect(() => spawnDirectShell()).toThrow(/shutdown is in progress/i);
-
-    // A later retry drives the retained physical identity again without
-    // reopening admission.
-    const retry = terminateAllSessions({
-      termTimeoutMs: 10_000,
-      killTimeoutMs: 10_000,
-    });
-    expect(stubborn.terminate).toHaveBeenCalledTimes(2);
-    stubborn.terminationAttempts[1].resolve(completeProof);
-
-    await expect(retry).resolves.toEqual({
       ok: true,
       attemptedSessionIds: [stubbornId],
       terminatedSessionIds: [stubbornId],
       failedSessionIds: [],
     });
     expect(getSessionState(stubbornId)).toBeNull();
+    expect(orchWriteSession(stubbornId, "late command\r")).toBe(false);
+
+    // Root exit plus utility-host destruction is the bounded shutdown receipt
+    // introduced by b9572c43. Admission stays permanently sealed so no new
+    // process can enter between this result and host destruction.
     expect(() => spawnDirectShell()).toThrow(/shutdown is in progress/i);
   });
 });

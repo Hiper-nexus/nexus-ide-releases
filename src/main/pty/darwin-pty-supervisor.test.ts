@@ -20,6 +20,7 @@ import {
   isProvenDarwinPtySupervisorExit,
   NEXUS_UTILITY_HELPER_IDENTIFIER,
   resolveDarwinPtySupervisor,
+  resolvePackagedDarwinLaunchAuthorizationReadPaths,
   resolvePackagedDarwinPtySmokeProviderSeal,
   satisfiesPackagedDarwinAdHocSmokeSignaturePolicy,
   satisfiesPackagedDarwinRuntimeOwnershipPolicy,
@@ -602,7 +603,7 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
           "/opt/vendor/codex",
           "--version",
         ],
-        2,
+        8,
       ),
     });
   });
@@ -971,6 +972,13 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     expect(() =>
       resolveDarwinPtySupervisor({ ...runtime, packaged: true }),
     ).toThrow(/Packaged Darwin/i);
+  });
+
+  it("returns no packaged launch-authorization reads in development", () => {
+    const { runtime } = temporaryRuntime();
+    expect(
+      resolvePackagedDarwinLaunchAuthorizationReadPaths(runtime),
+    ).toEqual([]);
   });
 });
 

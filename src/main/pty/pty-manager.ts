@@ -55,6 +55,7 @@ import {
 import {
   currentDarwinPtySupervisorRuntime,
   resolveDarwinPtySupervisor,
+  resolvePackagedDarwinLaunchAuthorizationReadPaths,
 } from "./darwin-pty-supervisor";
 import { buildScopedExecPlan } from "../runtime/process-sandbox";
 
@@ -1169,16 +1170,20 @@ export function spawnAgentSession(
       ) {
         // The utility process inserts this exact main-owned helper as the
         // Seatbelt target before it launches the authenticated vendor-native.
-        // Resolve it under the same dev/packaged signature policy in Main so
-        // the profile grants read authority to this file only, never to its
-        // containing Resources/build directory.
+        // Resolve it under the same dev/packaged signature policy in Main.
+        // Packaged launches additionally grant read-only access to the signed
+        // .app because Security.framework needs its sealed bundle metadata to
+        // authenticate the live Main/Helper launch-authority chain.
         const darwinPtySupervisorReadPaths =
           process.platform === "darwin"
-            ? [
-                resolveDarwinPtySupervisor(
-                  currentDarwinPtySupervisorRuntime(__dirname),
-                ),
-              ]
+            ? (() => {
+                const runtime =
+                  currentDarwinPtySupervisorRuntime(__dirname);
+                return [
+                  resolveDarwinPtySupervisor(runtime),
+                  ...resolvePackagedDarwinLaunchAuthorizationReadPaths(runtime),
+                ];
+              })()
             : [];
         const plan = buildScopedExecPlan({
           platform: process.platform,
