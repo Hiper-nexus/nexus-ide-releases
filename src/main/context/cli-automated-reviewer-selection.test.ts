@@ -85,7 +85,7 @@ function contract(
     reviewerPolicy: {
       minimumReviewers,
       requireIndependentAuthor: true,
-      requireDifferentProvider: risk === 'high' || risk === 'critical',
+      requireDifferentProvider: false,
       blockingSeverities: ['critical', 'high'],
     },
   } as unknown as MissionContract;
@@ -138,7 +138,7 @@ describe('automated PREVC reviewer route release boundary', () => {
   it('uses distinct Codex sessions for a critical two-reviewer quorum', () => {
     const routes = selectAutomatedReviewerRoutes(
       contract('critical', 2),
-      ['claude'],
+      ['codex'],
     );
 
     expect(routes).toHaveLength(2);
@@ -147,14 +147,20 @@ describe('automated PREVC reviewer route release boundary', () => {
     expect(routes[0]).not.toBe(routes[1]);
   });
 
-  it('fails closed for high-risk Codex-authored work instead of selecting Claude', () => {
-    expect(() =>
+  it('routes high-risk Codex-authored work to a fresh Codex reviewer session', () => {
+    expect(
       selectAutomatedReviewerRoutes(contract('high', 1), ['codex']),
-    ).toThrow(/independent review quorum unavailable.*found 0/i);
+    ).toEqual([
+      {
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      },
+    ]);
 
     expect(deps.routeTask).toHaveBeenCalledWith(
       expect.any(String),
-      [],
+      [{ id: 'codex', installed: true, models: ['gpt-5.6-sol'] }],
       undefined,
       'hard',
       true,

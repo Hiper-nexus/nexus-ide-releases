@@ -105,8 +105,13 @@ export function selectAutomatedReviewerRoutes(
   authorProviders: readonly string[],
 ): readonly ReviewerRoute[] {
   const required = contract.reviewerPolicy.minimumReviewers;
-  const requiresProviderDiversity =
-    contract.risk === 'high' || contract.risk === 'critical';
+  // Provider is not an identity boundary. The physical reviewer pane receives
+  // a fresh main-owned agent id and PTY session; the session registry and
+  // council reject either value when it aliases any author or prior reviewer.
+  // Keeping this parameter in the injected selector contract is intentional
+  // API compatibility, but it must never exclude the only release-qualified
+  // worker provider.
+  void authorProviders;
   const providers = listProviderSettings().filter(
     (provider) => {
       if (
@@ -114,9 +119,7 @@ export function selectAutomatedReviewerRoutes(
         !provider.enabled ||
         !provider.installed ||
         provider.authStrategy === 'login-needed' ||
-        provider.kind !== 'cli-pty' ||
-        (requiresProviderDiversity &&
-          authorProviders.includes(provider.adapterId))
+        provider.kind !== 'cli-pty'
       ) {
         return false;
       }
@@ -146,9 +149,7 @@ export function selectAutomatedReviewerRoutes(
     );
   }
   // Quorum independence is enforced by reviewer identity + physical session.
-  // Multiple Codex reviewer panes are therefore valid, while high/critical
-  // reviews authored by Codex fail closed above because PREVC additionally
-  // requires provider diversity.
+  // Multiple Codex reviewer panes are therefore valid for every risk tier.
   return Object.freeze(
     Array.from({ length: required }, () =>
       Object.freeze({

@@ -21,10 +21,18 @@ describe('automated review session registry', () => {
       id: 'author', sessionId: 'author-session', provider: 'codex',
       missionId: 'mission-a', checkoutPath: '/candidate',
     }, [])).toThrow(/author cannot review/i);
+    expect(() => registry.submit(id, {
+      id: 'reviewer-alias', sessionId: 'author-session', provider: 'codex',
+      missionId: 'mission-a', checkoutPath: '/candidate',
+    }, [])).toThrow(/author cannot review/i);
     registry.submit(id, {
-      id: 'reviewer', sessionId: 'review-session', provider: 'claude',
+      id: 'reviewer', sessionId: 'review-session', provider: 'codex',
       missionId: 'mission-a', checkoutPath: '/candidate',
     }, []);
+    expect(() => registry.submit(id, {
+      id: 'reviewer-replay', sessionId: 'review-session', provider: 'codex',
+      missionId: 'mission-a', checkoutPath: '/candidate',
+    }, [])).toThrow(/independent reviewer sessions/i);
 
     await expect(registry.wait(id, 100)).resolves.toMatchObject({ ready: true });
     expect(persist).toHaveBeenCalledOnce();
@@ -38,7 +46,7 @@ describe('automated review session registry', () => {
       persist: () => {},
     });
     registry.submit(blocked, {
-      id: 'reviewer-a', sessionId: 'review-a', provider: 'claude',
+      id: 'reviewer-a', sessionId: 'review-a', provider: 'codex',
       missionId: 'mission-a', checkoutPath: '/candidate',
     }, [{
       severity: 'high', category: 'correctness', file: 'src/a.ts', line: 1,
@@ -53,18 +61,18 @@ describe('automated review session registry', () => {
       persist: () => {},
     });
     registry.submit(quorum, {
-      id: 'reviewer-a', sessionId: 'review-a', provider: 'claude',
+      id: 'reviewer-a', sessionId: 'review-a', provider: 'codex',
       missionId: 'mission-a', checkoutPath: '/candidate-2',
     }, []);
     const waiting = registry.wait(quorum, 500);
     registry.submit(quorum, {
-      id: 'reviewer-b', sessionId: 'review-b', provider: 'agy',
+      id: 'reviewer-b', sessionId: 'review-b', provider: 'codex',
       missionId: 'mission-a', checkoutPath: '/candidate-2',
     }, []);
     await expect(waiting).resolves.toMatchObject({ ready: true });
   });
 
-  it('prevents any co-author provider from entering a high-risk review council', () => {
+  it('blocks every co-author identity/session while allowing a shared provider', async () => {
     const registry = new AutomatedReviewSessionRegistry();
     const id = registry.open({
       missionId: 'mission-a', checkoutPath: '/candidate', risk: 'high', binding,
@@ -75,9 +83,14 @@ describe('automated review session registry', () => {
       persist: () => {},
     });
     expect(() => registry.submit(id, {
-      id: 'reviewer', sessionId: 'review-session', provider: 'claude',
+      id: 'reviewer-alias', sessionId: 'author-b-session', provider: 'codex',
       missionId: 'mission-a', checkoutPath: '/candidate',
-    }, [])).toThrow(/every code author/i);
+    }, [])).toThrow(/author cannot review/i);
+    registry.submit(id, {
+      id: 'reviewer', sessionId: 'review-session', provider: 'codex',
+      missionId: 'mission-a', checkoutPath: '/candidate',
+    }, []);
+    await expect(registry.wait(id, 100)).resolves.toMatchObject({ ready: true });
   });
 
   it('cancels a pending wait immediately when review authority is revoked', async () => {

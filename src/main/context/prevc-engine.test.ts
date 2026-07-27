@@ -26,7 +26,9 @@ function evidence(overrides: Partial<WorkflowEvidence> = {}): WorkflowEvidence {
     trustedArtifactIds: ['artifact-a'],
     requiredArtifactIds: ['artifact-a'],
     authorId: 'author-a',
+    authorSessionId: 'author-session-a',
     reviewerId: 'reviewer-b',
+    reviewerSessionId: 'reviewer-session-b',
     authorProvider: 'codex',
     reviewerProvider: 'claude',
     worktreeId: 'worktree-a',
@@ -103,7 +105,7 @@ describe('PREVC workflow gate', () => {
     expect(state.stage).toBe('complete');
   });
 
-  it('blocks self-review, same-provider high-risk review and open blockers', () => {
+  it('blocks author/session aliases and open blockers while allowing shared provider', () => {
     const state = advanceWorkflow(
       createWorkflowState('high', binding),
       evidence(),
@@ -120,10 +122,29 @@ describe('PREVC workflow gate', () => {
     expect(() =>
       advanceWorkflow(
         state,
+        evidence({
+          reviewerId: 'reviewer-alias',
+          reviewerSessionId: 'author-session-a',
+        }),
+        'execution',
+      ),
+    ).toThrow(/author.*review/i);
+    expect(
+      advanceWorkflow(
+        state,
         evidence({ reviewerProvider: 'codex' }),
         'execution',
       ),
-    ).toThrow(/provider/i);
+    ).toMatchObject({
+      stage: 'execution',
+      reviewers: [
+        {
+          id: 'reviewer-b',
+          sessionId: 'reviewer-session-b',
+          provider: 'codex',
+        },
+      ],
+    });
     expect(() =>
       advanceWorkflow(
         state,

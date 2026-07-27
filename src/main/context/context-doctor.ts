@@ -73,7 +73,7 @@ const policySchema = z
     review: z
       .object({
         requireIndependentAuthor: z.literal(true),
-        requireDifferentProviderFor: z.array(riskSchema).min(1).max(4),
+        requireDifferentProviderFor: z.array(riskSchema).max(4),
         minimumReviewers: z
           .object({
             high: z.number().int().min(1).max(16),
@@ -93,9 +93,12 @@ const policySchema = z
         !policy.evidence.blockOnSeverities.includes('high')) {
       context.addIssue({ code: 'custom', message: 'critical and high findings must block' });
     }
-    if (!policy.review.requireDifferentProviderFor.includes('high') ||
-        !policy.review.requireDifferentProviderFor.includes('critical')) {
-      context.addIssue({ code: 'custom', message: 'high and critical reviews require another provider' });
+    if (policy.review.requireDifferentProviderFor.length > 0) {
+      context.addIssue({
+        code: 'custom',
+        message:
+          'provider labels are not reviewer identities; requireDifferentProviderFor must be empty',
+      });
     }
   });
 
@@ -189,7 +192,7 @@ const DEFAULT_POLICY = Object.freeze({
   }),
   review: Object.freeze({
     requireIndependentAuthor: true,
-    requireDifferentProviderFor: Object.freeze(['high', 'critical']),
+    requireDifferentProviderFor: Object.freeze([]),
     minimumReviewers: Object.freeze({ high: 1, critical: 2 }),
   }),
 });

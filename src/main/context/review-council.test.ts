@@ -43,7 +43,7 @@ function review(overrides: Record<string, unknown> = {}) {
 }
 
 describe('ReviewCouncil', () => {
-  it('rejects self-review and same-provider review for high-risk changes', () => {
+  it('rejects author/session aliases and replay while allowing a shared provider', () => {
     const council = new ReviewCouncil('high', binding);
     expect(() =>
       council.submit(
@@ -52,9 +52,27 @@ describe('ReviewCouncil', () => {
     ).toThrow(/author.*review/i);
     expect(() =>
       council.submit(
-        review({ reviewerProvider: 'codex' }) as ReturnType<typeof review>,
+        review({
+          reviewerId: 'reviewer-alias',
+          reviewerSessionId: 'session-author-a',
+        }) as ReturnType<typeof review>,
       ),
-    ).toThrow(/different provider/i);
+    ).toThrow(/author.*review/i);
+
+    const report = council.submit(
+      review({ reviewerProvider: 'codex' }) as ReturnType<typeof review>,
+    );
+    expect(report.reviewerProvider).toBe('codex');
+    expect(() =>
+      council.submit(
+        review({
+          reviewId: 'review-replay',
+          reviewerId: 'reviewer-replay',
+          reviewerSessionId: 'session-review-a',
+          reviewerProvider: 'codex',
+        }) as ReturnType<typeof review>,
+      ),
+    ).toThrow(/independent reviewer sessions/i);
   });
 
   it('computes finding fingerprints itself and blocks critical/high', () => {
@@ -96,14 +114,20 @@ describe('ReviewCouncil', () => {
 
   it('requires two independent reviewers and adjudication for critical divergence', () => {
     const council = new ReviewCouncil('critical', binding);
-    council.submit(review({ reviewId: 'review-a', findings: [] }));
+    council.submit(
+      review({
+        reviewId: 'review-a',
+        reviewerProvider: 'codex',
+        findings: [],
+      }),
+    );
     expect(council.evaluate().reason).toBe('review-quorum-missing');
     council.submit(
       review({
         reviewId: 'review-b',
         reviewerId: 'reviewer-b',
         reviewerSessionId: 'session-review-b',
-        reviewerProvider: 'gemini',
+        reviewerProvider: 'codex',
       }),
     );
     expect(council.evaluate()).toMatchObject({

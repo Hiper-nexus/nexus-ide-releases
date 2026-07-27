@@ -113,6 +113,18 @@ describe('Context Doctor', () => {
     expect(fs.existsSync(path.join(root, '.context/nexus/attestations'))).toBe(true);
     expect(fs.existsSync(path.join(root, '.context/nexus/evidence'))).toBe(true);
     expect(fs.existsSync(path.join(root, '.context/docs/business-model.md'))).toBe(false);
+    expect(
+      (
+        JSON.parse(
+          fs.readFileSync(
+            path.join(root, '.context/config/policy.json'),
+            'utf8',
+          ),
+        ) as {
+          review: { requireDifferentProviderFor: string[] };
+        }
+      ).review.requireDifferentProviderFor,
+    ).toEqual([]);
     expect(sensors.map((sensor) => sensor.id)).toEqual([
       'design-system',
     ]);

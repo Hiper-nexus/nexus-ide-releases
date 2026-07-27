@@ -71,7 +71,7 @@ describe('portable context attestations', () => {
     expect(inspection.bindingHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it('rejects self-review and same-provider review before writing authority', () => {
+  it('rejects author identity/session aliases while allowing shared provider provenance', () => {
     const { root, scope } = fixture();
     const sourceHash = write(root, 'README.md', '# Product\n');
     const targetHash = write(root, '.context/docs/project-overview.md', '# Product\n');
@@ -90,8 +90,18 @@ describe('portable context attestations', () => {
     })).toThrow(/independent/i);
     expect(() => createContextAttestation(scope, {
       ...base,
-      reviewer: { id: 'agent-b', sessionId: 'session-b', provider: 'codex' },
-    })).toThrow(/provider/i);
+      reviewer: { id: 'agent-b', sessionId: 'session-a', provider: 'codex' },
+    })).toThrow(/independent/i);
+    expect(
+      createContextAttestation(scope, {
+        ...base,
+        reviewer: {
+          id: 'agent-b',
+          sessionId: 'session-b',
+          provider: 'codex',
+        },
+      }).reviewer.provider,
+    ).toBe('codex');
   });
 
   it('fails closed when a reviewed target or its source changes', () => {

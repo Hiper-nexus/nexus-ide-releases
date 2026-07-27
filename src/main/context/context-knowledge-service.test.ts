@@ -211,7 +211,7 @@ describe('ContextKnowledgeService autonomous authority workflow', () => {
     }, author)).toThrow(/source.*hash/i);
   });
 
-  it('does not let the author or same provider approve its own authority proposal', () => {
+  it('blocks author identity aliases while allowing an independent same-provider session', () => {
     const { root, service } = fixture();
     const sourceHash = write(root, 'README.md', '# Source\n');
     const draft = service.propose({
@@ -226,11 +226,19 @@ describe('ContextKnowledgeService autonomous authority workflow', () => {
       reviewer: { id: author.id, sessionId: 'other-session', provider: 'claude' },
       rationale: 'Self review.',
     })).toThrow(/independent/i);
-    expect(() => service.review(draft.id, {
+    const approved = service.review(draft.id, {
       decision: 'approve',
       reviewer: { id: 'other-agent', sessionId: 'other-session', provider: author.provider },
-      rationale: 'Same provider.',
-    })).toThrow(/provider/i);
+      rationale: 'Independent Codex reviewer session verified all bound sources.',
+    });
+    expect(approved).toMatchObject({
+      status: 'approved',
+      reviewer: {
+        id: 'other-agent',
+        sessionId: 'other-session',
+        provider: author.provider,
+      },
+    });
   });
 
   it('satisfies readiness with the human operator as the independent reviewer', () => {

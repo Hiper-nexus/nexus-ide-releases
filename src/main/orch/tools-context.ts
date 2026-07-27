@@ -655,7 +655,7 @@ const contextDraftSupersedeTool: McpToolDef = {
 const contextDraftReviewRunTool: McpToolDef = {
   name: 'nexus_context_draft_review_run',
   description:
-    'Autonomously select and launch a read-only provider-independent reviewer. Approved drafts are atomically materialized by Nexus; rejected drafts remain rejected.',
+    'Autonomously select and launch a read-only identity/session-independent reviewer. Approved drafts are atomically materialized by Nexus; rejected drafts remain rejected.',
   inputSchema: {
     type: 'object',
     properties: { draftId: { type: 'string' } },
@@ -1325,7 +1325,7 @@ const validationRunTool: McpToolDef = {
 const planReviewRunTool: McpToolDef = {
   name: 'nexus_plan_review_run',
   description:
-    'Autonomously run the independent Review Council for the frozen plan/contract before high-risk execution. Reviewers are read-only and provider-independent.',
+    'Autonomously run the independent Review Council for the frozen plan/contract before high-risk execution. Reviewers are read-only and bound to distinct main-owned identities and physical sessions.',
   inputSchema: {
     type: 'object',
     properties: { missionId: { type: 'string' } },

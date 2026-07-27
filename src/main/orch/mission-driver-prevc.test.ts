@@ -28,6 +28,7 @@ function planningEvidence(): WorkflowEvidence {
     trustedArtifactIds: [],
     requiredArtifactIds: [],
     authorId: 'author-1',
+    authorSessionId: 'author-session-1',
     authorProvider: 'claude',
   };
 }
