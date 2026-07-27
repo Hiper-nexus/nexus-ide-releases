@@ -175,7 +175,9 @@ vi.mock("../pty/trusted-native-cli-binary", () => ({
           "executable override diverges from canonical discovery",
         );
       }
-      return requestedBinPath;
+      // Real Codex qualification returns the vendor Mach-O, not the npm wrapper.
+      // Main-owned must keep the discovery path in overrides (pty re-qualifies).
+      return `${requestedBinPath}-native`;
     },
   ),
 }));
@@ -259,6 +261,11 @@ describe("main-owned mission pane spawn", () => {
       sessionId: "pty-headless-1",
     });
     expect(pty.spawn).toHaveBeenCalledOnce();
+    // Discovery path stays in overrides — sealed native path is not fed back
+    // as requestedBinPath (that would diverge from canonical discovery).
+    expect(pty.spawn.mock.calls[0]?.[2]).toMatchObject({
+      binPath: "/mock/bin/codex",
+    });
     expect(pty.authority).toMatchObject({
       context: expect.objectContaining({
         contextRevision: missionAuthority.seal.contextRevision,

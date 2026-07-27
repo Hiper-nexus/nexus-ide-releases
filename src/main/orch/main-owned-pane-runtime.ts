@@ -455,14 +455,16 @@ export function spawnMainOwnedMissionPane(
       };
     }
     try {
-      preparedOverrides = {
-        ...preparedOverrides,
-        binPath: assertTrustedNativeConfinementBinary({
-          adapterId: adapter.id,
-          requestedBinPath: preparedOverrides.binPath,
-          canonicalBinPath: resolveAdapterBinary(adapter.id),
-        }),
-      };
+      // Gate only — do not replace binPath with the sealed native executable.
+      // For Codex, assertTrustedNativeConfinementBinary resolves the npm
+      // wrapper to the vendor Mach-O. spawnAgentSession re-qualifies against
+      // live discovery and rewrites the spawn file itself; feeding that Mach-O
+      // back as requestedBinPath fails "diverges from canonical discovery".
+      assertTrustedNativeConfinementBinary({
+        adapterId: adapter.id,
+        requestedBinPath: preparedOverrides.binPath,
+        canonicalBinPath: resolveAdapterBinary(adapter.id),
+      });
     } catch (error) {
       return {
         requestId,
