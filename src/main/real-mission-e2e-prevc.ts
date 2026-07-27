@@ -275,7 +275,10 @@ export function stageRealMissionE2EContextCorpus(workspacePath: string): void {
         },
         review: {
           requireIndependentAuthor: true,
-          requireDifferentProviderFor: ["high", "critical"],
+          // Provider labels are not reviewer identities; the doctor schema
+          // requires this list empty. Independence is enforced by author vs
+          // reviewer session identity on each attestation, not by risk tags.
+          requireDifferentProviderFor: [],
           minimumReviewers: { high: 1, critical: 2 },
         },
       },

@@ -60,6 +60,7 @@ import {
   validateHarnessSquad,
   type ScratchRepository,
 } from "./real-mission-e2e-workspace";
+import { sealRealMissionE2EContextAttestations } from "./real-mission-e2e-prevc";
 import { stageRealMissionCodexTrust } from "./real-mission-codex-trust";
 import { createRealMissionEvidenceAttester } from "./real-mission-e2e-attestation";
 
@@ -484,6 +485,10 @@ export function initRealMissionE2E(): void {
         if (!validateHarnessSquad()) {
           throw new Error("release fixture did not persist exactly");
         }
+        // Seal context attestations once the live project scope is known so
+        // guided PREVC bootstrap (before any orchestrator PTY) can pass the
+        // doctor readiness gate. Freeze still re-seals if needed.
+        sealRealMissionE2EContextAttestations(currentScope);
         fixturePrepared = true;
         console.log("[real-mission] PHASE phase=fixture-prepared");
         if (launchSurface === "product-wizard") {
