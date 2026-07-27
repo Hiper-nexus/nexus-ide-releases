@@ -50,6 +50,27 @@ export function workerCliPool(adapters: RosterAdapter[]): string[] {
   return sortWorkerCliIds(unique(candidates.map((adapter) => adapter.id)));
 }
 
+function adapterInstalledEnabled(
+  adapters: RosterAdapter[],
+  id: string | undefined,
+): boolean {
+  return Boolean(
+    id &&
+      adapters.some(
+        (adapter) =>
+          adapter.id === id &&
+          adapter.installed &&
+          adapter.enabled !== false,
+      ),
+  );
+}
+
+/**
+ * Balance worker CLIs across qualified writers. Preserve an explicit, installed
+ * Maestro (and worker) assignment — release fixtures and user-reviewed squads
+ * must not be rewritten to the legacy Claude default when that provider is
+ * present but unauthenticated.
+ */
 export function balanceSquadRosterCli(
   agents: SquadAgent[],
   adapters: RosterAdapter[],
@@ -60,20 +81,39 @@ export function balanceSquadRosterCli(
 
   return agents.map((agent) => {
     if (agent.category === "orchestrator") {
-      return agent.cli === orchestratorAdapterId
-        ? {
-            ...agent,
-            model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
-          }
-        : {
-            ...agent,
-            cli: orchestratorAdapterId,
-            model: defaultSquadModelForAdapter(orchestratorAdapterId),
-          };
+      if (adapterInstalledEnabled(adapters, agent.cli)) {
+        return {
+          ...agent,
+          model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
+        };
+      }
+      const target = adapterInstalledEnabled(adapters, orchestratorAdapterId)
+        ? orchestratorAdapterId
+        : agent.cli || LEGACY_ORCHESTRATOR_CLI;
+      return {
+        ...agent,
+        cli: target,
+        model: defaultSquadModelForAdapter(target),
+      };
     }
 
-    const nextCli = pool[workerIndex % pool.length] ?? agent.cli;
-    workerIndex += 1;
+    const keepWorker =
+      adapterInstalledEnabled(adapters, agent.cli) &&
+      agent.cli !== LEGACY_ORCHESTRATOR_CLI &&
+      adapters.some(
+        (adapter) =>
+          adapter.id === agent.cli &&
+          adapter.autonomousWorkspaceWriteCapable === true,
+      );
+    if (keepWorker) {
+      return {
+        ...agent,
+        model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
+      };
+    }
+
+    const nextCli =
+      pool.length > 0 ? pool[workerIndex++ % pool.length]! : agent.cli;
 
     return nextCli === agent.cli
       ? {

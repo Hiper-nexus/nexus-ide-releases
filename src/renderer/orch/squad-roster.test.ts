@@ -71,7 +71,7 @@ describe("workerCliPool", () => {
 });
 
 describe("balanceSquadRosterCli", () => {
-  it("keeps the Maestro on Claude and retargets every worker identity to safe Codex", () => {
+  it("preserves an installed Maestro CLI and retargets unqualified workers to Codex", () => {
     const balanced = balanceSquadRosterCli(
       [
         agent("orch", "orchestrator", "codex"),
@@ -83,17 +83,28 @@ describe("balanceSquadRosterCli", () => {
       [adapter("claude"), adapter("codex"), adapter("agy"), adapter("grok")],
     );
 
+    // Never rewrite a sealed/reviewed Maestro (e.g. release-gate codex) to the
+    // legacy Claude default just because Claude is also installed.
     expect(balanced.map((item) => item.cli)).toEqual([
-      "claude",
+      "codex",
       "codex",
       "codex",
       "codex",
       "codex",
     ]);
-    expect(balanced[0].model).toBeUndefined();
+    expect(balanced[0].model).toBe("codex-model");
     expect(balanced.slice(1).map((item) => item.model)).toEqual(
       Array.from({ length: 4 }, () => undefined),
     );
+  });
+
+  it("fills an empty Maestro from the automatic verified route", () => {
+    const balanced = balanceSquadRosterCli(
+      [agent("orch", "orchestrator", "", "")],
+      [adapter("claude"), adapter("codex")],
+      "codex",
+    );
+    expect(balanced[0]).toMatchObject({ cli: "codex" });
   });
 
   it("allows the configured non-Claude Maestro CLI to execute worker tasks too", () => {
