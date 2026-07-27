@@ -98,7 +98,12 @@ export function stageRealMissionCodexTrust(
     const config = stringify({
       features: {
         apps: false,
-        hooks: false,
+        // The isolated HOME has no user/project hooks. Keep Codex's hook
+        // engine enabled so the main-owned per-session `-c hooks.*` overrides
+        // can emit the causal UserPromptSubmit receipt required by kickoff.
+        // Disabling this feature silently drops those sealed hooks and leaves
+        // the real mission executing MCP work while acceptance times out.
+        hooks: true,
         multi_agent: false,
         plugins: false,
         remote_plugin: false,

@@ -55,7 +55,7 @@ describe('real mission Codex trust fixture', () => {
     expect(config.projects?.[projectRuntime]?.trust_level).toBe('untrusted');
     expect(config.features).toEqual({
       apps: false,
-      hooks: false,
+      hooks: true,
       multi_agent: false,
       plugins: false,
       remote_plugin: false,
