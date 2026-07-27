@@ -431,8 +431,11 @@ describe('builtin adapters', () => {
     expect(orchestrationEvidenceForAdapter(parsed('kimi'), 'builtin')).toBe(
       'unsupported',
     );
+    // grok declarou confinamento read-only enforceável (`--sandbox read-only`,
+    // probe físico de escape verde) e tem rota MCP — sobe para Maestro
+    // experimental; a promoção a verified exige o gate físico de coordenação.
     expect(orchestrationEvidenceForAdapter(parsed('grok'), 'builtin')).toBe(
-      'unsupported',
+      'experimental',
     );
     expect(orchestrationEvidenceForAdapter(parsed('omp'), 'builtin')).toBe(
       'unsupported',

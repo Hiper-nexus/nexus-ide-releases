@@ -1,6 +1,7 @@
 import type { Mission, SquadAgent } from "../../shared/orch-types";
 import { assertPromotedPlanSnapshot } from "./plan-promotion-authority";
 import { supportsMechanicallyReadOnlyCli } from "./mission-scheduler-plan";
+import { supportsAdvisoryParticipationCli } from "../../shared/mission-advisory";
 import { isGuidedUiMissionObjective } from "./guided-squad-skills";
 
 export const GUIDED_SEALED_TASK_DETAIL_MAX_CHARS = 65_536;
@@ -27,7 +28,11 @@ export function assertGuidedSealedTaskDetailBudget(
 export function guidedAdvisoryExecutionMode(
   agent: SquadAgent,
 ): "read_only" | "isolated_worktree" {
-  return supportsMechanicallyReadOnlyCli(agent.cli)
+  // Advisory MCP-only CLIs (kimi/agy/opencode/omp, claude quando o orquestrador
+  // não é Claude) também executam fan-out consultivo em read_only — nunca como
+  // writers isolados, papel que continua codex-only.
+  return supportsMechanicallyReadOnlyCli(agent.cli) ||
+    supportsAdvisoryParticipationCli(agent.cli)
     ? "read_only"
     : "isolated_worktree";
 }

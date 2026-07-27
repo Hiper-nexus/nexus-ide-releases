@@ -1,4 +1,5 @@
 import type { CliPtyAdapter } from '../../shared/adapter-types';
+import { isAdvisoryUnconfinedCli } from '../../shared/mission-advisory';
 import {
   PET_STUDIO_SQUAD,
   PET_STUDIO_SQUAD_ID,
@@ -73,6 +74,13 @@ export interface AutonomousCliPolicyOptions {
    * would remove Codex's native filesystem confinement.
    */
   readonly trustedCodexExternalProcessSandbox?: boolean;
+  /**
+   * Advisory-unconfined mission participant (kimi/agy/opencode/omp read_only
+   * worker): the Nexus MCP read-only authority is the only boundary. Strip
+   * provider yolo/permission escapes but never fabricate native confinement
+   * the CLI cannot enforce.
+   */
+  readonly advisoryUnconfinedParticipation?: boolean;
 }
 
 function sameCanonicalCapabilityList(
@@ -188,6 +196,19 @@ export function isMissionBoundCodexWorkspaceAuthority(
 export function requiresReadOnlyNativeAuthority(
   authority: NativeEffectAuthority,
 ): boolean {
+  // Advisory-unconfined lane: MCP read-only authority is the only boundary.
+  // Pushing these CLIs through the governed native argv would fail closed
+  // (they declare no enforceable read-only), so no native confinement is
+  // claimed — the authority record stays honest (nativeReadOnly=false).
+  // Claude is advisory-eligible but IS natively confined, so it stays out.
+  if (
+    authority.readOnly === true &&
+    authority.role === 'worker' &&
+    Boolean(authority.missionId?.trim()) &&
+    isAdvisoryUnconfinedCli(authority.adapterId ?? '')
+  ) {
+    return false;
+  }
   if (authority.readOnly === true || authority.nativeReadOnly === true) {
     return true;
   }
@@ -271,7 +292,9 @@ export function supportsEnforceableReadOnlyNativeAuthority(
     (adapter.quirks?.mcpAutoload &&
       adapter.id === 'claude' &&
       permission?.arg === '--permission-mode') ||
-    declaresEnforceableReadOnly(permission?.safe ?? [])
+    declaresEnforceableReadOnly(
+      permission?.readOnly ?? permission?.safe ?? [],
+    )
   );
 }
 
@@ -420,12 +443,16 @@ function codexGovernedArgs(
     // global approval `on-request`: Codex 0.145 auto-approves the exact Nexus
     // server through its server-scoped AppToolApproval::Approve setting, while
     // `never` + Disabled would silently approve every MCP server if strict
-    // config ever drifted.
+    // config ever drifted. The release-gate e2e is the single exception: its
+    // doctrine (see releaseGateFullAuto in secureAutonomousCliArgs) is zero
+    // approval prompts, the worker stalls on any provider question, and the
+    // outer Seatbelt boundary plus the server-scoped MCP config remain the
+    // physical authority — so the caller's `approval` is honored there.
     args.push(
       '--sandbox',
       'danger-full-access',
       '--ask-for-approval',
-      'on-request',
+      isCurrentProcessRealMissionE2E() ? approval : 'on-request',
     );
   } else {
     // Without a trusted outer process boundary, keep the private
@@ -568,7 +595,10 @@ export function secureAutonomousCliArgs(
     for (const sequence of permissionSequences(adapter)) {
       readOnlyArgs = removeSequence(readOnlyArgs, sequence);
     }
-    appendOnce(readOnlyArgs, safeArgs);
+    // The governed read-only lane prefers the adapter's dedicated,
+    // probe-verified confinement sequence (e.g. grok ["--sandbox",
+    // "read-only"]) over the interactive safe baseline.
+    appendOnce(readOnlyArgs, permission?.readOnly ?? safeArgs);
 
     if (codexConfinement) {
       const automaticApprovalMode = permission?.modes.auto;
@@ -635,6 +665,18 @@ export function secureAutonomousCliArgs(
       'workspace-write',
       'never',
     );
+  }
+
+  if (options.advisoryUnconfinedParticipation) {
+    // Advisory lane (see the option contract): the MCP read-only authority is
+    // the only boundary. Remove any provider full-auto/permission escape the
+    // caller may have inherited, keep the adapter's own argv, and never claim
+    // a native confinement this CLI cannot enforce.
+    let advisorArgs = [...currentArgs];
+    for (const sequence of permissionSequences(adapter)) {
+      advisorArgs = removeSequence(advisorArgs, sequence);
+    }
+    return advisorArgs;
   }
 
   if (

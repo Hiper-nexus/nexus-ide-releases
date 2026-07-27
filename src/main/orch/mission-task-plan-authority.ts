@@ -19,6 +19,7 @@ import {
 import { encodeTaskScheduleDetail } from "./mission-scheduler-meta";
 import {
   assertClosedAcyclicPlanDependencies,
+  supportsAdvisoryParticipationCli,
   supportsMechanicallyReadOnlyCli,
   supportsMechanicallyWorkspaceWriteCli,
   type PlannedExecutionMode,
@@ -149,10 +150,20 @@ function resolveRosterAgent(
     );
   }
   if (assignedAgent.cli === "claude") {
-    throw new Error(
-      `task ${taskId} cannot use ${assignedAgent.id}: reserveClaude keeps the ` +
-        "Claude OAuth session exclusive to the orchestrator; choose another roster worker",
-    );
+    // reserveClaude protects the single Claude OAuth session from concurrent
+    // Claude processes. A Claude advisor (read_only only) is admissible when
+    // the squad orchestrator is NOT Claude — there is exactly one Claude
+    // process in that mission. Writable Claude workers stay forbidden.
+    const orchestratorCli = squad.agents.find(
+      (agent) => agent.category === "orchestrator",
+    )?.cli;
+    if (orchestratorCli === "claude" || mode !== "read_only") {
+      throw new Error(
+        `task ${taskId} cannot use ${assignedAgent.id}: reserveClaude keeps the ` +
+          "Claude OAuth session exclusive to the orchestrator; Claude só " +
+          "participa como advisor read_only quando o orquestrador não é Claude",
+      );
+    }
   }
   const adapterInfo = getAdapterInfo(assignedAgent.cli);
   const capabilities = adapterCapabilityMatrixOf(adapterInfo);
@@ -186,7 +197,12 @@ function resolveRosterAgent(
       `task ${taskId} governed writer is not release-enabled at the physical dispatch boundary`,
     );
   }
-  if (mode === "read_only" && !capabilities.autonomousReadOnly) {
+  const advisoryCli = supportsAdvisoryParticipationCli(assignedAgent.cli);
+  if (
+    mode === "read_only" &&
+    !capabilities.autonomousReadOnly &&
+    !advisoryCli
+  ) {
     throw new Error(
       `task ${taskId} read_only requires a mechanically confined CLI; ` +
         `${assignedAgent.cli} is not eligible`,
@@ -204,10 +220,14 @@ function resolveRosterAgent(
   }
   // Keep the id-level dispatch backstop in the plan seal too. A future
   // release may add an AdapterInfo qualification only together with the
-  // physical spawn/claim/complete checks for that exact CLI.
+  // physical spawn/claim/complete checks for that exact CLI. Advisory CLIs
+  // (MCP-only, no native confinement) join read_only reviewer/scout tasks in
+  // the advisory-unconfined tier; everything else requires the mechanically
+  // confined lane.
   if (
     mode === "read_only" &&
-    !supportsMechanicallyReadOnlyCli(assignedAgent.cli)
+    !supportsMechanicallyReadOnlyCli(assignedAgent.cli) &&
+    !advisoryCli
   ) {
     throw new Error(
       `task ${taskId} read_only capability is not release-enabled at the physical dispatch boundary`,

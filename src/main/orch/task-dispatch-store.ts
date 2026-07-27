@@ -56,7 +56,10 @@ import {
   recordTaskDependencyPromptConsumption,
   type RecordTaskDependencyConsumptionInput,
 } from "./task-dependency-consumption-authority";
-import { supportsMechanicallyReadOnlyCli } from "./mission-scheduler-plan";
+import {
+  supportsAdvisoryParticipationCli,
+  supportsMechanicallyReadOnlyCli,
+} from "./mission-scheduler-plan";
 
 export { taskIntegrationReceiptSchema };
 export type {
@@ -516,11 +519,12 @@ export class TaskDispatchStore {
         this.#assertCurrentIntent(db, current);
         const sealed = assertSealedTaskDispatchPlanAuthority(db, current);
         if (
-          !supportsMechanicallyReadOnlyCli(sealed.route.adapterId) ||
+          (!supportsMechanicallyReadOnlyCli(sealed.route.adapterId) &&
+            !supportsAdvisoryParticipationCli(sealed.route.adapterId)) ||
           sealed.schedule.executionMode !== "read_only"
         ) {
           throw new Error(
-            "read-only completion requires the sealed mechanically confined CLI",
+            "read-only completion requires the sealed mechanically confined or advisory CLI",
           );
         }
         const physical = assertPhysicalTaskHandoffAuthority(

@@ -98,6 +98,10 @@
         "--sandbox",
         "workspace"
       ],
+      "readOnly": [
+        "--sandbox",
+        "read-only"
+      ],
       "default": ""
     }
   }

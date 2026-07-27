@@ -55,6 +55,10 @@ import {
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
 import { isReleaseQualifiedMissionWorkerCli } from './squad-runtime-policy';
+import {
+  supportsAdvisoryParticipationCli,
+  supportsMechanicallyReadOnlyCli,
+} from './mission-scheduler-plan';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -578,6 +582,20 @@ export function assertReleaseQualifiedMissionWorkerSpawn(
     (options.readOnly !== true ||
       supportsEnforceableReadOnlyNativeAuthority(adapter));
   if (qualified) return;
+  // Read-only participation lanes: mechanically confined read_only CLIs
+  // (codex, grok) and advisory-unconfined MCP-only CLIs (claude is also
+  // natively confined; kimi/agy/opencode/omp run advisory with the MCP
+  // read-only authority as the only boundary). Writable dispatch remains
+  // codex-only above.
+  const readOnlyParticipant =
+    options.readOnly === true &&
+    adapter?.kind === 'cli-pty' &&
+    isBuiltinAdapter(adapter.id) &&
+    (supportsMechanicallyReadOnlyCli(adapter.id) ||
+      supportsAdvisoryParticipationCli(adapter.id)) &&
+    (supportsEnforceableReadOnlyNativeAuthority(adapter) ||
+      supportsAdvisoryParticipationCli(adapter.id));
+  if (readOnlyParticipant) return;
   throw new Error(
     `governed_worker_spawn_unsupported: ${options.adapterId} não pode executar ` +
       'como worker autônomo de missão nesta release; use o adapter Codex builtin ' +

@@ -8,6 +8,7 @@ import type { ProjectExecutionScope } from "../../shared/types";
 import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
 import type { MissionPaneAuthoritySeal } from "../../shared/orch-types";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
+import { isAdvisoryUnconfinedCli } from "../../shared/mission-advisory";
 import type { CliPtyAdapter } from "../../shared/adapter-types";
 import { resolvePlaceholders } from "../../shared/adapter-types";
 import type { BoundSpawnAuthority } from "../orch/spawn-authority";
@@ -1109,6 +1110,16 @@ export function spawnAgentSession(
   );
   const enforceWorkspaceWriteSandbox =
     writableWorkerIntent || petStudioWritableOrchestrator;
+  // Advisory-unconfined lane (kimi/agy/opencode/omp read_only mission
+  // workers): MCP read-only authority only, no native confinement claim.
+  const advisoryUnconfinedParticipation = Boolean(
+    !nativeReadOnly &&
+      !enforceWorkspaceWriteSandbox &&
+      authority.context?.readOnly === true &&
+      authority.context?.role === "worker" &&
+      authority.context?.missionId?.trim() &&
+      isAdvisoryUnconfinedCli(adapter.id),
+  );
   const trustedCodexExternalProcessSandbox = Boolean(
     adapter.id === "codex" &&
       codexProcessSandbox &&
@@ -1169,6 +1180,7 @@ export function spawnAgentSession(
       trustedDecorationArgs,
       trustedCodexPermissionProfile,
       trustedCodexExternalProcessSandbox,
+      advisoryUnconfinedParticipation,
     });
   } catch (error) {
     decoration?.onSpawnFailed?.();

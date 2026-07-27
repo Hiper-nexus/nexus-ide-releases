@@ -405,6 +405,7 @@ export function assertExactRosterRoutes(input: {
   readonly workers: readonly SquadAgent[];
   readonly adapters: readonly LiveRosterAdapter[];
   readonly rosterHash: string;
+  readonly orchestratorCliId?: string;
 }): void {
   const taskText = [
     input.mission.title,
@@ -418,6 +419,7 @@ export function assertExactRosterRoutes(input: {
         agent: worker,
         adapters: input.adapters,
         rosterHash: input.rosterHash,
+        orchestratorCliId: input.orchestratorCliId,
       });
     } catch (error) {
       failures.push(

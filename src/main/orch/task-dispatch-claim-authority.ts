@@ -7,6 +7,7 @@ import {
 } from "./mission-scheduler";
 import { decodeTaskScheduleDetail } from "./mission-scheduler-meta";
 import {
+  supportsAdvisoryParticipationCli,
   supportsMechanicallyReadOnlyCli,
   supportsMechanicallyWorkspaceWriteCli,
 } from "./mission-scheduler-plan";
@@ -141,6 +142,7 @@ export function claimTaskDispatch(
       let sealedEntry:
         z.infer<typeof sealedPlanDispatchSchema>["tasks"][number] | null = null;
       let sealedAgent: z.infer<typeof squadAgentSchema> | null = null;
+      let sealedOrchestratorCli: string | undefined;
       if (plan) {
         if (!plan.squad_id || !plan.roster_hash || !plan.roster_snapshot_json) {
           throw new Error(
@@ -194,6 +196,9 @@ export function claimTaskDispatch(
             );
           }
           sealedAgent = agentMatches[0]!;
+          sealedOrchestratorCli = roster.agents.find(
+            (candidate) => candidate.category === "orchestrator",
+          )?.cli;
         } catch (error) {
           if (error instanceof ScopedStoreCorruptionError) throw error;
           throw new ScopedStoreCorruptionError("sealed dispatch contract", {
@@ -212,17 +217,25 @@ export function claimTaskDispatch(
           throw new Error("dispatch workerId diverge do agentName selado");
         }
         if (sealedAgent.cli === "claude") {
-          throw new Error("reserveClaude proíbe Claude OAuth como worker");
+          // Claude advisor (read_only) só é admissível quando o orquestrador
+          // do roster selado NÃO é Claude — um único processo Claude por missão.
+          if (
+            sealedOrchestratorCli === "claude" ||
+            executionMode !== "read_only"
+          ) {
+            throw new Error("reserveClaude proíbe Claude OAuth como worker");
+          }
         }
         if (routeContract.adapterId !== sealedAgent.cli) {
           throw new Error("dispatch provider diverge da CLI do roster selado");
         }
         if (
           executionMode === "read_only" &&
-          !supportsMechanicallyReadOnlyCli(routeContract.adapterId)
+          !supportsMechanicallyReadOnlyCli(routeContract.adapterId) &&
+          !supportsAdvisoryParticipationCli(routeContract.adapterId)
         ) {
           throw new Error(
-            "dispatch read_only exige CLI mecanicamente confinada",
+            "dispatch read_only exige CLI mecanicamente confinada ou advisor MCP",
           );
         }
         if (

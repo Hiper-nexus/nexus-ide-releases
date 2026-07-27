@@ -116,6 +116,13 @@ const controlSchema = z
         yolo: z.array(z.string()).default([]),
         /** Explicit safe baseline overriding a dangerous user-level CLI config. */
         safe: z.array(z.string()).optional(),
+        /**
+         * Kernel/provider-enforced read-only confinement sequence (e.g.
+         * ["--sandbox", "read-only"]). Declared only after a physical escape
+         * probe proved the boundary holds; used by the governed read-only
+         * lane instead of the interactive `safe` baseline.
+         */
+        readOnly: z.array(z.string()).optional(),
         /** Legacy adapter default. Nexus does not auto-enable non-empty modes. */
         default: z.string().default(''),
       })

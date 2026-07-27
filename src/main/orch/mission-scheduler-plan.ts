@@ -11,9 +11,14 @@ import {
   type GuidedTaskKind,
 } from './guided-task-kind';
 
+export { supportsAdvisoryParticipationCli } from '../../shared/mission-advisory';
+
 export type PlannedExecutionMode = 'isolated_worktree' | 'read_only';
 
-const MECHANICALLY_READ_ONLY_CLIS = new Set(['codex']);
+// codex: governed argv profile. grok: kernel Seatbelt `--sandbox read-only`
+// (physical escape probe 27/07: write outside the sandbox denied, session
+// state under the GROK_HOME overlay works).
+const MECHANICALLY_READ_ONLY_CLIS = new Set(['codex', 'grok']);
 const MECHANICALLY_WORKSPACE_WRITE_CLIS = new Set(['codex']);
 
 export function supportsMechanicallyReadOnlyCli(adapterId: string): boolean {
@@ -108,14 +113,20 @@ export function resolveSealedWorkerRoute(input: {
   readonly agent: TaskPlanAgentSnapshot;
   readonly adapters: readonly LiveRosterAdapter[];
   readonly rosterHash: string;
+  /**
+   * Squad orchestrator CLI. Claude may advise (read_only) only when it is NOT
+   * the orchestrator — reserveClaude protects the single OAuth session from
+   * concurrent Claude processes. Undefined fails closed (Claude forbidden).
+   */
+  readonly orchestratorCliId?: string;
 }): SealedWorkerRoute {
   if (input.agent.category === 'orchestrator') {
     throw new Error('sealed worker route cannot target the orchestrator');
   }
-  if (input.agent.cli === 'claude') {
+  if (input.agent.cli === 'claude' && input.orchestratorCliId !== 'codex') {
     throw new Error(
       'roster_route_forbidden: reserveClaude mantém o Claude OAuth exclusivo do orquestrador; ' +
-        'replaneje este worker com outra CLI do roster',
+        'Claude só participa como advisor read_only quando o orquestrador é codex',
     );
   }
   const adapter = input.adapters.find((candidate) => candidate.id === input.agent.cli);

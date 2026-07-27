@@ -4,6 +4,7 @@ import {
   assertClosedAcyclicPlanDependencies,
   assertSealedTaskSchedule,
   resolveSealedWorkerRoute,
+  supportsAdvisoryParticipationCli,
   supportsMechanicallyReadOnlyCli,
   supportsMechanicallyWorkspaceWriteCli,
 } from './mission-scheduler-plan';
@@ -30,11 +31,22 @@ function adapter(
 describe('sealed scheduler roster contract', () => {
   it('advertises read-only only for CLIs with an enforced native boundary', () => {
     expect(supportsMechanicallyReadOnlyCli('codex')).toBe(true);
+    // grok: Seatbelt `--sandbox read-only` com probe físico de escape verde.
+    expect(supportsMechanicallyReadOnlyCli('grok')).toBe(true);
     expect(supportsMechanicallyReadOnlyCli('glm')).toBe(false);
     expect(supportsMechanicallyReadOnlyCli('longcat')).toBe(false);
     expect(supportsMechanicallyReadOnlyCli('omp')).toBe(false);
     expect(supportsMechanicallyReadOnlyCli('agy')).toBe(false);
-    expect(supportsMechanicallyReadOnlyCli('grok')).toBe(false);
+  });
+  it('advertises the advisory MCP-only lane separately from confinement', () => {
+    expect(supportsAdvisoryParticipationCli('claude')).toBe(true);
+    expect(supportsAdvisoryParticipationCli('kimi')).toBe(true);
+    expect(supportsAdvisoryParticipationCli('omp')).toBe(true);
+    expect(supportsAdvisoryParticipationCli('opencode')).toBe(true);
+    expect(supportsAdvisoryParticipationCli('agy')).toBe(true);
+    expect(supportsAdvisoryParticipationCli('codex')).toBe(false);
+    expect(supportsAdvisoryParticipationCli('grok')).toBe(false);
+    expect(supportsAdvisoryParticipationCli('aider')).toBe(false);
   });
   it('admits only Codex for sealed autonomous workspace writes', () => {
     expect(supportsMechanicallyWorkspaceWriteCli('codex')).toBe(true);

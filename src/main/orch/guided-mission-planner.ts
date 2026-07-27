@@ -262,6 +262,9 @@ export function ensureGuidedMissionPlan(
     workers: rosterWorkers,
     adapters,
     rosterHash: taskPlanRosterHash,
+    orchestratorCliId: squad.agents.find(
+      (agent) => agent.category === "orchestrator",
+    )?.cli,
   });
   const ownershipFiles = addApprovedIntentOwnershipClaims(
     deps.listRepositoryOwnership(suite.tasks.scope),

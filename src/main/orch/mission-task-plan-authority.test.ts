@@ -88,6 +88,12 @@ const squad: Squad = {
       category: "scout",
       cli: "omp",
     },
+    {
+      id: "glm-scout",
+      agentName: "GLM Scout",
+      category: "scout",
+      cli: "glm",
+    },
   ],
 };
 
@@ -404,7 +410,7 @@ describe("mission task plan authority", () => {
     [
       {
         ...validTask,
-        agentRef: "omp-scout",
+        agentRef: "glm-scout",
         category: "scout",
         executionMode: "read_only",
       },
@@ -470,6 +476,59 @@ describe("mission task plan authority", () => {
       expect(createPlanAtomically).toHaveBeenCalledOnce();
     },
   );
+
+  it("allows an advisory MCP-only CLI to join read_only scout/reviewer tasks", () => {
+    const { suite, deps, createPlanAtomically } = harness();
+
+    expect(() =>
+      planMissionTasks(
+        {
+          missionId: "mission-a",
+          tasks: [
+            {
+              ...validTask,
+              agentRef: "omp-scout",
+              category: "scout",
+              executionMode: "read_only",
+              ownership: {
+                files: ["src"],
+                symbols: [],
+                domains: ["guided-advisory"],
+              },
+            },
+          ],
+        },
+        orchestratorContext(),
+        suite,
+        deps,
+      ),
+    ).not.toThrow();
+    expect(createPlanAtomically).toHaveBeenCalledOnce();
+  });
+
+  it("keeps reserveClaude when the squad orchestrator is Claude", () => {
+    const { suite, deps, createPlanAtomically } = harness();
+
+    expect(() =>
+      planMissionTasks(
+        {
+          missionId: "mission-a",
+          tasks: [
+            {
+              ...validTask,
+              agentRef: "claude-reviewer",
+              category: "reviewer",
+              executionMode: "read_only",
+            },
+          ],
+        },
+        orchestratorContext(),
+        suite,
+        deps,
+      ),
+    ).toThrow(/reserveClaude/);
+    expect(createPlanAtomically).not.toHaveBeenCalled();
+  });
 
   it("allows a read-only-only qualification only for reviewer/scout tasks", () => {
     const readOnlyCodex = adapterInfo("codex", {

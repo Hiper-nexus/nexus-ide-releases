@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
+
+const e2eFlag = vi.hoisted(() => ({ value: false }));
+vi.mock('../../shared/real-mission-e2e', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/real-mission-e2e')>()),
+  isCurrentProcessRealMissionE2E: () => e2eFlag.value,
+}));
 import {
   isMissionBoundCodexWorkspaceAuthority,
   isPetStudioNativeWorkspaceAuthority,
@@ -480,6 +486,57 @@ describe('secureAutonomousCliArgs', () => {
       '--dangerously-bypass-approvals-and-sandbox',
     );
     expect(args).not.toContain('never');
+  });
+
+  it('honors the caller approval never under the release-gate e2e doctrine', () => {
+    const codex = builtinCli('codex');
+    e2eFlag.value = true;
+    try {
+      const args = secureAutonomousCliArgs(codex, [
+        '--sandbox',
+        'workspace-write',
+        '--ask-for-approval',
+        'never',
+      ], false, {
+        enforceWorkspaceWriteSandbox: true,
+        trustedCodexPermissionProfile:
+          CODEX_WORKSPACE_PERMISSION_PROFILE,
+        trustedCodexExternalProcessSandbox: true,
+      });
+
+      expect(args).toEqual([
+        '--sandbox',
+        'danger-full-access',
+        '--ask-for-approval',
+        'never',
+      ]);
+      expect(args).not.toContain('on-request');
+    } finally {
+      e2eFlag.value = false;
+    }
+  });
+
+  it('keeps production on-request under the trusted outer sandbox', () => {
+    const codex = builtinCli('codex');
+
+    const args = secureAutonomousCliArgs(codex, [
+      '--sandbox',
+      'workspace-write',
+      '--ask-for-approval',
+      'never',
+    ], false, {
+      enforceWorkspaceWriteSandbox: true,
+      trustedCodexPermissionProfile:
+        CODEX_WORKSPACE_PERMISSION_PROFILE,
+      trustedCodexExternalProcessSandbox: true,
+    });
+
+    expect(args).toEqual([
+      '--sandbox',
+      'danger-full-access',
+      '--ask-for-approval',
+      'on-request',
+    ]);
   });
 
   it('preserves hook trust bypass only from the main-owned decoration', () => {
