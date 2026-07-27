@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { AdapterInfo } from '../../shared/types';
 import { VICTORY_KEYS, type VictoryKey } from '../../shared/onboarding-types';
+import {
+  REAL_MISSION_E2E_PRODUCT_WIZARD_ACTIVE_STORAGE_KEY,
+} from '../../shared/real-mission-e2e';
 import { useOnboardingStore } from '../state/onboarding-store';
 import { NexusMark } from './NexusMark';
 import { ProviderLogo } from './ProviderLogo';
@@ -181,7 +184,20 @@ export function Onboarding() {
     return () => window.removeEventListener('keydown', onKey);
   }, [visible, skip]);
 
-  if (!visible) return null;
+  // Product-wizard release E2E opens MissionWizard under this same surface.
+  // A first-run onboarding shell (especially at higher z-index) steals every
+  // click and leaves the gate stuck at product-wizard-ready with no evidence.
+  const productWizardE2EActive =
+    typeof window !== 'undefined' &&
+    window.sessionStorage.getItem(
+      REAL_MISSION_E2E_PRODUCT_WIZARD_ACTIVE_STORAGE_KEY,
+    ) === '1';
+  useEffect(() => {
+    if (!visible || !productWizardE2EActive) return;
+    complete();
+  }, [visible, productWizardE2EActive, complete]);
+
+  if (!visible || productWizardE2EActive) return null;
 
   const doneCount = VICTORY_KEYS.filter(
     (k) => state.victories[k] !== undefined,

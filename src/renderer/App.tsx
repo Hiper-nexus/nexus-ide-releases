@@ -191,6 +191,8 @@ export function App() {
         REAL_MISSION_E2E_PRODUCT_WIZARD_ACTIVE_STORAGE_KEY,
         '1',
       );
+      // Never let first-run onboarding cover the physical product-wizard gate.
+      useOnboardingStore.getState().complete();
       useHomeStore.getState().hide();
       useMissionWizardStore
         .getState()

@@ -112,6 +112,38 @@ export function stageTrustedCodexLauncher(codexBinary, userData) {
   return launcher;
 }
 
+/**
+ * Product-wizard E2E uses an isolated HOME. Without this seed the first-run
+ * onboarding modal mounts over MissionWizard (higher z-index) and the gate
+ * never creates a mission — missing-evidence at product-wizard-ready.
+ */
+export function stageRealMissionOnboardingComplete(isolatedHome) {
+  const home = path.resolve(isolatedHome);
+  if (!path.isAbsolute(home) || home.includes("\0")) {
+    throw new Error("isolated HOME for onboarding seed is invalid");
+  }
+  const nexusDir = path.join(home, ".nexus");
+  fs.mkdirSync(nexusDir, {
+    recursive: true,
+    mode: PRIVATE_DIRECTORY_MODE,
+  });
+  fs.chmodSync(nexusDir, PRIVATE_DIRECTORY_MODE);
+  const file = path.join(nexusDir, "onboarding.json");
+  const payload = `${JSON.stringify(
+    {
+      completed: true,
+      skipped: false,
+      victories: {
+        cliDetected: Date.now(),
+      },
+    },
+    null,
+    2,
+  )}\n`;
+  fs.writeFileSync(file, payload, { mode: PRIVATE_FILE_MODE });
+  return file;
+}
+
 function defaultResolveCommand(command, environment) {
   const result = spawnSync("/usr/bin/which", [command], {
     encoding: "utf8",

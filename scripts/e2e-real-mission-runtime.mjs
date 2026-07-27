@@ -31,6 +31,7 @@ import {
   realMissionEnvironment,
   resolveTrustedCodexBinary,
   stageCodexAuthentication,
+  stageRealMissionOnboardingComplete,
   stageTrustedCodexLauncher,
 } from "./e2e-real-mission-launcher.mjs";
 import {
@@ -444,6 +445,10 @@ async function runPackagedRealMissionCore(
       launchSurface,
     );
     stageCodexAuthentication(sourceCodexHome, isolatedEnvironment.HOME);
+    // Isolated HOME has no ~/.nexus/onboarding.json. Without a completed seed
+    // the welcome modal covers MissionWizard and the product-wizard gate dies
+    // at product-wizard-ready with missing-evidence.
+    stageRealMissionOnboardingComplete(isolatedEnvironment.HOME);
     assertCodexReady({
       environment: isolatedEnvironment,
       codexBinary,
