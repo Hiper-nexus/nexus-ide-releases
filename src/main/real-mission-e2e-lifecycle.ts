@@ -116,7 +116,7 @@ export function isCodexMcpApprovalPrompt(output: string): boolean {
     /\b(?:allow|approve|authorize|confirm|permission|permit|run the tool|permitir|aprovar|autorizar|confirmar|permissao|executar a ferramenta|ejecutar la herramienta|autoriser|confirmer)\b/u.test(
       normalized,
     );
-  const interactivePrompt =
+  const explicitQuestion =
     /\bquestion\s+\d+\s*\/\s*\d+\b/u.test(normalized) ||
     /\b(?:allow for this session|remember this choice|cancel this tool call|enter to submit answer|esc to interrupt)\b/u.test(
       normalized,
@@ -126,7 +126,14 @@ export function isCodexMcpApprovalPrompt(output: string): boolean {
     ) ||
     /\?\s*(?:$|\d+\s*[\.\)])/u.test(normalized);
   return (
-    namesNexusTool && interactivePrompt && (permissionLanguage || mcpContext)
+    namesNexusTool &&
+    explicitQuestion &&
+    // "Booting MCP server: nexus_* (… esc to interrupt)" is ordinary Codex
+    // startup status, not an approval question. Requiring permission language
+    // for status-only text preserves real localized MCP prompts while avoiding
+    // a false release-gate abort before the server handshake reaches idle.
+    permissionLanguage &&
+    mcpContext
   );
 }
 

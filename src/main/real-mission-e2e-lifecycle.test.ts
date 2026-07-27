@@ -347,6 +347,12 @@ describe("real mission premature exit receipts", () => {
         "Running nexus_handoff_submit through the bound Nexus server.",
       ),
     ).toBe(false);
+    expect(
+      isCodexMcpApprovalPrompt(`
+        Booting MCP server: nexus_6f0357953c28
+        (0s • esc to interrupt)
+      `),
+    ).toBe(false);
   });
 
   it("reads consumption and reviewer<-executor receipts through a query-only snapshot", () => {
