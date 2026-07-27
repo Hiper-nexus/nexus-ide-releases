@@ -123,7 +123,7 @@ Kimi is a first-class CLI adapter (`bin: kimi`, package
 | Headless / eval | `kimi -y --output-format text -p …` |
 | Auth | OAuth managed home or `KIMI_MODEL_*` transient key env |
 | Plan design | Prefer **mission lane=plan** (host) over Kimi `--plan` alone |
-| Explore/plan/coder roles | Builtin squad **Kimi Code Cell** (`kimi-code-cell`) |
+| Explore/plan/coder roles | Builtin **Code Cell — método Kimi** (`kimi-code-cell`): workers Codex governados; Kimi permanece no Terminal/manual |
 
 Senior analysis of [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli)
 vs what to transplant:  

@@ -1,5 +1,202 @@
 # Changelog
 
+## 0.19.31 — Missão Cumprida
+
+Data: 2026-07-26
+
+### Da ideia à entrega em um único fluxo
+
+- **Uma aprovação com autoridade real**: salvar o squad deixou de abrir um
+  modal obrigatório antes de outro modal. O roster exato é persistido no
+  próprio lançamento e uma única revisão nativa compacta mostra objetivo,
+  critérios, orçamento, runtime, squad, hashes e eventual substituição de
+  Maestro. Um recibo SHA-256 integral sela também os detalhes resumidos.
+- **Wizard para quem não programa**: objetivo e resultado esperado vêm
+  primeiro; opções técnicas aparecem por contexto. Rail, fan-out e painel
+  contextual formam uma linha de trabalho contínua, inspirada na clareza
+  operacional do Orca e fiel ao design system Nexus.
+- **Erros e overlays que cabem na tela**: o wizard usa a altura visual real,
+  mantém somente o corpo rolável e conserva as ações alcançáveis em janelas
+  baixas. Toasts ficam abaixo do dimmer e fora do caminho do formulário;
+  falhas de IPC, PREVC e worktree viram orientação humana inline, enquanto o
+  diagnóstico integral permanece em Operações.
+- **Greenfield de verdade**: projetos vazios aceitam scaffolds comuns de web,
+  Python, Go, Rust, Java/Kotlin, .NET, Swift, C/C++, Ruby, PHP, Flutter e
+  containers sob uma lista finita de ownership, sem globs e sem abrir acesso a
+  `.env`, `.git`, `.github`, `.npmrc` ou `.nexus`.
+- **Artefato pedido entra no selo**: um arquivo novo citado de forma explícita
+  no objetivo aprovado, como `resultado.txt`, é normalizado e acrescentado
+  como um único caminho exato ao plano. URLs, globs, traversal, conteúdo
+  citado, menções negadas, árvores ocultas/reservadas e qualquer arquivo não
+  pedido continuam fora do merge.
+- **Sensores que existem de verdade**: o Doctor não fabrica mais
+  `npm/typecheck/unit` em uma pasta vazia. Gates de package manager respeitam
+  scripts, manager e `cwd` reais; configuração incompatível não vira
+  autoridade silenciosa e comandos de teste não recebem flags específicas de
+  outro runner.
+
+### Todo o squad participa, e o resultado chega ao próximo
+
+- **Fan-out completo do roster executável**: cada identidade da cópia revisada
+  recebe trabalho compatível com sua função. O wizard só distribui execução
+  autônoma entre CLIs cuja barreira nativa foi qualificada; executores
+  implementam, e revisores/QA consomem o resultado anterior.
+- **Consumo comprovado**: cada aresta dependência→consumidor grava um recibo
+  imutável somente depois que o prompt com o handoff foi fisicamente aceito
+  pela sessão correta. ACK em massa não autoriza conclusão.
+- **Entrega fail-closed**: a missão só conclui com handoffs físicos, tentativas
+  aceitas, consumo por downstream, integração e QA. Claims de terminal sem
+  provenance continuam sendo apenas dados não confiáveis.
+- **PREVC antes do primeiro worker**: missões guiadas congelam no processo
+  principal o contrato exato da intenção aprovada antes de qualquer worker,
+  claim, worktree ou efeito de execução. Quando ainda falta contexto, somente
+  um Maestro de bootstrap nativamente read-only e revisores independentes
+  confinados podem preceder o freeze; nenhum deles recebe autoridade de
+  entrega. No scheduler, até a resolução da conta do worker fica atrás do
+  gate. Workers só nascem em `execution`; revisão pendente bloqueia sem deixar
+  uma meia missão viva.
+- **Dependência lógica não vira Git fantasma**: reviewers e advisors
+  read-only continuam obrigatórios por receipt e handoff, mas apenas
+  predecessores com worktree físico entram no grafo do WorktreeManager.
+
+### PRD não se perde na promoção
+
+- **Plan → standard selado**: o Nexus seleciona o handoff físico da sessão de
+  planejamento, valida provenance, sela resumo, artifacts e hashes, mostra o
+  conteúdo na aprovação e o persiste na nova revisão do contrato.
+- **Execução recebe o plano exato**: tarefas e prompts da nova sessão carregam
+  o PRD aprovado e seus digests. Corrupção, troca de sessão ou mudança durante
+  a confirmação interrompe a promoção.
+
+### CLIs reais, governadas
+
+- **Claude Opus 5**: modelo oficial no catálogo Claude e OMP, com preço,
+  roteamento e testes de integração que validam o identificador
+  `claude-opus-5` nos dois adapters.
+- **OMP autenticado sem segredo no Nexus**: a detecção consulta somente a
+  existência da credencial local habilitada para o provider do **modelo exato**
+  escolhido, no banco do OMP em modo somente leitura. Modelo ou provider
+  desconhecido falha fechado; o conteúdo da credencial nunca sai do broker e
+  somente o material daquele provider entra no processo.
+- **Subagentes sob o roster**: Codex recebe `multi_agent` desativado, Grok
+  recebe `--no-subagents` e OMP usa allowlist física sem a ferramenta `task`.
+  Panes diretos permanecem completos; o confinamento vale para missões
+  governadas.
+- **Skills e mídia guiadas sob seal**: o Squad Architect deriva allowlists por
+  papel a partir de um vocabulário Nexus conhecido/instalado e o main refaz a
+  projeção na cópia runtime antes do snapshot; JSON de modelo/renderer não
+  amplia skills ou tools. Somente o executor visual Codex de uma missão que
+  pede asset recebe a skill main-owned `nexus-visual-media` e exatamente
+  `nexus_media_providers` + `nexus_image_generate`; os demais workers continuam
+  com tools vazias. A skill proíbe os caminhos incompatíveis
+  `imagegen`/`hatch-pet`, API key ambiente e `generated_images`. Gerar imagem
+  ainda exige a confirmação nativa de custo e permanece limitado ao workspace.
+- **Worktree não finge ser sandbox**: escrita autônoma guiada fica limitada ao
+  Codex 0.145.0 builtin. O main materializa o perfil privado
+  `workspace-write` e remove flags de bypass, raízes adicionais e
+  perfis/configs que ampliariam o processo na última fronteira de spawn. Kimi,
+  OpenCode, OMP e as demais CLIs sem qualificação continuam disponíveis em
+  panes diretos/manuais, mas não recebem autoridade mutante só porque o `cwd`
+  aponta para um worktree.
+- **Provider validado antes de executar no macOS**: o Nexus resolve o Mach-O
+  nativo do fornecedor, sem executar o wrapper de descoberta, e um supervisor
+  assinado o cria suspenso. Identificador, cadeia Developer ID, Team ID,
+  CDHash e responsabilidade da imagem viva precisam coincidir antes do
+  `SIGCONT`; até o probe `--version` passa pela mesma fronteira autenticada,
+  em vez de executar o binário antes da attestation. Divergência encerra a
+  coorte sem liberar código do provider. Essa garantia começa quando o
+  supervisor já está em execução e não afirma que toda a cadeia anterior do
+  `node-pty` esteja ligada por inode ou livre de TOCTOU.
+- **Autoaprovação sem YOLO global**: depois da única aprovação nativa, o Codex
+  mantém `on-request` como política global no macOS. Somente o servidor MCP
+  efêmero, bearer-bound e main-owned daquela missão recebe
+  `default_tools_approval_mode="approve"` no próprio namespace; MCPs
+  ambientais e panes diretos não herdam essa decisão. O Codex usa
+  `danger-full-access` apenas dentro do Seatbelt externo do Nexus, para evitar
+  um segundo perfil aninhado; o perfil externo continua sendo a autoridade
+  física sobre HOME, temp, filesystem e rede por executável.
+- **Dependências sem egress remoto nesta release**: no macOS, o Seatbelt
+  concede rede somente ao caminho verificado do provider Codex; shell,
+  package managers e demais descendentes continuam offline. Instalação remota
+  de pacotes fica indisponível em vez de abrir proxy, MITM ou fallback de
+  egress. `load_workspace_dependencies` informa caminhos exatos de runtimes
+  locais já disponíveis, como Python/Pillow, Node.js, pnpm e Git, sem consultar
+  registry ou GitHub. A revisão nativa mostra a restrição e seu digest;
+  missões read-only ou sem executor qualificado exibem rede desativada.
+- **Pet Studio voltou a ser executável sem furar o HOME**: o maker usa a skill
+  main-owned `nexus-pet-studio`, mídia Nexus e Pillow conhecido para construir
+  o v2 no output exclusivo da missão dentro do workspace, sem rede de
+  subprocessos. O handoff precisa de provenance MCP física; o main valida
+  arquivos regulares por descriptor, rejeita symlink/hardlink e instala
+  atomicamente um id novo em `~/.codex/pets`, com retry idempotente e sem
+  sobrescrever pacote diferente.
+- **MCP físico**: endpoint loopback autenticado e OMP RPC registram provenance
+  assinada para handoffs. Rotas de Maestro são classificadas por evidência
+  mecânica, não pelo nome do modelo.
+- **Toolchain sem a falha de expansão de braces**: toda a árvore do Electron
+  Forge usa a implementação corrigida `brace-expansion` 5.0.8 por um pacote de
+  compatibilidade local, com fonte upstream, licença, hashes e provenance
+  verificáveis. O adaptador preserva as APIs CJS/ESM exigidas por minimatch
+  3/5/9 sem alterar o algoritmo; auditorias npm de produção e build ficam em
+  zero enquanto os backports upstream ainda não são publicados.
+- **Roster aprovado vence configuração antiga**: o Maestro selado na revisão
+  da missão tem precedência sobre um default global obsoleto. Uma cópia de
+  squad gerada e salva recebe id estável, reaparece no seletor e não some como
+  artefato efêmero do engine.
+
+### Autoridade e encerramento sem processo órfão
+
+- **Troca exclusiva de Maestro**: o processo principal inventaria sessões da
+  mesma família de autenticação, revoga dispatch, fecha os candidatos e só
+  aprova a nova missão depois de provar a saída da árvore antiga.
+- **Quit aguarda descendentes**: o desligamento encerra PTYs, filhos e
+  bootstrap de recuperação com resultado auditável. No macOS, um helper
+  universal assinado cria uma responsabilidade de processo própria e prova a
+  ausência até de double-forks reparentados antes de sair; ausência de prova
+  impede a confirmação de término. O fechamento da última janela sela a
+  admissão antes da primeira espera e considera o inventário global de PTYs e
+  OMP, inclusive missões headless e spawns em voo. Se uma prova falha, o app
+  permanece aberto, preserva inventário, observadores e stores para retry e
+  não reabre a cerca; a orquestração só fecha depois das provas físicas e da
+  reconciliação das saídas.
+- **Saída natural libera o próximo agente**: quando o PTY já produziu ausência
+  física, mas o renderer ainda conserva por um instante a folha visual sem
+  `sessionId`, o Main colapsa somente a referência única com missão, pane,
+  papel, encarnação e scope exatos. Sessão substituta, duplicata, cross-scope,
+  main-owned ou OMP vivo continuam fail-closed; reviewer e QA podem ocupar a
+  vaga no mesmo passe do scheduler.
+- **Handoff terminal não vira falso erro**: um handoff bloqueado ou falho pode
+  revogar intencionalmente a própria autoridade da missão sem transformar a
+  resposta já persistida em falha de transporte. Bearer, workflow, abort e
+  provenance continuam sendo revalidados antes e depois do commit.
+- **Retry perdido não duplica entrega**: handoff, receipt e transição do
+  dispatch entram na mesma transação. Se a resposta de rede se perder, um
+  retry idêntico consome seu novo receipt one-shot e apenas relê o resultado
+  físico já persistido; não cria outro handoff, não reenvia delivery e não
+  reabre a autoridade da missão. Payload, sessão, encarnação, HEAD ou
+  evidência divergentes falham fechado.
+
+### Prova de release e superfícies endurecidas
+
+- **O ZIP precisa cumprir uma missão pelo produto**: o gate da release abre o
+  MissionWizard visível no app empacotado e exige uma aprovação Nexus aceita,
+  zero prompts de autorização MCP do Codex, quatro PTYs físicos e três tarefas
+  encadeadas — executor, revisor e QA — com três handoffs e prova final de Git.
+  Revisor e QA precisam chegar ao PTY com confinamento read-only real; o
+  runner privado permanece um comando de diagnóstico separado, não roda no
+  gate e não pode promover evidência de interface. Assim, a validação da
+  release também pede uma única aprovação, sem repetir a missão inteira.
+- **IPC sensível pertence à janela principal viva**: mutações de conta,
+  provider, settings, squads e updater aceitam somente o `WebContents` exato
+  da janela principal, no frame principal e na origem esperada. Sender
+  desconhecido, navegado, destruído ou vindo de subframe falha fechado sem
+  registrar path, query, fragmento ou payload potencialmente secreto.
+- **Servidor e renderer com baseline verificável**: o backend remove
+  fingerprint do Express, emite CSP, anti-framing, `nosniff`, referrer e
+  permissions policy também em 404, que agora é JSON. O build recusa sinks
+  executáveis de HTML/JS no renderer e preload; HSTS continua deliberadamente
+  na borda, onde a topologia TLS completa pode ser validada.
+
 ## 0.19.30 — Encerra e Entra
 
 Data: 2026-07-25
