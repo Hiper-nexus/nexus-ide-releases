@@ -78,4 +78,11 @@ describe("MissionWizard action layout invariants", () => {
       /\.wizard__input:focus\s*\{[^}]*outline:\s*none/,
     );
   });
+
+  it("disables smooth roster scrolling when reduced motion is requested", () => {
+    expect(wizardSource).toContain("(prefers-reduced-motion: reduce)");
+    expect(wizardSource).toContain(
+      'behavior: reduceMotion ? "auto" : "smooth"',
+    );
+  });
 });

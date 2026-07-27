@@ -847,9 +847,15 @@ export function MissionWizard() {
           "Abra as opções avançadas desse integrante para escolher o que ele pode usar.",
       );
       requestAnimationFrame(() => {
+        const reduceMotion = window.matchMedia?.(
+          "(prefers-reduced-motion: reduce)",
+        ).matches;
         document
           .querySelector(`[data-agent-id="${invalid.id}"]`)
-          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+          ?.scrollIntoView({
+            behavior: reduceMotion ? "auto" : "smooth",
+            block: "center",
+          });
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -961,12 +967,11 @@ export function MissionWizard() {
     }
     const res = await window.nexus.orch.saveSquad(
       persisted,
-          purpose === "mission-runtime"
+      purpose === "mission-runtime"
         ? {
             purpose: "mission-runtime",
             guided:
-              mode === "agentic" ||
-              isEngineGeneratedSquadId(selectedSquad.id),
+              mode === "agentic" || isEngineGeneratedSquadId(selectedSquad.id),
             sourceSquadId: selectedSquad.id,
             designDraftToken:
               designedSquad?.id === selectedSquad.id
@@ -1679,9 +1684,7 @@ export function MissionWizard() {
       );
       return false;
     }
-    useToastStore
-      .getState()
-      .push("success", "Missão iniciada", planned.title);
+    useToastStore.getState().push("success", "Missão iniciada", planned.title);
     discardAndClose();
     return true;
   }

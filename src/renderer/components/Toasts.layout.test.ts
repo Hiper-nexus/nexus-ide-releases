@@ -34,4 +34,12 @@ describe("Toasts layout policy", () => {
     expect(rule(".toast__close")).toContain("width: 44px");
     expect(rule(".toast__close")).toContain("height: 44px");
   });
+
+  it("never truncates recovery instructions in notification details", () => {
+    const detail = rule(".toast__detail");
+    expect(detail).toContain("overflow-wrap: anywhere");
+    expect(detail).toContain("white-space: normal");
+    expect(detail).not.toContain("line-clamp");
+    expect(detail).not.toContain("overflow: hidden");
+  });
 });
