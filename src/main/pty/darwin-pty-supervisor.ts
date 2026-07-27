@@ -9,6 +9,8 @@ export const DARWIN_PTY_SUPERVISOR_IDENTIFIER = "nexus-pty-supervisor";
 export const DARWIN_PTY_PROVIDER_PROBE_MODE = "provider-probe";
 export const DARWIN_PTY_PROVIDER_PROBE_RECEIPT =
   "NEXUS_PTY_AUTHENTICATED_PROVIDER_PROBE_V1";
+export const DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE =
+  "packaged-smoke" as const;
 export const NEXUS_APP_BUNDLE_IDENTIFIER = "com.nexuside.app";
 export const NEXUS_UTILITY_HELPER_IDENTIFIER = "com.nexuside.app.helper";
 export const NEXUS_APPLE_TEAM_ID = "35P5XL3JN6";
@@ -19,6 +21,7 @@ const NEXUS_MAIN_EXECUTABLE_NAME = "nexus-ide";
 export interface DarwinPtySupervisorRuntime {
   readonly platform: NodeJS.Platform;
   readonly packaged: boolean;
+  readonly trustProfile?: typeof DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE;
   readonly resourcesPath?: string;
   readonly cwd: string;
   readonly moduleDir: string;
@@ -43,6 +46,20 @@ interface DarwinPtySupervisorSeal {
   readonly teamIdentifier: string | null;
   readonly cdHash: string;
 }
+
+export interface DarwinAdHocSmokeExecutableSeal {
+  readonly platform: "darwin";
+  readonly executablePath: string;
+  readonly identifier: typeof DARWIN_PTY_SUPERVISOR_IDENTIFIER;
+  readonly teamIdentifier: null;
+  readonly cdHash: string;
+  readonly sha256: string;
+  readonly trustProfile: typeof DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE;
+}
+
+export type DarwinPtyExecutableSeal =
+  | DarwinTrustedExecutableSeal
+  | DarwinAdHocSmokeExecutableSeal;
 
 /**
  * Stage zero is source passed directly in argv to Apple's root/SIP-owned Perl
@@ -365,6 +382,7 @@ export function isProvenDarwinPtySupervisorExit(
 
 export function currentDarwinPtySupervisorRuntime(
   moduleDir: string,
+  trustProfile?: typeof DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
 ): DarwinPtySupervisorRuntime {
   const resourcesPath = (
     process as NodeJS.Process & { readonly resourcesPath?: string }
@@ -372,6 +390,7 @@ export function currentDarwinPtySupervisorRuntime(
   return {
     platform: process.platform,
     packaged: path.resolve(moduleDir).split(path.sep).includes("app.asar"),
+    ...(trustProfile ? { trustProfile } : {}),
     ...(resourcesPath ? { resourcesPath } : {}),
     cwd: process.cwd(),
     moduleDir,
@@ -508,12 +527,53 @@ export function satisfiesPackagedDarwinSupervisorSignaturePolicy(
 function hasExactNexusRequirement(
   metadata: DarwinCodeSignatureMetadata,
   identifier: string,
+  teamIdentifier: string | null = NEXUS_APPLE_TEAM_ID,
+): boolean {
+  if (
+    metadata.identifier !== identifier ||
+    metadata.teamIdentifier !== teamIdentifier
+  ) {
+    return false;
+  }
+  if (teamIdentifier !== null) {
+    return (
+      metadata.designatedRequirement.includes(`identifier "${identifier}"`) &&
+      metadata.designatedRequirement.includes(teamIdentifier)
+    );
+  }
+  /*
+   * macOS emits an ad-hoc designated requirement as one (or, for a universal
+   * Mach-O, several) CDHash clauses rather than an identifier clause. Bind
+   * the exact identifier from the CodeDirectory metadata and independently
+   * require its current-architecture CDHash in that designated requirement.
+   */
+  const cdHash = metadata.cdHash?.toLowerCase();
+  return (
+    cdHash !== undefined &&
+    CDHASH_PATTERN.test(cdHash) &&
+    metadata.designatedRequirement
+      .toLowerCase()
+      .includes(`cdhash h"${cdHash}"`)
+  );
+}
+
+export function satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
+  helper: DarwinCodeSignatureMetadata,
+  app: DarwinCodeSignatureMetadata,
+  utilityHelper: DarwinCodeSignatureMetadata,
 ): boolean {
   return (
-    metadata.identifier === identifier &&
-    metadata.teamIdentifier === NEXUS_APPLE_TEAM_ID &&
-    metadata.designatedRequirement.includes(`identifier "${identifier}"`) &&
-    metadata.designatedRequirement.includes(NEXUS_APPLE_TEAM_ID)
+    hasExactNexusRequirement(
+      helper,
+      DARWIN_PTY_SUPERVISOR_IDENTIFIER,
+      null,
+    ) &&
+    hasExactNexusRequirement(app, NEXUS_APP_BUNDLE_IDENTIFIER, null) &&
+    hasExactNexusRequirement(
+      utilityHelper,
+      NEXUS_UTILITY_HELPER_IDENTIFIER,
+      null,
+    )
   );
 }
 
@@ -543,10 +603,19 @@ export function satisfiesPackagedDarwinRuntimeOwnershipPolicy(
   utilityHelper: DarwinCodeSignatureMetadata,
   liveProcess: DarwinCodeSignatureMetadata,
   liveParent: DarwinCodeSignatureMetadata | null,
+  teamIdentifier: string | null = NEXUS_APPLE_TEAM_ID,
 ): boolean {
   if (
-    !hasExactNexusRequirement(app, NEXUS_APP_BUNDLE_IDENTIFIER) ||
-    !hasExactNexusRequirement(utilityHelper, NEXUS_UTILITY_HELPER_IDENTIFIER)
+    !hasExactNexusRequirement(
+      app,
+      NEXUS_APP_BUNDLE_IDENTIFIER,
+      teamIdentifier,
+    ) ||
+    !hasExactNexusRequirement(
+      utilityHelper,
+      NEXUS_UTILITY_HELPER_IDENTIFIER,
+      teamIdentifier,
+    )
   ) {
     return false;
   }
@@ -594,6 +663,7 @@ function assertSystemPerlLauncher(): void {
 function assertAppOwnedSignature(
   helperPath: string,
   appRoot: string,
+  trustProfile?: typeof DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
 ): DarwinPtySupervisorSeal {
   const utilityHelperBundle = path.join(
     appRoot,
@@ -635,11 +705,25 @@ function assertAppOwnedSignature(
   const helper = readCodeSignatureMetadata(helperPath);
   const app = readCodeSignatureMetadata(appRoot);
   const utilityHelper = readCodeSignatureMetadata(utilityFile.realPath);
-  if (!satisfiesPackagedDarwinSupervisorSignaturePolicy(helper, app)) {
+  const releaseSigned =
+    satisfiesPackagedDarwinSupervisorSignaturePolicy(helper, app) &&
+    hasExactNexusRequirement(
+      utilityHelper,
+      NEXUS_UTILITY_HELPER_IDENTIFIER,
+    );
+  const localSmokeAdHoc =
+    trustProfile === DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE &&
+    satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
+      helper,
+      app,
+      utilityHelper,
+    );
+  if (!releaseSigned && !localSmokeAdHoc) {
     throw new Error(
       `helper and application must both carry Nexus Team ID ${NEXUS_APPLE_TEAM_ID}`,
     );
   }
+  const expectedTeamIdentifier = releaseSigned ? NEXUS_APPLE_TEAM_ID : null;
   const liveProcess = readCodeSignatureMetadata(String(process.pid));
   const expectedLiveExecutable =
     liveProcess.identifier === NEXUS_APP_BUNDLE_IDENTIFIER
@@ -665,6 +749,7 @@ function assertAppOwnedSignature(
       utilityHelper,
       liveProcess,
       liveParent,
+      expectedTeamIdentifier,
     )
   ) {
     throw new Error(
@@ -712,7 +797,11 @@ function resolvePackagedDarwinPtySupervisorSeal(
   ) {
     throw new Error("helper realpath escaped the application Resources root");
   }
-  const seal = assertAppOwnedSignature(before.realPath, appRoot);
+  const seal = assertAppOwnedSignature(
+    before.realPath,
+    appRoot,
+    runtime.trustProfile,
+  );
   const after = requireRegularExecutable(candidate);
   if (
     after.realPath !== before.realPath ||
@@ -794,18 +883,18 @@ export function resolveDarwinPtySupervisor(
  */
 export function resolvePackagedDarwinPtySmokeProviderSeal(
   runtime: DarwinPtySupervisorRuntime,
-): DarwinTrustedExecutableSeal {
+): DarwinPtyExecutableSeal {
   if (!runtime.packaged) {
     throw new Error(
       "Darwin authenticated PTY smoke requires the packaged Nexus helper",
     );
   }
-  const seal = resolveDarwinPtySupervisorSeal(runtime);
-  if (seal.teamIdentifier === null) {
+  if (runtime.trustProfile !== DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE) {
     throw new Error(
-      "Darwin authenticated PTY smoke requires a Team-signed Nexus helper",
+      "Darwin authenticated PTY smoke requires the explicit packaged-smoke trust profile",
     );
   }
+  const seal = resolveDarwinPtySupervisorSeal(runtime);
 
   const before = requireRegularExecutable(seal.executablePath);
   const sha256 = createHash("sha256")
@@ -825,14 +914,108 @@ export function resolvePackagedDarwinPtySmokeProviderSeal(
     );
   }
 
-  return Object.freeze({
+  const common = {
     platform: "darwin",
     executablePath: after.realPath,
     identifier: seal.identifier,
     teamIdentifier: seal.teamIdentifier,
     cdHash: seal.cdHash,
     sha256,
-  });
+  } as const;
+  return seal.teamIdentifier === null
+    ? Object.freeze({
+        ...common,
+        identifier: DARWIN_PTY_SUPERVISOR_IDENTIFIER,
+        teamIdentifier: null,
+        trustProfile: DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
+      })
+    : Object.freeze({
+        ...common,
+        teamIdentifier: seal.teamIdentifier,
+      });
+}
+
+function localAdHocSmokeSupervisorArgs(
+  runtime: DarwinPtySupervisorRuntime,
+  seal: DarwinAdHocSmokeExecutableSeal,
+  file: string,
+  args: readonly string[],
+): string[] {
+  if (
+    !runtime.packaged ||
+    runtime.trustProfile !== DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE ||
+    seal.trustProfile !== DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE ||
+    file !== seal.executablePath ||
+    args.length !== 1 ||
+    args[0] !== DARWIN_PTY_PROVIDER_PROBE_MODE ||
+    !path.isAbsolute(seal.executablePath) ||
+    seal.executablePath.includes("\0") ||
+    seal.identifier !== DARWIN_PTY_SUPERVISOR_IDENTIFIER ||
+    !CDHASH_PATTERN.test(seal.cdHash) ||
+    !SHA256_PATTERN.test(seal.sha256)
+  ) {
+    throw new Error(
+      "Darwin ad-hoc trust is restricted to the packaged local smoke provider probe",
+    );
+  }
+  return [
+    "supervise-local-smoke",
+    "--cdhash",
+    seal.cdHash,
+    "--",
+    seal.executablePath,
+    DARWIN_PTY_PROVIDER_PROBE_MODE,
+  ];
+}
+
+/**
+ * Direct main-process half of the packaged smoke. Team-signed artifacts keep
+ * the production authenticated launcher; only an explicitly profiled,
+ * entirely ad-hoc package reaches the zero-effect local smoke mode.
+ */
+export function packagedDarwinPtySmokeSupervisorCommand(
+  runtime: DarwinPtySupervisorRuntime,
+  seal: DarwinPtyExecutableSeal,
+): SupervisedPtyCommand {
+  if (
+    runtime.platform !== "darwin" ||
+    !runtime.packaged ||
+    runtime.trustProfile !== DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE ||
+    !runtime.resourcesPath ||
+    seal.executablePath !==
+      path.join(runtime.resourcesPath, DARWIN_PTY_SUPERVISOR_NAME) ||
+    seal.identifier !== DARWIN_PTY_SUPERVISOR_IDENTIFIER
+  ) {
+    throw new Error(
+      "packaged-smoke trust is restricted to the packaged Nexus helper probe",
+    );
+  }
+  const helper = resolveDarwinPtySupervisorSeal(runtime);
+  if (
+    helper.executablePath !== seal.executablePath ||
+    helper.identifier !== seal.identifier ||
+    helper.teamIdentifier !== seal.teamIdentifier ||
+    helper.cdHash !== seal.cdHash
+  ) {
+    throw new Error(
+      "packaged-smoke provider seal does not match the verified bundle helper",
+    );
+  }
+  const helperArgs =
+    seal.teamIdentifier === null
+      ? localAdHocSmokeSupervisorArgs(
+          runtime,
+          seal,
+          seal.executablePath,
+          [DARWIN_PTY_PROVIDER_PROBE_MODE],
+        )
+      : authenticatedSupervisorArgs(seal, [
+          DARWIN_PTY_PROVIDER_PROBE_MODE,
+        ]);
+  return stageZeroSupervisorCommand(
+    helper,
+    helperArgs,
+  );
 }
 
 function stageZeroSupervisorCommand(
@@ -901,6 +1084,11 @@ export function authenticatedDarwinSupervisorCommand(
       "authenticated executable seal has no immutable launcher on this platform",
     );
   }
+  if (runtime.trustProfile === DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE) {
+    throw new Error(
+      "packaged-smoke trust cannot enter the general authenticated CLI launcher",
+    );
+  }
   const helperArgs = authenticatedSupervisorArgs(seal, args);
   return stageZeroSupervisorCommand(
     resolveDarwinPtySupervisorSeal(runtime),
@@ -917,7 +1105,7 @@ export function supervisedPtyCommand(
   runtime: DarwinPtySupervisorRuntime,
   file: string,
   args: readonly string[],
-  seal?: DarwinTrustedExecutableSeal,
+  seal?: DarwinPtyExecutableSeal,
 ): SupervisedPtyCommand {
   if (runtime.platform !== "darwin") {
     if (seal) {
@@ -930,6 +1118,31 @@ export function supervisedPtyCommand(
   if (!path.isAbsolute(file) || file.includes("\0")) {
     throw new Error(
       "Darwin PTY supervisor requires an absolute, NUL-free command path",
+    );
+  }
+  if (runtime.trustProfile === DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE) {
+    if (
+      !seal ||
+      file !== seal.executablePath ||
+      args.length !== 1 ||
+      args[0] !== DARWIN_PTY_PROVIDER_PROBE_MODE
+    ) {
+      throw new Error(
+        "packaged-smoke trust is restricted to the packaged Nexus helper probe",
+      );
+    }
+    return packagedDarwinPtySmokeSupervisorCommand(runtime, seal);
+  }
+  if (seal?.teamIdentifier === null) {
+    const helperArgs = localAdHocSmokeSupervisorArgs(
+      runtime,
+      seal,
+      file,
+      args,
+    );
+    return stageZeroSupervisorCommand(
+      resolveDarwinPtySupervisorSeal(runtime),
+      helperArgs,
     );
   }
   if (seal) {

@@ -159,6 +159,18 @@ bundle. Identificador, Team ID e CDHash são comparados em todos esses vínculos
 Os caminhos fixos do repositório existem apenas no modo de desenvolvimento
 explicitamente separado.
 
+O smoke local do pacote tem uma exceção ainda mais estreita. O sentinel
+posicional capturado pelo Main cria o perfil `packaged-smoke`, que viaja no
+spec Main→utility junto de um selo ad-hoc do helper do próprio bundle. Esse
+perfil aceita somente uma cadeia integralmente ad-hoc (app, utility e helper);
+cadeias mistas são rejeitadas. O modo nativo `supervise-local-smoke` exige que o
+provider seja o próprio helper, no caminho fixo de `Contents/Resources`, e que
+o único argumento seja `provider-probe`. Mesmo nesse caso, a imagem viva é
+trace-executada e validada por identificador + CDHash antes de emitir o recibo.
+Sem o perfil, ou para qualquer CLI/comando diferente, o pacote ad-hoc continua
+falhando fechado. Releases Developer ID usam exclusivamente a política
+Team-signed normal, mesmo quando executam o smoke.
+
 Antes de montar qualquer comando, o runtime valida que `/usr/bin/perl` e
 `/usr/bin` são caminhos reais exatos, root-owned e não graváveis por grupo ou
 outros. `codesign --strict` precisa identificar o Perl como

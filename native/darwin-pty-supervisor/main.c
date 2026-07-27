@@ -71,6 +71,12 @@ extern char **environ;
 #ifndef NEXUS_TEST_PRE_TERMINATION_PROOF_HOLD_MS
 #define NEXUS_TEST_PRE_TERMINATION_PROOF_HOLD_MS 0
 #endif
+#ifndef NEXUS_TEST_PROVIDER_PROBE_MARKER
+#define NEXUS_TEST_PROVIDER_PROBE_MARKER 0
+#endif
+#ifndef NEXUS_TEST_EXECUTION_LOG
+#define NEXUS_TEST_EXECUTION_LOG 0
+#endif
 
 /*
  * Private XNU structure used by PROC_PIDUNIQIDENTIFIERINFO (flavor 17).
@@ -188,7 +194,8 @@ static void sleep_milliseconds(unsigned int milliseconds) {
 
 #if NEXUS_TEST_TRACED_AUTH_HOLD_MS > 0 ||                                  \
     NEXUS_TEST_PRE_SELF_EXEC_HOLD_MS > 0 ||                                 \
-    NEXUS_TEST_PRE_TERMINATION_PROOF_HOLD_MS > 0
+    NEXUS_TEST_PRE_TERMINATION_PROOF_HOLD_MS > 0 ||                          \
+    NEXUS_TEST_PROVIDER_PROBE_MARKER > 0
 static void test_write_ready_pid(const char *environment_name, pid_t pid) {
   const char *ready_path = getenv(environment_name);
   if (ready_path == NULL || ready_path[0] == '\0') {
@@ -200,6 +207,21 @@ static void test_write_ready_pid(const char *environment_name, pid_t pid) {
   }
   (void)fprintf(ready, "%d\n", pid);
   (void)fclose(ready);
+}
+#endif
+
+#if NEXUS_TEST_EXECUTION_LOG > 0
+__attribute__((constructor)) static void test_log_execution(void) {
+  const char *log_path = getenv("NEXUS_TEST_EXECUTION_LOG");
+  if (log_path == NULL || log_path[0] == '\0') {
+    return;
+  }
+  FILE *log = fopen(log_path, "a");
+  if (log == NULL) {
+    return;
+  }
+  (void)fprintf(log, "%d\n", getpid());
+  (void)fclose(log);
 }
 #endif
 
@@ -726,6 +748,9 @@ static int provider_probe_mode(int argc, char **argv) {
     fprintf(stderr, "usage: %s provider-probe\n", argv[0]);
     return NEXUS_EXIT_USAGE;
   }
+#if NEXUS_TEST_PROVIDER_PROBE_MARKER > 0
+  test_write_ready_pid("NEXUS_TEST_PROVIDER_PROBE_MARKER", getpid());
+#endif
   fputs(NEXUS_PROVIDER_PROBE_RECEIPT "\n", stdout);
   return 0;
 }
@@ -811,6 +836,31 @@ static bool parse_sealed_invocation(int argc, char **argv,
     return false;
   }
   *command_index = 9;
+  return true;
+}
+
+/*
+ * The local package smoke has no Apple Team identity by design. Its only
+ * ad-hoc exception is this zero-effect self-probe: the provider must be this
+ * exact helper image and the native live-code barrier still checks identifier
+ * plus per-architecture CDHash before one instruction of provider-probe runs.
+ */
+static bool parse_local_smoke_invocation(
+    int argc, char **argv, struct sealed_code_identity *identity,
+    int *command_index) {
+  if (argc != 7 || strcmp(argv[2], "--cdhash") != 0 ||
+      strcmp(argv[4], "--") != 0 || argv[5][0] != '/' ||
+      strcmp(argv[6], "provider-probe") != 0) {
+    return false;
+  }
+  memset(identity, 0, sizeof(*identity));
+  identity->identifier = NEXUS_SUPERVISOR_IDENTIFIER;
+  identity->team_identifier = NULL;
+  identity->cdhash_hex = argv[3];
+  if (!parse_cdhash(argv[3], identity->cdhash)) {
+    return false;
+  }
+  *command_index = 5;
   return true;
 }
 
@@ -946,6 +996,20 @@ static int bootstrap_authenticated_supervisor(int argc, char **argv) {
   }
   return bootstrap_disclaimed_supervisor_mode(
       argc, argv, "__run-disclaimed-authenticated", command_index);
+}
+
+static int bootstrap_local_smoke_supervisor(int argc, char **argv) {
+  struct sealed_code_identity identity;
+  int command_index = 0;
+  if (!parse_local_smoke_invocation(argc, argv, &identity, &command_index)) {
+    fprintf(stderr,
+            "usage: %s supervise-local-smoke --cdhash <40hex> -- "
+            "<packaged-helper> provider-probe\n",
+            argv[0]);
+    return NEXUS_EXIT_USAGE;
+  }
+  return bootstrap_disclaimed_supervisor_mode(
+      argc, argv, "__run-disclaimed-local-smoke", command_index);
 }
 
 static bool install_signal_handlers(void) {
@@ -1603,7 +1667,10 @@ signing_information_matches(CFDictionaryRef information,
       CFDictionaryGetValue(information, kSecCodeInfoTeamIdentifier);
   CFTypeRef unique = CFDictionaryGetValue(information, kSecCodeInfoUnique);
   return cf_string_matches(identifier, expected->identifier) &&
-         cf_string_matches(team, expected->team_identifier) && unique != NULL &&
+         (expected->team_identifier == NULL
+              ? team == NULL
+              : cf_string_matches(team, expected->team_identifier)) &&
+         unique != NULL &&
          CFGetTypeID(unique) == CFDataGetTypeID() &&
          CFDataGetLength((CFDataRef)unique) == CDHASH_BYTE_LENGTH &&
          memcmp(CFDataGetBytePtr((CFDataRef)unique), expected->cdhash,
@@ -1614,11 +1681,16 @@ static SecRequirementRef
 create_exact_code_requirement(const struct sealed_code_identity *expected) {
   CFStringRef identifier = CFStringCreateWithCString(
       kCFAllocatorDefault, expected->identifier, kCFStringEncodingUTF8);
-  CFStringRef team = CFStringCreateWithCString(
-      kCFAllocatorDefault, expected->team_identifier, kCFStringEncodingUTF8);
   CFStringRef cdhash = CFStringCreateWithCString(
       kCFAllocatorDefault, expected->cdhash_hex, kCFStringEncodingASCII);
-  if (identifier == NULL || team == NULL || cdhash == NULL) {
+  CFStringRef team =
+      expected->team_identifier == NULL
+          ? NULL
+          : CFStringCreateWithCString(kCFAllocatorDefault,
+                                      expected->team_identifier,
+                                      kCFStringEncodingUTF8);
+  if (identifier == NULL || cdhash == NULL ||
+      (expected->team_identifier != NULL && team == NULL)) {
     if (identifier != NULL) {
       CFRelease(identifier);
     }
@@ -1630,15 +1702,25 @@ create_exact_code_requirement(const struct sealed_code_identity *expected) {
     }
     return NULL;
   }
-  CFStringRef requirement_text = CFStringCreateWithFormat(
-      kCFAllocatorDefault, NULL,
-      CFSTR("identifier \"%@\" and anchor apple generic and "
-            "certificate 1[field.1.2.840.113635.100.6.2.6] exists and "
-            "certificate leaf[field.1.2.840.113635.100.6.1.13] exists and "
-            "certificate leaf[subject.OU] = \"%@\" and cdhash H\"%@\""),
-      identifier, team, cdhash);
+  CFStringRef requirement_text =
+      expected->team_identifier == NULL
+          ? CFStringCreateWithFormat(
+                kCFAllocatorDefault, NULL,
+                CFSTR("identifier \"%@\" and cdhash H\"%@\""), identifier,
+                cdhash)
+          : CFStringCreateWithFormat(
+                kCFAllocatorDefault, NULL,
+                CFSTR("identifier \"%@\" and anchor apple generic and "
+                      "certificate 1[field.1.2.840.113635.100.6.2.6] exists "
+                      "and certificate "
+                      "leaf[field.1.2.840.113635.100.6.1.13] exists and "
+                      "certificate leaf[subject.OU] = \"%@\" and cdhash "
+                      "H\"%@\""),
+                identifier, team, cdhash);
   CFRelease(identifier);
-  CFRelease(team);
+  if (team != NULL) {
+    CFRelease(team);
+  }
   CFRelease(cdhash);
   if (requirement_text == NULL) {
     return NULL;
@@ -2051,6 +2133,42 @@ static int run_disclaimed_authenticated_supervisor(int argc, char **argv) {
   return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity);
 }
 
+static bool has_suffix(const char *value, const char *suffix) {
+  size_t value_length = strlen(value);
+  size_t suffix_length = strlen(suffix);
+  return value_length > suffix_length &&
+         strcmp(value + value_length - suffix_length, suffix) == 0;
+}
+
+static int run_disclaimed_local_smoke_supervisor(int argc, char **argv) {
+  struct sealed_code_identity identity;
+  int command_index = 0;
+  if (!parse_local_smoke_invocation(argc, argv, &identity, &command_index)) {
+    fputs("nexus-pty-supervisor: invalid local smoke invocation\n", stderr);
+    return NEXUS_EXIT_USAGE;
+  }
+  char self[PATH_MAX];
+  char provider[PATH_MAX];
+  CFDictionaryRef live_helper = copy_live_signing_information(getpid());
+  bool live_helper_matches =
+      signing_information_matches(live_helper, &identity);
+  if (live_helper != NULL) {
+    CFRelease(live_helper);
+  }
+  if (!live_helper_matches ||
+      current_helper_signing_mode() != NEXUS_HELPER_SIGNING_ADHOC ||
+      executable_path(self) != 0 ||
+      realpath(argv[command_index], provider) == NULL ||
+      strcmp(self, provider) != 0 ||
+      !has_suffix(self, NEXUS_PACKAGED_HELPER_SUFFIX)) {
+    fputs("nexus-pty-supervisor: local smoke requires the exact packaged "
+          "ad-hoc helper as its zero-effect provider\n",
+          stderr);
+    return NEXUS_EXIT_CODE_IDENTITY;
+  }
+  return run_disclaimed_supervisor_mode(argc, argv, command_index, &identity);
+}
+
 static void print_usage(const char *program) {
   fprintf(stderr,
           "usage:\n"
@@ -2058,9 +2176,11 @@ static void print_usage(const char *program) {
           "  %s supervise-authenticated --identifier <id> "
           "--team-id <team> --cdhash <40hex> -- "
           "<absolute-command> [args...]\n"
+          "  %s supervise-local-smoke --cdhash <40hex> -- "
+          "<packaged-helper> provider-probe\n"
           "  %s inventory [--responsible-unique-id <uint64>]\n"
           "  %s provider-probe\n",
-          program, program, program, program);
+          program, program, program, program, program);
 }
 
 int main(int argc, char **argv) {
@@ -2070,11 +2190,17 @@ int main(int argc, char **argv) {
   if (argc >= 2 && strcmp(argv[1], "supervise-authenticated") == 0) {
     return bootstrap_authenticated_supervisor(argc, argv);
   }
+  if (argc >= 2 && strcmp(argv[1], "supervise-local-smoke") == 0) {
+    return bootstrap_local_smoke_supervisor(argc, argv);
+  }
   if (argc >= 2 && strcmp(argv[1], "__run-disclaimed") == 0) {
     return run_disclaimed_supervisor(argc, argv);
   }
   if (argc >= 2 && strcmp(argv[1], "__run-disclaimed-authenticated") == 0) {
     return run_disclaimed_authenticated_supervisor(argc, argv);
+  }
+  if (argc >= 2 && strcmp(argv[1], "__run-disclaimed-local-smoke") == 0) {
+    return run_disclaimed_local_smoke_supervisor(argc, argv);
   }
   if (argc >= 2 && strcmp(argv[1], "inventory") == 0) {
     return inventory_mode(argc, argv);

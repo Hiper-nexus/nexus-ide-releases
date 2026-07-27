@@ -12,22 +12,37 @@ import * as nodePty from "@lydell/node-pty";
 import {
   authenticatedDarwinSupervisorCommand,
   currentDarwinPtySupervisorRuntime,
+  DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
+  DARWIN_PTY_PROVIDER_PROBE_MODE,
+  DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
   DARWIN_PTY_STAGE_ZERO_SOURCE,
   DARWIN_PTY_SUPERVISOR_NAME,
   isProvenDarwinPtySupervisorExit,
   NEXUS_UTILITY_HELPER_IDENTIFIER,
   resolveDarwinPtySupervisor,
   resolvePackagedDarwinPtySmokeProviderSeal,
+  satisfiesPackagedDarwinAdHocSmokeSignaturePolicy,
   satisfiesPackagedDarwinRuntimeOwnershipPolicy,
   satisfiesPackagedDarwinSupervisorSignaturePolicy,
   supervisedPtyCommand,
 } from "./darwin-pty-supervisor";
+import type { DarwinAdHocSmokeExecutableSeal } from "./darwin-pty-supervisor";
 import type { DarwinTrustedExecutableSeal } from "./trusted-native-cli-binary";
 import { darwinNodePtyBootstrapLaunch } from "./darwin-node-pty-bootstrap";
 
 const temporaryDirectories: string[] = [];
 const activeProcessGroups = new Set<number>();
 const activePtys = new Map<number, nodePty.IPty>();
+const EXPECTED_DEVELOPER_IDENTITY =
+  "Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)";
+const EXPECTED_TEAM_IDENTIFIER = "35P5XL3JN6";
+const hasExpectedDeveloperIdentity =
+  process.platform === "darwin" &&
+  spawnSync(
+    "/usr/bin/security",
+    ["find-identity", "-v", "-p", "codesigning"],
+    { encoding: "utf8" },
+  ).stdout.includes(EXPECTED_DEVELOPER_IDENTITY);
 const sealedCodex: DarwinTrustedExecutableSeal = Object.freeze({
   platform: "darwin",
   executablePath: "/opt/vendor/codex",
@@ -35,6 +50,16 @@ const sealedCodex: DarwinTrustedExecutableSeal = Object.freeze({
   teamIdentifier: "2DC432GLL2",
   cdHash: "c9da028e2080a684d2c355e6f40ffc53c21ff7ee",
   sha256: "1da3f4e0e96028b8a771814293c3033dafd1971f943f6c7e79b0897fe705f590",
+});
+const sealedAdHocSmokeProvider: DarwinAdHocSmokeExecutableSeal = Object.freeze({
+  platform: "darwin",
+  executablePath:
+    "/Applications/NexusIDE.app/Contents/Resources/nexus-pty-supervisor",
+  identifier: "nexus-pty-supervisor",
+  teamIdentifier: null,
+  cdHash: "1111111111111111111111111111111111111111",
+  sha256: "2".repeat(64),
+  trustProfile: DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
 });
 
 function temporaryRuntime() {
@@ -96,6 +121,7 @@ function stageZeroArgs(
   helper: { readonly realPath: string; readonly cdHash: string },
   helperArgs: readonly string[],
   timeoutSeconds = 0,
+  teamIdentifier = "-",
 ): string[] {
   return [
     "-T",
@@ -107,7 +133,7 @@ function stageZeroArgs(
     "--identifier",
     "nexus-pty-supervisor",
     "--team-id",
-    "-",
+    teamIdentifier,
     "--cdhash",
     helper.cdHash,
     "--timeout-seconds",
@@ -115,6 +141,45 @@ function stageZeroArgs(
     "--",
     ...helperArgs,
   ];
+}
+
+function readDarwinCdHash(executable: string): string {
+  const metadata = spawnSync(
+    "/usr/bin/codesign",
+    ["--display", "--verbose=4", executable],
+    { encoding: "utf8" },
+  );
+  const output = `${metadata.stdout}\n${metadata.stderr}`;
+  const cdHash = /^CDHash=([a-f0-9]{40})$/imu.exec(output)?.[1];
+  if (!cdHash) throw new Error(`signed fixture has no CDHash: ${executable}`);
+  return cdHash;
+}
+
+function createPackagedNativeSmokeHelper(
+  defines: readonly string[] = [],
+): {
+  readonly root: string;
+  readonly realPath: string;
+  readonly cdHash: string;
+} {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "nexus-darwin-local-smoke-"),
+  );
+  temporaryDirectories.push(root);
+  const helper = path.join(
+    root,
+    "NexusIDE.app",
+    "Contents",
+    "Resources",
+    DARWIN_PTY_SUPERVISOR_NAME,
+  );
+  fs.mkdirSync(path.dirname(helper), { recursive: true });
+  buildNativeDevelopmentHelper(helper, defines);
+  return {
+    root,
+    realPath: fs.realpathSync(helper),
+    cdHash: readDarwinCdHash(helper),
+  };
 }
 
 function buildNativeDevelopmentHelper(
@@ -446,6 +511,17 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
         ),
       ).packaged,
     ).toBe(true);
+    expect(
+      currentDarwinPtySupervisorRuntime(
+        path.join(
+          "/Applications/NexusIDE.app/Contents/Resources",
+          "app.asar",
+          ".vite",
+          "build",
+        ),
+        DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
+      ).trustProfile,
+    ).toBe(DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE);
   });
 
   it("wraps an absolute command with the fixed development helper protocol", () => {
@@ -599,6 +675,52 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     );
   });
 
+  it("does not admit an ad-hoc seal without the local smoke profile or for another command", () => {
+    const packagedRuntime = {
+      platform: "darwin" as const,
+      packaged: true,
+      resourcesPath: "/Applications/NexusIDE.app/Contents/Resources",
+      cwd: "/tmp",
+      moduleDir:
+        "/Applications/NexusIDE.app/Contents/Resources/app.asar/.vite/build",
+    };
+    expect(() =>
+      supervisedPtyCommand(
+        packagedRuntime,
+        sealedAdHocSmokeProvider.executablePath,
+        [DARWIN_PTY_PROVIDER_PROBE_MODE],
+        sealedAdHocSmokeProvider,
+      ),
+    ).toThrow(/restricted to the packaged local smoke provider probe/i);
+    const smokeRuntime = {
+      ...packagedRuntime,
+      trustProfile: DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
+    };
+    expect(() =>
+      supervisedPtyCommand(
+        smokeRuntime,
+        sealedAdHocSmokeProvider.executablePath,
+        ["inventory"],
+        sealedAdHocSmokeProvider,
+      ),
+    ).toThrow(/restricted to the packaged Nexus helper probe/i);
+    expect(() =>
+      supervisedPtyCommand(
+        smokeRuntime,
+        sealedCodex.executablePath,
+        ["--version"],
+        sealedCodex,
+      ),
+    ).toThrow(/restricted to the packaged Nexus helper probe/i);
+    expect(() =>
+      authenticatedDarwinSupervisorCommand(
+        smokeRuntime,
+        sealedCodex,
+        ["--version"],
+      ),
+    ).toThrow(/cannot enter the general authenticated CLI launcher/i);
+  });
+
   it("rejects symlinks and never accepts an environment-selected helper", () => {
     const { root, helper, runtime } = temporaryRuntime();
     const outside = path.join(root, "outside-helper");
@@ -716,6 +838,72 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     ).toBe(false);
   });
 
+  it("accepts only an entirely ad-hoc packaged smoke chain", () => {
+    const helper = {
+      identifier: "nexus-pty-supervisor",
+      teamIdentifier: null,
+      cdHash: "a".repeat(40),
+      designatedRequirement: `cdhash H"${"a".repeat(40)}"`,
+    };
+    const app = {
+      identifier: "com.nexuside.app",
+      teamIdentifier: null,
+      cdHash: "b".repeat(40),
+      designatedRequirement: `cdhash H"${"b".repeat(40)}"`,
+    };
+    const utility = {
+      identifier: NEXUS_UTILITY_HELPER_IDENTIFIER,
+      teamIdentifier: null,
+      cdHash: "c".repeat(40),
+      designatedRequirement: `cdhash H"${"c".repeat(40)}"`,
+    };
+
+    expect(
+      satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
+        helper,
+        app,
+        utility,
+      ),
+    ).toBe(true);
+    expect(
+      satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
+        { ...helper, teamIdentifier: "35P5XL3JN6" },
+        app,
+        utility,
+      ),
+    ).toBe(false);
+    expect(
+      satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
+        {
+          ...helper,
+          designatedRequirement: `cdhash H"${"f".repeat(40)}"`,
+        },
+        app,
+        utility,
+      ),
+    ).toBe(false);
+    expect(
+      satisfiesPackagedDarwinAdHocSmokeSignaturePolicy(
+        {
+          identifier: helper.identifier,
+          teamIdentifier: helper.teamIdentifier,
+          designatedRequirement: helper.designatedRequirement,
+        },
+        app,
+        utility,
+      ),
+    ).toBe(false);
+    expect(
+      satisfiesPackagedDarwinRuntimeOwnershipPolicy(
+        app,
+        utility,
+        utility,
+        app,
+        null,
+      ),
+    ).toBe(true);
+  });
+
   it("binds distinct live main and utility identities to one exact signed bundle", () => {
     const app = {
       identifier: "com.nexuside.app",
@@ -778,6 +966,194 @@ describe("Darwin PTY responsibility supervisor resolution", () => {
     ).toThrow(/Packaged Darwin/i);
   });
 });
+
+describe.runIf(process.platform === "darwin")(
+  "Darwin packaged local-smoke native barrier",
+  () => {
+    it("admits only the exact ad-hoc helper self-probe through stage zero", () => {
+      const helper = createPackagedNativeSmokeHelper([
+        "NEXUS_TEST_EXECUTION_LOG=1",
+      ]);
+      const markerSource = path.join(helper.root, "foreign-provider.c");
+      const foreignProvider = path.join(helper.root, "foreign-provider");
+      buildAdHocMarkerExecutable(markerSource, foreignProvider);
+
+      const runProbe = (
+        name: string,
+        helperArgs: readonly string[],
+        extraEnvironment: NodeJS.ProcessEnv = {},
+      ) => {
+        const executionLog = path.join(helper.root, `${name}.executions`);
+        const result = spawnSync(
+          "/usr/bin/perl",
+          stageZeroArgs(helper, helperArgs),
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              ...extraEnvironment,
+              NEXUS_TEST_EXECUTION_LOG: executionLog,
+            },
+            timeout: 8_000,
+          },
+        );
+        expect(result.error).toBeUndefined();
+        const executions = fs.existsSync(executionLog)
+          ? fs
+              .readFileSync(executionLog, "utf8")
+              .split("\n")
+              .filter(Boolean)
+          : [];
+        return { result, executions };
+      };
+      const localSmokeArgs = (
+        cdHash: string,
+        provider = helper.realPath,
+        mode = DARWIN_PTY_PROVIDER_PROBE_MODE,
+        extra: readonly string[] = [],
+      ) => [
+        "supervise-local-smoke",
+        "--cdhash",
+        cdHash,
+        "--",
+        provider,
+        mode,
+        ...extra,
+      ];
+
+      const accepted = runProbe(
+        "accepted",
+        localSmokeArgs(helper.cdHash),
+      );
+      expect(accepted.result).toMatchObject({ status: 0, signal: null });
+      expect(accepted.result.stdout).toContain(
+        DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
+      );
+      // bootstrap -> disclaimed supervisor -> exact self-provider
+      expect(accepted.executions).toHaveLength(3);
+
+      const wrongCdHash = runProbe(
+        "wrong-cdhash",
+        localSmokeArgs("0".repeat(40)),
+      );
+      expect(wrongCdHash.result).toMatchObject({ status: 76, signal: null });
+      expect(wrongCdHash.result.stdout).not.toContain(
+        DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
+      );
+      expect(wrongCdHash.executions).toHaveLength(2);
+
+      const foreignMarker = path.join(helper.root, "foreign-provider.marker");
+      const wrongProvider = runProbe(
+        "wrong-provider",
+        localSmokeArgs(helper.cdHash, foreignProvider),
+        { NEXUS_STAGE0_SWAP_MARKER: foreignMarker },
+      );
+      expect(wrongProvider.result).toMatchObject({
+        status: 76,
+        signal: null,
+      });
+      expect(wrongProvider.result.stdout).not.toContain(
+        DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
+      );
+      expect(wrongProvider.executions).toHaveLength(2);
+      expect(fs.existsSync(foreignMarker)).toBe(false);
+
+      for (const [name, args] of [
+        [
+          "extra-argv",
+          localSmokeArgs(
+            helper.cdHash,
+            helper.realPath,
+            DARWIN_PTY_PROVIDER_PROBE_MODE,
+            ["unexpected"],
+          ),
+        ],
+        [
+          "inventory",
+          localSmokeArgs(
+            helper.cdHash,
+            helper.realPath,
+            "inventory",
+          ),
+        ],
+      ] as const) {
+        const rejected = runProbe(name, args);
+        // The helper itself returns usage before self-exec; stage zero maps
+        // that missing responsibility transition to its fail-closed identity
+        // rejection receipt.
+        expect(rejected.result).toMatchObject({ status: 76, signal: null });
+        expect(rejected.result.stdout).not.toContain(
+          DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
+        );
+        // Invalid argv is rejected by the first helper before self-exec/spawn.
+        expect(rejected.executions).toHaveLength(1);
+      }
+    }, 30_000);
+
+    it.runIf(hasExpectedDeveloperIdentity)(
+      "rejects a Developer ID helper from the ad-hoc local-smoke profile",
+      () => {
+        const helper = createPackagedNativeSmokeHelper([
+          "NEXUS_TEST_EXECUTION_LOG=1",
+        ]);
+        execFileSync("/usr/bin/codesign", [
+          "--force",
+          "--sign",
+          EXPECTED_DEVELOPER_IDENTITY,
+          "--identifier",
+          DARWIN_PTY_SUPERVISOR_NAME,
+          "--timestamp=none",
+          helper.realPath,
+        ]);
+        const signedHelper = {
+          realPath: helper.realPath,
+          cdHash: readDarwinCdHash(helper.realPath),
+        };
+        const executionLog = path.join(
+          helper.root,
+          "developer-id.executions",
+        );
+        const result = spawnSync(
+          "/usr/bin/perl",
+          stageZeroArgs(
+            signedHelper,
+            [
+              "supervise-local-smoke",
+              "--cdhash",
+              signedHelper.cdHash,
+              "--",
+              signedHelper.realPath,
+              DARWIN_PTY_PROVIDER_PROBE_MODE,
+            ],
+            0,
+            EXPECTED_TEAM_IDENTIFIER,
+          ),
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              NEXUS_TEST_EXECUTION_LOG: executionLog,
+            },
+            timeout: 8_000,
+          },
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result).toMatchObject({ status: 76, signal: null });
+        expect(result.stdout).not.toContain(
+          DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
+        );
+        expect(
+          fs
+            .readFileSync(executionLog, "utf8")
+            .split("\n")
+            .filter(Boolean),
+        ).toHaveLength(1);
+      },
+      20_000,
+    );
+  },
+);
 
 describe.runIf(process.platform === "darwin")(
   "Darwin stage-zero live helper barrier",

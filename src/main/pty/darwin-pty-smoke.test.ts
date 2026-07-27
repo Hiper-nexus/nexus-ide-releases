@@ -7,6 +7,7 @@ import {
   proveDarwinPtyPipelineForSmoke,
 } from "./darwin-pty-smoke";
 import {
+  DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
   DARWIN_PTY_PROVIDER_PROBE_MODE,
   DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
 } from "./darwin-pty-supervisor";
@@ -75,6 +76,7 @@ describe("Darwin packaged PTY smoke proof", () => {
         cwd: "/tmp/nexus-smoke",
         env: expect.objectContaining({ TERM: "xterm-256color" }),
         darwinExecutableSeal: sealedSmokeProvider,
+        darwinTrustProfile: DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
       }),
       expect.any(Object),
     );

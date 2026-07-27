@@ -1,11 +1,12 @@
 import type { PtyHost, PtyProcHandle } from "./pty-host-core";
 import {
   currentDarwinPtySupervisorRuntime,
+  DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
   DARWIN_PTY_PROVIDER_PROBE_MODE,
   DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
   resolvePackagedDarwinPtySmokeProviderSeal,
 } from "./darwin-pty-supervisor";
-import type { DarwinTrustedExecutableSeal } from "./trusted-native-cli-binary";
+import type { DarwinPtyExecutableSeal } from "./darwin-pty-supervisor";
 
 export const DARWIN_PTY_SMOKE_TIMEOUT_MS = 10_000;
 export const DARWIN_PTY_SMOKE_TERM_TIMEOUT_MS = 1_500;
@@ -33,7 +34,7 @@ export function proveDarwinPtyPipelineForSmoke(
     readonly cwd?: string;
     readonly environment?: NodeJS.ProcessEnv;
     readonly timeoutMs?: number;
-    readonly resolveProviderSeal?: () => DarwinTrustedExecutableSeal;
+    readonly resolveProviderSeal?: () => DarwinPtyExecutableSeal;
   } = {},
 ): Promise<boolean> {
   if ((options.platform ?? process.platform) !== "darwin") {
@@ -44,12 +45,15 @@ export function proveDarwinPtyPipelineForSmoke(
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
     return Promise.reject(new Error("invalid Darwin PTY smoke timeout"));
   }
-  let providerSeal: DarwinTrustedExecutableSeal;
+  let providerSeal: DarwinPtyExecutableSeal;
   try {
     providerSeal =
       options.resolveProviderSeal?.() ??
       resolvePackagedDarwinPtySmokeProviderSeal(
-        currentDarwinPtySupervisorRuntime(__dirname),
+        currentDarwinPtySupervisorRuntime(
+          __dirname,
+          DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
+        ),
       );
   } catch (error) {
     return Promise.reject(
@@ -128,6 +132,7 @@ export function proveDarwinPtyPipelineForSmoke(
             TERM: "xterm-256color",
           },
           darwinExecutableSeal: providerSeal,
+          darwinTrustProfile: DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
         },
         {
           onData: (chunk) => {

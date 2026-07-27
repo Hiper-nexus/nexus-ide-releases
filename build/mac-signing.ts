@@ -8,6 +8,7 @@ export const EXPECTED_DEVELOPER_ID_IDENTITY =
   'Developer ID Application: Cleofas Pereira rocha';
 export const EXPECTED_APPLE_TEAM_ID = '35P5XL3JN6';
 export const EXPECTED_NOTARY_PROFILE = 'nexus-notary';
+export const DARWIN_PTY_SUPERVISOR_IDENTIFIER = 'nexus-pty-supervisor';
 
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
@@ -113,6 +114,13 @@ export function shouldIgnoreMacSigningFile(filePath: string): boolean {
   );
 }
 
+function isDarwinPtySupervisorTarget(filePath: string): boolean {
+  const normalized = filePath.replaceAll('\\', '/');
+  return normalized.endsWith(
+    `/Contents/Resources/${DARWIN_PTY_SUPERVISOR_IDENTIFIER}`,
+  );
+}
+
 export function createMacSignOptions(teamId: string | undefined) {
   if (teamId !== undefined && !isAppleReleaseSigning(teamId)) {
     throw new Error('Apple Team ID must contain exactly 10 uppercase letters or digits.');
@@ -131,6 +139,18 @@ export function createMacSignOptions(teamId: string | undefined) {
     optionsForFile: (filePath: string) => ({
       entitlements: entitlementProfileForMacTarget(filePath),
       hardenedRuntime: isRelease,
+      // codesign otherwise derives a path/hash-suffixed identifier for this
+      // standalone Mach-O when osx-sign re-signs the assembled application.
+      // The native live-code barrier requires one fixed identifier in both
+      // local ad-hoc packages and Developer ID releases.
+      ...(isDarwinPtySupervisorTarget(filePath)
+        ? {
+            additionalArguments: [
+              '--identifier',
+              DARWIN_PTY_SUPERVISOR_IDENTIFIER,
+            ],
+          }
+        : {}),
       // Leaving this undefined in release mode makes @electron/osx-sign use
       // codesign's Apple-provided TSA (`--timestamp`). A URL override is both
       // unnecessary and less resilient across Apple timestamp backends.

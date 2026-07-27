@@ -7,7 +7,12 @@
  * callbacks. pty-host-client.ts wires it to the real utilityProcess.
  */
 import type { PtyProcessTreeTerminationProof } from './pty-descendant-termination';
-import type { DarwinTrustedExecutableSeal } from './trusted-native-cli-binary';
+import type {
+  DarwinPtyExecutableSeal,
+} from './darwin-pty-supervisor';
+import type {
+  DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
+} from './darwin-pty-supervisor';
 
 /** Fully-resolved spawn request. The main process builds file/args/env (the
  * security-relevant work); the host only executes it. */
@@ -23,7 +28,12 @@ export interface PtySpawnSpec {
    * Main-authenticated Mach-O identity. On Darwin the utility host must route
    * this through the native suspended/live-code verifier; it is never advisory.
    */
-  darwinExecutableSeal?: DarwinTrustedExecutableSeal;
+  darwinExecutableSeal?: DarwinPtyExecutableSeal;
+  /**
+   * Main-owned, single-purpose authority for the packaged smoke probe. It is
+   * never derived from environment variables and cannot authorize a CLI.
+   */
+  darwinTrustProfile?: typeof DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE;
 }
 
 export type PtyKillSignal = 'SIGTERM' | 'SIGKILL';

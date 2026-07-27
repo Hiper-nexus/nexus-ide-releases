@@ -16,10 +16,10 @@ import {
 } from "../shared/smoke-types";
 import { grantWorkspacePathFromTrustedMain } from "./persistence/workspace-store";
 import {
-  authenticatedDarwinSupervisorCommand,
   currentDarwinPtySupervisorRuntime,
-  DARWIN_PTY_PROVIDER_PROBE_MODE,
+  DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
   DARWIN_PTY_PROVIDER_PROBE_RECEIPT,
+  packagedDarwinPtySmokeSupervisorCommand,
   resolvePackagedDarwinPtySmokeProviderSeal,
 } from "./pty/darwin-pty-supervisor";
 import { createRealPtyHost } from "./pty/pty-host-client";
@@ -39,11 +39,12 @@ export function proveDarwinPtySupervisorForSmoke(
   const command =
     options.buildCommand?.() ??
     (() => {
-      const runtime = currentDarwinPtySupervisorRuntime(__dirname);
+      const runtime = currentDarwinPtySupervisorRuntime(
+        __dirname,
+        DARWIN_PTY_PACKAGED_SMOKE_TRUST_PROFILE,
+      );
       const seal = resolvePackagedDarwinPtySmokeProviderSeal(runtime);
-      return authenticatedDarwinSupervisorCommand(runtime, seal, [
-        DARWIN_PTY_PROVIDER_PROBE_MODE,
-      ]);
+      return packagedDarwinPtySmokeSupervisorCommand(runtime, seal);
     })();
   const result = (options.spawn ?? spawnSync)(command.file, command.args, {
     cwd: process.cwd(),

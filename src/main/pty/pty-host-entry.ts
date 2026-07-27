@@ -85,7 +85,10 @@ function handleSpawn(spec: Extract<HostControlMsg, { type: 'spawn' }>): void {
   let command: ReturnType<typeof supervisedPtyCommand>;
   try {
     command = supervisedPtyCommand(
-      currentDarwinPtySupervisorRuntime(__dirname),
+      currentDarwinPtySupervisorRuntime(
+        __dirname,
+        spec.darwinTrustProfile,
+      ),
       spec.file,
       spec.args,
       spec.darwinExecutableSeal,

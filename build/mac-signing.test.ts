@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createMacSignOptions,
+  DARWIN_PTY_SUPERVISOR_IDENTIFIER,
   entitlementProfileForMacTarget,
   EXPECTED_DEVELOPER_ID_IDENTITY,
   assertMacPublishReleaseEnvironment,
@@ -135,6 +136,44 @@ describe('macOS signing modes', () => {
       ),
     ).toBe(true);
   });
+
+  it.each([
+    [undefined, false],
+    ['35P5XL3JN6', true],
+  ])(
+    'preserves the exact PTY supervisor identifier in %s signing mode',
+    (teamId, hardenedRuntime) => {
+      const options = createMacSignOptions(teamId);
+      const helper =
+        '/tmp/NexusIDE.app/Contents/Resources/nexus-pty-supervisor';
+
+      expect(options.optionsForFile(helper)).toMatchObject({
+        additionalArguments: [
+          '--identifier',
+          DARWIN_PTY_SUPERVISOR_IDENTIFIER,
+        ],
+        hardenedRuntime,
+      });
+      expect(
+        options.optionsForFile(helper.replaceAll('/', '\\')),
+      ).toMatchObject({
+        additionalArguments: [
+          '--identifier',
+          DARWIN_PTY_SUPERVISOR_IDENTIFIER,
+        ],
+      });
+      for (const otherTarget of [
+        '/tmp/NexusIDE.app/Contents/Resources/nexus-pty-supervisor-copy',
+        '/tmp/NexusIDE.app/Contents/Resources/bin/nexus-pty-supervisor',
+        '/tmp/NexusIDE.app/Contents/MacOS/nexus-pty-supervisor',
+        '/tmp/nexus-pty-supervisor',
+      ]) {
+        expect(
+          options.optionsForFile(otherTarget).additionalArguments,
+        ).toBeUndefined();
+      }
+    },
+  );
 
   it('rejects malformed non-empty Team IDs instead of downgrading the build', () => {
     expect(isAppleReleaseSigning('not-a-team')).toBe(false);
