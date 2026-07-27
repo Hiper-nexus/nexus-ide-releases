@@ -776,6 +776,38 @@ function configOverrideValues(args: readonly string[]): string[] {
   return values;
 }
 
+function codexHookLoopbackNetworkEndpoint(
+  env: Readonly<Record<string, string>>,
+): { readonly executablePath: string; readonly port: number } | null {
+  const raw = env.NEXUS_HOOK_URL;
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("Codex hook endpoint must be an absolute loopback URL");
+  }
+  const port = Number(url.port);
+  if (
+    url.protocol !== "http:" ||
+    (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") ||
+    url.pathname !== "/hook/status" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65_535
+  ) {
+    throw new Error("Codex hook endpoint escaped the sealed loopback status route");
+  }
+  return {
+    executablePath: "/usr/bin/curl",
+    port,
+  };
+}
+
 function assertExclusiveOrchestratorProcessAvailable(
   adapter: CliPtyAdapter,
   authority: BoundSpawnAuthority,
@@ -1204,6 +1236,14 @@ export function spawnAgentSession(
           networkAllowedProcessPaths:
             process.platform === "darwin"
               ? trustedNativeLaunch?.providerNetworkProcessPaths
+              : undefined,
+          networkAllowedProcessEndpoints:
+            process.platform === "darwin"
+              ? (() => {
+                  const endpoint =
+                    codexHookLoopbackNetworkEndpoint(spawnEnv);
+                  return endpoint ? [endpoint] : undefined;
+                })()
               : undefined,
           extraReadPaths: [
             ...codexProcessSandbox.providerStatePaths,

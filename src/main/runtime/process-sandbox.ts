@@ -94,6 +94,15 @@ export interface ScopedExecPlanInput {
    */
   networkAllowedProcessPaths?: readonly string[];
   /**
+   * Exact process + loopback TCP destinations allowed through an otherwise
+   * offline macOS Seatbelt profile. Used by Nexus-owned status hooks without
+   * granting their transport process arbitrary network access.
+   */
+  networkAllowedProcessEndpoints?: readonly {
+    readonly executablePath: string;
+    readonly port: number;
+  }[];
+  /**
    * Lexical and canonical control roots that remain non-writable even under a
    * writable checkout. Paths may be absent when the profile is compiled.
    */
@@ -112,6 +121,10 @@ interface NormalizedExecPlanInput {
   readonly extraReadPaths: readonly string[];
   readonly extraWritePaths: readonly string[];
   readonly networkAllowedProcessPaths: readonly string[];
+  readonly networkAllowedProcessEndpoints: readonly {
+    readonly executablePath: string;
+    readonly port: number;
+  }[];
   readonly protectedWritePaths: readonly string[];
 }
 
@@ -283,6 +296,38 @@ function normalizedProtectedWritePaths(
   return [...normalized].sort();
 }
 
+function normalizedNetworkProcessEndpoints(
+  values: ScopedExecPlanInput['networkAllowedProcessEndpoints'],
+): Array<{ executablePath: string; port: number }> {
+  const normalized = new Map<string, {
+    executablePath: string;
+    port: number;
+  }>();
+  for (const value of values ?? []) {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      !Number.isInteger(value.port) ||
+      value.port < 1 ||
+      value.port > 65_535
+    ) {
+      throw new Error('network-allowed process endpoint has an invalid port');
+    }
+    const [executablePath] = canonicalExistingPaths(
+      [value.executablePath],
+      'network-allowed process endpoint paths',
+    );
+    normalized.set(`${executablePath}\0${value.port}`, {
+      executablePath,
+      port: value.port,
+    });
+  }
+  return [...normalized.values()].sort((left, right) =>
+    left.executablePath.localeCompare(right.executablePath) ||
+    left.port - right.port,
+  );
+}
+
 function pathAccessRule(candidate: string): string {
   let directory = false;
   try {
@@ -355,6 +400,10 @@ function buildMacosProfile(
   extraReadPaths: readonly string[] = [],
   extraWritePaths: readonly string[] = [],
   networkAllowedProcessPaths: readonly string[] = [],
+  networkAllowedProcessEndpoints: readonly {
+    readonly executablePath: string;
+    readonly port: number;
+  }[] = [],
   protectedWritePaths: readonly string[] = [],
 ): string {
   const deniedReads = MACOS_DENIED_READ_ROOTS.map(
@@ -392,6 +441,11 @@ function buildMacosProfile(
       `(with-filter (process-path ${sbplString(candidate)}) ` +
       '(allow network*))',
   );
+  const processScopedEndpointRules = networkAllowedProcessEndpoints.map(
+    ({ executablePath, port }) =>
+      `(with-filter (process-path ${sbplString(executablePath)}) ` +
+      `(allow network-outbound (remote tcp ${sbplString(`localhost:${port}`)})))`,
+  );
 
   return [
     '(version 1)',
@@ -399,6 +453,7 @@ function buildMacosProfile(
     // workspace-only denies network; workspace-net / yolo allow it.
     allowNetwork ? '(allow network*)' : '(deny network*)',
     ...processScopedNetworkRules,
+    ...processScopedEndpointRules,
     '(deny file-write*)',
     `(allow file-write* ${allowedWrites})`,
     ...(deniedControlWrites
@@ -489,9 +544,12 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
     input.networkAllowedProcessPaths,
     'network-allowed process paths',
   );
+  const networkAllowedProcessEndpoints =
+    normalizedNetworkProcessEndpoints(input.networkAllowedProcessEndpoints);
   if (
     sandboxAllowsNetwork(sandboxProfile) &&
-    networkAllowedProcessPaths.length > 0
+    (networkAllowedProcessPaths.length > 0 ||
+      networkAllowedProcessEndpoints.length > 0)
   ) {
     throw new Error(
       'process-scoped network authority cannot be combined with broad network access',
@@ -520,6 +578,9 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
     ),
     networkAllowedProcessPaths: Object.freeze(
       networkAllowedProcessPaths,
+    ),
+    networkAllowedProcessEndpoints: Object.freeze(
+      networkAllowedProcessEndpoints,
     ),
     protectedWritePaths: Object.freeze(
       normalizedProtectedWritePaths(input.protectedWritePaths),
@@ -575,6 +636,7 @@ function linuxPlan(
     input.extraReadPaths.length > 0 ||
     input.extraWritePaths.length > 0 ||
     input.networkAllowedProcessPaths.length > 0 ||
+    input.networkAllowedProcessEndpoints.length > 0 ||
     input.protectedWritePaths.length > 0
   ) {
     throw new Error(
@@ -647,6 +709,7 @@ function macosPlan(
         input.extraReadPaths,
         input.extraWritePaths,
         input.networkAllowedProcessPaths,
+        input.networkAllowedProcessEndpoints,
         input.protectedWritePaths,
       ),
       input.executable,
@@ -672,6 +735,7 @@ function windowsOciPlan(
     input.extraReadPaths.length > 0 ||
     input.extraWritePaths.length > 0 ||
     input.networkAllowedProcessPaths.length > 0 ||
+    input.networkAllowedProcessEndpoints.length > 0 ||
     input.protectedWritePaths.length > 0
   ) {
     throw new Error(

@@ -540,6 +540,16 @@ function expectDarwinCodexOuterSandbox(spec: PtySpawnSpec): void {
   );
 }
 
+function expectHookLoopbackGrant(
+  spec: PtySpawnSpec,
+  port: number,
+): void {
+  expect(spec.args[1]).toContain(
+    `(with-filter (process-path "/usr/bin/curl") ` +
+      `(allow network-outbound (remote tcp "localhost:${port}")))`,
+  );
+}
+
 describe("agentEnv linker-injection guard (plugin trust boundary)", () => {
   it("drops DYLD_ keys from env.static", () => {
     const env = agentEnv(
@@ -976,7 +986,10 @@ describe("cli-agent spawn argv hardening", () => {
       });
       mintedTokens.push(ctx.token);
       return {
-        env: { NEXUS_MCP_TOKEN: ctx.token },
+        env: {
+          NEXUS_MCP_TOKEN: ctx.token,
+          NEXUS_HOOK_URL: "http://127.0.0.1:5123/hook/status",
+        },
         extraArgs: ["-c", 'mcp_servers.nexus.url="http://127.0.0.1:1/mcp"'],
       };
     });
@@ -992,6 +1005,7 @@ describe("cli-agent spawn argv hardening", () => {
         revisionBoundWorker(),
       );
       const governedSpec = h.specFor(governed.sessionId);
+      expectHookLoopbackGrant(governedSpec, 5123);
       expect(governedSpec.args).toContain("--strict-config");
       expect(governedSpec.args).toEqual(
         expect.arrayContaining(["--disable", "multi_agent"]),

@@ -289,6 +289,86 @@ describe('process sandbox', () => {
     },
   );
 
+  it.runIf(process.platform === 'darwin')(
+    'allows a pinned hook transport only to one exact loopback port',
+    async () => {
+      const root = makeDir('nexus-hook-loopback-root');
+      const runtime = makeDir('nexus-hook-loopback-runtime');
+      const curl = fs.realpathSync('/usr/bin/curl');
+      const server = createServer((_request, response) => response.end('hook-ok'));
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => {
+          server.off('error', reject);
+          resolve();
+        });
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        throw new Error('hook loopback probe did not receive a TCP port');
+      }
+      const run = (
+        port: number,
+      ): Promise<{ status: number | null; stdout: string; stderr: string }> => {
+        const plan = buildMacosSeatbeltPlan({
+          platform: 'darwin',
+          executable: curl,
+          args: [
+            '--fail',
+            '--silent',
+            '--max-time',
+            '2',
+            `http://127.0.0.1:${port}/`,
+          ],
+          cwd: root,
+          rootRealPath: root,
+          sandboxDir: runtime,
+          env: { PATH: '/usr/bin:/bin' },
+          sandboxProfile: 'workspace-only',
+          networkAllowedProcessEndpoints: [{
+            executablePath: curl,
+            port: address.port,
+          }],
+        }, '/usr/bin/sandbox-exec');
+        expect(plan.args[1]).toContain(
+          `(remote tcp ${JSON.stringify(`localhost:${address.port}`)})`,
+        );
+        return new Promise((resolve, reject) => {
+          const child = spawn(plan.file, plan.args, {
+            cwd: plan.cwd,
+            env: plan.env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout.setEncoding('utf8');
+          child.stderr.setEncoding('utf8');
+          child.stdout.on('data', (chunk: string) => {
+            stdout += chunk;
+          });
+          child.stderr.on('data', (chunk: string) => {
+            stderr += chunk;
+          });
+          child.once('error', reject);
+          child.once('close', (status) => {
+            resolve({ status, stdout, stderr });
+          });
+        });
+      };
+
+      try {
+        const allowed = await run(address.port);
+        expect(allowed.status, String(allowed.stderr ?? '')).toBe(0);
+        expect(allowed.stdout).toBe('hook-ok');
+        const denied = await run(address.port + 1);
+        expect(denied.status).not.toBe(0);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+
   it('fails closed on platforms without a confinement provider', () => {
     const root = makeDir('nexus-sandbox-root');
     const runtime = makeDir('nexus-sandbox-runtime');
