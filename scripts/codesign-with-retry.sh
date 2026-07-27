@@ -7,8 +7,9 @@
 # ter sido gravada, mas antes de o timestamp chegar, deixa o Mach-O em estado
 # parcial e a tentativa seguinte pode morrer com "internal error". Por isso,
 # somente depois de um erro explicitamente relacionado ao TSA removemos essa
-# assinatura parcial antes do retry. Identidade, entitlement, keychain e
-# qualquer outra falha abortam de imediato.
+# assinatura parcial antes do retry. DMGs não suportam `--remove-signature`:
+# nesses contêineres a tentativa limitada reaplica a assinatura com `--force`.
+# Identidade, entitlement, keychain e qualquer outra falha abortam de imediato.
 #
 # Uso (ver build/notarize.md):
 #   PATH="$PWD/scripts/codesign-retry-bin:$PATH" npm run make:release
@@ -45,8 +46,28 @@ requests_secure_timestamp() {
   for arg in "$@"; do
     case "$arg" in
       --timestamp) return 0 ;;
-      --timestamp=none) ;;
+      --timestamp=none) return 1 ;;
       --timestamp=*) return 0 ;;
+    esac
+  done
+  # codesign solicita o timestamp seguro por padrão quando ele não foi
+  # explicitamente desativado. O maker do DMG usa esse padrão e não passa
+  # `--timestamp` na argv.
+  return 0
+}
+
+is_dmg_container() {
+  case "$1" in
+    *.dmg|*.DMG) return 0 ;;
+  esac
+  return 1
+}
+
+has_force_flag() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --force|-f) return 0 ;;
     esac
   done
   return 1
@@ -122,6 +143,7 @@ trap 'rm -f "$stdout_log" "$stderr_log"' EXIT
 last=1
 attempt=0
 timestamp_failure_seen=0
+command_args=("$@")
 # Esperas antes das tentativas: a primeira é imediata; as seguintes têm
 # backoff finito (máximo total de 207 s) e nunca escondem uma falha definitiva.
 for delay in 0 4 8 15 30 60 90; do
@@ -132,15 +154,15 @@ for delay in 0 4 8 15 30 60 90; do
   fi
   : >"$stdout_log"
   : >"$stderr_log"
-  /usr/bin/codesign "$@" >"$stdout_log" 2>"$stderr_log"
+  /usr/bin/codesign "${command_args[@]}" >"$stdout_log" 2>"$stderr_log"
   last=$?
   cat "$stdout_log"
   cat "$stderr_log" >&2
   if (( last == 0 )); then
-    if is_sign_invocation "$@"; then
-      target="${!#}"
+    if is_sign_invocation "${command_args[@]}"; then
+      target="${command_args[$((${#command_args[@]} - 1))]}"
       require_timestamp=0
-      if requests_secure_timestamp "$@"; then
+      if requests_secure_timestamp "${command_args[@]}"; then
         require_timestamp=1
       fi
       verify_signing_postcondition \
@@ -175,13 +197,22 @@ for delay in 0 4 8 15 30 60 90; do
     exit "$last"
   fi
   if (( attempt < 7 )); then
-    target="${!#}"
-    if ! remove_partial_signature "$target"; then
+    target="${command_args[$((${#command_args[@]} - 1))]}"
+    if is_dmg_container "$target"; then
+      if ! has_force_flag "${command_args[@]}"; then
+        count=${#command_args[@]}
+        # `target` is the final positional argument supplied to codesign.
+        command_args=("${command_args[@]:0:$((count - 1))}" --force "$target")
+      fi
+      printf '[codesign-retry] TSA transitório no DMG; reassinando o contêiner com --force (%d/7).\n' \
+        "$attempt" >&2
+    elif ! remove_partial_signature "$target"; then
       printf '[codesign-retry] não foi possível limpar a assinatura parcial; abortando.\n' >&2
       exit "$last"
+    else
+      printf '[codesign-retry] falha transitória do TSA da Apple; nova tentativa limitada (%d/7).\n' \
+        "$attempt" >&2
     fi
-    printf '[codesign-retry] falha transitória do TSA da Apple; nova tentativa limitada (%d/7).\n' \
-      "$attempt" >&2
   fi
 done
 exit "$last"

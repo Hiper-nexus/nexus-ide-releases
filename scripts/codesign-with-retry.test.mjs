@@ -92,6 +92,51 @@ exit 0
     ]);
   });
 
+  it('re-signs a DMG with force instead of removing its unsupported signature', () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'nexus-codesign-dmg-retry-test-'));
+    const targetPath = path.join(tempDir, 'NexusIDE.dmg');
+    const statePath = path.join(tempDir, 'calls.log');
+    const fakeCodesignPath = path.join(tempDir, 'codesign');
+    const wrapperPath = path.join(tempDir, 'wrapper.sh');
+    writeFileSync(targetPath, 'fixture');
+    writeFileSync(
+      fakeCodesignPath,
+      `#!/bin/bash
+printf '%s\\n' "$*" >> ${JSON.stringify(statePath)}
+if [[ "$1" == "--remove-signature" ]]; then exit 91; fi
+if [[ "$1" == "--sign" && "$*" != *"--force"* ]]; then
+  printf '%s: A timestamp was expected but was not found.\\n' "$5" >&2
+  exit 1
+fi
+if [[ "$1" == "-d" ]]; then
+  printf 'Timestamp=Jul 23, 2026 at 11:00:00\\n' >&2
+fi
+exit 0
+`,
+    );
+    chmodSync(fakeCodesignPath, 0o755);
+    const source = readFileSync(scriptPath, 'utf8')
+      .replaceAll('/usr/bin/codesign', fakeCodesignPath)
+      .replace('for delay in 0 4 8 15 30 60 90; do', 'for delay in 0 0; do')
+      .replace('if (( attempt < 7 )); then', 'if (( attempt < 2 )); then');
+    writeFileSync(wrapperPath, source);
+    chmodSync(wrapperPath, 0o755);
+
+    const result = spawnSync(
+      wrapperPath,
+      ['--sign', 'fixture', '--timestamp', targetPath],
+      { encoding: 'utf8' },
+    );
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(statePath, 'utf8').trim().split('\n')).toEqual([
+      `--sign fixture --timestamp ${targetPath}`,
+      `--sign fixture --timestamp --force ${targetPath}`,
+      `--verify --strict ${targetPath}`,
+      `-d --verbose=4 ${targetPath}`,
+    ]);
+  });
+
   it('never accepts a zero exit unless the target verifies with a secure timestamp', () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'nexus-codesign-postcondition-test-'));
     const targetPath = path.join(tempDir, 'native.node');
