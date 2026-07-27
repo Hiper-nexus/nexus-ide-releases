@@ -614,12 +614,12 @@ export async function executeJarvisAction(
         checkpoint(control);
         if (res.ok && res.squad) {
           useMissionWizardStore.getState().openForSquad(res.squad.id);
-          sayText = `Squad ${res.squad.name} pronto na revisão. Quer que eu inicie de verdade?`;
+          sayText = `Squad ${res.squad.name} pronto na revisão. Quer usar esta equipe na missão?`;
           expectReply = true;
           toolResult = {
             tool: action.type,
             ok: true,
-            summary: `squad ${res.squad.name} em revisão — aguardando confirmação`,
+            summary: `squad ${res.squad.name} em revisão — aguardando escolha`,
           };
         } else {
           if (isMissingModelKeyError(res.error)) useVoiceStore.getState().openSettings();
@@ -658,16 +658,16 @@ export async function executeJarvisAction(
       wizard.requestVoiceLaunch();
       sayText =
         wizard.visibleStep === 'intent-plan'
-          ? 'Plano confirmado — iniciando a missão autorizada.'
-          : 'Confirmado — iniciando o fluxo do squad.';
+          ? 'Abrindo a aprovação final da missão.'
+          : 'Squad selecionado. Agora falta revisar o objetivo.';
       expectReply = false;
       toolResult = {
         tool: action.type,
         ok: true,
         summary:
           wizard.visibleStep === 'intent-plan'
-            ? 'plano confirmado e missão iniciando'
-            : 'squad confirmado',
+            ? 'aprovação final da missão solicitada'
+            : 'squad selecionado para a missão',
       };
     }
   } else if (action.type === 'new_agentic_mission') {

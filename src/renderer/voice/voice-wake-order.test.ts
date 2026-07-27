@@ -20,6 +20,18 @@ function voiceWakeBlock(): string {
 }
 
 describe('voice wake order', () => {
+  it('does not start project-scoped voice before an authorized workspace is active', () => {
+    const gate = source.indexOf('if (!active)');
+    const capture = source.indexOf('capture.current = new VoiceCapture()');
+    const wakeStart = source.indexOf('void armConfiguredWakeMic()', gate);
+
+    expect(source).toContain('export function useVoiceController(active = true)');
+    expect(gate).toBeGreaterThanOrEqual(0);
+    expect(capture).toBeGreaterThan(gate);
+    expect(wakeStart).toBeGreaterThan(gate);
+    expect(source).toContain('}, [active])');
+  });
+
   it('opens the mic in parallel with (or before) the audible ack', () => {
     const block = voiceWakeBlock();
     // listenPromise is created before the optional ack (Live path skips ack).
@@ -52,7 +64,8 @@ describe('voice wake order', () => {
     expect(source).toContain('const WAKE_SILENCE_MS = 700');
   });
 
-  it('keeps the VAD → STT textual fallback for acoustic wake misses', () => {
+  it('keeps provider STT unavailable before local wake or operator authority', () => {
+    expect(source).toContain('const shouldUsePassiveWake = false');
     expect(source).toContain('wakeMic.onPassiveUtterance');
     expect(source).toContain('matchPassiveWakeWord');
     expect(source).toContain("purpose: 'passive-wake'");
@@ -147,19 +160,39 @@ describe('wake barge-in guards', () => {
   });
 
   it('resets the turn without tearing down the healthy Live session', () => {
-    expect(source).toContain('cancelLiveFollowUp()');
-    expect(source).toContain("liveInterrupt('wake-barge-in')");
-    expect(source).toContain('jarvis.wakeTurnReset');
-    expect(source).not.toContain('liveHardTeardown');
-    expect(source).not.toContain('jarvis.wakeSyncReset');
+    const wakeStart = source.indexOf('const handleWake = async');
+    const wakeEnd = source.indexOf('const onWake =', wakeStart);
+    const wakeBlock = source.slice(wakeStart, wakeEnd);
+    expect(wakeBlock).toContain('cancelLiveFollowUp()');
+    expect(wakeBlock).toContain("liveInterrupt('wake-barge-in')");
+    expect(wakeBlock).toContain('jarvis.wakeTurnReset');
+    expect(wakeBlock).not.toContain('liveHardTeardown');
+    expect(wakeBlock).not.toContain('jarvis.wakeSyncReset');
   });
 
-  it('does not warm Classic ack/filler audio when Realtime can own voice', () => {
-    const warmIndex = source.indexOf('warmAckCache(info.persona.userName ?? \'\')');
-    const guardIndex = source.lastIndexOf('if (!canAttemptRealtime(info))', warmIndex);
+  it('does not access cloud credentials or synthesize audio while the controller mounts', () => {
+    // Both paths resolve encrypted voice credentials in Electron main. Doing
+    // that from a passive React effect can synchronously enter macOS Keychain
+    // and starve the renderer/CDP before the first usable frame. The explicit
+    // wake path still calls liveStart/playWakePrompt on demand.
+    expect(source).not.toContain('warmAckCache(');
+    expect(source).not.toContain('livePrewarm(true)');
+    expect(source).toContain('.liveStart({ reason })');
+    expect(source).toContain('await playWakePrompt');
+  });
+});
 
-    expect(warmIndex).toBeGreaterThanOrEqual(0);
-    expect(guardIndex).toBeGreaterThanOrEqual(0);
+describe('Jarvis power-off authority', () => {
+  it('cuts capture/wake and rejects acoustic resurrection until explicit input', () => {
+    expect(source).toContain('registerJarvisPowerControl');
+    expect(source).toContain('capture.current.stop()');
+    expect(source).toContain('wakeMic.stop()');
+    expect(source).toContain('if (isJarvisPoweredOff()) return');
+    expect(source).toContain(
+      'const unsubWake = window.nexus.voice.onWakeDetected(() => onWake(\'voice\'))',
+    );
+    expect(source).toContain('const reactivated = reactivateJarvisInput()');
+    expect(source).toContain('reactivateJarvisInput();');
   });
 });
 

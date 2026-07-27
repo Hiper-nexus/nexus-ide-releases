@@ -5,9 +5,12 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
+  applicableContextSensors,
   ensureContextScaffold,
   inspectContextReadiness,
+  recommendedProjectSensorIds,
 } from './context-doctor';
+import type { SensorDefinition } from './sensor-broker';
 import {
   createContextAttestation,
   writeContextAttestation,
@@ -44,6 +47,17 @@ function hash(root: string, relative: string): string {
   return createHash('sha256')
     .update(fs.readFileSync(path.join(root, relative)))
     .digest('hex');
+}
+
+function readSensors(root: string): SensorDefinition[] {
+  return (
+    JSON.parse(
+      fs.readFileSync(
+        path.join(root, '.context/config/sensors.json'),
+        'utf8',
+      ),
+    ) as { sensors: SensorDefinition[] }
+  ).sensors;
 }
 
 function attest(
@@ -86,6 +100,7 @@ describe('Context Doctor', () => {
   it('creates only a safe scaffold and never fabricates business facts', () => {
     const { root, scope } = fixture();
     const result = ensureContextScaffold(scope);
+    const sensors = readSensors(root);
 
     expect(result.created).toEqual(
       expect.arrayContaining([
@@ -98,11 +113,244 @@ describe('Context Doctor', () => {
     expect(fs.existsSync(path.join(root, '.context/nexus/attestations'))).toBe(true);
     expect(fs.existsSync(path.join(root, '.context/nexus/evidence'))).toBe(true);
     expect(fs.existsSync(path.join(root, '.context/docs/business-model.md'))).toBe(false);
+    expect(
+      (
+        JSON.parse(
+          fs.readFileSync(
+            path.join(root, '.context/config/policy.json'),
+            'utf8',
+          ),
+        ) as {
+          review: { requireDifferentProviderFor: string[] };
+        }
+      ).review.requireDifferentProviderFor,
+    ).toEqual([]);
+    expect(sensors.map((sensor) => sensor.id)).toEqual([
+      'design-system',
+    ]);
+
+    const report = inspectContextReadiness(scope, { knownSymbols: new Set() });
+    expect(report.sensorIds).not.toEqual(
+      expect.arrayContaining(['typecheck', 'unit']),
+    );
+    expect(report.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'missing-required-sensors',
+        details: ['typecheck', 'unit'],
+      }),
+    );
+  });
+
+  it('scaffolds npm gates only when the root package exposes real scripts', () => {
+    const { root, scope } = fixture();
+    write(root, 'package.json', {
+      scripts: {
+        typecheck: 'tsc --noEmit',
+        test: 'vitest run',
+      },
+    });
+
+    ensureContextScaffold(scope);
+
+    const sensors = readSensors(root);
+    expect(sensors.map((sensor) => sensor.id)).toEqual([
+      'typecheck',
+      'unit',
+      'design-system',
+    ]);
+    expect(sensors.find((sensor) => sensor.id === 'typecheck')?.command)
+      .toEqual(['npm', 'run', 'typecheck']);
+    expect(sensors.find((sensor) => sensor.id === 'unit')?.command)
+      .toEqual(['npm', 'test']);
+  });
+
+  it.each([
+    {
+      label: 'pnpm lockfile',
+      manifest: {},
+      files: ['pnpm-lock.yaml'],
+      typecheck: ['pnpm', 'run', 'typecheck'],
+      unit: ['pnpm', 'test'],
+    },
+    {
+      label: 'Yarn lockfile',
+      manifest: {},
+      files: ['yarn.lock'],
+      typecheck: ['yarn', 'run', 'typecheck'],
+      unit: ['yarn', 'test'],
+    },
+    {
+      label: 'Bun lockfile',
+      manifest: {},
+      files: ['bun.lock'],
+      typecheck: ['bun', 'run', 'typecheck'],
+      unit: ['bun', 'run', 'test'],
+    },
+    {
+      label: 'packageManager field',
+      manifest: { packageManager: 'pnpm@10.13.1' },
+      files: ['package-lock.json'],
+      typecheck: ['pnpm', 'run', 'typecheck'],
+      unit: ['pnpm', 'test'],
+    },
+  ])(
+    'uses the $label package runner without requiring it during scaffold',
+    ({ manifest, files, typecheck, unit }) => {
+      const { root, scope } = fixture();
+      write(root, 'package.json', {
+        ...manifest,
+        scripts: {
+          typecheck: 'tsc --noEmit',
+          test: 'vitest run',
+        },
+      });
+      for (const file of files) write(root, file, '');
+
+      ensureContextScaffold(scope);
+
+      const sensors = readSensors(root);
+      expect(sensors.find((sensor) => sensor.id === 'typecheck')?.command)
+        .toEqual(typecheck);
+      expect(sensors.find((sensor) => sensor.id === 'unit')?.command)
+        .toEqual(unit);
+    },
+  );
+
+  it('resolves package capabilities from a canonical monorepo sensor cwd', () => {
+    const { root, scope } = fixture();
+    write(root, 'package.json', { private: true, workspaces: ['packages/*'] });
+    write(root, 'packages/app/package.json', {
+      scripts: {
+        typecheck: 'tsc --noEmit',
+        test: 'vitest run',
+      },
+    });
+    const sensors: SensorDefinition[] = [
+      {
+        id: 'typecheck',
+        command: ['pnpm', 'run', 'typecheck'],
+        timeoutMs: 60_000,
+        network: false,
+        cwd: 'packages/app',
+      },
+      {
+        id: 'unit',
+        command: ['pnpm', 'test'],
+        timeoutMs: 60_000,
+        network: false,
+        cwd: 'packages/app',
+      },
+    ];
+
+    expect(applicableContextSensors(scope, sensors).map((sensor) => sensor.id))
+      .toEqual(['typecheck', 'unit']);
+    expect(recommendedProjectSensorIds(scope, sensors))
+      .toEqual(['typecheck', 'unit']);
+  });
+
+  it('rejects package sensor cwd traversal and symlink escape', () => {
+    const { root, scope } = fixture();
+    const outside = fixture().root;
+    write(outside, 'package.json', {
+      scripts: { typecheck: 'tsc --noEmit' },
+    });
+    fs.symlinkSync(outside, path.join(root, 'escaped-package'));
+    const unsafe = (cwd: string): SensorDefinition => ({
+      id: 'typecheck',
+      command: ['npm', 'run', 'typecheck'],
+      timeoutMs: 60_000,
+      network: false,
+      cwd,
+    });
+
+    expect(applicableContextSensors(scope, [unsafe('../outside')])).toEqual([]);
+    expect(applicableContextSensors(scope, [unsafe('escaped-package')])).toEqual([]);
+  });
+
+  it('accepts only the canonical script mapping for package-managed recommended ids', () => {
+    const { root, scope } = fixture();
+    write(root, 'package.json', {
+      scripts: {
+        typecheck: 'tsc --noEmit',
+        test: 'vitest run',
+      },
+    });
+    const sensors: SensorDefinition[] = [
+      {
+        id: 'typecheck',
+        command: ['npm', 'run', 'test'],
+        timeoutMs: 60_000,
+        network: false,
+      },
+      {
+        id: 'unit',
+        command: ['npm', 'run', 'typecheck'],
+        timeoutMs: 60_000,
+        network: false,
+      },
+    ];
+
+    expect(applicableContextSensors(scope, sensors).map((sensor) => sensor.id))
+      .toEqual([]);
+    const unitWithArguments: SensorDefinition = {
+        id: 'unit',
+        command: ['npm', 'test', '--', '--run'],
+        timeoutMs: 60_000,
+        network: false,
+      };
+    expect(applicableContextSensors(scope, [unitWithArguments]))
+      .toEqual([unitWithArguments]);
+  });
+
+  it('preserves an explicitly versioned non-package recommended sensor', () => {
+    const { scope } = fixture();
+    const custom: SensorDefinition = {
+      id: 'typecheck',
+      command: ['/usr/bin/true'],
+      timeoutMs: 60_000,
+      network: false,
+    };
+
+    expect(applicableContextSensors(scope, [custom])).toEqual([custom]);
+  });
+
+  it('preserves a package sensor bound to a safe future monorepo cwd', () => {
+    const { scope } = fixture();
+    const future: SensorDefinition = {
+      id: 'unit',
+      command: ['npm', 'test'],
+      timeoutMs: 60_000,
+      network: false,
+      cwd: 'apps/web',
+    };
+
+    expect(applicableContextSensors(scope, [future])).toEqual([future]);
+    expect(recommendedProjectSensorIds(scope, [future])).toEqual(['unit']);
+  });
+
+  it('does not parse a package manifest larger than 1 MiB', () => {
+    const { root, scope } = fixture();
+    write(
+      root,
+      'package.json',
+      `{"scripts":{"typecheck":"${'x'.repeat(1024 * 1024)}"}}`,
+    );
+
+    ensureContextScaffold(scope);
+
+    expect(readSensors(root).map((sensor) => sensor.id))
+      .toEqual(['design-system']);
   });
 
   it('becomes ready only after independent attestations bind docs and invariants to evidence', () => {
     const { root, scope } = fixture();
     write(root, 'PRODUCT-SOURCE.md', '# Fonte\nEscopo, negócio, domínio, arquitetura e testes.');
+    write(root, 'package.json', {
+      scripts: {
+        typecheck: 'tsc --noEmit',
+        test: 'vitest run',
+      },
+    });
     for (const name of [
       'project-overview',
       'business-model',
@@ -211,6 +459,69 @@ describe('Context Doctor', () => {
     );
     expect(report.warnings).toContainEqual(
       expect.objectContaining({ code: 'missing-required-sensors' }),
+    );
+  });
+
+  it('blocks a post-scaffold package until its declared gates have applicable sensors', () => {
+    const { root, scope } = fixture();
+    write(root, 'PRODUCT-SOURCE.md', '# Fonte\nEscopo, negócio, domínio, arquitetura e testes.');
+    for (const name of [
+      'project-overview',
+      'business-model',
+      'domain-glossary',
+      'architecture',
+      'testing',
+    ]) {
+      write(root, `.context/docs/${name}.md`, `# ${name}\nFonte versionada.`);
+    }
+    ensureContextScaffold(scope);
+    write(root, 'package.json', {
+      scripts: {
+        typecheck: 'tsc --noEmit',
+        test: 'vitest run',
+      },
+    });
+    write(root, '.context/nexus/invariants/core.json', {
+      schemaVersion: 1,
+      facts: [
+        {
+          id: 'inv-core',
+          statement: 'Toda mutação valida o escopo do projeto.',
+          claimKey: 'project.scope.required',
+          value: true,
+          kind: 'asserted',
+          domains: ['core'],
+          relatedSymbols: ['ProjectExecutionScope'],
+        },
+      ],
+    });
+    for (const name of [
+      'project-overview',
+      'business-model',
+      'domain-glossary',
+      'architecture',
+      'testing',
+    ]) {
+      attest(root, scope, `.context/docs/${name}.md`, 'PRODUCT-SOURCE.md');
+    }
+    attest(root, scope, '.context/nexus/invariants/core.json', 'PRODUCT-SOURCE.md');
+
+    const report = inspectContextReadiness(scope, {
+      knownSymbols: new Set(['ProjectExecutionScope']),
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.blockers).toContainEqual(
+      expect.objectContaining({
+        code: 'missing-required-sensors',
+        details: ['typecheck', 'unit'],
+      }),
+    );
+    expect(report.warnings).not.toContainEqual(
+      expect.objectContaining({
+        code: 'missing-required-sensors',
+        details: expect.arrayContaining(['typecheck', 'unit']),
+      }),
     );
   });
 

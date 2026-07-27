@@ -132,17 +132,72 @@ export type MissionAttachmentSnapshot = z.infer<
   typeof missionAttachmentSnapshotSchema
 >;
 
+/**
+ * Main-owned snapshot of the exact physical handoff promoted from plan mode.
+ *
+ * The renderer never supplies this structure. Main selects the handoff from
+ * the scoped store, verifies its physical MCP provenance, computes every
+ * digest and persists the immutable payload in standard-v2. Main consumers
+ * revalidate the digests before using the plan as task context.
+ */
+export const MAX_PROMOTED_PLAN_SUMMARY_CHARS = 32_768;
+export const MAX_PROMOTED_PLAN_SUMMARY_BYTES = 32_768;
+
+export const promotedPlanSnapshotSchema = z
+  .object({
+    version: z.literal(1),
+    handoffId: z.string().min(1).max(256),
+    sourceIntentVersion: z.number().int().positive().max(1_000_000),
+    sourceSessionId: z.string().min(1).max(256),
+    sourceWorkerIncarnationId: z.string().min(1).max(256).optional(),
+    handoffCreatedAt: z.number().int().nonnegative(),
+    physicalReceipt: z
+      .object({
+        receiptId: z.string().min(1).max(256),
+        toolCallId: z.string().min(1).max(256),
+        source: z.enum(['http-mcp', 'omp-rpc-stdio']),
+        authoritySha256: z.string().regex(/^[a-f0-9]{64}$/),
+        worktreeHeadSha: z
+          .string()
+          .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+          .optional(),
+        issuedAt: z.number().int().nonnegative(),
+      })
+      .strict(),
+    /** Exact agent-produced PRD/plan text, not a renderer transcription. */
+    summary: z.string().min(1).max(MAX_PROMOTED_PLAN_SUMMARY_CHARS),
+    /** Exact JSON artifacts attached to the physical plan handoff. */
+    artifacts: z.array(z.unknown()).max(128),
+    summarySha256: z.string().regex(/^[a-f0-9]{64}$/),
+    artifactsSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    /** Digest over identity, physical provenance and exact plan payload. */
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export type PromotedPlanSnapshot = z.infer<typeof promotedPlanSnapshotSchema>;
+
 export const missionIntentContractSchema = z.object({
   version: z.literal(1),
   source: missionIntentSourceSchema,
-  goal: z.string().min(1).max(16_384),
-  acceptanceCriteria: z.array(z.string().min(1).max(2_048)).max(32),
+  // PREVC's compiler canonicalizes these same human-authored fields with
+  // `trim()`. Canonicalize them at the approval boundary too so a bounded
+  // truncation that lands on whitespace cannot make the freshly frozen
+  // contract look stale after the one native approval.
+  goal: z.string().trim().min(1).max(16_384),
+  acceptanceCriteria: z
+    .array(z.string().trim().min(1).max(2_048))
+    .max(32),
   risk: missionIntentRiskSchema,
   executionMode: missionExecutionModeSchema,
   /** Optional; missing/legacy contracts default to standard. */
   lane: missionLaneSchema.optional(),
   contextPolicy: missionContextPolicySchema,
   approvedAt: z.number().int().nonnegative().optional(),
+  /**
+   * Main-owned SHA-256 receipt for the complete authority review accepted in
+   * the native approval dialog. Optional only for persisted/legacy contracts.
+   */
+  approvalReviewSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   /** Wall-clock when execution was authorized (approve/start). SLA anchor. */
   dispatchedAt: z.number().int().nonnegative().optional(),
   intentVersion: z.number().int().positive().max(1_000_000),
@@ -174,6 +229,12 @@ export const missionIntentContractSchema = z.object({
    * single-task plan; prompt text alone is never authority.
    */
   requiredWorkerAgentRef: z.string().min(1).max(128).optional(),
+  /**
+   * Present only on a main-owned plan-vN → standard-vN+1 promotion.
+   * This is the durable PRD/plan input for the new guided task graph, so the
+   * standard session never depends on redelivery from the revoked plan PTY.
+   */
+  promotedPlan: promotedPlanSnapshotSchema.optional(),
 });
 export type MissionIntentContract = z.infer<typeof missionIntentContractSchema>;
 
@@ -487,6 +548,7 @@ export function classifyGoalRisk(goal: string): MissionIntentRisk {
  * Prompt builders use it to avoid restating the goal a second time.
  */
 export const AUTO_DERIVED_CRITERION_PREFIX = 'Objetivo concluído conforme:';
+const AUTO_DERIVED_CRITERION_MAX_CHARS = 2_048;
 
 export function isAutoDerivedCriterion(criterion: string): boolean {
   return criterion.trimStart().startsWith(AUTO_DERIVED_CRITERION_PREFIX);
@@ -510,7 +572,16 @@ export function compileIntentContract(input: {
   const criteria =
     input.acceptanceCriteria && input.acceptanceCriteria.length > 0
       ? input.acceptanceCriteria
-      : [`${AUTO_DERIVED_CRITERION_PREFIX} ${goal.slice(0, 200)}`];
+      : [
+          `${AUTO_DERIVED_CRITERION_PREFIX} ${goal
+            .slice(
+              0,
+              AUTO_DERIVED_CRITERION_MAX_CHARS -
+                AUTO_DERIVED_CRITERION_PREFIX.length -
+                1,
+            )
+            .trimEnd()}`,
+        ];
   const lane = input.lane ?? 'standard';
   const budgets =
     lane === 'consult' || lane === 'plan'
@@ -712,7 +783,7 @@ export function synthesizeImmediateDispatchContract(input: {
     acceptanceCriteria: petStudio
       ? [
           'Sessão Codex única iniciou com objetivo e imagem autorizados',
-          'Pacote final passou geração, montagem e QA da skill hatch-pet',
+          'Pacote final passou geração, montagem e QA da skill nexus-pet-studio',
           'Handoff final contém caminho do pacote, manifesto e evidências verificáveis',
         ]
       : [

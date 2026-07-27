@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const addShellPane = vi.fn();
 const hide = vi.fn();
-const openForMission = vi.fn();
+const openForAgentic = vi.fn();
 const toggleBoard = vi.fn();
 const openPanel = vi.fn();
 let paneCount = 1;
@@ -31,7 +31,7 @@ vi.mock('../state/home-store', () => ({
 
 vi.mock('../state/mission-wizard-store', () => ({
   useMissionWizardStore: {
-    getState: () => ({ openForMission }),
+    getState: () => ({ openForAgentic }),
   },
 }));
 
@@ -58,7 +58,7 @@ beforeEach(() => {
   paneCount = 1;
   addShellPane.mockClear();
   hide.mockClear();
-  openForMission.mockClear();
+  openForAgentic.mockClear();
   toggleBoard.mockClear();
   openPanel.mockClear();
   vi.stubGlobal('sessionStorage', {
@@ -88,7 +88,7 @@ describe('applyProgressiveLaunchIfPending', () => {
     });
     expect(applyProgressiveLaunchIfPending()).toBe(true);
     expect(addShellPane).toHaveBeenCalled();
-    expect(openForMission).not.toHaveBeenCalled();
+    expect(openForAgentic).not.toHaveBeenCalled();
   });
 
   it('missions with AI opens wizard; with openWithoutAi does not', () => {
@@ -99,9 +99,9 @@ describe('applyProgressiveLaunchIfPending', () => {
       openWithoutAi: false,
     });
     applyProgressiveLaunchIfPending();
-    expect(openForMission).toHaveBeenCalled();
+    expect(openForAgentic).toHaveBeenCalled();
 
-    openForMission.mockClear();
+    openForAgentic.mockClear();
     stashProgressiveLaunch({
       mode: 'missions',
       paneCount: 1,
@@ -109,7 +109,7 @@ describe('applyProgressiveLaunchIfPending', () => {
       openWithoutAi: true,
     });
     applyProgressiveLaunchIfPending();
-    expect(openForMission).not.toHaveBeenCalled();
+    expect(openForAgentic).not.toHaveBeenCalled();
   });
 
   it('no-op when nothing stashed', () => {

@@ -1,14 +1,18 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel } from '../../shared/types';
 import { defaultCanvasLayout } from '../lib/canvas-layout';
 import { buildGridTree, listPanes } from '../lib/split-tree';
-import { useLayoutStore } from './layout-store';
+import { switchWorkspaceLayout, useLayoutStore } from './layout-store';
 
 const basePane: PaneModel = {
   id: 'pane-a',
   kind: 'shell',
   title: 'Terminal',
 };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('layout-store canvas placement', () => {
   beforeEach(() => {
@@ -76,5 +80,31 @@ describe('layout-store pane maximize', () => {
 
     expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
     expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual(['pane-a']);
+  });
+});
+
+describe('layout-store workspace load failure', () => {
+  it('detaches persistence so outgoing panes cannot be saved under the failed target', async () => {
+    const save = vi.fn(async () => undefined);
+    vi.stubGlobal('window', {
+      nexus: {
+        layout: {
+          load: vi.fn(async () => {
+            throw new Error('layout unavailable');
+          }),
+          save,
+          saveSync: vi.fn(),
+        },
+      },
+    });
+
+    await expect(
+      switchWorkspaceLayout('/workspace/unavailable'),
+    ).rejects.toThrow('layout unavailable');
+
+    useLayoutStore.getState().addShellPane();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    expect(save).not.toHaveBeenCalled();
   });
 });

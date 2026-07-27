@@ -32,6 +32,40 @@ import {
   unregisterOrchRenderer,
 } from "./pane-registry";
 
+const missionAuthority = vi.hoisted(() => ({
+  seal: {
+    intentVersion: 1,
+    intentContractHash: "intent-contract-hash",
+    contextRevision: "context-revision-a",
+    contractHash: "contract-hash",
+    squadRevisionHash: "squad-revision-hash",
+  },
+}));
+
+vi.mock("./project-domain-store-registry", () => ({
+  getProjectDomainStores: vi.fn(() => ({
+    missions: {
+      get: vi.fn((missionId: string) => ({
+        id: missionId,
+        squadId: "squad-a",
+      })),
+    },
+  })),
+}));
+
+vi.mock("./squad-store", () => ({
+  getSquad: vi.fn((squadId: string) =>
+    squadId === "squad-a" ? { id: "squad-a", agents: [] } : null,
+  ),
+  listSquads: vi.fn(() => [{ id: "squad-a" }]),
+}));
+
+vi.mock("./mission-pane-authority", () => ({
+  resolveMissionPaneAuthoritySeal: vi.fn(() => missionAuthority.seal),
+  sameMissionPaneAuthoritySeal: (left: unknown, right: unknown) =>
+    JSON.stringify(left) === JSON.stringify(right),
+}));
+
 let rendererId = 100;
 function renderer(): WebContents & { send: ReturnType<typeof vi.fn> } {
   return {
@@ -307,6 +341,8 @@ describe("pending pane spawn authority", () => {
       missionId: "mission-a",
       agentName: "worker-a",
       role: "worker",
+      contextRevision: missionAuthority.seal.contextRevision,
+      authoritySeal: missionAuthority.seal,
       allowedTools: [],
       scope,
     });
@@ -338,6 +374,7 @@ describe("pending pane spawn authority", () => {
       },
     });
     expect(Object.isFrozen(claimed?.sealedRequest)).toBe(true);
+    expect(Object.isFrozen(claimed?.authoritySeal)).toBe(true);
     expect(claimPendingSpawnMeta(request.requestId, owner)).toBeNull();
 
     resolvePaneSpawn(
@@ -459,7 +496,7 @@ describe("pending pane spawn authority", () => {
     });
   });
 
-  it("requests recovery when the stable mission pane has already lost its session", async () => {
+  it("refuses worker recovery because the dispatch lifecycle owns it", async () => {
     const owner = renderer();
     const scope = testProjectScope();
     bindScope(owner, scope);
@@ -475,7 +512,8 @@ describe("pending pane spawn authority", () => {
       role: "worker",
       scope,
     });
-    const promise = requestMissionPaneRecovery({
+    owner.send.mockClear();
+    const result = await requestMissionPaneRecovery({
       missionId: "mission-a",
       paneId: "pane-dead",
       role: "worker",
@@ -492,20 +530,14 @@ describe("pending pane spawn authority", () => {
       scope,
       recap: "Continue the worker task.",
     });
-    const request = owner.send.mock.calls[0]?.[1] as MissionPaneRecoveryRequest;
-    expect(request).toMatchObject({
-      missionId: "mission-a",
-      paneId: "pane-dead",
-      role: "worker",
-      expectedSessionId: undefined,
-    });
-    expect(resolveMissionPaneRecovery({
-      requestId: request.requestId,
+    expect(result).toEqual({
+      requestId: "",
       ok: false,
-      paneId: request.paneId,
-      error: "test cleanup",
-    }, owner)).toBe(true);
-    await expect(promise).resolves.toMatchObject({ ok: false });
+      paneId: "pane-dead",
+      error:
+        "worker pane recovery is dispatch-owned; resume or replan the blocked task",
+    });
+    expect(owner.send).not.toHaveBeenCalled();
     syncPanes([], owner);
   });
 

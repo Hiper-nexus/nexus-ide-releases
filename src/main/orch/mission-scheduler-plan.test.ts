@@ -5,6 +5,7 @@ import {
   assertSealedTaskSchedule,
   resolveSealedWorkerRoute,
   supportsMechanicallyReadOnlyCli,
+  supportsMechanicallyWorkspaceWriteCli,
 } from './mission-scheduler-plan';
 
 function adapter(
@@ -29,11 +30,28 @@ function adapter(
 describe('sealed scheduler roster contract', () => {
   it('advertises read-only only for CLIs with an enforced native boundary', () => {
     expect(supportsMechanicallyReadOnlyCli('codex')).toBe(true);
-    expect(supportsMechanicallyReadOnlyCli('glm')).toBe(true);
-    expect(supportsMechanicallyReadOnlyCli('longcat')).toBe(true);
+    expect(supportsMechanicallyReadOnlyCli('glm')).toBe(false);
+    expect(supportsMechanicallyReadOnlyCli('longcat')).toBe(false);
     expect(supportsMechanicallyReadOnlyCli('omp')).toBe(false);
     expect(supportsMechanicallyReadOnlyCli('agy')).toBe(false);
     expect(supportsMechanicallyReadOnlyCli('grok')).toBe(false);
+  });
+  it('admits only Codex for sealed autonomous workspace writes', () => {
+    expect(supportsMechanicallyWorkspaceWriteCli('codex')).toBe(true);
+    for (const adapterId of [
+      'kimi',
+      'omp',
+      'opencode',
+      'agy',
+      'grok',
+      'glm',
+      'longcat',
+    ]) {
+      expect(
+        supportsMechanicallyWorkspaceWriteCli(adapterId),
+        adapterId,
+      ).toBe(false);
+    }
   });
   it('honours the exact roster CLI even when another installed provider is first', () => {
     const route = resolveSealedWorkerRoute({
@@ -103,6 +121,7 @@ describe('sealed scheduler roster contract', () => {
   it('rejects mutable schedule metadata that diverges from the sealed agent', () => {
     const detail = 'NEXUS_SCHEDULE_META:{}\n---\nbody';
     const planned = {
+      plannerId: 'task-1',
       taskId: 'task-1', agentRef: 'backend', agentCategory: 'executor' as const,
       plannedTitle: 'Task', plannedDetail: detail,
       task: {
@@ -116,6 +135,47 @@ describe('sealed scheduler roster contract', () => {
       dependsOn: [], ownership: { files: [], symbols: [], domains: [] }, merged: false,
     })).toThrow(/agente\/categoria/i);
   });
+
+  it.each(['executor', 'architect'] as const)(
+    'admits a sealed read-only %s through the runtime pre-spawn contract',
+    (agentCategory) => {
+      const detail = 'NEXUS_SCHEDULE_META:{}\n---\nbody';
+      const planned = {
+        plannerId: `task-${agentCategory}`,
+        taskId: `task-${agentCategory}`,
+        agentRef: `agent-${agentCategory}`,
+        agentCategory,
+        plannedTitle: 'Advisory',
+        plannedDetail: detail,
+        task: {
+          id: `task-${agentCategory}`,
+          missionId: 'mission-1',
+          title: 'Advisory',
+          detail,
+          status: 'pending' as const,
+          createdAt: 1,
+          updatedAt: 1,
+          projectId: 'project',
+          checkoutId: 'checkout',
+        },
+      };
+
+      expect(() =>
+        assertSealedTaskSchedule(planned, {
+          agentRef: `agent-${agentCategory}`,
+          agentCategory,
+          executionMode: 'read_only',
+          dependsOn: [],
+          ownership: {
+            files: ['src'],
+            symbols: [],
+            domains: ['guided-advisory', 'sequential-only'],
+          },
+          merged: false,
+        }),
+      ).not.toThrow();
+    },
+  );
 
   it('accepts only a closed acyclic task dependency graph', () => {
     expect(() => assertClosedAcyclicPlanDependencies([

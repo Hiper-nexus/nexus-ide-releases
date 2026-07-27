@@ -224,12 +224,12 @@ describe('mission prompt queue production wire', () => {
 describe('mission prompt queue executing watchdog', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    process.env.MISSION_PROMPT_EXECUTING_WATCHDOG_MS = '1000';
+    vi.stubEnv('MISSION_PROMPT_EXECUTING_WATCHDOG_MS', '1000');
     resetMissionPromptQueues();
   });
 
   afterEach(() => {
-    delete process.env.MISSION_PROMPT_EXECUTING_WATCHDOG_MS;
+    vi.unstubAllEnvs();
     resetMissionPromptQueues();
     vi.useRealTimers();
     vi.restoreAllMocks();

@@ -4,15 +4,20 @@ import {
   PET_STUDIO_SQUAD_ID,
 } from '../../shared/pet-studio';
 import { applySquadModelDefault } from '../../shared/squad-model-defaults';
+import {
+  NEXUS_PLAN_SQUAD_ID,
+  NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+} from '../../shared/builtin-squad-ids';
 
 /**
  * NEXUS ORIGINALS — squads embutidos, semeados no primeiro run (marcados
  * `builtin`) para que o Modo Squad funcione out-of-the-box, sem depender de
  * migração ou criação manual. Squads de desenvolvimento usam Claude como
- * orquestrador; o Pet Studio é a exceção visual deliberada, com um único Codex
- * e sem pipeline de repositório. Os workers podem ser trocados no passo de
- * revisão do wizard. Ids estáveis para não duplicar entre versões; `createdAt`
- * fixo para não churnar.
+ * orquestrador e Codex como worker governado; o Pet Studio é a exceção visual
+ * deliberada, com um único Codex e sem pipeline de repositório. Outras CLIs
+ * continuam disponíveis em painéis/Terminal manual, mas não são prometidas
+ * pelos rosters autônomos desta release. Ids estáveis para não duplicar entre
+ * versões; `createdAt` fixo para não churnar.
  */
 
 const SEED_TS = '1704067200000'; // 2024-01-01, estável
@@ -26,7 +31,8 @@ const SPEAK_HUMAN =
 /**
  * Allowlist mínima e explícita por papel (SEC#5 — antes `null` = irrestrito em
  * todos). Em squads gerais o orquestrador é o dono da missão e usa o toolset
- * completo; o Pet Studio declara apenas `load_workspace_dependencies`. Todo
+ * completo; o Pet Studio declara apenas dependências locais e as duas tools
+ * Nexus de mídia necessárias ao pipeline visual. Todo
  * worker é uma folha que só precisa entregar o handoff (nexus_handoff_submit é
  * sempre permitido), então seu `allowedTools` é `[]` — sem pane cross-access,
  * sem spawnar panes, sem controlar a missão. `allowedSkills` fica aberto de
@@ -224,10 +230,9 @@ const REVIEW_P0P3_ORCH_INSTRUCTIONS =
   'reviewer a rodar `git diff -- <path>` (e `git diff --cached -- <path>` ' +
   'no modo uncommitted) nos arquivos designados;\n' +
   '(c) o bloco "Instruções do reviewer" abaixo, INTEIRO e sem alterações.\n' +
-  'OBRIGATÓRIO: se o roster tiver "Reviewer D (omp)" e o adapter omp estiver ' +
-  'instalado, spawne-o no primeiro ciclo com agentName="Reviewer D (omp)" e ' +
-  'adapterId=omp (roster sticky — NÃO substitua por claude/codex/kimi via ' +
-  'route_task). Isso é diversidade real, não slot decorativo.\n' +
+  'Todos os reviewers deste roster são identidades independentes executadas ' +
+  'no Codex builtin governado. Kimi, OMP, Grok, AGY e outras CLIs continuam ' +
+  'disponíveis no Terminal/manual, mas não substituem workers desta missão.\n' +
   'Aguarde com nexus_pane_wait_many e colete os handoffs com nexus_handoff_list.\n' +
   '\n' +
   '## 4. Instruções do reviewer (repasse este bloco inteiro a cada reviewer)\n' +
@@ -251,8 +256,10 @@ const REVIEW_P0P3_ORCH_INSTRUCTIONS =
 const OUTCOME_PACK_COMMON =
   '\n\n## Operação segura\n' +
   'Transforme o contrato de resultado em tarefas com donos, dependências e ' +
-  'critérios de aceite antes de spawnar. Use apenas agentes do roster, preserve ' +
-  'a CLI de cada nome e mantenha escrita em um único worktree por tarefa. ' +
+  'critérios de aceite antes de spawnar. Use apenas agentes do roster; nesta ' +
+  'release, cada worker governado usa o Codex builtin e mantém escrita em um ' +
+  'único worktree por tarefa. Kimi, OMP, Grok, AGY e outras CLIs permanecem ' +
+  'disponíveis apenas no Terminal/manual. ' +
   'Cada worker entrega um handoff com arquivos alterados e provas executadas. ' +
   'O implementador nunca aprova o próprio trabalho: QA e Reviewer verificam ' +
   'o resultado de forma independente. Não marque a missão como concluída/done ' +
@@ -310,21 +317,21 @@ const RAW_SQUADS: Squad[] = [
         id: 'ux-content',
         agentName: 'UX & Conteúdo',
         category: 'architect',
-        cli: 'agy',
+        cli: 'codex',
         effort: 'medium',
       },
       {
         id: 'qa-accessibility',
         agentName: 'QA & Acessibilidade',
         category: 'reviewer',
-        cli: 'grok',
+        cli: 'codex',
         effort: 'medium',
       },
       {
         id: 'final-review',
-        agentName: 'Reviewer P0–P3 (omp)',
+        agentName: 'Reviewer P0–P3',
         category: 'reviewer',
-        cli: 'omp',
+        cli: 'codex',
         effort: 'high',
       },
     ],
@@ -363,7 +370,7 @@ const RAW_SQUADS: Squad[] = [
         id: 'investigator',
         agentName: 'Investigador',
         category: 'scout',
-        cli: 'agy',
+        cli: 'codex',
         effort: 'medium',
       },
       {
@@ -377,14 +384,14 @@ const RAW_SQUADS: Squad[] = [
         id: 'regression-qa',
         agentName: 'QA de Regressão',
         category: 'reviewer',
-        cli: 'grok',
+        cli: 'codex',
         effort: 'medium',
       },
       {
         id: 'final-review',
-        agentName: 'Reviewer P0–P3 (omp)',
+        agentName: 'Reviewer P0–P3',
         category: 'reviewer',
-        cli: 'omp',
+        cli: 'codex',
         effort: 'high',
       },
     ],
@@ -434,28 +441,28 @@ const RAW_SQUADS: Squad[] = [
         id: 'commerce-backend',
         agentName: 'Catálogo & Pedidos',
         category: 'executor',
-        cli: 'agy',
+        cli: 'codex',
         effort: 'medium',
       },
       {
         id: 'security',
         agentName: 'Segurança de Pagamento',
         category: 'reviewer',
-        cli: 'kimi',
+        cli: 'codex',
         effort: 'high',
       },
       {
         id: 'checkout-qa',
         agentName: 'QA de Checkout',
         category: 'reviewer',
-        cli: 'grok',
+        cli: 'codex',
         effort: 'high',
       },
       {
         id: 'final-review',
-        agentName: 'Reviewer P0–P3 (omp)',
+        agentName: 'Reviewer P0–P3',
         category: 'reviewer',
-        cli: 'omp',
+        cli: 'codex',
         effort: 'high',
       },
     ],
@@ -469,9 +476,9 @@ const RAW_SQUADS: Squad[] = [
       '# Full-Stack\n' +
       'Você é o orquestrador. Quebre a tarefa em frente, back e revisão; ' +
       'delegue cada parte ao worker correspondente via nexus_pane_* e ' +
-      'integre os handoffs. O roster é um MENU: spawne só os agentes que a ' +
-      'missão pede — MAS se a missão cruzar frente+back ou pedir paralelismo, ' +
-      'inclua "Generalist (omp)" (cli=omp) e preserve adapterId=omp no spawn. ' +
+      'integre os handoffs. O roster é um MENU de identidades Codex ' +
+      'independentes: spawne só os agentes que a missão pede e use o ' +
+      'Generalist quando a missão cruzar frente+back ou pedir paralelismo. ' +
       'Antes de finalizar: QA roda os testes/o app de verdade e ' +
       'tenta quebrar a entrega; Security revisa qualquer coisa que toque ' +
       'auth, pagamentos, rede ou dados de usuário; UX Designer critica e ' +
@@ -480,17 +487,13 @@ const RAW_SQUADS: Squad[] = [
       'finalize com QA e Reviewer aprovando.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      // Workers em CLIs DIFERENTES (defaults editáveis no review): diversidade
-      // de modelos = custo menor e sem sobrecarregar um provedor só.
       { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'codex', effort: 'medium' },
-      { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'agy', effort: 'medium' },
-      // Executor generalista no omp: sticky roster — spawn com agentName
-      // preserva cli=omp (não sobrescrever com route_task de outra CLI).
-      { id: 'generalist', agentName: 'Generalist (omp)', category: 'executor', cli: 'omp', effort: 'medium' },
-      { id: 'ux', agentName: 'UX Designer', category: 'reviewer', cli: 'claude', effort: 'medium' },
-      { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
-      { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
-      { id: 'reviewer', agentName: 'Reviewer', category: 'reviewer', cli: 'kimi', effort: 'high' },
+      { id: 'backend', agentName: 'Backend', category: 'executor', cli: 'codex', effort: 'medium' },
+      { id: 'generalist', agentName: 'Generalist', category: 'executor', cli: 'codex', effort: 'medium' },
+      { id: 'ux', agentName: 'UX Designer', category: 'reviewer', cli: 'codex', effort: 'medium' },
+      { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'codex', effort: 'medium' },
+      { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'codex', effort: 'high' },
+      { id: 'reviewer', agentName: 'Reviewer', category: 'reviewer', cli: 'codex', effort: 'high' },
     ],
   },
   {
@@ -502,19 +505,15 @@ const RAW_SQUADS: Squad[] = [
       '# Code Review\n' +
       'Você é o orquestrador. Envie o diff para os revisores em paralelo ' +
       '(correção, segurança e performance), colete os handoffs e consolide ' +
-      'um veredito único, priorizando os achados por severidade.\n' +
-      'OBRIGATÓRIO: no primeiro ciclo, spawne em paralelo o agente ' +
-      '"Edge Cases (omp)" (cli=omp) SE o adapter omp estiver instalado — ' +
-      'use agentName do roster e NÃO troque adapterId para outra CLI. ' +
-      'omp é cidadão de review, não fallback opcional.',
+      'um veredito único, priorizando os achados por severidade. Todos são ' +
+      'reviewers Codex governados e independentes; use Edge Cases para ' +
+      'integrações cross-boundary.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      { id: 'correctness', agentName: 'Correctness', category: 'reviewer', cli: 'kimi', effort: 'high' },
-      { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'claude', effort: 'high' },
-      { id: 'performance', agentName: 'Performance', category: 'reviewer', cli: 'agy', effort: 'high' },
-      // Quarto olhar no omp: casos de borda e integrações cross-boundary
-      // (mesma diversidade de modelos dos outros squads).
-      { id: 'edge-cases', agentName: 'Edge Cases (omp)', category: 'reviewer', cli: 'omp', effort: 'high' },
+      { id: 'correctness', agentName: 'Correctness', category: 'reviewer', cli: 'codex', effort: 'high' },
+      { id: 'security', agentName: 'Security', category: 'reviewer', cli: 'codex', effort: 'high' },
+      { id: 'performance', agentName: 'Performance', category: 'reviewer', cli: 'codex', effort: 'high' },
+      { id: 'edge-cases', agentName: 'Edge Cases', category: 'reviewer', cli: 'codex', effort: 'high' },
     ],
   },
   {
@@ -525,14 +524,14 @@ const RAW_SQUADS: Squad[] = [
     orchestratorInstructions: REVIEW_P0P3_ORCH_INSTRUCTIONS,
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      // Reviewers em CLIs diferentes (mesma razão do Full-Stack: diversidade
-      // de modelos). Allowlist Nexus explícita e read-only; allowedSkills []
-      // porque review P0–P3 é leitura pura — nenhuma skill é necessária.
+      // Identidades independentes no Codex governado. Allowlist Nexus
+      // explícita e read-only; allowedSkills [] porque review P0–P3 é leitura
+      // pura — nenhuma skill é necessária.
       {
         id: 'reviewer-a',
         agentName: 'Reviewer A',
         category: 'reviewer',
-        cli: 'claude',
+        cli: 'codex',
         effort: 'high',
         allowedTools: [...REVIEW_P0P3_READONLY_TOOLS],
         allowedSkills: [],
@@ -541,7 +540,7 @@ const RAW_SQUADS: Squad[] = [
         id: 'reviewer-b',
         agentName: 'Reviewer B',
         category: 'reviewer',
-        cli: 'kimi',
+        cli: 'codex',
         effort: 'high',
         allowedTools: [...REVIEW_P0P3_READONLY_TOOLS],
         allowedSkills: [],
@@ -550,19 +549,16 @@ const RAW_SQUADS: Squad[] = [
         id: 'reviewer-c',
         agentName: 'Reviewer C',
         category: 'reviewer',
-        cli: 'agy',
+        cli: 'codex',
         effort: 'high',
         allowedTools: [...REVIEW_P0P3_READONLY_TOOLS],
         allowedSkills: [],
       },
       {
-        // O pipeline É um port do oh-my-pi — o omp revisa no próprio rito,
-        // e é assim que ele entra em operação de background (achado de
-        // operador: "omp integrado mas nunca vi em ação").
         id: 'reviewer-d',
-        agentName: 'Reviewer D (omp)',
+        agentName: 'Reviewer D',
         category: 'reviewer',
-        cli: 'omp',
+        cli: 'codex',
         effort: 'high',
         allowedTools: [...REVIEW_P0P3_READONLY_TOOLS],
         allowedSkills: [],
@@ -587,32 +583,33 @@ const RAW_SQUADS: Squad[] = [
       'qualquer código.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'agy', effort: 'medium' },
-      { id: 'scout-b', agentName: 'Scout B', category: 'scout', cli: 'grok', effort: 'medium' },
-      { id: 'scout-c', agentName: 'Scout C (omp)', category: 'scout', cli: 'omp', effort: 'medium' },
-      { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
-      { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },
+      { id: 'scout-a', agentName: 'Scout A', category: 'scout', cli: 'codex', effort: 'medium' },
+      { id: 'scout-b', agentName: 'Scout B', category: 'scout', cli: 'codex', effort: 'medium' },
+      { id: 'scout-c', agentName: 'Scout C', category: 'scout', cli: 'codex', effort: 'medium' },
+      { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'codex', effort: 'high' },
+      { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'codex', effort: 'high' },
     ],
   },
   {
     // Planejamento estilo BMAD adaptado a brownfield: leitura REAL do sistema
     // antes de qualquer pergunta, interrogatório grilling (uma pergunta por
     // vez, decisões do usuário), e documentos versionáveis como entrega.
-    id: 'nexus-plan',
+    id: NEXUS_PLAN_SQUAD_ID,
     name: 'Planejamento & PRD',
     createdAt: SEED_TS,
     builtin: true,
     orchestratorInstructions:
       '# Planejamento & PRD (brownfield-first)\n' +
-      'Você é o orquestrador de planejamento. A entrega final são documentos ' +
-      'versionáveis em docs/ (PRD, arquitetura e stories) — NENHUM código de ' +
-      'produção é escrito nesta missão. Spawne os workers do roster via ' +
-      'nexus_pane_spawn (em paralelo quando as etapas permitirem), aguarde ' +
-      'com nexus_pane_wait_many e colete entregas com nexus_handoff_list.\n' +
+      'Você é o Maestro de planejamento. Consolide PRD, arquitetura e stories ' +
+      'executáveis em docs/plan.md — NENHUM código de produção é escrito nesta ' +
+      'missão. Esta lane é deliberadamente executada apenas pelo Maestro: NÃO ' +
+      'use nexus_pane_spawn nem nexus_route_task. Delegação nativa de leitura ' +
+      'ainda não possui confinamento comprovado em todas as CLIs; o fan-out ' +
+      'de workers Codex começa somente depois da promoção para standard.\n' +
       '\n' +
       '## 1. Leitura real do sistema (sempre primeiro)\n' +
-      'Antes de qualquer pergunta ao usuário, mande os explorers levantarem ' +
-      'em paralelo o estado REAL do workspace: stack e dependências, módulos ' +
+      'Antes de qualquer pergunta ao usuário, levante o estado REAL do ' +
+      'workspace: stack e dependências, módulos ' +
       'e fronteiras, fluxos críticos, integrações externas, testes e dívidas ' +
       'aparentes. Fatos se buscam no código — NUNCA pergunte ao usuário o ' +
       'que o repositório já responde.\n' +
@@ -627,50 +624,45 @@ const RAW_SQUADS: Squad[] = [
       'para o PRD sem confirmar entendimento compartilhado.\n' +
       '\n' +
       '## 3. PRD\n' +
-      'Peça ao PM o PRD em docs/prd/<slug>.md no formato do template ' +
+      'Produza uma seção PRD completa dentro de docs/plan.md, no formato do template ' +
       'prd/prd-template.md da skill bmad-templates (vision, JTBD, FRs ' +
       'aninhados por feature, NFRs, assumptions indexadas, escopo negativo). ' +
-      'O PRD referencia os achados dos explorers — nada de suposição que o ' +
-      'código contradiga. Antes de aprovar, o PM valida o documento item a ' +
-      'item com prd/prd-validation-checklist.md e registra o resultado no ' +
+      'O PRD referencia os achados da leitura — nada de suposição que o ' +
+      'código contradiga. Antes de aprovar, valide o documento item a ' +
+      'item com prd/prd-validation-checklist.md e registre o resultado no ' +
       'fim do arquivo.\n' +
       '\n' +
       '## 4. Arquitetura com diagrama\n' +
-      'Peça ao Architect o plano técnico em docs/architecture/<slug>.md ' +
-      'estruturado pelo architecture/spine-template.md da skill ' +
+      'Produza uma seção de arquitetura dentro de docs/plan.md, ' +
+      'estruturada pelo architecture/spine-template.md da skill ' +
       'bmad-templates, ancorado no estado atual: componentes tocados, ' +
       'mudanças por módulo, contratos e migrações, sequenciamento e ' +
-      'trade-offs. O Architect DEVE gerar o diagrama com a skill archify ' +
-      '(HTML self-contained em docs/architecture/<slug>.html) cobrindo ' +
-      'estado atual e proposto, e o HTML deve ser aberto num pane de ' +
-      'browser para o usuário ver.\n' +
+      'trade-offs. Inclua no mesmo docs/plan.md a especificação completa do ' +
+      'diagrama (estado atual e proposto) que a execução materializará com ' +
+      'archify após a promoção para standard.\n' +
       '\n' +
       '## 5. Shard em stories\n' +
-      'Peça ao PO quebrar PRD+arquitetura em épicos ' +
-      '(stories/epics-template.md) e stories (stories/story-template.md) em ' +
-      'docs/stories/: cada story autossuficiente, com critérios de aceite ' +
+      'Quebre PRD+arquitetura em épicos ' +
+      '(stories/epics-template.md) e stories (stories/story-template.md) como ' +
+      'seções estruturadas completas de docs/plan.md: cada story autossuficiente, com critérios de aceite ' +
       'verificáveis e dependências explícitas, validada com ' +
       'stories/story-checklist.md — prontas para o squad Implementação por ' +
       'Stories consumir uma a uma.\n' +
       '\n' +
       '## 6. Validação final\n' +
-      'O Contrarian ataca o pacote inteiro: custos ocultos, alternativa mais ' +
+      'Faça uma passada Contrarian no pacote inteiro: custos ocultos, alternativa mais ' +
       'simples, o que quebra em produção. Incorpore o que sobreviver e ' +
-      'finalize com um handoff listando os caminhos de todos os documentos.',
+      'finalize com nexus_handoff_submit: summary contém o conteúdo integral ' +
+      'de docs/plan.md e artifacts estrutura os futuros caminhos em docs/prd/, ' +
+      'docs/architecture/ e docs/stories/. Nesta lane escreva somente docs/plan.md.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      { id: 'explorer-a', agentName: 'Explorer A', category: 'scout', cli: 'agy', effort: 'medium' },
-      { id: 'explorer-b', agentName: 'Explorer B (omp)', category: 'scout', cli: 'omp', effort: 'medium' },
-      { id: 'pm', agentName: 'PM', category: 'executor', cli: 'claude', effort: 'high' },
-      { id: 'architect', agentName: 'Architect', category: 'architect', cli: 'claude', effort: 'high' },
-      { id: 'po', agentName: 'PO', category: 'executor', cli: 'codex', effort: 'medium' },
-      { id: 'contrarian', agentName: 'Contrarian', category: 'reviewer', cli: 'kimi', effort: 'high' },
     ],
   },
   {
     // Elo de execução do ciclo BMAD: consome docs/stories/ do Planejamento &
     // PRD e implementa story por story com gate de Definition of Done.
-    id: 'nexus-story-impl',
+    id: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
     name: 'Implementação por Stories',
     createdAt: SEED_TS,
     builtin: true,
@@ -682,10 +674,22 @@ const RAW_SQUADS: Squad[] = [
       'Spawne workers via nexus_pane_spawn, aguarde com nexus_pane_wait_many ' +
       'e colete entregas com nexus_handoff_list.\n' +
       '\n' +
+      '## Entrada física da promoção\n' +
+      'Quando o kickoff trouxer “PRD/plano físico aprovado na promoção”, esse ' +
+      'payload selado (summary, artifacts e digests) é a fonte de verdade da ' +
+      'execução. Antes da primeira story, materialize dele os documentos finais ' +
+      'em docs/prd/, docs/architecture/ e docs/stories/ e gere o diagrama ' +
+      'archify especificado; esta lane standard autoriza essa escrita. Depois ' +
+      'comece pela primeira story pronta. ' +
+      'NÃO repita discovery, entrevista, PRD, arquitetura nem o shard de ' +
+      'stories; o planejamento já terminou na revisão plan anterior.\n' +
+      '\n' +
       '## Ciclo por story\n' +
       '1. **Seleção**: liste docs/stories/ e escolha a próxima story aberta ' +
-      'sem dependência pendente. Sem stories? Finalize orientando rodar o ' +
-      'squad Planejamento & PRD primeiro.\n' +
+      'sem dependência pendente. Se o diretório estiver vazio mas houver o ' +
+      'payload promovido, materialize-o primeiro — nunca repita planejamento. ' +
+      'Somente sem payload promovido, bloqueie orientando rodar o squad ' +
+      'Planejamento & PRD.\n' +
       '2. **SM prepara**: o SM transforma a story num pacote de ' +
       'implementação autossuficiente no formato stories/story-template.md ' +
       'da skill bmad-templates — Dev Notes com arquivos/padrões REAIS do ' +
@@ -709,34 +713,37 @@ const RAW_SQUADS: Squad[] = [
       'reprovadas e restantes.',
     agents: [
       { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', effort: 'high' },
-      { id: 'sm', agentName: 'SM', category: 'executor', cli: 'claude', effort: 'medium' },
+      { id: 'sm', agentName: 'SM', category: 'executor', cli: 'codex', effort: 'medium' },
       { id: 'dev', agentName: 'Dev', category: 'executor', cli: 'codex', effort: 'medium' },
-      { id: 'dev-b', agentName: 'Dev B (omp)', category: 'executor', cli: 'omp', effort: 'medium' },
-      { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'grok', effort: 'medium' },
+      { id: 'dev-b', agentName: 'Dev B', category: 'executor', cli: 'codex', effort: 'medium' },
+      { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'codex', effort: 'medium' },
     ],
   },
   {
-    // Inspired by Kimi Code subagent roles (explore / plan / coder) — host
-    // authority stays Nexus (PREVC + worktrees). Workers are Kimi Code CLI.
+    // Inspired by Kimi Code subagent roles (explore / plan / coder). Governed
+    // workers use the only release-qualified confined runtime (Codex); Kimi
+    // itself remains available in a manual terminal without a false promise
+    // of PREVC/worktree/handoff automation.
     id: 'kimi-code-cell',
-    name: 'Kimi Code Cell',
+    name: 'Code Cell — método Kimi',
     createdAt: SEED_TS,
     builtin: true,
     orchestratorInstructions:
-      '# Kimi Code Cell\n' +
-      'Você orquestra três papéis no motor Kimi Code (cli=kimi), no espírito ' +
-      'explore → plan → coder. A autoridade de missão é do Nexus (PREVC, ' +
-      'worktrees, handoffs) — não use plan mode interno do Kimi se a missão ' +
-      'já tiver lane=plan no host.\n' +
+      '# Code Cell — método Kimi\n' +
+      'Você orquestra três papéis no método explore → plan → coder inspirado ' +
+      'no Kimi Code. A autoridade da missão é do Nexus (PREVC, worktrees e ' +
+      'handoffs), e nesta release os workers governados rodam no Codex builtin ' +
+      'qualificado. Kimi continua disponível para exploração manual no ' +
+      'Terminal, fora da execução autônoma da missão.\n' +
       '\n' +
       '## Fluxo\n' +
       '1. **Explorer** — só leitura: mapa, greps, git log/diff. Sem editar código.\n' +
       '2. **Planner** — desenha abordagem (pode escrever só plan.md / docs se a ' +
       'lane for plan). Entrega riscos, arquivos e verificação.\n' +
       '3. **Coder** — implementa no worktree; handoff com evidência real.\n' +
-      'Spawne via nexus_pane_spawn com agentName do roster (adapterId=kimi). ' +
-      'Use nexus_route_task só se precisar de motor alternativo; o roster ' +
-      'kimi é sticky.',
+      'Spawne via nexus_pane_spawn com o agentName do roster; o roster Codex ' +
+      'é sticky. Não substitua automaticamente esses workers por Kimi/OMP: ' +
+      'essas CLIs são rotas manuais nesta release.',
     agents: [
       {
         id: 'orch',
@@ -749,25 +756,22 @@ const RAW_SQUADS: Squad[] = [
         id: 'explorer',
         agentName: 'Explorer',
         category: 'scout',
-        cli: 'kimi',
+        cli: 'codex',
         effort: 'medium',
-        model: 'kimi-code/kimi-for-coding',
       },
       {
         id: 'planner',
         agentName: 'Planner',
         category: 'architect',
-        cli: 'kimi',
+        cli: 'codex',
         effort: 'high',
-        model: 'kimi-code/kimi-for-coding',
       },
       {
         id: 'coder',
         agentName: 'Coder',
         category: 'executor',
-        cli: 'kimi',
+        cli: 'codex',
         effort: 'medium',
-        model: 'kimi-code/kimi-for-coding',
       },
     ],
   },

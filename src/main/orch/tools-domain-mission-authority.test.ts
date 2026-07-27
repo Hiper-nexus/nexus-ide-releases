@@ -19,6 +19,7 @@ vi.mock('../context/context-workflow-registry', () => ({
 
 vi.mock('./squad-store', () => ({
   findAgent: vi.fn(() => null),
+  getSquad: vi.fn(() => null),
   listAgents: vi.fn(() => []),
   saveSquad: mocks.saveSquad,
 }));

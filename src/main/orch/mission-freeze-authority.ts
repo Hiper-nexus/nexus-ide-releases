@@ -34,16 +34,20 @@ export function bindFreezeDraftToApprovedIntent(
     );
   }
   const approved = mission.intentContract;
-  if (draft.goal !== approved.goal) {
+  const approvedGoal = approved.goal.trim();
+  if (draft.goal.trim() !== approvedGoal) {
     throw new Error(
       'freeze_goal_mismatch: o objetivo PREVC deve ser exatamente o objetivo aprovado',
     );
   }
+  const approvedCriteria = approved.acceptanceCriteria.map((criterion) =>
+    criterion.trim(),
+  );
   if (
-    draft.acceptanceCriteria.length !== approved.acceptanceCriteria.length ||
+    draft.acceptanceCriteria.length !== approvedCriteria.length ||
     draft.acceptanceCriteria.some(
       (criterion, index) =>
-        criterion.statement !== approved.acceptanceCriteria[index],
+        criterion.statement.trim() !== approvedCriteria[index],
     )
   ) {
     throw new Error(
@@ -57,12 +61,12 @@ export function bindFreezeDraftToApprovedIntent(
   ])];
   return Object.freeze({
     ...draft,
-    goal: approved.goal,
+    goal: approvedGoal,
     acceptanceCriteria: Object.freeze(
       draft.acceptanceCriteria.map((criterion, index) => Object.freeze({
         ...criterion,
         id: `criterion-${String(index + 1).padStart(4, '0')}`,
-        statement: approved.acceptanceCriteria[index]!,
+        statement: approvedCriteria[index]!,
         requiredSensorIds: Object.freeze([...criterion.requiredSensorIds]),
         invariantRefs: Object.freeze([...criterion.invariantRefs]),
         requiredArtifactIds: Object.freeze([...criterion.requiredArtifactIds]),

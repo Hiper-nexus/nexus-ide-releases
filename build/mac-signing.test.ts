@@ -125,6 +125,11 @@ describe('macOS signing modes', () => {
       ),
     ).toBe(false);
     expect(
+      shouldIgnoreMacSigningFile(
+        '/tmp/NexusIDE.app/Contents/Resources/nexus-pty-supervisor',
+      ),
+    ).toBe(false);
+    expect(
       createMacSignOptions('35P5XL3JN6').ignore(
         '/tmp/NexusIDE.app/Contents/Resources/wake/custom.onnx',
       ),
@@ -162,6 +167,10 @@ describe('macOS signing modes', () => {
     ],
     [
       '/tmp/NexusIDE.app/Contents/Resources/app.asar.unpacked/native.node',
+      'build/entitlements.mac.none.plist',
+    ],
+    [
+      '/tmp/NexusIDE.app/Contents/Resources/nexus-pty-supervisor',
       'build/entitlements.mac.none.plist',
     ],
     [

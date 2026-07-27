@@ -14,6 +14,7 @@ import { testProjectScope } from './__tests__/scope-fixture';
 const mocks = vi.hoisted(() => ({
   listProviderSettings: vi.fn(),
   hasAvailableAccount: vi.fn(() => true),
+  routableWorkerCliIds: new Set<string>(['codex']),
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
@@ -24,6 +25,17 @@ vi.mock('../persistence/account-store', async () => {
     '../persistence/account-store',
   );
   return { ...actual, hasAvailableAccount: mocks.hasAvailableAccount };
+});
+vi.mock('./squad-runtime-inventory', async () => {
+  const actual = await vi.importActual<
+    typeof import('./squad-runtime-inventory')
+  >('./squad-runtime-inventory');
+  return {
+    ...actual,
+    liveSquadRuntimeInventory: () => ({
+      policy: { routableWorkerCliIds: mocks.routableWorkerCliIds },
+    }),
+  };
 });
 
 import { buildDomainTools } from './tools-domain';
@@ -56,6 +68,13 @@ beforeAll(() => {
       installed: true,
       authStrategy: 'oauth',
       models: ['kimi-code/kimi-for-coding'],
+    },
+    {
+      adapterId: 'codex',
+      enabled: true,
+      installed: true,
+      authStrategy: 'oauth',
+      models: ['gpt-5.6-sol'],
     },
   ]);
   runtime = new ProjectRuntimeManager({
@@ -110,6 +129,7 @@ describe('nexus_route_task RouteReservation durável', () => {
 
     expect(result.routeReservationId).toMatch(/^route-reservation-/);
     expect(result.routeReservationExpiresAt).toBeGreaterThan(Date.now());
+    expect(result.adapterId).toBe('codex');
     expect(
       getProjectDomainStores(scope).missions.getRouteReservation(
         result.routeReservationId,
@@ -122,6 +142,32 @@ describe('nexus_route_task RouteReservation durável', () => {
         effort: result.effort,
       },
     });
+  });
+
+  it('filtra Kimi antes da reserva e falha com correção acionável sem Codex', async () => {
+    const routeTool = buildDomainTools().find(
+      (candidate) => candidate.name === 'nexus_route_task',
+    )!;
+    const previousRoute = getProjectDomainStores(scope).missions.get(
+      missionId,
+    )?.latestRoute;
+    mocks.routableWorkerCliIds.clear();
+    try {
+      await expect(
+        routeTool.handler(
+          { task: 'delegar leitura a um worker Kimi' },
+          context(),
+        ),
+      ).rejects.toThrow(
+        /governed_worker_route_unavailable.*Codex builtin.*Kimi.*Terminal.*Nenhuma RouteReservation/is,
+      );
+    } finally {
+      mocks.routableWorkerCliIds.add('codex');
+    }
+
+    expect(
+      getProjectDomainStores(scope).missions.get(missionId)?.latestRoute,
+    ).toEqual(previousRoute);
   });
 
   it('recusa cunhar reservation por uma sessão de orquestrador obsoleta', async () => {

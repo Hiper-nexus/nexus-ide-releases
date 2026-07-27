@@ -24,11 +24,15 @@ import { getProjectDomainStores } from './project-domain-store-registry';
 import { assertSafePtyPrompt } from './pty-prompt-safety';
 import { getSquad } from './squad-store';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
+import { assertPromotedPlanSnapshot } from './plan-promotion-authority';
 import {
+  getAgentTurnStartSequence,
   isSessionInjectableIdle,
   tapAgentSemanticStatus,
+  tapAgentTurnStart,
 } from './agent-status';
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
+import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 
 const BOOT_IDLE_WINDOW_MS = 15_000;
 /**
@@ -39,7 +43,9 @@ const BOOT_IDLE_WINDOW_MS = 15_000;
 const BOOT_BIRTH_WINDOW_MS = 90_000;
 /** Espera curta pelo arm do bracketed paste; TUIs sem o modo seguem no fallback. */
 const BRACKETED_PASTE_WINDOW_MS = 3_000;
-const PASTE_SETTLE_MS = 250;
+// Orca's production TUI path also gives bracketed paste 500 ms before Enter.
+// Nexus retains the stronger post-Enter UserPromptSubmit receipt below.
+const PASTE_SETTLE_MS = 500;
 const PASTE_IDLE_WINDOW_MS = 3_000;
 const ACCEPTANCE_WINDOW_MS = 12_000;
 /** Real-mission Codex may keep processing after paste; give it longer to re-idle. */
@@ -109,6 +115,11 @@ export interface MissionKickoffAcceptancePorts {
   readonly onInjectabilityChange?: (
     tap: (sessionId: string) => void,
   ) => () => void;
+  /** Monotonic, session-scoped native UserPromptSubmit sequence. */
+  readonly getTurnStartSequence: () => number;
+  readonly onTurnStart: (
+    tap: (sessionId: string, sequence: number) => void,
+  ) => () => void;
   /** Revalidates owner/scope/mission/session/intent before every external effect. */
   readonly isAuthorized: () => boolean;
   /** Must fence the mission again before persisting blocked + CTA. */
@@ -137,14 +148,14 @@ export function missionKickoffFailureDetail(reason: MissionKickoffFailureReason)
     case 'authority_lost':
       return 'A missão ou a sessão mudou durante o kickoff; nenhum resultado antigo foi aceito.';
     default:
-      return 'O terminal não produziu saída e uma borda idle→busy após o envio.';
+      return 'O terminal não confirmou o início do turno após o envio.';
   }
 }
 
 /**
- * Main-owned kickoff state machine. Passive writes never manufacture the busy
- * edge used as acceptance proof; only PTY output/hook activity after Enter can
- * satisfy output+busy. A finite boot wait prevents pasting into an active turn.
+ * Main-owned kickoff state machine. PTY output/busy are diagnostics only:
+ * acceptance requires the exact session's provider-native UserPromptSubmit
+ * boundary after Enter. A finite boot wait prevents pasting into an active turn.
  */
 export async function runMissionKickoffAcceptance(
   input: { readonly sessionId: string; readonly prompt: string },
@@ -170,6 +181,7 @@ export async function runMissionKickoffAcceptance(
   let submitted = false;
   let outputSeen = false;
   let busySeen = false;
+  let turnStartBaseline = 0;
   let idleWaiter: ((outcome: 'idle' | 'timeout' | 'exited') => void) | null = null;
   let birthWaiter: ((outcome: 'born' | 'timeout' | 'exited') => void) | null =
     null;
@@ -191,9 +203,6 @@ export async function runMissionKickoffAcceptance(
     }
     if (submitted && state === 'busy') {
       busySeen = true;
-      // Real-mission: Codex often starts silent reasoning without immediate PTY
-      // bytes after Enter; busy alone is enough acceptance for the gate.
-      if (outputSeen || realMission) acceptanceWaiter?.(true);
     }
     if (state === 'exited') {
       exited = true;
@@ -218,7 +227,6 @@ export async function runMissionKickoffAcceptance(
     }
     if (!submitted) return;
     outputSeen = true;
-    if (busySeen) acceptanceWaiter?.(true);
   });
   const untapExit = ports.onExit((sessionId) => {
     if (sessionId !== input.sessionId) return;
@@ -234,6 +242,14 @@ export async function runMissionKickoffAcceptance(
     idleWaiter?.('idle');
     idleWaiter = null;
   }) ?? (() => {});
+  const untapTurnStart = ports.onTurnStart((sessionId, sequence) => {
+    if (
+      sessionId !== input.sessionId ||
+      !submitted ||
+      sequence <= turnStartBaseline
+    ) return;
+    acceptanceWaiter?.(true);
+  });
 
   const delay = (ms: number) => new Promise<void>((resolve) => {
     const timer = setTimeout(() => {
@@ -309,7 +325,8 @@ export async function runMissionKickoffAcceptance(
       `[mission-kickoff] recusado (${reason}) ` +
         `session=${input.sessionId} ptyState=${ports.getState(input.sessionId)} ` +
         `injetavel=${ports.isInjectableIdle?.() ?? 'n/a'} ` +
-        `saidaVista=${outputSeen} busyVisto=${busySeen}`,
+        `saidaVista=${outputSeen} busyVisto=${busySeen} ` +
+        `turnStart=${ports.getTurnStartSequence()}/${turnStartBaseline}`,
     );
     // The production block port has its own mission/intent/session fence. That
     // lets mid-flight authority drift become visible while stale rebinds are a
@@ -373,26 +390,15 @@ export async function runMissionKickoffAcceptance(
     }
     // A TUI may repaint/echo the paste. Do not attribute that busy edge to CR;
     // wait for a fresh idle baseline before arming the actual submit proof.
-    // Real-mission exception: Codex may start the turn from bracketed paste
-    // without returning to idle; treat durable busy as acceptance.
     if (!isInjectableIdle()) {
-      if (realMission && ports.getState(input.sessionId) === 'busy') {
-        return { accepted: true };
-      }
       const pasteIdle = await waitForIdle(pasteIdleWindowMs);
       if (pasteIdle === 'exited') return await fail('session_exited');
       if (pasteIdle !== 'idle') {
-        if (realMission && ports.getState(input.sessionId) === 'busy') {
-          return { accepted: true };
-        }
         return await fail('timeout');
       }
     }
     if (!ports.isAuthorized()) return await fail('authority_lost');
     if (!isInjectableIdle()) {
-      if (realMission && ports.getState(input.sessionId) === 'busy') {
-        return { accepted: true };
-      }
       return await fail('timeout');
     }
 
@@ -414,11 +420,12 @@ export async function runMissionKickoffAcceptance(
     });
     outputSeen = false;
     busySeen = false;
+    turnStartBaseline = ports.getTurnStartSequence();
     submitted = true;
-    // Capture busy that already exists at submit arm time (paste auto-start).
+    // Busy already present at submit arm time is diagnostic only. Repaint,
+    // output quiet timers and hook status projection can all produce it.
     if (ports.getState(input.sessionId) === 'busy') {
       busySeen = true;
-      if (realMission) settleAcceptance(true);
     }
     let enterWritten = false;
     try {
@@ -431,10 +438,13 @@ export async function runMissionKickoffAcceptance(
       settleAcceptance(false);
       return await fail('write_failed');
     }
-    // Snapshot after Enter: some CLIs go busy before the state tap fires.
+    // Snapshot after Enter for diagnostics. Acceptance is exclusively the
+    // content-free UserPromptSubmit sequence emitted by agent-status.
     if (ports.getState(input.sessionId) === 'busy') {
       busySeen = true;
-      if (outputSeen || realMission) settleAcceptance(true);
+    }
+    if (ports.getTurnStartSequence() > turnStartBaseline) {
+      settleAcceptance(true);
     }
     if (await accepted) return { accepted: true };
     if (exited || ports.getState(input.sessionId) === null) {
@@ -457,6 +467,7 @@ export async function runMissionKickoffAcceptance(
     untapData();
     untapExit();
     untapInjectability();
+    untapTurnStart();
   }
 }
 
@@ -504,8 +515,8 @@ function buildPetStudioKickoffPrompt(
     '## Execução selada de agente único',
     squad.orchestratorInstructions.trim(),
     '- Trabalhe integralmente nesta sessão Codex, usando a imagem indicada como fonte canônica.',
-    '- Carregue a skill hatch-pet pelo nome e siga o workflow Codex v2 completo: geração, montagem, QA visual e validação do movimento.',
-    '- Entregue um pacote final instalável, com manifesto e caminhos exatos dos artefatos e das provas de QA.',
+    '- Carregue a skill nexus-pet-studio pelo nome e siga o workflow v2 completo: geração Nexus, montagem no workspace, QA visual e validação do movimento.',
+    `- Entregue dentro de artifacts/nexus-pet-studio/${mission.id}/<pet-id> um pacote pronto para o Nexus validar e instalar, com manifesto e caminhos exatos das provas de QA.`,
     '- Não pare em imagem intermediária, pergunta genérica ou promessa de trabalho futuro.',
     '- Ao concluir, chame nexus_handoff_submit uma única vez com status honesto, resumo, caminho do pacote e evidências verificáveis. Se houver impedimento real, envie o handoff como blocked com a causa e uma ação objetiva em PT-BR.',
   ]
@@ -543,6 +554,9 @@ export function buildCanonicalMissionKickoffPrompt(
     maxWorkers: contract.budgets.maxWorkers,
     lane: contract.lane ?? 'standard',
     attachmentPaths: contract.attachmentPaths,
+    promotedPlan: contract.promotedPlan
+      ? assertPromotedPlanSnapshot(contract.promotedPlan)
+      : undefined,
   });
 }
 
@@ -710,9 +724,16 @@ function submitMissionKickoffWithAuthority(
       onState: tapSessionState,
       onData: tapSessionData,
       onExit: tapSessionExit,
-      isInjectableIdle: () => isSessionInjectableIdle(input.sessionId),
+      isInjectableIdle: () =>
+        isSessionInjectableIdle(input.sessionId) &&
+        !cliPromptAutoResponder.shouldDeferInjection(input.sessionId),
       onInjectabilityChange: (tap) => tapAgentSemanticStatus((entry) => {
         tap(entry.sessionId);
+      }),
+      getTurnStartSequence: () =>
+        getAgentTurnStartSequence(input.sessionId),
+      onTurnStart: (tap) => tapAgentTurnStart((entry) => {
+        tap(entry.sessionId, entry.sequence);
       }),
       isAuthorized,
       block: async (reason) => {

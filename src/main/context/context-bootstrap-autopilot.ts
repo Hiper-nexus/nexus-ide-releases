@@ -15,7 +15,9 @@ import {
   buildContextBootstrapProposals,
   isSafeBootstrapSourceLocator,
   isAutoReviewableBootstrapProposal,
+  isMechanicallyReviewableBootstrapProposal,
   type BootstrapDocProposal,
+  type SanctionedPromotedPlanBootstrapSource,
 } from './orientation/orientation-bootstrap-context';
 import {
   tryGetProjectOrientationService,
@@ -23,6 +25,9 @@ import {
 } from './orientation/orientation-service';
 import type { OrientationSnapshot } from '../../shared/orientation-types';
 import { inspectGitBinding } from './git-binding';
+import { getProjectDomainStores } from '../orch/project-domain-store-registry';
+import { assertPromotedPlanSnapshot } from '../orch/plan-promotion-authority';
+import { resolvePromotedPlanGitSource } from '../orch/promoted-plan-git-authority';
 
 export type BootstrapAutopilotPhase =
   | 'ready'
@@ -53,6 +58,7 @@ export interface ContextBootstrapAutopilotResult {
     readonly rationale: string;
     readonly sourceCount: number;
     readonly autoReviewable: boolean;
+    readonly mechanicallyReviewable: boolean;
   }[];
   readonly proposedDraftIds: readonly string[];
   readonly draftOutcomes: readonly BootstrapDraftOutcome[];
@@ -75,6 +81,11 @@ export interface ContextBootstrapAutopilotOptions {
   readonly maxAutoReviews?: number;
   readonly signal?: AbortSignal;
   readonly orientation?: ProjectOrientationService | null;
+  /**
+   * Test/integration seam. Undefined resolves authority from the live mission;
+   * null explicitly disables promoted-plan bootstrap.
+   */
+  readonly promotedPlanSource?: SanctionedPromotedPlanBootstrapSource | null;
   readonly createReviewer?: () => {
     run(input: {
       scope: ProjectExecutionScope;
@@ -89,6 +100,11 @@ const BOOTSTRAP_SOURCE_POLICY_REVIEWER = Object.freeze({
   id: 'nexus-bootstrap-policy',
   sessionId: 'source-policy-v1',
   provider: 'nexus-policy',
+});
+const CANONICAL_SOURCE_MECHANICAL_REVIEWER = Object.freeze({
+  id: 'nexus-canonical-context-reviewer',
+  sessionId: 'deterministic-read-only-v1',
+  provider: 'nexus-mechanical-review',
 });
 
 function bootstrapAbortError(): Error {
@@ -114,6 +130,27 @@ function freezeOutcomes(
   outcomes: readonly BootstrapDraftOutcome[],
 ): readonly BootstrapDraftOutcome[] {
   return Object.freeze(outcomes.map((item) => Object.freeze({ ...item })));
+}
+
+function exactDraftMatchesProposal(
+  draft: ContextDraftRecord,
+  proposal: BootstrapDocProposal,
+  missionId: string | null,
+): boolean {
+  return (
+    draft.status === 'proposed' &&
+    draft.missionId === missionId &&
+    draft.targetPath === proposal.targetPath &&
+    draft.expectedTargetHash === null &&
+    draft.content === proposal.content &&
+    draft.sources.length === proposal.sources.length &&
+    draft.sources.every(
+      (source, index) =>
+        source.type === proposal.sources[index]?.type &&
+        source.locator === proposal.sources[index]?.locator &&
+        source.sourceHash === proposal.sources[index]?.sourceHash,
+    )
+  );
 }
 
 /**
@@ -240,6 +277,50 @@ function workflowBindingError(scope: ProjectExecutionScope): string | null {
   }
 }
 
+function resolveLivePromotedPlanBootstrapSource(
+  options: ContextBootstrapAutopilotOptions,
+): SanctionedPromotedPlanBootstrapSource | null {
+  if (options.promotedPlanSource !== undefined) {
+    return options.promotedPlanSource;
+  }
+  const missionId = options.missionId;
+  if (!missionId) return null;
+
+  let mission: ReturnType<
+    ReturnType<typeof getProjectDomainStores>['missions']['get']
+  >;
+  try {
+    mission = getProjectDomainStores(options.scope).missions.get(missionId);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'project-scoped domain stores are not initialized'
+    ) {
+      return null;
+    }
+    throw error;
+  }
+  const contract = mission?.intentContract;
+  if (!contract?.promotedPlan) return null;
+  if ((contract.lane ?? 'standard') !== 'standard') {
+    throw new Error(
+      'promoted_plan_context_invalid_lane: somente a missão standard promovida pode usar o PRD',
+    );
+  }
+  const snapshot = assertPromotedPlanSnapshot(contract.promotedPlan);
+  const source = resolvePromotedPlanGitSource(options.scope, snapshot);
+  return Object.freeze({
+    file: source.path,
+    content: source.content,
+    sourceHash: source.sourceHash,
+    headSha: source.headSha,
+    approvedIntent: Object.freeze({
+      goal: contract.goal,
+      acceptanceCriteria: Object.freeze([...contract.acceptanceCriteria]),
+    }),
+  });
+}
+
 /**
  * Senior bootstrap pilot: map → scaffold → propose → (quorum) review/apply → commit.
  * Never self-approves. Never fabricates business authority without independent review.
@@ -256,6 +337,9 @@ export async function runContextBootstrapAutopilot(
   );
   const workflow = getContextWorkflowService(options.scope);
   const knowledge = getContextKnowledgeService(options.scope);
+  // Resolve before the readiness fast-path: an already-green context must not
+  // hide a promoted PRD whose live mission, seal, file, HEAD or SHA drifted.
+  const promotedPlanSource = resolveLivePromotedPlanBootstrapSource(options);
   const orientationService =
     options.orientation === undefined
       ? tryGetProjectOrientationService()
@@ -330,8 +414,15 @@ export async function runContextBootstrapAutopilot(
     return Object.freeze({ ...base, autopilotHint: hintFor(base) });
   }
 
+  const proposalOptions = Object.freeze({ promotedPlanSource });
   const proposals: BootstrapDocProposal[] = map
-    ? [...buildContextBootstrapProposals(options.scope, map)]
+    ? [
+        ...buildContextBootstrapProposals(
+          options.scope,
+          map,
+          proposalOptions,
+        ),
+      ]
     : [];
   const proposalMeta = proposals.map((p) =>
     Object.freeze({
@@ -339,12 +430,18 @@ export async function runContextBootstrapAutopilot(
       rationale: p.rationale,
       sourceCount: p.sources.length,
       autoReviewable: isAutoReviewableBootstrapProposal(p),
+      mechanicallyReviewable: isMechanicallyReviewableBootstrapProposal(
+        options.scope,
+        p,
+        proposalOptions,
+      ),
     }),
   );
 
   const proposedDraftIds: string[] = [];
   const outcomes: BootstrapDraftOutcome[] = [];
   const autoReviewQueue: string[] = [];
+  const mechanicalReviewQueue: string[] = [];
   const appliedDraftIds: string[] = [];
   const rejectedDraftIds: string[] = [];
 
@@ -385,6 +482,35 @@ export async function runContextBootstrapAutopilot(
       });
       continue;
     }
+    const mechanicallyReviewable =
+      isMechanicallyReviewableBootstrapProposal(
+        options.scope,
+        proposal,
+        proposalOptions,
+      );
+    if (
+      mechanicallyReviewable &&
+      !exactDraftMatchesProposal(
+        draft,
+        proposal,
+        options.missionId ?? null,
+      )
+    ) {
+      const rejected = knowledge.review(draft.id, {
+        decision: 'reject',
+        reviewer: BOOTSTRAP_SOURCE_POLICY_REVIEWER,
+        rationale:
+          'Rejected by fail-closed canonical-source policy: durable draft bytes, mission binding, target precondition or complete source set do not match the sanctioned proposal.',
+      });
+      rejectedDraftIds.push(rejected.id);
+      outcomes.push({
+        draftId: rejected.id,
+        targetPath: rejected.targetPath,
+        status: 'rejected',
+        autoReviewable,
+      });
+      continue;
+    }
     resumableTargets.add(draft.targetPath);
     proposedDraftIds.push(draft.id);
     outcomes.push({
@@ -393,7 +519,11 @@ export async function runContextBootstrapAutopilot(
       status: draft.status,
       autoReviewable,
     });
-    if (autoReviewable) autoReviewQueue.push(draft.id);
+    if (mechanicallyReviewable) {
+      mechanicalReviewQueue.push(draft.id);
+    } else if (autoReviewable) {
+      autoReviewQueue.push(draft.id);
+    }
   }
 
   // Rejection memory across Doctor passes. idx_context_drafts_active_target is
@@ -445,7 +575,17 @@ export async function runContextBootstrapAutopilot(
         status: draft.status,
         autoReviewable,
       });
-      if (autoReviewable) autoReviewQueue.push(draft.id);
+      if (
+        isMechanicallyReviewableBootstrapProposal(
+          options.scope,
+          proposal,
+          proposalOptions,
+        )
+      ) {
+        mechanicalReviewQueue.push(draft.id);
+      } else if (autoReviewable) {
+        autoReviewQueue.push(draft.id);
+      }
     } catch (error) {
       rethrowIfBootstrapAborted(options.signal, error);
       outcomes.push({
@@ -455,6 +595,73 @@ export async function runContextBootstrapAutopilot(
         autoReviewable,
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  // Canonical sanctioned sources (the Main-owned PRODUCT.md envelope or the
+  // exact promoted PRD resolved from live mission + sealed snapshot + Git
+  // HEAD/SHA) admit byte-exact reconstruction. An independent Nexus reviewer
+  // verifies those bytes without interpreting domain meaning. Author and
+  // reviewer remain distinct; apply/commit stay separate.
+  for (const draftId of mechanicalReviewQueue) {
+    try {
+      throwIfBootstrapAborted(options.signal);
+      const current = knowledge.get(draftId);
+      const proposal = current
+        ? proposalsByTarget.get(current.targetPath)
+        : undefined;
+      if (
+        !current ||
+        !proposal ||
+        !isMechanicallyReviewableBootstrapProposal(
+          options.scope,
+          proposal,
+          proposalOptions,
+        ) ||
+        !exactDraftMatchesProposal(
+          current,
+          proposal,
+          options.missionId ?? null,
+        )
+      ) {
+        if (current?.status === 'proposed') {
+          const rejected = knowledge.review(current.id, {
+            decision: 'reject',
+            reviewer: BOOTSTRAP_SOURCE_POLICY_REVIEWER,
+            rationale:
+              'Rejected by fail-closed canonical-source policy immediately before review: durable draft authority diverged from the sanctioned proposal.',
+          });
+          rejectedDraftIds.push(rejected.id);
+        }
+        throw new Error(
+          'canonical-source mechanical review refused a non-canonical durable draft',
+        );
+      }
+      const source = proposal.sources[0]!;
+      const reviewed = knowledge.review(draftId, {
+        decision: 'approve',
+        reviewer: CANONICAL_SOURCE_MECHANICAL_REVIEWER,
+        rationale:
+          `Approved by deterministic read-only review: target bytes and sole sanctioned source ` +
+          `${source.locator}@${source.sourceHash} match the canonical projection.`,
+      });
+      const applied =
+        reviewed.status === 'applied'
+          ? { draft: reviewed }
+          : knowledge.apply(draftId);
+      appliedDraftIds.push(applied.draft.id);
+      const index = outcomes.findIndex((item) => item.draftId === draftId);
+      if (index >= 0) outcomes[index] = { ...outcomes[index], status: 'applied' };
+    } catch (error) {
+      rethrowIfBootstrapAborted(options.signal, error);
+      const index = outcomes.findIndex((item) => item.draftId === draftId);
+      if (index >= 0) {
+        outcomes[index] = {
+          ...outcomes[index],
+          status: 'review-failed',
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
   }
 

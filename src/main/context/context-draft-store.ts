@@ -396,9 +396,9 @@ export class ContextDraftStore {
     ) {
       throw new Error('context draft review must be independent from the author');
     }
-    if (current.author.provider === reviewer.provider) {
-      throw new Error('context draft review requires a different provider');
-    }
+    // Provider is retained as provenance only. A fresh main-owned reviewer may
+    // use the same Codex executable; immutable agent and physical session
+    // identities above are the authority boundary.
     const now = this.#binding.now();
     const result = this.#binding.writeDatabase().prepare(
       `UPDATE context_drafts

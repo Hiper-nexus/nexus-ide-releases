@@ -1,10 +1,11 @@
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog } from 'electron';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { UPDATE_CHANNELS, type UpdateState } from '../shared/update-ipc';
+import { handleTrusted } from './security/trusted-ipc';
 import {
   buildSquirrelFeed,
   isMacUpdatePlatform,
@@ -294,16 +295,16 @@ export class UpdateManager {
   }
 
   private registerIpcHandlers(): void {
-    ipcMain.handle(UPDATE_CHANNELS.getState, () => this.getState());
-    ipcMain.handle(UPDATE_CHANNELS.check, async () => {
+    handleTrusted(UPDATE_CHANNELS.getState, () => this.getState());
+    handleTrusted(UPDATE_CHANNELS.check, async () => {
       await this.check();
       return this.getState();
     });
-    ipcMain.handle(UPDATE_CHANNELS.install, async () => {
+    handleTrusted(UPDATE_CHANNELS.install, async () => {
       await this.install();
       return this.getState();
     });
-    ipcMain.handle(UPDATE_CHANNELS.restart, () => {
+    handleTrusted(UPDATE_CHANNELS.restart, () => {
       if (this.state.phase === 'ready') autoUpdater.quitAndInstall();
     });
   }

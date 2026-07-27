@@ -30,22 +30,36 @@ afterEach(() => {
 });
 
 describe('real mission Codex trust fixture', () => {
-  it('trusts the disposable tree roots used by scratch + worktrees', () => {
+  it('registers disposable scratch + worktree roots as untrusted', () => {
     const userData = makeUserData();
     const workspace = path.join(userData, 'real-mission-workspace-test');
     fs.mkdirSync(workspace, { mode: 0o700 });
 
     const configPath = stageRealMissionCodexTrust(userData, workspace);
     const config = parse(fs.readFileSync(configPath, 'utf8')) as {
+      features?: {
+        apps?: boolean;
+        plugins?: boolean;
+        remote_plugin?: boolean;
+      };
       projects?: Record<string, { trust_level?: string }>;
     };
     const canonicalUserData = fs.realpathSync(userData);
     const canonicalWorkspace = fs.realpathSync(workspace);
     const projectRuntime = path.join(canonicalUserData, 'project-runtime');
 
-    expect(config.projects?.[canonicalUserData]?.trust_level).toBe('trusted');
-    expect(config.projects?.[canonicalWorkspace]?.trust_level).toBe('trusted');
-    expect(config.projects?.[projectRuntime]?.trust_level).toBe('trusted');
+    expect(config.projects?.[canonicalUserData]?.trust_level).toBe('untrusted');
+    expect(config.projects?.[canonicalWorkspace]?.trust_level).toBe(
+      'untrusted',
+    );
+    expect(config.projects?.[projectRuntime]?.trust_level).toBe('untrusted');
+    expect(config.features).toEqual({
+      apps: false,
+      hooks: false,
+      multi_agent: false,
+      plugins: false,
+      remote_plugin: false,
+    });
     expect(Object.keys(config.projects ?? {}).sort()).toEqual(
       [canonicalUserData, canonicalWorkspace, projectRuntime].sort(),
     );

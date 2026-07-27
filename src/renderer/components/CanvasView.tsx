@@ -40,7 +40,6 @@ import {
 } from './pipe-motion';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useOrchStore } from '../state/orch-store';
-import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { PixelIcon } from './PixelIcon';
 
 const NODE_TYPES: NodeTypes = {
@@ -93,7 +92,6 @@ interface CanvasCommandBarProps {
   pipeCount: number;
   onCenter(): void;
   onAddTerminal(): void;
-  onStartMission(): void;
 }
 
 function shouldIgnoreCanvasShortcut(target: EventTarget | null): boolean {
@@ -114,7 +112,6 @@ function CanvasCommandBar({
   pipeCount,
   onCenter,
   onAddTerminal,
-  onStartMission,
 }: CanvasCommandBarProps) {
   const activity =
     busyCount > 0
@@ -161,10 +158,6 @@ function CanvasCommandBar({
           <PixelIcon name="terminal" size={10} />
           Terminal
         </button>
-        <button type="button" className="canvas-command__primary" onClick={onStartMission}>
-          <PixelIcon name="mission" size={10} />
-          Nova missão
-        </button>
       </div>
     </div>
   );
@@ -192,7 +185,6 @@ export function CanvasView() {
   const addShellPane = useLayoutStore((s) => s.addShellPane);
   const paneStates = useSessionStateStore((s) => s.paneStates);
   const paneMissions = useOrchStore((s) => s.paneMissions);
-  const openMissionWizard = useMissionWizardStore((s) => s.openForMission);
 
   // Sticky notes + pipes (each hydrates once and live-updates from main).
   useNotesController();
@@ -412,7 +404,6 @@ export function CanvasView() {
         pipeCount={pipes.length}
         onCenter={centerPanes}
         onAddTerminal={addShellPane}
-        onStartMission={openMissionWizard}
       />
       <ReactFlow
         nodes={nodes}

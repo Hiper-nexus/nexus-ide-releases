@@ -19,6 +19,8 @@ import {
 
 const root = await mkdtemp(path.join(tmpdir(), 'nexus-omp-rpc-smoke-'));
 let session = null;
+let result = null;
+let failure = null;
 
 try {
   const home = path.join(root, 'home');
@@ -82,24 +84,46 @@ try {
     throw new Error(`OMP publicou aviso durante o bootstrap: ${notices[0]}`);
   }
 
-  process.stdout.write(
-    `${JSON.stringify({
-      ok: true,
-      version: resolved.version,
-      state: snapshot.state,
-      model: snapshot.model,
-      promptSent: false,
-      realCredentialInherited: false,
-    })}\n`,
-  );
+  result = {
+    ok: true,
+    version: resolved.version,
+    state: snapshot.state,
+    model: snapshot.model,
+    promptSent: false,
+    realCredentialInherited: false,
+    teardownProven: true,
+  };
 } catch (error) {
+  failure = error;
+} finally {
+  if (session) {
+    try {
+      const proof = await session.terminate();
+      if (!proof.ok || !proof.rootExited || !proof.descendantsExited) {
+        throw new Error(
+          `encerramento físico do OMP não comprovado: ${
+            proof.error ?? 'recibo incompleto'
+          }`,
+        );
+      }
+    } catch (error) {
+      failure ??= error;
+    }
+  }
+  try {
+    await rm(root, { recursive: true, force: true });
+  } catch (error) {
+    failure ??= error;
+  }
+}
+
+if (failure || !result) {
   process.stderr.write(
     `[smoke:omp-rpc] ${
-      error instanceof Error ? error.message : String(error)
+      failure instanceof Error ? failure.message : String(failure)
     }\n`,
   );
   process.exitCode = 1;
-} finally {
-  session?.dispose();
-  await rm(root, { recursive: true, force: true });
+} else {
+  process.stdout.write(`${JSON.stringify(result)}\n`);
 }

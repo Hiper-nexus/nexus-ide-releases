@@ -1,0 +1,172 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  REAL_MISSION_E2E_CTA,
+  parseRealMissionE2EEvidence,
+  parseReleaseEligibleRealMissionE2EEvidence,
+} from "./real-mission-e2e";
+import { sha, validPassEvidence } from "./real-mission-e2e-test-support";
+
+describe("real mission E2E release eligibility and adversarial receipts", () => {
+  it("requires the single approval receipt to precede dispatch and kickoff", () => {
+    const missingApproval = validPassEvidence();
+    (missingApproval.mission as Record<string, unknown>).approvedAt = null;
+    expect(() => parseRealMissionE2EEvidence(missingApproval)).toThrow(
+      /real-mission invariants/,
+    );
+
+    const reversed = validPassEvidence();
+    (reversed.mission as Record<string, unknown>).approvedAt = 12;
+    expect(() => parseRealMissionE2EEvidence(reversed)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it("requires one accepted native dialog and zero Codex MCP prompts", () => {
+    const duplicateDialog = validPassEvidence();
+    (
+      duplicateDialog.interaction as Record<string, unknown>
+    ).nativeDialogCount = 2;
+    expect(() => parseRealMissionE2EEvidence(duplicateDialog)).toThrow(
+      /real-mission invariants/,
+    );
+
+    const providerPrompt = validPassEvidence();
+    (
+      providerPrompt.interaction as Record<string, unknown>
+    ).codexMcpPromptCount = 1;
+    expect(() => parseRealMissionE2EEvidence(providerPrompt)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it("keeps private runner evidence diagnostic-only for release", () => {
+    const privateEvidence = validPassEvidence();
+    expect(() =>
+      parseReleaseEligibleRealMissionE2EEvidence(privateEvidence),
+    ).toThrow(/physical product wizard/i);
+
+    const productEvidence = validPassEvidence();
+    productEvidence.launchSurface = "product-wizard";
+    productEvidence.wizardCoverage = "main-owned-product-sequence";
+    const productMission = productEvidence.mission as Record<string, unknown>;
+    const productSquadId =
+      "agentic-runtime-11111111-1111-4111-8111-111111111111";
+    productMission.squadId = productSquadId;
+    productMission.squadRevisionHash = sha("runtime-squad-revision");
+    (productEvidence.plan as Record<string, unknown>).squadId = productSquadId;
+    expect(() =>
+      parseReleaseEligibleRealMissionE2EEvidence(productEvidence),
+    ).not.toThrow();
+
+    const flagOnly = structuredClone(productEvidence);
+    flagOnly.wizardCoverage = "not-covered";
+    expect(() =>
+      parseReleaseEligibleRealMissionE2EEvidence(flagOnly),
+    ).toThrow(/real-mission invariants|physical product wizard/i);
+  });
+
+  it("requires a main-owned exact single-mission inventory", () => {
+    const evidence = validPassEvidence();
+    const inventory = evidence.missionInventory as Record<string, unknown>;
+    inventory.observedMissionCount = 2;
+    inventory.observedMissionIds = ["mission-e2e", "mission-extra"];
+    inventory.exactSingleProductMission = false;
+
+    expect(() => parseRealMissionE2EEvidence(evidence)).toThrow(
+      /real-mission invariants/i,
+    );
+  });
+
+  it("rejects QA completion without the physical no-change receipt evidence", () => {
+    const evidence = validPassEvidence();
+    const qa = (evidence.dispatches as Array<Record<string, unknown>>)[2]!;
+    const receipt = qa.integrationReceipt as Record<string, unknown>;
+    receipt.evidenceIds = [];
+    expect(() => parseRealMissionE2EEvidence(evidence)).toThrow();
+
+    const wrongHead = validPassEvidence();
+    const qaReceipt = (
+      wrongHead.dispatches as Array<Record<string, unknown>>
+    )[2]!.integrationReceipt as Record<string, unknown>;
+    qaReceipt.reference = `no-change:${"d".repeat(40)}:${sha("qa-clean-diff")}`;
+    expect(() => parseRealMissionE2EEvidence(wrongHead)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it("never permits this harness to claim full-flow coverage", () => {
+    const evidence = validPassEvidence();
+    evidence.coverageTier = "full-flow";
+    expect(() => parseRealMissionE2EEvidence(evidence)).toThrow(
+      /cannot claim full-flow/i,
+    );
+  });
+
+  it("rejects a stale-session handoff acceptance and a non-exact commit", () => {
+    const staleAcceptance = validPassEvidence();
+    (
+      staleAcceptance.handoffs as Array<Record<string, unknown>>
+    )[0].consumedBySessionId = "stale-orchestrator-session";
+    expect(() => parseRealMissionE2EEvidence(staleAcceptance)).toThrow(
+      /real-mission invariants/,
+    );
+
+    const extraCommit = validPassEvidence();
+    (extraCommit.repository as Record<string, unknown>).commitCount = 3;
+    (extraCommit.repository as Record<string, unknown>).exactSingleCommit =
+      false;
+    expect(() => parseRealMissionE2EEvidence(extraCommit)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it("accepts a merge-commit integration (3 commits) when the exact-result invariant holds", () => {
+    // The engine may integrate as fast-forward (2 commits) or as a real merge
+    // commit (initial + worker result + merge = 3). Either is a PASS as long
+    // as exactSingleCommit proved HEAD descends from the initial commit and
+    // only resultado.txt changed.
+    const mergeCommit = validPassEvidence();
+    (mergeCommit.repository as Record<string, unknown>).commitCount = 3;
+    expect(() => parseRealMissionE2EEvidence(mergeCommit)).not.toThrow();
+
+    const tooMany = validPassEvidence();
+    (tooMany.repository as Record<string, unknown>).commitCount = 4;
+    expect(() => parseRealMissionE2EEvidence(tooMany)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it("keeps failures closed and actionable without raw output fields", () => {
+    const evidence = validPassEvidence();
+    evidence.status = "fail";
+    const failure = {
+      code: "timeout",
+      reason: "boot_timeout",
+      cta: REAL_MISSION_E2E_CTA,
+      snapshot: {
+        missionStatus: "running",
+        paneCount: 1,
+        dispatchCount: 0,
+        handoffCount: 0,
+      },
+    };
+    evidence.failure = failure;
+    expect(parseRealMissionE2EEvidence(evidence).status).toBe("fail");
+    expect(() =>
+      parseRealMissionE2EEvidence({
+        ...evidence,
+        failure: {
+          ...failure,
+          reason: "prompt=private-provider-output",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseRealMissionE2EEvidence({
+        ...evidence,
+        rawOutput: "must never be persisted",
+      }),
+    ).toThrow();
+  });
+});

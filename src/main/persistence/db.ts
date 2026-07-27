@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS squads (
   created_at                TEXT NOT NULL,
   builtin                   INTEGER NOT NULL DEFAULT 0,
   orchestrator_instructions TEXT NOT NULL DEFAULT '',
+  runtime_source_squad_id    TEXT,
+  runtime_source_squad_hash  TEXT,
   roster_json               TEXT NOT NULL DEFAULT '[]'
 );
 

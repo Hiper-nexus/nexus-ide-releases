@@ -35,6 +35,7 @@ const state = vi.hoisted(() => {
     setWindowOpenHandler: vi.fn(),
     on: vi.fn(),
     once: vi.fn(),
+    removeListener: vi.fn(),
     getURL: vi.fn(() => 'about:blank'),
     getTitle: vi.fn(() => ''),
     canGoBack: vi.fn(() => false),
@@ -129,6 +130,9 @@ vi.mock('../orch/pane-registry', () => ({
   getPaneAuthzInfoOwnedBy: state.paneInfo,
   getPaneAuthzInfoOwnedByPane: state.paneInfo,
   getDevServerForPane: vi.fn(() => null),
+  listPaneSnapshots: vi.fn(() => []),
+  requestMissionPaneClose: vi.fn(async () => true),
+  requestPaneClose: vi.fn(async () => true),
 }));
 
 vi.mock('../context/context-workflow-registry', () => ({
@@ -142,12 +146,15 @@ const sendDesignSelectionToAgent = vi.hoisted(() => vi.fn());
 vi.mock('../orch/design-send', () => ({ sendDesignSelectionToAgent }));
 
 import {
+  assertBrowserAtExactUrl,
   assertTrustedLocalDesignPreview,
   browserDesignSessionKey,
   destroyBrowser,
+  destroyBrowserWithProof,
   ensureBrowser,
   getBrowserViewCount,
   loadBrowser,
+  lockBrowserToExactUrl,
   registerBrowserIpc,
 } from './browser-manager';
 import {
@@ -165,8 +172,106 @@ describe('browser manager pinned network boundary', () => {
     state.order.length = 0;
     state.handlers.clear();
     state.webContentsAvailable = true;
+    state.guest.getURL.mockReturnValue('about:blank');
+    state.guest.isDestroyed.mockReturnValue(false);
+    state.guest.once.mockImplementation(() => state.guest);
+    state.guest.removeListener.mockImplementation(() => state.guest);
+    state.guest.close.mockImplementation(() => undefined);
+    state.proxy.close.mockResolvedValue(undefined);
     state.paneInfo.mockReturnValue(null);
     state.getMissionWorkflow.mockReturnValue({ contract: null, workflow: null });
+  });
+
+  it('locks an automated review WebContents to the exact approved URL', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    await ensureBrowser(state.owner as never, scope, 'pane-review-lock');
+    const approved = 'http://127.0.0.1:43111/';
+    state.guest.getURL.mockReturnValue(approved);
+    lockBrowserToExactUrl('pane-review-lock', scope, approved);
+    expect(() =>
+      assertBrowserAtExactUrl('pane-review-lock', scope, approved),
+    ).not.toThrow();
+
+    const willNavigate = state.guest.on.mock.calls.find(
+      ([event]) => event === 'will-navigate',
+    )?.[1] as ((event: { preventDefault(): void }, url: string) => void) | undefined;
+    expect(willNavigate).toBeTypeOf('function');
+    const blocked = { preventDefault: vi.fn() };
+    willNavigate!(blocked, 'https://attacker.example/');
+    expect(blocked.preventDefault).toHaveBeenCalledOnce();
+
+    const allowed = { preventDefault: vi.fn() };
+    willNavigate!(allowed, approved);
+    expect(allowed.preventDefault).not.toHaveBeenCalled();
+
+    state.guest.getURL.mockReturnValue('https://attacker.example/');
+    expect(() =>
+      assertBrowserAtExactUrl('pane-review-lock', scope, approved),
+    ).toThrow(/left its approved local preview URL/i);
+    destroyBrowser('pane-review-lock', scope);
+  });
+
+  it('awaits both WebContents destruction and pinned proxy shutdown for review cleanup', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    await ensureBrowser(state.owner as never, scope, 'pane-review-proof');
+    let destroyed = false;
+    let onDestroyed: (() => void) | undefined;
+    state.guest.isDestroyed.mockImplementation(() => destroyed);
+    state.guest.once.mockImplementation((event: string, handler: () => void) => {
+      if (event === 'destroyed') onDestroyed = handler;
+      return state.guest;
+    });
+    state.guest.close.mockImplementation(() => {
+      destroyed = true;
+      onDestroyed?.();
+    });
+    let resolveProxy!: () => void;
+    state.proxy.close.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveProxy = resolve;
+      }),
+    );
+
+    let settled = false;
+    const cleanup = destroyBrowserWithProof(
+      'pane-review-proof',
+      scope,
+    ).finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(state.guest.close).toHaveBeenCalledOnce());
+    expect(settled).toBe(false);
+    resolveProxy();
+    await expect(cleanup).resolves.toBeUndefined();
+    expect(state.guest.close).toHaveBeenCalledWith({
+      waitForBeforeUnload: false,
+    });
+    expect(state.proxy.close).toHaveBeenCalledOnce();
+  });
+
+  it('fails physical proof when WebContents close throws or destroyed state stays false', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    await ensureBrowser(state.owner as never, scope, 'pane-review-close-throw');
+    state.guest.close.mockImplementationOnce(() => {
+      throw new Error('close refused');
+    });
+    await expect(
+      destroyBrowserWithProof('pane-review-close-throw', scope),
+    ).rejects.toThrow(/close failed.*close refused/i);
+    expect(state.proxy.close).toHaveBeenCalledOnce();
+
+    await ensureBrowser(state.owner as never, scope, 'pane-review-still-live');
+    let onDestroyed: (() => void) | undefined;
+    state.guest.once.mockImplementation((event: string, handler: () => void) => {
+      if (event === 'destroyed') onDestroyed = handler;
+      return state.guest;
+    });
+    state.guest.close.mockImplementationOnce(() => {
+      onDestroyed?.();
+    });
+    await expect(
+      destroyBrowserWithProof('pane-review-still-live', scope),
+    ).rejects.toThrow(/WebContents remains alive/i);
   });
   it('permits direct write-back only for an active process-owned local preview', async () => {
     installPinnedBrowserProxy.mockResolvedValue(state.proxy);

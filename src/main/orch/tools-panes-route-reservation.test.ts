@@ -39,6 +39,22 @@ const squadMocks = vi.hoisted(() => {
         model: 'gpt-5.6-sol',
         effort: 'high',
       },
+      {
+        id: 'legacy-kimi',
+        agentName: 'Legacy Kimi',
+        category: 'executor',
+        cli: 'kimi',
+        model: 'kimi-k2.5',
+        effort: 'high',
+      },
+      {
+        id: 'legacy-omp',
+        agentName: 'Legacy OMP',
+        category: 'executor',
+        cli: 'omp',
+        model: 'kimi-k2.5',
+        effort: 'high',
+      },
     ],
   };
   return {
@@ -97,8 +113,8 @@ function reserveRoute(overrides: Partial<{
 }> = {}) {
   const decision = {
     tier: 'medium' as const,
-    adapterId: overrides.adapterId ?? 'grok',
-    model: overrides.model ?? 'grok-4.1',
+    adapterId: overrides.adapterId ?? 'codex',
+    model: overrides.model ?? 'gpt-5.6-sol',
     effort: overrides.effort ?? 'medium',
     reason: 'rota de teste persistida antes do spawn',
     alternatives: [],
@@ -171,6 +187,17 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
     expect(message).not.toContain('route_reservation_required');
   });
 
+  it.each(['Legacy Kimi', 'Legacy OMP'])(
+    'recusa roster sticky legado %s antes de reservation, slot ou worktree',
+    async (agentName) => {
+      const message = await spawnError({ agentName });
+
+      expect(message).toContain('governed_worker_spawn_unsupported');
+      expect(message).toMatch(/codex/i);
+      expect(message).not.toContain('context workflow service');
+    },
+  );
+
   it('mantém o bloqueio de worker tentando virar orquestrador', async () => {
     let message = '';
     try {
@@ -197,8 +224,8 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
     let message = '';
     try {
       await paneSpawnTool.handler({
-        adapterId: 'grok',
-        model: 'grok-4.1',
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
         effort: 'medium',
         routeReservationId: reservation.id,
       }, unbound);
@@ -221,8 +248,8 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
 
   it('recusa spawn ad-hoc em missão running sem reservation válida', async () => {
     const message = await spawnError({
-      adapterId: 'grok',
-      model: 'grok-4.1',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
       effort: 'medium',
     });
 
@@ -233,8 +260,8 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
   it('aceita a tuple exata da reserva e só então alcança o próximo gate', async () => {
     const reservation = reserveRoute();
     const message = await spawnError({
-      adapterId: 'grok',
-      model: 'grok-4.1',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
       effort: 'medium',
       routeReservationId: reservation.id,
     });
@@ -252,7 +279,7 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
     const reservation = reserveRoute();
     const message = await spawnError({
       adapterId: 'codex',
-      model: 'gpt-5.6-sol',
+      model: 'gpt-5.5',
       effort: 'high',
       routeReservationId: reservation.id,
     });
@@ -266,8 +293,8 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
     const expected = {
       reservationId: reservation.id,
       missionId,
-      adapterId: 'grok',
-      model: 'grok-4.1',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
       effort: 'medium',
     };
     getProjectDomainStores(scope).missions.consumeRouteReservation(
@@ -276,8 +303,8 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
     );
 
     const message = await spawnError({
-      adapterId: 'grok',
-      model: 'grok-4.1',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
       effort: 'medium',
       routeReservationId: reservation.id,
     });
@@ -314,8 +341,8 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
     });
     const reservation = reserveRoute();
     const message = await spawnError({
-      adapterId: 'grok',
-      model: 'grok-4.1',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
       effort: 'medium',
       routeReservationId: reservation.id,
       taskId: 'manual-task',

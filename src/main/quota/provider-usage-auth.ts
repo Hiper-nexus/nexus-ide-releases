@@ -15,10 +15,7 @@ import {
   hasCachedSecret,
 } from '../persistence/secrets-store';
 import { loadLauncherProviderKey } from '../adapters/launcher-provider-manager';
-import {
-  claudeOAuthAccessToken,
-  getAccount,
-} from '../persistence/account-store';
+import { getAccount } from '../persistence/account-store';
 import {
   parseCodexAuthJson,
   type CodexChatGptAuth,
@@ -66,9 +63,26 @@ function pushUnique(out: string[], value: string | null | undefined): void {
   if (!out.includes(v)) out.push(v);
 }
 
-/** Claude OAuth token (vault account or active CLI). */
+/**
+ * Claude OAuth token for the renderer quota probe.
+ *
+ * This path runs during boot and must stay strictly cache/file-only:
+ * - an account-pinned probe may use only an already-decrypted vault entry;
+ * - an unpinned probe may read Claude's file-backed credential.
+ *
+ * The authoritative spawn path remains in account-store and may explicitly
+ * consult/synchronise the native Keychain when a worker is actually launched.
+ */
 export function resolveClaudeToken(accountId?: string): string | null {
-  return claudeOAuthAccessToken(accountId);
+  if (accountId) {
+    const blob = safeGetSecret(CRED_PREFIX + accountId);
+    return blob ? extractClaudeAccessToken(blob) : null;
+  }
+
+  const blob = readText(
+    path.join(os.homedir(), '.claude', '.credentials.json'),
+  );
+  return blob ? extractClaudeAccessToken(blob) : null;
 }
 
 /**

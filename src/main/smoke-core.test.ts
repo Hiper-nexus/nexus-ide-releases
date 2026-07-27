@@ -128,11 +128,16 @@ describe('smoke isolation', () => {
     const helperStart = mainSource.indexOf(
       'function isAutomatedReleaseTest(): boolean {',
     );
-    const helperEnd = mainSource.indexOf(
-      '\n}\n\ninitRealMissionE2E();',
-      helperStart,
-    );
+    const helperEnd = mainSource.indexOf('\n}\n', helperStart);
     const helperBlock = mainSource.slice(helperStart, helperEnd);
+    const harnessInitStart = mainSource.indexOf(
+      'if (isCurrentProcessRealMissionE2E()) {',
+      helperEnd,
+    );
+    const harnessInitBlock = mainSource.slice(
+      harnessInitStart,
+      mainSource.indexOf('\n}\n', harnessInitStart),
+    );
 
     expect(guardStart).toBeGreaterThan(-1);
     expect(guardEnd).toBeGreaterThan(guardStart);
@@ -143,6 +148,9 @@ describe('smoke isolation', () => {
     expect(helperBlock).toMatch(
       /return\s+isCurrentProcessSmokeTest\(\)\s*\|\|\s*isCurrentProcessRealMissionE2E\(\)/,
     );
+    expect(harnessInitStart).toBeGreaterThan(-1);
+    expect(harnessInitBlock).toContain("import('./real-mission-e2e')");
+    expect(harnessInitBlock).toContain('initRealMissionE2E()');
   });
 
   it('bootstraps the desktop window before optional hooks can delay launch', () => {
@@ -153,12 +161,18 @@ describe('smoke isolation', () => {
       '    const mainWindow = createMainWindow();',
       readyStart,
     );
+    const awaitRealMissionHarness = mainSource.indexOf(
+      '    await realMissionE2EInitialization;',
+      readyStart,
+    );
     const bootstrapBeforeHooks = mainSource.indexOf('    bootstrap();', readyStart);
     const awakeInit = mainSource.indexOf('    getAgentAwakeService();', readyStart);
 
     expect(readyStart).toBeGreaterThan(-1);
     expect(hookSection).toBeGreaterThan(readyStart);
     expect(createWindowAtReady).toBeGreaterThan(readyStart);
+    expect(awaitRealMissionHarness).toBeGreaterThan(readyStart);
+    expect(awaitRealMissionHarness).toBeLessThan(createWindowAtReady);
     expect(createWindowAtReady).toBeLessThan(awakeInit);
     expect(createWindowAtReady).toBeLessThan(bootstrapBeforeHooks);
     expect(bootstrapBeforeHooks).toBeGreaterThan(readyStart);

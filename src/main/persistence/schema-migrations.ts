@@ -19,6 +19,16 @@ const ADD_COLUMN_MIGRATIONS: AddColumnMigration[] = [
     column: 'native_instructions',
     definition: "native_instructions TEXT NOT NULL DEFAULT ''",
   },
+  {
+    table: 'squads',
+    column: 'runtime_source_squad_id',
+    definition: 'runtime_source_squad_id TEXT',
+  },
+  {
+    table: 'squads',
+    column: 'runtime_source_squad_hash',
+    definition: 'runtime_source_squad_hash TEXT',
+  },
   { table: 'mission_panes', column: 'effort', definition: 'effort TEXT' },
   { table: 'mission_panes', column: 'pane_id', definition: 'pane_id TEXT' },
   { table: 'mission_panes', column: 'account_id', definition: 'account_id TEXT' },

@@ -73,9 +73,31 @@ export interface ScopedExecPlanInput {
   rootRealPath: string;
   sandboxDir: string;
   env: NodeJS.ProcessEnv;
+  /** Optional pre-created private HOME within sandboxDir. */
+  privateHome?: string;
+  /** Optional pre-created private temp directory within sandboxDir. */
+  privateTmp?: string;
   /** Sensors/review commands set this so validation can never mutate code. */
   readOnlyRoot?: boolean;
   sandboxProfile?: SandboxProfile;
+  /**
+   * Existing provider-state paths required by the sandboxed parent process.
+   * These are canonicalized before entering the profile; child sandboxes still
+   * intersect this outer authority with their own narrower policy.
+   */
+  extraReadPaths?: readonly string[];
+  /** Existing provider-state paths the parent process must persist. */
+  extraWritePaths?: readonly string[];
+  /**
+   * Exact trusted executables that may use the network while the inherited
+   * sandbox keeps every other descendant offline. macOS only.
+   */
+  networkAllowedProcessPaths?: readonly string[];
+  /**
+   * Lexical and canonical control roots that remain non-writable even under a
+   * writable checkout. Paths may be absent when the profile is compiled.
+   */
+  protectedWritePaths?: readonly string[];
 }
 
 interface NormalizedExecPlanInput {
@@ -87,6 +109,10 @@ interface NormalizedExecPlanInput {
   readonly env: NodeJS.ProcessEnv;
   readonly readOnlyRoot: boolean;
   readonly sandboxProfile: SandboxProfile;
+  readonly extraReadPaths: readonly string[];
+  readonly extraWritePaths: readonly string[];
+  readonly networkAllowedProcessPaths: readonly string[];
+  readonly protectedWritePaths: readonly string[];
 }
 
 const MACOS_DENIED_READ_ROOTS = [
@@ -105,6 +131,7 @@ const NODE_TOOL_NAMES = new Set([
   'pnpm',
   'yarn',
 ]);
+export const MACOS_SEATBELT_EXECUTABLE = '/usr/bin/sandbox-exec';
 
 function shortHash(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 12);
@@ -157,6 +184,114 @@ function existingRealPath(candidate: string): string | null {
   } catch {
     return null;
   }
+}
+
+function canonicalPotentialPath(candidate: string): string {
+  const suffix: string[] = [];
+  let ancestor = candidate;
+  for (;;) {
+    try {
+      return path.join(
+        fs.realpathSync.native(ancestor),
+        ...suffix.reverse(),
+      );
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+    }
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) {
+      throw new Error('sandbox path has no resolvable filesystem ancestor');
+    }
+    suffix.push(path.basename(ancestor));
+    ancestor = parent;
+  }
+}
+
+function canonicalExistingPaths(
+  values: readonly string[] | undefined,
+  label: string,
+): string[] {
+  const canonical = new Set<string>();
+  for (const raw of values ?? []) {
+    if (!path.isAbsolute(raw) || raw.includes('\0')) {
+      throw new Error(`${label} must contain absolute NUL-free paths`);
+    }
+    let real: string;
+    try {
+      real = fs.realpathSync.native(raw);
+    } catch {
+      throw new Error(`${label} path must already exist`);
+    }
+    canonical.add(real);
+  }
+  return [...canonical].sort();
+}
+
+function normalizedProtectedWritePaths(
+  values: readonly string[] | undefined,
+): string[] {
+  const normalized = new Set<string>();
+  for (const raw of values ?? []) {
+    if (!path.isAbsolute(raw) || raw.includes('\0')) {
+      throw new Error(
+        'protected write roots must contain absolute NUL-free paths',
+      );
+    }
+    const resolved = path.resolve(raw);
+    if (path.dirname(resolved) === resolved) {
+      throw new Error('refusing to protect a filesystem root as a subpath');
+    }
+    // Preserve the lexical entry as well as its physical target. If the
+    // protected root is itself a symlink, protecting only realpath(raw) would
+    // still permit unlinking/replacing that directory entry inside an
+    // otherwise writable checkout.
+    normalized.add(resolved);
+    // The protected leaf may not exist yet (that is the TOCTOU case). Resolve
+    // the nearest existing ancestor so aliases such as /var -> /private/var
+    // cannot make an absent control directory miss its Seatbelt rule.
+    const suffix: string[] = [];
+    let ancestor = resolved;
+    for (;;) {
+      try {
+        const canonicalAncestor = fs.realpathSync.native(ancestor);
+        const canonical = path.join(
+          canonicalAncestor,
+          ...suffix.reverse(),
+        );
+        if (path.dirname(canonical) === canonical) {
+          throw new Error(
+            'refusing to protect a filesystem root as a subpath',
+          );
+        }
+        normalized.add(canonical);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+      }
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) {
+        throw new Error(
+          'protected write root has no resolvable filesystem ancestor',
+        );
+      }
+      suffix.push(path.basename(ancestor));
+      ancestor = parent;
+    }
+  }
+  return [...normalized].sort();
+}
+
+function pathAccessRule(candidate: string): string {
+  let directory = false;
+  try {
+    directory = fs.statSync(candidate).isDirectory();
+  } catch {
+    // Supplemental read/write paths are canonicalized existing paths. Keep a
+    // literal fallback so an identity race never widens the grant.
+  }
+  return `(${directory ? 'subpath' : 'literal'} ${sbplString(candidate)})`;
 }
 
 function nodeRuntimeRoot(target: string): string | null {
@@ -217,6 +352,10 @@ function buildMacosProfile(
   envPath: string | undefined,
   readOnlyRoot = false,
   allowNetwork = false,
+  extraReadPaths: readonly string[] = [],
+  extraWritePaths: readonly string[] = [],
+  networkAllowedProcessPaths: readonly string[] = [],
+  protectedWritePaths: readonly string[] = [],
 ): string {
   const deniedReads = MACOS_DENIED_READ_ROOTS.map(
     (root) => `(subpath ${sbplString(root)})`,
@@ -229,22 +368,42 @@ function buildMacosProfile(
     ...ancestorMetadataReadRules(sandboxDir),
     `(subpath ${sbplString(rootRealPath)})`,
     `(subpath ${sbplString(sandboxDir)})`,
+    ...extraReadPaths.flatMap((candidate) => [
+      ...ancestorMetadataReadRules(candidate),
+      pathAccessRule(candidate),
+    ]),
     ...collectToolchainReadRules(envPath),
   ].join(' ');
   const allowedWrites = [
     ...(readOnlyRoot ? [] : [`(subpath ${sbplString(rootRealPath)})`]),
     `(subpath ${sbplString(sandboxDir)})`,
+    ...extraWritePaths.map(pathAccessRule),
     '(literal "/dev/null")',
     '(literal "/dev/tty")',
   ].join(' ');
+  const deniedControlWrites = protectedWritePaths
+    .flatMap((candidate) => [
+      `(literal ${sbplString(candidate)})`,
+      `(subpath ${sbplString(candidate)})`,
+    ])
+    .join(' ');
+  const processScopedNetworkRules = networkAllowedProcessPaths.map(
+    (candidate) =>
+      `(with-filter (process-path ${sbplString(candidate)}) ` +
+      '(allow network*))',
+  );
 
   return [
     '(version 1)',
     '(allow default)',
     // workspace-only denies network; workspace-net / yolo allow it.
     allowNetwork ? '(allow network*)' : '(deny network*)',
+    ...processScopedNetworkRules,
     '(deny file-write*)',
     `(allow file-write* ${allowedWrites})`,
+    ...(deniedControlWrites
+      ? [`(deny file-write* ${deniedControlWrites})`]
+      : []),
     `(deny file-read* ${deniedReads})`,
     `(allow file-read* ${allowedReads})`,
   ].join(' ');
@@ -290,10 +449,54 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
     throw new Error('sandbox private runtime must be disjoint from the project checkout');
   }
 
-  const home = path.join(sandboxDir, 'home');
-  const tmp = path.join(sandboxDir, 'tmp');
-  ensurePrivateDir(home);
-  ensurePrivateDir(tmp);
+  const lexicalSandboxDir = path.resolve(input.sandboxDir);
+  const requestedHome = path.resolve(
+    input.privateHome ?? path.join(lexicalSandboxDir, 'home'),
+  );
+  const requestedTmp = path.resolve(
+    input.privateTmp ?? path.join(lexicalSandboxDir, 'tmp'),
+  );
+  if (
+    !isWithin(lexicalSandboxDir, requestedHome) ||
+    !isWithin(lexicalSandboxDir, requestedTmp)
+  ) {
+    throw new Error(
+      'sandbox private HOME and temp must remain inside its runtime directory',
+    );
+  }
+  if (
+    !isWithin(sandboxDir, canonicalPotentialPath(requestedHome)) ||
+    !isWithin(sandboxDir, canonicalPotentialPath(requestedTmp))
+  ) {
+    throw new Error(
+      'sandbox private HOME or temp resolves outside its runtime directory',
+    );
+  }
+  ensurePrivateDir(requestedHome);
+  ensurePrivateDir(requestedTmp);
+  const home = fs.realpathSync.native(requestedHome);
+  const tmp = fs.realpathSync.native(requestedTmp);
+  if (!isWithin(sandboxDir, home) || !isWithin(sandboxDir, tmp)) {
+    throw new Error(
+      'sandbox private HOME or temp resolves outside its runtime directory',
+    );
+  }
+  const sandboxProfile = resolveSandboxProfile(
+    input.sandboxProfile,
+    input.platform,
+  );
+  const networkAllowedProcessPaths = canonicalExistingPaths(
+    input.networkAllowedProcessPaths,
+    'network-allowed process paths',
+  );
+  if (
+    sandboxAllowsNetwork(sandboxProfile) &&
+    networkAllowedProcessPaths.length > 0
+  ) {
+    throw new Error(
+      'process-scoped network authority cannot be combined with broad network access',
+    );
+  }
   return Object.freeze({
     executable: input.executable,
     args: Object.freeze([...input.args]),
@@ -308,9 +511,18 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
       TEMP: tmp,
     }),
     readOnlyRoot: input.readOnlyRoot === true,
-    sandboxProfile: resolveSandboxProfile(
-      input.sandboxProfile,
-      input.platform,
+    sandboxProfile,
+    extraReadPaths: Object.freeze(
+      canonicalExistingPaths(input.extraReadPaths, 'extra read roots'),
+    ),
+    extraWritePaths: Object.freeze(
+      canonicalExistingPaths(input.extraWritePaths, 'extra write roots'),
+    ),
+    networkAllowedProcessPaths: Object.freeze(
+      networkAllowedProcessPaths,
+    ),
+    protectedWritePaths: Object.freeze(
+      normalizedProtectedWritePaths(input.protectedWritePaths),
     ),
   });
 }
@@ -358,6 +570,16 @@ function linuxPlan(
 ): ScopedShellPlan {
   if (!path.isAbsolute(bubblewrapExecutable) || bubblewrapExecutable.includes('\0')) {
     throw new Error('invalid Bubblewrap provider path');
+  }
+  if (
+    input.extraReadPaths.length > 0 ||
+    input.extraWritePaths.length > 0 ||
+    input.networkAllowedProcessPaths.length > 0 ||
+    input.protectedWritePaths.length > 0
+  ) {
+    throw new Error(
+      'supplemental process sandbox roots are unavailable on linux',
+    );
   }
   const maskedRoots = LINUX_MASKED_ROOTS.filter((candidate) =>
     candidate === '/home' || candidate === '/tmp' || fs.existsSync(candidate),
@@ -422,6 +644,10 @@ function macosPlan(
         input.env.PATH,
         input.readOnlyRoot,
         sandboxAllowsNetwork(input.sandboxProfile),
+        input.extraReadPaths,
+        input.extraWritePaths,
+        input.networkAllowedProcessPaths,
+        input.protectedWritePaths,
       ),
       input.executable,
       ...input.args,
@@ -441,6 +667,16 @@ function windowsOciPlan(
 ): ScopedShellPlan {
   if (!path.isAbsolute(runtimeExecutable) || runtimeExecutable.includes('\0')) {
     throw new Error('invalid Windows OCI sandbox runtime path');
+  }
+  if (
+    input.extraReadPaths.length > 0 ||
+    input.extraWritePaths.length > 0 ||
+    input.networkAllowedProcessPaths.length > 0 ||
+    input.protectedWritePaths.length > 0
+  ) {
+    throw new Error(
+      'supplemental process sandbox roots are unavailable on win32',
+    );
   }
   if (!OCI_IMAGE_PATTERN.test(image)) {
     throw new Error('Windows sandbox image must be pinned by sha256 digest');
@@ -507,6 +743,30 @@ function installedBubblewrap(): string | null {
   return null;
 }
 
+function installedMacosSeatbelt(): string {
+  let real: string;
+  try {
+    real = fs.realpathSync.native(MACOS_SEATBELT_EXECUTABLE);
+  } catch {
+    throw new Error(
+      'secure process sandbox provider is unavailable on darwin',
+    );
+  }
+  const stat = fs.statSync(real);
+  if (
+    real !== MACOS_SEATBELT_EXECUTABLE ||
+    !stat.isFile() ||
+    stat.uid !== 0 ||
+    (stat.mode & 0o022) !== 0
+  ) {
+    throw new Error(
+      'macOS sandbox provider must be the canonical root-owned system binary',
+    );
+  }
+  fs.accessSync(real, fs.constants.X_OK);
+  return real;
+}
+
 /** Build a confined process plan whose argv is never interpreted by a shell. */
 export function buildScopedExecPlan(
   input: ScopedExecPlanInput,
@@ -534,8 +794,5 @@ export function buildScopedExecPlan(
       `secure process sandbox provider is unavailable on ${input.platform}`,
     );
   }
-  if (!fs.existsSync('/usr/bin/sandbox-exec')) {
-    throw new Error('secure process sandbox provider is unavailable on darwin');
-  }
-  return macosPlan(normalized, '/usr/bin/sandbox-exec');
+  return macosPlan(normalized, installedMacosSeatbelt());
 }

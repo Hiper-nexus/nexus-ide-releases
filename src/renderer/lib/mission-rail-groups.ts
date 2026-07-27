@@ -1,4 +1,8 @@
-import type { Mission, MissionStatus } from '../../shared/orch-types';
+import type {
+  HandoffStatus,
+  Mission,
+  MissionStatus,
+} from '../../shared/orch-types';
 import type { MissionLane } from '../../shared/mission-intent';
 import type { RailSectionId } from './mission-rail-prefs';
 
@@ -133,7 +137,7 @@ export function statusLabel(s: MissionStatus): string {
     {
       pending: 'na fila',
       running: 'rodando',
-      blocked: 'travada',
+      blocked: 'bloqueada',
       done: 'concluída',
       failed: 'falhou',
     }[s] ?? s
@@ -149,21 +153,26 @@ export type RailStatusTone =
   | 'failed'
   | 'pending';
 
+export interface MissionRuntimeEvidence {
+  /**
+   * Physical process truth for the mission. `false` means the panes may still
+   * be visible as preserved transcripts, but no agent can currently act.
+   */
+  readonly hasActiveRuntime?: boolean;
+  /** Most recent worker report; informative, never enough to claim success. */
+  readonly latestHandoffStatus?: HandoffStatus | null;
+}
+
 export function railStatusDisplay(
   status: MissionStatus,
   liveInGrid: boolean,
   intentState?: Mission['intentState'],
   /** Delivery lane — plan mode needs a glanceable pill so ▶ promote is obvious. */
   lane?: MissionLane | null,
+  evidence: MissionRuntimeEvidence = {},
 ): { label: string; tone: RailStatusTone } {
-  if (liveInGrid) {
-    if (lane === 'plan') return { label: 'Plano ao vivo', tone: 'live' };
-    if (lane === 'consult') return { label: 'Consulta ao vivo', tone: 'live' };
-    if (lane === 'ops') return { label: 'Operação ao vivo', tone: 'live' };
-    return { label: 'Ao vivo', tone: 'live' };
-  }
-  // Terminal outcomes are authoritative. A stale intent snapshot must never
-  // make a failed or completed mission look ready for dispatch again.
+  // Durable terminal outcomes are authoritative even while their transcripts
+  // remain visible in the grid. "No grid" is layout, not liveness.
   // Persisted legacy rows may still carry terminal labels even though the
   // current domain union models them through the separate rail section.
   const terminalStatus = status as string;
@@ -186,6 +195,34 @@ export function railStatusDisplay(
     default:
       break;
   }
+  if (status === 'blocked') {
+    return { label: 'Bloqueada', tone: 'blocked' };
+  }
+
+  // A preserved exited pane must never paint the mission as live. Failed and
+  // blocked are reporter claims here (not completion authority), but they are
+  // the clearest available reason for a fully stopped runtime.
+  if (evidence.hasActiveRuntime === false) {
+    if (evidence.latestHandoffStatus === 'failed') {
+      return { label: 'Falhou', tone: 'failed' };
+    }
+    if (
+      evidence.latestHandoffStatus === 'blocked' ||
+      evidence.latestHandoffStatus === 'stalled'
+    ) {
+      return { label: 'Bloqueada', tone: 'blocked' };
+    }
+    if (status === 'running') {
+      return { label: 'Execução encerrada', tone: 'blocked' };
+    }
+  }
+
+  if (liveInGrid) {
+    if (lane === 'plan') return { label: 'Plano ao vivo', tone: 'live' };
+    if (lane === 'consult') return { label: 'Consulta ao vivo', tone: 'live' };
+    if (lane === 'ops') return { label: 'Operação ao vivo', tone: 'live' };
+    return { label: 'Ao vivo', tone: 'live' };
+  }
   // After intent shells: plan/consult/ops lanes are not "Em curso" de código.
   if (lane === 'plan') return { label: 'Em plano', tone: 'running' };
   if (lane === 'consult') return { label: 'Consulta', tone: 'running' };
@@ -193,8 +230,6 @@ export function railStatusDisplay(
   switch (status) {
     case 'running':
       return { label: 'Em curso', tone: 'running' };
-    case 'blocked':
-      return { label: 'Travada', tone: 'blocked' };
     case 'done':
       return { label: 'Concluída', tone: 'done' };
     case 'failed':
@@ -262,7 +297,7 @@ export function missionRailResumeCopy(
   if (status === 'blocked') {
     return {
       meta: 'Clique para retomar',
-      title: 'Missão travada — clique para retomar',
+      title: 'Missão bloqueada — clique para retomar',
     };
   }
   return {

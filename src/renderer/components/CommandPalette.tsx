@@ -9,6 +9,7 @@ import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useFilesStore } from '../state/files-store';
 import { useHomeStore } from '../state/home-store';
 import { useIntegrationsStore } from '../state/integrations-store';
+import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
 import { listPanes } from '../lib/split-tree';
 import { filterPaletteActions } from '../lib/command-palette-filter';
 import { formatShortcut } from '../lib/platform';
@@ -88,9 +89,9 @@ export function CommandPalette() {
       'mission-new',
       'Nova missão',
       'mission',
-      () => useMissionWizardStore.getState().openForMission(),
+      () => useMissionWizardStore.getState().openForAgentic(),
       formatShortcut('mod', 'N'),
-      'wizard squad',
+      'wizard guiada objetivo agente squad',
     );
     tool('terminal', 'Abrir terminal', 'terminal', () => layout.addShellPane(), '', 'shell novo');
     tool('browser', 'Abrir navegador', 'browser', () => layout.addBrowserPane(), '', 'web browser');
@@ -109,6 +110,38 @@ export function CommandPalette() {
       () => useFilesStore.getState().togglePanel(),
       '',
       'file tree',
+    );
+    tool(
+      'context-skills',
+      'Skills do projeto',
+      'agent',
+      () => useContextualPanelNavStore.getState().openTab('skills'),
+      '',
+      'skill catalogo contexto',
+    );
+    tool(
+      'context-marketplace',
+      'Marketplace de agentes e skills',
+      'star',
+      () => useContextualPanelNavStore.getState().openTab('marketplace'),
+      '',
+      'marketplace instalar agent skill catalogo',
+    );
+    tool(
+      'context-memory',
+      'Memória do projeto',
+      'files',
+      () => useContextualPanelNavStore.getState().openTab('memory'),
+      '',
+      'memory memoria decisoes contexto',
+    );
+    tool(
+      'context-browser',
+      'Hub MCP e navegador de contexto',
+      'browser',
+      () => useContextualPanelNavStore.getState().openTab('browser'),
+      '',
+      'mcp hub browser contexto',
     );
     tool(
       'board',
@@ -247,7 +280,7 @@ export function CommandPalette() {
                       size="sm"
                       onClick={() => {
                         close();
-                        useMissionWizardStore.getState().openForMission();
+                        useMissionWizardStore.getState().openForAgentic();
                       }}
                     />
                     <ActionCard

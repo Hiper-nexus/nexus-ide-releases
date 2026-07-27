@@ -78,7 +78,12 @@ export function defaultHookEventParser(
   body: Record<string, unknown>
 ): CanonicalHookEvent {
   if (eventType === 'user-submit') {
-    return { kind: 'status', type: 'start', clearsAwaitingInput: true };
+    return {
+      kind: 'status',
+      type: 'start',
+      clearsAwaitingInput: true,
+      promptSubmitted: true,
+    };
   }
 
   if (

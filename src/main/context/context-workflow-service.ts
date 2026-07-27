@@ -24,9 +24,11 @@ import {
   type WorkflowStage,
 } from './contract-compiler';
 import {
+  applicableContextSensors,
   ensureContextScaffold,
   inspectContextReadiness,
   loadContextConfiguration,
+  recommendedProjectSensorIds,
   type ContextReadinessReport,
 } from './context-doctor';
 import {
@@ -93,6 +95,32 @@ const missionStepReceiptRowSchema = z
   .strict();
 
 type MissionStepReceiptRow = z.infer<typeof missionStepReceiptRowSchema>;
+
+function milestoneValidationIdentity(
+  missionId: string,
+  milestoneId: string,
+  binding: EvidenceBinding,
+) {
+  return {
+    version: 'nexus-milestone-validation-v1',
+    missionId,
+    milestoneId,
+    binding,
+  } as const;
+}
+
+export function milestoneValidationEvidenceId(
+  missionId: string,
+  milestoneId: string,
+  binding: EvidenceBinding,
+): string {
+  const digest = createHash('sha256')
+    .update(canonicalJson(
+      milestoneValidationIdentity(missionId, milestoneId, binding),
+    ))
+    .digest('hex');
+  return `milestone:${digest}`;
+}
 
 export interface MissionContractDraft {
   readonly missionId: string;
@@ -356,6 +384,10 @@ export class ContextWorkflowService {
       impactedDomains = sortedUnique([...impactedDomains, ...radius.domains]);
     }
     const git = (this.#dependencies.inspectGit ?? inspectGitBinding)(this.scope);
+    const applicableSensors = applicableContextSensors(
+      this.scope,
+      config.sensors,
+    );
     const contract = compileMissionContract(
       {
         schemaVersion: 1,
@@ -383,8 +415,7 @@ export class ContextWorkflowService {
         impactedSymbols,
         requestedSensors: [
           ...new Set([
-            'typecheck',
-            'unit',
+            ...recommendedProjectSensorIds(this.scope, config.sensors),
             ...(draft.requestedSensors ?? []),
           ]),
         ],
@@ -393,7 +424,9 @@ export class ContextWorkflowService {
       },
       {
         invariantRefs,
-        availableSensorIds: new Set(config.sensors.map((sensor) => sensor.id)),
+        availableSensorIds: new Set(
+          applicableSensors.map((sensor) => sensor.id),
+        ),
         blockingConflictIds: readiness.blockers
           .filter((blocker) => blocker.code === 'context-conflict')
           .flatMap((blocker) => blocker.details ?? []),
@@ -457,6 +490,10 @@ export class ContextWorkflowService {
     );
     const previous = stored.contract;
     const git = (this.#dependencies.inspectGit ?? inspectGitBinding)(this.scope);
+    const applicableSensors = applicableContextSensors(
+      this.scope,
+      config.sensors,
+    );
     const contract = compileMissionContract(
       {
         schemaVersion: 1,
@@ -476,7 +513,12 @@ export class ContextWorkflowService {
         businessInvariantRefs: [...previous.businessInvariantRefs],
         impactedDomains: [...previous.impactedDomains],
         impactedSymbols: [...previous.impactedSymbols],
-        requestedSensors: [...previous.requiredSensors],
+        requestedSensors: [
+          ...new Set([
+            ...previous.requiredSensors,
+            ...recommendedProjectSensorIds(this.scope, config.sensors),
+          ]),
+        ],
         requiredArtifacts: [...previous.requiredArtifacts],
         // Piso de risco: goal/critérios idênticos reproduzem a classificação,
         // mas hints originais não são retidos no contrato compilado — estes
@@ -491,7 +533,9 @@ export class ContextWorkflowService {
       },
       {
         invariantRefs,
-        availableSensorIds: new Set(config.sensors.map((sensor) => sensor.id)),
+        availableSensorIds: new Set(
+          applicableSensors.map((sensor) => sensor.id),
+        ),
         blockingConflictIds: readiness.blockers
           .filter((blocker) => blocker.code === 'context-conflict')
           .flatMap((blocker) => blocker.details ?? []),
@@ -613,6 +657,12 @@ export class ContextWorkflowService {
     if (!currentStep || currentStep.id !== stepId) {
       throw new Error(`mission step ${stepId} is not the current milestone`);
     }
+    this.#assertExactMilestoneAttestation(
+      missionId,
+      stepId,
+      workflow.binding,
+      evidenceIds,
+    );
     return Object.freeze({
       mission,
       workflow,
@@ -852,14 +902,97 @@ export class ContextWorkflowService {
     const isForwardTransition =
       row.workflow_revision_before < row.workflow_revision_after &&
       toIndex > fromIndex;
+    const evidenceBinding = Object.freeze({
+      projectId: this.scope.projectId,
+      checkoutId: this.scope.checkoutId,
+      missionId: binding.missionId,
+      contextHash: binding.contextRevision,
+      contractHash: binding.contractHash,
+      baseSha: binding.baseSha,
+      headSha: binding.headSha,
+      diffHash: binding.diffHash,
+    });
     return (
       row.step_id === milestone.id &&
       (isCheckpoint || isForwardTransition) &&
       row.workflow_revision_after <= workflow.revision &&
       fromIndex >= 0 &&
-      evidenceIds.length === milestone.evidenceIds.length &&
-      evidenceIds.every((id) => milestone.evidenceIds.includes(id)) &&
+      evidenceIds.length === 1 &&
+      milestone.evidenceIds.length === 1 &&
+      evidenceIds[0] === milestone.evidenceIds[0] &&
+      this.#isExactMilestoneAttestation(
+        binding.missionId,
+        row.step_id,
+        evidenceBinding,
+        evidenceIds,
+      ) &&
       this.#isReceiptBindingCurrent(binding, row, workflow)
+    );
+  }
+
+  #assertExactMilestoneAttestation(
+    missionId: string,
+    stepId: string,
+    binding: EvidenceBinding,
+    evidenceIds: readonly string[],
+  ): void {
+    if (
+      !this.#isExactMilestoneAttestation(
+        missionId,
+        stepId,
+        binding,
+        evidenceIds,
+      )
+    ) {
+      throw new Error(
+        `mission step ${stepId} requires exactly one matching milestone attestation`,
+      );
+    }
+  }
+
+  #isExactMilestoneAttestation(
+    missionId: string,
+    stepId: string,
+    binding: EvidenceBinding,
+    evidenceIds: readonly string[],
+  ): boolean {
+    if (evidenceIds.length !== 1) return false;
+    const expectedId = milestoneValidationEvidenceId(
+      missionId,
+      stepId,
+      binding,
+    );
+    if (evidenceIds[0] !== expectedId) return false;
+    const matches = this.#store
+      .listSensorEvidence(missionId)
+      .filter((evidence) => evidence.id === expectedId);
+    if (matches.length !== 1) return false;
+    const evidence = matches[0]!;
+    const sourceEvidenceIds = evidence.command.slice(3);
+    const digest = expectedId.slice('milestone:'.length);
+    return (
+      evidence.sensorId === 'nexus-milestone-attestation' &&
+      evidence.sensorConfigHash === digest &&
+      evidence.projectId === this.scope.projectId &&
+      evidence.checkoutId === this.scope.checkoutId &&
+      evidence.missionId === missionId &&
+      evidence.baseSha === binding.baseSha &&
+      evidence.headSha === binding.headSha &&
+      evidence.diffHash === binding.diffHash &&
+      evidence.contextHash === binding.contextHash &&
+      evidence.contractHash === binding.contractHash &&
+      evidence.command[0] === 'nexus-internal' &&
+      evidence.command[1] === 'attest-final-validation' &&
+      evidence.command[2] === stepId &&
+      sourceEvidenceIds.length > 0 &&
+      sourceEvidenceIds.every((id) => IDENTIFIER.test(id)) &&
+      new Set(sourceEvidenceIds).size === sourceEvidenceIds.length &&
+      sourceEvidenceIds.every(
+        (id, index) => index === 0 || sourceEvidenceIds[index - 1]! < id,
+      ) &&
+      evidence.exitCode === 0 &&
+      !evidence.timedOut &&
+      !evidence.truncated
     );
   }
 
@@ -1190,12 +1323,11 @@ export class ContextWorkflowService {
     sourceEvidenceIds: readonly string[],
     existing: ReadonlyMap<string, TrustedEvidence>,
   ): string {
-    const identity = {
-      version: 'nexus-milestone-validation-v1',
+    const identity = milestoneValidationIdentity(
       missionId,
       milestoneId,
       binding,
-    };
+    );
     const statement = {
       ...identity,
       sourceEvidenceIds,
@@ -1206,7 +1338,11 @@ export class ContextWorkflowService {
     const statementDigest = createHash('sha256')
       .update(canonicalJson(statement))
       .digest('hex');
-    const id = `milestone:${identityDigest}`;
+    const id = milestoneValidationEvidenceId(
+      missionId,
+      milestoneId,
+      binding,
+    );
     const prior = existing.get(id);
     if (prior) {
       if (prior.sensorId !== 'nexus-milestone-attestation') {
@@ -1419,8 +1555,10 @@ export class ContextWorkflowService {
       trustedArtifactIds: this.#listPersistedArtifactIds(missionId),
       requiredArtifactIds,
       authorId: stored.author.id,
+      authorSessionId: stored.author.sessionId,
       authorProvider: stored.author.provider,
       reviewerId: unusedReviewer?.reviewerId,
+      reviewerSessionId: unusedReviewer?.reviewerSessionId,
       reviewerProvider: unusedReviewer?.reviewerProvider,
       worktreeId,
       integratedHeadSha: integrated?.headSha,

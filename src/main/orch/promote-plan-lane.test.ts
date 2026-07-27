@@ -1,12 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { WebContents } from 'electron';
-import type { Squad } from '../../shared/orch-types';
+import type { Handoff, Squad } from '../../shared/orch-types';
 import { compileIntentContract } from '../../shared/mission-intent';
+import {
+  NEXUS_PLAN_SQUAD_ID,
+  NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+} from '../../shared/builtin-squad-ids';
 
 const storeState = vi.hoisted(() => {
   const missions = new Map<string, Record<string, unknown>>();
+  const handoffs = new Map<string, Handoff>();
   return {
     missions,
+    handoffs,
     update: vi.fn((id: string, patch: Record<string, unknown>) => {
       const cur = missions.get(id);
       if (!cur) return null;
@@ -14,6 +20,27 @@ const storeState = vi.hoisted(() => {
       missions.set(id, next);
       return next;
     }),
+    commitPlanPromotionRevision: vi.fn(
+      (
+        id: string,
+        _expected: Record<string, unknown>,
+        squadId: string,
+        intentContract: Record<string, unknown>,
+      ) => {
+        const cur = missions.get(id);
+        if (!cur) throw new Error('mission not found');
+        const next = {
+          ...cur,
+          squadId,
+          status: 'pending',
+          intentState: 'ready_to_start',
+          intentVersion: intentContract.intentVersion,
+          intentContract,
+        };
+        missions.set(id, next);
+        return next;
+      },
+    ),
     get: (id: string) => missions.get(id) ?? null,
   };
 });
@@ -76,25 +103,76 @@ vi.mock('../context/orientation/orientation-service', () => ({
 }));
 
 import { RendererMissionAuthority } from './renderer-mission-authority';
+import { BUILTIN_SQUADS } from './builtin-squads';
+import { snapshotSquadAuthority } from './squad-authority-snapshot';
+import { missionRequiresGuidedPrevc } from './guided-mission-authority';
 
 describe('promotePlanLaneFromRenderer', () => {
   beforeEach(() => {
     storeState.missions.clear();
+    storeState.handoffs.clear();
     storeState.update.mockClear();
+    storeState.commitPlanPromotionRevision.mockClear();
   });
 
-  function authority() {
+  function physicalPlanHandoff(
+    missionId = 'm-plan',
+    sessionId = 'plan-session-v1',
+  ): Handoff {
+    return {
+      id: 'handoff-plan-v1',
+      missionId,
+      sessionId,
+      fromAgent: 'Maestro',
+      authorityOrigin: 'agent',
+      mcpProvenance: {
+        receiptId: 'receipt-plan-v1',
+        toolCallId: 'tool-plan-v1',
+        toolName: 'nexus_handoff_submit',
+        source: 'http-mcp',
+        missionId,
+        sessionId,
+        authoritySha256: 'a'.repeat(64),
+        issuedAt: 20,
+      },
+      status: 'success',
+      claimTrust: 'untrusted',
+      summary: '# PRD Auth\nImplementar sessões seguras e rotação de token.',
+      artifacts: [{ path: 'plan.md', kind: 'prd' }],
+      evidenceIds: [],
+      evidenceTrust: 'unverified',
+      delivered: true,
+      deliveryState: 'submitted',
+      submittedAt: 21,
+      createdAt: 20,
+    };
+  }
+
+  function authority(
+    assertStandardSquadReadiness: (squad: Squad) => void = () => undefined,
+    squadId = 'navalha',
+    extraSquads: readonly Squad[] = [],
+  ) {
     const registry = {
       forScope: () => ({
         missions: {
           get: (id: string) => storeState.get(id),
           update: storeState.update,
+          commitPlanPromotionRevision:
+            storeState.commitPlanPromotionRevision,
           list: () => [...storeState.missions.values()],
+        },
+        handoffs: {
+          list: ({ missionId }: { missionId: string }) =>
+            [...storeState.handoffs.values()].filter(
+              (handoff) => handoff.missionId === missionId,
+            ),
+          get: (id: string) => storeState.handoffs.get(id) ?? null,
         },
       }),
     };
     const squad: Squad = {
-      id: 'navalha',
+      id: squadId,
       name: 'Navalha',
       createdAt: '1',
       builtin: false,
@@ -117,19 +195,25 @@ describe('promotePlanLaneFromRenderer', () => {
       undefined,
       undefined,
       undefined,
-      () => squad,
-      () => ({
-        adapterId: 'codex',
-        model: 'gpt-5.6-sol',
+      (requestedId) =>
+        [...extraSquads, squad].find(
+          (candidate) => candidate.id === requestedId,
+        ) ?? null,
+      (_resolvedSquad, orchestrator) => ({
+        adapterId: orchestrator.cli,
+        model: orchestrator.model ?? 'provider-default',
         accountId: 'account-a',
         effort: 'high',
         readOnly: false,
         nativeReadOnly: true,
       }),
+      undefined,
+      undefined,
+      assertStandardSquadReadiness,
     );
   }
 
-  it('promotes plan → standard and expands budgets', () => {
+  it('promotes the exact physical plan → standard and expands budgets', () => {
     const contract = compileIntentContract({
       goal: 'Desenhar auth e depois implementar',
       intentVersion: 1,
@@ -142,28 +226,218 @@ describe('promotePlanLaneFromRenderer', () => {
       status: 'running',
       milestones: [],
       learnings: '',
-      intentState: 'dispatched',
+      intentState: 'executing',
       intentVersion: 1,
       intentContract: {
         ...contract,
-        approvedAt: 100,
-        dispatchedAt: 100,
+        approvedAt: 10,
+        dispatchedAt: 10,
       },
       createdAt: 1,
       updatedAt: 1,
-      squadId: 'navalha',
+      squadId: 'agentic-navalha',
+      orchestratorSessionId: 'plan-session-v1',
     });
+    const exactPlanSummary = [
+      '# PRD Auth completo',
+      'Arquitetura, critérios e stories aprovadas.',
+      'x'.repeat(6_000),
+    ].join('\n');
+    const handoff = {
+      ...physicalPlanHandoff(),
+      summary: exactPlanSummary,
+    };
+    storeState.handoffs.set(handoff.id, handoff);
 
-    const auth = authority();
+    const assertStandardSquadReadiness = vi.fn();
+    const auth = authority(
+      assertStandardSquadReadiness,
+      'agentic-navalha',
+    );
     const owner = {} as WebContents;
-    const updated = auth.promotePlanLaneFromRenderer(owner, {
+    const candidate = auth.planPromotionCandidateFromRenderer(owner, {
+      missionId: 'm-plan',
+    });
+    storeState.missions.set('m-plan', {
+      ...storeState.missions.get('m-plan')!,
+      orchestratorSessionId: undefined,
+    });
+    const detachedCandidate =
+      auth.planPromotionCandidateAfterTeardownFromMain(
+        owner,
+        { missionId: 'm-plan' },
+        candidate.promotedPlan!,
+      );
+    const updated = auth.promotePlanLaneFromRenderer(
+      owner,
+      { missionId: 'm-plan' },
+      detachedCandidate.fence,
+      detachedCandidate.promotedPlan!,
+    );
+
+    expect(updated.intentContract?.lane).toBe('standard');
+    expect(candidate.squad.id).toBe('agentic-navalha');
+    expect(updated.squadId).toBe('agentic-navalha');
+    expect(updated.intentVersion).toBe(2);
+    expect(updated.intentContract?.budgets.maxWorkers).toBeGreaterThan(0);
+    expect(updated.intentState).toBe('ready_to_start');
+    expect(updated.intentContract?.promotedPlan).toMatchObject({
+      handoffId: handoff.id,
+      summary: handoff.summary,
+      artifacts: handoff.artifacts,
+      digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(3);
+  });
+
+  it('promove o snapshot do atalho Planejar · PRD para o squad builtin de execução revisado', () => {
+    const planTemplate = BUILTIN_SQUADS.find(
+      (squad) => squad.id === NEXUS_PLAN_SQUAD_ID,
+    );
+    const executionTarget = BUILTIN_SQUADS.find(
+      (squad) => squad.id === NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+    );
+    if (!planTemplate || !executionTarget) {
+      throw new Error('missing plan/delivery builtin squads');
+    }
+    const runtimePlan: Squad = {
+      ...planTemplate,
+      id: 'mission-runtime-123e4567-e89b-42d3-a456-426614174000',
+      builtin: false,
+      runtimeSourceSquadId: planTemplate.id,
+      runtimeSourceSquadRevisionHash:
+        snapshotSquadAuthority(planTemplate).hash,
+      agents: planTemplate.agents.map((agent) => ({ ...agent })),
+    };
+    const contract = compileIntentContract({
+      goal: 'Planejar e entregar autenticação segura',
+      acceptanceCriteria: ['Implementação segue as stories aprovadas'],
+      intentVersion: 1,
+      lane: 'plan',
+    });
+    storeState.missions.set('m-plan', {
+      id: 'm-plan',
+      title: 'Planejar autenticação',
+      description: contract.goal,
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      intentState: 'executing',
+      intentVersion: 1,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+      },
+      createdAt: 1,
+      updatedAt: 1,
+      squadId: runtimePlan.id,
+      orchestratorSessionId: 'plan-session-v1',
+    });
+    const exactPlanSummary = [
+      '# PRD Auth completo',
+      'Arquitetura, critérios e stories aprovadas.',
+      'x'.repeat(6_000),
+    ].join('\n');
+    const handoff = {
+      ...physicalPlanHandoff(),
+      summary: exactPlanSummary,
+    };
+    storeState.handoffs.set(handoff.id, handoff);
+    const unavailable = authority(
+      () => {
+        throw new Error(
+          'guided_runtime_unavailable: worker Codex qualificado ausente',
+        );
+      },
+      runtimePlan.id,
+      [runtimePlan, executionTarget],
+    );
+    const owner = {} as WebContents;
+    expect(() =>
+      unavailable.planPromotionCandidateFromRenderer(owner, {
+        missionId: 'm-plan',
+      }),
+    ).toThrow(/worker codex qualificado ausente/i);
+
+    const assertStandardSquadReadiness = vi.fn();
+    const auth = authority(
+      assertStandardSquadReadiness,
+      runtimePlan.id,
+      [runtimePlan, executionTarget],
+    );
+
+    const candidate = auth.planPromotionCandidateFromRenderer(owner, {
       missionId: 'm-plan',
     });
 
-    expect(updated.intentContract?.lane).toBe('standard');
-    expect(updated.intentVersion).toBe(2);
-    expect(updated.intentContract?.budgets.maxWorkers).toBeGreaterThan(0);
-    expect(updated.intentState).toBe('dispatched');
+    expect(candidate.squad).toMatchObject({
+      id: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      name: executionTarget.name,
+      hash: snapshotSquadAuthority(executionTarget).hash,
+    });
+    expect(
+      candidate.squad.agents
+        .filter((agent) => agent.category !== 'orchestrator')
+        .map((agent) => agent.cli),
+    ).toEqual(['codex', 'codex', 'codex', 'codex']);
+    expect(candidate.squad.orchestratorInstructions).toMatch(
+      /entrada física da promoção/i,
+    );
+    expect(candidate.orchestratorRuntime.adapterId).toBe(
+      executionTarget.agents.find(
+        (agent) => agent.category === 'orchestrator',
+      )?.cli,
+    );
+
+    storeState.missions.set('m-plan', {
+      ...storeState.missions.get('m-plan')!,
+      orchestratorSessionId: undefined,
+    });
+    const detached =
+      auth.planPromotionCandidateAfterTeardownFromMain(
+        owner,
+        { missionId: 'm-plan' },
+        candidate.promotedPlan!,
+      );
+    expect(detached.squad.hash).toBe(candidate.squad.hash);
+    expect(detached.orchestratorRuntime).toEqual(
+      candidate.orchestratorRuntime,
+    );
+
+    const promoted = auth.promotePlanLaneFromRenderer(
+      owner,
+      { missionId: 'm-plan' },
+      detached.fence,
+      detached.promotedPlan!,
+    );
+
+    expect(promoted.squadId).toBe(NEXUS_STORY_IMPLEMENTATION_SQUAD_ID);
+    expect(promoted.intentContract).toMatchObject({
+      lane: 'standard',
+      squadRevisionHash: snapshotSquadAuthority(executionTarget).hash,
+      orchestratorRuntime: candidate.orchestratorRuntime,
+      promotedPlan: {
+        handoffId: handoff.id,
+        summary: exactPlanSummary,
+        artifacts: handoff.artifacts,
+      },
+    });
+    expect(missionRequiresGuidedPrevc(promoted)).toBe(true);
+    expect(storeState.get('m-plan')?.squadId).toBe(
+      NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+    );
+    expect(
+      missionRequiresGuidedPrevc(
+        storeState.get('m-plan') as Parameters<
+          typeof missionRequiresGuidedPrevc
+        >[0],
+      ),
+    ).toBe(true);
+    expect(assertStandardSquadReadiness).toHaveBeenCalledTimes(3);
+    expect(assertStandardSquadReadiness).toHaveBeenCalledWith(
+      executionTarget,
+    );
   });
 
   it('rejects a promotion when the plan changes while native confirmation is open', () => {
@@ -179,13 +453,20 @@ describe('promotePlanLaneFromRenderer', () => {
       status: 'running',
       milestones: [],
       learnings: '',
-      intentState: 'dispatched',
+      intentState: 'executing',
       intentVersion: 1,
-      intentContract: { ...contract, approvedAt: 100, dispatchedAt: 100 },
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+      },
       createdAt: 1,
       updatedAt: 1,
       squadId: 'navalha',
+      orchestratorSessionId: 'plan-session-v1',
     });
+    const handoff = physicalPlanHandoff();
+    storeState.handoffs.set(handoff.id, handoff);
     const auth = authority();
     const owner = {} as WebContents;
     const candidate = auth.planPromotionCandidateFromRenderer(owner, {
@@ -194,6 +475,7 @@ describe('promotePlanLaneFromRenderer', () => {
 
     storeState.missions.set('m-plan', {
       ...storeState.missions.get('m-plan')!,
+      orchestratorSessionId: undefined,
       intentVersion: 2,
       intentContract: { ...contract, intentVersion: 2, goal: 'Plano trocado' },
     });
@@ -202,8 +484,9 @@ describe('promotePlanLaneFromRenderer', () => {
         owner,
         { missionId: 'm-plan' },
         candidate.fence,
+        candidate.promotedPlan!,
       ),
-    ).toThrow(/promotion.*stale|intent.*changed/i);
+    ).toThrow(/plan_handoff_stale|promotion.*stale|intent.*changed/i);
     expect(storeState.update).not.toHaveBeenCalled();
   });
 
@@ -229,7 +512,12 @@ describe('promotePlanLaneFromRenderer', () => {
     });
     const auth = authority();
     expect(() =>
-      auth.promotePlanLaneFromRenderer({} as WebContents, { missionId: 'm1' }),
+      auth.promotePlanLaneFromRenderer(
+        {} as WebContents,
+        { missionId: 'm1' },
+        'not-used-for-non-plan',
+        {} as never,
+      ),
     ).toThrow(/not in plan lane/i);
   });
 });

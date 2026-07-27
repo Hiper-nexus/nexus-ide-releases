@@ -281,6 +281,62 @@ describe('manual release security artifacts', () => {
       zip: { sha256: shaFor('zip') },
       e2eEvidence: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) },
     });
+    expect(finalized.verification).toEqual({
+      physicalProductWizard: true,
+    });
+  });
+
+  it('never finalizes private-runner evidence as release security proof', () => {
+    const root = tempRoot();
+    const artifacts = path.join(root, 'artifacts');
+    buildReleaseSecurityArtifacts({
+      root,
+      outDir: artifacts,
+      runCommand: (args) => ({
+        status: 0,
+        stdout: JSON.stringify(
+          args[0] === 'audit'
+            ? { metadata: { vulnerabilities: { total: 0 } } }
+            : { bomFormat: 'CycloneDX', components: [] },
+        ),
+        stderr: '',
+      }),
+      commitSha: 'a'.repeat(40),
+      ...securityAuthority,
+      runtime: { node: 'v22.23.1', npm: '12.0.0' },
+    });
+    const dmg = path.join(root, 'NexusIDE.dmg');
+    const zip = path.join(root, 'NexusIDE.zip');
+    const evidence = path.join(root, 'private-runner.json');
+    fs.writeFileSync(dmg, 'dmg');
+    fs.writeFileSync(zip, 'zip');
+    fs.writeFileSync(
+      evidence,
+      JSON.stringify(
+        makeValidRealMissionEvidence({
+          launchSurface: 'private-runner',
+        }),
+      ),
+    );
+
+    expect(() =>
+      finalizeReleaseSecurityArtifacts({
+        securityDir: artifacts,
+        root,
+        dmgPath: dmg,
+        zipPath: zip,
+        evidencePath: evidence,
+        commitSha: 'a'.repeat(40),
+        version: '1.2.3',
+        ...securityAuthority,
+        expectedE2EArtifactSha256: shaFor('zip'),
+        expectedSigningIdentity:
+          'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+      }),
+    ).toThrow(/product-wizard|diagnostic-only|physical/i);
+    expect(
+      fs.existsSync(path.join(artifacts, 'real-mission-evidence.json')),
+    ).toBe(false);
   });
 
   it('rejects a structurally forged PASS receipt during finalization', () => {

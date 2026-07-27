@@ -16,6 +16,7 @@ import {
   createScopedSandboxHome,
   type SandboxProfile,
 } from '../runtime/process-sandbox';
+import { assertGovernedWorkspaceControlBoundary } from './governed-workspace-control-boundary';
 import { emitBgTaskEvent } from './bg-task-events';
 import { sameProjectScope } from './project-scoped-broadcast';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -164,6 +165,7 @@ const bgRun: McpToolDef = {
   },
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
+    assertGovernedWorkspaceControlBoundary(ctx, bgRun.name);
     const executionScope = executionScopeFor(ctx);
     const command = requireStr(args, 'command');
     const cwd = resolveCwdForScope(executionScope, str(args, 'cwd'));

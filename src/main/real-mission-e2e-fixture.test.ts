@@ -1,23 +1,26 @@
-import { createHash } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { createHash } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
 
-import type { Squad } from '../shared/orch-types';
+import type { Squad } from "../shared/orch-types";
 import {
   createRealMissionE2ESquadFixture,
+  REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_SQUAD_ID,
-} from '../shared/real-mission-e2e';
+} from "../shared/real-mission-e2e";
+import { retargetSquadInstructions } from "../shared/mission-identity";
 import {
   prepareSquadSave as prepareProductionSquadSave,
   type PreparedSquadSave,
-} from './orch/squad-store';
-import { snapshotSquadAuthority } from './orch/squad-authority-snapshot';
+} from "./orch/squad-store";
+import { snapshotSquadAuthority } from "./orch/squad-authority-snapshot";
 import {
   isExactRealMissionE2ESquadFixture,
   persistRealMissionE2ESquadFixture,
-} from './real-mission-e2e-fixture';
+  resolveProductWizardRealMissionE2ESquadBinding,
+} from "./real-mission-e2e-fixture";
 
 function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function fixtureHarness(options?: {
@@ -60,8 +63,8 @@ function fixtureHarness(options?: {
   };
 }
 
-describe('main-owned real mission squad fixture', () => {
-  it('is already in the production schema canonical property order', () => {
+describe("main-owned real mission squad fixture", () => {
+  it("is already in the production schema canonical property order", () => {
     const compiled = createRealMissionE2ESquadFixture();
     const prepared = prepareProductionSquadSave(compiled);
 
@@ -69,7 +72,7 @@ describe('main-owned real mission squad fixture', () => {
     expect(isExactRealMissionE2ESquadFixture(prepared.squad)).toBe(true);
   });
 
-  it('persists the compiled fixture and accepts only an exact hash-bound reread', () => {
+  it("persists the compiled fixture and accepts only an exact hash-bound reread", () => {
     const harness = fixtureHarness();
 
     const persisted = persistRealMissionE2ESquadFixture(harness.deps);
@@ -82,24 +85,34 @@ describe('main-owned real mission squad fixture', () => {
     );
     expect(persisted.agents).toEqual([
       expect.objectContaining({
-        id: 'e2e-orchestrator',
-        category: 'orchestrator',
+        id: "e2e-orchestrator",
+        category: "orchestrator",
         allowedTools: null,
       }),
       expect.objectContaining({
-        id: 'e2e-worker',
-        category: 'executor',
+        id: "e2e-executor",
+        category: "executor",
+        allowedTools: [],
+      }),
+      expect.objectContaining({
+        id: "e2e-reviewer",
+        category: "reviewer",
+        allowedTools: [],
+      }),
+      expect.objectContaining({
+        id: "e2e-qa",
+        category: "reviewer",
         allowedTools: [],
       }),
     ]);
   });
 
-  it('fails closed when the persisted reread drifts from the compiled fixture', () => {
+  it("fails closed when the persisted reread drifts from the compiled fixture", () => {
     const harness = fixtureHarness({
       mutatePersisted: (squad) => ({
         ...squad,
         agents: squad.agents.map((agent) =>
-          agent.id === 'e2e-worker'
+          agent.id === "e2e-reviewer"
             ? { ...agent, allowedTools: null }
             : agent,
         ),
@@ -111,7 +124,7 @@ describe('main-owned real mission squad fixture', () => {
     );
   });
 
-  it('fails closed when persistence does not make the fixture readable', () => {
+  it("fails closed when persistence does not make the fixture readable", () => {
     const harness = fixtureHarness();
     harness.getSquad.mockReturnValueOnce(null);
 
@@ -120,7 +133,7 @@ describe('main-owned real mission squad fixture', () => {
     );
   });
 
-  it('rejects later drift from the exact authority fixture', () => {
+  it("rejects later drift from the exact authority fixture", () => {
     const harness = fixtureHarness();
     const persisted = persistRealMissionE2ESquadFixture(harness.deps);
 
@@ -128,7 +141,7 @@ describe('main-owned real mission squad fixture', () => {
     expect(
       isExactRealMissionE2ESquadFixture({
         ...persisted,
-        createdAt: 'forged-revision',
+        createdAt: "forged-revision",
       }),
     ).toBe(false);
     expect(
@@ -137,5 +150,49 @@ describe('main-owned real mission squad fixture', () => {
         orchestratorInstructions: `${persisted.orchestratorInstructions}\nforged`,
       }),
     ).toBe(false);
+  });
+
+  it("binds only an exact main-lineage product-wizard runtime roster", () => {
+    const source = createRealMissionE2ESquadFixture();
+    const runtime: Squad = {
+      ...source,
+      id: "agentic-runtime-11111111-1111-4111-8111-111111111111",
+      createdAt: "runtime",
+      builtin: false,
+      runtimeSourceSquadId: source.id,
+      runtimeSourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+      orchestratorInstructions: retargetSquadInstructions(
+        source.orchestratorInstructions,
+        REAL_MISSION_E2E_GOAL,
+      ),
+      agents: source.agents.map((agent) => ({
+        ...agent,
+        model: "gpt-5.5",
+      })),
+    };
+    const lookup = (id: string) =>
+      id === source.id ? source : id === runtime.id ? runtime : null;
+
+    expect(
+      resolveProductWizardRealMissionE2ESquadBinding(runtime.id, lookup),
+    ).toMatchObject({
+      squadId: runtime.id,
+      sourceSquadId: source.id,
+      sourceSquadRevisionHash: snapshotSquadAuthority(source).hash,
+      squadRevisionHash: snapshotSquadAuthority(runtime).hash,
+    });
+
+    const tampered: Squad = {
+      ...runtime,
+      agents: runtime.agents.map((agent) =>
+        agent.id === "e2e-qa" ? { ...agent, cli: "kimi" } : agent,
+      ),
+    };
+    expect(
+      resolveProductWizardRealMissionE2ESquadBinding(
+        tampered.id,
+        (id) => (id === source.id ? source : tampered),
+      ),
+    ).toBeNull();
   });
 });

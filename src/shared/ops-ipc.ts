@@ -8,7 +8,7 @@ export const OPS_CHANNELS = {
   releaseReadiness: 'ops:releaseReadiness',
 } as const;
 
-export type AuditSource = 'http-mcp' | 'ipc-renderer' | 'jarvis-voice';
+export type AuditSource = 'http-mcp' | 'omp-rpc-stdio' | 'ipc-renderer' | 'jarvis-voice';
 export type AuditResult = 'intent' | 'ok' | 'error' | 'denied';
 
 export interface AuditLogEntry {

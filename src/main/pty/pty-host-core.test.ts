@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createPtyHostBridge,
+  PhysicalExitReceipts,
+  PreSpawnFailureTombstones,
   type HostControlMsg,
   type PtySpawnSpec,
 } from './pty-host-core';
@@ -31,6 +33,116 @@ const spec: PtySpawnSpec = {
   rows: 24,
   env: { PATH: '/usr/bin' },
 };
+
+describe('PreSpawnFailureTombstones', () => {
+  it('proves only the exact recorded session and consumes the evidence once', () => {
+    const tombstones = new PreSpawnFailureTombstones();
+    tombstones.record('failed-before-spawn');
+
+    expect(tombstones.consume('unknown')).toBe(false);
+    expect(tombstones.consume('failed-before-spawn')).toBe(true);
+    expect(tombstones.consume('failed-before-spawn')).toBe(false);
+  });
+
+  it('expires evidence at its bounded TTL', () => {
+    let now = 1_000;
+    const tombstones = new PreSpawnFailureTombstones({
+      ttlMs: 50,
+      now: () => now,
+    });
+    tombstones.record('expired');
+
+    now = 1_049;
+    expect(tombstones.size()).toBe(1);
+    now = 1_050;
+    expect(tombstones.consume('expired')).toBe(false);
+    expect(tombstones.size()).toBe(0);
+  });
+
+  it('evicts the oldest evidence when the hard bound is reached', () => {
+    const tombstones = new PreSpawnFailureTombstones({ maxEntries: 2 });
+    tombstones.record('oldest');
+    tombstones.record('middle');
+    tombstones.record('newest');
+
+    expect(tombstones.size()).toBe(2);
+    expect(tombstones.consume('oldest')).toBe(false);
+    expect(tombstones.consume('middle')).toBe(true);
+    expect(tombstones.consume('newest')).toBe(true);
+  });
+
+  it('forgets stale evidence when the same session id starts a new attempt', () => {
+    const tombstones = new PreSpawnFailureTombstones();
+    tombstones.record('retry');
+    tombstones.forget('retry');
+
+    expect(tombstones.consume('retry')).toBe(false);
+  });
+});
+
+describe('PhysicalExitReceipts', () => {
+  it('returns the same exact process-tree proof after natural exit and on retry', () => {
+    const receipts = new PhysicalExitReceipts();
+    receipts.record('natural-exit', {
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+
+    expect(receipts.read('unknown')).toBeNull();
+    expect(receipts.read('natural-exit')).toEqual({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+    expect(receipts.read('natural-exit')).toEqual({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+  });
+
+  it('never upgrades incomplete evidence and forgets a reused session id', () => {
+    const receipts = new PhysicalExitReceipts();
+    receipts.record('incomplete', {
+      ok: false,
+      rootExited: true,
+      descendantsExited: false,
+    });
+    expect(receipts.read('incomplete')).toBeNull();
+
+    receipts.record('reused', {
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
+    receipts.forget('reused');
+    expect(receipts.read('reused')).toBeNull();
+  });
+
+  it('bounds and expires stable receipts', () => {
+    let now = 2_000;
+    const receipts = new PhysicalExitReceipts({
+      ttlMs: 50,
+      maxEntries: 2,
+      now: () => now,
+    });
+    const proof = {
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    } as const;
+    receipts.record('oldest', proof);
+    receipts.record('middle', proof);
+    receipts.record('newest', proof);
+    expect(receipts.read('oldest')).toBeNull();
+    expect(receipts.size()).toBe(2);
+
+    now = 2_050;
+    expect(receipts.read('middle')).toBeNull();
+    expect(receipts.read('newest')).toBeNull();
+  });
+});
 
 describe('createPtyHostBridge', () => {
   it('forks (ensure) then posts the spawn spec to the host', () => {

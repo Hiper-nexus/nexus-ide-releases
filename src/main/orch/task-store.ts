@@ -9,6 +9,7 @@ import {
   type TaskRecord,
   type TaskStatus,
 } from '../../shared/orch-types';
+import { missionIntentContractSchema } from '../../shared/mission-intent';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
@@ -98,6 +99,13 @@ const taskPlanDatabaseRowSchema = z.object({
   created_at: z.number().int().nonnegative(),
 }).strict();
 
+export interface ApprovedPreflightTaskPlanAuthority {
+  readonly kind: 'approved-preflight';
+  readonly intentVersion: number;
+  readonly approvedAt: number;
+  readonly approvalReviewSha256?: string;
+}
+
 export interface AtomicTaskPlanInput {
   readonly missionId: string;
   readonly intentVersion: number;
@@ -106,6 +114,11 @@ export interface AtomicTaskPlanInput {
     readonly agents: readonly SquadAgent[];
   };
   readonly rows: readonly z.infer<typeof plannedTaskRowSchema>[];
+  /**
+   * Trusted Main-only capability for the approval → sealed-plan preflight.
+   * Ordinary MCP planning omits it and therefore still requires `running`.
+   */
+  readonly approvedPreflight?: ApprovedPreflightTaskPlanAuthority;
 }
 
 export interface TaskPlanReceiptEntry {
@@ -123,6 +136,19 @@ export type TaskPlanAgentSnapshot = Readonly<
     readonly allowedTools?: readonly string[] | null;
   }
 >;
+
+/**
+ * Canonical authority for the agent roster embedded in a task-plan receipt.
+ *
+ * This hash intentionally covers the executable agent identities only. It is
+ * distinct from `snapshotSquadAuthority(...).hash`, which also binds squad
+ * metadata, instructions and runtime lineage at the mission-approval gate.
+ */
+export interface TaskPlanRosterSnapshot {
+  readonly version: 1;
+  readonly hash: string;
+  readonly canonicalJson: string;
+}
 
 export interface TaskPlanReceipt {
   readonly version: 1;
@@ -203,6 +229,22 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+export function snapshotTaskPlanRoster(
+  agents: readonly SquadAgent[],
+): TaskPlanRosterSnapshot {
+  validateRosterIdentity(agents);
+  const envelope = rosterSnapshotEnvelopeSchema.parse({
+    version: 1,
+    agents,
+  });
+  const serialized = canonicalJson(envelope);
+  return Object.freeze({
+    version: 1,
+    hash: sha256(serialized),
+    canonicalJson: serialized,
+  });
+}
+
 function freezeAgent(agent: SquadAgent): TaskPlanAgentSnapshot {
   return Object.freeze({
     ...agent,
@@ -262,13 +304,9 @@ function sealPlan(input: {
   readonly agents: readonly SquadAgent[];
   readonly rows: readonly z.infer<typeof plannedTaskRowSchema>[];
 }): SealedPlan {
-  validateRosterIdentity(input.agents);
-  const rosterEnvelope = rosterSnapshotEnvelopeSchema.parse({
-    version: 1,
-    agents: input.agents,
-  });
-  const rosterJson = canonicalJson(rosterEnvelope);
-  const rosterHash = sha256(rosterJson);
+  const roster = snapshotTaskPlanRoster(input.agents);
+  const rosterJson = roster.canonicalJson;
+  const rosterHash = roster.hash;
   const entries = input.rows.map((row) => {
     const agent = resolveRosterAgent(input.agents, row.agentRef);
     if (agent.category !== row.agentCategory) {
@@ -376,6 +414,16 @@ export class ScopedTaskStore {
     const intentVersion = z.number().int().nonnegative().parse(rawInput.intentVersion);
     const squad = squadSnapshotSchema.parse(rawInput.squad);
     const rows = z.array(plannedTaskRowSchema).min(1).max(64).parse(rawInput.rows);
+    const approvedPreflight = z
+      .object({
+        kind: z.literal('approved-preflight'),
+        intentVersion: z.number().int().positive().max(1_000_000),
+        approvedAt: z.number().int().positive(),
+        approvalReviewSha256: hashSchema.optional(),
+      })
+      .strict()
+      .optional()
+      .parse(rawInput.approvedPreflight);
     if (new Set(rows.map((row) => row.plannerId)).size !== rows.length) {
       throw new Error('planner task ids must be unique');
     }
@@ -391,14 +439,48 @@ export class ScopedTaskStore {
     let inserted = false;
     db.transaction(() => {
       const mission = db.prepare(
-        `SELECT status, intent_version, squad_id FROM missions WHERE id = ?`,
+        `SELECT status, intent_state, intent_contract_json, intent_version,
+                squad_id, orch_session_id
+           FROM missions
+          WHERE id = ?`,
       ).get(missionId) as {
         status: string;
+        intent_state: string;
+        intent_contract_json: string | null;
         intent_version: number;
         squad_id: string | null;
+        orch_session_id: string | null;
       } | undefined;
       if (!mission) throw new Error(`mission not found: ${missionId}`);
-      if (mission.status !== 'running') throw new Error('task plan requires running mission');
+      let exactApprovedPreflight = false;
+      if (approvedPreflight) {
+        const parsedContract = (() => {
+          try {
+            return missionIntentContractSchema.parse(
+              JSON.parse(mission.intent_contract_json ?? 'null'),
+            );
+          } catch {
+            return null;
+          }
+        })();
+        exactApprovedPreflight = Boolean(
+          parsedContract &&
+            mission.status === 'pending' &&
+            mission.intent_state === 'ready_to_start' &&
+            mission.orch_session_id === null &&
+            mission.intent_version === approvedPreflight.intentVersion &&
+            parsedContract.intentVersion === approvedPreflight.intentVersion &&
+            parsedContract.approvedAt === approvedPreflight.approvedAt &&
+            parsedContract.approvalReviewSha256 ===
+              approvedPreflight.approvalReviewSha256 &&
+            parsedContract.dispatchedAt === undefined,
+        );
+      }
+      if (mission.status !== 'running' && !exactApprovedPreflight) {
+        throw new Error(
+          'task plan requires running mission or exact main-owned approved preflight',
+        );
+      }
       if (mission.intent_version !== intentVersion) {
         throw new Error('task plan intentVersion is stale');
       }
@@ -610,9 +692,8 @@ export class ScopedTaskStore {
       const rosterEnvelope = rosterSnapshotEnvelopeSchema.parse(
         JSON.parse(row.roster_snapshot_json),
       );
-      validateRosterIdentity(rosterEnvelope.agents);
-      const canonicalRoster = canonicalJson(rosterEnvelope);
-      if (sha256(canonicalRoster) !== row.roster_hash) {
+      const roster = snapshotTaskPlanRoster(rosterEnvelope.agents);
+      if (roster.hash !== row.roster_hash) {
         throw new Error('roster hash mismatch');
       }
       const plannerEnvelope = planReceiptEnvelopeSchema.parse(

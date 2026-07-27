@@ -244,6 +244,79 @@ describe('scoped task store', () => {
     expect(tasks.getPlannedTask('task-not-planned')).toBeNull();
   });
 
+  it('seals a pending approved plan only with the exact main-owned preflight capability', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const approvalReviewSha256 = 'a'.repeat(64);
+    const approvedAt = 101;
+    const mission = missions.create({
+      title: 'Approved preflight',
+      squadId: squad.id,
+      intentVersion: 2,
+      intentState: 'ready_to_start',
+      intentContract: {
+        ...compileIntentContract({
+          goal: 'Seal before dispatch',
+          intentVersion: 2,
+        }),
+        approvedAt,
+        approvalReviewSha256,
+      },
+    });
+    const tasks = createScopedTaskStore(runtimeManager, scope, { now: () => 202 });
+    const input = {
+      missionId: mission.id,
+      intentVersion: 2,
+      squad: { id: squad.id, agents: squad.agents },
+      rows: [{
+        plannerId: 'api',
+        title: 'API',
+        detail: 'Implementar',
+        agentRef: 'api-worker',
+        agentCategory: 'executor',
+      }],
+    } as const;
+
+    expect(() => tasks.createPlanAtomically(input)).toThrow(
+      /running mission or exact main-owned approved preflight/i,
+    );
+    expect(() => tasks.createPlanAtomically({
+      ...input,
+      approvedPreflight: {
+        kind: 'approved-preflight',
+        intentVersion: 2,
+        approvedAt: approvedAt + 1,
+        approvalReviewSha256,
+      },
+    })).toThrow(/running mission or exact main-owned approved preflight/i);
+    expect(tasks.hasPlan(mission.id, 2)).toBe(false);
+    expect(tasks.list(mission.id)).toEqual([]);
+
+    const sealed = tasks.createPlanAtomically({
+      ...input,
+      approvedPreflight: {
+        kind: 'approved-preflight',
+        intentVersion: 2,
+        approvedAt,
+        approvalReviewSha256,
+      },
+    });
+
+    expect(sealed).toHaveLength(1);
+    expect(tasks.hasPlan(mission.id, 2)).toBe(true);
+    expect(missions.get(mission.id)).toMatchObject({
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentVersion: 2,
+      orchestratorSessionId: undefined,
+      intentContract: {
+        approvedAt,
+        approvalReviewSha256,
+      },
+    });
+  });
+
   it('rejects non-members and category drift before persisting any task', () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

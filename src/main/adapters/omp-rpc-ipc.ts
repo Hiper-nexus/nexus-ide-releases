@@ -32,6 +32,7 @@ import {
 } from '../orch/gate';
 import { dispatchToolCall } from '../orch/mcp-dispatch';
 import type { McpRegistry } from '../orch/mcp-protocol';
+import { runInsideOmpRpcHostCall } from '../orch/http-mcp-boundary';
 import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { buildToolset } from '../orch/tools';
 import {
@@ -46,13 +47,16 @@ import {
   getRendererWorkspaceScope,
   requireRendererWorkspaceScope,
 } from '../persistence/renderer-workspace-scope';
-import { getAdapter } from './adapter-registry';
 import {
   OmpRpcSession,
-  resolveOmpBin,
+  buildOmpChildEnv,
   waitForOmpSessionReady,
   type OmpAutoApprovalRecord,
 } from './omp-rpc-service';
+import {
+  preflightOmpRpcSpawn,
+  type OmpCredentialScope,
+} from '../pty/pre-spawn-probe';
 
 /**
  * IPC do domínio ompRpc: hospeda sessões `omp --mode rpc-ui` como agentes de
@@ -118,12 +122,112 @@ interface HostedSession {
   paneId: string;
   kind: 'panel' | 'mission';
   title: string;
+  /**
+   * Exact launcher credential material present in this already-running
+   * process. Kept main-only and never serialized/logged. A live model switch
+   * is allowed only when its exact preflight resolves to the same scope;
+   * otherwise the process must be restarted so old/new providers cannot
+   * share an environment.
+   */
+  launchCredentialEnv: Readonly<Record<string, string>>;
+  /**
+   * Secret-free provider/auth authority for the running child. Environment
+   * equality alone is insufficient: two broker-backed providers both have an
+   * empty launcher env but still represent distinct credential authorities.
+   */
+  launchCredentialScope: OmpCredentialScope;
   /** Logical capability revocation may precede physical process exit. */
   revoked?: boolean;
+  /** One physical tree fence per hosted identity; false proofs remain retryable. */
+  termination?: Promise<boolean>;
+}
+
+function sameCredentialEnv(
+  left: Readonly<Record<string, string>>,
+  right: Readonly<Record<string, string>>,
+): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] && left[key] === right[key],
+    )
+  );
+}
+
+function sameCredentialScope(
+  left: OmpCredentialScope,
+  right: OmpCredentialScope,
+): boolean {
+  const leftEnvNames = [...left.envNames].sort();
+  const rightEnvNames = [...right.envNames].sort();
+  return (
+    left.modelProvider === right.modelProvider &&
+    left.source === right.source &&
+    left.authorityProviderId === right.authorityProviderId &&
+    leftEnvNames.length === rightEnvNames.length &&
+    leftEnvNames.every(
+      (envName, index) => envName === rightEnvNames[index],
+    )
+  );
 }
 
 const sessions = new Map<string, HostedSession>();
 const ownerCleanup = new Map<WebContents, () => void>();
+let disposeAllFlight: Promise<OmpRpcShutdownResult> | null = null;
+let ompLifecycleEpoch = 0;
+let ompShutdownRequested = false;
+
+interface OmpSpawnFence {
+  readonly epoch: number;
+  /** True once the child has entered the stable `sessions` inventory. */
+  materialized: boolean;
+  revoked: boolean;
+  released: boolean;
+  readonly settled: Promise<void>;
+  settle(): void;
+}
+
+const inFlightSpawns = new Set<OmpSpawnFence>();
+
+function acquireOmpSpawnFence(): OmpSpawnFence {
+  if (ompShutdownRequested || disposeAllFlight) {
+    throw new Error('OMP shutdown is in progress; new sessions are blocked');
+  }
+  let settle!: () => void;
+  const fence: OmpSpawnFence = {
+    epoch: ompLifecycleEpoch,
+    materialized: false,
+    revoked: false,
+    released: false,
+    settled: new Promise<void>((resolve) => {
+      settle = resolve;
+    }),
+    settle: () => settle(),
+  };
+  inFlightSpawns.add(fence);
+  return fence;
+}
+
+function assertOmpSpawnFence(fence: OmpSpawnFence): void {
+  if (
+    fence.released ||
+    fence.revoked ||
+    fence.epoch !== ompLifecycleEpoch ||
+    ompShutdownRequested
+  ) {
+    throw new Error('OMP spawn authority was revoked by shutdown');
+  }
+}
+
+function releaseOmpSpawnFence(fence: OmpSpawnFence): void {
+  if (fence.released) return;
+  fence.released = true;
+  inFlightSpawns.delete(fence);
+  fence.settle();
+}
 
 let registry: McpRegistry | null = null;
 
@@ -148,10 +252,7 @@ export function buildOmpHostToolDefinitions(
   allowedToolNames?: readonly string[] | null,
 ): OmpHostToolDefinition[] {
   const byName = new Map(source.tools.map((tool) => [tool.name, tool]));
-  const allow =
-    allowedToolNames == null
-      ? null
-      : new Set(allowedToolNames);
+  const allow = allowedToolNames == null ? null : new Set(allowedToolNames);
   const defs: OmpHostToolDefinition[] = [];
   for (const name of HOST_TOOL_NAMES) {
     if (allow && !allow.has(name)) continue;
@@ -164,11 +265,6 @@ export function buildOmpHostToolDefinitions(
     });
   }
   return defs;
-}
-
-function ompBinName(): string {
-  const adapter = getAdapter('omp');
-  return adapter && adapter.kind === 'cli-pty' ? adapter.bin : 'omp';
 }
 
 function resolveWorkspaceRoot(
@@ -204,13 +300,79 @@ function revokeHostedSession(sessionId: string, hosted: HostedSession): void {
   releaseSession(hosted.gateSessionId);
 }
 
+async function terminateHostedSession(
+  sessionId: string,
+  hosted: HostedSession,
+  options: TerminateOmpRpcSessionOptions = {},
+): Promise<boolean> {
+  if (sessions.get(sessionId) !== hosted) return true;
+  if (hosted.termination) return hosted.termination;
+  revokeHostedSession(sessionId, hosted);
+  const stream = paneStreams.get(sessionId);
+  if (stream) stream.disposed = true;
+  const operation = (async () => {
+    const proof = await hosted.session.terminate({
+      ...(options.timeoutMs !== undefined
+        ? { termTimeoutMs: options.timeoutMs }
+        : {}),
+      ...(options.killTimeoutMs !== undefined
+        ? { killTimeoutMs: options.killTimeoutMs }
+        : {}),
+      ...(options.snapshotTimeoutMs !== undefined
+        ? { snapshotTimeoutMs: options.snapshotTimeoutMs }
+        : {}),
+    });
+    if (!proof.ok || !proof.rootExited || !proof.descendantsExited) {
+      console.warn(
+        `[omp-rpc:${sessionId}] physical process-tree exit not proven: ` +
+          (proof.error ?? 'root/descendant proof incomplete'),
+      );
+      return false;
+    }
+    paneStreams.delete(sessionId);
+    if (sessions.get(sessionId) === hosted) sessions.delete(sessionId);
+    return true;
+  })().catch((error) => {
+    console.warn(
+      `[omp-rpc:${sessionId}] physical process-tree fence failed:`,
+      error,
+    );
+    return false;
+  });
+  hosted.termination = operation;
+  const terminated = await operation;
+  if (!terminated && hosted.termination === operation) {
+    hosted.termination = undefined;
+  }
+  return terminated;
+}
+
+/**
+ * Synchronous lifecycle callers may request revocation, but this return value
+ * means only "known and termination started". Physical success is available
+ * exclusively through terminateOmpRpcSession/disposeAllOmpRpcSessions.
+ */
 function disposeSession(sessionId: string): boolean {
   const hosted = sessions.get(sessionId);
   if (!hosted) return false;
-  revokeHostedSession(sessionId, hosted);
-  sessions.delete(sessionId);
-  hosted.session.dispose();
+  void terminateHostedSession(sessionId, hosted);
   return true;
+}
+
+function assertLiveRendererOwner(owner: WebContents): void {
+  try {
+    if (owner.isDestroyed() || owner.isCrashed()) {
+      throw new Error('renderer owner disappeared during OMP spawn');
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'renderer owner disappeared during OMP spawn'
+    ) {
+      throw error;
+    }
+    throw new Error('renderer owner became unavailable during OMP spawn');
+  }
 }
 
 function watchOwner(owner: WebContents): void {
@@ -366,7 +528,9 @@ export function listOmpRpcSessions(owner?: WebContents): OmpSessionSummary[] {
       // Same trust boundary as requireObservableSession/pushEvent: panel → owning
       // renderer only; mission → same-project windows only.
       if (hosted.kind === 'panel') return hosted.owner === owner;
-      return rendererScope !== null && sameProjectScope(rendererScope, hosted.scope);
+      return (
+        rendererScope !== null && sameProjectScope(rendererScope, hosted.scope)
+      );
     })
     .map((hosted) => ({
       sessionId: hosted.session.sessionId,
@@ -379,26 +543,36 @@ export function listOmpRpcSessions(owner?: WebContents): OmpSessionSummary[] {
     }));
 }
 
+export interface OmpRpcRuntimeSummary {
+  readonly total: number;
+  readonly busy: number;
+}
+
+const OMP_RUNTIME_BUSY_STATES = new Set<OmpRpcSessionLifecycle>([
+  'spawning',
+  'ready',
+  'busy',
+]);
+
 /**
- * Fail-loud parse: a non-empty malformed ref must never fall through to the
- * omp default silently (same "phantom model" class the PTY path fights via
- * resolveRoutableModel). `undefined`/empty = not specified → the omp default
- * is a legitimate choice and stays `undefined`.
+ * Complete global OMP admission + process inventory for native close/quit.
+ * A preflight awaiting provider discovery is already an admitted spawn and
+ * must count as busy: once its await resumes it may construct a child before
+ * renderer teardown observers can run. Materialized fences are excluded
+ * because their child is already represented in `sessions`.
  */
-function parseOmpModelRef(
-  model: string | undefined,
-): { provider: string; modelId: string } | undefined {
-  if (!model) return undefined;
-  const slash = model.indexOf('/');
-  if (slash <= 0 || slash === model.length - 1) {
-    throw new Error(
-      `modelo omp malformado: "${model}" (formato esperado: provider/modelId)`,
-    );
-  }
-  return {
-    provider: model.slice(0, slash),
-    modelId: model.slice(slash + 1),
-  };
+export function liveOmpRpcRuntimeSummary(): OmpRpcRuntimeSummary {
+  const pending = [...inFlightSpawns].filter(
+    (fence) => !fence.released && !fence.materialized,
+  ).length;
+  return Object.freeze({
+    total: sessions.size + pending,
+    busy:
+      pending +
+      [...sessions.values()].filter((hosted) =>
+        OMP_RUNTIME_BUSY_STATES.has(hosted.session.state),
+      ).length,
+  });
 }
 
 export interface MissionOmpWorkerInput {
@@ -512,9 +686,7 @@ function assertMissionExecutionScope(
     !path.isAbsolute(executionScope.rootRealPath) ||
     path.normalize(executionScope.rootRealPath) !== executionScope.rootRealPath
   ) {
-    throw new Error(
-      'OMP execution root must be an absolute normalized path',
-    );
+    throw new Error('OMP execution root must be an absolute normalized path');
   }
 }
 
@@ -525,23 +697,37 @@ function assertMissionExecutionScope(
 export async function spawnMissionOmpRpcWorker(
   input: MissionOmpWorkerInput,
 ): Promise<{ paneId: string; sessionId: string }> {
-  // Validate before minting any gate token: a malformed model ref throws
-  // here, so the spawn fails loud with a clear message and leaks nothing.
-  let model: ReturnType<typeof parseOmpModelRef>;
-  let binPath: string;
+  let spawnFence: OmpSpawnFence;
+  try {
+    spawnFence = acquireOmpSpawnFence();
+  } catch (error) {
+    throw new OmpMissionSpawnError(error, false);
+  }
+  try {
+    return await spawnMissionOmpRpcWorkerWithFence(input, spawnFence);
+  } finally {
+    releaseOmpSpawnFence(spawnFence);
+  }
+}
+
+async function spawnMissionOmpRpcWorkerWithFence(
+  input: MissionOmpWorkerInput,
+  spawnFence: OmpSpawnFence,
+): Promise<{ paneId: string; sessionId: string }> {
+  // Exact provider/model auth + version pin happen before minting any gate
+  // token or constructing the agent process.
+  let preflight: Awaited<ReturnType<typeof preflightOmpRpcSpawn>>;
   try {
     assertMissionExecutionScope(input.scope, input.executionScope);
-    model = parseOmpModelRef(input.model);
     if (sessions.size >= MAX_SESSIONS_PER_RENDERER * 2) {
       throw new Error('limite global de sessões omp atingido');
     }
-    binPath = (
-      await awaitMissionOmpSpawnStep(
-        resolveOmpBin(ompBinName()),
-        input,
-      )
-    ).binPath;
+    preflight = await awaitMissionOmpSpawnStep(
+      preflightOmpRpcSpawn(input.model),
+      input,
+    );
     assertMissionOmpSpawnAuthority(input);
+    assertOmpSpawnFence(spawnFence);
   } catch (error) {
     throw new OmpMissionSpawnError(error, false);
   }
@@ -586,18 +772,30 @@ export async function spawnMissionOmpRpcWorker(
         sessionId,
         workspaceRoot: input.executionScope.rootRealPath,
         approvalPolicy: input.approvalPolicy ?? 'yolo',
-        binPath,
-        model,
+        binPath: preflight.binPath,
+        governed: true,
+        model: preflight.model,
+        env: {
+          ...buildOmpChildEnv(),
+          ...preflight.keyEnv,
+        },
+        credentialSecrets: Object.values(preflight.keyEnv),
       },
       {
         hostTools: buildOmpHostToolDefinitions(hostRegistry(), allowedTools),
-        dispatchHostTool: async (toolName, args) => {
-          const outcome = await dispatchToolCall(
-            'http-mcp',
-            hostRegistry(),
-            toolName,
-            args,
+        dispatchHostTool: async (toolName, args, physicalCall) => {
+          const outcome = await runInsideOmpRpcHostCall(
+            physicalCall,
             gateCtx,
+            toolName,
+            () =>
+              dispatchToolCall(
+                'omp-rpc-stdio',
+                hostRegistry(),
+                toolName,
+                args,
+                gateCtx,
+              ),
           );
           return outcome.ok
             ? { ok: true, result: outcome.result }
@@ -618,7 +816,7 @@ export async function spawnMissionOmpRpcWorker(
             },
             0,
             false,
-            'http-mcp',
+            'omp-rpc-stdio',
           );
         },
         onPush: (event) => {
@@ -646,14 +844,6 @@ export async function spawnMissionOmpRpcWorker(
     throw new OmpMissionSpawnError(err, true);
   }
 
-  if (session.state === 'exited') {
-    releaseSession(gateSessionId);
-    throw new OmpMissionSpawnError(
-      new Error('processo omp encerrou durante o spawn'),
-      true,
-    );
-  }
-
   const hosted: HostedSession = {
     session,
     gateCtx,
@@ -663,9 +853,26 @@ export async function spawnMissionOmpRpcWorker(
     paneId,
     kind: 'mission',
     title: input.title ?? input.agentName ?? 'Oh My Pi',
+    launchCredentialEnv: preflight.keyEnv,
+    launchCredentialScope: preflight.credentialScope,
   };
   hostedRef.current = hosted;
   sessions.set(sessionId, hosted);
+  spawnFence.materialized = true;
+  // The child and its physical identity are now synchronously inventoried.
+  // Releasing here lets shutdown terminate it instead of waiting on readiness.
+  releaseOmpSpawnFence(spawnFence);
+  if (session.state === 'exited') {
+    const terminated = await terminateHostedSession(sessionId, hosted);
+    throw new OmpMissionSpawnError(
+      new Error(
+        terminated
+          ? 'processo omp encerrou durante o spawn'
+          : 'processo omp encerrou durante o spawn sem prova física completa; substituição bloqueada',
+      ),
+      true,
+    );
+  }
   if (input.missionId) {
     try {
       registerExternalWorkerSession({
@@ -675,7 +882,7 @@ export async function spawnMissionOmpRpcWorker(
         scope: input.scope,
       });
     } catch (error) {
-      disposeSession(sessionId);
+      await terminateHostedSession(sessionId, hosted);
       throw new OmpMissionSpawnError(error, true);
     }
   }
@@ -698,7 +905,7 @@ export async function spawnMissionOmpRpcWorker(
   } catch (err) {
     // A failed readiness/prompt transaction is not a live worker. Tear down
     // the child and its gate token so retries do not leak fleet slots.
-    disposeSession(sessionId);
+    await terminateHostedSession(sessionId, hosted);
     throw new OmpMissionSpawnError(err, true);
   }
   return { paneId, sessionId };
@@ -791,8 +998,7 @@ export interface OmpRpcPaneInput {
 }
 
 export type OmpRpcPaneResult =
-  | { ok: true; sessionId: string }
-  | { ok: false; error: string };
+  { ok: true; sessionId: string } | { ok: false; error: string };
 
 /**
  * Spawn `omp --mode rpc-ui` as a first-class GRID pane (kind panel, real
@@ -803,21 +1009,48 @@ export type OmpRpcPaneResult =
 export async function spawnOmpRpcPane(
   input: OmpRpcPaneInput,
 ): Promise<OmpRpcPaneResult> {
-  let model: { provider: string; modelId: string } | undefined;
+  let spawnFence: OmpSpawnFence;
   try {
-    model = parseOmpModelRef(input.model);
+    spawnFence = acquireOmpSpawnFence();
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  try {
+    return await spawnOmpRpcPaneWithFence(input, spawnFence);
+  } finally {
+    releaseOmpSpawnFence(spawnFence);
+  }
+}
+
+async function spawnOmpRpcPaneWithFence(
+  input: OmpRpcPaneInput,
+  spawnFence: OmpSpawnFence,
+): Promise<OmpRpcPaneResult> {
+  try {
+    assertLiveRendererOwner(input.owner);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
   if (sessionsForOwner(input.owner) >= MAX_SESSIONS_PER_RENDERER) {
     return { ok: false, error: 'limite de sessões omp atingido' };
   }
-  let binPath: string;
+  let preflight: Awaited<ReturnType<typeof preflightOmpRpcSpawn>>;
   try {
-    binPath = (await resolveOmpBin(ompBinName())).binPath;
+    preflight = await preflightOmpRpcSpawn(input.model);
     input.assertAuthority?.();
+    assertOmpSpawnFence(spawnFence);
+    assertLiveRendererOwner(input.owner);
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 
   const sessionId = randomUUID();
@@ -842,7 +1075,10 @@ export async function spawnOmpRpcPane(
     bindTokenToSession(gateCtx.token, gateSessionId);
   } catch (err) {
     releaseSessionByToken(gateCtx.token);
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 
   const stream: RpcPaneStream = {
@@ -862,18 +1098,30 @@ export async function spawnOmpRpcPane(
         sessionId,
         workspaceRoot: input.workspaceRoot,
         approvalPolicy: 'yolo',
-        binPath,
-        model,
+        binPath: preflight.binPath,
+        governed: true,
+        model: preflight.model,
+        env: {
+          ...buildOmpChildEnv(),
+          ...preflight.keyEnv,
+        },
+        credentialSecrets: Object.values(preflight.keyEnv),
       },
       {
         hostTools: buildOmpHostToolDefinitions(hostRegistry(), allowedTools),
-        dispatchHostTool: async (toolName, args) => {
-          const outcome = await dispatchToolCall(
-            'http-mcp',
-            hostRegistry(),
-            toolName,
-            args,
+        dispatchHostTool: async (toolName, args, physicalCall) => {
+          const outcome = await runInsideOmpRpcHostCall(
+            physicalCall,
             gateCtx,
+            toolName,
+            () =>
+              dispatchToolCall(
+                'omp-rpc-stdio',
+                hostRegistry(),
+                toolName,
+                args,
+                gateCtx,
+              ),
           );
           return outcome.ok
             ? { ok: true, result: outcome.result }
@@ -894,7 +1142,7 @@ export async function spawnOmpRpcPane(
             },
             0,
             false,
-            'http-mcp',
+            'omp-rpc-stdio',
           );
         },
         onPush: (event) => {
@@ -931,7 +1179,6 @@ export async function spawnOmpRpcPane(
               publishSessionActivityState(sessionId, 'idle');
               emitRpcPaneExit(stream, sessionId, event.code);
               stream.disposed = true;
-              paneStreams.delete(sessionId);
               disposeSession(sessionId);
               break;
             default:
@@ -942,12 +1189,10 @@ export async function spawnOmpRpcPane(
     );
   } catch (err) {
     releaseSession(gateSessionId);
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-
-  if (session.state === 'exited') {
-    releaseSession(gateSessionId);
-    return { ok: false, error: 'processo omp encerrou durante o spawn' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 
   const hosted: HostedSession = {
@@ -959,10 +1204,25 @@ export async function spawnOmpRpcPane(
     paneId,
     kind: input.missionId ? 'mission' : 'panel',
     title: input.title ?? input.agentName ?? 'Oh My Pi · RPC',
+    launchCredentialEnv: preflight.keyEnv,
+    launchCredentialScope: preflight.credentialScope,
   };
   hostedRef.current = hosted;
   sessions.set(sessionId, hosted);
+  spawnFence.materialized = true;
   paneStreams.set(sessionId, stream);
+  // Registration is atomic with child construction; shutdown can now own the
+  // physical termination without a process escaping between inventories.
+  releaseOmpSpawnFence(spawnFence);
+  if (session.state === 'exited') {
+    const terminated = await terminateHostedSession(sessionId, hosted);
+    return {
+      ok: false,
+      error: terminated
+        ? 'processo omp encerrou durante o spawn'
+        : 'processo omp encerrou durante o spawn sem prova física completa; substituição bloqueada',
+    };
+  }
 
   try {
     await waitForOmpSessionReady(session);
@@ -972,9 +1232,11 @@ export async function spawnOmpRpcPane(
     }
   } catch (err) {
     stream.disposed = true;
-    paneStreams.delete(sessionId);
-    disposeSession(sessionId);
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    await terminateHostedSession(sessionId, hosted);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
   return { ok: true, sessionId };
 }
@@ -1039,11 +1301,11 @@ export function canRendererControlOmpRpcPane(
   const hosted = sessions.get(sessionId);
   return Boolean(
     stream &&
-      hosted &&
-      stream.owner === owner &&
-      hosted.owner === owner &&
-      hosted.kind === 'panel' &&
-      !hosted.gateCtx.missionId,
+    hosted &&
+    stream.owner === owner &&
+    hosted.owner === owner &&
+    hosted.kind === 'panel' &&
+    !hosted.gateCtx.missionId,
   );
 }
 
@@ -1109,20 +1371,24 @@ export function killOmpRpcPane(sessionId: string): boolean {
     publishSessionActivityState(sessionId, 'idle');
     emitRpcPaneExit(stream, sessionId, 0);
   }
-  paneStreams.delete(sessionId);
   disposeSession(sessionId);
   return true;
 }
 
 export interface TerminateOmpRpcSessionOptions {
+  /** Backward-compatible SIGTERM grace budget. */
   readonly timeoutMs?: number;
+  /** Deprecated polling knob retained for callers; no longer a proof source. */
   readonly pollMs?: number;
+  readonly killTimeoutMs?: number;
+  readonly snapshotTimeoutMs?: number;
 }
 
 /**
  * Main-owned authority teardown. Capability tokens are revoked immediately,
- * but success is returned only after OmpRpcSession observed the child `exit`.
- * A timeout leaves the hosted record present/revoked, preventing replacement.
+ * but success is returned only after the shared process inventory proves the
+ * exact root callback and all captured/late descendants exited. A false proof
+ * leaves the hosted record present/revoked, preventing replacement.
  */
 export async function terminateOmpRpcSession(
   sessionId: string,
@@ -1132,33 +1398,32 @@ export async function terminateOmpRpcSession(
   if (!hosted) return true;
   const timeoutMs = options.timeoutMs ?? 5_000;
   const pollMs = options.pollMs ?? 10;
+  const killTimeoutMs = options.killTimeoutMs;
+  const snapshotTimeoutMs = options.snapshotTimeoutMs;
   if (
     !Number.isInteger(timeoutMs) ||
     timeoutMs < 0 ||
     timeoutMs > 30_000 ||
     !Number.isInteger(pollMs) ||
     pollMs < 1 ||
-    pollMs > 1_000
+    pollMs > 1_000 ||
+    (killTimeoutMs !== undefined &&
+      (!Number.isInteger(killTimeoutMs) ||
+        killTimeoutMs < 0 ||
+        killTimeoutMs > 30_000)) ||
+    (snapshotTimeoutMs !== undefined &&
+      (!Number.isInteger(snapshotTimeoutMs) ||
+        snapshotTimeoutMs < 0 ||
+        snapshotTimeoutMs > 30_000))
   ) {
     throw new Error('invalid OMP termination timeout');
   }
-  revokeHostedSession(sessionId, hosted);
-  const stream = paneStreams.get(sessionId);
-  if (stream) stream.disposed = true;
-  hosted.session.dispose();
-  const deadline = Date.now() + timeoutMs;
-  while (hosted.session.state !== 'exited' && Date.now() < deadline) {
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, pollMs);
-      timer.unref?.();
-    });
-  }
-  if (hosted.session.state !== 'exited') return false;
-  paneStreams.delete(sessionId);
-  if (sessions.get(sessionId) === hosted) {
-    sessions.delete(sessionId);
-  }
-  return true;
+  return terminateHostedSession(sessionId, hosted, {
+    timeoutMs,
+    pollMs,
+    ...(killTimeoutMs !== undefined ? { killTimeoutMs } : {}),
+    ...(snapshotTimeoutMs !== undefined ? { snapshotTimeoutMs } : {}),
+  });
 }
 
 /** Test-only: drop all pane streams (sessions go through disposeAll). */
@@ -1177,8 +1442,31 @@ async function startSession(
   owner: WebContents,
   raw: unknown,
 ): Promise<OmpRpcStartResult> {
+  let spawnFence: OmpSpawnFence;
+  try {
+    spawnFence = acquireOmpSpawnFence();
+  } catch (err) {
+    return toCommandResult(err);
+  }
+  try {
+    return await startSessionWithFence(owner, raw, spawnFence);
+  } finally {
+    releaseOmpSpawnFence(spawnFence);
+  }
+}
+
+async function startSessionWithFence(
+  owner: WebContents,
+  raw: unknown,
+  spawnFence: OmpSpawnFence,
+): Promise<OmpRpcStartResult> {
   const parsed = ompRpcStartRequestSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: 'payload inválido' };
+  try {
+    assertLiveRendererOwner(owner);
+  } catch (err) {
+    return toCommandResult(err);
+  }
   const scope = requireRendererWorkspaceScope(owner);
   if (sessionsForOwner(owner) >= MAX_SESSIONS_PER_RENDERER) {
     return { ok: false, error: 'limite de sessões omp atingido' };
@@ -1190,10 +1478,15 @@ async function startSession(
     return toCommandResult(err);
   }
 
-  // Pin de versão: valida `omp --version` antes de qualquer spawn.
-  let binPath: string;
+  // Exact provider/model auth and version pin before gate token/process spawn.
+  let preflight: Awaited<ReturnType<typeof preflightOmpRpcSpawn>>;
   try {
-    binPath = (await resolveOmpBin(ompBinName())).binPath;
+    const requestedModel = parsed.data.model
+      ? `${parsed.data.model.provider}/${parsed.data.model.modelId}`
+      : undefined;
+    preflight = await preflightOmpRpcSpawn(requestedModel);
+    assertOmpSpawnFence(spawnFence);
+    assertLiveRendererOwner(owner);
   } catch (err) {
     return toCommandResult(err);
   }
@@ -1223,23 +1516,34 @@ async function startSession(
         sessionId,
         workspaceRoot,
         approvalPolicy: 'safe',
-        binPath,
-        model: parsed.data.model,
+        binPath: preflight.binPath,
+        model: preflight.model,
+        env: {
+          ...buildOmpChildEnv(),
+          ...preflight.keyEnv,
+        },
+        credentialSecrets: Object.values(preflight.keyEnv),
       },
       {
         hostTools: buildOmpHostToolDefinitions(
           hostRegistry(),
           OMP_PANEL_HOST_TOOL_NAMES,
         ),
-        dispatchHostTool: async (toolName, args) => {
+        dispatchHostTool: async (toolName, args, physicalCall) => {
           // Gate real: o dispatcher aplica allowlist, intent-gate e auditoria
           // com o contexto mintado desta sessão — nunca bypassa.
-          const outcome = await dispatchToolCall(
-            'http-mcp',
-            hostRegistry(),
-            toolName,
-            args,
+          const outcome = await runInsideOmpRpcHostCall(
+            physicalCall,
             gateCtx,
+            toolName,
+            () =>
+              dispatchToolCall(
+                'omp-rpc-stdio',
+                hostRegistry(),
+                toolName,
+                args,
+                gateCtx,
+              ),
           );
           return outcome.ok
             ? { ok: true, result: outcome.result }
@@ -1263,7 +1567,7 @@ async function startSession(
             },
             0,
             false,
-            'http-mcp',
+            'omp-rpc-stdio',
           );
         },
         onPush: (event) => {
@@ -1278,12 +1582,6 @@ async function startSession(
     return toCommandResult(err);
   }
 
-  if (session.state === 'exited') {
-    // Spawn falhou de forma síncrona (erro emitido antes do registro).
-    releaseSession(gateSessionId);
-    return { ok: false, error: 'processo omp encerrou durante o spawn' };
-  }
-
   const hosted: HostedSession = {
     session,
     gateCtx,
@@ -1293,9 +1591,22 @@ async function startSession(
     paneId: `omp-rpc:${sessionId}`,
     kind: 'panel',
     title: 'OMP · RPC',
+    launchCredentialEnv: preflight.keyEnv,
+    launchCredentialScope: preflight.credentialScope,
   };
   hostedRef.current = hosted;
   sessions.set(sessionId, hosted);
+  spawnFence.materialized = true;
+  releaseOmpSpawnFence(spawnFence);
+  if (session.state === 'exited') {
+    const terminated = await terminateHostedSession(sessionId, hosted);
+    return {
+      ok: false,
+      error: terminated
+        ? 'processo omp encerrou durante o spawn'
+        : 'processo omp encerrou durante o spawn sem prova física completa; substituição bloqueada',
+    };
+  }
   watchOwner(owner);
   return { ok: true, sessionId };
 }
@@ -1349,7 +1660,27 @@ export function registerOmpRpcIpc(): void {
         const hosted = requireRendererMutableSession(event.sender, {
           sessionId: parsed.data.sessionId,
         });
-        await hosted.session.setModel(parsed.data.provider, parsed.data.modelId);
+        const preflight = await preflightOmpRpcSpawn(
+          `${parsed.data.provider}/${parsed.data.modelId}`,
+        );
+        if (
+          !sameCredentialScope(
+            hosted.launchCredentialScope,
+            preflight.credentialScope,
+          ) ||
+          !sameCredentialEnv(
+            hosted.launchCredentialEnv,
+            preflight.keyEnv,
+          )
+        ) {
+          throw new Error(
+            'o novo modelo exige outro escopo de credencial; reinicie a sessão OMP',
+          );
+        }
+        await hosted.session.setModel(
+          preflight.model.provider,
+          preflight.model.modelId,
+        );
         return { ok: true };
       } catch (err) {
         return toCommandResult(err);
@@ -1412,11 +1743,20 @@ export function registerOmpRpcIpc(): void {
 
   ipcMain.handle(
     OMP_RPC_CHANNELS.dispose,
-    (event, raw): OmpRpcCommandResult => {
+    async (event, raw): Promise<OmpRpcCommandResult> => {
       try {
         const hosted = requireRendererMutableSession(event.sender, raw);
-        disposeSession(hosted.session.sessionId);
-        return { ok: true };
+        const terminated = await terminateHostedSession(
+          hosted.session.sessionId,
+          hosted,
+        );
+        return terminated
+          ? { ok: true }
+          : {
+              ok: false,
+              error:
+                'o encerramento físico do processo OMP e seus descendentes não foi comprovado',
+            };
       } catch (err) {
         return toCommandResult(err);
       }
@@ -1424,7 +1764,85 @@ export function registerOmpRpcIpc(): void {
   );
 }
 
-/** Encerramento do app: mata todas as sessões hospedadas. */
-export function disposeAllOmpRpcSessions(): void {
-  for (const sessionId of [...sessions.keys()]) disposeSession(sessionId);
+export interface OmpRpcShutdownResult {
+  readonly ok: boolean;
+  readonly attemptedSessionIds: readonly string[];
+  readonly terminatedSessionIds: readonly string[];
+  readonly failedSessionIds: readonly string[];
+}
+
+/**
+ * Synchronously closes OMP admission and revokes every preflight fence. The
+ * pending operations remain inventoried until disposeAllOmpRpcSessions awaits
+ * their settlement, so no child can materialize after a close snapshot.
+ */
+export function sealOmpRpcAdmissionForShutdown(): void {
+  if (!ompShutdownRequested) {
+    ompShutdownRequested = true;
+    ompLifecycleEpoch += 1;
+  }
+  for (const spawnFence of inFlightSpawns) spawnFence.revoked = true;
+}
+
+/**
+ * App shutdown fence. It coalesces concurrent quit attempts and never clears a
+ * hosted identity until root + descendants are physically proven gone.
+ */
+export function disposeAllOmpRpcSessions(): Promise<OmpRpcShutdownResult> {
+  if (disposeAllFlight) return disposeAllFlight;
+  // Close the admission gate synchronously. Existing asynchronous provider
+  // discovery cannot cross this epoch and create a child after inventory.
+  sealOmpRpcAdmissionForShutdown();
+  const pendingSpawns = [...inFlightSpawns];
+  const operation = (async (): Promise<OmpRpcShutdownResult> => {
+    await Promise.all(pendingSpawns.map((spawnFence) => spawnFence.settled));
+    const attemptedSessionIds = [...sessions.keys()];
+    const outcomes = await Promise.all(
+      attemptedSessionIds.map(async (sessionId) => {
+        const hosted = sessions.get(sessionId);
+        return {
+          sessionId,
+          terminated: hosted
+            ? await terminateHostedSession(sessionId, hosted)
+            : true,
+        };
+      }),
+    );
+    const terminatedSessionIds = outcomes
+      .filter((outcome) => outcome.terminated)
+      .map((outcome) => outcome.sessionId);
+    const failedSessionIds = outcomes
+      .filter((outcome) => !outcome.terminated)
+      .map((outcome) => outcome.sessionId);
+    return Object.freeze({
+      ok: failedSessionIds.length === 0,
+      attemptedSessionIds: Object.freeze([...attemptedSessionIds]),
+      terminatedSessionIds: Object.freeze(terminatedSessionIds),
+      failedSessionIds: Object.freeze(failedSessionIds),
+    });
+  })();
+  disposeAllFlight = operation;
+  const clearShutdownGate = (): void => {
+    if (disposeAllFlight !== operation) return;
+    disposeAllFlight = null;
+  };
+  void operation.then(clearShutdownGate, clearShutdownGate);
+  return operation;
+}
+
+/**
+ * Test-only isolation hook. Production shutdown admission is intentionally
+ * sticky: once the app inventories OMP children, no later IPC may create one
+ * while the remainder of main shutdown is still running.
+ */
+export function __resetOmpRpcLifecycleForTests(): void {
+  if (
+    disposeAllFlight ||
+    inFlightSpawns.size > 0 ||
+    sessions.size > 0
+  ) {
+    throw new Error('cannot reset OMP lifecycle with active physical authority');
+  }
+  ompLifecycleEpoch += 1;
+  ompShutdownRequested = false;
 }

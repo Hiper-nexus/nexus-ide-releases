@@ -1,52 +1,69 @@
 import { loadLauncherProviderKey } from './launcher-provider-manager';
+import { ompModelAuthRoute } from './model-auth-readiness';
 
 /**
- * Herança de chaves para o omp: as API keys que o usuário JÁ guardou no Nexus
- * (providers.conf do launcher — GLM, Moonshot, DeepSeek, OpenRouter, OpenAI,
- * Gemini, xAI, Groq, Cerebras, Mistral…) são injetadas no processo do omp com
- * os nomes de env que ele reconhece — o omp nasce funcionando sem novo login.
+ * Credencial de API key para um processo OMP.
  *
- * O mapeamento cobre também upstreams FORA da tabela UPSTREAM_PROVIDERS do
- * launcher: o parser do providers.conf aceita qualquer linha
- * `^[a-z0-9_-]+=…` (launcher-provider-manager.ts), então uma linha solta
- * `openai=sk-...` já é suficiente para a chave chegar ao omp.
+ * A seleção é provider/model scoped: só a chave do provider do modelo exato
+ * pode entrar no ambiente. O comportamento antigo fazia fan-out do vault
+ * inteiro para todo processo OMP, aumentando desnecessariamente o alcance de
+ * cada worker e permitindo que uma key não escolhida alterasse billing/rota.
  *
  * Fora por design: logins de ASSINATURA (Claude Max, Codex, contas OAuth das
  * outras CLIs). Esses tokens são emitidos para o app que os criou — reusar em
  * outro cliente viola termos e expira sem aviso. Assinatura no omp = login
  * dele mesmo (auth-broker, dirigido pelo painel OMP·RPC).
  *
- * Só entram no env as chaves que EXISTEM — nunca variáveis vazias, e nomes
- * desconhecidos pelo omp são ignorados por ele sem efeito colateral.
+ * Os aliases/envs aceitos vêm da tabela release-pinned em
+ * model-auth-readiness.ts. Provider/model desconhecido falha fechado.
  */
 
-/** upstream do Nexus → nomes de env que o omp/SDKs reconhecem. */
-const UPSTREAM_TO_OMP_ENV: ReadonlyArray<readonly [string, readonly string[]]> =
-  Object.freeze([
-    ['anthropic', ['ANTHROPIC_API_KEY']],
-    // z.ai aparece nos SDKs com os dois nomes; injetar ambos é inócuo.
-    ['glm', ['ZAI_API_KEY', 'ZHIPUAI_API_KEY']],
-    ['moonshot', ['MOONSHOT_API_KEY']],
-    ['deepseek', ['DEEPSEEK_API_KEY']],
-    ['minimax', ['MINIMAX_API_KEY']],
-    ['qwen', ['DASHSCOPE_API_KEY']],
-    ['openrouter', ['OPENROUTER_API_KEY']],
-    ['openai', ['OPENAI_API_KEY']],
-    ['gemini', ['GEMINI_API_KEY']],
-    ['xai', ['XAI_API_KEY']],
-    ['groq', ['GROQ_API_KEY']],
-    ['cerebras', ['CEREBRAS_API_KEY']],
-    ['mistral', ['MISTRAL_API_KEY']],
-  ]);
+export interface OmpSelectedProviderKey {
+  readonly modelProvider: string;
+  readonly launcherProviderId: string;
+  readonly env: Readonly<Record<string, string>>;
+}
 
-export function buildOmpInheritedKeyEnv(
+export function resolveOmpSelectedProviderKey(
+  model: string | null | undefined,
+  loadKey: (providerId: string) => string | null = loadLauncherProviderKey,
+): OmpSelectedProviderKey | null {
+  const route = ompModelAuthRoute(model);
+  if (!route?.launcherProviderId || route.envNames.length === 0) return null;
+  const key = loadKey(route.launcherProviderId);
+  if (!key) return null;
+  const env: Record<string, string> = {};
+  for (const name of route.envNames) env[name] = key;
+  return Object.freeze({
+    modelProvider: route.modelProvider,
+    launcherProviderId: route.launcherProviderId,
+    env: Object.freeze(env),
+  });
+}
+
+export function hasOmpSelectedProviderKey(
+  model: string | null | undefined,
+  loadKey: (providerId: string) => string | null = loadLauncherProviderKey,
+): boolean {
+  return resolveOmpSelectedProviderKey(model, loadKey) !== null;
+}
+
+export function buildOmpSelectedProviderKeyEnv(
+  model: string | null | undefined,
   loadKey: (providerId: string) => string | null = loadLauncherProviderKey,
 ): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [upstream, envNames] of UPSTREAM_TO_OMP_ENV) {
-    const key = loadKey(upstream);
-    if (!key) continue;
-    for (const name of envNames) env[name] = key;
-  }
-  return env;
+  const selected = resolveOmpSelectedProviderKey(model, loadKey);
+  return selected ? { ...selected.env } : {};
+}
+
+/**
+ * Compatibility name retained for the service while callers migrate. A
+ * missing model deliberately returns an empty env, which also guarantees that
+ * `auth-broker list/login/token` never receives launcher credentials.
+ */
+export function buildOmpInheritedKeyEnv(
+  model?: string | null,
+  loadKey: (providerId: string) => string | null = loadLauncherProviderKey,
+): Record<string, string> {
+  return buildOmpSelectedProviderKeyEnv(model, loadKey);
 }

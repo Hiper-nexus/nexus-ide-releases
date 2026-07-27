@@ -99,8 +99,15 @@ describe('model catalog overlays', () => {
 });
 
 describe('published catalog JSON', () => {
-  it('ships grok-4.5 and marks claude-fable-5 as api-only/high', () => {
+  it('ships Claude Opus 5 and grok-4.5, and marks claude-fable-5 as api-only/high', () => {
     expect(PUBLISHED_MODEL_CATALOG.version).toBe(1);
+    expect(
+      modelCatalogInfo(PUBLISHED_MODEL_CATALOG, 'claude', 'claude-opus-5'),
+    ).toMatchObject({
+      id: 'claude-opus-5',
+      availability: 'paid',
+      costTier: 'high',
+    });
     expect(modelCatalogInfo(PUBLISHED_MODEL_CATALOG, 'grok', 'grok-4.5')?.id).toBe(
       'grok-4.5',
     );

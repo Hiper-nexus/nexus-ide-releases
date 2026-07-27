@@ -10,6 +10,8 @@ import {
 } from './workspace-file';
 import { applyHashlinePatch } from '../editor/hashline-session';
 import { assertAgentReadablePath } from './agent-path-policy';
+import { assertGovernedWorkspaceControlBoundary } from './governed-workspace-control-boundary';
+import { mutationTargetPaths } from '../context/context-workflow-service';
 
 /**
  * Editor manipulation MCP tools for Jarvis agent.
@@ -95,6 +97,9 @@ const editorInsert: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
+    assertGovernedWorkspaceControlBoundary(ctx, editorInsert.name, [
+      relativePath,
+    ]);
     const text = requireStr(args, 'text');
     const lineNum = num(args, 'line') ?? parseInt(requireStr(args, 'line'), 10);
     if (isNaN(lineNum) || lineNum < 1) {
@@ -156,6 +161,9 @@ const editorReplaceSelection: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
+    assertGovernedWorkspaceControlBoundary(ctx, editorReplaceSelection.name, [
+      relativePath,
+    ]);
     const oldText = requireStr(args, 'oldText');
     const newText = requireStr(args, 'newText');
     const replaceAll = args.replaceAll === true;
@@ -217,6 +225,11 @@ const editorApplyPatch: McpToolDef = {
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     const patchText = requireStr(args, 'patch');
+    assertGovernedWorkspaceControlBoundary(
+      ctx,
+      editorApplyPatch.name,
+      mutationTargetPaths({ patch: patchText }),
+    );
     const outcome = await applyHashlinePatch(
       executionScopeFor(ctx),
       ctx.token,

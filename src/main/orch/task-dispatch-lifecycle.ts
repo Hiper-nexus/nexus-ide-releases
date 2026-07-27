@@ -1,19 +1,21 @@
 import type { ProjectExecutionScope } from '../../shared/types';
-import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import {
   getAgentSessionInfo,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
-import { advanceRealMissionE2EMainOwnedChain } from '../real-mission-e2e-main-owned';
 import { getContextBySession } from './gate';
 import { getExternalWorkerSessionInfo } from './external-worker-session-registry';
 import {
   requireProjectDomainStoreRegistry,
   type ProjectDomainStoreSuite,
 } from './project-domain-store-registry';
+import { requestMissionWorkerPaneRetirement } from './pane-registry';
+import { TASK_DISPATCH_SESSION_EXIT_REASON } from './task-dispatch-persistence';
+import { productionTaskDispatchWorkerRetirement } from './task-dispatch-worker-retirement';
 
+export { TASK_DISPATCH_SESSION_EXIT_REASON };
 export const TASK_DISPATCH_ACTIVITY_THROTTLE_MS = 60_000;
 export const TASK_DISPATCH_HEARTBEAT_LEASE_MS = 10 * 60_000;
 export const TASK_DISPATCH_RECONCILE_MS = 30_000;
@@ -26,6 +28,10 @@ const suites = new Map<string, ProjectDomainStoreSuite>();
 const lastActivityRefresh = new Map<string, number>();
 let now: () => number = Date.now;
 let disposers: Array<() => void> = [];
+const retirementPasses = new Map<
+  string,
+  ReturnType<typeof setImmediate>
+>();
 
 function scopeKey(scope: ProjectExecutionScope): string {
   return `${scope.installationId}\0${scope.projectId}\0${scope.checkoutId}`;
@@ -49,6 +55,54 @@ function suiteForSession(sessionId: string): ProjectDomainStoreSuite | null {
 function sessionAuthority(sessionId: string) {
   return getContextBySession(sessionId) ??
     getExternalWorkerSessionInfo(sessionId);
+}
+
+async function retireTerminalWorkers(
+  suite: ProjectDomainStoreSuite,
+): Promise<void> {
+  const dispatches = suite.taskDispatches.list();
+  const missionIds = new Set(dispatches.map((dispatch) => dispatch.missionId));
+  for (const missionId of missionIds) {
+    await productionTaskDispatchWorkerRetirement.retireMissionWorkers({
+      scope: suite.scope,
+      missionId,
+      dispatches,
+      deps: {
+        getDispatch: (taskId) => suite.taskDispatches.get(taskId),
+        closeWorker: ({
+          paneId,
+          sessionId,
+          missionId: workerMissionId,
+          workerIncarnationId,
+          scope,
+        }) =>
+          requestMissionWorkerPaneRetirement({
+            paneId,
+            sessionId,
+            missionId: workerMissionId,
+            workerIncarnationId,
+            scope,
+          }),
+      },
+    });
+  }
+}
+
+function scheduleTerminalWorkerRetirement(
+  suite: ProjectDomainStoreSuite,
+): void {
+  const key = scopeKey(suite.scope);
+  if (retirementPasses.has(key)) return;
+  const handle = setImmediate(() => {
+    retirementPasses.delete(key);
+    void retireTerminalWorkers(suite).catch((error) => {
+      console.warn(
+        '[task-dispatch-lifecycle] worker retirement deferred:',
+        error,
+      );
+    });
+  });
+  retirementPasses.set(key, handle);
 }
 
 function renewFromActivity(sessionId: string): void {
@@ -102,64 +156,12 @@ function blockExitedSession(
   const preferred = suiteForSession(sessionId);
   const candidates = preferred ? [preferred] : [...suites.values()];
 
-  // Release gate: CLIs do not orchestrate. If the worker PTY dies before the
-  // LLM submits a handoff, finish the durable artifact path while the
-  // dispatch is still `running` — before the exit fence blocks the mission.
-  if (
-    isCurrentProcessRealMissionE2E() &&
-    authority.role === 'worker' &&
-    authority.missionId
-  ) {
-    for (const suite of candidates) {
-      try {
-        const advanced = advanceRealMissionE2EMainOwnedChain(
-          suite,
-          authority.missionId,
-          suite.scope,
-        );
-        if (advanced.advanced) {
-          console.log(
-            `[task-dispatch-lifecycle] real-mission main-owned on exit: ${advanced.reason}`,
-          );
-          // Handoff accepted → exit fence must not block a completed path.
-          const current = suite.taskDispatches
-            .list(authority.missionId)
-            .find(
-              (row) =>
-                row.sessionId === sessionId &&
-                row.workerIncarnationId === authority.workerIncarnationId,
-            );
-          if (
-            current &&
-            ['handoff_ready', 'merging', 'completed'].includes(current.state)
-          ) {
-            return;
-          }
-        }
-      } catch (error) {
-        console.warn(
-          '[task-dispatch-lifecycle] real-mission main-owned on exit failed:',
-          error,
-        );
-      }
-    }
-    // Release gate: a worker PTY is terminal once it exits (the dispatch is
-    // completed by the main-owned chain + durable merge, never by re-engaging
-    // the dead worker). Do NOT block the mission here. If the worktree was not
-    // ready at exit time, the chain could not advance yet — the observer tick
-    // retries advanceRealMissionE2EMainOwnedChain until the worktree is ready
-    // and the artifact/handoff/merge land. Blocking now would wedge the
-    // mission, because the main-owned chain refuses to advance a blocked
-    // status. The gate's own timeout bounds a genuinely stuck run.
-    return;
-  }
-
   for (const suite of candidates) {
     try {
       const blocked = suite.taskDispatches.blockSessionExit({
         sessionId,
         workerIncarnationId: authority.workerIncarnationId,
-        reason: 'O worker encerrou sem entregar um handoff confiável.',
+        reason: TASK_DISPATCH_SESSION_EXIT_REASON,
       });
       if (blocked) return;
     } catch (error) {
@@ -181,6 +183,12 @@ export function prepareTaskDispatchLifecycle(
   disposers = [
     registry.onScope((scope, suite) => {
       suites.set(scopeKey(scope), suite);
+      scheduleTerminalWorkerRetirement(suite);
+    }),
+    registry.onChange((scope, store) => {
+      if (store !== 'task-dispatches') return;
+      const suite = suites.get(scopeKey(scope));
+      if (suite) scheduleTerminalWorkerRetirement(suite);
     }),
     tapSessionData((sessionId) => renewFromActivity(sessionId)),
     tapSessionState((sessionId, state) => {
@@ -243,11 +251,15 @@ export async function reconcileTaskDispatchLifecycle(
         console.warn('[task-dispatch-lifecycle] expired dispatch reconcile failed:', error);
       }
     }
+    await retireTerminalWorkers(suite);
   }
 }
 
 export function shutdownTaskDispatchLifecycle(): void {
   for (const dispose of disposers.splice(0)) dispose();
+  for (const handle of retirementPasses.values()) clearImmediate(handle);
+  retirementPasses.clear();
+  productionTaskDispatchWorkerRetirement.reset();
   suites.clear();
   lastActivityRefresh.clear();
   now = Date.now;

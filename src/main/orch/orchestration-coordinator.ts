@@ -26,9 +26,19 @@ import {
   shutdownMissionOrchestratorBootstrapRecovery,
 } from './mission-orchestrator-bootstrap';
 import {
+  MISSION_ORCHESTRATOR_EXIT_RECONCILE_MS,
+  prepareMissionOrchestratorExitLifecycle,
+  reconcileMissionOrchestratorExits,
+  shutdownMissionOrchestratorExitLifecycle,
+} from './mission-orchestrator-exit-lifecycle';
+import {
   createOrchestrationReconciler,
   type OrchestrationReconciler,
 } from './orchestration-reconciler';
+import {
+  HANDOFF_DELIVERY_OUTBOX_RECONCILE_MS,
+  reconcilePendingHandoffDeliveryOutbox,
+} from './handoff-delivery-outbox';
 import { terminateUnauthorizedMissionRuntimes } from './mission-runtime-termination';
 import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
 import {
@@ -66,6 +76,7 @@ export function startOrchestrationCoordinator(): void {
   prepareStallWatchdog();
   prepareDelegationSupervisor();
   prepareTaskDispatchLifecycle();
+  prepareMissionOrchestratorExitLifecycle();
   prepareMissionOrchestratorBootstrapRecovery();
   disposeLoginWatchdog = installLoginStuckWatchdog({ autoTick: false });
 
@@ -91,6 +102,11 @@ export function startOrchestrationCoordinator(): void {
       run: (now) => reconcileTaskDispatchLifecycle(now),
     },
     {
+      id: 'mission-orchestrator-exit',
+      cadenceMs: MISSION_ORCHESTRATOR_EXIT_RECONCILE_MS,
+      run: () => reconcileMissionOrchestratorExits(),
+    },
+    {
       id: 'mission-orchestrator-bootstrap',
       cadenceMs: MISSION_ORCHESTRATOR_BOOTSTRAP_RECONCILE_MS,
       run: () => reconcileMissionOrchestratorBootstrap(),
@@ -114,6 +130,11 @@ export function startOrchestrationCoordinator(): void {
           }
         }
       },
+    },
+    {
+      id: 'handoff-delivery-outbox',
+      cadenceMs: HANDOFF_DELIVERY_OUTBOX_RECONCILE_MS,
+      run: () => reconcilePendingHandoffDeliveryOutbox(),
     },
     {
       id: 'mission-scheduler',
@@ -146,6 +167,21 @@ export function requestMissionRuntimeAuthorityReconciliation(): boolean {
   return coordinator?.request('mission-runtime-authority') ?? false;
 }
 
+/**
+ * Stop every periodic/spawning participant while retaining physical-exit taps
+ * and project stores. App shutdown uses this phase before terminating PTYs, so
+ * exact exit observations can still be committed synchronously.
+ */
+export async function quiesceOrchestrationCoordinator(): Promise<void> {
+  if (coordinatorStopFlight) return coordinatorStopFlight;
+  const current = coordinator;
+  if (!current) return;
+  await current.stop();
+  if (coordinator !== current) {
+    throw new Error('orchestration coordinator identity changed during quiesce');
+  }
+}
+
 export async function stopOrchestrationCoordinator(): Promise<void> {
   if (coordinatorStopFlight) return coordinatorStopFlight;
   const current = coordinator;
@@ -165,6 +201,7 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     shutdownDelegationSupervisor();
     shutdownStallWatchdog();
     shutdownTaskDispatchLifecycle();
+    shutdownMissionOrchestratorExitLifecycle();
     await shutdownMissionOrchestratorBootstrapRecovery();
     coordinator = null;
   })();

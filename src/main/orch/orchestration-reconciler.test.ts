@@ -88,6 +88,36 @@ describe('orchestration reconciler', () => {
     await reconciler.stop();
   });
 
+  it('bounds identical failure logs until a healthy pass starts a new incident', async () => {
+    vi.useFakeTimers();
+    const warn = vi.fn();
+    let healthy = false;
+    const run = vi.fn(async () => {
+      if (!healthy) throw new Error('same durable corruption');
+    });
+    const reconciler = createOrchestrationReconciler(
+      [{ id: 'scheduler', cadenceMs: 5_000, run }],
+      { warn },
+    );
+
+    reconciler.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    healthy = true;
+    await vi.advanceTimersByTimeAsync(5_000);
+    healthy = false;
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(run).toHaveBeenCalledTimes(5);
+    expect(warn).toHaveBeenCalledTimes(2);
+    await reconciler.stop();
+  });
+
   it('starts independent due participants without waiting for a slow sibling', async () => {
     vi.useFakeTimers();
     let releaseSlow: (() => void) | undefined;

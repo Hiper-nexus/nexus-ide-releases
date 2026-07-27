@@ -13,6 +13,7 @@ import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { getOrchSettings } from '../persistence/settings-store';
 import { hasAvailableAccount } from '../persistence/account-store';
+import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
 import { buildOmpRouteContext } from './omp-roster-policy';
 import { missionStatusSchema } from '../../shared/orch-types';
 import { buildClarify } from '../../shared/clarify';
@@ -52,6 +53,7 @@ import { emitPlannedTasksWithContract } from './mission-scheduler';
 import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { planMissionTasks } from './mission-task-plan-authority';
+import { liveSquadRuntimeInventory } from './squad-runtime-inventory';
 
 /**
  * MCP tools for handoffs (2), agents (3), missions (5), squad/catalog/task
@@ -906,7 +908,9 @@ const routeTaskTool: McpToolDef = {
     'for a mission, pass routeReservationId and adapterId/model/effort straight ' +
     'into nexus_pane_spawn. Call it for every delegation and trust the ' +
     'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook. ' +
-    'When spawning a roster agent whose cli is omp, keep adapterId=omp (roster sticky) even if this tool returns another provider.',
+    'Inside a running mission, candidates are restricted to release-qualified ' +
+    'governed workers (Codex in this release). Kimi and OMP remain available ' +
+    'for direct/manual Terminal use, never through a mission RouteReservation.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -961,9 +965,24 @@ const routeTaskTool: McpToolDef = {
     // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
     // mantinha o gate de cobertura do task-router sempre falso, matando a
     // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.
+    const governedMissionWorkerIds = missionId
+      ? liveSquadRuntimeInventory().policy.routableWorkerCliIds
+      : null;
     const providers = listProviderSettings().filter(
-      (a) => a.adapterId !== 'shell',
+      (a) =>
+        a.adapterId !== 'shell' &&
+        (governedMissionWorkerIds === null ||
+          governedMissionWorkerIds.has(a.adapterId)),
     );
+    if (missionId && providers.length === 0) {
+      throw new Error(
+        'governed_worker_route_unavailable: nenhuma rota autônoma qualificada ' +
+        'pode executar esta missão. Nesta release, workers de escrita e leitura ' +
+        'exigem o Codex builtin instalado, habilitado e autenticado. Kimi e OMP ' +
+        'continuam disponíveis no Terminal/manual; prepare o Codex em ' +
+        'Configurações › Providers. Nenhuma RouteReservation foi criada.',
+      );
+    }
     // Quota-aware auto-exclude: an adapter whose Nexus-managed accounts are
     // ALL on an active cooldown is treated as excluded, so routing no longer
     // depends on the orchestrator remembering to pass `exclude` (prompt-hope).
@@ -974,15 +993,20 @@ const routeTaskTool: McpToolDef = {
       .map((a) => a.adapterId)
       .filter((id) => !excluded.has(id) && !hasAvailableAccount(id));
     const buildAdapters = (skip: ReadonlySet<string>) =>
-      providers.map((a) => ({
-        id: a.adapterId,
-        installed:
-          !skip.has(a.adapterId) &&
-          a.enabled &&
-          a.installed &&
-          a.authStrategy !== 'login-needed',
-        models: a.models,
-      }));
+      providers.map((a) => {
+        const models = [
+          ...authReadyModelsForProvider(a, a.models),
+        ];
+        return {
+          id: a.adapterId,
+          installed:
+            !skip.has(a.adapterId) &&
+            a.enabled &&
+            a.installed &&
+            (a.authStrategy !== 'login-needed' || models.length > 0),
+          models,
+        };
+      });
     let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));
     let quotaFallbackNote = '';
     if (quotaExcluded.length > 0 && !adapters.some((a) => a.installed)) {
@@ -1021,7 +1045,17 @@ const routeTaskTool: McpToolDef = {
         preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
       }),
     );
-    if (!decision) throw new Error('no installed adapters to route to');
+    if (!decision) {
+      if (missionId) {
+        throw new Error(
+          'governed_worker_route_unavailable: o Codex qualificado não está ' +
+          'disponível para esta delegação (confira autenticação, cota e exclusões). ' +
+          'Ajuste Configurações › Providers e tente novamente. Nenhuma ' +
+          'RouteReservation foi criada.',
+        );
+      }
+      throw new Error('no installed adapters to route to');
+    }
     // Fail-safe: append note without mutating a frozen/shared decision object.
     if (quotaFallbackNote) {
       decision = {

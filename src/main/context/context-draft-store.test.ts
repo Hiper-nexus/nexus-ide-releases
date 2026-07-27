@@ -81,7 +81,7 @@ describe('ContextDraftStore', () => {
     expect(committed.appliedCommit).toBe('c'.repeat(40));
   });
 
-  it('enforces one active proposal per target and independent reviewer identity/provider', () => {
+  it('enforces one active proposal per target and independent reviewer identity/session', () => {
     const store = new ContextDraftStore(manager(), testProjectScope(), {
       idFactory: (prefix) => `${prefix}-${Math.random()}`,
     });
@@ -102,13 +102,13 @@ describe('ContextDraftStore', () => {
     })).toThrow(/independent/i);
     expect(() => store.review(first.id, {
       decision: 'approve',
-      reviewer: { ...reviewer, provider: author.provider },
+      reviewer: { ...reviewer, id: 'reviewer-alias', sessionId: author.sessionId },
       rationale: 'No.',
-    })).toThrow(/provider/i);
+    })).toThrow(/independent/i);
 
     const rejected = store.review(first.id, {
       decision: 'reject',
-      reviewer,
+      reviewer: { ...reviewer, provider: author.provider },
       rationale: 'The invariant overstates the implementation.',
     });
     expect(rejected.status).toBe('rejected');

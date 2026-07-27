@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
 
-import type { Squad } from '../shared/orch-types';
+import {
+  isMissionRuntimeSquadId,
+  type Squad,
+  type SquadAgent,
+} from '../shared/orch-types';
 import {
   createRealMissionE2ESquadFixture,
+  REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_SQUAD_ID,
 } from '../shared/real-mission-e2e';
+import { retargetSquadInstructions } from '../shared/mission-identity';
 import { snapshotSquadAuthority } from './orch/squad-authority-snapshot';
 import {
   applyPreparedSquadSave,
@@ -77,4 +83,94 @@ export function isExactRealMissionE2ESquadFixture(
     snapshotSquadAuthority(candidate).hash ===
       snapshotSquadAuthority(expected).hash
   );
+}
+
+export interface RealMissionE2ESquadBinding {
+  readonly squadId: string;
+  readonly sourceSquadId: typeof REAL_MISSION_E2E_SQUAD_ID;
+  readonly sourceSquadRevisionHash: string;
+  readonly squadRevisionHash: string;
+}
+
+function agentAuthorityShape(agent: SquadAgent): Record<string, unknown> {
+  return {
+    id: agent.id,
+    agentName: agent.agentName,
+    category: agent.category,
+    cli: agent.cli,
+    effort: agent.effort,
+    allowedSkills: agent.allowedSkills,
+    allowedTools: agent.allowedTools,
+  };
+}
+
+function exactWizardRuntimeRoster(
+  candidate: Squad,
+  source: Squad,
+): boolean {
+  return (
+    candidate.agents.length === source.agents.length &&
+    candidate.agents.every(
+      (agent, index) =>
+        JSON.stringify(agentAuthorityShape(agent)) ===
+        JSON.stringify(agentAuthorityShape(source.agents[index]!)),
+    )
+  );
+}
+
+export function resolvePrivateRealMissionE2ESquadBinding(
+  lookup: (id: string) => Squad | null = getSquad,
+): RealMissionE2ESquadBinding | null {
+  const source = lookup(REAL_MISSION_E2E_SQUAD_ID);
+  if (!isExactRealMissionE2ESquadFixture(source)) return null;
+  const revisionHash = snapshotSquadAuthority(source).hash;
+  return {
+    squadId: source.id,
+    sourceSquadId: REAL_MISSION_E2E_SQUAD_ID,
+    sourceSquadRevisionHash: revisionHash,
+    squadRevisionHash: revisionHash,
+  };
+}
+
+/**
+ * Resolve only the immutable runtime copy minted by main from the exact E2E
+ * source roster. Model choice may vary, but executable identities, CLIs,
+ * capability policies and playbook remain exactly bound to the fixture.
+ */
+export function resolveProductWizardRealMissionE2ESquadBinding(
+  squadId: string,
+  lookup: (id: string) => Squad | null = getSquad,
+): RealMissionE2ESquadBinding | null {
+  const source = lookup(REAL_MISSION_E2E_SQUAD_ID);
+  const candidate = lookup(squadId);
+  if (
+    !isExactRealMissionE2ESquadFixture(source) ||
+    !candidate ||
+    !isMissionRuntimeSquadId(candidate.id)
+  ) {
+    return null;
+  }
+  const sourceRevisionHash = snapshotSquadAuthority(source).hash;
+  const candidateRevisionHash = snapshotSquadAuthority(candidate).hash;
+  if (
+    candidate.runtimeSourceSquadId !== REAL_MISSION_E2E_SQUAD_ID ||
+    candidate.runtimeSourceSquadRevisionHash !== sourceRevisionHash ||
+    candidate.name !== source.name ||
+    candidate.nativeInstructions !== source.nativeInstructions ||
+    (candidate.orchestratorInstructions !== source.orchestratorInstructions &&
+      candidate.orchestratorInstructions !==
+        retargetSquadInstructions(
+          source.orchestratorInstructions,
+          REAL_MISSION_E2E_GOAL,
+        )) ||
+    !exactWizardRuntimeRoster(candidate, source)
+  ) {
+    return null;
+  }
+  return {
+    squadId: candidate.id,
+    sourceSquadId: REAL_MISSION_E2E_SQUAD_ID,
+    sourceSquadRevisionHash: sourceRevisionHash,
+    squadRevisionHash: candidateRevisionHash,
+  };
 }

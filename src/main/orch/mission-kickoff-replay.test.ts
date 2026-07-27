@@ -10,6 +10,10 @@ const runtime = vi.hoisted(() => ({
   stateTaps: [] as Array<(sessionId: string, state: PaneSessionState) => void>,
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
   exitTaps: [] as Array<(sessionId: string) => void>,
+  turnStartSequence: 0,
+  turnStartTaps: [] as Array<
+    (entry: { sessionId: string; sequence: number }) => void
+  >,
   mission: null as Mission | null,
   receipt: null as null | {
     missionId: string;
@@ -35,6 +39,10 @@ vi.mock('../pty/pty-manager', () => ({
       for (const tap of runtime.dataTaps) tap(sessionId, 'CLI iniciou a missão');
       runtime.state = 'busy';
       for (const tap of runtime.stateTaps) tap(sessionId, 'busy');
+      runtime.turnStartSequence += 1;
+      for (const tap of runtime.turnStartTaps) {
+        tap({ sessionId, sequence: runtime.turnStartSequence });
+      }
     }
     return true;
   }),
@@ -61,6 +69,21 @@ vi.mock('../pty/pty-manager', () => ({
       if (index >= 0) runtime.exitTaps.splice(index, 1);
     };
   }),
+}));
+
+vi.mock('./agent-status', () => ({
+  isSessionInjectableIdle: vi.fn(() => runtime.state === 'idle'),
+  tapAgentSemanticStatus: vi.fn(() => () => {}),
+  getAgentTurnStartSequence: vi.fn(() => runtime.turnStartSequence),
+  tapAgentTurnStart: vi.fn(
+    (tap: (entry: { sessionId: string; sequence: number }) => void) => {
+      runtime.turnStartTaps.push(tap);
+      return () => {
+        const index = runtime.turnStartTaps.indexOf(tap);
+        if (index >= 0) runtime.turnStartTaps.splice(index, 1);
+      };
+    },
+  ),
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
@@ -157,6 +180,8 @@ describe('durable kickoff replay boundary', () => {
     runtime.stateTaps.length = 0;
     runtime.dataTaps.length = 0;
     runtime.exitTaps.length = 0;
+    runtime.turnStartSequence = 0;
+    runtime.turnStartTaps.length = 0;
     runtime.receipt = null;
     runtime.receiptWrites = 0;
     vi.useFakeTimers();
@@ -173,8 +198,8 @@ describe('durable kickoff replay boundary', () => {
 
     const first = submitMissionKickoffFromMain(runtime.scope!, request);
     // 3s do fallback de bracketed paste (o harness nunca emite ESC[?2004h)
-    // + as janelas curtas de settle/aceite.
-    await vi.advanceTimersByTimeAsync(3_250);
+    // + 500ms de settle comprovado no benchmark de TUI.
+    await vi.advanceTimersByTimeAsync(3_600);
     await expect(first).resolves.toEqual({ accepted: true });
 
     await expect(

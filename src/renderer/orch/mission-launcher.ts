@@ -1,5 +1,6 @@
 import type { AdapterInfo, PaneModel } from "../../shared/types";
 import type { Squad, SquadAgent } from "../../shared/orch-types";
+import { orchestrationEvidenceOf } from "../../shared/adapter-types";
 import {
   buildIntentDispatchKickoffPrompt as buildSharedIntentDispatchKickoffPrompt,
   type IntentDispatchKickoffInput,
@@ -18,8 +19,8 @@ import {
 } from "../terminal/terminal-host";
 import { presentMainOwnedMissionPane } from './mission-pane-presentation';
 import {
-  hasOrchestratorMcpRoute,
-  isOrchestratorCapableAdapter,
+  hasDeclaredOrchestratorMcpRoute,
+  isDeclaredOrchestratorAdapter,
   resolveOrchestratorRuntime,
 } from "./orchestrator-runtime";
 import {
@@ -125,7 +126,7 @@ export function buildMissionKickoffPrompt(
       '## Execução direta\n' +
         'Esta é uma missão visual dedicada e já está registrada e em execução. ' +
         'Permaneça nesta sessão, não delegue e não envie comandos de continuação. ' +
-        'Use a skill hatch-pet diretamente; ela contém o contrato e o QA completos. ' +
+        'Use a skill nexus-pet-studio diretamente; ela contém o contrato governado e o QA completos. ' +
         'Depois que o pacote validado existir, chame nexus_handoff_submit uma única vez ' +
         'com status success e artifacts contendo os caminhos absolutos de ' +
         'spritesheet.webp e pet.json. A resposta confirma a conclusão ou informa ' +
@@ -319,6 +320,8 @@ export function buildIntentDispatchKickoffPrompt(input: {
   compactMemoryMarkdown?: IntentDispatchKickoffInput['compactMemoryMarkdown'];
   lane?: IntentDispatchKickoffInput['lane'];
   missionTitle?: IntentDispatchKickoffInput['missionTitle'];
+  promotedPlan?: IntentDispatchKickoffInput['promotedPlan'];
+  guidedPrevcRequired?: IntentDispatchKickoffInput['guidedPrevcRequired'];
 }): string {
   return buildSharedIntentDispatchKickoffPrompt(input);
 }
@@ -437,9 +440,9 @@ export async function launchSquadMission(
     options.profile ??
     (squad.id === PET_STUDIO_SQUAD_ID ? 'pet-studio' : 'standard');
   const orchestrator =
-    squad.agents.find((a) => a.category === "orchestrator") ?? squad.agents[0];
+    squad.agents.find((a) => a.category === "orchestrator") ?? null;
   if (!orchestrator) {
-    return { ok: false, error: "Este squad não tem agentes." };
+    return { ok: false, error: "Este squad não tem Maestro." };
   }
   if (options.existingMissionId && !options.goalPrompt?.trim()) {
     return {
@@ -467,13 +470,76 @@ export async function launchSquadMission(
     };
   }
 
-  // Intent-first: selecting a squad arms a shell only — zero panes, zero tokens.
-  // Pet Studio and explicit legacy/dispatch paths keep the full launch.
+  const rosterAdapterId = orchestrator.cli?.trim();
+  const configuredAdapterId =
+    options.adapterId ||
+    (profile === 'pet-studio' ? 'codex' : undefined) ||
+    rosterAdapterId ||
+    orchDefaults.defaultAdapterId ||
+    FALLBACK_ORCHESTRATOR_ADAPTER_ID;
+  const selectedAdapter = adapters.find(
+    (adapter) => adapter.id === configuredAdapterId,
+  );
+  if (!selectedAdapter) {
+    return {
+      ok: false,
+      error:
+        `Provider do orquestrador \`${configuredAdapterId}\` não foi carregado. ` +
+        "Escolha outro em Configurações › Providers.",
+    };
+  }
+  if (!hasDeclaredOrchestratorMcpRoute(selectedAdapter)) {
+    return {
+      ok: false,
+      error:
+        `${selectedAdapter.label} ainda não declara uma rota Nexus MCP ` +
+        "para coordenar squads. Escolha um provider compatível nas Configurações.",
+    };
+  }
+  if (!isDeclaredOrchestratorAdapter(selectedAdapter)) {
+    return {
+      ok: false,
+      error:
+        `CLI \`${selectedAdapter.id}\` não está instalada. ` +
+        "Instale-a ou escolha outro provider em Configurações › Providers.",
+      };
+  }
+  // Intent-first selection is inert: zero panes, zero CLI work, zero tokens.
+  // The later dispatch is allowed only when it carries the main-owned native
+  // approval callback. This is the single experimental-route acknowledgement.
   const intentFirst =
     profile !== 'pet-studio' &&
     !options.forceLegacyLaunch &&
     !options.existingMissionId &&
     orchDefaults.intentFirstMissionRuntimeV1 !== false;
+  const nativeApprovalBoundDispatch = Boolean(
+    options.existingMissionId && options.authorizeDispatch,
+  );
+  const orchestrationEvidence = orchestrationEvidenceOf(selectedAdapter);
+  if (orchestrationEvidence === 'unsupported') {
+    return {
+      ok: false,
+      error:
+        `${selectedAdapter.label} não tem evidência válida para coordenar ` +
+        'squads. Escolha outro provider em Configurações › Squads.',
+    };
+  }
+  if (
+    orchestrationEvidence === 'experimental' &&
+    !intentFirst &&
+    !nativeApprovalBoundDispatch
+  ) {
+    return {
+      ok: false,
+      error:
+        `${selectedAdapter.label} declara a rota Nexus, mas a orquestração ` +
+        'ainda é experimental. Use o fluxo de missão com aprovação nativa ' +
+        'ou escolha um Maestro verificado em Configurações › Squads.',
+    };
+  }
+
+  // Intent-first: selecting a squad arms a shell only — zero panes, zero tokens.
+  // Pet Studio and explicit legacy/dispatch paths keep the full launch.
   if (intentFirst) {
     try {
       useHomeStore.getState().hide();
@@ -500,44 +566,6 @@ export async function launchSquadMission(
     window.nexus.accounts.list(),
     window.nexus.quota?.snapshot?.().catch(() => null) ?? Promise.resolve(null),
   ]);
-  const rosterAdapterId = orchestrator.cli?.trim();
-  const configuredAdapterId = options.existingMissionId
-    ? rosterAdapterId ||
-      (profile === 'pet-studio' ? 'codex' : undefined) ||
-      orchDefaults.defaultAdapterId ||
-      FALLBACK_ORCHESTRATOR_ADAPTER_ID
-    : options.adapterId ||
-      (profile === 'pet-studio' ? 'codex' : undefined) ||
-      orchDefaults.defaultAdapterId ||
-      rosterAdapterId ||
-      FALLBACK_ORCHESTRATOR_ADAPTER_ID;
-  const selectedAdapter = adapters.find(
-    (adapter) => adapter.id === configuredAdapterId,
-  );
-  if (!selectedAdapter) {
-    return {
-      ok: false,
-      error:
-        `Provider do orquestrador \`${configuredAdapterId}\` não foi carregado. ` +
-        "Escolha outro em Configurações › Providers.",
-    };
-  }
-  if (!hasOrchestratorMcpRoute(selectedAdapter)) {
-    return {
-      ok: false,
-      error:
-        `${selectedAdapter.label} ainda não declara uma rota Nexus MCP verificada ` +
-        "para coordenar squads. Escolha um provider compatível nas Configurações.",
-    };
-  }
-  if (!isOrchestratorCapableAdapter(selectedAdapter)) {
-    return {
-      ok: false,
-      error:
-        `CLI \`${selectedAdapter.id}\` não está instalada. ` +
-        "Instale-a ou escolha outro provider em Configurações › Providers.",
-    };
-  }
 
   const cli = selectedAdapter.id;
   // P2: warn when default account for orchestrator CLI is high-usage / cooldown.
@@ -600,9 +628,8 @@ export async function launchSquadMission(
    * sends only missionId, then presents/adopts the sealed pane identity from
    * the response. Provider/model/account/cwd from this function are preflight
    * UX only and never cross the bootstrap IPC boundary.
-   */
+  */
   if (options.existingMissionId) {
-    const { paneMissions, missions } = useOrchStore.getState();
     if (options.authorizeDispatch) {
       try {
         await options.authorizeDispatch();
@@ -616,45 +643,6 @@ export async function launchSquadMission(
         };
       }
     }
-    const conflicts = conflictingOrchestratorPanes(cli);
-    const killedIds = new Set<string>();
-    const displaced = new Set<string>();
-    for (const pane of conflicts) {
-      const sessionId = getPaneSessionId(pane.id);
-      const missionId =
-        paneMissions[pane.id] ??
-        (sessionId
-          ? missions.find(
-              (mission) => mission.orchestratorSessionId === sessionId,
-            )?.id
-          : undefined);
-      if (!missionId) {
-        return {
-          ok: false,
-          error:
-            'Existe um orquestrador incompatível sem autoridade de missão ' +
-            'resolvida. Feche-o explicitamente antes de iniciar outra missão.',
-        };
-      }
-      displaced.add(missionId);
-    }
-    for (const missionId of displaced) {
-      try {
-        await window.nexus.orch.updateMission(missionId, {
-          status: 'blocked',
-        });
-      } catch (cause) {
-        return {
-          ok: false,
-          error:
-            cause instanceof Error
-              ? `O orquestrador anterior não foi encerrado: ${cause.message}`
-              : 'O orquestrador anterior não foi encerrado.',
-        };
-      }
-    }
-    for (const pane of conflicts) killedIds.add(pane.id);
-
     let bootstrap: Awaited<
       ReturnType<typeof window.nexus.orch.bootstrapMissionOrchestrator>
     >;
@@ -681,23 +669,20 @@ export async function launchSquadMission(
     const presentation = await presentMainOwnedMissionPane(
       bootstrap.missionId,
       bootstrap.pane,
-      { removePaneIds: killedIds },
     );
     if (!presentation.ok) {
       return { ok: false, error: presentation.error };
     }
     const orchPane = presentation.pane;
     if (!bootstrap.kickoff.accepted) {
-      useToastStore.getState().push('error', 'Kickoff não foi aceito', {
-        detail: bootstrap.kickoff.detail,
-        action: {
-          label: bootstrap.kickoff.cta,
-          onClick: () => {
-            useLayoutStore.getState().focus(orchPane.id);
-            useOrchStore.getState().openPanel('missions');
-          },
-        },
-      });
+      return {
+        ok: false,
+        paneId: orchPane.id,
+        missionId: bootstrap.missionId,
+        error:
+          `${bootstrap.kickoff.detail} ` +
+          `Próxima ação: ${bootstrap.kickoff.cta}.`,
+      };
     }
     return {
       ok: true,

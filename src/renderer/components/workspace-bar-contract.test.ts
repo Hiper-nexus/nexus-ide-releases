@@ -7,10 +7,7 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 
 describe('workspace bar discoverability contract', () => {
   it('keeps current workspace identity and new-workspace action visible', () => {
-    const source = fs.readFileSync(
-      path.join(ROOT, 'components/WorkspaceBar.tsx'),
-      'utf8',
-    );
+    const source = fs.readFileSync(path.join(ROOT, 'components/WorkspaceBar.tsx'), 'utf8');
     const css = fs.readFileSync(path.join(ROOT, 'styles/base.css'), 'utf8');
 
     expect(source).toContain('Workspace ativo');
@@ -39,5 +36,22 @@ describe('workspace bar discoverability contract', () => {
     expect(rule('.workspace-bar__name')).toContain('display: block');
     expect(rule('.workspace-bar__name')).toContain('width: 100%');
     expect(rule('.workspace-bar__name')).toContain('text-overflow: ellipsis');
+  });
+
+  it('keeps one visible new-workspace entrypoint and keyboard-operable menus', () => {
+    const source = fs.readFileSync(path.join(ROOT, 'components/WorkspaceBar.tsx'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, 'styles/base.css'), 'utf8');
+
+    expect(source).toContain("onClick={() => toggleMenu('workspace')}");
+    expect(source).not.toContain('openNewWorkspace();\n                      setWsMenuOpen(false);');
+    expect(source).toContain('handleMenuKeyDown');
+    expect(source).toContain('aria-controls="workspace-bar-more-menu"');
+    expect(source).toContain('aria-modal="true"');
+    expect(source).toContain('pickerDialogRef');
+    expect(source).toContain('element.inert = true');
+    expect(source).toContain('Verificando providers');
+    expect(source).toContain('Não foi possível carregar os providers');
+    expect(source).toContain('setAdaptersError');
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?workspace-bar__pulse-dot--busy/);
   });
 });

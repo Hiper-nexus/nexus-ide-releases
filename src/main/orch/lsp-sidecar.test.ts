@@ -6,12 +6,34 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   __settleLspWorkerForTests,
+  LSP_LIMITS,
   runScopedLspQuery,
 } from './lsp-sidecar';
 
 let parentDir = '';
 let root = '';
 let scope: ProjectExecutionScope;
+
+function writeProjectConfig(config: Record<string, unknown>): void {
+  fs.writeFileSync(path.join(root, 'tsconfig.json'), JSON.stringify(config));
+}
+
+function writeLspProjectConfig(config: Record<string, unknown>): void {
+  fs.writeFileSync(path.join(root, 'tsconfig.lsp.json'), JSON.stringify(config));
+}
+
+function writeManyScripts(
+  directory: string,
+  extension: 'js' | 'ts',
+): void {
+  fs.mkdirSync(directory, { recursive: true });
+  for (let index = 0; index <= LSP_LIMITS.maxProjectFiles; index += 1) {
+    fs.writeFileSync(
+      path.join(directory, `generated-${index}.${extension}`),
+      `export const generated_${index} = ${index};\n`,
+    );
+  }
+}
 
 beforeEach(() => {
   parentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-lsp-'));
@@ -181,6 +203,97 @@ describe('runScopedLspQuery', () => {
     ).rejects.toThrow(/already active/i);
     await expect(first).resolves.toMatchObject({ path: 'src/lib.ts' });
   });
+
+  it('uses tsconfig allowJs and exclude semantics without weakening the project-file cap', async () => {
+    const generated = path.join(root, 'src', 'generated-js');
+    writeManyScripts(generated, 'js');
+    writeProjectConfig({
+      compilerOptions: { strict: true },
+      include: ['src'],
+    });
+
+    await expect(
+      runScopedLspQuery(scope, {
+        kind: 'symbols',
+        path: 'src/lib.ts',
+        maxResults: 10,
+      }),
+    ).resolves.toMatchObject({ path: 'src/lib.ts' });
+
+    writeProjectConfig({
+      compilerOptions: { allowJs: true, strict: true },
+      include: ['src'],
+      exclude: ['src/generated-js'],
+    });
+    await expect(
+      runScopedLspQuery(scope, {
+        kind: 'symbols',
+        path: 'src/lib.ts',
+        maxResults: 10,
+      }),
+    ).resolves.toMatchObject({ path: 'src/lib.ts' });
+
+    writeProjectConfig({
+      compilerOptions: { allowJs: true, strict: true },
+      include: ['src'],
+    });
+    await expect(
+      runScopedLspQuery(scope, {
+        kind: 'symbols',
+        path: 'src/lib.ts',
+        maxResults: 10,
+      }),
+    ).rejects.toThrow(/project-file limit exceeded/i);
+  }, 15_000);
+
+  it('uses an explicit bounded LSP config without weakening the repository typecheck config', async () => {
+    const generated = path.join(root, 'src', 'generated-ts');
+    writeManyScripts(generated, 'ts');
+    writeProjectConfig({
+      compilerOptions: { strict: true },
+      include: ['src'],
+    });
+    writeLspProjectConfig({
+      compilerOptions: { strict: true },
+      include: ['src'],
+      exclude: ['src/generated-ts'],
+    });
+
+    await expect(
+      runScopedLspQuery(scope, {
+        kind: 'symbols',
+        path: 'src/lib.ts',
+        maxResults: 10,
+      }),
+    ).resolves.toMatchObject({
+      path: 'src/lib.ts',
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: 'greet', path: 'src/lib.ts' }),
+      ]),
+    });
+  }, 15_000);
+
+  it('anchors includes at the config root and never indexes a sibling tree', async () => {
+    const outsideRoot = path.join(parentDir, 'src');
+    writeManyScripts(outsideRoot, 'ts');
+    writeProjectConfig({
+      compilerOptions: { strict: true },
+      include: ['src', '../src', path.join(outsideRoot, '**/*.ts')],
+    });
+
+    await expect(
+      runScopedLspQuery(scope, {
+        kind: 'symbols',
+        path: 'src/lib.ts',
+        maxResults: 10,
+      }),
+    ).resolves.toMatchObject({
+      path: 'src/lib.ts',
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: 'greet', path: 'src/lib.ts' }),
+      ]),
+    });
+  }, 15_000);
 
   it('honors the repository tsconfig include set instead of globally indexing every tree', async () => {
     const repositoryRoot = fs.realpathSync(process.cwd());

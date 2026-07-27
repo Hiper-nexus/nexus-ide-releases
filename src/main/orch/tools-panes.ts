@@ -31,6 +31,7 @@ import {
   strArray,
   type SpawnToolOptions,
 } from './tool-util';
+import { isReleaseQualifiedMissionWorkerCli } from './squad-runtime-policy';
 import {
   assertCurrentMissionOrchestratorSession,
   canonicalToolName,
@@ -324,6 +325,21 @@ const paneSpawn: McpToolDef = {
         prompt: str(args, 'prompt'),
         scope: ctx.scope,
       };
+    }
+    // Reject stale/sticky/non-reserved legacy roster choices before consuming
+    // a route reservation or mutating any worker-slot/worktree state. The
+    // physical spawn path repeats this check as the final backstop.
+    if (
+      options.missionId &&
+      options.role === 'worker' &&
+      !isReleaseQualifiedMissionWorkerCli(options.adapterId)
+    ) {
+      throw new Error(
+        `governed_worker_spawn_unsupported: ${options.adapterId} não pode ` +
+          'executar como worker autônomo de missão nesta release; use o ' +
+          'adapter Codex builtin qualificado ou abra esse CLI manualmente no ' +
+          'Terminal fora da missão',
+      );
     }
     let releaseWorkerSlot: (() => void) | undefined;
     let spawnedWorkerPaneId: string | undefined;

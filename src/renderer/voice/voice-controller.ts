@@ -29,7 +29,6 @@ import {
   invalidateAckCacheIfPersonaChanged,
   playCachedWakeAck,
   playWakePrompt,
-  warmAckCache,
   wakeGreetingText,
 } from './voice-wake-ack';
 import { voiceHudStatusFromLiveState } from './live-hud-state';
@@ -138,6 +137,11 @@ import {
   type RecentTranscript,
 } from './recent-transcript-dedupe';
 import { isPendingDelegationConfirmation } from './delegation-confirm';
+import {
+  isJarvisPoweredOff,
+  reactivateJarvisInput,
+  registerJarvisPowerControl,
+} from './jarvis-power-authority';
 
 /**
  * Jarvis voice pipeline. Mounted once from App.
@@ -238,17 +242,57 @@ function finishAndProcessFacade(
     wakeAutoStop,
     finishAndProcess: finishAndProcessFacade,
   };
-  return finishAndProcess(capture, busy, deps);
+  return finishAndProcess(capture, busy, deps).finally(() => {
+    // Explicit click/PTT reactivation may have used the cold VoiceCapture
+    // path. Once that turn fully releases the mic, restore the local wake
+    // detector only if power authority still permits it.
+    if (!capture.isCapturing()) void armConfiguredWakeMic();
+  });
 }
 
 /** Idempotent mount: HMR / remount must replace listeners, never stack them. */
 let voiceControllerCleanup: (() => void) | null = null;
 
-export function useVoiceController(): void {
+async function armConfiguredWakeMic(): Promise<void> {
+  if (isJarvisPoweredOff()) return;
+  const info = useVoiceStore.getState().info;
+  if (
+    !info?.enabled ||
+    !info.wakeWordEnabled ||
+    info.captureAllowed === false
+  ) return;
+  try {
+    await wakeMic.start();
+    // A power-off can race an in-flight getUserMedia/openGraph. Stop again
+    // after it settles so the late start cannot resurrect ambient capture.
+    if (isJarvisPoweredOff()) wakeMic.stop();
+  } catch (error) {
+    if (!isJarvisPoweredOff()) {
+      useVoiceStore
+        .getState()
+        .setError(`Wake word indisponível: ${errMsg(error)}`);
+    }
+  }
+}
+
+export function useVoiceController(active = true): void {
   const capture = useRef<VoiceCapture | null>(null);
   const busy = useRef(false);
 
   useEffect(() => {
+    // Voice is project-scoped: before workspace hydration there is no
+    // authorized root for Live context/tool execution. Starting the hot mic
+    // here used to race the renderer boot and ask main to prewarm a session
+    // that governance would correctly reject. Keep the hook mounted (stable
+    // hook order), but do not create listeners, capture devices or provider
+    // sessions until App confirms an open workspace.
+    if (!active) {
+      voiceControllerCleanup?.();
+      voiceControllerCleanup = null;
+      wakeMic.stop();
+      return undefined;
+    }
+
     // Drop any prior subscription (HMR leaves preload Sets with stale cbs →
     // every audio/transcript event fires twice → mute races + double tools).
     voiceControllerCleanup?.();
@@ -265,6 +309,10 @@ export function useVoiceController(): void {
     capture.current.onLevel = publishVoiceLevel;
     wakeMic.onLevel = publishVoiceLevel;
     const streamLiveMicFrame = (frame: Float32Array, sampleRate: number) => {
+      if (
+        isJarvisPoweredOff() ||
+        useVoiceStore.getState().info?.captureAllowed === false
+      ) return;
       // Follow-up may stream directly only inside the short, locally armed
       // authority window. Outside it, room speech/TV can never reach Gemini.
       // The previous unconditional return contradicted beginListening(): the
@@ -302,8 +350,41 @@ export function useVoiceController(): void {
     const workNarrationSupervisor = new WorkNarrationSupervisor();
     const passiveWakeDeadline = new PassiveWakeDeadline(PASSIVE_WAKE_RENDERER_DEADLINE_MS);
     const passiveWakeAdmission = new PassiveWakeAdmission();
+    const unregisterPowerControl = registerJarvisPowerControl({
+      stopInput: () => {
+        passiveWakeDeadline.invalidate();
+        passiveWakeAdmission.reset();
+        followUpAuthority.clear();
+        cancelLiveFollowUp();
+        realtimeTranscriptWaiter.supersede();
+        turnExecution.beginTurn();
+        setPendingLiveStartSettle(null);
+        setFinishRealtimeCapture(null);
+        setWakeOpenInProgress(false);
+        setRealtimeTurnActive(false);
+        setSuppressRealtimeAudioOut(true);
+        setDropRealtimeAudioOut(true);
+        resetPendingRealtimeAudioOut();
+        clearLocalAudioGate();
+        wakeMic.cancelPassiveWake();
+        wakeMic.cancelUtterance();
+        wakeMic.stop();
+        if (capture.current?.isCapturing()) {
+          void capture.current.stop().catch((error) => {
+            logVoiceEvent('error', 'voice.powerOffCaptureStopFailed', errMsg(error));
+          });
+        }
+        busy.current = false;
+        useVoiceStore.getState().setLevel(0);
+        useVoiceStore.getState().setStatus('idle');
+      },
+    });
 
     const handleWake = async (source: WakeSource, preRollSeed?: Float32Array[]) => {
+      if (
+        isJarvisPoweredOff() ||
+        useVoiceStore.getState().info?.captureAllowed === false
+      ) return;
       if (wakeOpenInProgress) return;
       setWakeOpenInProgress(true);
       passiveWakeDeadline.invalidate();
@@ -394,6 +475,12 @@ export function useVoiceController(): void {
     };
 
     const onWake = (source: WakeSource = 'voice', preRollSeed?: Float32Array[]) => {
+      // Acoustic detection is never reactivation authority. A late ONNX event
+      // racing power-off is ignored until click/PTT explicitly clears the flag.
+      if (
+        isJarvisPoweredOff() ||
+        useVoiceStore.getState().info?.captureAllowed === false
+      ) return;
       if (wakeOpenInProgress) {
         console.log('[voice] wake ignorado (turno em andamento)');
         return;
@@ -960,10 +1047,14 @@ export function useVoiceController(): void {
       }
     }, STATUS_WATCHDOG_POLL_MS);
 
-    let livePrewarmRequested = false;
     const syncWakeWord = (info: VoiceRuntimeInfo) => {
-      const shouldUsePassiveWake =
-        info.enabled && info.wakeWordEnabled && info.routing === 'jarvis';
+      // Passive STT used to ship room audio to a credential-backed provider
+      // before any local wake or operator gesture. Besides violating explicit
+      // voice authority, resolving that cold secret can synchronously wait on
+      // macOS Keychain and freeze Electron. The bundled PT-BR/EN ONNX heads are
+      // the only always-on admission path; provider STT starts after a proven
+      // wake/PTT turn.
+      const shouldUsePassiveWake = false;
       wakeMic.onPassiveUtterance = shouldUsePassiveWake
         ? (utterance) => {
             void handlePassiveWake(utterance);
@@ -971,33 +1062,16 @@ export function useVoiceController(): void {
         : null;
       if (!shouldUsePassiveWake) wakeMic.cancelPassiveWake();
       if (!shouldUsePassiveWake) passiveWakeAdmission.reset();
-      if (info.enabled && info.wakeWordEnabled) {
+      if (
+        info.enabled &&
+        info.wakeWordEnabled &&
+        info.captureAllowed !== false &&
+        !isJarvisPoweredOff()
+      ) {
         invalidateAckCacheIfPersonaChanged(info);
-        if (!canAttemptRealtime(info)) {
-          warmAckCache(info.persona.userName ?? '');
-        }
-        void wakeMic.start().catch((err) => {
-          useVoiceStore.getState().setError(`Wake word indisponível: ${errMsg(err)}`);
-        });
-        if (canAttemptRealtime(info) && !livePrewarmRequested) {
-          livePrewarmRequested = true;
-          window.nexus.voice.liveContextIn(liveContextText());
-          void window.nexus.voice.livePrewarm(true).then((state) => {
-            useVoiceStore.getState().setLiveState(state);
-          }).catch((err) => {
-            livePrewarmRequested = false;
-            console.warn('[voice] prewarm Live falhou:', errMsg(err));
-          });
-        } else if (!canAttemptRealtime(info) && livePrewarmRequested) {
-          livePrewarmRequested = false;
-          void window.nexus.voice.livePrewarm(false).catch(() => {});
-        }
+        void armConfiguredWakeMic();
       } else {
         wakeMic.stop();
-        if (livePrewarmRequested) {
-          livePrewarmRequested = false;
-          void window.nexus.voice.livePrewarm(false).catch(() => {});
-        }
       }
     };
 
@@ -1010,6 +1084,12 @@ export function useVoiceController(): void {
       syncWakeWord(info);
     });
     const unsubLiveState = window.nexus.voice.onLiveState((state) => {
+      if (isJarvisPoweredOff()) {
+        if (state.status !== 'off') {
+          void window.nexus.voice.liveHardTeardown().catch(() => {});
+        }
+        return;
+      }
       useVoiceStore.getState().setLiveState(state);
       const hudStatus = voiceHudStatusFromLiveState(state, isListening(capture.current));
       if (hudStatus) useVoiceStore.getState().setStatus(hudStatus);
@@ -1018,6 +1098,7 @@ export function useVoiceController(): void {
       }
     });
     const unsubLiveTranscript = window.nexus.voice.onLiveTranscript((event) => {
+      if (isJarvisPoweredOff()) return;
       useVoiceStore.getState().addLiveTranscript(event);
       if (event.role === 'user' && event.final && event.text.trim()) {
         logVoiceTurnMilestone(
@@ -1037,15 +1118,18 @@ export function useVoiceController(): void {
       onRealtimeTranscriptForActionBridge(event);
     });
     const unsubTranscriptAppend = window.nexus.voice.onTranscriptAppend((event) => {
+      if (isJarvisPoweredOff()) return;
       useVoiceStore.getState().addTranscriptAppend(event);
     });
     const unsubLiveToolCall = window.nexus.voice.onLiveToolCall((event) => {
+      if (isJarvisPoweredOff()) return;
       useVoiceStore.getState().setLiveTool(event);
       if (event.source === 'realtime') {
         void executeRealtimeToolCall(event);
       }
     });
     const unsubLiveToolCancelled = window.nexus.voice.onLiveToolCancelled((event) => {
+      if (isJarvisPoweredOff()) return;
       const result = cancelRealtimeToolExecution(event);
       logVoiceEvent('warn', 'jarvis.realtimeActionCancelReceived', event.summary, {
         callId: event.callId,
@@ -1055,9 +1139,11 @@ export function useVoiceController(): void {
       });
     });
     const unsubLiveToolResult = window.nexus.voice.onLiveToolResult((event) => {
+      if (isJarvisPoweredOff()) return;
       useVoiceStore.getState().setLiveTool(event);
     });
     const unsubLiveToolTurnComplete = window.nexus.voice.onLiveToolTurnComplete((event) => {
+      if (isJarvisPoweredOff()) return;
       const turnToken = turnExecution.currentToken;
       const isCorrelated = (): boolean =>
         event.turnId === String(turnToken) &&
@@ -1152,10 +1238,18 @@ export function useVoiceController(): void {
       })();
     });
     const unsubLiveInterrupted = window.nexus.voice.onLiveInterrupted((event) => {
+      if (isJarvisPoweredOff()) return;
       useVoiceStore.getState().setLiveInterrupted(event);
       livePlayer?.stop();
     });
     const unsubLiveAudio = window.nexus.voice.onLiveAudioOut((event) => {
+      if (isJarvisPoweredOff()) {
+        window.nexus.voice.liveAudioPlayback({
+          id: event.id,
+          outcome: 'cancelled',
+        });
+        return;
+      }
       if (suppressRealtimeAudioOut) {
         queuePendingRealtimeAudioOut(event);
         return;
@@ -1207,6 +1301,10 @@ export function useVoiceController(): void {
     });
 
     const onStart = () => {
+      if (useVoiceStore.getState().info?.captureAllowed === false) return;
+      // A keyboard PTT press is an explicit local gesture and may reactivate
+      // input after power-off. Merely saying the wake word cannot.
+      reactivateJarvisInput();
       const action = pttStartAction({
         isListening: isListening(capture.current),
         isBusy: busy.current,
@@ -1250,6 +1348,9 @@ export function useVoiceController(): void {
       void finishAndProcessFacade(capture.current!, busy);
     };
     const onToggle = () => {
+      if (useVoiceStore.getState().info?.captureAllowed === false) return;
+      reactivateJarvisInput();
+      resumeJarvisNarration();
       if (isListening(capture.current)) {
         onStop();
       } else {
@@ -1265,8 +1366,21 @@ export function useVoiceController(): void {
     const unsubStop = window.nexus.voice.onPttStop(onStop);
     const unsubToggle = window.nexus.voice.onPttToggle(onToggle);
     const unsubWake = window.nexus.voice.onWakeDetected(() => onWake('voice'));
-    const unsubClickWake = onJarvisWakeRequest(() => onWake('click'));
+    const unsubClickWake = onJarvisWakeRequest(() => {
+      const reactivated = reactivateJarvisInput();
+      if (!reactivated) {
+        onWake('click');
+        return;
+      }
+      resumeJarvisNarration();
+      // Re-arm local wake first so the explicit turn uses one shared hot mic,
+      // not a simultaneous WakeMic + VoiceCapture pair.
+      void armConfiguredWakeMic().then(() => {
+        if (!isJarvisPoweredOff()) onWake('click');
+      });
+    });
     const unsubNarrate = window.nexus.voice.onNarrate((event) => {
+      if (isJarvisPoweredOff()) return;
       const layout = useLayoutStore.getState();
       const focusedMissionId = layout.focusedPaneId
         ? useOrchStore.getState().paneMissions[layout.focusedPaneId]
@@ -1284,6 +1398,7 @@ export function useVoiceController(): void {
       clearInterval(statusWatchdogTimer);
       unsubStatusWatchdog();
       unsubNarrationState();
+      unregisterPowerControl();
       registerNarrationControl(null);
       narrationQueue.dispose();
       workNarrationSupervisor.reset();
@@ -1320,7 +1435,7 @@ export function useVoiceController(): void {
       if (voiceControllerCleanup === cleanup) voiceControllerCleanup = null;
       cleanup();
     };
-  }, []);
+  }, [active]);
 }
 
 async function beginListening(
@@ -1331,6 +1446,10 @@ async function beginListening(
   busy?: React.MutableRefObject<boolean>,
 ): Promise<void> {
   const store = useVoiceStore.getState();
+  if (isJarvisPoweredOff() || store.info?.captureAllowed === false) {
+    if (busy) busy.current = false;
+    return;
+  }
   try {
     store.setNote(null);
     realtimeTranscriptWaiter.resetQueued();
@@ -1384,7 +1503,11 @@ async function beginListening(
       REALTIME_ACTION_BRIDGE_ENABLED &&
       isJarvisLiveEnabled();
     setPendingLiveStartSettle(null);
-    if (allowRealtimeBridge) {
+    if (
+      allowRealtimeBridge &&
+      !isJarvisPoweredOff() &&
+      useVoiceStore.getState().info?.captureAllowed !== false
+    ) {
       const info = useVoiceStore.getState().info;
       if (reason === 'reply' && isRealtimeLive()) {
         // FIX E: session is already hot — re-arm mic streaming without liveStart.
@@ -1404,6 +1527,14 @@ async function beginListening(
           window.nexus.voice
             .liveStart({ reason })
             .then(async (state) => {
+              if (
+                isJarvisPoweredOff() ||
+                useVoiceStore.getState().info?.captureAllowed === false
+              ) {
+                setRealtimeTurnActive(false);
+                await window.nexus.voice.liveHardTeardown().catch(() => {});
+                return;
+              }
               store.setLiveState(state);
               if (!state.realtimeReady) {
                 setRealtimeTurnActive(false);
@@ -1422,6 +1553,13 @@ async function beginListening(
       reason === 'reply' && autoStop
         ? { ...autoStop, maxMs: Math.min(autoStop.maxMs, REPLY_MAX_LISTEN_MS) }
         : autoStop;
+    if (
+      isJarvisPoweredOff() ||
+      useVoiceStore.getState().info?.captureAllowed === false
+    ) {
+      if (busy) busy.current = false;
+      return;
+    }
     if (wakeMic.isRunning()) {
       wakeMic.beginUtterance(
         captureAutoStop,
@@ -1431,10 +1569,23 @@ async function beginListening(
     } else {
       await capture.start(captureAutoStop);
     }
+    if (
+      isJarvisPoweredOff() ||
+      useVoiceStore.getState().info?.captureAllowed === false
+    ) {
+      wakeMic.cancelUtterance();
+      if (capture.isCapturing()) await capture.stop();
+      if (busy) busy.current = false;
+      return;
+    }
     logVoiceTurnMilestone(turnId, 'speech_start', { reason });
     store.setStatus('listening');
     liveStatus('listening');
   } catch (err) {
+    if (isJarvisPoweredOff()) {
+      if (busy) busy.current = false;
+      return;
+    }
     store.setError(`Mic unavailable: ${errMsg(err)}`);
     liveStatus('error', errMsg(err));
   }

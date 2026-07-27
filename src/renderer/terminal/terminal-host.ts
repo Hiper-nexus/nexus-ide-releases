@@ -29,6 +29,7 @@ import {
   submitPromptToPaneConfirmed as submitPanePromptConfirmed,
 } from './pane-submit';
 import { WebglLeasePool } from './webgl-lease';
+import { resumeTerminalVisibilityBeforePaint } from './terminal-visibility-resume';
 
 /**
  * Persistent terminal manager.
@@ -188,6 +189,34 @@ function registerWebglLease(paneId: string, host: Host): void {
         // Terminal not opened or already disposed.
       }
     },
+  });
+}
+
+/**
+ * Reveal/focus boundary for a live terminal.
+ *
+ * Reacquiring WebGL may change xterm's character metrics. Fit and propagate
+ * the resulting grid before promoting any background output; otherwise a TUI
+ * frame can be parsed against the transient DOM-renderer dimensions.
+ */
+function resumeVisibleHost(paneId: string, host: Host): boolean {
+  return resumeTerminalVisibilityBeforePaint({
+    resumeRenderer: () => webglPool.touch(paneId),
+    fitVisibleGrid: () => host.fit.fit(),
+    propagateSize: () => {
+      if (host.sessionId) {
+        window.nexus.pty.resize(
+          host.sessionId,
+          host.term.cols,
+          host.term.rows,
+        );
+      }
+    },
+    flushOutput: () => {
+      flushPendingScrollback(host);
+      flushTerminalOutput(host.term);
+    },
+    repaint: () => host.inputVisibility.repaintNow(),
   });
 }
 
@@ -691,7 +720,7 @@ function startSpawn(
  */
 const RESIZE_DEBOUNCE_MS = 60;
 
-function makeResizeObserver(host: Host): ResizeObserver {
+function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
   let timer: ReturnType<typeof setTimeout> | null = null;
   return new ResizeObserver(() => {
     if (host.disposed || !host.opened) return;
@@ -699,6 +728,10 @@ function makeResizeObserver(host: Host): ResizeObserver {
     timer = setTimeout(() => {
       timer = null;
       if (host.disposed || !host.opened) return;
+      if (useLayoutStore.getState().focusedPaneId === paneId) {
+        resumeVisibleHost(paneId, host);
+        return;
+      }
       try {
         host.fit.fit();
       } catch {
@@ -796,7 +829,7 @@ function createShellHost(pane: PaneModel): Host {
     cleanups: [],
   };
 
-  host.ro = makeResizeObserver(host);
+  host.ro = makeResizeObserver(pane.id, host);
   host.ro.observe(element);
 
   term.onTitleChange((title) =>
@@ -844,7 +877,7 @@ function createCliAgentHost(pane: PaneModel): Host {
     cleanups: [],
   };
 
-  host.ro = makeResizeObserver(host);
+  host.ro = makeResizeObserver(pane.id, host);
   host.ro.observe(element);
 
   term.onTitleChange((title) =>
@@ -1020,15 +1053,20 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
     registerWebglLease(pane.id, host);
   }
 
-  try {
-    host.fit.fit();
-    flushPendingScrollback(host);
-    if (host.sessionId) {
-      window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
+  if (useLayoutStore.getState().focusedPaneId !== pane.id) {
+    try {
+      host.fit.fit();
+      flushPendingScrollback(host);
+      if (host.sessionId) {
+        window.nexus.pty.resize(host.sessionId, host.term.cols, host.term.rows);
+      }
+    } catch {
+      // Slot not measurable yet; the ResizeObserver will retry.
     }
-  } catch {
-    // Slot not measurable yet; the ResizeObserver will retry.
   }
+  // The focused path is completed by focusHost in the caller's next layout
+  // effect. Keeping it there avoids duplicate fit/SIGWINCH while preserving
+  // resume → fit → flush before the browser paints.
 
   if (!host.spawnStarted && !host.hibernated) {
     if (heldSpawnPanes.has(pane.id)) {
@@ -1190,13 +1228,11 @@ export function focusHost(paneId: string): void {
   }
   const host = hosts.get(paneId);
   if (!host || host.disposed) return;
-  // Focus recency drives the WebGL lease: a DOM-rendered pane reclaims a
-  // context here (stealing from the least-recently-focused holder).
-  if (host.opened) webglPool.touch(paneId);
-  // Promote any background backlog immediately so the focused pane is not
-  // stuck behind the cooperative drain of other hidden panes.
-  flushTerminalOutput(host.term);
-  host.inputVisibility.repaintNow();
+  if (host.opened) {
+    // Focus recency drives the WebGL lease, then the visibility contract
+    // settles its grid before promoting any queued background output.
+    resumeVisibleHost(paneId, host);
+  }
   host.term.focus();
 }
 

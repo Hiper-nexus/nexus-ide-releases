@@ -1,11 +1,18 @@
-import { hasNexusMcpCapability } from '../../shared/adapter-types';
+import {
+  hasNexusMcpCapability,
+  orchestrationEvidenceOf,
+  type OrchestrationEvidence,
+} from '../../shared/adapter-types';
 import {
   missionOrchestratorRuntimeSnapshotSchema,
   type MissionOrchestratorRuntimeSnapshot,
 } from '../../shared/mission-intent';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
-import { getAdapter } from '../adapters/adapter-registry';
+import {
+  getAdapter,
+  listAdapterInfos,
+} from '../adapters/adapter-registry';
 import { listAccountInfos } from '../persistence/account-store';
 import { getOrchSettings } from '../persistence/settings-store';
 import { supportsEnforceableReadOnlyNativeAuthority } from '../pty/autonomous-cli-policy';
@@ -74,6 +81,7 @@ export function sameMissionOrchestratorRuntime(
 
 export function missionOrchestratorRuntimeReviewStrings(
   runtime: MissionOrchestratorRuntimeSnapshot,
+  evidence = missionOrchestratorEvidence(runtime.adapterId),
 ): string[] {
   return [
     runtime.adapterId,
@@ -82,7 +90,34 @@ export function missionOrchestratorRuntimeReviewStrings(
     runtime.effort ?? '',
     `readOnly=${String(runtime.readOnly)}`,
     `nativeReadOnly=${String(runtime.nativeReadOnly)}`,
+    `orchestrationEvidence=${evidence}`,
   ];
+}
+
+/** Main-owned evidence lookup. Renderer acknowledgement is never consulted. */
+export function missionOrchestratorEvidence(
+  adapterId: string,
+): OrchestrationEvidence {
+  const adapter = listAdapterInfos().find((candidate) => candidate.id === adapterId);
+  return adapter ? orchestrationEvidenceOf(adapter) : 'unsupported';
+}
+
+export function assertMissionOrchestratorEvidence(input: {
+  evidence: OrchestrationEvidence;
+  selection: 'saved-roster' | 'automatic';
+  label: string;
+}): void {
+  if (input.evidence === 'unsupported') {
+    throw new Error(
+      `${input.label} não tem evidência válida para a rota de orquestração.`,
+    );
+  }
+  if (input.selection === 'automatic' && input.evidence !== 'verified') {
+    throw new Error(
+      `${input.label} tem orquestração experimental e não pode ser ` +
+        'promovido automaticamente a Maestro. Escolha um provider verificado.',
+    );
+  }
 }
 
 export function resolveProductionMissionOrchestratorRuntime(
@@ -120,6 +155,13 @@ export function resolveProductionMissionOrchestratorRuntime(
         'aplicável ao orquestrador.',
     );
   }
+  const evidence = missionOrchestratorEvidence(adapterId);
+  const runtimeComesFromRoster = present(orchestrator.cli) === adapterId;
+  assertMissionOrchestratorEvidence({
+    evidence,
+    selection: runtimeComesFromRoster ? 'saved-roster' : 'automatic',
+    label: adapter.label,
+  });
 
   const accounts = listAccountInfos().filter(
     (account) => account.adapterId === adapterId,
@@ -144,7 +186,6 @@ export function resolveProductionMissionOrchestratorRuntime(
     );
   }
 
-  const runtimeComesFromRoster = present(orchestrator.cli) === adapterId;
   return canonicalMissionOrchestratorRuntime({
     adapterId,
     model:

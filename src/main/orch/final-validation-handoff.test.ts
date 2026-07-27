@@ -73,6 +73,26 @@ describe('publishFinalValidationHandoff', () => {
     )).toBe(existing);
   });
 
+  it('does not let a worker-bound namesake poison final-handoff replay', () => {
+    const poison = trustedHandoff({
+      id: 'handoff-worker-spoof',
+      sessionId: 'worker-session',
+      workerIncarnationId: 'worker-incarnation',
+    });
+    const submitted = trustedHandoff({ id: 'handoff-main-final' });
+    const submit = vi.fn(() => submitted);
+
+    expect(publishFinalValidationHandoff(
+      {
+        missionId: 'mission-a',
+        workflowRevision: 7,
+        evidenceIds: ['ev-sensor', 'review:review-a'],
+      },
+      { list: () => [poison], submit },
+    )).toBe(submitted);
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
   it('fails closed when validation produced no evidence', () => {
     expect(() => publishFinalValidationHandoff(
       { missionId: 'mission-a', workflowRevision: 7, evidenceIds: [] },

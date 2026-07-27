@@ -7,8 +7,8 @@ import { FLEET_SEG_LABEL } from '../../shared/pane-session-view';
 import type { OmpRpcSessionSummary } from '../../shared/omp-rpc-types';
 
 /**
- * Rollup da frota: "3 trabalhando · 2 prontos · 1 morto" num relance.
- * Clique foca quem precisa de atenção — morto primeiro, depois ocupado.
+ * Rollup da frota: "3 trabalhando · 2 prontos · 1 encerrado" num relance.
+ * Clique foca quem precisa de atenção — encerrado primeiro, depois ocupado.
  * Conta panes PTY + sessões omp rpc-ui (painel e mission workers).
  */
 
@@ -112,7 +112,7 @@ export function FleetChip() {
     working > 0 ? `${working} trabalhando` : null,
     ready > 0 ? `${ready} pronto${ready === 1 ? '' : 's'}` : null,
     sleeping > 0 ? `${sleeping} dormindo` : null,
-    down > 0 ? `${down} morto${down === 1 ? '' : 's'}` : null,
+    down > 0 ? `${down} encerrado${down === 1 ? '' : 's'}` : null,
   ]
     .filter(Boolean)
     .join(' · ');

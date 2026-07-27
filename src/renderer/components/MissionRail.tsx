@@ -40,13 +40,10 @@ import { OperatorHud } from './OperatorHud';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndBlockMission } from '../orch/block-mission';
 import { promotePlanMissionToExecution } from '../orch/plan-promote-flow';
-import {
-  usePlanLaneMetricsStore,
-} from '../state/plan-lane-metrics-store';
+import { usePlanLaneMetricsStore } from '../state/plan-lane-metrics-store';
 import { AgentDropZone } from './AgentDropZone';
 import type { ExternalIssue } from '../../shared/integrations-types';
 import { INTEGRATIONS_CHANGED_EVENT } from '../lib/integrations-events';
-import { useMissionWizardStore as useWizard } from '../state/mission-wizard-store';
 import {
   summarizeMissionBudget,
   summarizeWorkspaceMissionBudgets,
@@ -70,6 +67,7 @@ import {
   closeMissionNote,
   closeMissionRuntimeAndPanes,
 } from '../orch/close-mission-runtime';
+import { paneSessionView } from '../../shared/pane-session-view';
 
 /**
  * Activity Rail — missões **deste workspace** apenas:
@@ -82,8 +80,7 @@ export function MissionRail() {
   const boundWorkspacePath = useOrchStore((s) => s.boundWorkspacePath);
   const paneMissions = useOrchStore((s) => s.paneMissions);
   const handoffs = useOrchStore((s) => s.handoffs);
-  const openMissionWizard = useMissionWizardStore((s) => s.openForMission);
-  const openAgentic = useWizard((s) => s.openForAgentic);
+  const openAgentic = useMissionWizardStore((s) => s.openForAgentic);
   const openBoard = useOrchStore((s) => s.openBoard);
   const paneStates = useSessionStateStore((s) => s.paneStates);
   const openOmpPanel = useOmpRpcStore((s) => s.openPanel);
@@ -166,20 +163,31 @@ export function MissionRail() {
   useEffect(() => {
     const onChanged = () => setIssuesRefreshKey((k) => k + 1);
     window.addEventListener(INTEGRATIONS_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(INTEGRATIONS_CHANGED_EVENT, onChanged);
+    return () =>
+      window.removeEventListener(INTEGRATIONS_CHANGED_EVENT, onChanged);
   }, []);
 
   useEffect(() => {
+    // Never unlock/decrypt forge credentials merely because the activity rail
+    // mounted. On macOS safeStorage may synchronously wait for Keychain UI and
+    // freeze Electron's main thread before the first usable frame. Issue sync
+    // starts only after an explicit integrations change in this renderer
+    // session (saving/authenticating from the Integrations panel).
+    if (issuesRefreshKey === 0) return;
     let cancelled = false;
     void (async () => {
       const issues: ExternalIssue[] = [];
       try {
         if (await window.nexus.integrations.hasGithubToken()) {
-          const r = await window.nexus.integrations.listGithubIssues({ limit: 8 });
+          const r = await window.nexus.integrations.listGithubIssues({
+            limit: 8,
+          });
           if (r.ok) issues.push(...r.issues);
         }
         if (await window.nexus.integrations.hasLinearKey()) {
-          const r = await window.nexus.integrations.listLinearIssues({ limit: 8 });
+          const r = await window.nexus.integrations.listLinearIssues({
+            limit: 8,
+          });
           if (r.ok) issues.push(...r.issues);
         }
       } catch {
@@ -195,6 +203,8 @@ export function MissionRail() {
   // Layout no dep: livePaneIds filtra panes mortos do tree — sem isso, o
   // useMemo ficava stale e missão com terminal vivo sumia do “Em progresso”.
   const layoutRoot = useLayoutStore((s) => s.root);
+  const focusPane = useLayoutStore((s) => s.focus);
+  const focusedPaneId = useLayoutStore((s) => s.focusedPaneId);
   useEffect(() => {
     if (!note) return;
     const match = note.match(/\b(?:O )?pane ([A-Za-z0-9_-]+) não confirmou\b/i);
@@ -218,11 +228,49 @@ export function MissionRail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneMissions, layoutRoot, ompLiveMissionIds]);
 
+  const panesByMission = useMemo(() => {
+    const grouped = new Map<string, ReturnType<typeof listPanes>>();
+    for (const pane of listPanes(layoutRoot)) {
+      const missionId = paneMissions[pane.id] ?? pane.missionId;
+      if (!missionId || pane.kind !== 'cli-agent') continue;
+      const panes = grouped.get(missionId) ?? [];
+      panes.push(pane);
+      grouped.set(missionId, panes);
+    }
+    return grouped;
+  }, [layoutRoot, paneMissions]);
+
   const handoffCountByMission = useMemo(() => {
     const map = new Map<string, number>();
     for (const h of handoffs) {
       if (!h.missionId) continue;
       map.set(h.missionId, (map.get(h.missionId) ?? 0) + 1);
+    }
+    return map;
+  }, [handoffs]);
+
+  const latestHandoffByMission = useMemo(() => {
+    const map = new Map<string, (typeof handoffs)[number]>();
+    for (const handoff of handoffs) {
+      if (!handoff.missionId) continue;
+      const previous = map.get(handoff.missionId);
+      if (!previous || handoff.createdAt > previous.createdAt) {
+        map.set(handoff.missionId, handoff);
+      }
+    }
+    return map;
+  }, [handoffs]);
+
+  const latestHandoffByAgent = useMemo(() => {
+    const map = new Map<string, (typeof handoffs)[number]>();
+    for (const handoff of handoffs) {
+      const agent = handoff.fromAgent?.trim().toLocaleLowerCase();
+      if (!handoff.missionId || !agent) continue;
+      const key = `${handoff.missionId}\u0000${agent}`;
+      const previous = map.get(key);
+      if (!previous || handoff.createdAt > previous.createdAt) {
+        map.set(key, handoff);
+      }
     }
     return map;
   }, [handoffs]);
@@ -261,16 +309,13 @@ export function MissionRail() {
       return missionRailEmptyBeat(workspace?.name ?? 'este workspace');
     }
     return missionRailActiveBeat(activeCount, localMissions.length);
-  }, [
-    listReady,
-    localMissions.length,
-    activeCount,
-    workspace?.name,
-  ]);
+  }, [listReady, localMissions.length, activeCount, workspace?.name]);
 
   function toggleSection(id: RailSectionId) {
     setCollapsed((prev) => {
-      const next = prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id];
+      const next = prev.includes(id)
+        ? prev.filter((s) => s !== id)
+        : [...prev, id];
       saveCollapsedSections(next);
       return next;
     });
@@ -294,7 +339,8 @@ export function MissionRail() {
         setNote(
           result.ok
             ? closeMissionNote(result.terminatedSessionIds.length)
-            : result.error ?? 'Não foi possível provar a saída dos processos.',
+            : (result.error ??
+                'Não foi possível provar a saída dos processos.'),
         );
       } finally {
         // Sem finally, uma rejeição deixava `busy` preso e travava TODOS os
@@ -370,9 +416,7 @@ export function MissionRail() {
       hands > 0 ? ` · ${hands} entrega${hands === 1 ? '' : 's'}` : '';
     const budget = summarizeMissionBudget(mission);
     const budgetBit =
-      budget.hasContract && budget.label !== '—'
-        ? ` · ${budget.label}`
-        : '';
+      budget.hasContract && budget.label !== '—' ? ` · ${budget.label}` : '';
     const route = missionRouteDisplay(mission.latestRoute);
     const routeBit = route ? ` · ${route.meta}` : '';
     const laneBit =
@@ -399,11 +443,18 @@ export function MissionRail() {
         .map(([paneId]) => paneId);
       const live = livePaneIdsForMission(mission.id);
       const ids = live.length > 0 ? live : paneIds;
-      const busyCount = ids.filter(
+      const activeIds = ids.filter((paneId) => {
+        const state = paneStates.get(paneId);
+        return state !== 'exited' && state !== 'hibernated';
+      });
+      const busyCount = activeIds.filter(
         (paneId) => paneStates.get(paneId) === 'busy',
       ).length;
-      const spawningCount = ids.filter(
+      const spawningCount = activeIds.filter(
         (paneId) => paneStates.get(paneId) === 'spawning',
+      ).length;
+      const endedCount = ids.filter(
+        (paneId) => paneStates.get(paneId) === 'exited',
       ).length;
       const omp = summarizeOmpMissionActivity(ompSessions, mission.id);
       const ompBit = ompRailMetaFragment(omp);
@@ -423,9 +474,24 @@ export function MissionRail() {
         const agents = spawningCount + omp.starting;
         return `${agents} agente${agents === 1 ? '' : 's'} iniciando${elapsedBit}${ompSuffix}${handBit}${budgetBit}${routeBit}`;
       }
-      if (ids.length > 0 || omp.idle > 0) {
-        const agents = ids.length + omp.idle;
+      if (activeIds.length > 0 || omp.idle > 0) {
+        const agents = activeIds.length + omp.idle;
         return `${agents} agente${agents === 1 ? '' : 's'} no grid${elapsedBit}${ompSuffix}${handBit}${budgetBit}${routeBit}`;
+      }
+      if (
+        endedCount > 0 &&
+        omp.working === 0 &&
+        omp.starting === 0 &&
+        omp.idle === 0
+      ) {
+        const latestStatus = latestHandoffByMission.get(mission.id)?.status;
+        const report =
+          latestStatus === 'blocked' || latestStatus === 'stalled'
+            ? ' · bloqueio reportado'
+            : latestStatus === 'failed'
+              ? ' · falha reportada'
+              : '';
+        return `${endedCount} agente${endedCount === 1 ? '' : 's'} encerrado${endedCount === 1 ? '' : 's'}${report}${handBit}${budgetBit}${routeBit}`;
       }
       if (ompBit) {
         return `${ompBit}${elapsedBit}${handBit}${budgetBit}${routeBit}`;
@@ -437,11 +503,8 @@ export function MissionRail() {
     }
     if (mission.status === 'blocked') {
       return `${
-        missionRailResumeCopy(
-          mission.status,
-          liveInGrid,
-          mission.intentState,
-        ).meta ?? 'Clique para retomar'
+        missionRailResumeCopy(mission.status, liveInGrid, mission.intentState)
+          .meta ?? 'Clique para retomar'
       }${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
     if (mission.status === 'done' || mission.status === 'failed') {
@@ -456,8 +519,7 @@ export function MissionRail() {
     // Mission-only omp rpc workers have no PTY pane — open the OMP drawer so
     // the operator can see / approve without a dead reopen.
     const ompOnly =
-      ompLiveMissionIds.has(m.id) &&
-      livePaneIdsForMission(m.id).length === 0;
+      ompLiveMissionIds.has(m.id) && livePaneIdsForMission(m.id).length === 0;
     if (ompOnly) {
       openOmpPanel();
       setBusy(null);
@@ -477,11 +539,13 @@ export function MissionRail() {
   }
 
   return (
-    <aside className="mission-rail activity-rail" aria-label="Missões deste workspace">
+    <aside
+      className="mission-rail activity-rail"
+      aria-label="Missões deste workspace"
+    >
       <header className="mission-rail__head mission-rail__head--endorphin">
         <div className="mission-rail__heading">
-          <span className="mission-rail__kicker">{railBeat.kicker}</span>
-          <span className="mission-rail__title">Missões</span>
+          <span className="mission-rail__kicker">Missões</span>
           <span
             className="mission-rail__workspace"
             title={workspace?.path ?? undefined}
@@ -491,22 +555,12 @@ export function MissionRail() {
           <span className="mission-rail__summary" aria-live="polite">
             {!listReady
               ? 'a carregar…'
-              : railBeat.title}
-            {listReady && localMissions.length > 0 ? (
-              <span className="mission-rail__summary-line">{railBeat.line}</span>
-            ) : null}
+              : `${activeCount} ativa${activeCount === 1 ? '' : 's'} · ${
+                  localMissions.length
+                } ${localMissions.length === 1 ? 'missão' : 'missões'}`}
           </span>
         </div>
         <div className="mission-rail__head-actions">
-          <button
-            type="button"
-            className="mission-rail__new mission-rail__new--primary mission-rail__new--story"
-            title={`Nova missão neste workspace (${formatShortcut('mod', 'N')})`}
-            aria-label="Nova missão neste workspace"
-            onClick={openMissionWizard}
-          >
-            <PixelIcon name="plus" size={12} /> <span>Nova missão</span>
-          </button>
           <button
             type="button"
             className="mission-rail__board-btn"
@@ -517,100 +571,115 @@ export function MissionRail() {
             <PixelIcon name="board" size={11} />
           </button>
         </div>
-        {/* Chips do polish: a narrativa endorfinada fica acima, números aqui. */}
-        <div className="mission-rail__meta" role="status" aria-live="polite">
-          {!listReady ? (
-            <span className="mission-rail__chip mission-rail__chip--muted">
-              a carregar…
-            </span>
-          ) : (
-            <>
-              {gitBranch && (
-                <span
-                  className="mission-rail__chip mission-rail__chip--branch"
-                  title={`Worktree em ${gitBranch}${
-                    gitDirtyCount > 0
-                      ? ` · ${gitDirtyCount} alteração(ões) pendente(s)`
-                      : ' · limpo'
-                  }`}
-                >
-                  <PixelIcon name="files" size={10} />
-                  <span className="mission-rail__chip-value">{gitBranch}</span>
-                  {gitDirtyCount > 0 && (
-                    <span className="mission-rail__chip-label">
-                      {gitDirtyCount}△
-                    </span>
-                  )}
-                </span>
-              )}
-              <span
-                className="mission-rail__chip"
-                title="Missões em progresso ou bloqueadas neste workspace"
-              >
-                <span className="mission-rail__chip-value">{activeCount}</span>
-                <span className="mission-rail__chip-label">
-                  ativa{activeCount === 1 ? '' : 's'}
-                </span>
-              </span>
-              <span
-                className="mission-rail__chip"
-                title="Total de missões listadas nesta pasta"
-              >
-                <span className="mission-rail__chip-value">
-                  {localMissions.length}
-                </span>
-                <span className="mission-rail__chip-label">aqui</span>
-              </span>
-              {workspaceBudget.activeCount > 0 && (
-                <span
-                  className={`mission-rail__chip mission-rail__chip--budget${
-                    workspaceBudget.totalMaxTokens > 0 &&
-                    workspaceBudget.totalSpentTokens /
-                      Math.max(1, workspaceBudget.totalMaxTokens) >=
-                      0.8
-                      ? ' mission-rail__chip--warn'
-                      : ''
-                  }`}
-                  title="Orçamento agregado (intent contract: tokens estimados)"
-                >
-                  <span className="mission-rail__chip-value">
-                    {workspaceBudget.shortLabel}
-                  </span>
-                </span>
-              )}
-              {planMetricsLabel && (
-                <span
-                  className="mission-rail__chip mission-rail__chip--muted"
-                  title="Métricas locais: missões plan despachadas → promovidas (handoffs de plano)"
-                >
-                  <span className="mission-rail__chip-value">
-                    {planMetricsLabel}
-                  </span>
-                </span>
-              )}
-            </>
-          )}
-        </div>
       </header>
 
-      <div className="mission-rail__tools">
-        <label className="activity-rail__search">
-          <span className="settings-visually-hidden">
-            Filtrar missões deste workspace
-          </span>
-          <span className="activity-rail__search-icon" aria-hidden="true">
-            <PixelIcon name="search" size={11} />
-          </span>
-          <input
-            className="activity-rail__search-input"
-            type="search"
-            placeholder="Filtrar missões…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-        <AgentDropZone compact />
-      </div>
+      <details className="mission-rail__operations">
+        <summary>
+          <PixelIcon name="config" size={10} />
+          <span>Operações</span>
+          {gitDirtyCount > 0 && (
+            <span className="mission-rail__operations-alert">
+              {gitDirtyCount}{' '}
+              {gitDirtyCount === 1 ? 'alteração' : 'alterações'}
+            </span>
+          )}
+        </summary>
+        <div className="mission-rail__operations-body">
+          <div className="mission-rail__meta" role="status" aria-live="polite">
+            {!listReady ? (
+              <span className="mission-rail__chip mission-rail__chip--muted">
+                a carregar…
+              </span>
+            ) : (
+              <>
+                {gitBranch && (
+                  <span
+                    className="mission-rail__chip mission-rail__chip--branch"
+                    title={`Worktree em ${gitBranch}${
+                      gitDirtyCount > 0
+                        ? ` · ${gitDirtyCount} ${
+                            gitDirtyCount === 1
+                              ? 'alteração pendente'
+                              : 'alterações pendentes'
+                          }`
+                        : ' · limpo'
+                    }`}
+                  >
+                    <PixelIcon name="files" size={10} />
+                    <span className="mission-rail__chip-value">
+                      {gitBranch}
+                    </span>
+                    {gitDirtyCount > 0 && (
+                      <span className="mission-rail__chip-label">
+                        {gitDirtyCount}△
+                      </span>
+                    )}
+                  </span>
+                )}
+                <span className="mission-rail__chip">
+                  <span className="mission-rail__chip-value">
+                    {activeCount}
+                  </span>
+                  <span className="mission-rail__chip-label">
+                    ativa{activeCount === 1 ? '' : 's'}
+                  </span>
+                </span>
+                <span className="mission-rail__chip">
+                  <span className="mission-rail__chip-value">
+                    {localMissions.length}
+                  </span>
+                  <span className="mission-rail__chip-label">aqui</span>
+                </span>
+                {workspaceBudget.activeCount > 0 && (
+                  <span
+                    className={`mission-rail__chip mission-rail__chip--budget${
+                      workspaceBudget.totalMaxTokens > 0 &&
+                      workspaceBudget.totalSpentTokens /
+                        Math.max(1, workspaceBudget.totalMaxTokens) >=
+                        0.8
+                        ? ' mission-rail__chip--warn'
+                        : ''
+                    }`}
+                    title="Orçamento agregado das missões ativas"
+                  >
+                    <span className="mission-rail__chip-value">
+                      {workspaceBudget.shortLabel}
+                    </span>
+                  </span>
+                )}
+                {planMetricsLabel && (
+                  <span className="mission-rail__chip mission-rail__chip--muted">
+                    <span className="mission-rail__chip-value">
+                      {planMetricsLabel}
+                    </span>
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+          <AgentDropZone compact />
+        </div>
+      </details>
+
+      {(localMissions.length >= 4 || extIssues.length > 0) && (
+        <div className="mission-rail__tools">
+          <label className="activity-rail__search">
+            <span className="settings-visually-hidden">
+              Filtrar missões deste workspace
+            </span>
+            <span className="activity-rail__search-icon" aria-hidden="true">
+              <PixelIcon name="search" size={11} />
+            </span>
+            <input
+              className="activity-rail__search-input"
+              type="search"
+              placeholder="Filtrar missões…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+        </div>
+      )}
 
       <div className="activity-rail__body">
         <MissionClarifyCards missions={missions} handoffs={handoffs} />
@@ -618,7 +687,9 @@ export function MissionRail() {
           <section className="activity-rail__section activity-rail__section--issues">
             <div className="activity-rail__section-head activity-rail__section-head--static">
               <span className="activity-rail__section-label">Issues</span>
-              <span className="activity-rail__section-count">{extIssues.length}</span>
+              <span className="activity-rail__section-count">
+                {extIssues.length}
+              </span>
             </div>
             <ul className="mission-rail__list activity-rail__list">
               {extIssues.map((i) => (
@@ -687,7 +758,7 @@ export function MissionRail() {
                 subtitle="neste workspace"
                 variant="primary"
                 size="sm"
-                onClick={openMissionWizard}
+                onClick={() => openAgentic()}
               />
             }
           />
@@ -725,13 +796,47 @@ export function MissionRail() {
                     <ul className="mission-rail__list activity-rail__list">
                       {section.missions.map((m) => {
                         const liveInGrid = openMissionIds.has(m.id);
+                        const missionPanes = panesByMission.get(m.id) ?? [];
                         const pinned = pinnedIds.includes(m.id);
                         const lane = m.intentContract?.lane ?? null;
+                        const ompActivity = summarizeOmpMissionActivity(
+                          ompSessions,
+                          m.id,
+                        );
+                        const hasActivePaneRuntime = missionPanes.some(
+                          (pane) => {
+                            const state = paneStates.get(pane.id);
+                            return (
+                              state === undefined ||
+                              state === 'spawning' ||
+                              state === 'busy' ||
+                              state === 'idle'
+                            );
+                          },
+                        );
+                        const hasObservedRuntime =
+                          missionPanes.length > 0 ||
+                          ompActivity.working > 0 ||
+                          ompActivity.starting > 0 ||
+                          ompActivity.idle > 0 ||
+                          ompActivity.down > 0;
+                        const hasActiveRuntime =
+                          hasActivePaneRuntime ||
+                          ompActivity.working > 0 ||
+                          ompActivity.starting > 0 ||
+                          ompActivity.idle > 0 ||
+                          (!hasObservedRuntime &&
+                            Boolean(m.orchestratorSessionId));
                         const statusUi = railStatusDisplay(
                           m.status,
                           liveInGrid,
                           m.intentState,
                           lane,
+                          {
+                            hasActiveRuntime,
+                            latestHandoffStatus:
+                              latestHandoffByMission.get(m.id)?.status,
+                          },
                         );
                         const resumeCopy = missionRailResumeCopy(
                           m.status,
@@ -740,14 +845,34 @@ export function MissionRail() {
                           lane,
                         );
                         const routeDisplay = missionRouteDisplay(m.latestRoute);
+                        const canPromotePlan =
+                          lane === 'plan' &&
+                          m.status !== 'done' &&
+                          m.status !== 'failed';
+                        const canBlockMission =
+                          m.status === 'pending' || m.status === 'running';
+                        const listAction = missionListAction(m, liveInGrid);
+                        const hasListAction =
+                          archivedIds.includes(m.id) || listAction !== 'none';
+                        const rowActionCount =
+                          Number(canPromotePlan) +
+                          Number(canBlockMission) +
+                          1 +
+                          Number(hasListAction);
                         const dotStatus =
-                          m.status === 'blocked' || m.status === 'failed'
-                            ? m.status
+                          statusUi.tone === 'blocked' ||
+                          statusUi.tone === 'failed' ||
+                          statusUi.tone === 'done'
+                            ? statusUi.tone
                             : liveInGrid || m.status === 'running'
                               ? 'running'
                               : m.status;
                         return (
-                          <li key={m.id} className="mission-rail__row">
+                          <li
+                            key={m.id}
+                            className="mission-rail__row"
+                            data-action-count={rowActionCount}
+                          >
                             <button
                               className={`mission-rail__item ${
                                 liveInGrid
@@ -770,9 +895,7 @@ export function MissionRail() {
                                     status pill ao lado cortava "Execução + QA"
                                     em "Execução+…". */}
                                 <span className="mission-rail__item-title">
-                                  {pinned && (
-                                    <PixelIcon name="star" size={9} />
-                                  )}
+                                  {pinned && <PixelIcon name="star" size={9} />}
                                   {pinned ? ' ' : ''}
                                   {m.title}
                                 </span>
@@ -790,98 +913,168 @@ export function MissionRail() {
                                 </span>
                               </span>
                             </button>
-                            {m.intentContract?.lane === 'plan' &&
-                              m.status !== 'done' &&
-                              m.status !== 'failed' && (
-                              <button
-                                type="button"
-                                className="mission-rail__block"
-                                disabled={busy !== null}
-                                title="Executar plano — promover lane plan → código PREVC"
-                                aria-label={`Executar plano da missão ${m.title}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void promotePlan(m);
-                                }}
+                            {liveInGrid && missionPanes.length > 0 && (
+                              <ul
+                                className="mission-rail__agents"
+                                aria-label={`Agentes de ${m.title}`}
                               >
-                                <PixelIcon name="mission" size={10} />
-                              </button>
-                            )}
-                            {(m.status === 'pending' ||
-                              m.status === 'running') && (
-                              <button
-                                type="button"
-                                className="mission-rail__block"
-                                disabled={busy !== null}
-                                title="Encerrar como bloqueada (com justificativa)"
-                                aria-label={`Encerrar missão ${m.title} como bloqueada`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void blockMission(m);
-                                }}
-                              >
-                                <PixelIcon name="warn" size={10} />
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="mission-rail__pin"
-                              title={pinned ? 'Desafixar' : 'Fixar no topo'}
-                              aria-label={
-                                pinned ? 'Desafixar missão' : 'Fixar missão'
-                              }
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                togglePin(m.id);
-                              }}
-                            >
-                              <PixelIcon
-                                name={pinned ? 'star' : 'star-outline'}
-                                size={11}
-                              />
-                            </button>
-                            {archivedIds.includes(m.id) ? (
-                              <button
-                                className="mission-rail__remove"
-                                disabled={busy !== null}
-                                title="Trazer de volta para a lista"
-                                aria-label={`Desarquivar missão ${m.title}`}
-                                onClick={() => {
-                                  setArchivedIds(
-                                    setMissionArchived(
-                                      workspacePath,
-                                      m.id,
-                                      false,
-                                    ),
+                                {missionPanes.map((pane) => {
+                                  const state =
+                                    paneStates.get(pane.id) ?? 'spawning';
+                                  const agentKey =
+                                    pane.agentName?.trim().toLocaleLowerCase();
+                                  const latestAgentHandoff = agentKey
+                                    ? latestHandoffByAgent.get(
+                                        `${m.id}\u0000${agentKey}`,
+                                      )
+                                    : undefined;
+                                  const outcome =
+                                    latestAgentHandoff?.status === 'blocked' ||
+                                    latestAgentHandoff?.status === 'failed'
+                                      ? latestAgentHandoff.status
+                                      : m.status === 'blocked' ||
+                                          m.status === 'failed'
+                                        ? m.status
+                                        : undefined;
+                                  const view = paneSessionView(state, {
+                                    outcome,
+                                  });
+                                  const focused = pane.id === focusedPaneId;
+                                  const role =
+                                    pane.role === 'orchestrator'
+                                      ? 'Maestro'
+                                      : 'Especialista';
+                                  return (
+                                    <li key={pane.id}>
+                                      <button
+                                        type="button"
+                                        className={`mission-rail__agent${
+                                          focused
+                                            ? ' mission-rail__agent--focused'
+                                            : ''
+                                        }`}
+                                        onClick={() => focusPane(pane.id)}
+                                        aria-current={
+                                          focused ? 'true' : undefined
+                                        }
+                                        title={`${pane.agentName ?? pane.title} · ${view.tip}`}
+                                        aria-label={`Focar ${pane.agentName ?? pane.title}. ${view.tip}`}
+                                      >
+                                        <span
+                                          className={`mission-rail__agent-dot mission-rail__agent-dot--${view.mod}`}
+                                          aria-hidden="true"
+                                        />
+                                        <span className="mission-rail__agent-name">
+                                          {pane.agentName ?? pane.title}
+                                        </span>
+                                        <span className="mission-rail__agent-meta">
+                                          <span className="mission-rail__agent-role">
+                                            {role}
+                                          </span>
+                                          <span aria-hidden="true">·</span>
+                                          <span className="mission-rail__agent-state">
+                                            {view.chip}
+                                          </span>
+                                        </span>
+                                      </button>
+                                    </li>
                                   );
-                                  setNote(null);
+                                })}
+                              </ul>
+                            )}
+                            <div
+                              className="mission-rail__row-actions"
+                              role="group"
+                              aria-label={`Ações da missão ${m.title}`}
+                            >
+                              {canPromotePlan && (
+                                <button
+                                  type="button"
+                                  className="mission-rail__row-action mission-rail__row-action--promote"
+                                  disabled={busy !== null}
+                                  title="Executar plano — promover lane plan → código PREVC"
+                                  aria-label={`Executar plano da missão ${m.title}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void promotePlan(m);
+                                  }}
+                                >
+                                  <PixelIcon name="mission" size={10} />
+                                </button>
+                              )}
+                              {canBlockMission && (
+                                <button
+                                  type="button"
+                                  className="mission-rail__row-action mission-rail__row-action--block"
+                                  disabled={busy !== null}
+                                  title="Encerrar como bloqueada (com justificativa)"
+                                  aria-label={`Encerrar missão ${m.title} como bloqueada`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void blockMission(m);
+                                  }}
+                                >
+                                  <PixelIcon name="warn" size={10} />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="mission-rail__row-action mission-rail__row-action--pin"
+                                title={pinned ? 'Desafixar' : 'Fixar no topo'}
+                                aria-label={
+                                  pinned ? 'Desafixar missão' : 'Fixar missão'
+                                }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  togglePin(m.id);
                                 }}
                               >
-                                <PixelIcon name="restart" size={10} />
+                                <PixelIcon
+                                  name={pinned ? 'star' : 'star-outline'}
+                                  size={11}
+                                />
                               </button>
-                            ) : (
-                              missionListAction(m, liveInGrid) !== 'none' && (
+                              {archivedIds.includes(m.id) ? (
                                 <button
-                                  className="mission-rail__remove"
+                                  type="button"
+                                  className="mission-rail__row-action mission-rail__row-action--remove"
                                   disabled={busy !== null}
-                                  title={
-                                    missionActionCopy(
-                                      missionListAction(m, liveInGrid),
-                                    ).title
-                                  }
-                                  aria-label={`${
-                                    missionActionCopy(
-                                      missionListAction(m, liveInGrid),
-                                    ).verb
-                                  } missão ${m.title}`}
-                                  onClick={() =>
-                                    closeOrDiscardMission(m, liveInGrid)
-                                  }
+                                  title="Trazer de volta para a lista"
+                                  aria-label={`Desarquivar missão ${m.title}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setArchivedIds(
+                                      setMissionArchived(
+                                        workspacePath,
+                                        m.id,
+                                        false,
+                                      ),
+                                    );
+                                    setNote(null);
+                                  }}
                                 >
-                                  <PixelIcon name="close" size={10} />
+                                  <PixelIcon name="restart" size={10} />
                                 </button>
-                              )
-                            )}
+                              ) : (
+                                listAction !== 'none' && (
+                                  <button
+                                    type="button"
+                                    className="mission-rail__row-action mission-rail__row-action--remove"
+                                    disabled={busy !== null}
+                                    title={missionActionCopy(listAction).title}
+                                    aria-label={`${
+                                      missionActionCopy(listAction).verb
+                                    } missão ${m.title}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void closeOrDiscardMission(m, liveInGrid);
+                                    }}
+                                  >
+                                    <PixelIcon name="close" size={10} />
+                                  </button>
+                                )
+                              )}
+                            </div>
                           </li>
                         );
                       })}

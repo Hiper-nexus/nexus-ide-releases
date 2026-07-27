@@ -54,7 +54,7 @@ function immediateSquadAuthority(
 ): SpawnAuthority | null {
   const agent =
     squad.agents.find((candidate) => candidate.category === "orchestrator") ??
-    squad.agents[0];
+    null;
   if (!agent) return null;
   return {
     squadId: squad.id,
@@ -240,7 +240,7 @@ export function issueImmediateSquadSpawnGrant(
   const orchestrator =
     input.squad.agents.find(
       (candidate) => candidate.category === "orchestrator",
-    ) ?? input.squad.agents[0];
+    ) ?? null;
   if (
     !orchestrator ||
     runtime.adapterId !== orchestrator.cli ||

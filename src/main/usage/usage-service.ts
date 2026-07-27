@@ -9,7 +9,11 @@ import {
   type UsageSnapshot,
 } from '../../shared/usage-types';
 import { requireGamificationService } from '../gamification/gamification-service';
-import { getContextBySession } from '../orch/gate';
+import {
+  executionScopeFor,
+  getContextBySession,
+  type AgentGateContext,
+} from '../orch/gate';
 import { getPaneAuthzInfo } from '../orch/pane-registry';
 import {
   broadcastToProject,
@@ -52,6 +56,8 @@ interface DictatedAttribution {
 interface ScopeTelemetryState {
   readonly scope: ProjectExecutionScope;
   readonly stores: ProjectUsageStoreSuite;
+  /** Main-authorized isolated checkouts observed for live agent sessions. */
+  readonly executionRoots: Set<string>;
   readonly dictated: Map<string, DictatedAttribution>;
   readonly resumedPaneIds: Map<string, Set<string>>;
   readonly accountIdByProviderSession: Map<string, string>;
@@ -79,6 +85,13 @@ function isInside(root: string, candidate: string): boolean {
       !relative.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relative))
   );
+}
+
+export function isUsageCwdAuthorized(
+  ctx: Pick<AgentGateContext, 'scope' | 'executionScope'>,
+  cwd: string,
+): boolean {
+  return isInside(executionScopeFor(ctx).rootRealPath, cwd);
 }
 
 function paneUsage(row: ReturnType<ProjectUsageStoreSuite['usage']['totalsByPane']>[number]): PaneUsage {
@@ -165,6 +178,7 @@ export class UsageTelemetryService {
     if (provider === 'claude' && !state.watcher) {
       const watcher = new ClaudeTranscriptWatcher({
         workspacePath: state.scope.rootRealPath,
+        workspacePaths: () => state.executionRoots,
         onEvent: (event) => this.#onClaudeEvent(state, event),
       });
       watcher.start();
@@ -183,6 +197,7 @@ export class UsageTelemetryService {
       state.watcher = null;
       if (state.broadcastTimer) clearTimeout(state.broadcastTimer);
       state.broadcastTimer = null;
+      state.executionRoots.clear();
       state.dictated.clear();
       state.resumedPaneIds.clear();
       state.accountIdByProviderSession.clear();
@@ -217,6 +232,7 @@ export class UsageTelemetryService {
     const state: ScopeTelemetryState = {
       scope: immutableScope,
       stores: this.#registry.forScope(immutableScope),
+      executionRoots: new Set([immutableScope.rootRealPath]),
       dictated: new Map(),
       resumedPaneIds: new Map(),
       accountIdByProviderSession: new Map(),
@@ -230,6 +246,21 @@ export class UsageTelemetryService {
     return state;
   }
 
+  #registerExecutionRoot(
+    state: ScopeTelemetryState,
+    executionRoot: string,
+  ): void {
+    const key = scopeKey(state.scope);
+    const rootOwner = this.#rootOwners.get(executionRoot);
+    if (rootOwner && rootOwner !== key) {
+      throw new Error(
+        'one execution root resolved to multiple project scopes',
+      );
+    }
+    this.#rootOwners.set(executionRoot, key);
+    state.executionRoots.add(executionRoot);
+  }
+
   #onSessionDictated(info: DictatedSessionInfo): void {
     if (info.adapterId !== 'claude' && info.adapterId !== 'codex') return;
     const ctx = getContextBySession(info.ptySessionId);
@@ -239,9 +270,16 @@ export class UsageTelemetryService {
     }
     const state = this.#ensureScope(ctx.scope);
     const cwd = fs.realpathSync(info.cwd);
-    if (!isInside(state.scope.rootRealPath, cwd)) {
-      throw new Error('dictated session cwd escapes its project scope');
+    const executionRoot = fs.realpathSync(
+      executionScopeFor(ctx).rootRealPath,
+    );
+    if (
+      executionRoot !== executionScopeFor(ctx).rootRealPath ||
+      !isUsageCwdAuthorized(ctx, cwd)
+    ) {
+      throw new Error('dictated session cwd escapes its execution scope');
     }
+    this.#registerExecutionRoot(state, executionRoot);
     if (info.providerSessionId && info.paneId) {
       saveProviderPaneSession(
         state.scope,
@@ -481,7 +519,16 @@ export class UsageTelemetryService {
     this.#codexScanner = new CodexUsageScanner({
       isWatched: (cwd) => this.#scopeForCwd(cwd) !== null,
       onEvent: (event, cwd) => {
-        const state = this.#scopeForCwd(cwd);
+        // Fresh Codex sessions are main-dictated before their transcript is
+        // scanned. Prefer that exact provider-session binding: isolated task
+        // worktrees intentionally live outside the coordination checkout and
+        // therefore cannot be attributed safely from cwd alone.
+        const exact = [...this.#states.values()].filter(
+          (candidate) =>
+            candidate.dictated.get(event.sessionId)?.adapterId === 'codex',
+        );
+        const state =
+          exact.length === 1 ? exact[0] : this.#scopeForCwd(cwd);
         if (!state) return;
         this.#onCodexEvent(state, event);
       },
@@ -496,22 +543,24 @@ export class UsageTelemetryService {
     } catch {
       return null;
     }
-    const matches = [...this.#states.values()].filter((state) =>
-      isInside(state.scope.rootRealPath, real),
+    const matches = [...this.#states.values()].flatMap((state) =>
+      [...state.executionRoots]
+        .filter((root) => isInside(root, real))
+        .map((root) => ({ state, root })),
     );
     if (matches.length === 0) return null;
     matches.sort(
       (left, right) =>
-        right.scope.rootRealPath.length - left.scope.rootRealPath.length,
+        right.root.length - left.root.length,
     );
     if (
       matches.length > 1 &&
-      matches[0].scope.rootRealPath.length ===
-        matches[1].scope.rootRealPath.length
+      matches[0].root.length === matches[1].root.length &&
+      matches[0].state !== matches[1].state
     ) {
       return null;
     }
-    return matches[0];
+    return matches[0].state;
   }
 
   #scheduleBroadcast(state: ScopeTelemetryState): void {

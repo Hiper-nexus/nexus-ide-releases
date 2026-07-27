@@ -1,0 +1,40 @@
+{
+  "name": "brace-expansion",
+  "version": "5.0.8",
+  "description": "Nexus compatibility packaging for the patched brace-expansion 5.0.8 implementation",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.cjs",
+  "module": "./index.mjs",
+  "types": "./index.d.cts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": {
+        "types": "./index.d.mts",
+        "default": "./index.mjs"
+      },
+      "require": {
+        "types": "./index.d.cts",
+        "default": "./index.cjs"
+      },
+      "default": "./index.cjs"
+    }
+  },
+  "files": [
+    "index.cjs",
+    "index.mjs",
+    "index.d.cts",
+    "index.d.mts",
+    "upstream",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "dependencies": {
+    "balanced-match": "4.0.2"
+  },
+  "engines": {
+    "node": "20 || >=22"
+  }
+}

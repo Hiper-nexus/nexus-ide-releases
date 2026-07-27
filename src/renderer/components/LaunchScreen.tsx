@@ -1,20 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { AdapterInfo } from '../../shared/types';
-import type { ProgressiveLaunch } from '../../shared/progressive-onboarding';
-import { useWorkspaceStore } from '../state/workspace-store';
-import { useSettingsStore } from '../state/settings-store';
-import { useMissionWizardStore } from '../state/mission-wizard-store';
-import { useOrchStore } from '../state/orch-store';
+import { useEffect, useMemo, useState } from "react";
+import type { AccountInfo } from "../../shared/account-types";
+import type { AdapterInfo } from "../../shared/types";
+import type { ProviderSettingsInfo } from "../../shared/provider-settings-types";
+import type { ProgressiveLaunch } from "../../shared/progressive-onboarding";
+import { useWorkspaceStore } from "../state/workspace-store";
+import { useSettingsStore } from "../state/settings-store";
+import { useMissionWizardStore } from "../state/mission-wizard-store";
+import { useOrchStore } from "../state/orch-store";
 import {
   clearProgressiveLaunch,
   stashProgressiveLaunch,
-} from '../lib/progressive-launch';
-import { NexusMark } from './NexusMark';
-import { PixelIcon } from './PixelIcon';
-import { ProgressiveOnboarding } from './ProgressiveOnboarding';
-import { useProductFlags } from '../lib/use-product-flags';
-import { formatShortcut } from '../lib/platform';
-import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
+} from "../lib/progressive-launch";
+import { NexusMark } from "./NexusMark";
+import { PixelIcon } from "./PixelIcon";
+import { ProgressiveOnboarding } from "./ProgressiveOnboarding";
+import { useProductFlags } from "../lib/use-product-flags";
+import { formatShortcut } from "../lib/platform";
+import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
+import { missionRuntimeReadiness } from "../orch/mission-runtime-readiness";
 
 /**
  * Launch / onboarding screen — the first surface when no workspace is open:
@@ -22,11 +25,11 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
  * Choosing a workspace roots every new pane/mission at that folder.
  */
 
-const SKIP_KEY = 'nexus.progressiveOnboarding.skipped';
+const SKIP_KEY = "nexus.progressiveOnboarding.skipped";
 
 function timeAgo(ts: number): string {
   const mins = Math.max(0, Math.floor((Date.now() - ts) / 60000));
-  if (mins < 1) return 'agora';
+  if (mins < 1) return "agora";
   if (mins < 60) return `${mins}m atrás`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h atrás`;
@@ -42,40 +45,70 @@ export function LaunchScreen() {
   const openSettings = useSettingsStore((s) => s.toggleDrawer);
   const openWizard = useMissionWizardStore((s) => s.openForNewWorkspace);
   const mcpInfo = useOrchStore((s) => s.mcpInfo);
-  const [manual, setManual] = useState('');
   const [busy, setBusy] = useState(false);
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [providers, setProviders] = useState<ProviderSettingsInfo[]>([]);
+  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [adaptersLoaded, setAdaptersLoaded] = useState(false);
+  const [readinessError, setReadinessError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(() => {
     try {
-      return sessionStorage.getItem(SKIP_KEY) === '1';
+      return sessionStorage.getItem(SKIP_KEY) === "1";
     } catch {
       return false;
     }
   });
 
-  const installed = useMemo(
-    () => adapters.filter((adapter) => adapter.installed),
-    [adapters],
+  const readiness = useMemo(
+    () => missionRuntimeReadiness(adapters, providers, accounts),
+    [accounts, adapters, providers],
   );
   const mostRecent = recents[0] ?? null;
 
   useEffect(() => {
     let cancelled = false;
-    void window.nexus.adapters
-      .list()
-      .then((next) => {
-        if (!cancelled) setAdapters(next);
-      })
-      .catch(() => {
-        if (!cancelled) setError('Não foi possível verificar as CLIs instaladas.');
-      })
-      .finally(() => {
-        if (!cancelled) setAdaptersLoaded(true);
-      });
+    let requestRevision = 0;
+    const refreshInventory = (): void => {
+      const revision = ++requestRevision;
+      setAdaptersLoaded(false);
+      setReadinessError(null);
+      void Promise.all([
+        window.nexus.adapters.list(),
+        window.nexus.providers.list(),
+        window.nexus.accounts.list(),
+      ])
+        .then(([nextAdapters, nextProviders, nextAccounts]) => {
+          if (cancelled || revision !== requestRevision) return;
+          setAdapters(nextAdapters);
+          setProviders(nextProviders);
+          setAccounts(nextAccounts);
+        })
+        .catch(() => {
+          if (cancelled || revision !== requestRevision) return;
+          setAdapters([]);
+          setProviders([]);
+          setAccounts([]);
+          setReadinessError(
+            "Não foi possível verificar a rota local de execução.",
+          );
+        })
+        .finally(() => {
+          if (!cancelled && revision === requestRevision) {
+            setAdaptersLoaded(true);
+          }
+        });
+    };
+    const stopAdapters = window.nexus.adapters.onChanged(refreshInventory);
+    const stopProviders = window.nexus.providers.onChanged(refreshInventory);
+    const stopAccounts = window.nexus.accounts.onChanged(refreshInventory);
+    refreshInventory();
     return () => {
       cancelled = true;
+      requestRevision += 1;
+      stopAdapters();
+      stopProviders();
+      stopAccounts();
     };
   }, []);
 
@@ -85,14 +118,14 @@ export function LaunchScreen() {
         (event.metaKey || event.ctrlKey) &&
         !event.shiftKey &&
         !event.altKey &&
-        event.key.toLowerCase() === 'o'
+        event.key.toLowerCase() === "o"
       ) {
         event.preventDefault();
         openWizard();
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [openWizard]);
 
   async function openPath(path: string) {
@@ -105,17 +138,28 @@ export function LaunchScreen() {
       setError(
         cause instanceof Error
           ? cause.message
-          : 'Não foi possível abrir este workspace.',
+          : "Não foi possível abrir este workspace.",
       );
     } finally {
       setBusy(false);
     }
   }
 
-  async function openManual() {
-    const path = manual.trim();
-    if (!path) return;
-    await openPath(path);
+  async function chooseWorkspaceFolder() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await pick();
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Não foi possível abrir esta pasta.",
+      );
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleProgressiveLaunch(plan: ProgressiveLaunch) {
@@ -141,7 +185,7 @@ export function LaunchScreen() {
       setError(
         cause instanceof Error
           ? cause.message
-          : 'Não foi possível abrir este workspace.',
+          : "Não foi possível abrir este workspace.",
       );
     } finally {
       setBusy(false);
@@ -150,7 +194,7 @@ export function LaunchScreen() {
 
   function skipToAdvanced() {
     try {
-      sessionStorage.setItem(SKIP_KEY, '1');
+      sessionStorage.setItem(SKIP_KEY, "1");
     } catch {
       /* ignore */
     }
@@ -159,7 +203,10 @@ export function LaunchScreen() {
 
   if (!advanced) {
     return (
-      <div className="launch launch--progressive" data-testid="launch-progressive">
+      <div
+        className="launch launch--progressive"
+        data-testid="launch-progressive"
+      >
         <header className="launch__topbar">
           <div className="workspace-bar__brand">
             <NexusMark size={15} className="workspace-bar__logo" />
@@ -184,23 +231,23 @@ export function LaunchScreen() {
             onSkip={skipToAdvanced}
             onOpenTerminalOnly={() => {
               stashProgressiveLaunch({
-                mode: 'terminal-only',
+                mode: "terminal-only",
                 paneCount: 1,
-                agentDistribution: 'none',
+                agentDistribution: "none",
                 openWithoutAi: true,
               });
               void pick().catch((cause) => {
                 setError(
                   cause instanceof Error
                     ? cause.message
-                    : 'Não foi possível abrir este workspace.',
+                    : "Não foi possível abrir este workspace.",
                 );
               });
             }}
           />
-          {error && (
+          {(error || readinessError) && (
             <p className="launch__error" role="alert" style={{ marginTop: 12 }}>
-              {error}
+              {error ?? readinessError}
             </p>
           )}
         </main>
@@ -243,39 +290,51 @@ export function LaunchScreen() {
           <header className="launch__head">
             <NexusMark size={32} className="launch__logo" />
             <div>
-              <h1 id="launch-title" className="launch__title">NexusIDE</h1>
-              <p className="launch__tagline">
-                Centro de operações multiagente
-              </p>
+              <h1 id="launch-title" className="launch__title">
+                NexusIDE
+              </h1>
+              <p className="launch__tagline">Centro de operações multiagente</p>
             </div>
           </header>
 
           <div className="launch__readiness" aria-label="Estado do sistema">
-            <span className={installed.length > 0 ? 'is-live' : ''}>
+            <span
+              className={readiness.detectedAdapters.length > 0 ? "is-live" : ""}
+            >
               <i aria-hidden="true" />
               {adaptersLoaded
-                ? `${installed.length} CLI${installed.length === 1 ? '' : 's'} pronta${installed.length === 1 ? '' : 's'}`
-                : 'Verificando CLIs'}
+                ? `${readiness.detectedAdapters.length} CLI${readiness.detectedAdapters.length === 1 ? "" : "s"} detectada${readiness.detectedAdapters.length === 1 ? "" : "s"}`
+                : "Verificando CLIs"}
             </span>
-            <span className={mcpInfo?.running ? 'is-live' : ''}>
+            <span className={readiness.hasOperationalRoute ? "is-live" : ""}>
+              <i aria-hidden="true" />
+              {readiness.hasOperationalRoute
+                ? "Rota de missão autenticada e verificada"
+                : adaptersLoaded
+                  ? "Rota de missão requer configuração"
+                  : "Verificando rota de missão"}
+            </span>
+            <span className={mcpInfo?.running ? "is-live" : ""}>
               <i aria-hidden="true" />
               {mcpInfo?.running
                 ? `MCP online · ${mcpInfo.toolCount} ferramentas`
                 : mcpInfo
-                  ? 'MCP indisponível'
-                  : 'MCP conectando'}
+                  ? "MCP indisponível"
+                  : "MCP conectando"}
             </span>
           </div>
 
           <div className="launch__next">
             <p className="launch__next-label">Próxima ação</p>
             <h2>
-              {mostRecent ? `Retomar ${mostRecent.name}` : 'Abrir seu primeiro workspace'}
+              {mostRecent
+                ? `Retomar ${mostRecent.name}`
+                : "Abrir seu primeiro workspace"}
             </h2>
             <p>
               {mostRecent
-                ? 'Reabra o último contexto com seus panes e missões preservados.'
-                : 'Escolha a pasta que vai delimitar os terminais, agentes e ferramentas.'}
+                ? "Reabra o último contexto com seus panes e missões preservados."
+                : "Escolha a pasta que vai delimitar os terminais, agentes e ferramentas."}
             </p>
           </div>
 
@@ -288,7 +347,7 @@ export function LaunchScreen() {
                 autoFocus
               >
                 <PixelIcon name="mission" size={14} />
-                {busy ? 'Abrindo…' : `Continuar ${mostRecent.name}`}
+                {busy ? "Abrindo…" : `Continuar ${mostRecent.name}`}
               </button>
             ) : (
               <button
@@ -302,46 +361,46 @@ export function LaunchScreen() {
               </button>
             )}
             {mostRecent && (
-              <button className="launch__secondary" onClick={openWizard} disabled={busy}>
+              <button
+                className="launch__secondary"
+                onClick={openWizard}
+                disabled={busy}
+              >
                 <PixelIcon name="plus" size={12} />
-                Novo workspace <kbd>{formatShortcut('mod', 'O')}</kbd>
+                Novo workspace <kbd>{formatShortcut("mod", "O")}</kbd>
               </button>
             )}
           </div>
 
-          <form
-            className="launch__manual"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void openManual();
-            }}
-          >
-            <label htmlFor="launch-workspace-path">Abrir por caminho</label>
+          <div className="launch__manual">
+            <label htmlFor="launch-workspace-picker">
+              Escolha outra pasta pelo seletor seguro do sistema
+            </label>
             <div className="launch__manual-row">
-              <input
-                id="launch-workspace-path"
-                className="launch__input"
-                value={manual}
-                placeholder="/caminho/para/o/projeto"
-                spellCheck={false}
-                autoComplete="off"
-                onChange={(event) => setManual(event.target.value)}
-              />
               <button
+                id="launch-workspace-picker"
                 className="launch__secondary"
-                type="submit"
-                disabled={busy || !manual.trim()}
+                type="button"
+                onClick={() => void chooseWorkspaceFolder()}
+                disabled={busy}
               >
-                Abrir pasta
+                <PixelIcon name="files" size={12} />
+                {busy ? "Abrindo seletor…" : "Escolher pasta"}
               </button>
             </div>
-          </form>
-          {error && <p className="launch__error" role="alert">{error}</p>}
+          </div>
+          {(error || readinessError) && (
+            <p className="launch__error" role="alert">
+              {error ?? readinessError}
+            </p>
+          )}
         </section>
 
         <section className="launch__recents" aria-labelledby="launch-recents">
           <header className="launch__recents-head">
-            <h2 id="launch-recents" className="launch__section">Workspaces recentes</h2>
+            <h2 id="launch-recents" className="launch__section">
+              Workspaces recentes
+            </h2>
             <span>{recents.length}</span>
           </header>
           {recents.length === 0 ? (
@@ -373,7 +432,7 @@ export function LaunchScreen() {
                         setError(
                           cause instanceof Error
                             ? cause.message
-                            : 'Não foi possível remover este workspace dos recentes.',
+                            : "Não foi possível remover este workspace dos recentes.",
                         );
                       });
                     }}
@@ -389,7 +448,7 @@ export function LaunchScreen() {
           )}
           <footer className="launch__footer">
             <span>Selecione um workspace para restaurar o contexto.</span>
-            <kbd>{formatShortcut('mod', ',')}</kbd> configurações
+            <kbd>{formatShortcut("mod", ",")}</kbd> configurações
           </footer>
         </section>
       </main>

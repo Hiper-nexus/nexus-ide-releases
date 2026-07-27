@@ -15,6 +15,7 @@ import {
   FAILOVER_HANDOFF_FOOTER,
   FAILOVER_HANDOFF_HEADER,
 } from '../../shared/failover-handoff';
+import type { FailoverReasonKind } from '../../shared/account-types';
 
 /**
  * - 'quota': conta/plano esgotado — cooldown longo, pinta a janela Semanal.
@@ -23,7 +24,7 @@ import {
  * - 'transient': blip do provedor (capacidade do modelo / 5xx) — cooldown de
  *   SEGUNDOS; não é janela de uso (a conta volta sozinha).
  */
-export type LimitKind = 'rate-limit' | 'quota' | 'auth' | 'transient';
+export type LimitKind = FailoverReasonKind;
 
 export interface LimitHit {
   kind: LimitKind;

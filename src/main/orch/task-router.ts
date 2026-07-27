@@ -101,9 +101,10 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'medium' },
   ],
   hard: [
+    { adapterId: 'claude', model: 'claude-opus-5', effort: 'high' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
     { adapterId: 'glm', model: 'glm-5.2', effort: 'high' },
-    { adapterId: 'omp', model: 'xai/grok-4.5', effort: 'high' },
+    { adapterId: 'omp', model: 'xai-oauth/grok-4.5', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
@@ -112,6 +113,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   ],
   critical: [
     { adapterId: 'claude', model: 'claude-fable-5', effort: 'xhigh' },
+    { adapterId: 'claude', model: 'claude-opus-5', effort: 'xhigh' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'xhigh' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' },
     { adapterId: 'glm', model: 'glm-5.2', effort: 'xhigh' },
@@ -122,7 +124,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'xhigh' },
     { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'xhigh' },
     // omp last on critical — security floor keeps claude/codex first.
-    { adapterId: 'omp', model: 'xai/grok-4.5', effort: 'xhigh' },
+    { adapterId: 'omp', model: 'xai-oauth/grok-4.5', effort: 'xhigh' },
   ],
 };
 
@@ -276,6 +278,30 @@ function qualityDimension(taskText: string, tier: TaskTier): QualityDimension {
   return tier === 'hard' || tier === 'critical' ? 'reasoning' : 'coding';
 }
 
+const ROUTABLE_MODEL_FAMILY_VARIANTS: ReadonlyMap<
+  string,
+  ReadonlySet<string>
+> = new Map([
+  ['gpt-5.6', new Set(['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'])],
+]);
+
+/**
+ * Exact, release-pinned proof that a routed model is the sanctioned live
+ * variant of a configured model family. This deliberately is not a prefix
+ * check: an arbitrary `gpt-5.6-*` id must never inherit the sealed authority
+ * of `gpt-5.6`.
+ */
+export function isRoutableModelResolution(
+  requested: string,
+  resolved: string | undefined,
+): boolean {
+  return (
+    resolved === requested ||
+    (resolved !== undefined &&
+      (ROUTABLE_MODEL_FAMILY_VARIANTS.get(requested)?.has(resolved) ?? false))
+  );
+}
+
 /**
  * Resolve o modelo de um candidato da tabela contra a lista REAL de modelos do
  * adapter instalado. Motivo de campo (17/07): a tabela pedia `gpt-5.6`, mas a
@@ -283,9 +309,8 @@ function qualityDimension(taskText: string, tier: TaskTier): QualityDimension {
  * CLI ignorava o modelo fantasma e caía SILENCIOSAMENTE no seu default
  * (`gpt-5.5`). Agora:
  *  - modelo exato disponível → usa ele;
- *  - família disponível (mesmo prefixo de geração, ex.: `gpt-5.6` →
- *    `gpt-5.6-sol`) → usa a 1ª variante que o CLI lista (a CLI ordena a
- *    preferida primeiro);
+ *  - família release-pinned disponível (ex.: `gpt-5.6` → `gpt-5.6-sol`) →
+ *    usa a 1ª variante que o CLI lista (a CLI ordena a preferida primeiro);
  *  - nada da família instalado → candidato é DESCARTADO (nunca emite um
  *    modelo que o adapter não roda);
  *  - adapter sem lista de modelos → confia na tabela (não há como validar).
@@ -297,8 +322,8 @@ export function resolveRoutableModel(
   if (!requested) return { ok: true, model: undefined };
   if (!available || available.length === 0) return { ok: true, model: requested };
   if (available.includes(requested)) return { ok: true, model: requested };
-  const variant = available.find(
-    (model) => model.startsWith(`${requested}-`) || model.startsWith(`${requested}.`),
+  const variant = available.find((model) =>
+    isRoutableModelResolution(requested, model),
   );
   return variant ? { ok: true, model: variant } : { ok: false };
 }

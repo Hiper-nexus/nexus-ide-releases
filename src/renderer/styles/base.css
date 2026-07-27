@@ -82,10 +82,12 @@
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* Overlay ladder — keep app chrome (bar + Jarvis) ABOVE soft dimmers so
+  /* Overlay ladder — transient toasts stay below modal dimmers, so they can
+     never cover or capture a wizard/confirmation. Keep app chrome ABOVE soft dimmers so
      mid-form clicks on voice/config never hit the backdrop and wipe drafts.
      Hard modals (confirm, agent-picker, update) still cover chrome.
      See src/renderer/lib/ui-overlay-policy.ts. */
+  --z-toast: 44;
   --z-soft-overlay: 45;
   --z-soft-panel: 46;
   --z-app-chrome: 55;
@@ -147,8 +149,10 @@
 /* Ajustes de sinal para o tema claro (ui-theme.ts seta data-theme no <html>):
    verdes/âmbares de dark não seguram contraste sobre branco. */
 [data-theme='nexus-light'] {
-  --ok: #1a9e5c;
-  --live: #0f9d58;
+  /* ≥5.4:1 sobre branco: estes tokens aparecem como texto de status pequeno,
+     não apenas como pontos/LEDs. */
+  --ok: #0b7a43;
+  --live: #08783f;
   --warn: #9a6b00;
   --gold: #8a6d00;
 }
@@ -678,6 +682,12 @@ body {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .workspace-bar__pulse-dot--busy {
+    animation: none;
+  }
+}
+
 .workspace-bar__menu-sep {
   height: 1px;
   margin: 4px 6px;
@@ -863,13 +873,13 @@ body {
    height:100% do grid para fora da janela — as últimas linhas do terminal
    ficavam abaixo da borda e o xterm "não rolava até embaixo". */
 .app__body {
-  --app-body-inset: 8px;
+  --app-body-inset: 0px;
   --mission-rail-width: 248px;
   flex: 1 1 auto;
   min-height: 0;
   padding: var(--app-body-inset);
   display: flex;
-  gap: var(--app-body-inset);
+  gap: 0;
 }
 
 @media (max-width: 1120px) {
@@ -2445,8 +2455,9 @@ body {
 
 
 /* ---- Fleet chip: rollup da frota na zona de status ---- */
-/* Responde "quantos trabalhando / prontos / mortos" sem caçar pane por pane.
-   Clique foca o pane que precisa de atenção (morto primeiro, depois ocupado). */
+/* Responde "quantos trabalhando / prontos / encerrados" sem caçar pane por
+   pane. Clique foca quem precisa de atenção (encerrado primeiro, depois
+   ocupado). */
 .fleet-chip {
   display: inline-flex;
   align-items: center;

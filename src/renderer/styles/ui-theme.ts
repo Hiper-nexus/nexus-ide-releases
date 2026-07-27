@@ -61,10 +61,11 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     border: '#3b3e51',
     borderStrong: '#4d5170',
     text: '#f8f8f2',
-    textDim: '#8b91b0',
+    // 5.79:1 sobre o elevated — metadados pequenos continuam AA.
+    textDim: '#a8aecb',
     accent: '#bd93f9',
     accentInk: '#14101f',
-    danger: '#ff5555',
+    danger: '#ff7a90',
   },
   'solarized-dark': {
     bg: '#002b36',
@@ -73,10 +74,12 @@ const PALETTES: Record<TerminalThemeId, UiPalette> = {
     border: '#0e4250',
     borderStrong: '#1a5261',
     text: '#93a1a1',
-    textDim: '#6f8489',
+    // 5.08:1 sobre o elevated (o cinza Solarized canônico é insuficiente
+    // para os rótulos de 10–12 px usados pelo cockpit).
+    textDim: '#8fa6aa',
     accent: '#2aa4e8',
     accentInk: '#01222c',
-    danger: '#dc322f',
+    danger: '#ff7a70',
   },
 };
 

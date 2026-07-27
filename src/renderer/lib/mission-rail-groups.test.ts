@@ -167,7 +167,7 @@ describe('railStatusDisplay', () => {
   it('maps mission status to pill labels', () => {
     expect(railStatusDisplay('pending', false).label).toBe('Na fila');
     expect(railStatusDisplay('running', false).label).toBe('Em curso');
-    expect(railStatusDisplay('blocked', false).label).toBe('Travada');
+    expect(railStatusDisplay('blocked', false).label).toBe('Bloqueada');
     expect(railStatusDisplay('done', false).label).toBe('Concluída');
     expect(railStatusDisplay('failed', false).label).toBe('Falhou');
   });
@@ -191,16 +191,17 @@ describe('railStatusDisplay', () => {
     );
   });
 
-  it('keeps live grid and machine states unchanged by intentState', () => {
-    expect(railStatusDisplay('pending', true, 'awaiting_approval').label).toBe(
-      'Ao vivo',
-    );
+  it('never lets preserved grid panes hide a human or machine block', () => {
+    expect(
+      railStatusDisplay('pending', true, 'awaiting_approval').label,
+    ).toBe('Aguarda você');
     expect(railStatusDisplay('running', false, 'executing').label).toBe(
       'Em curso',
     );
     expect(railStatusDisplay('blocked', false, 'blocked_technical').label).toBe(
-      'Travada',
+      'Bloqueada',
     );
+    expect(railStatusDisplay('blocked', true).label).toBe('Bloqueada');
   });
 
   it('keeps terminal outcomes authoritative over stale intent state', () => {
@@ -210,6 +211,28 @@ describe('railStatusDisplay', () => {
     expect(railStatusDisplay('done', false, 'awaiting_approval').label).toBe(
       'Concluída',
     );
+    expect(railStatusDisplay('failed', true).label).toBe('Falhou');
+    expect(railStatusDisplay('done', true).label).toBe('Concluída');
+  });
+
+  it('does not call a preserved transcript live after every agent exited', () => {
+    expect(
+      railStatusDisplay('running', true, 'executing', null, {
+        hasActiveRuntime: false,
+      }),
+    ).toEqual({ label: 'Execução encerrada', tone: 'blocked' });
+    expect(
+      railStatusDisplay('running', true, 'executing', null, {
+        hasActiveRuntime: false,
+        latestHandoffStatus: 'blocked',
+      }),
+    ).toEqual({ label: 'Bloqueada', tone: 'blocked' });
+    expect(
+      railStatusDisplay('running', true, 'executing', null, {
+        hasActiveRuntime: false,
+        latestHandoffStatus: 'failed',
+      }),
+    ).toEqual({ label: 'Falhou', tone: 'failed' });
   });
 
   it('surfaces plan and consult lanes so promote/consult are glanceable', () => {
@@ -257,7 +280,7 @@ describe('missionRailResumeCopy', () => {
   it('labels a blocked mission for retry', () => {
     expect(missionRailResumeCopy('blocked', false)).toEqual({
       meta: 'Clique para retomar',
-      title: 'Missão travada — clique para retomar',
+      title: 'Missão bloqueada — clique para retomar',
     });
   });
 

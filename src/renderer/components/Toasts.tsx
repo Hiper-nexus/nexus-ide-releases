@@ -8,15 +8,25 @@ const TOAST_ICON: Record<ToastKind, PixelIconName> = {
   error: 'close',
 };
 
-/** Stacked transient notifications below the app bar, away from wizard actions. */
+/**
+ * Bottom-right transient notifications. Their layer stays below every modal
+ * dimmer, so a toast never covers or captures a wizard/approval interaction.
+ */
 export function Toasts() {
   const toasts = useToastStore((s) => s.toasts);
   const dismiss = useToastStore((s) => s.dismiss);
   if (toasts.length === 0) return null;
   return (
-    <div className="toasts" role="status" aria-live="polite">
+    <div className="toasts" role="region" aria-label="Notificações">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast toast--${t.kind}`}>
+        <div
+          key={t.id}
+          className={`toast toast--${t.kind}`}
+          role={t.kind === 'error' || t.kind === 'warn' ? 'alert' : 'status'}
+          aria-live={
+            t.kind === 'error' || t.kind === 'warn' ? 'assertive' : 'polite'
+          }
+        >
           <span className="toast__icon" aria-hidden="true">
             <PixelIcon name={TOAST_ICON[t.kind] ?? 'sparkle'} size={14} />
           </span>
@@ -41,9 +51,10 @@ export function Toasts() {
             )}
           </div>
           <button
+            type="button"
             className="toast__close"
             onClick={() => dismiss(t.id)}
-            aria-label="Fechar"
+            aria-label={`Fechar aviso: ${t.title}`}
           >
             <PixelIcon name="close" size={11} />
           </button>

@@ -1,20 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Mission, MissionPaneSpec, Squad } from '../../shared/orch-types';
+import type {
+  Handoff,
+  Mission,
+  MissionPaneSpec,
+  PaneSnapshot,
+  Squad,
+} from '../../shared/orch-types';
+import type { ProjectExecutionScope } from '../../shared/types';
 import {
   runMissionKickoffAcceptance,
   type MissionKickoffResult,
 } from './mission-kickoff';
 import {
   blockedBootstrapResumePatch,
+  blockedMissionRearmPatch,
+  blockedPlanPromotionResumePatch,
   MissionOrchestratorBootstrapRecovery,
   MissionOrchestratorBootstrapService,
   needsMissionOrchestratorBootstrapRecovery,
+  prepareDeadGraphReapprovalForScope,
   preferredMissionOrchestratorAdapterId,
+  restartMissionOrchestratorAfterPlanPromotionForScope,
   runtimeAuthorityMismatches,
+  stopMissionOrchestratorBeforePlanPromotionForScope,
   type MissionOrchestratorBootstrapDeps,
+  type DeadGraphReapprovalDeps,
+  type PlanPromotionRestartDeps,
 } from './mission-orchestrator-bootstrap';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { createMissionPaneAuthoritySeal } from './mission-pane-authority';
+import { NEXUS_STORY_IMPLEMENTATION_SQUAD_ID } from '../../shared/builtin-squad-ids';
+import { selectPhysicalPlanHandoff } from './plan-promotion-authority';
+import type { TaskDispatchRecord } from './task-dispatch-store';
 
 const scope = Object.freeze({
   version: 1 as const,
@@ -238,6 +255,10 @@ function harness(): Harness {
         | ((sessionId: string, next: 'idle' | 'busy' | 'spawning' | 'exited' | 'hibernated') => void)
         | undefined;
       let dataTap: ((sessionId: string, data: string) => void) | undefined;
+      let turnStartSequence = 0;
+      let turnStartTap:
+        | ((sessionId: string, sequence: number) => void)
+        | undefined;
       const result = await runMissionKickoffAcceptance(
         input,
         {
@@ -247,6 +268,8 @@ function harness(): Harness {
               dataTap?.(sessionId, 'execução aceita');
               state = 'busy';
               stateTap?.(sessionId, 'busy');
+              turnStartSequence += 1;
+              turnStartTap?.(sessionId, turnStartSequence);
             }
             return true;
           },
@@ -263,6 +286,13 @@ function harness(): Harness {
             };
           },
           onExit: () => () => {},
+          getTurnStartSequence: () => turnStartSequence,
+          onTurnStart: (tap) => {
+            turnStartTap = tap;
+            return () => {
+              turnStartTap = undefined;
+            };
+          },
           isAuthorized: () => true,
           block: async () => {},
         },
@@ -305,6 +335,156 @@ describe('initial main-owned orchestrator bootstrap', () => {
         'claude',
       ),
     ).toBe('claude');
+  });
+
+  it('creates the plan-lane Git baseline before planning or provider effects', async () => {
+    const h = harness();
+    h.mission = {
+      ...h.mission,
+      intentContract: {
+        ...h.mission.intentContract!,
+        lane: 'plan',
+      },
+    };
+    const order: string[] = [];
+    h.deps.ensurePlanGitBaseline = vi.fn(() => {
+      order.push('baseline');
+    });
+    h.deps.ensureMissionPlan = vi.fn(() => {
+      order.push('plan');
+    });
+    h.deps.ensureMissionPrevc = vi.fn(() => {
+      order.push('prevc');
+      return {
+        required: false,
+        frozen: false,
+        stage: null,
+        readyForWorkerDispatch: false,
+      };
+    });
+    const originalSpawn = h.deps.spawnMainOwnedPane;
+    h.deps.spawnMainOwnedPane = (input) => {
+      order.push('provider');
+      return originalSpawn(input);
+    };
+
+    const result = await new MissionOrchestratorBootstrapService(
+      h.deps,
+    ).bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(order).toEqual(['baseline', 'plan', 'prevc', 'provider']);
+  });
+
+  it('blocks durably before any provider effect when the main-owned plan preflight fails', async () => {
+    const h = harness();
+    h.deps.ensureMissionPlan = vi.fn(() => {
+      throw new Error('guided_plan_route_unavailable');
+    });
+    const service = new MissionOrchestratorBootstrapService(h.deps);
+
+    const result = await service.bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'preflight_failed',
+      error: expect.stringMatching(/main-owned.*guided_plan_route_unavailable/i),
+      cta: 'Retomar missão',
+    });
+    expect(h.spawned).toEqual([]);
+    expect(h.recorded).toEqual([]);
+    expect(h.kickoffPrompts).toEqual([]);
+    expect(h.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      description: expect.stringMatching(/orquestrador não iniciado.*CTA/is),
+    });
+  });
+
+  it('does not spawn the orchestrator when the main-owned guided PREVC freeze fails', async () => {
+    const h = harness();
+    h.deps.ensureMissionPlan = vi.fn();
+    h.deps.ensureMissionPrevc = vi.fn(() => {
+      throw new Error('guided_prevc_required: context not ready');
+    });
+    const service = new MissionOrchestratorBootstrapService(h.deps);
+
+    const result = await service.bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'preflight_failed',
+      error: expect.stringMatching(/PREVC.*context not ready/i),
+    });
+    expect(h.deps.ensureMissionPlan).toHaveBeenCalledOnce();
+    expect(h.deps.ensureMissionPrevc).toHaveBeenCalledOnce();
+    expect(h.spawned).toEqual([]);
+    expect(h.recorded).toEqual([]);
+    expect(h.kickoffPrompts).toEqual([]);
+  });
+
+  it('refuses every provider when Main has not physically frozen guided PREVC', async () => {
+    const h = harness();
+    h.deps.ensureMissionPlan = vi.fn();
+    h.deps.ensureMissionPrevc = vi.fn(() => ({
+      required: true,
+      frozen: false,
+      stage: null,
+      readyForWorkerDispatch: false,
+    }));
+    const service = new MissionOrchestratorBootstrapService(h.deps);
+
+    const result = await service.bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      missionId: h.mission.id,
+      reason: 'preflight_failed',
+      error: expect.stringMatching(
+        /PREVC.*freeze_incomplete.*mission_contracts.*scheduler/i,
+      ),
+    });
+    expect(h.spawned).toEqual([]);
+    expect(h.recorded).toEqual([]);
+    expect(h.kickoffPrompts).toEqual([]);
+  });
+
+  it('revalidates the plan after the Retomar missão rearm instead of escaping through bootstrap', async () => {
+    const h = harness();
+    h.mission = {
+      ...h.mission,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      description:
+        `${h.mission.description}\n\n<!-- nexus:guided-plan-block -->\n` +
+        '## Execução não iniciada\nCTA: Retomar missão.',
+    };
+    const resume = blockedBootstrapResumePatch(h.mission);
+    expect(resume).toMatchObject({ ok: true });
+    if (!resume.ok) throw new Error('unreachable');
+    h.mission = { ...h.mission, ...resume.patch };
+    h.deps.ensureMissionPlan = vi.fn(() => {
+      throw new Error('guided_plan_route_unavailable_after_resume');
+    });
+    const service = new MissionOrchestratorBootstrapService(h.deps);
+
+    const result = await service.bootstrap(scope, h.mission.id);
+
+    expect(h.deps.ensureMissionPlan).toHaveBeenCalledWith(
+      scope,
+      h.mission.id,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'preflight_failed',
+    });
+    expect(h.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    expect(h.spawned).toEqual([]);
+    expect(h.recorded).toEqual([]);
+    expect(h.kickoffPrompts).toEqual([]);
   });
 
   it('passes the exact approved authority seal into the physical main-owned PTY', async () => {
@@ -458,6 +638,122 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.kickoffPrompts[0]).not.toContain('# Missão antiga');
     expect(value.kickoffPrompts[0]).toContain('## Anexos validados pelo Nexus');
     expect(value.kickoffPrompts[0]).toContain('/validated/proof.png');
+  });
+
+  it('injects the exact promoted PRD into the live v2 bootstrap kickoff', async () => {
+    const value = harness();
+    const deliverySquad: Squad = {
+      ...squad,
+      id: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      name: 'Implementação por Stories',
+      orchestratorInstructions:
+        '# Implementação por Stories\nConsuma o pacote promovido e execute as stories.',
+      agents: squad.agents.map((agent) => ({ ...agent })),
+    };
+    const sourcePlan: Mission = {
+      ...value.mission,
+      status: 'running',
+      intentState: 'executing',
+      intentVersion: 1,
+      orchestratorSessionId: 'plan-session-v1',
+      intentContract: {
+        ...value.mission.intentContract!,
+        lane: 'plan',
+        intentVersion: 1,
+        approvedAt: 10,
+        dispatchedAt: 11,
+      },
+    };
+    const handoff: Handoff = {
+      id: 'handoff-plan-v1',
+      missionId: sourcePlan.id,
+      sessionId: 'plan-session-v1',
+      fromAgent: 'Maestro',
+      authorityOrigin: 'agent',
+      mcpProvenance: {
+        receiptId: 'receipt-plan-v1',
+        toolCallId: 'tool-plan-v1',
+        toolName: 'nexus_handoff_submit',
+        source: 'http-mcp',
+        missionId: sourcePlan.id,
+        sessionId: 'plan-session-v1',
+        authoritySha256: 'a'.repeat(64),
+        issuedAt: 12,
+      },
+      status: 'success',
+      claimTrust: 'untrusted',
+      summary:
+        '# PRD físico\nImplemente refresh token rotativo conforme as stories.',
+      artifacts: [{ path: 'docs/stories/auth.md', status: 'ready' }],
+      evidenceIds: [],
+      evidenceTrust: 'unverified',
+      delivered: true,
+      deliveryState: 'submitted',
+      createdAt: 13,
+    };
+    const promotedPlan = selectPhysicalPlanHandoff({
+      mission: sourcePlan,
+      handoffs: {
+        list: () => [handoff],
+        get: () => handoff,
+      },
+    });
+    value.mission = {
+      ...value.mission,
+      squadId: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      intentVersion: 2,
+      intentContract: {
+        ...value.mission.intentContract!,
+        lane: 'standard',
+        intentVersion: 2,
+        squadRevisionHash: snapshotSquadAuthority(deliverySquad).hash,
+        promotedPlan,
+      },
+    };
+    value.deps.getSquad = (id) =>
+      id === deliverySquad.id ? deliverySquad : null;
+    const targetSeal = createMissionPaneAuthoritySeal({
+      mission: value.mission,
+      squad: deliverySquad,
+    });
+    if (!targetSeal) throw new Error('missing delivery authority seal');
+    value.deps.getAgentSessionInfo = (sessionId) =>
+      sessionId === 'pty-main-orch'
+        ? {
+            sessionId,
+            paneId: 'pane-main-orch',
+            adapterId: 'codex',
+            model: 'gpt-5.6-sol',
+            requestedModel: 'gpt-5.6-sol',
+            accountId: 'account-codex',
+            effort: 'high',
+            cwd: scope.rootRealPath,
+            scope,
+            source: 'pending',
+            role: 'orchestrator',
+            missionId: value.mission.id,
+            agentName: 'Maestro',
+            readOnly: false,
+            nativeReadOnly: true,
+            allowedTools: ['nexus_task'],
+            allowedSkills: ['check-work'],
+            authoritySeal: targetSeal,
+          }
+        : null;
+
+    const result = await new MissionOrchestratorBootstrapService(
+      value.deps,
+    ).bootstrap(scope, value.mission.id);
+
+    expect(result.ok).toBe(true);
+    expect(value.kickoffPrompts).toHaveLength(1);
+    const prompt = value.kickoffPrompts[0]!;
+    expect(prompt).toContain(handoff.summary);
+    expect(prompt).toContain(JSON.stringify(promotedPlan.artifacts));
+    expect(prompt).toContain(promotedPlan.digest);
+    expect(prompt).toContain(promotedPlan.summarySha256);
+    expect(prompt).toContain(promotedPlan.artifactsSha256);
+    expect(prompt).toMatch(/não repita discovery, entrevista, PRD/i);
   });
 
   it('validates the sealed requested model instead of the provider-normalized model', async () => {
@@ -889,6 +1185,779 @@ describe('initial main-owned orchestrator bootstrap', () => {
   });
 });
 
+describe('plan promotion runtime restart', () => {
+  function promotedMission(): Mission {
+    const prior = approvedMission();
+    return {
+      ...prior,
+      id: 'mission-promoted',
+      squadId: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      status: 'pending',
+      intentState: 'ready_to_start',
+      intentVersion: 2,
+      orchestratorSessionId: undefined,
+      intentContract: {
+        ...prior.intentContract!,
+        lane: 'standard',
+        intentVersion: 2,
+        approvedAt: 200,
+        dispatchedAt: undefined,
+        promotedPlan: {
+          version: 1,
+          handoffId: 'handoff-plan-v1',
+          sourceIntentVersion: 1,
+          sourceSessionId: 'session-plan-v1',
+          handoffCreatedAt: 150,
+          physicalReceipt: {
+            receiptId: 'receipt-plan-v1',
+            toolCallId: 'tool-plan-v1',
+            source: 'http-mcp',
+            authoritySha256: 'a'.repeat(64),
+            issuedAt: 150,
+          },
+          summary: '# PRD aprovado\nImplementar a entrega.',
+          artifacts: [],
+          summarySha256: 'b'.repeat(64),
+          artifactsSha256: 'c'.repeat(64),
+          digest: 'd'.repeat(64),
+        },
+      },
+    };
+  }
+
+  function restartHarness(
+    options: {
+      mission?: Mission;
+      panes?: MissionPaneSpec[];
+      closeResult?: boolean;
+      sessionLive?: boolean;
+    } = {},
+  ) {
+    let mission = options.mission ?? promotedMission();
+    const panes: MissionPaneSpec[] = [...(options.panes ?? [])];
+    const revoked: string[] = [];
+    const closed: string[] = [];
+    const removed: string[] = [];
+    let sessionLive = options.sessionLive ?? false;
+    const ensureMissionPlan = vi.fn(
+      (): ReturnType<PlanPromotionRestartDeps['ensureMissionPlan']> => ({
+        applicable: true,
+        sealed: true,
+        reason: 'sealed',
+        workerAgentRef: 'executor',
+        taskId: 'task-guided-v2',
+      }),
+    );
+    const closePane = vi.fn(
+      async (input: {
+        paneId: string;
+        missionId: string;
+        scope: ProjectExecutionScope;
+      }) => {
+        closed.push(input.paneId);
+        if (options.closeResult !== false) sessionLive = false;
+        return options.closeResult !== false;
+      },
+    );
+    const bootstrap = vi.fn(async () => ({
+      ok: true as const,
+      missionId: mission.id,
+      pane: {
+        paneId: 'pane-code-v2',
+        sessionId: 'session-code-v2',
+        adapterId: 'codex',
+        model: approvedRuntime.model,
+        accountId: approvedRuntime.accountId,
+        effort: approvedRuntime.effort,
+        cwd: scope.rootRealPath,
+        title: 'Código v2',
+        agentName: 'Maestro',
+        role: 'orchestrator' as const,
+      },
+      kickoff: { accepted: true as const },
+    }));
+    const deps: PlanPromotionRestartDeps = {
+      getMission: (_scope, missionId) =>
+        missionId === mission.id ? mission : null,
+      updateMission: (_scope, missionId, patch) => {
+        if (missionId !== mission.id) return null;
+        mission = {
+          ...mission,
+          ...patch,
+          milestones: mission.milestones,
+          intentContract:
+            patch.intentContract === null
+              ? undefined
+              : patch.intentContract ?? mission.intentContract,
+          updatedAt: Date.now(),
+        };
+        return mission;
+      },
+      setOrchestratorSession: (_scope, missionId, sessionId) => {
+        if (missionId !== mission.id) return null;
+        mission = {
+          ...mission,
+          orchestratorSessionId: sessionId ?? undefined,
+          updatedAt: Date.now(),
+        };
+        return mission;
+      },
+      listMissionPanes: () => [...panes],
+      removeMissionPane: (_scope, paneRowId) => {
+        removed.push(paneRowId);
+        const index = panes.findIndex((pane) => pane.id === paneRowId);
+        if (index < 0) return false;
+        panes.splice(index, 1);
+        return true;
+      },
+      getSessionState: () => (sessionLive ? 'idle' : null),
+      getAgentSessionInfo: () => null,
+      revokeSessionAuthority: (sessionId) => {
+        revoked.push(sessionId);
+      },
+      closePane,
+      ensureMissionPlan,
+      bootstrap,
+    };
+    return {
+      deps,
+      get mission() {
+        return mission;
+      },
+      panes,
+      revoked,
+      closed,
+      removed,
+      closePane,
+      ensureMissionPlan,
+      bootstrap,
+    };
+  }
+
+  function activePlanMission(): Mission {
+    const standard = promotedMission();
+    return {
+      ...standard,
+      squadId: 'mission-runtime-plan-v1',
+      status: 'running',
+      intentState: 'executing',
+      intentVersion: 1,
+      orchestratorSessionId: 'session-plan-v1',
+      intentContract: {
+        ...standard.intentContract!,
+        lane: 'plan',
+        intentVersion: 1,
+        approvedAt: 100,
+        dispatchedAt: 101,
+      },
+    };
+  }
+
+  function planPane(missionId: string): MissionPaneSpec {
+    return {
+      id: 'mpane-plan-v1',
+      missionId,
+      paneId: 'pane-plan-v1',
+      adapterId: 'codex',
+      model: approvedRuntime.model,
+      accountId: approvedRuntime.accountId,
+      effort: approvedRuntime.effort,
+      cwd: scope.rootRealPath,
+      title: 'Plano v1',
+      agentName: 'Maestro',
+      role: 'orchestrator',
+      allowedTools: ['nexus_task'],
+      allowedSkills: ['check-work'],
+      scope,
+      executionScope: scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+  }
+
+  it('revokes and physically closes plan-v1 without writing standard-v2 bytes', async () => {
+    const plan = activePlanMission();
+    const h = restartHarness({
+      mission: plan,
+      panes: [planPane(plan.id)],
+      sessionLive: true,
+    });
+
+    const result =
+      await stopMissionOrchestratorBeforePlanPromotionForScope(
+        scope,
+        plan.id,
+        1,
+        h.deps,
+      );
+
+    expect(result).toEqual({ ok: true, missionId: plan.id });
+    expect(h.revoked).toEqual(['session-plan-v1']);
+    expect(h.closed).toEqual(['pane-plan-v1']);
+    expect(h.closePane).toHaveBeenCalledWith({
+      paneId: 'pane-plan-v1',
+      missionId: plan.id,
+      scope,
+    });
+    expect(h.removed).toEqual(['mpane-plan-v1']);
+    expect(h.mission).toMatchObject({
+      squadId: 'mission-runtime-plan-v1',
+      status: 'running',
+      intentState: 'executing',
+      intentVersion: 1,
+      orchestratorSessionId: undefined,
+      intentContract: {
+        lane: 'plan',
+        intentVersion: 1,
+      },
+    });
+    expect(h.ensureMissionPlan).not.toHaveBeenCalled();
+    expect(h.bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('keeps the durable contract in plan-v1 when physical exit is unproven', async () => {
+    const plan = activePlanMission();
+    const h = restartHarness({
+      mission: plan,
+      panes: [planPane(plan.id)],
+      closeResult: false,
+      sessionLive: true,
+    });
+
+    const result =
+      await stopMissionOrchestratorBeforePlanPromotionForScope(
+        scope,
+        plan.id,
+        1,
+        h.deps,
+      );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/encerramento físico/i),
+    });
+    expect(h.revoked).toEqual(['session-plan-v1']);
+    expect(h.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      intentVersion: 1,
+      orchestratorSessionId: 'session-plan-v1',
+      intentContract: {
+        lane: 'plan',
+        intentVersion: 1,
+      },
+    });
+    expect(h.ensureMissionPlan).not.toHaveBeenCalled();
+    expect(h.bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('seals and bootstraps v2 only after the v1 runtime is absent', async () => {
+    const h = restartHarness();
+    const result =
+      await restartMissionOrchestratorAfterPlanPromotionForScope(
+        scope,
+        'mission-promoted',
+        2,
+        h.deps,
+      );
+
+    expect(result.ok).toBe(true);
+    expect(h.revoked).toEqual([]);
+    expect(h.closed).toEqual([]);
+    expect(h.removed).toEqual([]);
+    expect(h.panes).toEqual([]);
+    expect(h.mission).toMatchObject({
+      squadId: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      status: 'running',
+      intentState: 'dispatched',
+      intentVersion: 2,
+      orchestratorSessionId: undefined,
+      intentContract: {
+        lane: 'standard',
+        intentVersion: 2,
+        dispatchedAt: expect.any(Number),
+      },
+    });
+    expect(h.ensureMissionPlan).toHaveBeenCalledWith(
+      scope,
+      'mission-promoted',
+    );
+    expect(h.bootstrap).toHaveBeenCalledWith(scope, 'mission-promoted');
+    expect(h.ensureMissionPlan).toHaveBeenCalledBefore(h.bootstrap);
+  });
+
+  it('never reaches provider bootstrap when promotion has no Guided v2 receipt', async () => {
+    const h = restartHarness();
+    h.ensureMissionPlan.mockReturnValueOnce({
+      applicable: false,
+      sealed: false,
+      reason: 'squad-not-engine-generated',
+    });
+
+    const result =
+      await restartMissionOrchestratorAfterPlanPromotionForScope(
+        scope,
+        'mission-promoted',
+        2,
+        h.deps,
+      );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'materialization_failed',
+      error: expect.stringMatching(/guided v2|receipt/i),
+    });
+    expect(h.bootstrap).not.toHaveBeenCalled();
+    expect(h.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      squadId: NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+      intentContract: {
+        promotedPlan: expect.objectContaining({
+          handoffId: 'handoff-plan-v1',
+        }),
+      },
+    });
+  });
+
+  it('never grants v2 when a pane reappears after physical teardown', async () => {
+    const h = restartHarness();
+    h.panes.push({
+      id: 'mpane-reappeared',
+      missionId: 'mission-promoted',
+      paneId: 'pane-reappeared',
+      adapterId: 'codex',
+      cwd: scope.rootRealPath,
+      title: 'Pane reaparecido',
+      agentName: 'Maestro',
+      role: 'orchestrator',
+      allowedTools: ['nexus_task'],
+      allowedSkills: ['check-work'],
+      scope,
+      executionScope: scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    });
+    const result =
+      await restartMissionOrchestratorAfterPlanPromotionForScope(
+        scope,
+        'mission-promoted',
+        2,
+        h.deps,
+      );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'materialization_failed',
+    });
+    expect(h.revoked).toEqual([]);
+    expect(h.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    expect(h.mission.intentContract?.dispatchedAt).toBeUndefined();
+    expect(blockedMissionRearmPatch(h.mission)).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/encerrar fisicamente.*Retomar missão/i),
+    });
+    expect(h.ensureMissionPlan).not.toHaveBeenCalled();
+    expect(h.bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('re-arms the same v2 revision for an explicit restart retry', async () => {
+    const h = restartHarness();
+    h.panes.push({
+      id: 'mpane-reappeared',
+      missionId: 'mission-promoted',
+      paneId: 'pane-reappeared',
+      adapterId: 'codex',
+      cwd: scope.rootRealPath,
+      title: 'Pane reaparecido',
+      agentName: 'Maestro',
+      role: 'orchestrator',
+      allowedTools: ['nexus_task'],
+      allowedSkills: ['check-work'],
+      scope,
+      executionScope: scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    });
+    await restartMissionOrchestratorAfterPlanPromotionForScope(
+      scope,
+      'mission-promoted',
+      2,
+      h.deps,
+    );
+
+    const retry = blockedPlanPromotionResumePatch(h.mission);
+
+    expect(retry).toMatchObject({
+      ok: true,
+      intentVersion: 2,
+      patch: {
+        status: 'pending',
+        intentState: 'ready_to_start',
+        description: expect.not.stringContaining(
+          'nexus:plan-promotion-restart-blocked',
+        ),
+        intentContract: {
+          lane: 'standard',
+          intentVersion: 2,
+        },
+      },
+    });
+    if (!retry.ok) throw new Error('unreachable');
+    expect(retry.patch.intentContract).toMatchObject({
+      dispatchedAt: undefined,
+    });
+  });
+
+  it('blocks when a worker pane appears after teardown', async () => {
+    const h = restartHarness();
+    h.panes.push({
+      id: 'mpane-plan-worker',
+      missionId: 'mission-promoted',
+      paneId: 'pane-plan-worker',
+      adapterId: 'codex',
+      cwd: scope.rootRealPath,
+      title: 'Worker inesperado',
+      role: 'worker',
+      agentName: 'Worker inesperado',
+      allowedTools: [],
+      allowedSkills: ['check-work'],
+      scope,
+      executionScope: scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    });
+
+    const result =
+      await restartMissionOrchestratorAfterPlanPromotionForScope(
+        scope,
+        'mission-promoted',
+        2,
+        h.deps,
+      );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'materialization_failed',
+    });
+    expect(h.revoked).toEqual([]);
+    expect(h.closed).toEqual([]);
+    expect(h.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    expect(h.ensureMissionPlan).not.toHaveBeenCalled();
+    expect(h.bootstrap).not.toHaveBeenCalled();
+  });
+});
+
+interface DeadGraphHarness {
+  mission: Mission;
+  panes: MissionPaneSpec[];
+  runtimePanes: PaneSnapshot[];
+  dispatches: TaskDispatchRecord[];
+  sessionStates: Map<string, 'idle' | null>;
+  revoked: string[];
+  closed: Array<{
+    paneId: string;
+    sessionId?: string;
+    role?: 'orchestrator' | 'worker';
+    workerIncarnationId?: string;
+  }>;
+  removed: string[];
+  publishedExpected: Mission[];
+  closeFailsFor?: string;
+  publishFails?: boolean;
+  deps: DeadGraphReapprovalDeps;
+}
+
+function deadGraphHarness(): DeadGraphHarness {
+  const approved = approvedMission();
+  const mission: Mission = {
+    ...approved,
+    status: 'blocked',
+    intentState: 'blocked_technical',
+    intentVersion: 2,
+    orchestratorSessionId: 'session-orch-v2',
+    intentContract: {
+      ...approved.intentContract!,
+      intentVersion: 2,
+      approvedAt: 200,
+      dispatchedAt: 210,
+    },
+    updatedAt: 220,
+  };
+  const value = {} as DeadGraphHarness;
+  value.mission = mission;
+  value.panes = [
+    {
+      id: 'pane-row-orch-v2',
+      missionId: mission.id,
+      paneId: 'pane-orch-v2',
+      adapterId: 'codex',
+      title: 'Maestro v2',
+      agentName: 'Maestro',
+      role: 'orchestrator',
+      scope,
+      executionScope: scope,
+      createdAt: 200,
+    },
+    {
+      id: 'pane-row-worker-v2',
+      missionId: mission.id,
+      paneId: 'pane-worker-v2',
+      adapterId: 'codex',
+      title: 'Worker v2',
+      agentName: 'Implementador',
+      workerIncarnationId: 'incarnation-worker-v2',
+      role: 'worker',
+      scope,
+      executionScope: scope,
+      createdAt: 205,
+    },
+  ];
+  value.runtimePanes = [
+    {
+      paneId: 'pane-orch-v2',
+      sessionId: 'session-orch-v2',
+      title: 'Maestro v2',
+      kind: 'cli-agent',
+      state: 'idle',
+      missionId: mission.id,
+      role: 'orchestrator',
+      scope,
+      executionScope: scope,
+    },
+    {
+      paneId: 'pane-worker-v2',
+      sessionId: 'session-worker-v2',
+      title: 'Worker v2',
+      kind: 'cli-agent',
+      state: 'idle',
+      missionId: mission.id,
+      workerIncarnationId: 'incarnation-worker-v2',
+      role: 'worker',
+      scope,
+      executionScope: scope,
+    },
+  ];
+  value.dispatches = [
+    {
+      id: 'dispatch-worker-v2',
+      taskId: 'task-worker-v2',
+      missionId: mission.id,
+      intentVersion: 2,
+      revision: 4,
+      attempt: 1,
+      state: 'superseded',
+      leaseOwner: 'main',
+      leaseExpiresAt: 1_000,
+      workerId: 'worker-v2',
+      workerIncarnationId: 'incarnation-worker-v2',
+      ownership: { files: ['src/**'], symbols: [], domains: [] },
+      executionMode: 'isolated_worktree',
+      paneId: 'pane-worker-v2',
+      sessionId: 'session-worker-v2',
+      createdAt: 200,
+      updatedAt: 220,
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+    },
+  ];
+  value.sessionStates = new Map([
+    ['session-orch-v2', 'idle'],
+    ['session-worker-v2', 'idle'],
+  ]);
+  value.revoked = [];
+  value.closed = [];
+  value.removed = [];
+  value.publishedExpected = [];
+  value.deps = {
+    getMission: (_scope, missionId) =>
+      missionId === value.mission.id ? value.mission : null,
+    listMissionPanes: () => [...value.panes],
+    removeMissionPane: (_scope, paneRowId) => {
+      const index = value.panes.findIndex((pane) => pane.id === paneRowId);
+      if (index < 0) return false;
+      value.panes.splice(index, 1);
+      value.removed.push(paneRowId);
+      return true;
+    },
+    listTaskDispatches: () => [...value.dispatches],
+    listRuntimePanes: () => [...value.runtimePanes],
+    getSessionState: (sessionId) =>
+      value.sessionStates.get(sessionId) ?? null,
+    revokeSessionAuthority: (sessionId) => {
+      value.revoked.push(sessionId);
+    },
+    closePane: async (input) => {
+      value.closed.push(input);
+      if (value.closeFailsFor === input.paneId) return false;
+      if (input.sessionId) value.sessionStates.set(input.sessionId, null);
+      const runtime = value.runtimePanes.find(
+        (pane) => pane.paneId === input.paneId,
+      );
+      if (runtime) runtime.state = 'exited';
+      return true;
+    },
+    publishReapprovalRevision: (_scope, missionId, expected) => {
+      if (value.publishFails) {
+        throw new Error('dead graph reapproval mission CAS changed');
+      }
+      expect(missionId).toBe(value.mission.id);
+      value.publishedExpected.push(expected);
+      const contract = expected.intentContract!;
+      const {
+        approvedAt: _approvedAt,
+        approvalReviewSha256: _approvalReviewSha256,
+        dispatchedAt: _dispatchedAt,
+        squadRevisionHash: _squadRevisionHash,
+        orchestratorRuntime: _orchestratorRuntime,
+        spentSteps: _spentSteps,
+        spentTokens: _spentTokens,
+        ...copy
+      } = contract;
+      value.mission = {
+        ...expected,
+        status: 'pending',
+        intentState: 'awaiting_approval',
+        intentVersion: 3,
+        orchestratorSessionId: undefined,
+        intentContract: { ...copy, intentVersion: 3 },
+        milestones: contract.acceptanceCriteria.map((label, index) => ({
+          id: `step-${index + 1}`,
+          label,
+          status: 'pending',
+          evidenceIds: [],
+        })),
+        updatedAt: expected.updatedAt + 1,
+      };
+      return value.mission;
+    },
+  };
+  return value;
+}
+
+describe('dead task graph reapproval', () => {
+  it('retires exact v2 identities and returns review-required without spawning or reusing', async () => {
+    const h = deadGraphHarness();
+
+    const result = await prepareDeadGraphReapprovalForScope(
+      scope,
+      h.mission.id,
+      h.deps,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'review_required',
+      intentVersion: 3,
+      cta: 'Revisar e aprovar',
+    });
+    expect(h.revoked).toEqual([
+      'session-orch-v2',
+      'session-worker-v2',
+    ]);
+    expect(h.closed).toEqual([
+      expect.objectContaining({
+        paneId: 'pane-orch-v2',
+        sessionId: 'session-orch-v2',
+        role: 'orchestrator',
+      }),
+      expect.objectContaining({
+        paneId: 'pane-worker-v2',
+        sessionId: 'session-worker-v2',
+        role: 'worker',
+        workerIncarnationId: 'incarnation-worker-v2',
+      }),
+    ]);
+    expect(h.removed).toEqual([
+      'pane-row-orch-v2',
+      'pane-row-worker-v2',
+    ]);
+    expect(h.publishedExpected).toHaveLength(1);
+    expect(h.publishedExpected[0]).toMatchObject({
+      status: 'blocked',
+      intentVersion: 2,
+      orchestratorSessionId: 'session-orch-v2',
+    });
+    expect(h.mission).toMatchObject({
+      status: 'pending',
+      intentState: 'awaiting_approval',
+      intentVersion: 3,
+      orchestratorSessionId: undefined,
+    });
+    expect(h.sessionStates.get('session-worker-v2')).toBeNull();
+  });
+
+  it('keeps the mission blocked when one exact physical teardown fails', async () => {
+    const h = deadGraphHarness();
+    h.closeFailsFor = 'pane-worker-v2';
+
+    const result = await prepareDeadGraphReapprovalForScope(
+      scope,
+      h.mission.id,
+      h.deps,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'not_authorized',
+      error: expect.stringMatching(/prova de encerramento físico/i),
+    });
+    expect(h.mission).toMatchObject({
+      status: 'blocked',
+      intentVersion: 2,
+    });
+    expect(h.publishedExpected).toEqual([]);
+    expect(h.removed).toEqual([]);
+  });
+
+  it('fails closed on a stale publication CAS after physical teardown', async () => {
+    const h = deadGraphHarness();
+    h.publishFails = true;
+
+    const result = await prepareDeadGraphReapprovalForScope(
+      scope,
+      h.mission.id,
+      h.deps,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'not_authorized',
+      error: expect.stringMatching(/CAS.*permaneceu bloqueada/i),
+    });
+    expect(h.mission).toMatchObject({
+      status: 'blocked',
+      intentVersion: 2,
+    });
+    expect(h.sessionStates.get('session-orch-v2')).toBeNull();
+    expect(h.sessionStates.get('session-worker-v2')).toBeNull();
+  });
+
+  it('leaves bootstrap-only blocks on the ordinary resume path', async () => {
+    const h = deadGraphHarness();
+    h.dispatches = [];
+
+    const result = await prepareDeadGraphReapprovalForScope(
+      scope,
+      h.mission.id,
+      h.deps,
+    );
+
+    expect(result).toBeNull();
+    expect(h.revoked).toEqual([]);
+    expect(h.closed).toEqual([]);
+    expect(h.removed).toEqual([]);
+    expect(h.publishedExpected).toEqual([]);
+    expect(h.mission.status).toBe('blocked');
+  });
+});
+
 describe('blockedBootstrapResumePatch', () => {
   const marker = '<!-- nexus:orchestrator-bootstrap-blocked -->';
 
@@ -911,6 +1980,29 @@ describe('blockedBootstrapResumePatch', () => {
     expect(result.patch.status).toBe('running');
     expect(result.patch.description).toBe('Fechar bootstrap main-owned');
     expect(result.patch.description).not.toContain(marker);
+  });
+
+  it('strips the guided-plan block note before a successful retry', () => {
+    const blocked: Mission = {
+      ...approvedMission(),
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      description:
+        'Fechar bootstrap main-owned\n\n' +
+        '<!-- nexus:guided-plan-block -->\n' +
+        '## Execução não iniciada\nCTA: Retomar missão.',
+    };
+
+    const result = blockedBootstrapResumePatch(blocked);
+
+    expect(result).toMatchObject({
+      ok: true,
+      patch: {
+        status: 'running',
+        intentState: 'executing',
+        description: 'Fechar bootstrap main-owned',
+      },
+    });
   });
 
   it('refuses missions the bootstrap did not block', () => {

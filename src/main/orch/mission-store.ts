@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import {
@@ -18,6 +19,7 @@ import {
 } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
+  hasCurrentDispatchAuthority,
   missionBlockKindSchema,
   missionBlockPatch,
   resolveMissionBlockingIntentState,
@@ -41,6 +43,12 @@ import {
   HANDOFF_REBIND_BLOCK_MARKER,
   MAX_HANDOFF_DELIVERY_ATTEMPTS,
 } from './handoff-delivery-policy';
+import {
+  MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
+  missionOrchestratorExitDescription,
+  sanitizeMissionOrchestratorExitOutput,
+} from './mission-orchestrator-exit-policy';
+import { hashMissionIntentContract } from './mission-pane-authority';
 import {
   ScopedStoreBinding,
   ScopedStoreCorruptionError,
@@ -91,9 +99,27 @@ const missionRowSchema = z
 const milestoneJsonSchema = z.array(missionMilestoneInputSchema).max(256);
 const entityIdSchema = z.string().min(1).max(256);
 const sessionIdSchema = z.string().min(1).max(256);
+const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const stepIdSchema = z.string().min(1).max(128);
 const driverActionSchema = z.string().min(1).max(64);
 const timestampSchema = z.number().int().nonnegative();
+const missionDriverCompletionExpectationSchema = z
+  .object({
+    expectedUpdatedAt: timestampSchema,
+    expectedIntentVersion: z.number().int().nonnegative().max(1_000_000),
+  })
+  .strict();
+const orchestratorPreDispatchExitInputSchema = z
+  .object({
+    missionId: entityIdSchema,
+    orchestratorSessionId: sessionIdSchema,
+    intentVersion: z.number().int().positive().max(1_000_000),
+    intentContractHash: hashSchema,
+    squadRevisionHash: hashSchema,
+    observation: z.enum(['physical_exit', 'missing_session_reconcile']),
+    outputTail: z.string().max(16_384),
+  })
+  .strict();
 
 const missionDriveStateRowSchema = z
   .object({
@@ -127,6 +153,10 @@ export interface MissionDriveRuntimeState {
   readonly lastError?: string;
   readonly updatedAt: number;
 }
+
+export type OrchestratorPreDispatchExitInput = z.infer<
+  typeof orchestratorPreDispatchExitInputSchema
+>;
 
 interface MissionRow extends z.infer<typeof missionRowSchema> {}
 
@@ -171,6 +201,17 @@ function cloneMission(mission: ScopedMission): ScopedMission {
               ? mission.intentContract.attachmentSnapshots.map((snapshot) => ({
                   ...snapshot,
                 }))
+              : undefined,
+            promotedPlan: mission.intentContract.promotedPlan
+              ? {
+                  ...mission.intentContract.promotedPlan,
+                  physicalReceipt: {
+                    ...mission.intentContract.promotedPlan.physicalReceipt,
+                  },
+                  artifacts: structuredClone(
+                    mission.intentContract.promotedPlan.artifacts,
+                  ),
+                }
               : undefined,
           },
         }
@@ -591,7 +632,9 @@ export class ScopedMissionStore {
       }>;
 
       const blocked = staleDeliveries.some((handoff) =>
-        handoff.delivery_state !== 'submitted' ||
+        !['submitted', 'acknowledged', 'consumed'].includes(
+          handoff.delivery_state,
+        ) ||
         handoff.submitted_at === null ||
         handoff.latest_attempt_no >= MAX_HANDOFF_DELIVERY_ATTEMPTS,
       );
@@ -623,9 +666,11 @@ export class ScopedMissionStore {
           `UPDATE handoffs
            SET delivered = 0, delivery_state = 'queued',
                submitted_at = NULL, acknowledged_at = NULL,
-               consumed_at = NULL
+               consumed_at = NULL, consumed_by_session = NULL,
+               consumed_delivery_attempt_id = NULL
            WHERE id = ? AND mission_id = ?
-             AND delivered = 1 AND delivery_state = 'submitted'`,
+             AND delivered = 1
+             AND delivery_state IN ('submitted', 'acknowledged', 'consumed')`,
         ).run(handoff.id, id);
         if (requeued.changes !== 1) {
           throw new Error('orchestrator rebind lost handoff delivery CAS');
@@ -643,6 +688,414 @@ export class ScopedMissionStore {
     if (!found) return null;
     this.#binding.emitChange();
     return this.get(id);
+  }
+
+  /**
+   * Fail closed when the exact physical Maestro exits before creating the
+   * first dispatch for this intent revision.
+   *
+   * The IMMEDIATE transaction fences session + revision + contract and proves
+   * the absence of every dispatch. Both `dispatched` and `executing` are valid
+   * current-authority states: Retomar rearms a blocked mission as `executing`
+   * before the replacement Maestro boots. It deliberately also covers failure
+   * before the kickoff receipt commits. Blocking plus the redacted diagnostic
+   * event are one indivisible state change.
+   */
+  blockOrchestratorPreDispatchExit(
+    rawInput: OrchestratorPreDispatchExitInput,
+  ): ScopedMission | null {
+    const input = orchestratorPreDispatchExitInputSchema.parse(rawInput);
+    const outputTail = sanitizeMissionOrchestratorExitOutput(input.outputTail);
+    const at = this.#binding.now();
+    const identityHash = createHash('sha256')
+      .update(
+        `${input.missionId}\0${input.intentVersion}\0${input.orchestratorSessionId}`,
+      )
+      .digest('hex');
+    const db = this.#binding.writeDatabase();
+    const updated = db
+      .transaction(() => {
+        const current = this.#getFromDatabase(db, input.missionId);
+        if (
+          !current ||
+          current.status !== 'running' ||
+          !['dispatched', 'executing'].includes(current.intentState ?? '') ||
+          current.orchestratorSessionId !== input.orchestratorSessionId ||
+          (current.intentVersion ?? 0) !== input.intentVersion ||
+          !hasCurrentDispatchAuthority(current) ||
+          !current.intentContract ||
+          hashMissionIntentContract(current.intentContract) !==
+            input.intentContractHash ||
+          current.intentContract.squadRevisionHash !== input.squadRevisionHash
+        ) {
+          return null;
+        }
+
+        const firstDispatch = db
+          .prepare(
+            `SELECT 1
+               FROM task_dispatch_queue
+              WHERE mission_id = ?
+                AND intent_version = ?
+              LIMIT 1`,
+          )
+          .get(input.missionId, input.intentVersion);
+        if (firstDispatch) return null;
+
+        const description = missionOrchestratorExitDescription(
+          current.description,
+        );
+        const result = db
+          .prepare(
+            `UPDATE missions
+                SET status = 'blocked',
+                    intent_state = 'blocked_technical',
+                    description = ?,
+                    updated_at = ?
+              WHERE id = ?
+                AND status = 'running'
+                AND intent_state IN ('dispatched', 'executing')
+                AND intent_version = ?
+                AND orch_session_id = ?`,
+          )
+          .run(
+            description,
+            at,
+            input.missionId,
+            input.intentVersion,
+            input.orchestratorSessionId,
+          );
+        if (result.changes !== 1) {
+          throw new Error(
+            'orchestrator pre-dispatch exit lost mission authority CAS',
+          );
+        }
+
+        db.prepare(
+          `UPDATE mission_drive_state
+              SET revision = revision + 1,
+                  last_action_kind = 'orchestrator_exit',
+                  last_outcome = 'failed',
+                  last_error = ?,
+                  updated_at = ?
+            WHERE mission_id = ?`,
+        ).run(
+          MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
+          at,
+          input.missionId,
+        );
+
+        const sequence = (
+          db
+            .prepare(
+              `SELECT COALESCE(MAX(sequence), 0) + 1 AS value
+                 FROM mission_events
+                WHERE mission_id = ?`,
+            )
+            .get(input.missionId) as { value: number }
+        ).value;
+        db.prepare(
+          `INSERT INTO mission_events (
+             sequence, id, mission_id, run_id, parent_run_id, event_type,
+             payload_json, idempotency_key, occurred_at, origin,
+             delivery_status
+           ) VALUES (?, ?, ?, ?, NULL, 'agent.finished', ?, ?, ?, 'system',
+                     'pending')`,
+        ).run(
+          sequence,
+          `mevt-orch-exit-${identityHash.slice(0, 40)}`,
+          input.missionId,
+          `orchestrator-${identityHash.slice(0, 40)}`,
+          JSON.stringify({
+            event: 'orchestrator.pre_dispatch_exit',
+            reason: MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
+            sessionId: input.orchestratorSessionId,
+            intentVersion: input.intentVersion,
+            phase: 'before_first_dispatch',
+            observation: input.observation,
+            outputTail,
+          }),
+          `orch-exit-${identityHash}`,
+          at,
+        );
+
+        return this.#getFromDatabase(db, input.missionId);
+      })
+      .immediate();
+    if (!updated) return null;
+    this.#binding.emitChange();
+    return cloneMission(updated);
+  }
+
+  /**
+   * Atomically replace a plan-only squad with its executable runtime snapshot
+   * while advancing exactly one intent revision.
+   *
+   * This is deliberately not part of `MissionPatch`: renderer-owned updates
+   * can never choose `squad_id`. The caller must present the exact main-owned
+   * mission snapshot it reviewed after physical plan teardown; SQLite then
+   * CASes id/squad/revision/timestamp and proves there is no live orchestrator
+   * or task dispatch before publishing the standard-lane contract.
+   */
+  commitPlanPromotionRevision(
+    rawId: string,
+    expected: Mission,
+    rawSquadId: string,
+    rawContract: MissionIntentContract,
+  ): ScopedMission {
+    const id = entityIdSchema.parse(rawId);
+    const squadId = z.string().min(1).max(128).parse(rawSquadId);
+    const contract = missionIntentContractSchema.parse(rawContract);
+    const expectedVersion = expected.intentVersion ?? 0;
+    if (
+      expected.id !== id ||
+      expected.orchestratorSessionId !== undefined ||
+      expected.intentContract?.lane !== 'plan' ||
+      contract.lane !== 'standard' ||
+      contract.intentVersion !== expectedVersion + 1
+    ) {
+      throw new Error('plan promotion revision contract is invalid');
+    }
+    assertIntentContractRevision(contract, contract.intentVersion);
+
+    const db = this.#binding.writeDatabase();
+    const updated = db.transaction(() => {
+      const existing = this.#getFromDatabase(db, id);
+      if (!existing) throw new Error('mission not found');
+      const expectedContract = serializeIntentContract(expected.intentContract);
+      const existingContract = serializeIntentContract(existing.intentContract);
+      if (
+        existing.squadId !== expected.squadId ||
+        (existing.intentVersion ?? 0) !== expectedVersion ||
+        existing.updatedAt !== expected.updatedAt ||
+        existing.status !== expected.status ||
+        (existing.intentState ?? 'legacy') !==
+          (expected.intentState ?? 'legacy') ||
+        existing.orchestratorSessionId !== undefined ||
+        existingContract !== expectedContract
+      ) {
+        throw new Error('plan promotion mission CAS changed');
+      }
+
+      const activeDispatch = db.prepare(
+        `SELECT task_id
+           FROM task_dispatch_queue
+          WHERE mission_id = ?
+            AND state IN (
+              'claimed', 'routed', 'spawning', 'running',
+              'handoff_ready', 'merging', 'suspended'
+            )
+          LIMIT 1`,
+      ).get(id);
+      if (activeDispatch) {
+        throw new Error(
+          'plan promotion cannot replace squad while a task dispatch is active',
+        );
+      }
+
+      const milestones = structuralCoerceMilestones(
+        normalizeMilestones(contract.acceptanceCriteria),
+      );
+      const updatedAt = this.#binding.now();
+      const result = db.prepare(
+        `UPDATE missions
+            SET squad_id = ?, status = 'pending', milestones_json = ?,
+                intent_state = 'ready_to_start', intent_contract_json = ?,
+                intent_version = ?, updated_at = ?
+          WHERE id = ?
+            AND intent_version = ?
+            AND updated_at = ?
+            AND orch_session_id IS NULL
+            AND (
+              (squad_id IS NULL AND ? IS NULL)
+              OR squad_id = ?
+            )`,
+      ).run(
+        squadId,
+        JSON.stringify(milestones),
+        serializeIntentContract(contract),
+        contract.intentVersion,
+        updatedAt,
+        id,
+        expectedVersion,
+        expected.updatedAt,
+        expected.squadId ?? null,
+        expected.squadId ?? null,
+      );
+      if (result.changes !== 1) {
+        throw new Error('plan promotion mission CAS changed');
+      }
+      return true;
+    }).immediate();
+    if (!updated) {
+      throw new Error('plan promotion mission update failed');
+    }
+    this.#binding.emitChange();
+    const mission = this.get(id);
+    if (!mission) throw new Error('mission not found after plan promotion');
+    return mission;
+  }
+
+  /**
+   * Publish a fresh, human-reviewable revision after an already-dispatched
+   * task graph became terminally invalid.
+   *
+   * The old task plan, task rows, dispatch queue and every receipt are audit
+   * history and are intentionally left untouched. The caller must first prove
+   * physical pane/session teardown and remove the durable pane composition;
+   * this transaction then CASes the exact blocked mission snapshot, requires a
+   * terminal dispatch from that same revision, and advances exactly once.
+   */
+  publishDeadGraphReapprovalRevision(
+    rawId: string,
+    expected: Mission,
+  ): ScopedMission {
+    const id = entityIdSchema.parse(rawId);
+    const expectedVersion = expected.intentVersion ?? 0;
+    const expectedContract = expected.intentContract;
+    if (
+      expected.id !== id ||
+      expected.status !== 'blocked' ||
+      (expected.intentState !== 'blocked_technical' &&
+        expected.intentState !== 'blocked_user') ||
+      !expectedContract ||
+      expectedContract.intentVersion !== expectedVersion ||
+      expectedVersion <= 0 ||
+      expectedVersion >= 1_000_000 ||
+      expectedContract.approvedAt === undefined
+    ) {
+      throw new Error('dead graph reapproval contract is invalid');
+    }
+
+    const {
+      approvedAt: _approvedAt,
+      approvalReviewSha256: _approvalReviewSha256,
+      dispatchedAt: _dispatchedAt,
+      squadRevisionHash: _squadRevisionHash,
+      orchestratorRuntime: _orchestratorRuntime,
+      spentSteps: _spentSteps,
+      spentTokens: _spentTokens,
+      ...reusableContract
+    } = expectedContract;
+    const nextVersion = expectedVersion + 1;
+    const nextContract = missionIntentContractSchema.parse({
+      ...reusableContract,
+      intentVersion: nextVersion,
+    });
+    const nextMilestones = structuralCoerceMilestones(
+      normalizeMilestones(nextContract.acceptanceCriteria),
+    );
+    const serializedExpectedContract = serializeIntentContract(expectedContract);
+    const serializedNextContract = serializeIntentContract(nextContract);
+    const db = this.#binding.writeDatabase();
+    const updated = db
+      .transaction(() => {
+        const current = this.#getFromDatabase(db, id);
+        if (
+          !current ||
+          current.status !== expected.status ||
+          (current.intentState ?? 'legacy') !==
+            (expected.intentState ?? 'legacy') ||
+          (current.intentVersion ?? 0) !== expectedVersion ||
+          current.updatedAt !== expected.updatedAt ||
+          current.squadId !== expected.squadId ||
+          current.orchestratorSessionId !== expected.orchestratorSessionId ||
+          serializeIntentContract(current.intentContract) !==
+            serializedExpectedContract
+        ) {
+          throw new Error('dead graph reapproval mission CAS changed');
+        }
+
+        const persistedPane = db
+          .prepare(
+            `SELECT id FROM mission_panes
+             WHERE mission_id = ?
+             LIMIT 1`,
+          )
+          .get(id);
+        if (persistedPane) {
+          throw new Error(
+            'dead graph reapproval requires proven pane teardown',
+          );
+        }
+
+        const invalidatedDispatch = db
+          .prepare(
+            `SELECT task_id FROM task_dispatch_queue
+             WHERE mission_id = ?
+               AND intent_version = ?
+               AND state IN ('superseded', 'blocked', 'failed')
+             LIMIT 1`,
+          )
+          .get(id, expectedVersion);
+        if (!invalidatedDispatch) {
+          throw new Error(
+            'dead graph reapproval requires an invalidated current dispatch',
+          );
+        }
+        const nonTerminalDispatch = db
+          .prepare(
+            `SELECT task_id FROM task_dispatch_queue
+             WHERE mission_id = ?
+               AND intent_version = ?
+               AND state NOT IN (
+                 'completed', 'superseded', 'blocked', 'failed'
+               )
+             LIMIT 1`,
+          )
+          .get(id, expectedVersion);
+        if (nonTerminalDispatch) {
+          throw new Error(
+            'dead graph reapproval cannot advance a non-terminal dispatch',
+          );
+        }
+
+        const updatedAt = this.#binding.now();
+        const result = db
+          .prepare(
+            `UPDATE missions
+             SET status = 'pending',
+                 milestones_json = ?,
+                 orch_session_id = NULL,
+                 intent_state = 'awaiting_approval',
+                 intent_contract_json = ?,
+                 intent_version = ?,
+                 updated_at = ?
+             WHERE id = ?
+               AND status = 'blocked'
+               AND intent_state = ?
+               AND intent_version = ?
+               AND updated_at = ?
+               AND intent_contract_json = ?
+               AND (
+                 (orch_session_id IS NULL AND ? IS NULL)
+                 OR orch_session_id = ?
+               )`,
+          )
+          .run(
+            JSON.stringify(nextMilestones),
+            serializedNextContract,
+            nextVersion,
+            updatedAt,
+            id,
+            expected.intentState,
+            expectedVersion,
+            expected.updatedAt,
+            serializedExpectedContract,
+            expected.orchestratorSessionId ?? null,
+            expected.orchestratorSessionId ?? null,
+          );
+        if (result.changes !== 1) {
+          throw new Error('dead graph reapproval mission CAS changed');
+        }
+        return this.#getFromDatabase(db, id);
+      })
+      .immediate();
+    if (!updated) {
+      throw new Error('dead graph reapproval mission update failed');
+    }
+    this.#binding.emitChange();
+    return cloneMission(updated);
   }
 
   update(rawId: string, rawPatch: MissionPatch): ScopedMission | null {
@@ -891,6 +1344,53 @@ export class ScopedMissionStore {
     const id = entityIdSchema.parse(rawId);
     const status = missionStatusSchema.parse(rawStatus);
     return this.update(id, { status });
+  }
+
+  /**
+   * Exclusive terminal write for the PREVC-backed Mission Driver.
+   *
+   * The caller must prove milestones + immutable PREVC receipts before entering
+   * this store boundary. A single CAS statement then closes both projections;
+   * no observer can see `status=done` with an executing intent (or vice versa).
+   */
+  completeFromMissionDriver(
+    rawId: string,
+    rawExpectation: {
+      readonly expectedUpdatedAt: number;
+      readonly expectedIntentVersion: number;
+    },
+  ): ScopedMission | null {
+    const id = entityIdSchema.parse(rawId);
+    const expectation =
+      missionDriverCompletionExpectationSchema.parse(rawExpectation);
+    const db = this.#binding.writeDatabase();
+    const updated = db
+      .transaction(() => {
+        const updatedAt = this.#binding.now();
+        const result = db
+          .prepare(
+            `UPDATE missions
+             SET status = 'done', intent_state = 'done', updated_at = ?
+             WHERE id = ?
+               AND status = 'running'
+               AND intent_state IN ('legacy', 'executing', 'validating')
+               AND intent_version = ?
+               AND updated_at = ?`,
+          )
+          .run(
+            updatedAt,
+            id,
+            expectation.expectedIntentVersion,
+            expectation.expectedUpdatedAt,
+          );
+        return result.changes === 1
+          ? this.#getFromDatabase(db, id)
+          : null;
+      })
+      .immediate();
+    if (!updated) return null;
+    this.#binding.emitChange();
+    return cloneMission(updated);
   }
 
   /** Persist a typed user/technical block without an ambiguous status-only write. */

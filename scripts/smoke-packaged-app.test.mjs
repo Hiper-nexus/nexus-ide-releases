@@ -3,22 +3,26 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { finished } from 'node:stream/promises';
 import { createPackage } from '@electron/asar';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   FUNCTIONAL_SMOKE_MARKER_CONTENT,
+  GRACEFUL_CLOSE_TIMEOUT_MS,
   assertFunctionalMarker,
   assertPackagedMainBundleBootable,
   inspectPackagedLegalArtifacts,
   inspectPackagedMainBundle,
   inspectPackagedWakeModel,
   assertNativeArtifactsPresent,
+  assertNoBundledNodePtySpawnHelper,
   assertNoNativeLoadFailure,
   assertPackagedSmokeProof,
   defaultPackagedTargetPath,
   formatValidationMatrix,
   killProcessTree,
+  listProcessTreePids,
   packagedBinaryForApp,
   packagedSmokeArgs,
   packagedSmokeEnvironment,
@@ -53,6 +57,14 @@ function writeTree(root, relativeFiles) {
     fs.writeFileSync(full, 'native');
     if (path.basename(full) === 'spawn-helper') fs.chmodSync(full, 0o755);
   }
+}
+
+async function createFinishedPackage(source, destination) {
+  // @electron/asar resolves createPackage after calling stream.end(), not
+  // after the archive has physically emitted "finish". Reading immediately
+  // is therefore racy under the full parallel suite.
+  const archive = await createPackage(source, destination);
+  await finished(archive);
 }
 
 describe('resolveAppArgument / default targets', () => {
@@ -319,7 +331,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
       path.join(source, '.vite', 'build', 'main-hashed.js'),
       'const req=(0,node_module.createRequire)({}.url);req.resolve("asset");',
     );
-    await createPackage(source, path.join(resources, 'app.asar'));
+    await createFinishedPackage(source, path.join(resources, 'app.asar'));
 
     expect(() => inspectPackagedMainBundle(resources)).toThrow(
       /createRequire.*undefined.*import\.meta\.url/iu,
@@ -362,7 +374,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
       'SIL Open Font License 1.1',
     );
     fs.mkdirSync(resources, { recursive: true });
-    await createPackage(source, path.join(resources, 'app.asar'));
+    await createFinishedPackage(source, path.join(resources, 'app.asar'));
 
     expect(() => inspectPackagedLegalArtifacts(resources)).not.toThrow();
   });
@@ -383,7 +395,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
       'Apache License 2.0',
     );
     fs.mkdirSync(resources, { recursive: true });
-    await createPackage(source, path.join(resources, 'app.asar'));
+    await createFinishedPackage(source, path.join(resources, 'app.asar'));
 
     expect(() => inspectPackagedLegalArtifacts(resources)).toThrow(
       /legal artifacts are incomplete/i,
@@ -430,7 +442,7 @@ describe('proofs: renderer, functional, marker, natives', () => {
     await expect(assertFunctionalMarker(userData)).rejects.toThrow(/mismatch/);
   });
 
-  it('lists required native artifacts per platform (spawn-helper only on macOS)', () => {
+  it('lists native bindings without treating spawn-helper as an artifact', () => {
     const darwin = requiredNativeArtifactGlobs({
       platform: 'darwin',
       arch: 'arm64',
@@ -452,12 +464,12 @@ describe('proofs: renderer, functional, marker, natives', () => {
         'tesseract-wasm-feature-detect',
         'better-sqlite3',
         'node-pty',
-        'node-pty-spawn-helper',
         'onnxruntime-node',
       ]),
     );
     expect(linux).not.toContain('node-pty-spawn-helper');
     expect(win).not.toContain('node-pty-spawn-helper');
+    expect(darwin).not.toContain('node-pty-spawn-helper');
     expect(win).toEqual(
       expect.arrayContaining(['webrtc-aec3-wasm', 'tesseract-worker', 'tesseract-core', 'tesseract-wasm-feature-detect', 'better-sqlite3', 'node-pty', 'onnxruntime-node']),
     );
@@ -484,11 +496,6 @@ describe('proofs: renderer, functional, marker, natives', () => {
           `node_modules/onnxruntime-node/bin/napi-v3/linux/${arch}/libonnxruntime.so.1`,
         );
       }
-      if (platform === 'darwin') {
-        files.push(
-          `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/spawn-helper`,
-        );
-      }
       writeTree(unpacked, files);
       const found = await assertNativeArtifactsPresent(unpacked, {
         platform,
@@ -498,9 +505,6 @@ describe('proofs: renderer, functional, marker, natives', () => {
       expect(found['webrtc-aec3-wasm']).toMatch(/webrtcaec3-0\.3\.0\.wasm$/);
       expect(found['node-pty']).toMatch(/pty\.node$/);
       expect(found['onnxruntime-node']).toMatch(/onnxruntime_binding\.node$/);
-      if (platform === 'darwin') {
-        expect(found['node-pty-spawn-helper']).toMatch(/spawn-helper$/);
-      }
     }
   });
 
@@ -521,27 +525,35 @@ describe('proofs: renderer, functional, marker, natives', () => {
     ).rejects.toThrow(/missing/);
   });
 
-  it('fails when the macOS node-pty helper is not executable', async () => {
+  it('fails when any macOS node-pty spawn-helper is bundled', async () => {
     const unpacked = makeTemp();
     writeTree(unpacked, [
-      'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
-      'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/pty.node',
       'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/spawn-helper',
-      'node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/onnxruntime_binding.node',
     ]);
-    fs.chmodSync(
-      path.join(
-        unpacked,
-        'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/spawn-helper',
-      ),
-      0o644,
-    );
+    await expect(
+      assertNoBundledNodePtySpawnHelper(unpacked),
+    ).rejects.toThrow(/forbidden/);
     await expect(
       assertNativeArtifactsPresent(unpacked, {
         platform: 'darwin',
         arch: 'arm64',
       }),
-    ).rejects.toThrow(/not executable/);
+    ).rejects.toThrow(/forbidden/);
+  });
+
+  it('fails when a spawn-helper is hidden inside app.asar', async () => {
+    const resources = makeTemp('nexus-spawn-helper-asar-');
+    const source = makeTemp('nexus-spawn-helper-asar-source-');
+    const unpacked = path.join(resources, 'app.asar.unpacked');
+    fs.mkdirSync(unpacked, { recursive: true });
+    writeTree(source, [
+      'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/spawn-helper',
+    ]);
+    await createFinishedPackage(source, path.join(resources, 'app.asar'));
+
+    await expect(
+      assertNoBundledNodePtySpawnHelper(unpacked),
+    ).rejects.toThrow(/asar contains forbidden/);
   });
 
   it('accepts better-sqlite3 prebuild bin layout via scan fallback', async () => {
@@ -553,7 +565,6 @@ describe('proofs: renderer, functional, marker, natives', () => {
       'node_modules/wasm-feature-detect/dist/cjs/index.cjs',
       'node_modules/better-sqlite3/bin/darwin-arm64-148/better-sqlite3.node',
       'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/pty.node',
-      'node_modules/@lydell/node-pty-darwin-arm64/prebuilds/darwin-arm64/spawn-helper',
       'node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/onnxruntime_binding.node',
     ]);
     const found = await assertNativeArtifactsPresent(unpacked, {
@@ -565,6 +576,41 @@ describe('proofs: renderer, functional, marker, natives', () => {
 });
 
 describe('process tree termination', () => {
+  it('does not report an already-dead zombie awaiting parent reaping', () => {
+    const runSync = vi.fn(() => ({
+      status: 0,
+      stdout:
+        ' 42 10 42 Z+\n' +
+        ' 43 42 43 S+\n' +
+        ' 99 10 99 R+\n',
+    }));
+
+    expect(
+      listProcessTreePids(42, {
+        platform: 'darwin',
+        runSync,
+      }),
+    ).toEqual([43]);
+    expect(runSync).toHaveBeenCalledWith(
+      'ps',
+      ['-axo', 'pid=,ppid=,pgid=,stat='],
+      expect.objectContaining({ shell: false }),
+    );
+  });
+
+  it('never converts an unreadable ps inventory into an empty tree', () => {
+    expect(() =>
+      listProcessTreePids(42, {
+        platform: 'darwin',
+        runSync: () => ({
+          status: 1,
+          stdout: '',
+          error: new Error('ps unavailable'),
+        }),
+      }),
+    ).toThrow(/process-tree inventory failed.*ps unavailable/);
+  });
+
   it('uses taskkill /T /F on Windows without a shell', () => {
     const runSync = vi.fn(() => ({ status: 0 }));
     killProcessTree(4242, { platform: 'win32', runSync });
@@ -614,6 +660,23 @@ describe('process tree termination', () => {
     });
     expect(proof.ok).toBe(false);
     expect(proof.remainingPids).toEqual([42, 777]);
+  });
+
+  it('fails closed when any termination inventory read fails', () => {
+    const proof = killProcessTree(42, {
+      platform: 'darwin',
+      kill: vi.fn(),
+      listPids: () => {
+        throw new Error('inventory denied');
+      },
+      sleep: () => undefined,
+      termGraceMs: 0,
+      killGraceMs: 0,
+      pollMs: 0,
+    });
+    expect(proof.ok).toBe(false);
+    expect(proof.remainingPids).toEqual([42]);
+    expect(proof.inventoryError).toMatch(/inventory denied/);
   });
 
   it('no-ops for invalid pids', () => {
@@ -709,11 +772,6 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
         `node_modules/onnxruntime-node/bin/napi-v3/linux/${arch}/libonnxruntime.so.1`,
       );
     }
-    if (platform === 'darwin') {
-      files.push(
-        `node_modules/@lydell/node-pty-${platform}-${arch}/prebuilds/${platform}-${arch}/spawn-helper`,
-      );
-    }
     writeTree(unpacked, files);
     const wakeDir = path.join(path.dirname(unpacked), 'wake');
     const wakeModel = Buffer.from('fixture-ptbr-wake-model');
@@ -786,6 +844,12 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     expect(result.matrix.darwin.status).toBe('apenas estrutural');
     expect(result.matrix.linux.status).toBe('apenas estrutural');
     expect(result.matrix.win32.status).toBe('apenas estrutural');
+    expect(result.shutdownMode).toBe('graceful');
+    expect(result.treeProof).toEqual({
+      ok: true,
+      remainingPids: [],
+      signalled: [],
+    });
   });
 
   it('kills the process tree on timeout', async () => {
@@ -825,21 +889,51 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     expect(killTree).toHaveBeenCalledWith(777, { platform: 'linux' });
   });
 
-  it('stops the isolated process once functional readiness is proven', async () => {
+  it('reaps the whole tree when the packaged child reports a launch error', async () => {
+    const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
+    const child = new EventEmitter();
+    child.pid = 776;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const killTree = vi.fn(() => ({
+      ok: true,
+      remainingPids: [],
+      signalled: ['group:SIGTERM'],
+    }));
+
+    await expect(
+      runPackagedSmoke(targetPath, {
+        platform: 'linux',
+        arch: 'x64',
+        killTree,
+        spawnImpl: () => {
+          queueMicrotask(() => child.emit('error', new Error('launch failed')));
+          return child;
+        },
+        inspectMainBundle: () => {},
+        inspectLegalArtifacts: () => {},
+      }),
+    ).rejects.toThrow(/launch failed/);
+
+    expect(killTree).toHaveBeenCalledWith(776, { platform: 'linux' });
+  });
+
+  it('gives Linux a bounded graceful-close window before reaping the tree', async () => {
     const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
     const child = new EventEmitter();
     child.pid = 778;
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
-    // Smoke now waits for close + tree proof after functional-ready.
+    const events = [];
     const killTree = vi.fn(() => {
-      queueMicrotask(() => child.emit('close', 0));
+      events.push('reaped');
       return { ok: true, remainingPids: [], signalled: ['group:SIGTERM'] };
     });
 
     const result = await runPackagedSmoke(targetPath, {
       platform: 'linux',
       arch: 'x64',
+      gracefulCloseTimeoutMs: 10,
       killTree,
       spawnImpl: (_binary, _args, opts) => {
         queueMicrotask(() => {
@@ -847,9 +941,14 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
           // The real runner writes this marker before emitting functional-ready.
           fs.mkdirSync(path.dirname(marker), { recursive: true });
           fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+          events.push('ready');
           child.stdout.emit(
             'data',
-            Buffer.from('[smoke] renderer-mounted\n[smoke] functional-ready: 20 probes\n'),
+            Buffer.from(
+              '[smoke] renderer-mounted\n' +
+                '[smoke] functional-ready: 20 probes\n' +
+                '[smoke] shutdown-complete: physical PTY inventory proven\n',
+            ),
           );
         });
         return child;
@@ -859,8 +958,223 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
     });
 
     expect(result.code).toBe(0);
+    expect(events).toEqual(['ready', 'reaped']);
     expect(killTree).toHaveBeenCalledWith(778, { platform: 'linux' });
     expect(result.treeProof?.ok).toBe(true);
+    expect(result.shutdownMode).toBe('external-reap');
+  });
+
+  it('does not reap when the app closes itself after functional readiness', async () => {
+    const { targetPath } = fixturePackage({ platform: 'darwin', arch: 'arm64' });
+    const child = new EventEmitter();
+    child.pid = 779;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const killTree = vi.fn();
+    const listTreePids = vi.fn(() => []);
+
+    const result = await runPackagedSmoke(targetPath, {
+      platform: 'darwin',
+      arch: 'arm64',
+      gracefulCloseTimeoutMs: 20,
+      requireGracefulClose: true,
+      killTree,
+      listTreePids,
+      spawnImpl: (_binary, _args, opts) => {
+        queueMicrotask(() => {
+          const marker = packagedSmokeMarkerPath(opts.env.NEXUS_USER_DATA_DIR);
+          fs.mkdirSync(path.dirname(marker), { recursive: true });
+          fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+          child.stdout.emit(
+            'data',
+            Buffer.from(
+              '[smoke] renderer-mounted\n' +
+                '[smoke] functional-ready: 20 probes\n' +
+                '[smoke] shutdown-complete: physical PTY inventory proven\n',
+            ),
+          );
+          child.emit('close', 0, null);
+        });
+        return child;
+      },
+      inspectMainBundle: () => {},
+      inspectLegalArtifacts: () => {},
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.shutdownMode).toBe('graceful');
+    expect(result.treeProof?.signalled).toEqual([]);
+    expect(listTreePids).toHaveBeenCalledWith(779, { platform: 'darwin' });
+    expect(killTree).not.toHaveBeenCalled();
+  });
+
+  it('rejects a macOS root exit without the main-owned shutdown proof', async () => {
+    const { targetPath } = fixturePackage({ platform: 'darwin', arch: 'arm64' });
+    const child = new EventEmitter();
+    child.pid = 7790;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+
+    await expect(
+      runPackagedSmoke(targetPath, {
+        platform: 'darwin',
+        arch: 'arm64',
+        gracefulCloseTimeoutMs: 20,
+        requireGracefulClose: true,
+        killTree: vi.fn(),
+        listTreePids: () => [],
+        spawnImpl: (_binary, _args, opts) => {
+          queueMicrotask(() => {
+            const marker = packagedSmokeMarkerPath(
+              opts.env.NEXUS_USER_DATA_DIR,
+            );
+            fs.mkdirSync(path.dirname(marker), { recursive: true });
+            fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+            child.stdout.emit(
+              'data',
+              Buffer.from(
+                '[smoke] renderer-mounted\n' +
+                  '[smoke] functional-ready: 20 probes\n',
+              ),
+            );
+            child.emit('close', 0, null);
+          });
+          return child;
+        },
+        inspectMainBundle: () => {},
+        inspectLegalArtifacts: () => {},
+      }),
+    ).rejects.toThrow(/main-owned shutdown-complete proof/);
+  });
+
+  it('rejects a natural non-zero close after readiness on Linux', async () => {
+    const { targetPath } = fixturePackage({ platform: 'linux', arch: 'x64' });
+    const child = new EventEmitter();
+    child.pid = 77901;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+
+    await expect(
+      runPackagedSmoke(targetPath, {
+        platform: 'linux',
+        arch: 'x64',
+        gracefulCloseTimeoutMs: 20,
+        listTreePids: () => [],
+        spawnImpl: (_binary, _args, opts) => {
+          queueMicrotask(() => {
+            const marker = packagedSmokeMarkerPath(
+              opts.env.NEXUS_USER_DATA_DIR,
+            );
+            fs.mkdirSync(path.dirname(marker), { recursive: true });
+            fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+            child.stdout.emit(
+              'data',
+              Buffer.from(
+                '[smoke] renderer-mounted\n' +
+                  '[smoke] functional-ready: 20 probes\n',
+              ),
+            );
+            child.emit('close', 7, null);
+          });
+          return child;
+        },
+        inspectMainBundle: () => {},
+        inspectLegalArtifacts: () => {},
+      }),
+    ).rejects.toThrow(/successful natural close.*exit=7/);
+  });
+
+  it('lets a naturally closing helper drain before the grace deadline', async () => {
+    const { targetPath } = fixturePackage({ platform: 'darwin', arch: 'arm64' });
+    const child = new EventEmitter();
+    child.pid = 7791;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const killTree = vi.fn();
+    const listTreePids = vi
+      .fn()
+      .mockReturnValueOnce([7792])
+      .mockReturnValueOnce([]);
+
+    const result = await runPackagedSmoke(targetPath, {
+      platform: 'darwin',
+      arch: 'arm64',
+      gracefulCloseTimeoutMs: 100,
+      requireGracefulClose: true,
+      killTree,
+      listTreePids,
+      spawnImpl: (_binary, _args, opts) => {
+        queueMicrotask(() => {
+          const marker = packagedSmokeMarkerPath(opts.env.NEXUS_USER_DATA_DIR);
+          fs.mkdirSync(path.dirname(marker), { recursive: true });
+          fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+          child.stdout.emit(
+            'data',
+            Buffer.from(
+              '[smoke] renderer-mounted\n' +
+                '[smoke] functional-ready: 20 probes\n' +
+                '[smoke] shutdown-complete: physical PTY inventory proven\n',
+            ),
+          );
+          child.emit('close', 0, null);
+        });
+        return child;
+      },
+      inspectMainBundle: () => {},
+      inspectLegalArtifacts: () => {},
+    });
+
+    expect(result.shutdownMode).toBe('graceful');
+    expect(listTreePids).toHaveBeenCalledTimes(2);
+    expect(killTree).not.toHaveBeenCalled();
+  });
+
+  it('fails macOS local proof after bounded fallback reaping', async () => {
+    const { targetPath } = fixturePackage({ platform: 'darwin', arch: 'arm64' });
+    const child = new EventEmitter();
+    child.pid = 780;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const killTree = vi.fn(() => ({
+      ok: true,
+      remainingPids: [],
+      signalled: ['group:SIGTERM'],
+    }));
+
+    await expect(
+      runPackagedSmoke(targetPath, {
+        platform: 'darwin',
+        arch: 'arm64',
+        gracefulCloseTimeoutMs: 10,
+        requireGracefulClose: true,
+        killTree,
+        spawnImpl: (_binary, _args, opts) => {
+          queueMicrotask(() => {
+            const marker = packagedSmokeMarkerPath(opts.env.NEXUS_USER_DATA_DIR);
+            fs.mkdirSync(path.dirname(marker), { recursive: true });
+            fs.writeFileSync(marker, FUNCTIONAL_SMOKE_MARKER_CONTENT);
+            child.stdout.emit(
+              'data',
+              Buffer.from('[smoke] renderer-mounted\n[smoke] functional-ready: 20 probes\n'),
+            );
+          });
+          return child;
+        },
+        inspectMainBundle: () => {},
+        inspectLegalArtifacts: () => {},
+      }),
+    ).rejects.toThrow(
+      /functional-ready but did not close gracefully within 10ms/,
+    );
+
+    expect(killTree).toHaveBeenCalledWith(780, { platform: 'darwin' });
+  });
+});
+
+describe('graceful packaged shutdown contract', () => {
+  it('keeps the default grace window short and below the outer timeout', () => {
+    expect(GRACEFUL_CLOSE_TIMEOUT_MS).toBeGreaterThanOrEqual(1_000);
+    expect(GRACEFUL_CLOSE_TIMEOUT_MS).toBeLessThan(10_000);
   });
 });
 

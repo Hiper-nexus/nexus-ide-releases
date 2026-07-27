@@ -6,18 +6,27 @@ product
 
 ## Users
 
-Desenvolvedores que trabalham com CLIs de IA (claude, codex, gemini, kimi, grok…)
-no macOS — power users de terminal, confortáveis com múltiplos agentes rodando em
-paralelo. Contexto: sessões longas de trabalho, ambiente escuro, telas grandes.
-O job: orquestrar vários agentes de IA ao mesmo tempo (squads, missões, handoffs)
-sem perder o controle do que cada um está fazendo.
+Dois níveis convivem no mesmo produto:
+
+1. Pessoas sem experiência em programação, que chegam com uma ideia e precisam
+   ser guiadas da definição do produto à entrega validada, sem aprender terminal,
+   CLIs, squads ou jargão de orquestração.
+2. Desenvolvedores e operadores que trabalham com CLIs de IA (Claude, Codex,
+   Gemini, Kimi, Grok…) e precisam inspecionar ou controlar agentes, worktrees,
+   handoffs, custo e evidências em sessões longas.
+
+O job comum é transformar uma intenção humana em software pronto com controle e
+evidência. O caminho padrão deve pedir apenas a próxima decisão necessária; a
+complexidade operacional continua disponível por divulgação progressiva.
 
 ## Product Purpose
 
-NexusIDE é um terminal IDE multi-agente: grid de panes de terminal reais, canvas
-infinito, orquestração nativa de squads/missões via MCP embutido, voz (Jarvis) e
-multi-conta com failover. Sucesso = o usuário comanda uma frota de agentes como
-um operador em um centro de operações — rápido, legível, sem fricção.
+NexusIDE é um sistema de criação de software multi-agente: conduz objetivo, PRD,
+planejamento, implementação, revisão, testes e entrega enquanto mantém grid de
+terminais reais, canvas, orquestração MCP, voz e multi-conta disponíveis para
+inspeção avançada. Sucesso = uma pessoa descreve o que quer, entende decisões
+importantes e recebe uma entrega verificável; um operador pode abrir a camada
+técnica e assumir controle sem trocar de produto.
 
 ## Brand Personality
 
@@ -49,6 +58,19 @@ evocar controle e prontidão (aviônica, mission control), nunca fantasia gamer.
    home → missão) entrega presença, confirmação ou progresso — pet, kicker,
    status narrativo, CTA com peso. Contrato em `src/shared/endorphin.ts`.
    Não é RGB gamer: é o operador sentir que o sistema respondeu com vida.
+7. **Complexidade sob demanda.** O caminho iniciante segue
+   ideia → escopo → aprovação única → progresso → entrega. Squads, providers,
+   panes e telemetria aparecem quando explicam uma decisão ou quando o usuário
+   abre “Operações”.
+8. **Uma decisão, um gate.** Editar ou salvar rascunhos não pede confirmação.
+   A aprovação humana acontece imediatamente antes do primeiro efeito externo
+   relevante e fixa o contrato exato que será executado.
+9. **Entrega guiada determinística.** Squads gerados pelo fluxo iniciante
+   executam uma onda de implementação seguida por QA independente. O QA só
+   altera e integra quando encontra um defeito; se a entrega já estiver verde,
+   sensores e revisão do processo principal emitem um receipt físico sem
+   fabricar commit. Squads salvos, manuais ou especializados preservam o
+   planejamento avançado definido pelo orquestrador.
 
 ## Accessibility & Inclusion
 

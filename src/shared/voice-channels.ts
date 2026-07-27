@@ -18,6 +18,8 @@ export const VOICE_CHANNELS = {
   speakStop: 'voice:speak.stop',
   /** send: renderer → main. Frames PCM 16 kHz para o detector de wake word. */
   wakeAudio: 'voice:wakeAudio',
+  /** send: renderer → main. Libera owner/modelo do wake sem aguardar novo PCM. */
+  wakeStop: 'voice:wake.stop',
   /** event: main → renderer. "Hey Jarvis" detectado pelo openWakeWord. */
   wakeDetected: 'voice:wake.detected',
   /** send: renderer → main. Evento do pipeline de voz para o log persistente

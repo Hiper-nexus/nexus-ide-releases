@@ -50,6 +50,21 @@ describe('defaultHookEventParser', () => {
     }
   });
 
+  it('marks only UserPromptSubmit as content-free prompt submission proof', () => {
+    expect(defaultHookEventParser('user-submit', { prompt: 'do not retain me' }))
+      .toEqual({
+        kind: 'status',
+        type: 'start',
+        clearsAwaitingInput: true,
+        promptSubmitted: true,
+      });
+    expect(defaultHookEventParser('tool-use', { tool_name: 'Bash' }))
+      .not.toHaveProperty('promptSubmitted');
+    expect(defaultHookEventParser('tool-complete', {
+      tool_name: 'AskUserQuestion',
+    })).not.toHaveProperty('promptSubmitted');
+  });
+
   it('carries title/message/lastAssistantMessage when present', () => {
     expect(
       defaultHookEventParser('stop', {

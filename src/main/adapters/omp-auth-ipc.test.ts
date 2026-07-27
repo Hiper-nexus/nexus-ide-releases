@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import {
   OMP_AUTH_CHANNELS,
   type OmpAuthPushEvent,
@@ -64,7 +65,11 @@ vi.mock('./omp-rpc-service', () => ({
   buildOmpChildEnv: vi.fn(() => ({})),
 }));
 
-import { disposeAllOmpAuthFlows, registerOmpAuthIpc } from './omp-auth-ipc';
+import {
+  disposeAllOmpAuthFlows,
+  probeOmpTokenPresence,
+  registerOmpAuthIpc,
+} from './omp-auth-ipc';
 
 function fakeOwner() {
   return {
@@ -175,5 +180,18 @@ describe('omp-auth-ipc × janela de autorização', () => {
     disposeAllOmpAuthFlows();
     expect(mocks.cancelFlow).toHaveBeenCalled();
     expect(mocks.authWindow.disposeOmpAuthWindow).toHaveBeenCalled();
+  });
+
+  it('limita a sonda de token sem capturar stdout nem deixar processo pendurado', async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.kill = vi.fn(() => true);
+    const result = await probeOmpTokenPresence('/fake/omp', 'anthropic', {
+      spawnImpl: vi.fn(() => child) as never,
+      timeoutMs: 10,
+    });
+    expect(result).toBe(false);
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL');
   });
 });

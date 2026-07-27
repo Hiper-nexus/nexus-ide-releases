@@ -11,7 +11,15 @@ const selectionDeps = vi.hoisted(() => ({
     {
       id: string;
       kind: 'cli-pty';
-      quirks: { mcpAutoload: boolean };
+      bin?: string;
+      spawn?: {
+        interactive: string[];
+        extraArgs: string[];
+      };
+      quirks: {
+        mcpAutoload: boolean;
+        nexusMcp?: 'codex';
+      };
       control?: {
         permission: {
           arg?: string;
@@ -23,6 +31,7 @@ const selectionDeps = vi.hoisted(() => ({
       };
     }
   >(),
+  builtinIds: new Set<string>(),
   routeTask: vi.fn(
     (_task: string, candidates: Array<{ id: string; installed: boolean }>) => {
       const candidate = candidates.find((item) => item.installed);
@@ -58,6 +67,7 @@ vi.mock('../persistence/provider-config-store', () => ({
 }));
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: (id: string) => selectionDeps.adapters.get(id) ?? null,
+  isBuiltinAdapter: (id: string) => selectionDeps.builtinIds.has(id),
 }));
 vi.mock('../orch/task-router', () => ({
   routeTask: selectionDeps.routeTask,
@@ -77,6 +87,40 @@ import {
 
 const CONTENT_HASH = 'c'.repeat(64);
 const SOURCE_HASH = 's'.repeat(64).replaceAll('s', 'a');
+
+function qualifiedCodexAdapter() {
+  return {
+    id: 'codex',
+    kind: 'cli-pty' as const,
+    bin: 'codex',
+    spawn: {
+      interactive: ['codex'],
+      extraArgs: [],
+    },
+    quirks: {
+      mcpAutoload: false,
+      nexusMcp: 'codex' as const,
+    },
+    control: {
+      permission: {
+        arg: '--ask-for-approval',
+        safe: [
+          '--sandbox',
+          'workspace-write',
+          '--ask-for-approval',
+          'on-request',
+        ],
+        yolo: ['--dangerously-bypass-approvals-and-sandbox'],
+        modes: {
+          auto: 'never',
+          default: 'on-request',
+          untrusted: 'untrusted',
+        },
+        default: '',
+      },
+    },
+  };
+}
 
 function proposedDraft(
   patch: Partial<ContextDraftRecord> = {},
@@ -135,6 +179,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   selectionDeps.providers.length = 0;
   selectionDeps.adapters.clear();
+  selectionDeps.builtinIds.clear();
+  selectionDeps.adapters.set('codex', qualifiedCodexAdapter());
+  selectionDeps.builtinIds.add('codex');
   paneDeps.snapshots.length = 0;
   resetContextDraftReviewResumeLedger();
 });
@@ -144,7 +191,7 @@ describe('CLI context draft reviewer', () => {
     expect(DEFAULT_CONTEXT_DRAFT_REVIEW_TIMEOUT_MS).toBe(120_000);
   });
 
-  it('selects one installed MCP-capable CLI outside the author provider', () => {
+  it('routes a Codex-authored draft to a fresh qualified Codex reviewer', () => {
     selectionDeps.providers.push(
       {
         adapterId: 'codex',
@@ -179,11 +226,6 @@ describe('CLI context draft reviewer', () => {
         models: ['review-model'],
       },
     );
-    selectionDeps.adapters.set('codex', {
-      id: 'codex',
-      kind: 'cli-pty',
-      quirks: { mcpAutoload: false },
-    });
     selectionDeps.adapters.set('claude', {
       id: 'claude',
       kind: 'cli-pty',
@@ -210,14 +252,14 @@ describe('CLI context draft reviewer', () => {
     });
 
     expect(selectIndependentContextReviewerRoute('codex')).toEqual({
-      adapterId: 'claude',
+      adapterId: 'codex',
       model: 'review-model',
       effort: 'high',
     });
     const candidates = selectionDeps.routeTask.mock.calls[0]?.[1] as Array<{
       id: string;
     }>;
-    expect(candidates.map((item) => item.id)).toEqual(['claude']);
+    expect(candidates.map((item) => item.id)).toEqual(['codex']);
   });
 
   it('accepts Codex only when its enforceable read-only policy is declared', () => {
@@ -229,28 +271,27 @@ describe('CLI context draft reviewer', () => {
       kind: 'cli-pty',
       models: ['review-model'],
     });
-    selectionDeps.adapters.set('codex', {
-      id: 'codex',
-      kind: 'cli-pty',
-      quirks: { mcpAutoload: false },
-      control: {
-        permission: {
-          safe: [
-            '--sandbox',
-            'workspace-write',
-            '--ask-for-approval',
-            'on-request',
-          ],
-          yolo: [],
-          modes: {},
-          default: '',
-        },
-      },
-    });
-
     expect(selectIndependentContextReviewerRoute('claude')).toMatchObject({
       adapterId: 'codex',
     });
+  });
+
+  it('rejects a user Codex lookalike from independent read-only review', () => {
+    selectionDeps.providers.push({
+      adapterId: 'codex',
+      enabled: true,
+      installed: true,
+      authStrategy: 'subscription',
+      kind: 'cli-pty',
+      models: ['review-model'],
+    });
+    selectionDeps.builtinIds.delete('codex');
+
+    expect(selectIndependentContextReviewerRoute('claude')).toBeNull();
+    const candidates = selectionDeps.routeTask.mock.calls[0]?.[1] as Array<{
+      id: string;
+    }>;
+    expect(candidates).toEqual([]);
   });
 
   it.each(['approved', 'rejected'] as const)(
@@ -273,12 +314,12 @@ describe('CLI context draft reviewer', () => {
           Object.freeze({
             id: reviewerId,
             sessionId: 'review-session',
-            provider: 'claude',
+            provider: 'codex',
           }),
         );
       });
       const reviewer = new CliContextDraftReviewer({
-        selectRoute: () => ({ adapterId: 'claude' }),
+        selectRoute: () => ({ adapterId: 'codex' }),
         spawn,
         readDraft,
         close,
@@ -295,7 +336,7 @@ describe('CLI context draft reviewer', () => {
       expect(spawn).toHaveBeenCalledOnce();
       const options = spawn.mock.calls[0]?.[0];
       expect(options).toMatchObject({
-        adapterId: 'claude',
+        adapterId: 'codex',
         role: 'worker',
         readOnly: true,
         scope,
@@ -322,7 +363,7 @@ describe('CLI context draft reviewer', () => {
     },
   );
 
-  it('fails closed when no independent quorum exists or selection returns the author', async () => {
+  it('fails closed when no independent reviewer route exists', async () => {
     const scope = testProjectScope();
     const draft = proposedDraft();
     const spawn = vi.fn();
@@ -335,15 +376,27 @@ describe('CLI context draft reviewer', () => {
       unavailable.run({ scope, draftId: draft.id }),
     ).rejects.toThrow(/quorum unavailable/i);
 
-    const selfReview = new CliContextDraftReviewer({
-      selectRoute: () => ({ adapterId: 'codex' }),
-      spawn,
-      readDraft: () => draft,
-    });
-    await expect(
-      selfReview.run({ scope, draftId: draft.id }),
-    ).rejects.toThrow(/different provider/i);
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('closes a reviewer pane whose physical session aliases the author', async () => {
+    const scope = testProjectScope();
+    const draft = proposedDraft();
+    const close = vi.fn(() => true);
+    const reviewer = new CliContextDraftReviewer({
+      selectRoute: () => ({ adapterId: 'codex' }),
+      spawn: async () => ({
+        paneId: 'pane-session-alias',
+        sessionId: draft.author.sessionId,
+      }),
+      readDraft: () => draft,
+      close,
+    });
+
+    await expect(
+      reviewer.run({ scope, draftId: draft.id }),
+    ).rejects.toThrow(/physical session independent from the author/i);
+    expect(close).toHaveBeenCalledWith('pane-session-alias');
   });
 
   it('does not spawn a reviewer after authority is revoked during route selection', async () => {
@@ -379,7 +432,7 @@ describe('CLI context draft reviewer', () => {
     });
     await vi.waitFor(() => expect(selectRoute).toHaveBeenCalledOnce());
     current = false;
-    resolveRoute({ adapterId: 'claude' });
+    resolveRoute({ adapterId: 'codex' });
 
     await expect(pending).rejects.toThrow('session_authority_revoked');
     expect(spawn).not.toHaveBeenCalled();
@@ -394,7 +447,7 @@ describe('CLI context draft reviewer', () => {
       now += 25;
     });
     const reviewer = new CliContextDraftReviewer({
-      selectRoute: () => ({ adapterId: 'claude' }),
+      selectRoute: () => ({ adapterId: 'codex' }),
       spawn: async () => ({
         paneId: 'pane-timeout',
         sessionId: 'session-timeout',
@@ -417,11 +470,11 @@ describe('CLI context draft reviewer', () => {
   it('closes a preserved reviewer whose session is gone and respawns in the same pass', async () => {
     const scope = testProjectScope();
     const draft = proposedDraft();
-    const agentName = contextDraftReviewerAgentName('glm', draft.id);
+    const agentName = contextDraftReviewerAgentName('codex', draft.id);
     const approved = reviewedDraft('approved', {
       id: agentName,
       sessionId: 'session-new',
-      provider: 'glm',
+      provider: 'codex',
     });
     paneDeps.snapshots.push({
       paneId: 'pane-preserved',
@@ -441,7 +494,7 @@ describe('CLI context draft reviewer', () => {
     const close = vi.fn(() => true);
     let reads = 0;
     const reviewer = new CliContextDraftReviewer({
-      selectRoute: () => ({ adapterId: 'glm' }),
+      selectRoute: () => ({ adapterId: 'codex' }),
       readDraft: () => (reads++ === 0 ? draft : approved),
       listPanes: () => paneDeps.snapshots,
       sessionState: () => null,
@@ -460,9 +513,9 @@ describe('CLI context draft reviewer', () => {
     const scope = testProjectScope();
     const draft = proposedDraft();
     const approved = reviewedDraft('approved', {
-      id: contextDraftReviewerAgentName('glm', draft.id),
+      id: contextDraftReviewerAgentName('codex', draft.id),
       sessionId: 'session-preserved',
-      provider: 'glm',
+      provider: 'codex',
     });
     paneDeps.snapshots.push({
       paneId: 'pane-preserved',
@@ -471,13 +524,15 @@ describe('CLI context draft reviewer', () => {
       title: 'glm — working',
       kind: 'cli-agent',
       state: 'idle',
-      agentName: contextDraftReviewerAgentName('glm', draft.id),
-      adapterId: 'glm',
+      agentName: contextDraftReviewerAgentName('codex', draft.id),
+      adapterId: 'codex',
       scope,
       missionId: draft.missionId ?? undefined,
     });
     const spawn = vi.fn();
-    const deliverPrompt = vi.fn(async (_sessionId: string, _prompt: string) => undefined);
+    const deliverPrompt = vi.fn(
+      async (_sessionId: string, _prompt: string) => true,
+    );
     let reads = 0;
     const reviewer = new CliContextDraftReviewer({
       readDraft: () => {
@@ -513,11 +568,11 @@ describe('CLI context draft reviewer', () => {
       rootRealPath: '/workspace/b',
     });
     const draft = proposedDraft({ id: 'context-draft-cross-scope' });
-    const agentName = contextDraftReviewerAgentName('glm', draft.id);
+    const agentName = contextDraftReviewerAgentName('codex', draft.id);
     const approved = reviewedDraft('approved', {
       id: agentName,
       sessionId: 'session-new',
-      provider: 'glm',
+      provider: 'codex',
     }, { id: draft.id });
     paneDeps.snapshots.push({
       paneId: 'pane-foreign',
@@ -526,7 +581,7 @@ describe('CLI context draft reviewer', () => {
       kind: 'cli-agent',
       state: 'idle',
       agentName,
-      adapterId: 'glm',
+      adapterId: 'codex',
       scope: foreignScope,
       missionId: draft.missionId ?? undefined,
     });
@@ -537,7 +592,7 @@ describe('CLI context draft reviewer', () => {
     }));
     let reads = 0;
     const reviewer = new CliContextDraftReviewer({
-      selectRoute: () => ({ adapterId: 'glm' }),
+      selectRoute: () => ({ adapterId: 'codex' }),
       readDraft: () => (reads++ === 0 ? draft : approved),
       listPanes: () => paneDeps.snapshots,
       sessionState: vi.fn(() => 'idle'),
@@ -557,9 +612,9 @@ describe('CLI context draft reviewer', () => {
     const scope = testProjectScope();
     const draft = proposedDraft();
     const approved = reviewedDraft('approved', {
-      id: contextDraftReviewerAgentName('glm', draft.id),
+      id: contextDraftReviewerAgentName('codex', draft.id),
       sessionId: 'session-preserved',
-      provider: 'glm',
+      provider: 'codex',
     });
     paneDeps.snapshots.push({
       paneId: 'pane-preserved',
@@ -567,12 +622,12 @@ describe('CLI context draft reviewer', () => {
       title: contextDraftReviewerPaneTitle(draft.id),
       kind: 'cli-agent',
       state: 'busy',
-      agentName: contextDraftReviewerAgentName('glm', draft.id),
-      adapterId: 'glm',
+      agentName: contextDraftReviewerAgentName('codex', draft.id),
+      adapterId: 'codex',
       scope,
       missionId: draft.missionId ?? undefined,
     });
-    const deliverPrompt = vi.fn(async () => undefined);
+    const deliverPrompt = vi.fn(async () => true);
     let reads = 0;
     const reviewer = new CliContextDraftReviewer({
       readDraft: () => {
@@ -596,11 +651,11 @@ describe('CLI context draft reviewer', () => {
   it('replaces the preserved pane in the same pass when it refuses the brief', async () => {
     const scope = testProjectScope();
     const draft = proposedDraft();
-    const agentName = contextDraftReviewerAgentName('glm', draft.id);
+    const agentName = contextDraftReviewerAgentName('codex', draft.id);
     const approved = reviewedDraft('approved', {
       id: agentName,
       sessionId: 'session-new',
-      provider: 'glm',
+      provider: 'codex',
     });
     paneDeps.snapshots.push({
       paneId: 'pane-preserved',
@@ -608,8 +663,8 @@ describe('CLI context draft reviewer', () => {
       title: contextDraftReviewerPaneTitle(draft.id),
       kind: 'cli-agent',
       state: 'idle',
-      agentName: contextDraftReviewerAgentName('glm', draft.id),
-      adapterId: 'glm',
+      agentName: contextDraftReviewerAgentName('codex', draft.id),
+      adapterId: 'codex',
       scope,
       missionId: draft.missionId ?? undefined,
     });
@@ -620,7 +675,7 @@ describe('CLI context draft reviewer', () => {
     }));
     let reads = 0;
     const reviewer = new CliContextDraftReviewer({
-      selectRoute: () => ({ adapterId: 'glm' }),
+      selectRoute: () => ({ adapterId: 'codex' }),
       readDraft: () => (reads++ === 0 ? draft : approved),
       listPanes: () => paneDeps.snapshots,
       sessionState: () => 'idle',
@@ -643,7 +698,7 @@ describe('CLI context draft reviewer', () => {
     const draft = proposedDraft();
     const close = vi.fn(() => true);
     const reviewer = new CliContextDraftReviewer({
-      selectRoute: () => ({ adapterId: 'claude' }),
+      selectRoute: () => ({ adapterId: 'codex' }),
       spawn: async () => ({ paneId: 'pane-partial', sessionId: '' }),
       readDraft: () => draft,
       close,
@@ -669,7 +724,7 @@ describe('CLI context draft reviewer', () => {
     // module state, exactly like production.
     const makeReviewer = () =>
       new CliContextDraftReviewer({
-        selectRoute: () => ({ adapterId: 'glm' }),
+        selectRoute: () => ({ adapterId: 'codex' }),
         spawn,
         readDraft: () => draft,
         listPanes: () => paneDeps.snapshots,
@@ -696,8 +751,8 @@ describe('CLI context draft reviewer', () => {
       title: contextDraftReviewerPaneTitle(draft.id),
       kind: 'cli-agent',
       state: 'busy',
-      agentName: contextDraftReviewerAgentName('glm', draft.id),
-      adapterId: 'glm',
+      agentName: contextDraftReviewerAgentName('codex', draft.id),
+      adapterId: 'codex',
       scope,
       missionId: draft.missionId ?? undefined,
     });

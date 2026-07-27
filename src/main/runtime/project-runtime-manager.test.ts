@@ -293,7 +293,36 @@ describe('ProjectRuntimeManager physical isolation', () => {
     expect(handoffColumns).toContain('submitted_at');
     expect(handoffColumns).toContain('acknowledged_at');
     expect(handoffColumns).toContain('consumed_at');
+    expect(handoffColumns).toContain('consumed_by_session');
+    expect(handoffColumns).toContain('consumed_delivery_attempt_id');
     expect(handoffColumns).not.toContain('delivered_at');
+    const handoffReceiptColumns = new Set(
+      (
+        runtime.db
+          .prepare('PRAGMA table_info(handoff_mcp_receipts)')
+          .all() as Array<{ name: string }>
+      ).map((column) => column.name),
+    );
+    expect(handoffReceiptColumns).toContain('raw_payload_sha256');
+    expect(handoffReceiptColumns).toContain('logical_operation_key');
+    expect(
+      runtime.db
+        .prepare(
+          `SELECT "unique" AS unique_index
+           FROM pragma_index_list('handoff_mcp_receipts')
+           WHERE name = 'idx_handoff_mcp_receipts_logical_operation'`,
+        )
+        .get(),
+    ).toEqual({ unique_index: 1 });
+    expect(
+      runtime.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sqlite_master
+           WHERE type = 'table'
+             AND name = 'task_dependency_consumption_receipts'`,
+        )
+        .get(),
+    ).toEqual({ count: 1 });
     runtime.db
       .prepare(
         `INSERT INTO missions

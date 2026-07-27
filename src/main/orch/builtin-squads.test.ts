@@ -39,41 +39,100 @@ describe('built-in squads (invariantes gerais)', () => {
     }
   });
 
-  it('todo squad de desenvolvimento tem pelo menos um agente omp no roster', () => {
-    // O omp é adapter de primeira classe; sem presença no menu dos builtins
-    // ele nunca entra em operação (achado de operador: "integrado mas nunca
-    // vi em ação"). O Pet Studio fica de fora por design (Codex único).
-    // kimi-code-cell is intentionally Kimi-only workers (no omp).
-    const devSquadIds = [
-      'nexus-fullstack',
-      'nexus-review',
-      'review-p0p3',
-      'nexus-research',
-      'nexus-plan',
-      'nexus-story-impl',
-    ];
-    for (const id of devSquadIds) {
-      const squad = BUILTIN_SQUADS.find((entry) => entry.id === id);
-      expect(squad, `squad ${id} ausente`).toBeDefined();
-      expect(
-        squad?.agents.some((agent) => agent.cli === 'omp'),
-        `squad ${id} sem agente omp`,
-      ).toBe(true);
+  it('todo worker builtin usa a única rota governada desta release: Codex', () => {
+    for (const squad of BUILTIN_SQUADS) {
+      for (const agent of squad.agents) {
+        if (agent.category === 'orchestrator') {
+          expect(
+            ['claude', 'codex'],
+            `${squad.id}/${agent.id} usa Maestro não verificado`,
+          ).toContain(agent.cli);
+          continue;
+        }
+        expect(
+          agent.cli,
+          `${squad.id}/${agent.id} promete worker incompatível`,
+        ).toBe('codex');
+      }
+      expect(squad.orchestratorInstructions).not.toMatch(
+        /adapterId\s*=\s*(?:omp|kimi|grok|agy|opencode|claude)|cli\s*=\s*(?:omp|kimi|grok|agy|opencode)|slots?\s+omp|\(omp\)/i,
+      );
     }
   });
 
-  it('kimi-code-cell maps explore/plan/coder roles onto Kimi workers', () => {
+  it('encadeia plan → stories sem escrever fora da lane nem repetir planejamento', () => {
+    const planning = BUILTIN_SQUADS.find(
+      (squad) => squad.id === 'nexus-plan',
+    );
+    const delivery = BUILTIN_SQUADS.find(
+      (squad) => squad.id === 'nexus-story-impl',
+    );
+
+    expect(planning?.orchestratorInstructions).toContain('docs/plan.md');
+    expect(planning?.orchestratorInstructions).toContain(
+      'Nesta lane escreva somente docs/plan.md',
+    );
+    expect(planning?.orchestratorInstructions).toMatch(
+      /apenas pelo Maestro/i,
+    );
+    expect(planning?.orchestratorInstructions).toMatch(
+      /NÃO use nexus_pane_spawn nem nexus_route_task/i,
+    );
+    expect(planning?.agents).toHaveLength(1);
+    expect(planning?.agents[0]?.category).toBe('orchestrator');
+    expect(planning?.agents[0]?.cli).toBe('claude');
+    expect(
+      delivery?.agents.filter((agent) => agent.category === 'orchestrator'),
+    ).toEqual([
+      expect.objectContaining({ agentName: 'Maestro', cli: 'claude' }),
+    ]);
+    expect(
+      delivery?.agents
+        .filter((agent) => agent.category !== 'orchestrator')
+        .map((agent) => agent.cli),
+    ).toEqual(['codex', 'codex', 'codex', 'codex']);
+    expect(
+      delivery?.agents.some(
+        (agent) =>
+          agent.category !== 'orchestrator' &&
+          ['claude', 'omp', 'grok', 'kimi', 'agy', 'opencode'].includes(
+            agent.cli,
+          ),
+      ),
+    ).toBe(false);
+    expect(delivery?.orchestratorInstructions).toMatch(
+      /materialize dele os documentos finais/i,
+    );
+    expect(delivery?.orchestratorInstructions).toMatch(
+      /diretório estiver vazio.*payload promovido.*materialize-o primeiro/is,
+    );
+    expect(delivery?.orchestratorInstructions).toMatch(
+      /nunca repita planejamento/i,
+    );
+  });
+
+  it('kimi-code-cell keeps the Kimi method but uses governed Codex workers', () => {
     const squad = BUILTIN_SQUADS.find((entry) => entry.id === 'kimi-code-cell');
     expect(squad).toBeDefined();
     expect(squad?.builtin).toBe(true);
+    expect(squad?.name).toBe('Code Cell — método Kimi');
+    expect(squad?.orchestratorInstructions).toMatch(
+      /Kimi continua disponível.*Terminal.*fora da execução autônoma/is,
+    );
     const byId = Object.fromEntries(
       (squad?.agents ?? []).map((agent) => [agent.id, agent]),
     );
-    expect(byId.explorer?.cli).toBe('kimi');
+    expect(byId.explorer?.cli).toBe('codex');
     expect(byId.explorer?.category).toBe('scout');
-    expect(byId.planner?.cli).toBe('kimi');
-    expect(byId.coder?.cli).toBe('kimi');
+    expect(byId.planner?.cli).toBe('codex');
+    expect(byId.coder?.cli).toBe('codex');
     expect(byId.coder?.category).toBe('executor');
+    expect(
+      squad?.agents.some(
+        (agent) =>
+          agent.category !== 'orchestrator' && agent.cli !== 'codex',
+      ),
+    ).toBe(false);
   });
 });
 
@@ -105,19 +164,20 @@ describe('built-in squads orientados a resultado', () => {
   );
 
   it.each(expectedPacks)(
-    '$name tem autoridade única, diversidade real e revisão independente',
+    '$name tem autoridade única, papéis independentes e revisão governada',
     ({ id }) => {
       const squad = BUILTIN_SQUADS.find((entry) => entry.id === id);
       const orchestrators =
         squad?.agents.filter((agent) => agent.category === 'orchestrator') ?? [];
       const workers =
         squad?.agents.filter((agent) => agent.category !== 'orchestrator') ?? [];
-      const cliFamilies = new Set(workers.map((agent) => agent.cli));
 
       expect(orchestrators).toHaveLength(1);
       expect(workers.length).toBeGreaterThanOrEqual(3);
-      expect(cliFamilies.size).toBeGreaterThanOrEqual(3);
-      expect(workers.some((agent) => agent.cli === 'omp')).toBe(true);
+      expect(new Set(workers.map((agent) => agent.id)).size).toBe(
+        workers.length,
+      );
+      expect(workers.every((agent) => agent.cli === 'codex')).toBe(true);
       expect(
         workers.some((agent) => agent.category === 'reviewer'),
       ).toBe(true);
@@ -159,6 +219,7 @@ describe('built-in Review P0–P3 squad', () => {
     expect(reviewers?.length).toBeGreaterThanOrEqual(1);
     for (const reviewer of reviewers ?? []) {
       expect(reviewer.category).toBe('reviewer');
+      expect(reviewer.cli).toBe('codex');
     }
   });
 

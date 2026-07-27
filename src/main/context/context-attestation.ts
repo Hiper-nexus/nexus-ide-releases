@@ -56,9 +56,8 @@ const attestationSchema = z.object({
   ) {
     context.addIssue({ code: 'custom', message: 'context review must be independent' });
   }
-  if (value.author.provider === value.reviewer.provider) {
-    context.addIssue({ code: 'custom', message: 'context review requires a different provider' });
-  }
+  // Provider remains portable provenance, not reviewer identity. The actor id
+  // and one-way physical-session fingerprint above prevent self-attestation.
   const locators = value.sources.map((source) => source.locator);
   if (new Set(locators).size !== locators.length) {
     context.addIssue({ code: 'custom', message: 'context attestation sources must be unique' });

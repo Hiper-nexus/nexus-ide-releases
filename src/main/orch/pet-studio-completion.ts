@@ -1,9 +1,26 @@
-import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  fsyncSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { Handoff } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { readWebpDimensions } from '../pet/pet-library';
 import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
@@ -12,6 +29,8 @@ import {
 const MAX_SPRITESHEET_BYTES = 2.5 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const CLOCK_SKEW_TOLERANCE_MS = 1_000;
+const PET_STUDIO_SHEET_WIDTH = 1_536;
+const PET_STUDIO_SHEET_HEIGHT = 2_288;
 
 type CompletionStores = {
   readonly missions: Pick<
@@ -41,6 +60,8 @@ export interface PetStudioCompletionResult {
 interface PetStudioCompletionDependencies {
   readonly getStores?: (scope: ProjectExecutionScope) => CompletionStores;
   readonly codexHome?: string;
+  /** Test seam; production always uses the main-owned canonical scope root. */
+  readonly workspaceRoot?: string;
 }
 
 function artifactPath(artifact: unknown): string | null {
@@ -72,68 +93,110 @@ function consume(
   stores.handoffs.markConsumed(handoffId, missionId);
 }
 
-function validatePackageArtifacts(
-  artifacts: readonly unknown[],
+interface BoundWorkspaceFile {
+  readonly path: string;
+  readonly bytes: Buffer;
+  readonly mtimeMs: number;
+  readonly ctimeMs: number;
+}
+
+function readBoundWorkspaceFile(
+  rawPath: string,
+  workspaceRoot: string,
+  maxBytes: number,
+  label: string,
+): BoundWorkspaceFile {
+  const expanded = expandArtifactPath(rawPath);
+  if (!expanded) {
+    throw new Error(`${label} deve usar caminho absoluto dentro do workspace`);
+  }
+  const workspaceReal = realpathSync(workspaceRoot);
+  const beforeReal = realpathSync(expanded);
+  if (!isWithin(workspaceReal, beforeReal)) {
+    throw new Error(`${label} deve permanecer dentro do workspace autorizado`);
+  }
+
+  const noFollow =
+    typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
+  const fd = openSync(expanded, constants.O_RDONLY | noFollow);
+  try {
+    const before = fstatSync(fd);
+    if (!before.isFile() || before.nlink !== 1 || before.size === 0) {
+      throw new Error(`${label} está ausente ou vazio`);
+    }
+    if (before.size > maxBytes) {
+      throw new Error(
+        label === 'spritesheet.webp'
+          ? 'spritesheet.webp excede 2,5 MiB'
+          : 'pet.json excede 64 KiB',
+      );
+    }
+
+    // Bind the canonical name to the already-open descriptor. A parent
+    // symlink swap after this point cannot redirect the bytes being read.
+    const openedReal = realpathSync(expanded);
+    const named = statSync(openedReal);
+    if (
+      !isWithin(workspaceReal, openedReal) ||
+      named.dev !== before.dev ||
+      named.ino !== before.ino
+    ) {
+      throw new Error(`${label} mudou durante a validação`);
+    }
+
+    const bytes = readFileSync(fd);
+    const after = fstatSync(fd);
+    if (
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.nlink !== 1 ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
+      bytes.length !== before.size
+    ) {
+      throw new Error(`${label} mudou durante a leitura`);
+    }
+    return {
+      path: openedReal,
+      bytes,
+      mtimeMs: before.mtimeMs,
+      ctimeMs: before.ctimeMs,
+    };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function assertValidPetPackageBytes(
+  sprite: BoundWorkspaceFile,
+  manifestFile: BoundWorkspaceFile,
   missionCreatedAt: number,
-  codexHome: string,
-): { packageDir: string } {
-  const paths = artifacts
-    .map(artifactPath)
-    .filter((path): path is string => Boolean(path))
-    .map(expandArtifactPath)
-    .filter(Boolean);
-  const spritePath = paths.find((path) => basename(path) === 'spritesheet.webp');
-  const manifestPath = paths.find((path) => basename(path) === 'pet.json');
-  if (!spritePath || !manifestPath) {
-    throw new Error(
-      'inclua nos artifacts os caminhos absolutos de spritesheet.webp e pet.json',
-    );
-  }
-
-  const petRoot = realpathSync(join(codexHome, 'pets'));
-  const spriteRealPath = realpathSync(spritePath);
-  const manifestRealPath = realpathSync(manifestPath);
+): { readonly id: string; readonly manifest: Record<string, unknown> } {
   if (
-    !isWithin(petRoot, spriteRealPath) ||
-    !isWithin(petRoot, manifestRealPath) ||
-    dirname(spriteRealPath) !== dirname(manifestRealPath)
-  ) {
-    throw new Error('o pacote final deve estar em uma única pasta de ~/.codex/pets');
-  }
-
-  const spriteStat = statSync(spriteRealPath);
-  const manifestStat = statSync(manifestRealPath);
-  if (!spriteStat.isFile() || spriteStat.size === 0) {
-    throw new Error('spritesheet.webp está ausente ou vazio');
-  }
-  if (spriteStat.size > MAX_SPRITESHEET_BYTES) {
-    throw new Error('spritesheet.webp excede 2,5 MiB');
-  }
-  if (!manifestStat.isFile() || manifestStat.size === 0) {
-    throw new Error('pet.json está ausente ou vazio');
-  }
-  if (manifestStat.size > MAX_MANIFEST_BYTES) {
-    throw new Error('pet.json excede 64 KiB');
-  }
-  if (
-    spriteStat.mtimeMs + CLOCK_SKEW_TOLERANCE_MS < missionCreatedAt ||
-    manifestStat.mtimeMs + CLOCK_SKEW_TOLERANCE_MS < missionCreatedAt
+    sprite.mtimeMs + CLOCK_SKEW_TOLERANCE_MS < missionCreatedAt ||
+    manifestFile.mtimeMs + CLOCK_SKEW_TOLERANCE_MS < missionCreatedAt ||
+    sprite.ctimeMs + CLOCK_SKEW_TOLERANCE_MS < missionCreatedAt ||
+    manifestFile.ctimeMs + CLOCK_SKEW_TOLERANCE_MS < missionCreatedAt
   ) {
     throw new Error('o pacote informado é anterior a esta missão');
   }
-
-  const webpHeader = readFileSync(spriteRealPath).subarray(0, 12);
+  const dimensions = readWebpDimensions(sprite.bytes);
+  if (!dimensions) {
+    throw new Error('spritesheet.webp não é um WebP estruturalmente válido');
+  }
   if (
-    webpHeader.length < 12 ||
-    webpHeader.toString('ascii', 0, 4) !== 'RIFF' ||
-    webpHeader.toString('ascii', 8, 12) !== 'WEBP'
+    dimensions.width !== PET_STUDIO_SHEET_WIDTH ||
+    dimensions.height !== PET_STUDIO_SHEET_HEIGHT
   ) {
-    throw new Error('spritesheet.webp não é um WebP válido');
+    throw new Error(
+      `spritesheet.webp deve medir exatamente ${PET_STUDIO_SHEET_WIDTH}×${PET_STUDIO_SHEET_HEIGHT} px (8×11)`,
+    );
   }
 
   let manifest: unknown;
   try {
-    manifest = JSON.parse(readFileSync(manifestRealPath, 'utf8'));
+    manifest = JSON.parse(manifestFile.bytes.toString('utf8'));
   } catch {
     throw new Error('pet.json não contém JSON válido');
   }
@@ -141,65 +204,251 @@ function validatePackageArtifacts(
     throw new Error('pet.json não contém um manifesto válido');
   }
   const pet = manifest as Record<string, unknown>;
+  const id = typeof pet.id === 'string' ? pet.id : '';
   if (
-    typeof pet.id !== 'string' ||
-    pet.id !== basename(dirname(manifestRealPath)) ||
+    !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(id) ||
+    id !== basename(dirname(manifestFile.path)) ||
+    dirname(sprite.path) !== dirname(manifestFile.path) ||
     pet.spriteVersionNumber !== 2 ||
     pet.spritesheetPath !== 'spritesheet.webp'
   ) {
     throw new Error(
-      'pet.json deve usar o id da pasta, spriteVersionNumber 2 e spritesheetPath spritesheet.webp',
+      'pet.json deve usar o id seguro da pasta, spriteVersionNumber 2 e spritesheetPath spritesheet.webp',
     );
   }
-  return { packageDir: dirname(manifestRealPath) };
+  return { id, manifest: pet };
 }
 
-function validatePackage(
-  handoff: Handoff,
+function sha256(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function missionOutputRoot(
+  workspaceRoot: string,
+  missionId: string,
+): string {
+  if (!/^[a-zA-Z0-9._-]{1,128}$/.test(missionId)) {
+    throw new Error('id de missão Pet Studio não é seguro para o output');
+  }
+  const workspaceReal = realpathSync(workspaceRoot);
+  const expected = join(
+    workspaceReal,
+    'artifacts',
+    'nexus-pet-studio',
+    missionId,
+  );
+  let outputReal: string;
+  try {
+    outputReal = realpathSync(expected);
+  } catch {
+    throw new Error(
+      `output Pet Studio desta missão ainda não existe: ${expected}`,
+    );
+  }
+  if (outputReal !== expected) {
+    throw new Error('output Pet Studio não pode atravessar symlink');
+  }
+  return outputReal;
+}
+
+function fsyncPath(file: string): void {
+  const fd = openSync(file, constants.O_RDONLY);
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+interface BoundWorkspacePetPackage {
+  readonly sprite: BoundWorkspaceFile;
+  readonly manifest: BoundWorkspaceFile;
+  readonly id: string;
+}
+
+function bindWorkspacePackage(
+  artifacts: readonly unknown[],
+  missionId: string,
   missionCreatedAt: number,
+  workspaceRoot: string,
+): BoundWorkspacePetPackage {
+  const paths = artifacts
+    .map(artifactPath)
+    .filter((value): value is string => Boolean(value));
+  const spritePath = paths.find((value) => basename(value) === 'spritesheet.webp');
+  const manifestPath = paths.find((value) => basename(value) === 'pet.json');
+  if (!spritePath || !manifestPath) {
+    throw new Error(
+      'inclua nos artifacts os caminhos absolutos do workspace para spritesheet.webp e pet.json',
+    );
+  }
+
+  const outputRoot = missionOutputRoot(workspaceRoot, missionId);
+  const sprite = readBoundWorkspaceFile(
+    spritePath,
+    outputRoot,
+    MAX_SPRITESHEET_BYTES,
+    'spritesheet.webp',
+  );
+  const manifest = readBoundWorkspaceFile(
+    manifestPath,
+    outputRoot,
+    MAX_MANIFEST_BYTES,
+    'pet.json',
+  );
+  const validated = assertValidPetPackageBytes(
+    sprite,
+    manifest,
+    missionCreatedAt,
+  );
+  // Preserve the caller's lexical workspace prefix (macOS commonly exposes
+  // /var through /private/var) while separately requiring the descriptor's
+  // canonical destination. This rejects package-level symlinks without
+  // rejecting the trusted scope root merely because the OS aliases it.
+  const lexicalOutputRoot = join(
+    resolve(workspaceRoot),
+    'artifacts',
+    'nexus-pet-studio',
+    missionId,
+  );
+  const lexicalPackageDir = join(lexicalOutputRoot, validated.id);
+  const expectedPackageDir = join(outputRoot, validated.id);
+  const expectedSpritePath = join(expectedPackageDir, 'spritesheet.webp');
+  const expectedManifestPath = join(expectedPackageDir, 'pet.json');
+  const namedSpritePath = resolve(expandArtifactPath(spritePath));
+  const namedManifestPath = resolve(expandArtifactPath(manifestPath));
+  const lexicalSpritePath = join(lexicalPackageDir, 'spritesheet.webp');
+  const lexicalManifestPath = join(lexicalPackageDir, 'pet.json');
+  if (
+    (namedSpritePath !== lexicalSpritePath &&
+      namedSpritePath !== expectedSpritePath) ||
+    (namedManifestPath !== lexicalManifestPath &&
+      namedManifestPath !== expectedManifestPath) ||
+    sprite.path !== expectedSpritePath ||
+    manifest.path !== expectedManifestPath
+  ) {
+    throw new Error(
+      'o pacote deve usar arquivos canônicos em um filho direto, sem symlink, do output exato desta missão',
+    );
+  }
+  return { sprite, manifest, id: validated.id };
+}
+
+/**
+ * Pet Maker never writes the real provider home. Main binds both workspace
+ * files to descriptors, validates the package, then installs new bytes under
+ * a fresh directory in the local pet catalog. Existing pets are never
+ * overwritten.
+ */
+function installWorkspacePackage(
+  artifacts: readonly unknown[],
+  missionId: string,
+  missionCreatedAt: number,
+  workspaceRoot: string,
   codexHome: string,
 ): { packageDir: string } {
-  return validatePackageArtifacts(
-    handoff.artifacts,
+  const bound = bindWorkspacePackage(
+    artifacts,
+    missionId,
     missionCreatedAt,
-    codexHome,
+    workspaceRoot,
   );
+  const { sprite, manifest, id } = bound;
+
+  const petsPath = join(resolve(codexHome), 'pets');
+  mkdirSync(petsPath, { recursive: true, mode: 0o700 });
+  const petRoot = realpathSync(petsPath);
+  const target = join(petRoot, id);
+  try {
+    statSync(target);
+    if (realpathSync(target) !== target) {
+      throw new Error(
+        `o pet existente com id ${id} não pode ser um symlink`,
+      );
+    }
+    const installedSprite = readBoundWorkspaceFile(
+      join(target, 'spritesheet.webp'),
+      petRoot,
+      MAX_SPRITESHEET_BYTES,
+      'spritesheet.webp',
+    );
+    const installedManifest = readBoundWorkspaceFile(
+      join(target, 'pet.json'),
+      petRoot,
+      MAX_MANIFEST_BYTES,
+      'pet.json',
+    );
+    if (
+      sha256(installedSprite.bytes) === sha256(sprite.bytes) &&
+      sha256(installedManifest.bytes) === sha256(manifest.bytes)
+    ) {
+      return { packageDir: realpathSync(target) };
+    }
+    throw new Error(
+      `já existe um pet diferente com id ${id}; gere um id novo para não sobrescrever dados`,
+    );
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') throw cause;
+  }
+
+  const staging = mkdtempSync(join(petRoot, '.nexus-install-'));
+  try {
+    writeFileSync(join(staging, 'spritesheet.webp'), sprite.bytes, {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    writeFileSync(join(staging, 'pet.json'), manifest.bytes, {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    fsyncPath(join(staging, 'spritesheet.webp'));
+    fsyncPath(join(staging, 'pet.json'));
+    fsyncPath(staging);
+    renameSync(staging, target);
+    fsyncPath(petRoot);
+  } catch (cause) {
+    rmSync(staging, { recursive: true, force: true });
+    throw cause;
+  }
+  return { packageDir: realpathSync(target) };
 }
 
-function recoverablePackages(
+function recoverablePackageArtifacts(
+  missionId: string,
   missionCreatedAt: number,
-  codexHome: string,
-): string[] {
-  let petRoot: string;
+  workspaceRoot: string,
+): unknown[][] {
+  let outputRoot: string;
   try {
-    petRoot = realpathSync(join(codexHome, 'pets'));
+    outputRoot = missionOutputRoot(workspaceRoot, missionId);
   } catch {
     return [];
   }
 
   let entries;
   try {
-    entries = readdirSync(petRoot, { withFileTypes: true });
+    entries = readdirSync(outputRoot, { withFileTypes: true });
   } catch {
     return [];
   }
 
-  const packages: string[] = [];
+  const packages: unknown[][] = [];
   for (const entry of entries) {
-    // Recovery ignores symlinked package directories. The normal handoff
-    // validator still canonicalizes every artifact before accepting it.
     if (!entry.isDirectory()) continue;
-    const packageDir = join(petRoot, entry.name);
+    const packageDir = join(outputRoot, entry.name);
+    const artifacts = [
+      join(packageDir, 'spritesheet.webp'),
+      join(packageDir, 'pet.json'),
+    ];
     try {
-      const validated = validatePackageArtifacts(
-        [
-          join(packageDir, 'spritesheet.webp'),
-          join(packageDir, 'pet.json'),
-        ],
+      bindWorkspacePackage(
+        artifacts,
+        missionId,
         missionCreatedAt,
-        codexHome,
+        workspaceRoot,
       );
-      packages.push(validated.packageDir);
+      packages.push(artifacts);
     } catch {
       // Missing, stale or malformed packages are not completion evidence.
     }
@@ -221,7 +470,10 @@ export interface PetStudioRecoveryResult {
  */
 export function reconcileCompletedPetStudioMissions(
   stores: RecoveryStores,
-  dependencies: Pick<PetStudioCompletionDependencies, 'codexHome'> = {},
+  dependencies: Pick<
+    PetStudioCompletionDependencies,
+    'codexHome' | 'workspaceRoot'
+  > = {},
 ): PetStudioRecoveryResult[] {
   const missions = stores.missions
     .list()
@@ -238,7 +490,21 @@ export function reconcileCompletedPetStudioMissions(
       process.env.CODEX_HOME ??
       join(homedir(), '.codex'),
   );
-  const candidates = recoverablePackages(mission.createdAt, codexHome);
+  const workspaceRoot = dependencies.workspaceRoot;
+  if (!workspaceRoot) {
+    return [
+      {
+        missionId: mission.id,
+        completed: false,
+        error: 'workspace canônico indisponível para recuperar o Pet Studio',
+      },
+    ];
+  }
+  const candidates = recoverablePackageArtifacts(
+    mission.id,
+    mission.createdAt,
+    resolve(workspaceRoot),
+  );
   if (candidates.length !== 1) {
     return [
       {
@@ -246,20 +512,40 @@ export function reconcileCompletedPetStudioMissions(
         completed: false,
         error:
           candidates.length === 0
-            ? 'nenhum pacote Pet Studio recente e válido encontrado'
+            ? 'nenhum pacote Pet Studio recente e válido no output desta missão'
             : 'mais de um pacote Pet Studio recente; recuperação ambígua',
       },
     ];
   }
 
-  stores.missions.setStatus(mission.id, 'done');
-  return [
-    {
-      missionId: mission.id,
-      completed: true,
-      packageDir: candidates[0],
-    },
-  ];
+  try {
+    const installed = installWorkspacePackage(
+      candidates[0]!,
+      mission.id,
+      mission.createdAt,
+      resolve(workspaceRoot),
+      codexHome,
+    );
+    stores.missions.setStatus(mission.id, 'done');
+    return [
+      {
+        missionId: mission.id,
+        completed: true,
+        packageDir: installed.packageDir,
+      },
+    ];
+  } catch (cause) {
+    return [
+      {
+        missionId: mission.id,
+        completed: false,
+        error:
+          cause instanceof Error
+            ? cause.message
+            : 'não foi possível reinstalar o pacote Pet Studio',
+      },
+    ];
+  }
 }
 
 /**
@@ -288,6 +574,23 @@ export function completePetStudioHandoff(
       error: 'a entrega não veio da sessão Pet Maker vinculada à missão',
     };
   }
+  const provenance = handoff.mcpProvenance;
+  if (
+    handoff.authorityOrigin !== 'agent' ||
+    !provenance ||
+    provenance.toolName !== 'nexus_handoff_submit' ||
+    provenance.source !== 'http-mcp' ||
+    provenance.missionId !== handoff.missionId ||
+    provenance.sessionId !== handoff.sessionId ||
+    provenance.issuedAt + CLOCK_SKEW_TOLERANCE_MS < mission.createdAt
+  ) {
+    return {
+      handled: true,
+      completed: false,
+      error:
+        'a entrega Pet Studio exige provenance física do nexus_handoff_submit desta missão e sessão',
+    };
+  }
 
   if (handoff.status === 'failed' || handoff.status === 'blocked') {
     stores.missions.setStatus(handoff.missionId, handoff.status);
@@ -307,9 +610,11 @@ export function completePetStudioHandoff(
   }
 
   try {
-    const validated = validatePackage(
-      handoff,
+    const validated = installWorkspacePackage(
+      handoff.artifacts,
+      handoff.missionId,
       mission.createdAt,
+      resolve(dependencies.workspaceRoot ?? scope.rootRealPath),
       resolve(
         dependencies.codexHome ??
           process.env.CODEX_HOME ??

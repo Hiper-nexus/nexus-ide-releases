@@ -7,6 +7,7 @@ import type {
   TodoItem,
   TodoList,
 } from '../../shared/orch-types';
+import { isMissionRuntimeSquadId } from '../../shared/orch-types';
 import { useOrchStore, type OrchPanelTab } from '../state/orch-store';
 import { askConfirm } from '../state/confirm-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
@@ -288,6 +289,9 @@ export function OrchestrationPanel() {
   const handoffs = useOrchStore((s) => s.handoffs);
   const todoLists = useOrchStore((s) => s.todoLists);
   const squads = useOrchStore((s) => s.squads);
+  const visibleSquads = squads.filter(
+    (squad) => !isMissionRuntimeSquadId(squad.id),
+  );
   const mcpInfo = useOrchStore((s) => s.mcpInfo);
   const tab = useOrchStore((s) => s.panelTab);
   const setTab = useOrchStore((s) => s.setPanelTab);
@@ -434,10 +438,10 @@ export function OrchestrationPanel() {
                   <ActionCard
                     icon="mission"
                     title="Lançar missão"
-                    subtitle="Wizard de squad / objetivo"
+                    subtitle="Descrever objetivo e revisar equipe"
                     variant="primary"
                     onClick={() =>
-                      useMissionWizardStore.getState().openForMission()
+                      useMissionWizardStore.getState().openForAgentic()
                     }
                   />
                 }
@@ -522,13 +526,13 @@ export function OrchestrationPanel() {
               <button
                 className="orch-panel__btn"
                 onClick={onExport}
-                disabled={squads.length === 0}
+                disabled={visibleSquads.length === 0}
               >
                 Exportar…
               </button>
             </div>
             {notice && <p className="orch-panel__notice">{notice}</p>}
-            {squads.length === 0 ? (
+            {visibleSquads.length === 0 ? (
               <EmptyState
                 icon="users"
                 title="Nenhum squad salvo"
@@ -540,9 +544,9 @@ export function OrchestrationPanel() {
                 }
                 action={
                   <ActionCard
-                    icon="mission"
-                    title="Nova missão"
-                    subtitle="Montar squad no wizard"
+                    icon="users"
+                    title="Configurar squad"
+                    subtitle="Abrir configuração técnica"
                     variant="primary"
                     size="sm"
                     onClick={() =>
@@ -553,7 +557,7 @@ export function OrchestrationPanel() {
               />
             ) : (
               <ul className="orch-list">
-                {squads.map((s) => (
+                {visibleSquads.map((s) => (
                   <SquadRow
                     key={s.id}
                     squad={s}

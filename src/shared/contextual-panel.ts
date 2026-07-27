@@ -20,7 +20,9 @@ export type ContextualTab = (typeof CONTEXTUAL_TABS)[number];
 
 export const contextualPanelStateSchema = z
   .object({
-    visible: z.boolean().default(true),
+    // Canvas-first: context opens when requested (file, Git, handoff, search)
+    // instead of permanently shrinking every terminal on first use.
+    visible: z.boolean().default(false),
     activeTab: z.enum(CONTEXTUAL_TABS).default('mission'),
     widthPx: z.number().int().min(200).max(900).default(360),
     /** Per-workspace tab persistence key = workspace id */

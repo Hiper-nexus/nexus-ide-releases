@@ -64,7 +64,7 @@ function metadata(
 }
 
 describe('mission plan preview', () => {
-  it('shows a bounded unit-price range without treating the operational ledger as billing', () => {
+  it('shows a bounded unit-price range without presenting plan limits as billing', () => {
     const preview = buildRosterCostPreview({
       roster,
       adapters,
@@ -94,7 +94,9 @@ describe('mission plan preview', () => {
     );
     expect(preview.totalLabel).toContain('$1–$10 por 1M tokens');
     expect(preview.totalLabel).toContain('Estimativa total indisponível');
-    expect(preview.caveat).toContain('ledger operacional');
+    expect(preview.caveat).toContain('controles operacionais');
+    expect(preview.caveat).toContain('cobrança do provedor');
+    expect(preview.caveat).not.toContain('ledger');
   });
 
   it('marks price and total estimate unavailable instead of inventing a value', () => {
@@ -128,6 +130,7 @@ describe('mission plan preview', () => {
     expect(preview.complete).toBe(false);
     expect(preview.lines[0]?.rateLabel).toContain('Consultando');
     expect(preview.totalLabel).toContain('Consultando');
+    expect(preview.totalLabel).toContain('time');
     expect(preview.totalLabel).not.toContain('Indisponível');
   });
 
@@ -162,8 +165,9 @@ describe('mission plan preview', () => {
     };
     const status = missionReviewP0P3Status(squad);
     expect(status.kind).toBe('not-controlled');
-    expect(status.label).toContain('Ainda não garantido');
-    expect(`${status.label} ${status.detail}`).toContain('motor');
+    expect(status.label).toContain('Ainda não confirmado');
+    expect(`${status.label} ${status.detail}`).toContain('revisores');
+    expect(`${status.label} ${status.detail}`).not.toContain('motor');
   });
 
   it('identifies the dedicated Review P0–P3 mission without promising an extra phase', () => {

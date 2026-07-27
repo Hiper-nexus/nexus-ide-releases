@@ -4,7 +4,10 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
-import { UsageTelemetryService } from './usage-service';
+import {
+  UsageTelemetryService,
+  isUsageCwdAuthorized,
+} from './usage-service';
 import { ProjectUsageStoreRegistry } from './usage-store-registry';
 
 let sqliteAvailable = true;
@@ -124,5 +127,47 @@ describe.skipIf(!sqliteAvailable)('UsageTelemetryService snapshots', () => {
     service.snapshot(scopeA);
     expect(() => service.snapshot(conflicting)).toThrow(/multiple project scopes/i);
     service.stop();
+  });
+});
+
+describe('usage cwd authority', () => {
+  it('accepts an isolated worktree only through the execution scope', () => {
+    const coordination = Object.freeze({
+      version: 1 as const,
+      installationId: 'install-a',
+      projectId: 'project-a',
+      checkoutId: 'checkout-a',
+      rootRealPath: '/workspace/project',
+      identitySource: 'manifest' as const,
+    });
+    const execution = Object.freeze({
+      ...coordination,
+      rootRealPath: '/private/worktrees/task-1',
+    });
+
+    expect(
+      isUsageCwdAuthorized(
+        { scope: coordination, executionScope: execution },
+        '/private/worktrees/task-1',
+      ),
+    ).toBe(true);
+    expect(
+      isUsageCwdAuthorized(
+        { scope: coordination, executionScope: execution },
+        '/private/worktrees/task-1/src',
+      ),
+    ).toBe(true);
+    expect(
+      isUsageCwdAuthorized(
+        { scope: coordination, executionScope: execution },
+        '/workspace/project',
+      ),
+    ).toBe(false);
+    expect(
+      isUsageCwdAuthorized(
+        { scope: coordination, executionScope: execution },
+        '/private/worktrees/task-10',
+      ),
+    ).toBe(false);
   });
 });

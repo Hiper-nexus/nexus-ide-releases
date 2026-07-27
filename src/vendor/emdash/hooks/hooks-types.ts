@@ -1,7 +1,9 @@
 // Vendored from generalaction/emdash@c1af543 — Apache-2.0
 // Source: packages/core/src/agents/plugins/capabilities/hooks-types.ts
 // See src/vendor/emdash/hooks/LICENSE.md. Nexus adds an activity-only
-// `clearsAwaitingInput` marker used by the main-owned injectable-idle latch.
+// `clearsAwaitingInput` marker used by the main-owned injectable-idle latch,
+// plus a content-free `promptSubmitted` provenance bit used to prove that a
+// native UserPromptSubmit boundary really fired.
 
 export const HOOK_EVENTS = [
   'notification',
@@ -43,6 +45,9 @@ export type CanonicalHookEvent =
       /** Only explicit user-submit / matching interactive-tool completion may
        * release a main-owned awaiting-input latch. */
       clearsAwaitingInput?: boolean;
+      /** Nexus-only provenance bit emitted exclusively for UserPromptSubmit.
+       * It deliberately carries neither the prompt nor provider output. */
+      promptSubmitted?: true;
     }
   | { kind: 'session'; providerSessionId: string }
   | { kind: 'ignore' };

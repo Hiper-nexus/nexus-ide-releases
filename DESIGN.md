@@ -76,7 +76,9 @@ corrija os dele).
 
 - `ActionCard` / `EmptyState` (`components/ActionCard.tsx`, `ui-actions.css`) —
   todo empty state ensina + tem ação primária. "Nada aqui" sem CTA é bug.
-- `ConfirmDialog` — confirm/alert nativos são proibidos.
+- `ConfirmDialog` — confirm/alert nativos são proibidos na interface. A única
+  exceção é a revisão de autoridade main-owned imediatamente antes de iniciar
+  uma missão, que usa confirmação nativa compacta e recibo auditável.
 - `PixelIcon` — set proprietário 11×11; ícone novo entra nele, não glifo Unicode
   solto (🎬 ★ ↻ são dívida).
 - Chips da bar: altura 26px, `border-radius: 999px`, um idioma só
@@ -87,8 +89,8 @@ corrija os dele).
 
 - WorkspaceBar: cada controle visível merece o lugar. Ação diária = **Nova
   missão** (única primária sólida). Secundário mora no `⋯` e no ⌘K.
-  Gamificação (XP) fora da zona de status. "Novo workspace" fica no menu ▾ da
-  marca (dois "Novo …" lado a lado confundem).
+  Gamificação (XP) fora da zona de status. "Novo workspace" é uma ação compacta
+  única junto à identidade do workspace; nunca se repete no menu ▾ da marca.
 - Frota em linguagem clara: "2 trabalhando · 1 morto" (nunca "zzz"/"x").
 - Pane comunica estado pela borda: busy = ciano, morto = danger, hibernado =
   tracejado dim; foco = acento + glow contido.
@@ -126,3 +128,37 @@ Fontes OFL: VT323, Inter, JetBrains Mono (licença em
 `third_party/licenses/OFL-1.1.txt`, provenance em
 `third_party/provenance/fonts-inter-jetbrains.json`). Componentes Orca
 (design mode): `third_party/provenance/orca-*.json`.
+
+## 11. Referência estrutural — Orca
+
+Fonte observada em 2026-07-25:
+[onorca.dev](https://www.onorca.dev/) e os pôsteres públicos de
+[status dos agentes](https://www.onorca.dev/whats-new/posters/agent-statuses.jpg),
+[split screen](https://www.onorca.dev/whats-new/posters/orca-split-screen.jpg) e
+[terminal](https://www.onorca.dev/whats-new/posters/ghostty-style-terminal.jpg).
+A captura local de auditoria fica em `.firecrawl/` (ignorada pelo Git) e pode
+ser refeita com `firecrawl-website-design-clone`.
+
+Usar os padrões de composição, não marca, logo, copy ou imagens do Orca:
+
+- **Rail quieto e hierárquico.** Workspace/missão é a linha principal; agentes
+  aparecem aninhados apenas quando existem. Um fill sutil e uma borda completa
+  de 1px marcam seleção; os demais itens não ganham card ou borda própria.
+- **Canvas é o protagonista.** Terminal, editor ou entrega ocupam todo o espaço
+  restante. Painéis de contexto são drawers sob demanda, não colunas permanentes.
+- **Estado compacto.** Dot + verbo + tempo curto substituem blocos de telemetria.
+  Detalhes técnicos ficam no hover/foco, expansão da missão ou “Operações”.
+- **Divisórias, não caixas.** Superfícies contínuas, borda de 1px e contraste
+  por elevação sutil. Glow só sinaliza foco vivo; nunca contorna toda a tela.
+- **Progressive disclosure real.** A jornada padrão mostra missão, próximo passo
+  e entrega. Worktree, CLI, modelo, budget, receipts e PREVC aparecem dentro da
+  missão expandida ou na camada avançada.
+- **Motion de continuidade.** Seleção e drawers usam 150–220ms com
+  `--ease-out-quart`; conteúdo preserva posição durante atualizações. Novos
+  agentes entram com opacity + translateY de no máximo 4px. Nada pulsa salvo
+  estado running e nada anima dimensões de terminal.
+
+Adaptação Nexus: manter Inter, VT323 pontual, tokens aviônicos e copy PT-BR.
+Não importar o monocromático puro do Orca nem remover nossos sinais de
+autoridade. O ganho esperado é menos chrome, melhor agrupamento e transições
+mais previsíveis — não transformar o Nexus numa cópia visual.

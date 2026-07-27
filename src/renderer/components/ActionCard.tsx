@@ -60,15 +60,17 @@ export function EmptyState({
   body,
   action,
   className = '',
+  role = 'status',
 }: {
   icon?: PixelIconName;
   title: string;
   body?: ReactNode;
   action?: ReactNode;
   className?: string;
+  role?: 'status' | 'alert';
 }) {
   return (
-    <div className={`empty-state ${className}`.trim()} role="status">
+    <div className={`empty-state ${className}`.trim()} role={role}>
       <span className="empty-state__icon" aria-hidden>
         <PixelIcon name={icon} size={22} />
       </span>

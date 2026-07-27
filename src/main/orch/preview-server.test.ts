@@ -9,6 +9,7 @@ import {
   startPreview,
   stopAllPreviews,
   stopPreview,
+  stopPreviewWithProof,
 } from './preview-server';
 
 const scopeA = { projectId: 'project-a', checkoutId: 'checkout-a' };
@@ -143,6 +144,32 @@ describe('preview-server', () => {
     fs.writeFileSync(path.join(dir, 'index.html'), '<h1>replacement</h1>');
 
     expect(stopPreview(preview.id, scopeA)).toBe(true);
+    expect(listPreviews(scopeA)).toEqual([]);
+  });
+
+  it('waits for physical listener close proof for privileged review teardown', async () => {
+    const preview = await startPreview(dir, scopeA);
+
+    await expect(
+      stopPreviewWithProof(preview.id, scopeB),
+    ).resolves.toBe(false);
+    await expect(
+      stopPreviewWithProof(preview.id, scopeA),
+    ).resolves.toBe(true);
+
+    expect(listPreviews(scopeA)).toEqual([]);
+    await expect(fetch(preview.url)).rejects.toThrow();
+  });
+
+  it('coalesces concurrent privileged teardown onto one physical close', async () => {
+    const preview = await startPreview(dir, scopeA);
+
+    await expect(
+      Promise.all([
+        stopPreviewWithProof(preview.id, scopeA),
+        stopPreviewWithProof(preview.id, scopeA),
+      ]),
+    ).resolves.toEqual([true, true]);
     expect(listPreviews(scopeA)).toEqual([]);
   });
 

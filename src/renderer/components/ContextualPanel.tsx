@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import {
   CONTEXTUAL_TAB_COPY,
   CONTEXTUAL_TABS,
@@ -15,11 +22,24 @@ import {
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { useContextualPanelNavStore } from '../state/contextual-panel-nav-store';
 
+const MIN_PANEL_WIDTH = 200;
+const MAX_PANEL_WIDTH = 900;
+const MIN_CANVAS_WIDTH = 320;
+const COMPACT_PANEL_BREAKPOINT = 900;
+const PANEL_KEYBOARD_STEP = 16;
+
+function clampPanelWidth(
+  widthPx: number,
+  maximum = MAX_PANEL_WIDTH,
+): number {
+  return Math.min(maximum, Math.max(MIN_PANEL_WIDTH, widthPx));
+}
+
 export interface ContextualPanelProps {
   readonly flagEnabled?: boolean;
   readonly workspaceId?: string;
   readonly initial?: Partial<ContextualPanelState>;
-  /** Controlled active tab (ModeLauncher); undefined = internal state only. */
+  /** Optional controlled active tab; undefined keeps navigation internal. */
   readonly activeTab?: ContextualTab;
   readonly onStateChange?: (state: ContextualPanelState) => void;
   readonly children?: Partial<Record<ContextualTab, React.ReactNode>>;
@@ -72,11 +92,39 @@ export function ContextualPanel({
   const [state, setState] = useState<ContextualPanelState>(() =>
     initialState(workspaceId, initial, controlledTab, storage),
   );
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === 'undefined' ? 1440 : window.innerWidth,
+  );
   const requestedTab = useContextualPanelNavStore(
     (nav) => nav.requestedTab,
   );
   const requestId = useContextualPanelNavStore((nav) => nav.requestId);
   const handledRequestId = useRef(0);
+  const tabRefs = useRef(new Map<ContextualTab, HTMLButtonElement>());
+  const generatedId = useId().replaceAll(':', '');
+  const panelDomId = `ctx-panel-${generatedId}`;
+  const panelBodyId = `${panelDomId}-body`;
+  const compactPresentation = viewportWidth < COMPACT_PANEL_BREAKPOINT;
+  const missionRailWidth = viewportWidth <= 1120 ? 210 : 248;
+  const responsiveMaximum = compactPresentation
+    ? Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, viewportWidth - 16))
+    : Math.min(
+        MAX_PANEL_WIDTH,
+        Math.max(
+          MIN_PANEL_WIDTH,
+          viewportWidth - missionRailWidth - MIN_CANVAS_WIDTH,
+        ),
+      );
+  const renderedWidth = clampPanelWidth(
+    state.widthPx,
+    responsiveMaximum,
+  );
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Rehydrate when workspace changes (real product path).
   useEffect(() => {
@@ -146,9 +194,10 @@ export function ContextualPanel({
         type="button"
         className="ctx-panel__show"
         onClick={() => update({ visible: true })}
-        title="Mostrar painel (Alt+])"
+        title="Abrir painel de contexto (Alt+])"
+        aria-label="Abrir painel de contexto"
       >
-        Painel
+        Abrir contexto
       </button>
     );
   }
@@ -156,31 +205,89 @@ export function ContextualPanel({
   const copy = CONTEXTUAL_TAB_COPY[state.activeTab];
   const body = children?.[state.activeTab];
   const visibleTabs = relevantTabs
-    ? CONTEXTUAL_TABS.filter(
-        (tab) => tab === state.activeTab || relevantTabs.includes(tab),
-      )
-    : CONTEXTUAL_TABS;
+    ? [...new Set([...relevantTabs, state.activeTab])]
+    : [...CONTEXTUAL_TABS];
+
+  const onTabKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    tab: ContextualTab,
+  ) => {
+    const currentIndex = visibleTabs.indexOf(tab);
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight') {
+      nextIndex = (currentIndex + 1) % visibleTabs.length;
+    } else if (event.key === 'ArrowLeft') {
+      nextIndex =
+        (currentIndex - 1 + visibleTabs.length) % visibleTabs.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = visibleTabs.length - 1;
+    }
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = visibleTabs[nextIndex];
+    if (!nextTab) return;
+    update({ activeTab: nextTab });
+    tabRefs.current.get(nextTab)?.focus();
+  };
+
+  const onSplitterKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey
+      ? PANEL_KEYBOARD_STEP * 4
+      : PANEL_KEYBOARD_STEP;
+    let widthPx: number | null = null;
+    if (event.key === 'ArrowLeft') {
+      widthPx = state.widthPx + step;
+    } else if (event.key === 'ArrowRight') {
+      widthPx = state.widthPx - step;
+    } else if (event.key === 'Home') {
+      widthPx = MIN_PANEL_WIDTH;
+    } else if (event.key === 'End') {
+      widthPx = responsiveMaximum;
+    }
+    if (widthPx === null) return;
+    event.preventDefault();
+    update({ widthPx: clampPanelWidth(widthPx, responsiveMaximum) });
+  };
 
   return (
     <aside
+      id={panelDomId}
       className="ctx-panel"
       data-testid="contextual-panel"
-      style={{ width: state.widthPx }}
+      data-presentation={compactPresentation ? 'drawer' : 'sidebar'}
+      style={{ width: renderedWidth }}
       aria-label="Painel contextual"
     >
-      <div className="ctx-panel__tabs" role="tablist" aria-label="Abas do painel">
-        {visibleTabs.map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            role="tab"
-            aria-selected={state.activeTab === tab}
-            className={state.activeTab === tab ? 'is-active' : ''}
-            onClick={() => update({ activeTab: tab })}
-          >
-            {CONTEXTUAL_TAB_COPY[tab].title}
-          </button>
-        ))}
+      <div className="ctx-panel__tabs">
+        <div
+          className="ctx-panel__tablist"
+          role="tablist"
+          aria-label="Abas do painel"
+          aria-orientation="horizontal"
+        >
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab}
+              ref={(node) => {
+                if (node) tabRefs.current.set(tab, node);
+                else tabRefs.current.delete(tab);
+              }}
+              id={`${panelDomId}-tab-${tab}`}
+              type="button"
+              role="tab"
+              aria-controls={panelBodyId}
+              aria-selected={state.activeTab === tab}
+              tabIndex={state.activeTab === tab ? 0 : -1}
+              className={state.activeTab === tab ? 'is-active' : ''}
+              onClick={() => update({ activeTab: tab })}
+              onKeyDown={(event) => onTabKeyDown(event, tab)}
+            >
+              {CONTEXTUAL_TAB_COPY[tab].title}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           className="ctx-panel__hide"
@@ -192,8 +299,10 @@ export function ContextualPanel({
         </button>
       </div>
       <div
+        id={panelBodyId}
         className="ctx-panel__body"
         role="tabpanel"
+        aria-labelledby={`${panelDomId}-tab-${state.activeTab}`}
         data-testid={`ctx-tab-${state.activeTab}`}
       >
         {body ?? (
@@ -207,15 +316,44 @@ export function ContextualPanel({
         className="ctx-panel__splitter"
         role="separator"
         aria-orientation="vertical"
+        aria-label="Redimensionar painel de contexto"
+        aria-controls={panelBodyId}
+        aria-valuemin={MIN_PANEL_WIDTH}
+        aria-valuemax={responsiveMaximum}
+        aria-valuenow={renderedWidth}
+        aria-valuetext={`${renderedWidth} pixels`}
+        tabIndex={0}
+        onKeyDown={onSplitterKeyDown}
         onMouseDown={(e) => {
           const startX = e.clientX;
-          const startW = state.widthPx;
+          const startW = renderedWidth;
+          let pendingWidth = renderedWidth;
+          let animationFrame = 0;
           const onMove = (ev: MouseEvent) => {
-            update({
-              widthPx: Math.min(900, Math.max(200, startW + (startX - ev.clientX))),
+            pendingWidth = clampPanelWidth(
+              startW + (startX - ev.clientX),
+              responsiveMaximum,
+            );
+            if (animationFrame) return;
+            animationFrame = window.requestAnimationFrame(() => {
+              animationFrame = 0;
+              // Drag feedback is transient: durable localStorage and external
+              // callbacks run once on pointer release, not every mousemove.
+              setState((previous) =>
+                contextualPanelStateSchema.parse({
+                  ...previous,
+                  widthPx: pendingWidth,
+                  workspaceId: workspaceId ?? previous.workspaceId,
+                }),
+              );
             });
           };
           const onUp = () => {
+            if (animationFrame) {
+              window.cancelAnimationFrame(animationFrame);
+              animationFrame = 0;
+            }
+            update({ widthPx: pendingWidth });
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
           };

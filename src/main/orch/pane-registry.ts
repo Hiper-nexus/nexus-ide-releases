@@ -8,6 +8,7 @@ import type {
   PaneRegistryEntry,
   MissionPaneRecoveryRequest,
   MissionPaneRecoveryResult,
+  MissionPaneAuthoritySeal,
   MissionPaneSpec,
   PaneSnapshot,
 } from "../../shared/orch-types";
@@ -74,6 +75,12 @@ import {
   createDevServerScanner,
   type DevServerEntry,
 } from "./dev-server-registry";
+import { getProjectDomainStores } from "./project-domain-store-registry";
+import { listSquads } from "./squad-store";
+import {
+  resolveMissionPaneAuthoritySeal,
+  sameMissionPaneAuthoritySeal,
+} from "./mission-pane-authority";
 
 /**
  * Main-process mirror of the renderer's pane grid plus per-session output ring
@@ -413,6 +420,9 @@ export function hasMirroredWorkspaceScope(
 let panesVersion = 0;
 const mainOwnedPaneHooks: MainOwnedPaneHooks = {
   attachSessionScope,
+  assertMissionAuthorityCurrent: (input) => {
+    assertMissionSpawnAuthorityCurrent(input);
+  },
   panesChanged: () => {
     panesVersion += 1;
   },
@@ -468,6 +478,10 @@ function retainRenderedMissionPaneHeadless(
           executionScope: agent.scope,
           readOnly: agent.readOnly,
           nativeReadOnly: agent.nativeReadOnly,
+          contextRevision: agent.authoritySeal?.contextRevision,
+          authoritySeal: agent.authoritySeal
+            ? Object.freeze({ ...agent.authoritySeal })
+            : undefined,
         }
       : undefined);
   if (
@@ -478,6 +492,19 @@ function retainRenderedMissionPaneHeadless(
     !sameProjectScope(meta.scope, previousScope)
   ) {
     return false;
+  }
+  if (meta.role === "worker") {
+    try {
+      assertMissionSpawnAuthorityCurrent({
+        missionId: meta.missionId,
+        scope: meta.scope,
+        contextRevision: meta.contextRevision,
+        authoritySeal: meta.authoritySeal,
+      });
+    } catch {
+      void terminateRecoveryReplacement(sessionId);
+      return true;
+    }
   }
   const detached = isOmpRpcSession(sessionId)
     ? detachOmpRpcMissionPane(owner, sessionId)
@@ -515,6 +542,16 @@ function retainClaimedPendingSpawnHeadless(
 ): OrchPaneSpawnResult | null {
   const sessionId = pending.claimedSessionId;
   if (!sessionId || !pending.meta.scope) return null;
+  try {
+    assertMissionSpawnAuthorityCurrent({
+      missionId: pending.meta.missionId ?? "",
+      scope: pending.meta.scope,
+      contextRevision: pending.meta.contextRevision,
+      authoritySeal: pending.meta.authoritySeal,
+    });
+  } catch {
+    return null;
+  }
 
   const retained = retainClaimedPendingSpawnRuntime(
     requestId,
@@ -994,6 +1031,106 @@ export function getPaneAuthzInfoOwnedByPane(
 
 export type PaneSpawnOptions = MainOwnedPaneSpawnOptions;
 
+/**
+ * Resolve the exact current mission/workflow/squad authority exclusively from
+ * main-owned stores. Callers may carry an expected seal, but never author the
+ * value that reaches a physical provider process.
+ */
+export function resolveCurrentMissionSpawnAuthoritySeal(
+  scope: Readonly<ProjectExecutionScope>,
+  missionId: string,
+) {
+  const mission = getProjectDomainStores(scope).missions.get(missionId);
+  const squads = listSquads().filter(
+    (candidate) => candidate.id === mission?.squadId,
+  );
+  const authoritySeal =
+    mission && squads.length === 1
+      ? resolveMissionPaneAuthoritySeal(scope, mission, squads[0])
+      : null;
+  if (!authoritySeal) {
+    throw new Error(
+      "mission pane authority seal is unavailable; replane and approve " +
+        "the current mission revision",
+    );
+  }
+  return Object.freeze({ ...authoritySeal });
+}
+
+/**
+ * Exact pre-effect fence for a mission process. `contextRevision` is merely a
+ * projection of the complete authority seal: accepting it independently
+ * would let a stale intent/squad/workflow combination retain process power.
+ */
+export function assertMissionSpawnAuthorityCurrent(input: {
+  readonly missionId: string;
+  readonly scope: Readonly<ProjectExecutionScope>;
+  readonly contextRevision?: string;
+  readonly authoritySeal?: MissionPaneAuthoritySeal;
+}): void {
+  const expected = input.authoritySeal;
+  if (!expected) {
+    throw new Error(
+      "mission pane authority seal is unavailable; replane and approve " +
+        "the current mission revision",
+    );
+  }
+  if (
+    input.contextRevision !== undefined &&
+    input.contextRevision !== expected.contextRevision
+  ) {
+    throw new Error(
+      "mission pane contextRevision diverges from its main-owned authority seal",
+    );
+  }
+  const current = resolveCurrentMissionSpawnAuthoritySeal(
+    input.scope,
+    input.missionId,
+  );
+  if (!sameMissionPaneAuthoritySeal(expected, current)) {
+    throw new Error(
+      "stale mission pane authority; replane and approve the current revision",
+    );
+  }
+}
+
+function canonicalMissionPaneSpawnOptions<T extends PaneSpawnOptions>(
+  options: T,
+): T {
+  if (
+    !options.missionId ||
+    (options.role !== "orchestrator" && options.role !== "worker")
+  ) {
+    return options;
+  }
+  const current = resolveCurrentMissionSpawnAuthoritySeal(
+    options.scope,
+    options.missionId,
+  );
+  if (
+    options.contextRevision !== undefined &&
+    options.contextRevision !== current.contextRevision
+  ) {
+    throw new Error(
+      "mission pane contextRevision is stale; use the current main-owned " +
+        "authority seal revision",
+    );
+  }
+  if (
+    options.authoritySeal &&
+    !sameMissionPaneAuthoritySeal(options.authoritySeal, current)
+  ) {
+    throw new Error(
+      "stale mission pane authority; replane and approve the current revision",
+    );
+  }
+  return {
+    ...options,
+    contextRevision: current.contextRevision,
+    authoritySeal: current,
+  };
+}
+
 /** Pending gate context plus the exact main-authored process request. */
 export type PendingSpawnMeta = OrchMeta & {
   requestedCwd?: string;
@@ -1025,6 +1162,9 @@ export function claimPendingSpawnMeta(
   pending.claimed = true;
   return {
     ...pending.meta,
+    authoritySeal: pending.meta.authoritySeal
+      ? Object.freeze({ ...pending.meta.authoritySeal })
+      : undefined,
     ...(pending.requestedCwd === undefined
       ? {}
       : { requestedCwd: pending.requestedCwd }),
@@ -1182,7 +1322,21 @@ export function spawnMainOwnedMissionPane(
     role: "orchestrator" | "worker";
   },
 ): OrchPaneSpawnResult {
-  return spawnMainOwnedMissionPaneRuntime(options, mainOwnedPaneHooks);
+  try {
+    return spawnMainOwnedMissionPaneRuntime(
+      canonicalMissionPaneSpawnOptions(options),
+      mainOwnedPaneHooks,
+    );
+  } catch (error) {
+    return {
+      requestId: "",
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "mission pane authority is stale",
+    };
+  }
 }
 
 export function requestPaneSpawn(
@@ -1196,6 +1350,18 @@ export function requestPaneSpawn(
         typeof options.abortSignal.reason === "string"
           ? options.abortSignal.reason
           : "pane spawn authority was revoked",
+    });
+  }
+  try {
+    options = canonicalMissionPaneSpawnOptions(options);
+  } catch (error) {
+    return Promise.resolve({
+      requestId: "",
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "mission pane authority is stale",
     });
   }
   const owner = rendererForMission(options.missionId, options.scope);
@@ -1290,6 +1456,9 @@ export function requestPaneSpawn(
         executionScope: options.executionScope,
         readOnly: options.readOnly === true,
         nativeReadOnly: options.nativeReadOnly,
+        authoritySeal: options.authoritySeal
+          ? Object.freeze({ ...options.authoritySeal })
+          : undefined,
       },
     };
     pendingSpawns.set(requestId, pending);
@@ -1475,6 +1644,15 @@ export async function requestMissionPaneRecovery(options: {
   scope: ProjectExecutionScope;
   recap: string;
 }): Promise<MissionPaneRecoveryResult> {
+  if (options.role === "worker") {
+    return {
+      requestId: "",
+      ok: false,
+      paneId: options.paneId,
+      error:
+        "worker pane recovery is dispatch-owned; resume or replan the blocked task",
+    };
+  }
   const matches = panes.filter((registered) => {
     const meta = orchMetaByPane.get(
       paneMetaKey(registered.owner, registered.entry.paneId),
@@ -1720,15 +1898,32 @@ export interface MissionPaneCloseRequest {
   readonly paneId: string;
   readonly missionId: string;
   readonly scope: Readonly<ProjectExecutionScope>;
+  /** Optional exact process identity used by dispatch-owned worker cleanup. */
+  readonly sessionId?: string;
+  readonly role?: "orchestrator" | "worker";
+  readonly workerIncarnationId?: string;
 }
 
 function matchesMissionPaneCloseAuthority(
-  authority: Pick<PaneAuthzInfo, "paneId" | "missionId" | "scope">,
+  authority: Pick<
+    PaneAuthzInfo,
+    | "paneId"
+    | "sessionId"
+    | "missionId"
+    | "role"
+    | "workerIncarnationId"
+    | "scope"
+  >,
   expected: MissionPaneCloseRequest,
 ): boolean {
   return (
     authority.paneId === expected.paneId &&
     authority.missionId === expected.missionId &&
+    (expected.sessionId === undefined ||
+      authority.sessionId === expected.sessionId) &&
+    (expected.role === undefined || authority.role === expected.role) &&
+    (expected.workerIncarnationId === undefined ||
+      authority.workerIncarnationId === expected.workerIncarnationId) &&
     Boolean(authority.scope && sameProjectScope(authority.scope, expected.scope))
   );
 }
@@ -1754,7 +1949,10 @@ export async function requestMissionPaneClose(
       !matchesMissionPaneCloseAuthority(
         {
           paneId: detached.entry.paneId,
+          sessionId: detached.entry.sessionId,
           missionId: detached.meta.missionId,
+          role: detached.meta.role,
+          workerIncarnationId: detached.meta.workerIncarnationId,
           scope: detached.meta.scope,
         },
         expected,
@@ -1776,7 +1974,10 @@ export async function requestMissionPaneClose(
       !matchesMissionPaneCloseAuthority(
         {
           paneId: current.entry.paneId,
+          sessionId: current.entry.sessionId,
           missionId: current.meta.missionId,
+          role: current.meta.role,
+          workerIncarnationId: current.meta.workerIncarnationId,
           scope: current.meta.scope,
         },
         expected,
@@ -1823,6 +2024,124 @@ export async function requestMissionPaneClose(
     current[0]!.entry.sessionId !== sessionId ||
     !matchesMissionPaneCloseAuthority(authzInfoOf(current[0]!), expected)
   ) {
+    return false;
+  }
+  owner.send(ORCH_CHANNELS.paneCloseRequest, expected.paneId);
+  return true;
+}
+
+export interface MissionWorkerPaneRetirementRequest {
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly missionId: string;
+  readonly workerIncarnationId: string;
+  readonly scope: Readonly<ProjectExecutionScope>;
+}
+
+/**
+ * Dispatch-owned worker retirement. No paneId-only fallback is permitted:
+ * the exact session and worker incarnation must still identify one physical
+ * worker in the same mission/scope. A replay after proven exit is idempotent;
+ * any live, stale or duplicate identity remains ambiguous and is never killed.
+ */
+export async function requestMissionWorkerPaneRetirement(
+  expected: MissionWorkerPaneRetirementRequest,
+): Promise<boolean> {
+  const runtime = getPaneRuntimeAuthorityBySession(expected.sessionId);
+  if (runtime) {
+    if (
+      !matchesMissionPaneCloseAuthority(runtime, {
+        ...expected,
+        role: "worker",
+      })
+    ) {
+      return false;
+    }
+    return requestMissionPaneClose({
+      ...expected,
+      role: "worker",
+    });
+  }
+
+  // A naturally exited PTY disappears from the physical inventory before the
+  // renderer collapses its stable visual leaf. Only that exact, sessionless
+  // leaf may be retired here. A replacement session, duplicate renderer
+  // reference, main-owned envelope, OMP runtime, or authority mismatch stays
+  // fail-closed.
+  if (
+    getSessionState(expected.sessionId) !== null ||
+    isOmpRpcSession(expected.sessionId)
+  ) {
+    return false;
+  }
+  const renderedReferences = panes.filter(
+    ({ entry }) =>
+      entry.paneId === expected.paneId ||
+      entry.sessionId === expected.sessionId,
+  );
+  const mainReferences = [
+    ...findMainOwnedPaneAuthz(expected.paneId),
+    ...findMainOwnedPaneAuthz(expected.sessionId),
+  ];
+  if (mainReferences.length > 0) {
+    return false;
+  }
+  if (renderedReferences.length === 0) return true;
+  if (renderedReferences.length !== 1) return false;
+
+  const target = renderedReferences[0]!;
+  if (
+    target.entry.paneId !== expected.paneId ||
+    target.entry.sessionId !== null ||
+    target.entry.kind !== "cli-agent" ||
+    !matchesMissionPaneCloseAuthority(authzInfoOf(target), {
+      paneId: expected.paneId,
+      missionId: expected.missionId,
+      role: "worker",
+      workerIncarnationId: expected.workerIncarnationId,
+      scope: expected.scope,
+    })
+  ) {
+    return false;
+  }
+  const owner = target.owner;
+  if (owner.isDestroyed() || owner.isCrashed()) return false;
+  try {
+    requireLiveRendererWorkspaceScope(owner, expected.scope);
+  } catch {
+    return false;
+  }
+
+  // No await occurs in the natural-exit branch. Re-read every inventory at
+  // the commit point anyway so this remains safe if future refactors add an
+  // asynchronous proof between selection and renderer notification.
+  const currentRenderedReferences = panes.filter(
+    ({ entry }) =>
+      entry.paneId === expected.paneId ||
+      entry.sessionId === expected.sessionId,
+  );
+  if (
+    currentRenderedReferences.length !== 1 ||
+    currentRenderedReferences[0] !== target ||
+    target.owner.isDestroyed() ||
+    target.owner.isCrashed() ||
+    !matchesMissionPaneCloseAuthority(authzInfoOf(target), {
+      paneId: expected.paneId,
+      missionId: expected.missionId,
+      role: "worker",
+      workerIncarnationId: expected.workerIncarnationId,
+      scope: expected.scope,
+    }) ||
+    getSessionState(expected.sessionId) !== null ||
+    isOmpRpcSession(expected.sessionId) ||
+    findMainOwnedPaneAuthz(expected.paneId).length > 0 ||
+    findMainOwnedPaneAuthz(expected.sessionId).length > 0
+  ) {
+    return false;
+  }
+  try {
+    requireLiveRendererWorkspaceScope(owner, expected.scope);
+  } catch {
     return false;
   }
   owner.send(ORCH_CHANNELS.paneCloseRequest, expected.paneId);

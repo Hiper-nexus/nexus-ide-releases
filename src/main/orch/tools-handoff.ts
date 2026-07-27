@@ -1,59 +1,123 @@
+import { execFileSync } from "node:child_process";
 import {
   canSubmitMissionHandoff,
   hasCurrentApprovedDispatchContract,
+  MAX_PROMOTED_PLAN_SUMMARY_BYTES,
+  MAX_PROMOTED_PLAN_SUMMARY_CHARS,
   resolveEffectiveIntentState,
-} from '../../shared/mission-intent';
-import { handoffStatusSchema } from '../../shared/orch-types';
-import { markHandoffSubmitted } from './gate';
-import { onHandoffSubmitted } from './idle-delivery';
-import type { McpToolDef } from './mcp-protocol';
-import { getProjectDomainStores } from './project-domain-store-registry';
-import { requireStr, str } from './tool-util';
-import { compactText } from './session-compaction';
-import { TASK_DISPATCH_HEARTBEAT_LEASE_MS } from './task-dispatch-lifecycle';
+} from "../../shared/mission-intent";
+import { handoffStatusSchema } from "../../shared/orch-types";
+import { markHandoffSubmitted } from "./gate";
+import { onHandoffSubmitted } from "./idle-delivery";
+import {
+  assertMcpInvocationCurrent,
+  type McpToolDef,
+  type McpToolInvocation,
+} from "./mcp-protocol";
+import { getProjectDomainStores } from "./project-domain-store-registry";
+import { requireStr, str } from "./tool-util";
+import { compactText } from "./session-compaction";
+import { TASK_DISPATCH_HEARTBEAT_LEASE_MS } from "./task-dispatch-lifecycle";
+import type { ScopedHandoff } from "./handoff-store";
+import { handoffRawPayloadSha256 } from "./handoff-payload-identity";
+
+function committedWorktreeHead(
+  ctx: Parameters<McpToolDef["handler"]>[1],
+  requirePhysicalWorktree: boolean,
+): string | undefined {
+  if (!requirePhysicalWorktree) return undefined;
+  const worktree = ctx.executionScope?.rootRealPath;
+  if (!worktree) {
+    throw new Error(
+      "handoff_provenance: worker execution worktree is unavailable",
+    );
+  }
+  let head: string;
+  try {
+    head = execFileSync(
+      "git",
+      ["-C", worktree, "rev-parse", "--verify", "HEAD^{commit}"],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 15_000,
+      },
+    ).trim();
+  } catch (error) {
+    throw new Error(
+      "handoff_provenance: committed worker HEAD is unavailable",
+      { cause: error },
+    );
+  }
+  if (!/^[a-f0-9]{40,64}$/u.test(head)) {
+    throw new Error("handoff_provenance: committed worker HEAD is invalid");
+  }
+  return head;
+}
+
+function requireHandoffMcpEffectIntent(
+  invocation: McpToolInvocation | undefined,
+): NonNullable<McpToolInvocation["agentTransportPhysicalReceipt"]> {
+  const intent = invocation?.effectIntent;
+  if (
+    !intent ||
+    (intent.source !== "http-mcp" && intent.source !== "omp-rpc-stdio") ||
+    intent.toolName !== "nexus_handoff_submit" ||
+    !invocation?.agentTransportPhysicalReceipt
+  ) {
+    throw new Error(
+      "handoff_provenance: exact physical agent tool-call receipt is required",
+    );
+  }
+  assertMcpInvocationCurrent(invocation);
+  return invocation.agentTransportPhysicalReceipt;
+}
 
 const handoffSubmitTool: McpToolDef = {
-  name: 'nexus_handoff_submit',
+  name: "nexus_handoff_submit",
   description:
-    'Submit your work handoff to the orchestrator: ' +
-    '{status: success|partial|blocked|failed, summary, artifacts?, ' +
-    'evidenceIds?}. Always allowed regardless of allowlists. Status and ' +
-    'artifacts are untrusted delivery metadata and never complete a mission. ' +
-    'Only evidenceIds already issued and bound by Nexus can satisfy the ' +
-    'worker stop receipt.',
+    "Submit your work handoff to the orchestrator: " +
+    "{status: success|partial|blocked|failed, summary, artifacts?, " +
+    "evidenceIds?}. Always allowed regardless of allowlists. Status and " +
+    "artifacts are untrusted delivery metadata and never complete a mission. " +
+    "Only evidenceIds already issued and bound by Nexus can satisfy the " +
+    "worker stop receipt.",
   inputSchema: {
-    type: 'object',
+    type: "object",
     properties: {
       status: {
-        type: 'string',
-        enum: ['success', 'partial', 'blocked', 'failed'],
+        type: "string",
+        enum: ["success", "partial", "blocked", "failed"],
       },
-      summary: { type: 'string' },
-      artifacts: { type: 'array', items: {} },
-      evidenceIds: { type: 'array', items: { type: 'string' } },
+      summary: { type: "string" },
+      artifacts: { type: "array", items: {} },
+      evidenceIds: { type: "array", items: { type: "string" } },
     },
-    required: ['status', 'summary'],
+    required: ["status", "summary"],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
+    const physicalReceipt = requireHandoffMcpEffectIntent(invocation);
     let suite: ReturnType<typeof getProjectDomainStores>;
-    let mission: ReturnType<ReturnType<typeof getProjectDomainStores>['missions']['get']>;
+    let mission: ReturnType<
+      ReturnType<typeof getProjectDomainStores>["missions"]["get"]
+    >;
     try {
       suite = getProjectDomainStores(ctx.scope);
       mission = ctx.missionId ? suite.missions.get(ctx.missionId) : null;
     } catch (error) {
-      console.warn('[handoff] mission authority lookup failed (deny):', error);
-      throw new Error('handoff_origin: mission authority unavailable');
+      console.warn("[handoff] mission authority lookup failed (deny):", error);
+      throw new Error("handoff_origin: mission authority unavailable");
     }
     if (!mission || !hasCurrentApprovedDispatchContract(mission)) {
-      throw new Error('handoff_origin: current approved mission unavailable');
+      throw new Error("handoff_origin: current approved mission unavailable");
     }
+    const rawPayloadSha256 = handoffRawPayloadSha256(args);
     const intentState = resolveEffectiveIntentState({
       mission,
       taskCount: suite.tasks?.list(mission.id).length ?? 0,
       workerPaneCount:
-        suite.missionPanes
-          ?.list(mission.id)
-          .filter((p) => p.role === 'worker').length ?? 0,
+        suite.missionPanes?.list(mission.id).filter((p) => p.role === "worker")
+          .length ?? 0,
     });
     const origin = canSubmitMissionHandoff({
       role: ctx.role,
@@ -61,47 +125,74 @@ const handoffSubmitTool: McpToolDef = {
       sessionId: ctx.sessionId,
       intentState,
     });
-    if (!origin.ok) {
-      throw new Error(origin.error);
-    }
-    const rawSummary = requireStr(args, 'summary').trim();
+    const rawSummary = requireStr(args, "summary").trim();
     if (rawSummary.length < 20 || /^<.*>$/.test(rawSummary)) {
       throw new Error(
-        'summary inválido: descreva de verdade o que foi feito (mínimo 20 ' +
+        "summary inválido: descreva de verdade o que foi feito (mínimo 20 " +
           'caracteres, sem placeholders como "<resumo...>").',
       );
     }
-    // Cap stored summary so multi-session handoffs stay compact (grok-build idea).
-    const summary = compactText(rawSummary, { maxChars: 4_000 }).text;
+    const isPlanHandoff = mission.intentContract?.lane === "plan";
+    if (
+      isPlanHandoff &&
+      (rawSummary.length > MAX_PROMOTED_PLAN_SUMMARY_CHARS ||
+        Buffer.byteLength(rawSummary, "utf8") > MAX_PROMOTED_PLAN_SUMMARY_BYTES)
+    ) {
+      throw new Error(
+        "summary inválido: PRD/plano excede o limite físico de 32 KiB",
+      );
+    }
+    // A plan handoff is the exact physical PRD/architecture/story payload.
+    // Other lanes retain compact operational summaries.
+    const summary = isPlanHandoff
+      ? rawSummary
+      : compactText(rawSummary, { maxChars: 4_000 }).text;
     const rawEvidenceIds = args.evidenceIds;
     if (
       rawEvidenceIds !== undefined &&
       (!Array.isArray(rawEvidenceIds) ||
-        rawEvidenceIds.some((id) => typeof id !== 'string'))
+        rawEvidenceIds.some((id) => typeof id !== "string"))
     ) {
-      throw new Error('evidenceIds must be an array of Nexus evidence IDs');
+      throw new Error("evidenceIds must be an array of Nexus evidence IDs");
     }
-    const activeDispatch = ctx.sessionId
-      ? suite.taskDispatches
-          ?.list(mission.id)
-          .find((dispatch) =>
-            dispatch.sessionId === ctx.sessionId &&
-            dispatch.state === 'running',
-          )
-      : undefined;
+    const sessionDispatches = ctx.sessionId
+      ? (suite.taskDispatches?.list(mission.id) ?? []).filter(
+          (dispatch) => dispatch.sessionId === ctx.sessionId,
+        )
+      : [];
+    const boundDispatch = ctx.workerIncarnationId
+      ? sessionDispatches.find(
+          (dispatch) =>
+            dispatch.workerIncarnationId === ctx.workerIncarnationId,
+        )
+      : sessionDispatches[0];
     if (
-      activeDispatch &&
-      (
+      sessionDispatches.length > 0 &&
+      (!boundDispatch ||
         !ctx.workerIncarnationId ||
-        activeDispatch.workerIncarnationId !== ctx.workerIncarnationId
-      )
+        boundDispatch.workerIncarnationId !== ctx.workerIncarnationId)
     ) {
       throw new Error(
-        'worker incarnation obsoleta: este handoff pertence a outra geração física',
+        "worker incarnation obsoleta: este handoff pertence a outra geração física",
       );
     }
-    const handoff = suite.handoffs.submit({
-      status: handoffStatusSchema.parse(args.status),
+    const terminalReplayCandidate =
+      ctx.role === "worker" &&
+      (mission.status === "blocked" || mission.status === "done") &&
+      boundDispatch !== undefined &&
+      boundDispatch.workerIncarnationId === ctx.workerIncarnationId &&
+      boundDispatch.handoffId !== undefined;
+    if (!origin.ok && !terminalReplayCandidate) {
+      throw new Error(origin.error);
+    }
+    const worktreeHeadSha = committedWorktreeHead(
+      ctx,
+      ctx.role === "worker" && boundDispatch !== undefined,
+    );
+    const status = handoffStatusSchema.parse(args.status);
+    assertMcpInvocationCurrent(invocation);
+    const handoffInput = {
+      status,
       summary,
       artifacts: Array.isArray(args.artifacts) ? args.artifacts : [],
       evidenceIds: rawEvidenceIds as string[] | undefined,
@@ -109,60 +200,83 @@ const handoffSubmitTool: McpToolDef = {
       sessionId: ctx.sessionId,
       workerIncarnationId: ctx.workerIncarnationId,
       fromAgent: ctx.agentName ?? ctx.label,
-    });
+    };
+    let handoff: ScopedHandoff;
     let taskDispatchState: string | undefined;
-    if (ctx.sessionId && ctx.workerIncarnationId && activeDispatch) {
-        const status = handoffStatusSchema.parse(args.status);
-        const dispatch = status === 'success'
-          ? suite.taskDispatches.acceptHandoff({
-              sessionId: ctx.sessionId,
-              workerIncarnationId: ctx.workerIncarnationId,
-              handoffId: handoff.id,
-            })
-          : suite.taskDispatches.blockFromHandoff({
-              sessionId: ctx.sessionId,
-              workerIncarnationId: ctx.workerIncarnationId,
-              handoffId: handoff.id,
-              detail: `${status}: ${summary}`,
-            });
-        taskDispatchState = dispatch.state;
+    let replayed = false;
+    if (ctx.sessionId && ctx.workerIncarnationId && boundDispatch) {
+      const committed =
+        suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
+          handoffInput,
+          physicalReceipt,
+          {
+            worktreeHeadSha,
+            rawPayloadSha256,
+          },
+          {
+            sessionId: ctx.sessionId,
+            workerIncarnationId: ctx.workerIncarnationId,
+            detail: `${status}: ${summary}`,
+          },
+        );
+      handoff = committed.handoff;
+      taskDispatchState = committed.taskDispatch.state;
+      replayed = committed.replayed;
+    } else {
+      const committed =
+        suite.handoffs.submitFromPhysicalAgentBoundaryWithReplay(
+          handoffInput,
+          physicalReceipt,
+          {
+            worktreeHeadSha,
+            rawPayloadSha256,
+          },
+        );
+      handoff = committed.handoff;
+      replayed = committed.replayed;
     }
-    if (handoff.evidenceTrust === 'nexus-trusted') {
+    if (handoff.evidenceTrust === "nexus-trusted") {
       markHandoffSubmitted(ctx);
     }
-    const petStudioCompletion = onHandoffSubmitted(handoff, ctx.scope);
+    // A queued replay may be recovering from a process/network loss after the
+    // SQLite commit but before delivery/completion side effects. Once delivery
+    // advanced, replaying Pet Studio would re-read mutable artifact paths and
+    // repeat an already-finished installation.
+    const petStudioCompletion =
+      !replayed || handoff.deliveryState === "queued"
+        ? onHandoffSubmitted(handoff, ctx.scope)
+        : null;
     return {
       ok: true,
       handoffId: handoff.id,
       evidenceTrust: handoff.evidenceTrust,
-      stopGateSatisfied: handoff.evidenceTrust === 'nexus-trusted',
+      stopGateSatisfied: handoff.evidenceTrust === "nexus-trusted",
+      ...(replayed ? { replayed: true } : {}),
       ...(taskDispatchState ? { taskDispatchState } : {}),
-      ...(petStudioCompletion
-        ? { petStudioCompletion }
-        : {}),
+      ...(petStudioCompletion ? { petStudioCompletion } : {}),
     };
   },
 };
 
 const handoffListTool: McpToolDef = {
-  name: 'nexus_handoff_list',
+  name: "nexus_handoff_list",
   description:
-    'List submitted handoffs (undelivered by default; includeDelivered: true ' +
-    'for the full audit trail). Optionally filter by missionId.',
+    "List submitted handoffs (undelivered by default; includeDelivered: true " +
+    "for the full audit trail). Optionally filter by missionId.",
   inputSchema: {
-    type: 'object',
+    type: "object",
     properties: {
-      missionId: { type: 'string' },
-      includeDelivered: { type: 'boolean' },
+      missionId: { type: "string" },
+      includeDelivered: { type: "boolean" },
     },
   },
   handler: async (args, ctx) => {
     // L10: only an orchestrator may enumerate other missions' handoffs. A worker
     // is confined to its own mission, so a prompt-injected worker cannot read
     // another mission's handoff summaries/artifacts by passing a guessed id.
-    const requestedMission = str(args, 'missionId');
+    const requestedMission = str(args, "missionId");
     const missionId =
-      ctx.role === 'orchestrator'
+      ctx.role === "orchestrator"
         ? (requestedMission ?? ctx.missionId)
         : ctx.missionId;
     return getProjectDomainStores(ctx.scope).handoffs.list({
@@ -173,55 +287,64 @@ const handoffListTool: McpToolDef = {
 };
 
 const handoffAcknowledgeTool: McpToolDef = {
-  name: 'nexus_handoff_ack',
+  name: "nexus_handoff_ack",
   description:
-    'Mark one delivered handoff as consumed after you actually processed its result. ' +
-    'Orchestrator-only; this is a transport receipt and never completes a mission.',
+    "Mark one delivered handoff as consumed after you actually processed its result. " +
+    "Orchestrator-only; the ACK is bound to the exact accepted delivery. It never " +
+    "completes a mission by itself, but verified completion requires this receipt.",
   inputSchema: {
-    type: 'object',
-    properties: { handoffId: { type: 'string' } },
-    required: ['handoffId'],
+    type: "object",
+    properties: { handoffId: { type: "string" } },
+    required: ["handoffId"],
   },
   handler: async (args, ctx) => {
-    if (ctx.role !== 'orchestrator' || !ctx.missionId) {
-      throw new Error('handoff acknowledgement requires a mission orchestrator');
+    if (ctx.role !== "orchestrator" || !ctx.missionId || !ctx.sessionId) {
+      throw new Error(
+        "handoff acknowledgement requires the current physical mission orchestrator",
+      );
     }
-    const handoffId = requireStr(args, 'handoffId');
-    const consumed = getProjectDomainStores(ctx.scope).handoffs.markConsumed(
+    const handoffId = requireStr(args, "handoffId");
+    const consumed = getProjectDomainStores(
+      ctx.scope,
+    ).handoffs.markConsumedAfterAcceptedDelivery(
       handoffId,
       ctx.missionId,
+      ctx.sessionId,
     );
-    if (!consumed) throw new Error('handoff is not awaiting consumption in this mission');
-    return { ok: true, handoffId, deliveryState: 'consumed' };
+    if (!consumed)
+      throw new Error("handoff is not awaiting consumption in this mission");
+    return { ok: true, handoffId, deliveryState: "consumed" };
   },
 };
 
 const workerHeartbeatTool: McpToolDef = {
-  name: 'nexus_worker_heartbeat',
+  name: "nexus_worker_heartbeat",
   description:
-    'Renew the durable lifecycle lease for this exact worker PTY. Workers on ' +
-    'long tasks should call it no later than every four minutes. It never changes ' +
-    'task/mission status and is always allowed by the skill gate.',
-  inputSchema: { type: 'object', properties: {} },
+    "Renew the durable lifecycle lease for this exact worker PTY. Workers on " +
+    "long tasks should call it no later than every four minutes. It never changes " +
+    "task/mission status and is always allowed by the skill gate.",
+  inputSchema: { type: "object", properties: {} },
   handler: async (_args, ctx) => {
     if (
-      ctx.role !== 'worker' ||
+      ctx.role !== "worker" ||
       !ctx.missionId ||
       !ctx.sessionId ||
       !ctx.workerIncarnationId
     ) {
       throw new Error(
-        'worker heartbeat exige worker com missão, sessão e encarnação vinculadas',
+        "worker heartbeat exige worker com missão, sessão e encarnação vinculadas",
       );
     }
-    const dispatch = getProjectDomainStores(ctx.scope).taskDispatches.heartbeat({
-      sessionId: ctx.sessionId,
-      missionId: ctx.missionId,
-      workerIncarnationId: ctx.workerIncarnationId,
-      leaseMs: TASK_DISPATCH_HEARTBEAT_LEASE_MS,
-    });
+    const dispatch = getProjectDomainStores(ctx.scope).taskDispatches.heartbeat(
+      {
+        sessionId: ctx.sessionId,
+        missionId: ctx.missionId,
+        workerIncarnationId: ctx.workerIncarnationId,
+        leaseMs: TASK_DISPATCH_HEARTBEAT_LEASE_MS,
+      },
+    );
     if (dispatch.missionId !== ctx.missionId) {
-      throw new Error('worker heartbeat não pertence à missão do token');
+      throw new Error("worker heartbeat não pertence à missão do token");
     }
     return {
       ok: true,

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useOmpRpcStore } from '../state/omp-rpc-store';
@@ -26,31 +26,24 @@ import { agentPickerEmptyBeat } from '../../shared/endorphin';
 import { setBrowserPaneSuppression } from '../browser/browser-host';
 import { AccountSwitcher } from './AccountSwitcher';
 import { useAccountStore } from '../state/account-store';
-import {
-  restartPanesForPendingAccount,
-} from '../orch/account-restart-controller';
+import { restartPanesForPendingAccount } from '../orch/account-restart-controller';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import { statusLabel } from '../lib/mission-rail-groups';
 import { AgentNotifications } from './AgentNotifications';
 import { FleetChip } from './FleetChip';
-import {
-  clearEphemeralDraft,
-  peekEphemeralDraft,
-  saveEphemeralDraft,
-} from '../state/ephemeral-draft-store';
+import { clearEphemeralDraft, peekEphemeralDraft, saveEphemeralDraft } from '../state/ephemeral-draft-store';
 
 const AGENT_PICKER_EMPTY = agentPickerEmptyBeat();
 
 function adapterModelLabel(adapter: AdapterInfo, model: string): string {
   const info = adapter.models.info?.[model];
-  const tags = [
-    info?.availability ?? null,
-    info?.costTier && info.costTier !== 'unknown' ? `cost:${info.costTier}` : null,
-  ].filter(Boolean);
+  const tags = [info?.availability ?? null, info?.costTier && info.costTier !== 'unknown' ? `cost:${info.costTier}` : null].filter(Boolean);
   return tags.length > 0 ? `${model} (${tags.join(', ')})` : model;
 }
 
 type BarDensity = 'full' | 'icons' | 'compact';
+type BarMenu = 'workspace' | 'missions' | 'more';
+type MenuFocusPosition = 'first' | 'last';
 
 function densityFromWidth(width: number): BarDensity {
   // Thresholds um pouco mais cedo: labels longos em PT não devem empurrar
@@ -60,10 +53,11 @@ function densityFromWidth(width: number): BarDensity {
   return 'full';
 }
 
-function useBarDensity(): { density: BarDensity; barRef: RefObject<HTMLElement | null> } {
-  const [density, setDensity] = useState<BarDensity>(() =>
-    typeof window === 'undefined' ? 'full' : densityFromWidth(window.innerWidth),
-  );
+function useBarDensity(): {
+  density: BarDensity;
+  barRef: RefObject<HTMLElement | null>;
+} {
+  const [density, setDensity] = useState<BarDensity>(() => (typeof window === 'undefined' ? 'full' : densityFromWidth(window.innerWidth)));
   const barRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const onResize = () => setDensity(densityFromWidth(window.innerWidth));
@@ -127,9 +121,7 @@ export function WorkspaceBar({
     ? 'error'
     : ompPendingUi.length > 0
       ? 'needs'
-      : ompStarting ||
-          ompSnapshot?.state === 'busy' ||
-          ompSnapshot?.isStreaming === true
+      : ompStarting || ompSnapshot?.state === 'busy' || ompSnapshot?.isStreaming === true
         ? 'busy'
         : ompSessionId
           ? 'idle'
@@ -145,7 +137,7 @@ export function WorkspaceBar({
   const toggleSettings = useSettingsStore((s) => s.toggleDrawer);
   const closeSettingsDrawer = useSettingsStore((s) => s.closeDrawer);
   const workspace = useWorkspaceStore((s) => s.current);
-  const openWizard = useMissionWizardStore((s) => s.openForMission);
+  const openAgentic = useMissionWizardStore((s) => s.openForAgentic);
   const openNewWorkspace = useMissionWizardStore((s) => s.openForNewWorkspace);
   const askCloseWorkspace = useCloseWorkspaceStore((s) => s.ask);
   const filesOpen = useFilesStore((s) => s.open);
@@ -164,6 +156,9 @@ export function WorkspaceBar({
   const restartAdapterId = useAccountStore((s) => s.restartAdapterId);
 
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [adaptersLoading, setAdaptersLoading] = useState(true);
+  const [adaptersError, setAdaptersError] = useState<string | null>(null);
+  const [adapterLoadAttempt, setAdapterLoadAttempt] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
   const updateState = useUpdateState();
   const [updateOpen, setUpdateOpen] = useState(false);
@@ -176,37 +171,261 @@ export function WorkspaceBar({
   const wsMenuRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const missionMenuRef = useRef<HTMLDivElement>(null);
+  const wsMenuContentRef = useRef<HTMLDivElement>(null);
+  const moreMenuContentRef = useRef<HTMLDivElement>(null);
+  const missionMenuContentRef = useRef<HTMLDivElement>(null);
+  const wsTriggerRef = useRef<HTMLButtonElement>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
+  const missionTriggerRef = useRef<HTMLButtonElement>(null);
+  const agentTriggerRef = useRef<HTMLButtonElement>(null);
+  const pickerDialogRef = useRef<HTMLDivElement>(null);
+  const pickerPanelRef = useRef<HTMLDivElement>(null);
+  const [menuFocusRequest, setMenuFocusRequest] = useState<{
+    menu: BarMenu;
+    position: MenuFocusPosition;
+  } | null>(null);
+
+  function menuContent(menu: BarMenu): HTMLDivElement | null {
+    if (menu === 'workspace') return wsMenuContentRef.current;
+    if (menu === 'missions') return missionMenuContentRef.current;
+    return moreMenuContentRef.current;
+  }
+
+  function menuTrigger(menu: BarMenu): HTMLButtonElement | null {
+    if (menu === 'workspace') return wsTriggerRef.current;
+    if (menu === 'missions') return missionTriggerRef.current;
+    return moreTriggerRef.current;
+  }
+
+  function isMenuOpen(menu: BarMenu): boolean {
+    if (menu === 'workspace') return wsMenuOpen;
+    if (menu === 'missions') return missionMenuOpen;
+    return moreOpen;
+  }
+
+  function setMenuOpen(menu: BarMenu, open: boolean): void {
+    if (menu === 'workspace') setWsMenuOpen(open);
+    if (menu === 'missions') setMissionMenuOpen(open);
+    if (menu === 'more') setMoreOpen(open);
+  }
+
+  function menuItems(menu: HTMLElement): HTMLElement[] {
+    return Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])')).filter((item) => item.getAttribute('aria-disabled') !== 'true');
+  }
+
+  function focusMenuItem(menu: BarMenu, position: MenuFocusPosition): void {
+    const content = menuContent(menu);
+    if (!content) return;
+    const items = menuItems(content);
+    const target = position === 'last' ? items.at(-1) : items[0];
+    target?.focus();
+  }
+
+  function openMenu(menu: BarMenu, position: MenuFocusPosition = 'first'): void {
+    setWsMenuOpen(menu === 'workspace');
+    setMissionMenuOpen(menu === 'missions');
+    setMoreOpen(menu === 'more');
+    setMenuFocusRequest({ menu, position });
+  }
+
+  function toggleMenu(menu: BarMenu): void {
+    if (isMenuOpen(menu)) {
+      setMenuOpen(menu, false);
+      return;
+    }
+    openMenu(menu);
+  }
+
+  function closeMenuAndRestoreFocus(menu: BarMenu): void {
+    setMenuOpen(menu, false);
+    requestAnimationFrame(() => menuTrigger(menu)?.focus());
+  }
+
+  function handleMenuTriggerKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, menu: BarMenu): void {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      openMenu(menu, event.key === 'ArrowUp' ? 'last' : 'first');
+    } else if (event.key === 'Escape' && isMenuOpen(menu)) {
+      event.preventDefault();
+      setMenuOpen(menu, false);
+    }
+  }
+
+  function handleMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>, menu: BarMenu): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeMenuAndRestoreFocus(menu);
+      return;
+    }
+
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = menuItems(event.currentTarget);
+    if (items.length === 0) return;
+
+    event.preventDefault();
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+    const nextIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? items.length - 1
+          : event.key === 'ArrowUp'
+            ? currentIndex <= 0
+              ? items.length - 1
+              : currentIndex - 1
+            : currentIndex === -1 || currentIndex === items.length - 1
+              ? 0
+              : currentIndex + 1;
+    items[nextIndex]?.focus();
+  }
+
+  function pickerFocusableElements(): HTMLElement[] {
+    const panel = pickerPanelRef.current;
+    if (!panel) return [];
+    return Array.from(
+      panel.querySelectorAll<HTMLElement>('button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'),
+    ).filter((element) => element.getAttribute('aria-hidden') !== 'true');
+  }
+
+  function restorePickerTriggerFocus(): void {
+    requestAnimationFrame(() => agentTriggerRef.current?.focus());
+  }
+
+  function closePickerAndRestoreFocus(): void {
+    softClosePicker();
+    restorePickerTriggerFocus();
+  }
+
+  function handlePickerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closePickerAndRestoreFocus();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = pickerFocusableElements();
+    if (focusable.length === 0) {
+      event.preventDefault();
+      pickerPanelRef.current?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  }
 
   const localMissions = useMemo(() => {
     if (!workspace?.path || boundWorkspacePath !== workspace.path) return [];
     return [...missions].sort((a, b) => b.updatedAt - a.updatedAt);
   }, [boundWorkspacePath, missions, workspace?.path]);
 
-  const quickMissions = useMemo(
-    () =>
-      localMissions
-        .filter((m) => m.status === 'running' || m.status === 'blocked' || m.status === 'pending')
-        .slice(0, 8),
-    [localMissions],
-  );
+  const quickMissions = useMemo(() => localMissions.filter((m) => m.status === 'running' || m.status === 'blocked' || m.status === 'pending').slice(0, 8), [localMissions]);
 
   useEffect(() => {
     let cancelled = false;
-    void window.nexus.adapters.list().then((list) => {
-      if (!cancelled) setAdapters(list);
+    let changed = false;
+    setAdaptersLoading(true);
+    setAdaptersError(null);
+    void window.nexus.adapters
+      .list()
+      .then((list) => {
+        if (!cancelled && !changed) setAdapters(list);
+      })
+      .catch((cause) => {
+        if (!cancelled && !changed) {
+          setAdapters([]);
+          setAdaptersError(
+            cause instanceof Error && cause.message.trim()
+              ? cause.message
+              : 'O catálogo local de providers não respondeu.',
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled && !changed) setAdaptersLoading(false);
     });
     const unsub = window.nexus.adapters.onChanged((list) => {
+      if (cancelled) return;
+      changed = true;
       setAdapters(list);
+      setAdaptersError(null);
+      setAdaptersLoading(false);
     });
     return () => {
       cancelled = true;
       unsub();
     };
-  }, []);
+  }, [adapterLoadAttempt]);
 
   useEffect(() => {
     setBrowserPaneSuppression('agent-picker', pickerOpen);
     return () => setBrowserPaneSuppression('agent-picker', false);
+  }, [pickerOpen]);
+
+  useEffect(() => {
+    if (!menuFocusRequest || !isMenuOpen(menuFocusRequest.menu)) return;
+    const request = menuFocusRequest;
+    const frame = requestAnimationFrame(() => {
+      focusMenuItem(request.menu, request.position);
+      setMenuFocusRequest((current) => (current === request ? null : current));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [menuFocusRequest, missionMenuOpen, moreOpen, wsMenuOpen]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const frame = requestAnimationFrame(() => {
+      const [first] = pickerFocusableElements();
+      (first ?? pickerPanelRef.current)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pickerOpen, adaptersLoading, adaptersError]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const dialog = pickerDialogRef.current;
+    if (!dialog) return;
+
+    // The picker is nested in the top bar, so inert every sibling branch from
+    // the dialog up to <body>. This keeps the dialog itself live while
+    // preventing pointer, focus and assistive-technology access to the bar,
+    // canvas and any other app surface behind it.
+    const background = new Set<HTMLElement>();
+    let branch: HTMLElement = dialog;
+    while (branch.parentElement) {
+      const parent = branch.parentElement;
+      for (const candidate of Array.from(parent.children)) {
+        if (candidate instanceof HTMLElement && candidate !== branch) {
+          background.add(candidate);
+        }
+      }
+      if (parent === document.body) break;
+      branch = parent;
+    }
+    const previous = [...background].map((element) => ({
+      element,
+      inert: element.inert,
+      ariaHidden: element.getAttribute('aria-hidden'),
+    }));
+    for (const element of background) {
+      element.inert = true;
+      element.setAttribute('aria-hidden', 'true');
+    }
+    return () => {
+      for (const { element, inert, ariaHidden } of previous) {
+        element.inert = inert;
+        if (ariaHidden === null) element.removeAttribute('aria-hidden');
+        else element.setAttribute('aria-hidden', ariaHidden);
+      }
+    };
   }, [pickerOpen]);
 
   useEffect(() => {
@@ -219,19 +438,15 @@ export function WorkspaceBar({
       if (moreOpen && moreRef.current && !moreRef.current.contains(t)) {
         setMoreOpen(false);
       }
-      if (
-        missionMenuOpen &&
-        missionMenuRef.current &&
-        !missionMenuRef.current.contains(t)
-      ) {
+      if (missionMenuOpen && missionMenuRef.current && !missionMenuRef.current.contains(t)) {
         setMissionMenuOpen(false);
       }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setWsMenuOpen(false);
-        setMoreOpen(false);
-        setMissionMenuOpen(false);
+        if (wsMenuOpen) closeMenuAndRestoreFocus('workspace');
+        if (moreOpen) closeMenuAndRestoreFocus('more');
+        if (missionMenuOpen) closeMenuAndRestoreFocus('missions');
       }
     };
     document.addEventListener('mousedown', onDoc);
@@ -245,19 +460,11 @@ export function WorkspaceBar({
   const installedAdapters = adapters.filter((a) => a.installed);
 
   function openPicker() {
-    const draft = peekEphemeralDraft<{ adapterId: string; model: string }>(
-      'agent-picker',
-    );
-    const fromDraft = draft
-      ? installedAdapters.find((a) => a.id === draft.adapterId) ?? null
-      : null;
+    const draft = peekEphemeralDraft<{ adapterId: string; model: string }>('agent-picker');
+    const fromDraft = draft ? (installedAdapters.find((a) => a.id === draft.adapterId) ?? null) : null;
     const first = fromDraft ?? installedAdapters[0] ?? null;
     setSelectedAdapter(first);
-    setSelectedModel(
-      fromDraft && draft
-        ? draft.model || first?.models.default || ''
-        : first?.models.default ?? '',
-    );
+    setSelectedModel(fromDraft && draft ? draft.model || first?.models.default || '' : (first?.models.default ?? ''));
     setPickerOpen(true);
   }
 
@@ -310,10 +517,7 @@ export function WorkspaceBar({
       id: 'view',
       label: viewKind === 'canvas' ? 'Grade' : 'Canvas',
       icon: viewKind === 'canvas' ? 'grid' : 'canvas',
-      title:
-        viewKind === 'grid'
-          ? 'Mudar para Canvas (arrastar painéis livremente)'
-          : 'Mudar para Grade (painéis divididos)',
+      title: viewKind === 'grid' ? 'Mudar para Canvas (arrastar painéis livremente)' : 'Mudar para Grade (painéis divididos)',
       active: viewKind === 'canvas',
       onClick: toggleView,
     },
@@ -343,16 +547,7 @@ export function WorkspaceBar({
     },
     {
       id: 'omp',
-      label:
-        ompPulse === 'busy'
-          ? 'OMP · ativo'
-          : ompPulse === 'needs'
-            ? 'OMP · aprovação'
-            : ompPulse === 'error'
-              ? 'OMP · erro'
-              : ompPulse === 'idle'
-                ? 'OMP · pronto'
-                : 'OMP RPC',
+      label: ompPulse === 'busy' ? 'OMP · ativo' : ompPulse === 'needs' ? 'OMP · aprovação' : ompPulse === 'error' ? 'OMP · erro' : ompPulse === 'idle' ? 'OMP · pronto' : 'OMP RPC',
       icon: 'agent',
       title:
         ompPulse === 'busy'
@@ -429,15 +624,14 @@ export function WorkspaceBar({
   }
 
   function renderToolBtn(tool: ToolDef, opts?: { menu?: boolean }) {
-    const pulseClass = tool.pulse
-      ? ` workspace-bar__pulse workspace-bar__pulse--${tool.pulse}`
-      : '';
+    const pulseClass = tool.pulse ? ` workspace-bar__pulse workspace-bar__pulse--${tool.pulse}` : '';
     if (opts?.menu) {
       return (
         <button
           key={tool.id}
           type="button"
           className={`workspace-bar__menu-item ${tool.active ? 'workspace-bar__menu-item--active' : ''}${pulseClass}`}
+          role="menuitem"
           title={tool.title}
           onClick={() => {
             activateTool(tool);
@@ -446,12 +640,7 @@ export function WorkspaceBar({
         >
           <PixelIcon name={tool.icon} size={12} />
           <span>{tool.label}</span>
-          {tool.pulse ? (
-            <span
-              className={`workspace-bar__pulse-dot workspace-bar__pulse-dot--${tool.pulse}`}
-              aria-hidden="true"
-            />
-          ) : null}
+          {tool.pulse ? <span className={`workspace-bar__pulse-dot workspace-bar__pulse-dot--${tool.pulse}`} aria-hidden="true" /> : null}
         </button>
       );
     }
@@ -466,22 +655,13 @@ export function WorkspaceBar({
       >
         <PixelIcon name={tool.icon} />
         {showLabels && <span className="workspace-bar__btn-label">{tool.label}</span>}
-        {tool.pulse ? (
-          <span
-            className={`workspace-bar__pulse-dot workspace-bar__pulse-dot--${tool.pulse}`}
-            aria-hidden="true"
-          />
-        ) : null}
+        {tool.pulse ? <span className={`workspace-bar__pulse-dot workspace-bar__pulse-dot--${tool.pulse}`} aria-hidden="true" /> : null}
       </button>
     );
   }
 
   return (
-    <header
-      ref={barRef}
-      className={`workspace-bar workspace-bar--${density}`}
-      data-density={density}
-    >
+    <header ref={barRef} className={`workspace-bar workspace-bar--${density}`} data-density={density}>
       {/* Brand: logo + name + workspace menu (novo/fechar) — no Board duplicate */}
       <div className="workspace-bar__brand">
         <NexusMark size={15} className="workspace-bar__logo" />
@@ -489,21 +669,19 @@ export function WorkspaceBar({
           <>
             <div className="workspace-bar__ws" ref={wsMenuRef}>
               <button
+                ref={wsTriggerRef}
                 type="button"
                 className="workspace-bar__name-btn"
                 title={workspace.path}
                 aria-haspopup="menu"
                 aria-expanded={wsMenuOpen}
-                onClick={() => {
-                  setWsMenuOpen((o) => !o);
-                  setMoreOpen(false);
-                }}
+                aria-controls="workspace-bar-workspace-menu"
+                onKeyDown={(event) => handleMenuTriggerKeyDown(event, 'workspace')}
+                onClick={() => toggleMenu('workspace')}
               >
                 <PixelIcon name="files" size={12} />
                 <span className="workspace-bar__context-copy">
-                  <span className="workspace-bar__context-label">
-                    Workspace ativo
-                  </span>
+                  <span className="workspace-bar__context-label">Workspace ativo</span>
                   <span className="workspace-bar__name">{workspace.name}</span>
                 </span>
                 <span className="workspace-bar__name-caret" aria-hidden="true">
@@ -511,29 +689,20 @@ export function WorkspaceBar({
                 </span>
               </button>
               {wsMenuOpen && (
-                <div className="workspace-bar__menu" role="menu">
+                <div
+                  ref={wsMenuContentRef}
+                  id="workspace-bar-workspace-menu"
+                  className="workspace-bar__menu"
+                  role="menu"
+                  aria-label="Ações do workspace"
+                  onKeyDown={(event) => handleMenuKeyDown(event, 'workspace')}
+                >
                   <div className="workspace-bar__menu-heading">
                     {workspace.name}
-                    <span
-                      className="workspace-bar__menu-heading-meta workspace-bar__workspace-path"
-                      title={workspace.path}
-                    >
+                    <span className="workspace-bar__menu-heading-meta workspace-bar__workspace-path" title={workspace.path}>
                       {workspace.path}
                     </span>
                   </div>
-                  <div className="workspace-bar__menu-sep" />
-                  <button
-                    type="button"
-                    className="workspace-bar__menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      openNewWorkspace();
-                      setWsMenuOpen(false);
-                    }}
-                  >
-                    <PixelIcon name="plus" size={12} />
-                    <span>Novo workspace</span>
-                  </button>
                   <button
                     type="button"
                     className="workspace-bar__menu-item"
@@ -553,17 +722,9 @@ export function WorkspaceBar({
         ) : (
           <span className="workspace-bar__name">Nenhum workspace</span>
         )}
-        <button
-          type="button"
-          className="workspace-bar__new-workspace"
-          title="Criar ou abrir outro workspace"
-          aria-label="Novo workspace"
-          onClick={openNewWorkspace}
-        >
+        <button type="button" className="workspace-bar__new-workspace" title="Criar ou abrir outro workspace" aria-label="Novo workspace" onClick={openNewWorkspace}>
           <PixelIcon name="plus" size={11} />
-          <span className="workspace-bar__new-workspace-label">
-            Novo workspace
-          </span>
+          <span className="workspace-bar__new-workspace-label">Novo workspace</span>
         </button>
       </div>
 
@@ -576,10 +737,7 @@ export function WorkspaceBar({
           <QuotaChip />
           {!compact && <CostSummary />}
           {activeTodo && !compact && (
-            <span
-              className="workspace-bar__todo"
-              title="Tarefa de orquestração atual"
-            >
+            <span className="workspace-bar__todo" title="Tarefa de orquestração atual">
               <PixelIcon name="mission" size={10} />
               <span className="workspace-bar__todo-text">{activeTodo}</span>
             </span>
@@ -590,34 +748,25 @@ export function WorkspaceBar({
         <div className="workspace-bar__zone workspace-bar__zone--primary">
           <button
             className="workspace-bar__btn workspace-bar__btn--primary"
-            onClick={openWizard}
+            onClick={() => openAgentic()}
             title={`Nova missão neste workspace (${formatShortcut('mod', 'N')})`}
             aria-label="Nova missão neste workspace"
           >
             <PixelIcon name="plus" />
-            <span className="workspace-bar__btn-label">
-              {compact ? 'Nova' : 'Nova missão'}
-            </span>
+            <span className="workspace-bar__btn-label">{compact ? 'Nova' : 'Nova missão'}</span>
           </button>
           <div className="workspace-bar__mission-menu" ref={missionMenuRef}>
             <button
+              ref={missionTriggerRef}
               type="button"
-              className={`workspace-bar__btn workspace-bar__btn--missions ${
-                missionMenuOpen ? 'workspace-bar__btn--view-active' : ''
-              }`}
-              title={
-                workspace
-                  ? `Missões de ${workspace.name} — abrir ou retomar`
-                  : 'Missões do workspace'
-              }
+              className={`workspace-bar__btn workspace-bar__btn--missions ${missionMenuOpen ? 'workspace-bar__btn--view-active' : ''}`}
+              title={workspace ? `Missões de ${workspace.name} — abrir ou retomar` : 'Missões do workspace'}
               aria-label="Lista de missões deste workspace"
               aria-haspopup="menu"
               aria-expanded={missionMenuOpen}
-              onClick={() => {
-                setMissionMenuOpen((o) => !o);
-                setMoreOpen(false);
-                setWsMenuOpen(false);
-              }}
+              aria-controls="workspace-bar-missions-menu"
+              onKeyDown={(event) => handleMenuTriggerKeyDown(event, 'missions')}
+              onClick={() => toggleMenu('missions')}
             >
               <PixelIcon name="mission" />
               {!compact && (
@@ -626,29 +775,27 @@ export function WorkspaceBar({
                   {localMissions.length > 0 ? ` (${localMissions.length})` : ''}
                 </span>
               )}
-              {compact && localMissions.length > 0 && (
-                <span className="workspace-bar__mission-count">
-                  {localMissions.length}
-                </span>
-              )}
+              {compact && localMissions.length > 0 && <span className="workspace-bar__mission-count">{localMissions.length}</span>}
             </button>
             {missionMenuOpen && (
               <div
+                ref={missionMenuContentRef}
+                id="workspace-bar-missions-menu"
                 className="workspace-bar__menu workspace-bar__menu--missions"
                 role="menu"
+                aria-label="Missões deste workspace"
+                onKeyDown={(event) => handleMenuKeyDown(event, 'missions')}
               >
                 <div className="workspace-bar__menu-heading">
                   {workspace ? workspace.name : 'Workspace'}
-                  <span className="workspace-bar__menu-heading-meta">
-                    só esta pasta
-                  </span>
+                  <span className="workspace-bar__menu-heading-meta">só esta pasta</span>
                 </div>
                 <button
                   type="button"
                   className="workspace-bar__menu-item workspace-bar__menu-item--accent"
                   role="menuitem"
                   onClick={() => {
-                    openWizard();
+                    openAgentic();
                     setMissionMenuOpen(false);
                   }}
                 >
@@ -656,9 +803,7 @@ export function WorkspaceBar({
                   <span>Nova missão</span>
                 </button>
                 {quickMissions.length === 0 ? (
-                  <p className="workspace-bar__menu-empty">
-                    Nenhuma missão ativa aqui.
-                  </p>
+                  <p className="workspace-bar__menu-empty">Nenhuma missão ativa aqui.</p>
                 ) : (
                   quickMissions.map((m) => (
                     <button
@@ -680,12 +825,8 @@ export function WorkspaceBar({
                     >
                       <PixelIcon name="mission" size={12} />
                       <span className="workspace-bar__menu-mission">
-                        <span className="workspace-bar__menu-mission-title">
-                          {m.title}
-                        </span>
-                        <span className="workspace-bar__menu-mission-meta">
-                          {statusLabel(m.status)}
-                        </span>
+                        <span className="workspace-bar__menu-mission-title">{m.title}</span>
+                        <span className="workspace-bar__menu-mission-meta">{statusLabel(m.status)}</span>
                       </span>
                     </button>
                   ))
@@ -706,12 +847,7 @@ export function WorkspaceBar({
               </div>
             )}
           </div>
-          <button
-            className="workspace-bar__btn workspace-bar__btn--agent"
-            onClick={openPicker}
-            title="Abrir um agente de IA em um painel novo"
-            aria-label="Abrir agente"
-          >
+          <button ref={agentTriggerRef} className="workspace-bar__btn workspace-bar__btn--agent" onClick={openPicker} title="Abrir um agente de IA em um painel novo" aria-label="Abrir agente">
             <PixelIcon name="agent" />
             {showLabels && <span className="workspace-bar__btn-label">Agente</span>}
           </button>
@@ -725,23 +861,30 @@ export function WorkspaceBar({
           {overflowTools.length > 0 && (
             <div className="workspace-bar__more" ref={moreRef}>
               <button
+                ref={moreTriggerRef}
                 type="button"
                 className={`workspace-bar__btn workspace-bar__btn--more ${moreOpen ? 'workspace-bar__btn--view-active' : ''}`}
                 title="Mais ferramentas"
                 aria-label="Mais ferramentas"
                 aria-haspopup="menu"
                 aria-expanded={moreOpen}
-                onClick={() => {
-                  setMoreOpen((o) => !o);
-                  setWsMenuOpen(false);
-                }}
+                aria-controls="workspace-bar-more-menu"
+                onKeyDown={(event) => handleMenuTriggerKeyDown(event, 'more')}
+                onClick={() => toggleMenu('more')}
               >
                 ⋯
               </button>
               {moreOpen && (
-                <div className="workspace-bar__menu workspace-bar__menu--end" role="menu">
+                <div
+                  ref={moreMenuContentRef}
+                  id="workspace-bar-more-menu"
+                  className="workspace-bar__menu workspace-bar__menu--end"
+                  role="menu"
+                  aria-label="Mais ferramentas"
+                  onKeyDown={(event) => handleMenuKeyDown(event, 'more')}
+                >
                   {overflowTools.map((tool) => renderToolBtn(tool, { menu: true }))}
-                  {compact && (
+                  {compact && updateState && (
                     <>
                       <div className="workspace-bar__menu-sep" />
                       <button
@@ -786,14 +929,7 @@ export function WorkspaceBar({
               )}
             </div>
           )}
-          {updateState && !compact && (
-            <UpdateStatusButton
-              state={updateState}
-              alwaysVisible
-              compact={density !== 'full'}
-              onClick={() => setUpdateOpen(true)}
-            />
-          )}
+          {updateState && !compact && <UpdateStatusButton state={updateState} alwaysVisible compact={density !== 'full'} onClick={() => setUpdateOpen(true)} />}
           <button
             className="workspace-bar__btn"
             onClick={() => {
@@ -809,29 +945,56 @@ export function WorkspaceBar({
         </div>
       </div>
 
-      {updateOpen && updateState && (
-        <UpdateModal state={updateState} onClose={() => setUpdateOpen(false)} />
-      )}
+      {updateOpen && updateState && <UpdateModal state={updateState} onClose={() => setUpdateOpen(false)} />}
 
       {pickerOpen && (
-        <div className="agent-picker" role="dialog" aria-label="Abrir agente">
-          <div className="agent-picker__overlay" onClick={softClosePicker} />
-          <div className="agent-picker__panel">
-            <h3 className="agent-picker__title">Abrir agente</h3>
+        <div ref={pickerDialogRef} className="agent-picker" role="dialog" aria-modal="true" aria-labelledby="agent-picker-title">
+          <div className="agent-picker__overlay" onClick={closePickerAndRestoreFocus} />
+          <div
+            ref={pickerPanelRef}
+            className="agent-picker__panel"
+            tabIndex={-1}
+            aria-busy={adaptersLoading}
+            onKeyDown={handlePickerKeyDown}
+          >
+            <h3 id="agent-picker-title" className="agent-picker__title">
+              Abrir agente
+            </h3>
 
-            {installedAdapters.length === 0 ? (
+            {adaptersLoading ? (
+              <EmptyState
+                className="agent-picker__empty agent-picker__empty--story"
+                icon="agent"
+                title="Verificando providers"
+                body={<p>Consultando as CLIs disponíveis neste computador…</p>}
+              />
+            ) : adaptersError ? (
+              <EmptyState
+                className="agent-picker__empty agent-picker__empty--story"
+                icon="warn"
+                role="alert"
+                title="Não foi possível carregar os providers"
+                body={<p>{adaptersError}</p>}
+                action={
+                  <ActionCard
+                    icon="restart"
+                    title="Tentar novamente"
+                    subtitle="reler catálogo local"
+                    variant="primary"
+                    onClick={() =>
+                      setAdapterLoadAttempt((attempt) => attempt + 1)
+                    }
+                  />
+                }
+              />
+            ) : installedAdapters.length === 0 ? (
               <EmptyState
                 className="agent-picker__empty agent-picker__empty--story"
                 icon="key"
                 title={AGENT_PICKER_EMPTY.title}
                 body={
                   <>
-                    <EndorphinPresence
-                      kicker={AGENT_PICKER_EMPTY.kicker}
-                      mood="idle"
-                      size={44}
-                      className="endorphin-presence--row agent-picker__empty-presence"
-                    />
+                    <EndorphinPresence kicker={AGENT_PICKER_EMPTY.kicker} mood="idle" size={44} className="endorphin-presence--row agent-picker__empty-presence" />
                     <p>{AGENT_PICKER_EMPTY.line}</p>
                     {adapters.length > 0 && (
                       <p>
@@ -858,19 +1021,8 @@ export function WorkspaceBar({
                 <label className="agent-picker__label">
                   Adaptador
                   <span className="agent-picker__select-row">
-                    {selectedAdapter && (
-                      <ProviderLogo
-                        adapterId={selectedAdapter.id}
-                        label={selectedAdapter.label}
-                        fallback={selectedAdapter.icon}
-                        size="sm"
-                      />
-                    )}
-                    <select
-                      className="agent-picker__select"
-                      value={selectedAdapter?.id ?? ''}
-                      onChange={(e) => handleAdapterChange(e.target.value)}
-                    >
+                    {selectedAdapter && <ProviderLogo adapterId={selectedAdapter.id} label={selectedAdapter.label} fallback={selectedAdapter.icon} size="sm" />}
+                    <select className="agent-picker__select" value={selectedAdapter?.id ?? ''} onChange={(e) => handleAdapterChange(e.target.value)}>
                       {installedAdapters.map((a) => (
                         <option key={a.id} value={a.id}>
                           {a.label}
@@ -883,11 +1035,7 @@ export function WorkspaceBar({
                 {selectedAdapter && selectedAdapter.models.list.length > 0 && (
                   <label className="agent-picker__label">
                     Modelo
-                    <select
-                      className="agent-picker__select"
-                      value={selectedModel}
-                      onChange={(e) => setSelectedModel(e.target.value)}
-                    >
+                    <select className="agent-picker__select" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
                       {selectedAdapter.models.list.map((m) => (
                         <option key={m} value={m}>
                           {adapterModelLabel(selectedAdapter, m)}
@@ -897,19 +1045,19 @@ export function WorkspaceBar({
                   </label>
                 )}
 
-                {selectedAdapter?.loginHint && (
-                  <p className="agent-picker__hint">{selectedAdapter.loginHint}</p>
-                )}
+                {selectedAdapter?.loginHint && <p className="agent-picker__hint">{selectedAdapter.loginHint}</p>}
 
                 <div className="agent-picker__actions">
-                  <button className="agent-picker__btn" onClick={discardClosePicker}>
+                  <button
+                    className="agent-picker__btn"
+                    onClick={() => {
+                      discardClosePicker();
+                      restorePickerTriggerFocus();
+                    }}
+                  >
                     Cancelar
                   </button>
-                  <button
-                    className="agent-picker__btn agent-picker__btn--primary"
-                    onClick={confirmSpawn}
-                    disabled={!selectedAdapter}
-                  >
+                  <button className="agent-picker__btn agent-picker__btn--primary" onClick={confirmSpawn} disabled={!selectedAdapter}>
                     Abrir
                   </button>
                 </div>

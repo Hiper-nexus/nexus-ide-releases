@@ -134,6 +134,7 @@ describe('durable context workflow store', () => {
       trustedArtifactIds: [],
       requiredArtifactIds: [],
       authorId: 'author-a',
+      authorSessionId: 'session-a',
       authorProvider: 'codex',
       worktreeId: 'worktree-a',
       integratedHeadSha: binding.headSha,

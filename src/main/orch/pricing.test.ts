@@ -23,6 +23,9 @@ describe('priceForModel', () => {
       MODEL_PRICES['claude-sonnet'],
     );
     expect(priceForModel('gpt-5-mini')).toEqual(MODEL_PRICES['gpt-5-mini']);
+    expect(priceForModel('claude-opus-5')).toEqual(
+      MODEL_PRICES['claude-opus-5'],
+    );
   });
 
   it('strips provider namespaces before matching', () => {
@@ -46,6 +49,14 @@ describe('estimateCost', () => {
     // claude-opus: $15/M in, $75/M out.
     const cost = estimateCost('claude-opus-4-8', 1_000_000, 1_000_000);
     expect(cost).toBeCloseTo(90, 10);
+  });
+
+  it('uses the official lower Opus 5 list price without changing Opus 4', () => {
+    const cost = estimateCost('claude-opus-5', 1_000_000, 1_000_000);
+    expect(cost).toBeCloseTo(30, 10);
+    expect(priceForModel('claude-opus-4-8')).toEqual(
+      MODEL_PRICES['claude-opus'],
+    );
   });
 
   it('scales linearly with token counts', () => {

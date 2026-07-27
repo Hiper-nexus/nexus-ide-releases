@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
 vi.mock('../pty/pty-manager', () => ({
   orchWriteSession: h.write,
   orchTerminateSession: vi.fn(async () => true),
+  getAgentSessionInfo: vi.fn(() => null),
   getSessionState: vi.fn(() => 'idle'),
   tapSessionData: vi.fn(() => () => {}),
   tapSessionExit: vi.fn(() => () => {}),
@@ -26,6 +27,7 @@ vi.mock('./pane-registry', () => ({
   listPaneSnapshots: vi.fn(() => []),
   listVisiblePaneSnapshots: vi.fn(() => []),
   readSessionOutput: vi.fn(() => ''),
+  requestMissionPaneClose: vi.fn(async () => true),
   requestPaneClose: vi.fn(async () => true),
   requestPaneSpawn: vi.fn(),
   waitForIdle: vi.fn(async () => 'idle'),

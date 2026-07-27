@@ -602,7 +602,7 @@ export function PetSection() {
 
   /**
    * "Gerar pet com IA": escolhe a imagem-base e inicia o Pet Studio fixo —
-   * um único Codex executa a skill hatch-pet sem abrir reviewers/worktrees.
+   * um único Codex executa a skill nexus-pet-studio sem abrir reviewers/worktrees.
    */
   const onHatchPet = async () => {
     if (!petApi.pickImage || hatchBusy) return;

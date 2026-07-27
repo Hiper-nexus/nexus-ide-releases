@@ -408,7 +408,7 @@ export function jarvisActionFastPath(
     }
   }
 
-  // Overclock wizard-fire: user confirms the open squad review ("sim", "inicia", …).
+  // Overclock wizard-fire: user chooses the squad open in review.
   if (
     /\brevis[aã]o de squad|squad pronto|iniciar squad\b/i.test(ctx.screen ?? '') &&
     /^(sim|confirma|confirmar|pode|pode iniciar|inicia|inicie|iniciar|dispara|dispare|vai|manda ver|ok|yes|go)\b/.test(
@@ -416,7 +416,7 @@ export function jarvisActionFastPath(
     )
   ) {
     return {
-      say: say(ctx, 'Confirmado — iniciando o squad.'),
+      say: say(ctx, 'Certo — usando este squad na missão.'),
       expectReply: false,
       action: { type: 'confirm_squad' },
     };

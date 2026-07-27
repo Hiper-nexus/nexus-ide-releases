@@ -8,6 +8,7 @@ import {
   type ScopedStoreOptions,
 } from "./scoped-store";
 import {
+  EMPTY_GIT_DIFF_SHA256,
   taskDispatchIdSchema as idSchema,
   taskDispatchRouteContractSchema as routeContractSchema,
   sealedPlanDispatchSchema,
@@ -21,6 +22,13 @@ import {
   type TaskDispatchState,
   type TaskIntegrationReceipt,
 } from "./task-dispatch-codec";
+import {
+  assertIntegratedPhysicalGitAuthority,
+  assertNoChangePhysicalGitAuthority,
+  assertReadOnlyPhysicalGitAuthority,
+} from "./task-dispatch-physical-git-authority";
+import { assertPhysicalTaskHandoffAuthority } from "./task-dispatch-physical-handoff-authority";
+import { assertSealedTaskDispatchPlanAuthority } from "./task-dispatch-sealed-plan-authority";
 import {
   claimTaskDispatch,
   type TaskDispatchClaimInput,
@@ -36,11 +44,19 @@ import {
   blockTaskDispatchMission,
   getTaskDispatchFromDatabase,
   getTaskDispatchRow,
+  refineTaskDispatchMissionBlock,
+  TASK_DISPATCH_SESSION_EXIT_REASON,
 } from "./task-dispatch-persistence";
 import {
   completeMissionFromVerifiedTaskPlan,
+  hasVerifiedGuidedTaskPlanAuthority,
   type CompleteMissionFromVerifiedPlanInput,
 } from "./task-dispatch-mission-completion-authority";
+import {
+  recordTaskDependencyPromptConsumption,
+  type RecordTaskDependencyConsumptionInput,
+} from "./task-dependency-consumption-authority";
+import { supportsMechanicallyReadOnlyCli } from "./mission-scheduler-plan";
 
 export { taskIntegrationReceiptSchema };
 export type {
@@ -127,6 +143,16 @@ export class TaskDispatchStore {
     });
   }
 
+  /**
+   * Main-owned proof that the exact worker incarnation accepted a prompt
+   * containing every sealed predecessor handoff.
+   */
+  recordDependencyPromptConsumption(
+    input: RecordTaskDependencyConsumptionInput,
+  ): TaskDispatchRecord {
+    return recordTaskDependencyPromptConsumption(this.#binding, input);
+  }
+
   acceptHandoff(input: AcceptTaskDispatchHandoffInput): TaskDispatchRecord {
     return acceptTaskDispatchHandoff(this.#binding, input);
   }
@@ -151,7 +177,10 @@ export class TaskDispatchStore {
     const db = this.#binding.readDatabase();
     const current = this.#getRow(db, taskId);
     if (!current) throw new Error(`dispatch não encontrado: ${taskId}`);
-    if (input.missionId && current.mission_id !== idSchema.parse(input.missionId)) {
+    if (
+      input.missionId &&
+      current.mission_id !== idSchema.parse(input.missionId)
+    ) {
       throw new Error("dispatch pertence a outra missão");
     }
     if (
@@ -161,10 +190,7 @@ export class TaskDispatchStore {
     ) {
       throw new Error("dispatch pertence a outra intentVersion");
     }
-    if (
-      input.expectedStates &&
-      !input.expectedStates.includes(current.state)
-    ) {
+    if (input.expectedStates && !input.expectedStates.includes(current.state)) {
       throw new Error(
         `dispatch sem autoridade de efeito no estado ${current.state}`,
       );
@@ -226,7 +252,13 @@ export class TaskDispatchStore {
           );
         }
         this.#assertCurrentIntent(db, current);
-        if (!current.handoff_id || current.revision !== revision) {
+        if (
+          !current.handoff_id ||
+          !current.session_id ||
+          !current.worker_incarnation_id ||
+          current.handoff_accepted_at === null ||
+          current.revision !== revision
+        ) {
           throw new Error(
             "coordinator complete perdeu CAS ou não tinha handoff",
           );
@@ -236,10 +268,59 @@ export class TaskDispatchStore {
             "receipt externo/sintético é proibido para same_checkout/read_only",
           );
         }
-        if (receipt.kind !== "worktree_integrated") {
+        const sealed = assertSealedTaskDispatchPlanAuthority(db, current);
+        const physical = assertPhysicalTaskHandoffAuthority(
+          db,
+          this.#binding.coordinates,
+          {
+            missionId: current.mission_id,
+            handoffId: current.handoff_id,
+            sessionId: current.session_id,
+            workerIncarnationId: current.worker_incarnation_id,
+            workerId: current.worker_id,
+            noLaterThan: current.handoff_accepted_at,
+            requireCorrelatedAuditIntent: true,
+            expectedStatus: "success",
+          },
+        );
+        if (
+          sealed.task.status !== "running" ||
+          sealed.routeConsumedAt > current.handoff_accepted_at ||
+          physical.issuedAt > current.handoff_accepted_at ||
+          receipt.completedAt < current.handoff_accepted_at ||
+          receipt.completedAt > now
+        ) {
           throw new Error(
-            `receipt ${receipt.kind} inválido para isolated_worktree; esperado worktree_integrated`,
+            "coordinator completion physical chronology is invalid",
           );
+        }
+        const noChangeMatch =
+          /^no-change:([a-f0-9]{40,64}):([a-f0-9]{64})$/.exec(
+            receipt.reference,
+          );
+        const noChangeQualityGate =
+          receipt.kind === "worktree_validated_no_change" &&
+          sealed.schedule.guidedTaskKind === "quality-gate" &&
+          (receipt.evidenceIds?.length ?? 0) > 0 &&
+          noChangeMatch !== null;
+        if (receipt.kind !== "worktree_integrated" && !noChangeQualityGate) {
+          throw new Error(
+            `receipt ${receipt.kind} inválido para isolated_worktree; ` +
+              "esperado merge integrado ou QA guiado no-change com evidência",
+          );
+        }
+        if (receipt.kind === "worktree_integrated") {
+          assertIntegratedPhysicalGitAuthority({
+            rootRealPath: this.#binding.scope.rootRealPath,
+            workerHeadSha: physical.worktreeHeadSha,
+            integratedHeadSha: receipt.reference,
+          });
+        } else {
+          assertNoChangePhysicalGitAuthority({
+            rootRealPath: this.#binding.scope.rootRealPath,
+            workerHeadSha: physical.worktreeHeadSha,
+            expectedHeadSha: noChangeMatch![1]!,
+          });
         }
         const result = db
           .prepare(
@@ -280,7 +361,133 @@ export class TaskDispatchStore {
   }
 
   /**
-   * Read-only completion is derived inside the store from a current trusted
+   * Complete a guided advisory on a CLI without mechanical read-only support.
+   *
+   * The caller supplies the independently re-proved Git identity, but cannot
+   * mint its completion receipt: this transaction binds that identity to the
+   * immutable MCP/OMP handoff receipt of the exact physical worker session.
+   * The scheduler must have already proved the disposable worktree clean and
+   * unchanged and marked it as validation-only; it is never a merge candidate.
+   */
+  completeIsolatedAdvisoryFromPhysicalHandoff(input: {
+    readonly taskId: string;
+    readonly revision: number;
+    readonly reference: string;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const revision = z.number().int().positive().parse(input.revision);
+    const reference = z.string().min(1).max(2_048).parse(input.reference);
+    const referenceMatch =
+      /^advisory-no-change:([a-f0-9]{40,64}):([a-f0-9]{64})$/.exec(reference);
+    if (!referenceMatch) {
+      throw new Error(
+        "isolated advisory complete exige referência física no-change válida",
+      );
+    }
+    const [, expectedHeadSha, expectedDiffHash] = referenceMatch;
+    if (expectedDiffHash !== EMPTY_GIT_DIFF_SHA256) {
+      throw new Error(
+        "isolated advisory complete exige o hash canônico de um diff vazio",
+      );
+    }
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (
+          !current ||
+          current.execution_mode !== "isolated_worktree" ||
+          current.state !== "merging" ||
+          current.revision !== revision ||
+          !current.handoff_id ||
+          !current.session_id ||
+          !current.worker_incarnation_id ||
+          current.handoff_accepted_at === null
+        ) {
+          throw new Error(
+            "isolated advisory complete exige dispatch merging e handoff físico exatos",
+          );
+        }
+        this.#assertCurrentIntent(db, current);
+        const sealed = assertSealedTaskDispatchPlanAuthority(db, current);
+        if (
+          !current.agent_category ||
+          sealed.schedule.guidedTaskKind !== "isolated-advisory"
+        ) {
+          throw new Error(
+            "isolated advisory complete exige o domínio guiado selado",
+          );
+        }
+        const physical = assertPhysicalTaskHandoffAuthority(
+          db,
+          this.#binding.coordinates,
+          {
+            missionId: current.mission_id,
+            handoffId: current.handoff_id,
+            sessionId: current.session_id,
+            workerIncarnationId: current.worker_incarnation_id,
+            workerId: current.worker_id,
+            noLaterThan: current.handoff_accepted_at,
+            requireCorrelatedAuditIntent: true,
+            expectedStatus: "success",
+          },
+        );
+        if (
+          sealed.task.status !== "running" ||
+          sealed.routeConsumedAt > current.handoff_accepted_at ||
+          physical.issuedAt > current.handoff_accepted_at ||
+          current.handoff_accepted_at > now
+        ) {
+          throw new Error(
+            "isolated advisory physical completion chronology is invalid",
+          );
+        }
+        assertNoChangePhysicalGitAuthority({
+          rootRealPath: this.#binding.scope.rootRealPath,
+          workerHeadSha: physical.worktreeHeadSha,
+          expectedHeadSha,
+        });
+        const receipt: TaskIntegrationReceipt = {
+          kind: "isolated_advisory_validated",
+          reference,
+          completedAt: now,
+          evidenceIds: [physical.receiptId],
+        };
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+         SET state = 'completed', revision = revision + 1,
+             integration_receipt_json = ?, completed_at = ?, updated_at = ?
+         WHERE task_id = ? AND revision = ? AND state = 'merging'
+           AND execution_mode = 'isolated_worktree'`,
+          )
+          .run(JSON.stringify(receipt), now, now, taskId, revision);
+        if (updated.changes !== 1) {
+          throw new Error("isolated advisory complete perdeu CAS");
+        }
+        const taskUpdate = db
+          .prepare(
+            `UPDATE tasks SET status = 'done', updated_at = ?
+         WHERE id = ? AND status = 'running'`,
+          )
+          .run(now, taskId);
+        if (taskUpdate.changes !== 1) {
+          throw new Error("isolated advisory task não estava running");
+        }
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) {
+      throw new Error("dispatch desapareceu após isolated advisory complete");
+    }
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
+   * Read-only completion is derived inside the store from either current PREVC
+   * evidence or the immutable physical MCP/OMP receipt of the exact worker
    * handoff. Callers cannot mint a `read_only_validated` receipt themselves.
    */
   completeReadOnlyFromTrustedHandoff(input: {
@@ -300,11 +507,50 @@ export class TaskDispatchStore {
           current.state !== "handoff_ready" ||
           current.revision !== revision ||
           !current.handoff_id ||
-          !current.session_id
+          !current.session_id ||
+          !current.worker_incarnation_id ||
+          current.handoff_accepted_at === null
         ) {
           throw new Error("read-only complete exige handoff_ready exato");
         }
         this.#assertCurrentIntent(db, current);
+        const sealed = assertSealedTaskDispatchPlanAuthority(db, current);
+        if (
+          !supportsMechanicallyReadOnlyCli(sealed.route.adapterId) ||
+          sealed.schedule.executionMode !== "read_only"
+        ) {
+          throw new Error(
+            "read-only completion requires the sealed mechanically confined CLI",
+          );
+        }
+        const physical = assertPhysicalTaskHandoffAuthority(
+          db,
+          this.#binding.coordinates,
+          {
+            missionId: current.mission_id,
+            handoffId: current.handoff_id,
+            sessionId: current.session_id,
+            workerIncarnationId: current.worker_incarnation_id,
+            workerId: current.worker_id,
+            noLaterThan: current.handoff_accepted_at,
+            requireCorrelatedAuditIntent: true,
+            expectedStatus: "success",
+          },
+        );
+        if (
+          sealed.task.status !== "running" ||
+          sealed.routeConsumedAt > current.handoff_accepted_at ||
+          physical.issuedAt > current.handoff_accepted_at ||
+          current.handoff_accepted_at > now
+        ) {
+          throw new Error(
+            "read-only physical completion chronology is invalid",
+          );
+        }
+        const integrationHeadSha = assertReadOnlyPhysicalGitAuthority({
+          rootRealPath: this.#binding.scope.rootRealPath,
+          workerHeadSha: physical.worktreeHeadSha,
+        });
         const evidence = db
           .prepare(
             `SELECT h.id, h.evidence_ids_json, h.context_revision,
@@ -333,31 +579,53 @@ export class TaskDispatchStore {
               workflow_revision: number;
             }
           | undefined;
-        if (!evidence) {
-          throw new Error(
-            "read-only handoff não possui evidência Nexus confiável e atual",
-          );
-        }
         let evidenceIds: string[];
-        try {
-          evidenceIds = z
-            .array(idSchema)
-            .min(1)
-            .max(256)
-            .parse(JSON.parse(evidence.evidence_ids_json));
-        } catch (error) {
-          throw new ScopedStoreCorruptionError("read-only handoff evidence", {
-            cause: error,
-          });
+        let referenceBinding: Readonly<Record<string, unknown>>;
+        if (evidence) {
+          try {
+            evidenceIds = z
+              .array(idSchema)
+              .min(1)
+              .max(256)
+              .parse(JSON.parse(evidence.evidence_ids_json));
+          } catch (error) {
+            throw new ScopedStoreCorruptionError("read-only handoff evidence", {
+              cause: error,
+            });
+          }
+          referenceBinding = {
+            origin: "prevc-evidence",
+            handoffId: evidence.id,
+            contextRevision: evidence.context_revision,
+            contractHash: evidence.contract_hash,
+            workflowRevision: evidence.workflow_revision,
+            physicalReceiptId: physical.receiptId,
+            physicalHeadSha: physical.worktreeHeadSha,
+            integrationHeadSha,
+          };
+        } else {
+          // Guided advisory/review workers may run before an optional PREVC
+          // freeze. In that case the immutable transport receipt proves that
+          // the exact physical worker/session submitted the success handoff;
+          // it does not pretend the worker produced a code diff. The final
+          // corrective QA + main-owned validation still gate mission success.
+          evidenceIds = [physical.receiptId];
+          referenceBinding = {
+            origin: "physical-agent-transport",
+            handoffId: current.handoff_id,
+            receiptId: physical.receiptId,
+            source: physical.source,
+            authoritySha256: physical.authoritySha256,
+            issuedAt: physical.issuedAt,
+            physicalHeadSha: physical.worktreeHeadSha,
+            integrationHeadSha,
+          };
         }
         const reference = tokenHash(
           JSON.stringify({
             missionId: current.mission_id,
             taskId: current.task_id,
-            handoffId: evidence.id,
-            contextRevision: evidence.context_revision,
-            contractHash: evidence.contract_hash,
-            workflowRevision: evidence.workflow_revision,
+            ...referenceBinding,
             evidenceIds: [...evidenceIds].sort(),
           }),
         );
@@ -414,6 +682,16 @@ export class TaskDispatchStore {
   }
 
   /**
+   * Replays the complete physical completion proof without changing mission
+   * state. Guided PREVC owns the eventual mission transition.
+   */
+  hasVerifiedGuidedPlanAuthority(
+    input: CompleteMissionFromVerifiedPlanInput,
+  ): boolean {
+    return hasVerifiedGuidedTaskPlanAuthority(this.#binding, input);
+  }
+
+  /**
    * A worktree reservation persisted before materialization is an uncertain
    * main-owned effect, not a worker failure. Only the exact pre-spawn claim may
    * be blocked here; no lease token or automatic respawn can override it.
@@ -427,9 +705,7 @@ export class TaskDispatchStore {
     const revision = z.number().int().positive().parse(input.revision);
     const reason = input.reason.trim().slice(0, 65_536);
     if (!reason) {
-      throw new Error(
-        "motivo da falha de criação do worktree é obrigatório",
-      );
+      throw new Error("motivo da falha de criação do worktree é obrigatório");
     }
     const now = this.#binding.now();
     const db = this.#binding.writeDatabase();
@@ -494,7 +770,8 @@ export class TaskDispatchStore {
     const taskId = idSchema.parse(input.taskId);
     const revision = z.number().int().positive().parse(input.revision);
     const reason = input.reason.trim().slice(0, 65_536);
-    if (!reason) throw new Error("motivo da falha terminal de merge é obrigatório");
+    if (!reason)
+      throw new Error("motivo da falha terminal de merge é obrigatório");
     const now = this.#binding.now();
     const db = this.#binding.writeDatabase();
     const record = db
@@ -738,13 +1015,7 @@ export class TaskDispatchStore {
              SET last_heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
              WHERE task_id = ? AND revision = ? AND state = 'running'`,
           )
-          .run(
-            now,
-            now + leaseMs,
-            now,
-            current.task_id,
-            current.revision,
-          );
+          .run(now, now + leaseMs, now, current.task_id, current.revision);
         if (result.changes !== 1) {
           throw new Error(`nenhum dispatch running para a sessão ${sessionId}`);
         }
@@ -879,6 +1150,115 @@ export class TaskDispatchStore {
     return record;
   }
 
+  /**
+   * A PTY exit can win the race against the scheduler bootstrap catch. Refine
+   * only that exact generic block with the real bootstrap failure while the
+   * original main-issued lease, task, pane, session and incarnation still
+   * match. This is metadata-only: handoff/integration receipts are neither
+   * accepted nor modified here.
+   */
+  refineBootstrapSessionExitBlock(
+    input: FencedMutation & {
+      readonly missionId: string;
+      readonly paneId: string;
+      readonly sessionId: string;
+      readonly workerIncarnationId: string;
+      readonly error: string;
+    },
+  ): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const missionId = idSchema.parse(input.missionId);
+    const paneId = idSchema.parse(input.paneId);
+    const sessionId = idSchema.parse(input.sessionId);
+    const workerIncarnationId = idSchema.parse(input.workerIncarnationId);
+    const revision = z.number().int().positive().parse(input.revision);
+    const hash = tokenHash(input.leaseToken);
+    const message = input.error.trim().slice(0, 65_536);
+    if (!message || message === TASK_DISPATCH_SESSION_EXIT_REASON) {
+      throw new Error(
+        "refinamento de bootstrap exige a causa específica do encerramento",
+      );
+    }
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (!current) throw new Error(`dispatch não encontrado: ${taskId}`);
+        if (
+          current.mission_id !== missionId ||
+          current.state !== "blocked" ||
+          current.revision !== revision ||
+          current.lease_token_hash !== hash ||
+          current.pane_id !== paneId ||
+          current.session_id !== sessionId ||
+          current.worker_incarnation_id !== workerIncarnationId ||
+          current.last_error !== TASK_DISPATCH_SESSION_EXIT_REASON
+        ) {
+          throw new Error(
+            "refinamento de bootstrap perdeu task/session/incarnation/lease do exit exato",
+          );
+        }
+        if (
+          current.handoff_id !== null ||
+          current.handoff_accepted_at !== null ||
+          current.integration_receipt_json !== null ||
+          current.completed_at !== null
+        ) {
+          throw new Error(
+            "refinamento de bootstrap recusou dispatch com receipt",
+          );
+        }
+        const mission = db
+          .prepare(`SELECT status, intent_version FROM missions WHERE id = ?`)
+          .get(missionId) as
+          { status: string; intent_version: number } | undefined;
+        if (
+          !mission ||
+          mission.status !== "blocked" ||
+          mission.intent_version !== current.intent_version
+        ) {
+          throw new Error(
+            "refinamento de bootstrap perdeu a revisão bloqueada da missão",
+          );
+        }
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+             SET last_error = ?, revision = revision + 1, updated_at = ?
+             WHERE task_id = ? AND mission_id = ? AND revision = ?
+               AND lease_token_hash = ? AND state = 'blocked'
+               AND pane_id = ? AND session_id = ?
+               AND worker_incarnation_id = ? AND last_error = ?
+               AND handoff_id IS NULL AND handoff_accepted_at IS NULL
+               AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(
+            message,
+            now,
+            taskId,
+            missionId,
+            revision,
+            hash,
+            paneId,
+            sessionId,
+            workerIncarnationId,
+            TASK_DISPATCH_SESSION_EXIT_REASON,
+          );
+        if (updated.changes !== 1) {
+          throw new Error("refinamento de bootstrap perdeu CAS do dispatch");
+        }
+        refineTaskDispatchMissionBlock(db, missionId, message, now);
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) {
+      throw new Error("dispatch desapareceu após refinar falha de bootstrap");
+    }
+    this.#binding.emitChange();
+    return record;
+  }
+
   fail(input: FencedMutation & { readonly error: string }): TaskDispatchRecord {
     const message = input.error.slice(0, 65_536);
     const db = this.#binding.writeDatabase();
@@ -978,9 +1358,7 @@ export class TaskDispatchStore {
               "last_heartbeat_at",
             ].includes(column)
           ) {
-            throw new Error(
-              `unsupported dispatch transition field: ${column}`,
-            );
+            throw new Error(`unsupported dispatch transition field: ${column}`);
           }
           assignments.push(`${column} = ?`);
           values.push(value);

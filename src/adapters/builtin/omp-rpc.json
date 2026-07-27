@@ -18,11 +18,12 @@
   "models": {
     "flag": "--model",
     "list": [
+      "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-4-6",
       "anthropic/claude-sonnet-5",
       "openai-codex/gpt-5.5",
       "zai/glm-5",
-      "xai/grok-4.5",
+      "xai-oauth/grok-4.5",
       "deepseek/deepseek-v4-pro"
     ],
     "default": "anthropic/claude-sonnet-4-6"

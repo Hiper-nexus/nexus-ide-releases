@@ -7,6 +7,10 @@ import {
   type ScopeCoordinates,
 } from "./scoped-store";
 
+export const EMPTY_GIT_DIFF_SHA256 = createHash("sha256")
+  .update("")
+  .digest("hex");
+
 export const taskDispatchIdSchema = z.string().min(1).max(256);
 export const taskDispatchStateSchema = z.enum([
   "claimed",
@@ -77,6 +81,8 @@ export const taskIntegrationReceiptSchema = z
   .object({
     kind: z.enum([
       "worktree_integrated",
+      "worktree_validated_no_change",
+      "isolated_advisory_validated",
       "same_checkout_validated",
       "read_only_validated",
     ]),

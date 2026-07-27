@@ -489,7 +489,7 @@ CREATE INDEX idx_cron_execution_state_status_updated
 
 /**
  * Draft bytes remain local runtime state until Nexus has verified the source
- * hashes and a provider-independent reviewer. Applied authority is portable
+ * hashes and an identity/session-independent reviewer. Applied authority is portable
  * through the target file plus its versioned attestation sidecar.
  */
 const CONTEXT_DRAFT_ATTESTATION_SCHEMA = `

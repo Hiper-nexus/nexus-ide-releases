@@ -9,8 +9,9 @@ import {
 } from './claude-transcript';
 
 /**
- * Observa os transcripts do Claude Code de um workspace e emite eventos de uso
- * REAL de tokens conforme as linhas chegam. Um watcher por workspace aberto.
+ * Observa os transcripts do Claude Code de um checkout e das execution roots
+ * explicitamente autorizadas para ele, emitindo uso REAL conforme as linhas
+ * chegam. Um watcher por escopo de checkout, inclusive com vários worktrees.
  *
  * Regras de robustez (formato de terceiro, muda sem aviso):
  * - offsets por BYTES por arquivo; só lê o delta (tail), nunca o arquivo todo
@@ -25,7 +26,14 @@ import {
  */
 
 export interface WatcherOptions {
+  /** Coordination checkout kept for backwards compatibility. */
   workspacePath: string;
+  /**
+   * Additional main-authorized execution roots (for example task worktrees).
+   * The resolver is intentionally lazy: a long-lived watcher sees roots that
+   * are granted after it starts without scanning unrelated checkouts.
+   */
+  workspacePaths?: () => Iterable<string>;
   onEvent: (event: UsageEvent, file: string) => void;
   /** Roots de config do Claude (multi-conta). Default: ~/.claude. */
   configDirs?: string[];
@@ -44,7 +52,7 @@ const DEFAULT_POLL_MS = 5_000;
 
 export class ClaudeTranscriptWatcher {
   private files = new Map<string, FileState>();
-  private watchers: fs.FSWatcher[] = [];
+  private watchers = new Map<string, fs.FSWatcher>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
 
@@ -53,27 +61,17 @@ export class ClaudeTranscriptWatcher {
   /** Diretórios de projeto candidatos (um por root de config). */
   projectDirs(): string[] {
     const roots = this.opts.configDirs ?? [path.join(os.homedir(), '.claude')];
-    const slug = claudeProjectSlug(this.opts.workspacePath);
-    return roots.map((root) => path.join(root, 'projects', slug));
+    const workspaces = new Set([this.opts.workspacePath]);
+    for (const workspacePath of this.opts.workspacePaths?.() ?? []) {
+      workspaces.add(workspacePath);
+    }
+    return [...workspaces].flatMap((workspacePath) => {
+      const slug = claudeProjectSlug(workspacePath);
+      return roots.map((root) => path.join(root, 'projects', slug));
+    });
   }
 
   start(): void {
-    for (const dir of this.projectDirs()) {
-      try {
-        if (!fs.existsSync(dir)) continue;
-        const watcher = fs.watch(dir, (_event, filename) => {
-          if (filename && filename.endsWith('.jsonl')) {
-            void this.ingest(path.join(dir, filename.toString()));
-          }
-        });
-        watcher.on('error', () => {
-          /* dir removido — o poll re-descobre */
-        });
-        this.watchers.push(watcher);
-      } catch {
-        // Sem dir de projeto ainda (primeira sessão) — o poll descobre depois.
-      }
-    }
     this.pollTimer = setInterval(() => void this.scanAll(), this.opts.pollMs ?? DEFAULT_POLL_MS);
     // unref: o watcher nunca deve segurar o processo vivo no quit.
     this.pollTimer.unref?.();
@@ -82,21 +80,45 @@ export class ClaudeTranscriptWatcher {
 
   stop(): void {
     this.stopped = true;
-    for (const w of this.watchers) {
+    for (const watcher of this.watchers.values()) {
       try {
-        w.close();
+        watcher.close();
       } catch {
         // ignore
       }
     }
-    this.watchers = [];
+    this.watchers.clear();
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = null;
+  }
+
+  private watchDirectory(dir: string): void {
+    if (this.watchers.has(dir) || !fs.existsSync(dir)) return;
+    try {
+      const watcher = fs.watch(dir, (_event, filename) => {
+        if (filename && filename.endsWith('.jsonl')) {
+          void this.ingest(path.join(dir, filename.toString()));
+        }
+      });
+      watcher.on('error', () => {
+        if (this.watchers.get(dir) !== watcher) return;
+        this.watchers.delete(dir);
+        try {
+          watcher.close();
+        } catch {
+          // O poll tenta observar o diretório novamente.
+        }
+      });
+      this.watchers.set(dir, watcher);
+    } catch {
+      // Sem dir de projeto ainda (primeira sessão) — o poll descobre depois.
+    }
   }
 
   private async scanAll(): Promise<void> {
     if (this.stopped) return;
     for (const dir of this.projectDirs()) {
+      this.watchDirectory(dir);
       let names: string[];
       try {
         names = await fs.promises.readdir(dir);

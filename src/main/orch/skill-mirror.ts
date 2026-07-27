@@ -37,6 +37,105 @@ If a *fact* can be found by exploring the environment (filesystem, tools, etc.),
 Do not act on it until I confirm we have reached a shared understanding.
 `;
 
+/**
+ * Main-owned visual path for governed workers. It intentionally avoids
+ * Codex's private generated_images directory and any ambient provider key:
+ * media generation stays behind the audited Nexus MCP boundary and writes
+ * directly into the authorized workspace.
+ */
+const GENERATED_NEXUS_VISUAL_MEDIA_SKILL = `---
+name: nexus-visual-media
+description: Generate or edit visual assets through the governed Nexus media tools and keep every output inside the authorized workspace.
+---
+
+# Nexus visual media
+
+Use this workflow whenever the mission requires an image, illustration,
+avatar, mascot, sprite or other generated visual asset.
+
+1. Call \`nexus_media_providers\` and use only a configured provider/model from
+   its response. Never invent a provider or model.
+2. Call \`nexus_image_generate\` with a precise prompt and an \`outPath\` inside
+   the current workspace. Pass workspace reference images through
+   \`imagePath\` or \`referenceImagePaths\` when the selected provider supports
+   them.
+3. Inspect the returned workspace file, compare it with the mission criteria
+   and iterate deliberately. Keep intermediate and QA artifacts in a named
+   workspace directory so the handoff is reproducible.
+4. Submit the final workspace paths and visual QA evidence in the handoff.
+
+Do not use native image-generation tools, \`generated_images\`, an
+\`OPENAI_API_KEY\`, the Codex system \`imagegen\` skill or \`hatch-pet\`.
+Those paths are outside this governed session and are not mission authority.
+If no configured Nexus media provider is available, stop and report the exact
+Settings → Mídia action required instead of pretending an asset was generated.
+`;
+
+const GENERATED_NEXUS_PET_STUDIO_SKILL = `---
+name: nexus-pet-studio
+description: Build a validated Nexus desktop-pet v2 package inside the authorized workspace using governed Nexus media and the exact bundled Pillow runtime.
+---
+
+# Nexus Pet Studio
+
+You are the single Pet Maker for this dedicated mission. Complete the whole
+visual pipeline in this session. Do not delegate.
+
+## Authority boundary
+
+- Use only \`nexus_media_providers\`, \`nexus_image_generate\` and
+  \`load_workspace_dependencies\` for Nexus-side capabilities.
+- Use the exact Python executable returned by
+  \`load_workspace_dependencies\`; Pillow has already been verified there.
+- Read the exact \`missionId\` from the kickoff. Work only below
+  \`artifacts/nexus-pet-studio/<missionId>/<pet-id>/\` in the current
+  workspace.
+- Never write to \`~/.codex/pets\`. Nexus validates and installs the final
+  package after your handoff.
+- Never use native image generation, \`generated_images\`, \`OPENAI_API_KEY\`,
+  the Codex system \`imagegen\` skill or \`hatch-pet\`.
+
+## Canonical visual pipeline
+
+1. Treat the authorized reference image as the identity source. Preserve
+   silhouette, palette, face, proportions and distinguishing marks.
+2. Call \`nexus_media_providers\`, then generate a canonical transparent base
+   with \`nexus_image_generate\` into the workspace. Reuse that base as a
+   reference for every later row; never mix isolated cells from unrelated
+   generators.
+3. Build an 8-column × 11-row sheet. The canonical cell is 192×208 px, so the
+   final image is 1536×2288 px:
+   - row 0: idle (6 frames; fill remaining cells consistently)
+   - row 1: running right (8)
+   - row 2: running left (8)
+   - row 3: waving (4; fill remaining cells consistently)
+   - row 4: jumping
+   - row 5: failed
+   - row 6: waiting (6; fill remaining cells consistently)
+   - row 7: running/activity
+   - row 8: review
+   - row 9: look directions 000° through 157.5° in 22.5° steps
+   - row 10: look directions 180° through 337.5° in 22.5° steps
+4. Keep the character on one stable ground line and at one stable scale.
+   Preserve transparency; reject clipping, opaque backgrounds, duplicated
+   anatomy, style drift and cells whose identity no longer matches the base.
+5. Assemble deterministically with Pillow. Save the final package as:
+   - \`artifacts/nexus-pet-studio/<missionId>/<pet-id>/spritesheet.webp\`
+   - \`artifacts/nexus-pet-studio/<missionId>/<pet-id>/pet.json\`
+   The id must match the folder basename and \`[a-z0-9][a-z0-9._-]{0,63}\`.
+   The manifest must contain that \`id\`, a human \`displayName\`,
+   \`spriteVersionNumber: 2\` and
+   \`spritesheetPath: "spritesheet.webp"\`.
+6. Create QA evidence alongside the package: a contact sheet and a short
+   motion preview covering idle, both running directions, wave, failure,
+   waiting and look directions. Verify the final WebP dimensions, RIFF/WEBP
+   header, file-size limit (2.5 MiB) and manifest JSON.
+7. Submit one final \`nexus_handoff_submit\` with honest status. On success,
+   include the absolute workspace paths of \`spritesheet.webp\`, \`pet.json\`
+   and the QA evidence. Nexus will install only a fresh, descriptor-validated
+   package from this exact workspace and session.
+`;
+
 interface SkillSource {
   name: string;
   dir: string;
@@ -53,6 +152,16 @@ export interface SkillMirrorOptions {
   generatedRoot?: string;
   allowedSkills?: string[] | null;
   ephemeralHomeDir?: string | null;
+  /**
+   * Extra provider-native destinations. Governed sessions use this to copy
+   * only explicitly granted skills into a private provider home.
+   */
+  targetDirs?: string[];
+  /**
+   * Direct panes keep the normal user namespace. Governed sessions set this
+   * to false so mirroring cannot mutate or expose the real provider profile.
+   */
+  includeCliTarget?: boolean;
 }
 
 function skillName(name: string): string {
@@ -71,6 +180,7 @@ function defaultSourceDirs(home: string): string[] {
     path.join(home, '.kimi-code', 'skills'),
     path.join(home, '.grok', 'skills'),
     path.join(home, '.config', 'opencode', 'skills'),
+    path.join(home, '.omp', 'agent', 'skills'),
   ];
 }
 
@@ -80,7 +190,22 @@ function writeGeneratedSkills(root: string): string {
   fs.writeFileSync(path.join(dir, 'SKILL.md'), GENERATED_PONYTAIL_SKILL);
   const grillingDir = path.join(root, 'grilling');
   fs.mkdirSync(grillingDir, { recursive: true });
-  fs.writeFileSync(path.join(grillingDir, 'SKILL.md'), GENERATED_GRILLING_SKILL);
+  fs.writeFileSync(
+    path.join(grillingDir, 'SKILL.md'),
+    GENERATED_GRILLING_SKILL,
+  );
+  const visualMediaDir = path.join(root, 'nexus-visual-media');
+  fs.mkdirSync(visualMediaDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(visualMediaDir, 'SKILL.md'),
+    GENERATED_NEXUS_VISUAL_MEDIA_SKILL,
+  );
+  const petStudioDir = path.join(root, 'nexus-pet-studio');
+  fs.mkdirSync(petStudioDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(petStudioDir, 'SKILL.md'),
+    GENERATED_NEXUS_PET_STUDIO_SKILL,
+  );
   for (const skill of BUILTIN_BRIDGEMIND_SKILLS) {
     const skillDir = path.join(root, skill.name);
     fs.mkdirSync(skillDir, { recursive: true });
@@ -140,7 +265,9 @@ function readSkillSources(sourceDirs: string[]): Map<string, SkillSource> {
   return sources;
 }
 
-function allowedSet(allowedSkills: string[] | null | undefined): Set<string> | null {
+function allowedSet(
+  allowedSkills: string[] | null | undefined,
+): Set<string> | null {
   if (allowedSkills == null) return null;
   return new Set(allowedSkills.map(skillName).filter(Boolean));
 }
@@ -151,7 +278,9 @@ function selectSources(
 ): SkillSource[] {
   const allowed = allowedSet(allowedSkills);
   if (allowed && allowed.size === 0) return [];
-  return [...sources.values()].filter((source) => !allowed || allowed.has(source.name));
+  return [...sources.values()].filter(
+    (source) => !allowed || allowed.has(source.name),
+  );
 }
 
 function cliSkillDirs(adapterId: string, home: string): string[] {
@@ -212,10 +341,15 @@ export function ensureSkillsForCli(
     options.allowedSkills,
   );
   const targetDirs = [
-    ...cliSkillDirs(adapterId, home),
-    ...(options.ephemeralHomeDir
-      ? [path.join(options.ephemeralHomeDir, '.claude', 'skills')]
-      : []),
+    ...new Set([
+      ...(options.includeCliTarget === false
+        ? []
+        : cliSkillDirs(adapterId, home)),
+      ...(options.targetDirs ?? []),
+      ...(options.ephemeralHomeDir
+        ? [path.join(options.ephemeralHomeDir, '.claude', 'skills')]
+        : []),
+    ]),
   ];
 
   let mirrored = 0;

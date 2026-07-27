@@ -27,9 +27,14 @@ import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
 import { getAxTree, performAxAction } from './ax-tree';
 import { runFunctionalSmokeProbes } from './functional-smoke';
-import { runRealMissionE2E } from './real-mission-e2e';
+import {
+  prepareRealMissionProductWizardE2E,
+  runRealMissionE2E,
+} from './real-mission-e2e';
 import {
   REAL_MISSION_E2E_CHANNELS,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_READY_EVENT,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_READY_STORAGE_KEY,
 } from '../shared/real-mission-e2e';
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
 import type { UpdateState } from '../shared/update-ipc';
@@ -697,6 +702,7 @@ const api: NexusApi = {
     stopSpeak: () => ipcRenderer.invoke(VOICE_CHANNELS.speakStop),
     sendWakeAudio: (chunk: ArrayBuffer) =>
       ipcRenderer.send(VOICE_CHANNELS.wakeAudio, chunk),
+    stopWake: () => ipcRenderer.send(VOICE_CHANNELS.wakeStop),
     logVoice: (payload) => ipcRenderer.send(VOICE_CHANNELS.logEvent, payload),
     openMicSettings: () => ipcRenderer.send(VOICE_CHANNELS.openMicSettings),
     openSoundSettings: () => ipcRenderer.send(VOICE_CHANNELS.openSoundSettings),
@@ -878,7 +884,19 @@ const api: NexusApi = {
         ORCH_CHANNELS.squadDesign,
         intent ? { workspacePath, intent } : workspacePath,
       ),
-    saveSquad: (squad) => ipcRenderer.invoke(ORCH_CHANNELS.squadSave, squad),
+    saveSquad: (squad, options) =>
+      ipcRenderer.invoke(
+        ORCH_CHANNELS.squadSave,
+        options?.purpose === 'mission-runtime'
+          ? {
+              squad,
+              purpose: 'mission-runtime',
+              guided: options.guided === true,
+              sourceSquadId: options.sourceSquadId,
+              designDraftToken: options.designDraftToken,
+            }
+          : squad,
+      ),
     deleteSquad: (id) => ipcRenderer.invoke(ORCH_CHANNELS.squadDelete, id),
     exportSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadExport),
     importSquads: () => ipcRenderer.invoke(ORCH_CHANNELS.squadImport),
@@ -1282,6 +1300,36 @@ ipcRenderer.on(WINDOW_CHANNELS.functionalSmokeRun, (_event, payload: unknown) =>
 });
 
 let realMissionE2EStarted = false;
+let realMissionProductWizardE2EPrepared = false;
+ipcRenderer.on(
+  REAL_MISSION_E2E_CHANNELS.prepareProductWizard,
+  (_event, payload: unknown) => {
+    if (realMissionProductWizardE2EPrepared) return;
+    realMissionProductWizardE2EPrepared = true;
+    void prepareRealMissionProductWizardE2E(api, payload, {
+      prepareFixture: (rendererFailureToken) =>
+        ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.prepareFixture, {
+          rendererFailureToken,
+        }),
+      observeMission: (missionId) =>
+        ipcRenderer.invoke(REAL_MISSION_E2E_CHANNELS.observe, { missionId }),
+    })
+      .then(() => {
+        // This signal only opens a modal at a main-selected fixture. It carries
+        // no mission id, coverage label, counter or execution authority.
+        window.sessionStorage.setItem(
+          REAL_MISSION_E2E_PRODUCT_WIZARD_READY_STORAGE_KEY,
+          '1',
+        );
+        window.dispatchEvent(
+          new Event(REAL_MISSION_E2E_PRODUCT_WIZARD_READY_EVENT),
+        );
+      })
+      .catch(() => {
+        console.error('[real-mission] product-wizard-setup-failed');
+      });
+  },
+);
 ipcRenderer.on(REAL_MISSION_E2E_CHANNELS.run, (_event, payload: unknown) => {
   if (realMissionE2EStarted) return;
   realMissionE2EStarted = true;

@@ -11,6 +11,7 @@ import {
   captureCandidateArtifactSeal,
   assertReleaseRepositoryState,
   runReleaseCandidateGate,
+  runReleaseCandidateGateTestCore,
 } from './release-candidate-gate.mjs';
 import { buildReleaseSecurityArtifacts } from './release-security-gate.mjs';
 import { makeValidRealMissionEvidence } from './test-support/real-mission-evidence.mjs';
@@ -58,6 +59,32 @@ function tempRoot() {
 const hash = (value) =>
   createHash('sha256').update(value).digest('hex');
 
+const buildTestSecurityArtifacts = (options) =>
+  buildReleaseSecurityArtifacts({
+    ...options,
+    runCommand: (args) => ({
+      status: 0,
+      stdout: JSON.stringify(
+        args[0] === 'audit'
+          ? {
+              metadata: {
+                vulnerabilities: {
+                  info: 0,
+                  low: 0,
+                  moderate: 0,
+                  high: 0,
+                  critical: 0,
+                  total: 0,
+                },
+              },
+            }
+          : { bomFormat: 'CycloneDX', components: [] },
+      ),
+      stderr: '',
+    }),
+    runtime: { node: 'v22.23.1', npm: '12.0.0' },
+  });
+
 afterEach(() => {
   for (const root of roots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -65,6 +92,22 @@ afterEach(() => {
 });
 
 describe('manual release candidate gate', () => {
+  it('keeps dependency injection outside the sealed production entrypoint', () => {
+    expect(() =>
+      runReleaseCandidateGate({
+        runUiE2E: vi.fn(),
+      }),
+    ).toThrow(/rejects dependency override/i);
+    const inherited = Object.create({
+      runUiE2E: vi.fn(),
+      runChecked: vi.fn(),
+      repository: {},
+    });
+    expect(() => runReleaseCandidateGate(inherited)).toThrow(
+      /rejects dependency override/i,
+    );
+  });
+
   it('requires clean tracked/staged/untracked state and tag^{commit}=HEAD', () => {
     expect(() => assertReleaseRepositoryState({
       statusPorcelain: '?? forgotten.txt\n',
@@ -222,7 +265,7 @@ describe('manual release candidate gate', () => {
     })).toThrow(/provenance/i);
   });
 
-  it('runs signed verifier and real E2E before producing a commit/artifact-bound receipt', async () => {
+  it('runs signed verifier and one product-wizard E2E before producing a commit/artifact-bound receipt', async () => {
     const root = tempRoot();
     const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
     const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
@@ -234,16 +277,13 @@ describe('manual release candidate gate', () => {
     );
     fs.writeFileSync(dmg, 'dmg');
     fs.writeFileSync(zip, 'zip');
+    const uiEvidence = makeValidRealMissionEvidence();
     const runChecked = vi.fn(() => ({ stdout: '', stderr: '' }));
-    const runE2E = vi.fn(async (_app, options) => {
-      fs.writeFileSync(
-        options.evidencePath,
-        JSON.stringify(makeValidRealMissionEvidence()),
-      );
+    const runUiE2E = vi.fn(async (_app, options) => {
+      fs.writeFileSync(options.evidencePath, JSON.stringify(uiEvidence));
       return { evidencePath: options.evidencePath };
     });
-
-    const result = await runReleaseCandidateGate({
+    const result = await runReleaseCandidateGateTestCore({
       root,
       environment: {
         NEXUS_MAC_PUBLISH_RELEASE: '1',
@@ -258,34 +298,11 @@ describe('manual release candidate gate', () => {
         tagCommitSha: 'a'.repeat(40),
         ...TAG_AUTHORITY,
       },
-      buildSecurityArtifacts: (options) =>
-        buildReleaseSecurityArtifacts({
-          ...options,
-          runCommand: (args) => ({
-            status: 0,
-            stdout: JSON.stringify(
-              args[0] === 'audit'
-                ? {
-                    metadata: {
-                      vulnerabilities: {
-                        info: 0,
-                        low: 0,
-                        moderate: 0,
-                        high: 0,
-                        critical: 0,
-                        total: 0,
-                      },
-                    },
-                  }
-                : { bomFormat: 'CycloneDX', components: [] },
-            ),
-            stderr: '',
-          }),
-          runtime: { node: 'v22.23.1', npm: '12.0.0' },
-        }),
+      buildSecurityArtifacts: buildTestSecurityArtifacts,
       runChecked,
-      runE2E,
-      extractE2EApp: async (_zipPath, callback) => callback(app),
+      runUiE2E,
+      extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
+        callback(app),
       now: () => new Date('2026-07-23T01:00:00.000Z'),
     });
 
@@ -298,9 +315,16 @@ describe('manual release candidate gate', () => {
       ]),
       expect.any(Object),
     );
-    expect(runE2E).toHaveBeenCalledWith(
+    expect(runUiE2E).toHaveBeenCalledWith(
       app,
       expect.objectContaining({
+        evidencePath: path.join(
+          root,
+          'release-artifacts',
+          'security',
+          'real-mission-evidence.json',
+        ),
+        launchSurface: 'product-wizard',
         releaseBinding: expect.objectContaining({
           appVersion: '1.2.3',
           commitSha: 'a'.repeat(40),
@@ -312,8 +336,9 @@ describe('manual release candidate gate', () => {
         }),
       }),
     );
+    expect(runUiE2E).toHaveBeenCalledOnce();
     expect(result.receipt).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       version: '1.2.3',
       tag: 'v1.2.3',
       commitSha: 'a'.repeat(40),
@@ -324,8 +349,34 @@ describe('manual release candidate gate', () => {
       verification: {
         signedNotarized: true,
         realMissionE2E: true,
+        physicalProductWizard: false,
+        singleProductMission: true,
       },
     });
+    expect(result.receiptPath).toBeNull();
+    const testCoreManifest = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          root,
+          'release-artifacts',
+          'security',
+          'security-manifest.json',
+        ),
+        'utf8',
+      ),
+    );
+    expect(testCoreManifest.verification).toBeUndefined();
+    expect(testCoreManifest.releaseArtifacts).toBeUndefined();
+    expect(
+      fs.existsSync(
+        path.join(
+          root,
+          'release-artifacts',
+          'security',
+          'release-candidate-receipt.json',
+        ),
+      ),
+    ).toBe(false);
     expect(result.receipt.securityAssets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -334,11 +385,65 @@ describe('manual release candidate gate', () => {
         }),
         expect.objectContaining({
           name: 'real-mission-evidence.json',
-          sha256: hash(
-            `${JSON.stringify(makeValidRealMissionEvidence())}`,
-          ),
+          sha256: hash(`${JSON.stringify(uiEvidence)}`),
         }),
       ]),
     );
+    expect(
+      fs.existsSync(
+        path.join(
+          root,
+          'release-artifacts',
+          'security',
+          'real-mission-engine-evidence.json',
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it('fails closed when the exact-ZIP product run produces only private-runner evidence', async () => {
+    const root = tempRoot();
+    const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
+    const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
+    const app = path.join(
+      root,
+      'out',
+      'NexusIDE-darwin-arm64',
+      'NexusIDE.app',
+    );
+    fs.writeFileSync(dmg, 'dmg');
+    fs.writeFileSync(zip, 'zip');
+    const writePrivateEvidence = async (_app, options) => {
+      const diagnostic = makeValidRealMissionEvidence({
+        launchSurface: 'private-runner',
+      });
+      fs.writeFileSync(options.evidencePath, JSON.stringify(diagnostic));
+    };
+    const runUiE2E = vi.fn(writePrivateEvidence);
+
+    await expect(
+      runReleaseCandidateGateTestCore({
+        root,
+        environment: {
+          NEXUS_MAC_PUBLISH_RELEASE: '1',
+          APPLE_TEAM_ID: '35P5XL3JN6',
+          APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+        },
+        generatedAfterMs: Date.now() - 1_000,
+        authority: RELEASE_AUTHORITY,
+        repository: {
+          statusPorcelain: '',
+          headSha: 'a'.repeat(40),
+          tagCommitSha: 'a'.repeat(40),
+          ...TAG_AUTHORITY,
+        },
+        buildSecurityArtifacts: buildTestSecurityArtifacts,
+        runChecked: vi.fn(() => ({ stdout: '', stderr: '' })),
+        runUiE2E,
+        extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
+          callback(app),
+      }),
+    ).rejects.toThrow(/product-wizard physical coverage/i);
+    expect(runUiE2E).toHaveBeenCalledOnce();
   });
 });

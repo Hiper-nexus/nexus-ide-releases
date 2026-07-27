@@ -13,6 +13,11 @@ import { z } from 'zod';
  */
 
 export type AccountMode = 'subscription' | 'api-key';
+export type FailoverReasonKind =
+  | 'rate-limit'
+  | 'quota'
+  | 'auth'
+  | 'transient';
 
 export interface Account {
   id: string;
@@ -63,6 +68,11 @@ export interface FailoverEvent {
   fromAccountLabel: string;
   toAccountLabel: string;
   reason: string;
+  /**
+   * Main-owned classification of the provider failure. Optional only for
+   * compatibility with an already-open renderer during an app update.
+   */
+  kind?: FailoverReasonKind;
   /** Whether a replacement account was found; false = no account left. */
   switched: boolean;
   /** Replacement account pinned to the pane before its resume spawn. */

@@ -17,6 +17,7 @@ import {
   isPlanLaneWritablePath,
 } from '../../shared/mission-intent';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { assertGovernedWorkspaceControlBoundary } from './governed-workspace-control-boundary';
 
 /**
  * File-system MCP tools for Jarvis agent.
@@ -298,23 +299,28 @@ const fileWrite: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const relativePath = requireStr(args, 'path');
+    assertGovernedWorkspaceControlBoundary(ctx, fileWrite.name, [relativePath]);
     const content = requireStr(args, 'content');
     const encoding = str(args, 'encoding') ?? 'utf-8';
-    // Plan lane (grok-build plan-mode): only plan.md / docs/plan.md.
-    // Fail-closed: store miss with a missionId still cannot open arbitrary writes.
+    // Mission-bound writes require live mission authority. A missing/corrupt
+    // store must never degrade into the unrestricted non-mission path.
     if (ctx.missionId) {
-      let mission: Parameters<typeof isPlanLane>[0] | null = null;
+      let mission: Parameters<typeof isPlanLane>[0] | null;
       try {
         mission = getProjectDomainStores(ctx.scope).missions.get(ctx.missionId);
-      } catch {
-        mission = null;
+      } catch (error) {
+        throw new Error(
+          'mission authority unavailable; file write denied',
+          { cause: error },
+        );
       }
-      if (mission && isPlanLane(mission)) {
-        if (!isPlanLaneWritablePath(relativePath)) {
-          throw new Error(
-            `plan lane denies write to ${relativePath}; only plan.md or docs/plan.md`,
-          );
-        }
+      if (!mission) {
+        throw new Error('mission authority unavailable; file write denied');
+      }
+      if (isPlanLane(mission) && !isPlanLaneWritablePath(relativePath)) {
+        throw new Error(
+          `plan lane denies write to ${relativePath}; only plan.md or docs/plan.md`,
+        );
       }
     }
     const result = writeWorkspaceTextFile(

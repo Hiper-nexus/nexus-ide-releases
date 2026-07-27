@@ -1,8 +1,10 @@
 import {
   mkdirSync,
   mkdtempSync,
+  linkSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -21,7 +23,9 @@ import {
 const scope = testProjectScope();
 let sandbox = '';
 let codexHome = '';
-let packageDir = '';
+let workspaceRoot = '';
+let sourcePackageDir = '';
+let installedPackageDir = '';
 let mission: ScopedMission;
 let setStatus: ReturnType<typeof vi.fn>;
 let markSubmitted: ReturnType<typeof vi.fn>;
@@ -43,12 +47,23 @@ function handoff(overrides: Partial<Handoff> = {}): Handoff {
     missionId: mission.id,
     sessionId: mission.orchestratorSessionId,
     fromAgent: 'Pet Maker',
+    authorityOrigin: 'agent',
+    mcpProvenance: {
+      receiptId: 'receipt-pet',
+      toolCallId: 'tool-pet',
+      toolName: 'nexus_handoff_submit',
+      source: 'http-mcp',
+      missionId: mission.id,
+      sessionId: mission.orchestratorSessionId!,
+      authoritySha256: 'a'.repeat(64),
+      issuedAt: Date.now(),
+    },
     status: 'success',
     claimTrust: 'untrusted',
     summary: 'Pet final gerado, validado e empacotado com sucesso.',
     artifacts: [
-      join(packageDir, 'spritesheet.webp'),
-      { path: join(packageDir, 'pet.json') },
+      join(sourcePackageDir, 'spritesheet.webp'),
+      { path: join(sourcePackageDir, 'pet.json') },
     ],
     evidenceIds: [],
     evidenceTrust: 'unverified',
@@ -59,17 +74,17 @@ function handoff(overrides: Partial<Handoff> = {}): Handoff {
   };
 }
 
-function writeValidPackage(): void {
-  mkdirSync(packageDir, { recursive: true });
+function writeValidPackage(
+  target = sourcePackageDir,
+  id = 'navi',
+): void {
+  mkdirSync(target, { recursive: true });
+  writeFileSync(join(target, 'spritesheet.webp'), validWebpHeader());
   writeFileSync(
-    join(packageDir, 'spritesheet.webp'),
-    Buffer.from('RIFF\u0004\u0000\u0000\u0000WEBP', 'binary'),
-  );
-  writeFileSync(
-    join(packageDir, 'pet.json'),
+    join(target, 'pet.json'),
     JSON.stringify({
-      id: 'navi',
-      displayName: 'Navi',
+      id,
+      displayName: id === 'navi' ? 'Navi' : id,
       description: 'Founder-builder pet',
       spriteVersionNumber: 2,
       spritesheetPath: 'spritesheet.webp',
@@ -77,10 +92,34 @@ function writeValidPackage(): void {
   );
 }
 
+function validWebpHeader(
+  width = 1_536,
+  height = 2_288,
+): Buffer {
+  const bytes = Buffer.alloc(30);
+  bytes.write('RIFF', 0, 'ascii');
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write('WEBP', 8, 'ascii');
+  bytes.write('VP8X', 12, 'ascii');
+  bytes.writeUInt32LE(10, 16);
+  bytes.writeUIntLE(width - 1, 24, 3);
+  bytes.writeUIntLE(height - 1, 27, 3);
+  return bytes;
+}
+
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), 'nexus-pet-completion-'));
   codexHome = join(sandbox, '.codex');
-  packageDir = join(codexHome, 'pets', 'navi');
+  workspaceRoot = join(sandbox, 'workspace');
+  installedPackageDir = join(codexHome, 'pets', 'navi');
+  sourcePackageDir = join(
+    workspaceRoot,
+    'artifacts',
+    'nexus-pet-studio',
+    'mission-pet',
+    'navi',
+  );
+  mkdirSync(workspaceRoot, { recursive: true });
   mission = {
     id: 'mission-pet',
     title: 'Create Navi',
@@ -103,32 +142,36 @@ beforeEach(() => {
 afterEach(() => rmSync(sandbox, { recursive: true, force: true }));
 
 describe('Pet Studio completion boundary', () => {
-  it('completes only after validating a fresh v2 package under the Codex pet root', () => {
+  it('installs a fresh descriptor-validated workspace package before completing', () => {
     writeValidPackage();
     const result = completePetStudioHandoff(handoff(), scope, {
       codexHome,
+      workspaceRoot,
       getStores: stores,
     });
 
     expect(result).toEqual({
       handled: true,
       completed: true,
-      packageDir: realpathSync(packageDir),
+      packageDir: realpathSync(installedPackageDir),
     });
+    expect(
+      realpathSync(join(installedPackageDir, 'spritesheet.webp')),
+    ).toBe(join(realpathSync(installedPackageDir), 'spritesheet.webp'));
     expect(setStatus).toHaveBeenCalledWith(mission.id, 'done');
     expect(markSubmitted).toHaveBeenCalledWith('handoff-pet');
     expect(markConsumed).toHaveBeenCalledWith('handoff-pet', mission.id);
   });
 
   it('keeps the mission running when the package is missing or malformed', () => {
-    mkdirSync(join(codexHome, 'pets'), { recursive: true });
     const result = completePetStudioHandoff(handoff(), scope, {
       codexHome,
+      workspaceRoot,
       getStores: stores,
     });
 
     expect(result).toMatchObject({ handled: true, completed: false });
-    expect(result?.error).toMatch(/ENOENT|ausente|validar/i);
+    expect(result?.error).toMatch(/não existe|ausente|validar/i);
     expect(setStatus).not.toHaveBeenCalled();
     expect(markSubmitted).not.toHaveBeenCalled();
   });
@@ -137,11 +180,12 @@ describe('Pet Studio completion boundary', () => {
     writeValidPackage();
     mission.createdAt = Date.now();
     const stale = new Date(mission.createdAt - 5_000);
-    utimesSync(join(packageDir, 'spritesheet.webp'), stale, stale);
-    utimesSync(join(packageDir, 'pet.json'), stale, stale);
+    utimesSync(join(sourcePackageDir, 'spritesheet.webp'), stale, stale);
+    utimesSync(join(sourcePackageDir, 'pet.json'), stale, stale);
 
     const result = completePetStudioHandoff(handoff(), scope, {
       codexHome,
+      workspaceRoot,
       getStores: stores,
     });
 
@@ -158,7 +202,7 @@ describe('Pet Studio completion boundary', () => {
     const result = completePetStudioHandoff(
       handoff({ sessionId: 'foreign-session' }),
       scope,
-      { codexHome, getStores: stores },
+      { codexHome, workspaceRoot, getStores: stores },
     );
 
     expect(result).toMatchObject({ handled: true, completed: false });
@@ -166,11 +210,29 @@ describe('Pet Studio completion boundary', () => {
     expect(setStatus).not.toHaveBeenCalled();
   });
 
+  it('rejects legacy terminal markers without physical MCP provenance', () => {
+    writeValidPackage();
+    const result = completePetStudioHandoff(
+      handoff({ mcpProvenance: undefined }),
+      scope,
+      { codexHome, workspaceRoot, getStores: stores },
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      completed: false,
+      error: expect.stringMatching(/provenance física/i),
+    });
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(() => realpathSync(installedPackageDir)).toThrow();
+  });
+
   it('does not alter the completion rules for any normal squad', () => {
     mission.squadId = 'software-development';
     expect(
       completePetStudioHandoff(handoff(), scope, {
         codexHome,
+        workspaceRoot,
         getStores: stores,
       }),
     ).toBeNull();
@@ -186,14 +248,14 @@ describe('Pet Studio completion boundary', () => {
           setStatus,
         },
       },
-      { codexHome },
+      { codexHome, workspaceRoot },
     );
 
     expect(result).toEqual([
       {
         missionId: mission.id,
         completed: true,
-        packageDir: realpathSync(packageDir),
+        packageDir: realpathSync(installedPackageDir),
       },
     ]);
     expect(setStatus).toHaveBeenCalledOnce();
@@ -202,20 +264,14 @@ describe('Pet Studio completion boundary', () => {
 
   it('does not recover when two fresh packages make ownership ambiguous', () => {
     writeValidPackage();
-    const secondDir = join(codexHome, 'pets', 'second');
-    mkdirSync(secondDir, { recursive: true });
-    writeFileSync(
-      join(secondDir, 'spritesheet.webp'),
-      Buffer.from('RIFF\u0004\u0000\u0000\u0000WEBP', 'binary'),
+    const secondDir = join(
+      workspaceRoot,
+      'artifacts',
+      'nexus-pet-studio',
+      mission.id,
+      'second',
     );
-    writeFileSync(
-      join(secondDir, 'pet.json'),
-      JSON.stringify({
-        id: 'second',
-        spriteVersionNumber: 2,
-        spritesheetPath: 'spritesheet.webp',
-      }),
-    );
+    writeValidPackage(secondDir, 'second');
 
     const result = reconcileCompletedPetStudioMissions(
       {
@@ -224,7 +280,7 @@ describe('Pet Studio completion boundary', () => {
           setStatus,
         },
       },
-      { codexHome },
+      { codexHome, workspaceRoot },
     );
 
     expect(result).toMatchObject([
@@ -234,6 +290,190 @@ describe('Pet Studio completion boundary', () => {
         error: expect.stringMatching(/ambígua/),
       },
     ]);
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(() => realpathSync(join(codexHome, 'pets'))).toThrow();
+  });
+
+  it('rejects artifacts outside the authorized workspace', () => {
+    const external = join(sandbox, 'outside', 'navi');
+    writeValidPackage(external);
+    mkdirSync(
+      join(
+        workspaceRoot,
+        'artifacts',
+        'nexus-pet-studio',
+        mission.id,
+      ),
+      { recursive: true },
+    );
+    sourcePackageDir = external;
+
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome,
+      workspaceRoot,
+      getStores: stores,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      completed: false,
+      error: expect.stringMatching(/workspace autorizado/i),
+    });
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects symlinked source bytes instead of following them', () => {
+    const external = join(sandbox, 'outside.webp');
+    mkdirSync(sourcePackageDir, { recursive: true });
+    writeFileSync(external, validWebpHeader());
+    symlinkSync(external, join(sourcePackageDir, 'spritesheet.webp'));
+    writeFileSync(
+      join(sourcePackageDir, 'pet.json'),
+      JSON.stringify({
+        id: 'navi',
+        spriteVersionNumber: 2,
+        spritesheetPath: 'spritesheet.webp',
+      }),
+    );
+
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome,
+      workspaceRoot,
+      getStores: stores,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      completed: false,
+      error: expect.stringMatching(/workspace autorizado|symlink|ELOOP/i),
+    });
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects a WebP that does not implement the exact 8×11 v2 sheet', () => {
+    writeValidPackage();
+    writeFileSync(
+      join(sourcePackageDir, 'spritesheet.webp'),
+      validWebpHeader(1_536, 1_872),
+    );
+
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome,
+      workspaceRoot,
+      getStores: stores,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      completed: false,
+      error: expect.stringMatching(/1536×2288.*8×11/i),
+    });
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects a package directory symlink even when it targets another direct child', () => {
+    const missionOutput = join(
+      workspaceRoot,
+      'artifacts',
+      'nexus-pet-studio',
+      mission.id,
+    );
+    const actualPackage = join(missionOutput, 'actual');
+    const linkedPackage = join(missionOutput, 'linked');
+    writeValidPackage(actualPackage, 'actual');
+    symlinkSync(actualPackage, linkedPackage);
+    sourcePackageDir = linkedPackage;
+
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome,
+      workspaceRoot,
+      getStores: stores,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      completed: false,
+      error: expect.stringMatching(/canônicos|symlink/i),
+    });
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects multiply-linked source bytes before installation', () => {
+    writeValidPackage();
+    linkSync(
+      join(sourcePackageDir, 'spritesheet.webp'),
+      join(sandbox, 'second-hardlink.webp'),
+    );
+
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome,
+      workspaceRoot,
+      getStores: stores,
+    });
+
+    expect(result).toMatchObject({ handled: true, completed: false });
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(() => realpathSync(installedPackageDir)).toThrow();
+  });
+
+  it('treats an identical installed package as an idempotent retry', () => {
+    writeValidPackage();
+    writeValidPackage(installedPackageDir);
+
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome,
+      workspaceRoot,
+      getStores: stores,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      completed: true,
+      packageDir: realpathSync(installedPackageDir),
+    });
+    expect(setStatus).toHaveBeenCalledWith(mission.id, 'done');
+  });
+
+  it('rejects an existing pet catalog entry that is a symlink', () => {
+    writeValidPackage();
+    const externalInstalled = join(codexHome, 'external-navi');
+    writeValidPackage(externalInstalled);
+    mkdirSync(join(codexHome, 'pets'), { recursive: true });
+    symlinkSync(externalInstalled, installedPackageDir);
+
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome,
+      workspaceRoot,
+      getStores: stores,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      completed: false,
+      error: expect.stringMatching(/não pode ser um symlink/i),
+    });
+    expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('never overwrites a different installed pet with the same id', () => {
+    writeValidPackage();
+    writeValidPackage(installedPackageDir);
+    writeFileSync(
+      join(installedPackageDir, 'spritesheet.webp'),
+      Buffer.from('RIFFdifferentWEBP', 'binary'),
+    );
+
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome,
+      workspaceRoot,
+      getStores: stores,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      completed: false,
+      error: expect.stringMatching(/já existe um pet diferente.*id navi/i),
+    });
     expect(setStatus).not.toHaveBeenCalled();
   });
 });

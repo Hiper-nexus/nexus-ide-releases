@@ -3,6 +3,16 @@
 NexusIDE includes third-party software and data. The corresponding licenses
 remain with their copyright holders.
 
+## @lydell/node-pty macOS bootstrap
+
+Terminal PTYs use `@lydell/node-pty@1.2.0-beta.12` (MIT). On macOS, the
+deterministic install step `scripts/patch-node-pty-darwin.mjs` changes the
+pinned platform package's `helperPath` from its bundled `spawn-helper` to
+Apple's `/usr/bin/perl` and removes that redundant executable. The script
+accepts only the recorded upstream and patched SHA-256 values; it does not
+change the native `pty.node` binding. The upstream copyright and MIT `LICENSE`
+remain packaged with `@lydell/node-pty`.
+
 ## taste-skill design dials
 
 The design profile of the automatic prompt engine
@@ -101,6 +111,29 @@ Adapted modules in this harvest:
 
 Every adapted source file carries an attribution header pointing at the pin
 and license. Existing copyright notices inside copied code are preserved.
+
+## brace-expansion 5.0.8 security compatibility package
+
+The build toolchain uses an exact copy of the patched
+[`brace-expansion@5.0.8`](https://github.com/juliangruber/brace-expansion/tree/v5.0.8)
+CommonJS implementation (MIT, Copyright Julian Gruber; TypeScript port
+Copyright Isaac Z. Schlueter). A Nexus-authored export adapter keeps legacy
+minimatch 3.x/5.x consumers callable while retaining the modern `.expand` and
+named ESM contracts. The expansion algorithm itself is unmodified.
+
+This temporary local package addresses
+[`GHSA-mh99-v99m-4gvg`](https://github.com/advisories/GHSA-mh99-v99m-4gvg)
+until compatible v1/v2 maintenance releases are published and consumed by the
+complete Electron Forge maker tree. Removal is tracked against upstream pull
+requests
+[#129](https://github.com/juliangruber/brace-expansion/pull/129),
+[#130](https://github.com/juliangruber/brace-expansion/pull/130),
+[#134](https://github.com/juliangruber/brace-expansion/pull/134), and
+[#135](https://github.com/juliangruber/brace-expansion/pull/135).
+
+License text: `third_party/licenses/brace-expansion-MIT.txt`. Source hashes,
+npm integrity, commit/tag pin, and compatibility rationale:
+`third_party/provenance/brace-expansion-5.0.8-compat.json`.
 
 ## JavaScript and native dependencies
 

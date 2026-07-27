@@ -72,6 +72,20 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     earlyPhrase: 'do you trust the files in this folder?',
   },
   {
+    // Claude Code 2.1.220 replaced the legacy folder-trust copy above. Keep a
+    // separate exact signature so future wording changes fail closed instead
+    // of turning generic terminal text into an automatic keypress.
+    adapterIds: ['claude', 'glm', 'longcat'],
+    name: 'claude-workspace-trust-quick-safety-check',
+    phrases: [
+      'quick safety check: is this a project you created or one you trust?',
+      'yes, i trust this folder',
+      'no, exit',
+    ],
+    response: ACCEPT_FIRST_OPTION_BY_NUMBER,
+    earlyPhrase: 'quick safety check: is this a project',
+  },
+  {
     adapterIds: ['agy'],
     name: 'agy-workspace-trust',
     phrases: [

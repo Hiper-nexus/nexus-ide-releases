@@ -10,7 +10,7 @@ import {
   collectReleaseRepositoryState,
   readAndAssertReleaseAuthority,
 } from './release-authority.mjs';
-import { assertRealMissionPassEvidence } from './e2e-real-mission.mjs';
+import { assertRealMissionReleaseEvidence } from './e2e-real-mission.mjs';
 import { bootstrapPinnedNpm } from './make-release.mjs';
 
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1024 * 1024;
@@ -402,6 +402,14 @@ export function assertReleaseSecurityManifest({
   ) {
     throw new Error('security manifest file inventory is incomplete');
   }
+  if (
+    manifest.releaseArtifacts !== undefined &&
+    manifest?.verification?.physicalProductWizard !== true
+  ) {
+    throw new Error(
+      'finalized security manifest lacks physical product-wizard authority',
+    );
+  }
   if (!securityDir) return manifest;
 
   for (const entry of manifest.files) {
@@ -420,6 +428,55 @@ export function assertReleaseSecurityManifest({
       }
     } else if (vulnerabilityTotal(parsed) !== 0) {
       throw new Error(`security audit is invalid or nonzero: ${entry.name}`);
+    }
+  }
+  if (manifest.releaseArtifacts !== undefined) {
+    if (
+      typeof manifest?.releaseArtifacts?.e2eEvidence?.name !== 'string' ||
+      typeof manifest?.releaseArtifacts?.zip?.sha256 !== 'string' ||
+      typeof manifest?.releaseArtifacts?.signingIdentity !== 'string'
+    ) {
+      throw new Error(
+        'finalized security manifest lacks physical product-wizard authority',
+      );
+    }
+    const evidencePath = path.join(
+      path.resolve(securityDir),
+      manifest.releaseArtifacts.e2eEvidence.name,
+    );
+    const evidenceFile = hashFile(evidencePath);
+    if (
+      evidenceFile.bytes !== manifest.releaseArtifacts.e2eEvidence.bytes ||
+      evidenceFile.sha256 !== manifest.releaseArtifacts.e2eEvidence.sha256
+    ) {
+      throw new Error('finalized physical E2E evidence digest mismatch');
+    }
+    let physicalEvidence;
+    try {
+      physicalEvidence = assertRealMissionReleaseEvidence(
+        parseJson(
+          fs.readFileSync(evidencePath, 'utf8'),
+          'evidência E2E física',
+        ),
+      );
+    } catch (error) {
+      throw new Error(
+        `finalized security manifest has no valid physical product-wizard evidence: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    if (
+      physicalEvidence.release?.commitSha !== commitSha ||
+      physicalEvidence.release?.appVersion !== version ||
+      physicalEvidence.release?.artifact?.sha256 !==
+        manifest.releaseArtifacts.zip.sha256 ||
+      physicalEvidence.release?.artifact?.identity !==
+        manifest.releaseArtifacts.signingIdentity
+    ) {
+      throw new Error(
+        'finalized physical E2E evidence does not match security manifest authority',
+      );
     }
   }
   return manifest;
@@ -453,7 +510,7 @@ export function finalizeReleaseSecurityArtifacts(options) {
   });
   let evidence;
   try {
-    evidence = assertRealMissionPassEvidence(
+    evidence = assertRealMissionReleaseEvidence(
       parseJson(
         fs.readFileSync(options.evidencePath, 'utf8'),
         'evidência E2E',
@@ -468,6 +525,8 @@ export function finalizeReleaseSecurityArtifacts(options) {
   }
   if (
     evidence?.status !== 'pass' ||
+    evidence?.launchSurface !== 'product-wizard' ||
+    evidence?.wizardCoverage !== 'main-owned-product-sequence' ||
     evidence?.release?.commitSha !== commitSha ||
     evidence?.release?.appVersion !== options.version ||
     evidence?.release?.artifact?.identity !== options.expectedSigningIdentity
@@ -495,6 +554,9 @@ export function finalizeReleaseSecurityArtifacts(options) {
   const finalized = {
     ...manifest,
     finalizedAt: (options.now ?? (() => new Date()))().toISOString(),
+    verification: {
+      physicalProductWizard: true,
+    },
     releaseArtifacts: {
       signingIdentity: evidence.release.artifact.identity,
       dmg: { name: path.basename(options.dmgPath), ...dmg },

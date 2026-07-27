@@ -3,9 +3,24 @@ import type { Handoff, Mission } from '../../shared/orch-types';
 import { detectNewPlanHandoffs } from './plan-handoff-notify';
 
 function handoff(partial: Partial<Handoff> & { id: string }): Handoff {
+  const missionId = partial.missionId ?? 'm-plan';
+  const sessionId = partial.sessionId ?? `session-${missionId}`;
   return {
     claimTrust: 'untrusted',
     status: 'success',
+    missionId,
+    sessionId,
+    authorityOrigin: 'agent',
+    mcpProvenance: {
+      receiptId: `receipt-${partial.id}`,
+      toolCallId: `tool-${partial.id}`,
+      toolName: 'nexus_handoff_submit',
+      source: 'http-mcp',
+      missionId,
+      sessionId,
+      authoritySha256: 'a'.repeat(64),
+      issuedAt: 1,
+    },
     summary: 'plano escrito em plan.md com riscos e verificação',
     artifacts: [],
     evidenceIds: [],
@@ -23,6 +38,7 @@ function mission(id: string, lane: 'plan' | 'standard'): Mission {
     title: `M ${id}`,
     description: 'goal',
     status: 'running',
+    orchestratorSessionId: `session-${id}`,
     milestones: [],
     learnings: '',
     createdAt: 1,
@@ -77,5 +93,22 @@ describe('detectNewPlanHandoffs', () => {
     const h = handoff({ id: 'h1', missionId: 'm-plan' });
     const missions = [mission('m-plan', 'plan')];
     expect(detectNewPlanHandoffs([h], [h], missions)).toEqual([]);
+  });
+
+  it('ignores partial or non-physical reports so the CTA never dead-ends', () => {
+    const missions = [mission('m-plan', 'plan')];
+    const partial = handoff({
+      id: 'h-partial',
+      missionId: 'm-plan',
+      status: 'partial',
+    });
+    const synthetic = handoff({
+      id: 'h-synthetic',
+      missionId: 'm-plan',
+      mcpProvenance: undefined,
+    });
+    expect(
+      detectNewPlanHandoffs([], [partial, synthetic], missions),
+    ).toEqual([]);
   });
 });

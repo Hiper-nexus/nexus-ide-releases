@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ContextDraftRecord } from './context-draft-store';
 import type { ContextReadinessReport } from './context-doctor';
+import type { BootstrapDocProposal } from './orientation/orientation-bootstrap-context';
 import type { ProjectOrientationMap } from './orientation/orientation-types';
 
 const mocks = vi.hoisted(() => ({
@@ -16,12 +17,7 @@ const mocks = vi.hoisted(() => ({
     warnings: [],
     sensorIds: [],
   } as ContextReadinessReport,
-  proposals: [] as Array<{
-    targetPath: string;
-    content: string;
-    sources: Array<{ type: 'file'; locator: string; sourceHash: string }>;
-    rationale: string;
-  }>,
+  proposals: [] as BootstrapDocProposal[],
   propose: vi.fn(),
   apply: vi.fn(),
   review: vi.fn(),
@@ -37,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(() => [] as ContextDraftRecord[]),
   readDraft: vi.fn(),
   inspectGit: vi.fn(),
+  mechanicallyReviewableTargets: new Set<string>(),
 }));
 
 vi.mock('./git-binding', () => ({
@@ -65,6 +62,10 @@ vi.mock('./orientation/orientation-bootstrap-context', async () => {
   return {
     ...actual,
     buildContextBootstrapProposals: () => mocks.proposals,
+    isMechanicallyReviewableBootstrapProposal: (
+      _scope: ProjectExecutionScope,
+      proposal: { targetPath: string },
+    ) => mocks.mechanicallyReviewableTargets.has(proposal.targetPath),
   };
 });
 
@@ -140,11 +141,27 @@ function draft(id: string, status: ContextDraftRecord['status']): ContextDraftRe
   });
 }
 
+function fileProposalSources(
+  record: ContextDraftRecord,
+): BootstrapDocProposal['sources'] {
+  return record.sources.map((source) => {
+    if (source.type !== 'file') {
+      throw new Error(`expected file source, received ${source.type}`);
+    }
+    return Object.freeze({
+      type: source.type,
+      locator: source.locator,
+      sourceHash: source.sourceHash,
+    });
+  });
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.proposals = [];
   mocks.list.mockReturnValue([]);
   mocks.readDraft.mockReturnValue(null);
+  mocks.mechanicallyReviewableTargets.clear();
   mocks.get.mockReturnValue(null);
   mocks.inspectReadiness.mockReturnValue(mocks.readiness);
   mocks.inspectGit.mockReturnValue({
@@ -157,6 +174,166 @@ beforeEach(() => {
 });
 
 describe('runContextBootstrapAutopilot', () => {
+  it('mechanically reviews every canonical greenfield projection without a second CLI and commits once ready', async () => {
+    const ready: ContextReadinessReport = Object.freeze({
+      ready: true,
+      blockers: Object.freeze([]),
+      warnings: Object.freeze([]),
+      contextRevision: 'e'.repeat(64),
+      sensorIds: Object.freeze(['typecheck', 'unit']),
+    });
+    const architecture = draft('draft-greenfield-architecture', 'proposed');
+    const invariant = Object.freeze({
+      ...draft('draft-greenfield-invariant', 'proposed'),
+      targetPath: '.context/nexus/invariants/approved-greenfield-intent.json',
+      content: '{"schemaVersion":1,"facts":[{"id":"inv:a"}]}\n',
+    });
+    mocks.proposals = [
+      {
+        targetPath: architecture.targetPath,
+        content: architecture.content,
+        sources: fileProposalSources(architecture),
+        rationale: 'canonical architecture unknowns',
+      },
+      {
+        targetPath: invariant.targetPath,
+        content: invariant.content,
+        sources: fileProposalSources(invariant),
+        rationale: 'canonical approved intent invariant',
+      },
+    ];
+    mocks.mechanicallyReviewableTargets.add(architecture.targetPath);
+    mocks.mechanicallyReviewableTargets.add(invariant.targetPath);
+    mocks.propose
+      .mockReturnValueOnce(architecture)
+      .mockReturnValueOnce(invariant);
+    mocks.readDraft.mockImplementation((id: string) =>
+      id === architecture.id ? architecture : invariant,
+    );
+    mocks.review.mockImplementation((id: string) =>
+      Object.freeze({
+        ...(id === architecture.id ? architecture : invariant),
+        status: 'approved' as const,
+      }),
+    );
+    mocks.apply.mockImplementation((id: string) => ({
+      draft: Object.freeze({
+        ...(id === architecture.id ? architecture : invariant),
+        status: 'applied' as const,
+      }),
+    }));
+    mocks.inspectReadiness
+      .mockReturnValueOnce(mocks.readiness)
+      .mockReturnValue(ready);
+    mocks.selectQuorum.mockReturnValue(null);
+    mocks.commitApplied.mockReturnValue({
+      commitSha: 'f'.repeat(40),
+      drafts: [],
+      recovered: false,
+    });
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: true,
+    });
+
+    expect(mocks.review).toHaveBeenCalledTimes(2);
+    expect(mocks.review).toHaveBeenCalledWith(
+      architecture.id,
+      expect.objectContaining({
+        decision: 'approve',
+        reviewer: expect.objectContaining({
+          provider: 'nexus-mechanical-review',
+        }),
+      }),
+    );
+    expect(mocks.reviewerRun).not.toHaveBeenCalled();
+    expect(mocks.apply).toHaveBeenCalledTimes(2);
+    expect(mocks.commitApplied).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      phase: 'committed',
+      quorumAvailable: false,
+      commitSha: 'f'.repeat(40),
+      appliedDraftIds: [
+        architecture.id,
+        invariant.id,
+      ],
+    });
+    expect(
+      result.bootstrapProposals.every(
+        (proposal) => proposal.mechanicallyReviewable,
+      ),
+    ).toBe(true);
+  });
+
+  it('policy-rejects a resumable greenfield draft whose durable bytes differ from the canonical proposal', async () => {
+    const canonical = Object.freeze({
+      ...draft('draft-canonical', 'proposed'),
+      content: '# Architecture\nOnly canonical unknowns.\n',
+    });
+    const malicious = Object.freeze({
+      ...draft('draft-malicious', 'proposed'),
+      content: '# Architecture\nInvented stack: privileged runtime.\n',
+    });
+    mocks.proposals = [{
+      targetPath: canonical.targetPath,
+      content: canonical.content,
+      sources: fileProposalSources(canonical),
+      rationale: 'canonical greenfield projection',
+    }];
+    mocks.mechanicallyReviewableTargets.add(canonical.targetPath);
+    mocks.list.mockImplementation((options?: { status?: string }) =>
+      options?.status === 'proposed' ? [malicious] : [],
+    );
+    mocks.propose.mockReturnValue(canonical);
+    mocks.readDraft.mockImplementation((id: string) =>
+      id === canonical.id ? canonical : malicious,
+    );
+    mocks.review.mockImplementation((id: string, input: {
+      decision: 'approve' | 'reject';
+    }) =>
+      Object.freeze({
+        ...(id === canonical.id ? canonical : malicious),
+        status:
+          input.decision === 'approve'
+            ? 'approved' as const
+            : 'rejected' as const,
+      }),
+    );
+    mocks.apply.mockReturnValue({
+      draft: Object.freeze({ ...canonical, status: 'applied' as const }),
+    });
+    mocks.selectQuorum.mockReturnValue(null);
+
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+    });
+
+    expect(mocks.review).toHaveBeenCalledWith(
+      malicious.id,
+      expect.objectContaining({
+        decision: 'reject',
+        reviewer: expect.objectContaining({ provider: 'nexus-policy' }),
+      }),
+    );
+    expect(mocks.apply).not.toHaveBeenCalledWith(malicious.id);
+    expect(mocks.review).toHaveBeenCalledWith(
+      canonical.id,
+      expect.objectContaining({
+        decision: 'approve',
+        reviewer: expect.objectContaining({
+          provider: 'nexus-mechanical-review',
+        }),
+      }),
+    );
+    expect(mocks.apply).toHaveBeenCalledWith(canonical.id);
+    expect(result.rejectedDraftIds).toContain(malicious.id);
+    expect(result.appliedDraftIds).toContain(canonical.id);
+  });
+
   it('does not mutate context when bootstrap was already preempted', async () => {
     const controller = new AbortController();
     controller.abort();

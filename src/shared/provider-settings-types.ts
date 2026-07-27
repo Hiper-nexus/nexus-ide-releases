@@ -59,6 +59,12 @@ export interface ProviderSettingsInfo {
   detectedBin: string;
   defaultModel: string;
   models: string[];
+  /**
+   * Exact model ids whose provider-specific auth is ready in this snapshot.
+   * Especially important for OMP: one broker credential never authorizes its
+   * entire multi-provider catalog.
+   */
+  authReadyModels?: string[];
   modelInfo?: ModelInfoMap;
   extraArgs: string[];
   /** Env var the key is injected as (e.g. ANTHROPIC_API_KEY). */

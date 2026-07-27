@@ -14,10 +14,11 @@
  * 4. HARD modals (confirm, update, destructive) still cover chrome.
  *
  * Z-index ladder (also mirrored as CSS vars in base.css):
- *   content < soft-overlay < soft-panel < app-chrome < hard-modal < voice-hud
+ *   content < toast < soft-overlay < soft-panel < app-chrome < hard-modal
  */
 
 export const UI_Z = {
+  toast: 44,
   softOverlay: 45,
   softPanel: 46,
   appChrome: 55,

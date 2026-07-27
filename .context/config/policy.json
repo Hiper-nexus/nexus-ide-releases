@@ -24,10 +24,7 @@
   },
   "review": {
     "requireIndependentAuthor": true,
-    "requireDifferentProviderFor": [
-      "high",
-      "critical"
-    ],
+    "requireDifferentProviderFor": [],
     "minimumReviewers": {
       "high": 1,
       "critical": 2

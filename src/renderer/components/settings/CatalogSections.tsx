@@ -7,6 +7,7 @@ import type {
   NativeToolInfo,
 } from '../../../shared/types';
 import type { MediaProviderInfo } from '../../../shared/media-types';
+import { isMissionRuntimeSquadId } from '../../../shared/orch-types';
 import { useOrchStore } from '../../state/orch-store';
 import { PixelIcon } from '../PixelIcon';
 import { ActionCard, EmptyState } from '../ActionCard';
@@ -223,7 +224,9 @@ function tierFiltered(
 export function AgentsSection() {
   const items = useInstalledCatalog('agent');
   const squadAgents = useOrchStore((s) =>
-    s.squads.reduce((count, squad) => count + squad.agents.length, 0),
+    s.squads
+      .filter((squad) => !isMissionRuntimeSquadId(squad.id))
+      .reduce((count, squad) => count + squad.agents.length, 0),
   );
   const enrich = useEnrichedCatalog();
   const [tier, setTier] = useState<HarnessTier | 'todos'>('todos');

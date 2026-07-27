@@ -53,6 +53,7 @@ vi.mock('../context/merge-validation-coordinator', () => ({
 
 vi.mock('../pty/pty-manager', () => ({
   getAgentSessionInfo: vi.fn(() => mocks.live),
+  getSessionState: vi.fn(() => null),
 }));
 
 vi.mock('./gate', () => ({
@@ -63,6 +64,7 @@ vi.mock('./gate', () => ({
   }),
   executionScopeFor: vi.fn((ctx: any) => ctx.executionScope ?? ctx.scope),
   getContextBySession: vi.fn(() => mocks.gate),
+  releaseSession: vi.fn(),
   rotateContextRevisionAuthority: vi.fn(),
 }));
 

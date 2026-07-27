@@ -193,9 +193,13 @@ export function registerWorkspaceIpc(): void {
 
   ipcMain.handle(WORKSPACE_CHANNELS.open, (event, raw) => {
     const parsed = openWorkspaceSchema.safeParse(raw);
-    if (!parsed.success) return state;
+    if (!parsed.success) {
+      throw new Error('workspace path is invalid');
+    }
     const canonical = canonicalDirectory(parsed.data.path);
-    if (!canonical) return state;
+    if (!canonical) {
+      throw new Error('workspace path is invalid or inaccessible');
+    }
     const isRecent = state.recents.some((workspace) => workspace.path === canonical);
     if (!isRecent && !workspaceGrants.consume(event.sender, canonical)) {
       throw new Error('workspace path was not authorized by the folder picker');

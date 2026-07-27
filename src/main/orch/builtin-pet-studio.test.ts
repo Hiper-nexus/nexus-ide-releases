@@ -14,11 +14,15 @@ describe('built-in Pet Studio squad', () => {
         id: 'pet-maker',
         category: 'orchestrator',
         cli: 'codex',
-        allowedTools: ['load_workspace_dependencies'],
-        allowedSkills: ['hatch-pet'],
+        allowedTools: [
+          'load_workspace_dependencies',
+          'nexus_media_providers',
+          'nexus_image_generate',
+        ],
+        allowedSkills: ['nexus-pet-studio'],
       }),
     ]);
-    expect(petStudio?.orchestratorInstructions).toContain('não delegue');
+    expect(petStudio?.orchestratorInstructions).toMatch(/não delegue/i);
     expect(petStudio?.orchestratorInstructions).not.toContain(
       '## Comunicação com o usuário',
     );

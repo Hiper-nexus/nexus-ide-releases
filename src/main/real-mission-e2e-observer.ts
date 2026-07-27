@@ -1,0 +1,1015 @@
+import { randomUUID } from "node:crypto";
+import { app } from "electron";
+import type { WebContents } from "electron";
+
+import {
+  REAL_MISSION_E2E_CTA,
+  REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION,
+  REAL_MISSION_E2E_EXECUTOR_ID,
+  REAL_MISSION_E2E_EXECUTOR_NAME,
+  REAL_MISSION_E2E_ORCHESTRATOR_ID,
+  REAL_MISSION_E2E_ORCHESTRATOR_NAME,
+  REAL_MISSION_E2E_QA_ID,
+  REAL_MISSION_E2E_QA_NAME,
+  REAL_MISSION_E2E_REVIEWER_ID,
+  REAL_MISSION_E2E_REVIEWER_NAME,
+  REAL_MISSION_E2E_RESULT_CONTENT,
+  parseRealMissionE2EEvidence,
+  type RealMissionE2EEvidence,
+  type RealMissionE2ELaunchSurface,
+} from "../shared/real-mission-e2e";
+import {
+  getAgentSessionInfo,
+  listAgentSessions,
+  tapSessionData,
+  tapSessionExit,
+  tapSessionState,
+} from "./pty/pty-manager";
+import type { ProjectDomainStoreSuite } from "./orch/project-domain-store-registry";
+import { missionKickoffFailureReasonFromDescription } from "./orch/mission-kickoff";
+import { decodeTaskScheduleDetail } from "./orch/mission-scheduler-meta";
+import { getContextWorkflowService } from "./context/context-workflow-registry";
+import { readAuditLog, type AuditEntry } from "./jarvis/audit-log";
+import {
+  resolvePrivateRealMissionE2ESquadBinding,
+  type RealMissionE2ESquadBinding,
+} from "./real-mission-e2e-fixture";
+import {
+  MISSION_DRIVER_WORKFLOW_STAGES,
+  parseMissionDriverEvidenceBinding,
+  parseMissionDriverEvidenceIds,
+  readDurableAuthoritySnapshot,
+  type MissionDriverStepReceipt,
+  type MissionDriverWorkflowStage,
+} from "./real-mission-e2e-authority";
+import {
+  isCodexMcpApprovalPrompt,
+  realMissionInteractionCapture,
+  type FailureCode,
+} from "./real-mission-e2e-lifecycle";
+import type { RealMissionE2EMissionInventoryFence } from "./real-mission-e2e-mission-inventory";
+import {
+  ExactRealMissionPhysicalPtyGate,
+  hasCorrelatedPhysicalWorkerData,
+  type KickoffCapture,
+  type PhysicalPtyAgent,
+  type PhysicalPtyCapture,
+  type RealMissionPhysicalPtyAgent,
+} from "./real-mission-e2e-physical";
+import { freezeRealMissionE2EPrevCIfNeeded } from "./real-mission-e2e-prevc";
+import {
+  buildRepositoryProof,
+  gitCommitIsAncestor,
+  productWizardSquadBinding,
+  sha256,
+  type ScratchRepository,
+} from "./real-mission-e2e-workspace";
+
+const DONE_SETTLE_MS = 20_000;
+const OBSERVE_INTERVAL_MS = 500;
+
+export class RealMissionObserver {
+  readonly #owner: WebContents;
+  readonly #scratch: ScratchRepository;
+  readonly #suite: ProjectDomainStoreSuite;
+  readonly #missionId: string;
+  readonly #launchSurface: RealMissionE2ELaunchSurface;
+  readonly #squadBinding: RealMissionE2ESquadBinding;
+  readonly #acceptanceCriteria: readonly string[];
+  readonly #missionInventoryFence: RealMissionE2EMissionInventoryFence;
+  readonly #onFinish: (code: FailureCode | null) => void;
+  readonly #physicalPtyGate: ExactRealMissionPhysicalPtyGate;
+  readonly #kickoff: KickoffCapture = {
+    sessionId: null,
+    idleAt: null,
+    busyAt: null,
+    ptyDataAt: null,
+    ptyChunkSha256: null,
+  };
+  readonly #physicalPty = new Map<string, PhysicalPtyCapture>();
+  readonly #codexMcpPromptBuffers = new Map<string, string>();
+  readonly #codexMcpPromptSessions = new Set<string>();
+  #kickoffProven = false;
+  #prevcFreezeAttempted = false;
+  #changedBeforeWorker = false;
+  #workerObserved = false;
+  #doneSeenAt: number | null = null;
+  #evaluationQueued = false;
+  #stopped = false;
+  #interval: ReturnType<typeof setInterval> | null = null;
+  #unsubscribeStore: (() => void) | null = null;
+  #untapState: (() => void) | null = null;
+  #untapData: (() => void) | null = null;
+  #untapExit: (() => void) | null = null;
+
+  constructor(input: {
+    owner: WebContents;
+    scratch: ScratchRepository;
+    suite: ProjectDomainStoreSuite;
+    missionId: string;
+    launchSurface: RealMissionE2ELaunchSurface;
+    squadBinding: RealMissionE2ESquadBinding;
+    acceptanceCriteria: readonly string[];
+    missionInventoryFence: RealMissionE2EMissionInventoryFence;
+    onFinish: (code: FailureCode | null) => void;
+  }) {
+    this.#owner = input.owner;
+    this.#scratch = input.scratch;
+    this.#suite = input.suite;
+    this.#missionId = input.missionId;
+    this.#launchSurface = input.launchSurface;
+    this.#squadBinding = input.squadBinding;
+    this.#acceptanceCriteria = [...input.acceptanceCriteria];
+    this.#missionInventoryFence = input.missionInventoryFence;
+    this.#onFinish = input.onFinish;
+    this.#physicalPtyGate = new ExactRealMissionPhysicalPtyGate(
+      input.missionId,
+    );
+  }
+
+  start(): void {
+    if (!this.#observeMissionInventory()) return;
+    this.#unsubscribeStore = this.#suite.missions.onChange(() => {
+      if (this.#observeMissionInventory()) this.#queueEvaluation();
+    });
+    const unsubscribePanes = this.#suite.missionPanes.onChange(() =>
+      this.#queueEvaluation(),
+    );
+    const unsubscribeDispatches = this.#suite.taskDispatches.onChange(() =>
+      this.#queueEvaluation(),
+    );
+    const unsubscribeTasks = this.#suite.tasks.onChange(() =>
+      this.#queueEvaluation(),
+    );
+    const unsubscribeHandoffs = this.#suite.handoffs.onChange(() =>
+      this.#queueEvaluation(),
+    );
+    const unsubscribeAll = this.#unsubscribeStore;
+    this.#unsubscribeStore = () => {
+      unsubscribeAll?.();
+      unsubscribePanes();
+      unsubscribeDispatches();
+      unsubscribeTasks();
+      unsubscribeHandoffs();
+    };
+    this.#untapState = tapSessionState((sessionId, state) => {
+      const agent = this.#acceptMissionPhysicalPty(
+        sessionId,
+        getAgentSessionInfo(sessionId),
+      );
+      if (!agent) return;
+      const now = Date.now();
+      // Record on any live state — packaged CLIs often skip a distinct
+      // `spawning` edge the observer can see.
+      if (state === "spawning" || state === "idle" || state === "busy") {
+        this.#recordPhysicalSpawn(sessionId, agent, now);
+      }
+      if (agent.role !== "orchestrator") {
+        this.#queueEvaluation();
+        return;
+      }
+      this.#kickoff.sessionId = sessionId;
+      if (!this.#kickoffProven && state === "idle") {
+        this.#kickoff.idleAt = now;
+        this.#kickoff.busyAt = null;
+        this.#kickoff.ptyDataAt = null;
+        this.#kickoff.ptyChunkSha256 = null;
+      } else if (
+        !this.#kickoffProven &&
+        state === "busy" &&
+        this.#kickoff.idleAt !== null
+      ) {
+        this.#kickoff.busyAt = now;
+        this.#maybeSealKickoffProof();
+      }
+      this.#queueEvaluation();
+    });
+    this.#untapData = tapSessionData((sessionId, data) => {
+      if (data.length === 0) return;
+      const agent = this.#acceptMissionPhysicalPty(
+        sessionId,
+        getAgentSessionInfo(sessionId),
+      );
+      if (!agent) return;
+      this.#recordPhysicalSpawn(sessionId, agent, Date.now());
+      if (agent.adapterId === "codex") {
+        const promptBuffer =
+          `${this.#codexMcpPromptBuffers.get(sessionId) ?? ""}${data}`.slice(
+            -8_192,
+          );
+        this.#codexMcpPromptBuffers.set(sessionId, promptBuffer);
+        if (
+          !this.#codexMcpPromptSessions.has(sessionId) &&
+          isCodexMcpApprovalPrompt(promptBuffer)
+        ) {
+          this.#codexMcpPromptSessions.add(sessionId);
+          // Fail before any keypress can be emitted. The gate never answers an
+          // MCP approval question because doing so would hide the defect.
+          this.#onFinish("mcp-prompt-detected");
+          return;
+        }
+      }
+      const physical = this.#physicalPty.get(sessionId);
+      if (physical && physical.dataAt === null) {
+        physical.dataAt = Date.now();
+        physical.ptyChunkSha256 = sha256(data);
+      }
+      if (
+        agent.role !== "orchestrator" ||
+        this.#kickoffProven ||
+        this.#kickoff.idleAt === null
+      ) {
+        this.#queueEvaluation();
+        return;
+      }
+      this.#kickoff.sessionId = sessionId;
+      this.#kickoff.ptyDataAt = Date.now();
+      this.#kickoff.ptyChunkSha256 = sha256(data);
+      this.#maybeSealKickoffProof();
+      this.#queueEvaluation();
+    });
+    this.#untapExit = tapSessionExit((sessionId, agent) => {
+      const accepted = this.#acceptMissionPhysicalPty(sessionId, agent);
+      if (!accepted) return;
+      this.#recordPhysicalSpawn(sessionId, accepted, Date.now());
+      if (
+        accepted.role === "orchestrator" &&
+        sessionId === this.#kickoff.sessionId
+      ) {
+        this.#queueEvaluation();
+      }
+    });
+    this.#interval = setInterval(() => this.#evaluate(), OBSERVE_INTERVAL_MS);
+    this.#evaluate();
+  }
+
+  stop(): void {
+    if (this.#stopped) return;
+    this.#stopped = true;
+    if (this.#interval) clearInterval(this.#interval);
+    this.#interval = null;
+    this.#unsubscribeStore?.();
+    this.#unsubscribeStore = null;
+    this.#untapState?.();
+    this.#untapState = null;
+    this.#untapData?.();
+    this.#untapData = null;
+    this.#untapExit?.();
+    this.#untapExit = null;
+    this.#codexMcpPromptBuffers.clear();
+  }
+
+  evidence(
+    startedAt: number,
+    status: "pass" | "fail",
+    failureCode: FailureCode | null,
+  ): RealMissionE2EEvidence {
+    const mission = this.#suite.missions.get(this.#missionId);
+    const currentSquadBinding =
+      this.#launchSurface === "product-wizard" && mission
+        ? productWizardSquadBinding(mission)
+        : resolvePrivateRealMissionE2ESquadBinding();
+    const squadBindingStillExact =
+      currentSquadBinding?.squadId === this.#squadBinding.squadId &&
+      currentSquadBinding.sourceSquadRevisionHash ===
+        this.#squadBinding.sourceSquadRevisionHash &&
+      currentSquadBinding.squadRevisionHash ===
+        this.#squadBinding.squadRevisionHash &&
+      mission?.intentContract?.squadRevisionHash ===
+        this.#squadBinding.squadRevisionHash;
+    const dispatches = this.#suite.taskDispatches.list(this.#missionId);
+    const durableAuthority = readDurableAuthoritySnapshot(
+      this.#suite.scope,
+      this.#missionId,
+    );
+    const auditEntries = readAuditLog(
+      { scope: this.#suite.scope, missionId: this.#missionId },
+      10_000,
+    );
+    const intentVersion = mission?.intentVersion ?? 0;
+    const plannedTasks = mission
+      ? this.#suite.tasks.listPlannedTasks(this.#missionId, intentVersion)
+      : [];
+    const plannedByTaskId = new Map(
+      plannedTasks.map((planned) => [planned.taskId, planned]),
+    );
+    const planReceipt = mission
+      ? this.#suite.tasks.getPlanReceipt(this.#missionId, intentVersion)
+      : null;
+    // CliAutomatedReviewer owns additional ephemeral merge/final panes. The
+    // four-pane release contract is the approved roster graph, so its proof is
+    // projected only from those exact main-owned identities.
+    const paneRows = this.#suite.missionPanes
+      .list(this.#missionId)
+      .filter(
+        (pane) =>
+          pane.agentName !== undefined &&
+          [
+            REAL_MISSION_E2E_ORCHESTRATOR_NAME,
+            REAL_MISSION_E2E_EXECUTOR_NAME,
+            REAL_MISSION_E2E_REVIEWER_NAME,
+            REAL_MISSION_E2E_QA_NAME,
+          ].includes(pane.agentName),
+      );
+    const paneProofs = paneRows.map((pane) => {
+      const dispatch = dispatches.find(
+        (candidate) =>
+          candidate.paneId === pane.paneId ||
+          candidate.workerIncarnationId === pane.workerIncarnationId,
+      );
+      const sessionId =
+        pane.role === "orchestrator"
+          ? (mission?.orchestratorSessionId ?? null)
+          : (dispatch?.sessionId ?? null);
+      const agentRef =
+        pane.agentName === REAL_MISSION_E2E_ORCHESTRATOR_NAME
+          ? REAL_MISSION_E2E_ORCHESTRATOR_ID
+          : pane.agentName === REAL_MISSION_E2E_EXECUTOR_NAME
+            ? REAL_MISSION_E2E_EXECUTOR_ID
+            : pane.agentName === REAL_MISSION_E2E_REVIEWER_NAME
+              ? REAL_MISSION_E2E_REVIEWER_ID
+              : pane.agentName === REAL_MISSION_E2E_QA_NAME
+                ? REAL_MISSION_E2E_QA_ID
+                : "unknown";
+      const physical =
+        sessionId === null ? null : (this.#physicalPty.get(sessionId) ?? null);
+      const physicalMatches =
+        physical?.role === pane.role &&
+        (pane.role !== "worker" ||
+          physical.workerIncarnationId === (pane.workerIncarnationId ?? null));
+      return {
+        role: pane.role,
+        paneId: pane.paneId ?? pane.id,
+        sessionId,
+        adapterId: pane.adapterId,
+        agentRef,
+        workerIncarnationId: pane.workerIncarnationId ?? null,
+        readOnly: physicalMatches ? physical.readOnly : null,
+        nativeReadOnly: physicalMatches ? physical.nativeReadOnly : null,
+        ptySpawnedAt: physicalMatches ? physical.spawnedAt : null,
+        ptyDataAt: physicalMatches ? physical.dataAt : null,
+        ptyChunkSha256: physicalMatches ? physical.ptyChunkSha256 : null,
+      };
+    });
+    const dispatchProofs = dispatches.map((dispatch) => {
+      const planned = plannedByTaskId.get(dispatch.taskId);
+      const schedule = planned
+        ? decodeTaskScheduleDetail(planned.plannedDetail).meta
+        : null;
+      const reservation = dispatch.routeReservationId
+        ? this.#suite.missions.getRouteReservation(dispatch.routeReservationId)
+        : null;
+      return {
+        taskId: dispatch.taskId,
+        plannerId:
+          planned?.plannerId === "guided-execution"
+            ? ("guided-execution" as const)
+            : planned?.plannerId === "guided-quality-gate"
+              ? ("guided-quality-gate" as const)
+              : planned?.plannerId.startsWith("guided-review-")
+                ? planned.plannerId
+                : null,
+        agentRef: dispatch.agentRef ?? null,
+        agentCategory: dispatch.agentCategory ?? null,
+        executionMode: dispatch.executionMode,
+        dependsOn: schedule ? [...schedule.dependsOn] : [],
+        state: dispatch.state,
+        routeReservationId: dispatch.routeReservationId ?? null,
+        routeConsumedAt: reservation?.consumedAt ?? null,
+        routeConsumerMatches:
+          reservation?.consumedBySession === `dispatch:${dispatch.id}` &&
+          reservation.missionId === mission?.id &&
+          reservation.intentVersion === dispatch.intentVersion &&
+          reservation.decision.adapterId === dispatch.adapterId &&
+          reservation.decision.model === dispatch.model &&
+          reservation.decision.effort === dispatch.effort &&
+          dispatch.adapterId === "codex" &&
+          planned?.agentRef === dispatch.agentRef &&
+          planned?.agentCategory === dispatch.agentCategory &&
+          schedule?.agentRef === dispatch.agentRef &&
+          schedule?.agentCategory === dispatch.agentCategory &&
+          schedule?.executionMode === dispatch.executionMode,
+        workerIncarnationId: dispatch.workerIncarnationId ?? null,
+        sessionId: dispatch.sessionId ?? null,
+        handoffId: dispatch.handoffId ?? null,
+        handoffAcceptedAt: dispatch.handoffAcceptedAt ?? null,
+        completedAt: dispatch.completedAt ?? null,
+        integrationReceipt:
+          dispatch.integrationReceipt?.kind === "worktree_integrated" &&
+          /^[a-f0-9]{40,64}$/u.test(dispatch.integrationReceipt.reference)
+            ? {
+                kind: "worktree_integrated" as const,
+                reference: dispatch.integrationReceipt.reference,
+                completedAt: dispatch.integrationReceipt.completedAt,
+                ...(dispatch.integrationReceipt.evidenceIds
+                  ? {
+                      evidenceIds: [...dispatch.integrationReceipt.evidenceIds],
+                    }
+                  : {}),
+              }
+            : dispatch.integrationReceipt?.kind ===
+                  "worktree_validated_no_change" &&
+                /^no-change:[a-f0-9]{40,64}:[a-f0-9]{64}$/u.test(
+                  dispatch.integrationReceipt.reference,
+                ) &&
+                (dispatch.integrationReceipt.evidenceIds?.length ?? 0) > 0
+              ? {
+                  kind: "worktree_validated_no_change" as const,
+                  reference: dispatch.integrationReceipt.reference,
+                  completedAt: dispatch.integrationReceipt.completedAt,
+                  evidenceIds: [...dispatch.integrationReceipt.evidenceIds!],
+                }
+              : null,
+      };
+    });
+    const plan =
+      planReceipt &&
+      planReceipt.squadId === this.#squadBinding.squadId &&
+      plannedTasks.length === 3
+        ? {
+            version: 1 as const,
+            squadId: planReceipt.squadId,
+            planHash: planReceipt.planHash,
+            rosterHash: planReceipt.rosterHash,
+            tasks: plannedTasks.flatMap((planned) => {
+              const schedule = decodeTaskScheduleDetail(
+                planned.plannedDetail,
+              ).meta;
+              if (
+                (planned.plannerId !== "guided-execution" &&
+                  planned.plannerId !== "guided-quality-gate" &&
+                  !planned.plannerId.startsWith("guided-review-")) ||
+                (planned.agentRef !== REAL_MISSION_E2E_EXECUTOR_ID &&
+                  planned.agentRef !== REAL_MISSION_E2E_REVIEWER_ID &&
+                  planned.agentRef !== REAL_MISSION_E2E_QA_ID) ||
+                (planned.agentCategory !== "executor" &&
+                  planned.agentCategory !== "reviewer") ||
+                (schedule?.executionMode !== "isolated_worktree" &&
+                  schedule?.executionMode !== "read_only")
+              ) {
+                return [];
+              }
+              return [
+                {
+                  plannerId:
+                    planned.plannerId === "guided-execution"
+                      ? ("guided-execution" as const)
+                      : planned.plannerId === "guided-quality-gate"
+                        ? ("guided-quality-gate" as const)
+                        : planned.plannerId,
+                  taskId: planned.taskId,
+                  agentRef:
+                    planned.agentRef === REAL_MISSION_E2E_EXECUTOR_ID
+                      ? ("e2e-executor" as const)
+                      : planned.agentRef === REAL_MISSION_E2E_REVIEWER_ID
+                        ? ("e2e-reviewer" as const)
+                        : ("e2e-qa" as const),
+                  agentCategory:
+                    planned.agentCategory === "executor"
+                      ? ("executor" as const)
+                      : ("reviewer" as const),
+                  executionMode: schedule.executionMode,
+                  dependsOn: [...schedule.dependsOn],
+                },
+              ];
+            }),
+          }
+        : null;
+    const repository = buildRepositoryProof(
+      this.#scratch,
+      this.#changedBeforeWorker,
+    );
+    const exactAuditIntent = (
+      provenance: NonNullable<
+        ReturnType<ProjectDomainStoreSuite["handoffs"]["get"]>
+      >["mcpProvenance"],
+    ): AuditEntry | null => {
+      if (!provenance) return null;
+      const matches = auditEntries.filter(
+        (entry) =>
+          entry.result === "intent" &&
+          entry.tool === "nexus_handoff_submit" &&
+          entry.source === provenance.source &&
+          entry.session === provenance.sessionId &&
+          entry.mission_id === provenance.missionId &&
+          entry.invocation_id === provenance.toolCallId &&
+          entry.project_id === this.#suite.scope.projectId &&
+          entry.checkout_id === this.#suite.scope.checkoutId,
+      );
+      return matches.length === 1 ? matches[0]! : null;
+    };
+    const handoffProofs = dispatches.flatMap((dispatch) => {
+      if (!dispatch.handoffId) return [];
+      const handoff = this.#suite.handoffs.get(dispatch.handoffId);
+      if (!handoff) return [];
+      const provenance = handoff.mcpProvenance;
+      const auditIntent = exactAuditIntent(provenance);
+      const durableConsumption = durableAuthority.handoffConsumptions.get(
+        handoff.id,
+      );
+      const deliveryAttempts = this.#suite.handoffs.listDeliveryAttempts(
+        handoff.id,
+      );
+      return [
+        {
+          id: handoff.id,
+          sessionId: handoff.sessionId ?? null,
+          workerIncarnationId: handoff.workerIncarnationId ?? null,
+          fromAgent: handoff.fromAgent ?? null,
+          authorityOrigin: handoff.authorityOrigin ?? null,
+          summarySha256: sha256(handoff.summary.trim()),
+          physicalReceipt:
+            provenance?.source === "http-mcp"
+              ? {
+                  receiptId: provenance.receiptId,
+                  handoffId: handoff.id,
+                  toolCallId: provenance.toolCallId,
+                  toolName: provenance.toolName,
+                  source: "http-mcp" as const,
+                  missionId: provenance.missionId,
+                  sessionId: provenance.sessionId,
+                  workerIncarnationId: provenance.workerIncarnationId ?? null,
+                  authoritySha256: provenance.authoritySha256,
+                  worktreeHeadSha: provenance.worktreeHeadSha ?? null,
+                  issuedAt: provenance.issuedAt,
+                  worktreeHeadIntegrated:
+                    provenance.worktreeHeadSha !== undefined &&
+                    repository.finalHeadSha !== null &&
+                    gitCommitIsAncestor(
+                      this.#scratch.workspacePath,
+                      provenance.worktreeHeadSha,
+                      repository.finalHeadSha,
+                    ),
+                }
+              : null,
+          auditIntent:
+            provenance?.source === "http-mcp" && auditIntent
+              ? {
+                  invocationId: auditIntent.invocation_id!,
+                  toolName: "nexus_handoff_submit" as const,
+                  source: "http-mcp" as const,
+                  sessionId: auditIntent.session,
+                  missionId: auditIntent.mission_id!,
+                  scope: {
+                    projectId: auditIntent.project_id,
+                    checkoutId: auditIntent.checkout_id,
+                  },
+                  occurredAt: Date.parse(auditIntent.timestamp),
+                }
+              : null,
+          status: handoff.status,
+          deliveryState: handoff.deliveryState,
+          delivered: handoff.delivered,
+          consumedAt: durableConsumption?.consumed_at ?? null,
+          consumedBySessionId: durableConsumption?.consumed_by_session ?? null,
+          consumedDeliveryAttemptId:
+            durableConsumption?.consumed_delivery_attempt_id ?? null,
+          deliveryAttempts: deliveryAttempts.map((attempt) => ({
+            id: attempt.id,
+            handoffId: attempt.handoffId,
+            missionId: attempt.missionId,
+            orchestratorSessionId: attempt.orchestratorSessionId,
+            attemptNo: attempt.attemptNo,
+            state: attempt.state,
+            startedAt: attempt.startedAt,
+            acceptDeadlineAt: attempt.acceptDeadlineAt ?? null,
+            acceptedAt: attempt.acceptedAt ?? null,
+            failedAt: attempt.failedAt ?? null,
+            failureCode: attempt.failureCode ?? null,
+          })),
+        },
+      ];
+    });
+    const dependencyConsumptions = durableAuthority.dependencyConsumptions.map(
+      (receipt) => ({
+        missionId: receipt.mission_id,
+        consumerTaskId: receipt.consumer_task_id,
+        dependencyTaskId: receipt.dependency_task_id,
+        handoffId: receipt.handoff_id,
+        consumerSessionId: receipt.consumer_session_id,
+        consumerWorkerIncarnationId: receipt.consumer_worker_incarnation_id,
+        promptSha256: receipt.prompt_sha256,
+        handoffSummarySha256: receipt.handoff_summary_sha256,
+        consumedAt: receipt.consumed_at,
+      }),
+    );
+    const completion: RealMissionE2EEvidence["completion"] = (() => {
+      if (
+        !mission ||
+        mission.status !== "done" ||
+        mission.intentState !== "done" ||
+        !mission.orchestratorSessionId ||
+        !plan ||
+        mission.milestones.length !== this.#acceptanceCriteria.length ||
+        mission.milestones.some(
+          (milestone, index) =>
+            milestone.id !== `step-${index + 1}` ||
+            milestone.label !== this.#acceptanceCriteria[index] ||
+            milestone.status !== "done" ||
+            milestone.evidenceIds.length !== 1,
+        )
+      ) {
+        return null;
+      }
+      try {
+        const service = getContextWorkflowService(this.#suite.scope);
+        const current = service.getMissionWorkflow(this.#missionId);
+        const workflow = current.workflow;
+        const driver = this.#suite.missions.getDriveRuntimeState(
+          this.#missionId,
+        );
+        if (
+          !current.contract ||
+          !workflow ||
+          workflow.stage !== "complete" ||
+          !service.isMissionDriverComplete(
+            this.#missionId,
+            mission.milestones.map((milestone) => milestone.id),
+          ) ||
+          !driver ||
+          driver.lastActionKind !== "complete" ||
+          driver.lastOutcome !== "success" ||
+          driver.lastAttemptAt === undefined ||
+          driver.lastSuccessAt === undefined
+        ) {
+          return null;
+        }
+        const receiptByStepId = new Map(
+          durableAuthority.missionStepReceipts.map((receipt) => [
+            receipt.step_id,
+            receipt,
+          ]),
+        );
+        if (
+          receiptByStepId.size !== mission.milestones.length ||
+          durableAuthority.missionStepReceipts.length !==
+            mission.milestones.length
+        ) {
+          return null;
+        }
+        const stepReceipts: MissionDriverStepReceipt[] = [];
+        for (const milestone of mission.milestones) {
+          const row = receiptByStepId.get(milestone.id);
+          const evidenceIds = row
+            ? parseMissionDriverEvidenceIds(row.evidence_ids_json)
+            : null;
+          const evidenceBinding = row
+            ? parseMissionDriverEvidenceBinding(row.evidence_binding_json)
+            : null;
+          if (
+            !row ||
+            !MISSION_DRIVER_WORKFLOW_STAGES.has(
+              row.from_stage as MissionDriverWorkflowStage,
+            ) ||
+            !MISSION_DRIVER_WORKFLOW_STAGES.has(
+              row.to_stage as MissionDriverWorkflowStage,
+            ) ||
+            !evidenceIds ||
+            !evidenceBinding ||
+            evidenceIds.length !== milestone.evidenceIds.length ||
+            evidenceIds.some((id, index) => id !== milestone.evidenceIds[index])
+          ) {
+            return null;
+          }
+          stepReceipts.push({
+            stepId: row.step_id,
+            fromStage: row.from_stage as MissionDriverWorkflowStage,
+            toStage: row.to_stage as MissionDriverWorkflowStage,
+            workflowRevisionBefore: row.workflow_revision_before,
+            workflowRevisionAfter: row.workflow_revision_after,
+            evidenceIds,
+            evidenceBinding,
+            completedAt: row.completed_at,
+          });
+        }
+        return {
+          origin: "mission-driver-prevc",
+          missionId: mission.id,
+          intentVersion: mission.intentVersion ?? 0,
+          orchestratorSessionId: mission.orchestratorSessionId,
+          planHash: plan.planHash,
+          taskCount: plan.tasks.length,
+          completedAt: driver.lastSuccessAt,
+          driver: {
+            revision: driver.revision,
+            runStartedAt: driver.runStartedAt,
+            attemptCount: driver.attemptCount,
+            lastAttemptAt: driver.lastAttemptAt,
+            lastSuccessAt: driver.lastSuccessAt,
+            lastActionKind: "complete",
+            lastOutcome: "success",
+            updatedAt: driver.updatedAt,
+          },
+          workflow: {
+            stage: "complete",
+            revision: workflow.revision,
+            route: [...workflow.route],
+            binding: {
+              missionId: workflow.binding.missionId,
+              contractHash: workflow.binding.contractHash,
+              contextHash: workflow.binding.contextHash,
+              baseSha: workflow.binding.baseSha,
+              headSha: workflow.binding.headSha,
+              diffHash: workflow.binding.diffHash,
+            },
+          },
+          milestones: mission.milestones.map((milestone) => ({
+            stepId: milestone.id,
+            label: milestone.label,
+            status: "done" as const,
+            evidenceIds: [...milestone.evidenceIds],
+          })),
+          stepReceipts,
+        };
+      } catch {
+        // Incomplete/corrupt PREVC or Driver state remains a closed null proof.
+        return null;
+      }
+    })();
+    return {
+      schemaVersion: REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION,
+      runId: `run-${randomUUID()}`,
+      appVersion: app.getVersion(),
+      startedAt,
+      finishedAt: Date.now(),
+      status,
+      workspaceSha256: sha256(this.#scratch.workspacePath),
+      expectedContentSha256: sha256(REAL_MISSION_E2E_RESULT_CONTENT),
+      coverageTier: "guided-delivery-core",
+      planOrigin: "production-guided-planner",
+      prevcOrigin: "e2e-fixture",
+      reviewOrigin: "production-physical-worker",
+      qaOrigin: "production-physical-worker",
+      launchSurface: this.#launchSurface,
+      wizardCoverage:
+        this.#launchSurface === "product-wizard"
+          ? "main-owned-product-sequence"
+          : "not-covered",
+      interaction: {
+        evidenceOrigin: "main-owned-instrumentation",
+        ...realMissionInteractionCapture,
+        codexMcpPromptCount: this.#codexMcpPromptSessions.size,
+      },
+      mission:
+        mission?.squadId === this.#squadBinding.squadId &&
+        squadBindingStillExact
+          ? {
+              id: mission.id,
+              status: mission.status,
+              intentState: mission.intentState ?? null,
+              intentVersion: mission.intentVersion ?? 0,
+              squadId: this.#squadBinding.squadId,
+              squadSourceId: this.#squadBinding.sourceSquadId,
+              squadSourceRevisionHash:
+                this.#squadBinding.sourceSquadRevisionHash,
+              squadRevisionHash: this.#squadBinding.squadRevisionHash,
+              approvedAt: mission.intentContract?.approvedAt ?? null,
+              dispatchedAt: mission.intentContract?.dispatchedAt ?? null,
+            }
+          : null,
+      missionInventory: this.#missionInventoryFence.proof(
+        this.#suite.missions.list(),
+      ),
+      kickoff: { ...this.#kickoff },
+      plan,
+      panes: paneProofs,
+      physicalPty: {
+        count: this.#physicalPty.size,
+        ids: [...this.#physicalPty.keys()],
+      },
+      dispatches: dispatchProofs,
+      handoffs: handoffProofs,
+      durableHandoffs: {
+        count: durableAuthority.handoffConsumptions.size,
+        ids: [...durableAuthority.handoffConsumptions.keys()],
+      },
+      dependencyConsumptions,
+      completion,
+      repository,
+      failure: failureCode
+        ? {
+            code: failureCode,
+            reason:
+              failureCode === "mission-blocked"
+                ? missionKickoffFailureReasonFromDescription(
+                    mission?.description ?? "",
+                  )
+                : null,
+            cta: REAL_MISSION_E2E_CTA,
+            snapshot: {
+              missionStatus: mission?.status ?? null,
+              paneCount: paneProofs.length,
+              dispatchCount: dispatchProofs.length,
+              handoffCount: handoffProofs.length,
+            },
+          }
+        : null,
+    };
+  }
+
+  #maybeSealKickoffProof(): void {
+    if (
+      this.#kickoff.idleAt !== null &&
+      this.#kickoff.busyAt !== null &&
+      this.#kickoff.ptyDataAt !== null &&
+      this.#kickoff.ptyChunkSha256 !== null &&
+      this.#kickoff.busyAt >= this.#kickoff.idleAt &&
+      this.#kickoff.ptyDataAt >= this.#kickoff.idleAt
+    ) {
+      this.#kickoffProven = true;
+    }
+  }
+
+  /** Freeze a real PREVC contract before main-owned worker/merge work. */
+  #maybeFreezePrevC(): void {
+    if (this.#stopped || !this.#kickoffProven) return;
+    try {
+      const result = freezeRealMissionE2EPrevCIfNeeded(
+        this.#suite,
+        this.#missionId,
+        this.#suite.scope,
+      );
+      if (result.frozen) {
+        this.#prevcFreezeAttempted = true;
+        console.log(
+          `[real-mission] PHASE phase=prevc-frozen mission=${this.#missionId}`,
+        );
+        return;
+      }
+      if (
+        result.reason === "already-frozen" ||
+        result.reason === "kickoff-pending" ||
+        result.reason === "gate-context-unavailable" ||
+        result.reason.startsWith("status-")
+      ) {
+        return;
+      }
+      if (
+        !this.#prevcFreezeAttempted &&
+        result.reason.startsWith("freeze-failed")
+      ) {
+        this.#prevcFreezeAttempted = true;
+        console.error(`[real-mission] PREVC freeze failed: ${result.reason}`);
+      }
+    } catch (error) {
+      if (!this.#prevcFreezeAttempted) {
+        this.#prevcFreezeAttempted = true;
+        console.error(
+          "[real-mission] PREVC freeze threw:",
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+  }
+
+  #acceptMissionPhysicalPty(
+    sessionId: string,
+    agent: PhysicalPtyAgent | null,
+  ): RealMissionPhysicalPtyAgent | null {
+    const inspected = this.#physicalPtyGate.inspect(sessionId, agent);
+    if (inspected.kind === "violation") {
+      this.#onFinish("invariant-failed");
+    }
+    return inspected.kind === "accepted" ? inspected.agent : null;
+  }
+
+  #recordPhysicalSpawn(
+    sessionId: string,
+    agent: RealMissionPhysicalPtyAgent,
+    at: number,
+  ): void {
+    if (this.#physicalPty.has(sessionId)) return;
+    this.#physicalPty.set(sessionId, {
+      role: agent.role,
+      workerIncarnationId: agent.workerIncarnationId ?? null,
+      readOnly: agent.readOnly,
+      nativeReadOnly: agent.nativeReadOnly ?? null,
+      spawnedAt: at,
+      dataAt: null,
+      ptyChunkSha256: null,
+    });
+  }
+
+  /** Backfill orch physical proof from kickoff when state taps missed spawn. */
+  #backfillPhysicalFromKickoff(): void {
+    const sessionId = this.#kickoff.sessionId;
+    if (
+      !sessionId ||
+      this.#physicalPty.has(sessionId) ||
+      this.#kickoff.idleAt === null ||
+      this.#kickoff.ptyDataAt === null ||
+      this.#kickoff.ptyChunkSha256 === null
+    ) {
+      return;
+    }
+    const agent = this.#acceptMissionPhysicalPty(
+      sessionId,
+      getAgentSessionInfo(sessionId),
+    );
+    if (!agent || agent.role !== "orchestrator") return;
+    this.#physicalPty.set(sessionId, {
+      role: "orchestrator",
+      workerIncarnationId: null,
+      readOnly: agent.readOnly,
+      nativeReadOnly: agent.nativeReadOnly ?? null,
+      spawnedAt: this.#kickoff.idleAt,
+      dataAt: this.#kickoff.ptyDataAt,
+      ptyChunkSha256: this.#kickoff.ptyChunkSha256,
+    });
+  }
+
+  #queueEvaluation(): void {
+    if (this.#evaluationQueued || this.#stopped) return;
+    this.#evaluationQueued = true;
+    // setTimeout(0), never setImmediate: every store change re-queued an
+    // immediate while live worker PTY output kept generating store changes
+    // (activity heartbeats), so Electron's uv check phase never drained and
+    // ALL main-process timers starved forever — waitForIdle hung, the
+    // scheduler tick zombified and merge never ran. The timer queue cannot
+    // starve itself.
+    setTimeout(() => {
+      this.#evaluationQueued = false;
+      this.#evaluate();
+    }, 0);
+  }
+
+  #observeMissionInventory(): boolean {
+    if (this.#missionInventoryFence.observe(this.#suite.missions.list())) {
+      return true;
+    }
+    this.#onFinish("invariant-failed");
+    return false;
+  }
+
+  #evaluate(): void {
+    if (this.#stopped) return;
+    if (!this.#observeMissionInventory()) return;
+    for (const agent of listAgentSessions()) {
+      if (agent.missionId !== this.#missionId) continue;
+      const accepted = this.#acceptMissionPhysicalPty(agent.sessionId, agent);
+      if (!accepted) return;
+      this.#recordPhysicalSpawn(agent.sessionId, accepted, Date.now());
+    }
+    if (this.#owner.isDestroyed() || this.#owner.isCrashed()) {
+      this.#onFinish("renderer-failed");
+      return;
+    }
+    const mission = this.#suite.missions.get(this.#missionId);
+    if (!mission) {
+      this.#onFinish("observer-invalid");
+      return;
+    }
+    this.#maybeFreezePrevC();
+    this.#backfillPhysicalFromKickoff();
+    const dispatches = this.#suite.taskDispatches.list(this.#missionId);
+    // A durable dispatch row alone is not physical evidence. Correlate the
+    // exact session + incarnation and require at least one real PTY data
+    // chunk before relaxing the pre-worker repository invariant.
+    if (hasCorrelatedPhysicalWorkerData(dispatches, this.#physicalPty)) {
+      this.#workerObserved = true;
+    }
+    const integrationMayHaveStarted = dispatches.some(
+      (dispatch) =>
+        dispatch.state === "merging" || dispatch.state === "completed",
+    );
+    if (!this.#workerObserved || !integrationMayHaveStarted) {
+      const repository = buildRepositoryProof(
+        this.#scratch,
+        this.#changedBeforeWorker,
+      );
+      if (
+        repository.finalHeadSha !== this.#scratch.initialHeadSha ||
+        !repository.clean
+      ) {
+        this.#changedBeforeWorker = true;
+        this.#onFinish("invariant-failed");
+        return;
+      }
+    }
+    if (mission.status === "blocked") {
+      this.#onFinish("mission-blocked");
+      return;
+    }
+    if (mission.status === "failed") {
+      this.#onFinish("mission-failed");
+      return;
+    }
+    if (mission.status !== "done") {
+      this.#doneSeenAt = null;
+      return;
+    }
+    this.#doneSeenAt ??= Date.now();
+    try {
+      parseRealMissionE2EEvidence(this.evidence(Date.now(), "pass", null));
+      this.#onFinish(null);
+      return;
+    } catch {
+      // Delivery acknowledgement and the final PTY state can land just after
+      // the scheduler integration transaction. Give those bounded receipts a
+      // short settle window; never promote a partial snapshot to PASS.
+    }
+    if (Date.now() - this.#doneSeenAt >= DONE_SETTLE_MS) {
+      this.#onFinish("invariant-failed");
+    }
+  }
+}

@@ -16,11 +16,16 @@ import { createScopedTaskStore, type ScopedTaskStore } from "./task-store";
 import {
   createTaskDispatchStore,
   type TaskDispatchStore,
-} from './task-dispatch-store';
+} from "./task-dispatch-store";
 import { createScopedTodoStore, type ScopedTodoStore } from "./todo-store";
 
 export type ProjectDomainStoreName =
-  "missions" | "mission-panes" | "handoffs" | "tasks" | "task-dispatches" | "todos";
+  | "missions"
+  | "mission-panes"
+  | "handoffs"
+  | "tasks"
+  | "task-dispatches"
+  | "todos";
 
 export interface ProjectDomainStoreSuite {
   readonly scope: ProjectExecutionScope;
@@ -93,7 +98,10 @@ export class ProjectDomainStoreRegistry {
       ),
       handoffs: createScopedHandoffStore(this.#runtimeManager, immutableScope),
       tasks: createScopedTaskStore(this.#runtimeManager, immutableScope),
-      taskDispatches: createTaskDispatchStore(this.#runtimeManager, immutableScope),
+      taskDispatches: createTaskDispatchStore(
+        this.#runtimeManager,
+        immutableScope,
+      ),
       todos: createScopedTodoStore(this.#runtimeManager, immutableScope),
     });
     const unsubscribers = [
@@ -102,15 +110,20 @@ export class ProjectDomainStoreRegistry {
         this.#emit(immutableScope, "mission-panes"),
       ),
       suite.handoffs.onChange(() => this.#emit(immutableScope, "handoffs")),
+      suite.handoffs.onDispatchChange(() => {
+        this.#emit(immutableScope, "task-dispatches");
+        this.#emit(immutableScope, "tasks");
+        this.#emit(immutableScope, "missions");
+      }),
       suite.tasks.onChange(() => this.#emit(immutableScope, "tasks")),
       suite.taskDispatches.onChange(() => {
         // Dispatch transactions also advance `tasks` and can block/complete a
         // `mission` in the same SQLite commit. Publish every affected read
         // model; otherwise the renderer could keep showing running after the
         // main-owned coordinator had already persisted done/blocked.
-        this.#emit(immutableScope, 'task-dispatches');
-        this.#emit(immutableScope, 'tasks');
-        this.#emit(immutableScope, 'missions');
+        this.#emit(immutableScope, "task-dispatches");
+        this.#emit(immutableScope, "tasks");
+        this.#emit(immutableScope, "missions");
       }),
       suite.todos.onChange(() => this.#emit(immutableScope, "todos")),
     ];

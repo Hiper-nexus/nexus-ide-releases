@@ -15,6 +15,13 @@ import {
 } from './mission-driver-io';
 import type { PrevcAdvancePort } from './mission-driver-prevc';
 
+const milestoneEvidence1 = `milestone:${'1'.repeat(64)}`;
+const milestoneEvidence2 = `milestone:${'2'.repeat(64)}`;
+
+function finalStepAuthority(evidenceId = milestoneEvidence1) {
+  return () => ({ workflowRevision: 7, evidenceId });
+}
+
 function step(
   partial: Partial<MissionMilestone> & Pick<MissionMilestone, 'id' | 'label'>,
 ): MissionMilestone {
@@ -45,7 +52,7 @@ function makeMission(
 describe('createProductionApplyPorts advance/complete', () => {
   const scope = testProjectScope();
 
-  it('binds trusted handoff evidence, calls PREVC advance, then marks step done', () => {
+  it('binds the terminal PREVC handoff, advances, then marks the step done', () => {
     let mission = makeMission([
       step({ id: 's1', label: 'Design', status: 'in-progress' }),
     ]);
@@ -114,15 +121,20 @@ describe('createProductionApplyPorts advance/complete', () => {
       handoffs: {
         list: () => [
           {
+            fromAgent: 'nexus-prevc-autopilot',
             evidenceTrust: 'nexus-trusted' as const,
-            evidenceIds: ['ev-1'],
+            evidenceIds: [milestoneEvidence1],
+            evidenceBinding: {
+              missionId: mission.id,
+              workflowRevision: 7,
+            },
             status: 'success' as const,
             createdAt: 10,
           },
         ],
         submit: vi.fn(),
       },
-    }) as never);
+    }) as never, undefined, undefined, finalStepAuthority());
 
     ports.advanceStep('mission-a', scope, 's1');
 
@@ -130,10 +142,177 @@ describe('createProductionApplyPorts advance/complete', () => {
       'mission-a',
       scope,
       's1',
-      ['ev-1'],
+      [milestoneEvidence1],
     );
     expect(mission.milestones[0]?.status).toBe('done');
-    expect(mission.milestones[0]?.evidenceIds).toEqual(['ev-1']);
+    expect(mission.milestones[0]?.evidenceIds).toEqual([
+      milestoneEvidence1,
+    ]);
+  });
+
+  it('rejects current Nexus evidence from any non-PREVC handoff', () => {
+    const mission = makeMission([
+      step({ id: 's1', label: 'Design', status: 'in-progress' }),
+    ]);
+    const prevcAdvance = vi.fn();
+    const ports = createProductionApplyPorts(
+      {
+        advanceMissionStep: prevcAdvance,
+        isMissionComplete: () => true,
+      },
+      () =>
+        ({
+          missions: { get: () => mission },
+          handoffs: {
+            list: () => [
+              {
+                fromAgent: 'worker-claimed-prevc',
+                evidenceTrust: 'nexus-trusted',
+                evidenceIds: [milestoneEvidence1],
+                evidenceBinding: {
+                  missionId: mission.id,
+                  workflowRevision: 7,
+                },
+                status: 'success',
+                createdAt: 10,
+              },
+            ],
+          },
+        }) as never,
+      undefined,
+      undefined,
+      finalStepAuthority(),
+    );
+
+    expect(() => ports.advanceStep(mission.id, scope, 's1')).toThrow(
+      /lacks nexus-trusted evidence/,
+    );
+    expect(prevcAdvance).not.toHaveBeenCalled();
+  });
+
+  it('rejects a physical worker spoofing the reserved PREVC agent label', () => {
+    const mission = makeMission([
+      step({ id: 's1', label: 'Design', status: 'in-progress' }),
+    ]);
+    const prevcAdvance = vi.fn();
+    const ports = createProductionApplyPorts(
+      {
+        advanceMissionStep: prevcAdvance,
+        isMissionComplete: () => true,
+      },
+      () =>
+        ({
+          missions: { get: () => mission },
+          handoffs: {
+            list: () => [
+              {
+                fromAgent: 'nexus-prevc-autopilot',
+                sessionId: 'worker-session',
+                workerIncarnationId: 'worker-incarnation',
+                mcpProvenance: { receiptId: 'physical-tool-call' },
+                evidenceTrust: 'nexus-trusted',
+                evidenceIds: [milestoneEvidence1],
+                evidenceBinding: {
+                  missionId: mission.id,
+                  workflowRevision: 7,
+                },
+                status: 'success',
+                createdAt: 10,
+              },
+            ],
+          },
+        }) as never,
+      undefined,
+      undefined,
+      finalStepAuthority(),
+    );
+
+    expect(() => ports.advanceStep(mission.id, scope, 's1')).toThrow(
+      /lacks nexus-trusted evidence/,
+    );
+    expect(prevcAdvance).not.toHaveBeenCalled();
+  });
+
+  it('rejects a final PREVC handoff from an older workflow revision', () => {
+    const mission = makeMission([
+      step({ id: 's1', label: 'Design', status: 'in-progress' }),
+    ]);
+    const prevcAdvance = vi.fn();
+    const ports = createProductionApplyPorts(
+      {
+        advanceMissionStep: prevcAdvance,
+        isMissionComplete: () => true,
+      },
+      () =>
+        ({
+          missions: { get: () => mission },
+          handoffs: {
+            list: () => [
+              {
+                fromAgent: 'nexus-prevc-autopilot',
+                evidenceTrust: 'nexus-trusted',
+                evidenceIds: [milestoneEvidence1],
+                evidenceBinding: {
+                  missionId: mission.id,
+                  workflowRevision: 6,
+                },
+                status: 'success',
+                createdAt: 10,
+              },
+            ],
+          },
+        }) as never,
+      undefined,
+      undefined,
+      finalStepAuthority(),
+    );
+
+    expect(() => ports.advanceStep(mission.id, scope, 's1')).toThrow(
+      /lacks nexus-trusted evidence/,
+    );
+    expect(prevcAdvance).not.toHaveBeenCalled();
+  });
+
+  it('rejects the dedicated PREVC handoff before the sealed plan is terminal', () => {
+    const mission = makeMission([
+      step({ id: 's1', label: 'Design', status: 'in-progress' }),
+    ]);
+    const listHandoffs = vi.fn(() => [
+      {
+        fromAgent: 'nexus-prevc-autopilot',
+        evidenceTrust: 'nexus-trusted',
+        evidenceIds: [milestoneEvidence1],
+        evidenceBinding: {
+          missionId: mission.id,
+          workflowRevision: 7,
+        },
+        status: 'success',
+        createdAt: 10,
+      },
+    ]);
+    const prevcAdvance = vi.fn();
+    const hasFinalAuthority = vi.fn(() => null);
+    const ports = createProductionApplyPorts(
+      {
+        advanceMissionStep: prevcAdvance,
+        isMissionComplete: () => true,
+      },
+      () =>
+        ({
+          missions: { get: () => mission },
+          handoffs: { list: listHandoffs },
+        }) as never,
+      undefined,
+      undefined,
+      hasFinalAuthority,
+    );
+
+    expect(() => ports.advanceStep(mission.id, scope, 's1')).toThrow(
+      /lacks nexus-trusted evidence/,
+    );
+    expect(hasFinalAuthority).toHaveBeenCalledWith(scope, mission.id, 's1');
+    expect(listHandoffs).not.toHaveBeenCalled();
+    expect(prevcAdvance).not.toHaveBeenCalled();
   });
 
   it('PREVC failure is fail-closed and leaves the milestone non-done', () => {
@@ -191,15 +370,20 @@ describe('createProductionApplyPorts advance/complete', () => {
       handoffs: {
         list: () => [
           {
+            fromAgent: 'nexus-prevc-autopilot',
             evidenceTrust: 'nexus-trusted' as const,
-            evidenceIds: ['ev-1'],
+            evidenceIds: [milestoneEvidence1],
+            evidenceBinding: {
+              missionId: mission.id,
+              workflowRevision: 7,
+            },
             status: 'success' as const,
             createdAt: 10,
           },
         ],
         submit: vi.fn(),
       },
-    }) as never);
+    }) as never, undefined, undefined, finalStepAuthority());
 
     expect(() => ports.advanceStep('mission-a', scope, 's1')).toThrow(
       /workflow not ready/,
@@ -215,7 +399,7 @@ describe('createProductionApplyPorts advance/complete', () => {
         id: 's1',
         label: 'Done',
         status: 'done',
-        evidenceIds: ['ev-1'],
+        evidenceIds: [milestoneEvidence1],
       }),
       step({ id: 's2', label: 'Next', status: 'in-progress' }),
     ]);
@@ -239,8 +423,13 @@ describe('createProductionApplyPorts advance/complete', () => {
           handoffs: {
             list: () => [
               {
+                fromAgent: 'nexus-prevc-autopilot',
                 evidenceTrust: 'nexus-trusted',
-                evidenceIds: ['ev-1'],
+                evidenceIds: [milestoneEvidence1],
+                evidenceBinding: {
+                  missionId: mission.id,
+                  workflowRevision: 7,
+                },
                 status: 'success',
                 createdAt: 10,
               },
@@ -248,6 +437,9 @@ describe('createProductionApplyPorts advance/complete', () => {
             submit: vi.fn(),
           },
         }) as never,
+      undefined,
+      undefined,
+      finalStepAuthority(),
     );
 
     expect(() => ports.advanceStep('mission-a', scope, 's2')).toThrow(
@@ -256,7 +448,7 @@ describe('createProductionApplyPorts advance/complete', () => {
     expect(prevcAdvance).not.toHaveBeenCalled();
   });
 
-  it('reserves later trusted evidence for later mission steps', () => {
+  it('selects the exact step attestation instead of the first handoff id', () => {
     const mission = makeMission([
       step({ id: 's1', label: 'First', status: 'in-progress' }),
       step({ id: 's2', label: 'Second', status: 'pending' }),
@@ -279,14 +471,22 @@ describe('createProductionApplyPorts advance/complete', () => {
         },
         handoffs: {
           list: () => [{
+            fromAgent: 'nexus-prevc-autopilot',
             evidenceTrust: 'nexus-trusted',
-            evidenceIds: ['ev-1', 'ev-2'],
+            evidenceIds: [milestoneEvidence1, milestoneEvidence2],
+            evidenceBinding: {
+              missionId: mission.id,
+              workflowRevision: 7,
+            },
             status: 'success',
             createdAt: 10,
           }],
           submit: vi.fn(),
         },
       }) as never,
+      undefined,
+      undefined,
+      finalStepAuthority(milestoneEvidence2),
     );
 
     expect(() => ports.advanceStep('mission-a', scope, 's1')).toThrow(
@@ -296,7 +496,7 @@ describe('createProductionApplyPorts advance/complete', () => {
       'mission-a',
       scope,
       's1',
-      ['ev-1'],
+      [milestoneEvidence2],
     );
   });
 
@@ -333,6 +533,9 @@ describe('createProductionApplyPorts advance/complete', () => {
             submit: vi.fn(),
           },
         }) as never,
+      undefined,
+      undefined,
+      finalStepAuthority(),
     );
 
     expect(() => ports.advanceStep('mission-a', scope, 's1')).toThrow(
@@ -381,7 +584,7 @@ describe('createProductionApplyPorts advance/complete', () => {
     expect(mission.status).toBe('running');
   });
 
-  it('complete succeeds when steps done and PREVC complete/absent', () => {
+  it('complete atomically closes mission status and intent after PREVC proof', () => {
     let mission = makeMission([
       step({
         id: 's1',
@@ -389,7 +592,31 @@ describe('createProductionApplyPorts advance/complete', () => {
         status: 'done',
         evidenceIds: ['ev-1'],
       }),
-    ]);
+    ], { intentState: 'executing', intentVersion: 1 });
+    const completeFromMissionDriver = vi.fn(
+      (
+        id: string,
+        expectation: {
+          expectedUpdatedAt: number;
+          expectedIntentVersion: number;
+        },
+      ) => {
+        if (
+          id !== mission.id ||
+          expectation.expectedUpdatedAt !== mission.updatedAt ||
+          expectation.expectedIntentVersion !== mission.intentVersion
+        ) {
+          return null;
+        }
+        mission = {
+          ...mission,
+          status: 'done',
+          intentState: 'done',
+          updatedAt: mission.updatedAt + 1,
+        };
+        return mission;
+      },
+    );
     const ports = createProductionApplyPorts(
       {
         advanceMissionStep: vi.fn(),
@@ -401,10 +628,8 @@ describe('createProductionApplyPorts advance/complete', () => {
             get: () => mission,
             update: () => mission,
             markMilestoneDone: () => mission,
-            setStatus: (_id: string, status: Mission['status']) => {
-              mission = { ...mission, status };
-              return mission;
-            },
+            setStatus: vi.fn(),
+            completeFromMissionDriver,
             appendLearning: () => mission,
             list: () => [mission],
             create: () => mission,
@@ -415,15 +640,55 @@ describe('createProductionApplyPorts advance/complete', () => {
 
     ports.completeMission('mission-a', scope);
     expect(mission.status).toBe('done');
+    expect(mission.intentState).toBe('done');
+    expect(completeFromMissionDriver).toHaveBeenCalledWith('mission-a', {
+      expectedUpdatedAt: 1,
+      expectedIntentVersion: 1,
+    });
   });
 
-  it('never signals pane death for an exited worker whose dispatch was delivered', () => {
-    // Regression (release gate + field audit "respawn loop"): the worker CLI
-    // exits naturally after its handoff is accepted; the dispatch then lives
-    // in the engine (handoff_ready → merging → completed) and re-engaging the
-    // dead worker is never useful. Counting it as a dead pane made the driver
-    // burn maxRespawnAttempts on futile respawns and block a mission whose
-    // work had already been integrated.
+  it('complete fails closed when the terminal CAS loses authority', () => {
+    const mission = makeMission(
+      [
+        step({
+          id: 's1',
+          label: 'Design',
+          status: 'done',
+          evidenceIds: ['ev-1'],
+        }),
+      ],
+      { intentState: 'validating', intentVersion: 2 },
+    );
+    const completeFromMissionDriver = vi.fn(() => null);
+    const ports = createProductionApplyPorts(
+      {
+        advanceMissionStep: vi.fn(),
+        isMissionComplete: () => true,
+      },
+      () =>
+        ({
+          missions: {
+            get: () => mission,
+            completeFromMissionDriver,
+          },
+          handoffs: { list: () => [], submit: vi.fn() },
+        }) as never,
+    );
+
+    expect(() => ports.completeMission('mission-a', scope)).toThrow(
+      /completion CAS changed/i,
+    );
+    expect(completeFromMissionDriver).toHaveBeenCalledWith('mission-a', {
+      expectedUpdatedAt: 1,
+      expectedIntentVersion: 2,
+    });
+    expect(mission).toMatchObject({
+      status: 'running',
+      intentState: 'validating',
+    });
+  });
+
+  it('never exposes worker panes to mission-driver recovery', () => {
     const orchestrator: MissionPaneSpec = {
       id: 'spec-orch', missionId: 'mission-a', paneId: 'pane-orch',
       adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
@@ -438,84 +703,14 @@ describe('createProductionApplyPorts advance/complete', () => {
       kind: 'cli-agent', state: 'idle', missionId: 'mission-a', role: 'orchestrator',
     }];
 
-    for (const state of ['handoff_ready', 'merging', 'completed'] as const) {
-      const actionable = actionableMissionPanes(
-        [orchestrator, worker],
-        [{ state, workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' }],
-      );
-      expect(actionable).toEqual([orchestrator]);
-      expect(
-        findDeadMissionPane('mission-a', actionable, liveOrchestratorOnly),
-      ).toBeNull();
-    }
+    const actionable = actionableMissionPanes([orchestrator, worker]);
+    expect(actionable).toEqual([orchestrator]);
+    expect(
+      findDeadMissionPane('mission-a', actionable, liveOrchestratorOnly),
+    ).toBeNull();
   });
 
-  it('keeps a worker recoverable while its dispatch still owns live work', () => {
-    const worker: MissionPaneSpec = {
-      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
-      adapterId: 'codex', title: 'Worker', role: 'worker', createdAt: 1,
-      workerIncarnationId: 'incarnation-1',
-    };
-
-    for (const state of ['claimed', 'routed', 'spawning', 'running'] as const) {
-      const actionable = actionableMissionPanes(
-        [worker],
-        [{ state, workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' }],
-      );
-      expect(actionable).toEqual([worker]);
-      expect(findDeadMissionPane('mission-a', actionable, [])).toMatchObject({
-        paneId: 'pane-worker',
-      });
-    }
-    // A fresh dispatch on the same durable pane row revives recoverability
-    // even when an older delivered dispatch also matches it.
-    expect(actionableMissionPanes(
-      [worker],
-      [
-        { state: 'completed', workerIncarnationId: 'incarnation-0', paneId: 'pane-worker' },
-        { state: 'running', workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' },
-      ],
-    )).toEqual([worker]);
-  });
-
-  it('protects a worker whose latest dispatch delivered even with a stale non-delivered attempt on the same pane', () => {
-    // Regression (review HIGH): replan/recovery reuses the durable paneId, so a
-    // superseded/blocked/failed older attempt coexists with a fresh delivered
-    // one. Judging by the WHOLE history (every-delivered) would keep the pane
-    // "actionable" and reintroduce the futile respawn loop; only the most
-    // recent dispatch bound to the pane defines the current work.
-    const worker: MissionPaneSpec = {
-      id: 'spec-worker', missionId: 'mission-a', paneId: 'pane-worker',
-      adapterId: 'codex', title: 'Worker', role: 'worker', createdAt: 1,
-      workerIncarnationId: 'incarnation-1',
-    };
-
-    for (const staleState of ['superseded', 'blocked', 'failed'] as const) {
-      const actionable = actionableMissionPanes(
-        [worker],
-        [
-          // oldest → newest (taskDispatches.list order)
-          { state: staleState, workerIncarnationId: 'incarnation-0', paneId: 'pane-worker' },
-          { state: 'completed', workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' },
-        ],
-      );
-      expect(actionable).toEqual([]);
-      expect(findDeadMissionPane('mission-a', actionable, [])).toBeNull();
-    }
-
-    // Match by exact incarnation wins over a homonymous paneId match: the
-    // pane's current incarnation dispatch is delivered even if a later,
-    // different-incarnation dispatch on the same paneId is still running.
-    expect(actionableMissionPanes(
-      [worker],
-      [
-        { state: 'completed', workerIncarnationId: 'incarnation-1', paneId: 'pane-worker' },
-        { state: 'running', workerIncarnationId: 'incarnation-2', paneId: 'pane-worker' },
-      ],
-    )).toEqual([]);
-  });
-
-  it('keeps workers without a matching dispatch and orchestrators always actionable', () => {
+  it('keeps orchestrators recoverable but excludes legacy workers too', () => {
     const orchestrator: MissionPaneSpec = {
       id: 'spec-orch', missionId: 'mission-a', paneId: 'pane-orch',
       adapterId: 'codex', title: 'Orchestrator', role: 'orchestrator', createdAt: 1,
@@ -525,16 +720,10 @@ describe('createProductionApplyPorts advance/complete', () => {
       adapterId: 'codex', title: 'Worker', role: 'worker', createdAt: 2,
     };
 
-    expect(actionableMissionPanes(
-      [orchestrator, legacyWorker],
-      [{ state: 'completed', workerIncarnationId: 'incarnation-x', paneId: 'pane-other' }],
-    )).toEqual([orchestrator, legacyWorker]);
-    // Even a delivered dispatch bound to the orchestrator pane id never makes
-    // the orchestrator non-actionable.
-    expect(actionableMissionPanes(
-      [orchestrator],
-      [{ state: 'completed', workerIncarnationId: null, paneId: 'pane-orch' }],
-    )).toEqual([orchestrator]);
+    expect(actionableMissionPanes([orchestrator, legacyWorker])).toEqual([
+      orchestrator,
+    ]);
+    expect(actionableMissionPanes([orchestrator])).toEqual([orchestrator]);
   });
 
   it('treats a missing persisted worker as dead by stable pane identity', () => {
@@ -619,7 +808,7 @@ describe('createProductionApplyPorts advance/complete', () => {
     expect(findDeadMissionPane('mission-a', persisted, scoped)).toBeNull();
   });
 
-  it('recovers a missing worker and records success only after renderer ACK', async () => {
+  it('recovers only the orchestrator and records success after renderer ACK', async () => {
     const mission = makeMission(
       [step({ id: 's1', label: 'API integrada', status: 'done' })],
       {
@@ -643,8 +832,8 @@ describe('createProductionApplyPorts advance/complete', () => {
     const recoverPane = vi.fn(async () => ({
       requestId: 'recovery-a',
       ok: true as const,
-      paneId: 'pane-worker',
-      sessionId: 'session-worker-new',
+      paneId: 'pane-orch',
+      sessionId: 'session-orch-new',
     }));
     const ports = createProductionApplyPorts(
       { advanceMissionStep: vi.fn(), isMissionComplete: () => false },
@@ -677,19 +866,19 @@ describe('createProductionApplyPorts advance/complete', () => {
       }],
     );
 
-    await ports.respawnFreshContext(mission.id, scope, 'worker exited');
+    await ports.respawnFreshContext(mission.id, scope, 'context rot');
 
     expect(recoverPane).toHaveBeenCalledWith(expect.objectContaining({
       missionId: mission.id,
-      paneId: 'pane-worker',
-      role: 'worker',
-      expectedSessionId: undefined,
-      pane: expect.objectContaining({ agentName: 'Builder' }),
+      paneId: 'pane-orch',
+      role: 'orchestrator',
+      expectedSessionId: 'session-orch',
+      pane: expect.objectContaining({ title: 'Orchestrator' }),
       recap: expect.stringMatching(/Memória compacta[\s\S]*Codex[\s\S]*API integrada/),
     }));
     expect(appendLearning).toHaveBeenCalledWith(
       mission.id,
-      expect.stringContaining('session-worker-new'),
+      expect.stringContaining('session-orch-new'),
     );
   });
 

@@ -92,7 +92,8 @@ export function assertMacPublishReleaseEnvironment(
  * opaque data, not Mach-O code. osx-sign walks every binary-looking resource
  * and otherwise invokes codesign on them; with a Developer ID identity that
  * makes the release stall/retry on harmless .webp/.pak files. Native modules
- * and the PTY helper remain signable and are deliberately kept in the walk.
+ * and the signed Nexus PTY supervisor remain deliberately in the walk. The
+ * node-pty spawn-helper is forbidden from the package.
  */
 export function shouldIgnoreMacSigningFile(filePath: string): boolean {
   const normalized = filePath.replaceAll('\\', '/');
@@ -106,7 +107,10 @@ export function shouldIgnoreMacSigningFile(filePath: string): boolean {
     return true;
   }
   if (!normalized.includes('/Contents/Resources/')) return false;
-  return !(/\.(?:node|dylib)$/u.test(normalized) || /\/spawn-helper$/u.test(normalized));
+  return !(
+    /\.(?:node|dylib)$/u.test(normalized) ||
+    /\/nexus-pty-supervisor$/u.test(normalized)
+  );
 }
 
 export function createMacSignOptions(teamId: string | undefined) {

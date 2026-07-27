@@ -26,7 +26,9 @@ export interface WorkflowEvidence {
   readonly trustedArtifactIds: readonly string[];
   readonly requiredArtifactIds: readonly string[];
   readonly authorId: string;
+  readonly authorSessionId: string;
   readonly reviewerId?: string;
+  readonly reviewerSessionId?: string;
   readonly authorProvider: string;
   readonly reviewerProvider?: string;
   readonly worktreeId?: string;
@@ -36,6 +38,7 @@ export interface WorkflowEvidence {
 
 export interface WorkflowReviewer {
   readonly id: string;
+  readonly sessionId: string;
   readonly provider: string;
 }
 
@@ -72,7 +75,11 @@ const workflowStateSchema = z
     reviewers: z
       .array(
         z
-          .object({ id: z.string().min(1).max(256), provider: z.string().min(1).max(256) })
+          .object({
+            id: z.string().min(1).max(256),
+            sessionId: z.string().min(1).max(256),
+            provider: z.string().min(1).max(256),
+          })
           .strict(),
       )
       .max(16),
@@ -162,22 +169,26 @@ function assertReview(
   state: WorkflowState,
   evidence: WorkflowEvidence,
 ): WorkflowReviewer {
-  if (!evidence.reviewerId || !evidence.reviewerProvider) {
+  if (
+    !evidence.reviewerId ||
+    !evidence.reviewerSessionId ||
+    !evidence.reviewerProvider
+  ) {
     throw new WorkflowGateError('review-invalid', 'reviewer identity is required');
   }
-  if (evidence.reviewerId === evidence.authorId) {
+  if (
+    evidence.reviewerId === evidence.authorId ||
+    evidence.reviewerSessionId === evidence.authorSessionId
+  ) {
     throw new WorkflowGateError('review-invalid', 'author cannot review their own work');
   }
   if (
-    (state.risk === 'high' || state.risk === 'critical') &&
-    evidence.reviewerProvider === evidence.authorProvider
+    state.reviewers.some(
+      (reviewer) =>
+        reviewer.id === evidence.reviewerId ||
+        reviewer.sessionId === evidence.reviewerSessionId,
+    )
   ) {
-    throw new WorkflowGateError(
-      'review-invalid',
-      'high-risk review requires a different provider',
-    );
-  }
-  if (state.reviewers.some((reviewer) => reviewer.id === evidence.reviewerId)) {
     throw new WorkflowGateError(
       'review-invalid',
       'critical review stages require independent reviewers',
@@ -186,6 +197,7 @@ function assertReview(
   assertNoBlockingFindings(evidence);
   return Object.freeze({
     id: evidence.reviewerId,
+    sessionId: evidence.reviewerSessionId,
     provider: evidence.reviewerProvider,
   });
 }
@@ -264,6 +276,12 @@ export function parseWorkflowState(raw: unknown): WorkflowState {
   }
   if (new Set(parsed.reviewers.map((reviewer) => reviewer.id)).size !== parsed.reviewers.length) {
     throw new Error('persisted workflow contains duplicate reviewers');
+  }
+  if (
+    new Set(parsed.reviewers.map((reviewer) => reviewer.sessionId)).size !==
+    parsed.reviewers.length
+  ) {
+    throw new Error('persisted workflow contains duplicate reviewer sessions');
   }
   return Object.freeze({
     ...parsed,

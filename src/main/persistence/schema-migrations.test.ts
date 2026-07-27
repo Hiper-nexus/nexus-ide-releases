@@ -42,6 +42,8 @@ describe('migrateSchema', () => {
     migrateSchema(db);
 
     expect(columns.get('squads')).toContain('native_instructions');
+    expect(columns.get('squads')).toContain('runtime_source_squad_id');
+    expect(columns.get('squads')).toContain('runtime_source_squad_hash');
     expect(columns.get('mission_panes')).toEqual(
       new Set([
         'effort',
@@ -71,7 +73,11 @@ describe('migrateSchema', () => {
 
   it('does not alter a schema that is already current', () => {
     const { db, calls } = fakeDb({
-      squads: ['native_instructions'],
+      squads: [
+        'native_instructions',
+        'runtime_source_squad_id',
+        'runtime_source_squad_hash',
+      ],
       mission_panes: [
         'effort',
         'pane_id',

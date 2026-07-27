@@ -115,8 +115,14 @@ export function MissionWizardPlanReview({
   if (!contract) {
     return (
       <div className="wizard__section">
-        <p className="wizard__label">REVISÃO DA MISSÃO</p>
-        <p className="wizard__error">
+        <h2
+          className="wizard__label"
+          data-wizard-plan-review-heading
+          tabIndex={-1}
+        >
+          REVISÃO DA MISSÃO
+        </h2>
+        <p className="wizard__error" role="alert" aria-live="assertive">
           O Nexus não recebeu um contrato de intenção válido para revisar.
           Volte ao objetivo e tente novamente; nenhum agente foi despachado.
         </p>
@@ -147,7 +153,13 @@ export function MissionWizardPlanReview({
 
   return (
     <div className="wizard__section">
-      <p className="wizard__label">REVISÃO DA MISSÃO</p>
+      <h2
+        className="wizard__label"
+        data-wizard-plan-review-heading
+        tabIndex={-1}
+      >
+        REVISÃO DA MISSÃO
+      </h2>
       <p className="wizard__mode-desc">
         <strong>Objetivo:</strong> {contract.goal || mission.description}
       </p>
@@ -156,83 +168,96 @@ export function MissionWizardPlanReview({
         {' · '}
         <strong>Risco:</strong> {contract.risk}
         {' · '}
-        <strong>Workers simultâneos:</strong> {contract.budgets.maxWorkers}
+        <strong>Agentes em paralelo:</strong> {contract.budgets.maxWorkers}
       </p>
 
-      <section className="wizard__plan-card">
-        <p className="wizard__label">CRITÉRIOS DE ACEITE</p>
-        {contract.acceptanceCriteria.length > 0 ? (
-          <ul className="wizard__mode-desc">
-            {contract.acceptanceCriteria.map((criterion) => (
-              <li key={criterion}>{criterion}</li>
+      <div className="wizard__plan-grid">
+        <section className="wizard__plan-card">
+          <h3 className="wizard__label">CRITÉRIOS DE ACEITE</h3>
+          {contract.acceptanceCriteria.length > 0 ? (
+            <ul className="wizard__mode-desc">
+              {contract.acceptanceCriteria.map((criterion) => (
+                <li key={criterion}>{criterion}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="wizard__hint-sm">
+              Nenhum critério adicional foi identificado; o Nexus ainda exige
+              entrega registrada e prova compatível com o objetivo.
+            </p>
+          )}
+        </section>
+
+        <section className="wizard__plan-card">
+          <h3 className="wizard__label">ONDAS PREVISTAS</h3>
+          <p className="wizard__hint-sm">
+            Estimativa antes do plano de tarefas controlado pelo Nexus;
+            dependências reais podem executar estas etapas em sequência ou
+            dividi-las.
+          </p>
+          <ol className="wizard__mode-desc">
+            {waves.map((wave) => (
+              <li key={wave.title}>
+                <strong>{wave.title}:</strong> {wave.detail}
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="wizard__plan-card">
+          <h3 className="wizard__label">CUSTO ESTIMADO DO TIME</h3>
+          <ul className="wizard__roster">
+            {costs.lines.map((line) => (
+              <li
+                key={line.agentId}
+                className="wizard__roster-item wizard__plan-cost-row"
+              >
+                <strong>{line.agentName}</strong> ({line.roleLabel}) ·{' '}
+                {line.adapterId}
+                {line.modelId
+                  ? ` / ${line.modelId}`
+                  : ' / modelo não definido'}
+                <br />
+                {line.rateLabel} · {line.estimateLabel}
+              </li>
             ))}
           </ul>
-        ) : (
-          <p className="wizard__hint-sm">
-            Nenhum critério adicional foi compilado; o motor ainda exige
-            handoff e prova compatível com o objetivo.
+          <p className="wizard__mode-desc">
+            <strong>{costs.totalLabel}</strong>
           </p>
-        )}
-      </section>
+          <p className="wizard__hint-sm">{costs.caveat}</p>
+        </section>
 
-      <section className="wizard__plan-card">
-        <p className="wizard__label">ONDAS PREVISTAS</p>
-        <p className="wizard__hint-sm">
-          Estimativa antes do plano de tarefas controlado pelo Nexus; dependências
-          reais podem serializar ou dividir estas ondas.
-        </p>
-        <ol className="wizard__mode-desc">
-          {waves.map((wave) => (
-            <li key={wave.title}>
-              <strong>{wave.title}:</strong> {wave.detail}
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      <section className="wizard__plan-card">
-        <p className="wizard__label">CUSTO ESTIMADO DO ROSTER</p>
-        <ul className="wizard__roster">
-          {costs.lines.map((line) => (
-            <li
-              key={line.agentId}
-              className="wizard__roster-item wizard__plan-cost-row"
-            >
-              <strong>{line.agentName}</strong> ({line.roleLabel}) —{' '}
-              {line.adapterId}
-              {line.modelId ? ` / ${line.modelId}` : ' / modelo não definido'}
-              <br />
-              {line.rateLabel} · {line.estimateLabel}
-            </li>
-          ))}
-        </ul>
-        <p className="wizard__mode-desc">
-          <strong>{costs.totalLabel}</strong>
-        </p>
-        <p className="wizard__hint-sm">{costs.caveat}</p>
-      </section>
-
-      <section className="wizard__plan-card">
-        <p className="wizard__label">
-          REVIEW P0–P3 AUTOMÁTICO AO FINAL
-        </p>
-        <p className="wizard__mode-desc">
-          <strong>{reviewStatus.label}</strong> {reviewStatus.detail}
-        </p>
-      </section>
+        <section className="wizard__plan-card">
+          <h3 className="wizard__label">
+            REVISÃO TÉCNICA AUTOMÁTICA AO FINAL
+          </h3>
+          <p className="wizard__mode-desc">
+            <strong>{reviewStatus.label}</strong> {reviewStatus.detail}
+          </p>
+        </section>
+      </div>
 
       {mission.intentState === 'awaiting_approval' && (
         <p className="wizard__mode-desc">
-          Superfície sensível detectada — confirme o plano antes de despachar
-          especialistas.
+          Esta missão inclui uma ação sensível: revise o plano antes de
+          iniciar o time.
         </p>
       )}
       <p className="wizard__mode-desc">
-        Depois de começar, o Nexus pilota implementação, revisão e QA pelo
-        PREVC. Ele só volta a você para uma decisão real, uma autorização
-        sensível ou um bloqueio comprovado.
+        Depois de começar, o Nexus conduz a implementação, a revisão
+        independente e a validação final. Ele só volta a você para uma decisão
+        real, uma autorização sensível ou um bloqueio comprovado.
       </p>
-      {error && <p className="wizard__error">{error}</p>}
+      {error && (
+        <p className="wizard__error" role="alert" aria-live="assertive">
+          {error}
+        </p>
+      )}
+      <p className="wizard__approval-note">
+        Nenhum agente será iniciado neste clique. A próxima janela é a única
+        autorização para começar a missão.
+      </p>
       <div className="wizard__actions">
         <button className="wizard__btn wizard__btn--ghost" onClick={onBack}>
           ‹ Editar objetivo
@@ -247,10 +272,8 @@ export function MissionWizardPlanReview({
             onClick={onStart}
           >
             {spawning
-              ? 'Iniciando…'
-              : mission.intentState === 'awaiting_approval'
-                ? 'Confirmar e começar'
-                : 'Começar'}
+              ? 'Abrindo aprovação…'
+              : 'Enviar para aprovação'}
           </button>
         </div>
       </div>

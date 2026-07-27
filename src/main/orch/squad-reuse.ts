@@ -9,10 +9,19 @@ export interface ReusableSquadLike {
   id: string;
   builtin: boolean;
   createdAt: string;
-  agents: Array<{ cli: string }>;
+  agents: Array<{ cli: string; category?: string; model?: string }>;
 }
 
-import { isEngineGeneratedSquadId } from '../../shared/orch-types';
+import {
+  isEngineGeneratedSquadId,
+  isMissionRuntimeSquadId,
+} from "../../shared/orch-types";
+import {
+  assessStandardSquadReadiness,
+  isSquadRuntimeAgentRoutable,
+  squadRuntimeCliPolicyFromRoutableIds,
+  type SquadRuntimeCliPolicy,
+} from "./squad-runtime-policy";
 
 // O schema de squad aceita epoch-ms OU ISO string em createdAt (ambos viram
 // string). Number(ISO) é NaN e quebraria o "mais recente" — parse os dois.
@@ -24,25 +33,43 @@ function createdAtMs(value: string): number {
 }
 
 /**
- * Mais recente squad DE USUÁRIO cujo roster inteiro está instalado. Builtin
+ * Mais recente squad DE USUÁRIO cujo roster inteiro está roteável. Builtin
  * (gerenciados pelo app) e fallbacks agênticos auto-gerados ficam de fora —
  * reusar um fallback velho congelaria exatamente o time que queremos evitar.
- * Roster com cli não instalado desqualifica: worker spawnado numa CLI ausente
- * para num prompt de login em missão autônoma.
+ * O contrato standard exige Maestro explícito/verificado, executor e reviewer
+ * não-Claude; um provider apenas instalado, desabilitado ou sem auth não basta.
  */
 export function pickReusableSquad<T extends ReusableSquadLike>(
   squads: T[],
-  installedCliIds: ReadonlySet<string>,
+  runtimePolicy: ReadonlySet<string> | SquadRuntimeCliPolicy,
+  verifiedOrchestratorCliIds: ReadonlySet<string>,
 ): T | null {
-  const eligible = squads.filter(
-    (squad) =>
+  const policy =
+    typeof runtimePolicy === "object" &&
+    runtimePolicy !== null &&
+    "routableCliIds" in runtimePolicy
+      ? runtimePolicy
+      : squadRuntimeCliPolicyFromRoutableIds(runtimePolicy);
+  const eligible = squads.filter((squad) => {
+    return (
       !squad.builtin &&
       !isEngineGeneratedSquadId(squad.id) &&
+      !isMissionRuntimeSquadId(squad.id) &&
       squad.agents.length > 0 &&
-      squad.agents.every((agent) => installedCliIds.has(agent.cli)),
-  );
+      squad.agents.every((agent) =>
+        isSquadRuntimeAgentRoutable(agent, policy),
+      ) &&
+      assessStandardSquadReadiness(
+        squad.agents,
+        policy,
+        verifiedOrchestratorCliIds,
+      ).ok
+    );
+  });
   if (eligible.length === 0) return null;
   return eligible.reduce((latest, squad) =>
-    createdAtMs(squad.createdAt) > createdAtMs(latest.createdAt) ? squad : latest,
+    createdAtMs(squad.createdAt) > createdAtMs(latest.createdAt)
+      ? squad
+      : latest,
   );
 }

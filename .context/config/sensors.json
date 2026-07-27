@@ -15,9 +15,7 @@
       "id": "unit",
       "command": [
         "npm",
-        "test",
-        "--",
-        "--run"
+        "test"
       ],
       "timeoutMs": 900000,
       "network": false

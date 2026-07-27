@@ -18,10 +18,11 @@ function isStrictDescendant(parent: string, candidate: string): boolean {
 }
 
 /**
- * Best-effort append of a trusted project path for an isolated worktree.
+ * Best-effort append of an explicitly untrusted project path for an isolated
+ * worktree.
  * Codex project trust is path-exact; workers spawn outside the scratch
- * workspace so each worktree must be registered or the pane stalls on a trust
- * modal and the dispatch fails as "awaiting operator input".
+ * workspace so each worktree must be registered to skip both the trust modal
+ * and project-local config/hooks without granting that repository code trust.
  */
 export function trustRealMissionCodexProjectPath(
   userData: string,
@@ -50,7 +51,7 @@ export function trustRealMissionCodexProjectPath(
   const escaped = canonicalProject.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
   const header = `[projects."${escaped}"]`;
   if (existing.includes(header)) return;
-  const block = `\n${header}\ntrust_level = "trusted"\n`;
+  const block = `\n${header}\ntrust_level = "untrusted"\n`;
   fs.appendFileSync(configPath, block, { mode: PRIVATE_FILE_MODE });
   try {
     fs.chmodSync(configPath, PRIVATE_FILE_MODE);
@@ -85,24 +86,32 @@ export function stageRealMissionCodexTrust(
   try {
     fileDescriptor = fs.openSync(configPath, 'wx', PRIVATE_FILE_MODE);
     didCreate = true;
-    // Worker dispatch uses isolated worktrees under project-runtime/. Trusting
-    // only the scratch workspace leaves the worker on Codex's "trust this
-    // project?" modal → pane not injectable → "awaiting operator input" and
-    // dispatch blocked without handoff. Trust the disposable tree roots that
-    // contain every later worktree path. Keep approval defaults alone here —
+    // Worker dispatch uses isolated worktrees under project-runtime/. Register
+    // the disposable roots as untrusted: this resolves the project decision
+    // without loading repository-owned config, hooks or rules. Keep approval
+    // defaults alone here —
     // overriding approval_policy/sandbox_mode in config broke kickoff idle
-    // detection in the release gate.
+    // detection in the release gate. Disable optional app/plugin discovery in
+    // this disposable harness so a missing third-party OAuth session cannot
+    // block the local Nexus MCP and worker proof.
     const projectRuntime = path.join(canonicalUserData, 'project-runtime');
     const config = stringify({
+      features: {
+        apps: false,
+        hooks: false,
+        multi_agent: false,
+        plugins: false,
+        remote_plugin: false,
+      },
       projects: {
         [canonicalUserData]: {
-          trust_level: 'trusted',
+          trust_level: 'untrusted',
         },
         [canonicalWorkspace]: {
-          trust_level: 'trusted',
+          trust_level: 'untrusted',
         },
         [projectRuntime]: {
-          trust_level: 'trusted',
+          trust_level: 'untrusted',
         },
       },
     });

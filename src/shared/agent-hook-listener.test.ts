@@ -56,6 +56,7 @@ describe('shared agent-hook-listener', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
+    vi.restoreAllMocks()
   })
 
   it('parses form-encoded bodies', () => {

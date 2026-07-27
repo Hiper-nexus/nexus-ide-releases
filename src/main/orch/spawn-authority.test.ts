@@ -74,6 +74,34 @@ describe("spawn authority resolution", () => {
     ).toThrow(/unknown or expired/);
   });
 
+  it("refuses an immediate grant when a worker is the first agent but no Maestro exists", () => {
+    const owner = {
+      id: 7,
+      isDestroyed: () => false,
+    } as unknown as WebContents;
+    const workerOnly: Squad = {
+      ...squad,
+      agents: [
+        {
+          ...squad.agents[0]!,
+          id: "worker",
+          agentName: "Executor",
+          category: "executor",
+        },
+      ],
+    };
+
+    expect(() =>
+      issueImmediateSquadSpawnGrant({
+        owner,
+        scope: testProjectScope(),
+        squad: workerOnly,
+        runtime: immediateRuntime,
+        now: 900,
+      }),
+    ).toThrow(/without an orchestrator/);
+  });
+
   it("keeps a trusted pending binding unchanged", () => {
     const pending = {
       missionId: "mission-a",
@@ -139,9 +167,7 @@ describe("spawn authority resolution", () => {
         null,
         grant?.authority ?? null,
       ),
-    ).toBe(
-      grant?.authority,
-    );
+    ).toBe(grant?.authority);
     expect(
       consumeImmediateSquadSpawnGrant({
         requestId: token,
@@ -295,9 +321,7 @@ describe("spawn authority resolution", () => {
             ...reviewedSquad,
             nativeInstructions: "Changed after confirmation.",
             agents: reviewedSquad.agents.map((agent) =>
-              agent.id === "worker"
-                ? { ...agent, model: "gpt-5.5" }
-                : agent,
+              agent.id === "worker" ? { ...agent, model: "gpt-5.5" } : agent,
             ),
           },
         ],
@@ -548,7 +572,9 @@ describe("spawn authority resolution", () => {
   it("binds task filesystem authority to an external worktree without changing mission coordinates", () => {
     const coordinationRoot = tempProject();
     const worktreeRoot = tempProject();
-    const coordinationScope = testProjectScope({ rootRealPath: coordinationRoot });
+    const coordinationScope = testProjectScope({
+      rootRealPath: coordinationRoot,
+    });
     const executionScope = { ...coordinationScope, rootRealPath: worktreeRoot };
 
     const authority = bindSpawnAuthority({
@@ -574,25 +600,29 @@ describe("spawn authority resolution", () => {
   it("rejects a worktree carrying different project coordinates", () => {
     const coordinationRoot = tempProject();
     const worktreeRoot = tempProject();
-    const coordinationScope = testProjectScope({ rootRealPath: coordinationRoot });
-    expect(() => bindSpawnAuthority({
-      requestId: "orchspawn-worktree",
-      pending: {
-        missionId: "mission-a",
-        role: "worker",
-        allowedTools: [],
-        scope: coordinationScope,
-        executionScope: {
-          ...coordinationScope,
-          projectId: "other-project",
-          rootRealPath: worktreeRoot,
+    const coordinationScope = testProjectScope({
+      rootRealPath: coordinationRoot,
+    });
+    expect(() =>
+      bindSpawnAuthority({
+        requestId: "orchspawn-worktree",
+        pending: {
+          missionId: "mission-a",
+          role: "worker",
+          allowedTools: [],
+          scope: coordinationScope,
+          executionScope: {
+            ...coordinationScope,
+            projectId: "other-project",
+            rootRealPath: worktreeRoot,
+          },
+          requestedCwd: worktreeRoot,
         },
-        requestedCwd: worktreeRoot,
-      },
-      squads: [squad],
-      persistedPane: null,
-      trustedUserScope: null,
-    })).toThrow(/execution scope differs/i);
+        squads: [squad],
+        persistedPane: null,
+        trustedUserScope: null,
+      }),
+    ).toThrow(/execution scope differs/i);
   });
 
   it("rejects direct, pending and persisted spawns that have no trusted project scope", () => {

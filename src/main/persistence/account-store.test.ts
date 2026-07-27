@@ -20,6 +20,7 @@ const deps = vi.hoisted(() => ({
   calls: [] as string[],
   /** Blobs escritos no Keychain nativo, em ordem. */
   keychainWrites: [] as string[],
+  cachedSecrets: new Set<string>(),
   activeEmail: null as string | null,
   keychain: null as string | null,
   needsRefresh: vi.fn(
@@ -43,13 +44,20 @@ function oauthBlob(accessToken: string): string {
 vi.mock('./secrets-store', () => ({
   deleteSecret: (key: string) => {
     deps.secrets.delete(key);
+    deps.cachedSecrets.delete(key);
     return { ok: true };
   },
-  getSecret: (key: string) => deps.secrets.get(key) ?? null,
+  getSecret: (key: string) => {
+    const value = deps.secrets.get(key) ?? null;
+    if (value !== null) deps.cachedSecrets.add(key);
+    return value;
+  },
+  hasCachedSecret: (key: string) => deps.cachedSecrets.has(key),
   hasSecret: (key: string) => deps.secrets.has(key),
   setSecret: (key: string, value: string) => {
     deps.calls.push(`setSecret:${key}`);
     deps.secrets.set(key, value);
+    deps.cachedSecrets.add(key);
     return { ok: true };
   },
 }));
@@ -129,6 +137,7 @@ beforeEach(() => {
   openDb = makeDb();
   initAccountStore(openDb);
   deps.secrets.clear();
+  deps.cachedSecrets.clear();
   deps.calls.length = 0;
   deps.keychainWrites.length = 0;
   deps.activeEmail = null;
@@ -209,7 +218,7 @@ describe('read-back Keychain → vault (linhagem Claude nativa)', () => {
     expect(deps.keychainWrites).toEqual([oauthBlob('b-live')]);
   });
 
-  it('sweeper faz o read-back da conta nativa SEM rotacionar a linhagem nativa', () => {
+  it('sweeper não faz read-back implícito da conta nativa', async () => {
     const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-old'));
     deps.secrets.set(`acctcred:${a.id}`, oauthBlob('a-stale'));
     deps.activeEmail = 'a@example.test';
@@ -217,11 +226,28 @@ describe('read-back Keychain → vault (linhagem Claude nativa)', () => {
 
     const stop = startClaudeSubscriptionFreshness(60_000);
     try {
-      // O tick inicial já sincroniza o vault a partir do Keychain…
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // O sweeper nunca consulta/escreve a linhagem nativa. O read-back fica
+      // restrito aos fluxos explícitos de ativação/spawn.
       expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(
-        oauthBlob('a-fresh-rotated'),
+        oauthBlob('a-stale'),
       );
-      // …mas o skip da conta nativa para REFRESH permanece: nunca rotacionar.
+      expect(deps.needsRefresh).not.toHaveBeenCalled();
+      expect(deps.refreshBlob).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
+  });
+
+  it('cold boot ignora credencial ainda não desbloqueada no cache', async () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-old'));
+    deps.cachedSecrets.delete(`acctcred:${a.id}`);
+    deps.activeEmail = 'someone-else@example.test';
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-a-old' });
+
+    const stop = startClaudeSubscriptionFreshness(60_000);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(deps.needsRefresh).not.toHaveBeenCalled();
       expect(deps.refreshBlob).not.toHaveBeenCalled();
     } finally {

@@ -5,6 +5,7 @@ import {
 import {
   ScopedStoreBinding,
   ScopedStoreCorruptionError,
+  type ScopeCoordinates,
 } from "./scoped-store";
 import {
   taskDispatchIdSchema,
@@ -15,23 +16,30 @@ import {
   getTaskDispatchFromDatabase,
   type TaskDispatchDatabase,
 } from "./task-dispatch-persistence";
+import {
+  assertPhysicalTaskHandoffAuthority,
+  type PhysicalTaskHandoffAuthority,
+} from "./task-dispatch-physical-handoff-authority";
 
 const EFFECT_AUTHORITY_INTENT_STATES = new Set([
   "dispatched",
   "executing",
   "validating",
 ]);
+const SUCCESS_HANDOFF_REPLAY_STATES = new Set([
+  "handoff_ready",
+  "merging",
+  "completed",
+]);
 
-/**
- * One exact approved intent revision is the durable authority for dispatcher
- * effects. Call this inside the same SQLite transaction that mutates a
- * dispatch row or persists a receipt.
- */
-export function assertTaskDispatchMissionLifecycleAuthority(
+function readTaskDispatchMissionAuthority(
   db: TaskDispatchDatabase,
   missionId: string,
   expectedIntentVersion: number,
-): void {
+): {
+  readonly status: string;
+  readonly intentState: string;
+} {
   const mission = db
     .prepare(
       `SELECT status, intent_state, intent_version, intent_contract_json
@@ -47,14 +55,6 @@ export function assertTaskDispatchMissionLifecycleAuthority(
     | undefined;
   if (!mission) {
     throw new Error(`autoridade lifecycle ausente: missão ${missionId}`);
-  }
-  if (
-    mission.status !== "running" ||
-    !EFFECT_AUTHORITY_INTENT_STATES.has(mission.intent_state)
-  ) {
-    throw new Error(
-      `autoridade lifecycle revogada: missão=${mission.status}, intent=${mission.intent_state}`,
-    );
   }
   if (mission.intent_version !== expectedIntentVersion) {
     throw new Error(
@@ -83,6 +83,35 @@ export function assertTaskDispatchMissionLifecycleAuthority(
   ) {
     throw new Error("autoridade lifecycle exige contrato aprovado atual");
   }
+  return {
+    status: mission.status,
+    intentState: mission.intent_state,
+  };
+}
+
+/**
+ * One exact approved intent revision is the durable authority for dispatcher
+ * effects. Call this inside the same SQLite transaction that mutates a
+ * dispatch row or persists a receipt.
+ */
+export function assertTaskDispatchMissionLifecycleAuthority(
+  db: TaskDispatchDatabase,
+  missionId: string,
+  expectedIntentVersion: number,
+): void {
+  const mission = readTaskDispatchMissionAuthority(
+    db,
+    missionId,
+    expectedIntentVersion,
+  );
+  if (
+    mission.status !== "running" ||
+    !EFFECT_AUTHORITY_INTENT_STATES.has(mission.intentState)
+  ) {
+    throw new Error(
+      `autoridade lifecycle revogada: missão=${mission.status}, intent=${mission.intentState}`,
+    );
+  }
 }
 
 export interface AcceptTaskDispatchHandoffInput {
@@ -91,91 +120,267 @@ export interface AcceptTaskDispatchHandoffInput {
   readonly handoffId: string;
 }
 
-export function acceptTaskDispatchHandoff(
-  binding: ScopedStoreBinding,
-  input: AcceptTaskDispatchHandoffInput,
+interface CommitTaskDispatchHandoffInput {
+  readonly sessionId: string;
+  readonly workerIncarnationId: string;
+  readonly handoffId: string;
+  readonly outcome: "accept" | "block";
+  readonly detail?: string;
+}
+
+export interface ResolveCommittedTaskDispatchHandoffReplayInput {
+  readonly sessionId: string;
+  readonly workerIncarnationId: string;
+  readonly expectedStatus: "success" | "non-success";
+}
+
+export interface CommittedTaskDispatchHandoffReplay {
+  readonly taskDispatch: TaskDispatchRecord;
+  readonly physicalAuthority: PhysicalTaskHandoffAuthority;
+}
+
+/**
+ * Recognize only a handoff already committed by this exact physical worker.
+ *
+ * `null` means the dispatch is still running and the caller may insert the
+ * first handoff in the same transaction. Every other pre-existing state is
+ * either one exact idempotent replay or a fail-closed conflict.
+ */
+export function resolveCommittedTaskDispatchHandoffReplayInTransaction(
+  db: TaskDispatchDatabase,
+  coordinates: ScopeCoordinates,
+  input: ResolveCommittedTaskDispatchHandoffReplayInput,
+  now: number,
+): CommittedTaskDispatchHandoffReplay | null {
+  const sessionId = taskDispatchIdSchema.parse(input.sessionId);
+  const workerIncarnationId = taskDispatchIdSchema.parse(
+    input.workerIncarnationId,
+  );
+  const rows = db
+    .prepare(
+      `SELECT task_id, mission_id, intent_version, worker_id, state, handoff_id
+       FROM task_dispatch_queue
+       WHERE session_id = ? AND worker_incarnation_id = ?`,
+    )
+    .all(sessionId, workerIncarnationId) as Array<{
+    readonly task_id: string;
+    readonly mission_id: string;
+    readonly intent_version: number;
+    readonly worker_id: string;
+    readonly state: string;
+    readonly handoff_id: string | null;
+  }>;
+  if (rows.length !== 1) {
+    if (rows.length === 0) {
+      throw new Error(`nenhum dispatch vinculado à sessão ${sessionId}`);
+    }
+    throw new ScopedStoreCorruptionError(
+      "task dispatch physical session identity",
+    );
+  }
+  const row = rows[0]!;
+  if (row.state === "running") {
+    if (row.handoff_id !== null) {
+      throw new ScopedStoreCorruptionError(
+        "running task dispatch with a committed handoff",
+      );
+    }
+    return null;
+  }
+  if (!row.handoff_id) {
+    throw new Error(
+      "handoff replay recusado: dispatch não possui handoff físico vinculado",
+    );
+  }
+
+  const expectedState =
+    input.expectedStatus === "success"
+      ? SUCCESS_HANDOFF_REPLAY_STATES.has(row.state)
+      : row.state === "blocked";
+  if (!expectedState) {
+    throw new Error(
+      `handoff replay recusado: estado ${row.state} diverge do resultado esperado`,
+    );
+  }
+  const mission = readTaskDispatchMissionAuthority(
+    db,
+    row.mission_id,
+    row.intent_version,
+  );
+  const missionStateMatches =
+    input.expectedStatus === "success"
+      ? mission.status === "running" || mission.status === "done"
+      : mission.status === "blocked";
+  if (!missionStateMatches) {
+    throw new Error(
+      `handoff replay recusado: missão ${mission.status} diverge do resultado esperado`,
+    );
+  }
+
+  const physicalAuthority = assertPhysicalTaskHandoffAuthority(
+    db,
+    coordinates,
+    {
+      missionId: row.mission_id,
+      handoffId: row.handoff_id,
+      sessionId,
+      workerIncarnationId,
+      workerId: row.worker_id,
+      noLaterThan: now,
+      requireCorrelatedAuditIntent: true,
+      expectedStatus: input.expectedStatus,
+    },
+  );
+  const taskDispatch = getTaskDispatchFromDatabase(
+    db,
+    row.task_id,
+    coordinates,
+  );
+  if (!taskDispatch) {
+    throw new Error("dispatch desapareceu durante replay do handoff");
+  }
+  return { taskDispatch, physicalAuthority };
+}
+
+/**
+ * Canonical SQLite port for binding a physical handoff to its dispatch.
+ *
+ * The caller may already own a wider transaction (the physical handoff
+ * insert) or may wrap this function in one. Receipt, correlated audit intent,
+ * dispatch CAS and terminal task/mission effects are therefore always proved
+ * and committed as one SQLite unit.
+ */
+export function commitTaskDispatchHandoffInTransaction(
+  db: TaskDispatchDatabase,
+  coordinates: ScopeCoordinates,
+  input: CommitTaskDispatchHandoffInput,
+  now: number,
 ): TaskDispatchRecord {
   const sessionId = taskDispatchIdSchema.parse(input.sessionId);
   const workerIncarnationId = taskDispatchIdSchema.parse(
     input.workerIncarnationId,
   );
   const handoffId = taskDispatchIdSchema.parse(input.handoffId);
-  const db = binding.writeDatabase();
-  const now = binding.now();
-  const record = db
-    .transaction(() => {
-      const row = db
-        .prepare(
-          `SELECT dispatch.task_id, dispatch.mission_id,
-                  dispatch.intent_version, dispatch.revision
+  const row = db
+    .prepare(
+      `SELECT dispatch.task_id, dispatch.mission_id,
+                  dispatch.intent_version, dispatch.revision,
+                  dispatch.worker_id
          FROM task_dispatch_queue AS dispatch
          WHERE dispatch.session_id = ?
            AND dispatch.worker_incarnation_id = ?
            AND dispatch.state = 'running'`,
-        )
-        .get(sessionId, workerIncarnationId) as
-        | {
-            task_id: string;
-            mission_id: string;
-            intent_version: number;
-            revision: number;
-          }
-        | undefined;
-      if (!row) {
-        throw new Error(`nenhum dispatch ativo para a sessão ${sessionId}`);
+    )
+    .get(sessionId, workerIncarnationId) as
+    | {
+        task_id: string;
+        mission_id: string;
+        intent_version: number;
+        revision: number;
+        worker_id: string;
       }
-      assertTaskDispatchMissionLifecycleAuthority(
-        db,
-        row.mission_id,
-        row.intent_version,
-      );
-      const handoff = db
-        .prepare(
-          `SELECT mission_id, session_id, worker_incarnation_id, status
-         FROM handoffs WHERE id = ?`,
-        )
-        .get(handoffId) as
-        | {
-            mission_id: string | null;
-            session_id: string | null;
-            worker_incarnation_id: string | null;
-            status: string;
-          }
-        | undefined;
-      if (
-        !handoff ||
-        handoff.mission_id !== row.mission_id ||
-        handoff.session_id !== sessionId ||
-        handoff.worker_incarnation_id !== workerIncarnationId ||
-        handoff.status !== "success"
-      ) {
-        throw new Error(
-          "handoff não pertence ao dispatch/sessão ou não é success",
-        );
-      }
-      const result = db
-        .prepare(
-          `UPDATE task_dispatch_queue
+    | undefined;
+  if (!row) {
+    throw new Error(`nenhum dispatch ativo para a sessão ${sessionId}`);
+  }
+  assertTaskDispatchMissionLifecycleAuthority(
+    db,
+    row.mission_id,
+    row.intent_version,
+  );
+  assertPhysicalTaskHandoffAuthority(db, coordinates, {
+    missionId: row.mission_id,
+    handoffId,
+    sessionId,
+    workerIncarnationId,
+    workerId: row.worker_id,
+    noLaterThan: now,
+    requireCorrelatedAuditIntent: true,
+    expectedStatus: input.outcome === "accept" ? "success" : "non-success",
+  });
+
+  if (input.outcome === "accept") {
+    const result = db
+      .prepare(
+        `UPDATE task_dispatch_queue
          SET state = 'handoff_ready', handoff_id = ?, revision = revision + 1,
              handoff_accepted_at = ?, updated_at = ?
          WHERE task_id = ? AND revision = ? AND session_id = ?
            AND worker_incarnation_id = ? AND state = 'running'`,
-        )
-        .run(
-          handoffId,
-          now,
-          now,
-          row.task_id,
-          row.revision,
-          sessionId,
-          workerIncarnationId,
-        );
-      if (result.changes !== 1)
-        throw new Error("handoff perdeu CAS do dispatch ativo");
-      return getTaskDispatchFromDatabase(db, row.task_id, binding.coordinates);
-    })
+      )
+      .run(
+        handoffId,
+        now,
+        now,
+        row.task_id,
+        row.revision,
+        sessionId,
+        workerIncarnationId,
+      );
+    if (result.changes !== 1)
+      throw new Error("handoff perdeu CAS do dispatch ativo");
+  } else {
+    if (typeof input.detail !== "string") {
+      throw new Error("block from handoff exige detalhe terminal");
+    }
+    const detail = input.detail.slice(0, 65_536);
+    if (!detail.trim()) {
+      throw new Error("block from handoff exige detalhe terminal");
+    }
+    const updated = db
+      .prepare(
+        `UPDATE task_dispatch_queue
+         SET state = 'blocked', handoff_id = ?, last_error = ?,
+             revision = revision + 1, updated_at = ?
+         WHERE task_id = ? AND revision = ? AND session_id = ?
+           AND worker_incarnation_id = ? AND state = 'running'`,
+      )
+      .run(
+        handoffId,
+        detail,
+        now,
+        row.task_id,
+        row.revision,
+        sessionId,
+        workerIncarnationId,
+      );
+    if (updated.changes !== 1) throw new Error("block perdeu CAS do dispatch");
+    db.prepare(
+      `UPDATE tasks SET status = 'failed', updated_at = ? WHERE id = ?`,
+    ).run(now, row.task_id);
+    blockTaskDispatchMission(db, row.mission_id, detail, now);
+  }
+
+  const record = getTaskDispatchFromDatabase(db, row.task_id, coordinates);
+  if (!record) {
+    throw new Error(
+      input.outcome === "accept"
+        ? "dispatch desapareceu após handoff"
+        : "dispatch desapareceu após block",
+    );
+  }
+  return record;
+}
+
+export function acceptTaskDispatchHandoff(
+  binding: ScopedStoreBinding,
+  input: AcceptTaskDispatchHandoffInput,
+): TaskDispatchRecord {
+  const db = binding.writeDatabase();
+  const now = binding.now();
+  const record = db
+    .transaction(() =>
+      commitTaskDispatchHandoffInTransaction(
+        db,
+        binding.coordinates,
+        {
+          ...input,
+          outcome: "accept",
+        },
+        now,
+      ),
+    )
     .immediate();
-  if (!record) throw new Error("dispatch desapareceu após handoff");
   binding.emitChange();
   return record;
 }
@@ -191,86 +396,21 @@ export function blockTaskDispatchFromHandoff(
   binding: ScopedStoreBinding,
   input: BlockTaskDispatchFromHandoffInput,
 ): TaskDispatchRecord {
-  const sessionId = taskDispatchIdSchema.parse(input.sessionId);
-  const workerIncarnationId = taskDispatchIdSchema.parse(
-    input.workerIncarnationId,
-  );
-  const handoffId = taskDispatchIdSchema.parse(input.handoffId);
-  const detail = input.detail.slice(0, 65_536);
   const now = binding.now();
   const db = binding.writeDatabase();
   const record = db
-    .transaction(() => {
-      const row = db
-        .prepare(
-          `SELECT dispatch.task_id, dispatch.mission_id,
-                  dispatch.intent_version, dispatch.revision
-         FROM task_dispatch_queue AS dispatch
-         WHERE dispatch.session_id = ?
-           AND dispatch.worker_incarnation_id = ?
-           AND dispatch.state = 'running'`,
-        )
-        .get(sessionId, workerIncarnationId) as
-        | {
-            task_id: string;
-            mission_id: string;
-            intent_version: number;
-            revision: number;
-          }
-        | undefined;
-      if (!row)
-        throw new Error(`nenhum dispatch ativo para a sessão ${sessionId}`);
-      assertTaskDispatchMissionLifecycleAuthority(
+    .transaction(() =>
+      commitTaskDispatchHandoffInTransaction(
         db,
-        row.mission_id,
-        row.intent_version,
-      );
-      const handoff = db
-        .prepare(
-          `SELECT mission_id, session_id, worker_incarnation_id
-         FROM handoffs WHERE id = ?`,
-        )
-        .get(handoffId) as
-        | {
-            mission_id: string | null;
-            session_id: string | null;
-            worker_incarnation_id: string | null;
-          }
-        | undefined;
-      if (
-        !handoff ||
-        handoff.mission_id !== row.mission_id ||
-        handoff.session_id !== sessionId ||
-        handoff.worker_incarnation_id !== workerIncarnationId
-      ) {
-        throw new Error("handoff não pertence à encarnação ativa do worker");
-      }
-      const updated = db
-        .prepare(
-          `UPDATE task_dispatch_queue
-         SET state = 'blocked', handoff_id = ?, last_error = ?,
-             revision = revision + 1, updated_at = ?
-         WHERE task_id = ? AND revision = ? AND worker_incarnation_id = ?
-           AND state = 'running'`,
-        )
-        .run(
-          handoffId,
-          detail,
-          now,
-          row.task_id,
-          row.revision,
-          workerIncarnationId,
-        );
-      if (updated.changes !== 1)
-        throw new Error("block perdeu CAS do dispatch");
-      db.prepare(
-        `UPDATE tasks SET status = 'failed', updated_at = ? WHERE id = ?`,
-      ).run(now, row.task_id);
-      blockTaskDispatchMission(db, row.mission_id, detail, now);
-      return getTaskDispatchFromDatabase(db, row.task_id, binding.coordinates);
-    })
+        binding.coordinates,
+        {
+          ...input,
+          outcome: "block",
+        },
+        now,
+      ),
+    )
     .immediate();
-  if (!record) throw new Error("dispatch desapareceu após block");
   binding.emitChange();
   return record;
 }

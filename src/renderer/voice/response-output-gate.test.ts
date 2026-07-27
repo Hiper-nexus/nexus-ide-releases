@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useVoiceStore } from './voice-store';
 import {
   isResponseMuted,
@@ -6,6 +6,11 @@ import {
   stopJarvisSpeech,
   powerOffJarvis,
 } from './response-output-gate';
+import {
+  isJarvisPoweredOff,
+  reactivateJarvisInput,
+  registerJarvisPowerControl,
+} from './jarvis-power-authority';
 
 vi.mock('./voice-playback', () => ({
   stopAllPlayback: vi.fn(),
@@ -30,14 +35,23 @@ vi.mock('./voice-session-state', async () => {
   return {
     livePlayer: { stop: vi.fn() },
     resetPendingRealtimeAudioOut: vi.fn(),
+    setDropRealtimeAudioOut: vi.fn(),
     setRealtimeTurnActive: vi.fn(),
     setSuppressRealtimeAudioOut: vi.fn(),
     turnExecution: new TurnExecutionOwner(),
+    wakeMic: {
+      cancelPassiveWake: vi.fn(),
+      cancelUtterance: vi.fn(),
+      stop: vi.fn(),
+    },
   };
 });
 
 describe('response-output-gate', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    registerJarvisPowerControl(null);
+    reactivateJarvisInput();
     useVoiceStore.setState({
       responseMuted: false,
       status: 'idle',
@@ -47,6 +61,7 @@ describe('response-output-gate', () => {
       nexus: {
         voice: {
           liveInterrupt: vi.fn(async () => ({})),
+          stopWake: vi.fn(),
           liveStop: vi.fn(async () => ({
             enabled: true,
             sessionId: null,
@@ -72,6 +87,11 @@ describe('response-output-gate', () => {
     });
   });
 
+  afterEach(() => {
+    registerJarvisPowerControl(null);
+    reactivateJarvisInput();
+  });
+
   it('toggles mute in the voice store', () => {
     setResponseMuted(true);
     expect(isResponseMuted()).toBe(true);
@@ -89,8 +109,12 @@ describe('response-output-gate', () => {
   });
 
   it('powerOffJarvis stops the live session', async () => {
+    const stopInput = vi.fn();
+    registerJarvisPowerControl({ stopInput });
     await powerOffJarvis();
     expect(window.nexus.voice.liveStop).toHaveBeenCalled();
+    expect(stopInput).toHaveBeenCalledOnce();
+    expect(isJarvisPoweredOff()).toBe(true);
     expect(useVoiceStore.getState().status).toBe('idle');
     expect(useVoiceStore.getState().note).toContain('desligada');
   });
@@ -131,5 +155,26 @@ describe('response-output-gate', () => {
     );
     await powerOffJarvis();
     expect(window.nexus.voice.liveHardTeardown).toHaveBeenCalled();
+  });
+
+  it('powerOffJarvis remains locally off when Live has no owner twice', async () => {
+    vi.mocked(window.nexus.voice.liveStop).mockRejectedValue(
+      new Error('voice live session has no owner'),
+    );
+    vi.mocked(window.nexus.voice.liveHardTeardown).mockRejectedValue(
+      new Error('voice live session has no owner'),
+    );
+    const stopInput = vi.fn();
+    registerJarvisPowerControl({ stopInput });
+
+    await powerOffJarvis();
+    await powerOffJarvis();
+
+    const { wakeMic, setDropRealtimeAudioOut } = await import('./voice-session-state');
+    expect(stopInput).toHaveBeenCalledTimes(2);
+    expect(wakeMic.stop).toHaveBeenCalledTimes(2);
+    expect(setDropRealtimeAudioOut).toHaveBeenLastCalledWith(true);
+    expect(isJarvisPoweredOff()).toBe(true);
+    expect(useVoiceStore.getState().note).toBe('Jarvis desligada');
   });
 });

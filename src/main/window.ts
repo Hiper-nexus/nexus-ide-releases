@@ -2,8 +2,16 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { WINDOW_CHANNELS } from '../shared/channels';
-import { killSessionsFor, liveSessionSummary } from './pty/pty-manager';
-import { closeNeedsConfirmation, isAppQuitAuthorized } from './close-authorization';
+import { killSessionsFor } from './pty/pty-manager';
+import {
+  liveRuntimeProcessSummary,
+  sealRuntimeProcessAdmissionForShutdown,
+} from './runtime-process-inventory';
+import {
+  closeNeedsConfirmation,
+  completeConfirmedWindowClose,
+  isAppQuitAuthorized,
+} from './close-authorization';
 import { isCurrentProcessSmokeTest } from './smoke-core';
 import { RENDERER_PROTOCOL_ENTRY_URL } from './renderer-protocol';
 import {
@@ -15,12 +23,23 @@ import {
   decideRendererLoadWatchdog,
   RENDERER_LOAD_STALL_MS,
 } from './reliability/renderer-load-watchdog';
+import {
+  RENDERER_MOUNT_DEADLINE_MS,
+  RendererMountWatchdog,
+} from './reliability/renderer-mount-watchdog';
+import { RendererBootRecovery } from './reliability/renderer-boot-recovery';
 import { handleRenderProcessGone } from './agent-runtime/agent-runtime-bridge';
 import {
   applyMacOSDockIcon,
   ensureRegularMacOSActivation,
   reassertMacOSDockPresence,
 } from './macos-activation-policy';
+import {
+  bindTrustedMainWindow,
+  isLiveTrustedMainWindowSender,
+} from './security/trusted-ipc';
+
+export { bindTrustedMainWindow } from './security/trusted-ipc';
 
 /**
  * Last-resort recovery screen: if React never mounts after repeated reloads (or
@@ -96,70 +115,6 @@ function buildCsp(devServerUrl: string | undefined): string {
     "frame-src 'none'",
     "frame-ancestors 'none'",
   ].join('; ');
-}
-
-interface TrustedMainWindowRecord {
-  window: BrowserWindow;
-  rendererUrl: string;
-}
-
-const trustedMainWindows = new WeakMap<WebContents, TrustedMainWindowRecord>();
-
-function isExpectedRendererLocation(currentRaw: string, expectedRaw: string): boolean {
-  try {
-    const current = new URL(currentRaw);
-    const expected = new URL(expectedRaw);
-    return (
-      current.username === '' &&
-      current.password === '' &&
-      expected.username === '' &&
-      expected.password === '' &&
-      current.protocol === expected.protocol &&
-      current.host === expected.host
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Binds external-link authority to this exact main-window WebContents.
- * Auxiliary BrowserWindows (pet, OAuth and embedded browser surfaces) never
- * enter this registry, even if one of them can forge the renderer URL.
- */
-export function bindTrustedMainWindow(
-  window: BrowserWindow,
-  rendererUrl: string,
-): void {
-  const contents = window.webContents;
-  trustedMainWindows.set(contents, { window, rendererUrl });
-  contents.once('destroyed', () => {
-    const current = trustedMainWindows.get(contents);
-    if (current?.window === window) trustedMainWindows.delete(contents);
-  });
-}
-
-function isLiveTrustedMainWindowSender(
-  event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>,
-): boolean {
-  const sender = event.sender;
-  const trusted = trustedMainWindows.get(sender);
-  if (!trusted) return false;
-  try {
-    if (
-      trusted.window.isDestroyed() ||
-      sender.isDestroyed() ||
-      sender.isCrashed() ||
-      trusted.window.webContents !== sender ||
-      event.senderFrame !== sender.mainFrame
-    ) {
-      return false;
-    }
-    return isExpectedRendererLocation(sender.getURL(), trusted.rendererUrl);
-  } catch {
-    // Electron getters can throw while a BrowserWindow/WebContents is dying.
-    return false;
-  }
 }
 
 export function handleOpenExternalRequest(
@@ -347,33 +302,59 @@ export function createMainWindow(): BrowserWindow | null {
   // Capture the reference up front: inside the 'destroyed' handler the
   // `win.webContents` getter can already throw "Object has been destroyed".
   const wc = win.webContents;
+  wc.on('preload-error', (_event, preloadPath, error) => {
+    console.error(
+      `[window] preload falhou (${path.basename(preloadPath)}):`,
+      error instanceof Error ? error.message : String(error),
+    );
+  });
 
-  let windowCloseAuthorized = false;
   let windowClosePromptOpen = false;
   win.on('close', (event) => {
-    const summary = liveSessionSummary(wc);
-    if (
-      !closeNeedsConfirmation({
-        sessionCount: summary.total,
-        authorized: windowCloseAuthorized || isAppQuitAuthorized(),
-        smokeTest: isCurrentProcessSmokeTest(),
-      })
-    ) {
+    // This is the sole main application window. Its close decision must cover
+    // the global Main-owned inventory, including headless/detached mission
+    // workers whose presentation owner is intentionally `null`.
+    const summary = liveRuntimeProcessSummary();
+    const authorized = isAppQuitAuthorized();
+    const smokeTest = isCurrentProcessSmokeTest();
+    if (authorized || smokeTest) {
       return;
     }
     event.preventDefault();
     if (windowClosePromptOpen) return;
+    const beginSafeAppShutdown = (): void => {
+      completeConfirmedWindowClose({
+        sealRuntimeAdmission: sealRuntimeProcessAdmissionForShutdown,
+        // app.quit enters Main's fail-closed before-quit lane. It does not
+        // destroy this WebContents until orchestration and every physical
+        // PTY/OMP tree have settled.
+        quitApp: () => app.quit(),
+      });
+    };
+    if (
+      !closeNeedsConfirmation({
+        sessionCount: summary.total,
+        authorized,
+        smokeTest,
+      })
+    ) {
+      // Even a zero snapshot can have queued orchestration. The sole main
+      // window therefore quits without a modal, while synchronously sealing
+      // admission before any queued spawn can run.
+      beginSafeAppShutdown();
+      return;
+    }
     windowClosePromptOpen = true;
     void dialog
       .showMessageBox(win, {
         type: 'warning',
         title: 'Fechar o NexusIDE?',
-        message: `${summary.total} terminal${summary.total === 1 ? '' : 'is'} ainda em execução`,
+        message: `${summary.total} processo${summary.total === 1 ? '' : 's'} ainda em execução`,
         detail:
           summary.busy > 0
-            ? `${summary.busy} ainda estão trabalhando. Fechar a janela encerra esses processos e tarefas.`
-            : 'Fechar a janela encerra os processos desses panes.',
-        buttons: ['Cancelar', 'Fechar e encerrar processos'],
+            ? `${summary.busy} ainda estão trabalhando. Fechar o NexusIDE encerra esses processos e tarefas com confirmação física.`
+            : 'Fechar o NexusIDE encerra com segurança os processos desses panes.',
+        buttons: ['Cancelar', 'Fechar e encerrar processos/tarefas'],
         defaultId: 0,
         cancelId: 0,
         noLink: true,
@@ -381,8 +362,7 @@ export function createMainWindow(): BrowserWindow | null {
       .then(({ response }) => {
         windowClosePromptOpen = false;
         if (response !== 1 || win.isDestroyed()) return;
-        windowCloseAuthorized = true;
-        win.close();
+        beginSafeAppShutdown();
       })
       .catch(() => {
         windowClosePromptOpen = false;
@@ -392,10 +372,14 @@ export function createMainWindow(): BrowserWindow | null {
   // Boot watchdog state, shared by the load + mount phases below.
   let finished = false;
   let mounted = false;
-  let nativeWindowShown = false;
+  let mountPoll: NodeJS.Timeout | null = null;
+  let loadStartedAt = Date.now();
+  let loadFailures = 0;
+  let suppressAbortedLoadUntil = 0;
+  let loadWatchdog: NodeJS.Timeout | null = null;
   const showNativeWindow = (): void => {
-    if (nativeWindowShown || win.isDestroyed()) return;
-    nativeWindowShown = true;
+    if (win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
     win.show();
     // Materialize Dock once the native window is actually shown. Focus only
     // after show resolves so we don't leave a ghost accessory tile.
@@ -410,15 +394,22 @@ export function createMainWindow(): BrowserWindow | null {
         ensureRegularMacOSActivation();
         applyMacOSDockIcon();
         app.focus?.({ steal: true });
-        if (!win.isDestroyed()) win.focus();
+        if (!win.isDestroyed()) {
+          if (!win.isVisible()) win.show();
+          win.focus();
+        }
       })
       .catch((error) => {
         console.warn('[window] macOS Dock activation failed:', error);
-        if (!win.isDestroyed()) win.focus();
+        if (!win.isDestroyed()) {
+          if (!win.isVisible()) win.show();
+          win.focus();
+        }
       });
   };
-  let mountReloads = 0;
-  const MAX_MOUNT_RELOADS = 5;
+  const MAX_BOOT_RECOVERIES = devServerUrl ? 20 : 5;
+  const WATCHDOG_ABORT_GRACE_MS = 1_000;
+  const WATCHDOG_RESTART_DELAY_MS = 100;
   // Sliding-window circuit breaker (ORCA harvest): caps auto-reloads so a
   // deterministic per-load crash cannot spin forever. Manual reload after the
   // recovery screen resets the breaker so the user can try again.
@@ -427,20 +418,69 @@ export function createMainWindow(): BrowserWindow | null {
     maxRecoveries: DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES,
   });
   let recoveryScreenShown = false;
+  const bootRecovery = new RendererBootRecovery({
+    maxRecoveries: MAX_BOOT_RECOVERIES,
+    onExhausted: () => {
+      if (loadWatchdog) {
+        clearInterval(loadWatchdog);
+        loadWatchdog = null;
+      }
+      stopMountMonitoring();
+      showNativeWindow();
+      if (recoveryScreenShown) return;
+      recoveryScreenShown = true;
+      showRecoveryScreen(wc);
+    },
+  });
+  const mountWatchdog = new RendererMountWatchdog(() => {
+    if (win.isDestroyed() || mounted) return;
+    if (mountPoll) {
+      clearInterval(mountPoll);
+      mountPoll = null;
+    }
+    console.warn(
+      `[window] root vazio após ${RENDERER_MOUNT_DEADLINE_MS / 1000}s — recuperação ${bootRecovery.attempts + 1}`,
+    );
+    bootRecovery.schedule(0, () => {
+      if (win.isDestroyed() || mounted) return;
+      finished = false;
+      loadStartedAt = Date.now();
+      wc.reload();
+    });
+  });
+  const stopMountMonitoring = (): void => {
+    mountWatchdog.cancel();
+    if (!mountPoll) return;
+    clearInterval(mountPoll);
+    mountPoll = null;
+  };
+  const commitRendererBoot = (): void => {
+    mounted = true;
+    bootRecovery.rendererCommitted();
+    rendererRecoveryCircuitBreaker.reset();
+    recoveryScreenShown = false;
+    stopMountMonitoring();
+    showNativeWindow();
+  };
 
   // Renderer → main mount signal, fired from a post-commit effect and scoped to
   // THIS window's sender. This — not a console log — is how the mount watchdog
   // knows React actually painted, in dev AND in the packaged app.
   const onMounted = (event: IpcMainEvent) => {
     if (event.sender === wc) {
-      mounted = true;
-      showNativeWindow();
+      commitRendererBoot();
     }
   };
   ipcMain.on(WINDOW_CHANNELS.mounted, onMounted);
   // Capture wc up front: inside 'destroyed' the win.webContents getter can
   // already throw "Object has been destroyed".
   wc.once('destroyed', () => {
+    bootRecovery.dispose();
+    if (loadWatchdog) {
+      clearInterval(loadWatchdog);
+      loadWatchdog = null;
+    }
+    stopMountMonitoring();
     ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
     killSessionsFor(wc);
   });
@@ -470,6 +510,7 @@ export function createMainWindow(): BrowserWindow | null {
   // instead of looping forever.
   wc.on('render-process-gone', (_e, details) => {
     console.warn('[window] renderer morreu:', details.reason);
+    stopMountMonitoring();
     const decision = handleRenderProcessGone({
       details: {
         reason: details.reason,
@@ -481,12 +522,17 @@ export function createMainWindow(): BrowserWindow | null {
     });
     if (win.isDestroyed()) return;
     if (decision.showRecoveryScreen) {
+      bootRecovery.halt();
       showNativeWindow();
       recoveryScreenShown = true;
       showRecoveryScreen(wc);
       return;
     }
     if (decision.reload) {
+      finished = false;
+      mounted = false;
+      loadStartedAt = Date.now();
+      stopMountMonitoring();
       win.reload();
     }
   });
@@ -497,35 +543,30 @@ export function createMainWindow(): BrowserWindow | null {
   // O load pode disparar ANTES do dev server do Vite aceitar conexões (a
   // janela abria preta e exigia fechar/reabrir). Auto-retry até carregar; o
   // backoff curto cobre o boot do Vite sem atrasar o caso saudável.
-  let loadRetries = 0;
-  let loadStartedAt = Date.now();
-  let suppressAbortedLoadUntil = 0;
-  const MAX_LOAD_RETRIES = 20;
-  const WATCHDOG_ABORT_GRACE_MS = 1_000;
-  const WATCHDOG_RESTART_DELAY_MS = 100;
   const load = () => {
+    if (win.isDestroyed() || bootRecovery.isStopped) return;
     // Rejeições são esperadas durante o boot do Vite (ERR_ABORTED em reload
     // concorrente) — o watchdog cuida do retry; nunca deixar virar unhandled.
+    finished = false;
+    mounted = false;
     loadStartedAt = Date.now();
+    stopMountMonitoring();
+    bootRecovery.beginNavigation();
     win.loadURL(rendererUrl).catch((err) => {
       console.warn('[window] load failed:', err);
     });
   };
-  wc.on('did-fail-load', (_e, code, desc) => {
+  wc.on('did-fail-load', (_e, code, desc, _validatedUrl, isMainFrame) => {
     if (win.isDestroyed()) return;
+    if (!isMainFrame) return;
     if (code === -3 && Date.now() < suppressAbortedLoadUntil) return;
-    loadRetries += 1;
-    if (loadRetries > MAX_LOAD_RETRIES) {
-      console.error(
-        `[window] load falhou ${MAX_LOAD_RETRIES}x (${code} ${desc}) — desistindo do retry automático`,
-      );
-      return;
-    }
-    console.warn(`[window] load falhou (${code} ${desc}) — retry ${loadRetries}`);
-    // Backoff simples: 400ms crescendo com o número de tentativas, teto 5s.
-    setTimeout(() => {
-      if (!win.isDestroyed()) load();
-    }, Math.min(400 * loadRetries, 5_000));
+    loadFailures += 1;
+    console.warn(
+      `[window] load falhou (${code} ${desc}) — recuperação ${bootRecovery.attempts + 1}`,
+    );
+    // Um único retry generation-bound: falhas atrasadas de uma navegação
+    // anterior nunca recarregam um renderer que já ficou saudável.
+    bootRecovery.schedule(Math.min(400 * loadFailures, 5_000), load);
   });
   // Watchdog em DUAS fases. Fase 1 (load): cobre falha sem did-fail-load
   // (conexão pendurada, Vite frio, localhost→IPv4 com servidor só em ::1).
@@ -535,50 +576,57 @@ export function createMainWindow(): BrowserWindow | null {
   // CARREGANDO (Vite frio transformando o grafo, máquina ocupada): a tela
   // pintava e era recarregada em seguida, em loop — o bug das "várias
   // piscadas" na tela inicial/onboarding. Agora a fase 2 faz polling: #root
-  // com conteúdo conta como montado mesmo que o sinal IPC se perca, e o
-  // reload só acontece se o root continuar VAZIO por ~20s (janela morta de
-  // verdade). Após MAX, tela de recuperação.
-  const watchdog = setInterval(() => {
-    if (win.isDestroyed()) {
-      clearInterval(watchdog);
-      return;
-    }
-    const action = decideRendererLoadWatchdog({
-      isFinished: finished,
-      isLoading: wc.isLoading(),
-      loadAgeMs: Date.now() - loadStartedAt,
-    });
-    if (action === 'wait') return;
-    if (action === 'restart-stalled-load') {
-      console.warn(
-        `[window] renderer travado por ${RENDERER_LOAD_STALL_MS / 1000}s — reiniciando carga`,
-      );
-      suppressAbortedLoadUntil = Date.now() + WATCHDOG_ABORT_GRACE_MS;
-      wc.stop();
-      setTimeout(() => {
-        if (!win.isDestroyed() && !finished) load();
-      }, WATCHDOG_RESTART_DELAY_MS);
-      return;
-    }
-    console.warn('[window] renderer sem navegação ativa — tentando novamente');
-    load();
-  }, 3_000);
+  // com conteúdo conta como montado mesmo que o sinal IPC se perca. O deadline
+  // de mount vive no Main, independente do executeJavaScript: mesmo um loop
+  // síncrono no React que congele completamente o renderer chega à recuperação
+  // após 20s. Após MAX, tela de recuperação.
+  const startLoadWatchdog = (): void => {
+    if (loadWatchdog || win.isDestroyed()) return;
+    loadWatchdog = setInterval(() => {
+      if (win.isDestroyed()) {
+        if (loadWatchdog) clearInterval(loadWatchdog);
+        loadWatchdog = null;
+        return;
+      }
+      // Exhaustion is terminal until an explicit manual retry starts a new
+      // main-frame navigation from the recovery screen.
+      if (bootRecovery.isStopped) return;
+      const action = decideRendererLoadWatchdog({
+        isFinished: finished,
+        isLoading: wc.isLoading(),
+        loadAgeMs: Date.now() - loadStartedAt,
+      });
+      if (action === 'wait') return;
+      if (action === 'restart-stalled-load') {
+        console.warn(
+          `[window] renderer travado por ${RENDERER_LOAD_STALL_MS / 1000}s — reiniciando carga`,
+        );
+        const scheduled = bootRecovery.schedule(
+          WATCHDOG_RESTART_DELAY_MS,
+          load,
+        );
+        if (scheduled) {
+          suppressAbortedLoadUntil = Date.now() + WATCHDOG_ABORT_GRACE_MS;
+          wc.stop();
+        }
+        return;
+      }
+      console.warn('[window] renderer sem navegação ativa — tentando novamente');
+      bootRecovery.schedule(WATCHDOG_RESTART_DELAY_MS, load);
+    }, 3_000);
+  };
   const MOUNT_POLL_MS = 2_000;
-  const MOUNT_EMPTY_CHECKS = 10; // ~20s de root vazio antes de recarregar
-  let mountPoll: NodeJS.Timeout | null = null;
   wc.on('did-finish-load', () => {
     finished = true;
-    loadRetries = 0;
-    clearInterval(watchdog);
-    // User clicked "Recarregar" on the recovery screen (or otherwise reloaded
-    // after the breaker opened). Clear history so a new recovery budget applies.
-    if (recoveryScreenShown) {
-      rendererRecoveryCircuitBreaker.reset();
-      recoveryScreenShown = false;
-    }
+    loadFailures = 0;
+    bootRecovery.cancelPending();
+    stopMountMonitoring();
     console.log('[window] renderer carregado');
-    if (mountPoll) clearInterval(mountPoll);
-    let emptyChecks = 0;
+    // A fast renderer can commit before the top-level load event reaches Main.
+    // onMounted already showed the window and cancelled monitoring in that case.
+    if (mounted) return;
+    mountWatchdog.arm();
+    let devDiagnosticsCaptured = false;
     const poll = setInterval(() => {
       if (win.isDestroyed() || mounted) {
         clearInterval(poll);
@@ -591,27 +639,50 @@ export function createMainWindow(): BrowserWindow | null {
           // Resposta atrasada de um load anterior não decide pelo atual.
           if (win.isDestroyed() || mounted || mountPoll !== poll) return;
           if (hasContent) {
-            mounted = true;
-            showNativeWindow();
-            clearInterval(poll);
+            commitRendererBoot();
             return;
           }
-          emptyChecks += 1;
-          if (emptyChecks < MOUNT_EMPTY_CHECKS) return;
-          clearInterval(poll);
-          if (mountReloads >= MAX_MOUNT_RELOADS) {
-            // Same recovery surface as crash-loop exhaustion; mark so the next
-            // did-finish-load (user "Recarregar") resets the crash breaker too.
-            showNativeWindow();
-            recoveryScreenShown = true;
-            showRecoveryScreen(wc);
-            return;
+          if (devServerUrl && !devDiagnosticsCaptured) {
+            devDiagnosticsCaptured = true;
+            void wc
+              .executeJavaScript(
+                `JSON.stringify({
+                readyState: document.readyState,
+                nexus: typeof window.nexus,
+                rootChildren:
+                  document.getElementById("root")?.childElementCount ?? null,
+                overlay:
+                  document
+                    .querySelector("vite-error-overlay")
+                    ?.shadowRoot?.textContent?.trim()
+                    .slice(0, 2048) ?? null,
+                failedResources: performance
+                  .getEntriesByType("resource")
+                  .map((entry) => ({
+                    name: (() => {
+                      try { return new URL(entry.name).pathname; }
+                      catch { return "[invalid-url]"; }
+                    })(),
+                    status:
+                      "responseStatus" in entry ? entry.responseStatus : null,
+                  }))
+                  .filter((entry) =>
+                    typeof entry.status === "number" && entry.status >= 400
+                  )
+                  .slice(0, 20),
+              })`,
+              )
+              .then((diagnostics) => {
+                if (!win.isDestroyed()) {
+                  console.warn(
+                    `[window] diagnóstico root vazio (dev): ${diagnostics}`,
+                  );
+                }
+              })
+              .catch(() => {
+                // Navigation or renderer teardown raced the diagnostic probe.
+              });
           }
-          mountReloads += 1;
-          console.warn(
-            `[window] root vazio após ${(MOUNT_POLL_MS * MOUNT_EMPTY_CHECKS) / 1000}s — reload ${mountReloads}`,
-          );
-          wc.reload();
         })
         .catch(() => {
           // Página em transição (navegação/reload em curso) — a próxima
@@ -620,13 +691,23 @@ export function createMainWindow(): BrowserWindow | null {
     }, MOUNT_POLL_MS);
     mountPoll = poll;
   });
-  wc.on('did-start-loading', () => {
-    mounted = false;
-    if (mountPoll) {
-      clearInterval(mountPoll);
-      mountPoll = null;
+  wc.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return;
+    // A única navegação possível depois da tela injetada é o clique explícito
+    // em "Recarregar". Isso abre um novo budget; eventos automáticos não.
+    const manualRetry = recoveryScreenShown;
+    if (manualRetry) {
+      rendererRecoveryCircuitBreaker.reset();
+      recoveryScreenShown = false;
     }
+    bootRecovery.beginNavigation({ manualRetry });
+    finished = false;
+    mounted = false;
+    loadStartedAt = Date.now();
+    stopMountMonitoring();
+    startLoadWatchdog();
   });
+  startLoadWatchdog();
   load();
 
   return win;

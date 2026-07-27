@@ -51,7 +51,11 @@ vi.mock('electron', () => ({
 
 vi.mock('./pty/pty-manager', () => ({
   killSessionsFor: vi.fn(),
-  liveSessionSummary: vi.fn(() => ({ total: 0, busy: 0 })),
+}));
+
+vi.mock('./runtime-process-inventory', () => ({
+  liveRuntimeProcessSummary: vi.fn(() => ({ total: 0, busy: 0 })),
+  sealRuntimeProcessAdmissionForShutdown: vi.fn(),
 }));
 
 vi.mock('./agent-runtime/agent-runtime-bridge', () => ({

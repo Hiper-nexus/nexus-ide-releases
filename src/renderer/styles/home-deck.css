@@ -32,20 +32,9 @@
   z-index: 30; /* above panes, below the side columns + wizard/drawers */
   display: grid;
   place-items: center;
-  /* Scrim sólido (sem blur/glassmorphism) + grade pixel sutil: a identidade
-     "mission control" aparece no default, não só no pixel-mode. */
-  background:
-    repeating-linear-gradient(
-      0deg,
-      var(--pixel-grid) 0 1px,
-      transparent 1px 24px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      var(--pixel-grid) 0 1px,
-      transparent 1px 24px
-    ),
-    color-mix(in srgb, var(--bg) 88%, transparent);
+  /* Continuous workspace surface: hierarchy comes from spacing and rules,
+     without a decorative grid or a floating “AI card”. */
+  background: color-mix(in srgb, var(--bg) 96%, var(--bg-elevated));
   border-radius: var(--radius);
 }
 
@@ -53,7 +42,8 @@
    laterais ficam ACIMA do overlay para continuarem clicáveis — o usuário pode
    sempre abrir uma missão pelo rail ou um arquivo sem antes dispensar o Home. */
 .app__body > .mission-rail,
-.app__body > .files {
+.app__body > .files,
+.app__body > .ctx-panel {
   position: relative;
   z-index: 31;
 }
@@ -65,19 +55,11 @@
   width: min(820px, calc(100% - 48px));
   max-height: calc(100% - 48px);
   overflow-y: auto;
-  /* Luz vinda de cima: um sopro de acento no topo dá dimensão sem virar
-     gradiente decorativo. */
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) 4%, var(--bg-elevated)) 0%,
-    var(--bg-elevated) 220px
-  );
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xl);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   padding: var(--space-6);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.045),
-    var(--shadow-3);
+  box-shadow: none;
   animation: home-deck-rise 180ms var(--ease-out-expo);
 }
 
@@ -163,7 +145,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-4);
-  margin: var(--space-4) 0 var(--space-5);
+  margin: var(--space-4) 0 0;
 }
 
 .home-deck__stat {
@@ -306,6 +288,7 @@
   border-color: var(--accent);
 }
 
+.home-deck__cta:disabled,
 .home-deck__btn:disabled {
   opacity: 0.55;
   cursor: default;
@@ -318,8 +301,54 @@
   line-height: 1.45;
 }
 
+.home-deck__advanced {
+  margin-top: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.home-deck__advanced > summary {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-1) var(--space-3);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  list-style: none;
+}
+
+.home-deck__advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.home-deck__advanced > summary::before {
+  content: "›";
+  color: var(--accent);
+  transform: rotate(0deg);
+  transition: transform 120ms var(--ease-out-quart);
+}
+
+.home-deck__advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.home-deck__advanced > summary:hover {
+  color: var(--text);
+}
+
+.home-deck__advanced > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.home-deck__advanced[open] {
+  padding-bottom: var(--space-4);
+}
+
 .home-deck__squads {
-  margin-top: var(--space-5);
+  margin-top: var(--space-4);
 }
 
 .home-deck__section-title {
@@ -524,6 +553,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .home-deck__advanced > summary::before,
   .home-deck__cta,
   .home-deck__btn,
   .home-deck__squad,

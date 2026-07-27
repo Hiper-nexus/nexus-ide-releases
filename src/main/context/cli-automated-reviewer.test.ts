@@ -80,6 +80,119 @@ describe('CLI automated reviewer', () => {
     );
   });
 
+  it('provisions and binds one real render pane before a design reviewer starts', async () => {
+    const { sessions, input, scope } = fixture();
+    const designInput = {
+      ...input,
+      contract: {
+        ...input.contract,
+        requiredSensors: Object.freeze(['design-system']),
+      },
+    };
+    const closeDesignSurface = vi.fn(async () => undefined);
+    const prepareDesignSurface = vi.fn(async (prepared: {
+      reviewSessionId: string;
+      missionId: string;
+      scope: typeof scope;
+      executionScope: typeof scope;
+    }) => ({
+      paneId: 'browser-review',
+      previewId: 'preview-review',
+      url: 'http://127.0.0.1:1234/',
+      missionId: prepared.missionId,
+      scope: prepared.scope,
+      executionScope: prepared.executionScope,
+    }));
+    const spawn = vi.fn(async (options: SpawnToolOptions) => {
+      const match = options.prompt?.match(/"reviewSessionId":"([^"]+)"/);
+      if (!match) throw new Error('review session missing from prompt');
+      sessions.recordDesignInspection(
+        match[1],
+        'session-review',
+        'browser-review',
+        'read',
+      );
+      sessions.recordDesignInspection(
+        match[1],
+        'session-review',
+        'browser-review',
+        'screenshot',
+      );
+      sessions.submit(match[1], {
+        id: 'reviewer-claude-1',
+        sessionId: 'session-review',
+        provider: 'claude',
+        missionId: 'mission-a',
+        checkoutPath: '/candidate',
+      }, []);
+      return { paneId: 'pane-review', sessionId: 'session-review' };
+    });
+    const reviewer = new CliAutomatedReviewer({
+      sessions,
+      selectRoutes: () => [{ adapterId: 'claude' }],
+      spawn,
+      close: () => true,
+      prepareDesignSurface,
+      closeDesignSurface,
+      timeoutMs: 100,
+    });
+
+    await expect(reviewer.run(designInput)).resolves.toMatchObject({ ready: true });
+    expect(prepareDesignSurface).toHaveBeenCalledWith(
+      expect.objectContaining({
+        missionId: 'mission-a',
+        executionScope: expect.objectContaining({ rootRealPath: '/candidate' }),
+      }),
+    );
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowedTools: expect.arrayContaining([
+          'nexus_browser_read',
+          'nexus_browser_screenshot',
+        ]),
+        allowedSkills: expect.arrayContaining(['impeccable']),
+        prompt: expect.stringContaining(
+          'Main-provisioned browser paneId: browser-review',
+        ),
+      }),
+      expect.any(Object),
+    );
+    expect(
+      (spawn.mock.calls[0]?.[0] as SpawnToolOptions).prompt,
+    ).toContain('Approved local preview: http://127.0.0.1:1234/');
+    expect(closeDesignSurface).toHaveBeenCalledWith(
+      expect.objectContaining({ paneId: 'browser-review' }),
+    );
+  });
+
+  it('fails closed before spawning when a design render cannot be provisioned', async () => {
+    const { sessions, input } = fixture();
+    const spawn = vi.fn();
+    const closeDesignSurface = vi.fn();
+    const reviewer = new CliAutomatedReviewer({
+      sessions,
+      selectRoutes: () => [{ adapterId: 'claude' }],
+      spawn,
+      close: () => true,
+      prepareDesignSurface: async () => {
+        throw new Error('exactly one Nexus-owned local preview; found 0');
+      },
+      closeDesignSurface,
+    });
+
+    await expect(
+      reviewer.run({
+        ...input,
+        contract: {
+          ...input.contract,
+          requiredSensors: Object.freeze(['design-system']),
+        },
+      }),
+    ).rejects.toThrow(/exactly one Nexus-owned local preview/i);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(closeDesignSurface).not.toHaveBeenCalled();
+  });
+
   it('does not spawn after authority is revoked during deferred route selection', async () => {
     const { sessions, input } = fixture();
     const routes = deferred<readonly [{ readonly adapterId: string }]>();

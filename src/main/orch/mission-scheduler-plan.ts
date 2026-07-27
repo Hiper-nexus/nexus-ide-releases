@@ -1,18 +1,33 @@
 import type { AgentCategory } from '../../shared/orch-types';
-import type { PlannedTaskRecord, TaskPlanAgentSnapshot } from './task-store';
+import type { TaskPlanAgentSnapshot } from './task-store';
 import {
   classifyTask,
   resolveRoutableModel,
   type RouteDecision,
 } from './task-router';
 import type { TaskScheduleMeta } from './mission-scheduler-meta';
+import {
+  parseGuidedTaskKind,
+  type GuidedTaskKind,
+} from './guided-task-kind';
 
 export type PlannedExecutionMode = 'isolated_worktree' | 'read_only';
 
-const MECHANICALLY_READ_ONLY_CLIS = new Set(['codex', 'glm', 'longcat']);
+const MECHANICALLY_READ_ONLY_CLIS = new Set(['codex']);
+const MECHANICALLY_WORKSPACE_WRITE_CLIS = new Set(['codex']);
 
 export function supportsMechanicallyReadOnlyCli(adapterId: string): boolean {
   return MECHANICALLY_READ_ONLY_CLIS.has(adapterId);
+}
+
+/**
+ * Id-level backstop for sealed task/claim authority. Live builtin origin and
+ * the exact adapter argv declaration are rechecked again before process spawn.
+ */
+export function supportsMechanicallyWorkspaceWriteCli(
+  adapterId: string,
+): boolean {
+  return MECHANICALLY_WORKSPACE_WRITE_CLIS.has(adapterId);
 }
 
 export interface SealedWorkerRoute {
@@ -140,17 +155,30 @@ export function resolveSealedWorkerRoute(input: {
 }
 
 /** Fail closed if mutable task metadata diverges from the sealed receipt. */
-export function assertSealedTaskSchedule(
-  planned: Pick<
-    PlannedTaskRecord,
-    'taskId' | 'agentRef' | 'agentCategory' | 'plannedTitle' | 'plannedDetail' | 'task'
-  >,
-  meta: TaskScheduleMeta | null,
-): asserts meta is TaskScheduleMeta & {
+export interface SealedTaskScheduleInput {
+  readonly plannerId: string;
+  readonly taskId: string;
+  readonly agentRef: string;
+  readonly agentCategory: AgentCategory;
+  readonly plannedTitle: string;
+  readonly plannedDetail: string;
+  readonly task: {
+    readonly title: string;
+    readonly detail: string;
+  };
+}
+
+export type SealedTaskSchedule = TaskScheduleMeta & {
   readonly agentRef: string;
   readonly agentCategory: Exclude<AgentCategory, 'orchestrator'>;
   readonly executionMode: PlannedExecutionMode;
-} {
+  readonly guidedTaskKind: GuidedTaskKind | null;
+};
+
+export function assertSealedTaskSchedule(
+  planned: SealedTaskScheduleInput,
+  meta: TaskScheduleMeta | null,
+): SealedTaskSchedule {
   if (
     planned.task.title !== planned.plannedTitle ||
     planned.task.detail !== planned.plannedDetail
@@ -172,11 +200,22 @@ export function assertSealedTaskSchedule(
   ) {
     throw new Error(`sealed task ${planned.taskId} exige ownership.files no worktree`);
   }
-  if (
-    meta.executionMode === 'read_only' &&
-    meta.agentCategory !== 'scout' &&
-    meta.agentCategory !== 'reviewer'
-  ) {
-    throw new Error(`sealed task ${planned.taskId} read_only exige scout/reviewer`);
-  }
+  const guidedTaskKind = parseGuidedTaskKind({
+    plannerId: planned.plannerId,
+    agentCategory: meta.agentCategory,
+    executionMode: meta.executionMode,
+    domains: meta.ownership.domains,
+    label: planned.taskId,
+  });
+  // Read-only is an execution capability, not a semantic category. The seal
+  // already binds the exact roster identity and rejects CLIs without native
+  // confinement; production dispatch repeats that capability check against
+  // the live route before materializing the worker.
+  return Object.freeze({
+    ...meta,
+    agentRef: meta.agentRef,
+    agentCategory: meta.agentCategory,
+    executionMode: meta.executionMode,
+    guidedTaskKind,
+  });
 }

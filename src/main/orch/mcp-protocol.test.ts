@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import {
   mintToken,
   releaseSessionByToken,
@@ -20,6 +21,7 @@ import {
   type JsonRpcRequest,
   type McpRegistry,
   type McpToolDef,
+  type McpToolInvocation,
 } from './mcp-protocol';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { clearAll as clearAllPermissions } from '../jarvis/permissions';
@@ -69,6 +71,16 @@ function missionCtx() {
   });
 }
 
+function opsMissionCtx() {
+  resetGateForTests();
+  return mintToken({
+    label: 'test',
+    role: 'worker',
+    missionId: TEST_MISSION_ID,
+    scope: auditScope,
+  });
+}
+
 function workflowOptions(
   confirm?: McpDispatchOptions['confirm'],
 ): McpDispatchOptions {
@@ -111,6 +123,40 @@ function workflowOptions(
       assertExecutionEffectAllowed: () => undefined,
     }),
     reserveMissionBudget: () => undefined,
+  };
+}
+
+function opsTerminalWorkflowOptions(
+  confirm?: McpDispatchOptions['confirm'],
+): McpDispatchOptions {
+  const base = workflowOptions(confirm);
+  return {
+    ...base,
+    resolveMissionForIntentGate: (scope, missionId) => {
+      const resolved = base.resolveMissionForIntentGate?.(scope, missionId);
+      if (!resolved?.mission.intentContract) return resolved ?? null;
+      return {
+        ...resolved,
+        mission: {
+          ...resolved.mission,
+          intentContract: {
+            ...resolved.mission.intentContract,
+            lane: 'ops',
+            budgets: {
+              ...resolved.mission.intentContract.budgets,
+              maxWorkers: 0,
+            },
+          },
+        },
+      };
+    },
+    // Ops is the intentional terminal/SSH lane and does not freeze a PREVC
+    // code-worktree contract. Revision-bound code workers use native shell
+    // inside their inherited process sandbox instead of this main-owned MCP.
+    resolveWorkflowAuthority: () => ({
+      contextRevision: undefined,
+      assertExecutionEffectAllowed: () => undefined,
+    }),
   };
 }
 
@@ -195,6 +241,65 @@ describe('handleMcpMessage', () => {
     const res = await handleMcpMessage(makeRegistry(), ctx, req('tools/list'));
     const tools = (res?.result as { tools: Array<{ name: string }> }).tools;
     expect(tools.map((t) => t.name)).toEqual(['nexus_pane_read']);
+  });
+
+  it('advertises image generation only to the exact main-owned Pet marker', async () => {
+    resetGateForTests();
+    const maker = PET_STUDIO_SQUAD.agents[0]!;
+    const definitions = [
+      'nexus_media_providers',
+      'nexus_image_generate',
+      'nexus_video_generate',
+    ].map((name) => ({
+      name,
+      description: name,
+      inputSchema: { type: 'object', properties: {} },
+      handler: vi.fn(async () => ({ ok: true })),
+    }));
+    const registry: McpRegistry = {
+      tools: definitions,
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const pet = mintToken({
+      label: maker.agentName,
+      role: 'orchestrator',
+      agentName: maker.agentName,
+      providerId: 'codex',
+      petStudioMediaAuthority: true,
+      petStudioAuthoritySource: 'legacy-squad',
+      petStudioSquadId: PET_STUDIO_SQUAD.id,
+      allowedTools: [...(maker.allowedTools ?? [])],
+      allowedSkills: [...(maker.allowedSkills ?? [])],
+      scope: auditScope,
+    });
+    const ordinary = mintToken({
+      label: 'ordinary-orchestrator',
+      role: 'orchestrator',
+      allowedTools: [...(maker.allowedTools ?? [])],
+      scope: auditScope,
+    });
+
+    const petResponse = await handleMcpMessage(
+      registry,
+      pet,
+      req('tools/list'),
+    );
+    const ordinaryResponse = await handleMcpMessage(
+      registry,
+      ordinary,
+      req('tools/list'),
+    );
+    const names = (response: typeof petResponse) =>
+      (response?.result as { tools: Array<{ name: string }> }).tools.map(
+        (tool) => tool.name,
+      );
+
+    expect(names(petResponse)).toEqual([
+      'nexus_media_providers',
+      'nexus_image_generate',
+    ]);
+    expect(names(ordinaryResponse)).toEqual(['nexus_media_providers']);
   });
 
   it('does not advertise workspace or process effects to read-only agents', async () => {
@@ -389,12 +494,12 @@ describe('handleMcpMessage', () => {
 
     const res = await handleMcpMessage(
       registry,
-      missionCtx(),
+      opsMissionCtx(),
       req('tools/call', {
         name: 'nexus_terminal_run',
         arguments: { command: 'rm -rf /tmp/nexus-no-ui' },
       }),
-      workflowOptions(),
+      opsTerminalWorkflowOptions(),
     );
 
     const result = res?.result as {
@@ -413,12 +518,14 @@ describe('handleMcpMessage', () => {
 
   it('executes a confirmation-required HTTP MCP tool after native approval', async () => {
     let executed = false;
+    let effectIntent: McpToolInvocation['effectIntent'];
     const destructive: McpToolDef = {
       name: 'nexus_terminal_run',
       description: 'terminal',
       inputSchema: { type: 'object', properties: {} },
-      handler: async () => {
+      handler: async (_args, _ctx, invocation) => {
         executed = true;
+        effectIntent = invocation?.effectIntent;
         return { exitCode: 0 };
       },
     };
@@ -431,12 +538,12 @@ describe('handleMcpMessage', () => {
 
     const res = await handleMcpMessage(
       registry,
-      missionCtx(),
+      opsMissionCtx(),
       req('tools/call', {
         name: 'nexus_terminal_run',
         arguments: { command: 'rm -rf /tmp/nexus-approved' },
       }),
-      workflowOptions(confirm),
+      opsTerminalWorkflowOptions(confirm),
     );
 
     const result = res?.result as {
@@ -445,6 +552,14 @@ describe('handleMcpMessage', () => {
     };
     expect(result.isError).toBeUndefined();
     expect(executed).toBe(true);
+    expect(effectIntent).toMatchObject({
+      toolName: 'nexus_terminal_run',
+      source: 'http-mcp',
+      toolCallId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu,
+      ),
+      issuedAt: expect.any(Number),
+    });
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
       source: 'http-mcp',
       toolName: 'nexus_terminal_run',
@@ -454,6 +569,8 @@ describe('handleMcpMessage', () => {
     }));
     const auditEntries = readAuditLog(auditContext);
     expect(auditEntries.map((entry) => entry.result)).toEqual(['intent', 'ok']);
+    expect(auditEntries[0]?.invocation_id).toBe(effectIntent?.toolCallId);
+    expect(auditEntries[1]?.invocation_id).toBe(effectIntent?.toolCallId);
     expect(auditEntries.at(-1)).toMatchObject({
       source: 'http-mcp',
       tool: 'nexus_terminal_run',
@@ -478,12 +595,12 @@ describe('handleMcpMessage', () => {
 
     const res = await handleMcpMessage(
       registry,
-      missionCtx(),
+      opsMissionCtx(),
       req('tools/call', {
         name: 'nexus_terminal_run',
         arguments: { command: 'deploy' },
       }),
-      workflowOptions(async () => true),
+      opsTerminalWorkflowOptions(async () => true),
     );
     const envelope = res?.result as {
       isError?: boolean;
@@ -519,12 +636,12 @@ describe('handleMcpMessage', () => {
 
     const res = await handleMcpMessage(
       registry,
-      missionCtx(),
+      opsMissionCtx(),
       req('tools/call', {
         name: 'nexus_terminal_run',
         arguments: { command: 'rm -rf /tmp/nexus-denied' },
       }),
-      workflowOptions(async () => false),
+      opsTerminalWorkflowOptions(async () => false),
     );
 
     const result = res?.result as {

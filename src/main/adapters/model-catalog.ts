@@ -70,6 +70,7 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
   adapters: {
     claude: {
       models: [
+        { id: 'claude-opus-5', availability: 'paid', costTier: 'high', source: 'bundled' },
         {
           id: 'claude-fable-5',
           availability: 'api-only',

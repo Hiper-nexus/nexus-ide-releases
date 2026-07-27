@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import {
   runReleaseCandidateGate,
 } from './release-candidate-gate.mjs';
+import { assertRealMissionReleaseEvidence } from './e2e-real-mission.mjs';
 import {
   assertReleaseRepositoryState,
   collectReleaseRepositoryState,
@@ -17,6 +18,9 @@ import { assertReleaseSecurityManifest } from './release-security-gate.mjs';
 
 export const CANONICAL_RELEASE_REPO = 'cleofasvolarehost/nexus-ide';
 export const PUBLIC_RELEASE_REPO = 'cleofasvolarehost/nexus-ide-releases';
+const MANUAL_RELEASE_PRODUCTION_AUTHORITY = Symbol(
+  'manual-release-production-authority',
+);
 
 export function githubRepositoryTarget(repo) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repo ?? '')) {
@@ -533,6 +537,34 @@ export function resolveSecurityAssets(securityDir, receipt) {
   ) {
     throw new Error('E2E evidence digest mismatch before publication');
   }
+  let physicalEvidence;
+  try {
+    physicalEvidence = assertRealMissionReleaseEvidence(
+      JSON.parse(fs.readFileSync(evidencePath, 'utf8')),
+    );
+  } catch (error) {
+    throw new Error(
+      `published candidate lacks valid physical product-wizard evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (
+    receipt?.verification?.physicalProductWizard !== true ||
+    receipt?.verification?.singleProductMission !==
+      physicalEvidence.missionInventory?.exactSingleProductMission ||
+    physicalEvidence.missionInventory?.exactSingleProductMission !== true ||
+    physicalEvidence.release?.commitSha !== receipt.commitSha ||
+    physicalEvidence.release?.appVersion !== receipt.version ||
+    physicalEvidence.release?.artifact?.sha256 !==
+      receipt.artifacts.zip.sha256 ||
+    physicalEvidence.release?.artifact?.identity !==
+      manifest?.releaseArtifacts?.signingIdentity
+  ) {
+    throw new Error(
+      'physical product-wizard evidence and candidate receipt are not coherent',
+    );
+  }
   return allowed.map((name) => path.join(securityDir, name));
 }
 
@@ -614,7 +646,7 @@ function assertCandidateReceiptShape(
     receipt?.artifacts?.e2eEvidence?.name,
   ];
   if (
-    receipt?.schemaVersion !== 3 ||
+    receipt?.schemaVersion !== 4 ||
     receipt?.version !== version ||
     receipt?.tag !== `v${version}` ||
     receipt?.commitSha !== commitSha ||
@@ -642,6 +674,8 @@ function assertCandidateReceiptShape(
     !Number.isFinite(Date.parse(receipt?.verifiedAt ?? '')) ||
     receipt?.verification?.signedNotarized !== true ||
     receipt?.verification?.realMissionE2E !== true ||
+    receipt?.verification?.physicalProductWizard !== true ||
+    receipt?.verification?.singleProductMission !== true ||
     receipt?.verification?.sameCommitAndArtifacts !== true ||
     receipt?.verification?.tagSignatureVerified !==
       receipt?.tagSignatureVerified ||
@@ -668,6 +702,53 @@ function assertCandidateReceiptShape(
       'reusable release candidate receipt is incomplete or incoherent',
     );
   }
+}
+
+export function assertPublishPhysicalCandidate(candidate) {
+  const receipt = candidate?.receipt;
+  const evidencePath = candidate?.evidencePath;
+  if (
+    receipt?.verification?.physicalProductWizard !== true ||
+    typeof evidencePath !== 'string'
+  ) {
+    throw new Error(
+      'release publication requires an authoritative physical product-wizard receipt',
+    );
+  }
+  const stat = fs.lstatSync(evidencePath);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error('physical product-wizard evidence is not a regular file');
+  }
+  if (
+    fileSha256(evidencePath) !== receipt?.artifacts?.e2eEvidence?.sha256
+  ) {
+    throw new Error('physical product-wizard evidence digest is stale');
+  }
+  let evidence;
+  try {
+    evidence = assertRealMissionReleaseEvidence(
+      JSON.parse(fs.readFileSync(evidencePath, 'utf8')),
+    );
+  } catch (error) {
+    throw new Error(
+      `release publication rejected physical product-wizard evidence: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (
+    receipt?.verification?.singleProductMission !==
+      evidence.missionInventory?.exactSingleProductMission ||
+    evidence.missionInventory?.exactSingleProductMission !== true ||
+    evidence.release?.commitSha !== receipt.commitSha ||
+    evidence.release?.appVersion !== receipt.version ||
+    evidence.release?.artifact?.sha256 !== receipt.artifacts.zip.sha256
+  ) {
+    throw new Error(
+      'physical product-wizard evidence does not match release candidate',
+    );
+  }
+  return evidence;
 }
 
 /**
@@ -981,14 +1062,27 @@ async function prepareDraft({
  * made public. Only after the canonical published receipt is re-read does the
  * asset-only public mirror transition from draft to published.
  */
-export async function publishManualRelease(options = {}) {
+async function publishManualReleaseCore(
+  options = {},
+  productionAuthority = null,
+) {
+  const authoritative =
+    productionAuthority === MANUAL_RELEASE_PRODUCTION_AUTHORITY;
   const root = path.resolve(options.root ?? process.cwd());
   const environment = options.environment ?? process.env;
   assertManualPublishEnvironment(environment);
-  const authority =
-    options.authority ?? readAndAssertReleaseAuthority(root);
+  const authority = authoritative
+    ? readAndAssertReleaseAuthority(root)
+    : options.authority;
+  if (!authority) {
+    throw new Error(
+      'manual release test core requires explicit release authority',
+    );
+  }
   const version = authority.version;
-  const nodeVersion = options.nodeVersion ?? process.version;
+  const nodeVersion = authoritative
+    ? process.version
+    : (options.nodeVersion ?? process.version);
   if (nodeVersion !== `v${authority.nodeVersion}`) {
     throw new Error(
       `release publication requires Node ${authority.nodeVersion}; ` +
@@ -999,18 +1093,40 @@ export async function publishManualRelease(options = {}) {
     throw new Error('explicit release version diverges from metadata authority');
   }
   const tag = `v${version}`;
-  const canonicalRepo =
-    options.canonicalRepo ?? CANONICAL_RELEASE_REPO;
-  const publicRepo = options.publicRepo ?? PUBLIC_RELEASE_REPO;
-  const github = options.github ?? createGitHubClient(root);
-  const gate = options.runCandidateGate ?? runReleaseCandidateGate;
-  const reusableLoader =
-    options.loadReusableCandidate ?? loadReusableReleaseCandidate;
-  const materialize =
-    options.materializeCandidate ?? materializeReleaseCandidate;
-  const repositoryPublisher =
-    options.repositoryPublisher ??
-    createRepositoryPublisher(root, canonicalRepo);
+  const canonicalRepo = authoritative
+    ? CANONICAL_RELEASE_REPO
+    : (options.canonicalRepo ?? CANONICAL_RELEASE_REPO);
+  const publicRepo = authoritative
+    ? PUBLIC_RELEASE_REPO
+    : (options.publicRepo ?? PUBLIC_RELEASE_REPO);
+  const github = authoritative ? createGitHubClient(root) : options.github;
+  const gate = authoritative
+    ? runReleaseCandidateGate
+    : options.runCandidateGate;
+  const reusableLoader = authoritative
+    ? loadReusableReleaseCandidate
+    : options.loadReusableCandidate;
+  const materialize = authoritative
+    ? materializeReleaseCandidate
+    : options.materializeCandidate;
+  const repositoryPublisher = authoritative
+    ? createRepositoryPublisher(root, canonicalRepo)
+    : options.repositoryPublisher;
+  const stage = authoritative
+    ? stageReleaseAssets
+    : options.stageReleaseAssets;
+  if (
+    !github ||
+    typeof gate !== 'function' ||
+    typeof reusableLoader !== 'function' ||
+    typeof materialize !== 'function' ||
+    !repositoryPublisher ||
+    typeof stage !== 'function'
+  ) {
+    throw new Error(
+      'manual release test core requires explicit non-production dependencies',
+    );
+  }
 
   let canonical = await github.inspect(canonicalRepo, tag);
   let mirror = await github.inspect(publicRepo, tag);
@@ -1026,10 +1142,9 @@ export async function publishManualRelease(options = {}) {
   ) {
     throw new Error('release candidate does not match the requested version');
   }
+  assertPublishPhysicalCandidate(candidate);
   const materialized = await materialize(root, candidate);
-  const stagedCandidate = await (
-    options.stageReleaseAssets ?? stageReleaseAssets
-  )(materialized);
+  const stagedCandidate = await stage(materialized);
   const release = stagedCandidate.release;
   try {
   if (reusePublishedCandidate) {
@@ -1157,6 +1272,54 @@ export async function publishManualRelease(options = {}) {
   } finally {
     stagedCandidate.cleanup();
   }
+}
+
+/**
+ * Sealed production entrypoint. Callers may select only root/environment; all
+ * build, GitHub, repository and staging authorities are module-owned.
+ */
+export function publishManualRelease(options = {}) {
+  if (options === null || typeof options !== 'object') {
+    throw new Error(
+      'sealed manual release rejects dependency override: prototype',
+    );
+  }
+  const allowed = new Set(['root', 'environment']);
+  const prototype = Object.getPrototypeOf(options);
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  const keys = Reflect.ownKeys(descriptors);
+  const unexpected = keys.find(
+    (key) =>
+      typeof key !== 'string' ||
+      !allowed.has(key) ||
+      descriptors[key]?.get !== undefined ||
+      descriptors[key]?.set !== undefined,
+  );
+  if (
+    (prototype !== Object.prototype && prototype !== null) ||
+    unexpected !== undefined
+  ) {
+    throw new Error(
+      `sealed manual release rejects dependency override: ${String(unexpected ?? 'prototype')}`,
+    );
+  }
+  return publishManualReleaseCore(
+    {
+      ...(descriptors.root ? { root: descriptors.root.value } : {}),
+      ...(descriptors.environment
+        ? { environment: descriptors.environment.value }
+        : {}),
+    },
+    MANUAL_RELEASE_PRODUCTION_AUTHORITY,
+  );
+}
+
+/**
+ * Dependency-injected controller for unit tests. It has no fallback to any
+ * production GitHub, git, candidate-gate, materialization or staging effect.
+ */
+export function publishManualReleaseTestCore(options = {}) {
+  return publishManualReleaseCore(options, null);
 }
 
 async function main() {

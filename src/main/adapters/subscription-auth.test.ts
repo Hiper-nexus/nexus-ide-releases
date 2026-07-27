@@ -1,10 +1,16 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  claudeKeychainHas,
+  claudeKeychainHasAsync,
   claudeOauthEmail,
   detectSubscriptionAuth,
+  hasSubscriptionAuthForStatus,
+  refreshClaudeSubscriptionAuthCache,
+  resetSubscriptionAuthCacheForTests,
   resolveAuthStrategy,
 } from './subscription-auth';
 
@@ -23,6 +29,7 @@ function touch(home: string, ...segments: string[]): void {
 }
 
 afterEach(() => {
+  resetSubscriptionAuthCacheForTests();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -115,6 +122,121 @@ describe('resolveAuthStrategy', () => {
 });
 
 describe('detectSubscriptionAuth', () => {
+  it('keeps the cold provider-status path out of the synchronous Keychain', () => {
+    const home = tempHome();
+    const syncKeychainProbe = vi.fn(() => true);
+
+    expect(
+      detectSubscriptionAuth('claude', home, undefined, {
+        probeClaudeKeychain: false,
+        claudeKeychainProbe: syncKeychainProbe,
+      }),
+    ).toBe(false);
+    expect(syncKeychainProbe).not.toHaveBeenCalled();
+    expect(hasSubscriptionAuthForStatus('claude', undefined, home)).toBe(false);
+  });
+
+  it('warms a Keychain-only Claude status asynchronously without poisoning the cold cache', async () => {
+    const home = tempHome();
+    const asyncKeychainProbe = vi.fn(async () => true);
+
+    // A cold status read fails closed but does not cache `false`; the
+    // authoritative/background probe can still establish the native session.
+    expect(hasSubscriptionAuthForStatus('claude', undefined, home)).toBe(false);
+    await expect(
+      refreshClaudeSubscriptionAuthCache(home, asyncKeychainProbe),
+    ).resolves.toEqual({ value: true, cacheUpdated: true });
+    expect(asyncKeychainProbe).toHaveBeenCalledTimes(1);
+    expect(hasSubscriptionAuthForStatus('claude', undefined, home)).toBe(true);
+
+    // The warm cache prevents a second Keychain process during the TTL.
+    await expect(
+      refreshClaudeSubscriptionAuthCache(home, asyncKeychainProbe),
+    ).resolves.toEqual({ value: true, cacheUpdated: false });
+    expect(asyncKeychainProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates concurrent background Keychain refreshes', async () => {
+    const home = tempHome();
+    let resolveProbe!: (value: boolean) => void;
+    const asyncKeychainProbe = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveProbe = resolve;
+        }),
+    );
+
+    const first = refreshClaudeSubscriptionAuthCache(
+      home,
+      asyncKeychainProbe,
+    );
+    const second = refreshClaudeSubscriptionAuthCache(
+      home,
+      asyncKeychainProbe,
+    );
+    await Promise.resolve();
+    expect(asyncKeychainProbe).toHaveBeenCalledTimes(1);
+    resolveProbe(false);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { value: false, cacheUpdated: true },
+      { value: false, cacheUpdated: true },
+    ]);
+  });
+
+  it.runIf(process.platform === 'darwin')(
+    'bounds the fallback Claude Keychain presence probe',
+    () => {
+      const execImpl = ((..._args: unknown[]) =>
+        Buffer.alloc(0)) as typeof import('node:child_process').execFileSync;
+      const bounded = vi.fn(execImpl);
+      expect(
+        claudeKeychainHas(
+          bounded as unknown as typeof import('node:child_process').execFileSync,
+        ),
+      ).toBe(true);
+      expect(bounded).toHaveBeenCalledWith(
+        'security',
+        ['find-generic-password', '-s', 'Claude Code-credentials'],
+        expect.objectContaining({
+          timeout: 5_000,
+          killSignal: 'SIGKILL',
+        }),
+      );
+    },
+  );
+
+  it.runIf(process.platform === 'darwin')(
+    'uses a bounded asynchronous process for the provider-status Keychain refresh',
+    async () => {
+      const execImpl = vi.fn(
+        (
+          _file: string,
+          _args: readonly string[],
+          _options: Record<string, unknown>,
+          callback: (error: Error | null) => void,
+        ) => {
+          queueMicrotask(() => callback(null));
+          return {};
+        },
+      );
+
+      await expect(
+        claudeKeychainHasAsync(
+          execImpl as unknown as typeof import('node:child_process').execFile,
+        ),
+      ).resolves.toBe(true);
+      expect(execImpl).toHaveBeenCalledWith(
+        'security',
+        ['find-generic-password', '-s', 'Claude Code-credentials'],
+        expect.objectContaining({
+          timeout: 5_000,
+          killSignal: 'SIGKILL',
+        }),
+        expect.any(Function),
+      );
+    },
+  );
+
   it('does not invent a subscription session for API-key-only Aider', () => {
     const home = tempHome();
     fs.mkdirSync(path.join(home, '.aider'), { recursive: true });
@@ -137,6 +259,144 @@ describe('detectSubscriptionAuth', () => {
     expect(detectSubscriptionAuth('grok', home)).toBe(false);
     touch(home, '.grok', 'auth.json');
     expect(detectSubscriptionAuth('grok', home)).toBe(true);
+  });
+
+  it('detects OMP only from exact provider/model vault metadata', () => {
+    const home = tempHome();
+    const databasePath = path.join(home, '.omp', 'agent', 'agent.db');
+    fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+    const database = new Database(databasePath);
+    try {
+      database.exec(`
+        CREATE TABLE auth_credentials (
+          id INTEGER PRIMARY KEY,
+          provider TEXT NOT NULL,
+          credential_type TEXT NOT NULL,
+          data TEXT NOT NULL,
+          disabled_cause TEXT
+        )
+      `);
+      database
+        .prepare(
+          `INSERT INTO auth_credentials
+             (id, provider, credential_type, data, disabled_cause)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(1, 'anthropic', 'oauth', 'secret-must-not-be-read', 'disabled');
+      expect(
+        detectSubscriptionAuth(
+          'omp',
+          home,
+          'anthropic/claude-sonnet-4-6',
+        ),
+      ).toBe(false);
+      database
+        .prepare(
+          `INSERT INTO auth_credentials
+             (id, provider, credential_type, data, disabled_cause)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(2, 'openai-codex', 'oauth', 'another-secret', null);
+      expect(
+        detectSubscriptionAuth('omp', home, 'openai-codex/gpt-5.5'),
+      ).toBe(true);
+      expect(
+        detectSubscriptionAuth('omp-rpc', home, 'openai-codex/gpt-5.5'),
+      ).toBe(true);
+      // A valid Codex credential is not blanket readiness for Anthropic/xAI.
+      expect(
+        detectSubscriptionAuth(
+          'omp',
+          home,
+          'anthropic/claude-sonnet-4-6',
+        ),
+      ).toBe(false);
+      expect(
+        detectSubscriptionAuth('omp', home, 'xai/grok-4.5'),
+      ).toBe(false);
+      database
+        .prepare(
+          `INSERT INTO auth_credentials
+             (id, provider, credential_type, data, disabled_cause)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(3, 'xai-oauth', 'oauth', 'synthetic-row-data', null);
+      expect(
+        detectSubscriptionAuth('omp', home, 'xai-oauth/grok-4.5'),
+      ).toBe(true);
+      // The distinct API-key selector is not authorized by xai-oauth.
+      expect(
+        detectSubscriptionAuth('omp', home, 'xai/grok-4.5'),
+      ).toBe(false);
+      // Missing/malformed model cannot fall back to "any vault row".
+      expect(detectSubscriptionAuth('omp', home)).toBe(false);
+      expect(detectSubscriptionAuth('omp', home, 'malformed')).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('fails closed when an OMP database has an unknown schema', () => {
+    const home = tempHome();
+    touch(home, '.omp', 'agent', 'agent.db');
+    expect(
+      detectSubscriptionAuth(
+        'omp',
+        home,
+        'anthropic/claude-sonnet-4-6',
+      ),
+    ).toBe(false);
+  });
+
+  it('honors only release-pinned broker aliases', () => {
+    const home = tempHome();
+    const databasePath = path.join(home, '.omp', 'agent', 'agent.db');
+    fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+    const database = new Database(databasePath);
+    try {
+      database.exec(`
+        CREATE TABLE auth_credentials (
+          id INTEGER PRIMARY KEY,
+          provider TEXT NOT NULL,
+          credential_type TEXT NOT NULL,
+          data TEXT NOT NULL,
+          disabled_cause TEXT
+        )
+      `);
+      database
+        .prepare(
+          `INSERT INTO auth_credentials
+             (provider, credential_type, data, disabled_cause)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(
+          'openai-codex-device',
+          'oauth',
+          'secret-must-not-be-read',
+          null,
+        );
+      expect(
+        detectSubscriptionAuth('omp', home, 'openai-codex/gpt-5.5'),
+      ).toBe(true);
+      expect(
+        detectSubscriptionAuth('omp', home, 'openai/gpt-5.5'),
+      ).toBe(false);
+      expect(
+        detectSubscriptionAuth('omp', home, 'future/gpt-5.5'),
+      ).toBe(false);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('treats only release-pinned local OMP providers as credentialless', () => {
+    const home = tempHome();
+    expect(
+      detectSubscriptionAuth('omp', home, 'ollama/qwen2.5-coder'),
+    ).toBe(true);
+    expect(
+      detectSubscriptionAuth('omp', home, 'future-local/model'),
+    ).toBe(false);
   });
 
   it('detects a managed AGY account via GEMINI_CLI_HOME (custom home)', () => {

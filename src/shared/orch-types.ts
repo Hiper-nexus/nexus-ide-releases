@@ -77,7 +77,12 @@ export const squadAgentSchema = z.preprocess(
     model: authorityString(128, 'agent model').optional(),
     // CLI-owned capability: new levels (for example Codex `ultra`) must not
     // require a Nexus release. Spawn validation still checks the adapter.
-    effort: z.string().min(1).max(32).regex(/^[A-Za-z0-9_-]+$/).optional(),
+    effort: z
+      .string()
+      .min(1)
+      .max(32)
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .optional(),
     /** null/absent = unrestricted. */
     allowedSkills: z
       .array(authorityString(128, 'allowed skill'))
@@ -111,6 +116,20 @@ export const squadSchema = z
       65_536,
       'native instructions',
     ).optional(),
+    /**
+     * Main-owned lineage for an immutable mission runtime snapshot.
+     * Renderer/global squad writes may request a snapshot from a source id,
+     * but only main validates and persists these two fields.
+     */
+    runtimeSourceSquadId: authorityString(
+      128,
+      'runtime source squad id',
+      1,
+    ).optional(),
+    runtimeSourceSquadRevisionHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     agents: z.array(squadAgentSchema).max(32).default([]),
   })
   .superRefine((squad, ctx) => {
@@ -324,7 +343,7 @@ export const missionPatchSchema = z.object({
   intentState: missionIntentStateSchema.optional(),
   intentContract: missionIntentContractSchema.nullable().optional(),
   intentVersion: z.number().int().nonnegative().max(1_000_000).optional(),
-});
+}).strict();
 export type MissionPatch = z.infer<typeof missionPatchSchema>;
 
 export const handoffStatusSchema = z.enum([
@@ -346,9 +365,7 @@ export const handoffEvidenceTrustSchema = z.enum([
   'nexus-trusted',
   'stale',
 ]);
-export type HandoffEvidenceTrust = z.infer<
-  typeof handoffEvidenceTrustSchema
->;
+export type HandoffEvidenceTrust = z.infer<typeof handoffEvidenceTrustSchema>;
 
 export const handoffDeliveryStateSchema = z.enum([
   'queued',
@@ -385,6 +402,32 @@ export interface HandoffEvidenceBinding {
   readonly workflowRevision: number;
 }
 
+/**
+ * Main-persisted receipt for the exact physical `nexus_handoff_submit`
+ * invocation that created a handoff. Ordinary main-process store calls and
+ * the legacy PTY parser never receive this provenance. HTTP MCP and OMP's
+ * validated stdio host-tool protocol are distinct, explicit origins.
+ */
+export interface HandoffMcpProvenance {
+  /** Correlates the durable row with the MCP dispatch/audit invocation. */
+  readonly receiptId: string;
+  readonly toolCallId: string;
+  readonly toolName: 'nexus_handoff_submit';
+  readonly source: 'http-mcp' | 'omp-rpc-stdio';
+  readonly missionId: string;
+  readonly sessionId: string;
+  readonly workerIncarnationId?: string;
+  /** SHA-256 fingerprint of the exact in-memory bearer authority. */
+  readonly authoritySha256: string;
+  /** Worker worktree HEAD observed before dispatch accepts/integrates it. */
+  readonly worktreeHeadSha?: string;
+  /** Canonical SHA-256 of the complete MCP args before summary compaction. */
+  readonly rawPayloadSha256?: string;
+  /** Stable physical worker-operation key; payload is intentionally excluded. */
+  readonly logicalOperationKey?: string;
+  readonly issuedAt: number;
+}
+
 export interface Handoff {
   id: string;
   missionId?: string;
@@ -395,6 +438,8 @@ export interface Handoff {
   fromAgent?: string;
   /** Main-owned provenance. Renderer/MCP payloads cannot select this value. */
   readonly authorityOrigin?: 'agent' | 'operator-confirmed';
+  /** Present only when the HTTP MCP tool boundary emitted the durable row. */
+  readonly mcpProvenance?: HandoffMcpProvenance;
   /** Reporter-supplied metadata. `success` never completes a mission. */
   status: HandoffStatus;
   readonly claimTrust: 'untrusted';
@@ -559,6 +604,7 @@ export type MissionOrchestratorBootstrapResult =
       readonly missionId: string;
       readonly reason:
         | 'not_authorized'
+        | 'review_required'
         | 'squad_missing'
         | 'preflight_failed'
         | 'spawn_failed'
@@ -566,15 +612,12 @@ export type MissionOrchestratorBootstrapResult =
         | 'provider_exited';
       readonly error: string;
       readonly cta: string;
+      /** Fresh main-owned revision that must pass native approval before spawn. */
+      readonly intentVersion?: number;
     };
 
 export type PaneRuntimeState =
-  | 'spawning'
-  | 'busy'
-  | 'idle'
-  | 'exited'
-  | 'hibernated'
-  | 'unknown';
+  'spawning' | 'busy' | 'idle' | 'exited' | 'hibernated' | 'unknown';
 
 /** One pane as mirrored into the main-process registry by the renderer. */
 export interface PaneRegistryEntry {
@@ -593,6 +636,8 @@ export interface PaneSnapshot extends PaneRegistryEntry {
   state: PaneRuntimeState;
   missionId?: string;
   agentName?: string;
+  /** Exact physical generation for a governed worker pane. */
+  workerIncarnationId?: string;
   role?: 'orchestrator' | 'worker';
   scope?: Readonly<ProjectExecutionScope>;
   executionScope?: Readonly<ProjectExecutionScope>;
@@ -738,4 +783,43 @@ export function isEngineGeneratedSquadId(id: string): boolean {
   return ENGINE_GENERATED_SQUAD_PREFIXES.some((prefix) =>
     id.startsWith(prefix),
   );
+}
+
+/**
+ * Immutable launch snapshots created by main for exactly one mission flow.
+ * They are deliberately outside the user-owned squad namespace: a renderer
+ * may request a snapshot, but only main chooses the final UUID and persists
+ * it. `agentic-runtime-*` remains eligible for the guided planner through the
+ * existing `agentic-` engine prefix; `mission-runtime-*` is the manual route.
+ */
+export const MISSION_RUNTIME_SQUAD_ID_RE =
+  /^(?:agentic|mission)-runtime-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+export function isMissionRuntimeSquadId(id: string): boolean {
+  return MISSION_RUNTIME_SQUAD_ID_RE.test(id);
+}
+
+export type SquadSavePurpose = 'global' | 'mission-runtime';
+
+export interface SquadSaveOptions {
+  readonly purpose?: SquadSavePurpose;
+  /** Guided snapshots keep the `agentic-` planner eligibility contract. */
+  readonly guided?: boolean;
+  /**
+   * Exact catalog squad reviewed by the operator. Main resolves and validates
+   * it before minting the immutable runtime identity.
+   */
+  readonly sourceSquadId?: string;
+  /**
+   * Opaque, short-lived main-owned seal for a squad designed in this wizard
+   * but not saved to the reusable catalog.
+   */
+  readonly designDraftToken?: string;
+}
+
+export interface SquadSaveResult {
+  readonly ok: boolean;
+  readonly error?: string;
+  /** Main-normalized immutable snapshot; present for successful saves. */
+  readonly squad?: Squad;
 }

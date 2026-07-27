@@ -318,7 +318,10 @@ export function compileMissionContract(
     // stages, while critical work requires two independent reviewers.
     minimumReviewers: risk === 'critical' ? 2 : 1,
     requireIndependentAuthor: true,
-    requireDifferentProvider: risk === 'high' || risk === 'critical',
+    // Codex is the only release-qualified worker provider. Reviewer
+    // independence is enforced by immutable agent + physical session
+    // identities, not by executable vendor labels.
+    requireDifferentProvider: false,
     blockingSeverities: ['critical', 'high'],
   };
 

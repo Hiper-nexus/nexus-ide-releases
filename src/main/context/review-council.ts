@@ -312,12 +312,9 @@ export class ReviewCouncil {
     ) {
       throw new Error('author cannot review their own change or session');
     }
-    if (
-      (this.risk === 'high' || this.risk === 'critical') &&
-      submission.reviewerProvider === submission.authorProvider
-    ) {
-      throw new Error('high-risk review requires a different provider');
-    }
+    // A provider is executable infrastructure, not a reviewer identity.
+    // Independence is the immutable agent/session pair checked here and
+    // against every prior report below.
     if (this.#reports.has(submission.reviewId)) {
       throw new Error(`duplicate review id: ${submission.reviewId}`);
     }

@@ -1,10 +1,8 @@
-import type { AgentGateContext } from './gate';
-import { canonicalToolName, isToolAllowedForRole } from './gate';
-import {
-  dispatchToolCall,
-  type McpDispatchOptions,
-} from './mcp-dispatch';
-import { isToolAllowedForReadOnlyContext } from './mcp-effect-policy';
+import type { AgentGateContext } from "./gate";
+import { canonicalToolName, isToolAllowedForRole } from "./gate";
+import { dispatchToolCall, type McpDispatchOptions } from "./mcp-dispatch";
+import { isToolAllowedForReadOnlyContext } from "./mcp-effect-policy";
+import type { AgentTransportPhysicalReceipt } from "./http-mcp-boundary";
 
 /**
  * Minimal MCP (Model Context Protocol) server core: JSON-RPC 2.0 message
@@ -17,22 +15,22 @@ import { isToolAllowedForReadOnlyContext } from './mcp-effect-policy';
  * mcp-server.ts and unit tests drive it directly.
  */
 
-export const MCP_PROTOCOL_VERSION = '2025-06-18';
+export const MCP_PROTOCOL_VERSION = "2025-06-18";
 const SUPPORTED_VERSIONS = new Set([
-  '2024-11-05',
-  '2025-03-26',
+  "2024-11-05",
+  "2025-03-26",
   MCP_PROTOCOL_VERSION,
 ]);
 
 export interface JsonRpcRequest {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id?: number | string | null;
   method: string;
   params?: Record<string, unknown>;
 }
 
 export interface JsonRpcResponse {
-  jsonrpc: '2.0';
+  jsonrpc: "2.0";
   id: number | string | null;
   result?: unknown;
   error?: { code: number; message: string };
@@ -63,6 +61,23 @@ export interface McpToolInvocation {
    */
   readonly assertCurrentAuthority?: () => void;
   /**
+   * Correlated durable-effect identity issued by the central dispatcher after
+   * audit intent persistence. HTTP MCP handoff provenance must bind to this
+   * value; tool handlers cannot mint a substitute.
+   */
+  readonly effectIntent?: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly source:
+      "http-mcp" | "omp-rpc-stdio" | "ipc-renderer" | "jarvis-voice";
+    readonly issuedAt: number;
+  };
+  /**
+   * Opaque one-shot capability minted only inside the authenticated localhost
+   * HTTP transport. It cannot be reconstructed from ids, hashes or JSON.
+   */
+  readonly agentTransportPhysicalReceipt?: AgentTransportPhysicalReceipt;
+  /**
    * One-shot receipt emitted only after exact native consent (or consumption
    * of an exact, single-use permission) for tools whose authority outlives the
    * current mission. It is never derived from mission-wide autopilot approval.
@@ -83,7 +98,7 @@ export function assertMcpInvocationCurrent(
 ): void {
   invocation?.assertCurrentAuthority?.();
   if (invocation?.signal?.aborted) {
-    throw new Error('session_authority_revoked');
+    throw new Error("session_authority_revoked");
   }
 }
 
@@ -105,25 +120,25 @@ export function resolveTool(
   );
 }
 
-function ok(id: JsonRpcResponse['id'], result: unknown): JsonRpcResponse {
-  return { jsonrpc: '2.0', id, result };
+function ok(id: JsonRpcResponse["id"], result: unknown): JsonRpcResponse {
+  return { jsonrpc: "2.0", id, result };
 }
 
 function rpcError(
-  id: JsonRpcResponse['id'],
+  id: JsonRpcResponse["id"],
   code: number,
   message: string,
 ): JsonRpcResponse {
-  return { jsonrpc: '2.0', id, error: { code, message } };
+  return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
 function toolText(payload: unknown): {
-  content: Array<{ type: 'text'; text: string }>;
+  content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 } {
   const text =
-    typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
-  return { content: [{ type: 'text', text }] };
+    typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  return { content: [{ type: "text", text }] };
 }
 
 function toolError(payload: unknown): ReturnType<typeof toolText> {
@@ -132,10 +147,10 @@ function toolError(payload: unknown): ReturnType<typeof toolText> {
 
 export function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
   return (
-    typeof value === 'object' &&
+    typeof value === "object" &&
     value !== null &&
-    (value as JsonRpcRequest).jsonrpc === '2.0' &&
-    typeof (value as JsonRpcRequest).method === 'string'
+    (value as JsonRpcRequest).jsonrpc === "2.0" &&
+    typeof (value as JsonRpcRequest).method === "string"
   );
 }
 
@@ -153,11 +168,11 @@ export async function handleMcpMessage(
   const id = message.id ?? null;
   const isNotification = message.id === undefined;
 
-  if (message.method.startsWith('notifications/')) return null;
+  if (message.method.startsWith("notifications/")) return null;
 
   switch (message.method) {
-    case 'initialize': {
-      const requested = (message.params?.protocolVersion as string) ?? '';
+    case "initialize": {
+      const requested = (message.params?.protocolVersion as string) ?? "";
       const version = SUPPORTED_VERSIONS.has(requested)
         ? requested
         : MCP_PROTOCOL_VERSION;
@@ -171,14 +186,20 @@ export async function handleMcpMessage(
       });
     }
 
-    case 'ping':
+    case "ping":
       return ok(id, {});
 
-    case 'tools/list': {
+    case "tools/list": {
       const tools = registry.tools
-        .filter((tool) =>
-          isToolAllowedForRole(ctx.role, ctx.allowedTools, tool.name) &&
-          (!ctx.readOnly || isToolAllowedForReadOnlyContext(tool.name)),
+        .filter(
+          (tool) =>
+            isToolAllowedForRole(
+              ctx.role,
+              ctx.allowedTools,
+              tool.name,
+              ctx.petStudioMediaAuthority,
+            ) &&
+            (!ctx.readOnly || isToolAllowedForReadOnlyContext(tool.name)),
         )
         .map((tool) => ({
           name: tool.name,
@@ -188,15 +209,14 @@ export async function handleMcpMessage(
       return ok(id, { tools });
     }
 
-    case 'tools/call': {
+    case "tools/call": {
       const name = message.params?.name;
-      if (typeof name !== 'string' || name.length === 0) {
-        return rpcError(id, -32602, 'tools/call requires params.name');
+      if (typeof name !== "string" || name.length === 0) {
+        return rpcError(id, -32602, "tools/call requires params.name");
       }
-      const args =
-        (message.params?.arguments as Record<string, unknown>) ?? {};
+      const args = (message.params?.arguments as Record<string, unknown>) ?? {};
       const result = await dispatchToolCall(
-        'http-mcp',
+        "http-mcp",
         registry,
         name,
         args,
@@ -207,8 +227,10 @@ export async function handleMcpMessage(
         console.log(`[orch] tool ${result.tool} ok (${ctx.label})`);
         return ok(id, toolText(result.result));
       }
-      const detail = result.error ?? result.confirmationReason ?? 'tool denied';
-      console.warn(`[orch] tool ${result.tool} FALHOU (${ctx.label}): ${detail}`);
+      const detail = result.error ?? result.confirmationReason ?? "tool denied";
+      console.warn(
+        `[orch] tool ${result.tool} FALHOU (${ctx.label}): ${detail}`,
+      );
       return ok(
         id,
         toolError(

@@ -53,6 +53,29 @@ describe('recorte vendorado (models-rich.json)', () => {
 });
 
 describe('getRichModelMetadata — um modelo real por adapter', () => {
+  it('claude/omp: resolve o seletor exato e metadados do Claude Opus 5', () => {
+    const direct = getRichModelMetadata('claude', 'claude-opus-5');
+    const broker = getRichModelMetadata('omp', 'anthropic/claude-opus-5');
+
+    for (const meta of [direct, broker]) {
+      expect(meta).toMatchObject({
+        id: 'claude-opus-5',
+        name: 'Claude Opus 5',
+        ompProvider: 'anthropic',
+        cost: {
+          input: 5,
+          output: 25,
+          cacheRead: 0.5,
+          cacheWrite: 6.25,
+        },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+        reasoning: true,
+        input: ['text', 'image'],
+      });
+    }
+  });
+
   it('claude: resolve preço e janela de claude-sonnet-4-5', () => {
     const meta = getRichModelMetadata('claude', 'claude-sonnet-4-5');
     expect(meta).not.toBeNull();

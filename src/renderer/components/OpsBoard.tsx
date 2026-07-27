@@ -64,7 +64,7 @@ export function OpsBoard() {
   const layoutRoot = useLayoutStore((s) => s.root);
   const focusPane = useLayoutStore((s) => s.focus);
   const paneStates = useSessionStateStore((s) => s.paneStates);
-  const openWizard = useMissionWizardStore((s) => s.openForMission);
+  const openWizard = useMissionWizardStore((s) => s.openForAgentic);
   const snapshot = useGamificationStore((s) => s.snapshot);
 
   const workspacePath = useWorkspaceStore((s) => s.current?.path ?? null);
@@ -194,8 +194,8 @@ export function OpsBoard() {
         <span className="ops-board__spacer" />
         <button
           className="ops-board__new"
-          onClick={openWizard}
-          title="Nova missão (livre ou squad)"
+          onClick={() => openWizard()}
+          title="Nova missão guiada por objetivo"
         >
           <PixelIcon name="mission" />
           Missão
@@ -226,7 +226,7 @@ export function OpsBoard() {
           <button
             type="button"
             className="action-card action-card--primary ops-board__new-cta"
-            onClick={openWizard}
+            onClick={() => openWizard()}
           >
             <span className="action-card__icon" aria-hidden>
               <PixelIcon name="mission" size={18} />
@@ -236,7 +236,7 @@ export function OpsBoard() {
                 Iniciar a primeira missão
               </strong>
               <small className="action-card__sub">
-                Abre o wizard de squad / objetivo
+                Descrever objetivo e revisar equipe
               </small>
             </span>
           </button>

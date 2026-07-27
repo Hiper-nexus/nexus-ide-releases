@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
 import type { Squad } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 
 interface TestOwner {
   id: number;
@@ -41,7 +42,11 @@ const harness = vi.hoisted(() => {
     /** Teclado do operador: posse de sessão, missões e o que chegou ao PTY. */
     operatorInput: {
       ownedSessions: new Map<string, { missionId?: string }>(),
-      missions: new Map<string, { status: string }>(),
+      missions: new Map<
+        string,
+        { status: string; orchestratorSessionId?: string }
+      >(),
+      missionPanes: [] as Array<{ id: string; missionId: string }>,
       writes: [] as Array<{ sessionId: string; data: string }>,
     },
     scopeChangeListeners,
@@ -74,6 +79,8 @@ const harness = vi.hoisted(() => {
     proposeRecipes: vi.fn(),
     saveCatalogOverlay: vi.fn(),
     bootstrapMissionOrchestrator: vi.fn(),
+    stopPlanPromotion: vi.fn(),
+    restartPlanPromotion: vi.fn(),
     terminatePty: vi.fn(async (_sessionId: string) => true),
     missionRemovalCandidate: vi.fn(),
     removeMission: vi.fn(),
@@ -135,6 +142,9 @@ const harness = vi.hoisted(() => {
         },
       };
     }),
+    prepareMissionRuntimeSquadSave: vi.fn((raw: any) =>
+      harness.prepareSquadSave(raw),
+    ),
     applyPreparedSquadSave: vi.fn((candidate: any) => {
       const squad = candidate.squad;
       const index = squads.findIndex((item) => item.id === squad.id);
@@ -296,11 +306,17 @@ vi.mock('./squad-store', () => ({
   applyPreparedSquadsImport: harness.applyPreparedSquadsImport,
   deleteSquad: harness.deleteSquad,
   exportSquadsJson: harness.exportSquadsJson,
+  getSquad: vi.fn(
+    (squadId: string) =>
+      harness.squads.find((squad) => squad.id === squadId) ?? null,
+  ),
   importSquadsJson: vi.fn(),
   initSquadStore: vi.fn(),
   listSquads: vi.fn(() => [...harness.squads]),
   onSquadsChange: vi.fn(),
   prepareSquadSave: harness.prepareSquadSave,
+  prepareMissionRuntimeSquadSave:
+    harness.prepareMissionRuntimeSquadSave,
   prepareSquadsImport: harness.prepareSquadsImport,
   saveSquad: harness.saveSquad,
 }));
@@ -350,14 +366,43 @@ vi.mock('./renderer-mission-authority', () => ({
     missionApprovalCandidateFromRenderer(owner: unknown, input: unknown) {
       return harness.missionApprovalCandidate(owner, input);
     }
-    approveIntentFromRenderer(owner: unknown, input: unknown, fence: string) {
-      return harness.approveMission(owner, input, fence);
+    approveIntentFromRenderer(
+      owner: unknown,
+      input: unknown,
+      fence: string,
+      approvalReviewSha256: string,
+    ) {
+      return harness.approveMission(
+        owner,
+        input,
+        fence,
+        approvalReviewSha256,
+      );
     }
     planPromotionCandidateFromRenderer(owner: unknown, input: unknown) {
       return harness.planPromotionCandidate(owner, input);
     }
-    promotePlanLaneFromRenderer(owner: unknown, input: unknown, fence: string) {
-      return harness.promotePlan(owner, input, fence);
+    planPromotionCandidateAfterTeardownFromMain(
+      owner: unknown,
+      input: unknown,
+      expectedPlan: unknown,
+    ) {
+      return harness.planPromotionCandidate(owner, input, expectedPlan);
+    }
+    promotePlanLaneFromRenderer(
+      owner: unknown,
+      input: unknown,
+      fence: string,
+      expectedPlan: unknown,
+      approvalReviewSha256: string,
+    ) {
+      return harness.promotePlan(
+        owner,
+        input,
+        fence,
+        expectedPlan,
+        approvalReviewSha256,
+      );
     }
     missionLifecycleCandidateFromRenderer(
       owner: unknown,
@@ -385,6 +430,18 @@ vi.mock('./renderer-mission-authority', () => ({
 vi.mock('./mission-orchestrator-bootstrap', () => ({
   bootstrapMissionOrchestratorForScope: vi.fn(),
   bootstrapMissionOrchestratorFromRenderer: harness.bootstrapMissionOrchestrator,
+  stopMissionOrchestratorBeforePlanPromotionForScope:
+    harness.stopPlanPromotion,
+  restartMissionOrchestratorAfterPlanPromotionForScope:
+    harness.restartPlanPromotion,
+}));
+vi.mock("./promoted-plan-git-authority", () => ({
+  commitPromotedPlanToGit: vi.fn(() => ({
+    headSha: "a".repeat(40),
+    paths: ["plan.md"],
+    summarySha256: "b".repeat(64),
+    committed: true,
+  })),
 }));
 vi.mock('./project-domain-store-registry', () => ({
   ProjectDomainStoreRegistry: class {},
@@ -393,6 +450,12 @@ vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: vi.fn(() => ({
     missions: {
       get: (missionId: string) => harness.operatorInput.missions.get(missionId),
+    },
+    missionPanes: {
+      list: (missionId: string) =>
+        harness.operatorInput.missionPanes.filter(
+          (pane) => pane.missionId === missionId,
+        ),
     },
   })),
 }));
@@ -567,6 +630,16 @@ const SAVED_SQUAD = Object.freeze({
   ],
 });
 
+function designedSquad(id: string): Squad {
+  return {
+    ...SAVED_SQUAD,
+    id,
+    name: `Design ${id}`,
+    builtin: false,
+    agents: SAVED_SQUAD.agents.map((agent) => ({ ...agent })) as Squad["agents"],
+  };
+}
+
 beforeEach(() => {
   harness.handlers.clear();
   harness.scopes.clear();
@@ -576,6 +649,10 @@ beforeEach(() => {
   harness.ompSessions.splice(0);
   harness.agentSessions.splice(0);
   harness.scopeChangeListeners.clear();
+  harness.operatorInput.ownedSessions.clear();
+  harness.operatorInput.missions.clear();
+  harness.operatorInput.missionPanes.splice(0);
+  harness.operatorInput.writes.length = 0;
   vi.clearAllMocks();
   harness.dialog.showMessageBox.mockReset();
   harness.dialog.showOpenDialog.mockReset();
@@ -586,11 +663,11 @@ beforeEach(() => {
   );
   harness.designSquadForWorkspace.mockResolvedValue({
     ok: true,
-    squad: { id: 'designed-workspace' },
+    squad: designedSquad('designed-workspace'),
   });
   harness.designSquadFromIntent.mockResolvedValue({
     ok: true,
-    squad: { id: 'designed-intent' },
+    squad: designedSquad('designed-intent'),
   });
   harness.loadEnrichedCatalog.mockReturnValue(null);
   harness.runHarnessEnrichWithBrain.mockResolvedValue({
@@ -718,6 +795,7 @@ beforeEach(() => {
       readOnly: false,
       nativeReadOnly: true,
     },
+    orchestratorEvidence: 'verified',
     intentVersion: 3,
     budgets: {
       planningTokens: 4_000,
@@ -756,6 +834,26 @@ beforeEach(() => {
       readOnly: false,
       nativeReadOnly: true,
     },
+    orchestratorEvidence: 'verified',
+    promotedPlan: {
+      version: 1,
+      handoffId: 'handoff-plan-v5',
+      sourceIntentVersion: 5,
+      sourceSessionId: 'session-plan-v5',
+      handoffCreatedAt: 500,
+      physicalReceipt: {
+        receiptId: 'receipt-plan-v5',
+        toolCallId: 'tool-plan-v5',
+        source: 'http-mcp',
+        authoritySha256: 'c'.repeat(64),
+        issuedAt: 500,
+      },
+      summary: '# PRD\nPlano exato revisado.',
+      artifacts: [{ path: 'plan.md' }],
+      summarySha256: 'd'.repeat(64),
+      artifactsSha256: 'e'.repeat(64),
+      digest: 'f'.repeat(64),
+    },
     intentVersion: 5,
     budgets: {
       planningTokens: 4_000,
@@ -764,7 +862,36 @@ beforeEach(() => {
     },
     fence: 'promotion-fence-5',
   });
-  harness.promotePlan.mockReturnValue({ id: 'mission-plan', status: 'running' });
+  harness.promotePlan.mockReturnValue({
+    id: 'mission-plan',
+    status: 'running',
+    intentVersion: 6,
+  });
+  harness.operatorInput.missions.set('mission-plan', {
+    status: 'pending',
+    orchestratorSessionId: undefined,
+  });
+  harness.stopPlanPromotion.mockResolvedValue({
+    ok: true,
+    missionId: 'mission-plan',
+  });
+  harness.restartPlanPromotion.mockImplementation(async () => {
+    harness.operatorInput.missions.delete('mission-plan');
+    return {
+      ok: true,
+      missionId: 'mission-plan',
+      pane: {
+        paneId: 'pane-plan-v2',
+        sessionId: 'session-plan-v2',
+        adapterId: 'codex',
+        cwd: '/workspace/a',
+        title: 'Plano revisado · orq',
+        agentName: 'Maestro',
+        role: 'orchestrator',
+      },
+      kickoff: { accepted: true },
+    };
+  });
   harness.missionLifecycleCandidate.mockReturnValue({
     missionId: 'mission-1',
     title: 'Missão em execução',
@@ -899,7 +1026,10 @@ describe('bounded enrichment authority', () => {
       harness.designSquadFromIntent
         .mockImplementationOnce(() => first.promise)
         .mockImplementationOnce(() => second.promise)
-        .mockResolvedValueOnce({ ok: true, squad: { id: 'after-settlement' } });
+        .mockResolvedValueOnce({
+          ok: true,
+          squad: designedSquad('after-settlement'),
+        });
       const handler = harness.handlers.get(ORCH_CHANNELS.squadDesign);
       if (!handler) throw new Error('missing squad design handler');
 
@@ -932,7 +1062,11 @@ describe('bounded enrichment authority', () => {
       await Promise.resolve();
       await expect(
         handler({ sender }, { intent: 'after-settlement-d-807' }),
-      ).resolves.toEqual({ ok: true, squad: { id: 'after-settlement' } });
+      ).resolves.toMatchObject({
+        ok: true,
+        squad: { id: 'after-settlement' },
+        designDraftToken: expect.any(String),
+      });
     } finally {
       first.resolve({ ok: true, squad: { id: 'cleanup-a' } });
       second.resolve({ ok: true, squad: { id: 'cleanup-b' } });
@@ -967,12 +1101,25 @@ describe('bounded enrichment authority', () => {
     });
     expect(harness.designSquadFromIntent).toHaveBeenCalledTimes(2);
 
-    first.resolve({ ok: true, squad: { id: 'a' } });
-    second.resolve({ ok: true, squad: { id: 'b' } });
-    await expect(Promise.all([flightA, joinedA, flightB])).resolves.toEqual([
-      { ok: true, squad: { id: 'a' } },
-      { ok: true, squad: { id: 'a' } },
-      { ok: true, squad: { id: 'b' } },
+    first.resolve({ ok: true, squad: designedSquad('a') });
+    second.resolve({ ok: true, squad: designedSquad('b') });
+    const results = await Promise.all([flightA, joinedA, flightB]);
+    expect(results).toEqual([
+      expect.objectContaining({
+        ok: true,
+        squad: expect.objectContaining({ id: 'a' }),
+        designDraftToken: expect.any(String),
+      }),
+      expect.objectContaining({
+        ok: true,
+        squad: expect.objectContaining({ id: 'a' }),
+        designDraftToken: expect.any(String),
+      }),
+      expect.objectContaining({
+        ok: true,
+        squad: expect.objectContaining({ id: 'b' }),
+        designDraftToken: expect.any(String),
+      }),
     ]);
   });
 
@@ -1228,6 +1375,40 @@ describe('immediate squad native grant authority', () => {
         },
       ),
     ).rejects.toThrow(/user_denied/);
+  });
+
+  it('expõe a fronteira exata do Pet Studio no único modal de início', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    harness.squads.push(PET_STUDIO_SQUAD);
+    const handler = harness.handlers.get(
+      ORCH_CHANNELS.missionAuthorizeImmediateSquad,
+    )!;
+
+    await handler(
+      { sender },
+      {
+        squadId: PET_STUDIO_SQUAD.id,
+        paneId: 'pane-pet',
+        adapterId: 'codex',
+        effort: 'high',
+        missionTitle: 'Criar mascote',
+        missionGoal: 'Criar mascote com a referência autorizada',
+      },
+    );
+
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    const detail = String(
+      harness.dialog.showMessageBox.mock.calls[0]?.[1]?.detail ?? '',
+    );
+    expect(detail).toContain('nexus-pet-studio');
+    expect(detail).toContain('nexus_media_providers,nexus_image_generate');
+    expect(detail).toContain(
+      'Codex pode escrever somente neste workspace, sem rede de subprocessos',
+    );
+    expect(detail).toContain('.agents/.codex continuam protegidos');
+    expect(detail).toContain('sem sobrescrever pets existentes');
   });
 });
 
@@ -1586,37 +1767,125 @@ describe('mission authority native confirmation', () => {
     await expect(
       handler({ sender }, { missionId: 'mission-1' }),
     ).resolves.toMatchObject({ id: 'mission-1', status: 'running' });
+    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
+    if (!options) throw new Error('missing native confirmation options');
+    const detail = String(options.detail ?? '');
+    const reviewSha256 = detail.match(
+      /Review integral: SHA-256=([a-f0-9]{64})/,
+    )?.[1];
+    expect(reviewSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(harness.approveMission).toHaveBeenCalledWith(
       sender,
       { missionId: 'mission-1' },
       'approval-fence-3',
+      reviewSha256,
     );
-    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
-    if (!options) throw new Error('missing native confirmation options');
-    const detail = String(options.detail ?? '');
     expect(options).toMatchObject({ defaultId: 0, cancelId: 0, noLink: true });
     expect(detail).toContain(SCOPE_A.rootRealPath);
     expect(detail).toContain('Corrigir o golden path');
     expect(detail).toContain('sensitive');
-    expect(detail).toContain('Teste real passa');
-    expect(detail).toContain('Handoff aceito');
-    expect(detail).toContain('proof.png');
-    expect(detail).toContain('e'.repeat(64));
-    expect(detail).toContain('Bytes: 321');
-    expect(detail).toContain('nexus_git_force_push');
-    expect(detail).toContain('Squad auditado');
-    expect(detail).toContain('Hash do squad');
+    expect(detail).toContain('lane=standard');
+    expect(detail).toContain('modo=autopilot');
+    expect(detail).toContain('orçamento P4000/E12000/W3/S12');
+    expect(detail).toContain('Critérios/permissões: critérios=2');
+    expect(detail).toContain('negadas=1, tools=1');
+    expect(detail).toContain('skills=1');
+    expect(detail).toContain('Evidências/plano: evidência=sim · anexos=1');
+    expect(detail).toContain('Maestro/workers');
+    expect(detail).toContain('workers=0');
+    expect(detail).toContain('squad=Squad auditado (saved-squad) SHA-256');
     expect(detail).toContain('a'.repeat(64));
-    expect(detail).toContain('Instruções e capacidades integrais');
     expect(detail).toContain('gpt-5.6-sol');
-    expect(detail).toContain('account-a');
-    expect(detail).toContain('Nexus MCP readOnly=false');
-    expect(detail).toContain('provider nativeReadOnly=true');
-    expect(detail).not.toContain(
-      'Coordene somente pelo contrato exibido.',
-    );
-    expect(detail.split('\n')).toHaveLength(12);
+    expect(detail).toContain('verificada');
+    expect(detail).toContain('Rede: desativada');
+    expect(detail).toContain('Review integral: SHA-256=');
+    expect(detail.split('\n')).toHaveLength(9);
     expect(detail.length).toBeLessThanOrEqual(1_800);
+  });
+
+  it('mantém shell Codex offline e limita dependências ao runtime empacotado', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const base = harness.missionApprovalCandidate();
+    harness.missionApprovalCandidate.mockReturnValueOnce({
+      ...base,
+      squad: {
+        ...base.squad,
+        agents: [
+          ...base.squad.agents,
+          {
+            id: 'executor',
+            agentName: 'Executor Codex',
+            category: 'executor',
+            cli: 'codex',
+            model: 'gpt-5.6-sol',
+            effort: 'high',
+            allowedTools: [],
+            allowedSkills: ['ponytail'],
+          },
+        ],
+      },
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await handler({ sender }, { missionId: 'mission-1' });
+
+    const detail = String(
+      harness.dialog.showMessageBox.mock.calls.at(-1)?.[1]?.detail ?? '',
+    );
+    expect(detail).toContain('Rede de shell: desativada');
+    expect(detail).toContain(
+      'provider/MCP somente no binário Codex fixado',
+    );
+    expect(detail).toContain(
+      'runtime empacotado via load_workspace_dependencies',
+    );
+    expect(detail).toContain('instalação remota de pacotes indisponível');
+    expect(detail).not.toContain('limited/MITM');
+    expect(detail).not.toContain('registry.npmjs.org');
+    expect(detail).toContain(
+      createHash('sha256')
+        .update(JSON.stringify({
+          enabled: false,
+          reason: 'codex-shell-network-denied-use-main-owned-mcp',
+          providerNetwork: 'pinned-vendor-process-only',
+          workspaceWriteWorkersNetwork: false,
+          readOnlyWorkersNetwork: false,
+          remotePackageInstall: false,
+          dependencyCapability: 'bundled-runtime-paths-only',
+          dependencyTool: 'load_workspace_dependencies',
+          mainOwnedTerminalAndBackground: false,
+        }))
+        .digest('hex'),
+    );
+    expect(detail.split('\n')).toHaveLength(9);
+  });
+
+  it('expõe a evidência experimental no único diálogo nativo final', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const candidate = harness.missionApprovalCandidate();
+    harness.missionApprovalCandidate.mockReturnValueOnce({
+      ...candidate,
+      orchestratorEvidence: 'experimental',
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+
+    await handler({ sender }, { missionId: 'mission-1' });
+
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
+    expect(String(options?.detail ?? '')).toContain(
+      'experimental (gate incompleto)',
+    );
+    expect(options).toMatchObject({
+      type: 'warning',
+      buttons: ['Negar', 'Aprovar experimental e iniciar'],
+      defaultId: 0,
+      cancelId: 0,
+    });
   });
 
   it('mantém o resumo da aprovação limitado mesmo com conteúdo máximo', async () => {
@@ -1657,11 +1926,59 @@ describe('mission authority native confirmation', () => {
     const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
     if (!options) throw new Error('missing native confirmation options');
     const detail = String(options.detail ?? '');
-    expect(detail.split('\n')).toHaveLength(12);
+    expect(detail.split('\n')).toHaveLength(9);
     expect(detail.length).toBeLessThanOrEqual(1_800);
-    expect(detail).toContain('24 agente(s)');
-    expect(detail).toContain('20 critério(s)');
-    expect(detail).not.toContain('instrução instrução instrução');
+    expect(detail).toContain('workers=23');
+    expect(detail).toContain('critérios=20');
+    expect(detail).toContain('negadas=40, tools=24');
+    expect(detail).toContain('skills=24');
+    expect(detail).toMatch(/Review integral: SHA-256=[a-f0-9]{64}/);
+    expect(detail).not.toContain('Agente 24');
+    expect(detail).not.toContain('instrução '.repeat(30));
+  });
+
+  it('faz o receipt integral mudar quando autoridade não exibida muda', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const base = harness.missionApprovalCandidate();
+    const handler = missionHandler(ORCH_CHANNELS.missionApproveIntent);
+    harness.missionApprovalCandidate.mockReturnValue({
+      ...base,
+      squad: {
+        ...base.squad,
+        orchestratorInstructions: 'autoridade integral alfa',
+      },
+    });
+
+    await handler({ sender }, { missionId: 'mission-1' });
+    const firstDetail = String(
+      harness.dialog.showMessageBox.mock.calls.at(-1)?.[1]?.detail ?? '',
+    );
+    const firstReceipt = firstDetail.match(
+      /Review integral: SHA-256=([a-f0-9]{64})/,
+    )?.[1];
+
+    harness.missionApprovalCandidate.mockReturnValue({
+      ...base,
+      squad: {
+        ...base.squad,
+        orchestratorInstructions: 'autoridade integral beta',
+      },
+    });
+    await handler({ sender }, { missionId: 'mission-1' });
+    const secondDetail = String(
+      harness.dialog.showMessageBox.mock.calls.at(-1)?.[1]?.detail ?? '',
+    );
+    const secondReceipt = secondDetail.match(
+      /Review integral: SHA-256=([a-f0-9]{64})/,
+    )?.[1];
+
+    expect(firstDetail).not.toContain('autoridade integral alfa');
+    expect(secondDetail).not.toContain('autoridade integral beta');
+    expect(firstReceipt).toMatch(/^[a-f0-9]{64}$/);
+    expect(secondReceipt).toMatch(/^[a-f0-9]{64}$/);
+    expect(secondReceipt).not.toBe(firstReceipt);
   });
 
   it('invalida aprovação se o renderer muda de workspace durante o modal', async () => {
@@ -1696,11 +2013,132 @@ describe('mission authority native confirmation', () => {
     await expect(
       handler({ sender }, { missionId: 'mission-plan' }),
     ).resolves.toMatchObject({ id: 'mission-plan', status: 'running' });
+    const detail = String(
+      harness.dialog.showMessageBox.mock.calls.at(-1)?.[1]?.detail ?? '',
+    );
+    const reviewSha256 = detail.match(
+      /Review integral: SHA-256=([a-f0-9]{64})/,
+    )?.[1];
+    expect(reviewSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(detail).toContain('lane=plan→standard');
+    expect(detail).toContain(`plano=handoff=handoff-plan-v5`);
     expect(harness.promotePlan).toHaveBeenCalledWith(
       sender,
       { missionId: 'mission-plan' },
       'promotion-fence-5',
+      expect.objectContaining({
+        handoffId: 'handoff-plan-v5',
+        digest: 'f'.repeat(64),
+      }),
+      reviewSha256,
     );
+    expect(harness.stopPlanPromotion).toHaveBeenCalledWith(
+      SCOPE_A,
+      'mission-plan',
+      5,
+    );
+    expect(harness.stopPlanPromotion).toHaveBeenCalledBefore(
+      harness.promotePlan,
+    );
+    // One candidate for the denied attempt, then initial + pre-teardown +
+    // post-teardown revalidation for the approved attempt.
+    expect(harness.planPromotionCandidate).toHaveBeenCalledTimes(4);
+    expect(harness.restartPlanPromotion).toHaveBeenCalledWith(
+      SCOPE_A,
+      'mission-plan',
+      6,
+    );
+  });
+
+  it('recusa texto ou seleção de handoff vindos do renderer na promoção', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const handler = missionHandler(ORCH_CHANNELS.missionPromotePlanLane);
+
+    await expect(
+      handler(
+        { sender },
+        {
+          missionId: 'mission-plan',
+          handoffId: 'renderer-selected',
+          summary: 'texto injetado pelo renderer',
+        },
+      ),
+    ).rejects.toThrow(/invalid promote plan lane payload/i);
+    expect(harness.planPromotionCandidate).not.toHaveBeenCalled();
+    expect(harness.promotePlan).not.toHaveBeenCalled();
+  });
+
+  it('não grava standard-v2 quando o encerramento físico do plano falha', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    harness.stopPlanPromotion.mockResolvedValueOnce({
+      ok: false,
+      missionId: 'mission-plan',
+      error: 'sem prova de encerramento físico',
+      cta: 'Executar plano novamente',
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionPromotePlanLane);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-plan' }),
+    ).rejects.toThrow(/encerramento físico/i);
+
+    expect(harness.stopPlanPromotion).toHaveBeenCalledWith(
+      SCOPE_A,
+      'mission-plan',
+      5,
+    );
+    expect(harness.promotePlan).not.toHaveBeenCalled();
+    expect(harness.restartPlanPromotion).not.toHaveBeenCalled();
+  });
+
+  it('mantém o plano sem pane se a autoridade revisada mudar durante o teardown', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const reviewed = harness.planPromotionCandidate();
+    harness.planPromotionCandidate.mockReset();
+    harness.planPromotionCandidate
+      .mockReturnValueOnce(reviewed)
+      .mockReturnValueOnce(reviewed)
+      .mockReturnValueOnce({
+        ...reviewed,
+        goal: 'Objetivo alterado durante o encerramento',
+        fence: 'promotion-fence-after-teardown',
+      });
+    const handler = missionHandler(ORCH_CHANNELS.missionPromotePlanLane);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-plan' }),
+    ).rejects.toThrow(/reviewed mission authority changed/i);
+
+    expect(harness.stopPlanPromotion).toHaveBeenCalledOnce();
+    expect(harness.promotePlan).not.toHaveBeenCalled();
+    expect(harness.restartPlanPromotion).not.toHaveBeenCalled();
+  });
+
+  it('recusa promoção se um pane reaparecer depois do teardown', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    harness.stopPlanPromotion.mockImplementationOnce(async () => {
+      harness.operatorInput.missionPanes.push({
+        id: 'pane-row-reappeared',
+        missionId: 'mission-plan',
+      });
+      return { ok: true, missionId: 'mission-plan' };
+    });
+    const handler = missionHandler(ORCH_CHANNELS.missionPromotePlanLane);
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-plan' }),
+    ).rejects.toThrow(/runtime.*reappeared/i);
+
+    expect(harness.promotePlan).not.toHaveBeenCalled();
+    expect(harness.restartPlanPromotion).not.toHaveBeenCalled();
   });
 
   it('confirma demotion e nunca permite ressurreição direta pelo renderer', async () => {
@@ -2169,28 +2607,22 @@ describe('saved squad mutation authority', () => {
     return { handler, sender };
   }
 
-  it('sobrescrita mostra resumo compacto com hash e nega save por padrão', async () => {
+  it('salva a configuração global como rascunho inerte sem modal', async () => {
     const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
     harness.squads.push({ ...SAVED_SQUAD });
-    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
-    await expect(handler({ sender }, {
+    const edited = {
       ...SAVED_SQUAD,
-      nativeInstructions: 'INSTRUÇÃO NATIVA EXATA E VISÍVEL',
-    })).resolves.toEqual({
-      ok: false,
-      error: 'user_denied',
+      nativeInstructions: 'INSTRUÇÃO NATIVA ATUALIZADA',
+    };
+    await expect(handler({ sender }, edited)).resolves.toMatchObject({
+      ok: true,
+      squad: expect.objectContaining({ id: SAVED_SQUAD.id }),
     });
-    expect(harness.applyPreparedSquadSave).not.toHaveBeenCalled();
-    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
-    if (!options) throw new Error('missing squad confirmation options');
-    expect(options).toMatchObject({ defaultId: 0, cancelId: 0, noLink: true });
-    // Resumo limitado: agentes com cli/model e hash fixando o conteúdo
-    // integral — o dump de instruções não cabe num alerta nativo sem scroll.
-    expect(options.detail).toContain('Maestro');
-    expect(options.detail).toContain('gpt-5.6-sol');
-    expect(options.detail).toContain('Hash exato');
-    expect(options.detail).not.toContain('INSTRUÇÃO NATIVA EXATA E VISÍVEL');
-    expect(options.detail).not.toContain('Coordene somente pelo contrato.');
+    expect(harness.applyPreparedSquadSave).toHaveBeenCalledOnce();
+    expect(harness.squads[0].nativeInstructions).toBe(
+      'INSTRUÇÃO NATIVA ATUALIZADA',
+    );
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
   });
 
   it('recusa criar ou sobrescrever metadata de squad builtin gerenciado', async () => {
@@ -2212,33 +2644,33 @@ describe('saved squad mutation authority', () => {
     expect(harness.applyPreparedSquadSave).not.toHaveBeenCalled();
   });
 
-  it('salva com clique exato, mas CAS recusa drift durante o modal', async () => {
-    const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
-    await expect(handler({ sender }, SAVED_SQUAD)).resolves.toEqual({ ok: true });
-    expect(harness.applyPreparedSquadSave).toHaveBeenCalledOnce();
+  it('mantém confirmação nativa para excluir o rascunho', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadDelete);
+    harness.squads.push({ ...SAVED_SQUAD });
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
 
-    harness.applyPreparedSquadSave.mockClear();
-    harness.dialog.showMessageBox.mockImplementationOnce(async () => {
-      harness.squads[0] = {
-        ...SAVED_SQUAD,
-        orchestratorInstructions: 'mudança concorrente',
-      };
-      return { response: 1 };
-    });
-    await expect(handler({ sender }, {
-      ...SAVED_SQUAD,
-      name: 'Novo nome',
-    })).resolves.toMatchObject({
+    await expect(handler({ sender }, SAVED_SQUAD.id)).resolves.toEqual({
       ok: false,
-      error: expect.stringMatching(/changed.*confirmation/i),
+      error: 'user_denied',
     });
-    expect(harness.applyPreparedSquadSave).toHaveBeenCalledOnce();
-    expect(harness.squads[0].orchestratorInstructions).toBe(
-      'mudança concorrente',
-    );
+    expect(harness.squads).toHaveLength(1);
+    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
+    expect(options).toMatchObject({
+      title: 'Nexus IDE — excluir squad',
+      buttons: ['Cancelar', 'Excluir squad'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+
+    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+    await expect(handler({ sender }, SAVED_SQUAD.id)).resolves.toEqual({
+      ok: true,
+    });
+    expect(harness.squads).toHaveLength(0);
   });
 
-  it('squad novo cercado persiste os defaults/allowlists finais sem modal', async () => {
+  it('squad global novo normaliza e persiste sem cerimônia de execução', async () => {
     const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
     const raw = {
       id: 'normalized-ipc-save',
@@ -2263,17 +2695,236 @@ describe('saved squad mutation authority', () => {
       ],
     };
 
-    await expect(handler({ sender }, raw)).resolves.toEqual({ ok: true });
-    // Gate único: squad NOVO com roster cercado (workers com allowlist
-    // explícita sem wildcard após a normalização) salva sem modal — a
-    // autoridade real é conferida no modal de aprovação da missão, que fixa
-    // o hash exato do roster.
+    await expect(handler({ sender }, raw)).resolves.toMatchObject({
+      ok: true,
+      squad: expect.objectContaining({ id: raw.id }),
+    });
     expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
     expect(harness.squads[0].agents[0]).toMatchObject({
       model: 'gemini-3.6-flash-high',
       allowedTools: null,
     });
     expect(harness.squads[0].agents[1]).toMatchObject({ allowedTools: [] });
+  });
+
+  it('mantém o design fora do catálogo e aceita seu token só no renderer e workspace originais', async () => {
+    const { handler: saveHandler, sender } = setup(
+      ORCH_CHANNELS.squadSave,
+    );
+    const designHandler = harness.handlers.get(ORCH_CHANNELS.squadDesign);
+    if (!designHandler) throw new Error('missing squad design handler');
+
+    const designed = (await designHandler(
+      { sender },
+      { intent: 'design efêmero com autoridade exata' },
+    )) as {
+      ok: boolean;
+      squad?: Squad;
+      designDraftToken?: string;
+    };
+    expect(designed).toMatchObject({
+      ok: true,
+      squad: { id: 'designed-intent' },
+      designDraftToken: expect.any(String),
+    });
+    expect(designed.designDraftToken?.length).toBeGreaterThanOrEqual(32);
+    expect(harness.squads).toHaveLength(0);
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    if (!designed.squad || !designed.designDraftToken) {
+      throw new Error('missing ephemeral design authority');
+    }
+
+    const request = {
+      squad: designed.squad,
+      purpose: 'mission-runtime',
+      guided: true,
+      sourceSquadId: designed.squad.id,
+      designDraftToken: designed.designDraftToken,
+    };
+    const otherRenderer = owner(902);
+    harness.scopes.set(otherRenderer.id, SCOPE_A);
+    harness.windows.set(otherRenderer.id, { isDestroyed: () => false });
+    await expect(
+      saveHandler({ sender: otherRenderer }, request),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/source squad is unavailable/i),
+    });
+
+    await expect(saveHandler({ sender }, request)).resolves.toMatchObject({
+      ok: true,
+      squad: {
+        id: expect.stringMatching(/^agentic-runtime-[0-9a-f-]{36}$/i),
+        runtimeSourceSquadId: designed.squad.id,
+      },
+    });
+    expect(harness.prepareMissionRuntimeSquadSave).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ id: designed.squad.id }),
+      true,
+      'ephemeral',
+    );
+    await expect(saveHandler({ sender }, request)).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/source squad is unavailable/i),
+    });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('salva silenciosamente somente uma cópia runtime nova e main-owned', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
+    harness.squads.push({ ...SAVED_SQUAD });
+    const request = {
+      squad: {
+        ...SAVED_SQUAD,
+        id: 'renderer-id-is-ignored',
+        builtin: true,
+      },
+      purpose: 'mission-runtime',
+      guided: false,
+      sourceSquadId: SAVED_SQUAD.id,
+    };
+
+    const result = (await handler({ sender }, request)) as {
+      ok: boolean;
+      squad?: Squad;
+    };
+
+    expect(result).toMatchObject({
+      ok: true,
+      squad: {
+        builtin: false,
+        orchestratorInstructions: SAVED_SQUAD.orchestratorInstructions,
+      },
+    });
+    expect(result.squad?.id).toMatch(
+      /^mission-runtime-[0-9a-f-]{36}$/i,
+    );
+    expect(result.squad?.id).not.toBe(request.squad.id);
+    expect(result.squad).toMatchObject({
+      runtimeSourceSquadId: SAVED_SQUAD.id,
+      runtimeSourceSquadRevisionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(harness.applyPreparedSquadSave).toHaveBeenCalledOnce();
+  });
+
+  it('save runtime + início abre exatamente o único modal semântico da missão', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
+    await expect(handler({ sender }, SAVED_SQUAD)).resolves.toMatchObject({
+      ok: true,
+      squad: expect.objectContaining({ id: SAVED_SQUAD.id }),
+    });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    const saved = (await handler(
+      { sender },
+      {
+        squad: SAVED_SQUAD,
+        purpose: 'mission-runtime',
+        guided: false,
+        sourceSquadId: SAVED_SQUAD.id,
+      },
+    )) as { ok: boolean; squad?: Squad };
+    if (!saved.squad) throw new Error('missing runtime squad');
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+
+    const base = harness.missionApprovalCandidate();
+    const runtimeSnapshot = harness.prepareSquadSave(saved.squad).snapshot;
+    harness.missionApprovalCandidate.mockReturnValueOnce({
+      ...base,
+      squad: runtimeSnapshot,
+    });
+    const approve = harness.handlers.get(ORCH_CHANNELS.missionApproveIntent);
+    if (!approve) throw new Error('missing mission approval handler');
+
+    await approve({ sender }, { missionId: 'mission-1' });
+
+    expect(harness.dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    const options = harness.dialog.showMessageBox.mock.calls[0]?.[1];
+    expect(options).toMatchObject({
+      title: 'Nexus IDE — iniciar missão',
+      buttons: ['Negar', 'Aprovar e iniciar'],
+    });
+    const detail = String(options?.detail ?? '');
+    expect(detail).toContain(saved.squad.id);
+    expect(detail).toContain('Maestro/workers');
+    expect(detail).toContain(`SHA-256=${runtimeSnapshot.hash}`);
+    expect(detail).toContain('tools=1+0 irrestrito(s)');
+    expect(detail).toContain('skills=1+0 irrestrito(s)');
+    expect(detail).toMatch(/Review integral: SHA-256=[a-f0-9]{64}/);
+  });
+
+  it('runtime é imutável e worker com wildcard não ganha save silencioso', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
+    harness.squads.push({ ...SAVED_SQUAD });
+    const first = (await handler(
+      { sender },
+      {
+        squad: SAVED_SQUAD,
+        purpose: 'mission-runtime',
+        guided: false,
+        sourceSquadId: SAVED_SQUAD.id,
+      },
+    )) as { ok: boolean; squad?: Squad };
+    expect(first.ok).toBe(true);
+    const runtime = first.squad;
+    expect(runtime?.id).toMatch(/^mission-runtime-/);
+    if (!runtime) throw new Error('missing runtime squad');
+
+    await expect(handler({ sender }, runtime)).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/runtime squads are immutable/i),
+    });
+
+    await expect(
+      handler(
+        { sender },
+        {
+          squad: {
+            ...SAVED_SQUAD,
+            agents: [
+              SAVED_SQUAD.agents[0],
+              {
+                id: 'worker-wide',
+                agentName: 'Worker wide',
+                category: 'executor',
+                cli: 'codex',
+                allowedTools: ['*'],
+              },
+            ],
+          },
+          purpose: 'mission-runtime',
+          guided: false,
+          sourceSquadId: SAVED_SQUAD.id,
+        },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/authority-fenced/i),
+    });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(harness.applyPreparedSquadSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('não deixa o renderer promover um squad comum para identidade guided', async () => {
+    const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
+    harness.squads.push({ ...SAVED_SQUAD });
+
+    await expect(
+      handler(
+        { sender },
+        {
+          squad: SAVED_SQUAD,
+          purpose: 'mission-runtime',
+          guided: true,
+          sourceSquadId: SAVED_SQUAD.id,
+        },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/guided identity.*main-owned source/i),
+    });
+    expect(harness.prepareMissionRuntimeSquadSave).not.toHaveBeenCalled();
   });
 
   it('não altera/exclui squad de missão running aprovada', async () => {

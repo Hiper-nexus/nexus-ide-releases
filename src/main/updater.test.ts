@@ -2,7 +2,10 @@ import { rmSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const electron = vi.hoisted(() => {
-  const handlers = new Map<string, () => Promise<unknown> | unknown>();
+  const handlers = new Map<
+    string,
+    (event?: unknown, ...args: unknown[]) => Promise<unknown> | unknown
+  >();
   const logsPath = `/tmp/nexus-updater-test-${process.pid}`;
   return {
     handlers,
@@ -21,7 +24,13 @@ const electron = vi.hoisted(() => {
     BrowserWindow: { getAllWindows: () => [] },
     dialog: { showMessageBox: vi.fn() },
     ipcMain: {
-      handle: (channel: string, handler: () => Promise<unknown> | unknown) => {
+      handle: (
+        channel: string,
+        handler: (
+          event?: unknown,
+          ...args: unknown[]
+        ) => Promise<unknown> | unknown,
+      ) => {
         handlers.set(channel, handler);
       },
     },
@@ -37,7 +46,24 @@ vi.mock('electron', () => ({
 }));
 
 import { UPDATE_CHANNELS } from '../shared/update-ipc';
+import { bindTrustedMainWindow } from './security/trusted-ipc';
 import { UpdateManager } from './updater';
+
+function trustedSenderEvent() {
+  const contents = {
+    mainFrame: { id: 1 },
+    isDestroyed: () => false,
+    isCrashed: () => false,
+    getURL: () => 'nexus://app/index.html',
+    once: () => undefined,
+  };
+  const win = {
+    webContents: contents,
+    isDestroyed: () => false,
+  };
+  bindTrustedMainWindow(win as never, 'nexus://app/index.html');
+  return { sender: contents, senderFrame: contents.mainFrame };
+}
 
 function apiRelease(version: string) {
   return {
@@ -76,11 +102,11 @@ describe('UpdateManager', () => {
     expect(check).toBeTypeOf('function');
     expect(install).toBeTypeOf('function');
 
-    await check?.();
+    await check?.(trustedSenderEvent());
     expect(manager.getState().available?.version).toBe('0.16.1');
 
     releases = [apiRelease('0.16.1'), apiRelease('0.16.4')];
-    await install?.();
+    await install?.(trustedSenderEvent());
 
     const downloadArgs = runGh.mock.calls.find(
       ([args]) => args[0] === 'release' && args[1] === 'download',

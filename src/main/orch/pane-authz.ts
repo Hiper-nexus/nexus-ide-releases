@@ -53,6 +53,67 @@ export interface AuthzDecision {
 
 const WRITE_ACTIONS = new Set<PaneAction>(['write', 'close']);
 
+export interface AutomatedReviewBrowserGrant {
+  readonly paneId: string;
+  readonly missionId: string;
+  readonly scope: Readonly<ProjectExecutionScope>;
+}
+
+/**
+ * Narrow object-level exception for a main-verified automated design review.
+ * The caller must already have proved the active review session and exact
+ * design profile before constructing `grant`; this pure layer only enforces
+ * pane identity, mission/scope binding and the read-only action boundary.
+ */
+export function authorizeAutomatedReviewBrowserAccess(
+  caller: CallerCtx,
+  pane: PaneAuthzInfo,
+  action: PaneAction,
+  grant: AutomatedReviewBrowserGrant,
+): AuthzDecision {
+  if (caller.role !== 'worker') {
+    return { allow: false, reason: 'automated review browser grant requires a worker' };
+  }
+  if (action !== 'read' && action !== 'wait') {
+    return {
+      allow: false,
+      reason: 'automated reviewers may only inspect their bound browser pane',
+    };
+  }
+  if (
+    pane.kind !== 'browser' ||
+    pane.paneId !== grant.paneId ||
+    pane.missionId !== grant.missionId ||
+    caller.missionId !== grant.missionId
+  ) {
+    return {
+      allow: false,
+      reason: 'browser pane is not bound to this automated review mission',
+    };
+  }
+  if (
+    !pane.scope ||
+    caller.scope.version !== grant.scope.version ||
+    caller.scope.installationId !== grant.scope.installationId ||
+    caller.scope.projectId !== grant.scope.projectId ||
+    caller.scope.checkoutId !== grant.scope.checkoutId ||
+    caller.scope.rootRealPath !== grant.scope.rootRealPath ||
+    caller.scope.identitySource !== grant.scope.identitySource ||
+    pane.scope.version !== grant.scope.version ||
+    pane.scope.installationId !== grant.scope.installationId ||
+    pane.scope.projectId !== grant.scope.projectId ||
+    pane.scope.checkoutId !== grant.scope.checkoutId ||
+    pane.scope.rootRealPath !== grant.scope.rootRealPath ||
+    pane.scope.identitySource !== grant.scope.identitySource
+  ) {
+    return {
+      allow: false,
+      reason: 'automated review browser pane belongs to another project checkout',
+    };
+  }
+  return { allow: true };
+}
+
 export function authorizePaneAccess(
   caller: CallerCtx,
   pane: PaneAuthzInfo,

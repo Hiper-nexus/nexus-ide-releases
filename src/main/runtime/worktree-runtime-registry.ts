@@ -1,7 +1,11 @@
-import { createHash } from 'node:crypto';
-import type { ProjectExecutionScope } from '../../shared/types';
-import type { ProjectRuntimeManager } from './project-runtime-manager';
-import { WorktreeManager, type CreateWorktreeInput, type WorktreeRecord } from './worktree-manager';
+import { createHash } from "node:crypto";
+import type { ProjectExecutionScope } from "../../shared/types";
+import type { ProjectRuntimeManager } from "./project-runtime-manager";
+import {
+  WorktreeManager,
+  type CreateWorktreeInput,
+  type WorktreeRecord,
+} from "./worktree-manager";
 import {
   MergeQueue,
   type EnqueueMergeInput,
@@ -9,14 +13,17 @@ import {
   type MergeQueueResult,
   type MergeQueueStateSnapshot,
   type RetryMergeInput,
-} from './merge-queue';
-import type { PreparedWorktreeIntegration } from './worktree-contract';
+} from "./merge-queue";
+import type {
+  PreparedWorktreeIntegration,
+  PreparedWorktreeNoChangeValidation,
+} from "./worktree-contract";
 import {
   SqliteMergeQueueStateStore,
   SqliteWorktreeStateStore,
-} from './sqlite-workflow-state-stores';
-import { inspectGitBinding } from '../context/git-binding';
-import type { IntegratedMissionResult } from '../context/context-workflow-service';
+} from "./sqlite-workflow-state-stores";
+import { inspectGitBinding } from "../context/git-binding";
+import type { IntegratedMissionResult } from "../context/context-workflow-service";
 
 interface ScopeRuntime {
   readonly scope: ProjectExecutionScope;
@@ -30,11 +37,16 @@ function scopeKey(scope: ProjectExecutionScope): string {
   return `${scope.projectId}\0${scope.checkoutId}`;
 }
 
-function sameScope(left: ProjectExecutionScope, right: ProjectExecutionScope): boolean {
-  return left.installationId === right.installationId &&
+function sameScope(
+  left: ProjectExecutionScope,
+  right: ProjectExecutionScope,
+): boolean {
+  return (
+    left.installationId === right.installationId &&
     left.projectId === right.projectId &&
     left.checkoutId === right.checkoutId &&
-    left.rootRealPath === right.rootRealPath;
+    left.rootRealPath === right.rootRealPath
+  );
 }
 
 export class WorktreeRuntimeRegistry {
@@ -49,14 +61,34 @@ export class WorktreeRuntimeRegistry {
     const key = scopeKey(scope);
     const existing = this.#runtimes.get(key);
     if (existing) {
-      if (!sameScope(existing.scope, scope)) throw new Error('worktree runtime scope collision');
+      if (!sameScope(existing.scope, scope))
+        throw new Error("worktree runtime scope collision");
       return existing;
     }
     const immutableScope = Object.freeze({ ...scope });
     const runtimeRoot = this.#manager.locationFor(scope).directory;
-    const worktreeState = new SqliteWorktreeStateStore(this.#manager, immutableScope);
-    const mergeState = new SqliteMergeQueueStateStore(this.#manager, immutableScope);
-    const worktrees = new WorktreeManager({ runtimeRoot, stateStore: worktreeState });
+    const worktreeState = new SqliteWorktreeStateStore(
+      this.#manager,
+      immutableScope,
+    );
+    const mergeState = new SqliteMergeQueueStateStore(
+      this.#manager,
+      immutableScope,
+    );
+    const worktrees = new WorktreeManager({
+      runtimeRoot,
+      stateStore: worktreeState,
+    });
+    const worktreeRecovery = worktreeState.recoverInvalidState(
+      worktrees.scopeKey(immutableScope),
+    );
+    if (worktreeRecovery.action === "quarantined") {
+      console.warn(
+        `[worktree-runtime] archived ${worktreeRecovery.recordCount} invalid ` +
+          `worktree record(s) as ${worktreeRecovery.quarantineId} ` +
+          `(${worktreeRecovery.reason}); no Git path or ref was removed`,
+      );
+    }
     const queue = new MergeQueue({
       runtimeRoot,
       stateStore: mergeState,
@@ -96,8 +128,9 @@ export class WorktreeRuntimeRegistry {
   ): readonly WorktreeRecord[] {
     const runtime = this.forScope(scope);
     return Object.freeze(
-      runtime.worktreeState.read(runtime.worktrees.scopeKey(scope)).records
-        .filter((record) => record.missionId === missionId),
+      runtime.worktreeState
+        .read(runtime.worktrees.scopeKey(scope))
+        .records.filter((record) => record.missionId === missionId),
     );
   }
 
@@ -114,6 +147,34 @@ export class WorktreeRuntimeRegistry {
       scope,
       missionId,
       taskId,
+    );
+  }
+
+  prepareNoChangeValidation(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+  ): PreparedWorktreeNoChangeValidation | null {
+    return this.forScope(scope).worktrees.prepareNoChangeValidation(
+      scope,
+      missionId,
+      taskId,
+    );
+  }
+
+  markValidatedNoChange(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+    expectedTaskHeadSha: string,
+    expectedIntegrationHeadSha: string,
+  ): WorktreeRecord {
+    return this.forScope(scope).worktrees.markValidatedNoChange(
+      scope,
+      missionId,
+      taskId,
+      expectedTaskHeadSha,
+      expectedIntegrationHeadSha,
     );
   }
 
@@ -150,22 +211,45 @@ export class WorktreeRuntimeRegistry {
   ): IntegratedMissionResult | null {
     const runtime = this.forScope(scope);
     const key = runtime.worktrees.scopeKey(scope);
-    const records = runtime.worktreeState.read(key).records
-      .filter((record) => record.missionId === missionId);
-    if (records.length === 0 || records.some((record) => record.status !== 'integrated')) {
+    const records = runtime.worktreeState
+      .read(key)
+      .records.filter((record) => record.missionId === missionId);
+    if (
+      records.length === 0 ||
+      records.some((record) => record.status !== "integrated")
+    ) {
       return null;
     }
     const queue = runtime.mergeState.read(key);
     const integratedTaskKeys = new Set(
       queue.entries
-        .filter((entry) => entry.missionId === missionId && entry.status === 'integrated')
+        .filter(
+          (entry) =>
+            entry.missionId === missionId && entry.status === "integrated",
+        )
         .map((entry) => entry.taskKey),
     );
-    if (records.some((record) => !integratedTaskKeys.has(record.taskKey))) return null;
+    if (
+      records.some(
+        (record) =>
+          !integratedTaskKeys.has(record.taskKey) &&
+          !(
+            record.taskHeadSha === record.baseSha &&
+            record.integratedSha === record.baseSha
+          ),
+      )
+    ) {
+      return null;
+    }
     const git = inspectGitBinding(scope, baseSha);
-    const worktreeId = `mission-worktrees:${createHash('sha256')
-      .update(records.map((record) => record.id).sort().join('\0'))
-      .digest('hex')}`;
+    const worktreeId = `mission-worktrees:${createHash("sha256")
+      .update(
+        records
+          .map((record) => record.id)
+          .sort()
+          .join("\0"),
+      )
+      .digest("hex")}`;
     return Object.freeze({ worktreeId, ...git });
   }
 
@@ -185,7 +269,8 @@ export function configureWorktreeRuntimeRegistry(
 }
 
 export function requireWorktreeRuntimeRegistry(): WorktreeRuntimeRegistry {
-  if (!registry) throw new Error('worktree runtime registry is not initialized');
+  if (!registry)
+    throw new Error("worktree runtime registry is not initialized");
   return registry;
 }
 

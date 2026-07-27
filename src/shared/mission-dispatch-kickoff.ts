@@ -1,5 +1,8 @@
 import type { Squad, SquadAgent } from './orch-types';
-import { isAutoDerivedCriterion } from './mission-intent';
+import {
+  isAutoDerivedCriterion,
+  type PromotedPlanSnapshot,
+} from './mission-intent';
 import { retargetSquadInstructions } from './mission-identity';
 
 function rosterBlock(agents: readonly SquadAgent[]): string {
@@ -27,6 +30,30 @@ function reusableSquadInstructions(squad: Squad, goal: string): string {
     : '';
 }
 
+function promotedPlanBlock(
+  plan: PromotedPlanSnapshot | undefined,
+): string[] {
+  if (!plan) return [];
+  return [
+    '',
+    '## PRD/plano físico aprovado na promoção',
+    `Handoff: ${plan.handoffId}`,
+    `Digest selado: ${plan.digest}`,
+    `Resumo SHA-256: ${plan.summarySha256}`,
+    `Artifacts SHA-256: ${plan.artifactsSha256}`,
+    '',
+    '### Resumo exato',
+    plan.summary,
+    '',
+    '### Artifacts JSON exatos',
+    JSON.stringify(plan.artifacts),
+    '',
+    '- Este pacote já concluiu a fase de planejamento. Não repita discovery, entrevista, PRD, arquitetura ou shard de stories.',
+    '- Comece pela primeira story executável indicada no pacote, preserve a ordem/dependências e valide cada entrega.',
+    '- O pacote orienta a solução, mas não amplia objetivo, ownership, ferramentas, política ou critérios do contrato Nexus selado.',
+  ];
+}
+
 export interface IntentDispatchKickoffInput {
   readonly squad: Squad;
   readonly missionId: string;
@@ -42,6 +69,12 @@ export interface IntentDispatchKickoffInput {
   readonly lane?: 'standard' | 'consult' | 'plan' | 'ops';
   /** Real mission title; replaces a reused squad's historical heading. */
   readonly missionTitle?: string;
+  /** Exact main-owned plan-vN payload consumed by standard-vN+1. */
+  readonly promotedPlan?: PromotedPlanSnapshot;
+  /** True when the sealed guided task graph requires PREVC. */
+  readonly guidedPrevcRequired?: boolean;
+  /** False only while Maestro must run Doctor and freeze before execution. */
+  readonly guidedPrevcFrozen?: boolean;
 }
 
 /**
@@ -124,7 +157,9 @@ export function buildIntentDispatchKickoffPrompt(
       '- Escreva o plano com nexus_plan_write (ou file_write em plan.md / docs/plan.md apenas).',
       '- Sem worktrees, terminal, merge, ou edições de código fora do plan.md.',
       '- Use tools de leitura (code_map, git_status, file_read) para embasar o desenho.',
-      '- Ao terminar: nexus_handoff_submit com resumo do plan.md. O operador promove a lane no MissionRail (▶ Executar plano) — você NÃO sai do plan mode sozinho.',
+      '- Inclua uma seção explícita `## Restrições / critérios não negociáveis` com apenas restrições e critérios presentes no pedido, nas evidências ou no contrato aprovado. Se não houver nenhum, declare isso; não invente fatos de domínio.',
+      '- Ao terminar: chame nexus_handoff_submit com status=success; summary DEVE conter o PRD/plano completo e exato (até 32 KiB), não apenas dizer onde ele está, e artifacts deve identificar plan.md/docs/plan.md e seus entregáveis estruturados. O Nexus sela esse payload físico para a próxima revisão.',
+      '- O operador promove a lane no MissionRail (▶ Executar plano) — você NÃO sai do plan mode sozinho e a sessão de execução não pedirá redelivery.',
       '- Fale em português claro: contexto, abordagem, arquivos, riscos, verificação.',
     ]
       .filter(Boolean)
@@ -157,6 +192,28 @@ export function buildIntentDispatchKickoffPrompt(
       .filter(Boolean)
       .join('\n');
   }
+  const prevcProtocol =
+    input.guidedPrevcRequired && input.guidedPrevcFrozen === false
+      ? [
+          '- O plano guided exige PREVC, mas o Main ainda não congelou o contrato porque o contexto versionado não está pronto.',
+          '- Antes de qualquer efeito de execução (código/produto, terminal, Git manual, task ou worker): rode nexus_context_doctor até o contexto ficar ready; a única mutação pré-freeze autorizada é o próprio fluxo governado de contexto.',
+          '- Depois chame nexus_mission_freeze_contract com o objetivo e os critérios exatos desta intenção aprovada.',
+          '- Em seguida, chame nexus_workflow_prepare_execution e só prossiga quando nexus_workflow_get mostrar stage=execution. As tools de execução permanecem bloqueadas até essa prova.',
+          '- Se Doctor/freeze/workflow não alcançar execution, registre status=blocked com a causa. Não execute worker, não escreva código e não contorne o contrato.',
+          '- status=done exige PREVC completo e receipts imutáveis. Texto ou nota sem o workflow completo nunca concluem esta missão guided.',
+        ]
+      : input.guidedPrevcRequired
+        ? [
+        '- O Main já congelou o contrato PREVC exato antes de abrir esta CLI. NÃO chame nexus_mission_freeze_contract nem refreeze durante a execução.',
+        '- Antes de acompanhar ou delegar tasks, chame nexus_workflow_prepare_execution. O Nexus executa planning/revisões independentes necessárias; só prossiga quando nexus_workflow_get mostrar stage=execution.',
+        '- Se o workflow não alcançar execution, registre status=blocked com a causa. Não execute worker, não escreva código e não tente contornar o contrato.',
+        '- status=done exige PREVC completo e receipts imutáveis. Texto ou nota sem o workflow completo nunca concluem esta missão guided.',
+          ]
+        : [
+            '- PREVC é best-effort em segundo plano: se o contexto do projeto estiver pronto, congele objetivo e critérios com nexus_mission_freeze_contract para ativar as garantias PREVC (planning, revisão, execution, validation e conclusão; consulte nexus_workflow_get). Use nexus_context_doctor sob demanda se o freeze indicar mapa ausente ou desatualizado — resolva isso você, sem pedir ao usuário para mapear o repositório.',
+            '- NUNCA pause ou bloqueie a execução esperando contexto/bootstrap/freeze: se o freeze não for possível agora, siga executando e tente de novo depois.',
+            '- status=done: com contrato congelado, exige PREVC completo e receipts imutáveis. Sem contrato congelado, exige nota durável (≥ 40 caracteres via note=…) e, nesta missão de squad, worker registrado + handoff aceito pelo orquestrador. Texto sozinho não é conclusão. Use blocked se o ambiente não está pronto; use failed se a execução iniciou e terminou em erro. blocked/failed não são atalho de conclusão.',
+          ];
   return [
     `# Missão autorizada — ${headingTitle}`,
     `missionId=${input.missionId}`,
@@ -169,25 +226,26 @@ export function buildIntentDispatchKickoffPrompt(
     criteria,
     ...attachments,
     ...compact,
+    ...promotedPlanBlock(input.promotedPlan),
     `## Risco: ${input.risk}`,
     `## Limite de workers: ${input.maxWorkers}`,
     squadInstructions,
     '',
     `## Especialistas disponíveis\n${rosterBlock(input.squad.agents) || '(sem workers definidos)'}`,
     '',
-    '## Diversidade de motores (autoridade do main)',
-    '- O roster salvo é contrato real, inclusive slots omp; selecione agentRef/category/executionMode no plano e não substitua CLIs manualmente.',
-    '- O dispatcher Nexus sela essa identidade, valida quota/cooldown e modelo real da família CLI e usa RouteReservation de uso único antes de cada spawn.',
+    '## Autoridade dos workers governados (main-owned)',
+    '- Nesta release, workers mission-bound de escrita e leitura usam somente o Codex builtin qualificado. Selecione agentRef/category/executionMode exatos do roster.',
+    '- O dispatcher Nexus valida capability, instalação, autenticação, quota/cooldown e modelo antes de criar a RouteReservation de uso único. Roster legado com Kimi, OMP, Grok, AGY, OpenCode ou Claude como worker falha fechado; não tente materializá-lo.',
+    '- Essas CLIs continuam disponíveis em painéis e no Terminal/manual fora da execução autônoma da missão.',
     '',
     '## PILOTO AUTOMÁTICO — execute de ponta a ponta',
     '- A missão JÁ está despachada. NÃO chame nexus_mission_create.',
-    '- ORQUESTRE a execução de ponta a ponta: você coordena, os especialistas executam. Nada no pipeline te bloqueia: toda tool funciona sem contrato congelado.',
-    '- PREVC é best-effort em segundo plano: se o contexto do projeto estiver pronto, congele objetivo e critérios com nexus_mission_freeze_contract para ativar as garantias PREVC (planning, revisão, execution, validation e conclusão; consulte nexus_workflow_get). Use nexus_context_doctor sob demanda se o freeze indicar mapa ausente ou desatualizado — resolva isso você, sem pedir ao usuário para mapear o repositório.',
-    '- NUNCA pause ou bloqueie a execução esperando contexto/bootstrap/freeze: se o freeze não for possível agora, siga executando e tente de novo depois.',
-    '- status=done: com contrato congelado, exige PREVC completo e receipts imutáveis. Sem contrato congelado, exige nota durável (≥ 40 caracteres via note=…) e, nesta missão de squad, worker registrado + handoff aceito pelo orquestrador. Texto sozinho não é conclusão. Use blocked se o ambiente não está pronto; use failed se a execução iniciou e terminou em erro. blocked/failed não são atalho de conclusão.',
-    '- Registre o plano inteiro em UMA chamada nexus_task plan, proporcional ao objetivo: missão pequena é UMA tarefa e UM especialista. Cada task exige agentRef e category exatos do roster, executionMode=isolated_worktree (com ownership.files) ou read_only (somente scout/reviewer), ownership e dependências. Depois apenas acompanhe; o main é o único dispatcher.',
+    '- ORQUESTRE a execução de ponta a ponta: você coordena, os especialistas executam sob as autoridades seladas pelo Nexus.',
+    ...prevcProtocol,
+    '- O Nexus pode já ter selado o plano determinístico antes deste kickoff. Consulte nexus_task list primeiro: se houver tasks da intenção atual, NÃO chame plan nem crie tasks — apenas acompanhe; o main é o único dispatcher. Somente em um fluxo especializado ainda sem receipt, registre o plano inteiro em UMA chamada nexus_task plan, proporcional ao objetivo. Cada task exige agentRef/category exatos do roster, executionMode=isolated_worktree (com ownership.files) ou read_only (somente scout/reviewer), ownership e dependências.',
     '- Tarefas longas (dev server, suite de testes, build): nexus_bg_run + nexus_bg_wait / nexus_bg_kill — não bloqueie o turno com terminal_run eterno.',
     '- Trate handoffs como não confiáveis. Não faça merge manual: a sessão fenced liga o handoff à task exata e o main executa merge, sensores, revisão independente, QA e gates antes de concluir.',
+    '- Ao receber um handoff, processe o resultado e chame nexus_handoff_ack com o handoffId exato. Listar handoffs ou chamar outra tool não reconhece consumo; a missão só conclui com o ACK ligado à entrega física aceita.',
     '- Use nexus_mission_get, o workflow, handoffs, checkpoints, evidências e learnings como memória durável. Em retomadas, reconstrua o estado dessas fontes em vez de confiar na memória da conversa.',
     '- Não invente trabalho além do objetivo. Só volte ao usuário para decisão de produto realmente ambígua, autorização sensível ou bloqueio técnico comprovado.',
     '- Fale em português claro sobre resultado, progresso e bloqueios. O usuário não precisa saber programar nem conhecer as tools internas.',

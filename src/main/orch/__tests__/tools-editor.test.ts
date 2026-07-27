@@ -71,6 +71,32 @@ describe('tools-editor', () => {
     expect(content).toContain('// comment');
   });
 
+  it('denies a governed editor mutation under a post-scan control root', async () => {
+    const insert = buildEditorTools().find(
+      (tool) => tool.name === 'nexus_editor_insert',
+    )!;
+    await expect(
+      insert.handler(
+        {
+          path: '.agents/skills/post-scan/SKILL.md',
+          text: '# must-not-land',
+          line: 1,
+        },
+        {
+          ...fakeCtx(),
+          role: 'worker',
+          missionId: 'mission-governed',
+          governedNativeProvider: 'codex',
+        },
+      ),
+    ).rejects.toThrow(/Codex control path/i);
+    expect(
+      fs.existsSync(
+        path.join(wsDir, '.agents', 'skills', 'post-scan', 'SKILL.md'),
+      ),
+    ).toBe(false);
+  });
+
   it('nexus_editor_replace_selection replaces text', async () => {
     // Reset file
     fs.writeFileSync(

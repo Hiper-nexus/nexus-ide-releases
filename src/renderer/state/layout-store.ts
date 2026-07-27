@@ -173,6 +173,44 @@ export function flushLayout(sync = false): void {
 }
 
 /**
+ * Persist the outgoing workspace while main still recognizes the renderer's
+ * old authority, then detach its persistence key. `workspace.open` changes
+ * that authority immediately; an old async save after that point must (and
+ * does) fail closed as a cross-workspace write.
+ *
+ * If the workspace open fails, call `switchWorkspaceLayout(previousPath)` to
+ * restore persistence for the still-active workspace.
+ */
+export function prepareWorkspaceLayoutSwitch(): string | null {
+  const previousPath = persistKey;
+  flushLayout(true);
+  persistKey = null;
+  return previousPath;
+}
+
+/** Whether the in-memory tree is currently attached to a persistence key. */
+export function hasAttachedWorkspaceLayout(): boolean {
+  return persistKey !== null;
+}
+
+/**
+ * Main can announce a workspace change that did not originate in this
+ * renderer (for example, a future native open-file route). At that point the
+ * old renderer authority is already gone, so attempting a final save would be
+ * both stale and correctly rejected by Main. Cancel it and detach instead.
+ *
+ * Normal renderer-owned transitions must use prepareWorkspaceLayoutSwitch()
+ * before invoking Main so their outgoing layout is still flushed.
+ */
+export function abandonWorkspaceLayoutAfterMainSwitch(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  persistKey = null;
+}
+
+/**
  * Monotonic counter bumped by every LOCAL structural tree mutation (setPanes,
  * split, spawn, close). A workspace-layout load captures it before its await;
  * if it moved, a user action raced the load and IS the newer truth — the
@@ -212,7 +250,16 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     flushLayout();
     persistKey = workspacePath;
     const versionAtStart = treeVersion;
-    const layout = await window.nexus.layout.load(workspacePath);
+    let layout: WorkspaceLayout | null;
+    try {
+      layout = await window.nexus.layout.load(workspacePath);
+    } catch (cause) {
+      // Never leave the outgoing in-memory tree attached to the new workspace
+      // after a failed load: its next mutation would persist foreign panes
+      // under the target root.
+      if (persistKey === workspacePath) persistKey = null;
+      throw cause;
+    }
     // A stale response from a slower earlier switch must not clobber the tree.
     if (persistKey !== workspacePath) return true;
     // A local mutation landed while we were loading — it wins; don't hydrate.
@@ -222,9 +269,10 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     return layout !== null;
   })();
   inFlightSwitch = { path: workspacePath, promise: run };
-  void run.finally(() => {
+  const clearInFlight = (): void => {
     if (inFlightSwitch?.promise === run) inFlightSwitch = null;
-  });
+  };
+  void run.then(clearInFlight, clearInFlight);
   return run;
 }
 

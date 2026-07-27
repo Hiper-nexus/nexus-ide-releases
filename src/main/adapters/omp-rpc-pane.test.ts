@@ -19,6 +19,9 @@ import {
 interface FakeSessionOptions {
   sessionId: string;
   model?: { provider: string; modelId: string };
+  env?: Record<string, string>;
+  governed?: boolean;
+  credentialSecrets?: readonly string[];
 }
 
 type FakePushEvent = { kind: string; [key: string]: unknown };
@@ -36,6 +39,16 @@ const h = vi.hoisted(() => {
     readonly sessionId: string;
     state = 'ready';
     disposed = false;
+    terminateImpl: () => Promise<{
+      ok: boolean;
+      rootExited: boolean;
+      descendantsExited: boolean;
+      error?: string;
+    }> = async () => ({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
 
     constructor(options: FakeSessionOptions, callbacks: FakeSessionCallbacks) {
       this.options = options;
@@ -46,6 +59,16 @@ const h = vi.hoisted(() => {
 
     dispose(): void {
       this.disposed = true;
+    }
+
+    async terminate(): Promise<{
+      ok: boolean;
+      rootExited: boolean;
+      descendantsExited: boolean;
+      error?: string;
+    }> {
+      this.disposed = true;
+      return this.terminateImpl();
     }
 
     snapshot(): { state: string } {
@@ -60,11 +83,41 @@ const h = vi.hoisted(() => {
     }
   }
 
+  const resolveOmpBin = vi.fn(async () => ({ binPath: '/fake/omp' }));
+  const preflightOmpRpcSpawn = vi.fn(async (selectedModel?: string) => {
+    const modelRef =
+      selectedModel || 'anthropic/claude-sonnet-4-6';
+    const slash = modelRef.indexOf('/');
+    if (slash <= 0 || slash === modelRef.length - 1) {
+      throw new Error(
+        `modelo omp malformado: "${modelRef}" (formato esperado: provider/modelId)`,
+      );
+    }
+    const resolved = await resolveOmpBin();
+    return {
+      modelRef,
+      model: {
+        provider: modelRef.slice(0, slash),
+        modelId: modelRef.slice(slash + 1),
+      },
+      binPath: resolved.binPath,
+      keyEnv: {},
+      credentialScope: {
+        modelProvider: modelRef.slice(0, slash),
+        source: 'broker',
+        authorityProviderId: modelRef.slice(0, slash),
+        envNames: [] as string[],
+      },
+    };
+  });
+
   return {
     FakeOmpRpcSession,
     getAllWindows: vi.fn((): unknown[] => []),
     ipcHandle: vi.fn(),
-    resolveOmpBin: vi.fn(async () => ({ binPath: '/fake/omp' })),
+    resolveOmpBin,
+    buildOmpChildEnv: vi.fn(() => ({ PATH: '/usr/bin', NO_COLOR: '1' })),
+    preflightOmpRpcSpawn,
     waitForOmpSessionReady: vi.fn(async () => undefined),
     mintToken: vi.fn((input: { missionId?: string }) => ({
       token: 'gate-token',
@@ -88,8 +141,12 @@ vi.mock('electron', () => ({
 }));
 vi.mock('./omp-rpc-service', () => ({
   OmpRpcSession: h.FakeOmpRpcSession,
+  buildOmpChildEnv: h.buildOmpChildEnv,
   resolveOmpBin: h.resolveOmpBin,
   waitForOmpSessionReady: h.waitForOmpSessionReady,
+}));
+vi.mock('../pty/pre-spawn-probe', () => ({
+  preflightOmpRpcSpawn: h.preflightOmpRpcSpawn,
 }));
 vi.mock('../orch/gate', () => ({
   mintToken: h.mintToken,
@@ -107,6 +164,7 @@ vi.mock('../pty/pty-manager', () => ({
 }));
 
 import {
+  __resetOmpRpcLifecycleForTests,
   __resetOmpRpcPaneStreamsForTests,
   acknowledgeOmpRpcPaneOutput,
   canRendererControlOmpRpcPane,
@@ -116,22 +174,31 @@ import {
   isOmpRpcPaneSession,
   isOmpRpcSession,
   killOmpRpcPane,
+  liveOmpRpcRuntimeSummary,
   listOmpRpcSessions,
   recoverOmpRpcPaneOutput,
   spawnOmpRpcPane,
+  sealOmpRpcAdmissionForShutdown,
   terminateOmpRpcSession,
   writeOmpRpcPaneInput,
 } from './omp-rpc-ipc';
 
-type FakeWebContents = WebContents & { send: ReturnType<typeof vi.fn> };
+type FakeWebContents = WebContents & {
+  send: ReturnType<typeof vi.fn>;
+  __setDestroyed: (destroyed: boolean) => void;
+};
 
 function fakeWebContents(id: number): FakeWebContents {
+  const state = { destroyed: false };
   return {
     id,
-    isDestroyed: () => false,
+    isDestroyed: () => state.destroyed,
     isCrashed: () => false,
     send: vi.fn(),
     once: vi.fn(),
+    __setDestroyed: (destroyed: boolean) => {
+      state.destroyed = destroyed;
+    },
   } as unknown as FakeWebContents;
 }
 
@@ -159,12 +226,120 @@ beforeEach(() => {
   h.getAllWindows.mockReturnValue([]);
 });
 
-afterEach(() => {
-  disposeAllOmpRpcSessions();
+afterEach(async () => {
+  await disposeAllOmpRpcSessions();
   __resetOmpRpcPaneStreamsForTests();
+  __resetOmpRpcLifecycleForTests();
 });
 
 describe('spawnOmpRpcPane', () => {
+  it('inventories deferred preflight and refuses materialization after owner destruction', async () => {
+    let resolveBin!: (value: { binPath: string }) => void;
+    h.resolveOmpBin.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBin = resolve;
+      }),
+    );
+    const owner = fakeWebContents(700);
+    const spawn = spawnOmpRpcPane({
+      owner,
+      scope: scopeA,
+      workspaceRoot: scopeA.rootRealPath,
+    });
+
+    expect(liveOmpRpcRuntimeSummary()).toEqual({ total: 1, busy: 1 });
+    expect(listOmpRpcSessions()).toEqual([]);
+    owner.__setDestroyed(true);
+    resolveBin({ binPath: '/fake/omp' });
+
+    await expect(spawn).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/owner.*disappeared|owner.*unavailable/i),
+    });
+    expect(h.mintToken).not.toHaveBeenCalled();
+    expect(h.FakeOmpRpcSession.instances).toHaveLength(0);
+    expect(liveOmpRpcRuntimeSummary()).toEqual({ total: 0, busy: 0 });
+  });
+
+  it('blocks a new acquire after a zero snapshot is synchronously sealed', async () => {
+    expect(liveOmpRpcRuntimeSummary()).toEqual({ total: 0, busy: 0 });
+    sealOmpRpcAdmissionForShutdown();
+
+    await expect(
+      spawnOmpRpcPane({
+        owner: fakeWebContents(701),
+        scope: scopeA,
+        workspaceRoot: scopeA.rootRealPath,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/shutdown is in progress/i),
+    });
+    expect(h.resolveOmpBin).not.toHaveBeenCalled();
+    expect(h.FakeOmpRpcSession.instances).toHaveLength(0);
+  });
+
+  it('mantém admission fechada após disposeAll resolver', async () => {
+    await expect(disposeAllOmpRpcSessions()).resolves.toEqual({
+      ok: true,
+      attemptedSessionIds: [],
+      terminatedSessionIds: [],
+      failedSessionIds: [],
+    });
+
+    await expect(
+      spawnOmpRpcPane({
+        owner: fakeWebContents(0),
+        scope: scopeA,
+        workspaceRoot: scopeA.rootRealPath,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/shutdown is in progress/i),
+    });
+    expect(h.resolveOmpBin).not.toHaveBeenCalled();
+    expect(h.mintToken).not.toHaveBeenCalled();
+    expect(h.FakeOmpRpcSession.instances).toHaveLength(0);
+  });
+
+  it('shutdown revoga pane spawn enquanto resolveOmpBin está pendente', async () => {
+    let resolveBin!: (value: { binPath: string }) => void;
+    h.resolveOmpBin.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBin = resolve;
+      }),
+    );
+
+    const spawnOutcome = spawnOmpRpcPane({
+      owner: fakeWebContents(0),
+      scope: scopeA,
+      workspaceRoot: scopeA.rootRealPath,
+    });
+    expect(h.resolveOmpBin).toHaveBeenCalledOnce();
+
+    let shutdownSettled = false;
+    const shutdown = disposeAllOmpRpcSessions().then((result) => {
+      shutdownSettled = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(shutdownSettled).toBe(false);
+
+    resolveBin({ binPath: '/fake/omp' });
+    await expect(spawnOutcome).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/revoked by shutdown/i),
+    });
+    expect(h.mintToken).not.toHaveBeenCalled();
+    expect(h.FakeOmpRpcSession.instances).toHaveLength(0);
+    await expect(shutdown).resolves.toEqual({
+      ok: true,
+      attemptedSessionIds: [],
+      terminatedSessionIds: [],
+      failedSessionIds: [],
+    });
+  });
+
   it('spawna como panel com paneId real, token mintado e prompt inicial', async () => {
     const owner = fakeWebContents(1);
     const result = await spawnOmpRpcPane({
@@ -195,9 +370,42 @@ describe('spawnOmpRpcPane', () => {
     expect(isOmpRpcPaneSession(result.sessionId)).toBe(true);
     expect(isOmpRpcPaneOwnedBy(result.sessionId, owner)).toBe(true);
     expect(isOmpRpcPaneOwnedBy(result.sessionId, fakeWebContents(99))).toBe(false);
+    expect(session.options.governed).toBe(true);
     expect(h.publishSessionActivityState).toHaveBeenCalledWith(
       result.sessionId,
       'idle',
+    );
+  });
+
+  it('aplica somente o env da credencial escolhida pelo preflight', async () => {
+    h.preflightOmpRpcSpawn.mockResolvedValueOnce({
+      modelRef: 'zai/glm-5',
+      model: { provider: 'zai', modelId: 'glm-5' },
+      binPath: '/fake/omp',
+      keyEnv: {
+        ZAI_API_KEY: 'selected-secret',
+      },
+      credentialScope: {
+        modelProvider: 'zai',
+        source: 'launcher',
+        authorityProviderId: 'glm',
+        envNames: ['ZAI_API_KEY'],
+      },
+    });
+    const result = await spawnOmpRpcPane({
+      owner: fakeWebContents(101),
+      scope: scopeA,
+      workspaceRoot: scopeA.rootRealPath,
+      model: 'zai/glm-5',
+    });
+    expect(result.ok).toBe(true);
+    expect(lastSession().options.env).toEqual({
+      PATH: '/usr/bin',
+      NO_COLOR: '1',
+      ZAI_API_KEY: 'selected-secret',
+    });
+    expect(lastSession().options.env).not.toHaveProperty(
+      'OPENROUTER_API_KEY',
     );
   });
 
@@ -383,12 +591,14 @@ describe('streaming, estado, input e kill do pane RPC', () => {
       sessionId,
       'idle',
     );
-    expect(listOmpRpcSessions()).toHaveLength(0);
+    await vi.waitFor(() => {
+      expect(listOmpRpcSessions()).toHaveLength(0);
+    });
     expect(writeOmpRpcPaneInput(sessionId, 'x')).toBe(false);
     expect(killOmpRpcPane(sessionId)).toBe(false);
   });
 
-  it('term provider só resolve depois do exit físico observado', async () => {
+  it('term provider só resolve depois da prova física de root e descendentes', async () => {
     const result = await spawnOmpRpcPane({
       owner: fakeWebContents(31),
       scope: scopeA,
@@ -398,6 +608,16 @@ describe('streaming, estado, input e kill do pane RPC', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const session = lastSession();
+    let resolveProof!: (proof: {
+      ok: true;
+      rootExited: true;
+      descendantsExited: true;
+    }) => void;
+    session.terminateImpl =
+      () =>
+        new Promise((resolve) => {
+          resolveProof = resolve;
+        });
     let settled = false;
     const termination = terminateOmpRpcSession(result.sessionId, {
       timeoutMs: 10_000,
@@ -413,14 +633,17 @@ describe('streaming, estado, input e kill do pane RPC', () => {
     expect(isOmpRpcSession(result.sessionId)).toBe(true);
     expect(settled).toBe(false);
 
-    session.state = 'exited';
-    emitPush({ kind: 'exit', code: 0 });
+    resolveProof({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
     await expect(termination).resolves.toBe(true);
     expect(isOmpRpcSession(result.sessionId)).toBe(false);
     expect(listOmpRpcSessions()).toEqual([]);
   });
 
-  it('evento exit do processo emite exit e libera o pane', async () => {
+  it('evento exit natural só libera o pane após a prova física completa', async () => {
     const owner = fakeWebContents(7);
     const result = await spawnOmpRpcPane({
       owner,
@@ -435,7 +658,51 @@ describe('streaming, estado, input e kill do pane RPC', () => {
       sessionId,
       exitCode: 1,
     });
-    expect(listOmpRpcSessions()).toHaveLength(0);
+    await vi.waitFor(() => {
+      expect(listOmpRpcSessions()).toHaveLength(0);
+    });
+  });
+
+  it('preserva a autoridade e bloqueia shutdown/replacement quando descendentes não saem', async () => {
+    const result = await spawnOmpRpcPane({
+      owner: fakeWebContents(71),
+      scope: scopeA,
+      workspaceRoot: scopeA.rootRealPath,
+      paneId: 'pane-descendant-stuck',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const session = lastSession();
+    session.terminateImpl = async () => ({
+      ok: false,
+      rootExited: true,
+      descendantsExited: false,
+      error: 'descendant still alive',
+    });
+
+    session.state = 'exited';
+    emitPush({ kind: 'exit', code: 1 });
+    await vi.waitFor(() => {
+      expect(h.releaseSession).toHaveBeenCalled();
+    });
+    expect(isOmpRpcSession(result.sessionId)).toBe(true);
+    expect(isOmpRpcPaneSession(result.sessionId)).toBe(true);
+
+    await expect(terminateOmpRpcSession(result.sessionId)).resolves.toBe(false);
+    await expect(disposeAllOmpRpcSessions()).resolves.toEqual({
+      ok: false,
+      attemptedSessionIds: [result.sessionId],
+      terminatedSessionIds: [],
+      failedSessionIds: [result.sessionId],
+    });
+    expect(isOmpRpcSession(result.sessionId)).toBe(true);
+
+    // Test cleanup may now prove the same preserved physical identity.
+    session.terminateImpl = async () => ({
+      ok: true,
+      rootExited: true,
+      descendantsExited: true,
+    });
   });
 
   it('pushEvent de panel continua indo só ao owner (canal ompRpc)', async () => {

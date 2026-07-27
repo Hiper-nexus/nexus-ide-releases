@@ -78,6 +78,8 @@ import type {
   OrchPaneSpawnResult,
   PaneRegistryEntry,
   Squad,
+  SquadSaveOptions,
+  SquadSaveResult,
   TodoList,
   TodoStatus,
 } from './orch-types';
@@ -450,6 +452,8 @@ export interface NexusApi {
     /** Barge-in: mata a fala do fallback `say` que toca no main. */
     stopSpeak(): Promise<void>;
     sendWakeAudio(chunk: ArrayBuffer): void;
+    /** Desarma o detector main-owned e libera sua autoridade/lock. */
+    stopWake(): void;
     /** Evento do pipeline (mic morreu, wake detectado, falha de STT/brain) →
      *  log persistente em ~/.nexus/logs/voice.log (via main). */
     logVoice(payload: VoiceLogPayload): void;
@@ -700,8 +704,17 @@ export interface NexusApi {
     designSquad(
       workspacePath: string,
       intent?: string,
-    ): Promise<{ ok: boolean; squad?: Squad; error?: string; warning?: string }>;
-    saveSquad(squad: Squad): Promise<{ ok: boolean; error?: string }>;
+    ): Promise<{
+      ok: boolean;
+      squad?: Squad;
+      designDraftToken?: string;
+      error?: string;
+      warning?: string;
+    }>;
+    saveSquad(
+      squad: Squad,
+      options?: SquadSaveOptions,
+    ): Promise<SquadSaveResult>;
     deleteSquad(id: string): Promise<{ ok: boolean }>;
     exportSquads(): Promise<{ ok: boolean; path?: string; error?: string }>;
     importSquads(): Promise<{ ok: boolean; count?: number; error?: string }>;

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import {
   assertOrchestratorMission,
   bindContextRevision,
@@ -9,6 +10,7 @@ import {
   getContextBySession,
   isSkillAllowed,
   isToolAllowed,
+  isToolAllowedForRole,
   markHandoffSubmitted,
   MAX_STOP_ATTEMPTS,
   mintToken,
@@ -53,6 +55,7 @@ describe('isToolAllowed', () => {
   it('always allows handoff tools and ToolSearch, even with empty allowlist', () => {
     expect(isToolAllowed([], 'nexus_handoff_submit')).toBe(true);
     expect(isToolAllowed([], 'handoff_list')).toBe(true);
+    expect(isToolAllowed([], 'nexus_handoff_ack')).toBe(true);
     expect(isToolAllowed([], 'nexus_worker_heartbeat')).toBe(true);
     expect(isToolAllowed([], 'ToolSearch')).toBe(true);
   });
@@ -212,6 +215,115 @@ describe('token registry + stop gate', () => {
       contextRevision: 'context-revision-a',
       scope: testProjectScope(),
     })).toThrow(/requires a mission/);
+  });
+
+  it('mints a governed native marker only for its matching writable mission worker', () => {
+    expect(() =>
+      mintToken({
+        label: 'governed-codex-worker',
+        role: 'worker',
+        missionId: 'mission-a',
+        providerId: 'codex',
+        governedNativeProvider: 'codex',
+        scope: testProjectScope(),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      mintToken({
+        label: 'wrong-provider',
+        role: 'worker',
+        missionId: 'mission-a',
+        providerId: 'claude',
+        governedNativeProvider: 'codex',
+        scope: testProjectScope(),
+      }),
+    ).toThrow(/matching writable mission worker/);
+    expect(() =>
+      mintToken({
+        label: 'read-only-provider',
+        role: 'worker',
+        missionId: 'mission-a',
+        providerId: 'codex',
+        governedNativeProvider: 'codex',
+        readOnly: true,
+        scope: testProjectScope(),
+      }),
+    ).toThrow(/matching writable mission worker/);
+  });
+
+  it('mints the Pet media marker only for the exact canonical Codex maker', () => {
+    const maker = PET_STUDIO_SQUAD.agents[0]!;
+    const pet = mintToken({
+      label: maker.agentName,
+      role: 'orchestrator',
+      agentName: maker.agentName,
+      providerId: 'codex',
+      petStudioMediaAuthority: true,
+      petStudioAuthoritySource: 'legacy-squad',
+      petStudioSquadId: PET_STUDIO_SQUAD.id,
+      allowedTools: [...(maker.allowedTools ?? [])],
+      allowedSkills: [...(maker.allowedSkills ?? [])],
+      scope: testProjectScope(),
+    });
+
+    expect(pet.petStudioMediaAuthority).toBe(true);
+    expect(
+      isToolAllowedForRole(
+        pet.role,
+        pet.allowedTools,
+        'nexus_image_generate',
+        pet.petStudioMediaAuthority,
+      ),
+    ).toBe(true);
+    expect(
+      isToolAllowedForRole(
+        pet.role,
+        pet.allowedTools,
+        'nexus_video_generate',
+        pet.petStudioMediaAuthority,
+      ),
+    ).toBe(false);
+    expect(
+      isToolAllowedForRole(
+        'orchestrator',
+        maker.allowedTools ?? null,
+        'nexus_image_generate',
+      ),
+    ).toBe(false);
+
+    expect(() =>
+      mintToken({
+        label: maker.agentName,
+        role: 'orchestrator',
+        missionId: 'mission-pet-lookalike',
+        agentName: maker.agentName,
+        providerId: 'codex',
+        petStudioMediaAuthority: true,
+        petStudioAuthoritySource: 'legacy-squad',
+        petStudioSquadId: PET_STUDIO_SQUAD.id,
+        allowedTools: [
+          ...(maker.allowedTools ?? []),
+          'nexus_video_generate',
+        ],
+        allowedSkills: [...(maker.allowedSkills ?? [])],
+        scope: testProjectScope(),
+      }),
+    ).toThrow(/exact writable main-owned Codex maker profile/);
+
+    expect(() =>
+      mintToken({
+        label: maker.agentName,
+        role: 'orchestrator',
+        agentName: maker.agentName,
+        providerId: 'codex',
+        petStudioMediaAuthority: true,
+        petStudioAuthoritySource: 'persisted-pane',
+        petStudioSquadId: PET_STUDIO_SQUAD.id,
+        allowedTools: [...(maker.allowedTools ?? [])],
+        allowedSkills: [...(maker.allowedSkills ?? [])],
+        scope: testProjectScope(),
+      }),
+    ).toThrow(/exact writable main-owned Codex maker profile/);
   });
 
   it('never rebinds a token or session to another PTY', () => {

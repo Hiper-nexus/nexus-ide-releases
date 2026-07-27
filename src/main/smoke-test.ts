@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { app, ipcMain } from 'electron';
 
 import {
@@ -14,6 +15,44 @@ import {
   parseFunctionalSmokeResult,
 } from '../shared/smoke-types';
 import { grantWorkspacePathFromTrustedMain } from './persistence/workspace-store';
+import {
+  currentDarwinPtySupervisorRuntime,
+  supervisedPtyCommand,
+} from './pty/darwin-pty-supervisor';
+import { createRealPtyHost } from './pty/pty-host-client';
+import { proveDarwinPtyPipelineForSmoke } from './pty/darwin-pty-smoke';
+
+export function proveDarwinPtySupervisorForSmoke(
+  options: {
+    readonly platform?: NodeJS.Platform;
+    readonly buildCommand?: () => { readonly file: string; readonly args: string[] };
+    readonly spawn?: typeof spawnSync;
+  } = {},
+): boolean {
+  if ((options.platform ?? process.platform) !== 'darwin') return false;
+  const command =
+    options.buildCommand?.() ??
+    supervisedPtyCommand(
+      currentDarwinPtySupervisorRuntime(__dirname),
+      '/usr/bin/true',
+      [],
+    );
+  const result = (options.spawn ?? spawnSync)(command.file, command.args, {
+    cwd: process.cwd(),
+    env: process.env,
+    encoding: 'utf8',
+    timeout: 10_000,
+    killSignal: 'SIGTERM',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.error || result.status !== 0 || result.signal !== null) {
+    throw new Error(
+      `Darwin PTY supervisor probe failed: ` +
+        `${result.error?.message ?? result.stderr ?? result.signal ?? result.status}`,
+    );
+  }
+  return true;
+}
 
 // CI smoke test: `NexusIDE --smoke-test` boots the app for real (full main
 // init + window + renderer bundle) and exits 0 only after React commits a real
@@ -41,6 +80,13 @@ export function initSmokeTest(): void {
     (line, isError) => (isError ? console.error(line) : console.log(line)),
   );
 
+  try {
+    proveDarwinPtySupervisorForSmoke();
+  } catch (error) {
+    settle('functional-failed', smokeErrorMessage(error));
+    return;
+  }
+
   // Registering a listener suppresses Electron's blocking exception dialog,
   // turning a post-import crash into a clean non-zero exit.
   process.on('uncaughtException', (err) => {
@@ -53,6 +99,20 @@ export function initSmokeTest(): void {
 
   app.on('browser-window-created', (_event, win) => {
     const wc = win.webContents;
+    const darwinPtyPipelineProof = proveDarwinPtyPipelineForSmoke(
+      createRealPtyHost(),
+      {
+        cwd: process.cwd(),
+        environment: process.env,
+      },
+    );
+    void darwinPtyPipelineProof
+      .then((ready) => {
+        if (ready) console.log('[smoke] darwin-pty-supervisor-ready');
+      })
+      .catch((error) => {
+        settle('functional-failed', smokeErrorMessage(error));
+      });
     const removeListeners = () => {
       ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
       ipcMain.removeListener(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
@@ -91,7 +151,7 @@ export function initSmokeTest(): void {
         return;
       }
       console.log('[smoke] renderer-mounted');
-      try {
+      void darwinPtyPipelineProof.then(() => {
         const workspacePath = path.join(app.getPath('userData'), 'functional-smoke-workspace');
         fs.mkdirSync(workspacePath, { recursive: true, mode: 0o700 });
         fs.writeFileSync(
@@ -106,13 +166,13 @@ export function initSmokeTest(): void {
         wc.send(WINDOW_CHANNELS.functionalSmokeRun, {
           workspacePath: canonicalWorkspacePath,
         });
-      } catch (error) {
+      }).catch((error) => {
         console.error(
           `[smoke] workspace setup error: ${smokeErrorMessage(error)}`,
         );
         ipcMain.removeListener(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
         settle('functional-failed', 'workspace-open');
-      }
+      });
     };
     ipcMain.on(WINDOW_CHANNELS.functionalSmokeResult, onFunctionalResult);
     ipcMain.on(WINDOW_CHANNELS.mounted, onMounted);

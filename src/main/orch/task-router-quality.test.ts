@@ -465,6 +465,9 @@ describe('resolveRoutableModel — modelo real, sem fantasma', () => {
     expect(resolveRoutableModel('gpt-5.6', ['gpt-5.5', 'gpt-5.4'])).toEqual({
       ok: false,
     });
+    expect(resolveRoutableModel('gpt-5.6', ['gpt-5.6-malicious'])).toEqual({
+      ok: false,
+    });
   });
 
   it('sem lista de modelos confia na tabela (não há como validar)', () => {
