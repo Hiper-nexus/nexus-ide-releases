@@ -57,6 +57,10 @@ import {
   type MissionLane,
 } from "../../shared/mission-intent";
 import { NEXUS_PLAN_SQUAD_ID } from "../../shared/builtin-squad-ids";
+import {
+  REAL_MISSION_E2E_GOAL,
+  REAL_MISSION_E2E_PRODUCT_WIZARD_ACTIVE_STORAGE_KEY,
+} from "../../shared/real-mission-e2e";
 import { recordRealMissionProductWizardStep } from "../lib/real-mission-product-wizard-e2e";
 
 /**
@@ -1321,10 +1325,21 @@ export function MissionWizard() {
           "mission-armed",
           result.missionId,
         );
-        const armedGoal = initialGoalForArmedMission({
-          isAgentic: mode === "agentic",
-          designedIntent: intent,
-        });
+        const productWizardE2EActive =
+          window.sessionStorage.getItem(
+            REAL_MISSION_E2E_PRODUCT_WIZARD_ACTIVE_STORAGE_KEY,
+          ) === "1";
+        // Physical product-wizard release gate opens the exact fixture squad
+        // via openForSquad (no agentic composer). Main only seals a causal
+        // receipt for REAL_MISSION_E2E_GOAL, so after the trusted launch click
+        // we submit that exact objective and continue to native approval —
+        // the operator never has to retype the multi-line gate goal.
+        const armedGoal = productWizardE2EActive
+          ? REAL_MISSION_E2E_GOAL
+          : initialGoalForArmedMission({
+              isAgentic: mode === "agentic",
+              designedIntent: intent,
+            });
         setArmedMissionId(result.missionId);
         setMissionGoal(armedGoal);
         setPlannedMission(null);
@@ -1333,14 +1348,14 @@ export function MissionWizard() {
         // team. Keep that immutable click snapshot across the async arm so
         // React state cannot send an empty/stale missionId or goal. The next
         // visible decision is the main-owned native approval.
-        if (mode === "agentic" && armedGoal) {
+        if ((mode === "agentic" || productWizardE2EActive) && armedGoal) {
           await compileAndRouteMissionGoal({
             missionId: result.missionId,
             goal: armedGoal,
             attachments: missionAttachments.map((attachment) => ({
               ...attachment,
             })),
-            source: agenticSource,
+            source: productWizardE2EActive ? "typed" : agenticSource,
             lane: missionLane,
             reviewedSquad: effectiveSquad,
             directToNativeApproval: true,
@@ -1361,6 +1376,13 @@ export function MissionWizard() {
         return;
       }
       discardAndClose();
+    } catch (cause) {
+      setError(
+        toUserFacingMissionError(
+          cause,
+          "Não foi possível preparar a equipe para esta missão. Tente novamente.",
+        ),
+      );
     } finally {
       missionTransitionInFlightRef.current = false;
       setSpawning(false);

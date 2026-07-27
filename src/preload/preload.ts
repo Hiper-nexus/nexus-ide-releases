@@ -663,12 +663,19 @@ window.addEventListener('message', (event) => {
         '*',
       );
     })
-    .catch(() => {
+    .catch((error: unknown) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : 'main rejected the product wizard causal step';
       window.postMessage(
         {
           type: REAL_MISSION_E2E_PRODUCT_WIZARD_STEP_RESULT_MESSAGE,
           requestId,
           ok: false,
+          error: message.replace(/[\r\n]+/gu, ' ').slice(0, 512),
         },
         '*',
       );

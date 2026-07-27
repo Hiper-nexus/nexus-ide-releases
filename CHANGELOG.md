@@ -6,6 +6,11 @@ Data: 2026-07-26
 
 ### Hotfix de release (quit / smoke)
 
+- **Product-wizard E2E não morre no passo causal**: o gate físico abre o
+  squad fixture e, após o clique confiável de lançamento, submete o objetivo
+  exato `REAL_MISSION_E2E_GOAL` até a aprovação nativa — sem exigir que o
+  operador re-digite o multi-line do release. A rejeição do main agora
+  propaga o motivo real (capability, observer, binding).
 - **Quit com shell vivo deixa de travar na prova PTY**: o shutdown do app
   usa uma janela generosa de término; status 0 com SIGTERM residual no
   node-pty conta como recibo Darwin; e se a raiz já morreu o inventário

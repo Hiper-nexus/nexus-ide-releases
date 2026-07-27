@@ -16,6 +16,7 @@ const requests: Array<{
   step: string;
 }> = [];
 let responseOk = true;
+let responseError: string | undefined;
 
 function emulatePreload(event: MessageEvent<unknown>): void {
   if (event.source !== window) return;
@@ -39,6 +40,7 @@ function emulatePreload(event: MessageEvent<unknown>): void {
       type: REAL_MISSION_E2E_PRODUCT_WIZARD_STEP_RESULT_MESSAGE,
       requestId: request.requestId,
       ok: responseOk,
+      ...(responseError ? { error: responseError } : {}),
     },
     "*",
   );
@@ -48,6 +50,7 @@ beforeEach(() => {
   window.sessionStorage.clear();
   requests.length = 0;
   responseOk = true;
+  responseError = undefined;
   vi.spyOn(window, "postMessage").mockImplementation((message: unknown) => {
     window.dispatchEvent(
       new MessageEvent("message", {
@@ -102,6 +105,17 @@ describe("product wizard release-only causal bridge", () => {
     ).rejects.toThrow(/main rejected/i);
   });
 
+  it("surfaces the main rejection reason when preload provides one", async () => {
+    responseOk = false;
+    responseError = "product wizard intent step lacks main observation";
+
+    await expect(
+      recordRealMissionProductWizardStep("intent-submitted", "mission-a"),
+    ).rejects.toThrow(
+      /main rejected the product wizard causal step: product wizard intent step lacks main observation/i,
+    );
+  });
+
   it("is awaited by the real MissionWizard at all three authority edges", () => {
     const source = readFileSync(
       path.join(
@@ -120,6 +134,24 @@ describe("product wizard release-only causal bridge", () => {
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
     expect(source.match(/await recordRealMissionProductWizardStep/gu)).toHaveLength(
       3,
+    );
+  });
+
+  it("auto-submits the exact release goal after the trusted product-wizard launch", () => {
+    const source = readFileSync(
+      path.join(
+        process.cwd(),
+        "src/renderer/components/MissionWizard.tsx",
+      ),
+      "utf8",
+    );
+    expect(source).toContain("REAL_MISSION_E2E_PRODUCT_WIZARD_ACTIVE_STORAGE_KEY");
+    expect(source).toContain("REAL_MISSION_E2E_GOAL");
+    expect(source).toMatch(
+      /productWizardE2EActive[\s\S]*REAL_MISSION_E2E_GOAL[\s\S]*directToNativeApproval:\s*true/u,
+    );
+    expect(source).toMatch(
+      /source:\s*productWizardE2EActive\s*\?\s*"typed"\s*:\s*agenticSource/u,
     );
   });
 
