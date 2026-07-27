@@ -157,8 +157,57 @@ describe("real mission E2E closed receipts", () => {
           cli: "codex",
           allowedTools: [],
         },
+        {
+          id: "e2e-advisor-grok",
+          category: "reviewer",
+          cli: "grok",
+          allowedTools: [],
+        },
+        {
+          id: "e2e-advisor-kimi",
+          category: "scout",
+          cli: "kimi",
+          allowedTools: [],
+        },
+        {
+          id: "e2e-advisor-agy",
+          category: "scout",
+          cli: "agy",
+          allowedTools: [],
+        },
+        {
+          id: "e2e-advisor-opencode",
+          category: "scout",
+          cli: "opencode",
+          allowedTools: [],
+        },
+        {
+          id: "e2e-advisor-omp",
+          category: "scout",
+          cli: "omp",
+          allowedTools: [],
+        },
+        {
+          id: "e2e-advisor-claude",
+          category: "reviewer",
+          cli: "claude",
+          allowedTools: [],
+        },
       ],
     });
+    // Advisors sem credencial (env NEXUS_REAL_MISSION_ADVISOR_SKIP) ficam
+    // fora do roster; o pipeline codex nunca muda.
+    const skipped = createRealMissionE2ESquadFixture(["grok", "omp"]);
+    expect(skipped.agents.map((agent) => agent.id)).toEqual([
+      REAL_MISSION_E2E_ORCHESTRATOR_ID,
+      REAL_MISSION_E2E_EXECUTOR_ID,
+      REAL_MISSION_E2E_REVIEWER_ID,
+      REAL_MISSION_E2E_QA_ID,
+      "e2e-advisor-kimi",
+      "e2e-advisor-agy",
+      "e2e-advisor-opencode",
+      "e2e-advisor-claude",
+    ]);
     expect(fixture.orchestratorInstructions).toContain(
       "Guided Planner, dispatch e integração pertencem ao main",
     );

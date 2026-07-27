@@ -12,13 +12,16 @@ export {
   REAL_MISSION_FLAG,
   REAL_MISSION_PRODUCT_WIZARD_FLAG,
   REAL_MISSION_TIMEOUT_MS,
+  REAL_MISSION_ADVISOR_SKIP_ENV,
 } from "./e2e-real-mission-contract.mjs";
 export {
+  assertAdvisorBinaries,
   assertCodexReady,
   parseRealMissionArgs,
   realMissionArgs,
   realMissionEnvironment,
   resolveTrustedCodexBinary,
+  stageAdvisorAuthentication,
   stageCodexAuthentication,
 } from "./e2e-real-mission-launcher.mjs";
 export {

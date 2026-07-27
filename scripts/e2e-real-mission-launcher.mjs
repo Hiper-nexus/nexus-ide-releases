@@ -1,10 +1,13 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
+  REAL_MISSION_ADVISOR_SKIP_ENV,
+  REAL_MISSION_ADVISOR_SKIP_PATTERN,
   REAL_MISSION_FLAG,
   REAL_MISSION_PRODUCT_WIZARD_FLAG,
   SAFE_CHILD_ENV_KEYS,
@@ -73,6 +76,16 @@ export function realMissionEnvironment(
       NEXUS_REAL_MISSION_ATTESTATION_BINDING: attestation.binding,
     };
   }
+  // Advisor skips are computed by the gate and injected into this environment
+  // before waitForChild re-derives the child env from it; preserve only a
+  // strictly-shaped comma-separated id list so nothing else can ride along.
+  const advisorSkips = baseEnv[REAL_MISSION_ADVISOR_SKIP_ENV];
+  const advisorSkipEnvironment =
+    typeof advisorSkips === "string" &&
+    advisorSkips.length <= 256 &&
+    REAL_MISSION_ADVISOR_SKIP_PATTERN.test(advisorSkips)
+      ? { [REAL_MISSION_ADVISOR_SKIP_ENV]: advisorSkips }
+      : {};
   return {
     ...environment,
     HOME: home,
@@ -100,6 +113,7 @@ export function realMissionEnvironment(
     ...(launchSurface === "product-wizard"
       ? { NEXUS_REAL_MISSION_PRODUCT_WIZARD_E2E: "1" }
       : { NEXUS_REAL_MISSION_E2E: "1" }),
+    ...advisorSkipEnvironment,
     ...attestationEnvironment,
   };
 }
@@ -380,4 +394,351 @@ export function assertCodexReady({
     authenticated: true,
     version: (version.stdout ?? "").trim().slice(0, 64),
   };
+}
+
+const ADVISOR_AUTH_MAX_BYTES = 4 * 1024 * 1024;
+const ADVISOR_DATABASE_MAX_BYTES = 64 * 1024 * 1024;
+
+/** chmod 0700 every directory from `leaf` up to (and including) `root`. */
+function chmodPrivateTree(root, leaf) {
+  const resolvedRoot = path.resolve(root);
+  let current = path.resolve(leaf);
+  for (;;) {
+    fs.chmodSync(current, PRIVATE_DIRECTORY_MODE);
+    if (current === resolvedRoot) return;
+    const parent = path.dirname(current);
+    if (
+      parent === current ||
+      !current.startsWith(`${resolvedRoot}${path.sep}`)
+    ) {
+      throw new Error("private advisor directory escapes the isolated HOME");
+    }
+    current = parent;
+  }
+}
+
+/**
+ * TOCTOU-safe copy of one advisor auth file into the isolated HOME, following
+ * the same discipline as stageCodexAuthentication: O_NOFOLLOW open, regular
+ * file owned by the operator, private source mode (for secret material),
+ * re-stat before/after the read, exclusive 0600 write, no partial copy left
+ * behind. Returns false when the source simply does not exist.
+ */
+function stageAdvisorAuthFile(
+  source,
+  destinationDirectory,
+  {
+    label,
+    maxBytes = ADVISOR_AUTH_MAX_BYTES,
+    requirePrivateMode = true,
+    privateRoot = null,
+  } = {},
+) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      source,
+      fs.constants.O_RDONLY |
+        (typeof fs.constants.O_NOFOLLOW === "number"
+          ? fs.constants.O_NOFOLLOW
+          : 0),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    if (error?.code === "ELOOP") {
+      throw new Error(`refusing to stage a non-regular ${label}`);
+    }
+    throw error;
+  }
+  let destination = "";
+  try {
+    const before = fs.fstatSync(descriptor);
+    if (!before.isFile()) {
+      throw new Error(`refusing to stage a non-regular ${label}`);
+    }
+    if (requirePrivateMode && (before.mode & 0o077) !== 0) {
+      throw new Error(`${label} must use private mode 0600`);
+    }
+    if (
+      typeof process.getuid === "function" &&
+      before.uid !== process.getuid()
+    ) {
+      throw new Error(`${label} must be owned by the release operator`);
+    }
+    if (before.size > maxBytes) {
+      throw new Error(`refusing to stage an oversized ${label}`);
+    }
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    const pathStat = fs.lstatSync(source);
+    if (
+      pathStat.isSymbolicLink() ||
+      !pathStat.isFile() ||
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      after.dev !== pathStat.dev ||
+      after.ino !== pathStat.ino ||
+      after.size !== pathStat.size
+    ) {
+      throw new Error(`${label} changed while it was being staged`);
+    }
+    fs.mkdirSync(destinationDirectory, {
+      recursive: true,
+      mode: PRIVATE_DIRECTORY_MODE,
+    });
+    if (privateRoot !== null) {
+      chmodPrivateTree(privateRoot, destinationDirectory);
+    } else {
+      fs.chmodSync(destinationDirectory, PRIVATE_DIRECTORY_MODE);
+    }
+    destination = path.join(destinationDirectory, path.basename(source));
+    fs.writeFileSync(destination, bytes, {
+      flag: "wx",
+      mode: PRIVATE_FILE_MODE,
+    });
+    fs.chmodSync(destination, PRIVATE_FILE_MODE);
+    return true;
+  } catch (error) {
+    if (destination) {
+      try {
+        fs.rmSync(destination, { force: true });
+      } catch {
+        // Best effort only: never replace the original staging failure.
+      }
+    }
+    throw error;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+/** Recursive private copy of an advisor OAuth directory (AGY antigravity). */
+function stageAdvisorAuthDirectory(
+  source,
+  destination,
+  { label, privateRoot },
+) {
+  const rootStat = fs.lstatSync(source);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`refusing to stage a non-directory ${label}`);
+  }
+  fs.mkdirSync(destination, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+  chmodPrivateTree(privateRoot, destination);
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const sourcePath = path.join(source, entry.name);
+    const entryStat = fs.lstatSync(sourcePath);
+    if (entryStat.isSymbolicLink()) {
+      throw new Error(`refusing to stage ${label} through a symlink`);
+    }
+    if (entryStat.isDirectory()) {
+      stageAdvisorAuthDirectory(
+        sourcePath,
+        path.join(destination, entry.name),
+        { label, privateRoot },
+      );
+    } else if (entryStat.isFile()) {
+      stageAdvisorAuthFile(sourcePath, destination, {
+        label: `${label} entry ${entry.name}`,
+        privateRoot,
+      });
+    } else {
+      throw new Error(`refusing to stage a non-regular ${label} entry`);
+    }
+  }
+}
+
+export const REAL_MISSION_ADVISOR_BINARIES = Object.freeze([
+  "grok",
+  "kimi",
+  "agy",
+  "opencode",
+  "omp",
+  "claude",
+]);
+
+/**
+ * Stage the real operator profile's advisor credentials into the isolated
+ * child HOME so the MCP overlays (which resolve profiles relative to the
+ * child's HOME) can authenticate. Missing material is a skip, never a
+ * failure: the caller aggregates the skipped ids into
+ * NEXUS_REAL_MISSION_ADVISOR_SKIP for the child observer. Returns a per-CLI
+ * status map: "staged" (material ready in the isolated HOME; for claude this
+ * means the keychain credential is present — nothing is copied), "skipped"
+ * (material absent, onSkip fired) or "credentialless" (opencode without auth,
+ * which still works via credentialless models).
+ */
+export function stageAdvisorAuthentication(
+  isolatedHome,
+  {
+    onSkip = () => {},
+    sourceHome = os.homedir(),
+    environment = process.env,
+    run = spawnSync,
+  } = {},
+) {
+  const home = path.resolve(isolatedHome);
+  if (!path.isAbsolute(home) || home.includes("\0")) {
+    throw new Error("isolated HOME for advisor staging is invalid");
+  }
+  const source = path.resolve(sourceHome);
+  const statuses = {};
+  const report = (cliId, status) => {
+    if (status === "skipped") onSkip(cliId);
+    return status;
+  };
+
+  // grok: ~/.grok/auth.json (+ config.toml when present). config.toml is not
+  // a secret, so its source mode is tolerated; the staged copy is still 0600.
+  const grokDestination = path.join(home, ".grok");
+  const grokStaged = stageAdvisorAuthFile(
+    path.join(source, ".grok", "auth.json"),
+    grokDestination,
+    { label: "Grok auth file", privateRoot: home },
+  );
+  if (!grokStaged) {
+    statuses.grok = report("grok", "skipped");
+  } else {
+    stageAdvisorAuthFile(
+      path.join(source, ".grok", "config.toml"),
+      grokDestination,
+      {
+        label: "Grok config file",
+        requirePrivateMode: false,
+        privateRoot: home,
+      },
+    );
+    statuses.grok = report("grok", "staged");
+  }
+
+  // kimi: ~/.kimi-code/credentials/kimi-code.json
+  const kimiStaged = stageAdvisorAuthFile(
+    path.join(source, ".kimi-code", "credentials", "kimi-code.json"),
+    path.join(home, ".kimi-code", "credentials"),
+    { label: "Kimi Code credentials file", privateRoot: home },
+  );
+  statuses.kimi = report("kimi", kimiStaged ? "staged" : "skipped");
+
+  // omp: ~/.omp/agent/agent.db (+ sqlite -shm/-wal sidecars when present)
+  const ompSourceAgent = path.join(source, ".omp", "agent");
+  const ompDestination = path.join(home, ".omp", "agent");
+  const ompStaged = stageAdvisorAuthFile(
+    path.join(ompSourceAgent, "agent.db"),
+    ompDestination,
+    {
+      label: "omp agent database",
+      maxBytes: ADVISOR_DATABASE_MAX_BYTES,
+      privateRoot: home,
+    },
+  );
+  if (!ompStaged) {
+    statuses.omp = report("omp", "skipped");
+  } else {
+    for (const suffix of ["-shm", "-wal"]) {
+      stageAdvisorAuthFile(
+        path.join(ompSourceAgent, `agent.db${suffix}`),
+        ompDestination,
+        {
+          label: `omp agent database ${suffix} sidecar`,
+          maxBytes: ADVISOR_DATABASE_MAX_BYTES,
+          privateRoot: home,
+        },
+      );
+    }
+    statuses.omp = report("omp", "staged");
+  }
+
+  // agy: the whole ~/.gemini/antigravity OAuth tree, copied privately.
+  try {
+    stageAdvisorAuthDirectory(
+      path.join(source, ".gemini", "antigravity"),
+      path.join(home, ".gemini", "antigravity"),
+      { label: "AGY antigravity directory", privateRoot: home },
+    );
+    statuses.agy = report("agy", "staged");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      statuses.agy = report("agy", "skipped");
+    } else {
+      throw error;
+    }
+  }
+
+  // opencode: $XDG_DATA_HOME/opencode/auth.json, defaulting to
+  // ~/.local/share. Absence is NOT a skip: opencode has credentialless models.
+  const xdgDataHome =
+    typeof environment.XDG_DATA_HOME === "string" &&
+    environment.XDG_DATA_HOME.length > 0
+      ? path.resolve(environment.XDG_DATA_HOME)
+      : path.join(source, ".local", "share");
+  const openCodeStaged = stageAdvisorAuthFile(
+    path.join(xdgDataHome, "opencode", "auth.json"),
+    path.join(home, ".local", "share", "opencode"),
+    { label: "opencode auth file", privateRoot: home },
+  );
+  statuses.opencode = report(
+    "opencode",
+    openCodeStaged ? "staged" : "credentialless",
+  );
+
+  // claude: the credential lives in the macOS keychain, readable by the child
+  // (same user). Nothing to copy; only verify presence.
+  if (process.platform !== "darwin") {
+    statuses.claude = report("claude", "skipped");
+  } else {
+    const lookup = run(
+      "/usr/bin/security",
+      ["find-generic-password", "-s", "Claude Code-credentials"],
+      {
+        encoding: "utf8",
+        env: { PATH: "/usr/bin:/bin", LANG: "C" },
+        shell: false,
+        timeout: 10_000,
+      },
+    );
+    statuses.claude = report(
+      "claude",
+      lookup.status === 0 ? "staged" : "skipped",
+    );
+  }
+
+  return statuses;
+}
+
+/**
+ * Verify each advisor CLI binary resolves on the operator PATH and answers
+ * `--version` within a short timeout. A missing/broken binary is a skip (the
+ * observer marks the advisor `skipped: no-credential`), never a gate failure.
+ */
+export function assertAdvisorBinaries({
+  onSkip = () => {},
+  environment = process.env,
+  resolveCommand = defaultResolveCommand,
+  run = spawnSync,
+} = {}) {
+  const statuses = {};
+  for (const cli of REAL_MISSION_ADVISOR_BINARIES) {
+    const resolved = resolveCommand(cli, environment);
+    if (typeof resolved !== "string" || !path.isAbsolute(resolved)) {
+      onSkip(cli);
+      statuses[cli] = { available: false };
+      continue;
+    }
+    const version = run(resolved, ["--version"], {
+      encoding: "utf8",
+      env: environment,
+      shell: false,
+      timeout: 10_000,
+    });
+    if (version.error || version.status !== 0) {
+      onSkip(cli);
+      statuses[cli] = { available: false };
+      continue;
+    }
+    statuses[cli] = {
+      available: true,
+      version: (version.stdout ?? "").trim().slice(0, 64),
+    };
+  }
+  return statuses;
 }

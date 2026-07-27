@@ -18,6 +18,7 @@ import {
   isExclusiveRealMissionE2E,
   isRealMissionE2ERendererFailureSignal,
   isRealMissionE2EPreApprovalMission,
+  realMissionE2EAdvisorSkipClis,
   realMissionE2EObservePayloadSchema,
   realMissionE2EPrepareFixturePayloadSchema,
   type RealMissionE2EEvidence,
@@ -56,10 +57,14 @@ import {
   runGit,
   setupScratchRepository,
   sha256,
-  validateHarnessCodexAdapter,
+  validateHarnessRoster,
   validateHarnessSquad,
   type ScratchRepository,
 } from "./real-mission-e2e-workspace";
+import {
+  buildRealMissionParticipation,
+  expectedRealMissionAdvisors,
+} from "./real-mission-e2e-participation";
 import { sealRealMissionE2EContextAttestations } from "./real-mission-e2e-prevc";
 import { stageRealMissionCodexTrust } from "./real-mission-codex-trust";
 import { createRealMissionEvidenceAttester } from "./real-mission-e2e-attestation";
@@ -175,6 +180,17 @@ export function initRealMissionE2E(): void {
       ids: [],
     },
     dependencyConsumptions: [],
+    // Mesmo no fechamento de falha o roster advisor é registrado: skipped por
+    // env ficam marcados e as credenciadas constam sem recibos físicos.
+    participation: buildRealMissionParticipation({
+      expectations: expectedRealMissionAdvisors(
+        realMissionE2EAdvisorSkipClis(),
+      ),
+      ptyByCli: new Map(),
+      dispatches: [],
+      handoffIssuedAt: () => null,
+      firstNexusToolAt: () => null,
+    }),
     completion: null,
     repository: {
       initialHeadSha: scratch?.initialHeadSha ?? null,
@@ -409,7 +425,7 @@ export function initRealMissionE2E(): void {
       const mission = candidates[0];
       if (!mission) return;
       const squadBinding = productWizardSquadBinding(mission);
-      if (!squadBinding || !validateHarnessCodexAdapter()) {
+      if (!squadBinding || !validateHarnessRoster()) {
         finish("observer-invalid");
         return;
       }
@@ -537,7 +553,7 @@ export function initRealMissionE2E(): void {
     if (
       !isRealMissionE2EPreApprovalMission(mission) ||
       !squadBinding ||
-      !validateHarnessCodexAdapter()
+      !validateHarnessRoster()
     ) {
       finish("observer-invalid");
       throw new Error(

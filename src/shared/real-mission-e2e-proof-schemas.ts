@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_CTA,
   REAL_MISSION_E2E_EXECUTOR_ID,
   REAL_MISSION_E2E_QA_ID,
@@ -91,10 +92,10 @@ export const paneProofSchema = z
   })
   .strict();
 
-const guidedPlannerIdSchema = z.enum([
-  "guided-execution",
-  "guided-quality-gate",
-]).or(z.string().regex(/^guided-review-[A-Za-z0-9._:-]{1,220}$/u));
+const guidedPlannerIdSchema = z
+  .enum(["guided-execution", "guided-quality-gate"])
+  .or(z.string().regex(/^guided-review-[A-Za-z0-9._:-]{1,220}$/u))
+  .or(z.string().regex(/^guided-advisory-[A-Za-z0-9._:-]{1,220}$/u));
 
 export const planProofSchema = z
   .object({
@@ -112,14 +113,18 @@ export const planProofSchema = z
               REAL_MISSION_E2E_EXECUTOR_ID,
               REAL_MISSION_E2E_REVIEWER_ID,
               REAL_MISSION_E2E_QA_ID,
+              ...REAL_MISSION_E2E_ADVISORS.map((advisor) => advisor.id),
             ]),
-            agentCategory: z.enum(["executor", "reviewer"]),
+            agentCategory: z.enum(["executor", "reviewer", "scout"]),
             executionMode: z.enum(["isolated_worktree", "read_only"]),
             dependsOn: z.array(idSchema).max(2),
           })
           .strict(),
       )
-      .max(3),
+      // Cadeia completa: 4 scouts + executor + revisor codex + 2 reviewers
+      // advisor + QA. Advisors skipped encolhem a cadeia; a exatidão fica no
+      // invariante de PASS do envelope.
+      .max(9),
   })
   .strict()
   .nullable();
@@ -284,6 +289,23 @@ export const durableHandoffSetSchema = z
   })
   .strict();
 
+/**
+ * Recibo de participação de uma CLI advisor: PTY físico (spawn), primeira
+ * tool nexus_* na fronteira HTTP MCP e submissão do handoff. Advisors sem
+ * credencial materializável entram como `skipped: "no-credential"` (via env
+ * NEXUS_REAL_MISSION_ADVISOR_SKIP) e ficam fora da exigência de PASS.
+ */
+export const advisorParticipationProofSchema = z
+  .object({
+    cli: z.enum(["grok", "kimi", "agy", "opencode", "omp", "claude"]),
+    tier: z.enum(["mechanically-confined", "advisory-unconfined"]),
+    skipped: z.literal("no-credential").nullable(),
+    spawnedAt: timestampSchema.nullable(),
+    firstNexusToolAt: timestampSchema.nullable(),
+    handoffAt: timestampSchema.nullable(),
+  })
+  .strict();
+
 export const physicalPtySetSchema = z
   .object({
     count: z.number().int().nonnegative().max(16),
@@ -404,6 +426,7 @@ export const failureSchema = z
       "timeout",
       "app-error",
       "mcp-prompt-detected",
+      "advisor-absent",
     ]),
     reason: z
       .enum([

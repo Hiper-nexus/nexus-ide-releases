@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_RESULT_CONTENT,
@@ -12,6 +13,7 @@ import {
   parseRealMissionE2EEvidence,
   type RealMissionE2EEvidence,
 } from "../shared/real-mission-e2e";
+import { hasNexusMcpCapability } from "../shared/adapter-types";
 import type { Mission } from "../shared/orch-types";
 import { getAdapter } from "./adapters/adapter-registry";
 import { getSquad } from "./orch/squad-store";
@@ -339,5 +341,37 @@ export function validateHarnessCodexAdapter(): boolean {
         "--ask-for-approval",
         "on-request",
       ])
+  );
+}
+
+/**
+ * Cada CLI advisor do harness precisa de um adapter cli-pty real com PTY
+ * obrigatório e rota Nexus MCP declarada — sem isso o fan-out consultivo não
+ * tem caminho físico de injeção/observação.
+ */
+export function validateHarnessAdvisorAdapters(): boolean {
+  return REAL_MISSION_E2E_ADVISORS.every((advisor) => {
+    const adapter = getAdapter(advisor.cli);
+    return Boolean(
+      adapter &&
+        adapter.kind === "cli-pty" &&
+        adapter.id === advisor.cli &&
+        adapter.bin === advisor.cli &&
+        adapter.spawn.ptyRequired &&
+        hasNexusMcpCapability(adapter.quirks),
+    );
+  });
+}
+
+/**
+ * Roster completo do harness multi-CLI: o squad persistido é o fixture exato
+ * (ids/categorias/CLIs, env-skip aplicado), o adapter codex mantém o shape
+ * release-pinado e cada CLI advisor tem caminho físico PTY + Nexus MCP.
+ */
+export function validateHarnessRoster(): boolean {
+  return (
+    validateHarnessSquad() &&
+    validateHarnessCodexAdapter() &&
+    validateHarnessAdvisorAdapters()
   );
 }

@@ -14,7 +14,11 @@ export type RealMissionPhysicalPtyAgent = PhysicalPtyAgent & {
   readonly role: "orchestrator" | "worker";
 };
 export type RealMissionPhysicalPtyIdentity =
-  "orchestrator" | "executor" | "reviewer" | "qa";
+  | "orchestrator"
+  | "executor"
+  | "reviewer"
+  | "qa"
+  | `advisor:${string}`;
 export type RealMissionPhysicalPtyInspection =
   | { readonly kind: "unrelated" }
   | { readonly kind: "violation" }
@@ -23,6 +27,16 @@ export type RealMissionPhysicalPtyInspection =
       readonly identity: RealMissionPhysicalPtyIdentity;
       readonly agent: RealMissionPhysicalPtyAgent;
     };
+
+/**
+ * Uma CLI advisor esperada pelo harness (não-skipped): a sessão física dela é
+ * aceita pelo gate com identidade `advisor:<cli>` e registrada na prova de
+ * participação — nunca no conjunto PTY codex de quatro panes.
+ */
+export interface RealMissionAdvisorPtyExpectation {
+  readonly cli: string;
+  readonly agentName: string;
+}
 
 /**
  * Accept only the main-owned identity actually attached to the physical PTY.
@@ -73,11 +87,38 @@ function physicalPtyIdentity(
 }
 
 /**
+ * Identidade advisor de uma sessão física: worker read_only da missão cuja
+ * CLI e nome casam exatamente com uma advisor esperada (não-skipped). Advisors
+ * skipped estão fora do roster — uma sessão com a identidade delas é violação.
+ */
+function advisorPtyIdentity(
+  missionId: string,
+  agent: PhysicalPtyAgent | null,
+  expectedAdvisors: readonly RealMissionAdvisorPtyExpectation[],
+): RealMissionPhysicalPtyIdentity | null {
+  if (
+    !agent ||
+    agent.missionId !== missionId ||
+    agent.role !== "worker" ||
+    !agent.workerIncarnationId
+  ) {
+    return null;
+  }
+  const advisor = expectedAdvisors.find(
+    (candidate) =>
+      candidate.cli === agent.adapterId &&
+      candidate.agentName === agent.agentName,
+  );
+  return advisor ? `advisor:${advisor.cli}` : null;
+}
+
+/**
  * Stateful exact-roster fence. A mission may bind one physical session to
  * each approved identity and no others, including sequential replacements.
  */
 export class ExactRealMissionPhysicalPtyGate {
   readonly #missionId: string;
+  readonly #expectedAdvisors: readonly RealMissionAdvisorPtyExpectation[];
   readonly #sessionByIdentity = new Map<
     RealMissionPhysicalPtyIdentity,
     string
@@ -87,8 +128,12 @@ export class ExactRealMissionPhysicalPtyGate {
     RealMissionPhysicalPtyIdentity
   >();
 
-  constructor(missionId: string) {
+  constructor(
+    missionId: string,
+    expectedAdvisors: readonly RealMissionAdvisorPtyExpectation[] = [],
+  ) {
     this.#missionId = missionId;
+    this.#expectedAdvisors = expectedAdvisors;
   }
 
   get acceptedSessionCount(): number {
@@ -100,10 +145,23 @@ export class ExactRealMissionPhysicalPtyGate {
     agent: PhysicalPtyAgent | null,
   ): RealMissionPhysicalPtyInspection {
     if (agent?.missionId !== this.#missionId) return { kind: "unrelated" };
-    if (!isRealMissionPhysicalPtyAgent(sessionId, this.#missionId, agent)) {
-      return { kind: "violation" };
+    let identity: RealMissionPhysicalPtyIdentity;
+    let acceptedAgent: RealMissionPhysicalPtyAgent;
+    if (isRealMissionPhysicalPtyAgent(sessionId, this.#missionId, agent)) {
+      identity = physicalPtyIdentity(agent);
+      acceptedAgent = agent;
+    } else {
+      // advisorPtyIdentity só aceita role "worker" com encarnação: a sessão
+      // advisor entra na cerca exata sem nunca virar prova do pipeline codex.
+      const advisorIdentity = advisorPtyIdentity(
+        this.#missionId,
+        agent,
+        this.#expectedAdvisors,
+      );
+      if (advisorIdentity === null) return { kind: "violation" };
+      identity = advisorIdentity;
+      acceptedAgent = agent as RealMissionPhysicalPtyAgent;
     }
-    const identity = physicalPtyIdentity(agent);
     const priorSession = this.#sessionByIdentity.get(identity);
     const priorIdentity = this.#identityBySession.get(sessionId);
     if (
@@ -114,7 +172,7 @@ export class ExactRealMissionPhysicalPtyGate {
     }
     this.#sessionByIdentity.set(identity, sessionId);
     this.#identityBySession.set(sessionId, identity);
-    return { kind: "accepted", identity, agent };
+    return { kind: "accepted", identity, agent: acceptedAgent };
   }
 }
 

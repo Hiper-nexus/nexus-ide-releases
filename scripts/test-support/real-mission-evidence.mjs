@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 
-import { productWizardReceiptChainSha256 } from "../e2e-real-mission-contract.mjs";
+import {
+  REAL_MISSION_ACCEPTANCE_CRITERIA,
+  REAL_MISSION_ADVISORS,
+  REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
+  REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
+  productWizardReceiptChainSha256,
+  realMissionExpectedTaskChain,
+} from "../e2e-real-mission-contract.mjs";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const canonicalJson = (value) => {
@@ -45,26 +52,8 @@ const milestoneAttestationId = (missionId, stepId, binding) =>
     milestoneId: stepId,
     binding,
   }))}`;
-const ACCEPTANCE_CRITERIA = Object.freeze([
-  "O executor Codex do roster cria resultado.txt no próprio worktree — nunca o orquestrador nem o processo main.",
-  "resultado.txt contém exatamente nexus-real-mission-e2e-ok seguido de newline.",
-  "O próprio executor faz o commit local e chama nexus_handoff_submit; sessão e encarnação conferem com o primeiro dispatch.",
-  "O motor Nexus integra o commit antes de liberar a tarefa dependente do revisor.",
-  "O revisor Codex abre um segundo PTY físico, valida o HEAD integrado e chama nexus_handoff_submit sem commit vazio nem alteração cosmética.",
-  "O motor Nexus emite worktree_validated_no_change para o revisor antes de liberar a tarefa dependente de QA.",
-  "O QA Codex abre um terceiro PTY físico, consome o handoff do revisor e valida o HEAD integrado; o QA não deve editar, alterar ou escrever arquivos e chama nexus_handoff_submit sem mudança artificial.",
-  "O motor Nexus emite o receipt final worktree_validated_no_change e marca a missão done sem atalho manual.",
-]);
-const PRODUCT_WIZARD_GOAL =
-  'Entregue resultado.txt com o conteúdo exato "nexus-real-mission-e2e-ok\\n". ' +
-  "O executor deve implementar e enviar seu handoff; depois um revisor independente " +
-  "deve validar o HEAD integrado e enviar seu handoff; por fim o QA deve validar a " +
-  "revisão integrada e enviar o terceiro handoff. O QA não deve editar, alterar ou " +
-  "escrever arquivos nem criar mudança artificial. " +
-  "O orquestrador não pode editar nem commitar o arquivo.";
-const PRODUCT_WIZARD_ACCEPTANCE_CRITERIA = Object.freeze([
-  `Objetivo concluído conforme: ${PRODUCT_WIZARD_GOAL}`,
-]);
+
+const memberSlug = (agentRef) => agentRef.replace(/^e2e-/u, "");
 
 export function makeValidRealMissionEvidence({
   appVersion = "1.2.3",
@@ -72,11 +61,11 @@ export function makeValidRealMissionEvidence({
   artifactSha256 = sha256("zip"),
   identity = "Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)",
   launchSurface = "product-wizard",
+  skipAdvisorClis = [],
 } = {}) {
+  const initialHeadSha = "c".repeat(40);
   const finalHeadSha = "b".repeat(40);
   const expectedContentSha256 = sha256("nexus-real-mission-e2e-ok\n");
-  const reviewerNoChangeDiffHash = sha256("reviewer-clean-diff");
-  const qaNoChangeDiffHash = sha256("qa-clean-diff");
   const planHash = sha256("guided-plan");
   const sourceSquadRevisionHash = sha256("source-squad-revision");
   const runtimeSquadRevisionHash = sha256("runtime-squad-revision");
@@ -86,20 +75,59 @@ export function makeValidRealMissionEvidence({
   const contextHash = sha256("frozen-context");
   const contractHash = sha256("frozen-contract");
   const finalDiffHash = sha256("integrated-diff");
+  const skipped = new Set(skipAdvisorClis);
+  const presentAdvisorClis = REAL_MISSION_ADVISORS.filter(
+    (advisor) => !skipped.has(advisor.cli),
+  ).map((advisor) => advisor.cli);
+  const chain = realMissionExpectedTaskChain(presentAdvisorClis);
   const workflowBinding = {
     projectId: "project-real",
     checkoutId: "checkout-real",
     missionId: "mission-real",
     contextHash,
     contractHash,
-    baseSha: "c".repeat(40),
+    baseSha: initialHeadSha,
     headSha: finalHeadSha,
     diffHash: finalDiffHash,
   };
   const acceptanceCriteria =
     launchSurface === "private-runner"
-      ? ACCEPTANCE_CRITERIA
-      : PRODUCT_WIZARD_ACCEPTANCE_CRITERIA;
+      ? REAL_MISSION_ACCEPTANCE_CRITERIA
+      : REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA;
+
+  // Linha do tempo física da cadeia linear: cada membro começa quando o
+  // anterior completa (receipt.completedAt === dispatch.completedAt).
+  let cursor = 4;
+  const timeline = chain.map((member, index) => {
+    const base = cursor;
+    cursor += 5;
+    return {
+      member,
+      index,
+      slug: memberSlug(member.agentRef),
+      taskId: `task-${memberSlug(member.agentRef)}`,
+      previousTaskId:
+        index > 0 ? `task-${memberSlug(chain[index - 1].agentRef)}` : null,
+      routeConsumedAt: base,
+      spawnedAt: base,
+      ptyDataAt: base + 1,
+      firstNexusToolAt: base + 1,
+      auditOccurredAt: base + 1,
+      issuedAt: base + 2,
+      attemptStartedAt: base + 2,
+      acceptedAt: base + 3,
+      handoffAcceptedAt: base + 3,
+      acceptDeadlineAt: base + 4,
+      handoffConsumedAt: base + 4,
+      consumedDependencyAt: base,
+      completedAt: base + 5,
+    };
+  });
+  const completionCompletedAt = cursor + 1;
+  const finishedAt = cursor + 2;
+  const headFor = (kind) =>
+    kind === "advisory" ? initialHeadSha : finalHeadSha;
+
   const milestones = acceptanceCriteria.map((label, index) => ({
     stepId: `step-${index + 1}`,
     label,
@@ -124,12 +152,12 @@ export function makeValidRealMissionEvidence({
       missionId: "mission-real",
       contextRevision: contextHash,
       contractHash,
-      baseSha: "c".repeat(40),
+      baseSha: initialHeadSha,
       headSha: finalHeadSha,
       diffHash: finalDiffHash,
       workflowRevision: 3,
     },
-    completedAt: 20,
+    completedAt: completionCompletedAt,
   }));
   const productWizardReceiptCore = {
     origin: "main-owned-product-wizard-causal-chain",
@@ -145,12 +173,31 @@ export function makeValidRealMissionEvidence({
     nativeDialogAcceptedAt: 0,
     approvalReturnedAt: 1,
   };
+  const codexWorkerPane = (agentRef) => {
+    const step = timeline.find(
+      (candidate) => candidate.member.agentRef === agentRef,
+    );
+    const readOnly = agentRef !== "e2e-executor";
+    return {
+      role: "worker",
+      paneId: `pane-${step.slug}`,
+      adapterId: "codex",
+      agentRef,
+      workerIncarnationId: `incarnation-${step.slug}`,
+      sessionId: `session-${step.slug}`,
+      readOnly,
+      nativeReadOnly: readOnly,
+      ptySpawnedAt: step.spawnedAt,
+      ptyDataAt: step.ptyDataAt,
+      ptyChunkSha256: sha256(`${step.slug}-pty`),
+    };
+  };
   return {
-    schemaVersion: 8,
+    schemaVersion: REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
     runId: "run-synthetic-fixture",
     appVersion,
     startedAt: 0,
-    finishedAt: 20,
+    finishedAt,
     status: "pass",
     failure: null,
     workspaceSha256,
@@ -242,32 +289,14 @@ export function makeValidRealMissionEvidence({
           : runtimeSquadId,
       planHash,
       rosterHash: sha256("guided-roster"),
-      tasks: [
-        {
-          plannerId: "guided-execution",
-          taskId: "task-executor",
-          agentRef: "e2e-executor",
-          agentCategory: "executor",
-          executionMode: "isolated_worktree",
-          dependsOn: [],
-        },
-        {
-          plannerId: "guided-review-e2e-reviewer-0",
-          taskId: "task-reviewer",
-          agentRef: "e2e-reviewer",
-          agentCategory: "reviewer",
-          executionMode: "read_only",
-          dependsOn: ["task-executor"],
-        },
-        {
-          plannerId: "guided-quality-gate",
-          taskId: "task-qa",
-          agentRef: "e2e-qa",
-          agentCategory: "reviewer",
-          executionMode: "read_only",
-          dependsOn: ["task-reviewer"],
-        },
-      ],
+      tasks: timeline.map((step) => ({
+        plannerId: step.member.plannerId,
+        taskId: step.taskId,
+        agentRef: step.member.agentRef,
+        agentCategory: step.member.agentCategory,
+        executionMode: step.member.executionMode,
+        dependsOn: step.previousTaskId === null ? [] : [step.previousTaskId],
+      })),
     },
     panes: [
       {
@@ -283,45 +312,9 @@ export function makeValidRealMissionEvidence({
         ptyDataAt: 3,
         ptyChunkSha256: sha256("orchestrator-pty"),
       },
-      {
-        role: "worker",
-        paneId: "pane-executor",
-        adapterId: "codex",
-        agentRef: "e2e-executor",
-        workerIncarnationId: "incarnation-executor",
-        sessionId: "session-executor",
-        readOnly: false,
-        nativeReadOnly: false,
-        ptySpawnedAt: 4,
-        ptyDataAt: 5,
-        ptyChunkSha256: sha256("executor-pty"),
-      },
-      {
-        role: "worker",
-        paneId: "pane-reviewer",
-        adapterId: "codex",
-        agentRef: "e2e-reviewer",
-        workerIncarnationId: "incarnation-reviewer",
-        sessionId: "session-reviewer",
-        readOnly: true,
-        nativeReadOnly: true,
-        ptySpawnedAt: 9,
-        ptyDataAt: 10,
-        ptyChunkSha256: sha256("reviewer-pty"),
-      },
-      {
-        role: "worker",
-        paneId: "pane-qa",
-        adapterId: "codex",
-        agentRef: "e2e-qa",
-        workerIncarnationId: "incarnation-qa",
-        sessionId: "session-qa",
-        readOnly: true,
-        nativeReadOnly: true,
-        ptySpawnedAt: 14,
-        ptyDataAt: 15,
-        ptyChunkSha256: sha256("qa-pty"),
-      },
+      codexWorkerPane("e2e-executor"),
+      codexWorkerPane("e2e-reviewer"),
+      codexWorkerPane("e2e-qa"),
     ],
     physicalPty: {
       count: 4,
@@ -332,288 +325,149 @@ export function makeValidRealMissionEvidence({
         "session-qa",
       ],
     },
-    dispatches: [
-      {
-        taskId: "task-executor",
-        plannerId: "guided-execution",
-        agentRef: "e2e-executor",
-        agentCategory: "executor",
-        executionMode: "isolated_worktree",
-        dependsOn: [],
-        state: "completed",
-        routeReservationId: "reservation-executor",
-        routeConsumedAt: 4,
-        routeConsumerMatches: true,
-        workerIncarnationId: "incarnation-executor",
-        sessionId: "session-executor",
-        handoffId: "handoff-executor",
-        handoffAcceptedAt: 7,
-        completedAt: 8,
-        integrationReceipt: {
-          kind: "worktree_integrated",
-          reference: finalHeadSha,
-          completedAt: 8,
-        },
+    dispatches: timeline.map((step) => ({
+      taskId: step.taskId,
+      plannerId: step.member.plannerId,
+      agentRef: step.member.agentRef,
+      agentCategory: step.member.agentCategory,
+      executionMode: step.member.executionMode,
+      dependsOn: step.previousTaskId === null ? [] : [step.previousTaskId],
+      state: "completed",
+      routeReservationId: `reservation-${step.slug}`,
+      routeConsumedAt: step.routeConsumedAt,
+      routeConsumerMatches: true,
+      workerIncarnationId: `incarnation-${step.slug}`,
+      sessionId: `session-${step.slug}`,
+      handoffId: `handoff-${step.slug}`,
+      handoffAcceptedAt: step.handoffAcceptedAt,
+      completedAt: step.completedAt,
+      integrationReceipt:
+        step.member.kind === "execution"
+          ? {
+              kind: "worktree_integrated",
+              reference: finalHeadSha,
+              completedAt: step.completedAt,
+            }
+          : {
+              kind: "worktree_validated_no_change",
+              reference: `no-change:${headFor(step.member.kind)}:${sha256(`${step.slug}-clean-diff`)}`,
+              completedAt: step.completedAt,
+              evidenceIds: [`sensor-${step.slug}`],
+            },
+    })),
+    handoffs: timeline.map((step) => ({
+      id: `handoff-${step.slug}`,
+      sessionId: `session-${step.slug}`,
+      workerIncarnationId: `incarnation-${step.slug}`,
+      fromAgent: step.member.agentName,
+      authorityOrigin: "agent",
+      summarySha256: sha256(`${step.slug}-handoff-summary`),
+      physicalReceipt: {
+        receiptId: `tool-call-${step.slug}`,
+        handoffId: `handoff-${step.slug}`,
+        toolCallId: `tool-call-${step.slug}`,
+        toolName: "nexus_handoff_submit",
+        source: "http-mcp",
+        missionId: "mission-real",
+        sessionId: `session-${step.slug}`,
+        workerIncarnationId: `incarnation-${step.slug}`,
+        authoritySha256: sha256(`${step.slug}-authority`),
+        worktreeHeadSha: headFor(step.member.kind),
+        issuedAt: step.issuedAt,
+        worktreeHeadIntegrated: true,
       },
-      {
-        taskId: "task-reviewer",
-        plannerId: "guided-review-e2e-reviewer-0",
-        agentRef: "e2e-reviewer",
-        agentCategory: "reviewer",
-        executionMode: "read_only",
-        dependsOn: ["task-executor"],
-        state: "completed",
-        routeReservationId: "reservation-reviewer",
-        routeConsumedAt: 9,
-        routeConsumerMatches: true,
-        workerIncarnationId: "incarnation-reviewer",
-        sessionId: "session-reviewer",
-        handoffId: "handoff-reviewer",
-        handoffAcceptedAt: 12,
-        completedAt: 13,
-        integrationReceipt: {
-          kind: "worktree_validated_no_change",
-          reference: `no-change:${finalHeadSha}:${reviewerNoChangeDiffHash}`,
-          completedAt: 13,
-          evidenceIds: ["sensor-typecheck", "review-independent"],
+      auditIntent: {
+        invocationId: `tool-call-${step.slug}`,
+        toolName: "nexus_handoff_submit",
+        source: "http-mcp",
+        sessionId: `session-${step.slug}`,
+        missionId: "mission-real",
+        scope: {
+          projectId: "project-real",
+          checkoutId: "checkout-real",
         },
+        occurredAt: step.auditOccurredAt,
       },
-      {
-        taskId: "task-qa",
-        plannerId: "guided-quality-gate",
-        agentRef: "e2e-qa",
-        agentCategory: "reviewer",
-        executionMode: "read_only",
-        dependsOn: ["task-reviewer"],
-        state: "completed",
-        routeReservationId: "reservation-qa",
-        routeConsumedAt: 14,
-        routeConsumerMatches: true,
-        workerIncarnationId: "incarnation-qa",
-        sessionId: "session-qa",
-        handoffId: "handoff-qa",
-        handoffAcceptedAt: 17,
-        completedAt: 18,
-        integrationReceipt: {
-          kind: "worktree_validated_no_change",
-          reference: `no-change:${finalHeadSha}:${qaNoChangeDiffHash}`,
-          completedAt: 18,
-          evidenceIds: ["sensor-typecheck-qa", "qa-independent"],
-        },
-      },
-    ],
-    handoffs: [
-      {
-        id: "handoff-executor",
-        sessionId: "session-executor",
-        workerIncarnationId: "incarnation-executor",
-        fromAgent: "E2E Executor",
-        authorityOrigin: "agent",
-        summarySha256: sha256("executor-handoff-summary"),
-        physicalReceipt: {
-          receiptId: "tool-call-executor",
-          handoffId: "handoff-executor",
-          toolCallId: "tool-call-executor",
-          toolName: "nexus_handoff_submit",
-          source: "http-mcp",
+      status: "success",
+      delivered: true,
+      deliveryState: "consumed",
+      consumedAt: step.handoffConsumedAt,
+      consumedBySessionId: "session-orch",
+      consumedDeliveryAttemptId: `attempt-${step.slug}`,
+      deliveryAttempts: [
+        {
+          id: `attempt-${step.slug}`,
+          handoffId: `handoff-${step.slug}`,
           missionId: "mission-real",
-          sessionId: "session-executor",
-          workerIncarnationId: "incarnation-executor",
-          authoritySha256: sha256("executor-authority"),
-          worktreeHeadSha: finalHeadSha,
-          issuedAt: 6,
-          worktreeHeadIntegrated: true,
+          orchestratorSessionId: "session-orch",
+          attemptNo: 1,
+          state: "accepted",
+          startedAt: step.attemptStartedAt,
+          acceptDeadlineAt: step.acceptDeadlineAt,
+          acceptedAt: step.acceptedAt,
+          failedAt: null,
+          failureCode: null,
         },
-        auditIntent: {
-          invocationId: "tool-call-executor",
-          toolName: "nexus_handoff_submit",
-          source: "http-mcp",
-          sessionId: "session-executor",
-          missionId: "mission-real",
-          scope: {
-            projectId: "project-real",
-            checkoutId: "checkout-real",
-          },
-          occurredAt: 5,
-        },
-        status: "success",
-        delivered: true,
-        deliveryState: "consumed",
-        consumedAt: 7,
-        consumedBySessionId: "session-orch",
-        consumedDeliveryAttemptId: "attempt-executor",
-        deliveryAttempts: [
-          {
-            id: "attempt-executor",
-            handoffId: "handoff-executor",
-            missionId: "mission-real",
-            orchestratorSessionId: "session-orch",
-            attemptNo: 1,
-            state: "accepted",
-            startedAt: 6,
-            acceptDeadlineAt: 8,
-            acceptedAt: 7,
-            failedAt: null,
-            failureCode: null,
-          },
-        ],
-      },
-      {
-        id: "handoff-reviewer",
-        sessionId: "session-reviewer",
-        workerIncarnationId: "incarnation-reviewer",
-        fromAgent: "E2E Revisor",
-        authorityOrigin: "agent",
-        summarySha256: sha256("reviewer-handoff-summary"),
-        physicalReceipt: {
-          receiptId: "tool-call-reviewer",
-          handoffId: "handoff-reviewer",
-          toolCallId: "tool-call-reviewer",
-          toolName: "nexus_handoff_submit",
-          source: "http-mcp",
-          missionId: "mission-real",
-          sessionId: "session-reviewer",
-          workerIncarnationId: "incarnation-reviewer",
-          authoritySha256: sha256("reviewer-authority"),
-          worktreeHeadSha: finalHeadSha,
-          issuedAt: 11,
-          worktreeHeadIntegrated: true,
-        },
-        auditIntent: {
-          invocationId: "tool-call-reviewer",
-          toolName: "nexus_handoff_submit",
-          source: "http-mcp",
-          sessionId: "session-reviewer",
-          missionId: "mission-real",
-          scope: {
-            projectId: "project-real",
-            checkoutId: "checkout-real",
-          },
-          occurredAt: 10,
-        },
-        status: "success",
-        delivered: true,
-        deliveryState: "consumed",
-        consumedAt: 12,
-        consumedBySessionId: "session-orch",
-        consumedDeliveryAttemptId: "attempt-reviewer",
-        deliveryAttempts: [
-          {
-            id: "attempt-reviewer",
-            handoffId: "handoff-reviewer",
-            missionId: "mission-real",
-            orchestratorSessionId: "session-orch",
-            attemptNo: 1,
-            state: "accepted",
-            startedAt: 11,
-            acceptDeadlineAt: 13,
-            acceptedAt: 12,
-            failedAt: null,
-            failureCode: null,
-          },
-        ],
-      },
-      {
-        id: "handoff-qa",
-        sessionId: "session-qa",
-        workerIncarnationId: "incarnation-qa",
-        fromAgent: "E2E QA",
-        authorityOrigin: "agent",
-        summarySha256: sha256("qa-handoff-summary"),
-        physicalReceipt: {
-          receiptId: "tool-call-qa",
-          handoffId: "handoff-qa",
-          toolCallId: "tool-call-qa",
-          toolName: "nexus_handoff_submit",
-          source: "http-mcp",
-          missionId: "mission-real",
-          sessionId: "session-qa",
-          workerIncarnationId: "incarnation-qa",
-          authoritySha256: sha256("qa-authority"),
-          worktreeHeadSha: finalHeadSha,
-          issuedAt: 16,
-          worktreeHeadIntegrated: true,
-        },
-        auditIntent: {
-          invocationId: "tool-call-qa",
-          toolName: "nexus_handoff_submit",
-          source: "http-mcp",
-          sessionId: "session-qa",
-          missionId: "mission-real",
-          scope: {
-            projectId: "project-real",
-            checkoutId: "checkout-real",
-          },
-          occurredAt: 15,
-        },
-        status: "success",
-        delivered: true,
-        deliveryState: "consumed",
-        consumedAt: 17,
-        consumedBySessionId: "session-orch",
-        consumedDeliveryAttemptId: "attempt-qa",
-        deliveryAttempts: [
-          {
-            id: "attempt-qa",
-            handoffId: "handoff-qa",
-            missionId: "mission-real",
-            orchestratorSessionId: "session-orch",
-            attemptNo: 1,
-            state: "accepted",
-            startedAt: 16,
-            acceptDeadlineAt: 18,
-            acceptedAt: 17,
-            failedAt: null,
-            failureCode: null,
-          },
-        ],
-      },
-    ],
+      ],
+    })),
     durableHandoffs: {
-      count: 3,
-      ids: ["handoff-executor", "handoff-reviewer", "handoff-qa"],
+      count: timeline.length,
+      ids: timeline.map((step) => `handoff-${step.slug}`),
     },
-    dependencyConsumptions: [
-      {
+    dependencyConsumptions: timeline.slice(1).map((step) => {
+      const previous = timeline[step.index - 1];
+      return {
         missionId: "mission-real",
-        consumerTaskId: "task-reviewer",
-        dependencyTaskId: "task-executor",
-        handoffId: "handoff-executor",
-        consumerSessionId: "session-reviewer",
-        consumerWorkerIncarnationId: "incarnation-reviewer",
-        promptSha256: sha256("reviewer-accepted-prompt"),
-        handoffSummarySha256: sha256("executor-handoff-summary"),
-        consumedAt: 9,
-      },
-      {
-        missionId: "mission-real",
-        consumerTaskId: "task-qa",
-        dependencyTaskId: "task-reviewer",
-        handoffId: "handoff-reviewer",
-        consumerSessionId: "session-qa",
-        consumerWorkerIncarnationId: "incarnation-qa",
-        promptSha256: sha256("qa-accepted-prompt"),
-        handoffSummarySha256: sha256("reviewer-handoff-summary"),
-        consumedAt: 14,
-      },
-    ],
+        consumerTaskId: step.taskId,
+        dependencyTaskId: previous.taskId,
+        handoffId: `handoff-${previous.slug}`,
+        consumerSessionId: `session-${step.slug}`,
+        consumerWorkerIncarnationId: `incarnation-${step.slug}`,
+        promptSha256: sha256(`${step.slug}-accepted-prompt`),
+        handoffSummarySha256: sha256(`${previous.slug}-handoff-summary`),
+        consumedAt: step.consumedDependencyAt,
+      };
+    }),
+    participation: REAL_MISSION_ADVISORS.map((advisor) => {
+      const step = timeline.find(
+        (candidate) => candidate.member.agentRef === advisor.id,
+      );
+      if (!step) {
+        return {
+          cli: advisor.cli,
+          tier: advisor.tier,
+          skipped: "no-credential",
+          spawnedAt: null,
+          firstNexusToolAt: null,
+          handoffAt: null,
+        };
+      }
+      return {
+        cli: advisor.cli,
+        tier: advisor.tier,
+        skipped: null,
+        spawnedAt: step.spawnedAt,
+        firstNexusToolAt: step.firstNexusToolAt,
+        handoffAt: step.issuedAt,
+      };
+    }),
     completion: {
       origin: "mission-driver-prevc",
       missionId: "mission-real",
       intentVersion: 1,
       orchestratorSessionId: "session-orch",
       planHash,
-      taskCount: 3,
-      completedAt: 20,
+      taskCount: chain.length,
+      completedAt: completionCompletedAt,
       driver: {
         revision: 15,
         runStartedAt: 1,
-        attemptCount: 9,
-        lastAttemptAt: 20,
-        lastSuccessAt: 20,
+        attemptCount: acceptanceCriteria.length + 1,
+        lastAttemptAt: completionCompletedAt,
+        lastSuccessAt: completionCompletedAt,
         lastActionKind: "complete",
         lastOutcome: "success",
-        updatedAt: 20,
+        updatedAt: completionCompletedAt,
       },
       workflow: {
         stage: "complete",
@@ -623,7 +477,7 @@ export function makeValidRealMissionEvidence({
           missionId: "mission-real",
           contractHash,
           contextHash,
-          baseSha: "c".repeat(40),
+          baseSha: initialHeadSha,
           headSha: finalHeadSha,
           diffHash: finalDiffHash,
         },
@@ -632,7 +486,7 @@ export function makeValidRealMissionEvidence({
       stepReceipts,
     },
     repository: {
-      initialHeadSha: "c".repeat(40),
+      initialHeadSha,
       finalHeadSha,
       resultSha256: expectedContentSha256,
       commitCount: 2,
@@ -642,3 +496,4 @@ export function makeValidRealMissionEvidence({
     },
   };
 }
+

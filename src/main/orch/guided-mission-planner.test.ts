@@ -200,6 +200,10 @@ function liveAdapter(
 
 function adapterInfo(id: string): AdapterInfo {
   const codex = id === "codex";
+  // Espelha o registry de produção: codex (caso especial), grok (Seatbelt
+  // `--sandbox read-only`) e claude (argv governado) têm confinamento nativo
+  // read-only enforceável; kimi/agy/opencode/omp seguem a rota advisory.
+  const nativeReadOnly = codex || id === "grok" || id === "claude";
   return {
     id,
     kind: "cli-pty",
@@ -217,7 +221,7 @@ function adapterInfo(id: string): AdapterInfo {
       promptInjectable: true,
       statusObservable: true,
       resumable: true,
-      autonomousReadOnly: codex,
+      autonomousReadOnly: nativeReadOnly,
       governedWriter: codex,
       verifiedMaestro: codex,
     },
@@ -394,7 +398,7 @@ describe("Guided Planner v2", () => {
     expect(ownership.files).not.toContain("**");
   });
 
-  it("seals the schema-v7 physical executor → reviewer → read-only QA chain", () => {
+  it("seals the schema-v9 multi-CLI advisory fan-out around the codex chain", () => {
     const liveSquad = createRealMissionE2ESquadFixture();
     const contract = compileIntentContract({
       goal: REAL_MISSION_E2E_GOAL,
@@ -418,7 +422,27 @@ describe("Guided Planner v2", () => {
     const h = harness({
       currentMission,
       liveSquad,
-      adapters: [liveAdapter("codex")],
+      adapters: [
+        liveAdapter("codex"),
+        // grok/agy chegam ao roster com o model default do produto selado.
+        {
+          id: "grok",
+          installed: true,
+          models: { list: ["grok-4.5"], default: "grok-4.5" },
+        },
+        liveAdapter("kimi"),
+        {
+          id: "agy",
+          installed: true,
+          models: {
+            list: ["gemini-3.6-flash-high"],
+            default: "gemini-3.6-flash-high",
+          },
+        },
+        liveAdapter("opencode"),
+        liveAdapter("omp"),
+        liveAdapter("claude"),
+      ],
     });
 
     expect(
@@ -430,31 +454,79 @@ describe("Guided Planner v2", () => {
       ...decodeTaskScheduleDetail(row.detail).meta!,
     }));
 
+    // Fan-out consultivo: scouts advisor (read_only) → executor codex →
+    // revisor codex → reviewers advisor (read_only) → QA codex read_only.
+    const advisoryIds = [
+      "e2e-advisor-kimi",
+      "e2e-advisor-agy",
+      "e2e-advisor-opencode",
+      "e2e-advisor-omp",
+    ];
+    const reviewIds = [
+      "e2e-reviewer",
+      "e2e-advisor-grok",
+      "e2e-advisor-claude",
+    ];
     expect(schedules).toEqual([
+      ...advisoryIds.map((agentRef, index) =>
+        expect.objectContaining({
+          plannerId: `guided-advisory-${index + 1}-${agentRef}`,
+          agentRef,
+          agentCategory: "scout",
+          executionMode: "read_only",
+          dependsOn:
+            index === 0
+              ? []
+              : [
+                  plannedTaskId(
+                    currentMission.id,
+                    3,
+                    `guided-advisory-${index}-${advisoryIds[index - 1]}`,
+                  ),
+                ],
+        }),
+      ),
       expect.objectContaining({
         plannerId: GUIDED_MISSION_PLANNER_TASK_ID,
         agentRef: "e2e-executor",
+        agentCategory: "executor",
         executionMode: "isolated_worktree",
-        dependsOn: [],
+        dependsOn: [
+          plannedTaskId(
+            currentMission.id,
+            3,
+            "guided-advisory-4-e2e-advisor-omp",
+          ),
+        ],
       }),
+      ...reviewIds.map((agentRef, index) =>
+        expect.objectContaining({
+          plannerId: `guided-review-${index + 1}-${agentRef}`,
+          agentRef,
+          agentCategory: "reviewer",
+          executionMode: "read_only",
+          dependsOn: [
+            plannedTaskId(
+              currentMission.id,
+              3,
+              index === 0
+                ? GUIDED_MISSION_PLANNER_TASK_ID
+                : `guided-review-${index}-${reviewIds[index - 1]}`,
+            ),
+          ],
+        }),
+      ),
       expect.objectContaining({
-        plannerId: expect.stringMatching(/^guided-review-/u),
-        agentRef: "e2e-reviewer",
+        plannerId: GUIDED_MISSION_QA_TASK_ID,
+        agentRef: "e2e-qa",
+        agentCategory: "reviewer",
         executionMode: "read_only",
         dependsOn: [
           plannedTaskId(
             currentMission.id,
             3,
-            GUIDED_MISSION_PLANNER_TASK_ID,
+            "guided-review-3-e2e-advisor-claude",
           ),
-        ],
-      }),
-      expect.objectContaining({
-        plannerId: GUIDED_MISSION_QA_TASK_ID,
-        agentRef: "e2e-qa",
-        executionMode: "read_only",
-        dependsOn: [
-          plannedTaskId(currentMission.id, 3, rows[1]!.plannerId),
         ],
       }),
     ]);

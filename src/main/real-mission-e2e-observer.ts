@@ -2,6 +2,7 @@ import { app } from "electron";
 import type { WebContents } from "electron";
 
 import {
+  REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_CTA,
   REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION,
   REAL_MISSION_E2E_EXECUTOR_ID,
@@ -14,6 +15,7 @@ import {
   REAL_MISSION_E2E_REVIEWER_NAME,
   REAL_MISSION_E2E_RESULT_CONTENT,
   parseRealMissionE2EEvidence,
+  realMissionE2EAdvisorSkipClis,
   type RealMissionE2EEvidence,
   type RealMissionE2ELaunchSurface,
   type RealMissionE2EProductWizardReceipt,
@@ -55,7 +57,17 @@ import {
   type PhysicalPtyAgent,
   type PhysicalPtyCapture,
   type RealMissionPhysicalPtyAgent,
+  type RealMissionPhysicalPtyIdentity,
 } from "./real-mission-e2e-physical";
+import {
+  buildRealMissionParticipation,
+  expectedRealMissionAdvisors,
+  realMissionAdvisorPtyExpectations,
+  realMissionAdvisorsMissingHandoff,
+  type RealMissionAdvisorExpectation,
+  type RealMissionAdvisorPtyCapture,
+  type RealMissionParticipation,
+} from "./real-mission-e2e-participation";
 import { freezeRealMissionE2EPrevCIfNeeded } from "./real-mission-e2e-prevc";
 import {
   buildRepositoryProof,
@@ -68,6 +80,46 @@ import type { RealMissionEvidenceAttester } from "./real-mission-e2e-attestation
 
 const DONE_SETTLE_MS = 20_000;
 const OBSERVE_INTERVAL_MS = 500;
+
+/** Roster worker exato do harness: agentRef → categoria/CLI esperados. */
+const HARNESS_WORKER_ROSTER = new Map<
+  string,
+  {
+    readonly agentCategory: "executor" | "reviewer" | "scout";
+    readonly cli: string;
+  }
+>([
+  [
+    REAL_MISSION_E2E_EXECUTOR_ID,
+    { agentCategory: "executor", cli: "codex" },
+  ],
+  [
+    REAL_MISSION_E2E_REVIEWER_ID,
+    { agentCategory: "reviewer", cli: "codex" },
+  ],
+  [REAL_MISSION_E2E_QA_ID, { agentCategory: "reviewer", cli: "codex" }],
+  ...REAL_MISSION_E2E_ADVISORS.map(
+    (advisor) =>
+      [
+        advisor.id,
+        { agentCategory: advisor.category, cli: advisor.cli },
+      ] as const,
+  ),
+]);
+
+/** plannerIds que o Guided Planner pode selar para o roster do harness. */
+function harnessPlannerId(plannerId: string): string | null {
+  return plannerId === "guided-execution" ||
+    plannerId === "guided-quality-gate" ||
+    plannerId.startsWith("guided-review-") ||
+    plannerId.startsWith("guided-advisory-")
+    ? plannerId
+    : null;
+}
+
+type HarnessWorkerAgentRef = NonNullable<
+  RealMissionE2EEvidence["plan"]
+>["tasks"][number]["agentRef"];
 
 export class RealMissionObserver {
   readonly #owner: WebContents;
@@ -85,6 +137,8 @@ export class RealMissionObserver {
   readonly #attestEvidence: RealMissionEvidenceAttester;
   readonly #onFinish: (code: FailureCode | null) => void;
   readonly #physicalPtyGate: ExactRealMissionPhysicalPtyGate;
+  readonly #advisorExpectations: readonly RealMissionAdvisorExpectation[];
+  readonly #advisorPty = new Map<string, RealMissionAdvisorPtyCapture>();
   readonly #kickoff: KickoffCapture = {
     sessionId: null,
     idleAt: null,
@@ -123,6 +177,8 @@ export class RealMissionObserver {
     ) => RealMissionE2EProductWizardReceipt | null;
     attestEvidence: RealMissionEvidenceAttester;
     onFinish: (code: FailureCode | null) => void;
+    /** CLIs advisor sem credencial (launcher via env); default: process.env. */
+    advisorSkipClis?: readonly string[];
   }) {
     this.#owner = input.owner;
     this.#runId = input.runId;
@@ -136,8 +192,12 @@ export class RealMissionObserver {
     this.#wizardReceiptForMission = input.wizardReceiptForMission;
     this.#attestEvidence = input.attestEvidence;
     this.#onFinish = input.onFinish;
+    this.#advisorExpectations = expectedRealMissionAdvisors(
+      input.advisorSkipClis ?? realMissionE2EAdvisorSkipClis(),
+    );
     this.#physicalPtyGate = new ExactRealMissionPhysicalPtyGate(
       input.missionId,
+      realMissionAdvisorPtyExpectations(this.#advisorExpectations),
     );
   }
 
@@ -167,12 +227,22 @@ export class RealMissionObserver {
       unsubscribeHandoffs();
     };
     this.#untapState = tapSessionState((sessionId, state) => {
-      const agent = this.#acceptMissionPhysicalPty(
+      const accepted = this.#acceptMissionPhysicalPty(
         sessionId,
         getAgentSessionInfo(sessionId),
       );
-      if (!agent) return;
+      if (!accepted) return;
       const now = Date.now();
+      const agent = accepted.agent;
+      if (accepted.identity.startsWith("advisor:")) {
+        // Record on any live state — packaged CLIs often skip a distinct
+        // `spawning` edge the observer can see.
+        if (state === "spawning" || state === "idle" || state === "busy") {
+          this.#recordAdvisorSpawn(accepted.identity, sessionId, now);
+        }
+        this.#queueEvaluation();
+        return;
+      }
       // Record on any live state — packaged CLIs often skip a distinct
       // `spawning` edge the observer can see.
       if (state === "spawning" || state === "idle" || state === "busy") {
@@ -200,11 +270,17 @@ export class RealMissionObserver {
     });
     this.#untapData = tapSessionData((sessionId, data) => {
       if (data.length === 0) return;
-      const agent = this.#acceptMissionPhysicalPty(
+      const accepted = this.#acceptMissionPhysicalPty(
         sessionId,
         getAgentSessionInfo(sessionId),
       );
-      if (!agent) return;
+      if (!accepted) return;
+      const agent = accepted.agent;
+      if (accepted.identity.startsWith("advisor:")) {
+        this.#recordAdvisorSpawn(accepted.identity, sessionId, Date.now());
+        this.#queueEvaluation();
+        return;
+      }
       this.#recordPhysicalSpawn(sessionId, agent, Date.now());
       if (agent.adapterId === "codex") {
         const promptBuffer =
@@ -245,9 +321,13 @@ export class RealMissionObserver {
     this.#untapExit = tapSessionExit((sessionId, agent) => {
       const accepted = this.#acceptMissionPhysicalPty(sessionId, agent);
       if (!accepted) return;
-      this.#recordPhysicalSpawn(sessionId, accepted, Date.now());
+      if (accepted.identity.startsWith("advisor:")) {
+        this.#recordAdvisorSpawn(accepted.identity, sessionId, Date.now());
+        return;
+      }
+      this.#recordPhysicalSpawn(sessionId, accepted.agent, Date.now());
       if (
-        accepted.role === "orchestrator" &&
+        accepted.agent.role === "orchestrator" &&
         sessionId === this.#kickoff.sessionId
       ) {
         this.#queueEvaluation();
@@ -304,6 +384,7 @@ export class RealMissionObserver {
       { scope: this.#suite.scope, missionId: this.#missionId },
       10_000,
     );
+    const participation = this.#buildParticipation(auditEntries);
     const intentVersion = mission?.intentVersion ?? 0;
     const plannedTasks = mission
       ? this.#suite.tasks.listPlannedTasks(this.#missionId, intentVersion)
@@ -379,14 +460,7 @@ export class RealMissionObserver {
         : null;
       return {
         taskId: dispatch.taskId,
-        plannerId:
-          planned?.plannerId === "guided-execution"
-            ? ("guided-execution" as const)
-            : planned?.plannerId === "guided-quality-gate"
-              ? ("guided-quality-gate" as const)
-              : planned?.plannerId.startsWith("guided-review-")
-                ? planned.plannerId
-                : null,
+        plannerId: planned ? harnessPlannerId(planned.plannerId) : null,
         agentRef: dispatch.agentRef ?? null,
         agentCategory: dispatch.agentCategory ?? null,
         executionMode: dispatch.executionMode,
@@ -401,7 +475,8 @@ export class RealMissionObserver {
           reservation.decision.adapterId === dispatch.adapterId &&
           reservation.decision.model === dispatch.model &&
           reservation.decision.effort === dispatch.effort &&
-          dispatch.adapterId === "codex" &&
+          dispatch.adapterId ===
+            HARNESS_WORKER_ROSTER.get(dispatch.agentRef ?? "")?.cli &&
           planned?.agentRef === dispatch.agentRef &&
           planned?.agentCategory === dispatch.agentCategory &&
           schedule?.agentRef === dispatch.agentRef &&
@@ -440,10 +515,13 @@ export class RealMissionObserver {
               : null,
       };
     });
+    // O plano selado agora é roster-complete: scouts advisor → executor →
+    // revisor codex → reviewers advisor → QA. Qualquer tarefa fora do roster
+    // exato do harness derruba a prova inteira (fail closed).
     const plan =
       planReceipt &&
       planReceipt.squadId === this.#squadBinding.squadId &&
-      plannedTasks.length === 3
+      plannedTasks.length > 0
         ? {
             version: 1 as const,
             squadId: planReceipt.squadId,
@@ -453,15 +531,12 @@ export class RealMissionObserver {
               const schedule = decodeTaskScheduleDetail(
                 planned.plannedDetail,
               ).meta;
+              const roster = HARNESS_WORKER_ROSTER.get(planned.agentRef);
+              const plannerId = harnessPlannerId(planned.plannerId);
               if (
-                (planned.plannerId !== "guided-execution" &&
-                  planned.plannerId !== "guided-quality-gate" &&
-                  !planned.plannerId.startsWith("guided-review-")) ||
-                (planned.agentRef !== REAL_MISSION_E2E_EXECUTOR_ID &&
-                  planned.agentRef !== REAL_MISSION_E2E_REVIEWER_ID &&
-                  planned.agentRef !== REAL_MISSION_E2E_QA_ID) ||
-                (planned.agentCategory !== "executor" &&
-                  planned.agentCategory !== "reviewer") ||
+                !roster ||
+                plannerId === null ||
+                planned.agentCategory !== roster.agentCategory ||
                 (schedule?.executionMode !== "isolated_worktree" &&
                   schedule?.executionMode !== "read_only")
               ) {
@@ -469,23 +544,10 @@ export class RealMissionObserver {
               }
               return [
                 {
-                  plannerId:
-                    planned.plannerId === "guided-execution"
-                      ? ("guided-execution" as const)
-                      : planned.plannerId === "guided-quality-gate"
-                        ? ("guided-quality-gate" as const)
-                        : planned.plannerId,
+                  plannerId,
                   taskId: planned.taskId,
-                  agentRef:
-                    planned.agentRef === REAL_MISSION_E2E_EXECUTOR_ID
-                      ? ("e2e-executor" as const)
-                      : planned.agentRef === REAL_MISSION_E2E_REVIEWER_ID
-                        ? ("e2e-reviewer" as const)
-                        : ("e2e-qa" as const),
-                  agentCategory:
-                    planned.agentCategory === "executor"
-                      ? ("executor" as const)
-                      : ("reviewer" as const),
+                  agentRef: planned.agentRef as HarnessWorkerAgentRef,
+                  agentCategory: roster.agentCategory,
                   executionMode: schedule.executionMode,
                   dependsOn: [...schedule.dependsOn],
                 },
@@ -805,6 +867,7 @@ export class RealMissionObserver {
         ids: [...durableAuthority.handoffConsumptions.keys()],
       },
       dependencyConsumptions,
+      participation,
       completion,
       repository,
       failure: failureCode
@@ -886,12 +949,55 @@ export class RealMissionObserver {
   #acceptMissionPhysicalPty(
     sessionId: string,
     agent: PhysicalPtyAgent | null,
-  ): RealMissionPhysicalPtyAgent | null {
+  ): { readonly identity: RealMissionPhysicalPtyIdentity; readonly agent: RealMissionPhysicalPtyAgent } | null {
     const inspected = this.#physicalPtyGate.inspect(sessionId, agent);
     if (inspected.kind === "violation") {
       this.#onFinish("invariant-failed");
     }
-    return inspected.kind === "accepted" ? inspected.agent : null;
+    return inspected.kind === "accepted"
+      ? { identity: inspected.identity, agent: inspected.agent }
+      : null;
+  }
+
+  /** PTY advisor fica fora do conjunto codex de quatro panes: vira recibo de
+   * participação, nunca prova do pipeline executor → revisor → QA. */
+  #recordAdvisorSpawn(
+    identity: RealMissionPhysicalPtyIdentity,
+    sessionId: string,
+    at: number,
+  ): void {
+    if (!identity.startsWith("advisor:")) return;
+    const cli = identity.slice("advisor:".length);
+    if (this.#advisorPty.has(cli)) return;
+    this.#advisorPty.set(cli, { sessionId, spawnedAt: at });
+  }
+
+  /** Recibos de participação por CLI advisor a partir das fontes físicas. */
+  #buildParticipation(auditEntries: readonly AuditEntry[]): RealMissionParticipation {
+    const firstNexusToolAt = (sessionId: string): number | null => {
+      let first: number | null = null;
+      for (const entry of auditEntries) {
+        if (
+          entry.session !== sessionId ||
+          entry.mission_id !== this.#missionId ||
+          !entry.tool.startsWith("nexus_")
+        ) {
+          continue;
+        }
+        const at = Date.parse(entry.timestamp);
+        if (!Number.isFinite(at)) continue;
+        if (first === null || at < first) first = at;
+      }
+      return first;
+    };
+    return buildRealMissionParticipation({
+      expectations: this.#advisorExpectations,
+      ptyByCli: this.#advisorPty,
+      dispatches: this.#suite.taskDispatches.list(this.#missionId),
+      handoffIssuedAt: (handoffId) =>
+        this.#suite.handoffs.get(handoffId)?.mcpProvenance?.issuedAt ?? null,
+      firstNexusToolAt,
+    });
   }
 
   #recordPhysicalSpawn(
@@ -927,12 +1033,12 @@ export class RealMissionObserver {
       sessionId,
       getAgentSessionInfo(sessionId),
     );
-    if (!agent || agent.role !== "orchestrator") return;
+    if (!agent || agent.agent.role !== "orchestrator") return;
     this.#physicalPty.set(sessionId, {
       role: "orchestrator",
       workerIncarnationId: null,
-      readOnly: agent.readOnly,
-      nativeReadOnly: agent.nativeReadOnly ?? null,
+      readOnly: agent.agent.readOnly,
+      nativeReadOnly: agent.agent.nativeReadOnly ?? null,
       spawnedAt: this.#kickoff.idleAt,
       dataAt: this.#kickoff.ptyDataAt,
       ptyChunkSha256: this.#kickoff.ptyChunkSha256,
@@ -969,7 +1075,11 @@ export class RealMissionObserver {
       if (agent.missionId !== this.#missionId) continue;
       const accepted = this.#acceptMissionPhysicalPty(agent.sessionId, agent);
       if (!accepted) return;
-      this.#recordPhysicalSpawn(agent.sessionId, accepted, Date.now());
+      if (accepted.identity.startsWith("advisor:")) {
+        this.#recordAdvisorSpawn(accepted.identity, agent.sessionId, Date.now());
+        continue;
+      }
+      this.#recordPhysicalSpawn(agent.sessionId, accepted.agent, Date.now());
     }
     if (this.#owner.isDestroyed() || this.#owner.isCrashed()) {
       this.#onFinish("renderer-failed");
@@ -1020,6 +1130,21 @@ export class RealMissionObserver {
       return;
     }
     this.#doneSeenAt ??= Date.now();
+    // Missão done sem o handoff físico de uma CLI advisor credenciada fecha o
+    // gate com o código dedicado; advisors skipped (sem credencial) ficam
+    // fora da exigência.
+    const missingAdvisors = realMissionAdvisorsMissingHandoff(
+      this.#buildParticipation(
+        readAuditLog(
+          { scope: this.#suite.scope, missionId: this.#missionId },
+          10_000,
+        ),
+      ),
+    );
+    if (missingAdvisors.length > 0) {
+      this.#onFinish("advisor-absent");
+      return;
+    }
     try {
       parseRealMissionE2EEvidence(this.evidence(Date.now(), "pass", null));
       this.#onFinish(null);

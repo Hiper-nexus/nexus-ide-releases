@@ -10,6 +10,7 @@ import {
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_SQUAD_ID,
+  realMissionE2EAdvisorSkipClis,
 } from "../shared/real-mission-e2e";
 import type { Mission } from "../shared/orch-types";
 import type { ProjectExecutionScope } from "../shared/types";
@@ -45,7 +46,7 @@ const CONTEXT_DOCS = [
 ] as const;
 
 const REAL_MISSION_E2E_SQUAD_REVISION_HASH = snapshotSquadAuthority(
-  createRealMissionE2ESquadFixture(),
+  createRealMissionE2ESquadFixture(realMissionE2EAdvisorSkipClis()),
 ).hash;
 
 function sameScope(

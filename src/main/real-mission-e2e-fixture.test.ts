@@ -104,6 +104,42 @@ describe("main-owned real mission squad fixture", () => {
         category: "reviewer",
         allowedTools: [],
       }),
+      expect.objectContaining({
+        id: "e2e-advisor-grok",
+        category: "reviewer",
+        cli: "grok",
+        allowedTools: [],
+      }),
+      expect.objectContaining({
+        id: "e2e-advisor-kimi",
+        category: "scout",
+        cli: "kimi",
+        allowedTools: [],
+      }),
+      expect.objectContaining({
+        id: "e2e-advisor-agy",
+        category: "scout",
+        cli: "agy",
+        allowedTools: [],
+      }),
+      expect.objectContaining({
+        id: "e2e-advisor-opencode",
+        category: "scout",
+        cli: "opencode",
+        allowedTools: [],
+      }),
+      expect.objectContaining({
+        id: "e2e-advisor-omp",
+        category: "scout",
+        cli: "omp",
+        allowedTools: [],
+      }),
+      expect.objectContaining({
+        id: "e2e-advisor-claude",
+        category: "reviewer",
+        cli: "claude",
+        allowedTools: [],
+      }),
     ]);
   });
 

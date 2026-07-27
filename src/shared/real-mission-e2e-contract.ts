@@ -1,4 +1,6 @@
 import type { Squad } from "./orch-types";
+import { isAdvisoryUnconfinedCli } from "./mission-advisory";
+import { defaultSquadModelForAdapter } from "./squad-model-defaults";
 
 /**
  * Both release-gate modes are command-line-only. The private flag drives the
@@ -10,7 +12,7 @@ export const REAL_MISSION_E2E_PRODUCT_WIZARD_FLAG =
   "--nexus-real-mission-product-wizard-e2e";
 export const REAL_MISSION_E2E_TIMEOUT_MS = 15 * 60_000;
 export const REAL_MISSION_E2E_EVIDENCE_FILE = "real-mission-evidence.json";
-export const REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION = 8;
+export const REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION = 9;
 export const REAL_MISSION_E2E_BUNDLE_ID = "com.nexuside.app";
 
 export const REAL_MISSION_E2E_CHANNELS = Object.freeze({
@@ -36,7 +38,7 @@ export const REAL_MISSION_E2E_PRODUCT_WIZARD_STEP_RESULT_MESSAGE =
 /**
  * The `agentic-` prefix is product authority, not decoration: it makes the
  * fixture enter the same deterministic Guided Planner used by beginner
- * missions. A harness-only plan is deliberately impossible in schema v8.
+ * missions. A harness-only plan is deliberately impossible in schema v9.
  */
 export const REAL_MISSION_E2E_SQUAD_ID = "agentic-nexus-real-mission-e2e";
 export const REAL_MISSION_E2E_ORCHESTRATOR_ID = "e2e-orchestrator";
@@ -51,6 +53,115 @@ export const REAL_MISSION_E2E_RESULT_FILE = "resultado.txt";
 export const REAL_MISSION_E2E_RESULT_CONTENT = "nexus-real-mission-e2e-ok\n";
 export const REAL_MISSION_E2E_CTA =
   "Abra o relatório de evidências, corrija o estado bloqueado e execute novamente antes da release.";
+
+/**
+ * Multi-CLI advisory lane do harness (Fase 2): advisors entram SOMENTE em
+ * tarefas read_only do fan-out consultivo do Guided Planner — nunca como
+ * writers. O pipeline executor → revisor → QA continua codex-only.
+ * A ordem canônica é autoridade: scouts antes do executor, reviewers advisor
+ * depois do revisor codex e antes do QA.
+ */
+export type RealMissionE2EAdvisorCli =
+  | "grok"
+  | "kimi"
+  | "agy"
+  | "opencode"
+  | "omp"
+  | "claude";
+
+export interface RealMissionE2EAdvisorSpec {
+  readonly id: string;
+  readonly name: string;
+  readonly cli: RealMissionE2EAdvisorCli;
+  readonly category: "reviewer" | "scout";
+}
+
+export const REAL_MISSION_E2E_ADVISORS: readonly RealMissionE2EAdvisorSpec[] =
+  Object.freeze([
+    {
+      id: "e2e-advisor-grok",
+      name: "E2E Advisor Grok",
+      cli: "grok",
+      category: "reviewer",
+    },
+    {
+      id: "e2e-advisor-kimi",
+      name: "E2E Advisor Kimi",
+      cli: "kimi",
+      category: "scout",
+    },
+    {
+      id: "e2e-advisor-agy",
+      name: "E2E Advisor Agy",
+      cli: "agy",
+      category: "scout",
+    },
+    {
+      id: "e2e-advisor-opencode",
+      name: "E2E Advisor OpenCode",
+      cli: "opencode",
+      category: "scout",
+    },
+    {
+      id: "e2e-advisor-omp",
+      name: "E2E Advisor OMP",
+      cli: "omp",
+      category: "scout",
+    },
+    {
+      id: "e2e-advisor-claude",
+      name: "E2E Advisor Claude",
+      cli: "claude",
+      category: "reviewer",
+    },
+  ]);
+
+export type RealMissionE2EAdvisorTier =
+  | "mechanically-confined"
+  | "advisory-unconfined";
+
+/**
+ * Tier de confinamento registrado na evidência. grok tem Seatbelt
+ * `--sandbox read-only` enforceável (MECHANICALLY_READ_ONLY_CLIS em
+ * mission-scheduler-plan.ts) e claude é confinado nativamente pelo argv
+ * governado (requiresReadOnlyNativeAuthority em autonomous-cli-policy.ts);
+ * kimi/agy/opencode/omp têm apenas a fronteira MCP read-only.
+ */
+export function realMissionE2EAdvisorTier(
+  cli: RealMissionE2EAdvisorCli,
+): RealMissionE2EAdvisorTier {
+  return isAdvisoryUnconfinedCli(cli)
+    ? "advisory-unconfined"
+    : "mechanically-confined";
+}
+
+/**
+ * Advisors sem credencial materializável são excluídos do roster pelo launcher
+ * via esta env (lista de clis separada por vírgula). O main lê a mesma env ao
+ * persistir o fixture e ao observar, então fixture, plano e evidência sempre
+ * concordam sobre o conjunto esperado.
+ */
+export const REAL_MISSION_E2E_ADVISOR_SKIP_ENV =
+  "NEXUS_REAL_MISSION_ADVISOR_SKIP";
+
+export function realMissionE2EAdvisorSkipClis(
+  environment: Readonly<Record<string, string | undefined>> = typeof process !==
+  "undefined"
+    ? process.env
+    : {},
+): RealMissionE2EAdvisorCli[] {
+  const raw = environment[REAL_MISSION_E2E_ADVISOR_SKIP_ENV];
+  if (!raw) return [];
+  const requested = new Set(
+    raw
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  );
+  return REAL_MISSION_E2E_ADVISORS.filter((advisor) =>
+    requested.has(advisor.cli),
+  ).map((advisor) => advisor.cli);
+}
 export const REAL_MISSION_E2E_GOAL =
   'Entregue resultado.txt com o conteúdo exato "nexus-real-mission-e2e-ok\\n". ' +
   "O executor deve implementar e enviar seu handoff; depois um revisor independente " +
@@ -68,6 +179,7 @@ export const REAL_MISSION_E2E_ACCEPTANCE_CRITERIA = Object.freeze([
   "O motor Nexus emite worktree_validated_no_change para o revisor antes de liberar a tarefa dependente de QA.",
   "O QA Codex abre um terceiro PTY físico, consome o handoff do revisor e valida o HEAD integrado; o QA não deve editar, alterar ou escrever arquivos e chama nexus_handoff_submit sem mudança artificial.",
   "O motor Nexus emite o receipt final worktree_validated_no_change e marca a missão done sem atalho manual.",
+  "Cada CLI advisor credenciada (grok, kimi, agy, opencode, omp, claude) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
 ]);
 
 /**
@@ -84,7 +196,7 @@ export const REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS = [
   "# Release gate E2E real",
   "Você é somente o orquestrador de UI. É PROIBIDO criar, editar, adicionar ou commitar resultado.txt.",
   "No Nexus, o Guided Planner, dispatch e integração pertencem ao main; a CLI acompanha e recebe os handoffs.",
-  "O plano de produção já contém três ondas sequenciais: e2e-executor, e2e-reviewer e e2e-qa. NÃO replaneje.",
+  "O plano de produção já contém o fan-out consultivo read_only dos advisors e as três ondas sequenciais codex: e2e-executor, e2e-reviewer e e2e-qa. NÃO replaneje.",
   "Não spawne workers manualmente: o scheduler durável do main reserva cada rota e abre cada PTY.",
   "O executor precisa criar e commitar o artefato e enviar o primeiro handoff pela tool Nexus.",
   "O revisor precisa validar o HEAD já integrado e enviar o segundo handoff sem mudança artificial.",
@@ -93,7 +205,10 @@ export const REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS = [
   "Integração, receipts e status done pertencem ao motor Nexus.",
 ].join("\n");
 
-export function createRealMissionE2ESquadFixture(): Squad {
+export function createRealMissionE2ESquadFixture(
+  skipAdvisorClis: readonly string[] = [],
+): Squad {
+  const skipped = new Set(skipAdvisorClis);
   return {
     id: REAL_MISSION_E2E_SQUAD_ID,
     name: "Nexus real mission release gate",
@@ -139,8 +254,111 @@ export function createRealMissionE2ESquadFixture(): Squad {
         allowedSkills: [],
         allowedTools: [],
       },
+      // Advisors multi-CLI: o Guided Planner os leva para tarefas read_only do
+      // fan-out consultivo (scouts antes do executor, reviewers antes do QA).
+      // O model default (grok/agy) fica explícito porque a persistência de
+      // produção o injeteria — o fixture precisa fechar o hash no round-trip.
+      ...REAL_MISSION_E2E_ADVISORS.filter(
+        (advisor) => !skipped.has(advisor.cli),
+      ).map((advisor) => {
+        const model = defaultSquadModelForAdapter(advisor.cli);
+        return {
+          id: advisor.id,
+          agentName: advisor.name,
+          category: advisor.category,
+          cli: advisor.cli,
+          ...(model ? { model } : {}),
+          effort: "medium",
+          allowedSkills: [],
+          allowedTools: [],
+        };
+      }),
     ],
   };
+}
+
+/**
+ * Um membro da cadeia linear selada pelo Guided Planner para o roster do
+ * harness: scouts advisor → executor codex → revisor codex → reviewers
+ * advisor → QA codex. Cada membro depende exatamente do anterior.
+ */
+export interface RealMissionE2EChainMember {
+  readonly agentRef: string;
+  readonly agentName: string;
+  readonly cli: string;
+  readonly agentCategory: "executor" | "reviewer" | "scout";
+  readonly plannerId: string;
+  readonly executionMode: "isolated_worktree" | "read_only";
+  readonly kind: "advisory" | "execution" | "review" | "quality-gate";
+}
+
+/**
+ * Cadeia exata de tarefas para o conjunto de advisors presentes (não-skipped).
+ * Os plannerIds reproduzem guidedFanoutPlannerId: os ids do roster já são
+ * slugs estáveis e os índices são a posição do membro no seu grupo do fan-out
+ * (advisory 1-based entre os scouts presentes; review 1-based começando no
+ * revisor codex).
+ */
+export function realMissionE2EExpectedTaskChain(
+  presentAdvisorClis: readonly string[],
+): RealMissionE2EChainMember[] {
+  const present = new Set(presentAdvisorClis);
+  const scouts = REAL_MISSION_E2E_ADVISORS.filter(
+    (advisor) => advisor.category === "scout" && present.has(advisor.cli),
+  );
+  const reviewAdvisors = REAL_MISSION_E2E_ADVISORS.filter(
+    (advisor) => advisor.category === "reviewer" && present.has(advisor.cli),
+  );
+  const reviewers: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly cli: string;
+  }[] = [
+    {
+      id: REAL_MISSION_E2E_REVIEWER_ID,
+      name: REAL_MISSION_E2E_REVIEWER_NAME,
+      cli: "codex",
+    },
+    ...reviewAdvisors,
+  ];
+  return [
+    ...scouts.map((advisor, index) => ({
+      agentRef: advisor.id,
+      agentName: advisor.name,
+      cli: advisor.cli,
+      agentCategory: "scout" as const,
+      plannerId: `guided-advisory-${index + 1}-${advisor.id}`,
+      executionMode: "read_only" as const,
+      kind: "advisory" as const,
+    })),
+    {
+      agentRef: REAL_MISSION_E2E_EXECUTOR_ID,
+      agentName: REAL_MISSION_E2E_EXECUTOR_NAME,
+      cli: "codex",
+      agentCategory: "executor" as const,
+      plannerId: "guided-execution",
+      executionMode: "isolated_worktree" as const,
+      kind: "execution" as const,
+    },
+    ...reviewers.map((reviewer, index) => ({
+      agentRef: reviewer.id,
+      agentName: reviewer.name,
+      cli: reviewer.cli,
+      agentCategory: "reviewer" as const,
+      plannerId: `guided-review-${index + 1}-${reviewer.id}`,
+      executionMode: "read_only" as const,
+      kind: "review" as const,
+    })),
+    {
+      agentRef: REAL_MISSION_E2E_QA_ID,
+      agentName: REAL_MISSION_E2E_QA_NAME,
+      cli: "codex",
+      agentCategory: "reviewer" as const,
+      plannerId: "guided-quality-gate",
+      executionMode: "read_only" as const,
+      kind: "quality-gate" as const,
+    },
+  ];
 }
 
 interface RealMissionE2EObservationMission {

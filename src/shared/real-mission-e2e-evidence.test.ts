@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseRealMissionE2EEvidence } from "./real-mission-e2e";
+import {
+  REAL_MISSION_E2E_CTA,
+  parseRealMissionE2EEvidence,
+} from "./real-mission-e2e";
 import { sha, validPassEvidence } from "./real-mission-e2e-test-support";
 
 describe("real mission E2E PASS graph", () => {
@@ -20,6 +23,12 @@ describe("real mission E2E PASS graph", () => {
   it("rejects the obsolete schema v7 receipt", () => {
     const legacy = validPassEvidence();
     legacy.schemaVersion = 7;
+    expect(() => parseRealMissionE2EEvidence(legacy)).toThrow();
+  });
+
+  it("rejects the obsolete schema v8 receipt", () => {
+    const legacy = validPassEvidence();
+    legacy.schemaVersion = 8;
     expect(() => parseRealMissionE2EEvidence(legacy)).toThrow();
   });
 
@@ -235,4 +244,98 @@ describe("real mission E2E PASS graph", () => {
     );
   });
 
+});
+
+describe("real mission E2E v9 advisor participation", () => {
+  it("requires the participation array in the strict envelope", () => {
+    const evidence = validPassEvidence();
+    delete evidence.participation;
+    expect(() => parseRealMissionE2EEvidence(evidence)).toThrow();
+  });
+
+  it("requires every credentialed advisor to prove PTY, nexus_* tool and handoff", () => {
+    const missing = validPassEvidence();
+    (missing.participation as Array<Record<string, unknown>>)[1]!.handoffAt =
+      null;
+    expect(() => parseRealMissionE2EEvidence(missing)).toThrow(
+      /real-mission invariants/,
+    );
+
+    const forged = validPassEvidence();
+    (forged.participation as Array<Record<string, unknown>>)[0]!.handoffAt =
+      999;
+    expect(() => parseRealMissionE2EEvidence(forged)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it("rejects a mislabeled confinement tier or an out-of-order roster", () => {
+    const wrongTier = validPassEvidence();
+    (wrongTier.participation as Array<Record<string, unknown>>)[1]!.tier =
+      "mechanically-confined";
+    expect(() => parseRealMissionE2EEvidence(wrongTier)).toThrow(
+      /canonical harness roster/,
+    );
+
+    const reordered = validPassEvidence();
+    const rows = reordered.participation as Array<Record<string, unknown>>;
+    [rows[0], rows[1]] = [rows[1]!, rows[0]!];
+    expect(() => parseRealMissionE2EEvidence(reordered)).toThrow(
+      /canonical harness roster/,
+    );
+  });
+
+  it("passes with env-skipped advisors inside and outside the fan-out groups", () => {
+    expect(() =>
+      parseRealMissionE2EEvidence(
+        validPassEvidence("private-runner", {
+          skipAdvisorClis: ["kimi", "omp"],
+        }),
+      ),
+    ).not.toThrow();
+
+    // Sem nenhuma advisor credenciada a cadeia codex v8 continua exata.
+    const codexOnly = validPassEvidence("private-runner", {
+      skipAdvisorClis: ["grok", "kimi", "agy", "opencode", "omp", "claude"],
+    });
+    const parsed = parseRealMissionE2EEvidence(codexOnly);
+    expect(parsed.status).toBe("pass");
+    expect(parsed.plan?.tasks).toHaveLength(3);
+    expect(parsed.dispatches).toHaveLength(3);
+    expect(parsed.handoffs).toHaveLength(3);
+    expect(parsed.dependencyConsumptions).toHaveLength(2);
+    expect(
+      parsed.participation.every((row) => row.skipped === "no-credential"),
+    ).toBe(true);
+  });
+
+  it("rejects PASS evidence whose skipped advisor still executed", () => {
+    const evidence = validPassEvidence("private-runner", {
+      skipAdvisorClis: ["kimi"],
+    });
+    const rows = evidence.participation as Array<Record<string, unknown>>;
+    rows[1]!.spawnedAt = 100;
+    expect(() => parseRealMissionE2EEvidence(evidence)).toThrow(
+      /canonical harness roster|real-mission invariants/,
+    );
+  });
+
+  it("accepts advisor-absent as a closed failure code", () => {
+    const evidence = validPassEvidence();
+    evidence.status = "fail";
+    evidence.failure = {
+      code: "advisor-absent",
+      reason: null,
+      cta: REAL_MISSION_E2E_CTA,
+      snapshot: {
+        missionStatus: "done",
+        paneCount: 4,
+        dispatchCount: 9,
+        handoffCount: 8,
+      },
+    };
+    expect(parseRealMissionE2EEvidence(evidence).failure?.code).toBe(
+      "advisor-absent",
+    );
+  });
 });

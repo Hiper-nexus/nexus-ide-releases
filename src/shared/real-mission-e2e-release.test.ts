@@ -108,15 +108,19 @@ describe("real mission E2E release eligibility and adversarial receipts", () => 
 
   it("rejects QA completion without the physical no-change receipt evidence", () => {
     const evidence = validPassEvidence();
-    const qa = (evidence.dispatches as Array<Record<string, unknown>>)[2]!;
+    const qa = (evidence.dispatches as Array<Record<string, unknown>>).find(
+      (dispatch) => dispatch.plannerId === "guided-quality-gate",
+    )!;
     const receipt = qa.integrationReceipt as Record<string, unknown>;
     receipt.evidenceIds = [];
     expect(() => parseRealMissionE2EEvidence(evidence)).toThrow();
 
     const wrongHead = validPassEvidence();
     const qaReceipt = (
-      wrongHead.dispatches as Array<Record<string, unknown>>
-    )[2]!.integrationReceipt as Record<string, unknown>;
+      (wrongHead.dispatches as Array<Record<string, unknown>>).find(
+        (dispatch) => dispatch.plannerId === "guided-quality-gate",
+      )!.integrationReceipt as Record<string, unknown>
+    );
     qaReceipt.reference = `no-change:${"d".repeat(40)}:${sha("qa-clean-diff")}`;
     expect(() => parseRealMissionE2EEvidence(wrongHead)).toThrow(
       /real-mission invariants/,

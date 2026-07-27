@@ -9,6 +9,7 @@ import {
   createRealMissionE2ESquadFixture,
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_SQUAD_ID,
+  realMissionE2EAdvisorSkipClis,
 } from '../shared/real-mission-e2e';
 import { retargetSquadInstructions } from '../shared/mission-identity';
 import { snapshotSquadAuthority } from './orch/squad-authority-snapshot';
@@ -49,13 +50,14 @@ function preparedFixtureIsInternallyConsistent(
 /**
  * Installs one compiled release-gate fixture through the main-owned store.
  * No renderer bytes choose the squad. The ordinary squad-save IPC and its
- * native confirmation remain untouched.
+ * native confirmation remain untouched. Advisors sem credencial (env
+ * NEXUS_REAL_MISSION_ADVISOR_SKIP) ficam fora do roster compilado.
  */
 export function persistRealMissionE2ESquadFixture(
   persistence: RealMissionE2EFixturePersistence = productionPersistence,
 ): Squad {
   const prepared = persistence.prepareSquadSave(
-    createRealMissionE2ESquadFixture(),
+    createRealMissionE2ESquadFixture(realMissionE2EAdvisorSkipClis()),
   );
   if (!preparedFixtureIsInternallyConsistent(prepared)) {
     throw new Error('real mission fixture preparation hash is inconsistent');
@@ -77,7 +79,9 @@ export function isExactRealMissionE2ESquadFixture(
   candidate: Squad | null | undefined,
 ): candidate is Squad {
   if (!candidate) return false;
-  const expected = createRealMissionE2ESquadFixture();
+  const expected = createRealMissionE2ESquadFixture(
+    realMissionE2EAdvisorSkipClis(),
+  );
   return (
     sha256(JSON.stringify(candidate)) === sha256(JSON.stringify(expected)) &&
     snapshotSquadAuthority(candidate).hash ===

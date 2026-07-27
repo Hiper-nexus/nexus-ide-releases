@@ -18,6 +18,7 @@ import {
 import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
+  REAL_MISSION_ADVISOR_SKIP_ENV,
   REAL_MISSION_CHILD_PHASES,
   REAL_MISSION_CTA,
   REAL_MISSION_EVIDENCE_FILE,
@@ -26,10 +27,12 @@ import {
   record,
 } from "./e2e-real-mission-contract.mjs";
 import {
+  assertAdvisorBinaries,
   assertCodexReady,
   realMissionArgs,
   realMissionEnvironment,
   resolveTrustedCodexBinary,
+  stageAdvisorAuthentication,
   stageCodexAuthentication,
   stageRealMissionOnboardingComplete,
   stageTrustedCodexLauncher,
@@ -593,6 +596,24 @@ async function runPackagedRealMissionCore(
       environment: isolatedEnvironment,
       codexBinary,
     });
+    // Multi-CLI advisors join the mission through the Nexus MCP overlays,
+    // which resolve CLI profiles relative to the child's isolated HOME. Stage
+    // each advisor's auth material from the real operator profile; missing
+    // credentials or binaries are skips (never gate failures) and are handed
+    // to the child observer via NEXUS_REAL_MISSION_ADVISOR_SKIP.
+    const advisorSkips = new Set();
+    const onAdvisorSkip = (cliId) => advisorSkips.add(cliId);
+    stageAdvisorAuthentication(isolatedEnvironment.HOME, {
+      sourceHome: realHome,
+      environment,
+      onSkip: onAdvisorSkip,
+    });
+    assertAdvisorBinaries({ environment, onSkip: onAdvisorSkip });
+    if (advisorSkips.size > 0) {
+      isolatedEnvironment[REAL_MISSION_ADVISOR_SKIP_ENV] = [...advisorSkips]
+        .sort()
+        .join(",");
+    }
     const result = await waitForChild(target, userData, {
       timeoutMs,
       spawnImpl,

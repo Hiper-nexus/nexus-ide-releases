@@ -3,6 +3,7 @@ import {
   GIT_SHA_PATTERN,
   MISSION_DRIVER_WORKFLOW_STAGES,
   REAL_MISSION_ACCEPTANCE_CRITERIA,
+  REAL_MISSION_ADVISORS,
   REAL_MISSION_CHILD_PHASES,
   REAL_MISSION_CTA,
   REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
@@ -16,6 +17,7 @@ import {
   hasExactKeys,
   milestoneAttestationId,
   productWizardReceiptChainSha256,
+  realMissionExpectedTaskChain,
   record,
   sha256,
 } from "./e2e-real-mission-contract.mjs";
@@ -75,6 +77,7 @@ export function assertRealMissionPassEvidence(raw) {
     "handoffs",
     "durableHandoffs",
     "dependencyConsumptions",
+    "participation",
     "completion",
     "repository",
     "failure",
@@ -313,62 +316,53 @@ export function assertRealMissionPassEvidence(raw) {
     "ptyChunkSha256",
   ]);
   const expectedSha = sha256(REAL_MISSION_EXPECTED_CONTENT);
-  const executorPlan = planTasks.find(
-    (task) => task?.plannerId === "guided-execution",
-  );
-  const reviewerPlan = planTasks.find(
-    (task) => task?.agentRef === "e2e-reviewer",
-  );
-  const qaPlan = planTasks.find(
-    (task) =>
-      task?.plannerId === "guided-quality-gate" &&
-      task?.agentRef === "e2e-qa",
-  );
-  const executorDispatch = dispatches.find(
-    (dispatch) => dispatch?.plannerId === "guided-execution",
-  );
-  const reviewerDispatch = dispatches.find(
-    (dispatch) => dispatch?.agentRef === "e2e-reviewer",
-  );
-  const qaDispatch = dispatches.find(
-    (dispatch) =>
-      dispatch?.plannerId === "guided-quality-gate" &&
-      dispatch?.agentRef === "e2e-qa",
-  );
-  const executorReceipt = record(executorDispatch?.integrationReceipt);
-  const reviewerReceipt = record(reviewerDispatch?.integrationReceipt);
-  const qaReceipt = record(qaDispatch?.integrationReceipt);
-  const executorHandoff = handoffs.find(
-    (handoff) => handoff?.id === executorDispatch?.handoffId,
-  );
-  const reviewerHandoff = handoffs.find(
-    (handoff) => handoff?.id === reviewerDispatch?.handoffId,
-  );
-  const qaHandoff = handoffs.find(
-    (handoff) => handoff?.id === qaDispatch?.handoffId,
-  );
-  const reviewerDependencyConsumption = record(
-    dependencyConsumptions.find(
-      (receipt) => receipt?.consumerTaskId === reviewerDispatch?.taskId,
+  // A cadeia selada é linear e derivada do roster advisor presente (não-
+  // skipped): scouts advisor → executor codex → revisor codex → reviewers
+  // advisor → QA codex. Cada membro depende e consome o handoff do anterior.
+  const participation = Array.isArray(evidence?.participation)
+    ? evidence.participation
+    : [];
+  const presentAdvisorClis = participation
+    .filter((row) => record(row)?.skipped === null)
+    .map((row) => row.cli);
+  const chain = realMissionExpectedTaskChain(presentAdvisorClis);
+  const chainPlans = chain.map((member) =>
+    planTasks.find(
+      (task) =>
+        task?.plannerId === member.plannerId &&
+        task?.agentRef === member.agentRef,
     ),
   );
-  const qaDependencyConsumption = record(
-    dependencyConsumptions.find(
-      (receipt) => receipt?.consumerTaskId === qaDispatch?.taskId,
+  const chainDispatches = chain.map((member) =>
+    dispatches.find(
+      (dispatch) =>
+        dispatch?.plannerId === member.plannerId &&
+        dispatch?.agentRef === member.agentRef,
     ),
   );
-  const reviewerNoChangeMatch =
-    typeof reviewerReceipt?.reference === "string"
-      ? /^no-change:([a-f0-9]{40,64}):([a-f0-9]{64})$/u.exec(
-          reviewerReceipt.reference,
-        )
-      : null;
-  const qaNoChangeMatch =
-    typeof qaReceipt?.reference === "string"
-      ? /^no-change:([a-f0-9]{40,64}):([a-f0-9]{64})$/u.exec(
-          qaReceipt.reference,
-        )
-      : null;
+  const chainReceipts = chainDispatches.map((dispatch) =>
+    record(dispatch?.integrationReceipt),
+  );
+  const chainHandoffs = chainDispatches.map((dispatch) =>
+    handoffs.find((handoff) => handoff?.id === dispatch?.handoffId),
+  );
+  const chainNoChangeMatches = chainReceipts.map((receipt) =>
+    typeof receipt?.reference === "string"
+      ? /^no-change:([a-f0-9]{40,64}):([a-f0-9]{64})$/u.exec(receipt.reference)
+      : null,
+  );
+  const executorIndex = chain.findIndex(
+    (member) => member.kind === "execution",
+  );
+  const reviewerIndex = chain.findIndex(
+    (member) => member.agentRef === "e2e-reviewer",
+  );
+  const qaIndex = chain.length - 1;
+  const executorDispatch = chainDispatches[executorIndex];
+  const reviewerDispatch = chainDispatches[reviewerIndex];
+  const qaDispatch = chainDispatches[qaIndex];
+  const executorHandoff = chainHandoffs[executorIndex];
+  const executorReceipt = chainReceipts[executorIndex];
   const paneIsPhysical = (pane) =>
     hasExactKeys(pane, [
       "role",
@@ -600,9 +594,6 @@ export function assertRealMissionPassEvidence(raw) {
       handoff?.consumedDeliveryAttemptId === accepted.id
     );
   };
-  const executorAcceptedAttempt = exactAcceptedAttempt(executorHandoff);
-  const reviewerAcceptedAttempt = exactAcceptedAttempt(reviewerHandoff);
-  const qaAcceptedAttempt = exactAcceptedAttempt(qaHandoff);
   const completionDriver = record(completion?.driver);
   const completionWorkflow = record(completion?.workflow);
   const completionWorkflowBinding = record(completionWorkflow?.binding);
@@ -832,6 +823,200 @@ export function assertRealMissionPassEvidence(raw) {
       "handoffSummarySha256",
       "consumedAt",
     ]);
+  const chainPlanIsExact =
+    planTasks.length === chain.length &&
+    chain.every((member, index) => {
+      const task = record(chainPlans[index]);
+      const previous = index > 0 ? record(chainPlans[index - 1]) : null;
+      return (
+        task !== null &&
+        task.agentCategory === member.agentCategory &&
+        task.executionMode === member.executionMode &&
+        Array.isArray(task.dependsOn) &&
+        (index === 0
+          ? task.dependsOn.length === 0
+          : task.dependsOn.length === 1 &&
+            task.dependsOn[0] === previous?.taskId)
+      );
+    });
+  const chainDispatchIsExact =
+    dispatches.length === chain.length &&
+    chain.every((member, index) => {
+      const dispatch = chainDispatches[index];
+      const receipt = chainReceipts[index];
+      const previous = index > 0 ? chainDispatches[index - 1] : undefined;
+      return (
+        dispatchIsPhysical(dispatch) &&
+        dispatch.taskId === chainPlans[index]?.taskId &&
+        dispatch.agentCategory === member.agentCategory &&
+        dispatch.executionMode === member.executionMode &&
+        Array.isArray(dispatch.dependsOn) &&
+        (index === 0
+          ? dispatch.dependsOn.length === 0
+          : dispatch.dependsOn.length === 1 &&
+            dispatch.dependsOn[0] === previous?.taskId) &&
+        (member.kind === "execution"
+          ? receipt?.kind === "worktree_integrated" &&
+            GIT_SHA_PATTERN.test(receipt.reference ?? "") &&
+            Number.isInteger(receipt.completedAt)
+          : receipt?.kind === "worktree_validated_no_change" &&
+            chainNoChangeMatches[index] !== null &&
+            Number.isInteger(receipt.completedAt) &&
+            Array.isArray(receipt.evidenceIds) &&
+            receipt.evidenceIds.length > 0)
+      );
+    });
+  const chainHandoffIsExact =
+    handoffs.length === chain.length &&
+    exactDurableHandoffSet &&
+    chain.every((member, index) =>
+      handoffMatches(
+        chainHandoffs[index],
+        chainDispatches[index],
+        member.agentName,
+      ),
+    ) &&
+    new Set(chainHandoffs.map((handoff) => handoff?.id)).size ===
+      chain.length &&
+    new Set(chainHandoffs.map((handoff) => handoff?.sessionId)).size ===
+      chain.length &&
+    new Set(chainHandoffs.map((handoff) => handoff?.workerIncarnationId))
+      .size === chain.length &&
+    new Set(
+      chainHandoffs.map(
+        (handoff) => record(handoff?.physicalReceipt)?.receiptId,
+      ),
+    ).size === chain.length &&
+    new Set(
+      chainHandoffs.map(
+        (handoff) => record(handoff?.physicalReceipt)?.toolCallId,
+      ),
+    ).size === chain.length &&
+    chainHandoffs.every((handoff) => {
+      const scope = record(record(handoff?.auditIntent)?.scope);
+      const first = record(record(chainHandoffs[0]?.auditIntent)?.scope);
+      return (
+        scope !== null &&
+        scope.projectId === first?.projectId &&
+        scope.checkoutId === first?.checkoutId
+      );
+    });
+  // Scouts advisor validam o HEAD inicial (antes do executor); o revisor
+  // codex, os reviewers advisor e o QA validam o HEAD final integrado.
+  const chainHeadIsExact = chain.every((member, index) => {
+    const head = record(chainHandoffs[index]?.physicalReceipt)?.worktreeHeadSha;
+    const noChangeHead = chainNoChangeMatches[index]?.[1];
+    if (member.kind === "advisory") {
+      return (
+        head === repository?.initialHeadSha &&
+        noChangeHead === repository?.initialHeadSha
+      );
+    }
+    if (member.kind === "execution") {
+      return typeof head === "string" && head !== repository?.initialHeadSha;
+    }
+    return (
+      head === repository?.finalHeadSha &&
+      noChangeHead === repository?.finalHeadSha
+    );
+  });
+  const chainConsumptionIsExact =
+    dependencyConsumptions.length === chain.length - 1 &&
+    dependencyConsumptions.every(dependencyConsumptionHasExactKeys) &&
+    chain.every((_, index) => {
+      if (index === 0) return true;
+      const dispatch = chainDispatches[index];
+      const previousDispatch = chainDispatches[index - 1];
+      const previousHandoff = record(chainHandoffs[index - 1]);
+      const receipt = record(
+        dependencyConsumptions.find(
+          (candidate) => candidate?.consumerTaskId === dispatch?.taskId,
+        ),
+      );
+      return (
+        receipt !== null &&
+        receipt.missionId === mission?.id &&
+        receipt.dependencyTaskId === previousDispatch?.taskId &&
+        receipt.handoffId === previousHandoff?.id &&
+        receipt.consumerSessionId === dispatch?.sessionId &&
+        receipt.consumerWorkerIncarnationId ===
+          dispatch?.workerIncarnationId &&
+        SHA256_PATTERN.test(receipt.promptSha256 ?? "") &&
+        receipt.handoffSummarySha256 === previousHandoff?.summarySha256 &&
+        Number.isInteger(receipt.consumedAt) &&
+        previousDispatch?.completedAt <= receipt.consumedAt &&
+        receipt.consumedAt <= dispatch?.handoffAcceptedAt &&
+        receipt.consumedAt <=
+          record(chainHandoffs[index]?.auditIntent)?.occurredAt
+      );
+    });
+  const chainTimingIsExact =
+    chain.every((_, index) => {
+      const receipt = chainReceipts[index];
+      const dispatch = chainDispatches[index];
+      const physical = record(chainHandoffs[index]?.physicalReceipt);
+      const previousReceipt = index > 0 ? chainReceipts[index - 1] : null;
+      return (
+        receipt !== null &&
+        receipt.completedAt === dispatch?.completedAt &&
+        physical?.issuedAt <= receipt.completedAt &&
+        (index === 0 ||
+          (previousReceipt !== null &&
+            previousReceipt.completedAt <= dispatch?.routeConsumedAt &&
+            previousReceipt.completedAt <= physical?.issuedAt))
+      );
+    }) &&
+    chainHandoffs.every(
+      (handoff) => handoff?.consumedAt <= completion?.completedAt,
+    );
+  // O roster advisor é canônico: as seis CLIs na ordem do contrato, com o
+  // tier exato; skipped não pode carregar recibo físico.
+  const participationIsCanonical =
+    participation.length === REAL_MISSION_ADVISORS.length &&
+    participation.every((rawRow, index) => {
+      const row = record(rawRow);
+      const advisor = REAL_MISSION_ADVISORS[index];
+      return (
+        hasExactKeys(row, [
+          "cli",
+          "tier",
+          "skipped",
+          "spawnedAt",
+          "firstNexusToolAt",
+          "handoffAt",
+        ]) &&
+        row?.cli === advisor.cli &&
+        row?.tier === advisor.tier &&
+        (row?.skipped === null || row?.skipped === "no-credential") &&
+        (row?.skipped === null ||
+          (row?.spawnedAt === null &&
+            row?.firstNexusToolAt === null &&
+            row?.handoffAt === null))
+      );
+    });
+  // Cada advisor credenciada prova PTY físico, primeira tool nexus_* e o
+  // handoff físico; handoffAt casa exatamente com o receipt MCP auditado.
+  const participationIsComplete = participation.every((rawRow) => {
+    const row = record(rawRow);
+    if (row === null || row.skipped !== null) return row !== null;
+    const advisor = REAL_MISSION_ADVISORS.find(
+      (candidate) => candidate.cli === row.cli,
+    );
+    const index = chain.findIndex(
+      (member) => member.agentRef === advisor?.id,
+    );
+    const physical =
+      index >= 0 ? record(chainHandoffs[index]?.physicalReceipt) : null;
+    return (
+      index >= 0 &&
+      Number.isInteger(row.spawnedAt) &&
+      Number.isInteger(row.firstNexusToolAt) &&
+      Number.isInteger(row.handoffAt) &&
+      row.spawnedAt <= row.firstNexusToolAt &&
+      row.firstNexusToolAt <= row.handoffAt &&
+      row.handoffAt === physical?.issuedAt
+    );
+  });
   const valid =
     exactTopLevelEnvelope &&
     evidence?.schemaVersion === REAL_MISSION_EVIDENCE_SCHEMA_VERSION &&
@@ -905,27 +1090,8 @@ export function assertRealMissionPassEvidence(raw) {
     plan?.squadId === mission?.squadId &&
     /^[a-f0-9]{64}$/u.test(plan?.planHash ?? "") &&
     /^[a-f0-9]{64}$/u.test(plan?.rosterHash ?? "") &&
-    planTasks.length === 3 &&
-    executorPlan?.agentRef === "e2e-executor" &&
-    executorPlan?.agentCategory === "executor" &&
-    executorPlan?.executionMode === "isolated_worktree" &&
-    Array.isArray(executorPlan?.dependsOn) &&
-    executorPlan.dependsOn.length === 0 &&
-    reviewerPlan?.agentRef === "e2e-reviewer" &&
-    reviewerPlan?.agentCategory === "reviewer" &&
-    reviewerPlan?.executionMode === "read_only" &&
-    /^guided-review-[A-Za-z0-9._:-]{1,220}$/u.test(
-      reviewerPlan?.plannerId ?? "",
-    ) &&
-    Array.isArray(reviewerPlan?.dependsOn) &&
-    reviewerPlan.dependsOn.length === 1 &&
-    reviewerPlan.dependsOn[0] === executorPlan?.taskId &&
-    qaPlan?.agentRef === "e2e-qa" &&
-    qaPlan?.agentCategory === "reviewer" &&
-    qaPlan?.executionMode === "read_only" &&
-    Array.isArray(qaPlan?.dependsOn) &&
-    qaPlan.dependsOn.length === 1 &&
-    qaPlan.dependsOn[0] === reviewerPlan?.taskId &&
+    chainPlanIsExact &&
+    participationIsCanonical &&
     panes.length === 4 &&
     exactPhysicalPtySet &&
     panes.every(paneIsPhysical) &&
@@ -965,126 +1131,14 @@ export function assertRealMissionPassEvidence(raw) {
         pane?.nativeReadOnly === true &&
         typeof pane?.workerIncarnationId === "string",
     ).length === 1 &&
-    dispatches.length === 3 &&
-    executorDispatch?.taskId === executorPlan?.taskId &&
-    executorDispatch?.agentRef === "e2e-executor" &&
-    executorDispatch?.agentCategory === "executor" &&
-    executorDispatch?.executionMode === "isolated_worktree" &&
-    Array.isArray(executorDispatch?.dependsOn) &&
-    executorDispatch.dependsOn.length === 0 &&
-    dispatchIsPhysical(executorDispatch) &&
-    executorDispatch?.completedAt === executorReceipt?.completedAt &&
-    executorReceipt?.kind === "worktree_integrated" &&
-    /^[a-f0-9]{40,64}$/u.test(executorReceipt?.reference ?? "") &&
-    Number.isInteger(executorReceipt?.completedAt) &&
-    reviewerDispatch?.taskId === reviewerPlan?.taskId &&
-    reviewerDispatch?.agentRef === "e2e-reviewer" &&
-    reviewerDispatch?.agentCategory === "reviewer" &&
-    reviewerDispatch?.executionMode === "read_only" &&
-    Array.isArray(reviewerDispatch?.dependsOn) &&
-    reviewerDispatch.dependsOn.length === 1 &&
-    reviewerDispatch.dependsOn[0] === executorDispatch?.taskId &&
-    dispatchIsPhysical(reviewerDispatch) &&
-    reviewerDispatch?.completedAt === reviewerReceipt?.completedAt &&
-    reviewerReceipt?.kind === "worktree_validated_no_change" &&
-    reviewerNoChangeMatch !== null &&
-    Number.isInteger(reviewerReceipt?.completedAt) &&
-    Array.isArray(reviewerReceipt?.evidenceIds) &&
-    reviewerReceipt.evidenceIds.length > 0 &&
-    qaDispatch?.taskId === qaPlan?.taskId &&
-    qaDispatch?.agentRef === "e2e-qa" &&
-    qaDispatch?.agentCategory === "reviewer" &&
-    qaDispatch?.executionMode === "read_only" &&
-    Array.isArray(qaDispatch?.dependsOn) &&
-    qaDispatch.dependsOn.length === 1 &&
-    qaDispatch.dependsOn[0] === reviewerDispatch?.taskId &&
-    dispatchIsPhysical(qaDispatch) &&
-    qaDispatch?.completedAt === qaReceipt?.completedAt &&
-    qaReceipt?.kind === "worktree_validated_no_change" &&
-    qaNoChangeMatch !== null &&
-    Number.isInteger(qaReceipt?.completedAt) &&
-    Array.isArray(qaReceipt?.evidenceIds) &&
-    qaReceipt.evidenceIds.length > 0 &&
-    handoffs.length === 3 &&
-    exactDurableHandoffSet &&
-    handoffMatches(executorHandoff, executorDispatch, "E2E Executor") &&
-    handoffMatches(reviewerHandoff, reviewerDispatch, "E2E Revisor") &&
-    handoffMatches(qaHandoff, qaDispatch, "E2E QA") &&
-    new Set(
-      [executorHandoff, reviewerHandoff, qaHandoff].map(
-        (handoff) => handoff?.id,
-      ),
-    ).size === 3 &&
-    new Set(
-      [executorHandoff, reviewerHandoff, qaHandoff].map(
-        (handoff) => handoff?.sessionId,
-      ),
-    ).size === 3 &&
-    new Set(
-      [executorHandoff, reviewerHandoff, qaHandoff].map(
-        (handoff) => handoff?.workerIncarnationId,
-      ),
-    ).size === 3 &&
-    new Set(
-      [executorHandoff, reviewerHandoff, qaHandoff].map(
-        (handoff) => handoff?.physicalReceipt?.receiptId,
-      ),
-    ).size === 3 &&
-    new Set(
-      [executorHandoff, reviewerHandoff, qaHandoff].map(
-        (handoff) => handoff?.physicalReceipt?.toolCallId,
-      ),
-    ).size === 3 &&
-    executorHandoff?.auditIntent?.scope?.projectId ===
-      reviewerHandoff?.auditIntent?.scope?.projectId &&
-    reviewerHandoff?.auditIntent?.scope?.projectId ===
-      qaHandoff?.auditIntent?.scope?.projectId &&
-    executorHandoff?.auditIntent?.scope?.checkoutId ===
-      reviewerHandoff?.auditIntent?.scope?.checkoutId &&
-    reviewerHandoff?.auditIntent?.scope?.checkoutId ===
-      qaHandoff?.auditIntent?.scope?.checkoutId &&
-    dependencyConsumptions.length === 2 &&
-    dependencyConsumptions.every(dependencyConsumptionHasExactKeys) &&
-    reviewerDependencyConsumption?.missionId === mission?.id &&
-    reviewerDependencyConsumption?.consumerTaskId === reviewerDispatch?.taskId &&
-    reviewerDependencyConsumption?.dependencyTaskId === executorDispatch?.taskId &&
-    reviewerDependencyConsumption?.handoffId === executorHandoff?.id &&
-    reviewerDependencyConsumption?.consumerSessionId ===
-      reviewerDispatch?.sessionId &&
-    reviewerDependencyConsumption?.consumerWorkerIncarnationId ===
-      reviewerDispatch?.workerIncarnationId &&
-    /^[a-f0-9]{64}$/u.test(
-      reviewerDependencyConsumption?.promptSha256 ?? "",
-    ) &&
-    reviewerDependencyConsumption?.handoffSummarySha256 ===
-      executorHandoff?.summarySha256 &&
-    Number.isInteger(reviewerDependencyConsumption?.consumedAt) &&
-    executorDispatch?.completedAt <=
-      reviewerDependencyConsumption?.consumedAt &&
-    reviewerDependencyConsumption?.consumedAt <=
-      reviewerDispatch?.handoffAcceptedAt &&
-    reviewerDependencyConsumption?.consumedAt <=
-      reviewerHandoff?.auditIntent?.occurredAt &&
-    qaDependencyConsumption?.missionId === mission?.id &&
-    qaDependencyConsumption?.consumerTaskId === qaDispatch?.taskId &&
-    qaDependencyConsumption?.dependencyTaskId === reviewerDispatch?.taskId &&
-    qaDependencyConsumption?.handoffId === reviewerHandoff?.id &&
-    qaDependencyConsumption?.consumerSessionId === qaDispatch?.sessionId &&
-    qaDependencyConsumption?.consumerWorkerIncarnationId ===
-      qaDispatch?.workerIncarnationId &&
-    /^[a-f0-9]{64}$/u.test(qaDependencyConsumption?.promptSha256 ?? "") &&
-    qaDependencyConsumption?.handoffSummarySha256 ===
-      reviewerHandoff?.summarySha256 &&
-    Number.isInteger(qaDependencyConsumption?.consumedAt) &&
-    reviewerDispatch?.completedAt <= qaDependencyConsumption?.consumedAt &&
-    qaDependencyConsumption?.consumedAt <= qaDispatch?.handoffAcceptedAt &&
-    qaDependencyConsumption?.consumedAt <=
-      qaHandoff?.auditIntent?.occurredAt &&
+    chainDispatchIsExact &&
+    chainHandoffIsExact &&
+    chainHeadIsExact &&
+    chainConsumptionIsExact &&
+    chainTimingIsExact &&
+    participationIsComplete &&
     exactMissionDriverCompletion &&
     qaDispatch?.completedAt <= completion?.completedAt &&
-    executorHandoff?.consumedAt <= completion?.completedAt &&
-    reviewerHandoff?.consumedAt <= completion?.completedAt &&
-    qaHandoff?.consumedAt <= completion?.completedAt &&
     exactRepository &&
     /^[a-f0-9]{40,64}$/u.test(repository?.initialHeadSha ?? "") &&
     /^[a-f0-9]{40,64}$/u.test(repository?.finalHeadSha ?? "") &&
@@ -1098,15 +1152,8 @@ export function assertRealMissionPassEvidence(raw) {
     repository?.changedBeforeWorker === false &&
     repository?.exactSingleCommit === true &&
     repository?.initialHeadSha !== repository?.finalHeadSha &&
-    executorHandoff?.physicalReceipt?.worktreeHeadSha !==
-      repository?.initialHeadSha &&
+    executorReceipt?.kind === "worktree_integrated" &&
     executorReceipt?.reference === repository?.finalHeadSha &&
-    reviewerHandoff?.physicalReceipt?.worktreeHeadSha ===
-      repository?.finalHeadSha &&
-    qaHandoff?.physicalReceipt?.worktreeHeadSha ===
-      repository?.finalHeadSha &&
-    reviewerNoChangeMatch?.[1] === repository?.finalHeadSha &&
-    qaNoChangeMatch?.[1] === repository?.finalHeadSha &&
     panes.find((pane) => pane?.agentRef === "e2e-orchestrator")?.sessionId ===
       kickoff?.sessionId &&
     panes.find((pane) => pane?.agentRef === "e2e-executor")?.sessionId ===
@@ -1120,18 +1167,7 @@ export function assertRealMissionPassEvidence(raw) {
     panes.find((pane) => pane?.agentRef === "e2e-qa")?.sessionId ===
       qaDispatch?.sessionId &&
     panes.find((pane) => pane?.agentRef === "e2e-qa")
-      ?.workerIncarnationId === qaDispatch?.workerIncarnationId &&
-    executorReceipt?.completedAt <= reviewerDispatch?.routeConsumedAt &&
-    executorReceipt?.completedAt <=
-      reviewerHandoff?.physicalReceipt?.issuedAt &&
-    reviewerHandoff?.physicalReceipt?.issuedAt <=
-      reviewerReceipt?.completedAt &&
-    reviewerReceipt?.completedAt <= qaDispatch?.routeConsumedAt &&
-    reviewerReceipt?.completedAt <= qaHandoff?.physicalReceipt?.issuedAt &&
-    qaHandoff?.physicalReceipt?.issuedAt <= qaReceipt?.completedAt &&
-    executorAcceptedAttempt?.acceptedAt <= executorHandoff?.consumedAt &&
-    reviewerAcceptedAttempt?.acceptedAt <= reviewerHandoff?.consumedAt &&
-    qaAcceptedAttempt?.acceptedAt <= qaHandoff?.consumedAt;
+      ?.workerIncarnationId === qaDispatch?.workerIncarnationId;
   if (!valid) {
     throw new Error("real mission evidence is incomplete or not a PASS");
   }
@@ -1154,6 +1190,36 @@ export function assertRealMissionReleaseEvidence(raw) {
   ) {
     throw new Error(
       "real mission release evidence requires product-wizard physical coverage; private-runner evidence is diagnostic-only",
+    );
+  }
+  // Release exige participação completa das advisors credenciadas: PTY
+  // físico, primeira tool nexus_* e handoff — skipped (sem credencial) fica
+  // fora da exigência, mas precisa estar registrada como skipped.
+  const participationRows = Array.isArray(evidence?.participation)
+    ? evidence.participation
+    : [];
+  const participationComplete =
+    participationRows.length === REAL_MISSION_ADVISORS.length &&
+    participationRows.every((rawRow) => {
+      const row = record(rawRow);
+      if (row === null) return false;
+      if (row.skipped === "no-credential") {
+        return (
+          row.spawnedAt === null &&
+          row.firstNexusToolAt === null &&
+          row.handoffAt === null
+        );
+      }
+      return (
+        row.skipped === null &&
+        Number.isInteger(row.spawnedAt) &&
+        Number.isInteger(row.firstNexusToolAt) &&
+        Number.isInteger(row.handoffAt)
+      );
+    });
+  if (!participationComplete) {
+    throw new Error(
+      "real mission release evidence requires complete participation of every credentialed advisor CLI",
     );
   }
   return evidence;

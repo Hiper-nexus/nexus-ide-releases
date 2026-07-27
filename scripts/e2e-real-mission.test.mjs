@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  REAL_MISSION_ADVISOR_SKIP_ENV,
   REAL_MISSION_CTA,
   REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
   REAL_MISSION_FLAG,
@@ -25,7 +26,11 @@ import {
   waitForChild,
 } from "./e2e-real-mission.mjs";
 import { makeValidRealMissionEvidence } from "./test-support/real-mission-evidence.mjs";
-import { nodeBinDirsNearCodexPackage } from "./e2e-real-mission-launcher.mjs";
+import {
+  assertAdvisorBinaries,
+  nodeBinDirsNearCodexPackage,
+  stageAdvisorAuthentication,
+} from "./e2e-real-mission-launcher.mjs";
 
 const tempDirectories = [];
 
@@ -1114,6 +1119,340 @@ describe("independent evidence verifier", () => {
       expect(() => assertRealMissionPassEvidence(evidence)).toThrow(
         /incomplete/,
       );
+    }
+  });
+});
+
+describe("real mission advisor authentication staging", () => {
+  const writePrivate = (file, content) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content, { mode: 0o600 });
+  };
+  const keychainRun = (status) =>
+    vi.fn().mockReturnValue({ status, stdout: "", stderr: "" });
+
+  it("stages every advisor's auth material into the isolated HOME with private modes", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    writePrivate(path.join(sourceHome, ".grok", "auth.json"), '{"grok":1}\n');
+    // config.toml is not a secret; a lax source mode is tolerated.
+    fs.writeFileSync(
+      path.join(sourceHome, ".grok", "config.toml"),
+      'model = "grok-4"\n',
+      { mode: 0o644 },
+    );
+    writePrivate(
+      path.join(sourceHome, ".kimi-code", "credentials", "kimi-code.json"),
+      '{"kimi":1}\n',
+    );
+    writePrivate(path.join(sourceHome, ".omp", "agent", "agent.db"), "sqlite");
+    writePrivate(
+      path.join(sourceHome, ".omp", "agent", "agent.db-wal"),
+      "wal",
+    );
+    writePrivate(
+      path.join(sourceHome, ".gemini", "antigravity", "oauth", "token.json"),
+      '{"agy":1}\n',
+    );
+    writePrivate(
+      path.join(sourceHome, ".local", "share", "opencode", "auth.json"),
+      '{"opencode":1}\n',
+    );
+    const onSkip = vi.fn();
+    const run = keychainRun(0);
+
+    const statuses = stageAdvisorAuthentication(isolatedHome, {
+      sourceHome,
+      environment: {},
+      onSkip,
+      run,
+    });
+
+    expect(statuses).toEqual({
+      grok: "staged",
+      kimi: "staged",
+      omp: "staged",
+      agy: "staged",
+      opencode: "staged",
+      claude: process.platform === "darwin" ? "staged" : "skipped",
+    });
+    if (process.platform === "darwin") {
+      expect(onSkip).not.toHaveBeenCalled();
+      expect(run).toHaveBeenCalledWith(
+        "/usr/bin/security",
+        ["find-generic-password", "-s", "Claude Code-credentials"],
+        expect.objectContaining({ shell: false }),
+      );
+    }
+    const stagedFiles = [
+      [".grok/auth.json", '{"grok":1}\n'],
+      [".grok/config.toml", 'model = "grok-4"\n'],
+      [".kimi-code/credentials/kimi-code.json", '{"kimi":1}\n'],
+      [".omp/agent/agent.db", "sqlite"],
+      [".omp/agent/agent.db-wal", "wal"],
+      [".gemini/antigravity/oauth/token.json", '{"agy":1}\n'],
+      [".local/share/opencode/auth.json", '{"opencode":1}\n'],
+    ];
+    for (const [relative, content] of stagedFiles) {
+      const staged = path.join(isolatedHome, relative);
+      expect(fs.readFileSync(staged, "utf8"), relative).toBe(content);
+      expect(fs.statSync(staged).mode & 0o777, relative).toBe(0o600);
+    }
+    for (const directory of [
+      ".grok",
+      ".kimi-code",
+      ".kimi-code/credentials",
+      ".omp/agent",
+      ".gemini/antigravity/oauth",
+      ".local/share/opencode",
+    ]) {
+      expect(
+        fs.statSync(path.join(isolatedHome, directory)).mode & 0o777,
+        directory,
+      ).toBe(0o700);
+    }
+  });
+
+  it("honors XDG_DATA_HOME when locating the opencode auth file", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    const xdg = path.join(root, "xdg-data");
+    writePrivate(path.join(xdg, "opencode", "auth.json"), '{"xdg":1}\n');
+
+    const statuses = stageAdvisorAuthentication(isolatedHome, {
+      sourceHome,
+      environment: { XDG_DATA_HOME: xdg },
+      onSkip: vi.fn(),
+      run: keychainRun(1),
+    });
+
+    expect(statuses.opencode).toBe("staged");
+    expect(
+      fs.readFileSync(
+        path.join(isolatedHome, ".local", "share", "opencode", "auth.json"),
+        "utf8",
+      ),
+    ).toBe('{"xdg":1}\n');
+  });
+
+  it("skips advisors whose material is absent and never fails", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    fs.mkdirSync(sourceHome, { recursive: true });
+    const onSkip = vi.fn();
+
+    const statuses = stageAdvisorAuthentication(isolatedHome, {
+      sourceHome,
+      environment: {},
+      onSkip,
+      run: keychainRun(1),
+    });
+
+    expect(statuses).toEqual({
+      grok: "skipped",
+      kimi: "skipped",
+      omp: "skipped",
+      agy: "skipped",
+      opencode: "credentialless",
+      claude: "skipped",
+    });
+    // opencode is credentialless, not a skip.
+    expect(onSkip.mock.calls.map(([cli]) => cli).sort()).toEqual([
+      "agy",
+      "claude",
+      "grok",
+      "kimi",
+      "omp",
+    ]);
+    expect(fs.existsSync(path.join(isolatedHome, ".grok"))).toBe(false);
+    expect(fs.existsSync(path.join(isolatedHome, ".kimi-code"))).toBe(false);
+  });
+
+  it("copies grok config.toml only when auth.json was staged", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    fs.mkdirSync(path.join(sourceHome, ".grok"), { recursive: true });
+    fs.writeFileSync(
+      path.join(sourceHome, ".grok", "config.toml"),
+      'model = "grok-4"\n',
+    );
+
+    const statuses = stageAdvisorAuthentication(isolatedHome, {
+      sourceHome,
+      environment: {},
+      onSkip: vi.fn(),
+      run: keychainRun(1),
+    });
+
+    expect(statuses.grok).toBe("skipped");
+    expect(
+      fs.existsSync(path.join(isolatedHome, ".grok", "config.toml")),
+    ).toBe(false);
+  });
+
+  it("refuses to stage advisor auth through a symlink", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    const external = path.join(root, "external-auth.json");
+    fs.writeFileSync(external, "{}\n", { mode: 0o600 });
+    fs.mkdirSync(path.join(sourceHome, ".grok"), { recursive: true });
+    fs.symlinkSync(external, path.join(sourceHome, ".grok", "auth.json"));
+
+    expect(() =>
+      stageAdvisorAuthentication(isolatedHome, {
+        sourceHome,
+        environment: {},
+        onSkip: vi.fn(),
+        run: keychainRun(1),
+      }),
+    ).toThrow(/non-regular Grok auth file/);
+  });
+
+  it("refuses a group/world-readable advisor secret and leaves no partial copy", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    fs.mkdirSync(path.join(sourceHome, ".kimi-code", "credentials"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(sourceHome, ".kimi-code", "credentials", "kimi-code.json"),
+      "{}\n",
+      { mode: 0o644 },
+    );
+
+    expect(() =>
+      stageAdvisorAuthentication(isolatedHome, {
+        sourceHome,
+        environment: {},
+        onSkip: vi.fn(),
+        run: keychainRun(1),
+      }),
+    ).toThrow(/mode 0600/i);
+    expect(
+      fs.existsSync(
+        path.join(isolatedHome, ".kimi-code", "credentials", "kimi-code.json"),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a symlink inside the AGY antigravity tree", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    const external = path.join(root, "external-token.json");
+    fs.writeFileSync(external, "{}\n", { mode: 0o600 });
+    fs.mkdirSync(path.join(sourceHome, ".gemini", "antigravity"), {
+      recursive: true,
+    });
+    fs.symlinkSync(
+      external,
+      path.join(sourceHome, ".gemini", "antigravity", "token.json"),
+    );
+
+    expect(() =>
+      stageAdvisorAuthentication(isolatedHome, {
+        sourceHome,
+        environment: {},
+        onSkip: vi.fn(),
+        run: keychainRun(1),
+      }),
+    ).toThrow(/symlink/);
+  });
+
+  it("treats a missing claude keychain credential as a skip, never a copy", () => {
+    const root = makeTemp();
+    const statuses = stageAdvisorAuthentication(path.join(root, "isolated"), {
+      sourceHome: path.join(root, "real-home"),
+      environment: {},
+      onSkip: vi.fn(),
+      run: keychainRun(1),
+    });
+    expect(statuses.claude).toBe("skipped");
+    expect(fs.existsSync(path.join(root, "isolated", ".claude"))).toBe(false);
+  });
+
+  it("marks only missing or broken advisor binaries as skips", () => {
+    const onSkip = vi.fn();
+    const resolveCommand = (command) =>
+      command === "kimi" || command === "omp"
+        ? ""
+        : `/usr/local/bin/${command}`;
+    const run = vi.fn((binary) =>
+      binary.endsWith("/agy")
+        ? { status: 1, stdout: "", stderr: "boom" }
+        : { status: 0, stdout: `${path.basename(binary)} 1.2.3\n`, stderr: "" },
+    );
+
+    const statuses = assertAdvisorBinaries({
+      onSkip,
+      environment: {},
+      resolveCommand,
+      run,
+    });
+
+    expect(statuses.grok).toEqual({ available: true, version: "grok 1.2.3" });
+    expect(statuses.opencode).toEqual({
+      available: true,
+      version: "opencode 1.2.3",
+    });
+    expect(statuses.claude).toEqual({
+      available: true,
+      version: "claude 1.2.3",
+    });
+    expect(statuses.kimi).toEqual({ available: false });
+    expect(statuses.omp).toEqual({ available: false });
+    expect(statuses.agy).toEqual({ available: false });
+    expect(onSkip.mock.calls.map(([cli]) => cli).sort()).toEqual([
+      "agy",
+      "kimi",
+      "omp",
+    ]);
+    expect(run).toHaveBeenCalledWith(
+      "/usr/local/bin/grok",
+      ["--version"],
+      expect.objectContaining({ shell: false, timeout: 10_000 }),
+    );
+  });
+
+  it("preserves only a strictly-shaped advisor skip list in the child environment", () => {
+    const first = realMissionEnvironment(
+      { PATH: "/usr/bin", [REAL_MISSION_ADVISOR_SKIP_ENV]: "agy,kimi" },
+      "/tmp/user-data",
+      "/trusted/codex",
+    );
+    expect(first[REAL_MISSION_ADVISOR_SKIP_ENV]).toBe("agy,kimi");
+
+    // waitForChild re-derives the child env from the isolated one; the gate's
+    // aggregated skip list must survive that second pass.
+    const second = realMissionEnvironment(
+      first,
+      "/tmp/user-data",
+      "/trusted/codex",
+    );
+    expect(second[REAL_MISSION_ADVISOR_SKIP_ENV]).toBe("agy,kimi");
+
+    for (const hostile of [
+      "agy kimi",
+      "agy;rm -rf /",
+      "agy\nNEXUS_REAL_MISSION_E2E=0",
+      "AGY",
+      `a,${"b,".repeat(200)}c`,
+    ]) {
+      const environment = realMissionEnvironment(
+        { PATH: "/usr/bin", [REAL_MISSION_ADVISOR_SKIP_ENV]: hostile },
+        "/tmp/user-data",
+        "/trusted/codex",
+      );
+      expect(
+        environment[REAL_MISSION_ADVISOR_SKIP_ENV],
+        JSON.stringify(hostile),
+      ).toBeUndefined();
     }
   });
 });
