@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   createHash,
   createHmac,
@@ -242,6 +242,88 @@ async function atomicWriteEvidence(evidence, destination) {
  * so the caller can still read the evidence file and emit accurate pane/
  * dispatch/handoff counts instead of hardcoded zeros.
  */
+/**
+ * Darwin Launch Services launch so the app becomes a responsibility root.
+ * Direct spawn of Contents/MacOS/nexus-ide keeps the e2e Node process as the
+ * responsible parent; the packaged PTY supervisor then rejects version/PTY
+ * probes with "launch authorization rejected before responsibility disclaim".
+ */
+function spawnDarwinLaunchServicesChild(
+  target,
+  userData,
+  launchSurface,
+  childEnvironment,
+  spawnImpl,
+) {
+  if (!target?.appPath || typeof target.appPath !== "string") {
+    throw new Error("darwin real-mission launch requires a .app bundle path");
+  }
+  const stdoutLog = path.join(userData, "real-mission-child.stdout.log");
+  const stderrLog = path.join(userData, "real-mission-child.stderr.log");
+  fs.writeFileSync(stdoutLog, "", { mode: PRIVATE_FILE_MODE });
+  fs.writeFileSync(stderrLog, "", { mode: PRIVATE_FILE_MODE });
+  const envArgs = [];
+  for (const [key, value] of Object.entries(childEnvironment)) {
+    if (typeof value !== "string") continue;
+    // open(1) --env takes AAA=foo; reject control characters that would break
+    // the launch argv contract.
+    if (/[\0\r\n]/.test(key) || /[\0\r\n]/.test(value)) {
+      throw new Error(`real-mission env ${key} contains control characters`);
+    }
+    envArgs.push("--env", `${key}=${value}`);
+  }
+  const openArgs = [
+    "-n",
+    "-W",
+    "-a",
+    target.appPath,
+    ...envArgs,
+    "--stdout",
+    stdoutLog,
+    "--stderr",
+    stderrLog,
+    "--args",
+    ...realMissionArgs(userData, launchSurface),
+  ];
+  const child = spawnImpl("/usr/bin/open", openArgs, {
+    stdio: ["ignore", "ignore", "pipe"],
+    shell: false,
+    detached: false,
+  });
+  return { child, stdoutLog, stderrLog, userData };
+}
+
+function findRealMissionAppPids(userData) {
+  const marker = `--user-data-dir=${path.resolve(userData)}`;
+  const result = spawnSync(
+    "/bin/ps",
+    ["-axo", "pid=,command="],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      shell: false,
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+    },
+  );
+  if (result.error || result.status !== 0 || typeof result.stdout !== "string") {
+    return [];
+  }
+  const pids = [];
+  for (const line of result.stdout.split("\n")) {
+    const match = /^\s*(\d+)\s+(\S.*)$/u.exec(line);
+    if (!match) continue;
+    const command = match[2];
+    if (
+      command.includes("nexus-ide") &&
+      command.includes(marker) &&
+      !command.includes(" open ")
+    ) {
+      pids.push(Number(match[1]));
+    }
+  }
+  return pids;
+}
+
 export async function waitForChild(
   target,
   userData,
@@ -272,15 +354,36 @@ export async function waitForChild(
       launchSurface,
       attestation,
     );
+  const useLaunchServices =
+    process.platform === "darwin" &&
+    typeof target?.appPath === "string" &&
+    target.appPath.endsWith(".app");
   let child;
+  let stdoutLog = null;
+  let stderrLog = null;
+  let logPoll = null;
+  let logOffset = { stdout: 0, stderr: 0 };
   try {
-    child = spawnImpl(target.binary, realMissionArgs(userData, launchSurface), {
-      env: childEnvironment,
-      stdio: ["ignore", "pipe", "pipe"],
-      shell: false,
-      detached: process.platform !== "win32",
-      windowsHide: process.platform === "win32",
-    });
+    if (useLaunchServices) {
+      const launched = spawnDarwinLaunchServicesChild(
+        target,
+        userData,
+        launchSurface,
+        childEnvironment,
+        spawnImpl,
+      );
+      child = launched.child;
+      stdoutLog = launched.stdoutLog;
+      stderrLog = launched.stderrLog;
+    } else {
+      child = spawnImpl(target.binary, realMissionArgs(userData, launchSurface), {
+        env: childEnvironment,
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: false,
+        detached: process.platform !== "win32",
+        windowsHide: process.platform === "win32",
+      });
+    }
   } finally {
     delete childEnvironment.NEXUS_REAL_MISSION_ATTESTATION_SECRET;
     delete childEnvironment.NEXUS_REAL_MISSION_ATTESTATION_CHALLENGE;
@@ -297,6 +400,7 @@ export async function waitForChild(
       settled = true;
       clearTimeout(timeout);
       if (terminationGrace) clearTimeout(terminationGrace);
+      if (logPoll) clearInterval(logPoll);
       for (const [signal, listener] of signalHandlers) {
         process.off(signal, listener);
       }
@@ -308,7 +412,13 @@ export async function waitForChild(
       // Graceful first so Electron before-quit can write real-mission-evidence.json
       // with the live mission snapshot (pane/dispatch/handoff counts).
       try {
-        killTree(child.pid, { platform: process.platform });
+        if (useLaunchServices) {
+          for (const pid of findRealMissionAppPids(userData)) {
+            killTree(pid, { platform: process.platform });
+          }
+        } else {
+          killTree(child.pid, { platform: process.platform });
+        }
       } catch {
         // Best-effort; close handler still settles.
       }
@@ -346,10 +456,40 @@ export async function waitForChild(
         }
       }
     };
-    child.stdout?.on("data", append);
-    child.stderr?.on("data", append);
+    const drainLog = (filePath, key) => {
+      if (!filePath) return;
+      try {
+        const stats = fs.statSync(filePath);
+        if (stats.size <= logOffset[key]) return;
+        const fd = fs.openSync(filePath, "r");
+        try {
+          const length = stats.size - logOffset[key];
+          const buffer = Buffer.alloc(length);
+          fs.readSync(fd, buffer, 0, length, logOffset[key]);
+          logOffset[key] = stats.size;
+          append(buffer);
+        } finally {
+          fs.closeSync(fd);
+        }
+      } catch {
+        // Log may appear after open returns.
+      }
+    };
+    if (useLaunchServices) {
+      logPoll = setInterval(() => {
+        drainLog(stdoutLog, "stdout");
+        drainLog(stderrLog, "stderr");
+      }, 250);
+    } else {
+      child.stdout?.on("data", append);
+      child.stderr?.on("data", append);
+    }
     child.once("error", (error) => finish(reject, error));
     child.once("close", (code) => {
+      if (useLaunchServices) {
+        drainLog(stdoutLog, "stdout");
+        drainLog(stderrLog, "stderr");
+      }
       finish(resolve, {
         code: Number.isInteger(code) ? code : 1,
         phase,
