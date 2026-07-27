@@ -368,7 +368,7 @@ describe('prepareCodexGovernedSession', () => {
       computer_use: false,
       enable_mcp_apps: false,
       goals: false,
-      hooks: false,
+      hooks: true,
       image_generation: false,
       in_app_browser: false,
       plugins: false,

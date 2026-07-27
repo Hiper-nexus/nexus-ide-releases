@@ -669,7 +669,11 @@ export function prepareCodexGovernedSession(
           computer_use: false,
           enable_mcp_apps: false,
           goals: false,
-          hooks: false,
+          // Hooks in this private CODEX_HOME come only from main-owned `-c
+          // hooks.*` overrides. Keep the engine active so UserPromptSubmit can
+          // reach the bearer-scoped loopback status endpoint; project/user
+          // hook discovery remains absent from this isolated profile.
+          hooks: true,
           image_generation: false,
           in_app_browser: false,
           plugins: false,
