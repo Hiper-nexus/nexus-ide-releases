@@ -990,7 +990,11 @@ describe("cli-agent spawn argv hardening", () => {
           NEXUS_MCP_TOKEN: ctx.token,
           NEXUS_HOOK_URL: "http://127.0.0.1:5123/hook/status",
         },
-        extraArgs: ["-c", 'mcp_servers.nexus.url="http://127.0.0.1:1/mcp"'],
+        extraArgs: [
+          "-c",
+          'mcp_servers.nexus.url="http://127.0.0.1:1/mcp"',
+          "--dangerously-bypass-hook-trust",
+        ],
       };
     });
     const adapter = makeCodexAdapter();
@@ -1006,6 +1010,9 @@ describe("cli-agent spawn argv hardening", () => {
       );
       const governedSpec = h.specFor(governed.sessionId);
       expectHookLoopbackGrant(governedSpec, 5123);
+      expect(governedCodexArgv(governedSpec)).toContain(
+        "--dangerously-bypass-hook-trust",
+      );
       expect(governedSpec.args).toContain("--strict-config");
       expect(governedSpec.args).toEqual(
         expect.arrayContaining(["--disable", "multi_agent"]),

@@ -482,6 +482,32 @@ describe('secureAutonomousCliArgs', () => {
     expect(args).not.toContain('never');
   });
 
+  it('preserves hook trust bypass only from the main-owned decoration', () => {
+    const codex = builtinCli('codex');
+    const trusted = secureAutonomousCliArgs(codex, [
+      '--dangerously-bypass-hook-trust',
+    ], true, {
+      unattendedNexusMcp: true,
+      trustedCodexPermissionProfile:
+        CODEX_READ_ONLY_PERMISSION_PROFILE,
+      trustedCodexExternalProcessSandbox: true,
+      trustedDecorationArgs: [
+        '--dangerously-bypass-hook-trust',
+      ],
+    });
+    expect(trusted).toContain('--dangerously-bypass-hook-trust');
+
+    const untrusted = secureAutonomousCliArgs(codex, [
+      '--dangerously-bypass-hook-trust',
+    ], true, {
+      unattendedNexusMcp: true,
+      trustedCodexPermissionProfile:
+        CODEX_READ_ONLY_PERMISSION_PROFILE,
+      trustedCodexExternalProcessSandbox: true,
+    });
+    expect(untrusted).not.toContain('--dangerously-bypass-hook-trust');
+  });
+
   it('fails closed when governed Codex lacks its exact main-owned permission profile', () => {
     expect(() =>
       secureAutonomousCliArgs(builtinCli('codex'), [], true),

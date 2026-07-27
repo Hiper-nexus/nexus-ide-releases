@@ -350,6 +350,10 @@ function codexGovernedArgs(
     CODEX_SAFE_EFFORT_OVERRIDE.test(value) || trustedConfigs.has(value);
   const safeEffortConfigs: string[] = [];
   let keepGovernedNoSubagents = false;
+  const keepMainOwnedHookTrustBypass =
+    options.trustedDecorationArgs?.includes(
+      '--dangerously-bypass-hook-trust',
+    ) === true;
 
   for (let index = 0; index < currentArgs.length; index += 1) {
     const arg = currentArgs[index]!;
@@ -401,6 +405,14 @@ function codexGovernedArgs(
   }
   if (keepGovernedNoSubagents) {
     args.push('--strict-config', '--disable', 'multi_agent');
+  }
+  if (keepMainOwnedHookTrustBypass) {
+    // The decorator is trusted main-process code and emits this only after a
+    // pinned Codex version probe. User/renderer extraArgs never enter
+    // trustedDecorationArgs. Preserve the exact automation trust receipt so
+    // the sealed per-session hooks actually run; all other unknown flags stay
+    // dropped by the governed argv reconstruction.
+    args.push('--dangerously-bypass-hook-trust');
   }
   if (options.trustedCodexExternalProcessSandbox) {
     // The Nexus outer sandbox is the only physical filesystem authority on
