@@ -56,7 +56,14 @@ const transport = {
 
 /** Create (once) and return the PTY host injected into pty-manager. */
 export function createRealPtyHost(): PtyHost {
-  if (!bridge) bridge = createPtyHostBridge(transport);
+  if (!bridge) {
+    bridge = createPtyHostBridge(transport, {
+      // Every Darwin node-pty root is the authenticated native responsibility
+      // supervisor. Its proof loop is intentionally unbounded; only an actual
+      // utility-process exit may fail a pending proof closed.
+      awaitNativeTerminationProof: process.platform === 'darwin',
+    });
+  }
   return bridge.host;
 }
 

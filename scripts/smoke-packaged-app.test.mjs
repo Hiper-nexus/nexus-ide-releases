@@ -1174,7 +1174,7 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
 describe('graceful packaged shutdown contract', () => {
   it('keeps the default grace window short and below the outer timeout', () => {
     expect(GRACEFUL_CLOSE_TIMEOUT_MS).toBeGreaterThanOrEqual(1_000);
-    expect(GRACEFUL_CLOSE_TIMEOUT_MS).toBeLessThan(10_000);
+    expect(GRACEFUL_CLOSE_TIMEOUT_MS).toBeLessThanOrEqual(30_000);
   });
 });
 

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const TIMEOUT_MS = 70_000;
-const GRACEFUL_CLOSE_TIMEOUT_MS = 8_000;
+const GRACEFUL_CLOSE_TIMEOUT_MS = 20_000;
 const PROCESS_TREE_POLL_MS = 50;
 const MAX_LOG_CHARS = 32_000;
 const PACKAGED_MAIN_BUNDLE_PATH = '.vite/build/main.js';

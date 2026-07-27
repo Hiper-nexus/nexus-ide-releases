@@ -106,6 +106,16 @@ export interface PtyHostBridge {
   sessionCount(): number;
 }
 
+export interface PtyHostBridgeOptions {
+  /**
+   * Darwin's signed responsibility supervisor is the proof authority for its
+   * whole cohort. It deliberately has no "give up" deadline once termination
+   * begins. This removes only the transport timer; handleHostDown still fails
+   * every pending proof closed if the owning utility process exits.
+   */
+  readonly awaitNativeTerminationProof?: boolean;
+}
+
 const TERMINATION_PROCESS_SCAN_BUDGET_MS = 4_000;
 const TERMINATION_TRANSPORT_MARGIN_MS = 500;
 export const PRE_SPAWN_FAILURE_TOMBSTONE_TTL_MS = 120_000;
@@ -274,14 +284,17 @@ export class PhysicalExitReceipts {
  * later duplicate (e.g. our own kill echoing back) is a no-op — the idempotency
  * the exit path depends on.
  */
-export function createPtyHostBridge(transport: HostTransport): PtyHostBridge {
+export function createPtyHostBridge(
+  transport: HostTransport,
+  options: PtyHostBridgeOptions = {},
+): PtyHostBridge {
   const handlers = new Map<string, PtySessionHandlers>();
   const pendingTerminations = new Map<
     string,
     {
       readonly sessionId: string;
       readonly resolve: (proof: PtyProcessTreeTerminationProof) => void;
-      readonly timer: ReturnType<typeof setTimeout>;
+      readonly timer: ReturnType<typeof setTimeout> | null;
     }
   >();
   let terminationCounter = 0;
@@ -311,19 +324,21 @@ export function createPtyHostBridge(transport: HostTransport): PtyHostBridge {
               killTimeoutMs +
               TERMINATION_PROCESS_SCAN_BUDGET_MS +
               TERMINATION_TRANSPORT_MARGIN_MS;
-            const timer = setTimeout(() => {
-              const pending = pendingTerminations.get(requestId);
-              if (!pending || pending.sessionId !== spec.sessionId) return;
-              pendingTerminations.delete(requestId);
-              resolve({
-                ok: false,
-                rootExited: false,
-                descendantsExited: false,
-                error:
-                  'O PTY host não respondeu dentro da janela física de término.',
-              });
-            }, deadlineMs);
-            timer.unref?.();
+            const timer = options.awaitNativeTerminationProof
+              ? null
+              : setTimeout(() => {
+                  const pending = pendingTerminations.get(requestId);
+                  if (!pending || pending.sessionId !== spec.sessionId) return;
+                  pendingTerminations.delete(requestId);
+                  resolve({
+                    ok: false,
+                    rootExited: false,
+                    descendantsExited: false,
+                    error:
+                      'O PTY host não respondeu dentro da janela física de término.',
+                  });
+                }, deadlineMs);
+            timer?.unref?.();
             pendingTerminations.set(requestId, {
               sessionId: spec.sessionId,
               resolve,
@@ -339,7 +354,7 @@ export function createPtyHostBridge(transport: HostTransport): PtyHostBridge {
               });
             } catch (error) {
               const pending = pendingTerminations.get(requestId);
-              if (pending) clearTimeout(pending.timer);
+              if (pending?.timer) clearTimeout(pending.timer);
               pendingTerminations.delete(requestId);
               resolve({
                 ok: false,
@@ -361,7 +376,7 @@ export function createPtyHostBridge(transport: HostTransport): PtyHostBridge {
     if (msg.type === 'termination-result') {
       const pending = pendingTerminations.get(msg.requestId);
       if (!pending || pending.sessionId !== msg.sessionId) return;
-      clearTimeout(pending.timer);
+      if (pending.timer) clearTimeout(pending.timer);
       pendingTerminations.delete(msg.requestId);
       pending.resolve(msg.proof);
       return;
@@ -380,7 +395,7 @@ export function createPtyHostBridge(transport: HostTransport): PtyHostBridge {
     const pending = [...pendingTerminations.values()];
     pendingTerminations.clear();
     for (const operation of pending) {
-      clearTimeout(operation.timer);
+      if (operation.timer) clearTimeout(operation.timer);
       operation.resolve({
         ok: false,
         rootExited: false,

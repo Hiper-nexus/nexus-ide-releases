@@ -265,6 +265,71 @@ describe('createPtyHostBridge', () => {
     }
   });
 
+  it('waits past the generic deadline for the exact native Darwin proof', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = fakeTransport();
+      const bridge = createPtyHostBridge(t.transport, {
+        awaitNativeTerminationProof: true,
+      });
+      const proc = bridge.host.spawn(spec, {
+        onData: () => {},
+        onExit: () => {},
+      });
+      const resolved = vi.fn();
+      const proof = proc.terminate({
+        termTimeoutMs: 100,
+        killTimeoutMs: 200,
+      });
+      void proof.then(resolved);
+      const request = t.posted.at(-1);
+      if (!request || request.type !== 'terminate') {
+        throw new Error('terminate request missing');
+      }
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(resolved).not.toHaveBeenCalled();
+
+      // Elapsed time is not proof. The exact host receipt still owns
+      // settlement after the generic cross-platform deadline has passed.
+      bridge.dispatchEvent({
+        type: 'exit',
+        sessionId: 's1',
+        exitCode: 0,
+      });
+      bridge.dispatchEvent({
+        type: 'termination-result',
+        sessionId: 's1',
+        requestId: request.requestId,
+        proof: {
+          ok: true,
+          rootExited: true,
+          descendantsExited: true,
+        },
+      });
+      await expect(proof).resolves.toMatchObject({ ok: true });
+      expect(resolved).toHaveBeenCalledOnce();
+
+      const second = bridge.host.spawn(
+        { ...spec, sessionId: 's2' },
+        { onData: () => {}, onExit: () => {} },
+      );
+      const hostLoss = second.terminate({
+        termTimeoutMs: 100,
+        killTimeoutMs: 200,
+      });
+      bridge.handleHostDown();
+      await expect(hostLoss).resolves.toMatchObject({
+        ok: false,
+        rootExited: false,
+        descendantsExited: false,
+        error: expect.stringMatching(/host/i),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('routes data events to the owning session only', () => {
     const t = fakeTransport();
     const bridge = createPtyHostBridge(t.transport);
