@@ -32,6 +32,7 @@ import {
   type SpawnToolOptions,
 } from './tool-util';
 import { isReleaseQualifiedMissionWorkerCli } from './squad-runtime-policy';
+import { CODEX_MCP_TOOL_TIMEOUT_SEC } from './cli-mcp-inject';
 import {
   assertCurrentMissionOrchestratorSession,
   canonicalToolName,
@@ -49,6 +50,16 @@ import { hasAvailableAccount } from '../persistence/account-store';
 import { resolveStickyOmpAdapter } from './omp-roster-policy';
 
 /** The 11 pane tools of the embedded MCP server (tool group 1). */
+
+/**
+ * Teto de espera por chamada MCP. O cliente do Codex aborta tools/call que
+ * passam de `tool_timeout_sec` (CODEX_MCP_TOOL_TIMEOUT_SEC), então uma espera
+ * longa morreria no transporte antes de devolver "timeout" — o orquestrador
+ * via erro de tool em vez de um estado pesquisável e a missão bloqueava
+ * (release gate 27/07). Devolvemos "timeout" alguns segundos antes do corte
+ * do cliente para o orquestrador pollingar com uma nova chamada.
+ */
+export const PANE_WAIT_TIMEOUT_CAP_MS = (CODEX_MCP_TOOL_TIMEOUT_SEC - 10) * 1000;
 
 // Default de model por adapter para o gate de proveniência: registry vivo
 // primeiro (respeita override do usuário), defs builtin como fallback (o
@@ -749,7 +760,9 @@ const paneWaitIdle: McpToolDef = {
   name: 'nexus_pane_wait_idle',
   description:
     "Block until a pane's CLI goes idle (finished responding), exits, or " +
-    'the timeout elapses. Returns {state, output} with the fresh tail.',
+    'the timeout elapses. Returns {state, output} with the fresh tail. ' +
+    `timeoutMs is capped at ${PANE_WAIT_TIMEOUT_CAP_MS} per call; on state ` +
+    '"timeout" call again to keep waiting.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -763,7 +776,7 @@ const paneWaitIdle: McpToolDef = {
     const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'paneId'), 'wait');
     const state = await waitForIdle(
       sessionId,
-      num(args, 'timeoutMs') ?? 120_000,
+      Math.min(num(args, 'timeoutMs') ?? 120_000, PANE_WAIT_TIMEOUT_CAP_MS),
     );
     return {
       state,
@@ -776,7 +789,9 @@ const paneWaitMany: McpToolDef = {
   name: 'nexus_pane_wait_many',
   description:
     'Wait on several panes. returnOn "any" resolves at the first idle pane; ' +
-    '"all" waits for every pane (default). Returns per-pane states.',
+    '"all" waits for every pane (default). Returns per-pane states. ' +
+    `timeoutMs is capped at ${PANE_WAIT_TIMEOUT_CAP_MS} per call; while ` +
+    'panes return "timeout", call again to keep waiting.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -788,7 +803,10 @@ const paneWaitMany: McpToolDef = {
   },
   handler: async (args, ctx) => {
     const paneIds = strArray(args, 'paneIds');
-    const timeoutMs = num(args, 'timeoutMs') ?? 300_000;
+    const timeoutMs = Math.min(
+      num(args, 'timeoutMs') ?? 300_000,
+      PANE_WAIT_TIMEOUT_CAP_MS,
+    );
     const waits = paneIds.map(async (paneId) => {
       try {
         const state = await waitForIdle(
