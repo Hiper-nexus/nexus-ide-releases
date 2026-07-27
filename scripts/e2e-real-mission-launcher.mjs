@@ -84,6 +84,10 @@ export function realMissionEnvironment(
     TEMP: tmp,
     PATH: [
       path.join(isolatedUserData, "trusted-bin"),
+      // Official Codex npm entry is `#!/usr/bin/env node`. Keep the Node that
+      // hosts that package on PATH so any preflight that still touches the
+      // wrapper can resolve. Main still launches the sealed Darwin binary.
+      ...nodeBinDirsNearCodexPackage(codexBinary),
       path.dirname(process.execPath),
       "/usr/bin",
       "/bin",
@@ -98,6 +102,36 @@ export function realMissionEnvironment(
       : { NEXUS_REAL_MISSION_E2E: "1" }),
     ...attestationEnvironment,
   };
+}
+
+/**
+ * Resolve Node bin dirs adjacent to the official `@openai/codex` package so
+ * `#!/usr/bin/env node` works under the gate's restricted PATH.
+ * codexBinary is expected at `.../node_modules/@openai/codex/bin/codex.js`.
+ */
+export function nodeBinDirsNearCodexPackage(codexBinary) {
+  if (typeof codexBinary !== "string" || !path.isAbsolute(codexBinary)) {
+    return [];
+  }
+  const normalized = codexBinary.replaceAll("\\", "/");
+  const suffix = "/node_modules/@openai/codex/bin/codex.js";
+  if (!normalized.endsWith(suffix)) return [];
+  // hermes/local layout: <prefix>/lib/node_modules/@openai/codex/bin/codex.js
+  // → <prefix>/bin/node
+  const prefixLib = path.resolve(path.dirname(codexBinary), "../../../..");
+  const candidates = [
+    path.join(prefixLib, "bin"),
+    path.join(path.dirname(prefixLib), "bin"),
+  ];
+  return candidates.filter((dir) => {
+    try {
+      const nodePath = path.join(dir, "node");
+      const st = fs.statSync(nodePath);
+      return st.isFile() && (st.mode & 0o111) !== 0;
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function stageTrustedCodexLauncher(codexBinary, userData) {

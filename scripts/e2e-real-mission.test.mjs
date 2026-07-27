@@ -25,6 +25,7 @@ import {
   waitForChild,
 } from "./e2e-real-mission.mjs";
 import { makeValidRealMissionEvidence } from "./test-support/real-mission-evidence.mjs";
+import { nodeBinDirsNearCodexPackage } from "./e2e-real-mission-launcher.mjs";
 
 const tempDirectories = [];
 
@@ -174,6 +175,10 @@ describe("real mission packaged harness arguments", () => {
     expect(environment.PATH).toBe(
       [
         "/tmp/user-data/trusted-bin",
+        // Node that can host the official npm Codex wrapper (if present).
+        ...nodeBinDirsNearCodexPackage(
+          "/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js",
+        ),
         path.dirname(process.execPath),
         "/usr/bin",
         "/bin",

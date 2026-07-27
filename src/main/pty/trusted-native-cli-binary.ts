@@ -374,18 +374,32 @@ function assertPinnedVersion(
   );
   const probe = spawnSync(supervisedProbe.file, supervisedProbe.args, {
     encoding: "utf8",
-    timeout: 5_000,
+    timeout: 10_000,
     stdio: ["ignore", "pipe", "pipe"],
     env: MINIMAL_DARWIN_PROBE_ENV,
     cwd: "/var/empty",
   });
+  const observed = `${probe.stdout ?? ""}${probe.stderr ?? ""}`.trim();
   if (
     probe.error ||
     probe.status !== 0 ||
     probe.signal ||
-    probe.stdout.trim() !== expected
+    observed !== expected
   ) {
-    throw new Error(`${label} native confinement requires exactly ${expected}`);
+    const detail = [
+      probe.error ? `error=${probe.error.message}` : null,
+      probe.status !== null && probe.status !== 0
+        ? `status=${probe.status}`
+        : null,
+      probe.signal ? `signal=${probe.signal}` : null,
+      observed ? `observed=${JSON.stringify(observed.slice(0, 120))}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    throw new Error(
+      `${label} native confinement requires exactly ${expected}` +
+        (detail ? ` (${detail})` : ""),
+    );
   }
   assertIdentityCurrent(identity);
   versionCache.add(cacheKey);

@@ -38,7 +38,10 @@ const SIGNING_IDENTIFIER_PATTERN = /^[A-Za-z0-9._-]+$/;
 const TEAM_IDENTIFIER_PATTERN = /^[A-Z0-9]{10}$/;
 const CDHASH_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const VERSION_PROBE_TIMEOUT_SECONDS = 2;
+// Cold launch under the authenticated barrier can exceed 2s on a busy host
+// (Gatekeeper first-open, codesign cache miss). Keep probes short but allow
+// enough room that a healthy `codex --version` does not false-fail the gate.
+const VERSION_PROBE_TIMEOUT_SECONDS = 8;
 
 interface DarwinPtySupervisorSeal {
   readonly executablePath: string;
