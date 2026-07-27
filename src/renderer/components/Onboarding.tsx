@@ -199,7 +199,13 @@ export function Onboarding() {
               Vamos preparar o essencial.
             </p>
           </div>
-          <button className="onb__skip-x" onClick={skip} aria-label="Pular introdução" title="Pular (Esc)">
+          <button
+            type="button"
+            className="onb__skip-x"
+            onClick={skip}
+            aria-label="Pular introdução"
+            title="Pular (Esc)"
+          >
             <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
               <path d="M3 3 L11 11 M11 3 L3 11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
             </svg>
@@ -266,11 +272,12 @@ export function Onboarding() {
         </section>
 
         <footer className="onb__foot">
-          <button className="onb__skip" onClick={skip}>
+          <button type="button" className="onb__skip" onClick={skip}>
             Pular
           </button>
           {installed.length > 0 || installDone ? (
             <button
+              type="button"
               className="onb__cta"
               onClick={complete}
               title={
@@ -285,6 +292,7 @@ export function Onboarding() {
             </button>
           ) : autoInstallable ? (
             <button
+              type="button"
               className="onb__cta"
               onClick={() => void handleAutoInstall()}
               disabled={installing}
@@ -294,6 +302,7 @@ export function Onboarding() {
             </button>
           ) : missing.length > 0 ? (
             <button
+              type="button"
               className="onb__cta"
               onClick={expandInstallHelp}
               title="Ver os comandos de instalação de cada CLI"

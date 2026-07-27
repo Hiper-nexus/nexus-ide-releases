@@ -36,17 +36,28 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => ({
   },
 
   complete: () => {
+    // Optimistic: never leave the user staring at a dead primary CTA while
+    // main IPC is slow, hung after a failed quit proof, or offline.
+    const previous = get().state;
+    set({ state: { ...previous, completed: true } });
     void window.nexus.onboarding
       .set({ completed: true })
       .then((state) => set({ state }))
-      .catch((err) => console.warn('[onboarding] falha ao persistir complete:', err));
+      .catch((err) => {
+        console.warn('[onboarding] falha ao persistir complete:', err);
+        // Keep the dismiss — blocking the deck is worse than a missed disk write.
+      });
   },
 
   skip: () => {
+    const previous = get().state;
+    set({ state: { ...previous, skipped: true } });
     void window.nexus.onboarding
       .set({ skipped: true })
       .then((state) => set({ state }))
-      .catch((err) => console.warn('[onboarding] falha ao persistir skip:', err));
+      .catch((err) => {
+        console.warn('[onboarding] falha ao persistir skip:', err);
+      });
   },
 
   markVictory: (key) => {

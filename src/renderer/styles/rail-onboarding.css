@@ -1643,14 +1643,19 @@
 .onb {
   position: fixed;
   inset: 0;
-  z-index: 70; /* acima de wizard/drawers — é a primeira tela */
+  /* Above workspace menus (80) and account switcher portal (10050): this is
+     the first-run modal and must receive the primary CTA click. */
+  z-index: 10100;
   display: grid;
   place-items: center;
   padding: 24px;
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(3px);
+  pointer-events: auto;
 }
 .onb__panel {
+  position: relative;
+  z-index: 1;
   width: min(600px, 100%);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
@@ -1660,6 +1665,7 @@
   padding: 26px 26px 20px;
   box-shadow: var(--shadow-3);
   animation: onb-rise 200ms var(--ease-out-quint);
+  pointer-events: auto;
 }
 @keyframes onb-rise {
   from {
