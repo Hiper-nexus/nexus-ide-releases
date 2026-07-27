@@ -5,6 +5,8 @@
 // gate URL env + bearer header + NEXUS_HOOK_STATUS marker); added coverage for
 // filterUserHooks and the flavor header.
 
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { describe, expect, it } from 'vitest';
 import {
   NEXUS_HOOK_MARKER,
@@ -17,7 +19,8 @@ import {
 describe('hook command helpers', () => {
   it('builds POSIX stdin hook commands', () => {
     expect(makeStdinHookCommand('stop', { platform: 'linux', flavor: 'claude' })).toBe(
-      'NEXUS_HOOK_STATUS=1 curl -sf -X POST ' +
+      'NEXUS_HOOK_STATUS=1 curl -sf --connect-timeout 0.5 --max-time 1.5 ' +
+        '--noproxy 127.0.0.1,localhost --output /dev/null -X POST ' +
         '-H "Content-Type: application/json" ' +
         '-H "authorization: Bearer $NEXUS_GATE_TOKEN" ' +
         '-H "X-Nexus-Hook-Event: stop" ' +
@@ -31,7 +34,8 @@ describe('hook command helpers', () => {
     expect(
       makeNotificationHookCommand('permission_prompt', { platform: 'linux', flavor: 'codex' }),
     ).toBe(
-      'NEXUS_HOOK_STATUS=1 curl -sf -X POST ' +
+      'NEXUS_HOOK_STATUS=1 curl -sf --connect-timeout 0.5 --max-time 1.5 ' +
+        '--noproxy 127.0.0.1,localhost --output /dev/null -X POST ' +
         '-H "Content-Type: application/json" ' +
         '-H "authorization: Bearer $NEXUS_GATE_TOKEN" ' +
         '-H "X-Nexus-Hook-Event: notification" ' +
@@ -47,6 +51,88 @@ describe('hook command helpers', () => {
     expect(command).toContain('$NEXUS_HOOK_URL');
     expect(command).not.toMatch(/127\.0\.0\.1:\d/);
   });
+
+  it('bounds loopback delivery and bypasses ambient proxy configuration', () => {
+    const command = makeStdinHookCommand('start', {
+      platform: 'linux',
+      flavor: 'codex',
+    });
+    expect(command).toContain('--connect-timeout 0.5');
+    expect(command).toContain('--max-time 1.5');
+    expect(command).toContain('--noproxy 127.0.0.1,localhost');
+  });
+
+  it.runIf(process.platform !== 'win32')(
+    'posts the hook payload without leaking the endpoint JSON to stdout',
+    async () => {
+      let receivedBody = '';
+      const server = createServer((request, response) => {
+        request.setEncoding('utf8');
+        request.on('data', (chunk: string) => {
+          receivedBody += chunk;
+        });
+        request.on('end', () => {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end('{"ok":true,"applied":true}');
+        });
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => {
+          server.off('error', reject);
+          resolve();
+        });
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        throw new Error('hook command test did not receive a TCP port');
+      }
+      try {
+        const result = await new Promise<{
+          code: number | null;
+          stdout: string;
+          stderr: string;
+        }>((resolve, reject) => {
+          const child = spawn(
+            '/bin/sh',
+            ['-c', makeStdinHookCommand('user-submit', {
+              platform: process.platform,
+              flavor: 'codex',
+            })],
+            {
+              env: {
+                PATH: '/usr/bin:/bin',
+                NEXUS_GATE_TOKEN: 'test-token',
+                NEXUS_HOOK_URL:
+                  `http://127.0.0.1:${address.port}/hook/status`,
+              },
+              stdio: ['pipe', 'pipe', 'pipe'],
+            },
+          );
+          let stdout = '';
+          let stderr = '';
+          child.stdout.setEncoding('utf8');
+          child.stderr.setEncoding('utf8');
+          child.stdout.on('data', (chunk: string) => {
+            stdout += chunk;
+          });
+          child.stderr.on('data', (chunk: string) => {
+            stderr += chunk;
+          });
+          child.once('error', reject);
+          child.once('close', (code) => resolve({ code, stdout, stderr }));
+          child.stdin.end('{"hook_event_name":"UserPromptSubmit"}');
+        });
+        expect(result).toEqual({ code: 0, stdout: '', stderr: '' });
+        expect(receivedBody).toBe(
+          '{"hook_event_name":"UserPromptSubmit"}',
+        );
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 
   it('builds Windows hook commands without a quoted cmd.exe body', () => {
     const command = makeNotificationHookCommand('idle_prompt', {

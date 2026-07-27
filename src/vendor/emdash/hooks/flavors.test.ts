@@ -153,6 +153,7 @@ describe('flavor hook spec tables', () => {
     ] as const) {
       for (const spec of specs) {
         expect(spec.command).toContain('NEXUS_HOOK_STATUS');
+        expect(spec.command).toContain('--output /dev/null');
         expect(spec.command).toContain(`X-Nexus-Hook-Flavor: ${flavor}`);
         expect(spec.command).toContain('$NEXUS_GATE_TOKEN');
         expect(spec.command).toContain('$NEXUS_HOOK_URL');

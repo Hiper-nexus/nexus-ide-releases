@@ -180,7 +180,8 @@ function makeGrokSessionStartCommand(opts: HookCommandOptions = {}): string {
     return makeWindowsPowerShellHookCommand(script);
   }
   return (
-    'NEXUS_HOOK_STATUS=1 curl -sf -X POST ' +
+    'NEXUS_HOOK_STATUS=1 curl -sf --connect-timeout 0.5 --max-time 1.5 ' +
+    '--noproxy 127.0.0.1,localhost --output /dev/null -X POST ' +
     '-H "Content-Type: application/json" ' +
     '-H "authorization: Bearer $NEXUS_GATE_TOKEN" ' +
     '-H "X-Nexus-Hook-Event: session" ' +
