@@ -123,13 +123,23 @@ function defaultPermissionModeFor(adapterId: string): string {
 }
 
 function defaultConfigFor(adapterId: string): ProviderConfig {
+  // Claude-compatible forks that always talk to a third-party Anthropic
+  // endpoint (GLM/z.ai, LongCat) default their upstream so spawn injects
+  // ANTHROPIC_BASE_URL + AUTH_TOKEN via buildProviderRoutingEnv — not the
+  // native Anthropic subscription path.
+  const defaultUpstream =
+    adapterId === 'glm'
+      ? 'glm'
+      : adapterId === 'longcat'
+        ? 'longcat'
+        : 'anthropic';
   return {
     adapterId,
     enabled: true,
     binPath: '',
     defaultModel: '',
     extraArgs: [],
-    upstream: 'anthropic',
+    upstream: defaultUpstream,
     permissionMode: defaultPermissionModeFor(adapterId),
     effort: '',
     verbose: false,
