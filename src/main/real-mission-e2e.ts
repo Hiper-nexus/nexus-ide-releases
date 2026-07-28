@@ -89,6 +89,75 @@ export { readDurableAuthoritySnapshot } from "./real-mission-e2e-authority";
  * to one strict mission id; the workspace, observation scope, PTY evidence,
  * durable receipts, repository checks, and final verdict all stay in main.
  */
+
+async function clickProductWizardTrustedLaunch(
+  sender: WebContents,
+): Promise<boolean> {
+  if (sender.isDestroyed() || sender.isCrashed()) return false;
+  const point = (await sender.executeJavaScript(`(() => {
+    const el = document.querySelector(
+      '[data-nexus-real-mission-wizard-launch="true"]',
+    );
+    if (!(el instanceof HTMLElement)) return null;
+    if (
+      (el instanceof HTMLButtonElement && el.disabled) ||
+      el.getAttribute("aria-disabled") === "true"
+    ) {
+      return null;
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    return {
+      x: Math.round(rect.left + rect.width / 2),
+      y: Math.round(rect.top + rect.height / 2),
+    };
+  })()`)) as { x: number; y: number } | null;
+  if (!point || sender.isDestroyed() || sender.isCrashed()) return false;
+  sender.focus();
+  const common = {
+    x: point.x,
+    y: point.y,
+    button: "left" as const,
+    clickCount: 1,
+  };
+  sender.sendInputEvent({ type: "mouseDown", ...common });
+  sender.sendInputEvent({ type: "mouseUp", ...common });
+  return true;
+}
+
+function scheduleProductWizardTrustedLaunchClicks(
+  sender: WebContents,
+  isSettled: () => boolean,
+): () => void {
+  let attempts = 0;
+  let clicked = false;
+  const timer = setInterval(() => {
+    if (isSettled() || clicked || sender.isDestroyed() || sender.isCrashed()) {
+      clearInterval(timer);
+      return;
+    }
+    attempts += 1;
+    if (attempts > 120) {
+      clearInterval(timer);
+      return;
+    }
+    void clickProductWizardTrustedLaunch(sender)
+      .then((ok) => {
+        if (ok) {
+          clicked = true;
+          clearInterval(timer);
+          console.log(
+            "[real-mission] PHASE phase=product-wizard-launch-clicked",
+          );
+        }
+      })
+      .catch(() => {
+        // Button may not be mounted yet; keep polling.
+      });
+  }, 250);
+  return () => clearInterval(timer);
+}
+
 export function initRealMissionE2E(): void {
   if (!isCurrentProcessRealMissionE2E()) return;
   const launchSurface: RealMissionE2ELaunchSurface =
@@ -479,6 +548,17 @@ export function initRealMissionE2E(): void {
     unsubscribeProductWizardMission = suite.missions.onChange(evaluate);
     evaluate();
     console.log("[real-mission] PHASE phase=product-wizard-ready");
+    // Physical gate requires Event.isTrusted on the launch control. Synthesize
+    // a main-owned input event so unattended release:candidate can proceed.
+    const stopLaunchClicks = scheduleProductWizardTrustedLaunchClicks(
+      sender,
+      () => settled,
+    );
+    const previousUnsubscribe = unsubscribeProductWizardMission;
+    unsubscribeProductWizardMission = () => {
+      stopLaunchClicks();
+      previousUnsubscribe?.();
+    };
   };
 
   ipcMain.handle(

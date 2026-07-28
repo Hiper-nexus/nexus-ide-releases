@@ -6,11 +6,21 @@ const electron = vi.hoisted(() => ({
   showMessageBoxSync: vi.fn(),
 }));
 
+const realMissionE2E = vi.hoisted(() => ({
+  isCurrentProcessRealMissionE2E: vi.fn(() => false),
+}));
+
 vi.mock("electron", () => ({
   dialog: {
     showMessageBox: electron.showMessageBox,
     showMessageBoxSync: electron.showMessageBoxSync,
   },
+}));
+
+vi.mock("../shared/real-mission-e2e", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../shared/real-mission-e2e")>()),
+  isCurrentProcessRealMissionE2E: () =>
+    realMissionE2E.isCurrentProcessRealMissionE2E(),
 }));
 
 import {
@@ -29,6 +39,9 @@ const approvalOptions = {
 beforeEach(() => {
   vi.useFakeTimers();
   resetRealMissionInteractionCapture();
+  realMissionE2E.isCurrentProcessRealMissionE2E.mockReturnValue(false);
+  electron.showMessageBox.mockReset();
+  electron.showMessageBoxSync.mockReset();
 });
 
 describe("real mission native approval timing instrumentation", () => {
@@ -91,5 +104,26 @@ describe("real mission native approval timing instrumentation", () => {
       openedAt: null,
       acceptedAt: null,
     });
+  });
+
+  it("auto-accepts mission approval dialogs during real-mission e2e", async () => {
+    realMissionE2E.isCurrentProcessRealMissionE2E.mockReturnValue(true);
+    installRealMissionDialogInstrumentation();
+    vi.setSystemTime(400);
+    const pending = (
+      dialog.showMessageBox as unknown as (
+        options: typeof approvalOptions,
+      ) => Promise<{ response: number }>
+    )(approvalOptions);
+    await vi.advanceTimersByTimeAsync(25);
+    await expect(pending).resolves.toMatchObject({ response: 1 });
+    expect(electron.showMessageBox).not.toHaveBeenCalled();
+    expect(realMissionInteractionCapture).toEqual({
+      nativeDialogCount: 1,
+      missionApprovalDialogCount: 1,
+      missionApprovalAcceptedCount: 1,
+    });
+    expect(readRealMissionApprovalDialogTiming().openedAt).toBe(400);
+    expect(readRealMissionApprovalDialogTiming().acceptedAt).toBe(425);
   });
 });

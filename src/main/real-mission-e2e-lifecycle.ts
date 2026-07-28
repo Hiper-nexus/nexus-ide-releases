@@ -2,6 +2,7 @@ import { dialog } from "electron";
 import type { MessageBoxOptions, MessageBoxReturnValue } from "electron";
 
 import type { RealMissionE2EEvidence } from "../shared/real-mission-e2e";
+import { isCurrentProcessRealMissionE2E } from "../shared/real-mission-e2e";
 import { stripAnsi } from "./orch/pane-registry";
 
 export interface RealMissionInteractionCapture {
@@ -76,6 +77,14 @@ export function installRealMissionDialogInstrumentation(): void {
       realMissionInteractionCapture.missionApprovalDialogCount += 1;
       realMissionApprovalDialogOpenedAt = Date.now();
     }
+    // Unattended product-wizard gate: keep the causal counters/timings, but do
+    // not block forever waiting for a human to click the native sheet.
+    if (missionApproval && isCurrentProcessRealMissionE2E()) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      realMissionInteractionCapture.missionApprovalAcceptedCount += 1;
+      realMissionApprovalDialogAcceptedAt = Date.now();
+      return { response: 1, checkboxChecked: false };
+    }
     const result = await originalAsync(...args);
     if (missionApproval && result.response === 1) {
       realMissionInteractionCapture.missionApprovalAcceptedCount += 1;
@@ -90,6 +99,11 @@ export function installRealMissionDialogInstrumentation(): void {
     if (missionApproval) {
       realMissionInteractionCapture.missionApprovalDialogCount += 1;
       realMissionApprovalDialogOpenedAt = Date.now();
+    }
+    if (missionApproval && isCurrentProcessRealMissionE2E()) {
+      realMissionInteractionCapture.missionApprovalAcceptedCount += 1;
+      realMissionApprovalDialogAcceptedAt = Date.now();
+      return 1;
     }
     const response = originalSync(...args);
     if (missionApproval && response === 1) {

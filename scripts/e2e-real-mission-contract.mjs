@@ -180,6 +180,7 @@ export const REAL_MISSION_CHILD_PHASES = new Set([
   "fixture-prepared",
   "observer-armed",
   "product-wizard-ready",
+  "product-wizard-launch-clicked",
 ]);
 export const REAL_MISSION_FAILURE_CODES = new Set([
   "setup-failed",
