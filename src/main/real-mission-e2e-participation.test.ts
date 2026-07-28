@@ -173,6 +173,7 @@ describe("real mission advisor participation receipts", () => {
       "opencode",
       "omp",
       "claude",
+      "glm",
     ]);
   });
 
@@ -197,6 +198,7 @@ describe("real mission advisor participation receipts", () => {
       "grok",
       "kimi",
       "opencode",
+      "glm",
     ]);
   });
 });
