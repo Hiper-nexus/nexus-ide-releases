@@ -246,6 +246,14 @@ export const realMissionE2EEvidenceSchema = z
           )
         : null,
     );
+    const isNonExecutionValidationReceipt = (
+      receipt: (typeof chainReceipts)[number],
+    ): boolean =>
+      (receipt?.kind === "worktree_validated_no_change" &&
+        /^no-change:[a-f0-9]{40,64}:[a-f0-9]{64}$/u.test(receipt.reference)) ||
+      (receipt?.kind === "read_only_validated" &&
+        /^[a-f0-9]{64}$/u.test(receipt.reference) &&
+        receipt.evidenceIds.length > 0);
     const executorIndex = chain.findIndex(
       (member) => member.kind === "execution",
     );
@@ -263,16 +271,16 @@ export const realMissionE2EEvidenceSchema = z
       executorDispatch?.integrationReceipt?.kind === "worktree_integrated"
         ? executorDispatch.integrationReceipt
         : null;
-    const reviewerReceipt =
-      reviewerDispatch?.integrationReceipt?.kind ===
-      "worktree_validated_no_change"
-        ? reviewerDispatch.integrationReceipt
-        : null;
-    const qaReceipt =
-      qaDispatch?.integrationReceipt?.kind ===
-      "worktree_validated_no_change"
-        ? qaDispatch.integrationReceipt
-        : null;
+    const reviewerReceipt = isNonExecutionValidationReceipt(
+      reviewerDispatch?.integrationReceipt ?? null,
+    )
+      ? reviewerDispatch!.integrationReceipt
+      : null;
+    const qaReceipt = isNonExecutionValidationReceipt(
+      qaDispatch?.integrationReceipt ?? null,
+    )
+      ? qaDispatch!.integrationReceipt
+      : null;
     const completion = evidence.completion;
     const exactMissionInventory =
       evidence.missionInventory.evidenceOrigin ===
@@ -544,8 +552,7 @@ export const realMissionE2EEvidenceSchema = z
             completedDispatchIsPhysical(dispatch) &&
             (member.kind === "execution"
               ? receipt?.kind === "worktree_integrated"
-              : receipt?.kind === "worktree_validated_no_change" &&
-                chainNoChangeReferences[index] !== null),
+              : isNonExecutionValidationReceipt(receipt)),
         );
       });
     const chainHandoffIsExact =
@@ -579,10 +586,16 @@ export const realMissionE2EEvidenceSchema = z
       );
     // Scouts advisor validam o HEAD inicial (antes do executor); o revisor
     // codex, os reviewers advisor e o QA validam o HEAD final integrado.
+    // Receipts worktree_validated_no_change selam o HEAD no reference;
+    // read_only_validated (harness Main-owned) exige só o head físico.
     const chainHeadIsExact = chain.every((member, index) => {
       const head = chainHandoffs[index]?.physicalReceipt?.worktreeHeadSha;
+      const receipt = chainReceipts[index];
       const noChangeHead = chainNoChangeReferences[index]?.[1];
       if (member.kind === "advisory") {
+        if (receipt?.kind === "read_only_validated") {
+          return head === evidence.repository.initialHeadSha;
+        }
         return (
           head === evidence.repository.initialHeadSha &&
           noChangeHead === evidence.repository.initialHeadSha
@@ -594,6 +607,9 @@ export const realMissionE2EEvidenceSchema = z
           head !== undefined &&
           head !== evidence.repository.initialHeadSha
         );
+      }
+      if (receipt?.kind === "read_only_validated") {
+        return head === evidence.repository.finalHeadSha;
       }
       return (
         head === evidence.repository.finalHeadSha &&

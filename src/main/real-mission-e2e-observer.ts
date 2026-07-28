@@ -522,7 +522,18 @@ export class RealMissionObserver {
                   completedAt: dispatch.integrationReceipt.completedAt,
                   evidenceIds: [...dispatch.integrationReceipt.evidenceIds!],
                 }
-              : null,
+              : dispatch.integrationReceipt?.kind === "read_only_validated" &&
+                  /^[a-f0-9]{64}$/u.test(
+                    dispatch.integrationReceipt.reference,
+                  ) &&
+                  (dispatch.integrationReceipt.evidenceIds?.length ?? 0) > 0
+                ? {
+                    kind: "read_only_validated" as const,
+                    reference: dispatch.integrationReceipt.reference,
+                    completedAt: dispatch.integrationReceipt.completedAt,
+                    evidenceIds: [...dispatch.integrationReceipt.evidenceIds!],
+                  }
+                : null,
       };
     });
     // O plano selado agora é roster-complete: scouts advisor → executor →
@@ -872,10 +883,15 @@ export class RealMissionObserver {
       },
       dispatches: dispatchProofs,
       handoffs: handoffProofs,
-      durableHandoffs: {
-        count: durableAuthority.handoffConsumptions.size,
-        ids: [...durableAuthority.handoffConsumptions.keys()],
-      },
+      // A prova só selar os handoffs dos workers da cadeia; consumptions
+      // Main-owned extras (ex.: nexus-prevc-autopilot) ficam fora do set.
+      durableHandoffs: (() => {
+        const proofIds = handoffProofs.map((handoff) => handoff.id);
+        const ids = proofIds.filter((id) =>
+          durableAuthority.handoffConsumptions.has(id),
+        );
+        return { count: ids.length, ids };
+      })(),
       dependencyConsumptions,
       participation,
       completion,

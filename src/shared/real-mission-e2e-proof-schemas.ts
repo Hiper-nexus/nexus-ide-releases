@@ -151,6 +151,16 @@ const worktreeNoChangeReceiptSchema = z
   })
   .strict();
 
+/** Main-owned completion for harness read_only workers (reviewer/QA/advisors). */
+const readOnlyValidatedReceiptSchema = z
+  .object({
+    kind: z.literal("read_only_validated"),
+    reference: z.string().regex(/^[a-f0-9]{64}$/u),
+    completedAt: timestampSchema,
+    evidenceIds: z.array(idSchema).min(1).max(256),
+  })
+  .strict();
+
 export const dispatchProofSchema = z
   .object({
     taskId: idSchema,
@@ -186,6 +196,7 @@ export const dispatchProofSchema = z
       .discriminatedUnion("kind", [
         worktreeIntegratedReceiptSchema,
         worktreeNoChangeReceiptSchema,
+        readOnlyValidatedReceiptSchema,
       ])
       .nullable(),
   })
