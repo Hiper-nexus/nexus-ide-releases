@@ -15,9 +15,10 @@ const ACTIVE_WORKER_STATES = new Set<TaskDispatchState>([
   "suspended",
 ]);
 
+// Only terminal states. Retiring during handoff_ready/merging races the
+// merge-council author pane (still needed for resolveAuthor) and throws
+// worker_retirement_exit_unproven while the PTY is legitimately alive.
 const RETIRABLE_WORKER_STATES = new Set<TaskDispatchState>([
-  "handoff_ready",
-  "merging",
   "completed",
   "blocked",
   "failed",

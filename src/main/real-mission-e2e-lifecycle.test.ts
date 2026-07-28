@@ -175,6 +175,22 @@ describe("real mission premature exit receipts", () => {
     expect(gate.acceptedSessionCount).toBe(0);
   });
 
+  it("ignores canonical merge-council reviewer PTYs as unrelated to the roster fence", () => {
+    const gate = new ExactRealMissionPhysicalPtyGate("mission-e2e");
+    const council = rosterPty({
+      sessionId: "pty-merge-council",
+      agentName: "reviewer-codex-1-63549194f40b",
+      role: "worker",
+      readOnly: true,
+      nativeReadOnly: true,
+    });
+
+    expect(gate.inspect(council.sessionId, council)).toEqual({
+      kind: "unrelated",
+    });
+    expect(gate.acceptedSessionCount).toBe(0);
+  });
+
   it("accepts exactly one physical PTY for each of the four roster identities", () => {
     const gate = new ExactRealMissionPhysicalPtyGate("mission-e2e");
     const roster = [

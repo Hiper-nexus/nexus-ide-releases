@@ -5,6 +5,10 @@ import {
   REAL_MISSION_E2E_REVIEWER_NAME,
   REAL_MISSION_E2E_SQUAD_ID,
 } from "../shared/real-mission-e2e";
+import {
+  isAutomatedReviewerAgentName,
+  isContextDraftReviewerAgentName,
+} from "./orch/prevc-reviewer-profile";
 import { getAgentSessionInfo } from "./pty/pty-manager";
 
 export type PhysicalPtyAgent = NonNullable<
@@ -172,7 +176,20 @@ export class ExactRealMissionPhysicalPtyGate {
         agent,
         this.#expectedAdvisors,
       );
-      if (advisorIdentity === null) return { kind: "violation" };
+      if (advisorIdentity === null) {
+        // Production merge-council / context-draft reviewers spawn canonical
+        // mission-bound PTYs (reviewer-codex-N-<hex>). They are not part of the
+        // four-pane E2E roster proof, but aborting them as violations kills the
+        // merge while candidate-validating. Treat them as unrelated.
+        if (
+          agent.readOnly === true &&
+          (isAutomatedReviewerAgentName(agent.agentName, agent.adapterId) ||
+            isContextDraftReviewerAgentName(agent.agentName, agent.adapterId))
+        ) {
+          return { kind: "unrelated" };
+        }
+        return { kind: "violation" };
+      }
       identity = advisorIdentity;
       acceptedAgent = agent as RealMissionPhysicalPtyAgent;
     }
