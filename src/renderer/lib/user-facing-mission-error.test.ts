@@ -43,4 +43,18 @@ describe("user-facing mission errors", () => {
       "A pasta mudou durante a preparação. Revise o objetivo e tente novamente.",
     );
   });
+
+  it("tells the truth when a mission state refuses a new goal", () => {
+    // Field trap (28/07): the raw reason contains "invalid", so it fell into
+    // the generic fallback and told the operator to "revise o texto" while the
+    // real problem was the mission state. They retyped the same goal 3x.
+    expect(
+      toUserFacingMissionError(
+        new Error("invalid transition executing --submit_goal-->"),
+        "Não foi possível preparar o objetivo. Revise o texto e tente novamente.",
+      ),
+    ).toBe(
+      "A missão já está em execução e não aceita um novo objetivo agora. Pare a missão para redirecioná-la.",
+    );
+  });
 });

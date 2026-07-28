@@ -784,3 +784,111 @@ describe('process sandbox', () => {
     },
   );
 });
+
+describe('processHome (native-profile providers)', () => {
+  it('sets HOME to the explicit processHome instead of the sandbox home', () => {
+    const root = makeDir('nexus-sandbox-root');
+    const runtime = makeDir('nexus-sandbox-runtime');
+    const nativeHome = makeDir('nexus-native-home');
+
+    const plan = buildMacosSeatbeltPlan({
+      platform: 'darwin',
+      executable: '/bin/sh',
+      args: ['-c', 'pwd'],
+      cwd: root,
+      rootRealPath: root,
+      sandboxDir: runtime,
+      processHome: nativeHome,
+      env: { PATH: '/usr/bin:/bin', HOME: '/ignored' },
+    }, '/usr/bin/sandbox-exec');
+
+    expect(plan.env.HOME).toBe(nativeHome);
+    // The in-sandbox private home/tmp still exist as writable scratch.
+    expect(plan.env.TMPDIR).toBe(path.join(runtime, 'tmp'));
+    expect(fs.existsSync(path.join(runtime, 'home'))).toBe(true);
+  });
+
+  it('grants only the exact provider-state paths, never the full home', () => {
+    const root = makeDir('nexus-sandbox-root');
+    const runtime = makeDir('nexus-sandbox-runtime');
+    const nativeHome = makeDir('nexus-native-home');
+    const providerState = path.join(nativeHome, '.gemini');
+    fs.mkdirSync(providerState);
+
+    const plan = buildMacosSeatbeltPlan({
+      platform: 'darwin',
+      executable: '/bin/sh',
+      args: ['-c', 'pwd'],
+      cwd: root,
+      rootRealPath: root,
+      sandboxDir: runtime,
+      processHome: nativeHome,
+      env: { PATH: '/usr/bin:/bin' },
+      extraReadPaths: [providerState],
+      extraWritePaths: [providerState],
+    }, '/usr/bin/sandbox-exec');
+
+    const profile = plan.args[1];
+    expect(profile).toContain(JSON.stringify(providerState));
+    // The native home itself is NOT granted wholesale — only via the
+    // provider-state subpath above (and ancestor metadata rules).
+    expect(profile).not.toContain(`(subpath ${JSON.stringify(nativeHome)})`);
+  });
+
+  it('rejects a processHome inside the project checkout', () => {
+    const root = makeDir('nexus-sandbox-root');
+    const runtime = makeDir('nexus-sandbox-runtime');
+
+    expect(() =>
+      buildMacosSeatbeltPlan({
+        platform: 'darwin',
+        executable: '/bin/sh',
+        args: ['-c', 'pwd'],
+        cwd: root,
+        rootRealPath: root,
+        sandboxDir: runtime,
+        processHome: root,
+        env: { PATH: '/usr/bin:/bin' },
+      }, '/usr/bin/sandbox-exec'),
+    ).toThrow(/must not be inside the project checkout/i);
+  });
+
+  it('allows a processHome that contains the sandbox runtime (native AGY)', () => {
+    const root = makeDir('nexus-sandbox-root');
+    const nativeHome = makeDir('nexus-native-home');
+    // The AGY runtime lives under ~/.nexus/ephemeral, INSIDE the real home.
+    const runtime = path.join(nativeHome, '.nexus', 'ephemeral', 'runtime');
+    fs.mkdirSync(runtime, { recursive: true });
+
+    const plan = buildMacosSeatbeltPlan({
+      platform: 'darwin',
+      executable: '/bin/sh',
+      args: ['-c', 'pwd'],
+      cwd: root,
+      rootRealPath: root,
+      sandboxDir: runtime,
+      processHome: nativeHome,
+      env: { PATH: '/usr/bin:/bin' },
+    }, '/usr/bin/sandbox-exec');
+
+    expect(plan.env.HOME).toBe(nativeHome);
+  });
+
+  it('rejects a non-existent processHome', () => {
+    const root = makeDir('nexus-sandbox-root');
+    const runtime = makeDir('nexus-sandbox-runtime');
+
+    expect(() =>
+      buildMacosSeatbeltPlan({
+        platform: 'darwin',
+        executable: '/bin/sh',
+        args: ['-c', 'pwd'],
+        cwd: root,
+        rootRealPath: root,
+        sandboxDir: runtime,
+        processHome: path.join(root, '..', 'definitely-absent-home'),
+        env: { PATH: '/usr/bin:/bin' },
+      }, '/usr/bin/sandbox-exec'),
+    ).toThrow(/existing directory/i);
+  });
+});

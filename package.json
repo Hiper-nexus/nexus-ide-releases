@@ -38,6 +38,7 @@
     "typecheck": "tsc --noEmit",
     "pretest": "node scripts/check-node-natives.mjs",
     "test": "vitest run",
+    "test:changed": "vitest run --changed",
     "eval:export-ranking": "node --import tsx scripts/export-public-ranking.mjs",
     "eval:benchmark:verify": "node --import tsx scripts/verify-nexus-benchmark.mjs",
     "start:forge": "electron-forge start"

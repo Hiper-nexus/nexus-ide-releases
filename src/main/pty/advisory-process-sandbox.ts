@@ -39,13 +39,35 @@ export interface AdvisoryProcessSandboxInput {
   readonly privateTmp?: string | undefined;
   /** Resolved CLI binary, the single process allowed to use the network. */
   readonly binaryPath: string;
+  /**
+   * Explicit process HOME for providers whose binary resolves auth/config
+   * from the native profile path regardless of $HOME (AGY 1.1). When present
+   * the child keeps its native HOME; the sandbox runtime stays private.
+   */
+  readonly processHome?: string | undefined;
+  /**
+   * Private writable runtime directory, when the decoration created one
+   * separately from the overlay HOME (native-profile spawns). Falls back to
+   * privateHome when absent.
+   */
+  readonly runtimeDir?: string | undefined;
+  /** Exact provider-state paths the confined CLI may read. */
+  readonly providerStateReadPaths?: readonly string[];
+  /** Exact provider-state paths the confined CLI may update. */
+  readonly providerStateWritePaths?: readonly string[];
 }
 
 export interface AdvisoryProcessSandbox {
-  /** Writable session root for the confined process (its private HOME). */
+  /** Writable session root for the confined process (its private runtime). */
   readonly sandboxDir: string;
   /** Extra existing paths the CLI must persist beyond sandboxDir. */
   readonly extraWritePaths: readonly string[];
+  /** Native HOME kept for the child, when the provider requires it. */
+  readonly processHome?: string;
+  /** Canonical provider-state read grants (never the full user home). */
+  readonly providerStateReadPaths: readonly string[];
+  /** Canonical provider-state write grants (never the full user home). */
+  readonly providerStateWritePaths: readonly string[];
 }
 
 function existingDirectory(candidate: string | undefined): string | null {
@@ -89,7 +111,10 @@ export function resolveAdvisoryProcessSandbox(
   if (!requiresAdvisoryProcessSandbox(input.adapterId, input.readOnlyLane)) {
     return null;
   }
-  const sandboxDir = existingDirectory(input.privateHome);
+  // Native-profile providers (AGY 1.1) keep the real HOME and get a separate
+  // private runtime; overlay providers keep HOME == sandboxDir.
+  const sandboxDir =
+    existingDirectory(input.runtimeDir) ?? existingDirectory(input.privateHome);
   if (!sandboxDir) return null;
   const binary = existingFile(input.binaryPath);
   if (!binary) return null;
@@ -99,9 +124,26 @@ export function resolveAdvisoryProcessSandbox(
   if (tmp && !tmp.startsWith(`${sandboxDir}/`) && tmp !== sandboxDir) {
     extraWritePaths.push(tmp);
   }
+  const processHome = existingDirectory(input.processHome) ?? undefined;
+  // Provider-state grants are canonicalized existing paths. A missing grant
+  // target is dropped (not fatal): the CLI may still work from cache, and the
+  // kernel boundary is what matters — but the full user home is never added.
+  const providerStateReadPaths: string[] = [];
+  for (const candidate of input.providerStateReadPaths ?? []) {
+    const real = existingDirectory(candidate);
+    if (real) providerStateReadPaths.push(real);
+  }
+  const providerStateWritePaths: string[] = [];
+  for (const candidate of input.providerStateWritePaths ?? []) {
+    const real = existingDirectory(candidate);
+    if (real) providerStateWritePaths.push(real);
+  }
   return Object.freeze({
     sandboxDir,
     extraWritePaths: Object.freeze(extraWritePaths),
+    ...(processHome ? { processHome } : {}),
+    providerStateReadPaths: Object.freeze(providerStateReadPaths),
+    providerStateWritePaths: Object.freeze(providerStateWritePaths),
   });
 }
 

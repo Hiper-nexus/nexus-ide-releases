@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { WebContents } from "electron";
@@ -59,7 +60,7 @@ import {
   resolveDarwinPtySupervisor,
   resolvePackagedDarwinLaunchAuthorizationReadPaths,
 } from "./darwin-pty-supervisor";
-import { buildScopedExecPlan } from "../runtime/process-sandbox";
+import { buildScopedExecPlan, createScopedSandboxHome } from "../runtime/process-sandbox";
 import { linkedWorktreeGitPaths } from "../runtime/linked-worktree-git-paths";
 import {
   assertAdvisoryConfinement,
@@ -266,6 +267,18 @@ function fireTaps<T extends (...args: never[]) => void>(
 export interface AgentSpawnDecoration {
   env: Record<string, string>;
   extraArgs: string[];
+  /**
+   * Native-profile providers (AGY 1.1): the child keeps this HOME instead of
+   * the sandbox-internal private home. Auth/config resolve from the real
+   * profile; the kernel boundary grants only providerState*Paths below.
+   */
+  processHome?: string;
+  /** Private writable runtime for the sandbox, when != HOME. */
+  sandboxDir?: string;
+  /** Exact provider-state paths the confined process may read. */
+  providerStateReadPaths?: readonly string[];
+  /** Exact provider-state paths the confined process may update. */
+  providerStateWritePaths?: readonly string[];
   onSpawned?: (sessionId: string) => void;
   /** Called if the PTY fails to spawn, so minted tokens/artifacts are freed. */
   onSpawnFailed?: () => void;
@@ -1321,16 +1334,75 @@ export function spawnAgentSession(
     // Advisory CLIs have no native read-only profile, so a prompt is the only
     // thing asking them to behave — and a prompt is not a boundary. Nexus wraps
     // them in its OWN Seatbelt profile instead: the kernel mounts the execution
-    // scope read-only, the per-session private HOME stays writable for auth and
-    // session state, and only the CLI binary may reach the network. Failure to
-    // build that boundary must abort the spawn, never downgrade it.
+    // scope read-only, the per-session private runtime stays writable for auth
+    // and session state, and only the CLI binary may reach the network. Failure
+    // to build that boundary must abort the spawn, never downgrade it.
+    //
+    // Writable-runtime resolution (never the real user home):
+    //  - decoration.sandboxDir present (AGY native lease) → that runtime;
+    //  - decoration overrode HOME to an ephemeral overlay (OMP/AGY-direct) →
+    //    the overlay itself is the private runtime;
+    //  - HOME is still the real user home (Kimi/Grok/OpenCode carry their state
+    //    in provider env vars, not HOME) → mint a fresh private runtime, keep
+    //    the real HOME as processHome, and grant only the Nexus ephemeral
+    //    artifact tree. The real home is NEVER the writable sandbox root.
     try {
+      const realHome = os.homedir();
+      const decorationOverrodeHome = Boolean(decoration && decoration.env.HOME);
+      let advisoryRuntimeDir = decoration?.sandboxDir;
+      let advisoryProcessHome = decoration?.processHome;
+      const advisoryEphemeralGrants: string[] = [];
+      if (!advisoryRuntimeDir && !decorationOverrodeHome) {
+        const runtime = createScopedSandboxHome({
+          projectId: sessionId,
+          checkoutId: `advisory-${adapter.id}`,
+        });
+        advisoryRuntimeDir = runtime.dir;
+        advisoryProcessHome = advisoryProcessHome ?? spawnEnv.HOME ?? realHome;
+        // These providers carry their MCP/session state in a provider env var
+        // that points into the Nexus ephemeral tree (never HOME). Grant exactly
+        // those per-session dirs — not the whole ephemeral root, so one advisor
+        // cannot read a sibling session's bearer-bearing config.
+        const ephemeralRoot = path.join(realHome, ".nexus", "ephemeral");
+        for (const envVar of [
+          "KIMI_CODE_HOME",
+          "GROK_HOME",
+          "OPENCODE_CONFIG_DIR",
+          "XDG_DATA_HOME",
+          "GEMINI_CLI_HOME",
+        ]) {
+          const value = spawnEnv[envVar];
+          if (!value || !path.isAbsolute(value)) continue;
+          let real: string;
+          try {
+            real = fs.realpathSync.native(value);
+          } catch {
+            continue;
+          }
+          if (
+            real.startsWith(`${ephemeralRoot}${path.sep}`) &&
+            fs.statSync(real).isDirectory()
+          ) {
+            advisoryEphemeralGrants.push(real);
+          }
+        }
+      }
       const advisorySandbox = resolveAdvisoryProcessSandbox({
         adapterId: adapter.id,
         readOnlyLane: true,
         privateHome: spawnEnv.HOME,
         privateTmp: spawnEnv.TMPDIR,
         binaryPath: bin,
+        processHome: advisoryProcessHome,
+        runtimeDir: advisoryRuntimeDir,
+        providerStateReadPaths: [
+          ...(decoration?.providerStateReadPaths ?? []),
+          ...advisoryEphemeralGrants,
+        ],
+        providerStateWritePaths: [
+          ...(decoration?.providerStateWritePaths ?? []),
+          ...advisoryEphemeralGrants,
+        ],
       });
       assertAdvisoryConfinement(
         adapter.id,
@@ -1346,6 +1418,8 @@ export function spawnAgentSession(
           cwd,
           rootRealPath: authority.scope.rootRealPath,
           sandboxDir: advisorySandbox.sandboxDir,
+          privateHome: advisorySandbox.sandboxDir,
+          processHome: advisorySandbox.processHome,
           env: spawnEnv,
           readOnlyRoot: true,
           // The boundary that matters for an advisor is WRITE: it reviews and
@@ -1357,8 +1431,14 @@ export function spawnAgentSession(
           // also broke helper subprocesses while leaving the CLI itself online,
           // which is inconsistent rather than safe.
           sandboxProfile: "workspace-net",
-          extraReadPaths: advisorySandbox.extraWritePaths,
-          extraWritePaths: advisorySandbox.extraWritePaths,
+          extraReadPaths: [
+            ...advisorySandbox.extraWritePaths,
+            ...advisorySandbox.providerStateReadPaths,
+          ],
+          extraWritePaths: [
+            ...advisorySandbox.extraWritePaths,
+            ...advisorySandbox.providerStateWritePaths,
+          ],
         });
         spawnFile = plan.file;
         spawnArgs = plan.args;

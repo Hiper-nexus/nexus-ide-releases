@@ -392,12 +392,18 @@ const TRANSITIONS: Readonly<
     block_user: 'blocked_user',
     block_technical: 'blocked_technical',
   },
+  // A blocked mission is exactly where the operator needs to intervene, so a
+  // new message preempts it like any other un-frozen state. Recompiling bumps
+  // intentVersion, which revokes the previous approval — the mission has to be
+  // approved again before any effect, so this exit never widens authority.
   blocked_user: {
     user_resume: 'executing',
+    submit_goal: 'intent_compiling',
   },
   blocked_technical: {
     begin_execution: 'executing',
     block_user: 'blocked_user',
+    submit_goal: 'intent_compiling',
   },
   done: {},
   legacy: {

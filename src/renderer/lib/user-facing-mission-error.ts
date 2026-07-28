@@ -18,7 +18,32 @@ function truncateAtWord(
   return `${candidate.slice(0, cutAt).trimEnd()}…`;
 }
 
+/**
+ * A refused goal is a mission-state problem, never a wording problem. The raw
+ * reason contains "invalid", so without this mapping it fell through to the
+ * generic fallback and told the operator to revise their text — sending them
+ * into a retype loop against a state that would refuse every attempt.
+ */
+function refusedGoalRecovery(raw: string): string | null {
+  const match = /invalid transition ([a-z_]+) --submit_goal-->/i.exec(raw);
+  if (!match) return null;
+  switch (match[1]) {
+    case "dispatched":
+    case "executing":
+    case "validating":
+      return "A missão já está em execução e não aceita um novo objetivo agora. Pare a missão para redirecioná-la.";
+    case "intent_compiling":
+      return "O objetivo anterior ainda está sendo compilado. Aguarde um instante e envie de novo.";
+    case "done":
+      return "Esta missão já foi concluída. Abra uma nova missão para continuar.";
+    default:
+      return "Esta missão não aceita um novo objetivo no estado atual. Abra Operações para ver o diagnóstico.";
+  }
+}
+
 function knownMissionRecovery(raw: string): string | null {
+  const refusedGoal = refusedGoalRecovery(raw);
+  if (refusedGoal) return refusedGoal;
   if (/guided_plan_unborn_with_files/i.test(raw)) {
     return "Esta pasta já tem arquivos sem histórico. Faça o primeiro commit e tente novamente.";
   }

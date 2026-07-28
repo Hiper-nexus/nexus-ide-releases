@@ -77,6 +77,12 @@ import {
   supportsMcpInjection,
 } from "./cli-mcp-inject";
 import {
+  acquireAgyNativeMcpLease,
+  releaseAgyNativeMcpLease,
+  recoverStaleAgyNativeLeases,
+  type AgyNativeMcpLease,
+} from "./agy-native-mcp-lease";
+import {
   cleanupCliMcpSession,
   prepareGrokMcpSession,
   prepareKimiMcpSession,
@@ -643,6 +649,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     const extraArgs: string[] = [];
     let ephemeralHomeDir: string | null = null;
     let skillsPrepared = false;
+    let nativeAgyLease: AgyNativeMcpLease | null = null;
     // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task
     // pelo adapter base, então o bloqueio vale para panes diretos e
     // orquestrados sem duplicar flags aqui.
@@ -759,15 +766,26 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           // on older codex would break the spawn; unresolved version omits.
           extraArgs.push(...codexHookTrustBypassArgs(adapter.bin));
         } else if (flavor === "agy") {
-          // AGY 1.1 resolves its config through HOME (and newer builds may
-          // honor GEMINI_CLI_HOME). Mirror skills first, then overlay both
-          // variables with a per-session private config tree. When a managed
-          // account set GEMINI_CLI_HOME, source auth from that tree.
-          const agyConfig = prepareAgyMcpConfig(mcpUrl(), ctx.token, {
-            geminiHome: preparedEnv?.GEMINI_CLI_HOME,
-          });
-          env.HOME = agyConfig.homeDir;
-          env.GEMINI_CLI_HOME = agyConfig.geminiHomeDir;
+          if (gated && meta?.readOnly === true) {
+            // AGY 1.1 resolves auth AND mcp_config.json from the native path
+            // (~/.gemini/antigravity-cli/) regardless of $HOME/GEMINI_CLI_HOME
+            // — physically verified. The overlay approach breaks it: config is
+            // invisible, auth identity is missed. Native-profile mode keeps the
+            // real HOME, leases the shared MCP config transactionally (lock +
+            // journal + byte-exact restore), and hands the sandbox a separate
+            // private runtime with exact provider-state grants.
+            nativeAgyLease = acquireAgyNativeMcpLease(mcpUrl(), ctx.token, {
+              geminiHome: preparedEnv?.GEMINI_CLI_HOME,
+            });
+          } else {
+            // Direct panes keep the historical overlay: full profile mirrored
+            // by symlinks, private mcp_config.json with this session's bearer.
+            const agyConfig = prepareAgyMcpConfig(mcpUrl(), ctx.token, {
+              geminiHome: preparedEnv?.GEMINI_CLI_HOME,
+            });
+            env.HOME = agyConfig.homeDir;
+            env.GEMINI_CLI_HOME = agyConfig.geminiHomeDir;
+          }
         } else if (flavor === "opencode") {
           const prepared = prepareOpenCodeMcpSession(mcpUrl(), ctx.token);
           Object.assign(env, prepared.env);
@@ -803,6 +821,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     } catch (err) {
       releaseSessionByToken(ctx.token);
       cleanupAgyMcpConfig(ctx.token);
+      releaseAgyNativeMcpLease(ctx.token);
       cleanupOmpMcpConfig(ctx.token);
       cleanupCliMcpSession(ctx.token);
       cleanupSessionArtifacts(ctx.token);
@@ -815,6 +834,16 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     const decoration: AgentSpawnDecoration = {
       env,
       extraArgs,
+      // Native-profile AGY (advisory): HOME stays real, the sandbox gets a
+      // private runtime, and the kernel grants only the provider-state paths.
+      ...(nativeAgyLease
+        ? {
+            processHome: nativeAgyLease.realHome,
+            sandboxDir: nativeAgyLease.runtimeDir,
+            providerStateReadPaths: [nativeAgyLease.geminiDir],
+            providerStateWritePaths: [nativeAgyLease.providerStateDir],
+          }
+        : {}),
       onSpawned: (sessionId) => {
         bindTokenToSession(ctx.token, sessionId);
         sessionTokens.set(sessionId, ctx.token);
@@ -825,6 +854,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         // registry and remove any token-bearing files we wrote.
         releaseSessionByToken(ctx.token);
         cleanupAgyMcpConfig(ctx.token);
+        releaseAgyNativeMcpLease(ctx.token);
         cleanupOmpMcpConfig(ctx.token);
         cleanupCliMcpSession(ctx.token);
         cleanupSessionArtifacts(ctx.token);
@@ -911,6 +941,7 @@ function installLegacyParser(): void {
     if (token) {
       sessionTokens.delete(sessionId);
       cleanupAgyMcpConfig(token);
+      releaseAgyNativeMcpLease(token);
       cleanupOmpMcpConfig(token);
       cleanupCliMcpSession(token);
       cleanupSessionArtifacts(token);
@@ -925,6 +956,20 @@ export function startMcpServer(): Promise<void> {
   httpConfirmationScheduler = new McpConfirmationScheduler(
     showHttpMcpConfirmation,
   );
+  // Crash recovery: a previous Nexus that died mid-lease may have left the
+  // shared AGY config with an injected nexus entry. Restore it before any
+  // new session acquires the profile.
+  const staleNative = recoverStaleAgyNativeLeases();
+  if (staleNative.recovered > 0) {
+    console.log(
+      `[orch] restored ${staleNative.recovered} stale AGY native MCP lease(s)`,
+    );
+  }
+  if (staleNative.failed > 0) {
+    console.warn(
+      `[orch] ${staleNative.failed} AGY native lease(s) could not be restored`,
+    );
+  }
   const staleAgy = purgeStaleAgyMcpConfigs();
   const staleCli = purgeStaleCliMcpSessions();
   const removedArtifacts = staleAgy.removed + staleCli.removed;
@@ -997,6 +1042,7 @@ export function stopMcpServer(): void {
   cliPromptAutoResponder.clear();
   for (const token of sessionTokens.values()) {
     cleanupAgyMcpConfig(token);
+    releaseAgyNativeMcpLease(token);
     cleanupOmpMcpConfig(token);
     cleanupCliMcpSession(token);
     cleanupSessionArtifacts(token);

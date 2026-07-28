@@ -141,6 +141,48 @@ describe('portable context attestations', () => {
     );
   });
 
+  it('retires a superseded attestation once the target is reviewed again', () => {
+    // Field trap (28/07): re-reviewing a context doc writes a NEW attestation
+    // and leaves the previous file on disk. Its targetHash describes bytes that
+    // no longer exist, so it failed target-hash-mismatch forever — a permanent
+    // `invalid-context-attestation` blocker that kept every Guided mission
+    // stuck in blocked_technical.
+    const { root, scope } = fixture();
+    const targetPath = '.context/docs/architecture.md';
+    const identity = {
+      author: { id: 'author', sessionId: 'author-session', provider: 'codex' },
+      reviewer: { id: 'reviewer', sessionId: 'review-session', provider: 'claude' },
+      nexusVersion: '0.12.0',
+    };
+    const firstSourceHash = write(root, 'src/shared/types.ts', 'export type A = 1;\n');
+    const firstTargetHash = write(root, targetPath, '# Arquitetura\nPrimeira revisão.\n');
+    const superseded = createContextAttestation(scope, {
+      ...identity,
+      targetPath,
+      targetHash: firstTargetHash,
+      sources: [{ type: 'file', locator: 'src/shared/types.ts', sourceHash: firstSourceHash }],
+      reviewedAt: '2026-07-13T12:00:00.000Z',
+    });
+    writeContextAttestation(scope, superseded);
+
+    // The doc is rewritten and reviewed again; the old attestation stays behind.
+    const nextSourceHash = write(root, 'src/shared/types.ts', 'export type A = 2;\n');
+    const nextTargetHash = write(root, targetPath, '# Arquitetura\nSegunda revisão.\n');
+    const active = createContextAttestation(scope, {
+      ...identity,
+      targetPath,
+      targetHash: nextTargetHash,
+      sources: [{ type: 'file', locator: 'src/shared/types.ts', sourceHash: nextSourceHash }],
+      reviewedAt: '2026-07-18T12:00:00.000Z',
+    });
+    writeContextAttestation(scope, active);
+
+    const inspection = inspectContextAttestations(scope);
+
+    expect(inspection.diagnostics).toEqual([]);
+    expect(inspection.attestations).toEqual([active]);
+  });
+
   it('does not follow symlinked evidence sources', () => {
     const { root, scope } = fixture();
     const outside = path.join(os.tmpdir(), `nexus-attestation-outside-${Date.now()}`);

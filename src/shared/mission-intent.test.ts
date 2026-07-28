@@ -141,6 +141,20 @@ describe('mission intent transitions', () => {
       transitionIntentState({ from: 'executing', event: 'submit_goal' }).ok,
     ).toBe(false);
   });
+
+  it('lets a new user message redirect a blocked mission', () => {
+    // Field trap (28/07): a mission blocked at preflight accepted no new goal,
+    // so `Retomar`/`re-armar` could only replay the same failing contract and
+    // the operator had no way out of blocked_technical. Recompiling bumps
+    // intentVersion, which revokes the old approval — the mission must be
+    // approved again before any effect, so this exit never widens authority.
+    expect(
+      transitionIntentState({ from: 'blocked_technical', event: 'submit_goal' }),
+    ).toEqual({ ok: true, to: 'intent_compiling' });
+    expect(
+      transitionIntentState({ from: 'blocked_user', event: 'submit_goal' }),
+    ).toEqual({ ok: true, to: 'intent_compiling' });
+  });
 });
 
 describe('mission dispatch authority', () => {

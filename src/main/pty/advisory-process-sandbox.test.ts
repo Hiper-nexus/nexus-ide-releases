@@ -133,6 +133,59 @@ describe('resolveAdvisoryProcessSandbox', () => {
       }),
     ).toBeNull();
   });
+
+  it('prefers a separate runtime dir and keeps the native processHome', () => {
+    const root = tempDir();
+    const overlayHome = path.join(root, 'overlay-home');
+    const runtime = path.join(root, 'runtime');
+    const nativeHome = path.join(root, 'native-home');
+    const gemini = path.join(nativeHome, '.gemini');
+    const cliState = path.join(gemini, 'antigravity-cli');
+    fs.mkdirSync(overlayHome);
+    fs.mkdirSync(runtime);
+    fs.mkdirSync(cliState, { recursive: true });
+    const binary = fakeBinary(root);
+
+    const sandbox = resolveAdvisoryProcessSandbox({
+      adapterId: 'agy',
+      readOnlyLane: true,
+      privateHome: overlayHome,
+      binaryPath: binary,
+      processHome: nativeHome,
+      runtimeDir: runtime,
+      providerStateReadPaths: [gemini],
+      providerStateWritePaths: [cliState],
+    });
+
+    // The writable sandbox root is the private runtime, NOT the native home.
+    expect(sandbox?.sandboxDir).toBe(runtime);
+    expect(sandbox?.processHome).toBe(nativeHome);
+    expect(sandbox?.providerStateReadPaths).toEqual([gemini]);
+    expect(sandbox?.providerStateWritePaths).toEqual([cliState]);
+  });
+
+  it('drops provider-state grants that do not exist instead of widening', () => {
+    const root = tempDir();
+    const runtime = path.join(root, 'runtime');
+    const nativeHome = path.join(root, 'native-home');
+    fs.mkdirSync(runtime);
+    fs.mkdirSync(nativeHome);
+    const binary = fakeBinary(root);
+
+    const sandbox = resolveAdvisoryProcessSandbox({
+      adapterId: 'agy',
+      readOnlyLane: true,
+      privateHome: runtime,
+      binaryPath: binary,
+      processHome: nativeHome,
+      runtimeDir: runtime,
+      providerStateReadPaths: [path.join(nativeHome, 'absent')],
+      providerStateWritePaths: [],
+    });
+
+    expect(sandbox?.providerStateReadPaths).toEqual([]);
+    expect(sandbox?.providerStateWritePaths).toEqual([]);
+  });
 });
 
 describe('assertAdvisoryConfinement', () => {
@@ -144,7 +197,12 @@ describe('assertAdvisoryConfinement', () => {
 
   it('refuses the advisory lane where the sandbox does not exist', () => {
     const root = tempDir();
-    const sandbox = { sandboxDir: root, extraWritePaths: [] };
+    const sandbox = {
+      sandboxDir: root,
+      extraWritePaths: [],
+      providerStateReadPaths: [],
+      providerStateWritePaths: [],
+    };
     expect(() =>
       assertAdvisoryConfinement('kimi', true, sandbox, 'linux'),
     ).toThrow(/only available on macOS/i);

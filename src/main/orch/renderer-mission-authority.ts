@@ -791,13 +791,18 @@ export class RendererMissionAuthority {
       rawPolicy === "on-demand"
         ? rawPolicy
         : "on-demand";
+    // A blocked mission has no frozen active workflow, so a redirect replaces
+    // the plan wholesale — leaving the previous criteria would show the old
+    // plan next to the new contract.
     const canReplacePlannedMilestones =
       from === "legacy" ||
       from === "draft" ||
       from === "awaiting_goal" ||
       from === "intent_compiling" ||
       from === "ready_to_start" ||
-      from === "awaiting_approval";
+      from === "awaiting_approval" ||
+      from === "blocked_user" ||
+      from === "blocked_technical";
     // The synchronous compiler is the queue consumer for goal prompts. Mark
     // that delivery explicitly so snapshots never expose already-compiled
     // goals as permanently queued work.

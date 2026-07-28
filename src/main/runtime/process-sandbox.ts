@@ -77,6 +77,16 @@ export interface ScopedExecPlanInput {
   privateHome?: string;
   /** Optional pre-created private temp directory within sandboxDir. */
   privateTmp?: string;
+  /**
+   * Explicit process HOME OUTSIDE the sandbox runtime. When present the child
+   * receives HOME=<processHome> instead of the private home inside
+   * sandboxDir — required by providers whose binary resolves auth/config from
+   * the native profile path regardless of $HOME (AGY 1.1). The caller is
+   * responsible for granting the exact provider-state paths through
+   * extraReadPaths/extraWritePaths; the profile never widens automatically.
+   * Main-process trusted only — never derived from renderer/agent input.
+   */
+  processHome?: string;
   /** Sensors/review commands set this so validation can never mutate code. */
   readOnlyRoot?: boolean;
   sandboxProfile?: SandboxProfile;
@@ -126,6 +136,39 @@ interface NormalizedExecPlanInput {
     readonly port: number;
   }[];
   readonly protectedWritePaths: readonly string[];
+}
+
+/**
+ * Validate an explicit processHome: absolute, NUL-free, existing directory,
+ * and NOT inside the project checkout (HOME never lives in the workspace).
+ * Returns the canonical path.
+ *
+ * processHome MAY contain the sandbox runtime (the native AGY runtime lives
+ * under ~/.nexus/ephemeral, inside the real home). That is safe: the Seatbelt
+ * profile grants writes ONLY to sandboxDir and the exact provider-state
+ * paths — never to processHome wholesale — so a runtime nested under the real
+ * home widens nothing. The HOME env itself is applied in normalizeExecPlan.
+ */
+function canonicalProcessHome(
+  candidate: string,
+  rootRealPath: string,
+): string {
+  if (!path.isAbsolute(candidate) || candidate.includes('\0')) {
+    throw new Error('processHome must be an absolute NUL-free path');
+  }
+  let real: string;
+  try {
+    real = fs.realpathSync.native(candidate);
+  } catch {
+    throw new Error('processHome must be an existing directory');
+  }
+  if (!fs.statSync(real).isDirectory()) {
+    throw new Error('processHome must be an existing directory');
+  }
+  if (isWithin(rootRealPath, real)) {
+    throw new Error('processHome must not be inside the project checkout');
+  }
+  return real;
 }
 
 const MACOS_DENIED_READ_ROOTS = [
@@ -511,6 +554,12 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
   const requestedTmp = path.resolve(
     input.privateTmp ?? path.join(lexicalSandboxDir, 'tmp'),
   );
+  // Explicit processHome (native-profile providers such as AGY): validated
+  // AFTER sandboxDir is canonical so the checkout check uses real paths.
+  const processHome =
+    input.processHome !== undefined
+      ? canonicalProcessHome(input.processHome, rootRealPath)
+      : null;
   if (
     !isWithin(lexicalSandboxDir, requestedHome) ||
     !isWithin(lexicalSandboxDir, requestedTmp)
@@ -563,7 +612,10 @@ function normalizeExecPlan(input: ScopedExecPlanInput): NormalizedExecPlanInput 
     sandboxDir,
     env: Object.freeze({
       ...input.env,
-      HOME: home,
+      // processHome wins for providers that resolve auth/config from the
+      // native profile path; the in-sandbox private home remains as writable
+      // scratch regardless (TMPDIR lives there).
+      HOME: processHome ?? home,
       TMPDIR: tmp,
       TMP: tmp,
       TEMP: tmp,

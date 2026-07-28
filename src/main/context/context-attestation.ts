@@ -390,6 +390,12 @@ export function inspectContextAttestations(
   const diagnostics: ContextAttestationDiagnostic[] = [];
   const attestations: ContextAttestation[] = [];
   const fileBindings: Array<{ path: string; hash: string }> = [];
+  const candidates: Array<{
+    readonly attestation: ContextAttestation;
+    readonly byteDiagnostics: readonly ContextAttestationDiagnostic[];
+    /** Attests bytes the target no longer has — a superseded review. */
+    readonly stale: boolean;
+  }> = [];
   for (const entry of entries) {
     const relative = `${ATTESTATION_ROOT}/${entry.name}`;
     if (entry.isSymbolicLink() || !entry.isFile() || !entry.name.endsWith('.json')) {
@@ -422,11 +428,11 @@ export function inspectContextAttestations(
       const byteDiagnostics = verifyBytes(scope, attestation).map((item) =>
         diagnostic(item.code, item.message, relative, item.targetPath),
       );
-      if (byteDiagnostics.length > 0) {
-        diagnostics.push(...byteDiagnostics);
-        continue;
-      }
-      attestations.push(attestation);
+      candidates.push({
+        attestation,
+        byteDiagnostics,
+        stale: byteDiagnostics.some((item) => item.code === 'target-hash-mismatch'),
+      });
     } catch (error) {
       diagnostics.push(diagnostic(
         'invalid-attestation',
@@ -434,6 +440,32 @@ export function inspectContextAttestations(
         relative,
       ));
     }
+  }
+
+  // Re-reviewing a doc writes a new attestation and leaves the previous file on
+  // disk. That older file attests bytes the target no longer has, so it failed
+  // target-hash-mismatch forever and permanently blocked context readiness.
+  // When a sibling attestation still matches the target's current bytes, the
+  // stale one is a superseded review and grants nothing — drop it silently.
+  // With no matching sibling nothing is superseded, so review drift on the only
+  // attestation still fails closed.
+  const targetsWithCurrentReview = new Set(
+    candidates
+      .filter((candidate) => !candidate.stale)
+      .map((candidate) => candidate.attestation.targetPath),
+  );
+  for (const candidate of candidates) {
+    if (
+      candidate.stale &&
+      targetsWithCurrentReview.has(candidate.attestation.targetPath)
+    ) {
+      continue;
+    }
+    if (candidate.byteDiagnostics.length > 0) {
+      diagnostics.push(...candidate.byteDiagnostics);
+      continue;
+    }
+    attestations.push(candidate.attestation);
   }
 
   const duplicateTargets = new Set<string>();
