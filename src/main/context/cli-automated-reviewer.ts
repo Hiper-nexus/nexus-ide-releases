@@ -34,8 +34,13 @@ import {
   automatedReviewSkills,
   automatedReviewTools,
 } from '../orch/prevc-reviewer-profile';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 
+/** Ordinary missions: 10 min. Real-mission release gate: 20 min — the merge
+ * council spawns live CLI reviewers and cold HOME + MCP boot routinely exceeds
+ * 10 min on the simple gate deliverable without being stuck. */
 const REVIEW_TIMEOUT_MS = 10 * 60_000;
+const REAL_MISSION_REVIEW_TIMEOUT_MS = 20 * 60_000;
 const REVIEWER_SPAWN_ATTEMPTS = 3;
 const REVIEWER_IDLE_NUDGE_MS = 45_000;
 const REVIEWER_MAX_IDLE_NUDGES = 3;
@@ -262,7 +267,11 @@ export class CliAutomatedReviewer {
       dependencies.prepareDesignSurface ?? prepareDesignSurface;
     this.#closeDesignSurface =
       dependencies.closeDesignSurface ?? closeDesignSurface;
-    this.#timeoutMs = dependencies.timeoutMs ?? REVIEW_TIMEOUT_MS;
+    this.#timeoutMs =
+      dependencies.timeoutMs ??
+      (isCurrentProcessRealMissionE2E()
+        ? REAL_MISSION_REVIEW_TIMEOUT_MS
+        : REVIEW_TIMEOUT_MS);
     this.#idleNudgeMs = dependencies.idleNudgeMs ?? REVIEWER_IDLE_NUDGE_MS;
     this.#maxIdleNudges = dependencies.maxIdleNudges ?? REVIEWER_MAX_IDLE_NUDGES;
     this.#spawnAttempts = dependencies.spawnAttempts ?? REVIEWER_SPAWN_ATTEMPTS;
