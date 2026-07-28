@@ -398,7 +398,9 @@ describe('CLI automated reviewer', () => {
   it('re-delivers a short nudge when the reviewer pane returns to idle', async () => {
     vi.useFakeTimers();
     const { sessions, input } = fixture();
-    const deliverPrompt = vi.fn(async () => true);
+    const deliverPrompt = vi.fn(
+      async (_sessionId: string, _prompt: string) => true,
+    );
     let reviewSessionId = '';
     const spawn = vi.fn(async (options: SpawnToolOptions, hooks: SpawnPaneHooks = {}) => {
       const match = options.prompt?.match(/"reviewSessionId":"([^"]+)"/);
