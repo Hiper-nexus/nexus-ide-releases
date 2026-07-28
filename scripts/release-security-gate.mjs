@@ -565,11 +565,70 @@ export function finalizeReleaseSecurityArtifacts(options) {
     fs.copyFileSync(options.evidencePath, evidenceAssetPath);
   }
   const e2eEvidence = hashFile(evidenceAssetPath);
+  // The Claude-orchestrator variant evidence is bound to the same commit,
+  // version, identity and ZIP, and carries its own live runtime proof.
+  if (
+    typeof options.claudeOrchestratorEvidencePath !== 'string' ||
+    options.claudeOrchestratorRuntimeProof === undefined
+  ) {
+    throw new Error(
+      'claude orchestrator evidence and runtime proof are required',
+    );
+  }
+  const claudeEvidence = assertRealMissionReleaseEvidence(
+    parseJson(
+      fs.readFileSync(options.claudeOrchestratorEvidencePath, 'utf8'),
+      'evidência E2E orquestrador Claude',
+    ),
+  );
+  if (
+    claudeEvidence?.status !== 'pass' ||
+    claudeEvidence?.launchSurface !== 'product-wizard' ||
+    claudeEvidence?.wizardCoverage !== 'main-owned-product-sequence' ||
+    claudeEvidence?.release?.commitSha !== commitSha ||
+    claudeEvidence?.release?.appVersion !== options.version ||
+    claudeEvidence?.release?.artifact?.identity !==
+      options.expectedSigningIdentity ||
+    claudeEvidence?.release?.artifact?.sha256 !== zip.sha256
+  ) {
+    throw new Error(
+      'evidência E2E orquestrador Claude não pertence ao mesmo commit/versão/identidade/ZIP',
+    );
+  }
+  assertVerifiedRealMissionRuntimeProof(
+    options.claudeOrchestratorRuntimeProof,
+    {
+      evidence: claudeEvidence,
+      releaseBinding: {
+        appVersion: options.version,
+        commitSha,
+        artifact: {
+          sha256: options.expectedE2EArtifactSha256,
+          identity: options.expectedSigningIdentity,
+        },
+      },
+    },
+  );
+  const claudeEvidenceAssetPath = path.join(
+    securityDir,
+    'real-mission-evidence-claude-orchestrator.json',
+  );
+  if (
+    path.resolve(options.claudeOrchestratorEvidencePath) !==
+    claudeEvidenceAssetPath
+  ) {
+    fs.copyFileSync(
+      options.claudeOrchestratorEvidencePath,
+      claudeEvidenceAssetPath,
+    );
+  }
+  const claudeOrchestratorEvidence = hashFile(claudeEvidenceAssetPath);
   const finalized = {
     ...manifest,
     finalizedAt: (options.now ?? (() => new Date()))().toISOString(),
     verification: {
       physicalProductWizard: true,
+      physicalClaudeOrchestrator: true,
     },
     releaseArtifacts: {
       signingIdentity: evidence.release.artifact.identity,
@@ -578,6 +637,10 @@ export function finalizeReleaseSecurityArtifacts(options) {
       e2eEvidence: {
         name: path.basename(evidenceAssetPath),
         ...e2eEvidence,
+      },
+      e2eEvidenceClaudeOrchestrator: {
+        name: path.basename(claudeEvidenceAssetPath),
+        ...claudeOrchestratorEvidence,
       },
     },
   };

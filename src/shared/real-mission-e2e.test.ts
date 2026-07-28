@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA,
+  REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_CRITERION,
   REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_EXECUTOR_ID,
   REAL_MISSION_E2E_FLAG,
@@ -15,8 +17,10 @@ import {
   isRealMissionE2E,
   isRealMissionE2EPreApprovalMission,
   isRealMissionE2ERendererFailureSignal,
+  realMissionE2EAcceptanceCriteria,
   realMissionE2ELaunchSurface,
   realMissionE2EObservePayloadSchema,
+  realMissionE2EExpectedTaskChain,
   realMissionE2EPrepareFixturePayloadSchema,
   realMissionE2ERendererFailureSignal,
   realMissionE2ERunPayloadSchema,
@@ -102,7 +106,23 @@ describe("real mission E2E closed receipts", () => {
     ).toEqual({
       workspacePath: "/tmp/nexus-real-workspace",
       rendererFailureToken,
+      // Ausente = variante codex (default do harness).
+      orchestratorCli: "codex",
     });
+    expect(
+      realMissionE2ERunPayloadSchema.parse({
+        workspacePath: "/tmp/nexus-real-workspace",
+        rendererFailureToken,
+        orchestratorCli: "claude",
+      }).orchestratorCli,
+    ).toBe("claude");
+    expect(() =>
+      realMissionE2ERunPayloadSchema.parse({
+        workspacePath: "/tmp/nexus-real-workspace",
+        rendererFailureToken,
+        orchestratorCli: "grok",
+      }),
+    ).toThrow();
     expect(() =>
       realMissionE2ERunPayloadSchema.parse({
         workspacePath: "/tmp/nexus-real-workspace",
@@ -281,4 +301,132 @@ describe("real mission E2E closed receipts", () => {
     ).toThrow();
   });
 
+});
+
+describe("real mission E2E claude orchestrator variant", () => {
+  it("compiles the fixture with a claude orchestrator and no claude advisor", () => {
+    const fixture = createRealMissionE2ESquadFixture([], "claude");
+
+    expect(fixture.agents[0]).toMatchObject({
+      id: REAL_MISSION_E2E_ORCHESTRATOR_ID,
+      category: "orchestrator",
+      cli: "claude",
+      allowedTools: null,
+    });
+    // reserveClaude: a advisor claude nunca entra no roster da variante.
+    expect(fixture.agents.some((agent) => agent.id === "e2e-advisor-claude"))
+      .toBe(false);
+    expect(fixture.agents.map((agent) => agent.id)).toEqual([
+      "e2e-orchestrator",
+      "e2e-executor",
+      "e2e-reviewer",
+      "e2e-qa",
+      "e2e-advisor-grok",
+      "e2e-advisor-kimi",
+      "e2e-advisor-agy",
+      "e2e-advisor-opencode",
+      "e2e-advisor-omp",
+    ]);
+    // O pipeline executor → revisor → QA continua codex nas duas variantes.
+    expect(
+      fixture.agents
+        .filter((agent) =>
+          ["e2e-executor", "e2e-reviewer", "e2e-qa"].includes(agent.id),
+        )
+        .every((agent) => agent.cli === "codex"),
+    ).toBe(true);
+  });
+
+  it("derives the expected task chain without the reserved claude advisor", () => {
+    const presentClis = ["grok", "kimi", "agy", "opencode", "omp"];
+    const chain = realMissionE2EExpectedTaskChain(presentClis);
+
+    expect(chain.map((member) => member.agentRef)).toEqual([
+      "e2e-advisor-kimi",
+      "e2e-advisor-agy",
+      "e2e-advisor-opencode",
+      "e2e-advisor-omp",
+      "e2e-executor",
+      "e2e-reviewer",
+      "e2e-advisor-grok",
+      "e2e-qa",
+    ]);
+    expect(chain.map((member) => member.plannerId)).toEqual([
+      "guided-advisory-1-e2e-advisor-kimi",
+      "guided-advisory-2-e2e-advisor-agy",
+      "guided-advisory-3-e2e-advisor-opencode",
+      "guided-advisory-4-e2e-advisor-omp",
+      "guided-execution",
+      "guided-review-1-e2e-reviewer",
+      "guided-review-2-e2e-advisor-grok",
+      "guided-quality-gate",
+    ]);
+    // Nenhum worker claude em nenhuma posição da cadeia.
+    expect(chain.every((member) => member.cli !== "claude")).toBe(true);
+  });
+
+  it("selects the variant acceptance criteria with the extra proof obligation", () => {
+    expect(realMissionE2EAcceptanceCriteria("codex")).toBe(
+      REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+    );
+    const claudeCriteria = realMissionE2EAcceptanceCriteria("claude");
+    expect(claudeCriteria).toBe(
+      REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA,
+    );
+    expect(claudeCriteria).toHaveLength(
+      REAL_MISSION_E2E_ACCEPTANCE_CRITERIA.length + 1,
+    );
+    expect(claudeCriteria.at(-1)).toBe(
+      REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_CRITERION,
+    );
+    expect(claudeCriteria.slice(0, -1)).toEqual([
+      ...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+    ]);
+  });
+
+  it("arms observation for the variant pre-approval intent only with the variant criteria", () => {
+    const baseMission = {
+      id: "mission-e2e",
+      status: "pending",
+      intentState: "ready_to_start",
+      intentVersion: 1,
+      squadId: REAL_MISSION_E2E_SQUAD_ID,
+      orchestratorSessionId: null,
+      intentContract: {
+        version: 1,
+        source: "typed",
+        goal: REAL_MISSION_E2E_GOAL,
+        executionMode: "autopilot",
+        lane: "standard",
+        contextPolicy: "minimal",
+        intentVersion: 1,
+      },
+    };
+    const variantMission = {
+      ...baseMission,
+      intentContract: {
+        ...baseMission.intentContract,
+        acceptanceCriteria: [
+          ...REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA,
+        ],
+      },
+    };
+    expect(isRealMissionE2EPreApprovalMission(variantMission, "claude")).toBe(
+      true,
+    );
+    // Critérios da variante errada não abrem observação.
+    expect(isRealMissionE2EPreApprovalMission(variantMission, "codex")).toBe(
+      false,
+    );
+    const codexMission = {
+      ...baseMission,
+      intentContract: {
+        ...baseMission.intentContract,
+        acceptanceCriteria: [...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA],
+      },
+    };
+    expect(isRealMissionE2EPreApprovalMission(codexMission, "claude")).toBe(
+      false,
+    );
+  });
 });

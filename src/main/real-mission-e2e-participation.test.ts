@@ -68,6 +68,48 @@ describe("real mission advisor expectations", () => {
       realMissionAdvisorPtyExpectations(expectations).map((entry) => entry.cli),
     ).toEqual(["grok", "agy", "opencode", "omp"]);
   });
+
+  it("reserves the claude advisor in the claude orchestrator variant", () => {
+    const expectations = expectedRealMissionAdvisors([], {
+      orchestratorCli: "claude",
+    });
+
+    expect(
+      expectations.find((entry) => entry.cli === "claude")?.skipped,
+    ).toBe("orchestrator-reserved");
+    expect(
+      expectations
+        .filter((entry) => entry.cli !== "claude")
+        .every((entry) => entry.skipped === null),
+    ).toBe(true);
+    // reserveClaude: nenhuma sessão worker claude entra na cerca física.
+    expect(
+      realMissionAdvisorPtyExpectations(expectations).map((entry) => entry.cli),
+    ).toEqual(["grok", "kimi", "agy", "opencode", "omp"]);
+    // A advisor reservada nunca entra na exigência de handoff.
+    const participation = buildRealMissionParticipation({
+      expectations,
+      ptyByCli: new Map(),
+      dispatches: [],
+      handoffIssuedAt: () => null,
+      firstNexusToolAt: () => null,
+    });
+    expect(participation.find((row) => row.cli === "claude")).toEqual({
+      cli: "claude",
+      tier: "mechanically-confined",
+      skipped: "orchestrator-reserved",
+      spawnedAt: null,
+      firstNexusToolAt: null,
+      handoffAt: null,
+    });
+    expect(realMissionAdvisorsMissingHandoff(participation)).toEqual([
+      "grok",
+      "kimi",
+      "agy",
+      "opencode",
+      "omp",
+    ]);
+  });
 });
 
 describe("real mission advisor participation receipts", () => {
@@ -221,5 +263,52 @@ describe("real mission physical PTY gate with advisors", () => {
     expect(
       fence.inspect("session-other", null).kind,
     ).toBe("unrelated");
+  });
+
+  it("accepts the variant orchestrator CLI and rejects the other one", () => {
+    const orchestratorAgent = (sessionId: string, cli: string) =>
+      ({
+        sessionId,
+        missionId: "mission-e2e",
+        adapterId: cli,
+        role: "orchestrator",
+        agentName: "E2E Orquestrador",
+        squadId: "agentic-nexus-real-mission-e2e",
+        readOnly: false,
+        nativeReadOnly: true,
+      }) as unknown as PhysicalPtyAgent;
+
+    const claudeGate = new ExactRealMissionPhysicalPtyGate(
+      "mission-e2e",
+      realMissionAdvisorPtyExpectations(
+        expectedRealMissionAdvisors([], { orchestratorCli: "claude" }),
+      ),
+      "claude",
+    );
+    expect(
+      claudeGate.inspect(
+        "session-orch",
+        orchestratorAgent("session-orch", "claude"),
+      ),
+    ).toMatchObject({ kind: "accepted", identity: "orchestrator" });
+    // Na variante claude, um orquestrador codex é violação exata do roster.
+    expect(
+      claudeGate.inspect(
+        "session-orch-codex",
+        orchestratorAgent("session-orch-codex", "codex"),
+      ).kind,
+    ).toBe("violation");
+
+    const codexGate = new ExactRealMissionPhysicalPtyGate(
+      "mission-e2e",
+      [],
+      "codex",
+    );
+    expect(
+      codexGate.inspect(
+        "session-orch-claude",
+        orchestratorAgent("session-orch-claude", "claude"),
+      ).kind,
+    ).toBe("violation");
   });
 });

@@ -6,8 +6,8 @@ import type { WebContents } from "electron";
 import { WINDOW_CHANNELS } from "../shared/channels";
 import {
   REAL_MISSION_E2E_CHANNELS,
-  REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_CTA,
+  REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE,
   REAL_MISSION_E2E_EVIDENCE_FILE,
   REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
@@ -18,8 +18,10 @@ import {
   isExclusiveRealMissionE2E,
   isRealMissionE2ERendererFailureSignal,
   isRealMissionE2EPreApprovalMission,
+  realMissionE2EAcceptanceCriteria,
   realMissionE2EAdvisorSkipClis,
   realMissionE2EObservePayloadSchema,
+  realMissionE2EOrchestratorCli,
   realMissionE2EPrepareFixturePayloadSchema,
   type RealMissionE2EEvidence,
   type RealMissionE2ELaunchSurface,
@@ -91,6 +93,13 @@ export function initRealMissionE2E(): void {
     isCurrentProcessRealMissionProductWizardE2E()
       ? "product-wizard"
       : "private-runner";
+  // Variante de orquestrador selada pelo launcher (default codex): define o
+  // roster do fixture, a cerca física e o nome do arquivo de evidência.
+  const orchestratorCli = realMissionE2EOrchestratorCli();
+  const evidenceFileName =
+    orchestratorCli === "claude"
+      ? REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE
+      : REAL_MISSION_E2E_EVIDENCE_FILE;
   const attestEvidence = createRealMissionEvidenceAttester({
     environment: process.env,
     appVersion: app.getVersion(),
@@ -104,7 +113,7 @@ export function initRealMissionE2E(): void {
   const rendererFailureToken = randomBytes(32).toString("hex");
   const evidenceFile = path.join(
     app.getPath("userData"),
-    REAL_MISSION_E2E_EVIDENCE_FILE,
+    evidenceFileName,
   );
   let scratch: ScratchRepository | null = null;
   let owner: WebContents | null = null;
@@ -185,6 +194,7 @@ export function initRealMissionE2E(): void {
     participation: buildRealMissionParticipation({
       expectations: expectedRealMissionAdvisors(
         realMissionE2EAdvisorSkipClis(),
+        { orchestratorCli },
       ),
       ptyByCli: new Map(),
       dispatches: [],
@@ -253,7 +263,7 @@ export function initRealMissionE2E(): void {
     if (failureCode === null) {
       console.log(
         `[real-mission] PASS mission=${evidence.mission?.id ?? "unknown"} ` +
-          `evidence=${REAL_MISSION_E2E_EVIDENCE_FILE}`,
+          `evidence=${evidenceFileName}`,
       );
       process.exitCode = 0;
     } else {
@@ -306,6 +316,7 @@ export function initRealMissionE2E(): void {
       {
         workspacePath: scratch.workspacePath,
         rendererFailureToken,
+        orchestratorCli,
       },
     );
   };
@@ -393,6 +404,7 @@ export function initRealMissionE2E(): void {
         productWizardReceiptAuthority?.receiptForMission(missionId) ?? null,
       attestEvidence,
       onFinish: finish,
+      orchestratorCli,
     });
     observer.start();
     observedMissionId = mission.id;
@@ -565,7 +577,7 @@ export function initRealMissionE2E(): void {
       suite,
       mission,
       squadBinding,
-      REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+      realMissionE2EAcceptanceCriteria(orchestratorCli),
     );
     return { ok: true };
   });

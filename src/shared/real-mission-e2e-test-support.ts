@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 
 import {
-  REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION,
   REAL_MISSION_E2E_ORCHESTRATOR_ID,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_SQUAD_ID,
   productWizardReceiptChainSha256,
+  realMissionE2EAcceptanceCriteria,
   realMissionE2EAdvisorTier,
   realMissionE2EExpectedTaskChain,
   type RealMissionE2EAdvisorCli,
@@ -26,11 +26,20 @@ function memberSlug(agentRef: string): string {
 
 export function validPassEvidence(
   launchSurface: "private-runner" | "product-wizard" = "private-runner",
-  options?: { readonly skipAdvisorClis?: readonly RealMissionE2EAdvisorCli[] },
+  options: {
+    readonly skipAdvisorClis?: readonly RealMissionE2EAdvisorCli[];
+    readonly orchestratorCli?: "codex" | "claude";
+  } = {},
 ): Record<string, unknown> {
-  const skippedClis = new Set(options?.skipAdvisorClis ?? []);
+  const orchestratorCli = options.orchestratorCli ?? "codex";
+  const skippedClis = new Set(options.skipAdvisorClis ?? []);
+  // reserveClaude: na variante orquestrador Claude a advisor claude é
+  // reservada — nunca vira worker.
+  const claudeReserved = orchestratorCli === "claude";
   const presentAdvisorClis = REAL_MISSION_E2E_ADVISORS.filter(
-    (advisor) => !skippedClis.has(advisor.cli),
+    (advisor) =>
+      !skippedClis.has(advisor.cli) &&
+      !(claudeReserved && advisor.cli === "claude"),
   ).map((advisor) => advisor.cli);
   const chain = realMissionE2EExpectedTaskChain(presentAdvisorClis);
   const planHash = sha("guided-plan");
@@ -58,7 +67,7 @@ export function validPassEvidence(
   const acceptanceCriteria =
     launchSurface === "product-wizard"
       ? REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA
-      : REAL_MISSION_E2E_ACCEPTANCE_CRITERIA;
+      : realMissionE2EAcceptanceCriteria(orchestratorCli);
   const workflowRoute = [
     "planning",
     "execution",
@@ -215,7 +224,10 @@ export function validPassEvidence(
       return {
         cli: advisor.cli,
         tier: realMissionE2EAdvisorTier(advisor.cli),
-        skipped: "no-credential",
+        skipped:
+          claudeReserved && advisor.cli === "claude"
+            ? "orchestrator-reserved"
+            : "no-credential",
         spawnedAt: null,
         firstNexusToolAt: null,
         handoffAt: null,
@@ -381,7 +393,7 @@ export function validPassEvidence(
         role: "orchestrator",
         paneId: "pane-orch",
         sessionId: "session-orch",
-        adapterId: "codex",
+        adapterId: orchestratorCli,
         agentRef: REAL_MISSION_E2E_ORCHESTRATOR_ID,
         workerIncarnationId: null,
         readOnly: false,

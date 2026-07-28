@@ -20,8 +20,10 @@ import {
   PRIVATE_FILE_MODE,
   REAL_MISSION_ADVISOR_SKIP_ENV,
   REAL_MISSION_CHILD_PHASES,
+  REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE,
   REAL_MISSION_CTA,
   REAL_MISSION_EVIDENCE_FILE,
+  REAL_MISSION_ORCHESTRATOR_ENV,
   REAL_MISSION_TIMEOUT_MS,
   canonicalJson,
   record,
@@ -446,7 +448,7 @@ export async function waitForChild(
           continue;
         }
         if (
-          /^\[real-mission\] PASS mission=[A-Za-z0-9][A-Za-z0-9._:-]{0,255} evidence=real-mission-evidence\.json$/u.test(
+          /^\[real-mission\] PASS mission=[A-Za-z0-9][A-Za-z0-9._:-]{0,255} evidence=real-mission-evidence(?:-claude-orchestrator)?\.json$/u.test(
             line,
           )
         ) {
@@ -568,193 +570,252 @@ async function runPackagedRealMissionCore(
   );
 
   const realHome = os.homedir();
-  let userData = null;
-  try {
-    userData = await fsp.mkdtemp(
-      path.join(os.tmpdir(), "nexus-real-mission-"),
-    );
-    await fsp.chmod(userData, PRIVATE_DIRECTORY_MODE);
-    await fsp.mkdir(path.join(userData, "tmp"), {
-      recursive: true,
-      mode: PRIVATE_DIRECTORY_MODE,
-    });
-    const sourceCodexHome = path.join(realHome, ".codex");
-    const codexBinary = resolveTrustedCodexBinary({ environment });
-    stageTrustedCodexLauncher(codexBinary, userData);
-    const isolatedEnvironment = realMissionEnvironment(
-      environment,
-      userData,
-      codexBinary,
-      launchSurface,
-    );
-    stageCodexAuthentication(sourceCodexHome, isolatedEnvironment.HOME);
-    // Isolated HOME has no ~/.nexus/onboarding.json. Without a completed seed
-    // the welcome modal covers MissionWizard and the product-wizard gate dies
-    // at product-wizard-ready with missing-evidence.
-    stageRealMissionOnboardingComplete(isolatedEnvironment.HOME);
-    assertCodexReady({
-      environment: isolatedEnvironment,
-      codexBinary,
-    });
-    // Multi-CLI advisors join the mission through the Nexus MCP overlays,
-    // which resolve CLI profiles relative to the child's isolated HOME. Stage
-    // each advisor's auth material from the real operator profile; missing
-    // credentials or binaries are skips (never gate failures) and are handed
-    // to the child observer via NEXUS_REAL_MISSION_ADVISOR_SKIP.
-    const advisorSkips = new Set();
-    const onAdvisorSkip = (cliId) => advisorSkips.add(cliId);
-    stageAdvisorAuthentication(isolatedEnvironment.HOME, {
-      sourceHome: realHome,
-      environment,
-      onSkip: onAdvisorSkip,
-    });
-    assertAdvisorBinaries({ environment, onSkip: onAdvisorSkip });
-    if (advisorSkips.size > 0) {
-      isolatedEnvironment[REAL_MISSION_ADVISOR_SKIP_ENV] = [...advisorSkips]
-        .sort()
-        .join(",");
-    }
-    const result = await waitForChild(target, userData, {
-      timeoutMs,
-      spawnImpl,
-      environment: isolatedEnvironment,
-      killTree,
-      codexBinary,
-      launchSurface,
-      attestation: runtimeAttestation.childEnvironment(),
-    });
-    const appEvidencePath = path.join(userData, REAL_MISSION_EVIDENCE_FILE);
-    let rawEvidence = null;
+  /**
+   * One physical packaged run of an orchestrator variant against the same
+   * verified target, release binding and runtime attestation (same HMAC
+   * secret/challenge). The product release gate runs the mission twice —
+   * codex and claude orchestrators — each in its own isolated userData.
+   */
+  const runVariant = async (
+    orchestratorCli,
+    variantEvidenceFile,
+    destination,
+  ) => {
+    let userData = null;
     try {
-      rawEvidence = JSON.parse(await fsp.readFile(appEvidencePath, "utf8"));
-    } catch {
-      rawEvidence = null;
-    }
-
-    // Interrupted gate: prefer on-disk evidence snapshot (written on before-quit
-    // after SIGTERM), then the app FAIL line, then a phase-aware zero summary.
-    if (result.interruptedBy) {
-      let summary;
-      if (rawEvidence) {
-        summary = safeRealMissionFailureSummary(rawEvidence, result);
-        // Stamp the interrupt code when the app only recorded a generic failure.
-        if (
-          result.interruptedBy === "sigint" ||
-          result.interruptedBy === "sigterm" ||
-          result.interruptedBy === "timeout"
-        ) {
-          summary = summary.replace(
-            /code=[a-z0-9-]+/u,
-            `code=${result.interruptedBy}`,
-          );
-        }
-      } else if (
-        typeof result.appFailSummary === "string" &&
-        result.appFailSummary.startsWith("[real-mission] FAIL ")
-      ) {
-        summary = result.appFailSummary.includes("CTA:")
-          ? result.appFailSummary
-          : `${result.appFailSummary} CTA: ${REAL_MISSION_CTA}`;
-      } else {
-        const child = safeChildExitSummary(result);
-        summary =
-          `[real-mission] FAIL code=${result.interruptedBy} ` +
-          `reason=none exit=${child.exitCode} phase=${child.phase} ` +
-          `status=unknown panes=0 dispatches=0 handoffs=0 ` +
-          `CTA: ${REAL_MISSION_CTA}`;
-      }
-      if (rawEvidence) {
-        try {
-          const receipt = safeRealMissionFailureReceipt(
-            rawEvidence,
-            result,
-            releaseBinding,
-            launchSurface,
-          );
-          await atomicWriteEvidence(receipt, evidencePath);
-        } catch {
-          // Summary is still the primary diagnostic for the operator.
-        }
-      }
-      throw new Error(summary);
-    }
-
-    if (!rawEvidence) {
-      const child = safeChildExitSummary(result);
-      throw new Error(
-        `[real-mission] FAIL code=missing-evidence exit=${child.exitCode} ` +
-          `phase=${child.phase} status=none panes=0 ` +
-          `dispatches=0 handoffs=0 CTA: ${REAL_MISSION_CTA}`,
+      userData = await fsp.mkdtemp(
+        path.join(os.tmpdir(), "nexus-real-mission-"),
       );
-    }
-    const runtimeProof = verifyRuntimeAttestation(
-      rawEvidence,
-      runtimeAttestation,
-    );
-    if (result.code !== 0 || rawEvidence?.status !== "pass") {
-      const summary = safeRealMissionFailureSummary(rawEvidence, result);
-      const receipt = safeRealMissionFailureReceipt(
-        rawEvidence,
-        result,
-        releaseBinding,
+      await fsp.chmod(userData, PRIVATE_DIRECTORY_MODE);
+      await fsp.mkdir(path.join(userData, "tmp"), {
+        recursive: true,
+        mode: PRIVATE_DIRECTORY_MODE,
+      });
+      const sourceCodexHome = path.join(realHome, ".codex");
+      const codexBinary = resolveTrustedCodexBinary({ environment });
+      stageTrustedCodexLauncher(codexBinary, userData);
+      const isolatedEnvironment = realMissionEnvironment(
+        environment,
+        userData,
+        codexBinary,
         launchSurface,
       );
-      try {
-        await atomicWriteEvidence(receipt, evidencePath);
-      } catch {
-        throw new Error(`${summary}; failure receipt could not be persisted`);
+      stageCodexAuthentication(sourceCodexHome, isolatedEnvironment.HOME);
+      // Isolated HOME has no ~/.nexus/onboarding.json. Without a completed seed
+      // the welcome modal covers MissionWizard and the product-wizard gate dies
+      // at product-wizard-ready with missing-evidence.
+      stageRealMissionOnboardingComplete(isolatedEnvironment.HOME);
+      assertCodexReady({
+        environment: isolatedEnvironment,
+        codexBinary,
+      });
+      // Multi-CLI advisors join the mission through the Nexus MCP overlays,
+      // which resolve CLI profiles relative to the child's isolated HOME. Stage
+      // each advisor's auth material from the real operator profile; missing
+      // credentials or binaries are skips (never gate failures) and are handed
+      // to the child observer via NEXUS_REAL_MISSION_ADVISOR_SKIP.
+      const advisorSkips = new Set();
+      const onAdvisorSkip = (cliId) => advisorSkips.add(cliId);
+      const advisorAuthStatuses = stageAdvisorAuthentication(
+        isolatedEnvironment.HOME,
+        {
+          sourceHome: realHome,
+          environment,
+          onSkip: onAdvisorSkip,
+        },
+      );
+      const advisorBinaryStatuses = assertAdvisorBinaries({
+        environment,
+        onSkip: onAdvisorSkip,
+      });
+      if (orchestratorCli === "claude") {
+        // The Claude orchestrator variant is a hard release requirement:
+        // keychain credential + staged non-secret identity + working binary.
+        // A missing Claude never degrades into an advisor skip here.
+        if (
+          advisorAuthStatuses.claude !== "staged" ||
+          advisorBinaryStatuses.claude?.available !== true
+        ) {
+          throw new Error(
+            `[real-mission] FAIL code=setup-failed status=none panes=0 ` +
+              `dispatches=0 handoffs=0 claude orchestrator auth or binary ` +
+              `unavailable CTA: ${REAL_MISSION_CTA}`,
+          );
+        }
+        isolatedEnvironment[REAL_MISSION_ORCHESTRATOR_ENV] = "claude";
       }
-      throw new Error(summary);
-    }
-    if (rawEvidence?.appVersion !== releaseBinding.appVersion) {
-      throw new Error(
-        "real mission app version does not match the exact release binding",
+      if (advisorSkips.size > 0) {
+        isolatedEnvironment[REAL_MISSION_ADVISOR_SKIP_ENV] = [...advisorSkips]
+          .sort()
+          .join(",");
+      }
+      const result = await waitForChild(target, userData, {
+        timeoutMs,
+        spawnImpl,
+        environment: isolatedEnvironment,
+        killTree,
+        codexBinary,
+        launchSurface,
+        attestation: runtimeAttestation.childEnvironment(),
+      });
+      const appEvidencePath = path.join(userData, variantEvidenceFile);
+      let rawEvidence = null;
+      try {
+        rawEvidence = JSON.parse(await fsp.readFile(appEvidencePath, "utf8"));
+      } catch {
+        rawEvidence = null;
+      }
+
+      // Interrupted gate: prefer on-disk evidence snapshot (written on before-quit
+      // after SIGTERM), then the app FAIL line, then a phase-aware zero summary.
+      if (result.interruptedBy) {
+        let summary;
+        if (rawEvidence) {
+          summary = safeRealMissionFailureSummary(rawEvidence, result);
+          // Stamp the interrupt code when the app only recorded a generic failure.
+          if (
+            result.interruptedBy === "sigint" ||
+            result.interruptedBy === "sigterm" ||
+            result.interruptedBy === "timeout"
+          ) {
+            summary = summary.replace(
+              /code=[a-z0-9-]+/u,
+              `code=${result.interruptedBy}`,
+            );
+          }
+        } else if (
+          typeof result.appFailSummary === "string" &&
+          result.appFailSummary.startsWith("[real-mission] FAIL ")
+        ) {
+          summary = result.appFailSummary.includes("CTA:")
+            ? result.appFailSummary
+            : `${result.appFailSummary} CTA: ${REAL_MISSION_CTA}`;
+        } else {
+          const child = safeChildExitSummary(result);
+          summary =
+            `[real-mission] FAIL code=${result.interruptedBy} ` +
+            `reason=none exit=${child.exitCode} phase=${child.phase} ` +
+            `status=unknown panes=0 dispatches=0 handoffs=0 ` +
+            `CTA: ${REAL_MISSION_CTA}`;
+        }
+        if (rawEvidence) {
+          try {
+            const receipt = safeRealMissionFailureReceipt(
+              rawEvidence,
+              result,
+              releaseBinding,
+              launchSurface,
+            );
+            await atomicWriteEvidence(receipt, destination);
+          } catch {
+            // Summary is still the primary diagnostic for the operator.
+          }
+        }
+        throw new Error(summary);
+      }
+
+      if (!rawEvidence) {
+        const child = safeChildExitSummary(result);
+        throw new Error(
+          `[real-mission] FAIL code=missing-evidence exit=${child.exitCode} ` +
+            `phase=${child.phase} status=none panes=0 ` +
+            `dispatches=0 handoffs=0 CTA: ${REAL_MISSION_CTA}`,
+        );
+      }
+      const runtimeProof = verifyRuntimeAttestation(
+        rawEvidence,
+        runtimeAttestation,
       );
+      if (result.code !== 0 || rawEvidence?.status !== "pass") {
+        const summary = safeRealMissionFailureSummary(rawEvidence, result);
+        const receipt = safeRealMissionFailureReceipt(
+          rawEvidence,
+          result,
+          releaseBinding,
+          launchSurface,
+        );
+        try {
+          await atomicWriteEvidence(receipt, destination);
+        } catch {
+          throw new Error(`${summary}; failure receipt could not be persisted`);
+        }
+        throw new Error(summary);
+      }
+      if (rawEvidence?.appVersion !== releaseBinding.appVersion) {
+        throw new Error(
+          "real mission app version does not match the exact release binding",
+        );
+      }
+      const evidence = assertRealMissionPassEvidence({
+        ...rawEvidence,
+        release: {
+          ...releaseBinding,
+          runId,
+          startedAt,
+          finishedAt: now().toISOString(),
+        },
+      });
+      if (
+        evidence.launchSurface !== launchSurface ||
+        (launchSurface === "private-runner" &&
+          evidence.wizardCoverage !== "not-covered") ||
+        (launchSurface === "product-wizard" &&
+          evidence.wizardCoverage !== "main-owned-product-sequence")
+      ) {
+        throw new Error(
+          "real mission evidence launch surface does not match the main-owned runner mode",
+        );
+      }
+      if (launchSurface === "product-wizard") {
+        assertRealMissionReleaseEvidence(evidence);
+      }
+      if (!result.passLineSeen) {
+        const child = safeChildExitSummary(result);
+        throw new Error(
+          `[real-mission] FAIL code=missing-pass-line exit=${child.exitCode} ` +
+            `phase=${child.phase} status=done panes=0 ` +
+            `dispatches=0 handoffs=0 CTA: ${REAL_MISSION_CTA}`,
+        );
+      }
+      await atomicWriteEvidence(evidence, destination);
+      return { evidence, evidencePath: destination, runtimeProof };
+    } finally {
+      if (userData !== null) {
+        // Preserve the last failed gate state for local diagnosis when requested.
+        if (environment.NEXUS_REAL_MISSION_PRESERVE_USERDATA === "1") {
+          process.stderr.write(`[real-mission] preserved userData=${userData}\n`);
+        } else {
+          await fsp.rm(userData, { recursive: true, force: true });
+        }
+      }
     }
-    const evidence = assertRealMissionPassEvidence({
-      ...rawEvidence,
-      release: {
-        ...releaseBinding,
-        runId,
-        startedAt,
-        finishedAt: now().toISOString(),
-      },
-    });
-    if (
-      evidence.launchSurface !== launchSurface ||
-      (launchSurface === "private-runner" &&
-        evidence.wizardCoverage !== "not-covered") ||
-      (launchSurface === "product-wizard" &&
-        evidence.wizardCoverage !== "main-owned-product-sequence")
-    ) {
-      throw new Error(
-        "real mission evidence launch surface does not match the main-owned runner mode",
-      );
+  };
+
+  try {
+    const primary = await runVariant(
+      "codex",
+      REAL_MISSION_EVIDENCE_FILE,
+      evidencePath,
+    );
+    if (launchSurface !== "product-wizard") {
+      // The private diagnostic stays a single codex-orchestrator engine run.
+      return { ...primary, target };
     }
-    if (launchSurface === "product-wizard") {
-      assertRealMissionReleaseEvidence(evidence);
-    }
-    if (!result.passLineSeen) {
-      const child = safeChildExitSummary(result);
-      throw new Error(
-        `[real-mission] FAIL code=missing-pass-line exit=${child.exitCode} ` +
-          `phase=${child.phase} status=done panes=0 ` +
-          `dispatches=0 handoffs=0 CTA: ${REAL_MISSION_CTA}`,
-      );
-    }
-    await atomicWriteEvidence(evidence, evidencePath);
-    return { evidence, evidencePath, target, runtimeProof };
+    // The sealed product release gate must also prove the Claude orchestrator
+    // variant against the same ZIP/commit/identity and the same HMAC
+    // attestation material.
+    const claudeOrchestrator = await runVariant(
+      "claude",
+      REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE,
+      path.join(
+        path.dirname(evidencePath),
+        REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE,
+      ),
+    );
+    return { ...primary, target, claudeOrchestrator };
   } finally {
     runtimeAttestation.secret.fill(0);
     runtimeAttestation.challenge.fill(0);
-    if (userData !== null) {
-      // Preserve the last failed gate state for local diagnosis when requested.
-      if (environment.NEXUS_REAL_MISSION_PRESERVE_USERDATA === "1") {
-        process.stderr.write(`[real-mission] preserved userData=${userData}\n`);
-      } else {
-        await fsp.rm(userData, { recursive: true, force: true });
-      }
-    }
   }
 }
 

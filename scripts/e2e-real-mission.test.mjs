@@ -10,6 +10,7 @@ import {
   REAL_MISSION_CTA,
   REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
   REAL_MISSION_FLAG,
+  REAL_MISSION_ORCHESTRATOR_ENV,
   REAL_MISSION_PRODUCT_WIZARD_FLAG,
   assertCodexReady,
   assertRealMissionPassEvidence,
@@ -22,6 +23,7 @@ import {
   runPackagedRealMissionProductWizard,
   safeRealMissionFailureReceipt,
   safeRealMissionFailureSummary,
+  stageClaudeNativeIdentity,
   stageCodexAuthentication,
   waitForChild,
 } from "./e2e-real-mission.mjs";
@@ -593,6 +595,26 @@ describe("independent evidence verifier", () => {
     expect(assertRealMissionPassEvidence(validEvidence()).status).toBe("pass");
   });
 
+  it("accepts the claude-orchestrator variant proof chain bound to release", () => {
+    const variant = validEvidence({ orchestratorCli: "claude" });
+    expect(assertRealMissionPassEvidence(variant).status).toBe("pass");
+    expect(assertRealMissionReleaseEvidence(variant).status).toBe("pass");
+
+    // Orquestrador claude sem a advisor reservada: rejeitado.
+    const unreserved = validEvidence({ orchestratorCli: "claude" });
+    unreserved.participation[5].skipped = "no-credential";
+    expect(() => assertRealMissionPassEvidence(unreserved)).toThrow(
+      /incomplete/,
+    );
+
+    // Orquestrador codex carregando a marca orchestrator-reserved: rejeitado.
+    const forgedMark = validEvidence({ skipAdvisorClis: ["claude"] });
+    forgedMark.participation[5].skipped = "orchestrator-reserved";
+    expect(() => assertRealMissionPassEvidence(forgedMark)).toThrow(
+      /incomplete/,
+    );
+  });
+
   it("does not count the synthetic zero-findings council as review coverage", () => {
     const misleading = validEvidence();
     misleading.reviewOrigin = "e2e-merge-review-fixture";
@@ -1159,6 +1181,18 @@ describe("real mission advisor authentication staging", () => {
       path.join(sourceHome, ".local", "share", "opencode", "auth.json"),
       '{"opencode":1}\n',
     );
+    // Identidade nativa NÃO-secreta do Claude (oauthAccount/userID): o CLI
+    // decide "logado" por ela; o segredo fica só na keychain.
+    fs.writeFileSync(
+      path.join(sourceHome, ".claude.json"),
+      JSON.stringify({
+        hasCompletedOnboarding: true,
+        oauthAccount: "operator@example.com",
+        userID: "user_123",
+        organizationSecret: "never-staged",
+      }),
+      { mode: 0o644 },
+    );
     const onSkip = vi.fn();
     const run = keychainRun(0);
 
@@ -1184,6 +1218,17 @@ describe("real mission advisor authentication staging", () => {
         ["find-generic-password", "-s", "Claude Code-credentials"],
         expect.objectContaining({ shell: false }),
       );
+      const stagedIdentity = JSON.parse(
+        fs.readFileSync(path.join(isolatedHome, ".claude.json"), "utf8"),
+      );
+      expect(stagedIdentity).toEqual({
+        hasCompletedOnboarding: true,
+        oauthAccount: "operator@example.com",
+        userID: "user_123",
+      });
+      expect(
+        fs.statSync(path.join(isolatedHome, ".claude.json")).mode & 0o777,
+      ).toBe(0o600);
     }
     const stagedFiles = [
       [".grok/auth.json", '{"grok":1}\n'],
@@ -1212,6 +1257,78 @@ describe("real mission advisor authentication staging", () => {
         directory,
       ).toBe(0o700);
     }
+  });
+
+  it("stages only the non-secret native Claude identity into the isolated HOME", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    fs.mkdirSync(sourceHome, { recursive: true });
+    fs.writeFileSync(
+      path.join(sourceHome, ".claude.json"),
+      JSON.stringify({
+        hasCompletedOnboarding: true,
+        oauthAccount: "operator@example.com",
+        userID: "user_123",
+        organizationSecret: "never-staged",
+        projects: { "/private/work": { hasTrustDialogAccepted: true } },
+      }),
+      { mode: 0o644 },
+    );
+
+    expect(stageClaudeNativeIdentity(isolatedHome, { sourceHome })).toBe(true);
+
+    const staged = JSON.parse(
+      fs.readFileSync(path.join(isolatedHome, ".claude.json"), "utf8"),
+    );
+    // Só identidade não-secreta: nada de projetos, segredos ou settings.
+    expect(staged).toEqual({
+      hasCompletedOnboarding: true,
+      oauthAccount: "operator@example.com",
+      userID: "user_123",
+    });
+    expect(
+      fs.statSync(path.join(isolatedHome, ".claude.json")).mode & 0o777,
+    ).toBe(0o600);
+    expect(
+      fs.existsSync(path.join(isolatedHome, ".claude", ".credentials.json")),
+    ).toBe(false);
+  });
+
+  it("reports no Claude identity when the real profile lacks or hides it", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    fs.mkdirSync(sourceHome, { recursive: true });
+
+    expect(stageClaudeNativeIdentity(isolatedHome, { sourceHome })).toBe(
+      false,
+    );
+
+    fs.writeFileSync(
+      path.join(sourceHome, ".claude.json"),
+      JSON.stringify({ hasCompletedOnboarding: true }),
+    );
+    expect(stageClaudeNativeIdentity(isolatedHome, { sourceHome })).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(isolatedHome, ".claude.json"))).toBe(
+      false,
+    );
+  });
+
+  it("refuses to stage the Claude identity through a symlink", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    fs.mkdirSync(sourceHome, { recursive: true });
+    const target = path.join(root, "hosted.json");
+    fs.writeFileSync(target, JSON.stringify({ oauthAccount: "x" }));
+    fs.symlinkSync(target, path.join(sourceHome, ".claude.json"));
+
+    expect(() =>
+      stageClaudeNativeIdentity(isolatedHome, { sourceHome }),
+    ).toThrow(/non-regular/i);
   });
 
   it("honors XDG_DATA_HOME when locating the opencode auth file", () => {
@@ -1451,6 +1568,42 @@ describe("real mission advisor authentication staging", () => {
       );
       expect(
         environment[REAL_MISSION_ADVISOR_SKIP_ENV],
+        JSON.stringify(hostile),
+      ).toBeUndefined();
+    }
+  });
+
+  it("preserves only a strict codex|claude orchestrator variant in the child environment", () => {
+    const claude = realMissionEnvironment(
+      { PATH: "/usr/bin", [REAL_MISSION_ORCHESTRATOR_ENV]: "claude" },
+      "/tmp/user-data",
+      "/trusted/codex",
+    );
+    expect(claude[REAL_MISSION_ORCHESTRATOR_ENV]).toBe("claude");
+
+    // Segunda passagem (waitForChild re-deriva): a variante sobrevive.
+    const again = realMissionEnvironment(
+      claude,
+      "/tmp/user-data",
+      "/trusted/codex",
+    );
+    expect(again[REAL_MISSION_ORCHESTRATOR_ENV]).toBe("claude");
+
+    // Ausente ou fora do estrito: nada atravessa (default codex no main).
+    expect(
+      realMissionEnvironment(
+        { PATH: "/usr/bin" },
+        "/tmp/user-data",
+        "/trusted/codex",
+      )[REAL_MISSION_ORCHESTRATOR_ENV],
+    ).toBeUndefined();
+    for (const hostile of ["grok", "CLAUDE", "claude ", "codex,claude", ""]) {
+      expect(
+        realMissionEnvironment(
+          { PATH: "/usr/bin", [REAL_MISSION_ORCHESTRATOR_ENV]: hostile },
+          "/tmp/user-data",
+          "/trusted/codex",
+        )[REAL_MISSION_ORCHESTRATOR_ENV],
         JSON.stringify(hostile),
       ).toBeUndefined();
     }

@@ -494,6 +494,12 @@ async function runReleaseCandidateGateCore(
     'security',
     'real-mission-evidence.json',
   );
+  const claudeOrchestratorEvidencePath = path.join(
+    root,
+    'release-artifacts',
+    'security',
+    'real-mission-evidence-claude-orchestrator.json',
+  );
   const e2eArtifactSha256 = artifactSeal.zip.sha256;
   const releaseBinding = {
     appVersion: version,
@@ -519,7 +525,24 @@ async function runReleaseCandidateGateCore(
     }
     return evidence;
   };
+  const assertBoundClaudeOrchestratorEvidence = () => {
+    const evidence = assertRealMissionReleaseEvidence(
+      JSON.parse(fs.readFileSync(claudeOrchestratorEvidencePath, 'utf8')),
+    );
+    if (
+      evidence.release?.appVersion !== version ||
+      evidence.release?.commitSha !== state.commitSha ||
+      evidence.release?.artifact?.sha256 !== artifactSeal.zip.sha256 ||
+      evidence.release?.artifact?.identity !== EXPECTED_IDENTITY
+    ) {
+      throw new Error(
+        'physical claude-orchestrator evidence is not bound to this exact ZIP, commit, version and signing identity',
+      );
+    }
+    return evidence;
+  };
   let runtimeProof = null;
+  let claudeOrchestratorRuntimeProof = null;
   await extractE2EApp(
     artifacts.zip,
     artifactSeal.zip.sha256,
@@ -538,11 +561,22 @@ async function runReleaseCandidateGateCore(
         releaseBinding,
       });
       runtimeProof = uiRun.runtimeProof;
+      assertVerifiedRealMissionRuntimeProof(
+        uiRun?.claudeOrchestrator?.runtimeProof,
+        {
+          evidence: uiRun?.claudeOrchestrator?.evidence,
+          releaseBinding,
+        },
+      );
+      claudeOrchestratorRuntimeProof =
+        uiRun.claudeOrchestrator.runtimeProof;
     }
     assertBoundProductWizardEvidence();
+    assertBoundClaudeOrchestratorEvidence();
     },
   );
   const productWizardEvidence = assertBoundProductWizardEvidence();
+  assertBoundClaudeOrchestratorEvidence();
   assertCandidateArtifactSeal(artifactSeal);
 
   if (authoritative) {
@@ -552,6 +586,8 @@ async function runReleaseCandidateGateCore(
       dmgPath: artifacts.dmg,
       zipPath: artifacts.zip,
       evidencePath,
+      claudeOrchestratorEvidencePath,
+      claudeOrchestratorRuntimeProof,
       commitSha: state.commitSha,
       version,
       tagObjectSha: state.tagObjectSha,
@@ -588,12 +624,17 @@ async function runReleaseCandidateGateCore(
         name: path.basename(evidencePath),
         sha256: sha256File(evidencePath),
       },
+      e2eEvidenceClaudeOrchestrator: {
+        name: path.basename(claudeOrchestratorEvidencePath),
+        sha256: sha256File(claudeOrchestratorEvidencePath),
+      },
     },
     securityAssets,
     verification: {
       signedNotarized: true,
       realMissionE2E: true,
       physicalProductWizard: authoritative,
+      claudeOrchestratorE2E: true,
       singleProductMission:
         productWizardEvidence.missionInventory.exactSingleProductMission,
       sameCommitAndArtifacts: true,

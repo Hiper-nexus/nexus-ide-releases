@@ -10,6 +10,7 @@ import {
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_SQUAD_ID,
   realMissionE2EAdvisorSkipClis,
+  realMissionE2EOrchestratorCli,
 } from '../shared/real-mission-e2e';
 import { retargetSquadInstructions } from '../shared/mission-identity';
 import { snapshotSquadAuthority } from './orch/squad-authority-snapshot';
@@ -57,7 +58,10 @@ export function persistRealMissionE2ESquadFixture(
   persistence: RealMissionE2EFixturePersistence = productionPersistence,
 ): Squad {
   const prepared = persistence.prepareSquadSave(
-    createRealMissionE2ESquadFixture(realMissionE2EAdvisorSkipClis()),
+    createRealMissionE2ESquadFixture(
+      realMissionE2EAdvisorSkipClis(),
+      realMissionE2EOrchestratorCli(),
+    ),
   );
   if (!preparedFixtureIsInternallyConsistent(prepared)) {
     throw new Error('real mission fixture preparation hash is inconsistent');
@@ -81,6 +85,7 @@ export function isExactRealMissionE2ESquadFixture(
   if (!candidate) return false;
   const expected = createRealMissionE2ESquadFixture(
     realMissionE2EAdvisorSkipClis(),
+    realMissionE2EOrchestratorCli(),
   );
   return (
     sha256(JSON.stringify(candidate)) === sha256(JSON.stringify(expected)) &&

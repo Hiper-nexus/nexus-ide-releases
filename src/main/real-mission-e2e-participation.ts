@@ -3,33 +3,42 @@ import {
   realMissionE2EAdvisorTier,
   type RealMissionE2EAdvisorCli,
   type RealMissionE2EEvidence,
+  type RealMissionE2EOrchestratorCli,
 } from "../shared/real-mission-e2e";
 import type { RealMissionAdvisorPtyExpectation } from "./real-mission-e2e-physical";
 
 /**
  * Uma CLI advisor do harness e o que a evidência exige dela. Advisors sem
  * credencial materializável chegam via env NEXUS_REAL_MISSION_ADVISOR_SKIP
- * (launcher) e ficam fora da exigência de handoff.
+ * (launcher); na variante orquestrador Claude, a advisor claude é reservada
+ * (reserveClaude: um único processo Claude na missão — o orquestrador).
  */
 export interface RealMissionAdvisorExpectation {
   readonly cli: RealMissionE2EAdvisorCli;
   readonly agentRef: string;
   readonly agentName: string;
   readonly tier: "mechanically-confined" | "advisory-unconfined";
-  readonly skipped: "no-credential" | null;
+  readonly skipped: "no-credential" | "orchestrator-reserved" | null;
 }
 
 /** Conjunto advisor esperado na ordem canônica do contrato. */
 export function expectedRealMissionAdvisors(
   skipAdvisorClis: readonly string[],
+  options: { readonly orchestratorCli?: RealMissionE2EOrchestratorCli } = {},
 ): RealMissionAdvisorExpectation[] {
   const skipped = new Set(skipAdvisorClis);
+  const orchestratorReserved = options.orchestratorCli === "claude";
   return REAL_MISSION_E2E_ADVISORS.map((advisor) => ({
     cli: advisor.cli,
     agentRef: advisor.id,
     agentName: advisor.name,
     tier: realMissionE2EAdvisorTier(advisor.cli),
-    skipped: skipped.has(advisor.cli) ? ("no-credential" as const) : null,
+    skipped:
+      orchestratorReserved && advisor.cli === "claude"
+        ? ("orchestrator-reserved" as const)
+        : skipped.has(advisor.cli)
+          ? ("no-credential" as const)
+          : null,
   }));
 }
 

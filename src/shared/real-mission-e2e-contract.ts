@@ -12,6 +12,8 @@ export const REAL_MISSION_E2E_PRODUCT_WIZARD_FLAG =
   "--nexus-real-mission-product-wizard-e2e";
 export const REAL_MISSION_E2E_TIMEOUT_MS = 15 * 60_000;
 export const REAL_MISSION_E2E_EVIDENCE_FILE = "real-mission-evidence.json";
+export const REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE =
+  "real-mission-evidence-claude-orchestrator.json";
 export const REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION = 9;
 export const REAL_MISSION_E2E_BUNDLE_ID = "com.nexuside.app";
 
@@ -162,6 +164,28 @@ export function realMissionE2EAdvisorSkipClis(
     requested.has(advisor.cli),
   ).map((advisor) => advisor.cli);
 }
+
+/**
+ * Variante de orquestrador do harness: codex (default) ou claude. Claude é
+ * orquestrador-capaz (VERIFIED_ORCHESTRATOR_BUILTINS) e o gate prova as duas
+ * variantes contra o mesmo ZIP/commit. Qualquer valor fora do estrito cai no
+ * default codex — o launcher valida com regex própria antes de propagar.
+ */
+export type RealMissionE2EOrchestratorCli = "codex" | "claude";
+
+export const REAL_MISSION_E2E_ORCHESTRATOR_ENV =
+  "NEXUS_REAL_MISSION_ORCHESTRATOR";
+
+export function realMissionE2EOrchestratorCli(
+  environment: Readonly<Record<string, string | undefined>> = typeof process !==
+  "undefined"
+    ? process.env
+    : {},
+): RealMissionE2EOrchestratorCli {
+  return environment[REAL_MISSION_E2E_ORCHESTRATOR_ENV] === "claude"
+    ? "claude"
+    : "codex";
+}
 export const REAL_MISSION_E2E_GOAL =
   'Entregue resultado.txt com o conteúdo exato "nexus-real-mission-e2e-ok\\n". ' +
   "O executor deve implementar e enviar seu handoff; depois um revisor independente " +
@@ -181,6 +205,28 @@ export const REAL_MISSION_E2E_ACCEPTANCE_CRITERIA = Object.freeze([
   "O motor Nexus emite o receipt final worktree_validated_no_change e marca a missão done sem atalho manual.",
   "Cada CLI advisor credenciada (grok, kimi, agy, opencode, omp, claude) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
 ]);
+
+/**
+ * Critério extra da variante orquestrador Claude: a missão inteira corre sob
+ * UM único processo Claude (o orquestrador — reserveClaude), com o pipeline
+ * executor→revisor→QA codex e as advisors não-Claude.
+ */
+export const REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_CRITERION =
+  "A variante orquestrador Claude executa o ciclo completo (kickoff→dispatch→handoffs→integração→done) com o pipeline codex e advisors não-Claude, sem segundo processo Claude.";
+
+export const REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA =
+  Object.freeze([
+    ...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+    REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_CRITERION,
+  ]);
+
+export function realMissionE2EAcceptanceCriteria(
+  orchestratorCli: RealMissionE2EOrchestratorCli,
+): readonly string[] {
+  return orchestratorCli === "claude"
+    ? REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA
+    : REAL_MISSION_E2E_ACCEPTANCE_CRITERIA;
+}
 
 /**
  * The real beginner wizard intentionally submits only the operator-authored
@@ -207,8 +253,12 @@ export const REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS = [
 
 export function createRealMissionE2ESquadFixture(
   skipAdvisorClis: readonly string[] = [],
+  orchestratorCli: RealMissionE2EOrchestratorCli = "codex",
 ): Squad {
   const skipped = new Set(skipAdvisorClis);
+  // reserveClaude: na variante orquestrador Claude ele é o ÚNICO processo
+  // Claude da missão — a advisor claude nunca entra no roster.
+  if (orchestratorCli === "claude") skipped.add("claude");
   return {
     id: REAL_MISSION_E2E_SQUAD_ID,
     name: "Nexus real mission release gate",
@@ -220,7 +270,7 @@ export function createRealMissionE2ESquadFixture(
         id: REAL_MISSION_E2E_ORCHESTRATOR_ID,
         agentName: REAL_MISSION_E2E_ORCHESTRATOR_NAME,
         category: "orchestrator",
-        cli: "codex",
+        cli: orchestratorCli,
         // Medium keeps the physical observer responsive. The production
         // Guided Planner seals the task graph before this CLI is spawned.
         effort: "medium",
@@ -385,13 +435,16 @@ interface RealMissionE2EObservationMission {
 
 /**
  * The observer must be installed after the exact fixture intent is compiled
- * but before approval can synchronously start the main-owned bootstrap.
+ * but before approval can synchronously start the main-owned bootstrap. A
+ * variante de orquestrador vem da env do processo (default codex).
  */
 export function isRealMissionE2EPreApprovalMission(
   mission: RealMissionE2EObservationMission | null | undefined,
+  orchestratorCli: RealMissionE2EOrchestratorCli = realMissionE2EOrchestratorCli(),
 ): mission is RealMissionE2EObservationMission {
   const contract = mission?.intentContract;
   const criteria = contract?.acceptanceCriteria;
+  const acceptanceCriteria = realMissionE2EAcceptanceCriteria(orchestratorCli);
   return (
     mission?.status === "pending" &&
     (mission.intentState === "ready_to_start" ||
@@ -412,10 +465,9 @@ export function isRealMissionE2EPreApprovalMission(
     contract.squadRevisionHash === undefined &&
     contract.orchestratorRuntime === undefined &&
     Array.isArray(criteria) &&
-    criteria.length === REAL_MISSION_E2E_ACCEPTANCE_CRITERIA.length &&
+    criteria.length === acceptanceCriteria.length &&
     criteria.every(
-      (criterion, index) =>
-        criterion === REAL_MISSION_E2E_ACCEPTANCE_CRITERIA[index],
+      (criterion, index) => criterion === acceptanceCriteria[index],
     )
   );
 }

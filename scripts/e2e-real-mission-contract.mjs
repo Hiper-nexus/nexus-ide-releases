@@ -25,6 +25,14 @@ export const REAL_MISSION_ADVISOR_SKIP_ENV = "NEXUS_REAL_MISSION_ADVISOR_SKIP";
 export const REAL_MISSION_ADVISOR_SKIP_PATTERN =
   /^[a-z0-9-]+(,[a-z0-9-]+)*$/u;
 /**
+ * Variante de orquestrador do harness: codex (default, ausente) ou claude.
+ * O launcher propaga somente valores estritos; o main cai no default codex.
+ */
+export const REAL_MISSION_ORCHESTRATOR_ENV = "NEXUS_REAL_MISSION_ORCHESTRATOR";
+export const REAL_MISSION_ORCHESTRATOR_PATTERN = /^(?:codex|claude)$/u;
+export const REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE =
+  "real-mission-evidence-claude-orchestrator.json";
+/**
  * Roster advisor multi-CLI do harness (Fase 2), na ordem canônica que a
  * evidência registra. Advisors entram somente em tarefas read_only do fan-out
  * consultivo; o pipeline executor → revisor → QA continua codex-only.
@@ -205,6 +213,18 @@ export const REAL_MISSION_ACCEPTANCE_CRITERIA = Object.freeze([
   "O motor Nexus emite o receipt final worktree_validated_no_change e marca a missão done sem atalho manual.",
   "Cada CLI advisor credenciada (grok, kimi, agy, opencode, omp, claude) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
 ]);
+export const REAL_MISSION_CLAUDE_ORCHESTRATOR_CRITERION =
+  "A variante orquestrador Claude executa o ciclo completo (kickoff→dispatch→handoffs→integração→done) com o pipeline codex e advisors não-Claude, sem segundo processo Claude.";
+export const REAL_MISSION_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA =
+  Object.freeze([
+    ...REAL_MISSION_ACCEPTANCE_CRITERIA,
+    REAL_MISSION_CLAUDE_ORCHESTRATOR_CRITERION,
+  ]);
+export function realMissionAcceptanceCriteria(orchestratorCli) {
+  return orchestratorCli === "claude"
+    ? REAL_MISSION_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA
+    : REAL_MISSION_ACCEPTANCE_CRITERIA;
+}
 export const REAL_MISSION_GOAL =
   'Entregue resultado.txt com o conteúdo exato "nexus-real-mission-e2e-ok\\n". ' +
   "O executor deve implementar e enviar seu handoff; depois um revisor independente " +

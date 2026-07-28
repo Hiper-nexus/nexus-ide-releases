@@ -143,6 +143,40 @@ describe("main-owned real mission squad fixture", () => {
     ]);
   });
 
+  it("persists the claude-orchestrator variant roster from the sealed env", () => {
+    vi.stubEnv("NEXUS_REAL_MISSION_ORCHESTRATOR", "claude");
+    try {
+      const harness = fixtureHarness();
+
+      const persisted = persistRealMissionE2ESquadFixture(harness.deps);
+
+      expect(persisted.agents[0]).toMatchObject({
+        id: "e2e-orchestrator",
+        category: "orchestrator",
+        cli: "claude",
+        allowedTools: null,
+      });
+      // reserveClaude: nenhuma advisor claude no roster da variante.
+      expect(
+        persisted.agents.some((agent) => agent.id === "e2e-advisor-claude"),
+      ).toBe(false);
+      expect(
+        persisted.agents
+          .filter((agent) =>
+            ["e2e-executor", "e2e-reviewer", "e2e-qa"].includes(agent.id),
+          )
+          .every((agent) => agent.cli === "codex"),
+      ).toBe(true);
+      expect(isExactRealMissionE2ESquadFixture(persisted)).toBe(true);
+      // O roster da variante codex não é aceito sob a env claude.
+      expect(
+        isExactRealMissionE2ESquadFixture(createRealMissionE2ESquadFixture()),
+      ).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("fails closed when the persisted reread drifts from the compiled fixture", () => {
     const harness = fixtureHarness({
       mutatePersisted: (squad) => ({

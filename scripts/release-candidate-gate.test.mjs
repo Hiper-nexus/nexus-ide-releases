@@ -278,9 +278,19 @@ describe('manual release candidate gate', () => {
     fs.writeFileSync(dmg, 'dmg');
     fs.writeFileSync(zip, 'zip');
     const uiEvidence = makeValidRealMissionEvidence();
+    const claudeEvidence = makeValidRealMissionEvidence({
+      orchestratorCli: "claude",
+    });
     const runChecked = vi.fn(() => ({ stdout: '', stderr: '' }));
     const runUiE2E = vi.fn(async (_app, options) => {
       fs.writeFileSync(options.evidencePath, JSON.stringify(uiEvidence));
+      fs.writeFileSync(
+        path.join(
+          path.dirname(options.evidencePath),
+          'real-mission-evidence-claude-orchestrator.json',
+        ),
+        JSON.stringify(claudeEvidence),
+      );
       return { evidencePath: options.evidencePath };
     });
     const result = await runReleaseCandidateGateTestCore({
@@ -346,10 +356,21 @@ describe('manual release candidate gate', () => {
       tagSignerFingerprint: TAG_AUTHORITY.tagSignerFingerprint,
       tagSignatureVerified: true,
       architecture: 'arm64',
+      artifacts: {
+        e2eEvidence: {
+          name: 'real-mission-evidence.json',
+          sha256: hash(`${JSON.stringify(uiEvidence)}`),
+        },
+        e2eEvidenceClaudeOrchestrator: {
+          name: 'real-mission-evidence-claude-orchestrator.json',
+          sha256: hash(`${JSON.stringify(claudeEvidence)}`),
+        },
+      },
       verification: {
         signedNotarized: true,
         realMissionE2E: true,
         physicalProductWizard: false,
+        claudeOrchestratorE2E: true,
         singleProductMission: true,
       },
     });
@@ -444,6 +465,52 @@ describe('manual release candidate gate', () => {
           callback(app),
       }),
     ).rejects.toThrow(/product-wizard physical coverage/i);
+    expect(runUiE2E).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when the claude-orchestrator variant evidence is missing', async () => {
+    const root = tempRoot();
+    const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
+    const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
+    const app = path.join(
+      root,
+      'out',
+      'NexusIDE-darwin-arm64',
+      'NexusIDE.app',
+    );
+    fs.writeFileSync(dmg, 'dmg');
+    fs.writeFileSync(zip, 'zip');
+    const runUiE2E = vi.fn(async (_app, options) => {
+      // Só a evidência codex é produzida: a variante claude nunca fecha.
+      fs.writeFileSync(
+        options.evidencePath,
+        JSON.stringify(makeValidRealMissionEvidence()),
+      );
+    });
+
+    await expect(
+      runReleaseCandidateGateTestCore({
+        root,
+        environment: {
+          NEXUS_MAC_PUBLISH_RELEASE: '1',
+          APPLE_TEAM_ID: '35P5XL3JN6',
+          APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+        },
+        generatedAfterMs: Date.now() - 1_000,
+        authority: RELEASE_AUTHORITY,
+        repository: {
+          statusPorcelain: '',
+          headSha: 'a'.repeat(40),
+          tagCommitSha: 'a'.repeat(40),
+          ...TAG_AUTHORITY,
+        },
+        buildSecurityArtifacts: buildTestSecurityArtifacts,
+        runChecked: vi.fn(() => ({ stdout: '', stderr: '' })),
+        runUiE2E,
+        extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
+          callback(app),
+      }),
+    ).rejects.toThrow(/claude-orchestrator|ENOENT/i);
     expect(runUiE2E).toHaveBeenCalledOnce();
   });
 });

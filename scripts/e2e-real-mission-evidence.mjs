@@ -2,7 +2,6 @@ import {
   EVIDENCE_ID_PATTERN,
   GIT_SHA_PATTERN,
   MISSION_DRIVER_WORKFLOW_STAGES,
-  REAL_MISSION_ACCEPTANCE_CRITERIA,
   REAL_MISSION_ADVISORS,
   REAL_MISSION_CHILD_PHASES,
   REAL_MISSION_CTA,
@@ -17,6 +16,7 @@ import {
   hasExactKeys,
   milestoneAttestationId,
   productWizardReceiptChainSha256,
+  realMissionAcceptanceCriteria,
   realMissionExpectedTaskChain,
   record,
   sha256,
@@ -83,10 +83,6 @@ export function assertRealMissionPassEvidence(raw) {
     "failure",
     "release",
   ]);
-  const expectedAcceptanceCriteria =
-    evidence?.launchSurface === "product-wizard"
-      ? REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA
-      : REAL_MISSION_ACCEPTANCE_CRITERIA;
   const mission = record(evidence?.mission);
   const exactMission =
     hasExactKeys(mission, [
@@ -239,6 +235,22 @@ export function assertRealMissionPassEvidence(raw) {
     Number.isFinite(finishedAt) &&
     new Date(finishedAt).toISOString() === release?.finishedAt;
   const panes = Array.isArray(evidence?.panes) ? evidence.panes : [];
+  // A lista de critérios da variante deriva do orquestrador físico provado
+  // nos panes: Claude carrega o critério extra de variante; codex, a base.
+  const orchestratorPanes = panes.filter(
+    (pane) =>
+      record(pane)?.role === "orchestrator" &&
+      record(pane)?.agentRef === "e2e-orchestrator",
+  );
+  const orchestratorCli =
+    orchestratorPanes.length === 1 &&
+    orchestratorPanes[0]?.adapterId === "claude"
+      ? "claude"
+      : "codex";
+  const expectedAcceptanceCriteria =
+    evidence?.launchSurface === "product-wizard"
+      ? REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA
+      : realMissionAcceptanceCriteria(orchestratorCli);
   const physicalPty = record(evidence?.physicalPty);
   const physicalPtyIds = Array.isArray(physicalPty?.ids)
     ? physicalPty.ids
@@ -987,7 +999,9 @@ export function assertRealMissionPassEvidence(raw) {
         ]) &&
         row?.cli === advisor.cli &&
         row?.tier === advisor.tier &&
-        (row?.skipped === null || row?.skipped === "no-credential") &&
+        (row?.skipped === null ||
+          row?.skipped === "no-credential" ||
+          row?.skipped === "orchestrator-reserved") &&
         (row?.skipped === null ||
           (row?.spawnedAt === null &&
             row?.firstNexusToolAt === null &&
@@ -1099,11 +1113,19 @@ export function assertRealMissionPassEvidence(raw) {
     panes.filter(
       (pane) =>
         pane?.role === "orchestrator" &&
-        pane?.adapterId === "codex" &&
+        (pane?.adapterId === "codex" || pane?.adapterId === "claude") &&
         pane?.agentRef === "e2e-orchestrator" &&
         pane?.readOnly === false &&
         pane?.nativeReadOnly === true,
     ).length === 1 &&
+    // Variante coerente: orquestrador Claude exige a advisor claude marcada
+    // orchestrator-reserved (reserveClaude); orquestrador codex proíbe a marca.
+    ((orchestratorCli === "claude" &&
+      participation.find((row) => record(row)?.cli === "claude")?.skipped ===
+        "orchestrator-reserved") ||
+      (orchestratorCli === "codex" &&
+        participation.find((row) => record(row)?.cli === "claude")?.skipped !==
+          "orchestrator-reserved")) &&
     panes.filter(
       (pane) =>
         pane?.role === "worker" &&
@@ -1203,7 +1225,10 @@ export function assertRealMissionReleaseEvidence(raw) {
     participationRows.every((rawRow) => {
       const row = record(rawRow);
       if (row === null) return false;
-      if (row.skipped === "no-credential") {
+      if (
+        row.skipped === "no-credential" ||
+        row.skipped === "orchestrator-reserved"
+      ) {
         return (
           row.spawnedAt === null &&
           row.firstNexusToolAt === null &&

@@ -9,6 +9,8 @@ import {
   REAL_MISSION_ADVISOR_SKIP_ENV,
   REAL_MISSION_ADVISOR_SKIP_PATTERN,
   REAL_MISSION_FLAG,
+  REAL_MISSION_ORCHESTRATOR_ENV,
+  REAL_MISSION_ORCHESTRATOR_PATTERN,
   REAL_MISSION_PRODUCT_WIZARD_FLAG,
   SAFE_CHILD_ENV_KEYS,
 } from "./e2e-real-mission-contract.mjs";
@@ -86,6 +88,14 @@ export function realMissionEnvironment(
     REAL_MISSION_ADVISOR_SKIP_PATTERN.test(advisorSkips)
       ? { [REAL_MISSION_ADVISOR_SKIP_ENV]: advisorSkips }
       : {};
+  // Orchestrator variant rides the same strict pattern: only "codex"/"claude"
+  // crosses into the child; anything else falls back to the codex default.
+  const orchestrator = baseEnv[REAL_MISSION_ORCHESTRATOR_ENV];
+  const orchestratorEnvironment =
+    typeof orchestrator === "string" &&
+    REAL_MISSION_ORCHESTRATOR_PATTERN.test(orchestrator)
+      ? { [REAL_MISSION_ORCHESTRATOR_ENV]: orchestrator }
+      : {};
   return {
     ...environment,
     HOME: home,
@@ -114,6 +124,7 @@ export function realMissionEnvironment(
       ? { NEXUS_REAL_MISSION_PRODUCT_WIZARD_E2E: "1" }
       : { NEXUS_REAL_MISSION_E2E: "1" }),
     ...advisorSkipEnvironment,
+    ...orchestratorEnvironment,
     ...attestationEnvironment,
   };
 }
@@ -557,6 +568,78 @@ export const REAL_MISSION_ADVISOR_BINARIES = Object.freeze([
   "claude",
 ]);
 
+const CLAUDE_AUTH_IDENTITY_MAX_BYTES = 256 * 1024;
+
+/**
+ * Stage the NON-SECRET native Claude login identity into the isolated child
+ * HOME. The OAuth secret lives in the macOS keychain and the CLI reads it
+ * regardless of HOME, but the native adapter decides "logged in" from
+ * oauthAccount/userID in ~/.claude.json (see prepareEphemeralHome /
+ * readNativeClaudeAuthIdentity): without these two non-secret keys the
+ * orchestrator/advisor panes would fall into /login and hang the gate. No
+ * credentials file, project trust or settings are ever copied.
+ */
+export function stageClaudeNativeIdentity(
+  isolatedHome,
+  { sourceHome = os.homedir() } = {},
+) {
+  const home = path.resolve(isolatedHome);
+  const source = path.join(path.resolve(sourceHome), ".claude.json");
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      source,
+      fs.constants.O_RDONLY |
+        (typeof fs.constants.O_NOFOLLOW === "number"
+          ? fs.constants.O_NOFOLLOW
+          : 0),
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    if (error?.code === "ELOOP") {
+      throw new Error("refusing to stage a non-regular Claude profile");
+    }
+    throw error;
+  }
+  try {
+    const before = fs.fstatSync(descriptor);
+    if (!before.isFile()) {
+      throw new Error("refusing to stage a non-regular Claude profile");
+    }
+    if (
+      typeof process.getuid === "function" &&
+      before.uid !== process.getuid()
+    ) {
+      throw new Error("Claude profile must be owned by the release operator");
+    }
+    if (before.size > CLAUDE_AUTH_IDENTITY_MAX_BYTES) {
+      throw new Error("refusing to stage an oversized Claude profile");
+    }
+    const parsed = JSON.parse(
+      fs.readFileSync(descriptor, "utf8"),
+    );
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    const identity = {};
+    for (const key of ["oauthAccount", "userID"]) {
+      if (typeof parsed[key] === "string" && parsed[key].length > 0) {
+        identity[key] = parsed[key];
+      }
+    }
+    if (Object.keys(identity).length === 0) return false;
+    fs.mkdirSync(home, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+    fs.writeFileSync(
+      path.join(home, ".claude.json"),
+      JSON.stringify({ hasCompletedOnboarding: true, ...identity }, null, 2),
+      { mode: PRIVATE_FILE_MODE, flag: "wx" },
+    );
+    return true;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 /**
  * Stage the real operator profile's advisor credentials into the isolated
  * child HOME so the MCP overlays (which resolve profiles relative to the
@@ -681,8 +764,10 @@ export function stageAdvisorAuthentication(
     openCodeStaged ? "staged" : "credentialless",
   );
 
-  // claude: the credential lives in the macOS keychain, readable by the child
-  // (same user). Nothing to copy; only verify presence.
+  // claude: the OAuth secret lives in the macOS keychain, readable by the
+  // child (same user), but the native adapter also needs the non-secret
+  // login identity (~/.claude.json oauthAccount/userID) or it falls into
+  // /login. "staged" requires both; nothing secret is ever copied.
   if (process.platform !== "darwin") {
     statuses.claude = report("claude", "skipped");
   } else {
@@ -696,9 +781,12 @@ export function stageAdvisorAuthentication(
         timeout: 10_000,
       },
     );
+    const identityStaged = stageClaudeNativeIdentity(home, {
+      sourceHome: source,
+    });
     statuses.claude = report(
       "claude",
-      lookup.status === 0 ? "staged" : "skipped",
+      lookup.status === 0 && identityStaged ? "staged" : "skipped",
     );
   }
 

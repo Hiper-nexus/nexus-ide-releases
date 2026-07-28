@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import { isMissionRuntimeSquadId } from "./orch-types";
 import {
-  REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_ADVISORS,
   REAL_MISSION_E2E_EVIDENCE_SCHEMA_VERSION,
   REAL_MISSION_E2E_EXECUTOR_ID,
@@ -11,6 +10,7 @@ import {
   REAL_MISSION_E2E_QA_ID,
   REAL_MISSION_E2E_REVIEWER_ID,
   REAL_MISSION_E2E_SQUAD_ID,
+  realMissionE2EAcceptanceCriteria,
   realMissionE2EAdvisorTier,
   realMissionE2EExpectedTaskChain,
 } from "./real-mission-e2e-contract";
@@ -186,7 +186,7 @@ export const realMissionE2EEvidenceSchema = z
       (pane) =>
         pane.role === "orchestrator" &&
         pane.agentRef === REAL_MISSION_E2E_ORCHESTRATOR_ID &&
-        pane.adapterId === "codex",
+        (pane.adapterId === "codex" || pane.adapterId === "claude"),
     );
     const executors = evidence.panes.filter(
       (pane) =>
@@ -286,6 +286,14 @@ export const realMissionE2EEvidenceSchema = z
     const completionEvidenceIds = completionMilestones.flatMap(
       (milestone) => milestone.evidenceIds,
     );
+    // A lista de critérios da variante deriva do orquestrador físico provado
+    // nos panes: Claude carrega o critério extra de variante; codex, a base.
+    const expectedAcceptanceCriteria =
+      evidence.launchSurface === "product-wizard"
+        ? REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA
+        : realMissionE2EAcceptanceCriteria(
+            orchestrators[0]?.adapterId === "claude" ? "claude" : "codex",
+          );
     const receiptMatchesMilestone = (
       receipt: (typeof completionReceipts)[number],
       milestone: (typeof completionMilestones)[number],
@@ -346,17 +354,11 @@ export const realMissionE2EEvidenceSchema = z
       completionRoute.includes("execution") &&
       !completionRoute.includes("complete") &&
       new Set(completionRoute).size === completionRoute.length &&
-      completionMilestones.length ===
-        (evidence.launchSurface === "product-wizard"
-          ? REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA
-          : REAL_MISSION_E2E_ACCEPTANCE_CRITERIA).length &&
+      completionMilestones.length === expectedAcceptanceCriteria.length &&
       completionMilestones.every(
         (milestone, index) =>
           milestone.stepId === `step-${index + 1}` &&
-          milestone.label ===
-            (evidence.launchSurface === "product-wizard"
-              ? REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA
-              : REAL_MISSION_E2E_ACCEPTANCE_CRITERIA)[index] &&
+          milestone.label === expectedAcceptanceCriteria[index] &&
           milestone.status === "done" &&
           milestone.evidenceIds.length === 1 &&
           /^milestone:[a-f0-9]{64}$/u.test(milestone.evidenceIds[0]!),
@@ -734,6 +736,15 @@ export const realMissionE2EEvidenceSchema = z
       exactPhysicalPtySet &&
       orchestrators[0]?.readOnly === false &&
       orchestrators[0]?.nativeReadOnly === true &&
+      // Variante coerente: orquestrador Claude exige a advisor claude marcada
+      // orchestrator-reserved (reserveClaude); orquestrador codex proíbe essa
+      // marca (lá a advisor claude participa ou é no-credential).
+      ((orchestrators[0]?.adapterId === "claude" &&
+        evidence.participation.find((row) => row.cli === "claude")?.skipped ===
+          "orchestrator-reserved") ||
+        (orchestrators[0]?.adapterId === "codex" &&
+          evidence.participation.find((row) => row.cli === "claude")
+            ?.skipped !== "orchestrator-reserved")) &&
       executors[0]?.readOnly === false &&
       executors[0]?.nativeReadOnly === false &&
       reviewers[0]?.readOnly === true &&

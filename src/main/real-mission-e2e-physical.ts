@@ -44,24 +44,27 @@ export interface RealMissionAdvisorPtyExpectation {
  * authority is missionId + workerIncarnationId. The legacy-squad
  * orchestrator carries squadId, while the production main-owned bootstrap
  * carries the exact approved authority seal instead. Both are real runtime
- * paths and neither may be replaced with generated evidence.
+ * paths and neither may be replaced with generated evidence. O orquestrador
+ * físico é a CLI da variante (codex ou claude); os workers do pipeline são
+ * sempre codex.
  */
 export function isRealMissionPhysicalPtyAgent(
   sessionId: string,
   missionId: string,
   agent: PhysicalPtyAgent | null,
+  orchestratorCli: "codex" | "claude" = "codex",
 ): agent is RealMissionPhysicalPtyAgent {
   if (
     !agent ||
     agent.sessionId !== sessionId ||
     agent.missionId !== missionId ||
-    agent.adapterId !== "codex" ||
     (agent.role !== "orchestrator" && agent.role !== "worker")
   ) {
     return false;
   }
   if (agent.role === "orchestrator") {
     return (
+      agent.adapterId === orchestratorCli &&
       agent.agentName === REAL_MISSION_E2E_ORCHESTRATOR_NAME &&
       (agent.squadId === REAL_MISSION_E2E_SQUAD_ID ||
         (agent.source === "pending" &&
@@ -70,6 +73,7 @@ export function isRealMissionPhysicalPtyAgent(
     );
   }
   return (
+    agent.adapterId === "codex" &&
     (agent.agentName === REAL_MISSION_E2E_EXECUTOR_NAME ||
       agent.agentName === REAL_MISSION_E2E_REVIEWER_NAME ||
       agent.agentName === REAL_MISSION_E2E_QA_NAME) &&
@@ -118,6 +122,7 @@ function advisorPtyIdentity(
  */
 export class ExactRealMissionPhysicalPtyGate {
   readonly #missionId: string;
+  readonly #orchestratorCli: "codex" | "claude";
   readonly #expectedAdvisors: readonly RealMissionAdvisorPtyExpectation[];
   readonly #sessionByIdentity = new Map<
     RealMissionPhysicalPtyIdentity,
@@ -131,9 +136,11 @@ export class ExactRealMissionPhysicalPtyGate {
   constructor(
     missionId: string,
     expectedAdvisors: readonly RealMissionAdvisorPtyExpectation[] = [],
+    orchestratorCli: "codex" | "claude" = "codex",
   ) {
     this.#missionId = missionId;
     this.#expectedAdvisors = expectedAdvisors;
+    this.#orchestratorCli = orchestratorCli;
   }
 
   get acceptedSessionCount(): number {
@@ -147,7 +154,14 @@ export class ExactRealMissionPhysicalPtyGate {
     if (agent?.missionId !== this.#missionId) return { kind: "unrelated" };
     let identity: RealMissionPhysicalPtyIdentity;
     let acceptedAgent: RealMissionPhysicalPtyAgent;
-    if (isRealMissionPhysicalPtyAgent(sessionId, this.#missionId, agent)) {
+    if (
+      isRealMissionPhysicalPtyAgent(
+        sessionId,
+        this.#missionId,
+        agent,
+        this.#orchestratorCli,
+      )
+    ) {
       identity = physicalPtyIdentity(agent);
       acceptedAgent = agent;
     } else {

@@ -6,11 +6,12 @@ import {
   createRealMissionE2ESquadFixture,
   isCurrentProcessRealMissionE2E,
   isCurrentProcessRealMissionProductWizardE2E,
-  REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_SQUAD_ID,
+  realMissionE2EAcceptanceCriteria,
   realMissionE2EAdvisorSkipClis,
+  realMissionE2EOrchestratorCli,
 } from "../shared/real-mission-e2e";
 import type { Mission } from "../shared/orch-types";
 import type { ProjectExecutionScope } from "../shared/types";
@@ -46,7 +47,10 @@ const CONTEXT_DOCS = [
 ] as const;
 
 const REAL_MISSION_E2E_SQUAD_REVISION_HASH = snapshotSquadAuthority(
-  createRealMissionE2ESquadFixture(realMissionE2EAdvisorSkipClis()),
+  createRealMissionE2ESquadFixture(
+    realMissionE2EAdvisorSkipClis(),
+    realMissionE2EOrchestratorCli(),
+  ),
 ).hash;
 
 function sameScope(
@@ -88,7 +92,9 @@ function realMissionE2EContractProfile(
         sourceSquadRevisionHash: REAL_MISSION_E2E_SQUAD_REVISION_HASH,
         squadRevisionHash: REAL_MISSION_E2E_SQUAD_REVISION_HASH,
       },
-      acceptanceCriteria: REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+      acceptanceCriteria: realMissionE2EAcceptanceCriteria(
+        realMissionE2EOrchestratorCli(),
+      ),
       contextPolicy: "minimal",
     };
   }

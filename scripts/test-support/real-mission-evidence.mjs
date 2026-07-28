@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 
 import {
-  REAL_MISSION_ACCEPTANCE_CRITERIA,
   REAL_MISSION_ADVISORS,
   REAL_MISSION_EVIDENCE_SCHEMA_VERSION,
   REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
   productWizardReceiptChainSha256,
+  realMissionAcceptanceCriteria,
   realMissionExpectedTaskChain,
 } from "../e2e-real-mission-contract.mjs";
 
@@ -62,6 +62,7 @@ export function makeValidRealMissionEvidence({
   identity = "Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)",
   launchSurface = "product-wizard",
   skipAdvisorClis = [],
+  orchestratorCli = "codex",
 } = {}) {
   const initialHeadSha = "c".repeat(40);
   const finalHeadSha = "b".repeat(40);
@@ -76,8 +77,13 @@ export function makeValidRealMissionEvidence({
   const contractHash = sha256("frozen-contract");
   const finalDiffHash = sha256("integrated-diff");
   const skipped = new Set(skipAdvisorClis);
+  // reserveClaude: na variante orquestrador Claude a advisor claude é
+  // reservada — nunca vira worker.
+  const claudeReserved = orchestratorCli === "claude";
   const presentAdvisorClis = REAL_MISSION_ADVISORS.filter(
-    (advisor) => !skipped.has(advisor.cli),
+    (advisor) =>
+      !skipped.has(advisor.cli) &&
+      !(claudeReserved && advisor.cli === "claude"),
   ).map((advisor) => advisor.cli);
   const chain = realMissionExpectedTaskChain(presentAdvisorClis);
   const workflowBinding = {
@@ -92,7 +98,7 @@ export function makeValidRealMissionEvidence({
   };
   const acceptanceCriteria =
     launchSurface === "private-runner"
-      ? REAL_MISSION_ACCEPTANCE_CRITERIA
+      ? realMissionAcceptanceCriteria(orchestratorCli)
       : REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA;
 
   // Linha do tempo física da cadeia linear: cada membro começa quando o
@@ -302,7 +308,7 @@ export function makeValidRealMissionEvidence({
       {
         role: "orchestrator",
         paneId: "pane-orchestrator",
-        adapterId: "codex",
+        adapterId: orchestratorCli,
         agentRef: "e2e-orchestrator",
         workerIncarnationId: null,
         sessionId: "session-orch",
@@ -436,7 +442,10 @@ export function makeValidRealMissionEvidence({
         return {
           cli: advisor.cli,
           tier: advisor.tier,
-          skipped: "no-credential",
+          skipped:
+            claudeReserved && advisor.cli === "claude"
+              ? "orchestrator-reserved"
+              : "no-credential",
           spawnedAt: null,
           firstNexusToolAt: null,
           handoffAt: null,

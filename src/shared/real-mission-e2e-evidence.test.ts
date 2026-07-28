@@ -339,3 +339,64 @@ describe("real mission E2E v9 advisor participation", () => {
     );
   });
 });
+
+describe("real mission E2E v9 claude orchestrator variant", () => {
+  it("parses the claude-orchestrator PASS evidence with the reserved advisor", () => {
+    const parsed = parseRealMissionE2EEvidence(
+      validPassEvidence("private-runner", { orchestratorCli: "claude" }),
+    );
+
+    expect(parsed.status).toBe("pass");
+    // Sem advisor claude: 4 scouts + executor + revisor + grok + QA.
+    expect(parsed.plan?.tasks).toHaveLength(8);
+    expect(parsed.dispatches).toHaveLength(8);
+    expect(parsed.handoffs).toHaveLength(8);
+    expect(parsed.dependencyConsumptions).toHaveLength(7);
+    expect(
+      parsed.participation.find((row) => row.cli === "claude")?.skipped,
+    ).toBe("orchestrator-reserved");
+    expect(parsed.completion?.milestones).toHaveLength(10);
+    const orchestrator = parsed.panes.find(
+      (pane) => pane.role === "orchestrator",
+    );
+    expect(orchestrator?.adapterId).toBe("claude");
+  });
+
+  it("rejects a claude orchestrator whose advisor was not reserved", () => {
+    const evidence = validPassEvidence("private-runner", {
+      orchestratorCli: "claude",
+    });
+    (evidence.participation as Array<Record<string, unknown>>)[5]!.skipped =
+      "no-credential";
+    expect(() => parseRealMissionE2EEvidence(evidence)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it("rejects a codex orchestrator carrying the orchestrator-reserved mark", () => {
+    const evidence = validPassEvidence("private-runner", {
+      skipAdvisorClis: ["claude"],
+    });
+    (evidence.participation as Array<Record<string, unknown>>)[5]!.skipped =
+      "orchestrator-reserved";
+    expect(() => parseRealMissionE2EEvidence(evidence)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+
+  it("rejects the codex criteria list on the claude variant run", () => {
+    const evidence = validPassEvidence("private-runner", {
+      orchestratorCli: "claude",
+    });
+    // Remove o critério extra da variante: a missão selada tinha 10 marcos.
+    const completion = evidence.completion as {
+      milestones: unknown[];
+      stepReceipts: unknown[];
+    };
+    completion.milestones.pop();
+    completion.stepReceipts.pop();
+    expect(() => parseRealMissionE2EEvidence(evidence)).toThrow(
+      /real-mission invariants/,
+    );
+  });
+});

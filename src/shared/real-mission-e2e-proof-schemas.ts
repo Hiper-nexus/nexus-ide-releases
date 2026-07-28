@@ -293,13 +293,15 @@ export const durableHandoffSetSchema = z
  * Recibo de participação de uma CLI advisor: PTY físico (spawn), primeira
  * tool nexus_* na fronteira HTTP MCP e submissão do handoff. Advisors sem
  * credencial materializável entram como `skipped: "no-credential"` (via env
- * NEXUS_REAL_MISSION_ADVISOR_SKIP) e ficam fora da exigência de PASS.
+ * NEXUS_REAL_MISSION_ADVISOR_SKIP); na variante orquestrador Claude, a advisor
+ * claude entra como `skipped: "orchestrator-reserved"` (reserveClaude: um
+ * único processo Claude na missão). Skipped ficam fora da exigência de PASS.
  */
 export const advisorParticipationProofSchema = z
   .object({
     cli: z.enum(["grok", "kimi", "agy", "opencode", "omp", "claude"]),
     tier: z.enum(["mechanically-confined", "advisory-unconfined"]),
-    skipped: z.literal("no-credential").nullable(),
+    skipped: z.enum(["no-credential", "orchestrator-reserved"]).nullable(),
     spawnedAt: timestampSchema.nullable(),
     firstNexusToolAt: timestampSchema.nullable(),
     handoffAt: timestampSchema.nullable(),

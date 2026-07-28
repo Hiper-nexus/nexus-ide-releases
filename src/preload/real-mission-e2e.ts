@@ -1,7 +1,7 @@
 import {
-  REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_SQUAD_ID,
+  realMissionE2EAcceptanceCriteria,
   realMissionE2ERendererFailureSignal,
   realMissionE2ERunPayloadSchema,
 } from "../shared/real-mission-e2e";
@@ -131,9 +131,12 @@ export async function runRealMissionE2E(
       // Enter the ordinary beginner path so approval must invoke the
       // production Guided Planner. Automation-owned missions intentionally
       // use a different exact-worker contract and would not prove this flow.
+      // Os critérios seguem a variante de orquestrador selada pelo main.
       source: "typed",
       contextPolicy: "minimal",
-      acceptanceCriteria: [...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA],
+      acceptanceCriteria: [
+        ...realMissionE2EAcceptanceCriteria(payload.orchestratorCli),
+      ],
       lane: "standard",
     });
     if (

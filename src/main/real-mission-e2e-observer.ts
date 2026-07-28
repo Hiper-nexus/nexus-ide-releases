@@ -16,8 +16,10 @@ import {
   REAL_MISSION_E2E_RESULT_CONTENT,
   parseRealMissionE2EEvidence,
   realMissionE2EAdvisorSkipClis,
+  realMissionE2EOrchestratorCli,
   type RealMissionE2EEvidence,
   type RealMissionE2ELaunchSurface,
+  type RealMissionE2EOrchestratorCli,
   type RealMissionE2EProductWizardReceipt,
 } from "../shared/real-mission-e2e";
 import {
@@ -179,6 +181,8 @@ export class RealMissionObserver {
     onFinish: (code: FailureCode | null) => void;
     /** CLIs advisor sem credencial (launcher via env); default: process.env. */
     advisorSkipClis?: readonly string[];
+    /** Variante de orquestrador do harness; default: env do processo. */
+    orchestratorCli?: RealMissionE2EOrchestratorCli;
   }) {
     this.#owner = input.owner;
     this.#runId = input.runId;
@@ -194,10 +198,15 @@ export class RealMissionObserver {
     this.#onFinish = input.onFinish;
     this.#advisorExpectations = expectedRealMissionAdvisors(
       input.advisorSkipClis ?? realMissionE2EAdvisorSkipClis(),
+      {
+        orchestratorCli:
+          input.orchestratorCli ?? realMissionE2EOrchestratorCli(),
+      },
     );
     this.#physicalPtyGate = new ExactRealMissionPhysicalPtyGate(
       input.missionId,
       realMissionAdvisorPtyExpectations(this.#advisorExpectations),
+      input.orchestratorCli ?? realMissionE2EOrchestratorCli(),
     );
   }
 

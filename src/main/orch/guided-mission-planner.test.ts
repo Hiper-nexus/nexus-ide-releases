@@ -532,6 +532,138 @@ describe("Guided Planner v2", () => {
     ]);
   });
 
+  it("seals the claude-orchestrator variant chain without any claude worker", () => {
+    const liveSquad = createRealMissionE2ESquadFixture([], "claude");
+    const contract = compileIntentContract({
+      goal: REAL_MISSION_E2E_GOAL,
+      acceptanceCriteria: [
+        ...REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
+      ],
+      intentVersion: 3,
+      source: "typed",
+      lane: "standard",
+    });
+    const currentMission = mission({
+      squadId: liveSquad.id,
+      description: contract.goal,
+      intentContract: {
+        ...contract,
+        approvedAt: 10,
+        dispatchedAt: 10,
+        squadRevisionHash: snapshotSquadAuthority(liveSquad).hash,
+      },
+    });
+    const h = harness({
+      currentMission,
+      liveSquad,
+      adapters: [
+        liveAdapter("codex"),
+        {
+          id: "grok",
+          installed: true,
+          models: { list: ["grok-4.5"], default: "grok-4.5" },
+        },
+        liveAdapter("kimi"),
+        {
+          id: "agy",
+          installed: true,
+          models: {
+            list: ["gemini-3.6-flash-high"],
+            default: "gemini-3.6-flash-high",
+          },
+        },
+        liveAdapter("opencode"),
+        liveAdapter("omp"),
+        liveAdapter("claude"),
+      ],
+    });
+
+    expect(
+      ensureGuidedMissionPlan(h.suite, currentMission.id, h.deps),
+    ).toMatchObject({ applicable: true, sealed: true });
+    const rows = h.createPlanAtomically.mock.calls[0]![0].rows;
+    const schedules = rows.map((row) => ({
+      plannerId: row.plannerId,
+      ...decodeTaskScheduleDetail(row.detail).meta!,
+    }));
+
+    // Variante claude: advisor claude reservada (orquestrador) — a cadeia
+    // termina a revisão independente no grok e nenhum worker é claude.
+    const advisoryIds = [
+      "e2e-advisor-kimi",
+      "e2e-advisor-agy",
+      "e2e-advisor-opencode",
+      "e2e-advisor-omp",
+    ];
+    const reviewIds = ["e2e-reviewer", "e2e-advisor-grok"];
+    expect(schedules).toEqual([
+      ...advisoryIds.map((agentRef, index) =>
+        expect.objectContaining({
+          plannerId: `guided-advisory-${index + 1}-${agentRef}`,
+          agentRef,
+          agentCategory: "scout",
+          executionMode: "read_only",
+          dependsOn:
+            index === 0
+              ? []
+              : [
+                  plannedTaskId(
+                    currentMission.id,
+                    3,
+                    `guided-advisory-${index}-${advisoryIds[index - 1]}`,
+                  ),
+                ],
+        }),
+      ),
+      expect.objectContaining({
+        plannerId: GUIDED_MISSION_PLANNER_TASK_ID,
+        agentRef: "e2e-executor",
+        agentCategory: "executor",
+        executionMode: "isolated_worktree",
+        dependsOn: [
+          plannedTaskId(
+            currentMission.id,
+            3,
+            "guided-advisory-4-e2e-advisor-omp",
+          ),
+        ],
+      }),
+      ...reviewIds.map((agentRef, index) =>
+        expect.objectContaining({
+          plannerId: `guided-review-${index + 1}-${agentRef}`,
+          agentRef,
+          agentCategory: "reviewer",
+          executionMode: "read_only",
+          dependsOn: [
+            plannedTaskId(
+              currentMission.id,
+              3,
+              index === 0
+                ? GUIDED_MISSION_PLANNER_TASK_ID
+                : `guided-review-${index}-${reviewIds[index - 1]}`,
+            ),
+          ],
+        }),
+      ),
+      expect.objectContaining({
+        plannerId: GUIDED_MISSION_QA_TASK_ID,
+        agentRef: "e2e-qa",
+        agentCategory: "reviewer",
+        executionMode: "read_only",
+        dependsOn: [
+          plannedTaskId(
+            currentMission.id,
+            3,
+            "guided-review-2-e2e-advisor-grok",
+          ),
+        ],
+      }),
+    ]);
+    expect(
+      rows.every((row) => !row.agentRef.includes("claude")),
+    ).toBe(true);
+  });
+
   it("admits only exact credentialless OpenCode models when no usable account exists", () => {
     const provider = {
       adapterId: "opencode",

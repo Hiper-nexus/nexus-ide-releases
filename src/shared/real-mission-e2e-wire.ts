@@ -148,6 +148,8 @@ export const realMissionE2ERunPayloadSchema = z
   .object({
     workspacePath: z.string().min(1).max(4_096),
     rendererFailureToken: sha256Schema,
+    // Variante de orquestrador selada pelo main; ausente = codex (default).
+    orchestratorCli: z.enum(["codex", "claude"]).default("codex"),
   })
   .strict();
 
