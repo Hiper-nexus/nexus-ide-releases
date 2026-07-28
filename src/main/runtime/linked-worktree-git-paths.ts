@@ -67,38 +67,77 @@ function readCommonDir(gitDir: string): string {
   }
 }
 
-/**
- * Existing paths that must be writable for `git commit` to succeed from
- * `worktreeDir`. Returns an empty list for an ordinary checkout, an unreadable
- * pointer, or anything that does not resolve to a real directory — the caller
- * must never widen the sandbox on a guess.
- */
-export function linkedWorktreeGitWritePaths(
-  worktreeDir: string,
-): string[] {
-  const gitDir = readGitDirPointer(worktreeDir);
-  if (!gitDir) return [];
-  let realGitDir: string;
+/** Never writable: one is host code execution, the other rewrites remotes. */
+const COMMON_DIR_PROTECTED_ENTRIES = ['hooks', 'config'] as const;
+
+export interface LinkedWorktreeGitPaths {
+  /**
+   * The repository directory must be READABLE as a whole: git stats and lists
+   * it while resolving the worktree, and denying it yields
+   * `fatal: not a git repository` — the commit never even starts.
+   */
+  readonly readPaths: readonly string[];
+  /** Exactly the subtrees a commit mutates. */
+  readonly writePaths: readonly string[];
+  /** Carved back out of any writable grant, as defence in depth. */
+  readonly protectedPaths: readonly string[];
+}
+
+const EMPTY: LinkedWorktreeGitPaths = Object.freeze({
+  readPaths: Object.freeze([]),
+  writePaths: Object.freeze([]),
+  protectedPaths: Object.freeze([]),
+});
+
+function realpathOrNull(candidate: string): string | null {
   try {
-    realGitDir = fs.realpathSync.native(gitDir);
+    return fs.realpathSync.native(candidate);
   } catch {
-    return [];
+    return null;
   }
-  if (!fs.statSync(realGitDir, { throwIfNoEntry: false })?.isDirectory()) {
-    return [];
+}
+
+/**
+ * Filesystem authority `git commit` needs from `worktreeDir`. Returns empty for
+ * an ordinary checkout, an unreadable pointer, or anything that does not
+ * resolve to a real directory — the caller must never widen the sandbox on a
+ * guess.
+ */
+export function linkedWorktreeGitPaths(
+  worktreeDir: string,
+): LinkedWorktreeGitPaths {
+  const gitDir = readGitDirPointer(worktreeDir);
+  if (!gitDir) return EMPTY;
+  const realGitDir = realpathOrNull(gitDir);
+  if (
+    !realGitDir ||
+    !fs.statSync(realGitDir, { throwIfNoEntry: false })?.isDirectory()
+  ) {
+    return EMPTY;
   }
   const commonDir = readCommonDir(realGitDir);
-  const candidates = [
+  const readPaths = new Set<string>();
+  for (const candidate of [realGitDir, commonDir]) {
+    const real = realpathOrNull(candidate);
+    if (real) readPaths.add(real);
+  }
+  const writePaths = new Set<string>();
+  for (const candidate of [
     realGitDir,
     ...COMMON_DIR_WRITE_ENTRIES.map((entry) => path.join(commonDir, entry)),
-  ];
-  const resolved = new Set<string>();
-  for (const candidate of candidates) {
-    try {
-      resolved.add(fs.realpathSync.native(candidate));
-    } catch {
-      // Absent entries (a fresh repo has no packed-refs) are simply not granted.
-    }
+  ]) {
+    const real = realpathOrNull(candidate);
+    // Absent entries (a fresh repo has no packed-refs) are simply not granted.
+    if (real) writePaths.add(real);
   }
-  return [...resolved].sort();
+  const protectedPaths = new Set<string>();
+  for (const entry of COMMON_DIR_PROTECTED_ENTRIES) {
+    const real = realpathOrNull(path.join(commonDir, entry));
+    if (real) protectedPaths.add(real);
+  }
+  return Object.freeze({
+    readPaths: Object.freeze([...readPaths].sort()),
+    writePaths: Object.freeze([...writePaths].sort()),
+    protectedPaths: Object.freeze([...protectedPaths].sort()),
+  });
 }

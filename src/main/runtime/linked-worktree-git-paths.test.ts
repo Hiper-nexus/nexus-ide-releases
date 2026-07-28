@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { linkedWorktreeGitWritePaths } from './linked-worktree-git-paths';
+import { linkedWorktreeGitPaths } from './linked-worktree-git-paths';
 
 const created: string[] = [];
 
@@ -41,32 +41,48 @@ afterEach(() => {
   }
 });
 
-describe('linkedWorktreeGitWritePaths', () => {
-  it('grants the parent git subtrees a commit actually writes', () => {
+describe('linkedWorktreeGitPaths', () => {
+  it('makes the repository directory readable so git can resolve it', () => {
     const { repo, worktree } = repoWithLinkedWorktree();
-
-    const granted = linkedWorktreeGitWritePaths(worktree);
-
     const common = fs.realpathSync.native(path.join(repo, '.git'));
-    expect(granted).toContain(
+
+    const paths = linkedWorktreeGitPaths(worktree);
+
+    // Without this git reports `fatal: not a git repository` and the commit
+    // never starts — measured against a real Seatbelt profile.
+    expect(paths.readPaths).toContain(common);
+    expect(paths.readPaths).toContain(
       fs.realpathSync.native(path.join(common, 'worktrees', 'wt')),
     );
-    expect(granted).toContain(path.join(common, 'objects'));
-    expect(granted).toContain(path.join(common, 'refs'));
-    expect(granted).toContain(path.join(common, 'logs'));
   });
 
-  it('never grants hooks or config: both would break the sandbox boundary', () => {
+  it('grants write only on the subtrees a commit mutates', () => {
     const { repo, worktree } = repoWithLinkedWorktree();
     const common = fs.realpathSync.native(path.join(repo, '.git'));
 
-    const granted = linkedWorktreeGitWritePaths(worktree);
+    const { writePaths } = linkedWorktreeGitPaths(worktree);
+
+    expect(writePaths).toContain(
+      fs.realpathSync.native(path.join(common, 'worktrees', 'wt')),
+    );
+    expect(writePaths).toContain(path.join(common, 'objects'));
+    expect(writePaths).toContain(path.join(common, 'refs'));
+    expect(writePaths).toContain(path.join(common, 'logs'));
+    // The repository directory itself is readable, never writable wholesale.
+    expect(writePaths).not.toContain(common);
+  });
+
+  it('keeps hooks and config unwritable', () => {
+    const { repo, worktree } = repoWithLinkedWorktree();
+    const common = fs.realpathSync.native(path.join(repo, '.git'));
+
+    const { writePaths, protectedPaths } = linkedWorktreeGitPaths(worktree);
 
     // hooks/ is arbitrary host code execution; config rewrites remotes/filters.
-    expect(granted).not.toContain(path.join(common, 'hooks'));
-    expect(granted).not.toContain(path.join(common, 'config'));
-    // The whole .git must never be granted wholesale.
-    expect(granted).not.toContain(common);
+    expect(writePaths).not.toContain(path.join(common, 'hooks'));
+    expect(writePaths).not.toContain(path.join(common, 'config'));
+    expect(protectedPaths).toContain(path.join(common, 'hooks'));
+    expect(protectedPaths).toContain(path.join(common, 'config'));
   });
 
   it('grants nothing for an ordinary checkout', () => {
@@ -75,17 +91,22 @@ describe('linkedWorktreeGitWritePaths', () => {
     fs.mkdirSync(repo);
     git(repo, 'init', '-q', '.');
 
-    expect(linkedWorktreeGitWritePaths(repo)).toEqual([]);
+    const paths = linkedWorktreeGitPaths(repo);
+
+    expect(paths.readPaths).toEqual([]);
+    expect(paths.writePaths).toEqual([]);
   });
 
   it('grants nothing when the pointer is absent or unreadable', () => {
     const root = tempRoot();
-    expect(linkedWorktreeGitWritePaths(path.join(root, 'missing'))).toEqual([]);
+    expect(linkedWorktreeGitPaths(path.join(root, 'missing')).writePaths).toEqual(
+      [],
+    );
 
     const bogus = path.join(root, 'bogus');
     fs.mkdirSync(bogus);
     fs.writeFileSync(path.join(bogus, '.git'), 'not a gitdir pointer\n');
-    expect(linkedWorktreeGitWritePaths(bogus)).toEqual([]);
+    expect(linkedWorktreeGitPaths(bogus).writePaths).toEqual([]);
   });
 
   it('grants nothing when the pointer targets a path that does not exist', () => {
@@ -97,6 +118,9 @@ describe('linkedWorktreeGitWritePaths', () => {
       `gitdir: ${path.join(root, 'nowhere', 'worktrees', 'x')}\n`,
     );
 
-    expect(linkedWorktreeGitWritePaths(orphan)).toEqual([]);
+    const paths = linkedWorktreeGitPaths(orphan);
+
+    expect(paths.readPaths).toEqual([]);
+    expect(paths.writePaths).toEqual([]);
   });
 });

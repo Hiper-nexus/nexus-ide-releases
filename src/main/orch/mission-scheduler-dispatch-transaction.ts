@@ -36,6 +36,7 @@ import { decodeTaskScheduleDetail } from "./mission-scheduler-meta";
 import {
   assertSealedTaskSchedule,
   resolveSealedWorkerRoute,
+  supportsAdvisoryParticipationCli,
   supportsMechanicallyReadOnlyCli,
   type LiveRosterAdapter,
 } from "./mission-scheduler-plan";
@@ -369,15 +370,24 @@ export async function dispatchMissionSchedulerTask(
         ? resolveMissionSpawnAccountId(sealedRoute.decision.adapterId)
         : Promise.resolve(undefined),
   });
-  if (
-    executionMode === "read_only" &&
-    !supportsMechanicallyReadOnlyCli(sealedRoute.decision.adapterId)
-  ) {
-    throw new Error(
-      `read_only_unsupported: ${sealedRoute.decision.adapterId} não oferece ` +
-        "uma barreira mecânica de escrita verificada; " +
-        "replaneje com uma CLI que suporte sandbox read-only verificado",
-    );
+  if (executionMode === "read_only") {
+    const adapterId = sealedRoute.decision.adapterId;
+    // Two ways to earn a read_only lane, both enforced outside the prompt:
+    // the provider's own verified profile (codex argv, grok Seatbelt), or the
+    // Nexus-owned kernel sandbox that mounts the execution scope read-only for
+    // an advisory CLI (see advisory-process-sandbox). The Nexus boundary is
+    // macOS-only today, so elsewhere an advisory CLI still has no barrier.
+    const providerConfined = supportsMechanicallyReadOnlyCli(adapterId);
+    const nexusConfined =
+      process.platform === "darwin" &&
+      supportsAdvisoryParticipationCli(adapterId);
+    if (!providerConfined && !nexusConfined) {
+      throw new Error(
+        `read_only_unsupported: ${adapterId} não oferece ` +
+          "uma barreira mecânica de escrita verificada; " +
+          "replaneje com uma CLI que suporte sandbox read-only verificado",
+      );
+    }
   }
   const workerId = planned.agent.agentName;
   const plannedAllowedTools = planned.agent.allowedTools ?? [];

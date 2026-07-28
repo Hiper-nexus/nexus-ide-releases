@@ -59,7 +59,12 @@ import {
   resolvePackagedDarwinLaunchAuthorizationReadPaths,
 } from "./darwin-pty-supervisor";
 import { buildScopedExecPlan } from "../runtime/process-sandbox";
-import { linkedWorktreeGitWritePaths } from "../runtime/linked-worktree-git-paths";
+import { linkedWorktreeGitPaths } from "../runtime/linked-worktree-git-paths";
+import {
+  assertAdvisoryConfinement,
+  requiresAdvisoryProcessSandbox,
+  resolveAdvisoryProcessSandbox,
+} from "./advisory-process-sandbox";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -1230,6 +1235,9 @@ export function spawnAgentSession(
                 ];
               })()
             : [];
+        const worktreeGit = nativeReadOnly
+          ? { readPaths: [], writePaths: [], protectedPaths: [] }
+          : linkedWorktreeGitPaths(authority.scope.rootRealPath);
         const plan = buildScopedExecPlan({
           platform: process.platform,
           executable: bin,
@@ -1258,24 +1266,80 @@ export function spawnAgentSession(
                   return endpoint ? [endpoint] : undefined;
                 })()
               : undefined,
+          // A linked worktree keeps its git metadata in the PARENT repo,
+          // outside this execution scope root. Without these exact subtrees the
+          // governed worker cannot commit its own work — and it needs BOTH
+          // sides: without read, git cannot even recognise the directory
+          // (`fatal: not a git repository`); without write it dies later on
+          // `<repo>/.git/worktrees/<id>/index.lock`. Either way the worker
+          // correctly refuses to report success and the mission blocks with the
+          // file already produced. Read-only lanes never commit, so they get
+          // neither.
           extraReadPaths: [
             ...codexProcessSandbox.providerStatePaths,
             ...trustedNativeRuntimeReadPaths,
             ...darwinPtySupervisorReadPaths,
+            ...worktreeGit.readPaths,
           ],
           extraWritePaths: [
             ...codexProcessSandbox.providerStatePaths,
-            // A linked worktree keeps its git metadata in the PARENT repo,
-            // outside this execution scope root. Without these exact subtrees
-            // the governed worker cannot commit its own work: git dies on
-            // `<repo>/.git/worktrees/<id>/index.lock` and the worker correctly
-            // refuses to report success, blocking the mission. Read-only lanes
-            // never commit, so they never receive it.
-            ...(nativeReadOnly
-              ? []
-              : linkedWorktreeGitWritePaths(authority.scope.rootRealPath)),
+            ...worktreeGit.writePaths,
           ],
-          protectedWritePaths: codexProcessSandbox.protectedWritePaths,
+          protectedWritePaths: [
+            ...codexProcessSandbox.protectedWritePaths,
+            ...worktreeGit.protectedPaths,
+          ],
+        });
+        spawnFile = plan.file;
+        spawnArgs = plan.args;
+        spawnCwd = plan.cwd;
+        spawnEnv = cleanEnv(plan.env);
+      }
+    } catch (error) {
+      decoration?.onSpawnFailed?.();
+      throw error;
+    }
+  } else if (
+    requiresAdvisoryProcessSandbox(
+      adapter.id,
+      authority.context?.readOnly === true,
+    )
+  ) {
+    // Advisory CLIs have no native read-only profile, so a prompt is the only
+    // thing asking them to behave — and a prompt is not a boundary. Nexus wraps
+    // them in its OWN Seatbelt profile instead: the kernel mounts the execution
+    // scope read-only, the per-session private HOME stays writable for auth and
+    // session state, and only the CLI binary may reach the network. Failure to
+    // build that boundary must abort the spawn, never downgrade it.
+    try {
+      const advisorySandbox = resolveAdvisoryProcessSandbox({
+        adapterId: adapter.id,
+        readOnlyLane: true,
+        privateHome: spawnEnv.HOME,
+        privateTmp: spawnEnv.TMPDIR,
+        binaryPath: bin,
+      });
+      assertAdvisoryConfinement(
+        adapter.id,
+        true,
+        advisorySandbox,
+        process.platform,
+      );
+      if (advisorySandbox) {
+        const plan = buildScopedExecPlan({
+          platform: process.platform,
+          executable: bin,
+          args,
+          cwd,
+          rootRealPath: authority.scope.rootRealPath,
+          sandboxDir: advisorySandbox.sandboxDir,
+          env: spawnEnv,
+          readOnlyRoot: true,
+          sandboxProfile: "workspace-only",
+          extraReadPaths: advisorySandbox.extraWritePaths,
+          extraWritePaths: advisorySandbox.extraWritePaths,
+          networkAllowedProcessPaths:
+            advisorySandbox.networkAllowedProcessPaths,
         });
         spawnFile = plan.file;
         spawnArgs = plan.args;
