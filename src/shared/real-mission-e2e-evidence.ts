@@ -121,8 +121,13 @@ export const realMissionE2EEvidenceSchema = z
         message: "private runner cannot carry a product-wizard receipt",
       });
     }
+    // O receipt causal é obrigatório apenas no PASS. Um FAIL de product-wizard
+    // (wizard nunca executado, timeout, setup) fecha com wizardReceipt nulo —
+    // exigir a cadeia causal aqui derrubava o processo com ZodError em vez de
+    // persistir a evidência de falha.
     if (
       evidence.launchSurface === "product-wizard" &&
+      evidence.status === "pass" &&
       (evidence.wizardCoverage !== "main-owned-product-sequence" ||
         evidence.wizardReceipt === null)
     ) {

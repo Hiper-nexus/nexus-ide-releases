@@ -7,6 +7,7 @@ import {
   adapterCapabilityMatrixOf,
   type AdapterCapabilityMatrix,
 } from "../../shared/adapter-types";
+import { supportsAdvisoryParticipationCli } from "../../shared/mission-advisory";
 import { defaultSquadModelForAdapter } from "../../shared/squad-model-defaults";
 import { isAdapterModelAuthenticated } from "../orch/mission-runtime-readiness";
 import { AgentAvatar } from "./AgentAvatar";
@@ -77,9 +78,19 @@ function modelLabel(adapterId: string, model: string): string {
 
 function workerCapabilityLabel(
   capabilities: AdapterCapabilityMatrix,
+  adapterId: string,
+  agentCategory: SquadAgent["category"],
+  orchestratorCli: string | undefined,
 ): string {
   if (capabilities.governedWriter) return "escrita confinada";
   if (capabilities.autonomousReadOnly) return "leitura supervisionada";
+  if (
+    (agentCategory === "reviewer" || agentCategory === "scout") &&
+    supportsAdvisoryParticipationCli(adapterId) &&
+    (adapterId !== "claude" || orchestratorCli !== "claude")
+  ) {
+    return "leitura advisory MCP";
+  }
   if (capabilities.launchable) return "somente manual";
   return "indisponível";
 }
@@ -134,7 +145,7 @@ export function MissionWizardReview({
   const workerAdapterCandidates = adapters.filter((adapter) => {
     const capabilities = adapterCapabilityMatrixOf(adapter);
     return (
-      adapter.id !== "claude" &&
+      (adapter.id !== "claude" || orchestratorAgent?.cli !== "claude") &&
       adapter.kind === "cli-pty" &&
       adapter.installed &&
       capabilities.launchable &&
@@ -157,13 +168,22 @@ export function MissionWizardReview({
   ): boolean => {
     if (!adapter) return false;
     const capabilities = adapterCapabilityMatrixOf(adapter);
+    // Advisory lane (Fases 0/1): CLIs com rota Nexus MCP mas sem confinamento
+    // nativo enforceável participam como advisors read_only em papéis
+    // reviewer/scout. Claude só como advisor quando o orquestrador do roster
+    // não é Claude (reserveClaude: uma única sessão OAuth por missão).
+    const advisoryLane =
+      (agent.category === "reviewer" || agent.category === "scout") &&
+      supportsAdvisoryParticipationCli(adapter.id) &&
+      (adapter.id !== "claude" || orchestratorAgent?.cli !== "claude");
     const roleQualified =
       agent.category === "reviewer" || agent.category === "scout"
         ? capabilities.governedWriter ||
-          capabilities.autonomousReadOnly
+          capabilities.autonomousReadOnly ||
+          advisoryLane
         : capabilities.governedWriter;
     return Boolean(
-      adapter.id !== "claude" &&
+      (adapter.id !== "claude" || advisoryLane) &&
         adapter.kind === "cli-pty" &&
         adapter.installed &&
         capabilities.launchable &&
@@ -200,6 +220,13 @@ export function MissionWizardReview({
           !capabilities.autonomousReadOnly &&
           !capabilities.governedWriter
         ) {
+          if (
+            supportsAdvisoryParticipationCli(unqualifiedWorker.cli) &&
+            (unqualifiedWorker.category === "reviewer" ||
+              unqualifiedWorker.category === "scout")
+          ) {
+            return `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} como advisor read_only nesta release.`;
+          }
           return `${label} está disponível para uso manual no Terminal, mas não pode executar o worker ${unqualifiedWorker.agentName} automaticamente nesta release.`;
         }
         if (
@@ -445,6 +472,9 @@ export function MissionWizardReview({
                                   {x.label} ·{" "}
                                   {workerCapabilityLabel(
                                     adapterCapabilityMatrixOf(x),
+                                    x.id,
+                                    a.category,
+                                    orchestratorAgent?.cli,
                                   )}
                                 </option>
                               );

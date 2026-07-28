@@ -1,5 +1,6 @@
 import type { AdapterInfo } from "../../shared/types";
 import type { SquadAgent } from "../../shared/orch-types";
+import { supportsAdvisoryParticipationCli } from "../../shared/mission-advisory";
 import { defaultSquadModelForAdapter } from "../../shared/squad-model-defaults";
 
 const LEGACY_ORCHESTRATOR_CLI = "claude";
@@ -21,6 +22,9 @@ type RosterAdapter = Pick<
   "id" | "installed" | "autonomousWorkspaceWriteCapable"
 > & {
   enabled?: boolean;
+  capabilities?: {
+    readonly autonomousReadOnly?: boolean;
+  };
 };
 
 function unique(values: string[]): string[] {
@@ -69,7 +73,9 @@ function adapterInstalledEnabled(
  * Balance worker CLIs across qualified writers. Preserve an explicit, installed
  * Maestro (and worker) assignment — release fixtures and user-reviewed squads
  * must not be rewritten to the legacy Claude default when that provider is
- * present but unauthenticated.
+ * present but unauthenticated. Workers reviewer/scout em CLIs da advisory lane
+ * (Fases 0/1: rota Nexus MCP read_only) também são preservados; Claude só como
+ * advisor quando o orquestrador do roster não é Claude (reserveClaude).
  */
 export function balanceSquadRosterCli(
   agents: SquadAgent[],
@@ -77,6 +83,9 @@ export function balanceSquadRosterCli(
   orchestratorAdapterId = LEGACY_ORCHESTRATOR_CLI,
 ): SquadAgent[] {
   const pool = workerCliPool(adapters);
+  const rosterOrchestratorCli = agents.find(
+    (agent) => agent.category === "orchestrator",
+  )?.cli;
   let workerIndex = 0;
 
   return agents.map((agent) => {
@@ -97,14 +106,30 @@ export function balanceSquadRosterCli(
       };
     }
 
-    const keepWorker =
-      adapterInstalledEnabled(adapters, agent.cli) &&
+    const advisoryLaneWorker =
+      (agent.category === "reviewer" || agent.category === "scout") &&
+      supportsAdvisoryParticipationCli(agent.cli) &&
+      (agent.cli !== "claude" || rosterOrchestratorCli !== "claude");
+    // Confinamento mecânico read-only (ex.: grok Seatbelt) também preserva
+    // reviewers/scouts — a escrita continua exigindo workspace-write governado.
+    const mechanicallyReadOnlyWorker =
+      (agent.category === "reviewer" || agent.category === "scout") &&
       agent.cli !== LEGACY_ORCHESTRATOR_CLI &&
       adapters.some(
         (adapter) =>
           adapter.id === agent.cli &&
-          adapter.autonomousWorkspaceWriteCapable === true,
+          adapter.capabilities?.autonomousReadOnly === true,
       );
+    const keepWorker =
+      adapterInstalledEnabled(adapters, agent.cli) &&
+      (agent.cli !== LEGACY_ORCHESTRATOR_CLI || advisoryLaneWorker) &&
+      (advisoryLaneWorker ||
+        mechanicallyReadOnlyWorker ||
+        adapters.some(
+          (adapter) =>
+            adapter.id === agent.cli &&
+            adapter.autonomousWorkspaceWriteCapable === true,
+        ));
     if (keepWorker) {
       return {
         ...agent,

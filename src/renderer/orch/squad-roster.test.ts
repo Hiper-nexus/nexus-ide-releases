@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SquadAgent } from "../../shared/orch-types";
 import { balanceSquadRosterCli, workerCliPool } from "./squad-roster";
-
 function adapter(
   id: string,
   installed = true,
@@ -71,7 +70,7 @@ describe("workerCliPool", () => {
 });
 
 describe("balanceSquadRosterCli", () => {
-  it("preserves an installed Maestro CLI and retargets unqualified workers to Codex", () => {
+  it("preserves an installed Maestro CLI and advisory-lane reviewer/scout workers", () => {
     const balanced = balanceSquadRosterCli(
       [
         agent("orch", "orchestrator", "codex"),
@@ -84,18 +83,66 @@ describe("balanceSquadRosterCli", () => {
     );
 
     // Never rewrite a sealed/reviewed Maestro (e.g. release-gate codex) to the
-    // legacy Claude default just because Claude is also installed.
+    // legacy Claude default just because Claude is also installed. Reviewer e
+    // scout na advisory lane (Fases 0/1) são preservados; executor/architect
+    // sem escrita confinada seguem retargetados para Codex.
     expect(balanced.map((item) => item.cli)).toEqual([
       "codex",
+      "claude",
       "codex",
       "codex",
-      "codex",
-      "codex",
+      "claude",
     ]);
     expect(balanced[0].model).toBe("codex-model");
-    expect(balanced.slice(1).map((item) => item.model)).toEqual(
-      Array.from({ length: 4 }, () => undefined),
+    expect(balanced[1].model).toBe("claude-model");
+    expect(balanced[4].model).toBe("claude-model");
+    expect([balanced[2].model, balanced[3].model]).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("preserves advisory reviewer/scout workers on MCP-only CLIs", () => {
+    const grokAdapter = {
+      ...adapter("grok"),
+      capabilities: { autonomousReadOnly: true },
+    };
+    const balanced = balanceSquadRosterCli(
+      [
+        agent("orch", "orchestrator", "codex"),
+        agent("e2e-advisor-kimi", "scout", "kimi"),
+        agent("e2e-advisor-grok", "reviewer", "grok"),
+        agent("e2e-executor", "executor", "codex"),
+      ],
+      [
+        adapter("codex"),
+        adapter("kimi"),
+        grokAdapter,
+        adapter("agy"),
+      ],
     );
+
+    // Advisors read_only (rota Nexus MCP) e read-only mecânico (grok Seatbelt)
+    // não são reescritos para Codex.
+    expect(balanced.map((item) => item.cli)).toEqual([
+      "codex",
+      "kimi",
+      "grok",
+      "codex",
+    ]);
+  });
+
+  it("rewrites a claude advisor to Codex when the roster orchestrator is Claude", () => {
+    const balanced = balanceSquadRosterCli(
+      [
+        agent("orch", "orchestrator", "claude"),
+        agent("e2e-advisor-claude", "reviewer", "claude"),
+      ],
+      [adapter("claude"), adapter("codex")],
+    );
+
+    // reserveClaude: com orquestrador Claude, nenhum worker Claude é preservado.
+    expect(balanced.map((item) => item.cli)).toEqual(["claude", "codex"]);
   });
 
   it("fills an empty Maestro from the automatic verified route", () => {

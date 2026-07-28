@@ -338,6 +338,37 @@ describe("real mission E2E v9 advisor participation", () => {
       "advisor-absent",
     );
   });
+
+  it("closes product-wizard FAIL evidence without the causal wizard receipt", () => {
+    // O wizard nunca executou (timeout/setup): o FAIL fecha com receipt nulo
+    // em vez de derrubar o processo com ZodError no attester.
+    const evidence = validPassEvidence("product-wizard");
+    evidence.status = "fail";
+    evidence.wizardCoverage = "not-covered";
+    evidence.wizardReceipt = null;
+    evidence.failure = {
+      code: "timeout",
+      reason: null,
+      cta: REAL_MISSION_E2E_CTA,
+      snapshot: {
+        missionStatus: null,
+        paneCount: 0,
+        dispatchCount: 0,
+        handoffCount: 0,
+      },
+    };
+    const parsed = parseRealMissionE2EEvidence(evidence);
+    expect(parsed.status).toBe("fail");
+    expect(parsed.failure?.code).toBe("timeout");
+
+    // No PASS, a cadeia causal continua obrigatória.
+    const forgedPass = validPassEvidence("product-wizard");
+    forgedPass.wizardCoverage = "not-covered";
+    forgedPass.wizardReceipt = null;
+    expect(() => parseRealMissionE2EEvidence(forgedPass)).toThrow(
+      /causal main-owned receipt|real-mission invariants/i,
+    );
+  });
 });
 
 describe("real mission E2E v9 claude orchestrator variant", () => {

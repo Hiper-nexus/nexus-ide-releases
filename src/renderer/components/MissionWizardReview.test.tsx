@@ -640,3 +640,165 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => root.unmount());
   });
 });
+
+describe("MissionWizardReview advisory worker lane", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  const claude: AdapterInfo = {
+    ...codex,
+    id: "claude",
+    label: "Claude",
+    models: { list: ["claude-opus-5"], default: "claude-opus-5" },
+    orchestrationEvidence: "verified",
+    autonomousWorkspaceWriteCapable: false,
+    capabilities: {
+      launchable: true,
+      promptInjectable: true,
+      statusObservable: true,
+      resumable: true,
+      autonomousReadOnly: true,
+      governedWriter: false,
+      verifiedMaestro: true,
+    },
+  };
+
+  const aider: AdapterInfo = {
+    ...kimi,
+    id: "aider",
+    label: "Aider",
+  };
+
+  function reviewHarness(
+    rosterAgents: SquadAgent[],
+    adapterList: AdapterInfo[],
+    onLaunch = vi.fn(),
+  ) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <MissionWizardReview
+          squad={{ ...squad, agents: rosterAgents }}
+          roster={rosterAgents}
+          adapters={adapterList}
+          providers={adapterList.map((adapter) => provider(adapter))}
+          highlightedAgentId={null}
+          error={null}
+          spawning={false}
+          rosterSaved={false}
+          rosterInvalidAgent={null}
+          onSaveRoster={vi.fn()}
+          onUpdateAgent={vi.fn()}
+          onError={vi.fn()}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onLaunch={onLaunch}
+        />,
+      );
+    });
+    const launch = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "Usar este squad",
+    );
+    return { host, root, launch, onLaunch };
+  }
+
+  it("qualifies an authenticated advisory CLI for a read_only reviewer", () => {
+    const reviewer: SquadAgent = {
+      id: "e2e-advisor-kimi",
+      agentName: "E2E Advisor Kimi",
+      category: "reviewer",
+      cli: "kimi",
+      model: kimi.models.default,
+      effort: "medium",
+      allowedTools: [],
+    };
+    const { host, root, launch, onLaunch } = reviewHarness(
+      [orchestrator, reviewer],
+      [codex, kimi],
+    );
+
+    // Advisory lane (Fases 0/1): reviewer/scout read_only não exige
+    // confinamento nativo — a fronteira é a autoridade MCP read-only.
+    const kimiOption = [
+      ...host.querySelectorAll<HTMLOptionElement>(
+        'select[aria-label="Provider de E2E Advisor Kimi"] option',
+      ),
+    ].find((option) => option.text.includes("Kimi"));
+    expect(kimiOption?.text).toBe("Kimi · leitura advisory MCP");
+    expect(kimiOption?.disabled).toBe(false);
+    expect(launch?.disabled).toBe(false);
+    act(() => launch?.click());
+    expect(onLaunch).toHaveBeenCalledOnce();
+    act(() => root.unmount());
+  });
+
+  it("admits a claude advisor when the orchestrator is not Claude", () => {
+    const scout: SquadAgent = {
+      id: "e2e-advisor-claude",
+      agentName: "E2E Advisor Claude",
+      category: "scout",
+      cli: "claude",
+      model: claude.models.default,
+      effort: "medium",
+      allowedTools: [],
+    };
+    const { root, launch } = reviewHarness(
+      [orchestrator, scout],
+      [codex, claude],
+    );
+
+    expect(launch?.disabled).toBe(false);
+    act(() => root.unmount());
+  });
+
+  it("blocks a claude worker when the orchestrator already is Claude", () => {
+    const claudeOrchestrator: SquadAgent = {
+      ...orchestrator,
+      cli: "claude",
+      model: claude.models.default,
+    };
+    const reviewer: SquadAgent = {
+      id: "e2e-advisor-claude",
+      agentName: "E2E Advisor Claude",
+      category: "reviewer",
+      cli: "claude",
+      model: claude.models.default,
+      effort: "medium",
+      allowedTools: [],
+    };
+    // reserveClaude: uma única sessão OAuth Claude por missão — o orquestrador.
+    const { root, launch, onLaunch } = reviewHarness(
+      [claudeOrchestrator, reviewer],
+      [codex, claude],
+    );
+
+    expect(launch?.disabled).toBe(true);
+    act(() => launch?.click());
+    expect(onLaunch).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it("keeps a non-advisory CLI without confinement out of reviewer work", () => {
+    const reviewer: SquadAgent = {
+      id: "worker-aider",
+      agentName: "Reviewer Aider",
+      category: "reviewer",
+      cli: "aider",
+      model: aider.models.default,
+      effort: "medium",
+      allowedTools: [],
+    };
+    const { root, launch, onLaunch } = reviewHarness(
+      [orchestrator, reviewer],
+      [codex, aider],
+    );
+
+    expect(launch?.disabled).toBe(true);
+    act(() => launch?.click());
+    expect(onLaunch).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+});
