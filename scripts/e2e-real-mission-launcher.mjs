@@ -524,50 +524,6 @@ function stageAdvisorAuthFile(
   }
 }
 
-/** Entries whose source must already be private before we copy them. */
-const ADVISORY_SECRET_ENTRY_PATTERN =
-  /(?:auth|credential|token|oauth|secret|cookie|private[._-]?key|\.pem$)/iu;
-
-/** Recursive private copy of an advisor OAuth directory (AGY antigravity). */
-function stageAdvisorAuthDirectory(
-  source,
-  destination,
-  { label, privateRoot },
-) {
-  const rootStat = fs.lstatSync(source);
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    throw new Error(`refusing to stage a non-directory ${label}`);
-  }
-  fs.mkdirSync(destination, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-  chmodPrivateTree(privateRoot, destination);
-  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
-    const sourcePath = path.join(source, entry.name);
-    const entryStat = fs.lstatSync(sourcePath);
-    if (entryStat.isSymbolicLink()) {
-      throw new Error(`refusing to stage ${label} through a symlink`);
-    }
-    if (entryStat.isDirectory()) {
-      stageAdvisorAuthDirectory(
-        sourcePath,
-        path.join(destination, entry.name),
-        { label, privateRoot },
-      );
-    } else if (entryStat.isFile()) {
-      // Secret entries (auth/token/oauth/...) must already be 0600 at the
-      // source — a world-readable credential is a hard fail. Non-secret state
-      // (annotations, pbtxt, installation ids) may be mode-lax upstream; the
-      // copy still lands 0600 in the isolated HOME.
-      stageAdvisorAuthFile(sourcePath, destination, {
-        label: `${label} entry ${entry.name}`,
-        privateRoot,
-        requirePrivateMode: ADVISORY_SECRET_ENTRY_PATTERN.test(entry.name),
-      });
-    } else {
-      throw new Error(`refusing to stage a non-regular ${label} entry`);
-    }
-  }
-}
-
 export const REAL_MISSION_ADVISOR_BINARIES = Object.freeze([
   "grok",
   "kimi",
@@ -740,20 +696,52 @@ export function stageAdvisorAuthentication(
     statuses.omp = report("omp", "staged");
   }
 
-  // agy: the whole ~/.gemini/antigravity OAuth tree, copied privately.
-  try {
-    stageAdvisorAuthDirectory(
-      path.join(source, ".gemini", "antigravity"),
-      path.join(home, ".gemini", "antigravity"),
-      { label: "AGY antigravity directory", privateRoot: home },
+  // agy: like claude, the OAuth secret lives in the macOS keychain (service
+  // "gemini", account "antigravity"), readable by the child as the same user.
+  // The governed home overlay only links non-secret identity entries, so
+  // stage those (plus oauth_creds.json when it exists) — never the whole
+  // antigravity tree (it carries binaries, caches and conversations).
+  if (process.platform !== "darwin") {
+    statuses.agy = report("agy", "skipped");
+  } else {
+    const lookup = run(
+      "/usr/bin/security",
+      ["find-generic-password", "-s", "gemini", "-a", "antigravity"],
+      {
+        encoding: "utf8",
+        env: { PATH: "/usr/bin:/bin", LANG: "C" },
+        shell: false,
+        timeout: 10_000,
+      },
     );
-    statuses.agy = report("agy", "staged");
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      statuses.agy = report("agy", "skipped");
-    } else {
-      throw error;
-    }
+    const geminiDestination = path.join(home, ".gemini");
+    stageAdvisorAuthFile(
+      path.join(source, ".gemini", "google_accounts.json"),
+      geminiDestination,
+      {
+        label: "agy google accounts identity",
+        requirePrivateMode: false,
+        privateRoot: home,
+      },
+    );
+    stageAdvisorAuthFile(
+      path.join(source, ".gemini", "installation_id"),
+      geminiDestination,
+      {
+        label: "agy installation id",
+        requirePrivateMode: false,
+        privateRoot: home,
+      },
+    );
+    stageAdvisorAuthFile(
+      path.join(source, ".gemini", "oauth_creds.json"),
+      geminiDestination,
+      { label: "agy oauth credentials", privateRoot: home },
+    );
+    statuses.agy = report(
+      "agy",
+      lookup.status === 0 ? "staged" : "skipped",
+    );
   }
 
   // opencode: $XDG_DATA_HOME/opencode/auth.json, defaulting to

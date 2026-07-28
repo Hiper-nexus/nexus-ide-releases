@@ -1173,9 +1173,15 @@ describe("real mission advisor authentication staging", () => {
       path.join(sourceHome, ".omp", "agent", "agent.db-wal"),
       "wal",
     );
+    // agy: o segredo OAuth fica na keychain (service "gemini", account
+    // "antigravity"); só a identidade NÃO-secreta é staged.
     writePrivate(
-      path.join(sourceHome, ".gemini", "antigravity", "oauth", "token.json"),
-      '{"agy":1}\n',
+      path.join(sourceHome, ".gemini", "google_accounts.json"),
+      '{"accounts":[]}\n',
+    );
+    writePrivate(
+      path.join(sourceHome, ".gemini", "installation_id"),
+      "install-1\n",
     );
     writePrivate(
       path.join(sourceHome, ".local", "share", "opencode", "auth.json"),
@@ -1236,7 +1242,8 @@ describe("real mission advisor authentication staging", () => {
       [".kimi-code/credentials/kimi-code.json", '{"kimi":1}\n'],
       [".omp/agent/agent.db", "sqlite"],
       [".omp/agent/agent.db-wal", "wal"],
-      [".gemini/antigravity/oauth/token.json", '{"agy":1}\n'],
+      [".gemini/google_accounts.json", '{"accounts":[]}\n'],
+      [".gemini/installation_id", "install-1\n"],
       [".local/share/opencode/auth.json", '{"opencode":1}\n'],
     ];
     for (const [relative, content] of stagedFiles) {
@@ -1249,7 +1256,7 @@ describe("real mission advisor authentication staging", () => {
       ".kimi-code",
       ".kimi-code/credentials",
       ".omp/agent",
-      ".gemini/antigravity/oauth",
+      ".gemini",
       ".local/share/opencode",
     ]) {
       expect(
@@ -1456,30 +1463,6 @@ describe("real mission advisor authentication staging", () => {
         path.join(isolatedHome, ".kimi-code", "credentials", "kimi-code.json"),
       ),
     ).toBe(false);
-  });
-
-  it("refuses a symlink inside the AGY antigravity tree", () => {
-    const root = makeTemp();
-    const sourceHome = path.join(root, "real-home");
-    const isolatedHome = path.join(root, "isolated-home");
-    const external = path.join(root, "external-token.json");
-    fs.writeFileSync(external, "{}\n", { mode: 0o600 });
-    fs.mkdirSync(path.join(sourceHome, ".gemini", "antigravity"), {
-      recursive: true,
-    });
-    fs.symlinkSync(
-      external,
-      path.join(sourceHome, ".gemini", "antigravity", "token.json"),
-    );
-
-    expect(() =>
-      stageAdvisorAuthentication(isolatedHome, {
-        sourceHome,
-        environment: {},
-        onSkip: vi.fn(),
-        run: keychainRun(1),
-      }),
-    ).toThrow(/symlink/);
   });
 
   it("treats a missing claude keychain credential as a skip, never a copy", () => {
