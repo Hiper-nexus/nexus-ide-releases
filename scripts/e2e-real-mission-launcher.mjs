@@ -524,6 +524,10 @@ function stageAdvisorAuthFile(
   }
 }
 
+/** Entries whose source must already be private before we copy them. */
+const ADVISORY_SECRET_ENTRY_PATTERN =
+  /(?:auth|credential|token|oauth|secret|cookie|private[._-]?key|\.pem$)/iu;
+
 /** Recursive private copy of an advisor OAuth directory (AGY antigravity). */
 function stageAdvisorAuthDirectory(
   source,
@@ -549,9 +553,14 @@ function stageAdvisorAuthDirectory(
         { label, privateRoot },
       );
     } else if (entryStat.isFile()) {
+      // Secret entries (auth/token/oauth/...) must already be 0600 at the
+      // source — a world-readable credential is a hard fail. Non-secret state
+      // (annotations, pbtxt, installation ids) may be mode-lax upstream; the
+      // copy still lands 0600 in the isolated HOME.
       stageAdvisorAuthFile(sourcePath, destination, {
         label: `${label} entry ${entry.name}`,
         privateRoot,
+        requirePrivateMode: ADVISORY_SECRET_ENTRY_PATTERN.test(entry.name),
       });
     } else {
       throw new Error(`refusing to stage a non-regular ${label} entry`);
