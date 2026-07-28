@@ -129,6 +129,11 @@ if (evalJs) {
 
 const shot = await send('Page.captureScreenshot', { format: 'png' });
 writeFileSync(out, Buffer.from(shot.data, 'base64'));
+// Device emulation changes the live renderer viewport, not only the captured
+// image. Leaving it active makes the real BrowserWindow render wider than its
+// native surface and visibly clips the right edge after a diagnostic shot.
+await send('Emulation.clearDeviceMetricsOverride');
+await sleep(200);
 console.log(`shot salvo em ${out}`);
 ws.close();
 process.exit(0);

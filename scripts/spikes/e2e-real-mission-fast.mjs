@@ -13,6 +13,7 @@
 //   node scripts/spikes/e2e-real-mission-fast.mjs [--app <path>]
 
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,9 +31,18 @@ function sha256File(filePath) {
 }
 
 function resolveHeadSha(rootPath) {
-  const dotGit = fs.readFileSync(path.join(rootPath, '.git'), 'utf8').trim();
-  const gitdirMatch = dotGit.match(/^gitdir:\s*(.+)$/);
-  let gitdir = gitdirMatch ? gitdirMatch[1] : path.join(rootPath, '.git');
+  const dotGitPath = path.join(rootPath, '.git');
+  let gitdir = dotGitPath;
+  if (!fs.lstatSync(dotGitPath).isDirectory()) {
+    const dotGit = fs.readFileSync(dotGitPath, 'utf8').trim();
+    const gitdirMatch = dotGit.match(/^gitdir:\s*(.+)$/);
+    if (!gitdirMatch) {
+      throw new Error(`invalid .git file: ${dotGitPath}`);
+    }
+    gitdir = path.isAbsolute(gitdirMatch[1])
+      ? gitdirMatch[1]
+      : path.resolve(rootPath, gitdirMatch[1]);
+  }
   let headRef = fs.readFileSync(path.join(gitdir, 'HEAD'), 'utf8').trim();
   if (headRef.startsWith('ref:')) {
     const ref = headRef.slice(4).trim();
@@ -89,6 +99,23 @@ const releaseBinding = {
   artifact: { sha256: artifactSha256, identity },
 };
 
+function spawnWithDiagnostics(command, args, options) {
+  const child = spawn(command, args, options);
+  const forwardOperationalLines = (chunk) => {
+    for (const line of chunk.toString().split(/\r?\n/u)) {
+      if (
+        /^\[(?:real-mission|mission-|task-dispatch|nexus|pty)/u.test(line) ||
+        /\b(?:failed|blocked|exited|worker_incarnation_lost)\b/iu.test(line)
+      ) {
+        process.stderr.write(`[app] ${line}\n`);
+      }
+    }
+  };
+  child.stdout?.on('data', forwardOperationalLines);
+  child.stderr?.on('data', forwardOperationalLines);
+  return child;
+}
+
 console.error(
   `[fast] app=${path.relative(root, appPath)} ` +
     `commit=${commitSha.slice(0, 12)} binarySha=${artifactSha256.slice(0, 12)}`,
@@ -100,6 +127,7 @@ try {
     {
       evidencePath,
       environment: { ...process.env, NEXUS_REAL_MISSION_PRESERVE_USERDATA: '1' },
+      spawnImpl: spawnWithDiagnostics,
       releaseBinding,
     },
   );
