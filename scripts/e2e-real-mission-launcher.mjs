@@ -965,16 +965,18 @@ export function stageAdvisorAuthentication(
     openCodeStaged ? "staged" : "credentialless",
   );
 
-  // claude: the OAuth secret lives in the macOS keychain, readable by the
-  // child (same user), but the native adapter also needs the non-secret
-  // login identity (~/.claude.json oauthAccount/userID) or it falls into
-  // /login. "staged" requires both; nothing secret is ever copied.
+  // claude: Keychain holds the OAuth secret. Product-wizard Electron runs with
+  // HOME=isolated and its auth probe / isAdapterModelAuthenticated may not
+  // treat keychain-only as ready (login-needed → Usar este squad disabled for
+  // E2E Advisor Claude). Materialize a slim ~/.claude/.credentials.json in
+  // the isolated HOME from the operator keychain so file-backed detection and
+  // env materialization work. Never copy the fat mcpOAuth plugin map.
   if (process.platform !== "darwin") {
     statuses.claude = report("claude", "skipped");
   } else {
-    const lookup = run(
+    const secret = run(
       "/usr/bin/security",
-      ["find-generic-password", "-s", "Claude Code-credentials"],
+      ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
       {
         encoding: "utf8",
         env: { PATH: "/usr/bin:/bin", LANG: "C" },
@@ -982,16 +984,73 @@ export function stageAdvisorAuthentication(
         timeout: 10_000,
       },
     );
+    const rawBlob =
+      secret.status === 0 && typeof secret.stdout === "string"
+        ? secret.stdout.trim()
+        : "";
+    const slimBlob = slimClaudeKeychainBlob(rawBlob);
     const identityStaged = stageClaudeNativeIdentity(home, {
       sourceHome: source,
     });
-    statuses.claude = report(
-      "claude",
-      lookup.status === 0 && identityStaged ? "staged" : "skipped",
-    );
+    if (!slimBlob || !identityStaged) {
+      statuses.claude = report("claude", "skipped");
+    } else {
+      const claudeDir = path.join(home, ".claude");
+      fs.mkdirSync(claudeDir, {
+        recursive: true,
+        mode: PRIVATE_DIRECTORY_MODE,
+      });
+      fs.chmodSync(claudeDir, PRIVATE_DIRECTORY_MODE);
+      fs.writeFileSync(path.join(claudeDir, ".credentials.json"), slimBlob, {
+        mode: PRIVATE_FILE_MODE,
+      });
+      statuses.claude = report("claude", "staged");
+    }
   }
 
   return statuses;
+}
+
+/**
+ * Pure: keep only claudeAiOauth with a non-empty accessToken (matches main
+ * slimClaudeCredentialBlob). Returns compact JSON without newlines, or null.
+ */
+export function slimClaudeKeychainBlob(blob) {
+  if (typeof blob !== "string" || !blob) return null;
+  try {
+    const parsed = JSON.parse(blob);
+    const oauth = parsed?.claudeAiOauth;
+    if (!oauth || typeof oauth !== "object" || Array.isArray(oauth)) {
+      return null;
+    }
+    if (typeof oauth.accessToken !== "string" || !oauth.accessToken) {
+      return null;
+    }
+    const slimOauth = { accessToken: oauth.accessToken };
+    if (typeof oauth.refreshToken === "string" && oauth.refreshToken) {
+      slimOauth.refreshToken = oauth.refreshToken;
+    }
+    if (typeof oauth.expiresAt === "number" && Number.isFinite(oauth.expiresAt)) {
+      slimOauth.expiresAt = oauth.expiresAt;
+    }
+    if (
+      typeof oauth.refreshTokenExpiresAt === "number" &&
+      Number.isFinite(oauth.refreshTokenExpiresAt)
+    ) {
+      slimOauth.refreshTokenExpiresAt = oauth.refreshTokenExpiresAt;
+    }
+    if (Array.isArray(oauth.scopes)) {
+      const scopes = oauth.scopes.filter(
+        (s) => typeof s === "string" && s.length > 0,
+      );
+      if (scopes.length > 0) slimOauth.scopes = scopes;
+    } else if (typeof oauth.scopes === "string" && oauth.scopes.trim()) {
+      slimOauth.scopes = oauth.scopes.trim();
+    }
+    return JSON.stringify({ claudeAiOauth: slimOauth });
+  } catch {
+    return null;
+  }
 }
 
 /**

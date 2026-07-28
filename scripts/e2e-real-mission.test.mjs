@@ -1153,7 +1153,29 @@ describe("real mission advisor authentication staging", () => {
     fs.writeFileSync(file, content, { mode: 0o600 });
   };
   const keychainRun = (status) =>
-    vi.fn().mockReturnValue({ status, stdout: "", stderr: "" });
+    vi.fn().mockImplementation((bin, args = []) => {
+      const joined = Array.isArray(args) ? args.join(" ") : "";
+      // Claude/Agy secret reads need a non-empty stdout for "usable" session.
+      if (status === 0 && joined.includes("-w")) {
+        if (joined.includes("Claude Code-credentials")) {
+          return {
+            status: 0,
+            stdout:
+              JSON.stringify({
+                claudeAiOauth: {
+                  accessToken: "sk-ant-oat01-test",
+                  refreshToken: "sk-ant-ort01-test",
+                },
+              }) + "\n",
+            stderr: "",
+          };
+        }
+        if (joined.includes("antigravity")) {
+          return { status: 0, stdout: "gemini-secret-blob\n", stderr: "" };
+        }
+      }
+      return { status, stdout: "", stderr: "" };
+    });
 
   it("stages every advisor's auth material into the isolated HOME with private modes", () => {
     const root = makeTemp();
@@ -1252,7 +1274,12 @@ describe("real mission advisor authentication staging", () => {
       expect(onSkip).not.toHaveBeenCalled();
       expect(run).toHaveBeenCalledWith(
         "/usr/bin/security",
-        ["find-generic-password", "-s", "Claude Code-credentials"],
+        [
+          "find-generic-password",
+          "-s",
+          "Claude Code-credentials",
+          "-w",
+        ],
         expect.objectContaining({ shell: false }),
       );
       const stagedIdentity = JSON.parse(
@@ -1267,6 +1294,14 @@ describe("real mission advisor authentication staging", () => {
       expect(
         fs.statSync(path.join(isolatedHome, ".claude.json")).mode & 0o777,
       ).toBe(0o600);
+      const creds = JSON.parse(
+        fs.readFileSync(
+          path.join(isolatedHome, ".claude", ".credentials.json"),
+          "utf8",
+        ),
+      );
+      expect(creds.claudeAiOauth.accessToken).toBe("sk-ant-oat01-test");
+      expect(creds.mcpOAuth).toBeUndefined();
     }
     const stagedFiles = [
       [".grok/auth.json", '{"grok":1}\n'],
