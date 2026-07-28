@@ -640,7 +640,12 @@ export function initRealMissionE2E(): void {
           observeProductWizardMission(event.sender);
         }
         return { ok: true };
-      } catch {
+      } catch (error) {
+        const detail =
+          error instanceof Error ? error.message : String(error ?? "unknown");
+        console.error(
+          `[real-mission] fixture persist failed: ${detail.slice(0, 400)}`,
+        );
         finish("setup-failed");
         throw new Error("main-owned release fixture could not be persisted");
       }

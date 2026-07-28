@@ -254,6 +254,48 @@ export const REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS = [
   "Integração, receipts e status done pertencem ao motor Nexus.",
 ].join("\n");
 
+/**
+ * Build a roster agent whose JSON key order matches production
+ * `squadSchema.parse` + `withAllowlists` (model defaults applied, model field
+ * immediately after `cli`). Hash equality is byte-exact on JSON.stringify.
+ */
+function fixtureAgent(input: {
+  id: string;
+  agentName: string;
+  category: "orchestrator" | "executor" | "reviewer" | "scout";
+  cli: string;
+  effort?: string;
+  allowedSkills?: string[];
+  allowedTools?: string[] | null;
+  model?: string;
+}): {
+  id: string;
+  agentName: string;
+  category: "orchestrator" | "executor" | "reviewer" | "scout";
+  cli: string;
+  model?: string;
+  effort?: string;
+  allowedSkills?: string[];
+  allowedTools?: string[] | null;
+} {
+  const model =
+    input.model?.trim() || defaultSquadModelForAdapter(input.cli) || undefined;
+  return {
+    id: input.id,
+    agentName: input.agentName,
+    category: input.category,
+    cli: input.cli,
+    ...(model ? { model } : {}),
+    ...(input.effort !== undefined ? { effort: input.effort } : {}),
+    ...(input.allowedSkills !== undefined
+      ? { allowedSkills: input.allowedSkills }
+      : {}),
+    ...(input.allowedTools !== undefined
+      ? { allowedTools: input.allowedTools }
+      : {}),
+  };
+}
+
 export function createRealMissionE2ESquadFixture(
   skipAdvisorClis: readonly string[] = [],
   orchestratorCli: RealMissionE2EOrchestratorCli = "codex",
@@ -269,7 +311,7 @@ export function createRealMissionE2ESquadFixture(
     builtin: false,
     orchestratorInstructions: REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS,
     agents: [
-      {
+      fixtureAgent({
         id: REAL_MISSION_E2E_ORCHESTRATOR_ID,
         agentName: REAL_MISSION_E2E_ORCHESTRATOR_NAME,
         category: "orchestrator",
@@ -279,8 +321,8 @@ export function createRealMissionE2ESquadFixture(
         effort: "medium",
         allowedSkills: [],
         allowedTools: null,
-      },
-      {
+      }),
+      fixtureAgent({
         id: REAL_MISSION_E2E_EXECUTOR_ID,
         agentName: REAL_MISSION_E2E_EXECUTOR_NAME,
         category: "executor",
@@ -288,8 +330,8 @@ export function createRealMissionE2ESquadFixture(
         effort: "medium",
         allowedSkills: [],
         allowedTools: [],
-      },
-      {
+      }),
+      fixtureAgent({
         id: REAL_MISSION_E2E_REVIEWER_ID,
         agentName: REAL_MISSION_E2E_REVIEWER_NAME,
         category: "reviewer",
@@ -297,8 +339,8 @@ export function createRealMissionE2ESquadFixture(
         effort: "medium",
         allowedSkills: [],
         allowedTools: [],
-      },
-      {
+      }),
+      fixtureAgent({
         id: REAL_MISSION_E2E_QA_ID,
         agentName: REAL_MISSION_E2E_QA_NAME,
         category: "reviewer",
@@ -306,26 +348,24 @@ export function createRealMissionE2ESquadFixture(
         effort: "medium",
         allowedSkills: [],
         allowedTools: [],
-      },
+      }),
       // Advisors multi-CLI: o Guided Planner os leva para tarefas read_only do
       // fan-out consultivo (scouts antes do executor, reviewers antes do QA).
-      // O model default (grok/agy) fica explícito porque a persistência de
-      // produção o injeteria — o fixture precisa fechar o hash no round-trip.
+      // O model default (grok/agy/codex) fica explícito porque a persistência
+      // de produção o injetaria — o fixture precisa fechar o hash no round-trip.
       ...REAL_MISSION_E2E_ADVISORS.filter(
         (advisor) => !skipped.has(advisor.cli),
-      ).map((advisor) => {
-        const model = defaultSquadModelForAdapter(advisor.cli);
-        return {
+      ).map((advisor) =>
+        fixtureAgent({
           id: advisor.id,
           agentName: advisor.name,
           category: advisor.category,
           cli: advisor.cli,
-          ...(model ? { model } : {}),
           effort: "medium",
           allowedSkills: [],
           allowedTools: [],
-        };
-      }),
+        }),
+      ),
     ],
   };
 }
