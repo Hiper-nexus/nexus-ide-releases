@@ -66,7 +66,7 @@ describe("real mission advisor expectations", () => {
     ).toBe("no-credential");
     expect(
       realMissionAdvisorPtyExpectations(expectations).map((entry) => entry.cli),
-    ).toEqual(["grok", "agy", "opencode", "omp"]);
+    ).toEqual(["grok", "agy", "opencode", "omp", "glm"]);
   });
 
   it("reserves the claude advisor in the claude orchestrator variant", () => {
