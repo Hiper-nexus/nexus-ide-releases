@@ -311,6 +311,7 @@ describe('prepareCodexGovernedSession', () => {
       workspaceRoot: worktree,
       codexNativeAuthority: 'workspace-write',
       codexAdminSkillsRoot: adminSkillsRoot,
+      model: 'gpt-5.5',
     });
 
     expect(result.env.CODEX_HOME).toBe(result.artifactDir);
@@ -321,6 +322,7 @@ describe('prepareCodexGovernedSession', () => {
     ]);
     const privateConfigPath = path.join(result.env.CODEX_HOME, 'config.toml');
     const privateConfig = parse(fs.readFileSync(privateConfigPath, 'utf8')) as {
+      model?: string;
       default_permissions?: string;
       features?: Record<string, boolean>;
       projects?: Record<string, { trust_level?: string }>;
@@ -346,7 +348,11 @@ describe('prepareCodexGovernedSession', () => {
         ignore_default_excludes?: boolean;
         set?: Record<string, string>;
       };
-      tui?: { resume_cwd?: string };
+      notice?: { model_migrations?: Record<string, string> };
+      tui?: {
+        resume_cwd?: string;
+        model_availability_nux?: Record<string, number>;
+      };
       skills?: {
         bundled?: { enabled?: boolean };
         config?: Array<{ path?: string; enabled?: boolean }>;
@@ -408,7 +414,12 @@ describe('prepareCodexGovernedSession', () => {
         TMPDIR: path.join(result.env.CODEX_HOME, 'shell-tmp'),
       },
     });
-    expect(privateConfig.tui).toEqual({ resume_cwd: 'current' });
+    expect(privateConfig.model).toBe('gpt-5.5');
+    expect(privateConfig.notice?.model_migrations?.['gpt-5.4']).toBe('gpt-5.5');
+    expect(privateConfig.tui).toEqual({
+      resume_cwd: 'current',
+      model_availability_nux: { 'gpt-5.5': 4 },
+    });
     expect(privateConfig.skills?.bundled).toEqual({ enabled: false });
     expect(privateConfig.skills?.config).toEqual(
       [repoSkill, projectCodexSkill, userSkill, adminSkill, outsideSkill]

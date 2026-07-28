@@ -645,7 +645,12 @@ export function prepareCodexGovernedSession(
         [path.join(artifactDir, 'skills')],
         policy.allowedSkills,
       );
+      // Preferências de TUI que o Codex tenta gravar em config.toml no boot.
+      // O arquivo é immutable (protectedWritePaths); se já estiverem aqui, o
+      // TUI não tenta batchWrite e some o vermelho "Failed to save … config.toml".
+      const sealedModel = options.model?.trim() || undefined;
       const config = stringify({
+        ...(sealedModel ? { model: sealedModel } : {}),
         default_permissions: permissionProfile,
         shell_environment_policy: {
           inherit: 'core',
@@ -698,10 +703,28 @@ export function prepareCodexGovernedSession(
             trust_level: 'untrusted',
           },
         },
+        // Renames recentes: se o mapa já existe, Codex não pede para persistir
+        // "model migration prompt preference" no arquivo imutável.
+        notice: {
+          model_migrations: {
+            'gpt-5.3': 'gpt-5.5',
+            'gpt-5.4': 'gpt-5.5',
+            'gpt-5.4-mini': 'gpt-5.5',
+            'gpt-5.4-nano': 'gpt-5.5',
+          },
+        },
         tui: {
           // Exact resume must stay in the current sealed worktree and never
           // prompt to rebind to a historic checkout.
           resume_cwd: 'current',
+          // NUX "model available" já visto → não grava tui.model_availability_nux.
+          ...(sealedModel
+            ? {
+                model_availability_nux: {
+                  [sealedModel]: 4,
+                },
+              }
+            : {}),
         },
         skills: {
           bundled: {

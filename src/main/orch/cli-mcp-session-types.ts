@@ -18,6 +18,12 @@ export interface CliMcpSessionOptions extends GovernedCliProfileOptions {
   codexResumeSessionId?: string;
   /** Test seam for the machine-admin Codex skill tier. */
   codexAdminSkillsRoot?: string;
+  /**
+   * Exact model sealed by main for this spawn (`--model` flag). Pre-written
+   * into the immutable private config so the TUI does not try to persist
+   * default-model / migration prefs (and red-error on protectedWritePaths).
+   */
+  model?: string;
 }
 
 export interface CliMcpSessionResult {

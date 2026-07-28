@@ -1083,6 +1083,9 @@ export function spawnAgentSession(
           allowedSkills: [...policy.allowedSkills],
           cwd,
           workspaceRoot: authority.scope.rootRealPath,
+          // Pre-fill immutable config with the sealed model so the TUI does not
+          // try to rewrite default-model / migration prefs under Seatbelt deny.
+          model: model || undefined,
           codexResumeSessionId:
             resumeMode === "exact"
               ? trustedResumeArgs[trustedResumeArgs.length - 1]
