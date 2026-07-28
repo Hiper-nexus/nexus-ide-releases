@@ -25,9 +25,9 @@ export const CURRENT_RELEASE: AppRelease = {
         'Um worktree isolado guarda os objetos e refs do commit no repositório pai, fora da área de escrita do worker — e o sandbox negava. Todo commit morria com "Operation not permitted", o agente se recusava a reportar sucesso sem ter commitado e a missão parava sem entregar. O sandbox passa a liberar exatamente o que um commit toca, e nada além: hooks e config seguem bloqueados.',
     },
     {
-      title: 'Mais de uma CLI na mesma missão',
+      title: 'Todo CLI do squad entra na missão',
       detail:
-        'Um revisor em CLI com confinamento garantido fora do prompt entra na missão junto do pipeline principal, com terminal próprio e handoff submetido — hoje Codex e Grok. A evidência registra o tier de confinamento de cada participante.',
+        'Kimi, Agy, OpenCode, OMP e Claude passam a participar como conselheiros somente-leitura, com terminal próprio e handoff submetido, ao lado de Codex e Grok. Aproveitar várias LLMs na mesma missão deixou de custar segurança: quem não traz confinamento próprio passa a rodar dentro do sandbox do Nexus, onde o kernel monta o projeto como somente-leitura e só o binário daquela CLI alcança a rede. Sem confinamento, a sessão não nasce.',
     },
     {
       title: 'Fluxo único, sem modal cosmético',

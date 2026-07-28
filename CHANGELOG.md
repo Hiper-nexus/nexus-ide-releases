@@ -20,23 +20,29 @@ gates e nunca chegou a ser publicada.
   outro reescreveria remotes e filtros. Faixas somente-leitura não recebem
   nada disso.
 
-### Mais de uma CLI na mesma missão
+### Todo CLI do squad entra na missão — confinado pelo kernel
 
-- **Advisor com barreira mecânica**: um revisor em CLI cujo confinamento é
-  garantido fora do prompt entra na missão junto do pipeline principal, com
-  PTY próprio, ao menos uma tool `nexus_*` e handoff submetido. Qualificam-se
-  o Codex (perfil de argv governado) e o Grok (`--sandbox read-only` do
-  Seatbelt, com escape probe físico). A evidência registra o tier de
-  confinamento de cada participante.
+- **Conselheiros de qualquer CLI**: Kimi, Agy, OpenCode, OMP e Claude passam a
+  participar como revisores e batedores somente-leitura, cada um com PTY
+  próprio, ao menos uma tool `nexus_*` e handoff submetido. Aproveitar várias
+  LLMs na mesma missão deixa de custar segurança.
+- **A barreira passa a ser do kernel, não do prompt**: essas CLIs não declaram
+  confinamento somente-leitura próprio, e pedir por prompt que respeitem a
+  faixa nunca foi uma fronteira. Em vez de afrouxar a exigência, o Nexus aplica
+  o seu próprio perfil Seatbelt: a raiz de execução é montada somente-leitura
+  pelo kernel, a única área gravável é o HOME privado que a sessão já cria para
+  aquela CLI, e a rede fica restrita ao binário dela. Quem já traz confinamento
+  verificado — Codex pelo perfil de argv, Grok pelo Seatbelt — continua usando o
+  próprio.
+- **Fail-closed**: se o confinamento não puder ser construído, a sessão não
+  nasce. A ausência de um HOME privado nunca rebaixa a única barreira da missão
+  para uma instrução de texto. Fora do macOS a faixa é recusada, não concedida
+  sem sandbox.
 - **A aprovação enxerga a faixa somente-leitura**: a fronteira final do main
   exigia escrita autônoma confinada de todo agente não-orquestrador, então
-  qualquer missão com advisor morria antes de abrir o primeiro PTY. Executor
-  continua exigindo Codex, e ninguém entra sem rota ativa de adapter.
-
-**Fora desta versão**: o tier *advisory-unconfined* — Kimi, Agy, OpenCode, OMP
-e Claude como conselheiro — está declarado no planejamento e no schema de
-evidência, mas o dispatch ainda exige barreira mecânica verificada e recusa
-`read_only` para essas CLIs. Elas seguem disponíveis no uso direto/manual.
+  qualquer missão com conselheiro morria antes de abrir o primeiro PTY. O
+  executor continua exigindo Codex, e ninguém entra sem rota ativa de adapter.
+- A evidência registra o tier de confinamento de cada participante.
 
 ### A prova acompanha o squad inteiro
 
