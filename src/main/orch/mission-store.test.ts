@@ -487,6 +487,33 @@ describe('scoped mission store', () => {
     unsubscribe();
   });
 
+  it('completes a dispatched guided mission after PREVC receipts', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'driver-complete-dispatched' });
+    let now = 150;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-driver-dispatched',
+    });
+    const mission = store.create({
+      title: 'Guided dispatched',
+      intentState: 'dispatched',
+      intentVersion: 1,
+    });
+    const running = store.setStatus(mission.id, 'running')!;
+
+    expect(
+      store.completeFromMissionDriver(mission.id, {
+        expectedUpdatedAt: running.updatedAt,
+        expectedIntentVersion: 1,
+      }),
+    ).toMatchObject({
+      status: 'done',
+      intentState: 'done',
+      intentVersion: 1,
+    });
+  });
+
   it('rejects stale Driver completion without changing either projection', () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: 'driver-complete-stale' });

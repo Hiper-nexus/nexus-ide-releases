@@ -1373,7 +1373,9 @@ export class ScopedMissionStore {
              SET status = 'done', intent_state = 'done', updated_at = ?
              WHERE id = ?
                AND status = 'running'
-               AND intent_state IN ('legacy', 'executing', 'validating')
+               AND intent_state IN (
+                 'legacy', 'dispatched', 'executing', 'validating'
+               )
                AND intent_version = ?
                AND updated_at = ?`,
           )
