@@ -24,12 +24,17 @@ export type PlannedExecutionMode = 'isolated_worktree' | 'read_only';
 const MECHANICALLY_WORKSPACE_WRITE_CLIS = new Set(['codex']);
 
 /**
- * Id-level backstop for sealed task/claim authority. Live builtin origin and
- * the exact adapter argv declaration are rechecked again before process spawn.
+ * Id-level backstop for sealed task/claim authority under the `governed`
+ * policy. Live builtin origin and the exact adapter argv declaration are
+ * rechecked again before process spawn. Under `operator-choice`, callers
+ * pass `operatorChoice=true` so any CLI id clears this id-level gate — the
+ * Seatbelt at spawn remains the real boundary.
  */
 export function supportsMechanicallyWorkspaceWriteCli(
   adapterId: string,
+  operatorChoice = false,
 ): boolean {
+  if (operatorChoice) return adapterId.trim().length > 0;
   return MECHANICALLY_WORKSPACE_WRITE_CLIS.has(adapterId);
 }
 

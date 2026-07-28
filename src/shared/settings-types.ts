@@ -178,11 +178,23 @@ export const orchSettingsSchema = z.object({
    * Default true for vibe-coder zero friction; disable only for pure routing demos.
    */
   ompAutoSpawn: z.boolean().default(true),
+  /**
+   * Who may act as Maestro / autonomous writer inside a Squad mission:
+   * - `operator-choice` (default): vibe-coder mode — any installed +
+   *   authenticated + handoff-capable CLI. Nexus still confines writers with
+   *   Seatbelt; the jail is the sandbox, not a brand allowlist.
+   * - `governed`: release-qualified ladder (Codex writers, verified Maestro).
+   *   Opt-in for operators who want the narrow release gate.
+   */
+  squadCliPolicy: z
+    .enum(['governed', 'operator-choice'])
+    .default('operator-choice'),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
 export type OmpParticipation = OrchSettings['ompParticipation'];
 export type OmpMissionTransport = OrchSettings['ompMissionTransport'];
+export type SquadCliPolicy = OrchSettings['squadCliPolicy'];
 
 /**
  * App-wide voice audio routing. `default` follows the current operating-system

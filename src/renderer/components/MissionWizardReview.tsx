@@ -8,7 +8,9 @@ import {
   type AdapterCapabilityMatrix,
 } from "../../shared/adapter-types";
 import { supportsAdvisoryParticipationCli } from "../../shared/mission-advisory";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { defaultSquadModelForAdapter } from "../../shared/squad-model-defaults";
+import type { SquadCliPolicy } from "../../shared/settings-types";
 import { isAdapterModelAuthenticated } from "../orch/mission-runtime-readiness";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProviderLogo } from "./ProviderLogo";
@@ -43,6 +45,8 @@ interface MissionWizardReviewProps {
   onBack(): void;
   onCancel(): void;
   onLaunch(): void;
+  /** Test/override seam; production loads from orch.squadCliPolicy. */
+  squadCliPolicy?: SquadCliPolicy;
 }
 
 function specValue(
@@ -115,7 +119,29 @@ export function MissionWizardReview({
   onBack,
   onCancel,
   onLaunch,
+  squadCliPolicy: squadCliPolicyProp,
 }: MissionWizardReviewProps) {
+  const [squadCliPolicyState, setSquadCliPolicyState] =
+    useState<SquadCliPolicy>("operator-choice");
+  useEffect(() => {
+    if (squadCliPolicyProp) return;
+    let cancelled = false;
+    void window.nexus.settings
+      ?.orchGet?.()
+      .then((orch) => {
+        if (!cancelled) {
+          setSquadCliPolicyState(orch.squadCliPolicy ?? "operator-choice");
+        }
+      })
+      .catch(() => {
+        // Keep operator-choice default if settings are unavailable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [squadCliPolicyProp]);
+  const squadCliPolicy = squadCliPolicyProp ?? squadCliPolicyState;
+  const operatorChoice = isOperatorChoicePolicy(squadCliPolicy);
   const orchestratorAgent =
     roster.find((agent) => agent.category === "orchestrator") ?? null;
   const orchestratorAdapter = adapters.find(
@@ -130,7 +156,7 @@ export function MissionWizardReview({
         capabilities.launchable &&
         capabilities.promptInjectable &&
         capabilities.statusObservable &&
-        capabilities.verifiedMaestro &&
+        (operatorChoice || capabilities.verifiedMaestro) &&
         providers.find((provider) => provider.adapterId === adapter.id)
           ?.enabled !== false &&
         isAdapterModelAuthenticated(
@@ -168,22 +194,29 @@ export function MissionWizardReview({
   ): boolean => {
     if (!adapter) return false;
     const capabilities = adapterCapabilityMatrixOf(adapter);
-    // Advisory lane (Fases 0/1): CLIs com rota Nexus MCP mas sem confinamento
-    // nativo enforceável participam como advisors read_only em papéis
-    // reviewer/scout. Claude só como advisor quando o orquestrador do roster
-    // não é Claude (reserveClaude: uma única sessão OAuth por missão).
+    const isAdvisorRole =
+      agent.category === "reviewer" || agent.category === "scout";
     const advisoryLane =
-      (agent.category === "reviewer" || agent.category === "scout") &&
+      isAdvisorRole &&
       supportsAdvisoryParticipationCli(adapter.id) &&
       (adapter.id !== "claude" || orchestratorAgent?.cli !== "claude");
-    const roleQualified =
-      agent.category === "reviewer" || agent.category === "scout"
-        ? capabilities.governedWriter ||
-          capabilities.autonomousReadOnly ||
-          advisoryLane
-        : capabilities.governedWriter;
+    // Operator-choice: any installed CLI qualifies for any worker role.
+    // Governed: writers need governedWriter; advisors need read/advisory lane.
+    const roleQualified = operatorChoice
+      ? adapter.installed
+      : isAdvisorRole
+        ? Boolean(
+            capabilities.governedWriter ||
+              capabilities.autonomousReadOnly ||
+              advisoryLane,
+          )
+        : Boolean(capabilities.governedWriter);
     return Boolean(
-      (adapter.id !== "claude" || advisoryLane) &&
+      (adapter.id !== "claude" ||
+        advisoryLane ||
+        (operatorChoice &&
+          isAdvisorRole &&
+          orchestratorAgent?.cli !== "claude")) &&
         adapter.kind === "cli-pty" &&
         adapter.installed &&
         capabilities.launchable &&
@@ -223,8 +256,9 @@ export function MissionWizardReview({
           supportsAdvisoryParticipationCli(unqualifiedWorker.cli) &&
           (unqualifiedWorker.cli !== "claude" ||
             orchestratorAgent?.cli !== "claude");
-        const roleCapable =
-          isAdvisorRole
+        const roleCapable = operatorChoice
+          ? Boolean(adapter?.installed)
+          : isAdvisorRole
             ? Boolean(
                 capabilities.governedWriter ||
                   capabilities.autonomousReadOnly ||
@@ -277,16 +311,20 @@ export function MissionWizardReview({
   const orchestratorManualOnly = Boolean(
     orchestratorAdapter &&
       adapterCapabilityMatrixOf(orchestratorAdapter).launchable &&
-      !adapterCapabilityMatrixOf(orchestratorAdapter).verifiedMaestro,
+      !adapterCapabilityMatrixOf(orchestratorAdapter).verifiedMaestro &&
+      !operatorChoice,
   );
   const orchestratorBlockedReason = !orchestratorAgent
     ? "O squad não tem Maestro."
     : !orchestratorAgent.cli
-      ? "Nenhum Maestro verificado está disponível automaticamente. Escolha um provider abaixo."
+      ? operatorChoice
+        ? "Nenhum Maestro autenticado está disponível. Escolha um provider abaixo."
+        : "Nenhum Maestro verificado está disponível automaticamente. Escolha um provider abaixo."
       : !orchestratorAdapter
         ? `O provider ${orchestratorAgent.cli} não foi carregado. Escolha outro em Configurações › Squads.`
-        : !adapterCapabilityMatrixOf(orchestratorAdapter).verifiedMaestro
-          ? `${orchestratorAdapter.label} está disponível no Terminal, mas não concluiu o gate de Maestro desta release. Escolha um Maestro verificado.`
+        : !operatorChoice &&
+            !adapterCapabilityMatrixOf(orchestratorAdapter).verifiedMaestro
+          ? `${orchestratorAdapter.label} está disponível no Terminal, mas não concluiu o gate de Maestro desta release. Escolha um Maestro verificado ou ative Escolha livre em Configurações › Orquestração.`
           : !orchestratorModelAuthenticated
             ? `${orchestratorAdapter.label} precisa de autenticação válida para o modelo selecionado.`
             : !orchestratorRouteDeclared
@@ -396,11 +434,9 @@ export function MissionWizardReview({
             </span>
           </div>
           <p className="wizard__hint-sm">
-            O Maestro automático usa somente provider com gate verificado.
-            Executores e arquitetos exigem escrita confinada; reviewers e
-            scouts também podem usar uma CLI com leitura autônoma confinada.
-            CLIs sem essas qualificações continuam visíveis como uso manual no
-            Terminal. Salvar a configuração não inicia agentes.
+            {operatorChoice
+              ? "Escolha livre: qualquer CLI autenticada pode ser Maestro, executor ou reviewer. O Nexus confina o processo no Seatbelt — a marca da CLI não é a trava. Salvar a configuração não inicia agentes."
+              : "O Maestro automático usa somente provider com gate verificado. Executores e arquitetos exigem escrita confinada; reviewers e scouts também podem usar uma CLI com leitura autônoma confinada. CLIs sem essas qualificações continuam visíveis como uso manual no Terminal. Salvar a configuração não inicia agentes."}
           </p>
           <p className="wizard__hint-sm">
             Use * só no orquestrador; workers precisam de tools explícitas ou
@@ -653,11 +689,14 @@ export function MissionWizardReview({
                     )}
                     {!isOrchestrator && !workerAgentQualified(a) && (
                       <p className="wizard__row-error">
-                        {a.category === "reviewer" || a.category === "scout"
-                          ? "Esta função exige leitura autônoma confinada e autenticação."
-                          : "Esta função exige escrita autônoma confinada e autenticação."}{" "}
-                        Escolha uma CLI qualificada; as opções marcadas como
-                        somente manual não iniciam workers.
+                        {operatorChoice
+                          ? "CLI precisa estar instalada e autenticada para rodar neste papel."
+                          : a.category === "reviewer" || a.category === "scout"
+                            ? "Esta função exige leitura autônoma confinada e autenticação."
+                            : "Esta função exige escrita autônoma confinada e autenticação."}{" "}
+                        {operatorChoice
+                          ? "Faça login na CLI ou troque o provider."
+                          : "Escolha uma CLI qualificada; as opções marcadas como somente manual não iniciam workers."}
                       </p>
                     )}
                   </div>

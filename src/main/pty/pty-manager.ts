@@ -67,6 +67,12 @@ import {
   requiresAdvisoryProcessSandbox,
   resolveAdvisoryProcessSandbox,
 } from "./advisory-process-sandbox";
+import {
+  assertOperatorChoiceWriterConfinement,
+  isOperatorChoiceWorkspaceWrite,
+  resolveOperatorChoiceWriterSandbox,
+} from "./operator-choice-writer-sandbox";
+import { getOrchSettings } from "../persistence/settings-store";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -1143,6 +1149,12 @@ export function spawnAgentSession(
       authority.context?.missionId?.trim() &&
       isAdvisoryUnconfinedCli(adapter.id),
   );
+  const operatorChoiceWorkspaceWrite = isOperatorChoiceWorkspaceWrite({
+    squadCliPolicy: getOrchSettings().squadCliPolicy,
+    adapterId: adapter.id,
+    writableWorkerIntent,
+    hasCodexNativeWriteAuthority: governedWorkspaceWriter,
+  });
   const trustedCodexExternalProcessSandbox = Boolean(
     adapter.id === "codex" &&
       codexProcessSandbox &&
@@ -1213,6 +1225,7 @@ export function spawnAgentSession(
       trustedCodexPermissionProfile,
       trustedCodexExternalProcessSandbox,
       advisoryUnconfinedParticipation,
+      operatorChoiceWorkspaceWrite,
     });
   } catch (error) {
     decoration?.onSpawnFailed?.();
@@ -1455,6 +1468,67 @@ export function spawnAgentSession(
             ...advisorySandbox.extraWritePaths,
             ...advisorySandbox.providerStateWritePaths,
           ],
+        });
+        spawnFile = plan.file;
+        spawnArgs = plan.args;
+        spawnCwd = plan.cwd;
+        spawnEnv = cleanEnv(plan.env);
+      }
+    } catch (error) {
+      decoration?.onSpawnFailed?.();
+      throw error;
+    }
+  }
+
+  if (operatorChoiceWorkspaceWrite) {
+    // Operator-choice writer: CLI has no Codex-class native workspace-write
+    // profile. Nexus wraps the process in its own Seatbelt with a WRITABLE
+    // execution root (isolated worktree) + private session runtime. Fail
+    // closed without a constructible boundary — never downgrade to a prompt.
+    try {
+      const decorationOverrodeHome = Boolean(decoration && decoration.env.HOME);
+      const planResolved = resolveOperatorChoiceWriterSandbox({
+        adapterId: adapter.id,
+        sessionId,
+        binaryPath: bin,
+        rootRealPath: authority.scope.rootRealPath,
+        spawnEnv,
+        decorationSandboxDir: decoration?.sandboxDir,
+        decorationProcessHome: decoration?.processHome,
+        decorationOverrodeHome,
+        providerStateReadPaths: decoration?.providerStateReadPaths,
+        providerStateWritePaths: decoration?.providerStateWritePaths,
+      });
+      assertOperatorChoiceWriterConfinement(
+        adapter.id,
+        planResolved,
+        process.platform,
+      );
+      if (planResolved) {
+        const worktreeGit = planResolved.worktreeGit;
+        const plan = buildScopedExecPlan({
+          platform: process.platform,
+          executable: bin,
+          args,
+          cwd,
+          rootRealPath: authority.scope.rootRealPath,
+          sandboxDir: planResolved.sandbox.sandboxDir,
+          privateHome: planResolved.sandbox.sandboxDir,
+          processHome: planResolved.sandbox.processHome,
+          env: spawnEnv,
+          readOnlyRoot: false,
+          sandboxProfile: planResolved.sandboxProfile,
+          extraReadPaths: [
+            ...planResolved.sandbox.extraWritePaths,
+            ...planResolved.sandbox.providerStateReadPaths,
+            ...worktreeGit.readPaths,
+          ],
+          extraWritePaths: [
+            ...planResolved.sandbox.extraWritePaths,
+            ...planResolved.sandbox.providerStateWritePaths,
+            ...worktreeGit.writePaths,
+          ],
+          protectedWritePaths: [...worktreeGit.protectedPaths],
         });
         spawnFile = plan.file;
         spawnArgs = plan.args;

@@ -1,9 +1,11 @@
 import type { AdapterInfo } from "../../shared/adapter-types";
 import { orchestrationEvidenceOf } from "../../shared/adapter-types";
 import type { Squad } from "../../shared/orch-types";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { listAdapterInfos } from "../adapters/adapter-registry";
 import { hasAvailableAccount } from "../persistence/account-store";
 import { listProviderSettings } from "../persistence/provider-config-store";
+import { getOrchSettings } from "../persistence/settings-store";
 import {
   assessStandardSquadReadiness,
   buildSquadRuntimeCliPolicy,
@@ -31,6 +33,9 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
     adapterInfos.map((adapter) => [adapter.id, adapter] as const),
   );
   const providers = listProviderSettings();
+  const operatorChoice = isOperatorChoicePolicy(
+    getOrchSettings().squadCliPolicy,
+  );
   const policy = buildSquadRuntimeCliPolicy(
     providers.map((provider) => {
       const adapter = adapterById.get(provider.adapterId);
@@ -49,6 +54,7 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
       });
     }),
     hasAvailableAccount,
+    operatorChoice,
   );
   const providerById = new Map(
     providers.map((provider) => [provider.adapterId, provider] as const),
@@ -129,6 +135,7 @@ export function assertLiveGuidedSquadReadiness(squad: Squad): void {
     squad.agents,
     inventory.policy,
     inventory.verifiedOrchestratorCliIds,
+    isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
   );
   if (readiness.ok) return;
   throw new Error(

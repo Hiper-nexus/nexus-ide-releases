@@ -78,6 +78,27 @@ describe("buildSquadRuntimeCliPolicy", () => {
     }
   });
 
+  it("under operator-choice promotes handoff-capable CLIs into workers", () => {
+    const policy = buildSquadRuntimeCliPolicy(
+      [
+        provider("codex"),
+        provider("kimi", {
+          guidedHandoffCapable: true,
+          autonomousWorkspaceWriteCapable: false,
+        }),
+        provider("agy", {
+          guidedHandoffCapable: true,
+        }),
+      ],
+      () => true,
+      true,
+    );
+
+    expect(policy.routableWorkerCliIds.has("kimi")).toBe(true);
+    expect(policy.routableWorkerCliIds.has("agy")).toBe(true);
+    expect(policy.routableWorkerCliIds.has("claude")).toBe(false);
+  });
+
   it("does not let a forged capability promote Kimi into a governed mission worker", () => {
     const policy = buildSquadRuntimeCliPolicy(
       [

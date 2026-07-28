@@ -81,6 +81,13 @@ export interface AutonomousCliPolicyOptions {
    * TUIs; native confinement flags the CLI cannot enforce are still not invented.
    */
   readonly advisoryUnconfinedParticipation?: boolean;
+  /**
+   * Operator-choice writable worker: the CLI has no provider-native
+   * workspace-write profile. Nexus applies its own Seatbelt with a writable
+   * execution root; argv keeps provider auto-approve and never invents Codex
+   * sandbox flags.
+   */
+  readonly operatorChoiceWorkspaceWrite?: boolean;
 }
 
 function sameCanonicalCapabilityList(
@@ -654,22 +661,28 @@ export function secureAutonomousCliArgs(
   }
 
   if (options.enforceWorkspaceWriteSandbox) {
-    if (!supportsEnforceableWorkspaceWriteNativeAuthority(adapter)) {
+    if (supportsEnforceableWorkspaceWriteNativeAuthority(adapter)) {
+      return codexGovernedArgs(
+        currentArgs,
+        options,
+        'workspace-write',
+        'never',
+      );
+    }
+    if (!options.operatorChoiceWorkspaceWrite) {
       throw new Error(
         `adapter ${adapter.id} does not declare enforceable workspace-write confinement`,
       );
     }
-    return codexGovernedArgs(
-      currentArgs,
-      options,
-      'workspace-write',
-      'never',
-    );
+    // Fall through to the operator-choice / advisory argv shape below.
   }
 
-  if (options.advisoryUnconfinedParticipation) {
-    // Advisory lane (kimi/agy/opencode/omp): MCP is read-only and the outer
-    // process sandbox denies workspace writes. Do not invent native confinement
+  if (
+    options.advisoryUnconfinedParticipation ||
+    options.operatorChoiceWorkspaceWrite
+  ) {
+    // Advisory (read_only) or operator-choice writer: MCP + outer kernel
+    // Seatbelt is the authority boundary. Do not invent native confinement
     // flags the CLI cannot enforce — but DO keep provider auto-approve so the
     // agent never stalls on interactive "Approve once" TUIs (ls/read/etc).
     // Stripping YOLO here was the release-gate regression that left Kimi

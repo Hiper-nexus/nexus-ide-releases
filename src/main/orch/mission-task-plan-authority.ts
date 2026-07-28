@@ -35,6 +35,8 @@ import { childMissionId } from "./tools-panes";
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { listAdapterInfos } from "../adapters/adapter-registry";
+import { getOrchSettings } from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 
 type WorkerCategory = Exclude<AgentCategory, "orchestrator">;
 
@@ -131,6 +133,7 @@ function resolveRosterAgent(
   ownershipFiles: readonly string[],
   squad: Squad,
   getAdapterInfo: MissionTaskPlanAuthorityDeps["getAdapterInfo"],
+  operatorChoice = false,
 ): SquadAgent {
   const matches = squad.agents.filter(
     (agent) => agent.id === agentRef || agent.agentName === agentRef,
@@ -184,14 +187,18 @@ function resolveRosterAgent(
       `task ${taskId} isolated_worktree requires explicit ownership.files`,
     );
   }
-  if (mode === "isolated_worktree" && !capabilities.governedWriter) {
+  if (
+    mode === "isolated_worktree" &&
+    !capabilities.governedWriter &&
+    !operatorChoice
+  ) {
     throw new Error(
       `task ${taskId} isolated_worktree requires a release-qualified governed writer`,
     );
   }
   if (
     mode === "isolated_worktree" &&
-    !supportsMechanicallyWorkspaceWriteCli(assignedAgent.cli)
+    !supportsMechanicallyWorkspaceWriteCli(assignedAgent.cli, operatorChoice)
   ) {
     throw new Error(
       `task ${taskId} governed writer is not release-enabled at the physical dispatch boundary`,
@@ -281,6 +288,9 @@ function parsePlanTask(
   }
   const category = workerCategory(id, row.category);
   const mode = executionMode(id, row.executionMode);
+  const operatorChoice = isOperatorChoicePolicy(
+    getOrchSettings().squadCliPolicy,
+  );
   const assignedAgent = resolveRosterAgent(
     id,
     agentRef,
@@ -289,6 +299,7 @@ function parsePlanTask(
     ownership.files,
     squad,
     deps.getAdapterInfo,
+    operatorChoice,
   );
   return {
     id,

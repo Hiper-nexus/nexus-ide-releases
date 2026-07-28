@@ -16,6 +16,7 @@ type OrchestratorDefaultsValue = Pick<
   | "ompRpcAutoStart"
   | "ompMissionTransport"
   | "ompAutoSpawn"
+  | "squadCliPolicy"
 >;
 
 const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
@@ -26,7 +27,14 @@ const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
   ompRpcAutoStart: true,
   ompMissionTransport: "auto",
   ompAutoSpawn: true,
+  squadCliPolicy: "operator-choice",
 };
+
+const SQUAD_CLI_POLICY_LABELS: Record<OrchSettings["squadCliPolicy"], string> =
+  {
+    "operator-choice": "Escolha livre — qualquer CLI autenticada (padrão)",
+    governed: "Governado — só CLIs qualificadas nesta release",
+  };
 
 const OMP_PARTICIPATION_LABELS: Record<
   OrchSettings["ompParticipation"],
@@ -47,6 +55,7 @@ function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
     ompRpcAutoStart: settings.ompRpcAutoStart !== false,
     ompMissionTransport: settings.ompMissionTransport ?? "auto",
     ompAutoSpawn: settings.ompAutoSpawn !== false,
+    squadCliPolicy: settings.squadCliPolicy ?? "operator-choice",
   };
 }
 
@@ -347,6 +356,40 @@ export function OrchestratorDefaults() {
       <p className="settings-field__note">
         Aplicado ao próximo squad. O modelo da receita tem prioridade quando usa
         o mesmo provider.
+      </p>
+
+      <div className="settings-orchestrator__grid">
+        <label className="settings-field">
+          Liberdade de CLI no Squad
+          <select
+            className="settings-input"
+            aria-label="Política de CLI no Squad"
+            value={defaults.squadCliPolicy}
+            disabled={disabled}
+            onChange={(event) =>
+              void save({
+                squadCliPolicy: event.target
+                  .value as OrchSettings["squadCliPolicy"],
+              })
+            }
+          >
+            {(
+              Object.keys(SQUAD_CLI_POLICY_LABELS) as Array<
+                OrchSettings["squadCliPolicy"]
+              >
+            ).map((mode) => (
+              <option key={mode} value={mode}>
+                {SQUAD_CLI_POLICY_LABELS[mode]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="settings-field__note">
+        Padrão: escolha livre — monta o squad com qualquer CLI autenticada e
+        manda codar. O Nexus ainda confina o processo no Seatbelt (macOS).
+        Governado é o modo estreito da release (Codex writer / Maestro
+        verificado) se você quiser.
       </p>
 
       <div className="settings-orchestrator__grid settings-orchestrator__grid--omp">

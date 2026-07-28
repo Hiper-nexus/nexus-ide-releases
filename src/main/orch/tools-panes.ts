@@ -31,7 +31,8 @@ import {
   strArray,
   type SpawnToolOptions,
 } from './tool-util';
-import { isReleaseQualifiedMissionWorkerCli } from './squad-runtime-policy';
+import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
+import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { CODEX_MCP_TOOL_TIMEOUT_SEC } from './cli-mcp-inject';
 import {
   assertCurrentMissionOrchestratorSession,
@@ -343,12 +344,17 @@ const paneSpawn: McpToolDef = {
     if (
       options.missionId &&
       options.role === 'worker' &&
-      !isReleaseQualifiedMissionWorkerCli(options.adapterId)
+      options.readOnly !== true &&
+      !isMissionWorkerWriteEligibleCli(
+        options.adapterId,
+        isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
+      )
     ) {
       throw new Error(
         `governed_worker_spawn_unsupported: ${options.adapterId} não pode ` +
           'executar como worker autônomo de missão nesta release; use o ' +
-          'adapter Codex builtin qualificado ou abra esse CLI manualmente no ' +
+          'adapter Codex builtin qualificado, ative Configurações › ' +
+          'Orquestração › Escolha livre, ou abra esse CLI manualmente no ' +
           'Terminal fora da missão',
       );
     }

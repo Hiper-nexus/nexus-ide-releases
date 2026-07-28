@@ -13,6 +13,7 @@ import {
 import type { Squad } from "../../shared/orch-types";
 import { diagnoseWithDoctorGrok } from "../runtime/doctor-diagnostic-engine";
 import { getOrchSettings } from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { orchestrationEvidenceOf } from "../../shared/adapter-types";
 import { assessStandardSquadReadiness } from "./squad-runtime-policy";
 import { liveSquadRuntimeInventory } from "./squad-runtime-inventory";
@@ -317,6 +318,7 @@ function deterministicSquadFallback(
     candidate.agents,
     inventory.policy,
     inventory.verifiedOrchestratorCliIds,
+    isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
   );
   if (!readiness.ok) {
     return {
@@ -386,6 +388,7 @@ export async function designSquadFromIntent(
       listSquads(),
       inventory.policy,
       inventory.verifiedOrchestratorCliIds,
+      isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
     );
     if (saved) {
       assertSquadDesignAuthority(options);
@@ -559,6 +562,7 @@ async function designSquad(opts: {
     candidate.agents,
     inventory.policy,
     inventory.verifiedOrchestratorCliIds,
+    isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
   );
   if (!readiness.ok) {
     return deterministicSquadFallback(

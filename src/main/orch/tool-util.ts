@@ -19,30 +19,23 @@ import {
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
-import {
-  getAdapter,
-  isBuiltinAdapter,
-} from '../adapters/adapter-registry';
+import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import { resolveRoutableModel } from './task-router';
 import { getProjectDomainStores } from './project-domain-store-registry';
-import { LEGACY_MARKER } from './legacy-handoff';
-import { PONYTAIL_RULES } from './ponytail';
-import { ENGINEERING_CHARTER } from './engineering-charter';
-import { composeDesignCharter } from './design-profile';
 import { getOrchSettings } from '../persistence/settings-store';
 import { resolveCwdForScope } from './workspace-path';
-import { canUseNexusMcp } from './cli-mcp-inject';
-import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
+import { withHandoffContract } from './worker-handoff-contract';
 import {
   isSafeOmpMissionPreflightFailure,
   spawnMissionOmpRpcWorker,
   terminateOmpRpcSession,
 } from '../adapters/omp-rpc-ipc';
 import {
-  supportsEnforceableReadOnlyNativeAuthority,
-  supportsEnforceableWorkspaceWriteNativeAuthority,
-} from '../pty/autonomous-cli-policy';
+  assertReleaseQualifiedMissionWorkerSpawn,
+  isRevisionBoundWritableWorkerAdapterAllowed,
+} from './mission-worker-spawn-authority';
+import { waitOutBootPrompts } from './boot-prompt-hold';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
 import { assertSafePtyPrompt } from './pty-prompt-safety';
@@ -55,11 +48,6 @@ import {
 } from './mcp-protocol';
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
-import { isReleaseQualifiedMissionWorkerCli } from './squad-runtime-policy';
-import {
-  supportsAdvisoryParticipationCli,
-  supportsMechanicallyReadOnlyCli,
-} from './mission-scheduler-plan';
 import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
@@ -75,7 +63,6 @@ const PROMPT_SETTLE_MS = 500;
 const ENTER_RETRY_MS = 400;
 const AGENT_BOOT_TIMEOUT_MS = 20_000;
 /** Max wait for Claude-family bypass/trust menus before typing the mission prompt. */
-const BOOT_PROMPT_HOLD_MS = 5_000;
 /**
  * After a brief is typed, the session must report busy within this window.
  * A still-idle session means a dialog with no autoresponder signature ate the
@@ -499,129 +486,13 @@ function requireMissionPaneAuthoritySeal(options: SpawnToolOptions) {
   return seal;
 }
 
-/**
- * UI-shaped work, detected on the task brief + pane title/agent name. Biased
- * generous (false positive = status quo ante: charter included); superset of
- * the contract-compiler UI_SIGNAL so design guidance never misses real UI.
- */
-const WORKER_UI_SIGNAL =
-  /\b(ui|ux|frontend|front-end|design|layout|estilo|style|styling|css|tailwind|component|componente|tsx|jsx|html|tela|p[aá]gina|bot[aã]o|modal|landing|website|interface|responsive|responsivo|acessibilidade|accessibility|dashboard|visual|dark ?mode|tema|theme|icon|[ií]cone)\b/i;
+export {
+  charterTierForWorker,
+  withHandoffContract,
+  type HandoffContractHints,
+} from './worker-handoff-contract';
 
-export interface HandoffContractHints {
-  /** Squad role category — scouts/architects read and plan, they don't ship diffs. */
-  category?: string;
-  /** Extra corpus (title, agent name) for the UI-task detection. */
-  hints?: Array<string | undefined>;
-}
-
-/** Charters only help roles that produce code/UI; for the rest they are noise. */
-export function charterTierForWorker(
-  input: { prompt: string } & HandoffContractHints,
-): { engineering: boolean; design: boolean; lean: boolean } {
-  const category = input.category?.toLowerCase();
-  // Recon/planning roles deliver analysis, not diffs — build discipline and
-  // diff-size rules only dilute their brief.
-  if (category === 'scout' || category === 'architect') {
-    return { engineering: false, design: false, lean: false };
-  }
-  const corpus = [input.prompt, ...(input.hints ?? [])]
-    .filter(Boolean)
-    .join('\n');
-  const uiTask = WORKER_UI_SIGNAL.test(corpus);
-  if (category === 'reviewer') {
-    // Reviewers judge against the engineering bar (and may refine code), but
-    // the ponytail diff ladder targets authors, not critics.
-    return { engineering: true, design: uiTask, lean: false };
-  }
-  // Executors and unclassified spawns: full build discipline; design charter
-  // only when the task actually touches UI (its own applicability rule).
-  return { engineering: true, design: uiTask, lean: true };
-}
-
-/**
- * Append the handoff contract a WORKER must fulfil, matched to what its CLI
- * can actually do: MCP-wired adapters get the
- * nexus_handoff_submit tool; every other CLI has NO route to the embedded MCP
- * server, so its only completion signal is printing the legacy marker block —
- * without this instruction those workers finish silently and the orchestrator
- * waits forever.
- */
-export function withHandoffContract(
-  prompt: string,
-  adapter: { quirks: Record<string, unknown> },
-  hints: HandoffContractHints = {},
-): string {
-  const viaMcp = canUseNexusMcp(adapter);
-  const contract = viaMcp
-    ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
-      'com {status: "success"|"partial"|"failed", summary, artifacts}.'
-    : 'Ao concluir sua tarefa, imprima EXATAMENTE este bloco como texto no ' +
-      'terminal (é seu sinal de conclusão para o orquestrador):\n' +
-      `${LEGACY_MARKER}\n` +
-      '{"status":"success","summary":"<resumo objetivo do que fez>","artifacts":[]}';
-  // Disciplina em camadas (toggles em Configurações › Squads): a Carta de
-  // Engenharia dita o comportamento sênior (stack certa, gates verdes,
-  // segurança, spec viva); o ponytail dita o tamanho do diff. O tier por
-  // papel/tarefa mantém o prompt proporcional: missão curta não paga ~8 KB
-  // de cartas que não se aplicam a ela.
-  const orch = getOrchSettings();
-  const tier = charterTierForWorker({ prompt, ...hints });
-  const charter =
-    orch.seniorMode && tier.engineering ? `\n\n${ENGINEERING_CHARTER}` : '';
-  // A carta de design é composta com o perfil (direção + dials) do workspace;
-  // perfil neutro degrada para a carta pura, sem custo extra de prompt.
-  const design =
-    orch.designPro && tier.design ? `\n\n${composeDesignCharter(orch)}` : '';
-  const lean = orch.leanCode && tier.lean ? `\n\n${PONYTAIL_RULES}` : '';
-  return `${prompt}${charter}${design}${lean}\n\n${contract}`;
-}
-
-/**
- * Last physical boundary before a governed worker can reach credential probes,
- * RPC, or PTY creation. Persisted rosters, sticky routes, legacy receipts and
- * callers without a contextRevision are data — none of them can widen this
- * release-owned allowlist.
- *
- * Manual Terminal panes have no missionId and remain multi-provider. An
- * explicitly identified mission orchestrator is also outside the worker
- * boundary (Maestro has its own read-only/delegation authority).
- */
-export function assertReleaseQualifiedMissionWorkerSpawn(
-  options: Pick<
-    SpawnToolOptions,
-    'adapterId' | 'missionId' | 'role' | 'readOnly'
-  >,
-): void {
-  if (!options.missionId || options.role === 'orchestrator') return;
-  const adapter = getAdapter(options.adapterId);
-  const qualified =
-    adapter?.kind === 'cli-pty' &&
-    isReleaseQualifiedMissionWorkerCli(adapter.id) &&
-    isBuiltinAdapter(adapter.id) &&
-    supportsEnforceableWorkspaceWriteNativeAuthority(adapter) &&
-    (options.readOnly !== true ||
-      supportsEnforceableReadOnlyNativeAuthority(adapter));
-  if (qualified) return;
-  // Read-only participation lanes: mechanically confined read_only CLIs
-  // (codex, grok) and advisory-unconfined MCP-only CLIs (claude is also
-  // natively confined; kimi/agy/opencode/omp run advisory with the MCP
-  // read-only authority as the only boundary). Writable dispatch remains
-  // codex-only above.
-  const readOnlyParticipant =
-    options.readOnly === true &&
-    adapter?.kind === 'cli-pty' &&
-    isBuiltinAdapter(adapter.id) &&
-    (supportsMechanicallyReadOnlyCli(adapter.id) ||
-      supportsAdvisoryParticipationCli(adapter.id)) &&
-    (supportsEnforceableReadOnlyNativeAuthority(adapter) ||
-      supportsAdvisoryParticipationCli(adapter.id));
-  if (readOnlyParticipant) return;
-  throw new Error(
-    `governed_worker_spawn_unsupported: ${options.adapterId} não pode executar ` +
-      'como worker autônomo de missão nesta release; use o adapter Codex builtin ' +
-      'qualificado ou abra esse CLI manualmente no Terminal fora da missão',
-  );
-}
+export { assertReleaseQualifiedMissionWorkerSpawn } from './mission-worker-spawn-authority';
 
 export async function spawnPaneAndMaybePrompt(
   options: SpawnToolOptions,
@@ -663,13 +534,11 @@ export async function spawnPaneAndMaybePrompt(
   }
   if (
     revisionBoundWritableWorker &&
-    (adapter.id !== 'codex' ||
-      !isBuiltinAdapter(adapter.id) ||
-      !supportsEnforceableWorkspaceWriteNativeAuthority(adapter))
+    !isRevisionBoundWritableWorkerAdapterAllowed(adapter.id)
   ) {
     throw new Error(
       `workspace_write_unsupported: ${adapter.id} não oferece sandbox ` +
-        'nativo builtin confiável para worker autônomo isolado',
+        'confiável para worker autônomo isolado (ative Escolha livre ou use Codex)',
     );
   }
   // Circuit half-open / closed only for auto traffic; explicit spawns still try.
@@ -912,38 +781,4 @@ export async function spawnPaneAndMaybePrompt(
   return { paneId: result.paneId, sessionId: result.sessionId };
 }
 
-/**
- * Block inject while a known interactive boot prompt is visible or just
- * accepted. If the menu is still up after maxMs, force-dismiss it (Down+Enter,
- * then numeric "2") so we never type the mission brief into the dialog.
- */
-export async function waitOutBootPrompts(
-  sessionId: string,
-  maxMs = BOOT_PROMPT_HOLD_MS,
-): Promise<void> {
-  const deadline = Date.now() + maxMs;
-  while (
-    cliPromptAutoResponder.shouldDeferInjection(sessionId) &&
-    Date.now() < deadline
-  ) {
-    await delay(50);
-  }
-  if (!cliPromptAutoResponder.shouldDeferInjection(sessionId)) return;
-
-  const forced = cliPromptAutoResponder.forceAcceptResponse(sessionId);
-  if (forced) {
-    orchWriteSession(sessionId, forced.response);
-    if (forced.fallbackResponse) {
-      await delay(120);
-      // Some Claude Code builds ignore the primary keys on numbered menus.
-      orchWriteSession(sessionId, forced.fallbackResponse);
-    }
-  }
-  const settleDeadline = Date.now() + 600;
-  while (
-    cliPromptAutoResponder.shouldDeferInjection(sessionId) &&
-    Date.now() < settleDeadline
-  ) {
-    await delay(50);
-  }
-}
+export { waitOutBootPrompts } from './boot-prompt-hold';

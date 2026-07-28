@@ -43,6 +43,7 @@ export function pickReusableSquad<T extends ReusableSquadLike>(
   squads: T[],
   runtimePolicy: ReadonlySet<string> | SquadRuntimeCliPolicy,
   verifiedOrchestratorCliIds: ReadonlySet<string>,
+  operatorChoice = false,
 ): T | null {
   const policy =
     typeof runtimePolicy === "object" &&
@@ -63,6 +64,7 @@ export function pickReusableSquad<T extends ReusableSquadLike>(
         squad.agents,
         policy,
         verifiedOrchestratorCliIds,
+        operatorChoice,
       ).ok
     );
   });

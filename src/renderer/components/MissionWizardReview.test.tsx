@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccountInfo } from "../../shared/account-types";
 import type { Squad, SquadAgent } from "../../shared/orch-types";
 import type { AdapterInfo } from "../../shared/types";
@@ -11,6 +11,22 @@ import { MissionWizardReview } from "./MissionWizardReview";
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
+
+beforeEach(() => {
+  (
+    window as unknown as {
+      nexus: {
+        settings: {
+          orchGet: () => Promise<{ squadCliPolicy: string }>;
+        };
+      };
+    }
+  ).nexus = {
+    settings: {
+      orchGet: async () => ({ squadCliPolicy: "governed" }),
+    },
+  };
+});
 
 const orchestrator: SquadAgent = {
   id: "orch",
@@ -160,6 +176,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={squad}
           roster={[orchestrator]}
           adapters={[codex]}
@@ -200,6 +217,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={squad}
           roster={[orchestrator]}
           adapters={[codex]}
@@ -248,6 +266,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={squad}
           roster={[orchestrator]}
           adapters={[codex]}
@@ -295,6 +314,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={{ ...squad, agents: [workerOnly] }}
           roster={[workerOnly]}
           adapters={[codex]}
@@ -341,6 +361,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={{ ...squad, agents: [manualOrchestrator] }}
           roster={[manualOrchestrator]}
           adapters={[kimi]}
@@ -395,6 +416,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={{ ...squad, agents: [orchestrator, worker] }}
           roster={[orchestrator, worker]}
           adapters={[codex, kimi]}
@@ -451,6 +473,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={{ ...squad, agents: [orchestrator, worker] }}
           roster={[orchestrator, worker]}
           adapters={[codex, kimi]}
@@ -505,6 +528,7 @@ describe("MissionWizardReview orchestrator provider", () => {
       act(() => {
         root.render(
           <MissionWizardReview
+            squadCliPolicy="governed"
             squad={{ ...squad, agents: [orchestrator, worker] }}
             roster={[orchestrator, worker]}
             adapters={[codex, supervisedReadOnly]}
@@ -564,6 +588,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={squad}
           roster={[orchestrator]}
           adapters={[codex]}
@@ -607,6 +632,7 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={squad}
           roster={[orchestrator]}
           adapters={[codex]}
@@ -681,6 +707,7 @@ describe("MissionWizardReview advisory worker lane", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={{ ...squad, agents: rosterAgents }}
           roster={rosterAgents}
           adapters={adapterList}
@@ -770,6 +797,7 @@ describe("MissionWizardReview advisory worker lane", () => {
     act(() => {
       root.render(
         <MissionWizardReview
+          squadCliPolicy="governed"
           squad={{ ...squad, agents: [orchestrator, scout] }}
           roster={[orchestrator, scout]}
           adapters={[codex, claude]}

@@ -11,6 +11,8 @@ import {
   supportsMechanicallyReadOnlyCli,
   supportsMechanicallyWorkspaceWriteCli,
 } from "./mission-scheduler-plan";
+import { getOrchSettings } from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { isRoutableModelResolution } from "./task-router";
 import { ScopedStoreBinding, ScopedStoreCorruptionError } from "./scoped-store";
 import {
@@ -240,7 +242,10 @@ export function claimTaskDispatch(
         }
         if (
           executionMode === "isolated_worktree" &&
-          !supportsMechanicallyWorkspaceWriteCli(routeContract.adapterId)
+          !supportsMechanicallyWorkspaceWriteCli(
+            routeContract.adapterId,
+            isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
+          )
         ) {
           throw new Error(
             "dispatch isolated_worktree exige CLI com sandbox de workspace confiável",

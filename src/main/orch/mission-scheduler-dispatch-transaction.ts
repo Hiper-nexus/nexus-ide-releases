@@ -18,6 +18,8 @@ import {
 } from "../persistence/account-store";
 import { listProviderSettings } from "../persistence/provider-config-store";
 import { supportsEnforceableWorkspaceWriteNativeAuthority } from "../pty/autonomous-cli-policy";
+import { getOrchSettings } from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { quotaAvailabilityScore } from "../quota/quota-policy";
 import { requireQuotaService } from "../quota/quota-service";
 import { trustRealMissionCodexProjectPath } from "../real-mission-codex-trust";
@@ -373,15 +375,24 @@ export async function dispatchMissionSchedulerTask(
   });
   if (executionMode === "isolated_worktree") {
     const liveAdapter = getAdapter(sealedRoute.routeContract.adapterId);
-    if (
-      !liveAdapter ||
-      liveAdapter.kind !== "cli-pty" ||
-      !isBuiltinAdapter(liveAdapter.id) ||
-      !supportsEnforceableWorkspaceWriteNativeAuthority(liveAdapter)
-    ) {
+    const operatorChoice = isOperatorChoicePolicy(
+      getOrchSettings().squadCliPolicy,
+    );
+    // Governed: require Codex-class native workspace-write. Operator-choice:
+    // any builtin cli-pty is enough at the seal — the PTY path wraps the
+    // process in the Nexus Seatbelt (fail-closed without a constructible
+    // boundary on non-macOS).
+    const writeEligible =
+      liveAdapter?.kind === "cli-pty" &&
+      isBuiltinAdapter(liveAdapter.id) &&
+      (operatorChoice ||
+        supportsEnforceableWorkspaceWriteNativeAuthority(liveAdapter));
+    if (!liveAdapter || !writeEligible) {
       throw new Error(
         `workspace_write_unsupported: ${sealedRoute.routeContract.adapterId} ` +
-          "não possui sandbox nativo builtin qualificado para o dispatch selado",
+          (operatorChoice
+            ? "não possui adapter cli-pty builtin para escrita sob escolha livre"
+            : "não possui sandbox nativo builtin qualificado para o dispatch selado"),
       );
     }
   }

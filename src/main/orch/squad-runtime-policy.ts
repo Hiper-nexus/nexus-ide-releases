@@ -61,12 +61,15 @@ export interface SquadRuntimeAgentLike {
 }
 
 /**
- * Current-release id backstop for unattended mission workers.
+ * Current-release id backstop for unattended mission workers under the
+ * `governed` squad CLI policy.
  *
  * Capability metadata remains necessary, but it is not sufficient on its own:
- * the physical task planner/dispatcher only implements confined read/write
- * authority for the builtin Codex path in this release. Keep manual panes and
- * direct routing separate — Kimi/OMP/etc. remain available there.
+ * the physical task planner/dispatcher only implements provider-native
+ * confined read/write for the builtin Codex path. Under `operator-choice`
+ * (see orch.squadCliPolicy) any handoff-capable CLI may write — confined by
+ * the Nexus kernel Seatbelt instead of a brand allowlist. Manual panes and
+ * direct routing remain available either way.
  */
 const RELEASE_QUALIFIED_MISSION_WORKER_CLIS = new Set(["codex"]);
 
@@ -74,6 +77,19 @@ export function isReleaseQualifiedMissionWorkerCli(
   adapterId: string,
 ): boolean {
   return RELEASE_QUALIFIED_MISSION_WORKER_CLIS.has(adapterId);
+}
+
+/**
+ * Whether a CLI may act as an autonomous mission writer right now.
+ * `operatorChoice` opens the lane to any non-empty adapter id; the physical
+ * spawn path still fails closed without a constructible Seatbelt boundary.
+ */
+export function isMissionWorkerWriteEligibleCli(
+  adapterId: string,
+  operatorChoice = false,
+): boolean {
+  if (operatorChoice) return adapterId.trim().length > 0;
+  return isReleaseQualifiedMissionWorkerCli(adapterId);
 }
 
 export type StandardSquadReadiness =
@@ -169,6 +185,11 @@ export function squadRuntimeModelsForCli(
 export function buildSquadRuntimeCliPolicy(
   providers: readonly SquadRuntimeProviderSnapshot[],
   hasAvailableAccount: (adapterId: string) => boolean,
+  /**
+   * When true, any handoff-capable non-Claude CLI may be a mission worker.
+   * Default false keeps the release-qualified Codex writer lane.
+   */
+  operatorChoice = false,
 ): SquadRuntimeCliPolicy {
   const routableCliIds = new Set<string>();
   const credentiallessOnlyCliIds = new Set<string>();
@@ -253,14 +274,20 @@ export function buildSquadRuntimeCliPolicy(
     ),
     routableWorkerCliIds: new Set(
       [...routableCliIds].filter((adapterId) => {
-        if (!isReleaseQualifiedMissionWorkerCli(adapterId)) return false;
         const provider = providers.find(
           (candidate) => candidate.adapterId === adapterId,
         );
-        return (
-          provider?.guidedHandoffCapable === true &&
-          provider.autonomousWorkspaceWriteCapable === true
-        );
+        if (!provider?.guidedHandoffCapable) return false;
+        if (operatorChoice) {
+          return (
+            adapterId !== "claude" &&
+            adapterId !== "shell" &&
+            adapterId !== "omp-rpc"
+          );
+        }
+        // Governed: Codex-class writers only (release-qualified + write capable).
+        if (!isReleaseQualifiedMissionWorkerCli(adapterId)) return false;
+        return provider.autonomousWorkspaceWriteCapable === true;
       }),
     ),
     credentiallessOnlyCliIds,
@@ -317,6 +344,11 @@ export function assessStandardSquadReadiness(
   agents: readonly SquadRuntimeAgentLike[],
   policy: SquadRuntimeCliPolicy,
   verifiedOrchestratorCliIds: ReadonlySet<string>,
+  /**
+   * When true (`orch.squadCliPolicy === 'operator-choice'`), any routable
+   * Maestro is enough — the release-qualified verified-Maestro gate is skipped.
+   */
+  operatorChoice = false,
 ): StandardSquadReadiness {
   const orchestrators = agents.filter(
     (agent) => agent.category === "orchestrator",
@@ -340,7 +372,10 @@ export function assessStandardSquadReadiness(
       detail: "o Maestro aprovado não possui rota ativa",
     });
   }
-  if (!verifiedOrchestratorCliIds.has(orchestratorCli)) {
+  if (
+    !operatorChoice &&
+    !verifiedOrchestratorCliIds.has(orchestratorCli)
+  ) {
     return Object.freeze({
       ok: false,
       code: "maestro-unverified",
