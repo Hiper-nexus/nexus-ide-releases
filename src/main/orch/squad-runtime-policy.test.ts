@@ -474,6 +474,82 @@ describe("assessStandardSquadReadiness", () => {
     });
   });
 
+  it("admits read-only advisors that never write autonomously", () => {
+    const advisoryPolicy = buildSquadRuntimeCliPolicy(
+      [provider("claude"), provider("codex"), provider("grok"), provider("kimi")],
+      () => true,
+    );
+
+    expect(
+      assessStandardSquadReadiness(
+        [
+          { category: "orchestrator", cli: "codex" },
+          { category: "executor", cli: "codex" },
+          { category: "reviewer", cli: "codex" },
+          // grok: mechanically confined read_only lane (kernel Seatbelt).
+          { category: "reviewer", cli: "grok" },
+          // kimi: advisory tier behind the Nexus MCP read-only authority.
+          { category: "scout", cli: "kimi" },
+          // claude: admissible as advisor because the Maestro is not Claude.
+          { category: "reviewer", cli: "claude" },
+        ],
+        advisoryPolicy,
+        verified,
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it("keeps the Claude advisor out when the Maestro is also Claude", () => {
+    expect(
+      assessStandardSquadReadiness(
+        [
+          { category: "orchestrator", cli: "claude" },
+          { category: "executor", cli: "codex" },
+          { category: "reviewer", cli: "codex" },
+          { category: "scout", cli: "claude" },
+        ],
+        policy,
+        verified,
+      ),
+    ).toMatchObject({ ok: false, code: "claude-worker" });
+  });
+
+  it("never admits a writing category through the read-only lane", () => {
+    // kimi holds no autonomous write confinement: as an executor it is a
+    // worker, not an advisor, so the roster must fail closed.
+    expect(
+      assessStandardSquadReadiness(
+        [
+          { category: "orchestrator", cli: "codex" },
+          { category: "executor", cli: "kimi" },
+          { category: "reviewer", cli: "codex" },
+        ],
+        policy,
+        verified,
+      ),
+    ).toMatchObject({ ok: false, code: "executor-unavailable" });
+  });
+
+  it("still requires an active adapter route for a read-only advisor", () => {
+    const withoutKimi = buildSquadRuntimeCliPolicy(
+      [provider("claude"), provider("codex")],
+      () => true,
+    );
+
+    expect(
+      assessStandardSquadReadiness(
+        [
+          { category: "orchestrator", cli: "codex" },
+          { category: "executor", cli: "codex" },
+          { category: "reviewer", cli: "codex" },
+          { category: "scout", cli: "kimi" },
+        ],
+        withoutKimi,
+        verified,
+      ),
+    ).toMatchObject({ ok: false, code: "worker-unavailable" });
+  });
+
   it.each([
     [
       "explicit Maestro",

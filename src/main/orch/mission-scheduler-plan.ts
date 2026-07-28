@@ -11,19 +11,17 @@ import {
   type GuidedTaskKind,
 } from './guided-task-kind';
 
-export { supportsAdvisoryParticipationCli } from '../../shared/mission-advisory';
+export {
+  supportsAdvisoryParticipationCli,
+  // codex: governed argv profile. grok: kernel Seatbelt `--sandbox read-only`
+  // (physical escape probe 27/07: write outside the sandbox denied, session
+  // state under the GROK_HOME overlay works).
+  supportsMechanicallyReadOnlyCli,
+} from '../../shared/mission-advisory';
 
 export type PlannedExecutionMode = 'isolated_worktree' | 'read_only';
 
-// codex: governed argv profile. grok: kernel Seatbelt `--sandbox read-only`
-// (physical escape probe 27/07: write outside the sandbox denied, session
-// state under the GROK_HOME overlay works).
-const MECHANICALLY_READ_ONLY_CLIS = new Set(['codex', 'grok']);
 const MECHANICALLY_WORKSPACE_WRITE_CLIS = new Set(['codex']);
-
-export function supportsMechanicallyReadOnlyCli(adapterId: string): boolean {
-  return MECHANICALLY_READ_ONLY_CLIS.has(adapterId);
-}
 
 /**
  * Id-level backstop for sealed task/claim authority. Live builtin origin and

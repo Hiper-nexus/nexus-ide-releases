@@ -2,6 +2,7 @@ import {
   authReadyModelsForProvider,
   isCredentiallessOpenCodeModel,
 } from "../adapters/model-auth-readiness";
+import { supportsReadOnlyParticipationCli } from "../../shared/mission-advisory";
 
 /**
  * Main-owned squad readiness policy.
@@ -262,6 +263,35 @@ export function buildSquadRuntimeCliPolicy(
 }
 
 /**
+ * The only roster categories that can hold a read_only lane. Executor and
+ * architect are excluded on purpose: both write to the workspace, so they
+ * always owe the autonomous write confinement demanded of a mission worker.
+ */
+const READ_ONLY_PARTICIPATION_CATEGORIES: ReadonlySet<unknown> = new Set([
+  "reviewer",
+  "scout",
+]);
+
+/**
+ * Advisory participation lane: a reviewer/scout on a CLI that can hold a
+ * read_only lane joins the mission through the Nexus MCP read-only authority
+ * (or its own mechanical confinement) and therefore never needs autonomous
+ * workspace write. It still must be routable as an adapter — advisory is a
+ * narrower authority, not an exemption from having an active route.
+ */
+function isReadOnlyParticipant(
+  agent: SquadRuntimeAgentLike,
+  policy: SquadRuntimeCliPolicy,
+): boolean {
+  return (
+    READ_ONLY_PARTICIPATION_CATEGORIES.has(agent.category) &&
+    typeof agent.cli === "string" &&
+    supportsReadOnlyParticipationCli(agent.cli) &&
+    isSquadRuntimeAgentRoutable(agent, policy)
+  );
+}
+
+/**
  * Standard beginner delivery requires one explicit verified Maestro plus
  * independently addressable executor and reviewer identities. Executor and
  * reviewer may share a non-Claude CLI; their distinct roster identities are
@@ -302,10 +332,19 @@ export function assessStandardSquadReadiness(
     });
   }
 
+  // reserveClaude keeps exactly one Claude OAuth session per mission. A Claude
+  // advisor confined to a read-only lane is admissible when the Maestro is NOT
+  // Claude — the sealed task plan already applies that same rule (see
+  // mission-task-plan-authority).
+  const claudeNonOrchestrators = agents.filter(
+    (agent) => agent.category !== "orchestrator" && agent.cli === "claude",
+  );
   if (
-    agents.some(
-      (agent) => agent.category !== "orchestrator" && agent.cli === "claude",
-    )
+    claudeNonOrchestrators.length > 0 &&
+    (orchestratorCli === "claude" ||
+      claudeNonOrchestrators.some(
+        (agent) => !READ_ONLY_PARTICIPATION_CATEGORIES.has(agent.category),
+      ))
   ) {
     return Object.freeze({
       ok: false,
@@ -343,6 +382,7 @@ export function assessStandardSquadReadiness(
   const unroutableWorker = agents.find(
     (agent) =>
       agent.category !== "orchestrator" &&
+      !isReadOnlyParticipant(agent, policy) &&
       !isSquadRuntimeAgentRoutable(agent, policy, true),
   );
   if (unroutableWorker) {
