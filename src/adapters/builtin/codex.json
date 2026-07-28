@@ -51,6 +51,8 @@
     "flag": "--model",
     "list": [
       "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
       "gpt-5.5",
       "gpt-5.4",
       "gpt-5.4-mini",
@@ -62,7 +64,7 @@
       "gpt-4.1",
       "gpt-4o"
     ],
-    "default": "gpt-5.5"
+    "default": "gpt-5.6-terra"
   },
   "promptInjection": {
     "method": "arg",

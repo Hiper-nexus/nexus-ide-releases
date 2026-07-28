@@ -1,11 +1,14 @@
 /** Product defaults for newly created or provider-switched squad agents. */
 export const SQUAD_MODEL_DEFAULTS = {
+  codex: 'gpt-5.6-terra',
   grok: 'grok-4.5',
   gemini: 'gemini-3.6-flash-high',
 } as const;
 
 export function defaultSquadModelForAdapter(adapterId: string): string | undefined {
   switch (adapterId.trim().toLowerCase()) {
+    case 'codex':
+      return SQUAD_MODEL_DEFAULTS.codex;
     case 'grok':
       return SQUAD_MODEL_DEFAULTS.grok;
     case 'agy':

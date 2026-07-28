@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-07-25T23:30:00.000Z",
+  "updatedAt": "2026-07-28T16:00:00.000Z",
   "adapters": {
     "claude": {
       "default": "claude-sonnet-5",
@@ -51,8 +51,27 @@
       ]
     },
     "codex": {
-      "default": "gpt-5.5",
+      "default": "gpt-5.6-terra",
       "models": [
+        {
+          "id": "gpt-5.6-sol",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Topo da linha 5.6 — use em hard/critical; custo alto."
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
         {
           "id": "gpt-5.5",
           "availability": "paid",
