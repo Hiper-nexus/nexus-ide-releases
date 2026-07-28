@@ -10,7 +10,9 @@ import { defaultSquadModelForAdapter } from "./squad-model-defaults";
 export const REAL_MISSION_E2E_FLAG = "--nexus-real-mission-e2e";
 export const REAL_MISSION_E2E_PRODUCT_WIZARD_FLAG =
   "--nexus-real-mission-product-wizard-e2e";
-export const REAL_MISSION_E2E_TIMEOUT_MS = 15 * 60_000;
+// Must cover executor work + merge-council wait (20 min in real-mission).
+// The outer release-candidate harness allows 32 min; keep headroom below that.
+export const REAL_MISSION_E2E_TIMEOUT_MS = 30 * 60_000;
 export const REAL_MISSION_E2E_EVIDENCE_FILE = "real-mission-evidence.json";
 export const REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE =
   "real-mission-evidence-claude-orchestrator.json";

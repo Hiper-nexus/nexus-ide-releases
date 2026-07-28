@@ -42,8 +42,10 @@ import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 const REVIEW_TIMEOUT_MS = 10 * 60_000;
 const REAL_MISSION_REVIEW_TIMEOUT_MS = 20 * 60_000;
 const REVIEWER_SPAWN_ATTEMPTS = 3;
-const REVIEWER_IDLE_NUDGE_MS = 45_000;
-const REVIEWER_MAX_IDLE_NUDGES = 3;
+// Nudge only after a long true idle — firing while Codex pauses between
+// tool calls re-pastes a brief and can reset an in-flight review turn.
+const REVIEWER_IDLE_NUDGE_MS = 90_000;
+const REVIEWER_MAX_IDLE_NUDGES = 2;
 
 interface ReviewerRoute {
   readonly adapterId: string;
@@ -216,6 +218,8 @@ function reviewerPrompt(
     'When finished, call nexus_merge_review_submit exactly once:',
     JSON.stringify({ reviewSessionId, findings: [] }),
     'Use an empty findings array only after you have inspected the diff and found no issue.',
+    'Do NOT call nexus_handoff_submit. This review lane has no handoff tool;',
+    'nexus_merge_review_submit is the only completion signal.',
   ].join('\n');
 }
 
@@ -224,8 +228,8 @@ function reviewerIdleNudgePrompt(reviewSessionId: string): string {
     '# Nexus Independent Merge Review — resume',
     '',
     'You already have the review brief. Do not wait for another agent.',
-    'Inspect the checkout/diff with the allowed Nexus tools, then call',
-    'nexus_merge_review_submit exactly once:',
+    'Do NOT call nexus_handoff_submit.',
+    'If inspection is done, call nexus_merge_review_submit exactly once now:',
     JSON.stringify({ reviewSessionId, findings: [] }),
     'Empty findings are valid only after you inspected the diff yourself.',
   ].join('\n');
