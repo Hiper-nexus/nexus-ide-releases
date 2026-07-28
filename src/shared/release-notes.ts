@@ -13,12 +13,22 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.31',
-  date: '2026-07-26',
-  codename: 'Missão Cumprida',
+  version: '0.19.32',
+  date: '2026-07-27',
+  codename: 'Mais de Uma Cabeça',
   summary:
-    'Uma única aprovação leva o objetivo do PRD à entrega: o Nexus distribui trabalho real ao squad, comprova que cada resultado chegou ao próximo agente e só conclui depois de revisão e QA.',
+    'A missão deixa de ser trabalho de uma CLI só: revisores e batedores de outras CLIs entram na mesma missão em faixa somente-leitura, com PTY próprio e recibo físico. Vem junto tudo que estava pronto na 0.19.31, que ficou retida nos gates.',
   highlights: [
+    {
+      title: 'Conselho multi-CLI na mesma missão',
+      detail:
+        'Revisores e batedores de outras CLIs participam em faixa somente-leitura, cada um com PTY próprio, ao menos uma tool nexus_* e handoff submetido. A evidência registra o tier de confinamento de cada um: mecânico, quando o próprio provider garante (Codex pelo perfil de argv, Grok pelo Seatbelt do kernel), ou advisory, quando a fronteira é a autoridade somente-leitura do MCP Nexus.',
+    },
+    {
+      title: 'Claude também aconselha',
+      detail:
+        'Com o Maestro em outra CLI, o Claude entra como conselheiro somente-leitura da missão. A missão continua com uma única sessão Claude OAuth, então o Claude nunca vira executor com escrita.',
+    },
     {
       title: 'Fluxo único, sem modal cosmético',
       detail:
@@ -41,6 +51,16 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Missão com conselheiro deixa de morrer na aprovação',
+      detail:
+        'A fronteira final do Main exigia escrita autônoma confinada de todo agente que não fosse o Maestro, então qualquer missão com conselheiro era barrada antes de abrir o primeiro terminal. A aprovação agora reconhece a faixa somente-leitura; executor continua exigindo Codex e nenhum conselheiro entra sem rota ativa.',
+    },
+    {
+      title: 'Kickoff do Codex sobrevive ao sandbox do Darwin',
+      detail:
+        'O host de terminal roda em processo utilitário e a autorização de launch só aceitava o helper base, derrubando o início do Codex com "helper exited before authenticated exec". Agora os helpers do app são aceitos com Team e identifier próprios, os selos do bundle são liberados na autorização e os hooks selados sobrevivem ao perfil isolado.',
+    },
     {
       title: 'Orquestração confinada por CLI',
       detail:

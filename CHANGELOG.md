@@ -1,6 +1,53 @@
 # Changelog
 
-## 0.19.31 — Missão Cumprida
+## 0.19.32 — Mais de Uma Cabeça
+
+Data: 2026-07-27
+
+Entrega também tudo que estava preparado para a 0.19.31, que ficou retida nos
+gates e nunca chegou a ser publicada.
+
+### Conselho multi-CLI dentro da mesma missão
+
+- **Lane advisor**: revisores e batedores em CLIs que sustentam uma faixa
+  somente-leitura entram na missão com recibo físico — PTY próprio, ao menos
+  uma tool `nexus_*` e handoff submetido. A evidência registra o tier de
+  confinamento de cada um: mecânico (Codex pelo perfil de argv, Grok pelo
+  Seatbelt do kernel) ou advisory, quando a única fronteira é a autoridade
+  somente-leitura do MCP Nexus.
+- **Claude também aconselha**: com o Maestro em outra CLI, Claude participa
+  como advisor somente-leitura. `reserveClaude` continua garantindo uma única
+  sessão Claude OAuth por missão, então Claude executor segue proibido.
+- **A aprovação enxerga a faixa**: a fronteira final do main deixou de exigir
+  escrita autônoma confinada de todo agente não-orquestrador. Era o elo que
+  faltava — qualquer missão com advisor morria antes de abrir o primeiro PTY.
+  Executor continua exigindo Codex, e advisory nunca dispensa rota ativa.
+- **Grok confinado**: entra na missão restrito a `read_only`.
+
+### A prova acompanha o squad inteiro
+
+- **Suíte real-mission multi-CLI** com recibos de participação (schema v9):
+  cada advisor credenciada precisa aparecer fisicamente na evidência, e quem
+  não tem credencial é registrado como pulado — nunca silenciado.
+- **Variante com orquestrador Claude** fechando o ciclo completo
+  (kickoff → dispatch → handoffs → integração → done) com evidência atestada
+  dupla no gate.
+- O wizard qualifica os advisors e o gate fecha em FAIL sem `wizardReceipt`.
+
+### Codex e o sandbox do Darwin
+
+- **PTY nasce do Helper (Plugin)**: a autorização de launch do supervisor só
+  aceitava o Helper base e o main. O host PTY roda em `utilityProcess` e
+  morria com "helper exited before authenticated exec", derrubando o kickoff
+  do Codex. Agora Plugin/GPU/Renderer são aceitos com Team e identifier do app.
+- **Selos do bundle liberados no launch-auth**, com falha registrada em vez de
+  silenciosa.
+- **Hooks selados sobrevivem ao perfil Codex isolado**: trust preservado,
+  transporte silencioso e loopback permitido dentro do sandbox.
+- **Espera de panes abaixo do timeout MCP do Codex**, para o orquestrador não
+  ser cortado no meio do próprio boot.
+
+## 0.19.31 — Missão Cumprida (não publicada)
 
 Data: 2026-07-26
 
