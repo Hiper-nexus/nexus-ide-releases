@@ -11,6 +11,7 @@ import {
   REAL_MISSION_E2E_RESULT_FILE,
   REAL_MISSION_E2E_SQUAD_ID,
   parseRealMissionE2EEvidence,
+  realMissionE2EAdvisorSkipClis,
   type RealMissionE2EEvidence,
 } from "../shared/real-mission-e2e";
 import { hasNexusMcpCapability } from "../shared/adapter-types";
@@ -345,12 +346,16 @@ export function validateHarnessCodexAdapter(): boolean {
 }
 
 /**
- * Cada CLI advisor do harness precisa de um adapter cli-pty real com PTY
- * obrigatório e rota Nexus MCP declarada — sem isso o fan-out consultivo não
- * tem caminho físico de injeção/observação.
+ * Cada CLI advisor **presente** no roster (após NEXUS_REAL_MISSION_ADVISOR_SKIP)
+ * precisa de um adapter cli-pty real com PTY obrigatório e rota Nexus MCP —
+ * sem isso o fan-out consultivo não tem caminho físico de injeção/observação.
+ * Advisors pulados por env não entram na prova desta rodada.
  */
 export function validateHarnessAdvisorAdapters(): boolean {
-  return REAL_MISSION_E2E_ADVISORS.every((advisor) => {
+  const skipped = new Set(realMissionE2EAdvisorSkipClis());
+  return REAL_MISSION_E2E_ADVISORS.filter(
+    (advisor) => !skipped.has(advisor.cli),
+  ).every((advisor) => {
     const adapter = getAdapter(advisor.cli);
     return Boolean(
       adapter &&

@@ -132,6 +132,46 @@ describe("balanceSquadRosterCli", () => {
     ]);
   });
 
+  it("preserves sealed advisor CLIs even when detection is false", () => {
+    // Root cause of product-wizard observer-invalid with heavy advisor skips:
+    // omp/grok momentarily undetected → silent rewrite → binding null.
+    const balanced = balanceSquadRosterCli(
+      [
+        agent("orch", "orchestrator", "codex"),
+        agent("e2e-advisor-omp", "scout", "omp"),
+        agent("e2e-advisor-grok", "reviewer", "grok"),
+        agent("e2e-executor", "executor", "codex"),
+      ],
+      [adapter("codex")],
+    );
+
+    expect(balanced.map((item) => item.cli)).toEqual([
+      "codex",
+      "omp",
+      "grok",
+      "codex",
+    ]);
+  });
+
+  it("preserves every CLI when preserveExactCliAssignments is set", () => {
+    const balanced = balanceSquadRosterCli(
+      [
+        agent("orch", "orchestrator", "codex"),
+        agent("e2e-advisor-omp", "scout", "omp"),
+        agent("e2e-executor", "executor", "claude"),
+      ],
+      [adapter("codex")],
+      "codex",
+      { preserveExactCliAssignments: true },
+    );
+
+    expect(balanced.map((item) => item.cli)).toEqual([
+      "codex",
+      "omp",
+      "claude",
+    ]);
+  });
+
   it("rewrites a claude advisor to Codex when the roster orchestrator is Claude", () => {
     const balanced = balanceSquadRosterCli(
       [

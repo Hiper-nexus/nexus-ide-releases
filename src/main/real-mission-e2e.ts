@@ -59,6 +59,8 @@ import {
   runGit,
   setupScratchRepository,
   sha256,
+  validateHarnessAdvisorAdapters,
+  validateHarnessCodexAdapter,
   validateHarnessRoster,
   validateHarnessSquad,
   type ScratchRepository,
@@ -431,6 +433,10 @@ export function initRealMissionE2E(): void {
       const candidates = missions
         .filter((mission) => isProductWizardPreApprovalMission(mission));
       if (candidates.length > 1) {
+        console.error(
+          "[real-mission] observer-invalid reason=multiple-preapproval-missions " +
+            `count=${candidates.length}`,
+        );
         finish("observer-invalid");
         return;
       }
@@ -438,6 +444,14 @@ export function initRealMissionE2E(): void {
       if (!mission) return;
       const squadBinding = productWizardSquadBinding(mission);
       if (!squadBinding || !validateHarnessRoster()) {
+        console.error(
+          "[real-mission] observer-invalid reason=roster-or-binding " +
+            `binding=${squadBinding ? "ok" : "null"} ` +
+            `squad=${validateHarnessSquad()} ` +
+            `codex=${validateHarnessCodexAdapter()} ` +
+            `advisors=${validateHarnessAdvisorAdapters()} ` +
+            `missionSquad=${mission.squadId}`,
+        );
         finish("observer-invalid");
         return;
       }
@@ -454,7 +468,11 @@ export function initRealMissionE2E(): void {
           REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA,
           inventoryFence,
         );
-      } catch {
+      } catch (error) {
+        console.error(
+          "[real-mission] observer-invalid reason=arm-observer-threw " +
+            `${error instanceof Error ? error.message : String(error)}`,
+        );
         if (!settled) finish("observer-invalid");
       }
     };

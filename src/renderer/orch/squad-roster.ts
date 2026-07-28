@@ -1,6 +1,5 @@
 import type { AdapterInfo } from "../../shared/types";
 import type { SquadAgent } from "../../shared/orch-types";
-import { supportsAdvisoryParticipationCli } from "../../shared/mission-advisory";
 import { defaultSquadModelForAdapter } from "../../shared/squad-model-defaults";
 
 const LEGACY_ORCHESTRATOR_CLI = "claude";
@@ -69,18 +68,31 @@ function adapterInstalledEnabled(
   );
 }
 
+export interface BalanceSquadRosterCliOptions {
+  /**
+   * Release-gate / sealed fixture: never rewrite any CLI (orchestrator,
+   * executor or advisor). Only fill missing model defaults. Silent rebalancing
+   * broke product-wizard E2E binding (`observer-invalid`) when omp/grok were
+   * momentarily undetected in the packaged gate.
+   */
+  readonly preserveExactCliAssignments?: boolean;
+}
+
 /**
  * Balance worker CLIs across qualified writers. Preserve an explicit, installed
  * Maestro (and worker) assignment — release fixtures and user-reviewed squads
  * must not be rewritten to the legacy Claude default when that provider is
- * present but unauthenticated. Workers reviewer/scout em CLIs da advisory lane
- * (Fases 0/1: rota Nexus MCP read_only) também são preservados; Claude só como
- * advisor quando o orquestrador do roster não é Claude (reserveClaude).
+ * present but unauthenticated.
+ *
+ * Reviewer/scout CLIs are sealed once chosen: qualification belongs to the
+ * review UI / spawn gate, not to silent rebalancing. Claude is rewritten only
+ * under reserveClaude (orchestrator already Claude).
  */
 export function balanceSquadRosterCli(
   agents: SquadAgent[],
   adapters: RosterAdapter[],
   orchestratorAdapterId = LEGACY_ORCHESTRATOR_CLI,
+  options?: BalanceSquadRosterCliOptions,
 ): SquadAgent[] {
   const pool = workerCliPool(adapters);
   const rosterOrchestratorCli = agents.find(
@@ -89,6 +101,13 @@ export function balanceSquadRosterCli(
   let workerIndex = 0;
 
   return agents.map((agent) => {
+    if (options?.preserveExactCliAssignments) {
+      return {
+        ...agent,
+        model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
+      };
+    }
+
     if (agent.category === "orchestrator") {
       if (adapterInstalledEnabled(adapters, agent.cli)) {
         return {
@@ -106,30 +125,28 @@ export function balanceSquadRosterCli(
       };
     }
 
-    const advisoryLaneWorker =
+    // Sealed reviewer/scout assignment — including mechanical read-only (grok)
+    // and advisory MCP lane (kimi/omp/agy…). Do not rewrite when detection is
+    // late/false; the wizard surfaces auth/install blocks instead.
+    if (
       (agent.category === "reviewer" || agent.category === "scout") &&
-      supportsAdvisoryParticipationCli(agent.cli) &&
-      (agent.cli !== "claude" || rosterOrchestratorCli !== "claude");
-    // Confinamento mecânico read-only (ex.: grok Seatbelt) também preserva
-    // reviewers/scouts — a escrita continua exigindo workspace-write governado.
-    const mechanicallyReadOnlyWorker =
-      (agent.category === "reviewer" || agent.category === "scout") &&
+      agent.cli &&
+      !(agent.cli === "claude" && rosterOrchestratorCli === "claude")
+    ) {
+      return {
+        ...agent,
+        model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
+      };
+    }
+
+    const keepWorker =
+      adapterInstalledEnabled(adapters, agent.cli) &&
       agent.cli !== LEGACY_ORCHESTRATOR_CLI &&
       adapters.some(
         (adapter) =>
           adapter.id === agent.cli &&
-          adapter.capabilities?.autonomousReadOnly === true,
+          adapter.autonomousWorkspaceWriteCapable === true,
       );
-    const keepWorker =
-      adapterInstalledEnabled(adapters, agent.cli) &&
-      (agent.cli !== LEGACY_ORCHESTRATOR_CLI || advisoryLaneWorker) &&
-      (advisoryLaneWorker ||
-        mechanicallyReadOnlyWorker ||
-        adapters.some(
-          (adapter) =>
-            adapter.id === agent.cli &&
-            adapter.autonomousWorkspaceWriteCapable === true,
-        ));
     if (keepWorker) {
       return {
         ...agent,

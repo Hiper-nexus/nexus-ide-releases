@@ -71,7 +71,7 @@
       "moonshot-v1-128k",
       "moonshot-v1-32k"
     ],
-    "default": "kimi-code/kimi-for-coding"
+    "default": "kimi-code/k3"
   },
   "promptInjection": {
     "method": "arg",

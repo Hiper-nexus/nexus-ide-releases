@@ -754,6 +754,54 @@ describe("MissionWizardReview advisory worker lane", () => {
     act(() => root.unmount());
   });
 
+  it("blames auth — not missing qualification — when Claude has read-only but is logged out", () => {
+    const scout: SquadAgent = {
+      id: "e2e-advisor-claude",
+      agentName: "E2E Advisor Claude",
+      category: "scout",
+      cli: "claude",
+      model: claude.models.default,
+      effort: "medium",
+      allowedTools: [],
+    };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <MissionWizardReview
+          squad={{ ...squad, agents: [orchestrator, scout] }}
+          roster={[orchestrator, scout]}
+          adapters={[codex, claude]}
+          providers={[
+            provider(codex),
+            provider(claude, {
+              authStrategy: "login-needed",
+              authReadyModels: [],
+            }),
+          ]}
+          highlightedAgentId={null}
+          error={null}
+          spawning={false}
+          rosterSaved={false}
+          rosterInvalidAgent={null}
+          onSaveRoster={vi.fn()}
+          onUpdateAgent={vi.fn()}
+          onError={vi.fn()}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onLaunch={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("precisa de autenticação válida");
+    expect(host.textContent).not.toContain(
+      "não possui essa qualificação nesta release",
+    );
+    act(() => root.unmount());
+  });
+
   it("blocks a claude worker when the orchestrator already is Claude", () => {
     const claudeOrchestrator: SquadAgent = {
       ...orchestrator,

@@ -215,24 +215,52 @@ export function MissionWizardReview({
         );
         const label = adapter?.label ?? unqualifiedWorker.cli;
         const capabilities = adapterCapabilityMatrixOf(adapter);
+        const isAdvisorRole =
+          unqualifiedWorker.category === "reviewer" ||
+          unqualifiedWorker.category === "scout";
+        const advisoryLane =
+          isAdvisorRole &&
+          supportsAdvisoryParticipationCli(unqualifiedWorker.cli) &&
+          (unqualifiedWorker.cli !== "claude" ||
+            orchestratorAgent?.cli !== "claude");
+        const roleCapable =
+          isAdvisorRole
+            ? Boolean(
+                capabilities.governedWriter ||
+                  capabilities.autonomousReadOnly ||
+                  advisoryLane,
+              )
+            : Boolean(capabilities.governedWriter);
+        const authenticated = adapter
+          ? isAdapterModelAuthenticated(
+              adapter,
+              providers,
+              unqualifiedWorker.model,
+              accounts,
+            )
+          : false;
+        // Auth failure on a role-capable CLI must never look like "sem
+        // qualificação nesta release" — that message cost hours of wrong
+        // diagnosis (Claude advisor with autonomousReadOnly + login-needed).
+        if (
+          adapter &&
+          capabilities.launchable &&
+          roleCapable &&
+          !authenticated
+        ) {
+          return isAdvisorRole
+            ? `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} como advisor read_only nesta release.`
+            : `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} automaticamente nesta release.`;
+        }
         if (
           capabilities.launchable &&
           !capabilities.autonomousReadOnly &&
-          !capabilities.governedWriter
+          !capabilities.governedWriter &&
+          !advisoryLane
         ) {
-          if (
-            supportsAdvisoryParticipationCli(unqualifiedWorker.cli) &&
-            (unqualifiedWorker.category === "reviewer" ||
-              unqualifiedWorker.category === "scout")
-          ) {
-            return `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} como advisor read_only nesta release.`;
-          }
           return `${label} está disponível para uso manual no Terminal, mas não pode executar o worker ${unqualifiedWorker.agentName} automaticamente nesta release.`;
         }
-        if (
-          unqualifiedWorker.category === "reviewer" ||
-          unqualifiedWorker.category === "scout"
-        ) {
+        if (isAdvisorRole) {
           return `O worker ${unqualifiedWorker.agentName} precisa de leitura autônoma confinada e autenticada. ${label} não possui essa qualificação nesta release.`;
         }
         return `O worker ${unqualifiedWorker.agentName} precisa de escrita autônoma confinada e autenticada. ${label} não possui essa qualificação nesta release.`;

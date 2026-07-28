@@ -679,17 +679,35 @@ export function stageAdvisorAuthentication(
     path.join(home, ".kimi-code", "credentials"),
     { label: "Kimi Code credentials file", privateRoot: home },
   );
-  // Credentials alone are not enough to run: kimi refuses any model that its
-  // config.toml does not declare, and dies at startup with
-  //   [config.invalid] Model "<id>" is not configured in config.toml
-  // The isolated HOME has no config, so the advisor is spawned and then
-  // immediately fails. Stage the operator's config next to the credentials.
+  // Credentials alone are not enough to run. Two more pieces of the operator
+  // profile have to travel, or the advisor spawns and dies immediately:
+  //
+  // - config.toml: kimi refuses any model its config does not declare and
+  //   exits with `[config.invalid] Model "<id>" is not configured`;
+  // - device_id (+ the oauth marker): the access token is short-lived and the
+  //   refresh is bound to the device identity. Without it the isolated HOME
+  //   reports `OAuth login expired. Send /login to login.` even though the
+  //   operator profile is perfectly logged in.
   if (kimiStaged) {
     stageAdvisorAuthFile(
       path.join(source, ".kimi-code", "config.toml"),
       path.join(home, ".kimi-code"),
       {
         label: "Kimi Code model configuration",
+        requirePrivateMode: false,
+        privateRoot: home,
+      },
+    );
+    stageAdvisorAuthFile(
+      path.join(source, ".kimi-code", "device_id"),
+      path.join(home, ".kimi-code"),
+      { label: "Kimi Code device identity", privateRoot: home },
+    );
+    stageAdvisorAuthFile(
+      path.join(source, ".kimi-code", "oauth", "kimi-code"),
+      path.join(home, ".kimi-code", "oauth"),
+      {
+        label: "Kimi Code oauth marker",
         requirePrivateMode: false,
         privateRoot: home,
       },

@@ -60,6 +60,7 @@ import { NEXUS_PLAN_SQUAD_ID } from "../../shared/builtin-squad-ids";
 import {
   REAL_MISSION_E2E_GOAL,
   REAL_MISSION_E2E_PRODUCT_WIZARD_ACTIVE_STORAGE_KEY,
+  REAL_MISSION_E2E_SQUAD_ID,
 } from "../../shared/real-mission-e2e";
 import { recordRealMissionProductWizardStep } from "../lib/real-mission-product-wizard-e2e";
 
@@ -829,6 +830,9 @@ export function MissionWizard() {
         sq.agents,
         rosterAdapters,
         verifiedAutomaticOrchestratorId,
+        sq.id === REAL_MISSION_E2E_SQUAD_ID
+          ? { preserveExactCliAssignments: true }
+          : undefined,
       ),
     );
     setRosterSaved(false);

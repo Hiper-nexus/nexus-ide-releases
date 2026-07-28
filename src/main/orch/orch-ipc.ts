@@ -75,6 +75,11 @@ import {
   type RendererMissionAuthorityCandidate,
   type RendererMissionLifecycleCandidate,
 } from "./renderer-mission-authority";
+import {
+  hasMissionApprovalTrust,
+  missionApprovalTrustKeyFrom,
+  rememberMissionApprovalTrust,
+} from "./mission-approval-trust";
 import { deleteMissionPromptQueue } from "./mission-prompt-queue-registry";
 import {
   ProjectDomainStoreRegistry,
@@ -854,6 +859,21 @@ async function confirmMissionAuthorityChange(
       action,
       replacement,
     );
+    // Pré-autorização (approve only): mesmo projeto + mesmo roster hash →
+    // pula o modal e ainda emite o reviewSha256 do review integral. Promote
+    // e experimental sempre pedem olhos humanos. Gate E2E real desliga trust.
+    const trustKey = missionApprovalTrustKeyFrom(scope, candidate.squad.hash);
+    if (
+      !isPromotion &&
+      !isExperimental &&
+      hasMissionApprovalTrust(trustKey)
+    ) {
+      console.log(
+        `[orch] mission approval delegated project=${scope.projectId} ` +
+          `squadHash=${candidate.squad.hash.slice(0, 12)}`,
+      );
+      return review.reviewSha256;
+    }
     const result = await dialog.showMessageBox(window, {
       type:
         candidate.risk === "destructive" || isExperimental
@@ -873,6 +893,13 @@ async function confirmMissionAuthorityChange(
       defaultId: 0,
       cancelId: 0,
       noLink: true,
+      ...(isPromotion
+        ? {}
+        : {
+            checkboxLabel:
+              "Não perguntar de novo para esta equipe neste projeto",
+            checkboxChecked: false,
+          }),
       message: isPromotion
         ? "Permitir que este plano passe a executar mudanças?"
         : isExperimental
@@ -880,7 +907,14 @@ async function confirmMissionAuthorityChange(
         : "Aprovar esta missão e liberar sua execução?",
       detail: review.detail,
     });
-    return result.response === 1 ? review.reviewSha256 : null;
+    if (result.response !== 1) return null;
+    if (!isPromotion && result.checkboxChecked) {
+      rememberMissionApprovalTrust(
+        trustKey,
+        candidate.squad.runtimeSourceSquadId ?? candidate.squad.id,
+      );
+    }
+    return review.reviewSha256;
   } finally {
     missionAuthorityConfirmations.delete(owner);
   }
