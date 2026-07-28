@@ -535,6 +535,7 @@ describe('manual GitHub release publication', () => {
       environment: publishEnvironment(),
       version: '1.2.3',
       authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
       stageReleaseAssets: passthroughStage,
       github,
       repositoryPublisher: {
@@ -601,6 +602,7 @@ describe('manual GitHub release publication', () => {
       environment: publishEnvironment(),
       version: '1.2.3',
       authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
       stageReleaseAssets: passthroughStage,
       github: fakeGitHub({ states, fixture, events }),
       repositoryPublisher: {
@@ -662,6 +664,7 @@ describe('manual GitHub release publication', () => {
       environment: publishEnvironment(),
       version: '1.2.3',
       authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
       stageReleaseAssets: passthroughStage,
       github: fakeGitHub({ states, fixture, events }),
       repositoryPublisher: {
@@ -721,6 +724,7 @@ describe('manual GitHub release publication', () => {
       environment: publishEnvironment(),
       version: '1.2.3',
       authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
       stageReleaseAssets: passthroughStage,
       github: fakeGitHub({ states, fixture, events }),
       repositoryPublisher: {
@@ -763,6 +767,7 @@ describe('manual GitHub release publication', () => {
       environment: publishEnvironment(),
       version: '1.2.3',
       authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
       stageReleaseAssets: passthroughStage,
       github: fakeGitHub({
         states: new Map([[CANONICAL_RELEASE_REPO, canonical]]),
@@ -791,6 +796,7 @@ describe('manual GitHub release publication', () => {
       environment: publishEnvironment(),
       version: '1.2.3',
       authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
       stageReleaseAssets: passthroughStage,
       github: fakeGitHub({
         states: new Map([
@@ -843,6 +849,7 @@ describe('manual GitHub release publication', () => {
       environment: publishEnvironment(),
       version: '1.2.3',
       authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
       stageReleaseAssets: passthroughStage,
       github: fakeGitHub({
         states: new Map([
@@ -882,6 +889,7 @@ describe('manual GitHub release publication', () => {
       environment: publishEnvironment(),
       version: '1.2.3',
       authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
       stageReleaseAssets: passthroughStage,
       github: fakeGitHub({
         states: new Map([[CANONICAL_RELEASE_REPO, canonical]]),
@@ -922,6 +930,10 @@ function releaseAuthority() {
     npmVersion: '12.0.0',
     allowedTagSignerFingerprints: [],
   };
+}
+
+function releaseNodeVersion() {
+  return `v${releaseAuthority().nodeVersion}`;
 }
 
 function passthroughStage(release) {

@@ -1,5 +1,7 @@
 import http from "node:http";
+import fs from "node:fs";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import { app, dialog } from "electron";
 import type { McpRuntimeInfo } from "../../shared/orch-types";
 import {
@@ -650,12 +652,35 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       if (shouldUseEphemeralHome(adapter, gated)) {
         // Só o Claude NATIVO carrega a identidade OAuth da assinatura para o
         // overlay; GLM/LongCat (base URL de terceiro) jamais podem recebê-la.
+        const approvedMissionProjectTrust =
+          hasApprovedMissionProjectTrust(authority);
         const home = prepareEphemeralHome(ctx.token, mcpConfig, {
           carryNativeClaudeAuth: !isThirdPartyClaudeFamily(adapter),
           cwd: authority.cwd,
-          approvedMissionProjectTrust:
-            hasApprovedMissionProjectTrust(authority),
+          approvedMissionProjectTrust,
         });
+        if (approvedMissionProjectTrust) {
+          const stagedProfile = JSON.parse(
+            fs.readFileSync(path.join(home.dir, ".claude.json"), "utf8"),
+          ) as {
+            projects?: Record<
+              string,
+              {
+                hasTrustDialogAccepted?: unknown;
+                hasCompletedProjectOnboarding?: unknown;
+              }
+            >;
+          };
+          const exactTrust = stagedProfile.projects?.[authority.cwd];
+          if (
+            exactTrust?.hasTrustDialogAccepted !== true ||
+            exactTrust.hasCompletedProjectOnboarding !== true
+          ) {
+            throw new Error(
+              "failed to stage exact Claude-family project trust for the sealed mission",
+            );
+          }
+        }
         env.HOME = home.dir;
         ephemeralHomeDir = home.dir;
         // A identidade OAuth carregada faz o CLI baixar os conectores MCP da

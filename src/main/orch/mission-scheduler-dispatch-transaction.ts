@@ -67,6 +67,19 @@ export function missionSchedulerBootstrapFailureDetail(error: unknown): string {
   }`;
 }
 
+function missionSchedulerSessionExitFailureDetail(error: unknown): string {
+  const cause = error instanceof Error ? error.message : String(error);
+  const maskedByLifecycleFence =
+    /^dispatch sem autoridade de efeito no estado blocked$/iu.test(
+      cause.trim(),
+    );
+  return missionSchedulerBootstrapFailureDetail(
+    maskedByLifecycleFence
+      ? "agent session exited during boot before prompt acceptance"
+      : error,
+  );
+}
+
 type DispatchFailureSnapshot = Pick<
   TaskDispatchRecord,
   | "state"
@@ -125,10 +138,14 @@ export function persistMissionSchedulerDispatchFailure(input: {
   if (!input.leaseToken) return "unchanged";
   const current = input.store.get(input.taskId);
   if (!current) return "unchanged";
-  const detail = missionSchedulerBootstrapFailureDetail(input.error);
-  if (
+  const genericSessionExitWon =
     current.state === "blocked" &&
-    current.lastError === TASK_DISPATCH_SESSION_EXIT_REASON &&
+    current.lastError === TASK_DISPATCH_SESSION_EXIT_REASON;
+  const detail = genericSessionExitWon
+    ? missionSchedulerSessionExitFailureDetail(input.error)
+    : missionSchedulerBootstrapFailureDetail(input.error);
+  if (
+    genericSessionExitWon &&
     input.paneId &&
     input.sessionId &&
     input.workerIncarnationId &&

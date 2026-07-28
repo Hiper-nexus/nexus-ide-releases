@@ -10,7 +10,10 @@ import {
   disposeProjectDomainStoreRegistry,
   getProjectDomainStores,
 } from './project-domain-store-registry';
-import { clearRouteProvenance } from './route-provenance';
+import {
+  clearRouteProvenance,
+  recordRouteDecision,
+} from './route-provenance';
 import { paneSpawnTool } from './tools-panes';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
@@ -247,6 +250,10 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
   });
 
   it('recusa spawn ad-hoc em missão running sem reservation válida', async () => {
+    recordRouteDecision({
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+    });
     const message = await spawnError({
       adapterId: 'codex',
       model: 'gpt-5.6-sol',

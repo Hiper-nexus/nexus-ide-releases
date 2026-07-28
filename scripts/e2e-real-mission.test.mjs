@@ -1249,6 +1249,16 @@ describe("real mission advisor authentication staging", () => {
       path.join(sourceHome, ".local", "share", "opencode", "auth.json"),
       '{"opencode":1}\n',
     );
+    writePrivate(
+      path.join(
+        sourceHome,
+        ".local",
+        "share",
+        "ai-launcher",
+        "providers.conf",
+      ),
+      "glm=00000000000000000000000000000000.testsecretvalue\n",
+    );
     // Identidade nativa NÃO-secreta do Claude (oauthAccount/userID): o CLI
     // decide "logado" por ela; o segredo fica só na keychain.
     fs.writeFileSync(
@@ -1284,6 +1294,7 @@ describe("real mission advisor authentication staging", () => {
       agy: "staged",
       opencode: "staged",
       claude: process.platform === "darwin" ? "staged" : "skipped",
+      glm: "staged",
     });
     if (process.platform === "darwin") {
       expect(onSkip).not.toHaveBeenCalled();
@@ -1348,6 +1359,10 @@ describe("real mission advisor authentication staging", () => {
         }) + "\n",
       ],
       [".local/share/opencode/auth.json", '{"opencode":1}\n'],
+      [
+        ".local/share/ai-launcher/providers.conf",
+        "glm=00000000000000000000000000000000.testsecretvalue\n",
+      ],
     ];
     expect(fs.existsSync(path.join(isolatedHome, ".omp/agent/agent.db"))).toBe(
       true,
@@ -1364,6 +1379,7 @@ describe("real mission advisor authentication staging", () => {
       ".omp/agent",
       ".gemini",
       ".local/share/opencode",
+      ".local/share/ai-launcher",
     ]) {
       expect(
         fs.statSync(path.join(isolatedHome, directory)).mode & 0o777,
@@ -1493,11 +1509,13 @@ describe("real mission advisor authentication staging", () => {
       agy: "skipped",
       opencode: "credentialless",
       claude: "skipped",
+      glm: "skipped",
     });
     // opencode is credentialless, not a skip.
     expect(onSkip.mock.calls.map(([cli]) => cli).sort()).toEqual([
       "agy",
       "claude",
+      "glm",
       "grok",
       "kimi",
       "omp",
@@ -1560,6 +1578,7 @@ describe("real mission advisor authentication staging", () => {
       JSON.stringify({
         access_token: "at-test",
         refresh_token: "rt-test",
+        expires_at: Math.floor(Date.now() / 1000) + 3_600,
       }) + "\n",
       { mode: 0o644 },
     );
@@ -1593,6 +1612,44 @@ describe("real mission advisor authentication staging", () => {
         scope: "kimi-code",
         token_type: "Bearer",
         expires_in: 0,
+      }) + "\n",
+    );
+    writePrivate(
+      path.join(sourceHome, ".kimi-code", "device_id"),
+      "device-uuid-test\n",
+    );
+    fs.writeFileSync(
+      path.join(sourceHome, ".kimi-code", "config.toml"),
+      'default_model = "kimi-code/k3"\n',
+      { mode: 0o644 },
+    );
+
+    const statuses = stageAdvisorAuthentication(isolatedHome, {
+      sourceHome,
+      environment: {},
+      onSkip,
+      run: keychainRun(1),
+    });
+
+    expect(statuses.kimi).toBe("skipped");
+    expect(onSkip).toHaveBeenCalledWith("kimi");
+    expect(fs.existsSync(path.join(isolatedHome, ".kimi-code"))).toBe(false);
+  });
+
+  it("skips non-empty but expired Kimi credentials instead of opening /login", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    const onSkip = vi.fn();
+    writePrivate(
+      path.join(sourceHome, ".kimi-code", "credentials", "kimi-code.json"),
+      JSON.stringify({
+        access_token: "at-expired",
+        refresh_token: "rt-present-but-unproven",
+        expires_at: Math.floor(Date.now() / 1000) - 1,
+        scope: "kimi-code",
+        token_type: "Bearer",
+        expires_in: 900,
       }) + "\n",
     );
     writePrivate(

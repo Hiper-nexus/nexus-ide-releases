@@ -91,7 +91,7 @@ describe('resolveOrchestratorRuntime', () => {
     ).toBe('claude-opus-explicit');
   });
 
-  it('leaves model undefined when provider default should decide at spawn time', () => {
+  it('uses the product Codex default when squad/global defaults are empty', () => {
     expect(
       resolveOrchestratorRuntime({
         adapterId: 'codex',
@@ -99,7 +99,7 @@ describe('resolveOrchestratorRuntime', () => {
         defaultAccountId: '',
         accounts: [],
       }),
-    ).toEqual({ model: undefined, accountId: undefined });
+    ).toEqual({ model: 'gpt-5.6-terra', accountId: undefined });
   });
 
   it('uses the product defaults for Grok and AGY when no squad/global model is set', () => {

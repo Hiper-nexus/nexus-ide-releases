@@ -123,7 +123,8 @@ describe('resolveAuthStrategy', () => {
 });
 
 describe('kimiCredentialsBlobIsUsable', () => {
-  it('rejects empty shells and accepts a live access or refresh token', () => {
+  it('requires a live access token with a safe expiry window', () => {
+    const now = 2_000_000_000;
     expect(
       kimiCredentialsBlobIsUsable(
         JSON.stringify({
@@ -131,17 +132,55 @@ describe('kimiCredentialsBlobIsUsable', () => {
           refresh_token: '',
           expires_at: 0,
         }),
+        now,
       ),
     ).toBe(false);
-    expect(kimiCredentialsBlobIsUsable('{"kimi":1}')).toBe(false);
+    expect(kimiCredentialsBlobIsUsable('{"kimi":1}', now)).toBe(false);
     expect(
       kimiCredentialsBlobIsUsable(
-        JSON.stringify({ access_token: 'at-live', refresh_token: '' }),
+        JSON.stringify({
+          access_token: 'at-expired',
+          refresh_token: 'rt-present-but-unproven',
+          expires_at: now - 1,
+        }),
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      kimiCredentialsBlobIsUsable(
+        JSON.stringify({
+          access_token: '',
+          refresh_token: 'rt-live',
+          expires_at: now + 3_600,
+        }),
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      kimiCredentialsBlobIsUsable(
+        JSON.stringify({
+          access_token: 'at-nearly-expired',
+          expires_at: now + 300,
+        }),
+        now,
+      ),
+    ).toBe(false);
+    expect(
+      kimiCredentialsBlobIsUsable(
+        JSON.stringify({
+          access_token: 'at-live',
+          expires_at: now + 301,
+        }),
+        now,
       ),
     ).toBe(true);
     expect(
       kimiCredentialsBlobIsUsable(
-        JSON.stringify({ access_token: '', refresh_token: 'rt-live' }),
+        JSON.stringify({
+          access_token: 'at-live-ms',
+          expires_at: (now + 3_600) * 1000,
+        }),
+        now,
       ),
     ).toBe(true);
   });

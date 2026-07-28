@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 export const REAL_MISSION_FLAG = "--nexus-real-mission-e2e";
 export const REAL_MISSION_PRODUCT_WIZARD_FLAG =
   "--nexus-real-mission-product-wizard-e2e";
-// A cadeia multi-CLI v9 é linear (planner → 4 scouts advisor → executor →
+// A cadeia multi-CLI v9 é linear (planner → 5 scouts advisor → executor →
 // revisor codex → 2 reviewers advisor → QA): 10 PTYs físicos sequenciais com
 // modelos reais. 16 min bastavam para o pipeline codex de 4 panes; a suíte
 // multi-CLI precisa de folga para boot + turno + handoff de cada advisor.

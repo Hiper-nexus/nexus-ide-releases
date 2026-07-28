@@ -9,6 +9,7 @@ const stubs = vi.hoisted(() => ({
   })),
   requestPaneClose: vi.fn(async () => true),
   waitForIdle: vi.fn(async () => 'idle'),
+  readSessionOutput: vi.fn(() => ''),
   preSpawnProbe: vi.fn<
     (adapterId: string, options?: { model?: string }) => Promise<void>
   >(async () => undefined),
@@ -52,6 +53,7 @@ vi.mock('./pane-registry', () => ({
   getPaneAuthzInfo: vi.fn(),
   requestPaneClose: stubs.requestPaneClose,
   requestPaneSpawn: stubs.requestPaneSpawn,
+  readSessionOutput: stubs.readSessionOutput,
   resolveCurrentMissionSpawnAuthoritySeal:
     stubs.resolveMissionPaneAuthoritySeal,
   waitForIdle: stubs.waitForIdle,
@@ -187,6 +189,7 @@ describe('agent pane workspace confinement', () => {
     stubs.resolveCwdForScope.mockReturnValue('/workspace');
     stubs.preSpawnProbe.mockResolvedValue(undefined);
     stubs.waitForIdle.mockResolvedValue('idle');
+    stubs.readSessionOutput.mockReturnValue('');
     stubs.requestPaneClose.mockResolvedValue(true);
     stubs.terminateSession.mockResolvedValue(true);
   });
@@ -440,6 +443,44 @@ describe('agent pane workspace confinement', () => {
     finishBoot?.('idle');
 
     await expect(pending).rejects.toThrow('session_authority_revoked');
+    expect(stubs.writeSession).not.toHaveBeenCalled();
+    expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-1');
+  });
+
+  it('preserves the physical PTY exit cause before the blocked dispatch fence', async () => {
+    let current = true;
+    stubs.waitForIdle.mockImplementationOnce(async () => {
+      current = false;
+      return 'exited';
+    });
+    stubs.readSessionOutput.mockReturnValueOnce(
+      'Error: model glm-5.2 is unavailable for this account',
+    );
+    const assertCurrentAuthority = vi.fn(() => {
+      if (!current) {
+        throw new Error('dispatch sem autoridade de efeito no estado blocked');
+      }
+    });
+
+    await expect(
+      spawnPaneAndMaybePrompt(
+        {
+          adapterId: 'codex',
+          missionId: 'm1',
+          role: 'worker',
+          prompt: 'never pasted',
+          scope,
+          executionScope: taskExecutionScope,
+        },
+        {
+          invocation: { assertCurrentAuthority },
+        },
+      ),
+    ).rejects.toThrow(
+      /agent session exited during boot.*model glm-5\.2 is unavailable/is,
+    );
+
+    expect(assertCurrentAuthority).toHaveBeenCalled();
     expect(stubs.writeSession).not.toHaveBeenCalled();
     expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-1');
   });

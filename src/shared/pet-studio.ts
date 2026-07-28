@@ -25,6 +25,7 @@ export const PET_STUDIO_SQUAD: Squad = {
       agentName: 'Pet Maker',
       category: 'orchestrator',
       cli: 'codex',
+      model: 'gpt-5.6-terra',
       effort: 'high',
       // The dedicated maker gets only workspace dependencies plus Nexus-owned
       // media. It never receives the private Codex imagegen/home path.

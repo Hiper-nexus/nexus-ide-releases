@@ -479,21 +479,30 @@ export function assertCodexReady({
 
 const ADVISOR_AUTH_MAX_BYTES = 4 * 1024 * 1024;
 const ADVISOR_DATABASE_MAX_BYTES = 64 * 1024 * 1024;
+const KIMI_ACCESS_TOKEN_MIN_TTL_SECONDS = 5 * 60;
 
 /**
- * True when a Kimi credentials JSON carries a non-empty access or refresh
- * token. An empty shell after logout/expiry must never count as staged auth.
+ * True only when a Kimi credentials JSON carries a non-empty access token
+ * whose declared expiry is safely in the future. A refresh token alone is not
+ * proof of a live isolated session: Kimi can reject an expired/invalid refresh
+ * and then erase both copied tokens, which used to leave the release gate in an
+ * interactive `/login` pane.
  */
-export function kimiCredentialsBlobIsUsable(blob) {
+export function kimiCredentialsBlobIsUsable(
+  blob,
+  nowSeconds = Math.floor(Date.now() / 1000),
+) {
   try {
     const parsed = JSON.parse(blob);
     const access =
       typeof parsed.access_token === "string" ? parsed.access_token.trim() : "";
-    const refresh =
-      typeof parsed.refresh_token === "string"
-        ? parsed.refresh_token.trim()
-        : "";
-    return access.length > 0 || refresh.length > 0;
+    const rawExpiry = Number(parsed.expires_at);
+    if (!access || !Number.isFinite(rawExpiry) || rawExpiry <= 0) return false;
+    const expirySeconds =
+      rawExpiry >= 1_000_000_000_000
+        ? Math.floor(rawExpiry / 1000)
+        : Math.floor(rawExpiry);
+    return expirySeconds - nowSeconds > KIMI_ACCESS_TOKEN_MIN_TTL_SECONDS;
   } catch {
     return false;
   }
@@ -778,9 +787,9 @@ export function stageAdvisorAuthentication(
   }
 
   // kimi: ~/.kimi-code/credentials/kimi-code.json (+ device_id + config.toml).
-  // An empty credentials shell (access_token/refresh_token both "") is NOT a
-  // login — staging it made the gate spawn kimi and die with
-  // `OAuth login expired` / `auth.login_required` while the file "existed".
+  // An empty or expired credentials shell is NOT a login — staging it made the
+  // gate spawn kimi and die with `OAuth login expired` /
+  // `auth.login_required` while the file "existed".
   // device_id is mandatory for refresh in an isolated HOME; config.toml is
   // mandatory so the declared model is accepted.
   const kimiCredSource = path.join(

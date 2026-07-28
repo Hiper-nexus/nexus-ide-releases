@@ -13,12 +13,27 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.35',
+  version: '0.19.36',
   date: '2026-07-28',
-  codename: 'GLM no multi-CLI',
+  codename: 'Bootstrap multi-CLI sem corrida',
   summary:
-    'Multi-CLI inclui GLM (CLI Claude + z.ai). Grok read-only sem selo Darwin. Claude advisor OAuth segue skip no gate se bootstrap race; GLM usa API key do providers.conf.',
+    'O gate multi-CLI preserva a causa real de saídas precoces e Claude/GLM recebem somente a confiança exata da missão selada no HOME isolado.',
   highlights: [
+    {
+      title: 'Claude e GLM atravessam o bootstrap selado',
+      detail:
+        'O HOME isolado recebe apenas a confiança do cwd exato já aprovado pelo Main. Isso remove o diálogo interativo de folder trust sem copiar projetos, histórico ou identidade OAuth para o GLM.',
+    },
+    {
+      title: 'Falha de provider deixa diagnóstico acionável',
+      detail:
+        'Se o PTY sair durante o boot, o Nexus preserva a cauda redigida do terminal e refina o bloqueio da sessão física exata. A mensagem genérica de autoridade bloqueada não apaga mais a causa original.',
+    },
+    {
+      title: 'Kimi vencido não entra na missão',
+      detail:
+        'Access e refresh tokens preenchidos não provam uma sessão viva. O Nexus agora exige access token com expiração válida e margem de segurança; uma sessão expirada vira no-credential em vez de parar o gate pedindo /login.',
+    },
     {
       title: 'Grok confinado pelo CLI, não por CDHash Nexus',
       detail:

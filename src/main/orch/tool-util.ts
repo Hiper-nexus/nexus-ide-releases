@@ -1,5 +1,6 @@
 import {
   getPaneAuthzInfo,
+  readSessionOutput,
   requestPaneClose,
   requestPaneSpawn,
   waitForIdle,
@@ -59,6 +60,7 @@ import {
   supportsAdvisoryParticipationCli,
   supportsMechanicallyReadOnlyCli,
 } from './mission-scheduler-plan';
+import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -81,6 +83,17 @@ const BOOT_PROMPT_HOLD_MS = 5_000;
  * blind to idle panes: stall needs busy, login-stuck needs a busy transition).
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
+
+function agentBootExitError(sessionId: string): Error {
+  const outputTail = sanitizeMissionOrchestratorExitOutput(
+    readSessionOutput(sessionId, 80),
+  );
+  return new Error(
+    `agent session exited during boot before prompt acceptance\n` +
+      `PTY tail:\n${outputTail}`,
+  );
+}
+
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -859,10 +872,14 @@ export async function spawnPaneAndMaybePrompt(
           hints: [options.title, options.agentName],
         });
     try {
-      assertMcpInvocationCurrent(hooks.invocation);
       if (boot === 'exited') {
-        throw new Error('agent session exited during boot');
+        // The exact PTY exit may already have moved the durable dispatch to
+        // blocked. Inspect that physical outcome before re-running the spawn
+        // authority fence; otherwise the generic blocked-state assertion
+        // replaces the provider's real bootstrap failure.
+        throw agentBootExitError(result.sessionId);
       }
+      assertMcpInvocationCurrent(hooks.invocation);
       // 'idle' or 'timeout' (slow boot): deliver and prove acceptance —
       // a swallowed brief used to leave a zombie worker no watchdog can see.
       const promptAccepted = await deliverAgentPrompt(

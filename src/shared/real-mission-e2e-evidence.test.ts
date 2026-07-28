@@ -296,7 +296,15 @@ describe("real mission E2E v9 advisor participation", () => {
 
     // Sem nenhuma advisor credenciada a cadeia codex v8 continua exata.
     const codexOnly = validPassEvidence("private-runner", {
-      skipAdvisorClis: ["grok", "kimi", "agy", "opencode", "omp", "claude"],
+      skipAdvisorClis: [
+        "grok",
+        "kimi",
+        "agy",
+        "opencode",
+        "omp",
+        "claude",
+        "glm",
+      ],
     });
     const parsed = parseRealMissionE2EEvidence(codexOnly);
     expect(parsed.status).toBe("pass");
@@ -378,11 +386,11 @@ describe("real mission E2E v9 claude orchestrator variant", () => {
     );
 
     expect(parsed.status).toBe("pass");
-    // Sem advisor claude: 4 scouts + executor + revisor + grok + QA.
-    expect(parsed.plan?.tasks).toHaveLength(8);
-    expect(parsed.dispatches).toHaveLength(8);
-    expect(parsed.handoffs).toHaveLength(8);
-    expect(parsed.dependencyConsumptions).toHaveLength(7);
+    // Sem advisor claude: 5 scouts + executor + revisor + grok + QA.
+    expect(parsed.plan?.tasks).toHaveLength(9);
+    expect(parsed.dispatches).toHaveLength(9);
+    expect(parsed.handoffs).toHaveLength(9);
+    expect(parsed.dependencyConsumptions).toHaveLength(8);
     expect(
       parsed.participation.find((row) => row.cli === "claude")?.skipped,
     ).toBe("orchestrator-reserved");

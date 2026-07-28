@@ -121,10 +121,10 @@ export const planProofSchema = z
           })
           .strict(),
       )
-      // Cadeia completa: 4 scouts + executor + revisor codex + 2 reviewers
+      // Cadeia completa: 5 scouts + executor + revisor codex + 2 reviewers
       // advisor + QA. Advisors skipped encolhem a cadeia; a exatidão fica no
       // invariante de PASS do envelope.
-      .max(9),
+      .max(10),
   })
   .strict()
   .nullable();

@@ -33,14 +33,29 @@ function write(file: string, value: string): void {
 }
 
 function adapter(
-  id: 'claude' | 'codex' | 'agy' | 'opencode' | 'kimi' | 'grok' | 'omp',
+  id:
+    | 'claude'
+    | 'glm'
+    | 'codex'
+    | 'agy'
+    | 'opencode'
+    | 'kimi'
+    | 'grok'
+    | 'omp',
 ): CliPtyAdapter {
-  const claudeFamily = id === 'claude';
+  const claudeFamily = id === 'claude' || id === 'glm';
   return {
     id,
     label: id,
-    bin: `/mock/bin/${id}`,
-    env: { static: {}, passthrough: [], ephemeralHome: false },
+    bin: id === 'glm' ? '/mock/bin/claude' : `/mock/bin/${id}`,
+    env: {
+      static:
+        id === 'glm'
+          ? { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' }
+          : {},
+      passthrough: [],
+      ephemeralHome: false,
+    },
     quirks: {
       mcpAutoload: claudeFamily,
       nexusMcp: claudeFamily ? 'autoload' : id,
@@ -230,6 +245,39 @@ describe('mcp-server governed CLI profile wiring', () => {
         sealedMissionAuthority(cwd, { contextRevision: 'e'.repeat(64) }),
       ),
     ).toBe(false);
+
+    decoration.onSpawnFailed?.();
+  });
+
+  it('projects the same exact trust into a sealed GLM worker overlay', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    fs.mkdirSync(home, { recursive: true });
+    vi.stubEnv('HOME', home);
+
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('glm'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      sealedMissionAuthority(cwd, { role: 'worker' }),
+      undefined,
+    );
+    if (!decoration) throw new Error('expected GLM mission decoration');
+    const overlay = JSON.parse(
+      fs.readFileSync(path.join(decoration.env.HOME, '.claude.json'), 'utf8'),
+    ) as {
+      oauthAccount?: unknown;
+      projects?: Record<string, Record<string, unknown>>;
+    };
+    expect(overlay.oauthAccount).toBeUndefined();
+    expect(overlay.projects).toEqual({
+      [cwd]: {
+        hasTrustDialogAccepted: true,
+        hasCompletedProjectOnboarding: true,
+      },
+    });
 
     decoration.onSpawnFailed?.();
   });

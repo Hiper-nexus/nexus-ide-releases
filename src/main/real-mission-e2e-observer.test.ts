@@ -244,13 +244,21 @@ describe("real mission observer advisor participation", () => {
     harness.mission = doneMission();
 
     const observer = createObserver({
-      advisorSkipClis: ["grok", "kimi", "agy", "opencode", "omp", "claude"],
+      advisorSkipClis: [
+        "grok",
+        "kimi",
+        "agy",
+        "opencode",
+        "omp",
+        "claude",
+        "glm",
+      ],
     });
     observer.start();
 
     expect(harness.finishes).not.toContain("advisor-absent");
     const evidence = observer.evidence(Date.now(), "fail", "timeout");
-    expect(evidence.participation).toHaveLength(6);
+    expect(evidence.participation).toHaveLength(7);
     expect(
       evidence.participation.every(
         (row) =>

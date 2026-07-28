@@ -260,24 +260,30 @@ function existsInEnv(envVar: string, ...segments: string[]): boolean {
 }
 
 /**
- * Kimi's credentials file can exist as an empty shell after logout/expiry
- * (`access_token`/`refresh_token` both ""). File presence alone must not count
- * as a live login — that made the UI and the E2E staging treat a dead session
- * as authenticated, then the CLI died with `OAuth login expired` / login_required.
+ * Kimi's credentials file can exist with non-empty but expired tokens. A
+ * refresh token alone is not proof of a live login: the CLI may reject it and
+ * erase the copied isolated credentials. Require an access token with a
+ * declared expiry more than five minutes away so UI readiness and release
+ * staging never advertise a dead session.
  */
-export function kimiCredentialsBlobIsUsable(blob: string): boolean {
+export function kimiCredentialsBlobIsUsable(
+  blob: string,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): boolean {
   try {
     const parsed = JSON.parse(blob) as {
       access_token?: unknown;
-      refresh_token?: unknown;
+      expires_at?: unknown;
     };
     const access =
       typeof parsed.access_token === 'string' ? parsed.access_token.trim() : '';
-    const refresh =
-      typeof parsed.refresh_token === 'string'
-        ? parsed.refresh_token.trim()
-        : '';
-    return access.length > 0 || refresh.length > 0;
+    const rawExpiry = Number(parsed.expires_at);
+    if (!access || !Number.isFinite(rawExpiry) || rawExpiry <= 0) return false;
+    const expirySeconds =
+      rawExpiry >= 1_000_000_000_000
+        ? Math.floor(rawExpiry / 1000)
+        : Math.floor(rawExpiry);
+    return expirySeconds - nowSeconds > 5 * 60;
   } catch {
     return false;
   }

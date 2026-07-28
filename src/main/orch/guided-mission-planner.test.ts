@@ -188,12 +188,20 @@ function liveAdapter(
   id: string,
   installed = true,
 ): ReturnType<GuidedMissionPlannerDeps["listLiveAdapters"]>[number] {
+  const canonicalDefault =
+    id === "codex"
+      ? "gpt-5.6-terra"
+      : id === "glm"
+        ? "glm-5.2"
+        : id === "grok"
+          ? "grok-4.5"
+          : `${id}-default`;
   return {
     id,
     installed,
     models: {
-      list: [`${id}-default`],
-      default: `${id}-default`,
+      list: [canonicalDefault],
+      default: canonicalDefault,
     },
   };
 }
@@ -442,6 +450,7 @@ describe("Guided Planner v2", () => {
         liveAdapter("opencode"),
         liveAdapter("omp"),
         liveAdapter("claude"),
+        liveAdapter("glm"),
       ],
     });
 
@@ -461,6 +470,7 @@ describe("Guided Planner v2", () => {
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
       "e2e-advisor-omp",
+      "e2e-advisor-glm",
     ];
     const reviewIds = [
       "e2e-reviewer",
@@ -495,7 +505,7 @@ describe("Guided Planner v2", () => {
           plannedTaskId(
             currentMission.id,
             3,
-            "guided-advisory-4-e2e-advisor-omp",
+            "guided-advisory-5-e2e-advisor-glm",
           ),
         ],
       }),
@@ -575,6 +585,7 @@ describe("Guided Planner v2", () => {
         liveAdapter("opencode"),
         liveAdapter("omp"),
         liveAdapter("claude"),
+        liveAdapter("glm"),
       ],
     });
 
@@ -594,6 +605,7 @@ describe("Guided Planner v2", () => {
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
       "e2e-advisor-omp",
+      "e2e-advisor-glm",
     ];
     const reviewIds = ["e2e-reviewer", "e2e-advisor-grok"];
     expect(schedules).toEqual([
@@ -624,7 +636,7 @@ describe("Guided Planner v2", () => {
           plannedTaskId(
             currentMission.id,
             3,
-            "guided-advisory-4-e2e-advisor-omp",
+            "guided-advisory-5-e2e-advisor-glm",
           ),
         ],
       }),

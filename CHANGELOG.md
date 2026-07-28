@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.19.36 — Bootstrap multi-CLI sem corrida
+
+Data: 2026-07-28
+
+### Release gate
+
+- **Causa real do bootstrap preservada**: se a saída física do PTY vencer a
+  corrida e bloquear o dispatch, o scheduler registra o erro do provider e a
+  cauda redigida do terminal em vez de sobrescrevê-los com
+  `dispatch sem autoridade de efeito no estado blocked`.
+- **Claude-family confia somente na missão selada**: Claude OAuth e GLM/z.ai
+  recebem no HOME isolado a confiança exata do cwd já aprovado pelo Main. O
+  spawn falha fechado se essa projeção não estiver presente, evitando a saída
+  precoce no diálogo interativo de folder trust.
+- **Contrato GLM sincronizado**: schema, fixtures, cardinalidade do fan-out,
+  staging de `providers.conf`, defaults Codex e testes do publish agora
+  representam os sete advisors e a cadeia máxima de dez tasks.
+- **Kimi expirado vira skip honesto**: strings de access/refresh token não
+  bastam mais. O gate e a UI exigem access token com `expires_at` válido e
+  margem mínima; sessão vencida fica `no-credential` em vez de abrir um pane
+  quebrado em `/login`.
+
+### Validação
+
+- Typecheck verde.
+- Suíte completa: 950 arquivos e 8.077 testes verdes.
+
 ## 0.19.35 — GLM no multi-CLI
 
 Data: 2026-07-28

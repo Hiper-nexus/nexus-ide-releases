@@ -72,6 +72,38 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
     expect(fail).not.toHaveBeenCalled();
   });
 
+  it("does not persist the blocked-state authority error when session exit won", () => {
+    const current = blockedBootstrapSnapshot();
+    const refineBootstrapSessionExitBlock = vi.fn();
+
+    expect(
+      persistMissionSchedulerDispatchFailure({
+        store: {
+          get: () => current,
+          refineBootstrapSessionExitBlock,
+          fail: vi.fn(),
+        },
+        missionId: "mission-bootstrap",
+        taskId: "task-bootstrap",
+        leaseToken: "lease-bootstrap",
+        paneId: current.paneId,
+        sessionId: current.sessionId,
+        workerIncarnationId: current.workerIncarnationId,
+        error: new Error(
+          "dispatch sem autoridade de efeito no estado blocked",
+        ),
+      }),
+    ).toBe("refined");
+
+    expect(refineBootstrapSessionExitBlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error:
+          `${MISSION_SCHEDULER_BOOTSTRAP_FAILURE_PREFIX} ` +
+          "agent session exited during boot before prompt acceptance",
+      }),
+    );
+  });
+
   it("keeps a generic post-bootstrap exit unchanged without catch-bound identity", () => {
     const current = blockedBootstrapSnapshot();
     const refineBootstrapSessionExitBlock = vi.fn();

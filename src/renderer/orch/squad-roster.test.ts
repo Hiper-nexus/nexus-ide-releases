@@ -97,8 +97,8 @@ describe("balanceSquadRosterCli", () => {
     expect(balanced[1].model).toBe("claude-model");
     expect(balanced[4].model).toBe("claude-model");
     expect([balanced[2].model, balanced[3].model]).toEqual([
-      undefined,
-      undefined,
+      "gpt-5.6-terra",
+      "gpt-5.6-terra",
     ]);
   });
 

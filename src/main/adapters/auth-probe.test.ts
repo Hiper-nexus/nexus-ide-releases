@@ -16,7 +16,8 @@ vi.mock('../persistence/provider-config-store', () => ({
 
 vi.mock('./subscription-auth', () => ({
   hasSubscriptionAuth: (adapterId: string) => adapterId === 'grok',
-  detectSubscriptionAuth: (adapterId: string) => adapterId === 'grok',
+  detectSubscriptionAuth: (adapterId: string) =>
+    adapterId === 'grok' || adapterId === 'claude',
   claudeOauthEmail: () => 'retornoja@gmail.com',
 }));
 
