@@ -1191,15 +1191,22 @@ describe("real mission advisor authentication staging", () => {
       path.join(sourceHome, ".omp", "agent", "agent.db-wal"),
       "wal",
     );
-    // agy: o segredo OAuth fica na keychain (service "gemini", account
-    // "antigravity"); só a identidade NÃO-secreta é staged.
+    // agy: sessão viva = oauth_creds utilizável e/ou conta active + secret.
+    // Instalação antigravity sozinha não conta (evita "login new" no wizard).
     writePrivate(
       path.join(sourceHome, ".gemini", "google_accounts.json"),
-      '{"accounts":[]}\n',
+      JSON.stringify({ active: "operator@example.com", old: [] }) + "\n",
     );
     writePrivate(
       path.join(sourceHome, ".gemini", "installation_id"),
       "install-1\n",
+    );
+    writePrivate(
+      path.join(sourceHome, ".gemini", "oauth_creds.json"),
+      JSON.stringify({
+        access_token: "agy-at",
+        refresh_token: "agy-rt",
+      }) + "\n",
     );
     writePrivate(
       path.join(sourceHome, ".local", "share", "opencode", "auth.json"),
@@ -1279,8 +1286,18 @@ describe("real mission advisor authentication staging", () => {
       [".kimi-code/config.toml", 'default_model = "kimi-code/k3"\n'],
       [".omp/agent/agent.db", "sqlite"],
       [".omp/agent/agent.db-wal", "wal"],
-      [".gemini/google_accounts.json", '{"accounts":[]}\n'],
+      [
+        ".gemini/google_accounts.json",
+        JSON.stringify({ active: "operator@example.com", old: [] }) + "\n",
+      ],
       [".gemini/installation_id", "install-1\n"],
+      [
+        ".gemini/oauth_creds.json",
+        JSON.stringify({
+          access_token: "agy-at",
+          refresh_token: "agy-rt",
+        }) + "\n",
+      ],
       [".local/share/opencode/auth.json", '{"opencode":1}\n'],
     ];
     for (const [relative, content] of stagedFiles) {

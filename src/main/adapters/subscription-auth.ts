@@ -192,6 +192,59 @@ export function claudeCredentialsFileIsUsable(home = os.homedir()): boolean {
   }
 }
 
+/** True when ~/.gemini/oauth_creds.json has a non-empty access or refresh token. */
+export function agyOauthCredsFileIsUsable(home = os.homedir()): boolean {
+  const candidates = [
+    path.join(home, '.gemini', 'oauth_creds.json'),
+  ];
+  const custom = process.env.GEMINI_CLI_HOME?.trim();
+  if (custom) {
+    candidates.unshift(path.join(custom, 'oauth_creds.json'));
+  }
+  for (const filePath of candidates) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as {
+        access_token?: unknown;
+        refresh_token?: unknown;
+      };
+      const access =
+        typeof parsed.access_token === 'string'
+          ? parsed.access_token.trim()
+          : '';
+      const refresh =
+        typeof parsed.refresh_token === 'string'
+          ? parsed.refresh_token.trim()
+          : '';
+      if (access.length > 0 || refresh.length > 0) return true;
+    } catch {
+      // try next
+    }
+  }
+  return false;
+}
+
+/** True when google_accounts.json names a live active account email. */
+export function agyGoogleAccountIsActive(home = os.homedir()): boolean {
+  const candidates = [path.join(home, '.gemini', 'google_accounts.json')];
+  const custom = process.env.GEMINI_CLI_HOME?.trim();
+  if (custom) {
+    candidates.unshift(path.join(custom, 'google_accounts.json'));
+  }
+  for (const filePath of candidates) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as {
+        active?: unknown;
+      };
+      if (typeof parsed.active === 'string' && parsed.active.includes('@')) {
+        return true;
+      }
+    } catch {
+      // try next
+    }
+  }
+  return false;
+}
+
 
 function existsInEnv(envVar: string, ...segments: string[]): boolean {
   const customHome = process.env[envVar]?.trim();
@@ -377,24 +430,13 @@ export function detectSubscriptionAuth(
       // at the LongCat Anthropic-compatible endpoint. Never a subscription.
       return false;
     case 'agy':
-      // A managed AGY account lives under $GEMINI_CLI_HOME (see managed-credentials
-      // homeEnvVar/authCandidates); check it first so a custom-home login is not
-      // misread as "login-needed" (the gap that 1192cfc closed for codex/grok/kimi
-      // but skipped for agy).
-      //
-      // oauth_creds.json comes FIRST because it is the credential itself. The
-      // antigravity* entries below are installation directories: they prove the
-      // app is present, not that anyone is logged in. Probing only those made an
-      // isolated HOME — which receives the staged credential but not the whole
-      // installation tree — look logged out while AGY was in fact authenticated.
+      // Live OAuth only — never treat antigravity* install trees as login.
+      // Installation dirs made google_accounts.active=null + leftover keychain
+      // look "staged" in the release gate while the UI said "login new" and
+      // disabled Usar este squad.
       return (
-        existsInEnv('GEMINI_CLI_HOME', 'oauth_creds.json') ||
-        exists('.gemini', 'oauth_creds.json') ||
-        existsInEnv('GEMINI_CLI_HOME', 'antigravity') ||
-        existsInEnv('GEMINI_CLI_HOME', 'antigravity-cli') ||
-        exists('.gemini', 'antigravity') ||
-        exists('.gemini', 'antigravity-cli') ||
-        exists('.antigravity')
+        agyOauthCredsFileIsUsable(home) ||
+        agyGoogleAccountIsActive(home)
       );
     case 'kimi':
       // Require a non-empty access/refresh token. The zero-byte oauth marker

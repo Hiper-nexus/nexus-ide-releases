@@ -463,21 +463,36 @@ describe('detectSubscriptionAuth', () => {
     ).toBe(false);
   });
 
-  it('detects a managed AGY account via GEMINI_CLI_HOME (custom home)', () => {
+  it('detects a managed AGY account via usable oauth_creds under GEMINI_CLI_HOME', () => {
     const home = tempHome();
     const geminiHome = tempHome();
     const prev = process.env.GEMINI_CLI_HOME;
     process.env.GEMINI_CLI_HOME = geminiHome;
     try {
-      // Nothing in the real home nor the custom home yet.
       expect(detectSubscriptionAuth('agy', home)).toBe(false);
-      // The managed account's auth artifact lands under $GEMINI_CLI_HOME.
+      // Install tree alone is not a live session.
       touch(geminiHome, 'antigravity');
+      expect(detectSubscriptionAuth('agy', home)).toBe(false);
+      fs.writeFileSync(
+        path.join(geminiHome, 'oauth_creds.json'),
+        JSON.stringify({ access_token: 'at', refresh_token: 'rt' }),
+      );
       expect(detectSubscriptionAuth('agy', home)).toBe(true);
     } finally {
       if (prev === undefined) delete process.env.GEMINI_CLI_HOME;
       else process.env.GEMINI_CLI_HOME = prev;
     }
+  });
+
+  it('rejects AGY when google_accounts.active is null (logged out)', () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.gemini', 'google_accounts.json'),
+      JSON.stringify({ active: null, old: ['user@example.com'] }),
+    );
+    touch(path.join(home, '.gemini'), 'antigravity');
+    expect(detectSubscriptionAuth('agy', home)).toBe(false);
   });
 
   it('fails closed for a custom adapter without an auth detector', () => {

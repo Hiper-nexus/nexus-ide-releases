@@ -858,17 +858,51 @@ export function stageAdvisorAuthentication(
     statuses.omp = report("omp", "staged");
   }
 
-  // agy: like claude, the OAuth secret lives in the macOS keychain (service
-  // "gemini", account "antigravity"), readable by the child as the same user.
-  // The governed home overlay only links non-secret identity entries, so
-  // stage those (plus oauth_creds.json when it exists) — never the whole
-  // antigravity tree (it carries binaries, caches and conversations).
+  // agy: OAuth secret in keychain (service "gemini", account "antigravity")
+  // and/or ~/.gemini/oauth_creds.json. Keychain *metadata* alone is NOT a live
+  // session — google_accounts can have active:null after logout while the
+  // genp item remains. Staging a half-dead AGY put it in the product-wizard
+  // roster as "login new" and disabled "Usar este squad" forever.
+  // Never copy the whole antigravity tree (binaries, caches, conversations).
   if (process.platform !== "darwin") {
     statuses.agy = report("agy", "skipped");
   } else {
-    const lookup = run(
+    const oauthCredsPath = path.join(source, ".gemini", "oauth_creds.json");
+    const oauthUsable = (() => {
+      try {
+        const raw = fs.readFileSync(oauthCredsPath, "utf8");
+        const parsed = JSON.parse(raw);
+        const access =
+          typeof parsed?.access_token === "string"
+            ? parsed.access_token.trim()
+            : "";
+        const refresh =
+          typeof parsed?.refresh_token === "string"
+            ? parsed.refresh_token.trim()
+            : "";
+        return access.length > 0 || refresh.length > 0;
+      } catch {
+        return false;
+      }
+    })();
+    const accountsActive = (() => {
+      try {
+        const raw = fs.readFileSync(
+          path.join(source, ".gemini", "google_accounts.json"),
+          "utf8",
+        );
+        const parsed = JSON.parse(raw);
+        return (
+          typeof parsed?.active === "string" &&
+          parsed.active.includes("@")
+        );
+      } catch {
+        return false;
+      }
+    })();
+    const keychainSecret = run(
       "/usr/bin/security",
-      ["find-generic-password", "-s", "gemini", "-a", "antigravity"],
+      ["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"],
       {
         encoding: "utf8",
         env: { PATH: "/usr/bin:/bin", LANG: "C" },
@@ -876,34 +910,42 @@ export function stageAdvisorAuthentication(
         timeout: 10_000,
       },
     );
-    const geminiDestination = path.join(home, ".gemini");
-    stageAdvisorAuthFile(
-      path.join(source, ".gemini", "google_accounts.json"),
-      geminiDestination,
-      {
-        label: "agy google accounts identity",
-        requirePrivateMode: false,
-        privateRoot: home,
-      },
-    );
-    stageAdvisorAuthFile(
-      path.join(source, ".gemini", "installation_id"),
-      geminiDestination,
-      {
-        label: "agy installation id",
-        requirePrivateMode: false,
-        privateRoot: home,
-      },
-    );
-    stageAdvisorAuthFile(
-      path.join(source, ".gemini", "oauth_creds.json"),
-      geminiDestination,
-      { label: "agy oauth credentials", privateRoot: home },
-    );
-    statuses.agy = report(
-      "agy",
-      lookup.status === 0 ? "staged" : "skipped",
-    );
+    const keychainUsable =
+      keychainSecret.status === 0 &&
+      typeof keychainSecret.stdout === "string" &&
+      keychainSecret.stdout.trim().length > 0;
+    // Live session: usable oauth_creds OR (keychain secret + active account).
+    const live = oauthUsable || (keychainUsable && accountsActive);
+    if (!live) {
+      statuses.agy = report("agy", "skipped");
+    } else {
+      const geminiDestination = path.join(home, ".gemini");
+      stageAdvisorAuthFile(
+        path.join(source, ".gemini", "google_accounts.json"),
+        geminiDestination,
+        {
+          label: "agy google accounts identity",
+          requirePrivateMode: false,
+          privateRoot: home,
+        },
+      );
+      stageAdvisorAuthFile(
+        path.join(source, ".gemini", "installation_id"),
+        geminiDestination,
+        {
+          label: "agy installation id",
+          requirePrivateMode: false,
+          privateRoot: home,
+        },
+      );
+      if (oauthUsable) {
+        stageAdvisorAuthFile(oauthCredsPath, geminiDestination, {
+          label: "agy oauth credentials",
+          privateRoot: home,
+        });
+      }
+      statuses.agy = report("agy", "staged");
+    }
   }
 
   // opencode: $XDG_DATA_HOME/opencode/auth.json, defaulting to

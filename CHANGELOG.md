@@ -9,6 +9,9 @@ com tag/build, mas o gate E2E multi-CLI não fechou PASS no artefato final).
 
 ### Multi-CLI operacional
 
+- **Agy half-dead não trava o wizard**: staging e auth detector exigem
+  sessão Google viva (`oauth_creds` / conta active), não só item de Keychain
+  ou pasta antigravity — evita "login new" desabilitando Usar este squad.
 - **Gate PATH multi-CLI**: advisor bins (kimi/grok/claude/omp/agy/opencode) são
   linkados em `trusted-bin` do userData isolado — sem isso o wizard ficava com
   "Usar este squad" disabled e o gate morria em product-wizard-ready.
