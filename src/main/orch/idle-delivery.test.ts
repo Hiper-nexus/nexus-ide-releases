@@ -44,6 +44,11 @@ const storeMocks = vi.hoisted(() => ({
     patch: { status?: string; description?: string };
   }>,
   handoffs: new Map<string, Handoff>(),
+  taskDispatches: [] as Array<{
+    handoffId: string;
+    missionId: string;
+    state: string;
+  }>,
   delivered: [] as Array<{ scope: ProjectExecutionScope; id: string }>,
   deliveryAttempts: new Map<string, {
     id: string;
@@ -138,6 +143,12 @@ vi.mock('./project-domain-store-registry', () => ({
         storeMocks.missions.set(key, next);
         return next;
       },
+    },
+    taskDispatches: {
+      list: (missionId?: string) =>
+        storeMocks.taskDispatches.filter(
+          (row) => !missionId || row.missionId === missionId,
+        ),
     },
     handoffs: {
       get: (id: string) =>
@@ -286,6 +297,7 @@ beforeEach(() => {
   storeMocks.missions.clear();
   storeMocks.missionUpdates.length = 0;
   storeMocks.handoffs.clear();
+  storeMocks.taskDispatches.length = 0;
   storeMocks.delivered.length = 0;
   storeMocks.deliveryAttempts.clear();
   storeMocks.nextAttemptId = 1;
@@ -656,6 +668,30 @@ describe('idle delivery authority and lifecycle', () => {
         }),
       },
     ]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('não bloqueia a missão quando o dispatcher durável já possui o handoff', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    storeMocks.taskDispatches.push({
+      handoffId: 'handoff-a',
+      missionId: 'mission-a',
+      state: 'merging',
+    });
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await vi.advanceTimersByTimeAsync(25_000);
+
+    expect(storeMocks.delivered).toEqual([]);
+    expect(storeMocks.missionUpdates).toEqual([]);
+    expect(
+      storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
+        ?.status,
+    ).toBe('running');
     delivery.shutdownIdleDelivery();
   });
 

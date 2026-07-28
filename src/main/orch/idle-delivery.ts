@@ -232,6 +232,28 @@ function acceptPendingEnters(sessionId: string): void {
   }
 }
 
+function durableDispatchOwnsHandoff(
+  authority: DeliveryAuthority,
+  handoffId: string,
+): boolean {
+  // Guided/durable missions already accepted the handoff into the scheduler
+  // (handoff_ready → merging). Blocking the mission because the orchestrator
+  // PTY did not absorb an idle-delivery paste revokes merge authority
+  // (dispatch → superseded) and aborts a valid candidate mid-council.
+  try {
+    const dispatch = getProjectDomainStores(authority.scope)
+      .taskDispatches.list(authority.missionId)
+      .find((row) => row.handoffId === handoffId);
+    return (
+      dispatch?.state === 'handoff_ready' ||
+      dispatch?.state === 'merging' ||
+      dispatch?.state === 'completed'
+    );
+  } catch {
+    return false;
+  }
+}
+
 function blockDeliveryFailure(
   authority: DeliveryAuthority,
   handoffId: string,
@@ -240,6 +262,16 @@ function blockDeliveryFailure(
   const stores = getProjectDomainStores(authority.scope);
   const mission = stores.missions.get(authority.missionId);
   if (mission && mission.status !== 'done' && mission.status !== 'failed') {
+    if (durableDispatchOwnsHandoff(authority, handoffId)) {
+      console.warn(
+        '[idle-delivery] handoff não injetado no orquestrador após requeue ' +
+          `limitado, mas o dispatcher durável já possui o handoff — missão ` +
+          `permanece em curso (mission=${authority.missionId}, ` +
+          `handoff=${handoffId}, session=${authority.sessionId}, ` +
+          `attempts=${attempts})`,
+      );
+      return;
+    }
     const marker = `<!-- nexus:handoff-delivery-failed:${handoffId} -->`;
     const description = mission.description.includes(marker)
       ? mission.description
