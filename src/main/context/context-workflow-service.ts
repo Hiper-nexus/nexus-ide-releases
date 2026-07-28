@@ -1280,6 +1280,48 @@ export class ContextWorkflowService {
   }
 
   /**
+   * Replays the durable review council for the current workflow binding without
+   * spawning another reviewer CLI. Used to recover final validation after a
+   * crash or a failed reviewer re-spawn.
+   */
+  inspectCurrentBindingReviewGate(missionId: string): {
+    readonly ready: boolean;
+    readonly reason: string;
+    readonly evidenceIds: readonly string[];
+    readonly reportCount: number;
+  } {
+    const stored = this.#store.getContract(missionId);
+    const workflow = this.#store.getWorkflow(missionId);
+    if (!stored || !workflow) {
+      throw new Error('review gate requires a frozen mission workflow');
+    }
+    const reports = this.#store
+      .listReviewReports(missionId, workflow.binding.diffHash)
+      .filter(
+        (report) =>
+          report.binding.missionId === workflow.binding.missionId &&
+          report.binding.contextHash === workflow.binding.contextHash &&
+          report.binding.contractHash === workflow.binding.contractHash &&
+          report.binding.baseSha === workflow.binding.baseSha &&
+          report.binding.headSha === workflow.binding.headSha &&
+          report.binding.diffHash === workflow.binding.diffHash,
+      );
+    const council = new ReviewCouncil(stored.contract.risk, workflow.binding);
+    for (const report of reports) {
+      council.submit(reviewSubmissionFromReport(report));
+    }
+    const gate = council.evaluate();
+    return Object.freeze({
+      ready: gate.ready,
+      reason: gate.reason,
+      evidenceIds: Object.freeze(
+        reports.map((report) => `review:${report.reviewId}`),
+      ),
+      reportCount: reports.length,
+    });
+  }
+
+  /**
    * Derive one immutable Nexus attestation per pending Ralph milestone from a
    * successful final validation bundle. The deterministic IDs make a crash
    * during persistence safe to replay without reusing evidence across steps.

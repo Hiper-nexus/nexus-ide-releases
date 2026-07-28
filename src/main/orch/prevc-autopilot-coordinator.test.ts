@@ -368,6 +368,13 @@ function createWorld(
     recordMergeReviewReport: vi.fn(),
     recordMilestoneValidationEvidence: recordMilestones,
     listCurrentPersistedEvidenceIds: () => [...currentEvidenceIds],
+    inspectCurrentBindingReviewGate: () =>
+      Object.freeze({
+        ready: false,
+        reason: "review-quorum-missing",
+        evidenceIds: Object.freeze([] as string[]),
+        reportCount: 0,
+      }),
   } as unknown as ContextWorkflowService;
   const suite = {
     scope,

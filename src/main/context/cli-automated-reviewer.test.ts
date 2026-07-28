@@ -307,7 +307,7 @@ describe('CLI automated reviewer', () => {
     const close = vi.fn(async () => true);
     const spawn = vi.fn(
       async (options: SpawnToolOptions, hooks: SpawnPaneHooks = {}) => {
-        if (options.title?.endsWith('-1')) {
+        if (options.adapterId === 'claude') {
           hooks.onPaneCreated?.('pane-first', 'session-first');
           firstSpawned.resolve();
           await new Promise<never>((_resolve, reject) => {

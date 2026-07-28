@@ -337,16 +337,20 @@ export class CliAutomatedReviewer {
             input.contextMarkdown,
             designSurface ?? undefined,
           );
+          const reviewerSuffix = reviewSessionId.replaceAll('-', '').slice(0, 12);
           const spawnOptions = {
             adapterId: route.adapterId,
             model: route.model,
             effort: route.effort,
             cwd: input.checkoutPath,
-            title: `review-${input.contract.missionId}-${index + 1}`,
+            // Title participates in mission-pane identity. A stable title made
+            // later validation retries collide with the first sealed reviewer
+            // pane and throw "authority revision is immutable".
+            title:
+              `review-${input.contract.missionId}-${index + 1}-${reviewerSuffix}`,
             missionId: input.contract.missionId,
             agentName:
-              `reviewer-${route.adapterId}-${index + 1}-` +
-              reviewSessionId.replaceAll('-', '').slice(0, 12),
+              `reviewer-${route.adapterId}-${index + 1}-` + reviewerSuffix,
             allowedTools: [
               ...automatedReviewTools(
                 input.contract.requiredSensors.includes('design-system'),

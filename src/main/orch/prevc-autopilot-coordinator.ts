@@ -647,6 +647,30 @@ async function runFinalValidationUnlocked(input: {
     throw new Error("final validation has no integrated code author");
   }
   input.assertCurrentAuthority();
+  // Prefer durable council evidence already on the current binding. Re-spawning
+  // a reviewer CLI with a stable pane title collides on mission-pane identity
+  // and fails closed with "authority revision is immutable".
+  const durableReview = service.inspectCurrentBindingReviewGate(
+    input.missionId,
+  );
+  if (durableReview.ready) {
+    return {
+      ready: true,
+      reason: durableReview.reason,
+      sensorEvidence,
+      review: {
+        ready: true,
+        gate: {
+          ready: true,
+          reason: durableReview.reason,
+          blockingFindingCount: 0,
+          reportCount: durableReview.reportCount,
+        },
+        reports: [],
+        evidenceIds: durableReview.evidenceIds,
+      },
+    };
+  }
   const reviewer = new CliAutomatedReviewer();
   const reviewInput = {
     scope: input.scope,
