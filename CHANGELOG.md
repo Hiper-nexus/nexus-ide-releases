@@ -14,6 +14,11 @@ Correção do bloqueio do release:candidate no advisor Grok read-only.
   no Nexus — o spawn do reviewer E2E falhava com
   `adapter grok has no pinned native authenticity root` e bloqueava a missão
   após Kimi/OpenCode/executor/Codex-reviewer já terem handoff.
+- **Claude advisor no dispatch com orquestrador Codex**: `resolveSealedWorkerRoute`
+  recebia `orchestratorCliId` omitido e tratava `undefined !== 'codex'` como
+  reserveClaude — bloqueava a missão após Kimi/OpenCode/Grok. Dispatch passa a
+  ler a CLI do orquestrador do squad e permite Claude advisor quando o
+  orquestrador não é Claude.
 - **Handoff durável no retirement** (main): completion não aborta quando o
   handoff já está assentado.
 

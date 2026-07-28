@@ -139,6 +139,28 @@ describe('sealed scheduler roster contract', () => {
       },
       adapters: [adapter('claude', true, ['claude-sonnet-5'], 'claude-sonnet-5')],
     })).toThrow(/reserveClaude/i);
+    expect(() => resolveSealedWorkerRoute({
+      taskText: 'Revisar com Claude', rosterHash: 'd'.repeat(64),
+      agent: {
+        id: 'e2e-advisor-claude', agentName: 'E2E Advisor Claude',
+        category: 'reviewer', cli: 'claude',
+      },
+      adapters: [adapter('claude', true, ['claude-sonnet-5'], 'claude-sonnet-5')],
+      orchestratorCliId: 'claude',
+    })).toThrow(/orquestrador não é Claude/i);
+  });
+
+  it('allows Claude advisor when the sealed orchestrator is Codex', () => {
+    const route = resolveSealedWorkerRoute({
+      taskText: 'Revisar com Claude', rosterHash: 'e'.repeat(64),
+      agent: {
+        id: 'e2e-advisor-claude', agentName: 'E2E Advisor Claude',
+        category: 'reviewer', cli: 'claude',
+      },
+      adapters: [adapter('claude', true, ['claude-sonnet-5'], 'claude-sonnet-5')],
+      orchestratorCliId: 'codex',
+    });
+    expect(route.routeContract.adapterId).toBe('claude');
   });
 
   it('rejects mutable schedule metadata that diverges from the sealed agent', () => {

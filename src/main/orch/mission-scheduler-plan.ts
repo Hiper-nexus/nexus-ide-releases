@@ -121,11 +121,22 @@ export function resolveSealedWorkerRoute(input: {
   if (input.agent.category === 'orchestrator') {
     throw new Error('sealed worker route cannot target the orchestrator');
   }
-  if (input.agent.cli === 'claude' && input.orchestratorCliId !== 'codex') {
-    throw new Error(
-      'roster_route_forbidden: reserveClaude mantém o Claude OAuth exclusivo do orquestrador; ' +
-        'Claude só participa como advisor read_only quando o orquestrador é codex',
-    );
+  if (input.agent.cli === 'claude') {
+    // Match mission-task-plan-authority: one Claude process per mission.
+    // Missing orchestrator identity must fail closed — never treat `undefined`
+    // as "not Claude" (that was blocking Codex-maestro multi-CLI advisors).
+    if (!input.orchestratorCliId?.trim()) {
+      throw new Error(
+        'roster_route_forbidden: reserveClaude exige a CLI do orquestrador; ' +
+          'Claude advisor não despacha sem identidade do orquestrador da missão',
+      );
+    }
+    if (input.orchestratorCliId === 'claude') {
+      throw new Error(
+        'roster_route_forbidden: reserveClaude mantém o Claude OAuth exclusivo do orquestrador; ' +
+          'Claude só participa como advisor read_only quando o orquestrador não é Claude',
+      );
+    }
   }
   const adapter = input.adapters.find((candidate) => candidate.id === input.agent.cli);
   if (!adapter || !adapter.installed) {

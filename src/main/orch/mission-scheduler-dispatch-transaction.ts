@@ -46,6 +46,7 @@ import { buildMissionSchedulerTaskPrompt } from "./mission-scheduler-task-prompt
 import { selectMissionSchedulerWorktreeDependencies } from "./mission-scheduler-worktree-dependencies";
 import { countLiveMissionWorkerSlots } from "./mission-driver-io";
 import { getProjectDomainStores } from "./project-domain-store-registry";
+import { getSquad } from "./squad-store";
 import { spawnPaneAndMaybePrompt } from "./tool-util";
 import {
   projectMissionSchedulerWorkerSlots,
@@ -340,11 +341,18 @@ export async function dispatchMissionSchedulerTask(
         hasAvailableAccount,
       });
     });
+  const orchestratorCliId =
+    mission.squadId
+      ? getSquad(mission.squadId)?.agents.find(
+          (agent) => agent.category === "orchestrator",
+        )?.cli
+      : undefined;
   const sealedRoute = resolveSealedWorkerRoute({
     taskText,
     agent: planned.agent,
     adapters,
     rosterHash: planned.rosterHash,
+    orchestratorCliId,
   });
   if (executionMode === "isolated_worktree") {
     const liveAdapter = getAdapter(sealedRoute.routeContract.adapterId);
