@@ -124,6 +124,20 @@ describe.runIf(process.platform === 'darwin')('Claude Keychain boundaries', () =
     );
   });
 
+  it('bounds the Keychain write so account activation cannot freeze the main loop', () => {
+    // Must be a usable OAuth blob — bare strings are refused by slim.
+    const slim = slimClaudeCredentialBlob(fullFatBlob())!;
+    expect(writeActiveClaudeCredential(slim)).toBe(true);
+    expect(childProcess.spawnSync).toHaveBeenCalledWith(
+      'security',
+      ['-i'],
+      expect.objectContaining({
+        timeout: 5_000,
+        killSignal: 'SIGKILL',
+      }),
+    );
+  });
+
   it('slims a fat mcpOAuth blob before interactive write', () => {
     const full = fullFatBlob();
     expect(writeActiveClaudeCredential(full)).toBe(true);
