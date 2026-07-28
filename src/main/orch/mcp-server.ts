@@ -836,12 +836,15 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       extraArgs,
       // Native-profile AGY (advisory): HOME stays real, the sandbox gets a
       // private runtime, and the kernel grants only the provider-state paths.
+      // Write covers the whole ~/.gemini root: auth refresh rotates
+      // oauth_creds.json/state.json there, outside antigravity-cli/. The
+      // Keychain read grant is added by the pty advisory path (native home).
       ...(nativeAgyLease
         ? {
             processHome: nativeAgyLease.realHome,
             sandboxDir: nativeAgyLease.runtimeDir,
             providerStateReadPaths: [nativeAgyLease.geminiDir],
-            providerStateWritePaths: [nativeAgyLease.providerStateDir],
+            providerStateWritePaths: [nativeAgyLease.geminiDir],
           }
         : {}),
       onSpawned: (sessionId) => {

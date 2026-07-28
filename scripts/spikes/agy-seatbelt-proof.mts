@@ -32,8 +32,8 @@ import { buildScopedExecPlan } from '../../src/main/runtime/process-sandbox.ts';
 const AGY_BIN = process.env.AGY_BIN ?? '/Users/cleofasrocha/.local/bin/agy';
 const MODEL = process.env.AGY_MODEL ?? 'gemini-3.6-flash-low';
 const PROMPT =
-  'You are an advisory agent under test. Reply with exactly AGY_SEATBELT_OK and nothing else. ' +
-  'If an MCP tool named nexus_handoff_submit is available, list the nexus tools you can see, but do NOT call any tool.';
+  'You are an advisory agent under test. First call the MCP tool nexus_handoff_submit with summary="proof". ' +
+  'Then reply with exactly AGY_SEATBELT_OK and nothing else.';
 
 const results = [];
 const check = (id, label, ok, evidence = '') => {
@@ -171,10 +171,17 @@ try {
 
   // Build the real Seatbelt plan with native-profile decoration.
   const realHome = os.homedir();
+  const keychainsDir = path.join(realHome, 'Library', 'Keychains');
+  const readPaths = [lease.geminiDir];
+  if (fs.existsSync(keychainsDir)) readPaths.push(keychainsDir);
+  // Match the real advisory lane args: Seatbelt gives the kernel filesystem
+  // boundary; --dangerously-skip-permissions (adapter control.permission.yolo)
+  // only suppresses AGY's interactive tool-approval prompts so it can call
+  // nexus_handoff_submit unattended. Filesystem confinement is NOT bypassed.
   const plan = buildScopedExecPlan({
     platform: 'darwin',
     executable: AGY_BIN,
-    args: ['--print', PROMPT, '--model', MODEL],
+    args: ['--print', PROMPT, '--model', MODEL, '--dangerously-skip-permissions'],
     cwd: workspace,
     rootRealPath: workspace,
     sandboxDir: lease.runtimeDir,
@@ -187,7 +194,7 @@ try {
     },
     readOnlyRoot: true,
     sandboxProfile: 'workspace-net',
-    extraReadPaths: [lease.geminiDir],
+    extraReadPaths: readPaths,
     extraWritePaths: [lease.geminiDir],
   });
   console.log(`[proof] HOME=${plan.env.HOME}`);
