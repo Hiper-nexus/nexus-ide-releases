@@ -295,7 +295,15 @@ export function detectSubscriptionAuth(
       // homeEnvVar/authCandidates); check it first so a custom-home login is not
       // misread as "login-needed" (the gap that 1192cfc closed for codex/grok/kimi
       // but skipped for agy).
+      //
+      // oauth_creds.json comes FIRST because it is the credential itself. The
+      // antigravity* entries below are installation directories: they prove the
+      // app is present, not that anyone is logged in. Probing only those made an
+      // isolated HOME — which receives the staged credential but not the whole
+      // installation tree — look logged out while AGY was in fact authenticated.
       return (
+        existsInEnv('GEMINI_CLI_HOME', 'oauth_creds.json') ||
+        exists('.gemini', 'oauth_creds.json') ||
         existsInEnv('GEMINI_CLI_HOME', 'antigravity') ||
         existsInEnv('GEMINI_CLI_HOME', 'antigravity-cli') ||
         exists('.gemini', 'antigravity') ||

@@ -1335,11 +1335,17 @@ export function spawnAgentSession(
           sandboxDir: advisorySandbox.sandboxDir,
           env: spawnEnv,
           readOnlyRoot: true,
-          sandboxProfile: "workspace-only",
+          // The boundary that matters for an advisor is WRITE: it reviews and
+          // scouts, it never edits. Network stays open (workspace-net) because
+          // an advisor is regularly asked to go fetch the reference the
+          // operator dropped mid-mission — a page, a doc, an example — and
+          // clamping the network would only push that work back to the human
+          // without protecting the workspace any further. Denying the net here
+          // also broke helper subprocesses while leaving the CLI itself online,
+          // which is inconsistent rather than safe.
+          sandboxProfile: "workspace-net",
           extraReadPaths: advisorySandbox.extraWritePaths,
           extraWritePaths: advisorySandbox.extraWritePaths,
-          networkAllowedProcessPaths:
-            advisorySandbox.networkAllowedProcessPaths,
         });
         spawnFile = plan.file;
         spawnArgs = plan.args;

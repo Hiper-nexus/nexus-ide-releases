@@ -41,6 +41,8 @@ export interface SquadRuntimeProviderSnapshot {
 
 export interface SquadRuntimeCliPolicy {
   readonly routableCliIds: ReadonlySet<string>;
+  /** Routable AND able to return a physical Nexus MCP/OMP handoff receipt. */
+  readonly handoffCapableCliIds: ReadonlySet<string>;
   readonly routableWorkerCliIds: ReadonlySet<string>;
   readonly credentiallessOnlyCliIds: ReadonlySet<string>;
   readonly credentiallessDefaultModelByCliId: Readonly<Record<string, string>>;
@@ -98,6 +100,7 @@ export function squadRuntimeCliPolicyFromRoutableIds(
     // Compatibility helper for pure callers/tests that already supply a
     // pre-vetted route set. Production inventory must use
     // buildSquadRuntimeCliPolicy with explicit adapter capabilities.
+    handoffCapableCliIds: new Set(routableCliIds),
     routableWorkerCliIds: new Set(
       [...routableCliIds].filter((adapterId) => adapterId !== "claude"),
     ),
@@ -237,6 +240,17 @@ export function buildSquadRuntimeCliPolicy(
   }
   return Object.freeze({
     routableCliIds,
+    // A mission participant of ANY tier must be able to return a physical
+    // Nexus MCP/OMP handoff receipt; without that route it can talk but never
+    // prove it did anything, so it is not a participant at all. Advisors need
+    // exactly this and nothing more — no autonomous write.
+    handoffCapableCliIds: new Set(
+      [...routableCliIds].filter(
+        (adapterId) =>
+          providers.find((candidate) => candidate.adapterId === adapterId)
+            ?.guidedHandoffCapable === true,
+      ),
+    ),
     routableWorkerCliIds: new Set(
       [...routableCliIds].filter((adapterId) => {
         if (!isReleaseQualifiedMissionWorkerCli(adapterId)) return false;
@@ -287,6 +301,8 @@ function isReadOnlyParticipant(
     READ_ONLY_PARTICIPATION_CATEGORIES.has(agent.category) &&
     typeof agent.cli === "string" &&
     supportsReadOnlyParticipationCli(agent.cli) &&
+    // No physical handoff route means it can never prove participation.
+    policy.handoffCapableCliIds.has(agent.cli) &&
     isSquadRuntimeAgentRoutable(agent, policy)
   );
 }

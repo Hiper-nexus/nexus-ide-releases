@@ -587,10 +587,24 @@ export function stageClaudeNativeIdentity(
       return false;
     }
     const identity = {};
-    for (const key of ["oauthAccount", "userID"]) {
-      if (typeof parsed[key] === "string" && parsed[key].length > 0) {
-        identity[key] = parsed[key];
-      }
+    // `oauthAccount` is an OBJECT ({ emailAddress, ... }) in a real profile.
+    // The previous string-only check dropped it silently, so the staged profile
+    // never carried the one field the auth probe reads (claudeOauthEmail) and
+    // Claude looked logged out inside the isolated HOME — while the operator
+    // profile was perfectly authenticated. Copy ONLY the email: it identifies
+    // the session for the probe and carries no secret.
+    const oauthAccount = parsed.oauthAccount;
+    if (
+      oauthAccount &&
+      typeof oauthAccount === "object" &&
+      !Array.isArray(oauthAccount) &&
+      typeof oauthAccount.emailAddress === "string" &&
+      oauthAccount.emailAddress.includes("@")
+    ) {
+      identity.oauthAccount = { emailAddress: oauthAccount.emailAddress };
+    }
+    if (typeof parsed.userID === "string" && parsed.userID.length > 0) {
+      identity.userID = parsed.userID;
     }
     if (Object.keys(identity).length === 0) return false;
     fs.mkdirSync(home, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });

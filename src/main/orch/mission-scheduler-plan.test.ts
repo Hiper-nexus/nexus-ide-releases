@@ -38,15 +38,26 @@ describe('sealed scheduler roster contract', () => {
     expect(supportsMechanicallyReadOnlyCli('omp')).toBe(false);
     expect(supportsMechanicallyReadOnlyCli('agy')).toBe(false);
   });
-  it('advertises the advisory MCP-only lane separately from confinement', () => {
+  it('advertises the advisory lane separately from native confinement', () => {
     expect(supportsAdvisoryParticipationCli('claude')).toBe(true);
     expect(supportsAdvisoryParticipationCli('kimi')).toBe(true);
     expect(supportsAdvisoryParticipationCli('omp')).toBe(true);
     expect(supportsAdvisoryParticipationCli('opencode')).toBe(true);
     expect(supportsAdvisoryParticipationCli('agy')).toBe(true);
+    expect(supportsAdvisoryParticipationCli('glm')).toBe(true);
+    expect(supportsAdvisoryParticipationCli('aider')).toBe(true);
+    // codex/grok confine themselves; wrapping them would nest Seatbelt.
     expect(supportsAdvisoryParticipationCli('codex')).toBe(false);
     expect(supportsAdvisoryParticipationCli('grok')).toBe(false);
-    expect(supportsAdvisoryParticipationCli('aider')).toBe(false);
+    // omp-rpc has no terminal for the kernel sandbox to wrap.
+    expect(supportsAdvisoryParticipationCli('omp-rpc')).toBe(false);
+  });
+
+  it('admits a CLI that does not exist in this build yet', () => {
+    // The rule is derived, so an operator-installed provider participates the
+    // moment its adapter exists — no allowlist edit, no release.
+    expect(supportsAdvisoryParticipationCli('qwen')).toBe(true);
+    expect(supportsAdvisoryParticipationCli('')).toBe(false);
   });
   it('admits only Codex for sealed autonomous workspace writes', () => {
     expect(supportsMechanicallyWorkspaceWriteCli('codex')).toBe(true);

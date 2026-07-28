@@ -1193,7 +1193,13 @@ describe("real mission advisor authentication staging", () => {
       path.join(sourceHome, ".claude.json"),
       JSON.stringify({
         hasCompletedOnboarding: true,
-        oauthAccount: "operator@example.com",
+        // Formato REAL do Claude: oauthAccount e um OBJETO. O teste antigo o
+        // modelava como string, formato que o CLI nunca produz — foi por isso
+        // que a perda do campo no staging passou despercebida.
+        oauthAccount: {
+          emailAddress: "operator@example.com",
+          accountUuid: "acc-uuid-never-staged",
+        },
         userID: "user_123",
         organizationSecret: "never-staged",
       }),
@@ -1227,9 +1233,10 @@ describe("real mission advisor authentication staging", () => {
       const stagedIdentity = JSON.parse(
         fs.readFileSync(path.join(isolatedHome, ".claude.json"), "utf8"),
       );
+      // Somente o email atravessa: e o que o probe de auth le, e nao e segredo.
       expect(stagedIdentity).toEqual({
         hasCompletedOnboarding: true,
-        oauthAccount: "operator@example.com",
+        oauthAccount: { emailAddress: "operator@example.com" },
         userID: "user_123",
       });
       expect(
@@ -1275,7 +1282,11 @@ describe("real mission advisor authentication staging", () => {
       path.join(sourceHome, ".claude.json"),
       JSON.stringify({
         hasCompletedOnboarding: true,
-        oauthAccount: "operator@example.com",
+        // Formato REAL: objeto, nao string.
+        oauthAccount: {
+          emailAddress: "operator@example.com",
+          accountUuid: "acc-uuid-never-staged",
+        },
         userID: "user_123",
         organizationSecret: "never-staged",
         projects: { "/private/work": { hasTrustDialogAccepted: true } },
@@ -1291,7 +1302,8 @@ describe("real mission advisor authentication staging", () => {
     // Só identidade não-secreta: nada de projetos, segredos ou settings.
     expect(staged).toEqual({
       hasCompletedOnboarding: true,
-      oauthAccount: "operator@example.com",
+      // Só o email atravessa: e o que o probe le, e o accountUuid nao vai junto.
+      oauthAccount: { emailAddress: "operator@example.com" },
       userID: "user_123",
     });
     expect(

@@ -22,10 +22,23 @@ gates e nunca chegou a ser publicada.
 
 ### Todo CLI do squad entra na missão — confinado pelo kernel
 
-- **Conselheiros de qualquer CLI**: Kimi, Agy, OpenCode, OMP e Claude passam a
-  participar como revisores e batedores somente-leitura, cada um com PTY
-  próprio, ao menos uma tool `nexus_*` e handoff submetido. Aproveitar várias
-  LLMs na mesma missão deixa de custar segurança.
+- **Conselheiros de qualquer CLI**: Kimi, Agy, OpenCode, OMP, GLM, LongCat,
+  Aider e Claude passam a participar como revisores e batedores
+  somente-leitura, cada um com PTY próprio, ao menos uma tool `nexus_*` e
+  handoff submetido. Aproveitar várias LLMs na mesma missão deixa de custar
+  segurança — e usar mais modelos significa menos token gasto por modelo e
+  mais pontos de vista sobre o mesmo código.
+- **Sem lista para manter**: a participação é derivada da capacidade, não
+  enumerada. Uma CLI que você instale amanhã entra assim que o adapter existir
+  — sem editar código, sem esperar release. Os dois requisitos são técnicos e
+  honestos: não se confinar sozinha (aí o Nexus confina) e ter rota de handoff
+  físico (sem ela, nenhum participante consegue provar o que fez).
+- **Detecção de login deixa de mentir**: três CLIs apareciam deslogadas
+  estando autenticadas. O perfil do Claude só era copiado quando `oauthAccount`
+  era texto, mas ele é um objeto — o campo que o Nexus lê para reconhecer a
+  sessão sumia no caminho. O Agy era procurado pelo diretório de instalação em
+  vez da credencial. E o Kimi recebia a credencial sem a configuração de
+  modelos, então nascia e morria no start.
 - **A barreira passa a ser do kernel, não do prompt**: essas CLIs não declaram
   confinamento somente-leitura próprio, e pedir por prompt que respeitem a
   faixa nunca foi uma fronteira. Em vez de afrouxar a exigência, o Nexus aplica

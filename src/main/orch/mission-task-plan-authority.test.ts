@@ -410,15 +410,6 @@ describe("mission task plan authority", () => {
     [
       {
         ...validTask,
-        agentRef: "glm-scout",
-        category: "scout",
-        executionMode: "read_only",
-      },
-      /read_only requires a mechanically confined CLI/,
-    ],
-    [
-      {
-        ...validTask,
         agentRef: "omp-scout",
         category: "scout",
         executionMode: "isolated_worktree",
@@ -440,6 +431,34 @@ describe("mission task plan authority", () => {
       expect(createPlanAtomically).not.toHaveBeenCalled();
     },
   );
+
+  it("admits a read_only advisor on a CLI with no native confinement", () => {
+    // The boundary for these CLIs is the Nexus kernel sandbox, applied at
+    // spawn (advisory-process-sandbox), not a profile the provider ships. Any
+    // CLI the operator installs is advisory the moment its adapter exists —
+    // there is no allowlist to extend.
+    const { suite, deps } = harness();
+
+    expect(() =>
+      planMissionTasks(
+        {
+          missionId: "mission-a",
+          tasks: [
+            {
+              ...validTask,
+              agentRef: "glm-scout",
+              category: "scout",
+              executionMode: "read_only",
+              ownership: undefined,
+            },
+          ],
+        },
+        orchestratorContext(),
+        suite,
+        deps,
+      ),
+    ).not.toThrow();
+  });
 
   it.each([
     ["executor", "builder"],

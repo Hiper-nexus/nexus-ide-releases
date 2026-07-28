@@ -15,8 +15,12 @@ import { supportsAdvisoryParticipationCli } from '../../shared/mission-advisory'
  * Under it the execution scope root is mounted read-only by the kernel, so the
  * CLI physically cannot mutate the workspace no matter what the model decides.
  * The only writable area is the per-session private HOME the MCP overlay already
- * creates for that CLI (auth, session and cache state), and network is denied to
- * every descendant except the CLI binary itself, which must reach its provider.
+ * creates for that CLI (auth, session and cache state).
+ *
+ * WRITE is the boundary that matters here; the network deliberately stays open.
+ * An advisor is routinely asked to go read the reference the operator dropped
+ * mid-mission — a page, a doc, an example — and clamping the network would push
+ * that work back to the human without protecting the workspace any further.
  *
  * This is a narrowing, never a grant: an advisory CLI that cannot be confined
  * gets no read-only lane at all (see assertAdvisoryConfinement).
@@ -42,8 +46,6 @@ export interface AdvisoryProcessSandbox {
   readonly sandboxDir: string;
   /** Extra existing paths the CLI must persist beyond sandboxDir. */
   readonly extraWritePaths: readonly string[];
-  /** Only this executable may open the network. */
-  readonly networkAllowedProcessPaths: readonly string[];
 }
 
 function existingDirectory(candidate: string | undefined): string | null {
@@ -100,7 +102,6 @@ export function resolveAdvisoryProcessSandbox(
   return Object.freeze({
     sandboxDir,
     extraWritePaths: Object.freeze(extraWritePaths),
-    networkAllowedProcessPaths: Object.freeze([binary]),
   });
 }
 

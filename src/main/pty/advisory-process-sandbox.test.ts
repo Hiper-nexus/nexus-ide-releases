@@ -64,7 +64,7 @@ describe('resolveAdvisoryProcessSandbox', () => {
     });
 
     expect(sandbox?.sandboxDir).toBe(home);
-    expect(sandbox?.networkAllowedProcessPaths).toEqual([binary]);
+    expect(sandbox?.extraWritePaths).toEqual([]);
   });
 
   it('adds a private temp only when it lives outside the private HOME', () => {
@@ -144,11 +144,7 @@ describe('assertAdvisoryConfinement', () => {
 
   it('refuses the advisory lane where the sandbox does not exist', () => {
     const root = tempDir();
-    const sandbox = {
-      sandboxDir: root,
-      extraWritePaths: [],
-      networkAllowedProcessPaths: [fakeBinary(root)],
-    };
+    const sandbox = { sandboxDir: root, extraWritePaths: [] };
     expect(() =>
       assertAdvisoryConfinement('kimi', true, sandbox, 'linux'),
     ).toThrow(/only available on macOS/i);

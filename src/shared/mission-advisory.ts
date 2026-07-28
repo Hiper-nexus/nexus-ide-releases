@@ -1,28 +1,40 @@
 /**
- * Advisory participation lane (multi-CLI squad coverage): CLIs with a real
- * Nexus MCP injection path but NO enforceable native read/write confinement.
- * They may join read_only reviewer/scout tasks with MCP read-only authority
- * and physical PTY/MCP/handoff receipts — the evidence records the tier as
+ * Advisory participation lane (multi-CLI squad coverage): CLIs without an
+ * enforceable native read/write confinement of their own. They join read_only
+ * reviewer/scout tasks confined by the Nexus kernel sandbox, with physical
+ * PTY/MCP/handoff receipts — the evidence records the tier as
  * advisory-unconfined, never as mechanically confined.
  *
- * Membership notes:
- * - claude is listed for the plan/dispatch eligibility checks, but it IS
- *   natively confined (governed read-only argv) and only participates when
- *   the mission orchestrator is not Claude (reserveClaude);
- * - codex/grok are NOT advisory: they have mechanically confined read_only
- *   lanes (see MECHANICALLY_READ_ONLY_CLIS below);
- * - aider has no Nexus MCP path and can never be advisory.
+ * claude is advisory for the plan/dispatch eligibility checks, but it IS
+ * natively confined (governed read-only argv), so it only participates when
+ * the mission orchestrator is not Claude (reserveClaude).
  */
-const ADVISORY_PARTICIPATION_CLIS = new Set([
-  'claude',
-  'kimi',
-  'agy',
-  'opencode',
-  'omp',
-]);
+/**
+ * Transports that cannot hold an advisory PTY lane at all. `omp-rpc` speaks
+ * RPC, not a terminal, so there is no process for the kernel sandbox to wrap.
+ */
+const NON_PTY_TRANSPORT_CLIS = new Set(['omp-rpc']);
 
+/**
+ * Advisory participation is DERIVED, never enumerated.
+ *
+ * The confinement that makes an advisor safe belongs to Nexus (the kernel
+ * sandbox in advisory-process-sandbox), not to the provider — so there is
+ * nothing to audit per CLI, and keeping a hand-written allowlist would only
+ * lock out every CLI the operator adds later. A newly installed provider is
+ * advisory the moment its adapter exists: no code change, no release.
+ *
+ * A CLI is advisory when it does NOT already confine itself. codex and grok
+ * carry their own verified read-only profile and use it; everyone else borrows
+ * the Nexus boundary. The remaining requirements — a live adapter route, a
+ * per-session private HOME, a real binary — are checked where the adapter is
+ * actually known (squad-runtime-policy, advisory-process-sandbox), and each of
+ * them fails closed.
+ */
 export function supportsAdvisoryParticipationCli(adapterId: string): boolean {
-  return ADVISORY_PARTICIPATION_CLIS.has(adapterId);
+  const id = adapterId.trim();
+  if (!id || NON_PTY_TRANSPORT_CLIS.has(id)) return false;
+  return !supportsMechanicallyReadOnlyCli(id);
 }
 
 /**
@@ -31,7 +43,9 @@ export function supportsAdvisoryParticipationCli(adapterId: string): boolean {
  * never be pushed through the governed native argv path.
  */
 export function isAdvisoryUnconfinedCli(adapterId: string): boolean {
-  return adapterId !== 'claude' && ADVISORY_PARTICIPATION_CLIS.has(adapterId);
+  return (
+    adapterId !== 'claude' && supportsAdvisoryParticipationCli(adapterId)
+  );
 }
 
 /**

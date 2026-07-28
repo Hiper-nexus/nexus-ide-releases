@@ -781,7 +781,11 @@ describe("MissionWizardReview advisory worker lane", () => {
     act(() => root.unmount());
   });
 
-  it("keeps a non-advisory CLI without confinement out of reviewer work", () => {
+  it("admits any installed CLI as a reviewer advisor", () => {
+    // Advisory participation is derived, not enumerated: the confinement is
+    // the Nexus kernel sandbox applied at spawn, so a CLI the operator adds
+    // later — aider here, tomorrow anything else — qualifies as soon as its
+    // adapter exists and its model is authenticated. No allowlist to extend.
     const reviewer: SquadAgent = {
       id: "worker-aider",
       agentName: "Reviewer Aider",
@@ -796,9 +800,9 @@ describe("MissionWizardReview advisory worker lane", () => {
       [codex, aider],
     );
 
-    expect(launch?.disabled).toBe(true);
+    expect(launch?.disabled).toBe(false);
     act(() => launch?.click());
-    expect(onLaunch).not.toHaveBeenCalled();
+    expect(onLaunch).toHaveBeenCalledTimes(1);
     act(() => root.unmount());
   });
 });
