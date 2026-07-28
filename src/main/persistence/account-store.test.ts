@@ -65,6 +65,10 @@ vi.mock('./secrets-store', () => ({
 vi.mock('../adapters/claude-credential', () => ({
   activeClaudeEmail: () => deps.activeEmail,
   readActiveClaudeCredential: () => deps.keychain,
+  readActiveClaudeCredentialSlim: () => deps.keychain,
+  slimClaudeCredentialBlob: (blob: string) => blob,
+  claudeCredentialBlobIsUsable: (blob: string | null | undefined) =>
+    Boolean(blob && String(blob).includes('accessToken')),
   writeActiveClaudeCredential: (blob: string) => {
     deps.calls.push('keychainWrite');
     deps.keychainWrites.push(blob);

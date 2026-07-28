@@ -3,6 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { ompModelAuthRoute } from './model-auth-readiness';
+import {
+  claudeCredentialBlobIsUsable,
+  readActiveClaudeCredential,
+} from './claude-credential';
 
 /**
  * Subscription-auth priority (user directive): CLIs signed in via their own
@@ -154,7 +158,8 @@ export function claudeKeychainHasAsync(
   });
 }
 
-/** Email of the active Claude OAuth account from ~/.claude.json, if any. */
+/** Email of the active Claude OAuth account from ~/.claude.json, if any.
+ *  Identity only — not proof of a live session (see detectSubscriptionAuth). */
 export function claudeOauthEmail(home = os.homedir()): string | null {
   try {
     const raw = JSON.parse(
@@ -164,6 +169,26 @@ export function claudeOauthEmail(home = os.homedir()): string | null {
     return typeof email === 'string' && email.includes('@') ? email : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Linux/headless Claude credentials file with a non-empty OAuth access token.
+ * File presence alone is not enough (empty shells after logout).
+ */
+export function claudeCredentialsFileIsUsable(home = os.homedir()): boolean {
+  try {
+    const raw = fs.readFileSync(
+      path.join(home, '.claude', '.credentials.json'),
+      'utf8',
+    );
+    const parsed = JSON.parse(raw) as {
+      claudeAiOauth?: { accessToken?: unknown };
+    };
+    const token = parsed.claudeAiOauth?.accessToken;
+    return typeof token === 'string' && token.length > 0;
+  } catch {
+    return false;
   }
 }
 
@@ -312,15 +337,29 @@ export function detectSubscriptionAuth(
   const exists = (...segments: string[]) => existsAt(home, ...segments);
   switch (adapterId) {
     case 'claude':
-      // Prefer file-backed oauthAccount: Keychain probes often fail from
-      // packaged Electron (TCC / no user keychain prompt) even when the
-      // terminal CLI is fully logged in.
-      return (
-        claudeOauthEmail(home) !== null ||
-        exists('.claude', '.credentials.json') ||
-        (options.probeClaudeKeychain !== false &&
-          (options.claudeKeychainProbe ?? claudeKeychainHas)())
-      );
+      // Live session = usable OAuth access token, not merely oauthAccount
+      // email identity (email survives after OAuth expiry → false positive).
+      // Prefer keychain secret (when allowed) or Linux credentials file.
+      // Keychain *metadata* alone is insufficient: item can exist with a
+      // dead blob. Cold UI paths may set probeClaudeKeychain:false and then
+      // only the credentials-file path counts until async refresh runs.
+      if (claudeCredentialsFileIsUsable(home)) return true;
+      if (options.probeClaudeKeychain !== false) {
+        if (options.claudeKeychainProbe) {
+          // Test/injected probe: presence of the service (legacy seam).
+          if (options.claudeKeychainProbe()) return true;
+        } else if (home === os.homedir()) {
+          // Authoritative path for the real operator home: require a usable
+          // access token in the secret payload, not just the keychain item.
+          const blob = readActiveClaudeCredential();
+          if (claudeCredentialBlobIsUsable(blob)) return true;
+        } else if (claudeKeychainHas()) {
+          // Non-default home still cannot redirect macOS keychain; metadata
+          // presence is the best we can do without spoofing another user.
+          return true;
+        }
+      }
+      return false;
     case 'codex':
       // ChatGPT session file (the launcher's xconta model swaps this file).
       return existsInEnv('CODEX_HOME', 'auth.json') || exists('.codex', 'auth.json');
@@ -439,6 +478,7 @@ export function refreshClaudeSubscriptionAuthCache(
     return Promise.resolve({ value: cached, cacheUpdated: false });
   }
 
+  // credentials file with usable token — no keychain needed
   const fileBacked = detectSubscriptionAuth(
     'claude',
     home,
@@ -451,8 +491,16 @@ export function refreshClaudeSubscriptionAuthCache(
   }
 
   if (claudeRefreshInFlight) return claudeRefreshInFlight;
+  // Prefer a usable secret payload on the real home; fall back to the
+  // injected/async metadata probe for tests and TCC-limited environments.
   claudeRefreshInFlight = Promise.resolve()
-    .then(keychainProbe)
+    .then(async () => {
+      if (home === os.homedir()) {
+        const blob = readActiveClaudeCredential();
+        if (claudeCredentialBlobIsUsable(blob)) return true;
+      }
+      return keychainProbe();
+    })
     .catch(() => false)
     .then((value) => {
       cacheSubscriptionAuth('claude', value);

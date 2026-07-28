@@ -484,7 +484,7 @@ describe('detectSubscriptionAuth', () => {
     expect(detectSubscriptionAuth('unknown-provider', tempHome())).toBe(false);
   });
 
-  it('reads Claude email from ~/.claude.json oauthAccount (file-backed login)', () => {
+  it('reads Claude email as identity only — not a live session', () => {
     const home = tempHome();
     expect(claudeOauthEmail(home)).toBeNull();
     fs.writeFileSync(
@@ -494,7 +494,41 @@ describe('detectSubscriptionAuth', () => {
       }),
     );
     expect(claudeOauthEmail(home)).toBe('user@example.com');
-    // File-backed account alone is enough even if Keychain probe fails.
-    expect(detectSubscriptionAuth('claude', home)).toBe(true);
+    // Email survives OAuth expiry; it must not prove a live subscription.
+    expect(
+      detectSubscriptionAuth('claude', home, undefined, {
+        probeClaudeKeychain: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('treats credentials file with accessToken as a live Claude session', () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude', '.credentials.json'),
+      JSON.stringify({
+        claudeAiOauth: { accessToken: 'sk-ant-oat01-file' },
+      }),
+    );
+    expect(
+      detectSubscriptionAuth('claude', home, undefined, {
+        probeClaudeKeychain: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects empty credentials file as not live', () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude', '.credentials.json'),
+      JSON.stringify({ claudeAiOauth: { accessToken: '' } }),
+    );
+    expect(
+      detectSubscriptionAuth('claude', home, undefined, {
+        probeClaudeKeychain: false,
+      }),
+    ).toBe(false);
   });
 });

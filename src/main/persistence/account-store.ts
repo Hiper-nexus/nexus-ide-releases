@@ -12,7 +12,10 @@ import {
 } from './secrets-store';
 import {
   activeClaudeEmail,
+  claudeCredentialBlobIsUsable,
   readActiveClaudeCredential,
+  readActiveClaudeCredentialSlim,
+  slimClaudeCredentialBlob,
   writeActiveClaudeCredential,
 } from '../adapters/claude-credential';
 import {
@@ -313,8 +316,14 @@ function syncClaudeBlobFromKeychainIfNative(account: Account): void {
   ) {
     return;
   }
-  const nativeBlob = readActiveClaudeCredential();
-  if (!nativeBlob) return; // Keychain unreadable → keep the vault snapshot.
+  // Vault only the slim OAuth slice — never the fat mcpOAuth plugin map.
+  const nativeBlob =
+    readActiveClaudeCredentialSlim() ??
+    (() => {
+      const raw = readActiveClaudeCredential();
+      return raw ? slimClaudeCredentialBlob(raw) : null;
+    })();
+  if (!nativeBlob) return; // Keychain unreadable / unusable → keep vault snapshot.
   if (getSecret(CRED_PREFIX + account.id) === nativeBlob) return; // In sync.
   const saved = setSecret(CRED_PREFIX + account.id, nativeBlob);
   if (!saved.ok) {
@@ -452,8 +461,10 @@ function claudeAuthEnvFromBlob(blob: string): Record<string, string> | null {
  * user-scoped. The token stays in the child process environment only.
  */
 export function activeClaudeAuthEnv(): Record<string, string> | null {
-  let blob = readActiveClaudeCredential();
-  if (!blob) {
+  // Prefer slim keychain read so vault/env never depend on mcpOAuth bulk.
+  let blob =
+    readActiveClaudeCredentialSlim() ?? readActiveClaudeCredential();
+  if (!blob || !claudeCredentialBlobIsUsable(blob)) {
     try {
       blob = fs.readFileSync(
         path.join(os.homedir(), '.claude', '.credentials.json'),
@@ -463,6 +474,7 @@ export function activeClaudeAuthEnv(): Record<string, string> | null {
       return null;
     }
   }
+  if (!claudeCredentialBlobIsUsable(blob)) return null;
   return claudeAuthEnvFromBlob(blob);
 }
 
@@ -939,7 +951,12 @@ export function addActiveSessionAccount(
   let email: string | undefined;
 
   if (adapterId === 'claude') {
-    blob = readActiveClaudeCredential();
+    blob =
+      readActiveClaudeCredentialSlim() ??
+      (() => {
+        const raw = readActiveClaudeCredential();
+        return raw ? slimClaudeCredentialBlob(raw) : null;
+      })();
     email = activeClaudeEmail() ?? undefined;
   } else if (isFileAuthAdapter(adapterId)) {
     const capture = captureNativeAuth(adapterId);

@@ -28,6 +28,9 @@ vi.mock('./secrets-store', () => {
 vi.mock('../adapters/claude-credential', () => ({
   activeClaudeEmail: () => null,
   readActiveClaudeCredential: () => null,
+  readActiveClaudeCredentialSlim: () => null,
+  slimClaudeCredentialBlob: () => null,
+  claudeCredentialBlobIsUsable: () => false,
   writeActiveClaudeCredential: vi.fn(() => true),
 }));
 

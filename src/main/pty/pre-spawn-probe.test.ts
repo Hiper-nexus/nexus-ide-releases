@@ -84,7 +84,10 @@ describe('probePreSpawn — claude family', () => {
     makeDeps({ getAdapter: () => claudeAdapter, ...overrides });
 
   it('passes when the native keychain credential is readable', async () => {
-    const deps = withClaude({ readActiveClaudeCredential: () => '{"blob":1}' });
+    const deps = withClaude({
+      readActiveClaudeCredential: () =>
+        JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-x' } }),
+    });
     expect(await runProbe('claude', deps)).toBeNull();
   });
 
@@ -103,9 +106,32 @@ describe('probePreSpawn — claude family', () => {
     expect(await runProbe('claude', deps)).toBeNull();
   });
 
-  it('passes when only the oauthAccount email is visible (packaged TCC blind spot)', async () => {
+  it('allows email-only for direct (non-governed) terminals — CLI uses native keychain', async () => {
     const deps = withClaude({ claudeOauthEmail: () => 'user@example.com' });
     expect(await runProbe('claude', deps)).toBeNull();
+  });
+
+  it('fail-closed rejects email-only for governed / isolated-home spawns', async () => {
+    const deps = withClaude({ claudeOauthEmail: () => 'user@example.com' });
+    const failure = await probePreSpawn('claude', {
+      deps,
+      failClosed: true,
+    });
+    expect(failure?.code).toBe('missing-credential');
+    expect(failure?.adapterId).toBe('claude');
+  });
+
+  it('fail-closed passes when keychain blob has usable accessToken', async () => {
+    const deps = withClaude({
+      readActiveClaudeCredential: () =>
+        JSON.stringify({
+          claudeAiOauth: { accessToken: 'sk-ant-oat01-live' },
+        }),
+      claudeOauthEmail: () => 'user@example.com',
+    });
+    expect(
+      await probePreSpawn('claude', { deps, failClosed: true }),
+    ).toBeNull();
   });
 
   it('fails typed + actionable when nothing exists', async () => {

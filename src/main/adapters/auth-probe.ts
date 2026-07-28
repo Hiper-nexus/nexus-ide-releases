@@ -54,20 +54,37 @@ const OAUTH_PROBES: Record<
   () => Promise<{ state: AuthState; detail: string }>
 > = {
   claude: async () => {
-    // Same truth as spawn/readiness: ~/.claude.json oauthAccount first.
-    // Keychain-only probes false-negative inside packaged Electron (TCC).
+    // Live session ≠ identity. Prefer the same detector as spawn readiness
+    // (usable OAuth token / credentials file). Email alone is identity only.
+    if (detectSubscriptionAuth('claude', HOME)) {
+      const email = claudeOauthEmail(HOME);
+      return {
+        state: 'ok',
+        detail: email
+          ? `sessão Claude viva: ${email}`
+          : 'sessão Claude OAuth detectada',
+      };
+    }
     const email = claudeOauthEmail(HOME);
     if (email) {
-      return { state: 'ok', detail: `sessão Claude: ${email}` };
+      return {
+        state: 'missing',
+        detail:
+          `identidade Claude (${email}) sem sessão viva — rode \`claude auth login\``,
+      };
     }
     if (fileExists(path.join(HOME, '.claude', '.credentials.json'))) {
-      return { state: 'ok', detail: 'sessão OAuth local (.credentials.json)' };
+      return {
+        state: 'missing',
+        detail: 'arquivo de credenciais Claude sem access token utilizável',
+      };
     }
     if (await keychainHas('Claude Code-credentials')) {
-      return { state: 'ok', detail: 'sessão OAuth no Keychain' };
-    }
-    if (detectSubscriptionAuth('claude', HOME)) {
-      return { state: 'ok', detail: 'sessão Claude detectada' };
+      return {
+        state: 'missing',
+        detail:
+          'item Keychain presente mas sem OAuth utilizável — rode `claude auth login`',
+      };
     }
     return { state: 'missing', detail: 'sem sessão — rode a CLI e faça /login' };
   },

@@ -22,7 +22,6 @@
     ],
     "headless": [
       "kimi",
-      "--auto",
       "--output-format",
       "text",
       "-p",

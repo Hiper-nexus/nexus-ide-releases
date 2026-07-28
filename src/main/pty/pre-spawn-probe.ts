@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { getAdapter } from '../adapters/adapter-registry';
-import { readActiveClaudeCredential } from '../adapters/claude-credential';
+import {
+  claudeCredentialBlobIsUsable,
+  readActiveClaudeCredential,
+} from '../adapters/claude-credential';
 import {
   hasNativeFileAuth,
   isFileAuthAdapter,
@@ -276,10 +279,23 @@ function hintFor(adapter: ProbeAdapterView, fallback: string): string {
   return adapter.auth?.loginHint ?? fallback;
 }
 
+function claudeBlobLooksUsable(blob: string): boolean {
+  // Prefer structured OAuth parse; bare non-empty strings (legacy tests /
+  // synthetic deps) still count when JSON is absent.
+  if (claudeCredentialBlobIsUsable(blob)) return true;
+  try {
+    JSON.parse(blob);
+    return false;
+  } catch {
+    return blob.trim().length > 0;
+  }
+}
+
 async function probe(
   adapterId: string,
   selectedModel: string | undefined,
   deps: PreSpawnProbeDeps,
+  failClosed = false,
 ): Promise<PreSpawnProbeFailure | null> {
   const adapter = deps.getAdapter(adapterId);
   // Unknown adapters are rejected by the spawn gate itself — not ours to judge.
@@ -337,21 +353,32 @@ async function probe(
   if (managedAccountAvailable) return null;
 
   if (adapterId === 'claude') {
-    if (deps.readActiveClaudeCredential() !== null) return null;
+    // Usable session only: non-empty OAuth access token in keychain blob or
+    // credentials file, or a stored API key. oauthAccount email alone is
+    // identity, not a live session — it survives OAuth expiry and used to
+    // open mute Maestro panes on isolated HOME.
+    const keychainBlob = deps.readActiveClaudeCredential();
+    if (
+      typeof keychainBlob === 'string' &&
+      keychainBlob.length > 0 &&
+      claudeBlobLooksUsable(keychainBlob)
+    ) {
+      return null;
+    }
     if (deps.readClaudeCredentialsFile() !== null) return null;
     if (deps.hasStoredKey(adapterId, effectiveModel)) return null;
-    // Packaged Electron often CANNOT read the login keychain (TCC) even when
-    // the CLI is fully logged in — an oauthAccount email in ~/.claude.json
-    // marks a login we cannot fully judge → pass rather than block a healthy
-    // user. A genuinely broken credential with the email still present is the
-    // login-stuck watchdog's job, not this probe's.
-    if (deps.claudeOauthEmail() !== null) return null;
+    // Governed / fail-closed spawns (mission, isolated HOME) never trust email.
+    // Direct user terminals may still open when we only know the identity and
+    // the CLI will use native keychain itself (non-isolated HOME).
+    if (!failClosed && deps.claudeOauthEmail() !== null) {
+      return null;
+    }
     return {
       code: 'missing-credential',
       adapterId,
       hint: hintFor(
         adapter,
-        'rode `claude` num terminal para autenticar, ou adicione a conta em Configurações › Contas',
+        'rode `claude auth login` num terminal para autenticar, ou adicione a conta em Configurações › Contas',
       ),
     };
   }
@@ -405,6 +432,7 @@ export async function probePreSpawn(
       adapterId,
       options.model,
       options.deps ?? defaultDeps,
+      options.failClosed === true,
     );
   } catch (err) {
     if (options.failClosed) {

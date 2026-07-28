@@ -396,19 +396,17 @@ describe('builtin adapters', () => {
     ]);
   });
 
-  it('uses Kimi Code fully autonomous prompt mode for headless (not legacy --print)', () => {
-    // Real kimi-code (`kimi --help`): -p is already non-interactive; --print/--quiet
-    // are kimi-cli legacy docs and do not exist on current @moonshot-ai/kimi-code.
-    // Kimi 0.29.1 documents -y as allowing follow-up questions; --auto is the
-    // no-question permission mode required by autonomous workers.
+  it('uses Kimi Code prompt mode for headless without combining --auto and -p', () => {
+    // Real kimi-code rejects `Cannot combine --prompt with --auto`.
+    // Headless is non-interactive via -p only; interactive YOLO still uses --auto.
     expect(builtin('kimi')?.spawn?.headless).toEqual([
       'kimi',
-      '--auto',
       '--output-format',
       'text',
       '-p',
       '{{PROMPT}}',
     ]);
+    expect(builtin('kimi')?.spawn?.headless).not.toContain('--auto');
     expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['--auto']);
   });
 
