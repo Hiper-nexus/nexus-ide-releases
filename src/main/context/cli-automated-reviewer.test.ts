@@ -83,6 +83,7 @@ describe('CLI automated reviewer', () => {
     expect(spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         executionScope: expect.objectContaining({ rootRealPath: '/candidate' }),
+        omitHandoffContract: true,
         allowedTools: expect.not.arrayContaining(['nexus_file_write', 'nexus_terminal_run']),
       }),
       expect.objectContaining({

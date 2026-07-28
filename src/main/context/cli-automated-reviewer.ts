@@ -355,6 +355,7 @@ export class CliAutomatedReviewer {
             ],
             role: 'worker' as const,
             readOnly: true,
+            omitHandoffContract: true,
             prompt,
             scope: input.scope,
             executionScope,

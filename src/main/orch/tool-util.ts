@@ -411,6 +411,13 @@ export interface SpawnToolOptions {
   executionScope?: AgentGateContext['executionScope'];
   readOnly?: boolean;
   /**
+   * Merge-council / context reviewers finalize with nexus_merge_review_submit
+   * (or draft review), not nexus_handoff_submit. Appending the worker handoff
+   * contract makes Codex inspect the diff then stall looking for a tool that
+   * is not in allowedTools.
+   */
+  omitHandoffContract?: boolean;
+  /**
    * Internal: skip the zero-friction omp companion auto-spawn (used when this
    * spawn IS the companion, to prevent recursion).
    */
@@ -839,13 +846,18 @@ export async function spawnPaneAndMaybePrompt(
   if (options.prompt) {
     // Let the CLI finish booting before typing (first idle or timeout).
     const boot = await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
-    const prompt =
-      options.role === 'orchestrator'
-        ? options.prompt
-        : withHandoffContract(options.prompt, adapter, {
-            category: options.agentCategory,
-            hints: [options.title, options.agentName],
-          });
+    const omitHandoff =
+      options.omitHandoffContract === true ||
+      options.role === 'orchestrator' ||
+      (Array.isArray(options.allowedTools) &&
+        options.allowedTools.includes('nexus_merge_review_submit') &&
+        !options.allowedTools.includes('nexus_handoff_submit'));
+    const prompt = omitHandoff
+      ? options.prompt
+      : withHandoffContract(options.prompt, adapter, {
+          category: options.agentCategory,
+          hints: [options.title, options.agentName],
+        });
     try {
       assertMcpInvocationCurrent(hooks.invocation);
       if (boot === 'exited') {

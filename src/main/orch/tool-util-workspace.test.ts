@@ -496,6 +496,45 @@ describe('worker handoff capability contract', () => {
     expect(prompt).toContain('marker');
     expect(prompt).not.toContain('nexus_handoff_submit');
   });
+
+  it('does not append handoff_submit to merge-council reviewer briefs', async () => {
+    stubs.sessionState.mockReturnValue('idle');
+    const writes: string[] = [];
+    stubs.writeSession.mockImplementation(
+      ((sessionId: string, data: string) => {
+        writes.push(String(data));
+        if (
+          String(data).includes('nexus_merge_review_submit') ||
+          String(data).includes('200~')
+        ) {
+          queueMicrotask(() => {
+            stubs.sessionState.mockReturnValue('busy');
+            for (const tap of stubs.stateTaps) tap(sessionId, 'busy');
+            for (const tap of stubs.dataTaps) tap(sessionId, 'ok');
+          });
+        }
+        return true;
+      }) as typeof stubs.writeSession,
+    );
+
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'codex',
+      missionId: 'm1',
+      role: 'worker',
+      readOnly: true,
+      prompt: 'Call nexus_merge_review_submit when done.',
+      allowedTools: [
+        'nexus_git_diff',
+        'nexus_merge_review_submit',
+      ],
+      scope,
+      executionScope: taskExecutionScope,
+    });
+
+    const pasted = writes.join('\n');
+    expect(pasted).toContain('nexus_merge_review_submit');
+    expect(pasted).not.toContain('nexus_handoff_submit');
+  });
 });
 
 describe('omp rpc spawn transaction', () => {
