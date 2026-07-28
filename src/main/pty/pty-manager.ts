@@ -51,6 +51,7 @@ import {
 import {
   qualifyTrustedNativeConfinementLaunch,
   revalidateTrustedNativeConfinementLaunch,
+  supportsPinnedNativeConfinementAuthenticity,
   type TrustedNativeConfinementLaunch,
 } from "./trusted-native-cli-binary";
 import {
@@ -1169,15 +1170,24 @@ export function spawnAgentSession(
           "governed native confinement resume requires an exact main-owned provider session",
         );
       }
-      trustedNativeLaunch = qualifyTrustedNativeConfinementLaunch({
-        adapterId: adapter.id,
-        requestedBinPath: bin,
-        canonicalBinPath: resolveAdapterBinary(adapter.id),
-      });
-      bin = trustedNativeLaunch.executablePath;
-      trustedNativeRuntimeReadPaths = [
-        ...trustedNativeLaunch.runtimeReadPaths,
-      ];
+      // Sealed Darwin image pin (Team ID + CDHash + release) is only for
+      // adapters with an authenticity root (Codex/Claude today). Grok and
+      // peers declare mechanical read-only via provider argv
+      // (`--sandbox read-only`) without a Nexus pin — keep argv confinement
+      // and leave `darwinExecutableSeal` unset. Unpinned adapters that
+      // request workspace-write still fail closed in secureAutonomousCliArgs
+      // (not here), so the error names the missing confinement profile.
+      if (supportsPinnedNativeConfinementAuthenticity(adapter.id)) {
+        trustedNativeLaunch = qualifyTrustedNativeConfinementLaunch({
+          adapterId: adapter.id,
+          requestedBinPath: bin,
+          canonicalBinPath: resolveAdapterBinary(adapter.id),
+        });
+        bin = trustedNativeLaunch.executablePath;
+        trustedNativeRuntimeReadPaths = [
+          ...trustedNativeLaunch.runtimeReadPaths,
+        ];
+      }
     }
     args = secureAutonomousCliArgs(adapter, args, nativeReadOnly, {
       unattendedNexusMcp,

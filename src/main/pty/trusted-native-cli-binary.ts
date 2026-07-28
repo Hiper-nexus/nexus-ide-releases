@@ -163,6 +163,21 @@ const DARWIN_AUTHENTICITY_ROOTS = Object.freeze({
 } satisfies Record<string, DarwinAuthenticityRoot>);
 
 /**
+ * True only for adapters that ship a release-pinned Darwin Developer ID root
+ * (exact Team ID + CDHash + version). Other mechanical read-only CLIs (e.g.
+ * Grok with `--sandbox read-only`) enforce the boundary inside their own
+ * binary and must not enter the sealed-image launch path — they have no pin.
+ */
+export function supportsPinnedNativeConfinementAuthenticity(
+  adapterId: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(
+    DARWIN_AUTHENTICITY_ROOTS,
+    adapterId,
+  );
+}
+
+/**
  * Exact release-image roots for the shipped macOS architecture. A matching
  * Developer ID Team ID is necessary but not sufficient: another binary signed
  * by the same vendor is not authorized to inherit this release's authority.

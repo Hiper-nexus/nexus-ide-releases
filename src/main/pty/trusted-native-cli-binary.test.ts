@@ -142,6 +142,7 @@ import {
   PINNED_CODEX_PACKAGE_VERSION,
   qualifyTrustedNativeConfinementLaunch,
   revalidateTrustedNativeConfinementLaunch,
+  supportsPinnedNativeConfinementAuthenticity,
   trustedNativeConfinementRuntimeReadPaths,
 } from "./trusted-native-cli-binary";
 
@@ -501,6 +502,14 @@ describe("trusted native CLI binary", () => {
       }),
     ).toThrow(/no pinned native confinement authenticity root/i);
     expect(spawnState.calls).toHaveLength(0);
+  });
+
+  it("exposes authenticity pins only for release-sealed adapters", () => {
+    expect(supportsPinnedNativeConfinementAuthenticity("codex")).toBe(true);
+    expect(supportsPinnedNativeConfinementAuthenticity("claude")).toBe(true);
+    // Grok enforces read-only via provider argv, not a Nexus CDHash pin.
+    expect(supportsPinnedNativeConfinementAuthenticity("grok")).toBe(false);
+    expect(supportsPinnedNativeConfinementAuthenticity("kimi")).toBe(false);
   });
 
   it("grants only the vendor-native read path for Codex npm", () => {

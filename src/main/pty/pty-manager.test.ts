@@ -75,12 +75,19 @@ vi.mock("../adapters/adapter-registry", async (importOriginal) => {
   };
 });
 vi.mock("./trusted-native-cli-binary", () => ({
+  supportsPinnedNativeConfinementAuthenticity: (adapterId: string) =>
+    adapterId === "codex" || adapterId === "claude",
   qualifyTrustedNativeConfinementLaunch: (input: {
     adapterId: string;
     requestedBinPath: string;
   }) => {
     if (input.requestedBinPath === adapterTrust.rejectedBinPath) {
       throw new Error("executable override diverges from canonical discovery");
+    }
+    if (input.adapterId !== "codex" && input.adapterId !== "claude") {
+      throw new Error(
+        `adapter ${input.adapterId} has no pinned native confinement authenticity root`,
+      );
     }
     nativeLaunchTrust.qualificationCount += 1;
     const launch = Object.freeze({
@@ -1854,7 +1861,7 @@ describe("cli-agent spawn argv hardening", () => {
       expectDarwinCodexOuterSandbox(spec);
       expect(governedCodexArgv(spec)).toEqual([
         "--model",
-        "gpt-5.5",
+        "gpt-5.6-terra",
         "--strict-config",
         "--disable",
         "multi_agent",

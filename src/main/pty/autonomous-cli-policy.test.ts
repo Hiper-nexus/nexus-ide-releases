@@ -225,6 +225,10 @@ describe('secureAutonomousCliArgs', () => {
     expect(
       supportsEnforceableReadOnlyNativeAuthority(builtinCli('claude')),
     ).toBe(true);
+    // Grok declares --sandbox read-only (provider-enforced), not a Darwin pin.
+    expect(
+      supportsEnforceableReadOnlyNativeAuthority(builtinCli('grok')),
+    ).toBe(true);
     expect(
       supportsEnforceableReadOnlyNativeAuthority(builtinCli('glm')),
     ).toBe(false);
@@ -243,6 +247,21 @@ describe('secureAutonomousCliArgs', () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it('applies Grok provider read-only sandbox without requiring a sealed image pin', () => {
+    const grok = builtinCli('grok');
+    const args = secureAutonomousCliArgs(
+      grok,
+      ['grok', '--always-approve', 'review this'],
+      true,
+    );
+    expect(args).toEqual(
+      expect.arrayContaining(['--sandbox', 'read-only']),
+    );
+    expect(args).not.toEqual(
+      expect.arrayContaining(['--always-approve']),
+    );
   });
 
   it('qualifies only the exact release-pinned Codex workspace sandbox', () => {
