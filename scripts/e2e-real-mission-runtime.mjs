@@ -39,6 +39,7 @@ import {
   stageCodexAuthentication,
   stageRealMissionOnboardingComplete,
   stageTrustedCodexLauncher,
+  stageTrustedAdvisorLaunchers,
 } from "./e2e-real-mission-launcher.mjs";
 import {
   assertRealMissionPassEvidence,
@@ -595,6 +596,10 @@ async function runPackagedRealMissionCore(
       const sourceCodexHome = path.join(realHome, ".codex");
       const codexBinary = resolveTrustedCodexBinary({ environment });
       stageTrustedCodexLauncher(codexBinary, userData);
+      // Multi-CLI: put operator-available advisor bins on the child PATH so
+      // adapters resolve as installed and the product-wizard launch button
+      // is not permanently disabled (see stageTrustedAdvisorLaunchers).
+      stageTrustedAdvisorLaunchers(userData, { environment });
       const isolatedEnvironment = realMissionEnvironment(
         environment,
         userData,

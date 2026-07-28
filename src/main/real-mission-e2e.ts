@@ -90,47 +90,15 @@ export { readDurableAuthoritySnapshot } from "./real-mission-e2e-authority";
  * durable receipts, repository checks, and final verdict all stay in main.
  */
 
-async function clickProductWizardTrustedLaunch(
-  sender: WebContents,
-): Promise<boolean> {
-  if (sender.isDestroyed() || sender.isCrashed()) return false;
-  const point = (await sender.executeJavaScript(`(() => {
-    const el = document.querySelector(
-      '[data-nexus-real-mission-wizard-launch="true"]',
-    );
-    if (!(el instanceof HTMLElement)) return null;
-    if (
-      (el instanceof HTMLButtonElement && el.disabled) ||
-      el.getAttribute("aria-disabled") === "true"
-    ) {
-      return null;
-    }
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return null;
-    return {
-      x: Math.round(rect.left + rect.width / 2),
-      y: Math.round(rect.top + rect.height / 2),
-    };
-  })()`)) as { x: number; y: number } | null;
-  if (!point || sender.isDestroyed() || sender.isCrashed()) return false;
-  sender.focus();
-  const common = {
-    x: point.x,
-    y: point.y,
-    button: "left" as const,
-    clickCount: 1,
-  };
-  sender.sendInputEvent({ type: "mouseDown", ...common });
-  sender.sendInputEvent({ type: "mouseUp", ...common });
-  return true;
-}
-
 function scheduleProductWizardTrustedLaunchClicks(
   sender: WebContents,
   isSettled: () => boolean,
+  onGaveUp?: () => void,
 ): () => void {
   let attempts = 0;
   let clicked = false;
+  let sawButton = false;
+  let sawDisabled = false;
   const timer = setInterval(() => {
     if (isSettled() || clicked || sender.isDestroyed() || sender.isCrashed()) {
       clearInterval(timer);
@@ -139,21 +107,69 @@ function scheduleProductWizardTrustedLaunchClicks(
     attempts += 1;
     if (attempts > 120) {
       clearInterval(timer);
+      console.error(
+        "[real-mission] product-wizard-launch-gave-up " +
+          `attempts=${attempts} sawButton=${sawButton} sawDisabled=${sawDisabled}`,
+      );
+      onGaveUp?.();
       return;
     }
-    void clickProductWizardTrustedLaunch(sender)
-      .then((ok) => {
-        if (ok) {
-          clicked = true;
-          clearInterval(timer);
-          console.log(
-            "[real-mission] PHASE phase=product-wizard-launch-clicked",
+    void (async () => {
+      try {
+        if (sender.isDestroyed() || sender.isCrashed()) return;
+        const state = (await sender.executeJavaScript(`(() => {
+          const el = document.querySelector(
+            '[data-nexus-real-mission-wizard-launch="true"]',
           );
+          if (!(el instanceof HTMLElement)) return { kind: "missing" };
+          const disabled =
+            (el instanceof HTMLButtonElement && el.disabled) ||
+            el.getAttribute("aria-disabled") === "true";
+          const rect = el.getBoundingClientRect();
+          if (rect.width < 1 || rect.height < 1) return { kind: "hidden" };
+          if (disabled) {
+            const title = el.getAttribute("title") || "";
+            return { kind: "disabled", title };
+          }
+          return {
+            kind: "ready",
+            x: Math.round(rect.left + rect.width / 2),
+            y: Math.round(rect.top + rect.height / 2),
+          };
+        })()`)) as
+          | { kind: "missing" | "hidden" | "disabled"; title?: string }
+          | { kind: "ready"; x: number; y: number };
+        if (state.kind === "disabled") {
+          sawButton = true;
+          sawDisabled = true;
+          if (attempts === 1 || attempts % 20 === 0) {
+            console.warn(
+              "[real-mission] product-wizard-launch-disabled " +
+                `title=${JSON.stringify(state.title ?? "")}`,
+            );
+          }
+          return;
         }
-      })
-      .catch(() => {
+        if (state.kind !== "ready") return;
+        sawButton = true;
+        sender.focus();
+        const common = {
+          x: state.x,
+          y: state.y,
+          button: "left" as const,
+          clickCount: 1,
+        };
+        sender.sendInputEvent({ type: "mouseDown", ...common });
+        sender.sendInputEvent({ type: "mouseUp", ...common });
+        clicked = true;
+        clearInterval(timer);
+        console.log(
+          "[real-mission] PHASE phase=product-wizard-launch-clicked",
+        );
+      } catch {
         // Button may not be mounted yet; keep polling.
-      });
+      }
+    })();
   }, 250);
   return () => clearInterval(timer);
 }
@@ -553,6 +569,9 @@ export function initRealMissionE2E(): void {
     const stopLaunchClicks = scheduleProductWizardTrustedLaunchClicks(
       sender,
       () => settled,
+      () => {
+        if (!settled) finish("setup-failed");
+      },
     );
     const previousUnsubscribe = unsubscribeProductWizardMission;
     unsubscribeProductWizardMission = () => {

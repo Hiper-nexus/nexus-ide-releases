@@ -563,6 +563,18 @@ describe("real mission local prerequisites and state restoration", () => {
         missionApprovalAcceptedCount: 0,
         codexMcpPromptCount: 0,
       },
+      failure: {
+        code: "mission-blocked",
+        reason: "boot_timeout",
+        detail: null,
+        cta: REAL_MISSION_CTA,
+        snapshot: {
+          missionStatus: "blocked",
+          paneCount: 1,
+          dispatchCount: 0,
+          handoffCount: 0,
+        },
+      },
       release: {
         appVersion: "0.19.26",
         commitSha: "a".repeat(40),
@@ -573,17 +585,6 @@ describe("real mission local prerequisites and state restoration", () => {
         },
       },
       child: { exitCode: 0, phase: "observer-armed" },
-      failure: {
-        code: "mission-blocked",
-        reason: "boot_timeout",
-        cta: REAL_MISSION_CTA,
-        snapshot: {
-          missionStatus: "blocked",
-          paneCount: 1,
-          dispatchCount: 0,
-          handoffCount: 0,
-        },
-      },
     });
     expect(JSON.stringify(receipt)).not.toMatch(
       /"prompt":|rawOutput|never persist/u,

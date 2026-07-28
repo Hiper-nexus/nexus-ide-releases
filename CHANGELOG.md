@@ -9,6 +9,10 @@ com tag/build, mas o gate E2E multi-CLI não fechou PASS no artefato final).
 
 ### Multi-CLI operacional
 
+- **Gate PATH multi-CLI**: advisor bins (kimi/grok/claude/omp/agy/opencode) são
+  linkados em `trusted-bin` do userData isolado — sem isso o wizard ficava com
+  "Usar este squad" disabled e o gate morria em product-wizard-ready.
+
 - **Advisors multi-CLI no gate e na missão**: Kimi, Grok, Agy, OpenCode, OMP e
   Claude (quando não for Maestro) entram como participantes com PTY, tools
   `nexus_*` e handoff; evidência registra tier (confined vs advisory).

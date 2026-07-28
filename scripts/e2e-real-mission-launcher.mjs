@@ -172,6 +172,70 @@ export function stageTrustedCodexLauncher(codexBinary, userData) {
 }
 
 /**
+ * Stage multi-CLI advisor (and Claude) binaries into the gate's trusted-bin.
+ * The isolated child PATH only sees trusted-bin + a few system dirs — without
+ * these symlinks, adapters report installed=false, the product-wizard launch
+ * button stays disabled forever, and the gate hangs at product-wizard-ready.
+ *
+ * Missing/untrusted binaries are omitted (never a hard failure); callers that
+ * already called assertAdvisorBinaries decide skip vs require.
+ */
+export function stageTrustedAdvisorLaunchers(
+  userData,
+  {
+    environment = process.env,
+    resolveCommand = defaultResolveCommand,
+    clis = REAL_MISSION_ADVISOR_BINARIES,
+  } = {},
+) {
+  const directory = path.join(path.resolve(userData), "trusted-bin");
+  fs.mkdirSync(directory, {
+    recursive: true,
+    mode: PRIVATE_DIRECTORY_MODE,
+  });
+  fs.chmodSync(directory, PRIVATE_DIRECTORY_MODE);
+  const staged = {};
+  for (const cli of clis) {
+    if (cli === "codex") continue; // staged by stageTrustedCodexLauncher
+    const unresolved = resolveCommand(cli, environment);
+    if (typeof unresolved !== "string" || !path.isAbsolute(unresolved)) {
+      continue;
+    }
+    let binary;
+    try {
+      binary = fs.realpathSync(unresolved);
+      const stat = fs.statSync(binary);
+      if (
+        !stat.isFile() ||
+        (stat.mode & 0o111) === 0 ||
+        (stat.mode & 0o022) !== 0
+      ) {
+        continue;
+      }
+      if (
+        typeof process.getuid === "function" &&
+        stat.uid !== process.getuid() &&
+        stat.uid !== 0
+      ) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    const launcher = path.join(directory, cli);
+    try {
+      fs.lstatSync(launcher);
+      fs.unlinkSync(launcher);
+    } catch {
+      // absent is fine
+    }
+    fs.symlinkSync(binary, launcher, "file");
+    staged[cli] = binary;
+  }
+  return staged;
+}
+
+/**
  * Product-wizard E2E uses an isolated HOME. Without this seed the first-run
  * onboarding modal mounts over MissionWizard (higher z-index) and the gate
  * never creates a mission — missing-evidence at product-wizard-ready.
