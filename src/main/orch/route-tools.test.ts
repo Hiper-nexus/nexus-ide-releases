@@ -57,7 +57,7 @@ describe('nexus_route_task wiring', () => {
   it('registra a decisão na proveniência E no route-log com o motivo', async () => {
     mocks.listProviderSettings.mockReturnValue([
       { adapterId: 'shell', enabled: true, installed: true, authStrategy: 'none', models: ['shell'] },
-      { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth', models: ['kimi-code/kimi-for-coding'] },
+      { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth', models: ['kimi-code/k3'] },
       { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.5'] },
     ]);
     const decision = (await tool('nexus_route_task').handler(
@@ -88,7 +88,7 @@ describe('nexus_route_task quota auto-exclude', () => {
     enabled: true,
     installed: true,
     authStrategy: 'oauth',
-    models: ['kimi-code/kimi-for-coding'],
+    models: ['kimi-code/k3'],
   };
   const codexProvider = {
     adapterId: 'codex',
@@ -139,7 +139,7 @@ describe('nexus_route_task quota auto-exclude', () => {
 describe('nexus_route_log handler', () => {
   it('respeita o limit e clampa 0..50', async () => {
     mocks.listProviderSettings.mockReturnValue([
-      { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth', models: ['kimi-code/kimi-for-coding'] },
+      { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth', models: ['kimi-code/k3'] },
     ]);
     for (let i = 0; i < 3; i += 1) {
       await tool('nexus_route_task').handler({ task: `t${i} media` }, context());

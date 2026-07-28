@@ -41,7 +41,7 @@ describe('diversidade com cobertura parcial de avaliação (regressão: só code
     },
     { id: 'codex', installed: true, models: ['gpt-5.5', 'gpt-5.4'] },
     { id: 'grok', installed: true, models: ['grok-4.1', 'grok-4-fast'] },
-    { id: 'kimi', installed: true, models: ['kimi-code/kimi-for-coding'] },
+    { id: 'kimi', installed: true, models: ['kimi-code/k3'] },
     {
       id: 'agy',
       installed: true,
@@ -58,7 +58,7 @@ describe('diversidade com cobertura parcial de avaliação (regressão: só code
       true,
     );
     expect(decision!.adapterId).toBe('kimi');
-    expect(decision!.model).toBe('kimi-code/kimi-for-coding');
+    expect(decision!.model).toBe('kimi-code/k3');
     expect(decision!.reason).not.toContain('avaliação Nexus por dimensão');
   });
 
@@ -98,7 +98,7 @@ describe('quality de fixture nunca pre-empta diversidade (RC1)', () => {
         kimi: {
           models: [
             {
-              id: 'kimi-code/kimi-for-coding',
+              id: 'kimi-code/k3',
               availability: 'cheap' as const,
               costTier: 'low' as const,
               quality: {
@@ -120,7 +120,7 @@ describe('quality de fixture nunca pre-empta diversidade (RC1)', () => {
         {
           id: 'kimi',
           installed: true,
-          models: ['kimi-code/kimi-for-coding'],
+          models: ['kimi-code/k3'],
         },
       ],
       DEFAULT_ROUTING_TABLE,
@@ -133,7 +133,7 @@ describe('quality de fixture nunca pre-empta diversidade (RC1)', () => {
     // evidência publicada capaz de derrubar a política de diversidade.
     expect(decision).toMatchObject({
       adapterId: 'kimi',
-      model: 'kimi-code/kimi-for-coding',
+      model: 'kimi-code/k3',
     });
     expect(decision!.reason).not.toContain('avaliação Nexus por dimensão');
   });
@@ -182,7 +182,7 @@ describe('gate de cobertura da avaliação — bordas', () => {
       [
         { id: 'claude', installed: true },
         { id: 'grok', installed: true, models: ['grok-4.1', 'grok-4-fast'] },
-        { id: 'kimi', installed: true, models: ['kimi-code/kimi-for-coding'] },
+        { id: 'kimi', installed: true, models: ['kimi-code/k3'] },
       ],
       DEFAULT_ROUTING_TABLE,
       'easy',
@@ -217,7 +217,7 @@ describe('gate de cobertura da avaliação — bordas', () => {
             {
               // Avaliado, porém api-only: bloqueado para auto-rota — não pode
               // contar como cobertura, senão o gate liga sem candidato real.
-              id: 'kimi-code/kimi-for-coding',
+              id: 'kimi-code/k3',
               availability: 'api-only' as const,
               costTier: 'low' as const,
               quality: {
@@ -235,7 +235,7 @@ describe('gate de cobertura da avaliação — bordas', () => {
       'tarefa de complexidade média',
       [
         { id: 'grok', installed: true, models: ['grok-4.1'] },
-        { id: 'kimi', installed: true, models: ['kimi-code/kimi-for-coding'] },
+        { id: 'kimi', installed: true, models: ['kimi-code/k3'] },
       ],
       DEFAULT_ROUTING_TABLE,
       'medium',

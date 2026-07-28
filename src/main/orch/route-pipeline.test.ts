@@ -90,7 +90,7 @@ describe('scoreRouteCandidate', () => {
 describe('multiScoreRerank', () => {
   it('skips circuit-open when alternatives exist', () => {
     const ranked = [
-      entry('kimi', 'kimi-code/kimi-for-coding'),
+      entry('kimi', 'kimi-code/k3'),
       entry('codex', 'gpt-5.4'),
     ];
     const { ranked: out, note } = multiScoreRerank({

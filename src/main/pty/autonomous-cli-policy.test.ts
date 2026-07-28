@@ -808,6 +808,28 @@ describe('secureAutonomousCliArgs', () => {
     expect(secureAutonomousCliArgs(kimi, ['-y'])).toEqual(['-y']);
   });
 
+  it('keeps provider yolo on the advisory-unconfined lane so Kimi never stalls on Approve once', () => {
+    const kimi = builtinCli('kimi');
+    const args = secureAutonomousCliArgs(kimi, [], false, {
+      advisoryUnconfinedParticipation: true,
+    });
+    for (const flag of kimi.control.permission?.yolo ?? []) {
+      expect(args).toContain(flag);
+    }
+    expect(args).toContain('--auto');
+  });
+
+  it('forces verified yolo for every release-gate CLI that declares one (not only Codex)', () => {
+    e2eFlag.value = true;
+    try {
+      const kimi = builtinCli('kimi');
+      const args = secureAutonomousCliArgs(kimi, [], false);
+      expect(args).toContain('--auto');
+    } finally {
+      e2eFlag.value = false;
+    }
+  });
+
   it('preserves each built-in provider native yolo flag for writable workers', () => {
     const cliAdapters = BUILTIN_ADAPTERS
       .map((raw) => adapterSchema.parse(raw))

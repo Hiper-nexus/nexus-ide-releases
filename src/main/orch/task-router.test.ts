@@ -142,7 +142,7 @@ describe('routeTask', () => {
       'easy',
     );
     expect(decision!.adapterId).toBe('kimi');
-    expect(decision!.model).toBe('kimi-code/kimi-for-coding');
+    expect(decision!.model).toBe('kimi-code/k3');
   });
 
   it('does not route to LongCat when the caller marks it unavailable', () => {

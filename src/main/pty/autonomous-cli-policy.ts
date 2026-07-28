@@ -76,9 +76,9 @@ export interface AutonomousCliPolicyOptions {
   readonly trustedCodexExternalProcessSandbox?: boolean;
   /**
    * Advisory-unconfined mission participant (kimi/agy/opencode/omp read_only
-   * worker): the Nexus MCP read-only authority is the only boundary. Strip
-   * provider yolo/permission escapes but never fabricate native confinement
-   * the CLI cannot enforce.
+   * worker): MCP read-only + outer kernel write deny is the authority boundary.
+   * Provider auto-approve (yolo) is KEPT so the agent never stalls on interactive
+   * TUIs; native confinement flags the CLI cannot enforce are still not invented.
    */
   readonly advisoryUnconfinedParticipation?: boolean;
 }
@@ -558,12 +558,12 @@ export function secureAutonomousCliArgs(
   const permission = adapter.control?.permission;
   const usesNexusOnlyTools = adapter.quirks.mcpAutoload;
   const safeArgs = permission?.safe ?? [];
-  // Release-gate workers run in disposable worktrees. Without YOLO they stall
-  // on Codex project-trust / approval prompts and fail as "awaiting operator
-  // input" before any handoff can exist.
+  // Release-gate workers run unattended in disposable worktrees. Without YOLO
+  // any CLI stalls on provider approval prompts ("Approve once") and the
+  // mission never produces a handoff. Force the adapter's verified yolo
+  // sequence for every provider that declares one — not just Codex.
   const releaseGateFullAuto =
     isCurrentProcessRealMissionE2E() &&
-    adapter.id === 'codex' &&
     (permission?.yolo?.length ?? 0) > 0
       ? permission!.yolo
       : [];
@@ -668,13 +668,18 @@ export function secureAutonomousCliArgs(
   }
 
   if (options.advisoryUnconfinedParticipation) {
-    // Advisory lane (see the option contract): the MCP read-only authority is
-    // the only boundary. Remove any provider full-auto/permission escape the
-    // caller may have inherited, keep the adapter's own argv, and never claim
-    // a native confinement this CLI cannot enforce.
+    // Advisory lane (kimi/agy/opencode/omp): MCP is read-only and the outer
+    // process sandbox denies workspace writes. Do not invent native confinement
+    // flags the CLI cannot enforce — but DO keep provider auto-approve so the
+    // agent never stalls on interactive "Approve once" TUIs (ls/read/etc).
+    // Stripping YOLO here was the release-gate regression that left Kimi
+    // waiting for a human on every shell tool.
     let advisorArgs = [...currentArgs];
     for (const sequence of permissionSequences(adapter)) {
       advisorArgs = removeSequence(advisorArgs, sequence);
+    }
+    if ((permission?.yolo?.length ?? 0) > 0) {
+      appendOnce(advisorArgs, permission!.yolo);
     }
     return advisorArgs;
   }

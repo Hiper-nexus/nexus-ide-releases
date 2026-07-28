@@ -78,11 +78,11 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   trivial: [
     { adapterId: 'grok', model: 'grok-code-fast-1', effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.6-flash-low', effort: 'low' },
-    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'low' },
+    { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
   ],
   easy: [
-    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'low' },
+    { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'grok', model: 'grok-4-fast', effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.6-flash-low', effort: 'low' },
     { adapterId: 'omp', model: 'zai/glm-5', effort: 'low' },
@@ -94,7 +94,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // omp early: real diversity when installed, not silent last-resort.
     { adapterId: 'omp', model: 'zai/glm-5', effort: 'medium' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
-    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'medium' },
+    { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'medium' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.4', effort: 'medium' },
@@ -108,7 +108,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
-    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'high' },
+    { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'high' },
   ],
   critical: [
@@ -122,7 +122,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // agy antes de kimi preserva a preferência efetiva anterior (o empréstimo
     // do tier hard escolhia gemini-3.1-pro-high quando ambos instalados).
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'xhigh' },
-    { adapterId: 'kimi', model: 'kimi-code/kimi-for-coding', effort: 'xhigh' },
+    { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'xhigh' },
     // omp last on critical — security floor keeps claude/codex first.
     { adapterId: 'omp', model: 'xai-oauth/grok-4.5', effort: 'xhigh' },
   ],

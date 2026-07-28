@@ -204,10 +204,22 @@
       ]
     },
     "kimi": {
-      "default": "kimi-code/kimi-for-coding",
+      "default": "kimi-code/k3",
       "models": [
         {
+          "id": "kimi-code/k3",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
           "id": "kimi-code/kimi-for-coding",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "kimi-code/kimi-for-coding-highspeed",
           "availability": "cheap",
           "costTier": "low",
           "source": "remote"
