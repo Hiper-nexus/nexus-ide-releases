@@ -17,17 +17,17 @@ export const CURRENT_RELEASE: AppRelease = {
   date: '2026-07-27',
   codename: 'Mais de Uma Cabeça',
   summary:
-    'A missão deixa de ser trabalho de uma CLI só: revisores e batedores de outras CLIs entram na mesma missão em faixa somente-leitura, com PTY próprio e recibo físico. Vem junto tudo que estava pronto na 0.19.31, que ficou retida nos gates.',
+    'O worker volta a entregar: o commit dentro do worktree isolado deixa de ser negado pelo sandbox, que era o ponto onde a missão parava sem produzir resultado. Um revisor de outra CLI passa a acompanhar a mesma missão. Vem junto tudo que estava pronto na 0.19.31, que ficou retida nos gates.',
   highlights: [
     {
-      title: 'Conselho multi-CLI na mesma missão',
+      title: 'O worker volta a conseguir commitar',
       detail:
-        'Revisores e batedores de outras CLIs participam em faixa somente-leitura, cada um com PTY próprio, ao menos uma tool nexus_* e handoff submetido. A evidência registra o tier de confinamento de cada um: mecânico, quando o próprio provider garante (Codex pelo perfil de argv, Grok pelo Seatbelt do kernel), ou advisory, quando a fronteira é a autoridade somente-leitura do MCP Nexus.',
+        'Um worktree isolado guarda os objetos e refs do commit no repositório pai, fora da área de escrita do worker — e o sandbox negava. Todo commit morria com "Operation not permitted", o agente se recusava a reportar sucesso sem ter commitado e a missão parava sem entregar. O sandbox passa a liberar exatamente o que um commit toca, e nada além: hooks e config seguem bloqueados.',
     },
     {
-      title: 'Claude também aconselha',
+      title: 'Mais de uma CLI na mesma missão',
       detail:
-        'Com o Maestro em outra CLI, o Claude entra como conselheiro somente-leitura da missão. A missão continua com uma única sessão Claude OAuth, então o Claude nunca vira executor com escrita.',
+        'Um revisor em CLI com confinamento garantido fora do prompt entra na missão junto do pipeline principal, com terminal próprio e handoff submetido — hoje Codex e Grok. A evidência registra o tier de confinamento de cada participante.',
     },
     {
       title: 'Fluxo único, sem modal cosmético',

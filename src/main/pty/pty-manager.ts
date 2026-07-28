@@ -59,6 +59,7 @@ import {
   resolvePackagedDarwinLaunchAuthorizationReadPaths,
 } from "./darwin-pty-supervisor";
 import { buildScopedExecPlan } from "../runtime/process-sandbox";
+import { linkedWorktreeGitWritePaths } from "../runtime/linked-worktree-git-paths";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -1262,7 +1263,18 @@ export function spawnAgentSession(
             ...trustedNativeRuntimeReadPaths,
             ...darwinPtySupervisorReadPaths,
           ],
-          extraWritePaths: codexProcessSandbox.providerStatePaths,
+          extraWritePaths: [
+            ...codexProcessSandbox.providerStatePaths,
+            // A linked worktree keeps its git metadata in the PARENT repo,
+            // outside this execution scope root. Without these exact subtrees
+            // the governed worker cannot commit its own work: git dies on
+            // `<repo>/.git/worktrees/<id>/index.lock` and the worker correctly
+            // refuses to report success, blocking the mission. Read-only lanes
+            // never commit, so they never receive it.
+            ...(nativeReadOnly
+              ? []
+              : linkedWorktreeGitWritePaths(authority.scope.rootRealPath)),
+          ],
           protectedWritePaths: codexProcessSandbox.protectedWritePaths,
         });
         spawnFile = plan.file;

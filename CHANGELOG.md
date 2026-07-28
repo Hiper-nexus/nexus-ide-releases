@@ -7,22 +7,36 @@ Data: 2026-07-27
 Entrega também tudo que estava preparado para a 0.19.31, que ficou retida nos
 gates e nunca chegou a ser publicada.
 
-### Conselho multi-CLI dentro da mesma missão
+### O worker volta a conseguir commitar
 
-- **Lane advisor**: revisores e batedores em CLIs que sustentam uma faixa
-  somente-leitura entram na missão com recibo físico — PTY próprio, ao menos
-  uma tool `nexus_*` e handoff submetido. A evidência registra o tier de
-  confinamento de cada um: mecânico (Codex pelo perfil de argv, Grok pelo
-  Seatbelt do kernel) ou advisory, quando a única fronteira é a autoridade
-  somente-leitura do MCP Nexus.
-- **Claude também aconselha**: com o Maestro em outra CLI, Claude participa
-  como advisor somente-leitura. `reserveClaude` continua garantindo uma única
-  sessão Claude OAuth por missão, então Claude executor segue proibido.
-- **A aprovação enxerga a faixa**: a fronteira final do main deixou de exigir
-  escrita autônoma confinada de todo agente não-orquestrador. Era o elo que
-  faltava — qualquer missão com advisor morria antes de abrir o primeiro PTY.
-  Executor continua exigindo Codex, e advisory nunca dispensa rota ativa.
-- **Grok confinado**: entra na missão restrito a `read_only`.
+- **Commit em worktree isolado deixa de ser negado pelo sandbox**: um worktree
+  vinculado guarda só um `.git` de uma linha; os objetos, refs e reflogs do
+  commit vão para o repositório pai, que fica fora da raiz de execução do
+  worker. O perfil Seatbelt negava essa escrita e todo commit morria em
+  `Operation not permitted` — o worker então se recusava, corretamente, a
+  reportar sucesso, e a missão bloqueava sem entregar. O sandbox passa a
+  conceder exatamente as subárvores que um commit toca. `hooks/` e `config`
+  continuam sem escrita: um daria execução de código arbitrário no host, o
+  outro reescreveria remotes e filtros. Faixas somente-leitura não recebem
+  nada disso.
+
+### Mais de uma CLI na mesma missão
+
+- **Advisor com barreira mecânica**: um revisor em CLI cujo confinamento é
+  garantido fora do prompt entra na missão junto do pipeline principal, com
+  PTY próprio, ao menos uma tool `nexus_*` e handoff submetido. Qualificam-se
+  o Codex (perfil de argv governado) e o Grok (`--sandbox read-only` do
+  Seatbelt, com escape probe físico). A evidência registra o tier de
+  confinamento de cada participante.
+- **A aprovação enxerga a faixa somente-leitura**: a fronteira final do main
+  exigia escrita autônoma confinada de todo agente não-orquestrador, então
+  qualquer missão com advisor morria antes de abrir o primeiro PTY. Executor
+  continua exigindo Codex, e ninguém entra sem rota ativa de adapter.
+
+**Fora desta versão**: o tier *advisory-unconfined* — Kimi, Agy, OpenCode, OMP
+e Claude como conselheiro — está declarado no planejamento e no schema de
+evidência, mas o dispatch ainda exige barreira mecânica verificada e recusa
+`read_only` para essas CLIs. Elas seguem disponíveis no uso direto/manual.
 
 ### A prova acompanha o squad inteiro
 
