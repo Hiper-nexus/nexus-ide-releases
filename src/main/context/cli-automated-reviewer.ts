@@ -1,7 +1,11 @@
 import type { ProjectExecutionScope } from '../../shared/types';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { requestPaneClose } from '../orch/pane-registry';
-import { spawnPaneAndMaybePrompt } from '../orch/tool-util';
+import { isSessionInjectableIdle } from '../orch/agent-status';
+import {
+  deliverAgentPrompt,
+  spawnPaneAndMaybePrompt,
+} from '../orch/tool-util';
 import {
   assertMcpInvocationCurrent,
   type McpToolInvocation,
@@ -32,6 +36,9 @@ import {
 } from '../orch/prevc-reviewer-profile';
 
 const REVIEW_TIMEOUT_MS = 10 * 60_000;
+const REVIEWER_SPAWN_ATTEMPTS = 3;
+const REVIEWER_IDLE_NUDGE_MS = 45_000;
+const REVIEWER_MAX_IDLE_NUDGES = 3;
 
 interface ReviewerRoute {
   readonly adapterId: string;
@@ -61,6 +68,8 @@ export interface CliAutomatedReviewerDependencies {
   readonly spawn?: typeof spawnPaneAndMaybePrompt;
   readonly close?: (paneId: string) => boolean | Promise<boolean>;
   readonly isSessionLive?: (sessionId: string) => boolean;
+  readonly isInjectableIdle?: (sessionId: string) => boolean;
+  readonly deliverPrompt?: typeof deliverAgentPrompt;
   readonly prepareDesignSurface?: (input: {
     readonly reviewSessionId: string;
     readonly missionId: string;
@@ -72,6 +81,9 @@ export interface CliAutomatedReviewerDependencies {
     surface: AutomatedReviewDesignSurface,
   ) => void | Promise<void>;
   readonly timeoutMs?: number;
+  readonly idleNudgeMs?: number;
+  readonly maxIdleNudges?: number;
+  readonly spawnAttempts?: number;
 }
 
 async function prepareDesignSurface(
@@ -202,12 +214,26 @@ function reviewerPrompt(
   ].join('\n');
 }
 
+function reviewerIdleNudgePrompt(reviewSessionId: string): string {
+  return [
+    '# Nexus Independent Merge Review — resume',
+    '',
+    'You already have the review brief. Do not wait for another agent.',
+    'Inspect the checkout/diff with the allowed Nexus tools, then call',
+    'nexus_merge_review_submit exactly once:',
+    JSON.stringify({ reviewSessionId, findings: [] }),
+    'Empty findings are valid only after you inspected the diff yourself.',
+  ].join('\n');
+}
+
 export class CliAutomatedReviewer {
   readonly #sessions: AutomatedReviewSessionRegistry;
   readonly #selectRoutes: NonNullable<CliAutomatedReviewerDependencies['selectRoutes']>;
   readonly #spawn: typeof spawnPaneAndMaybePrompt;
   readonly #close: (paneId: string) => boolean | Promise<boolean>;
   readonly #isSessionLive: (sessionId: string) => boolean;
+  readonly #isInjectableIdle: (sessionId: string) => boolean;
+  readonly #deliverPrompt: typeof deliverAgentPrompt;
   readonly #prepareDesignSurface: NonNullable<
     CliAutomatedReviewerDependencies['prepareDesignSurface']
   >;
@@ -215,6 +241,9 @@ export class CliAutomatedReviewer {
     CliAutomatedReviewerDependencies['closeDesignSurface']
   >;
   readonly #timeoutMs: number;
+  readonly #idleNudgeMs: number;
+  readonly #maxIdleNudges: number;
+  readonly #spawnAttempts: number;
 
   constructor(dependencies: CliAutomatedReviewerDependencies = {}) {
     this.#sessions = dependencies.sessions ?? automatedReviewSessions;
@@ -226,11 +255,17 @@ export class CliAutomatedReviewer {
       dependencies.isSessionLive ??
       ((sessionId) =>
         getSessionState(sessionId) !== null || isOmpRpcSession(sessionId));
+    this.#isInjectableIdle =
+      dependencies.isInjectableIdle ?? isSessionInjectableIdle;
+    this.#deliverPrompt = dependencies.deliverPrompt ?? deliverAgentPrompt;
     this.#prepareDesignSurface =
       dependencies.prepareDesignSurface ?? prepareDesignSurface;
     this.#closeDesignSurface =
       dependencies.closeDesignSurface ?? closeDesignSurface;
     this.#timeoutMs = dependencies.timeoutMs ?? REVIEW_TIMEOUT_MS;
+    this.#idleNudgeMs = dependencies.idleNudgeMs ?? REVIEWER_IDLE_NUDGE_MS;
+    this.#maxIdleNudges = dependencies.maxIdleNudges ?? REVIEWER_MAX_IDLE_NUDGES;
+    this.#spawnAttempts = dependencies.spawnAttempts ?? REVIEWER_SPAWN_ATTEMPTS;
   }
 
   async run(input: RunAutomatedReviewInput): Promise<AutomatedReviewResult> {
@@ -283,47 +318,85 @@ export class CliAutomatedReviewer {
       const spawnResults = await Promise.allSettled(
         routes.map(async (route, index) => {
           assertMcpInvocationCurrent(invocation);
-          const spawned = await this.#spawn(
-            {
-              adapterId: route.adapterId,
-              model: route.model,
-              effort: route.effort,
-              cwd: input.checkoutPath,
-              title: `review-${input.contract.missionId}-${index + 1}`,
-              missionId: input.contract.missionId,
-              agentName:
-                `reviewer-${route.adapterId}-${index + 1}-` +
-                reviewSessionId.replaceAll('-', '').slice(0, 12),
-              allowedTools: [
-                ...automatedReviewTools(
-                  input.contract.requiredSensors.includes('design-system'),
-                ),
-              ],
-              allowedSkills: [
-                ...automatedReviewSkills(
-                  input.contract.requiredSensors.includes('design-system'),
-                ),
-              ],
-              role: 'worker',
-              readOnly: true,
-              prompt: reviewerPrompt(
-                reviewSessionId,
-                input.contract,
-                input.contextMarkdown,
-                designSurface ?? undefined,
-              ),
-              scope: input.scope,
-              executionScope,
-            },
-            {
-              invocation,
-              onPaneCreated: (paneId, sessionId) => {
-                panes.set(paneId, sessionId);
-              },
-            },
+          const prompt = reviewerPrompt(
+            reviewSessionId,
+            input.contract,
+            input.contextMarkdown,
+            designSurface ?? undefined,
           );
-          panes.set(spawned.paneId, spawned.sessionId);
-          assertMcpInvocationCurrent(invocation);
+          const spawnOptions = {
+            adapterId: route.adapterId,
+            model: route.model,
+            effort: route.effort,
+            cwd: input.checkoutPath,
+            title: `review-${input.contract.missionId}-${index + 1}`,
+            missionId: input.contract.missionId,
+            agentName:
+              `reviewer-${route.adapterId}-${index + 1}-` +
+              reviewSessionId.replaceAll('-', '').slice(0, 12),
+            allowedTools: [
+              ...automatedReviewTools(
+                input.contract.requiredSensors.includes('design-system'),
+              ),
+            ],
+            allowedSkills: [
+              ...automatedReviewSkills(
+                input.contract.requiredSensors.includes('design-system'),
+              ),
+            ],
+            role: 'worker' as const,
+            readOnly: true,
+            prompt,
+            scope: input.scope,
+            executionScope,
+          };
+          let lastError: unknown;
+          for (let attempt = 0; attempt < this.#spawnAttempts; attempt += 1) {
+            let promptAccepted = false;
+            try {
+              assertMcpInvocationCurrent(invocation);
+              const spawned = await this.#spawn(spawnOptions, {
+                invocation,
+                onPaneCreated: (paneId, sessionId) => {
+                  panes.set(paneId, sessionId);
+                },
+                // Swallow-safe: merge-council must not return a live pane whose
+                // brief never crossed the acceptance boundary.
+                onPromptAccepted: () => {
+                  promptAccepted = true;
+                },
+              });
+              if (!promptAccepted) {
+                throw new Error(
+                  'agent prompt remained live without physical acceptance proof',
+                );
+              }
+              panes.set(spawned.paneId, spawned.sessionId);
+              assertMcpInvocationCurrent(invocation);
+              return;
+            } catch (error) {
+              lastError = error;
+              // Drop any partial pane identity from a failed attempt before
+              // the next spawn so finally-close does not race a dead session.
+              for (const [paneId, sessionId] of [...panes]) {
+                panes.delete(paneId);
+                let closed = false;
+                try {
+                  closed = await this.#close(paneId);
+                } catch {
+                  closed = false;
+                }
+                if (!closed && this.#isSessionLive(sessionId)) {
+                  throw new Error(
+                    `reviewer pane ${paneId} did not produce physical exit proof`,
+                  );
+                }
+              }
+            }
+          }
+          throw lastError instanceof Error
+            ? lastError
+            : new Error('independent reviewer spawn failed');
         }),
       );
       const failedSpawn = spawnResults.find(
@@ -332,9 +405,10 @@ export class CliAutomatedReviewer {
       );
       if (failedSpawn) throw failedSpawn.reason;
       assertMcpInvocationCurrent(invocation);
-      const result = await this.#sessions.wait(
+      const result = await this.#waitWithIdleNudge(
         reviewSessionId,
-        this.#timeoutMs,
+        panes,
+        invocation,
         input.signal,
         input.assertCurrentAuthority,
       );
@@ -365,6 +439,70 @@ export class CliAutomatedReviewer {
           result.status === 'rejected',
       );
       if (failedClose) throw failedClose.reason;
+    }
+  }
+
+  async #waitWithIdleNudge(
+    reviewSessionId: string,
+    panes: ReadonlyMap<string, string>,
+    invocation: McpToolInvocation,
+    signal?: AbortSignal,
+    assertCurrentAuthority?: () => void,
+  ): Promise<AutomatedReviewResult> {
+    const waitPromise = this.#sessions.wait(
+      reviewSessionId,
+      this.#timeoutMs,
+      signal,
+      assertCurrentAuthority,
+    );
+    if (this.#maxIdleNudges < 1 || this.#idleNudgeMs < 1) {
+      return waitPromise;
+    }
+    let nudges = 0;
+    let nudgeTimer: NodeJS.Timeout | null = null;
+    const stopNudges = () => {
+      if (nudgeTimer) clearTimeout(nudgeTimer);
+      nudgeTimer = null;
+    };
+    const scheduleNudge = () => {
+      if (nudges >= this.#maxIdleNudges) return;
+      nudgeTimer = setTimeout(() => {
+        void (async () => {
+          try {
+            assertMcpInvocationCurrent(invocation);
+            for (const sessionId of panes.values()) {
+              if (!this.#isInjectableIdle(sessionId)) continue;
+              const accepted = await this.#deliverPrompt(
+                sessionId,
+                reviewerIdleNudgePrompt(reviewSessionId),
+                invocation,
+              );
+              if (accepted) {
+                nudges += 1;
+                console.warn(
+                  `[automated-review] reviewer idle nudge ${nudges}/` +
+                    `${this.#maxIdleNudges} (session=${sessionId})`,
+                );
+                break;
+              }
+            }
+          } catch (error) {
+            console.warn(
+              '[automated-review] idle nudge failed:',
+              error instanceof Error ? error.message : error,
+            );
+          } finally {
+            if (nudges < this.#maxIdleNudges) scheduleNudge();
+          }
+        })();
+      }, this.#idleNudgeMs);
+      nudgeTimer.unref();
+    };
+    scheduleNudge();
+    try {
+      return await waitPromise;
+    } finally {
+      stopNudges();
     }
   }
 }

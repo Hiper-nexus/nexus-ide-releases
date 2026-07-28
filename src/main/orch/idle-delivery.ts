@@ -316,6 +316,9 @@ function retryOrBlockDelivery(
   attemptNo: number,
 ): void {
   if (!isCurrentAuthority(authority)) return;
+  // Durable merge already owns the handoff; keep retrying PTY paste only
+  // burns the attempt budget and spams blockDeliveryFailure.
+  if (durableDispatchOwnsHandoff(authority, handoffId)) return;
   if (attemptNo >= MAX_DELIVERY_ATTEMPTS) {
     blockDeliveryFailure(authority, handoffId, attemptNo);
     return;
@@ -398,6 +401,7 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     !isCurrentAuthority(authority) ||
     !isSessionInjectableIdle(authority.sessionId)
   ) return false;
+  if (durableDispatchOwnsHandoff(authority, handoff.id)) return false;
   const stores = getProjectDomainStores(authority.scope);
   const current = stores.handoffs.get(handoff.id);
   if (!current) return false;

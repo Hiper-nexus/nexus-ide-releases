@@ -47,17 +47,28 @@ function fixture() {
   return { sessions, scope, contract, binding, input };
 }
 
+function acceptSpawn(
+  paneId: string,
+  sessionId: string,
+  hooks: SpawnPaneHooks = {},
+  prompt = 'review brief',
+): { paneId: string; sessionId: string } {
+  hooks.onPaneCreated?.(paneId, sessionId);
+  hooks.onPromptAccepted?.(paneId, sessionId, prompt);
+  return { paneId, sessionId };
+}
+
 describe('CLI automated reviewer', () => {
   it('spawns a read-only independent route and waits for structured submission', async () => {
     const { sessions, input } = fixture();
-    const spawn = vi.fn(async (options: SpawnToolOptions) => {
+    const spawn = vi.fn(async (options: SpawnToolOptions, hooks: SpawnPaneHooks = {}) => {
       const match = options.prompt?.match(/"reviewSessionId":"([^"]+)"/);
       if (!match) throw new Error('review session missing from prompt');
       sessions.submit(match[1], {
         id: 'reviewer-claude-1', sessionId: 'session-review', provider: 'claude',
         missionId: 'mission-a', checkoutPath: '/candidate',
       }, []);
-      return { paneId: 'pane-review', sessionId: 'session-review' };
+      return acceptSpawn('pane-review', 'session-review', hooks, options.prompt);
     });
     const reviewer = new CliAutomatedReviewer({
       sessions,
@@ -65,6 +76,7 @@ describe('CLI automated reviewer', () => {
       spawn,
       close: () => true,
       timeoutMs: 100,
+      maxIdleNudges: 0,
     });
 
     await expect(reviewer.run(input)).resolves.toMatchObject({ ready: true });
@@ -75,6 +87,7 @@ describe('CLI automated reviewer', () => {
       }),
       expect.objectContaining({
         onPaneCreated: expect.any(Function),
+        onPromptAccepted: expect.any(Function),
         invocation: expect.any(Object),
       }),
     );
@@ -103,7 +116,7 @@ describe('CLI automated reviewer', () => {
       scope: prepared.scope,
       executionScope: prepared.executionScope,
     }));
-    const spawn = vi.fn(async (options: SpawnToolOptions) => {
+    const spawn = vi.fn(async (options: SpawnToolOptions, hooks: SpawnPaneHooks = {}) => {
       const match = options.prompt?.match(/"reviewSessionId":"([^"]+)"/);
       if (!match) throw new Error('review session missing from prompt');
       sessions.recordDesignInspection(
@@ -125,7 +138,7 @@ describe('CLI automated reviewer', () => {
         missionId: 'mission-a',
         checkoutPath: '/candidate',
       }, []);
-      return { paneId: 'pane-review', sessionId: 'session-review' };
+      return acceptSpawn('pane-review', 'session-review', hooks, options.prompt);
     });
     const reviewer = new CliAutomatedReviewer({
       sessions,
@@ -135,6 +148,7 @@ describe('CLI automated reviewer', () => {
       prepareDesignSurface,
       closeDesignSurface,
       timeoutMs: 100,
+      maxIdleNudges: 0,
     });
 
     await expect(reviewer.run(designInput)).resolves.toMatchObject({ ready: true });
@@ -239,6 +253,8 @@ describe('CLI automated reviewer', () => {
       spawn,
       close,
       isSessionLive: () => true,
+      spawnAttempts: 1,
+      maxIdleNudges: 0,
     });
 
     let settled = false;
@@ -273,6 +289,8 @@ describe('CLI automated reviewer', () => {
       spawn,
       close: () => false,
       isSessionLive: () => true,
+      spawnAttempts: 1,
+      maxIdleNudges: 0,
     });
 
     await expect(
@@ -300,8 +318,7 @@ describe('CLI automated reviewer', () => {
           });
         }
         await lateSpawn.promise;
-        hooks.onPaneCreated?.('pane-late', 'session-late');
-        return { paneId: 'pane-late', sessionId: 'session-late' };
+        return acceptSpawn('pane-late', 'session-late', hooks, options.prompt);
       },
     );
     const reviewer = new CliAutomatedReviewer({
@@ -313,6 +330,8 @@ describe('CLI automated reviewer', () => {
       spawn,
       close,
       isSessionLive: () => true,
+      spawnAttempts: 1,
+      maxIdleNudges: 0,
     });
 
     let settled = false;
@@ -331,5 +350,86 @@ describe('CLI automated reviewer', () => {
     expect(close).toHaveBeenCalledWith('pane-first');
     expect(close).toHaveBeenCalledWith('pane-late');
     expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries spawn when prompt acceptance is unproven, then waits for submit', async () => {
+    const { sessions, input } = fixture();
+    let attempts = 0;
+    const spawn = vi.fn(async (options: SpawnToolOptions, hooks: SpawnPaneHooks = {}) => {
+      attempts += 1;
+      const match = options.prompt?.match(/"reviewSessionId":"([^"]+)"/);
+      if (!match) throw new Error('review session missing from prompt');
+      hooks.onPaneCreated?.(`pane-${attempts}`, `session-${attempts}`);
+      if (attempts < 2) {
+        throw new Error(
+          'agent prompt remained live without physical acceptance proof',
+        );
+      }
+      sessions.submit(match[1], {
+        id: 'reviewer-claude-1',
+        sessionId: `session-${attempts}`,
+        provider: 'claude',
+        missionId: 'mission-a',
+        checkoutPath: '/candidate',
+      }, []);
+      hooks.onPromptAccepted?.(
+        `pane-${attempts}`,
+        `session-${attempts}`,
+        options.prompt ?? '',
+      );
+      return { paneId: `pane-${attempts}`, sessionId: `session-${attempts}` };
+    });
+    const close = vi.fn(async () => true);
+    const reviewer = new CliAutomatedReviewer({
+      sessions,
+      selectRoutes: () => [{ adapterId: 'claude' }],
+      spawn,
+      close,
+      timeoutMs: 100,
+      spawnAttempts: 3,
+      maxIdleNudges: 0,
+    });
+
+    await expect(reviewer.run(input)).resolves.toMatchObject({ ready: true });
+    expect(attempts).toBe(2);
+    expect(close).toHaveBeenCalledWith('pane-1');
+  });
+
+  it('re-delivers a short nudge when the reviewer pane returns to idle', async () => {
+    vi.useFakeTimers();
+    const { sessions, input } = fixture();
+    const deliverPrompt = vi.fn(async () => true);
+    let reviewSessionId = '';
+    const spawn = vi.fn(async (options: SpawnToolOptions, hooks: SpawnPaneHooks = {}) => {
+      const match = options.prompt?.match(/"reviewSessionId":"([^"]+)"/);
+      if (!match) throw new Error('review session missing from prompt');
+      reviewSessionId = match[1];
+      return acceptSpawn('pane-review', 'session-review', hooks, options.prompt);
+    });
+    const reviewer = new CliAutomatedReviewer({
+      sessions,
+      selectRoutes: () => [{ adapterId: 'claude' }],
+      spawn,
+      close: () => true,
+      deliverPrompt,
+      isInjectableIdle: () => true,
+      timeoutMs: 5_000,
+      idleNudgeMs: 50,
+      maxIdleNudges: 2,
+    });
+
+    const running = reviewer.run(input);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(deliverPrompt).toHaveBeenCalled();
+    expect(String(deliverPrompt.mock.calls[0]?.[1])).toContain('resume');
+    sessions.submit(reviewSessionId, {
+      id: 'reviewer-claude-1',
+      sessionId: 'session-review',
+      provider: 'claude',
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+    }, []);
+    await expect(running).resolves.toMatchObject({ ready: true });
+    vi.useRealTimers();
   });
 });

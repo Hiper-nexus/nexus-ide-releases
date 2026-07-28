@@ -860,7 +860,10 @@ export async function spawnPaneAndMaybePrompt(
       );
       if (promptAccepted) {
         hooks.onPromptAccepted?.(result.paneId, result.sessionId, prompt);
-      } else if (hooks.onPromptAccepted) {
+      } else if (hooks.onPromptAccepted || options.readOnly === true) {
+        // Read-only reviewers (merge-council) must not burn the full review
+        // timeout as silent zombies when the brief was swallowed. Callers that
+        // register onPromptAccepted already require the same proof.
         throw new Error(
           'agent prompt remained live without physical acceptance proof',
         );
