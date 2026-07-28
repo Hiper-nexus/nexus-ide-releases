@@ -251,7 +251,7 @@ export const REAL_MISSION_ACCEPTANCE_CRITERIA = Object.freeze([
   "O motor Nexus emite worktree_validated_no_change para o revisor antes de liberar a tarefa dependente de QA.",
   "O QA Codex abre um terceiro PTY físico, consome o handoff do revisor e valida o HEAD integrado; o QA não deve editar, alterar ou escrever arquivos e chama nexus_handoff_submit sem mudança artificial.",
   "O motor Nexus emite o receipt final worktree_validated_no_change e marca a missão done sem atalho manual.",
-  "Cada CLI advisor credenciada (grok, kimi, agy, opencode, omp, claude) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
+  "Cada CLI advisor credenciada (grok, kimi, agy, opencode, omp, claude, glm) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
 ]);
 export const REAL_MISSION_CLAUDE_ORCHESTRATOR_CRITERION =
   "A variante orquestrador Claude executa o ciclo completo (kickoff→dispatch→handoffs→integração→done) com o pipeline codex e advisors não-Claude, sem segundo processo Claude.";

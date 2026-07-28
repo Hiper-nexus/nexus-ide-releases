@@ -85,7 +85,7 @@ describe("real mission advisor expectations", () => {
     // reserveClaude: nenhuma sessão worker claude entra na cerca física.
     expect(
       realMissionAdvisorPtyExpectations(expectations).map((entry) => entry.cli),
-    ).toEqual(["grok", "kimi", "agy", "opencode", "omp"]);
+    ).toEqual(["grok", "kimi", "agy", "opencode", "omp", "glm"]);
     // A advisor reservada nunca entra na exigência de handoff.
     const participation = buildRealMissionParticipation({
       expectations,
@@ -108,6 +108,7 @@ describe("real mission advisor expectations", () => {
       "agy",
       "opencode",
       "omp",
+      "glm",
     ]);
   });
 });
