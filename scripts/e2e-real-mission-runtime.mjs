@@ -19,6 +19,7 @@ import {
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_FILE_MODE,
   REAL_MISSION_ADVISOR_SKIP_ENV,
+  mergeRealMissionAdvisorSkipEnv,
   REAL_MISSION_CHILD_PHASES,
   REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE,
   REAL_MISSION_CTA,
@@ -644,10 +645,14 @@ async function runPackagedRealMissionCore(
         }
         isolatedEnvironment[REAL_MISSION_ORCHESTRATOR_ENV] = "claude";
       }
-      if (advisorSkips.size > 0) {
-        isolatedEnvironment[REAL_MISSION_ADVISOR_SKIP_ENV] = [...advisorSkips]
-          .sort()
-          .join(",");
+      const mergedAdvisorSkips = mergeRealMissionAdvisorSkipEnv(
+        isolatedEnvironment[REAL_MISSION_ADVISOR_SKIP_ENV],
+        advisorSkips,
+      );
+      if (mergedAdvisorSkips) {
+        isolatedEnvironment[REAL_MISSION_ADVISOR_SKIP_ENV] = mergedAdvisorSkips;
+      } else {
+        delete isolatedEnvironment[REAL_MISSION_ADVISOR_SKIP_ENV];
       }
       const result = await waitForChild(target, userData, {
         timeoutMs,

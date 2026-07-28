@@ -14,6 +14,7 @@ export {
   REAL_MISSION_TIMEOUT_MS,
   REAL_MISSION_ADVISOR_SKIP_ENV,
   REAL_MISSION_ORCHESTRATOR_ENV,
+  mergeRealMissionAdvisorSkipEnv,
 } from "./e2e-real-mission-contract.mjs";
 export {
   assertAdvisorBinaries,

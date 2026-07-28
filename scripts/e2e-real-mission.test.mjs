@@ -15,6 +15,7 @@ import {
   assertCodexReady,
   assertRealMissionPassEvidence,
   assertRealMissionReleaseEvidence,
+  mergeRealMissionAdvisorSkipEnv,
   parseRealMissionArgs,
   realMissionArgs,
   realMissionEnvironment,
@@ -1166,7 +1167,23 @@ describe("real mission advisor authentication staging", () => {
     );
     writePrivate(
       path.join(sourceHome, ".kimi-code", "credentials", "kimi-code.json"),
-      '{"kimi":1}\n',
+      JSON.stringify({
+        access_token: "at-test",
+        refresh_token: "rt-test",
+        expires_at: 9_999_999_999,
+        scope: "kimi-code",
+        token_type: "Bearer",
+        expires_in: 900,
+      }) + "\n",
+    );
+    writePrivate(
+      path.join(sourceHome, ".kimi-code", "device_id"),
+      "device-uuid-test\n",
+    );
+    fs.writeFileSync(
+      path.join(sourceHome, ".kimi-code", "config.toml"),
+      'default_model = "kimi-code/k3"\n',
+      { mode: 0o644 },
     );
     writePrivate(path.join(sourceHome, ".omp", "agent", "agent.db"), "sqlite");
     writePrivate(
@@ -1246,7 +1263,19 @@ describe("real mission advisor authentication staging", () => {
     const stagedFiles = [
       [".grok/auth.json", '{"grok":1}\n'],
       [".grok/config.toml", 'model = "grok-4"\n'],
-      [".kimi-code/credentials/kimi-code.json", '{"kimi":1}\n'],
+      [
+        ".kimi-code/credentials/kimi-code.json",
+        JSON.stringify({
+          access_token: "at-test",
+          refresh_token: "rt-test",
+          expires_at: 9_999_999_999,
+          scope: "kimi-code",
+          token_type: "Bearer",
+          expires_in: 900,
+        }) + "\n",
+      ],
+      [".kimi-code/device_id", "device-uuid-test\n"],
+      [".kimi-code/config.toml", 'default_model = "kimi-code/k3"\n'],
       [".omp/agent/agent.db", "sqlite"],
       [".omp/agent/agent.db-wal", "wal"],
       [".gemini/google_accounts.json", '{"accounts":[]}\n'],
@@ -1458,7 +1487,10 @@ describe("real mission advisor authentication staging", () => {
     });
     fs.writeFileSync(
       path.join(sourceHome, ".kimi-code", "credentials", "kimi-code.json"),
-      "{}\n",
+      JSON.stringify({
+        access_token: "at-test",
+        refresh_token: "rt-test",
+      }) + "\n",
       { mode: 0o644 },
     );
 
@@ -1475,6 +1507,75 @@ describe("real mission advisor authentication staging", () => {
         path.join(isolatedHome, ".kimi-code", "credentials", "kimi-code.json"),
       ),
     ).toBe(false);
+  });
+
+  it("skips an empty Kimi credentials shell instead of staging a dead login", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    const onSkip = vi.fn();
+    writePrivate(
+      path.join(sourceHome, ".kimi-code", "credentials", "kimi-code.json"),
+      JSON.stringify({
+        access_token: "",
+        refresh_token: "",
+        expires_at: 0,
+        scope: "kimi-code",
+        token_type: "Bearer",
+        expires_in: 0,
+      }) + "\n",
+    );
+    writePrivate(
+      path.join(sourceHome, ".kimi-code", "device_id"),
+      "device-uuid-test\n",
+    );
+    fs.writeFileSync(
+      path.join(sourceHome, ".kimi-code", "config.toml"),
+      'default_model = "kimi-code/k3"\n',
+      { mode: 0o644 },
+    );
+
+    const statuses = stageAdvisorAuthentication(isolatedHome, {
+      sourceHome,
+      environment: {},
+      onSkip,
+      run: keychainRun(1),
+    });
+
+    expect(statuses.kimi).toBe("skipped");
+    expect(onSkip).toHaveBeenCalledWith("kimi");
+    expect(fs.existsSync(path.join(isolatedHome, ".kimi-code"))).toBe(false);
+  });
+
+  it("skips Kimi when credentials are live but device_id is missing", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    const onSkip = vi.fn();
+    writePrivate(
+      path.join(sourceHome, ".kimi-code", "credentials", "kimi-code.json"),
+      JSON.stringify({
+        access_token: "at-test",
+        refresh_token: "rt-test",
+        expires_at: 9_999_999_999,
+      }) + "\n",
+    );
+    fs.writeFileSync(
+      path.join(sourceHome, ".kimi-code", "config.toml"),
+      'default_model = "kimi-code/k3"\n',
+      { mode: 0o644 },
+    );
+
+    const statuses = stageAdvisorAuthentication(isolatedHome, {
+      sourceHome,
+      environment: {},
+      onSkip,
+      run: keychainRun(1),
+    });
+
+    expect(statuses.kimi).toBe("skipped");
+    expect(onSkip).toHaveBeenCalledWith("kimi");
+    expect(fs.existsSync(path.join(isolatedHome, ".kimi-code"))).toBe(false);
   });
 
   it("treats a missing claude keychain credential as a skip, never a copy", () => {
@@ -1566,6 +1667,18 @@ describe("real mission advisor authentication staging", () => {
         JSON.stringify(hostile),
       ).toBeUndefined();
     }
+  });
+
+  it("merges operator advisor skips with staging auto-skips instead of replacing", () => {
+    expect(
+      mergeRealMissionAdvisorSkipEnv("agy,opencode,claude", ["omp", "agy"]),
+    ).toBe("agy,claude,omp,opencode");
+    expect(mergeRealMissionAdvisorSkipEnv("kimi", [])).toBe("kimi");
+    expect(mergeRealMissionAdvisorSkipEnv(undefined, ["grok"])).toBe("grok");
+    expect(mergeRealMissionAdvisorSkipEnv("", [])).toBe("");
+    expect(
+      mergeRealMissionAdvisorSkipEnv("agy;rm -rf /", ["kimi"]),
+    ).toBe("kimi");
   });
 
   it("preserves only a strict codex|claude orchestrator variant in the child environment", () => {

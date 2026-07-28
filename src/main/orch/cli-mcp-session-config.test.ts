@@ -977,6 +977,15 @@ describe('prepareKimiMcpSession', () => {
     );
     write(path.join(kimiHome, 'skills', 'allowed', 'SKILL.md'), '# allowed');
     write(path.join(kimiHome, 'skills', 'blocked', 'SKILL.md'), '# blocked');
+    write(
+      path.join(kimiHome, 'credentials', 'kimi-code.json'),
+      JSON.stringify({
+        access_token: 'at-test',
+        refresh_token: 'rt-test',
+      }),
+    );
+    write(path.join(kimiHome, 'device_id'), 'device-uuid-test\n');
+    write(path.join(kimiHome, 'oauth', 'kimi-code'), '');
     const token = 'kimi-governed-token';
     tokens.push(token);
 
@@ -986,12 +995,10 @@ describe('prepareKimiMcpSession', () => {
       governed: true,
       allowedSkills: ['allowed'],
     });
-    const rawMcp = fs.readFileSync(
-      path.join(result.env.KIMI_CODE_HOME, 'mcp.json'),
-      'utf8',
-    );
+    const overlayHome = result.env.KIMI_CODE_HOME;
+    const rawMcp = fs.readFileSync(path.join(overlayHome, 'mcp.json'), 'utf8');
     const rawConfig = fs.readFileSync(
-      path.join(result.env.KIMI_CODE_HOME, 'config.toml'),
+      path.join(overlayHome, 'config.toml'),
       'utf8',
     );
 
@@ -1000,16 +1007,26 @@ describe('prepareKimiMcpSession', () => {
     expect(rawConfig).toContain('NEXUS_HOOK_STATUS');
     expect(result.extraArgs).toEqual([
       '--skills-dir',
-      path.join(result.env.KIMI_CODE_HOME, 'skills'),
+      path.join(overlayHome, 'skills'),
     ]);
     expect(
-      fs.existsSync(
-        path.join(result.env.KIMI_CODE_HOME, 'skills', 'allowed', 'SKILL.md'),
-      ),
+      fs.existsSync(path.join(overlayHome, 'skills', 'allowed', 'SKILL.md')),
     ).toBe(true);
+    expect(fs.existsSync(path.join(overlayHome, 'skills', 'blocked'))).toBe(
+      false,
+    );
+    // OAuth refresh in the ephemeral KIMI_CODE_HOME needs the live token
+    // material AND the device identity — presence of the overlay alone is not
+    // enough if these entries were omitted from the governed link set.
     expect(
-      fs.existsSync(path.join(result.env.KIMI_CODE_HOME, 'skills', 'blocked')),
-    ).toBe(false);
+      fs.readFileSync(path.join(overlayHome, 'device_id'), 'utf8'),
+    ).toBe('device-uuid-test\n');
+    expect(
+      fs.existsSync(path.join(overlayHome, 'credentials', 'kimi-code.json')),
+    ).toBe(true);
+    expect(fs.existsSync(path.join(overlayHome, 'oauth', 'kimi-code'))).toBe(
+      true,
+    );
   });
 
   it('fails closed instead of linking an unparseable governed config', () => {

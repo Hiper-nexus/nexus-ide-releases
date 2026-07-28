@@ -49,6 +49,7 @@ import {
 import { buildHandoffTools } from './tools-handoff';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { canCompleteConsultLane, canCompleteOpsLane } from '../../shared/mission-intent';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import { emitPlannedTasksWithContract } from './mission-scheduler';
 import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
@@ -264,6 +265,15 @@ const missionSetStatusTool: McpToolDef = {
     }
     if (current.status === 'done' && status === 'done') return current;
     if (status === 'blocked' || status === 'failed') {
+      // Release gate: orchestrator CLI demoting to blocked aborts the proof
+      // while advisors/workers are still in the durable scheduler (seen as
+      // mission-blocked with panes>0 / handoffs=0). Keep waiting instead.
+      if (isCurrentProcessRealMissionE2E()) {
+        throw new Error(
+          `status=${status} is forbidden in real-mission E2E — ` +
+            'wait for the durable scheduler; do not demote the mission',
+        );
+      }
       if (note.length < 8 && current.learnings.trim().length < 8) {
         throw new Error(
           `status=${status} requires a note (or existing learnings) explaining the cause — ` +

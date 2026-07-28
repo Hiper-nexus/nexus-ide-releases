@@ -410,6 +410,25 @@ export function assertCodexReady({
 const ADVISOR_AUTH_MAX_BYTES = 4 * 1024 * 1024;
 const ADVISOR_DATABASE_MAX_BYTES = 64 * 1024 * 1024;
 
+/**
+ * True when a Kimi credentials JSON carries a non-empty access or refresh
+ * token. An empty shell after logout/expiry must never count as staged auth.
+ */
+export function kimiCredentialsBlobIsUsable(blob) {
+  try {
+    const parsed = JSON.parse(blob);
+    const access =
+      typeof parsed.access_token === "string" ? parsed.access_token.trim() : "";
+    const refresh =
+      typeof parsed.refresh_token === "string"
+        ? parsed.refresh_token.trim()
+        : "";
+    return access.length > 0 || refresh.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** chmod 0700 every directory from `leaf` up to (and including) `root`. */
 function chmodPrivateTree(root, leaf) {
   const resolvedRoot = path.resolve(root);
@@ -673,47 +692,78 @@ export function stageAdvisorAuthentication(
     statuses.grok = report("grok", "staged");
   }
 
-  // kimi: ~/.kimi-code/credentials/kimi-code.json
-  const kimiStaged = stageAdvisorAuthFile(
-    path.join(source, ".kimi-code", "credentials", "kimi-code.json"),
-    path.join(home, ".kimi-code", "credentials"),
-    { label: "Kimi Code credentials file", privateRoot: home },
+  // kimi: ~/.kimi-code/credentials/kimi-code.json (+ device_id + config.toml).
+  // An empty credentials shell (access_token/refresh_token both "") is NOT a
+  // login — staging it made the gate spawn kimi and die with
+  // `OAuth login expired` / `auth.login_required` while the file "existed".
+  // device_id is mandatory for refresh in an isolated HOME; config.toml is
+  // mandatory so the declared model is accepted.
+  const kimiCredSource = path.join(
+    source,
+    ".kimi-code",
+    "credentials",
+    "kimi-code.json",
   );
-  // Credentials alone are not enough to run. Two more pieces of the operator
-  // profile have to travel, or the advisor spawns and dies immediately:
-  //
-  // - config.toml: kimi refuses any model its config does not declare and
-  //   exits with `[config.invalid] Model "<id>" is not configured`;
-  // - device_id (+ the oauth marker): the access token is short-lived and the
-  //   refresh is bound to the device identity. Without it the isolated HOME
-  //   reports `OAuth login expired. Send /login to login.` even though the
-  //   operator profile is perfectly logged in.
-  if (kimiStaged) {
-    stageAdvisorAuthFile(
-      path.join(source, ".kimi-code", "config.toml"),
-      path.join(home, ".kimi-code"),
-      {
-        label: "Kimi Code model configuration",
-        requirePrivateMode: false,
-        privateRoot: home,
-      },
+  let kimiSourceUsable = false;
+  try {
+    kimiSourceUsable = kimiCredentialsBlobIsUsable(
+      fs.readFileSync(kimiCredSource, "utf8"),
     );
-    stageAdvisorAuthFile(
-      path.join(source, ".kimi-code", "device_id"),
-      path.join(home, ".kimi-code"),
-      { label: "Kimi Code device identity", privateRoot: home },
-    );
-    stageAdvisorAuthFile(
-      path.join(source, ".kimi-code", "oauth", "kimi-code"),
-      path.join(home, ".kimi-code", "oauth"),
-      {
-        label: "Kimi Code oauth marker",
-        requirePrivateMode: false,
-        privateRoot: home,
-      },
-    );
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
   }
-  statuses.kimi = report("kimi", kimiStaged ? "staged" : "skipped");
+  if (!kimiSourceUsable) {
+    statuses.kimi = report("kimi", "skipped");
+  } else {
+    const kimiCredStaged = stageAdvisorAuthFile(
+      kimiCredSource,
+      path.join(home, ".kimi-code", "credentials"),
+      { label: "Kimi Code credentials file", privateRoot: home },
+    );
+    const kimiConfigStaged = kimiCredStaged
+      ? stageAdvisorAuthFile(
+          path.join(source, ".kimi-code", "config.toml"),
+          path.join(home, ".kimi-code"),
+          {
+            label: "Kimi Code model configuration",
+            requirePrivateMode: false,
+            privateRoot: home,
+          },
+        )
+      : false;
+    const kimiDeviceStaged = kimiCredStaged
+      ? stageAdvisorAuthFile(
+          path.join(source, ".kimi-code", "device_id"),
+          path.join(home, ".kimi-code"),
+          { label: "Kimi Code device identity", privateRoot: home },
+        )
+      : false;
+    if (kimiCredStaged) {
+      // Best-effort oauth marker (may be a zero-byte presence file).
+      stageAdvisorAuthFile(
+        path.join(source, ".kimi-code", "oauth", "kimi-code"),
+        path.join(home, ".kimi-code", "oauth"),
+        {
+          label: "Kimi Code oauth marker",
+          requirePrivateMode: false,
+          privateRoot: home,
+        },
+      );
+    }
+    if (kimiCredStaged && kimiConfigStaged && kimiDeviceStaged) {
+      statuses.kimi = report("kimi", "staged");
+    } else {
+      try {
+        fs.rmSync(path.join(home, ".kimi-code"), {
+          recursive: true,
+          force: true,
+        });
+      } catch {
+        // Best effort: never replace the skip with a staging cleanup failure.
+      }
+      statuses.kimi = report("kimi", "skipped");
+    }
+  }
 
   // omp: ~/.omp/agent/agent.db (+ sqlite -shm/-wal sidecars when present)
   const ompSourceAgent = path.join(source, ".omp", "agent");

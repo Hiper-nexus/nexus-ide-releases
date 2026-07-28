@@ -11,6 +11,7 @@ import {
   type MissionIntentState,
 } from '../../shared/mission-intent';
 import type { Mission } from '../../shared/orch-types';
+import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import { canonicalToolName } from './gate';
 import { effectPolicyForTool } from './mcp-effect-policy';
 import { emitMissionIntentEvent } from './mission-intent-events';
@@ -262,11 +263,24 @@ export function assertMissionIntentAllowsTool(
 
     // set_status: post-dispatch, or fail-safe demotion to blocked/failed only.
     // legacy no longer opens arbitrary status writes.
+    // Release-gate E2E: blocked/failed from the orchestrator CLI aborts the
+    // proof before the durable scheduler finishes (seen as mission-blocked
+    // with panes>0). Demotion stays available outside the harness.
     if (canonical === 'mission_set_status') {
       const nextStatus =
         typeof args.status === 'string' ? args.status : undefined;
       const failSafe =
         nextStatus === 'blocked' || nextStatus === 'failed';
+      if (failSafe && isCurrentProcessRealMissionE2E()) {
+        return deny(
+          'tool_denied',
+          'tool_denied: real-mission E2E forbids mission_set_status blocked/failed — wait for the durable scheduler',
+          ctx,
+          intentState,
+          intentVersion,
+          toolName,
+        );
+      }
       if (
         failSafe ||
         (canDispatchWorkers(intentState) && isDispatchAuthorized)

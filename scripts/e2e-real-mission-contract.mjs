@@ -24,6 +24,37 @@ export const PRIVATE_DIRECTORY_MODE = 0o700;
 export const REAL_MISSION_ADVISOR_SKIP_ENV = "NEXUS_REAL_MISSION_ADVISOR_SKIP";
 export const REAL_MISSION_ADVISOR_SKIP_PATTERN =
   /^[a-z0-9-]+(,[a-z0-9-]+)*$/u;
+
+/**
+ * Une o skip pedido pelo operador (já validado no env isolado) com os skips
+ * detectados no staging (credencial/binário ausente). Nunca substituir um pelo
+ * outro: se o staging achar só `agy` e o operador pediu `claude`, perder o
+ * `claude` reintroduz advisor quebrado no roster e pode derrubar o gate com
+ * `observer-invalid` / binding inconsistente.
+ */
+export function mergeRealMissionAdvisorSkipEnv(
+  existing,
+  autoSkips,
+) {
+  const merged = new Set();
+  if (
+    typeof existing === "string" &&
+    existing.length > 0 &&
+    existing.length <= 256 &&
+    REAL_MISSION_ADVISOR_SKIP_PATTERN.test(existing)
+  ) {
+    for (const part of existing.split(",")) {
+      const cli = part.trim();
+      if (cli) merged.add(cli);
+    }
+  }
+  for (const cli of autoSkips ?? []) {
+    if (typeof cli === "string" && /^[a-z0-9-]+$/u.test(cli)) {
+      merged.add(cli);
+    }
+  }
+  return [...merged].sort().join(",");
+}
 /**
  * Variante de orquestrador do harness: codex (default, ausente) ou claude.
  * O launcher propaga somente valores estritos; o main cai no default codex.

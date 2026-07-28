@@ -248,6 +248,7 @@ export const REAL_MISSION_E2E_ORCHESTRATOR_INSTRUCTIONS = [
   "O revisor precisa validar o HEAD já integrado e enviar o segundo handoff sem mudança artificial.",
   "O QA precisa consumir o handoff do revisor e enviar o terceiro handoff sem mudança artificial.",
   "Se os handoffs chegarem na UI, apenas acompanhe — não force done via nexus_mission_update.",
+  "É PROIBIDO usar nexus_mission_set_status com blocked ou failed neste gate: o motor Nexus conduz a missão até done; demover status aborta a prova de release.",
   "Integração, receipts e status done pertencem ao motor Nexus.",
 ].join("\n");
 

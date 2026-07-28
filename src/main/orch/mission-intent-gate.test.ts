@@ -1,7 +1,18 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
 import { PREPARE_PROJECT_PLACEHOLDER_GOAL } from '../../shared/mission-intent';
+
+const e2eFlag = vi.hoisted(() => ({ value: false }));
+vi.mock('../../shared/real-mission-e2e', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../shared/real-mission-e2e')>();
+  return {
+    ...actual,
+    isCurrentProcessRealMissionE2E: () => e2eFlag.value,
+  };
+});
+
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
 
 const awaitingGoal: Mission = {
@@ -354,6 +365,29 @@ describe('mission intent gate', () => {
         { status: 'blocked' },
       ).ok,
     ).toBe(true);
+
+    e2eFlag.value = true;
+    try {
+      const denied = assertMissionIntentAllowsTool(
+        'nexus_mission_set_status',
+        { mission: prepare },
+        { status: 'blocked' },
+      );
+      expect(denied.ok).toBe(false);
+      if (!denied.ok) {
+        expect(denied.code).toBe('tool_denied');
+        expect(denied.error).toMatch(/real-mission E2E forbids/i);
+      }
+      expect(
+        assertMissionIntentAllowsTool(
+          'nexus_mission_set_status',
+          { mission: prepare },
+          { status: 'failed' },
+        ).ok,
+      ).toBe(false);
+    } finally {
+      e2eFlag.value = false;
+    }
   });
 
   it('denies effectful tools when mission is missing (fail-closed)', () => {

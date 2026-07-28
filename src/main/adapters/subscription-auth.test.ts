@@ -9,6 +9,7 @@ import {
   claudeOauthEmail,
   detectSubscriptionAuth,
   hasSubscriptionAuthForStatus,
+  kimiCredentialsBlobIsUsable,
   refreshClaudeSubscriptionAuthCache,
   resetSubscriptionAuthCacheForTests,
   resolveAuthStrategy,
@@ -118,6 +119,31 @@ describe('resolveAuthStrategy', () => {
         subscriptionAuthed: false,
       }).strategy,
     ).toBe('login-needed');
+  });
+});
+
+describe('kimiCredentialsBlobIsUsable', () => {
+  it('rejects empty shells and accepts a live access or refresh token', () => {
+    expect(
+      kimiCredentialsBlobIsUsable(
+        JSON.stringify({
+          access_token: '',
+          refresh_token: '',
+          expires_at: 0,
+        }),
+      ),
+    ).toBe(false);
+    expect(kimiCredentialsBlobIsUsable('{"kimi":1}')).toBe(false);
+    expect(
+      kimiCredentialsBlobIsUsable(
+        JSON.stringify({ access_token: 'at-live', refresh_token: '' }),
+      ),
+    ).toBe(true);
+    expect(
+      kimiCredentialsBlobIsUsable(
+        JSON.stringify({ access_token: '', refresh_token: 'rt-live' }),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -259,6 +285,44 @@ describe('detectSubscriptionAuth', () => {
     expect(detectSubscriptionAuth('grok', home)).toBe(false);
     touch(home, '.grok', 'auth.json');
     expect(detectSubscriptionAuth('grok', home)).toBe(true);
+  });
+
+  it('does not treat an empty Kimi credentials shell as authenticated', () => {
+    const home = tempHome();
+    const creds = path.join(
+      home,
+      '.kimi-code',
+      'credentials',
+      'kimi-code.json',
+    );
+    const oauthMarker = path.join(home, '.kimi-code', 'oauth', 'kimi-code');
+    fs.mkdirSync(path.dirname(creds), { recursive: true });
+    fs.mkdirSync(path.dirname(oauthMarker), { recursive: true });
+    fs.writeFileSync(oauthMarker, '');
+    fs.writeFileSync(
+      creds,
+      JSON.stringify({
+        access_token: '',
+        refresh_token: '',
+        expires_at: 0,
+        scope: 'kimi-code',
+        token_type: 'Bearer',
+        expires_in: 0,
+      }),
+    );
+    expect(detectSubscriptionAuth('kimi', home)).toBe(false);
+    fs.writeFileSync(
+      creds,
+      JSON.stringify({
+        access_token: 'at-live',
+        refresh_token: 'rt-live',
+        expires_at: 9_999_999_999,
+        scope: 'kimi-code',
+        token_type: 'Bearer',
+        expires_in: 900,
+      }),
+    );
+    expect(detectSubscriptionAuth('kimi', home)).toBe(true);
   });
 
   it('detects OMP only from exact provider/model vault metadata', () => {

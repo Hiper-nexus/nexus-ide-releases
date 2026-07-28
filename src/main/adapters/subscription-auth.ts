@@ -182,6 +182,53 @@ function existsInEnv(envVar: string, ...segments: string[]): boolean {
 }
 
 /**
+ * Kimi's credentials file can exist as an empty shell after logout/expiry
+ * (`access_token`/`refresh_token` both ""). File presence alone must not count
+ * as a live login — that made the UI and the E2E staging treat a dead session
+ * as authenticated, then the CLI died with `OAuth login expired` / login_required.
+ */
+export function kimiCredentialsBlobIsUsable(blob: string): boolean {
+  try {
+    const parsed = JSON.parse(blob) as {
+      access_token?: unknown;
+      refresh_token?: unknown;
+    };
+    const access =
+      typeof parsed.access_token === 'string' ? parsed.access_token.trim() : '';
+    const refresh =
+      typeof parsed.refresh_token === 'string'
+        ? parsed.refresh_token.trim()
+        : '';
+    return access.length > 0 || refresh.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function kimiCredentialsFileIsUsable(filePath: string): boolean {
+  try {
+    return kimiCredentialsBlobIsUsable(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+function kimiHasUsableCredentials(home: string): boolean {
+  const candidates = [
+    path.join(home, '.kimi-code', 'credentials', 'kimi-code.json'),
+    path.join(home, '.kimi', 'credentials', 'kimi-code.json'),
+    path.join(home, '.config', 'kimi', 'credentials.json'),
+  ];
+  const customHome = process.env.KIMI_CODE_HOME?.trim();
+  if (customHome) {
+    candidates.unshift(
+      path.join(customHome, 'credentials', 'kimi-code.json'),
+    );
+  }
+  return candidates.some((file) => kimiCredentialsFileIsUsable(file));
+}
+
+/**
  * OMP owns its credential vault in a local SQLite database. Read only exact
  * provider presence metadata — never credential payloads — so Nexus can
  * distinguish a usable broker route from an interactive-login dead end.
@@ -311,14 +358,10 @@ export function detectSubscriptionAuth(
         exists('.antigravity')
       );
     case 'kimi':
-      return (
-        existsInEnv('KIMI_CODE_HOME', 'oauth', 'kimi-code') ||
-        existsInEnv('KIMI_CODE_HOME', 'credentials', 'kimi-code.json') ||
-        exists('.kimi-code', 'oauth', 'kimi-code') ||
-        exists('.kimi-code', 'credentials', 'kimi-code.json') ||
-        exists('.kimi', 'credentials', 'kimi-code.json') ||
-        exists('.config', 'kimi', 'credentials.json')
-      );
+      // Require a non-empty access/refresh token. The zero-byte oauth marker
+      // and the empty credentials shell both survive logout and must not
+      // suppress API-key fallback or pass the release-gate staging probe.
+      return kimiHasUsableCredentials(home);
     case 'opencode':
       // Official OpenCode docs use the XDG path. Keep the native macOS data
       // path as a compatibility probe for package-manager variants.

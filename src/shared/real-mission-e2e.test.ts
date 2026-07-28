@@ -234,6 +234,9 @@ describe("real mission E2E closed receipts", () => {
     expect(fixture.orchestratorInstructions).toContain(
       "O executor precisa criar e commitar o artefato",
     );
+    expect(fixture.orchestratorInstructions).toContain(
+      "PROIBIDO usar nexus_mission_set_status com blocked ou failed",
+    );
     expect(fixture.orchestratorInstructions).toContain("e2e-reviewer");
     expect(fixture.orchestratorInstructions).toContain("e2e-qa");
     expect(REAL_MISSION_E2E_SQUAD_ID).toMatch(/^agentic-/u);
