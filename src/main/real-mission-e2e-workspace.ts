@@ -351,17 +351,28 @@ export function validateHarnessCodexAdapter(): boolean {
  * sem isso o fan-out consultivo não tem caminho físico de injeção/observação.
  * Advisors pulados por env não entram na prova desta rodada.
  */
+/**
+ * Host binary name for advisors that share another CLI's executable.
+ * GLM (and LongCat) run `claude` pointed at a third-party Anthropic-compatible
+ * endpoint — adapter.id stays `glm`, adapter.bin is `claude`.
+ */
+function realMissionAdvisorHostBin(cli: string): string {
+  if (cli === "glm" || cli === "longcat") return "claude";
+  return cli;
+}
+
 export function validateHarnessAdvisorAdapters(): boolean {
   const skipped = new Set(realMissionE2EAdvisorSkipClis());
   return REAL_MISSION_E2E_ADVISORS.filter(
     (advisor) => !skipped.has(advisor.cli),
   ).every((advisor) => {
     const adapter = getAdapter(advisor.cli);
+    const hostBin = realMissionAdvisorHostBin(advisor.cli);
     return Boolean(
       adapter &&
         adapter.kind === "cli-pty" &&
         adapter.id === advisor.cli &&
-        adapter.bin === advisor.cli &&
+        adapter.bin === hostBin &&
         adapter.spawn.ptyRequired &&
         hasNexusMcpCapability(adapter.quirks),
     );

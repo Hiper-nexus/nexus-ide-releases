@@ -36,10 +36,12 @@ describe("real mission advisor expectations", () => {
       ["opencode", "advisory-unconfined", null],
       ["omp", "advisory-unconfined", null],
       ["claude", "mechanically-confined", null],
+      ["glm", "advisory-unconfined", null],
     ]);
     expect(realMissionE2EAdvisorTier("grok")).toBe("mechanically-confined");
     expect(realMissionE2EAdvisorTier("claude")).toBe("mechanically-confined");
     expect(realMissionE2EAdvisorTier("kimi")).toBe("advisory-unconfined");
+    expect(realMissionE2EAdvisorTier("glm")).toBe("advisory-unconfined");
   });
 
   it("parses the skip env as a comma-separated CLI list in canonical order", () => {
