@@ -13,12 +13,17 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.33',
+  version: '0.19.34',
   date: '2026-07-28',
-  codename: 'Mais de Uma Cabeça',
+  codename: 'Grok reviewer sobe',
   summary:
-    'Multi-CLI de verdade na missão: Kimi, Grok, Agy, OpenCode, OMP e Claude entram como conselheiros com PTY e handoff, sob confinamento do kernel. Claude Maestro deixa de mentir sobre login (Keychain slim + sessão viva). Merge-council e gate E2E multi-CLI vêm no pacote.',
+    'O advisor Grok read-only deixa de exigir selo Darwin pinado (só Codex/Claude). Missão multi-CLI do release:candidate deixa de bloquear no bootstrap do Grok após Kimi/OpenCode/executor já terem entregue handoff.',
   highlights: [
+    {
+      title: 'Grok confinado pelo CLI, não por CDHash Nexus',
+      detail:
+        'Read-only com --sandbox read-only no argv. Authenticity root (Team ID + CDHash) continua só em Codex e Claude. O reviewer Grok do gate E2E volta a spawnar.',
+    },
     {
       title: 'Multi-CLI na mesma missão',
       detail:

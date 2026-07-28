@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.19.34 — Grok reviewer sobe
+
+Data: 2026-07-28
+
+Correção do bloqueio do release:candidate no advisor Grok read-only.
+
+### Fix
+
+- **Grok read-only sem selo Darwin pinado**: só Codex/Claude passam pelo
+  `qualifyTrustedNativeConfinementLaunch` (Team ID + CDHash + versão). Grok
+  confina com `--sandbox read-only` no argv do CLI e não tem authenticity root
+  no Nexus — o spawn do reviewer E2E falhava com
+  `adapter grok has no pinned native authenticity root` e bloqueava a missão
+  após Kimi/OpenCode/executor/Codex-reviewer já terem handoff.
+- **Handoff durável no retirement** (main): completion não aborta quando o
+  handoff já está assentado.
+
+### Herdado da 0.19.33
+
+Multi-CLI, Claude Keychain slim, Codex default `gpt-5.6-terra`, OMP skip sem
+vault, etc.
+
 ## 0.19.33 — Mais de Uma Cabeça
 
 Data: 2026-07-28
