@@ -579,7 +579,18 @@ async function tickMission(
     },
     // A task that handed off no longer needs a provider process. Prove exit of
     // the exact task/session/incarnation before maxWorkers admits a successor.
-    retireWorkers: () => retireMissionTaskWorkers(scope, missionId),
+    // Soft-fail: an unproven exit must keep occupying capacity, but must never
+    // abort the same-tick post-merge completion / PREVC bridge.
+    retireWorkers: async () => {
+      try {
+        await retireMissionTaskWorkers(scope, missionId);
+      } catch (error) {
+        console.warn(
+          `[mission-scheduler] worker retirement deferred for ${missionId}:`,
+          error,
+        );
+      }
+    },
     snapshot: () => schedulerTasks(scope, missionId),
     launchNext: (currentSchedulerTasks) =>
       runSchedulerTick(

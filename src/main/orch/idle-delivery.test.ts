@@ -50,6 +50,7 @@ const storeMocks = vi.hoisted(() => ({
     state: string;
   }>,
   delivered: [] as Array<{ scope: ProjectExecutionScope; id: string }>,
+  consumed: [] as Array<{ scope: ProjectExecutionScope; id: string }>,
   deliveryAttempts: new Map<string, {
     id: string;
     handoffId: string;
@@ -208,6 +209,35 @@ vi.mock('./project-domain-store-registry', () => ({
         if (!attempt || attempt.state !== 'pasted') return false;
         attempt.state = 'accepted';
         storeMocks.delivered.push({ scope, id: handoffId });
+        const current = storeMocks.handoffs.get(handoffId);
+        if (current) {
+          storeMocks.handoffs.set(handoffId, {
+            ...current,
+            delivered: true,
+            deliveryState: 'submitted',
+          });
+        }
+        return true;
+      },
+      markConsumedAfterAcceptedDelivery: (
+        handoffId: string,
+        _missionId: string,
+        _sessionId: string,
+      ) => {
+        const current = storeMocks.handoffs.get(handoffId) ?? handoff({ id: handoffId });
+        if (
+          !current.delivered &&
+          current.deliveryState !== 'submitted' &&
+          current.deliveryState !== 'acknowledged'
+        ) {
+          return false;
+        }
+        storeMocks.handoffs.set(handoffId, {
+          ...current,
+          delivered: true,
+          deliveryState: 'consumed',
+        });
+        storeMocks.consumed.push({ scope, id: handoffId });
         return true;
       },
       list: ({ missionId }: { missionId?: string }) =>
@@ -299,6 +329,7 @@ beforeEach(() => {
   storeMocks.handoffs.clear();
   storeMocks.taskDispatches.length = 0;
   storeMocks.delivered.length = 0;
+  storeMocks.consumed.length = 0;
   storeMocks.deliveryAttempts.clear();
   storeMocks.nextAttemptId = 1;
 });
@@ -671,10 +702,11 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
-  it('não bloqueia a missão quando o dispatcher durável já possui o handoff', async () => {
+  it('assenta entrega durável sem PTY e não bloqueia a missão', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     authorizeTarget(scope);
+    storeMocks.handoffs.set('handoff-a', handoff());
     storeMocks.taskDispatches.push({
       handoffId: 'handoff-a',
       missionId: 'mission-a',
@@ -686,7 +718,10 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.onHandoffSubmitted(handoff(), scope);
     await vi.advanceTimersByTimeAsync(25_000);
 
-    expect(storeMocks.delivered).toEqual([]);
+    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
+    expect(storeMocks.consumed).toEqual([{ scope, id: 'handoff-a' }]);
+    expect(storeMocks.handoffs.get('handoff-a')?.deliveryState).toBe('consumed');
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
     expect(storeMocks.missionUpdates).toEqual([]);
     expect(
       storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)

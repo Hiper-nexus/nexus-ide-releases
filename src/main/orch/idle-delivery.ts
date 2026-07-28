@@ -265,6 +265,65 @@ function durableDispatchOwnsHandoff(
   }
 }
 
+/**
+ * When the durable dispatcher already owns the handoff, PTY paste is advisory
+ * and usually impossible (orchestrator busy). Still write the accepted-delivery
+ * + consumption receipts the verified completion / PREVC bridge require.
+ */
+function settleDurableOwnedHandoffDelivery(
+  authority: DeliveryAuthority,
+  handoff: Handoff,
+): boolean {
+  const stores = getProjectDomainStores(authority.scope);
+  const current = stores.handoffs.get(handoff.id);
+  if (!current) return false;
+  if (current.deliveryState === 'consumed') return true;
+  if (
+    current.deliveryState === 'submitted' ||
+    current.deliveryState === 'acknowledged'
+  ) {
+    return stores.handoffs.markConsumedAfterAcceptedDelivery(
+      current.id,
+      authority.missionId,
+      authority.sessionId,
+    );
+  }
+  if (current.deliveryState !== 'queued') return false;
+  try {
+    const attempt = stores.handoffs.reserveDeliveryAttempt({
+      handoffId: current.id,
+      missionId: authority.missionId,
+      orchestratorSessionId: authority.sessionId,
+      maxAttempts: MAX_DELIVERY_ATTEMPTS,
+    });
+    stores.handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: current.id,
+      acceptDeadlineAt: Date.now() + SUBMIT_ACCEPTANCE_WINDOW_MS,
+    });
+    if (
+      !stores.handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: current.id,
+      })
+    ) {
+      return false;
+    }
+    return stores.handoffs.markConsumedAfterAcceptedDelivery(
+      current.id,
+      authority.missionId,
+      authority.sessionId,
+    );
+  } catch (error) {
+    console.warn(
+      '[idle-delivery] settle durable handoff failed ' +
+        `(mission=${authority.missionId}, handoff=${handoff.id}): ` +
+        (error instanceof Error ? error.message : String(error)),
+    );
+    return false;
+  }
+}
+
 function missionDispatchesAlreadyTerminal(
   authority: DeliveryAuthority,
 ): boolean {
@@ -437,7 +496,9 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     !isCurrentAuthority(authority) ||
     !isSessionInjectableIdle(authority.sessionId)
   ) return false;
-  if (durableDispatchOwnsHandoff(authority, handoff.id)) return false;
+  if (durableDispatchOwnsHandoff(authority, handoff.id)) {
+    return settleDurableOwnedHandoffDelivery(authority, handoff);
+  }
   const stores = getProjectDomainStores(authority.scope);
   const current = stores.handoffs.get(handoff.id);
   if (!current) return false;
