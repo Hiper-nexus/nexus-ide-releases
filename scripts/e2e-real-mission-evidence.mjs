@@ -359,10 +359,22 @@ export function assertRealMissionPassEvidence(raw) {
     handoffs.find((handoff) => handoff?.id === dispatch?.handoffId),
   );
   const chainNoChangeMatches = chainReceipts.map((receipt) =>
+    receipt?.kind === "worktree_validated_no_change" &&
     typeof receipt?.reference === "string"
       ? /^no-change:([a-f0-9]{40,64}):([a-f0-9]{64})$/u.exec(receipt.reference)
       : null,
   );
+  const isNonExecutionValidationReceipt = (receipt) =>
+    (receipt?.kind === "worktree_validated_no_change" &&
+      typeof receipt?.reference === "string" &&
+      /^no-change:[a-f0-9]{40,64}:[a-f0-9]{64}$/u.test(receipt.reference) &&
+      Array.isArray(receipt.evidenceIds) &&
+      receipt.evidenceIds.length > 0) ||
+    (receipt?.kind === "read_only_validated" &&
+      typeof receipt?.reference === "string" &&
+      /^[a-f0-9]{64}$/u.test(receipt.reference) &&
+      Array.isArray(receipt.evidenceIds) &&
+      receipt.evidenceIds.length > 0);
   const executorIndex = chain.findIndex(
     (member) => member.kind === "execution",
   );
@@ -411,6 +423,14 @@ export function assertRealMissionPassEvidence(raw) {
       );
     }
     if (receipt?.kind === "worktree_validated_no_change") {
+      return hasExactKeys(receipt, [
+        "kind",
+        "reference",
+        "completedAt",
+        "evidenceIds",
+      ]);
+    }
+    if (receipt?.kind === "read_only_validated") {
       return hasExactKeys(receipt, [
         "kind",
         "reference",
@@ -871,11 +891,8 @@ export function assertRealMissionPassEvidence(raw) {
           ? receipt?.kind === "worktree_integrated" &&
             GIT_SHA_PATTERN.test(receipt.reference ?? "") &&
             Number.isInteger(receipt.completedAt)
-          : receipt?.kind === "worktree_validated_no_change" &&
-            chainNoChangeMatches[index] !== null &&
-            Number.isInteger(receipt.completedAt) &&
-            Array.isArray(receipt.evidenceIds) &&
-            receipt.evidenceIds.length > 0)
+          : isNonExecutionValidationReceipt(receipt) &&
+            Number.isInteger(receipt.completedAt))
       );
     });
   const chainHandoffIsExact =
@@ -915,10 +932,16 @@ export function assertRealMissionPassEvidence(raw) {
     });
   // Scouts advisor validam o HEAD inicial (antes do executor); o revisor
   // codex, os reviewers advisor e o QA validam o HEAD final integrado.
+  // worktree_validated_no_change selam o HEAD no reference; read_only_validated
+  // (harness Main-owned) exige só o head físico do handoff.
   const chainHeadIsExact = chain.every((member, index) => {
     const head = record(chainHandoffs[index]?.physicalReceipt)?.worktreeHeadSha;
+    const receipt = chainReceipts[index];
     const noChangeHead = chainNoChangeMatches[index]?.[1];
     if (member.kind === "advisory") {
+      if (receipt?.kind === "read_only_validated") {
+        return head === repository?.initialHeadSha;
+      }
       return (
         head === repository?.initialHeadSha &&
         noChangeHead === repository?.initialHeadSha
@@ -926,6 +949,9 @@ export function assertRealMissionPassEvidence(raw) {
     }
     if (member.kind === "execution") {
       return typeof head === "string" && head !== repository?.initialHeadSha;
+    }
+    if (receipt?.kind === "read_only_validated") {
+      return head === repository?.finalHeadSha;
     }
     return (
       head === repository?.finalHeadSha &&
