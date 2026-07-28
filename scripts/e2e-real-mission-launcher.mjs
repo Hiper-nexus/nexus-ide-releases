@@ -829,19 +829,26 @@ export function stageAdvisorAuthentication(
     }
   }
 
-  // omp: ~/.omp/agent/agent.db (+ sqlite -shm/-wal sidecars when present)
+  // omp: ~/.omp/agent/agent.db (+ sqlite -shm/-wal sidecars when present).
+  // File presence alone is not enough — an empty/unlinked vault made the
+  // product-wizard admit OMP then fail at spawn with probe-unavailable.
   const ompSourceAgent = path.join(source, ".omp", "agent");
   const ompDestination = path.join(home, ".omp", "agent");
-  const ompStaged = stageAdvisorAuthFile(
-    path.join(ompSourceAgent, "agent.db"),
-    ompDestination,
-    {
+  const ompSourceDb = path.join(ompSourceAgent, "agent.db");
+  const ompVaultReady = ompAgentVaultHasEnabledCredential(ompSourceDb);
+  const ompStaged =
+    ompVaultReady &&
+    stageAdvisorAuthFile(ompSourceDb, ompDestination, {
       label: "omp agent database",
       maxBytes: ADVISOR_DATABASE_MAX_BYTES,
       privateRoot: home,
-    },
-  );
+    });
   if (!ompStaged) {
+    try {
+      fs.rmSync(path.join(home, ".omp"), { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
     statuses.omp = report("omp", "skipped");
   } else {
     for (const suffix of ["-shm", "-wal"]) {
@@ -1009,6 +1016,40 @@ export function stageAdvisorAuthentication(
   }
 
   return statuses;
+}
+
+/**
+ * True when an OMP agent.db has at least one non-disabled auth_credentials row.
+ * Read-only; never invents readiness from file presence alone.
+ */
+export function ompAgentVaultHasEnabledCredential(databasePath) {
+  if (typeof databasePath !== "string" || !databasePath) return false;
+  let database = null;
+  try {
+    const Database = require("better-sqlite3");
+    database = new Database(databasePath, {
+      readonly: true,
+      fileMustExist: true,
+    });
+    database.pragma("query_only = ON");
+    const row = database
+      .prepare(
+        `SELECT 1 AS ready
+           FROM auth_credentials
+          WHERE disabled_cause IS NULL OR disabled_cause = ''
+          LIMIT 1`,
+      )
+      .get();
+    return row?.ready === 1;
+  } catch {
+    return false;
+  } finally {
+    try {
+      database?.close();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 /**

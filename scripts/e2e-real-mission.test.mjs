@@ -1208,7 +1208,22 @@ describe("real mission advisor authentication staging", () => {
       'default_model = "kimi-code/k3"\n',
       { mode: 0o644 },
     );
-    writePrivate(path.join(sourceHome, ".omp", "agent", "agent.db"), "sqlite");
+    {
+      const Database = require("better-sqlite3");
+      const dbPath = path.join(sourceHome, ".omp", "agent", "agent.db");
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      const db = new Database(dbPath);
+      db.exec(
+        `CREATE TABLE auth_credentials (
+           provider TEXT,
+           disabled_cause TEXT
+         );
+         INSERT INTO auth_credentials(provider, disabled_cause)
+         VALUES ('anthropic', NULL);`,
+      );
+      db.close();
+      fs.chmodSync(dbPath, 0o600);
+    }
     writePrivate(
       path.join(sourceHome, ".omp", "agent", "agent.db-wal"),
       "wal",
@@ -1319,7 +1334,6 @@ describe("real mission advisor authentication staging", () => {
       ],
       [".kimi-code/device_id", "device-uuid-test\n"],
       [".kimi-code/config.toml", 'default_model = "kimi-code/k3"\n'],
-      [".omp/agent/agent.db", "sqlite"],
       [".omp/agent/agent.db-wal", "wal"],
       [
         ".gemini/google_accounts.json",
@@ -1335,6 +1349,9 @@ describe("real mission advisor authentication staging", () => {
       ],
       [".local/share/opencode/auth.json", '{"opencode":1}\n'],
     ];
+    expect(fs.existsSync(path.join(isolatedHome, ".omp/agent/agent.db"))).toBe(
+      true,
+    );
     for (const [relative, content] of stagedFiles) {
       const staged = path.join(isolatedHome, relative);
       expect(fs.readFileSync(staged, "utf8"), relative).toBe(content);
