@@ -135,6 +135,71 @@ describe('pre-activation CLI artifact rollback', () => {
   });
 });
 
+describe('advisory provider-state home grant', () => {
+  it('exposes the real provider home for a governed Kimi overlay', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const artifacts = path.join(root, 'artifacts');
+    const providerHome = path.join(home, '.kimi-code');
+    // The overlay symlinks session/auth state from here; the sandbox must be
+    // told to grant it or the CLI's session mkdir fails with EPERM.
+    write(path.join(providerHome, 'mcp.json'), JSON.stringify({ mcpServers: {} }));
+    write(path.join(providerHome, 'credentials', 'kimi-code.json'), '{}');
+    const token = 'kimi-provider-state-home';
+    tokens.push(token);
+
+    const result = prepareKimiMcpSession('http://127.0.0.1:4200/mcp', token, {
+      home,
+      artifactRoot: artifacts,
+      providerHome,
+      governed: true,
+      allowedSkills: [],
+    });
+
+    expect(result.providerStateHome).toBe(providerHome);
+  });
+
+  it('exposes the real provider home for a governed Grok overlay', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const artifacts = path.join(root, 'artifacts');
+    const providerHome = path.join(home, '.grok');
+    write(path.join(providerHome, 'config.toml'), '');
+    const token = 'grok-provider-state-home';
+    tokens.push(token);
+
+    const result = prepareGrokMcpSession('http://127.0.0.1:4300/mcp', token, {
+      home,
+      artifactRoot: artifacts,
+      providerHome,
+      governed: true,
+      allowedSkills: [],
+    });
+
+    expect(result.providerStateHome).toBe(providerHome);
+  });
+
+  it('omits the provider-state home for a non-governed (direct pane) overlay', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const artifacts = path.join(root, 'artifacts');
+    const providerHome = path.join(home, '.kimi-code');
+    write(path.join(providerHome, 'mcp.json'), JSON.stringify({ mcpServers: {} }));
+    const token = 'kimi-direct-no-provider-state';
+    tokens.push(token);
+
+    const result = prepareKimiMcpSession('http://127.0.0.1:4200/mcp', token, {
+      home,
+      artifactRoot: artifacts,
+      providerHome,
+      governed: false,
+      allowedSkills: null,
+    });
+
+    expect(result.providerStateHome).toBeUndefined();
+  });
+});
+
 describe('prepareOpenCodeMcpSession', () => {
   it('uses the official inline config and expands the bearer from env at runtime', () => {
     const token = 'opencode-secret-token';

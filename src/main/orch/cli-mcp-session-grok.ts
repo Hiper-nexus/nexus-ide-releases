@@ -265,6 +265,10 @@ export function prepareGrokMcpSession(
         extraArgs: policy.governed ? ['--no-subagents'] : [],
         serverName,
         artifactDir,
+        // Governed overlay symlinks provider state into GROK_HOME from the real
+        // ~/.grok; the advisory sandbox must grant it read+write so session
+        // writes and auth reads resolve through the symlinks.
+        ...(policy.governed ? { providerStateHome: providerHome } : {}),
       };
     },
   );

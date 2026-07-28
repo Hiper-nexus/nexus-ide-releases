@@ -31,6 +31,14 @@ export interface CliMcpSessionResult {
   extraArgs: string[];
   serverName: string;
   artifactDir: string | null;
+  /**
+   * Real provider home the overlay symlinks auth/session state INTO the
+   * ephemeral artifactDir from (e.g. ~/.kimi-code, ~/.grok). The advisory
+   * Seatbelt profile must grant read+write here: the CLI writes session/history
+   * through those symlinks, which the kernel resolves to the real path. Absent
+   * for self-contained overlays (OpenCode) that never symlink a real home.
+   */
+  providerStateHome?: string;
   /** Present only for a Codex session whose private profile was compiled. */
   codexPermissionProfile?: string;
   /**

@@ -650,6 +650,9 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     let ephemeralHomeDir: string | null = null;
     let skillsPrepared = false;
     let nativeAgyLease: AgyNativeMcpLease | null = null;
+    // Real provider home (~/.kimi-code, ~/.grok) the governed overlay symlinks
+    // session/auth state into. The advisory sandbox grants it read+write.
+    let advisoryProviderStateHome: string | undefined;
     // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task
     // pelo adapter base, então o bloqueio vale para panes diretos e
     // orquestrados sem duplicar flags aqui.
@@ -796,6 +799,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
+          advisoryProviderStateHome = prepared.providerStateHome;
         } else if (flavor === "grok") {
           const prepared = prepareGrokMcpSession(mcpUrl(), ctx.token, {
             providerHome: preparedEnv?.GROK_HOME,
@@ -804,6 +808,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
+          advisoryProviderStateHome = prepared.providerStateHome;
         } else if (flavor === "omp") {
           // omp resolve `~/.omp/agent/mcp.json` via HOME; overlay privado por
           // sessão preserva login/sessões por symlink e isola o bearer.
@@ -846,7 +851,15 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
             providerStateReadPaths: [nativeAgyLease.geminiDir],
             providerStateWritePaths: [nativeAgyLease.geminiDir],
           }
-        : {}),
+        : advisoryProviderStateHome
+          ? {
+              // Overlay providers (Kimi/Grok): keep the minted runtime as HOME
+              // (pty-manager path), but grant the real provider home so the
+              // overlay's session/auth symlinks resolve read+write.
+              providerStateReadPaths: [advisoryProviderStateHome],
+              providerStateWritePaths: [advisoryProviderStateHome],
+            }
+          : {}),
       onSpawned: (sessionId) => {
         bindTokenToSession(ctx.token, sessionId);
         sessionTokens.set(sessionId, ctx.token);

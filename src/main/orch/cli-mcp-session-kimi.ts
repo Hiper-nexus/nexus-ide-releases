@@ -151,6 +151,10 @@ export function prepareKimiMcpSession(
         extraArgs: policy.governed ? ['--skills-dir', governedSkillsDir] : [],
         serverName,
         artifactDir,
+        // Governed overlay symlinks sessions/user-history/credentials into the
+        // artifactDir pointing at the real ~/.kimi-code — the advisory sandbox
+        // must grant that home so session writes and auth reads resolve.
+        ...(policy.governed ? { providerStateHome: providerHome } : {}),
       };
     },
   );
