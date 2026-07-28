@@ -232,6 +232,17 @@ function acceptPendingEnters(sessionId: string): void {
   }
 }
 
+function isDiagnosticDriverHandoff(handoff: Handoff): boolean {
+  // mission-driver "stalled / no progress" signals are ledger/UI diagnostics.
+  // Pasting them into a busy orchestrator and then demoting the mission to
+  // blocked after two failed CR attempts can kill a fully completed guided
+  // run (executor+reviewer+QA already done).
+  return (
+    handoff.status === 'stalled' ||
+    handoff.fromAgent === 'nexus-mission-driver'
+  );
+}
+
 function durableDispatchOwnsHandoff(
   authority: DeliveryAuthority,
   handoffId: string,
@@ -254,6 +265,28 @@ function durableDispatchOwnsHandoff(
   }
 }
 
+function missionDispatchesAlreadyTerminal(
+  authority: DeliveryAuthority,
+): boolean {
+  try {
+    const rows = getProjectDomainStores(authority.scope).taskDispatches.list(
+      authority.missionId,
+    );
+    return (
+      rows.length > 0 &&
+      rows.every(
+        (row) =>
+          row.state === 'completed' ||
+          row.state === 'failed' ||
+          row.state === 'blocked' ||
+          row.state === 'superseded',
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 function blockDeliveryFailure(
   authority: DeliveryAuthority,
   handoffId: string,
@@ -262,7 +295,10 @@ function blockDeliveryFailure(
   const stores = getProjectDomainStores(authority.scope);
   const mission = stores.missions.get(authority.missionId);
   if (mission && mission.status !== 'done' && mission.status !== 'failed') {
-    if (durableDispatchOwnsHandoff(authority, handoffId)) {
+    if (
+      durableDispatchOwnsHandoff(authority, handoffId) ||
+      missionDispatchesAlreadyTerminal(authority)
+    ) {
       console.warn(
         '[idle-delivery] handoff não injetado no orquestrador após requeue ' +
           `limitado, mas o dispatcher durável já possui o handoff — missão ` +
@@ -575,6 +611,7 @@ export function onHandoffSubmitted(
   // Pet Studio has no worker/orchestrator loop: its sole Codex session submits
   // its own validated result. Never queue that message back into the same PTY.
   if (petCompletion) return petCompletion;
+  if (isDiagnosticDriverHandoff(handoff)) return null;
   const authority = targetAuthority(handoff, scope);
   if (!authority) return null; // No trusted orchestrator — stays listed as pending.
   if (

@@ -695,6 +695,38 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
+  it('ignora handoff diagnóstico do mission-driver e não bloqueia a missão', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    storeMocks.taskDispatches.push({
+      handoffId: 'handoff-worker',
+      missionId: 'mission-a',
+      state: 'completed',
+    });
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(
+      handoff({
+        id: 'handoff-driver',
+        fromAgent: 'nexus-mission-driver',
+        status: 'stalled',
+        summary: 'mission-driver: missão sem progresso há 10 min',
+      }),
+      scope,
+    );
+    await vi.advanceTimersByTimeAsync(25_000);
+
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+    expect(storeMocks.missionUpdates).toEqual([]);
+    expect(
+      storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
+        ?.status,
+    ).toBe('running');
+    delivery.shutdownIdleDelivery();
+  });
+
   it('retries Enter once when the CLI swallowed submit and stayed idle', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
