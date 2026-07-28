@@ -25,6 +25,7 @@ describe("real mission advisor expectations", () => {
       "opencode",
       "omp",
       "claude",
+      "glm",
     ]);
     expect(
       expectations.map((entry) => [entry.cli, entry.tier, entry.skipped]),
