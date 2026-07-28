@@ -353,6 +353,25 @@ describe("real mission premature exit receipts", () => {
         (0s • esc to interrupt)
       `),
     ).toBe(false);
+    // Rolling PTY buffer: boot status + later model prose must not abort the gate.
+    expect(
+      isCodexMcpApprovalPrompt(`
+        Booting MCP server: nexus_6f0357953c28
+        (0s • esc to interrupt)
+        Please confirm the mission goal before we continue?
+      `),
+    ).toBe(false);
+    expect(
+      isCodexMcpApprovalPrompt(`
+        Booting MCP server: nexus_6f0357953c28
+        Allow edits to resultado.txt?
+      `),
+    ).toBe(false);
+    expect(
+      isCodexMcpApprovalPrompt(
+        "Use nexus_task to list work, then confirm the plan with the operator?",
+      ),
+    ).toBe(false);
   });
 
   it("reads consumption and reviewer<-executor receipts through a query-only snapshot", () => {

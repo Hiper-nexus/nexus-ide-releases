@@ -114,40 +114,36 @@ export function installRealMissionDialogInstrumentation(): void {
   };
 }
 
+/**
+ * Detect a real Codex MCP tool-approval question for a Nexus-bound server.
+ *
+ * Must NOT fire on ordinary boot ("Booting MCP server: nexus_… esc to
+ * interrupt") or on model prose that happens to mention `nexus_*` next to
+ * words like "confirm" in the same rolling PTY buffer — that false positive
+ * aborted the release gate after tools had already run successfully.
+ */
 export function isCodexMcpApprovalPrompt(output: string): boolean {
   const normalized = stripAnsi(output)
     .normalize("NFKD")
     .replace(/\p{Diacritic}/gu, "")
     .toLocaleLowerCase("en-US")
     .replace(/\s+/gu, " ");
-  const namesNexusTool = /\bnexus_[a-z0-9][a-z0-9_-]{1,127}\b/u.test(
-    normalized,
-  );
-  const mcpContext =
-    /\bmcp\b/u.test(normalized) ||
-    /\b(?:tool|ferramenta|herramienta|outil|werkzeug)\b/u.test(normalized);
-  const permissionLanguage =
-    /\b(?:allow|approve|authorize|confirm|permission|permit|run the tool|permitir|aprovar|autorizar|confirmar|permissao|executar a ferramenta|ejecutar la herramienta|autoriser|confirmer)\b/u.test(
-      normalized,
-    );
-  const explicitQuestion =
-    /\bquestion\s+\d+\s*\/\s*\d+\b/u.test(normalized) ||
-    /\b(?:allow for this session|remember this choice|cancel this tool call|enter to submit answer|esc to interrupt)\b/u.test(
-      normalized,
-    ) ||
-    /\b(?:permitir nesta sessao|lembrar esta escolha|cancelar esta chamada|pressione enter|tecle enter|negar|cancelar)\b/u.test(
-      normalized,
-    ) ||
-    /\?\s*(?:$|\d+\s*[\.\)])/u.test(normalized);
+  // Structural shapes of the Codex 0.145 approval UI (EN / PT / ES). Require
+  // server id + MCP server wording + tool name in one contiguous clause —
+  // bag-of-words across an 8KB buffer is too loose.
   return (
-    namesNexusTool &&
-    explicitQuestion &&
-    // "Booting MCP server: nexus_* (… esc to interrupt)" is ordinary Codex
-    // startup status, not an approval question. Requiring permission language
-    // for status-only text preserves real localized MCP prompts while avoiding
-    // a false release-gate abort before the server handshake reaches idle.
-    permissionLanguage &&
-    mcpContext
+    /\ballow(?:\s+the)?\s+nexus_[a-z0-9][a-z0-9_-]{1,127}\s+mcp\s+server\s+to\s+run\s+tool\s+"?nexus_[a-z0-9][a-z0-9_-]{1,127}"?\s*\?/u.test(
+      normalized,
+    ) ||
+    /\ballow\s+mcp\s+server\s+nexus_[a-z0-9][a-z0-9_-]{1,127}\s+to\s+run\s+tool\s+"?nexus_[a-z0-9][a-z0-9_-]{1,127}"?\s*\?/u.test(
+      normalized,
+    ) ||
+    /\bpermitir\s+que\s+o\s+servidor\s+mcp\s+nexus_[a-z0-9][a-z0-9_-]{1,127}\s+execute\s+a\s+ferramenta\s+"?nexus_[a-z0-9][a-z0-9_-]{1,127}"?\s*\?/u.test(
+      normalized,
+    ) ||
+    /\b(?:autorizar|permitir)\s+al\s+servidor\s+mcp\s+nexus_[a-z0-9][a-z0-9_-]{1,127}\s+para\s+ejecutar\s+la\s+herramienta\s+"?nexus_[a-z0-9][a-z0-9_-]{1,127}"?\s*\?/u.test(
+      normalized,
+    )
   );
 }
 
