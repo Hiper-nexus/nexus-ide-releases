@@ -13,11 +13,11 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.34',
+  version: '0.19.35',
   date: '2026-07-28',
-  codename: 'Grok reviewer sobe',
+  codename: 'GLM no multi-CLI',
   summary:
-    'O advisor Grok read-only deixa de exigir selo Darwin pinado (só Codex/Claude). Missão multi-CLI do release:candidate deixa de bloquear no bootstrap do Grok após Kimi/OpenCode/executor já terem entregue handoff.',
+    'Multi-CLI inclui GLM (CLI Claude + z.ai). Grok read-only sem selo Darwin. Claude advisor OAuth segue skip no gate se bootstrap race; GLM usa API key do providers.conf.',
   highlights: [
     {
       title: 'Grok confinado pelo CLI, não por CDHash Nexus',

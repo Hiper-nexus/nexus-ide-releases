@@ -197,7 +197,9 @@ export function stageTrustedAdvisorLaunchers(
   const staged = {};
   for (const cli of clis) {
     if (cli === "codex") continue; // staged by stageTrustedCodexLauncher
-    const unresolved = resolveCommand(cli, environment);
+    // glm (and future Claude-backed forks) resolve the host `claude` binary.
+    const hostBin = resolveRealMissionAdvisorHostBin(cli);
+    const unresolved = resolveCommand(hostBin, environment);
     if (typeof unresolved !== "string" || !path.isAbsolute(unresolved)) {
       continue;
     }
@@ -222,14 +224,18 @@ export function stageTrustedAdvisorLaunchers(
     } catch {
       continue;
     }
-    const launcher = path.join(directory, cli);
-    try {
-      fs.lstatSync(launcher);
-      fs.unlinkSync(launcher);
-    } catch {
-      // absent is fine
+    // Stage under the adapter id (glm) and, when the host bin differs, also
+    // under the host name (claude) so resolveAdapterBinary(adapter.bin) works.
+    for (const linkName of new Set([cli, hostBin])) {
+      const launcher = path.join(directory, linkName);
+      try {
+        fs.lstatSync(launcher);
+        fs.unlinkSync(launcher);
+      } catch {
+        // absent is fine
+      }
+      fs.symlinkSync(binary, launcher, "file");
     }
-    fs.symlinkSync(binary, launcher, "file");
     staged[cli] = binary;
   }
   return staged;
@@ -614,7 +620,22 @@ export const REAL_MISSION_ADVISOR_BINARIES = Object.freeze([
   "opencode",
   "omp",
   "claude",
+  "glm",
 ]);
+
+/**
+ * Advisor ids whose adapter.bin is not the id itself (Claude-compatible
+ * forks). Resolve the host CLI for --version / trusted-bin, but keep the
+ * advisor id for skip lists and evidence.
+ */
+export const REAL_MISSION_ADVISOR_HOST_BIN = Object.freeze({
+  glm: "claude",
+});
+
+export function resolveRealMissionAdvisorHostBin(cli) {
+  if (typeof cli !== "string" || !cli) return cli;
+  return REAL_MISSION_ADVISOR_HOST_BIN[cli] ?? cli;
+}
 
 const CLAUDE_AUTH_IDENTITY_MAX_BYTES = 256 * 1024;
 
@@ -972,6 +993,57 @@ export function stageAdvisorAuthentication(
     openCodeStaged ? "staged" : "credentialless",
   );
 
+  // glm: Claude-compatible CLI + z.ai token from ai-launcher providers.conf
+  // (glm=… / zai=…). Main process has HOME=isolated, so loadLauncherProviderKey
+  // only sees this staged file. Never log the token.
+  {
+    const sourceConf = path.join(
+      source,
+      ".local",
+      "share",
+      "ai-launcher",
+      "providers.conf",
+    );
+    let glmToken = null;
+    try {
+      const raw = fs.readFileSync(sourceConf, "utf8");
+      for (const line of raw.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eq = trimmed.indexOf("=");
+        if (eq <= 0) continue;
+        const name = trimmed.slice(0, eq).trim();
+        const value = trimmed.slice(eq + 1).trim();
+        if (
+          (name === "glm" || name === "zai" || name === "z.ai") &&
+          value.length > 0
+        ) {
+          glmToken = value;
+          break;
+        }
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (!glmToken) {
+      statuses.glm = report("glm", "skipped");
+    } else {
+      const destDir = path.join(home, ".local", "share", "ai-launcher");
+      fs.mkdirSync(destDir, {
+        recursive: true,
+        mode: PRIVATE_DIRECTORY_MODE,
+      });
+      fs.chmodSync(destDir, PRIVATE_DIRECTORY_MODE);
+      // Only the glm slot — never copy sakana/other secrets into the gate HOME.
+      fs.writeFileSync(
+        path.join(destDir, "providers.conf"),
+        `glm=${glmToken}\n`,
+        { mode: PRIVATE_FILE_MODE },
+      );
+      statuses.glm = report("glm", "staged");
+    }
+  }
+
   // claude: Keychain holds the OAuth secret. Product-wizard Electron runs with
   // HOME=isolated and its auth probe / isAdapterModelAuthenticated may not
   // treat keychain-only as ready (login-needed → Usar este squad disabled for
@@ -1107,7 +1179,8 @@ export function assertAdvisorBinaries({
 } = {}) {
   const statuses = {};
   for (const cli of REAL_MISSION_ADVISOR_BINARIES) {
-    const resolved = resolveCommand(cli, environment);
+    const hostBin = resolveRealMissionAdvisorHostBin(cli);
+    const resolved = resolveCommand(hostBin, environment);
     if (typeof resolved !== "string" || !path.isAbsolute(resolved)) {
       onSkip(cli);
       statuses[cli] = { available: false };

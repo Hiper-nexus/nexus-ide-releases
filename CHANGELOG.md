@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.19.35 — GLM no multi-CLI
+
+Data: 2026-07-28
+
+### Multi-CLI
+
+- **GLM advisor no gate E2E**: adapter `glm` (binário Claude + `ANTHROPIC_*` z.ai)
+  entra no fan-out consultivo; token só via `providers.conf` staged no HOME
+  isolado (`glm=`/`zai=`). `reserveClaude` não se aplica (API key, não OAuth).
+- Host bin: trusted-bin resolve `claude` para o id `glm`.
+
+### Herdado da 0.19.34
+
+Grok seal fix, fixture terra models, Claude advisor dispatch com orch Codex.
+
 ## 0.19.34 — Grok reviewer sobe
 
 Data: 2026-07-28

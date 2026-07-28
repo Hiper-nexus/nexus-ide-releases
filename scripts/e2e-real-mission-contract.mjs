@@ -68,7 +68,8 @@ export const REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE =
  * evidência registra. Advisors entram somente em tarefas read_only do fan-out
  * consultivo; o pipeline executor → revisor → QA continua codex-only.
  * Tier: grok/claude = mechanically-confined (Seatbelt/argv governado nativo);
- * kimi/agy/opencode/omp = advisory-unconfined (fronteira MCP read-only).
+ * kimi/agy/opencode/omp/glm = advisory-unconfined (MCP + Seatbelt Nexus).
+ * GLM reuses the Claude Code binary with z.ai ANTHROPIC_* env (API key).
  */
 export const REAL_MISSION_ADVISORS = Object.freeze([
   Object.freeze({
@@ -112,6 +113,13 @@ export const REAL_MISSION_ADVISORS = Object.freeze([
     cli: "claude",
     category: "reviewer",
     tier: "mechanically-confined",
+  }),
+  Object.freeze({
+    id: "e2e-advisor-glm",
+    name: "E2E Advisor GLM",
+    cli: "glm",
+    category: "scout",
+    tier: "advisory-unconfined",
   }),
 ]);
 

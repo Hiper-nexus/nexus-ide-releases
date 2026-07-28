@@ -140,6 +140,12 @@ describe("main-owned real mission squad fixture", () => {
         cli: "claude",
         allowedTools: [],
       }),
+      expect.objectContaining({
+        id: "e2e-advisor-glm",
+        category: "scout",
+        cli: "glm",
+        allowedTools: [],
+      }),
     ]);
   });
 

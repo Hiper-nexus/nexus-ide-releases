@@ -213,6 +213,12 @@ describe("real mission E2E closed receipts", () => {
           cli: "claude",
           allowedTools: [],
         },
+        {
+          id: "e2e-advisor-glm",
+          category: "scout",
+          cli: "glm",
+          allowedTools: [],
+        },
       ],
     });
     // Advisors sem credencial (env NEXUS_REAL_MISSION_ADVISOR_SKIP) ficam
@@ -227,6 +233,7 @@ describe("real mission E2E closed receipts", () => {
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
       "e2e-advisor-claude",
+      "e2e-advisor-glm",
     ]);
     expect(fixture.orchestratorInstructions).toContain(
       "Guided Planner, dispatch e integração pertencem ao main",
@@ -329,6 +336,7 @@ describe("real mission E2E claude orchestrator variant", () => {
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
       "e2e-advisor-omp",
+      "e2e-advisor-glm",
     ]);
     // O pipeline executor → revisor → QA continua codex nas duas variantes.
     expect(
@@ -341,7 +349,7 @@ describe("real mission E2E claude orchestrator variant", () => {
   });
 
   it("derives the expected task chain without the reserved claude advisor", () => {
-    const presentClis = ["grok", "kimi", "agy", "opencode", "omp"];
+    const presentClis = ["grok", "kimi", "agy", "opencode", "omp", "glm"];
     const chain = realMissionE2EExpectedTaskChain(presentClis);
 
     expect(chain.map((member) => member.agentRef)).toEqual([
@@ -349,6 +357,7 @@ describe("real mission E2E claude orchestrator variant", () => {
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
       "e2e-advisor-omp",
+      "e2e-advisor-glm",
       "e2e-executor",
       "e2e-reviewer",
       "e2e-advisor-grok",
@@ -359,13 +368,15 @@ describe("real mission E2E claude orchestrator variant", () => {
       "guided-advisory-2-e2e-advisor-agy",
       "guided-advisory-3-e2e-advisor-opencode",
       "guided-advisory-4-e2e-advisor-omp",
+      "guided-advisory-5-e2e-advisor-glm",
       "guided-execution",
       "guided-review-1-e2e-reviewer",
       "guided-review-2-e2e-advisor-grok",
       "guided-quality-gate",
     ]);
-    // Nenhum worker claude em nenhuma posição da cadeia.
+    // Nenhum worker claude OAuth em nenhuma posição da cadeia (glm ≠ claude).
     expect(chain.every((member) => member.cli !== "claude")).toBe(true);
+    expect(chain.some((member) => member.cli === "glm")).toBe(true);
   });
 
   it("selects the variant acceptance criteria with the extra proof obligation", () => {

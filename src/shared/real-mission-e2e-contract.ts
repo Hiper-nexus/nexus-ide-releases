@@ -71,7 +71,8 @@ export type RealMissionE2EAdvisorCli =
   | "agy"
   | "opencode"
   | "omp"
-  | "claude";
+  | "claude"
+  | "glm";
 
 export interface RealMissionE2EAdvisorSpec {
   readonly id: string;
@@ -118,6 +119,15 @@ export const REAL_MISSION_E2E_ADVISORS: readonly RealMissionE2EAdvisorSpec[] =
       cli: "claude",
       category: "reviewer",
     },
+    // GLM reuses the Claude Code binary pointed at z.ai (ANTHROPIC_* env).
+    // Distinct adapter id + API key — not Claude OAuth — so reserveClaude
+    // does not apply; advisory-unconfined + Nexus Seatbelt.
+    {
+      id: "e2e-advisor-glm",
+      name: "E2E Advisor GLM",
+      cli: "glm",
+      category: "scout",
+    },
   ]);
 
 export type RealMissionE2EAdvisorTier =
@@ -129,7 +139,7 @@ export type RealMissionE2EAdvisorTier =
  * `--sandbox read-only` enforceável (MECHANICALLY_READ_ONLY_CLIS em
  * mission-scheduler-plan.ts) e claude é confinado nativamente pelo argv
  * governado (requiresReadOnlyNativeAuthority em autonomous-cli-policy.ts);
- * kimi/agy/opencode/omp têm apenas a fronteira MCP read-only.
+ * kimi/agy/opencode/omp/glm têm apenas a fronteira MCP + Seatbelt Nexus.
  */
 export function realMissionE2EAdvisorTier(
   cli: RealMissionE2EAdvisorCli,
@@ -205,7 +215,7 @@ export const REAL_MISSION_E2E_ACCEPTANCE_CRITERIA = Object.freeze([
   "O motor Nexus emite worktree_validated_no_change para o revisor antes de liberar a tarefa dependente de QA.",
   "O QA Codex abre um terceiro PTY físico, consome o handoff do revisor e valida o HEAD integrado; o QA não deve editar, alterar ou escrever arquivos e chama nexus_handoff_submit sem mudança artificial.",
   "O motor Nexus emite o receipt final worktree_validated_no_change e marca a missão done sem atalho manual.",
-  "Cada CLI advisor credenciada (grok, kimi, agy, opencode, omp, claude) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
+  "Cada CLI advisor credenciada (grok, kimi, agy, opencode, omp, claude, glm) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
 ]);
 
 /**
