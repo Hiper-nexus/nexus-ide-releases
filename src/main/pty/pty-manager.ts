@@ -1352,6 +1352,7 @@ export function spawnAgentSession(
       let advisoryRuntimeDir = decoration?.sandboxDir;
       let advisoryProcessHome = decoration?.processHome;
       const advisoryEphemeralGrants: string[] = [];
+      const advisoryReadOnlyGrants: string[] = [];
       if (!advisoryRuntimeDir && !decorationOverrodeHome) {
         const runtime = createScopedSandboxHome({
           projectId: sessionId,
@@ -1387,6 +1388,20 @@ export function spawnAgentSession(
           }
         }
       }
+      // Native-home advisory spawns (AGY, Kimi, …) authenticate via macOS
+      // Keychain. AGY 1.1 reads the Keychain DB file directly — not only via
+      // securityd — so without a read grant the CLI silently falls into the
+      // OAuth re-login flow (physically verified). READ-ONLY, never writable.
+      if (advisoryProcessHome) {
+        const keychainsDir = path.join(realHome, "Library", "Keychains");
+        try {
+          if (fs.statSync(keychainsDir).isDirectory()) {
+            advisoryReadOnlyGrants.push(keychainsDir);
+          }
+        } catch {
+          // No Keychain dir on this host; nothing to grant.
+        }
+      }
       const advisorySandbox = resolveAdvisoryProcessSandbox({
         adapterId: adapter.id,
         readOnlyLane: true,
@@ -1398,6 +1413,7 @@ export function spawnAgentSession(
         providerStateReadPaths: [
           ...(decoration?.providerStateReadPaths ?? []),
           ...advisoryEphemeralGrants,
+          ...advisoryReadOnlyGrants,
         ],
         providerStateWritePaths: [
           ...(decoration?.providerStateWritePaths ?? []),
