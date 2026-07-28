@@ -24,6 +24,27 @@ function taskDispatchMissionBlock(detail: string): string {
   );
 }
 
+/**
+ * Extract the last durable worker-block detail from a mission description.
+ * Used by the release-gate evidence so FAIL reports the exact fence, not null.
+ */
+export function taskDispatchBlockDetailFromDescription(
+  description: string,
+): string | null {
+  const marker = TASK_DISPATCH_BLOCK_MARKER;
+  const start = description.lastIndexOf(marker);
+  if (start < 0) return null;
+  const after = description.slice(start + marker.length);
+  const heading = "## Worker bloqueado\n";
+  const headAt = after.indexOf(heading);
+  if (headAt < 0) return null;
+  let body = after.slice(headAt + heading.length);
+  const ctaAt = body.indexOf(TASK_DISPATCH_RESUME_CTA);
+  if (ctaAt >= 0) body = body.slice(0, ctaAt);
+  const detail = body.trim();
+  return detail.length > 0 ? detail.slice(0, 4_000) : null;
+}
+
 export function getTaskDispatchRow(
   db: TaskDispatchDatabase,
   taskId: string,

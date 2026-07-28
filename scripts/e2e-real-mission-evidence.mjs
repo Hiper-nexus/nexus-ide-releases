@@ -1276,6 +1276,10 @@ function safeRealMissionFailureParts(raw, result) {
   const failureReason = REAL_MISSION_FAILURE_REASONS.has(failure?.reason)
     ? failure.reason
     : null;
+  const failureDetail =
+    typeof failure?.detail === "string" && failure.detail.trim().length > 0
+      ? failure.detail.trim().slice(0, 4_000)
+      : null;
   const missionStatus = REAL_MISSION_STATUSES.has(snapshot?.missionStatus)
     ? snapshot.missionStatus
     : null;
@@ -1284,6 +1288,7 @@ function safeRealMissionFailureParts(raw, result) {
     failure: {
       code: failureCode,
       reason: failureReason,
+      detail: failureDetail,
       cta: REAL_MISSION_CTA,
       snapshot: {
         missionStatus,
@@ -1351,6 +1356,10 @@ export function safeRealMissionFailureReceipt(
 export function safeRealMissionFailureSummary(raw, result) {
   const { child, failure } = safeRealMissionFailureParts(raw, result);
   const snapshot = failure.snapshot;
+  const detailPart =
+    typeof failure.detail === "string" && failure.detail.length > 0
+      ? ` detail=${JSON.stringify(failure.detail.slice(0, 240))}`
+      : "";
   return (
     `[real-mission] FAIL code=${failure.code} ` +
     `reason=${failure.reason ?? "none"} ` +
@@ -1358,7 +1367,8 @@ export function safeRealMissionFailureSummary(raw, result) {
     `status=${snapshot.missionStatus ?? "none"} ` +
     `panes=${snapshot.paneCount} ` +
     `dispatches=${snapshot.dispatchCount} ` +
-    `handoffs=${snapshot.handoffCount} ` +
+    `handoffs=${snapshot.handoffCount}` +
+    `${detailPart} ` +
     `CTA: ${REAL_MISSION_CTA}`
   );
 }

@@ -439,6 +439,12 @@ export const failureSchema = z
         "authority_lost",
       ])
       .nullable(),
+    /**
+     * Operator-facing block detail from the mission description (worker
+     * dispatch fence). Kickoff reasons stay in `reason`; this field is free
+     * text so the gate never loses "why" when the workspace is deleted.
+     */
+    detail: z.string().max(4_000).nullable().optional(),
     cta: z.literal(REAL_MISSION_E2E_CTA),
     snapshot: z
       .object({

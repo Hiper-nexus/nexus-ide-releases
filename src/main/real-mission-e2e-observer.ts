@@ -31,6 +31,7 @@ import {
 } from "./pty/pty-manager";
 import type { ProjectDomainStoreSuite } from "./orch/project-domain-store-registry";
 import { missionKickoffFailureReasonFromDescription } from "./orch/mission-kickoff";
+import { taskDispatchBlockDetailFromDescription } from "./orch/task-dispatch-persistence";
 import { decodeTaskScheduleDetail } from "./orch/mission-scheduler-meta";
 import { getContextWorkflowService } from "./context/context-workflow-registry";
 import { readAuditLog, type AuditEntry } from "./jarvis/audit-log";
@@ -885,6 +886,13 @@ export class RealMissionObserver {
             reason:
               failureCode === "mission-blocked"
                 ? missionKickoffFailureReasonFromDescription(
+                    mission?.description ?? "",
+                  )
+                : null,
+            detail:
+              failureCode === "mission-blocked" ||
+              failureCode === "mission-failed"
+                ? taskDispatchBlockDetailFromDescription(
                     mission?.description ?? "",
                   )
                 : null,
