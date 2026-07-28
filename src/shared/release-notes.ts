@@ -13,12 +13,22 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.32',
-  date: '2026-07-27',
+  version: '0.19.33',
+  date: '2026-07-28',
   codename: 'Mais de Uma Cabeça',
   summary:
-    'O worker volta a entregar: o commit dentro do worktree isolado deixa de ser negado pelo sandbox, que era o ponto onde a missão parava sem produzir resultado. Um revisor de outra CLI passa a acompanhar a mesma missão. Vem junto tudo que estava pronto na 0.19.31, que ficou retida nos gates.',
+    'Multi-CLI de verdade na missão: Kimi, Grok, Agy, OpenCode, OMP e Claude entram como conselheiros com PTY e handoff, sob confinamento do kernel. Claude Maestro deixa de mentir sobre login (Keychain slim + sessão viva). Merge-council e gate E2E multi-CLI vêm no pacote.',
   highlights: [
+    {
+      title: 'Multi-CLI na mesma missão',
+      detail:
+        'Advisors de Kimi, Grok, Agy, OpenCode, OMP e Claude abrem PTY físico, chamam tools nexus_* e submetem handoff. Participação por capacidade, não por allowlist estática. Quem não se confina sozinho roda no Seatbelt do Nexus (projeto read-only, HOME privado, rede do binário).',
+    },
+    {
+      title: 'Claude Maestro com sessão viva',
+      detail:
+        'O vault e o write do Keychain usam só o slice claudeAiOauth (sem o mapa gordo de MCP). Spawn governado / HOME isolado exige access token real — email sozinho não passa. Multi-conta deixa de corromper o login nativo.',
+    },
     {
       title: 'O worker volta a conseguir commitar',
       detail:

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.19.33 — Mais de Uma Cabeça
+
+Data: 2026-07-28
+
+Release de produção do multi-CLI + hardening de auth Claude (a 0.19.32 ficou
+com tag/build, mas o gate E2E multi-CLI não fechou PASS no artefato final).
+
+### Multi-CLI operacional
+
+- **Advisors multi-CLI no gate e na missão**: Kimi, Grok, Agy, OpenCode, OMP e
+  Claude (quando não for Maestro) entram como participantes com PTY, tools
+  `nexus_*` e handoff; evidência registra tier (confined vs advisory).
+- **Kimi headless sem `--auto` + `-p`**: o CLI rejeita a combinação; headless
+  usa só prompt mode; YOLO interativo mantém `--auto`.
+- **Kimi default k3** no catálogo/rota de worker.
+- **YOLO advisory** preservado para CLIs advisory-unconfined.
+- **Merge-council / reviewer read-only** enxerga `nexus_merge_review_submit`.
+- **Timeout da missão real** alinhado ao council (~20 min).
+
+### Claude Keychain e Maestro
+
+- **Slim write**: vault e Keychain gravam só `{ claudeAiOauth }` (~0,5 KB), sem
+  o mapa `mcpOAuth` (~11 KB) que quebrava o `security -i` (>3500 bytes).
+- **Fallback de write** via arquivo 0600 se o path interativo falhar.
+- **Sessão viva ≠ identidade**: email em `oauthAccount` sozinho não prova
+  login; spawn governado / HOME isolado exige access token utilizável.
+
+### Herdado da 0.19.32
+
+Tudo abaixo (worker commit, multi-CLI confinement, prova dual Codex+Claude
+orchestrator, Codex sandbox Darwin, etc.) permanece na linha 0.19.x.
+
 ## 0.19.32 — Mais de Uma Cabeça
 
 Data: 2026-07-27
