@@ -739,16 +739,6 @@ async function drivePrevcAutopilotUnlocked(input: {
       input.allowExecutionExit,
       sealedPlanCompleted,
     );
-    if (action === "complete") {
-      return Object.freeze({ state: "complete", transitions });
-    }
-    if (action === "wait-execution") {
-      return Object.freeze({
-        state: "execution",
-        transitions,
-        reason: "planned tasks are not all integrated",
-      });
-    }
     const advanceCurrentStage = () => {
       assertRevisionAuthority();
       const next = workflowStageSchema.parse(nextWorkflowStage(route, stage));
@@ -789,19 +779,65 @@ async function drivePrevcAutopilotUnlocked(input: {
         suite.handoffs,
       );
     };
-    const recoveredFinalHandoff = suite.handoffs
-      .list({
-        missionId: input.missionId,
-        includeDelivered: true,
-      })
-      .find(
-        (handoff) =>
-          handoff.fromAgent === "nexus-prevc-autopilot" &&
-          handoff.evidenceTrust === "nexus-trusted" &&
-          handoff.evidenceBinding?.workflowRevision === workflowRevision &&
-          handoff.evidenceIds.length > 0 &&
-          handoff.evidenceIds.every((id) => id.startsWith("milestone:")),
+    const findFinalHandoff = () =>
+      suite.handoffs
+        .list({
+          missionId: input.missionId,
+          includeDelivered: true,
+        })
+        .find(
+          (handoff) =>
+            handoff.fromAgent === "nexus-prevc-autopilot" &&
+            handoff.evidenceTrust === "nexus-trusted" &&
+            handoff.evidenceBinding?.workflowRevision === workflowRevision &&
+            handoff.evidenceIds.length > 0 &&
+            handoff.evidenceIds.every((id) => id.startsWith("milestone:")),
+        );
+    if (action === "complete") {
+      // Orchestrators may have advanced PREVC to complete before the atomic
+      // receipt existed. Recover the final trusted handoff so Ralph can close.
+      const existing = findFinalHandoff();
+      if (existing) {
+        return Object.freeze({
+          state: "complete",
+          transitions,
+          finalHandoffId: existing.id,
+          reason: "final PREVC transition awaits the atomic mission-step receipt",
+        });
+      }
+      const currentEvidenceIds = service.listCurrentPersistedEvidenceIds(
+        input.missionId,
       );
+      const sourceEvidenceIds = currentEvidenceIds.filter(
+        (id) => !id.startsWith("milestone:"),
+      );
+      if (sourceEvidenceIds.length === 0) {
+        return Object.freeze({
+          state: "complete",
+          transitions,
+          reason: "complete without recoverable final validation evidence",
+        });
+      }
+      validatedEvidenceIds = service.recordMilestoneValidationEvidence(
+        input.missionId,
+        sourceEvidenceIds,
+      );
+      const handoff = publishFinalReceiptEvidence();
+      return Object.freeze({
+        state: "complete",
+        transitions,
+        finalHandoffId: handoff.id,
+        reason: "final PREVC transition awaits the atomic mission-step receipt",
+      });
+    }
+    if (action === "wait-execution") {
+      return Object.freeze({
+        state: "execution",
+        transitions,
+        reason: "planned tasks are not all integrated",
+      });
+    }
+    const recoveredFinalHandoff = findFinalHandoff();
     if (
       recoveredFinalHandoff &&
       (stage.startsWith("validation") || stage === "confirmation")

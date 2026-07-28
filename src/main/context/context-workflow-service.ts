@@ -645,7 +645,13 @@ export class ContextWorkflowService {
     if (!mission || !workflow) {
       throw new Error('mission step requires a frozen PREVC workflow');
     }
-    if (workflow.stage === 'complete') {
+    // A premature MCP/orchestrator advance may park the workflow at complete
+    // before Ralph receipts exist. Pending milestones may still close against
+    // the current binding without moving PREVC again.
+    if (
+      workflow.stage === 'complete' &&
+      mission.milestones.every((milestone) => milestone.status === 'done')
+    ) {
       throw new Error('mission PREVC workflow is already complete');
     }
     if (this.#hasMissionStepReceipt(db, missionId, stepId)) {
@@ -741,16 +747,21 @@ export class ContextWorkflowService {
     workflow: WorkflowState,
     isFinalMilestone: boolean,
   ): WorkflowState {
+    if (workflow.stage === 'complete') return workflow;
     const requestedNext =
       workflow.route[workflow.route.indexOf(workflow.stage) + 1] ?? 'complete';
     // More milestones than route transitions is valid. Once PREVC reaches its
     // last gate, non-final milestones receive immutable checkpoint receipts at
     // the current revision; only the final milestone may cross to complete.
     if (requestedNext === 'complete' && !isFinalMilestone) return workflow;
-    let next = this.advance(missionId, requestedNext);
+    let next = this.advance(missionId, requestedNext, {
+      allowFinalComplete: true,
+    });
     while (isFinalMilestone && next.stage !== 'complete') {
       const index = next.route.indexOf(next.stage);
-      next = this.advance(missionId, next.route[index + 1] ?? 'complete');
+      next = this.advance(missionId, next.route[index + 1] ?? 'complete', {
+        allowFinalComplete: true,
+      });
     }
     return next;
   }
@@ -1282,7 +1293,13 @@ export class ContextWorkflowService {
     if (!mission || !workflow) {
       throw new Error('milestone attestation requires a frozen mission');
     }
-    if (!workflow.stage.startsWith('validation')) {
+    const validationCompleted = workflow.completedStages.some((stage) =>
+      stage.startsWith('validation'),
+    );
+    if (
+      !workflow.stage.startsWith('validation') &&
+      !(workflow.stage === 'complete' && validationCompleted)
+    ) {
       throw new Error('milestone attestations require successful final validation');
     }
     const sourceEvidenceIds = [...new Set(rawSourceEvidenceIds)].sort();
@@ -1477,7 +1494,16 @@ export class ContextWorkflowService {
     return Object.freeze({ report, gate: council.evaluate() });
   }
 
-  advance(missionId: string, requestedNext: WorkflowStage): WorkflowState {
+  advance(
+    missionId: string,
+    requestedNext: WorkflowStage,
+    options: { readonly allowFinalComplete?: boolean } = {},
+  ): WorkflowState {
+    if (requestedNext === 'complete' && !options.allowFinalComplete) {
+      throw new Error(
+        'final PREVC complete transition is owned by the atomic mission-step receipt path',
+      );
+    }
     const stored = this.#store.getContract(missionId);
     const current = this.#store.getWorkflow(missionId);
     if (!stored || !current) throw new Error('mission has no frozen workflow');

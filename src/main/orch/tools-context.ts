@@ -927,7 +927,7 @@ const sensorTool: McpToolDef = {
 const advanceTool: McpToolDef = {
   name: 'nexus_workflow_advance',
   description:
-    'Ask Nexus to advance exactly one PREVC stage. Nexus derives reviews, sensor evidence, context revision and integrated Git state; callers cannot declare done.',
+    'Ask Nexus to advance exactly one non-final PREVC stage. Nexus derives reviews, sensor evidence, context revision and integrated Git state; callers cannot declare done or advance to complete (owned by the atomic mission-step receipt).',
   inputSchema: {
     type: 'object',
     properties: { missionId: { type: 'string' }, next: { type: 'string' } },
@@ -937,6 +937,11 @@ const advanceTool: McpToolDef = {
     if (ctx.role === 'worker') throw new Error('only an orchestrator can advance workflow');
     const input = z.object({ missionId: identifier, next: workflowStageSchema }).strict().parse(args);
     assertMission(ctx, input.missionId);
+    if (input.next === 'complete') {
+      throw new Error(
+        'final PREVC complete transition is owned by the atomic mission-step receipt path',
+      );
+    }
     return getContextWorkflowService(ctx.scope).advance(input.missionId, input.next);
   },
 };

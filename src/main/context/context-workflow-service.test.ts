@@ -381,6 +381,9 @@ describe('native context workflow service', () => {
       { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
     );
     service.advance('mission-a', 'validation-primary');
+    expect(() => service.advance('mission-a', 'complete')).toThrow(
+      /atomic mission-step receipt path/i,
+    );
     const binding = service.getMissionWorkflow('mission-a').workflow!.binding;
     recordTrustedSensor(manager, scope, binding, 'sensor-typecheck', 'typecheck');
     recordTrustedSensor(manager, scope, binding, 'sensor-unit', 'unit');

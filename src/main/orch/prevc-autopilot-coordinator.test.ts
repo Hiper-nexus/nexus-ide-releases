@@ -71,6 +71,7 @@ function milestoneIds(): string[] {
 function createWorld(
   options: {
     readonly sensorPasses?: boolean;
+    readonly prematureComplete?: boolean;
     readonly review?: (
       assertCurrentAuthority: () => void,
       mutate: () => void,
@@ -148,24 +149,50 @@ function createWorld(
     sessionId: `main:${missionId}`,
     provider: "nexus-main",
   };
-  let workflow = {
-    risk: contract.risk,
-    binding: {
-      projectId: scope.projectId,
-      checkoutId: scope.checkoutId,
-      missionId,
-      contractHash: contract.contractHash,
-      contextHash: contract.contextRevision,
-      baseSha: BASE_SHA,
-      headSha: BASE_SHA,
-      diffHash: EMPTY_DIFF,
-    },
-    route: contract.route,
-    stage: "execution" as WorkflowStage,
-    completedStages: ["planning" as WorkflowStage],
-    reviewers: [],
-    revision: 2,
-  };
+  let workflow = options.prematureComplete
+    ? {
+        risk: contract.risk,
+        binding: {
+          projectId: scope.projectId,
+          checkoutId: scope.checkoutId,
+          missionId,
+          contractHash: contract.contractHash,
+          contextHash: contract.contextRevision,
+          baseSha: BASE_SHA,
+          headSha: FINAL_SHA,
+          diffHash: FINAL_DIFF,
+        },
+        route: contract.route,
+        stage: "complete" as WorkflowStage,
+        completedStages: [
+          "planning" as WorkflowStage,
+          "execution" as WorkflowStage,
+          "validation-primary" as WorkflowStage,
+        ],
+        reviewers: [],
+        revision: 3,
+      }
+    : {
+        risk: contract.risk,
+        binding: {
+          projectId: scope.projectId,
+          checkoutId: scope.checkoutId,
+          missionId,
+          contractHash: contract.contractHash,
+          contextHash: contract.contextRevision,
+          baseSha: BASE_SHA,
+          headSha: BASE_SHA,
+          diffHash: EMPTY_DIFF,
+        },
+        route: contract.route,
+        stage: "execution" as WorkflowStage,
+        completedStages: ["planning" as WorkflowStage],
+        reviewers: [],
+        revision: 2,
+      };
+  let currentEvidenceIds: string[] = options.prematureComplete
+    ? ["sensor:unit", "review:final"]
+    : [];
   let receipt: TaskPlanReceipt = {
     version: 1,
     missionId,
@@ -286,7 +313,6 @@ function createWorld(
     },
   ];
   const handoffs: Handoff[] = [];
-  let currentEvidenceIds: string[] = [];
   const sensorCalls = vi.fn();
   const reviewCalls = vi.fn();
   const recordMilestones = vi.fn(
@@ -774,6 +800,38 @@ describe("production guided PREVC post-merge bridge", () => {
     expect(world.reviewCalls).toHaveBeenCalledOnce();
     expect(world.publishFinalHandoff).toHaveBeenCalledOnce();
     expect(world.handoffs).toHaveLength(1);
+    expect(world.requestDriverTick).toHaveBeenCalledOnce();
+  });
+
+  it("recovers final receipt when workflow reached complete without the atomic path", async () => {
+    const world = createWorld({ prematureComplete: true });
+
+    const result = await runGuidedPrevcPostMergeBridge(
+      world.scope,
+      world.missionId,
+      world.dependencies,
+    );
+
+    expect(result).toMatchObject({
+      applicable: true,
+      ready: true,
+      driverWakeRequested: true,
+      autopilot: {
+        state: "complete",
+        finalHandoffId: "handoff-final-1",
+        reason: expect.stringMatching(/atomic mission-step receipt/i),
+      },
+    });
+    expect(world.sensorCalls).not.toHaveBeenCalled();
+    expect(world.reviewCalls).not.toHaveBeenCalled();
+    expect(world.recordMilestones).toHaveBeenCalledOnce();
+    expect(world.publishFinalHandoff).toHaveBeenCalledOnce();
+    expect(world.handoffs).toHaveLength(1);
+    expect(world.handoffs[0]).toMatchObject({
+      fromAgent: "nexus-prevc-autopilot",
+      evidenceTrust: "nexus-trusted",
+      evidenceIds: milestoneIds(),
+    });
     expect(world.requestDriverTick).toHaveBeenCalledOnce();
   });
 
