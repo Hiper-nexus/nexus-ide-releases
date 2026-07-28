@@ -130,6 +130,9 @@ describe('MCP effect policy', () => {
       'nexus_handoff_submit',
       'nexus_handoff_ack',
       'nexus_worker_heartbeat',
+      // Merge/plan council submit: read-only reviewers must list and call these.
+      'nexus_merge_review_submit',
+      'nexus_review_submit',
     ]) {
       expect(isToolAllowedForReadOnlyContext(tool), tool).toBe(true);
     }
@@ -143,6 +146,7 @@ describe('MCP effect policy', () => {
       'nexus_pane_spawn',
       'nexus_route_task',
       'nexus_context_draft_apply',
+      'nexus_merge_task',
       'nexus_future_unknown_tool',
     ]) {
       expect(isToolAllowedForReadOnlyContext(tool), tool).toBe(false);

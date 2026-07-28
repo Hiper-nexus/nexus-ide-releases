@@ -153,6 +153,13 @@ const READ_ONLY_CONTEXT_METADATA_TOOLS = new Set([
   'handoff_submit',
   'handoff_ack',
   'worker_heartbeat',
+  // Merge council reviewers are spawned readOnly=true. The submit handler
+  // revalidates the opaque review session + PTY + checkout and never writes
+  // the workspace. Without this exact name, tools/list hides the endpoint and
+  // the council burns the full timeout after a clean inspection (gate 0.19.32:
+  // "nexus_merge_review_submit endpoint is not exposed").
+  'merge_review_submit',
+  'review_submit',
 ]);
 
 /** Bounded local controls that do not change workspace or external data. */
