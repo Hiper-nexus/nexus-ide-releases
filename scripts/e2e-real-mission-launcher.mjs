@@ -665,6 +665,22 @@ export function stageAdvisorAuthentication(
     path.join(home, ".kimi-code", "credentials"),
     { label: "Kimi Code credentials file", privateRoot: home },
   );
+  // Credentials alone are not enough to run: kimi refuses any model that its
+  // config.toml does not declare, and dies at startup with
+  //   [config.invalid] Model "<id>" is not configured in config.toml
+  // The isolated HOME has no config, so the advisor is spawned and then
+  // immediately fails. Stage the operator's config next to the credentials.
+  if (kimiStaged) {
+    stageAdvisorAuthFile(
+      path.join(source, ".kimi-code", "config.toml"),
+      path.join(home, ".kimi-code"),
+      {
+        label: "Kimi Code model configuration",
+        requirePrivateMode: false,
+        privateRoot: home,
+      },
+    );
+  }
   statuses.kimi = report("kimi", kimiStaged ? "staged" : "skipped");
 
   // omp: ~/.omp/agent/agent.db (+ sqlite -shm/-wal sidecars when present)
