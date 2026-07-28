@@ -403,7 +403,7 @@ describe('manual GitHub release publication', () => {
       expect(resolveSecurityAssets(
         fixture.securityDir,
         fixture.receipt,
-      )).toHaveLength(7);
+      )).toHaveLength(8);
       fs.writeFileSync(
         path.join(fixture.securityDir, 'undeclared-secret.txt'),
         'private',
@@ -1170,6 +1170,18 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
     path.join(securityDir, 'real-mission-evidence.json'),
     evidence,
   );
+  const claudeEvidence = JSON.stringify({
+    ...physicalEvidence,
+    panes: (physicalEvidence.panes ?? []).map((pane) =>
+      pane?.role === 'orchestrator'
+        ? { ...pane, adapterId: 'claude' }
+        : pane,
+    ),
+  });
+  fs.writeFileSync(
+    path.join(securityDir, 'real-mission-evidence-claude-orchestrator.json'),
+    claudeEvidence,
+  );
   const receipt = {
     schemaVersion: 4,
     verifiedAt: '2026-07-23T00:00:00.000Z',
@@ -1187,11 +1199,16 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
         name: 'real-mission-evidence.json',
         sha256: digest(evidence),
       },
+      e2eEvidenceClaudeOrchestrator: {
+        name: 'real-mission-evidence-claude-orchestrator.json',
+        sha256: digest(claudeEvidence),
+      },
     },
     verification: {
       signedNotarized: true,
       realMissionE2E: true,
       physicalProductWizard: true,
+      physicalClaudeOrchestrator: true,
       singleProductMission: true,
       sameCommitAndArtifacts: true,
       tagSignatureVerified: false,
@@ -1216,6 +1233,7 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
       files,
       verification: {
         physicalProductWizard: true,
+        physicalClaudeOrchestrator: true,
       },
       releaseArtifacts: {
         signingIdentity:
@@ -1225,6 +1243,10 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
         e2eEvidence: {
           ...receipt.artifacts.e2eEvidence,
           bytes: Buffer.byteLength(evidence),
+        },
+        e2eEvidenceClaudeOrchestrator: {
+          ...receipt.artifacts.e2eEvidenceClaudeOrchestrator,
+          bytes: Buffer.byteLength(claudeEvidence),
         },
       },
     };

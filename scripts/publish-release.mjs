@@ -415,6 +415,10 @@ export function resolveSecurityAssets(securityDir, receipt) {
       receipt.artifacts.e2eEvidence.name ||
     manifest?.releaseArtifacts?.e2eEvidence?.sha256 !==
       receipt.artifacts.e2eEvidence.sha256 ||
+    manifest?.releaseArtifacts?.e2eEvidenceClaudeOrchestrator?.name !==
+      receipt.artifacts.e2eEvidenceClaudeOrchestrator?.name ||
+    manifest?.releaseArtifacts?.e2eEvidenceClaudeOrchestrator?.sha256 !==
+      receipt.artifacts.e2eEvidenceClaudeOrchestrator?.sha256 ||
     !Array.isArray(manifest.files)
   ) {
     throw new Error('security manifest and candidate receipt are not coherent');
@@ -443,10 +447,22 @@ export function resolveSecurityAssets(securityDir, receipt) {
   ) {
     throw new Error('security manifest file inventory is incoherent');
   }
+  const claudeEvidenceName =
+    receipt.artifacts.e2eEvidenceClaudeOrchestrator?.name;
+  if (
+    typeof claudeEvidenceName !== 'string' ||
+    path.basename(claudeEvidenceName) !== claudeEvidenceName ||
+    claudeEvidenceName === receipt.artifacts.e2eEvidence.name
+  ) {
+    throw new Error(
+      'candidate receipt is missing the sealed Claude orchestrator evidence asset',
+    );
+  }
   const expectedSealedNames = [
     ...manifestNames,
     'security-manifest.json',
     receipt.artifacts.e2eEvidence.name,
+    claudeEvidenceName,
   ];
   if (new Set(expectedSealedNames).size !== expectedSealedNames.length) {
     throw new Error('security manifest contains duplicate reserved assets');
@@ -488,6 +504,17 @@ export function resolveSecurityAssets(securityDir, receipt) {
     sealedEvidence?.sha256 !== receipt.artifacts.e2eEvidence.sha256
   ) {
     throw new Error('candidate receipt E2E evidence seal is incoherent');
+  }
+  const sealedClaudeEvidence = sealed.find(
+    (entry) => entry.name === claudeEvidenceName,
+  );
+  if (
+    sealedClaudeEvidence?.sha256 !==
+    receipt.artifacts.e2eEvidenceClaudeOrchestrator.sha256
+  ) {
+    throw new Error(
+      'candidate receipt Claude orchestrator E2E evidence seal is incoherent',
+    );
   }
   const actual = fs
     .readdirSync(securityDir, { withFileTypes: true });
