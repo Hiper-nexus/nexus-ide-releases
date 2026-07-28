@@ -652,11 +652,6 @@ export async function spawnPaneAndMaybePrompt(
         'nativo builtin confiável para worker autônomo isolado',
     );
   }
-  if (options.adapterId === 'omp' && options.readOnly === true) {
-    throw new Error(
-      'OMP does not provide enforceable read-only native confinement',
-    );
-  }
   // Circuit half-open / closed only for auto traffic; explicit spawns still try.
   // Failures below trip the breaker for future routeTask multi-score.
   // Defesa em profundidade contra modelo-fantasma (caso de campo 17/07): a
@@ -708,7 +703,14 @@ export async function spawnPaneAndMaybePrompt(
   };
   // Oh My Pi dual transport: rpc-ui for deterministic lifecycle, PTY for full
   // MCP inject. `auto` prefers rpc and falls back to PTY on failure.
-  if (options.adapterId === 'omp' && options.role !== 'orchestrator') {
+  // Read-only advisory OMP must stay on PTY: the Nexus Seatbelt profile wraps
+  // the process (advisory-process-sandbox). rpc-ui has no PTY to confine, and
+  // omp-rpc is explicitly non-advisory in mission-advisory.
+  if (
+    options.adapterId === 'omp' &&
+    options.role !== 'orchestrator' &&
+    options.readOnly !== true
+  ) {
     const transport = getOrchSettings().ompMissionTransport;
     if (transport === 'rpc' || transport === 'auto') {
       try {

@@ -583,24 +583,47 @@ describe('omp rpc spawn transaction', () => {
     expect(onPromptAccepted.mock.calls[0]?.[2]).toContain('marker');
   });
 
-  it('fails closed before any OMP spawn when read-only is required', async () => {
-    for (const transport of ['auto', 'pty'] as const) {
+  it('routes read-only advisory OMP through PTY Seatbelt, never rpc-ui', async () => {
+    const { isBuiltinAdapter } = await import('../adapters/adapter-registry');
+    vi.mocked(isBuiltinAdapter).mockImplementation(
+      (id: string) => id === 'codex' || id === 'omp',
+    );
+
+    for (const transport of ['auto', 'rpc', 'pty'] as const) {
       stubs.orchSettings.ompMissionTransport = transport;
+      stubs.ompRpcSpawn.mockClear();
+      stubs.requestPaneSpawn.mockClear();
+      stubs.requestPaneSpawn.mockResolvedValueOnce({
+        ok: true,
+        paneId: `pane-omp-ro-${transport}`,
+        sessionId: `session-omp-ro-${transport}`,
+      });
+
       await expect(
         spawnPaneAndMaybePrompt({
           adapterId: 'omp',
           missionId: 'm1',
           role: 'worker',
-          prompt: 'review only',
           readOnly: true,
           scope,
         }),
-      ).rejects.toThrow(/governed_worker_spawn_unsupported/i);
+      ).resolves.toEqual({
+        paneId: `pane-omp-ro-${transport}`,
+        sessionId: `session-omp-ro-${transport}`,
+      });
+
+      expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
+      expect(stubs.requestPaneSpawn).toHaveBeenCalledOnce();
+      expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          adapterId: 'omp',
+          readOnly: true,
+          missionId: 'm1',
+        }),
+      );
     }
 
-    expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
-    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
-    expect(stubs.missionPanesRecord).not.toHaveBeenCalled();
+    vi.mocked(isBuiltinAdapter).mockImplementation((id: string) => id === 'codex');
   });
 
   it('não persiste pane nem abre fallback PTY após uma morte pós-spawn ambígua', async () => {
