@@ -6,6 +6,7 @@ import {
   claudeCredentialBlobIsUsable,
   readActiveClaudeCredential,
 } from './claude-credential';
+import { realUserHome } from '../path-resolver';
 
 /**
  * Subscription-auth priority (user directive): CLIs signed in via their own
@@ -306,25 +307,64 @@ export function agyKeychainBlobIsUsable(blob: string): boolean {
  * for the normal TTL — the provider snapshot filters readiness per model and
  * would otherwise spawn one probe per model.
  */
-let agyKeychainMemo: { value: boolean; at: number } | null = null;
+let agyKeychainMemo: {
+  readonly home: string;
+  readonly value: boolean;
+  readonly at: number;
+} | null = null;
+
+export interface AgyKeychainProbeOptions {
+  /** Test seam; production resolves the OS-account HOME, never process HOME. */
+  readonly nativeHome?: string;
+}
 
 export function agyKeychainCredentialIsUsable(
   execImpl: typeof execFileSync = execFileSync,
+  options: AgyKeychainProbeOptions = {},
 ): boolean {
   if (process.platform !== 'darwin') return false;
-  if (agyKeychainMemo && Date.now() - agyKeychainMemo.at < CACHE_TTL_MS) {
+  const requestedHome = options.nativeHome ?? realUserHome();
+  if (
+    !path.isAbsolute(requestedHome) ||
+    requestedHome.includes('\0')
+  ) {
+    return false;
+  }
+  let nativeHome: string;
+  try {
+    nativeHome = fs.realpathSync.native(requestedHome);
+    if (!fs.statSync(nativeHome).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  if (
+    agyKeychainMemo?.home === nativeHome &&
+    Date.now() - agyKeychainMemo.at < CACHE_TTL_MS
+  ) {
     return agyKeychainMemo.value;
   }
   let value = false;
   try {
     const raw = execImpl(
-      'security',
+      '/usr/bin/security',
       ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'],
       {
         stdio: 'pipe',
         timeout: 5_000,
         killSignal: 'SIGKILL',
         encoding: 'utf8',
+        // Electron release gates deliberately isolate process.env.HOME. AGY
+        // 1.1, however, authenticates against the native login keychain and
+        // also spawns with that OS-account HOME. `security` follows HOME when
+        // selecting the default keychain, so inheriting the isolation path
+        // reports item-not-found for a session the AGY binary can use.
+        env: {
+          HOME: nativeHome,
+          USERPROFILE: nativeHome,
+          PATH: '/usr/bin:/bin',
+          LANG: 'C',
+          LC_ALL: 'C',
+        },
       },
     );
     value = agyKeychainBlobIsUsable(typeof raw === 'string' ? raw : '');
@@ -332,7 +372,7 @@ export function agyKeychainCredentialIsUsable(
     // Locked keychain / TCC denial inside packaged Electron → fail closed.
     value = false;
   }
-  agyKeychainMemo = { value, at: Date.now() };
+  agyKeychainMemo = { home: nativeHome, value, at: Date.now() };
   return value;
 }
 
@@ -500,12 +540,12 @@ export function detectSubscriptionAuth(
         return true;
       }
       // The antigravity CLI route writes no oauth_creds.json: its session
-      // token lives in the login keychain. File-only detection reported
-      // "login necessário" for a signed-in CLI. A non-default home cannot
-      // redirect the macOS keychain, so only the real operator home probes it.
+      // token lives in the native login keychain. File-only detection reported
+      // "login necessário" for a signed-in CLI. AGY 1.1 is intentionally
+      // launched with OS-account HOME even when Electron itself has an
+      // isolated HOME, so readiness must query that same native authority.
       if (options.probeAgyKeychain === false) return false;
       if (options.agyKeychainProbe) return options.agyKeychainProbe();
-      if (home !== os.homedir()) return false;
       return agyKeychainCredentialIsUsable();
     case 'kimi':
       // Require a non-empty access/refresh token. The zero-byte oauth marker

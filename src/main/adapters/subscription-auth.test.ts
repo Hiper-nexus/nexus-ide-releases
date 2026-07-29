@@ -200,6 +200,7 @@ describe('agyKeychainCredentialIsUsable', () => {
 
   it('memoizes the keychain probe so per-model readiness spawns one process', () => {
     if (process.platform !== 'darwin') return;
+    const nativeHome = tempHome();
     const exec = vi.fn(
       () =>
         `go-keyring-base64:${Buffer.from(
@@ -207,10 +208,61 @@ describe('agyKeychainCredentialIsUsable', () => {
           'utf8',
         ).toString('base64')}`,
     ) as unknown as typeof import('node:child_process').execFileSync;
-    expect(agyKeychainCredentialIsUsable(exec)).toBe(true);
-    expect(agyKeychainCredentialIsUsable(exec)).toBe(true);
-    expect(agyKeychainCredentialIsUsable(exec)).toBe(true);
+    expect(
+      agyKeychainCredentialIsUsable(exec, { nativeHome }),
+    ).toBe(true);
+    expect(
+      agyKeychainCredentialIsUsable(exec, { nativeHome }),
+    ).toBe(true);
+    expect(
+      agyKeychainCredentialIsUsable(exec, { nativeHome }),
+    ).toBe(true);
     expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds the lookup to native HOME when Electron HOME is isolated', () => {
+    if (process.platform !== 'darwin') return;
+    const nativeHome = tempHome();
+    const canonicalNativeHome = fs.realpathSync.native(nativeHome);
+    const isolatedHome = tempHome();
+    const exec = vi.fn(
+      (
+        _file: string,
+        _args: readonly string[],
+        options: { env?: NodeJS.ProcessEnv },
+      ) => {
+        if (
+          options.env?.HOME !== canonicalNativeHome ||
+          options.env?.USERPROFILE !== canonicalNativeHome
+        ) {
+          throw new Error('wrong login keychain');
+        }
+        return `go-keyring-base64:${Buffer.from(
+          JSON.stringify({ auth_method: 'oauth', token: 'tok' }),
+          'utf8',
+        ).toString('base64')}`;
+      },
+    ) as unknown as typeof import('node:child_process').execFileSync;
+    const previousHome = process.env.HOME;
+    process.env.HOME = isolatedHome;
+    try {
+      expect(
+        agyKeychainCredentialIsUsable(exec, { nativeHome }),
+      ).toBe(true);
+      expect(exec).toHaveBeenCalledWith(
+        '/usr/bin/security',
+        ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'],
+        expect.objectContaining({
+          env: expect.objectContaining({
+            HOME: canonicalNativeHome,
+            USERPROFILE: canonicalNativeHome,
+          }),
+        }),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
   });
 
   it('fails closed when the keychain lookup throws', () => {
@@ -483,10 +535,18 @@ describe('detectSubscriptionAuth', () => {
     const prev = process.env.GEMINI_CLI_HOME;
     process.env.GEMINI_CLI_HOME = geminiHome;
     try {
-      expect(detectSubscriptionAuth('agy', home)).toBe(false);
+      expect(
+        detectSubscriptionAuth('agy', home, undefined, {
+          probeAgyKeychain: false,
+        }),
+      ).toBe(false);
       // Install tree alone is not a live session.
       touch(geminiHome, 'antigravity');
-      expect(detectSubscriptionAuth('agy', home)).toBe(false);
+      expect(
+        detectSubscriptionAuth('agy', home, undefined, {
+          probeAgyKeychain: false,
+        }),
+      ).toBe(false);
       fs.writeFileSync(
         path.join(geminiHome, 'oauth_creds.json'),
         JSON.stringify({ access_token: 'at', refresh_token: 'rt' }),
@@ -506,7 +566,11 @@ describe('detectSubscriptionAuth', () => {
       JSON.stringify({ active: null, old: ['user@example.com'] }),
     );
     touch(path.join(home, '.gemini'), 'antigravity');
-    expect(detectSubscriptionAuth('agy', home)).toBe(false);
+    expect(
+      detectSubscriptionAuth('agy', home, undefined, {
+        probeAgyKeychain: false,
+      }),
+    ).toBe(false);
   });
 
   it('detects AGY from the login keychain when ~/.gemini has no oauth files', () => {
@@ -536,11 +600,13 @@ describe('detectSubscriptionAuth', () => {
     ).toBe(false);
   });
 
-  it('never reaches the AGY keychain for a non-default home', () => {
-    // A non-default home cannot redirect the macOS keychain, so a temp home
-    // must stay file-only and report logged out — even on a machine whose
-    // real login keychain holds a live antigravity token.
-    expect(detectSubscriptionAuth('agy', tempHome())).toBe(false);
+  it('uses native AGY keychain authority even when process HOME is isolated', () => {
+    const isolatedHome = tempHome();
+    expect(
+      detectSubscriptionAuth('agy', isolatedHome, undefined, {
+        agyKeychainProbe: () => true,
+      }),
+    ).toBe(true);
   });
 
   it('fails closed for a custom adapter without an auth detector', () => {
