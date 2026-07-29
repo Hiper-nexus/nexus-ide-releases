@@ -19,7 +19,7 @@ import { listAccounts } from '../persistence/account-store';
 import {
   hasRuntimeKey,
   providerAuthStrategy,
-  providerAuthStrategyAuthoritative,
+  providerAuthStrategyAuthoritativeAsync,
 } from '../persistence/provider-config-store';
 
 /**
@@ -90,7 +90,7 @@ export interface PreSpawnProbeDeps {
   authoritativeAuthStrategy?(
     adapterId: string,
     model?: string,
-  ): AuthStrategy;
+  ): AuthStrategy | Promise<AuthStrategy>;
 }
 
 export interface PreSpawnProbeOptions {
@@ -137,7 +137,7 @@ const defaultDeps: PreSpawnProbeDeps = {
   authStrategy: (adapterId, model) =>
     providerAuthStrategy(adapterId, model),
   authoritativeAuthStrategy: (adapterId, model) =>
-    providerAuthStrategyAuthoritative(adapterId, model),
+    providerAuthStrategyAuthoritativeAsync(adapterId, model),
 };
 
 function hintFor(adapter: ProbeAdapterView, fallback: string): string {
@@ -173,12 +173,21 @@ async function probe(
     effectiveModel,
   );
   const managedAccountAvailable = deps.listAccounts(adapterId).length > 0;
+  const authStrategyResolver =
+    adapterId === 'agy' && deps.authoritativeAuthStrategy
+      ? deps.authoritativeAuthStrategy
+      : deps.authStrategy;
+  const currentAuthStrategy = await authStrategyResolver(
+    adapterId,
+    effectiveModel,
+  );
 
-  // This is the last spawn barrier, so a readiness regression after squad
-  // selection must fail closed. A stale Nexus account row is not proof of
-  // current provider authentication.
+  // AGY's Keychain-only login needs a live check because a user can complete
+  // OAuth while the renderer's 60s status cache still says login-needed.
+  // The authority probe is asynchronous so a locked Keychain cannot freeze
+  // Electron's main loop. Other adapters retain their dedicated probes below.
   if (
-    deps.authStrategy(adapterId, effectiveModel) === 'login-needed' &&
+    currentAuthStrategy === 'login-needed' &&
     !credentiallessOpenCode
   ) {
     return {
@@ -194,6 +203,14 @@ async function probe(
   // A Nexus-managed account means the pinned-account path will validate the
   // credential (prepareAccountForSpawn already fails those cases well).
   if (managedAccountAvailable) return null;
+
+  // AGY 1.1 stores its OAuth session in the native macOS Keychain and does not
+  // create a capturable oauth_creds.json. The authoritative provider decision
+  // above probes that exact Keychain source. Requiring a file after it succeeds
+  // turns a healthy AGY login into a permanent missing-credential loop.
+  if (adapterId === 'agy' && currentAuthStrategy === 'subscription') {
+    return null;
+  }
 
   if (adapterId === 'claude') {
     // Usable session only: non-empty OAuth access token in keychain blob or

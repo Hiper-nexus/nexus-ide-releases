@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   agyKeychainBlobIsUsable,
   agyKeychainCredentialIsUsable,
+  agyKeychainCredentialIsUsableAsync,
   claudeKeychainHas,
   claudeKeychainHasAsync,
   claudeOauthEmail,
@@ -12,6 +13,7 @@ import {
   resetAgyKeychainCache,
   hasSubscriptionAuthForStatus,
   kimiCredentialsBlobIsUsable,
+  refreshAgySubscriptionAuthCache,
   refreshClaudeSubscriptionAuthCache,
   resetSubscriptionAuthCacheForTests,
   resolveAuthStrategy,
@@ -220,6 +222,96 @@ describe('agyKeychainCredentialIsUsable', () => {
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
+  it('bypasses a stale negative cache at the authoritative spawn boundary', () => {
+    if (process.platform !== 'darwin') return;
+    const nativeHome = tempHome();
+    const exec = vi.fn()
+      .mockImplementationOnce(() => {
+        throw new Error('item not found before OAuth completed');
+      })
+      .mockImplementationOnce(
+        () =>
+          `go-keyring-base64:${Buffer.from(
+            JSON.stringify({ auth_method: 'oauth', token: 'fresh-token' }),
+            'utf8',
+          ).toString('base64')}`,
+      ) as unknown as typeof import('node:child_process').execFileSync;
+
+    expect(
+      agyKeychainCredentialIsUsable(exec, { nativeHome }),
+    ).toBe(false);
+    expect(
+      agyKeychainCredentialIsUsable(exec, {
+        nativeHome,
+        bypassCache: true,
+      }),
+    ).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses one recent positive authoritative proof across adjacent spawn gates', () => {
+    if (process.platform !== 'darwin') return;
+    const nativeHome = tempHome();
+    const exec = vi.fn(
+      () =>
+        `go-keyring-base64:${Buffer.from(
+          JSON.stringify({ auth_method: 'oauth', token: 'live-token' }),
+          'utf8',
+        ).toString('base64')}`,
+    ) as unknown as typeof import('node:child_process').execFileSync;
+
+    expect(
+      agyKeychainCredentialIsUsable(exec, {
+        nativeHome,
+        bypassCache: true,
+      }),
+    ).toBe(true);
+    expect(
+      agyKeychainCredentialIsUsable(exec, {
+        nativeHome,
+        bypassCache: true,
+      }),
+    ).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('probes AGY authority asynchronously and warms the short spawn proof', async () => {
+    if (process.platform !== 'darwin') return;
+    const nativeHome = tempHome();
+    const validBlob = `go-keyring-base64:${Buffer.from(
+      JSON.stringify({ auth_method: 'oauth', token: 'live-token' }),
+      'utf8',
+    ).toString('base64')}`;
+    const asyncExec = vi.fn(
+      (
+        _file: string,
+        _args: readonly string[],
+        _options: Record<string, unknown>,
+        callback: (error: Error | null, stdout: string) => void,
+      ) => {
+        queueMicrotask(() => callback(null, validBlob));
+      },
+    ) as unknown as typeof import('node:child_process').execFile;
+
+    const proof = agyKeychainCredentialIsUsableAsync(asyncExec, {
+      nativeHome,
+      bypassCache: true,
+    });
+    expect(asyncExec).toHaveBeenCalledOnce();
+    await expect(proof).resolves.toBe(true);
+
+    const syncExec = vi.fn(() => {
+      throw new Error('recent async proof should be reused');
+    }) as unknown as typeof import('node:child_process').execFileSync;
+    expect(
+      agyKeychainCredentialIsUsable(syncExec, {
+        nativeHome,
+        bypassCache: true,
+      }),
+    ).toBe(true);
+    expect(syncExec).not.toHaveBeenCalled();
+  });
+
   it('binds the lookup to native HOME when Electron HOME is isolated', () => {
     if (process.platform !== 'darwin') return;
     const nativeHome = tempHome();
@@ -384,6 +476,39 @@ describe('detectSubscriptionAuth', () => {
       refreshClaudeSubscriptionAuthCache(home, asyncKeychainProbe),
     ).resolves.toEqual({ value: true, cacheUpdated: false });
     expect(asyncKeychainProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps AGY provider snapshots non-blocking and warms Keychain auth asynchronously', async () => {
+    const home = tempHome();
+    const model = 'gemini-3.6-flash-high';
+    const asyncKeychainProbe = vi.fn(async () => true);
+
+    expect(hasSubscriptionAuthForStatus('agy', model, home)).toBe(false);
+    await expect(
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
+    ).resolves.toEqual({ value: true, cacheUpdated: true });
+    expect(asyncKeychainProbe).toHaveBeenCalledTimes(1);
+    expect(hasSubscriptionAuthForStatus('agy', model, home)).toBe(true);
+
+    await expect(
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
+    ).resolves.toEqual({ value: true, cacheUpdated: false });
+    expect(asyncKeychainProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a negative AGY status cache hide a login completed moments later', async () => {
+    const home = tempHome();
+    const asyncKeychainProbe = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    await expect(
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
+    ).resolves.toEqual({ value: false, cacheUpdated: false });
+    await expect(
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
+    ).resolves.toEqual({ value: true, cacheUpdated: true });
+    expect(asyncKeychainProbe).toHaveBeenCalledTimes(2);
   });
 
   it('deduplicates concurrent background Keychain refreshes', async () => {

@@ -19,6 +19,10 @@ vi.mock('./subscription-auth', () => ({
   detectSubscriptionAuth: (adapterId: string) =>
     adapterId === 'grok' || adapterId === 'claude',
   claudeOauthEmail: () => 'retornoja@gmail.com',
+  refreshAgySubscriptionAuthCache: async () => ({
+    value: false,
+    cacheUpdated: false,
+  }),
 }));
 
 import { probeAdapterAuth } from './auth-probe';

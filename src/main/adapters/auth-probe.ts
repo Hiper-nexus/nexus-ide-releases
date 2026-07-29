@@ -10,6 +10,7 @@ import {
   claudeOauthEmail,
   detectSubscriptionAuth,
   hasSubscriptionAuth,
+  refreshAgySubscriptionAuthCache,
 } from './subscription-auth';
 
 /**
@@ -97,7 +98,11 @@ const OAUTH_PROBES: Record<
   agy: async () =>
     // Delegate to the shared detector (like grok/kimi) so a managed AGY account
     // under $GEMINI_CLI_HOME is recognized, not just ~/.gemini in the real home.
-    hasSubscriptionAuth('agy')
+    (await refreshAgySubscriptionAuthCache(
+      HOME,
+      undefined,
+      { authoritative: true },
+    )).value
       ? { state: 'ok', detail: 'sessão AGY local' }
       : {
           state: 'missing',

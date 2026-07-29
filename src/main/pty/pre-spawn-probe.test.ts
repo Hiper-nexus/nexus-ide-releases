@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   PreSpawnProbeError,
   assertPreSpawnProbe,
@@ -34,6 +34,15 @@ const opencodeAdapter: ProbeAdapterView = {
     loginHint: 'Run `opencode auth login`.',
   },
   models: { default: 'opencode/big-pickle' },
+};
+
+const agyAdapter: ProbeAdapterView = {
+  kind: 'cli-pty',
+  auth: {
+    method: 'oauth',
+    loginHint: 'Run `agy` and complete Google OAuth.',
+  },
+  models: { default: 'gemini-3.6-flash-high' },
 };
 
 function makeDeps(overrides: Partial<PreSpawnProbeDeps> = {}): PreSpawnProbeDeps {
@@ -174,6 +183,67 @@ describe('probePreSpawn — file-backed adapters', () => {
       code: 'missing-credential',
       adapterId: 'grok',
       hint: 'Run `grok login`.',
+    });
+  });
+
+  it('accepts AGY keychain-only auth without inventing a required OAuth file', async () => {
+    const authoritativeAuth = vi.fn(() => 'subscription' as const);
+    const deps = makeDeps({
+      getAdapter: () => agyAdapter,
+      authStrategy: () => 'subscription',
+      authoritativeAuthStrategy: authoritativeAuth,
+      hasNativeFileAuth: () => false,
+    });
+
+    expect(
+      await probePreSpawn('agy', {
+        deps,
+        failClosed: true,
+      }),
+    ).toBeNull();
+    expect(authoritativeAuth).toHaveBeenCalledOnce();
+  });
+
+  it('accepts AGY keychain auth from the authoritative spawn decision when the UI cache is stale', async () => {
+    const cachedAuth = vi.fn(() => 'login-needed' as const);
+    const authoritativeAuth = vi.fn(async () => 'subscription' as const);
+    const deps = makeDeps({
+      getAdapter: () => agyAdapter,
+      authStrategy: cachedAuth,
+      authoritativeAuthStrategy: authoritativeAuth,
+      hasNativeFileAuth: () => false,
+    });
+
+    expect(
+      await probePreSpawn('agy', {
+        deps,
+        model: 'gemini-3.6-flash-high',
+        failClosed: true,
+      }),
+    ).toBeNull();
+    expect(authoritativeAuth).toHaveBeenCalledWith(
+      'agy',
+      'gemini-3.6-flash-high',
+    );
+    expect(cachedAuth).not.toHaveBeenCalled();
+  });
+
+  it('rejects AGY when the authoritative spawn decision observes logout despite a ready UI cache', async () => {
+    const deps = makeDeps({
+      getAdapter: () => agyAdapter,
+      authStrategy: () => 'subscription',
+      authoritativeAuthStrategy: () => 'login-needed',
+      hasNativeFileAuth: () => false,
+    });
+
+    const failure = await probePreSpawn('agy', {
+      deps,
+      failClosed: true,
+    });
+    expect(failure).toEqual({
+      code: 'missing-credential',
+      adapterId: 'agy',
+      hint: 'Run `agy` and complete Google OAuth.',
     });
   });
 });

@@ -77,11 +77,12 @@ import {
   modelInfoForAdapter,
 } from '../adapters/model-catalog';
 import {
-  detectSubscriptionAuth,
   hasSubscriptionAuth,
   hasSubscriptionAuthForStatus,
+  refreshAgySubscriptionAuthCache,
   refreshClaudeSubscriptionAuthCache,
   resolveAuthStrategy,
+  type AuthDecision,
 } from '../adapters/subscription-auth';
 import {
   KIMI_TRANSIENT_MODEL_ENV_KEYS,
@@ -302,8 +303,6 @@ function authDecision(
   _selectedModel?: string,
   options: {
     statusSnapshot?: boolean;
-    /** Authority-critical spawn checks must not trust the 60s UI cache. */
-    authoritative?: boolean;
   } = {},
 ) {
   const adapter = getAdapter(adapterId);
@@ -312,9 +311,11 @@ function authDecision(
   return resolveAuthStrategy({
     authMethod,
     hasStoredKey: hasRuntimeKey(adapterId),
-    subscriptionAuthed: options.authoritative
-      ? detectSubscriptionAuth(adapterId, os.homedir())
-      : options.statusSnapshot
+    // AGY's native Keychain is always probed asynchronously before governed
+    // spawn. Synchronous settings/spawn paths consume only that warm cache so
+    // a locked login Keychain can never freeze Electron's main event loop.
+    subscriptionAuthed:
+      options.statusSnapshot || adapterId === 'agy'
         ? hasSubscriptionAuthForStatus(adapterId)
         : hasSubscriptionAuth(adapterId),
   });
@@ -332,12 +333,25 @@ export function providerAuthStrategy(
  * snapshots deliberately use the short cache; process creation must observe
  * the credential source as it exists now.
  */
-export function providerAuthStrategyAuthoritative(
+export async function providerAuthStrategyAuthoritativeAsync(
   adapterId: string,
   selectedModel?: string,
-): ProviderSettingsInfo['authStrategy'] {
-  return authDecision(adapterId, selectedModel, {
-    authoritative: true,
+): Promise<ProviderSettingsInfo['authStrategy']> {
+  if (adapterId !== 'agy') {
+    return providerAuthStrategy(adapterId, selectedModel);
+  }
+  const adapter = getAdapter(adapterId);
+  const authMethod =
+    adapter?.kind === 'cli-pty' ? adapter.auth.method : 'api_key';
+  const result = await refreshAgySubscriptionAuthCache(
+    os.homedir(),
+    undefined,
+    { authoritative: true },
+  );
+  return resolveAuthStrategy({
+    authMethod,
+    hasStoredKey: hasRuntimeKey(adapterId),
+    subscriptionAuthed: result.value,
   }).strategy;
 }
 
@@ -452,9 +466,12 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
   return { ready: true, reason: 'ready' };
 }
 
-export function providerReadiness(
+function resolveProviderReadiness(
   adapterId: string,
   selectedModel?: string,
+  options: {
+    decision?: AuthDecision;
+  } = {},
 ): ProviderReadiness {
   const infrastructure = providerInfrastructureReadiness(adapterId);
   if (!infrastructure.ready) return infrastructure;
@@ -463,7 +480,8 @@ export function providerReadiness(
   if (!adapter) return infrastructure;
 
   const effectiveModel = effectiveProviderModel(adapterId, selectedModel);
-  const decision = authDecision(adapterId, selectedModel);
+  const decision =
+    options.decision ?? authDecision(adapterId, selectedModel);
   if (decision.strategy === 'login-needed') {
     const credentiallessReady =
       isProviderAuthReadyForModel(
@@ -484,6 +502,13 @@ export function providerReadiness(
   }
 
   return { ready: true, reason: 'ready' };
+}
+
+export function providerReadiness(
+  adapterId: string,
+  selectedModel?: string,
+): ProviderReadiness {
+  return resolveProviderReadiness(adapterId, selectedModel);
 }
 
 export function isProviderReady(adapterId: string, model?: string): boolean {
@@ -544,6 +569,9 @@ function buildProviderSpawnOverrides(
   adapterId: string,
   perSpawn: ProviderPerSpawn,
   preparedAccount: PreparedAccount | null,
+  options: {
+    decision?: AuthDecision;
+  } = {},
 ): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
   const adapter = getAdapter(adapterId);
@@ -687,7 +715,9 @@ function buildProviderSpawnOverrides(
   // Subscription-first (user directive): an authenticated subscription CLI
   // never receives an API key — and inherited key vars are stripped so they
   // cannot hijack billing. The key only flows when there is no subscription.
-  const decision = authDecision(adapterId, perSpawn.model);
+  const decision =
+    options.decision ??
+    authDecision(adapterId, perSpawn.model);
   // `getKey()` may synchronously cross the macOS Keychain boundary. Keep that
   // effect behind the exact API-key decision so a healthy native subscription
   // can never stall the Electron main thread on an irrelevant vault prompt.
@@ -718,9 +748,18 @@ export function prepareProviderSpawn(
   adapterId: string,
   perSpawn: ProviderPerSpawn = {},
 ): ProviderSpawnPreparation {
+  const infrastructure = providerInfrastructureReadiness(adapterId);
+  if (!infrastructure.ready) {
+    return { ok: false, error: infrastructure.reason };
+  }
+  const spawnDecision = perSpawn.accountId
+    ? undefined
+    : authDecision(adapterId, perSpawn.model);
   const readiness = perSpawn.accountId
-    ? providerInfrastructureReadiness(adapterId)
-    : providerReadiness(adapterId, perSpawn.model);
+      ? infrastructure
+      : resolveProviderReadiness(adapterId, perSpawn.model, {
+        decision: spawnDecision,
+      });
   if (!readiness.ready) return { ok: false, error: readiness.reason };
 
   let preparedAccount: PreparedAccount | null = null;
@@ -742,6 +781,9 @@ export function prepareProviderSpawn(
         adapterId,
         perSpawn,
         preparedAccount,
+        {
+          decision: spawnDecision,
+        },
       ),
     };
   } catch (err) {
@@ -1225,11 +1267,14 @@ export function registerProviderIpc(): void {
       listAdapters().map((a) => a.id),
       () => broadcast(),
     );
-    // A Keychain-only Claude login is warmed asynchronously. The immediate
-    // provider snapshot is cache/file-metadata based and therefore cannot
-    // freeze this IPC request behind `security` for up to five seconds.
-    void refreshClaudeSubscriptionAuthCache().then(({ cacheUpdated }) => {
-      if (cacheUpdated) broadcast();
+    // Keychain-only provider logins are warmed asynchronously. The immediate
+    // snapshot stays metadata/cache-only and cannot freeze this IPC request
+    // behind `security` for up to five seconds.
+    void Promise.all([
+      refreshClaudeSubscriptionAuthCache(),
+      refreshAgySubscriptionAuthCache(),
+    ]).then((results) => {
+      if (results.some(({ cacheUpdated }) => cacheUpdated)) broadcast();
     });
     return listProviderSettingsForRenderer();
   });

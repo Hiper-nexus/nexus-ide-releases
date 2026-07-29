@@ -10,6 +10,10 @@ const spawnDeps = vi.hoisted(() => ({
   subscriptionStatusAuthed: vi.fn<
     (adapterId: string, model?: string) => boolean
   >(() => true),
+  refreshAgyAuth: vi.fn(async () => ({
+    value: true,
+    cacheUpdated: true,
+  })),
   resolveAuthStrategy: vi.fn<
     (input: {
       authMethod: string;
@@ -100,6 +104,26 @@ const opencodeAdapter = {
   },
 };
 
+const agyAdapter = {
+  ...kimiAdapter,
+  id: 'agy',
+  label: 'Antigravity',
+  bin: 'agy',
+  install: { command: 'npm install -g @google/antigravity' },
+  auth: {
+    method: 'oauth',
+    loginHint: 'agy login',
+  },
+  env: {
+    passthrough: [],
+  },
+  models: {
+    flag: '--model',
+    list: ['gemini-3.6-flash-high'],
+    default: 'gemini-3.6-flash-high',
+  },
+};
+
 const credentiallessAdapter = {
   ...kimiAdapter,
   id: 'local-agent',
@@ -130,9 +154,11 @@ vi.mock('../adapters/adapter-registry', () => ({
       ? claudeAdapter
       : id === 'kimi'
         ? kimiAdapter
-        : id === 'opencode'
-          ? opencodeAdapter
-          : id === 'local-agent'
+      : id === 'opencode'
+        ? opencodeAdapter
+        : id === 'agy'
+          ? agyAdapter
+        : id === 'local-agent'
             ? credentiallessAdapter
           : null,
   isBinResolvable: () => true,
@@ -143,6 +169,8 @@ vi.mock('../adapters/adapter-registry', () => ({
         ? '/Users/test/.kimi-code/bin/kimi'
       : id === 'opencode'
         ? '/opt/homebrew/bin/opencode'
+        : id === 'agy'
+          ? '/opt/homebrew/bin/agy'
         : id === 'local-agent'
           ? '/usr/local/bin/local-agent'
         : null,
@@ -153,6 +181,8 @@ vi.mock('../adapters/adapter-registry', () => ({
         ? '/Users/test/.kimi-code/bin/kimi'
       : id === 'opencode'
         ? '/opt/homebrew/bin/opencode'
+        : id === 'agy'
+          ? '/opt/homebrew/bin/agy'
         : id === 'local-agent'
           ? '/usr/local/bin/local-agent'
         : null,
@@ -161,6 +191,7 @@ vi.mock('../adapters/adapter-registry', () => ({
     claudeAdapter,
     kimiAdapter,
     opencodeAdapter,
+    agyAdapter,
     credentiallessAdapter,
   ],
   notifyAdaptersChanged: vi.fn(),
@@ -216,6 +247,7 @@ vi.mock('../adapters/model-catalog', () => ({
 vi.mock('../adapters/subscription-auth', () => ({
   hasSubscriptionAuth: spawnDeps.subscriptionAuthed,
   hasSubscriptionAuthForStatus: spawnDeps.subscriptionStatusAuthed,
+  refreshAgySubscriptionAuthCache: spawnDeps.refreshAgyAuth,
   refreshClaudeSubscriptionAuthCache: vi.fn(async () => ({
     value: true,
     cacheUpdated: false,
@@ -235,6 +267,7 @@ vi.mock('./account-store', () => ({
 import {
   listProviderSettings,
   prepareProviderSpawn,
+  providerAuthStrategyAuthoritativeAsync,
   providerReadiness,
 } from './provider-config-store';
 
@@ -245,6 +278,10 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.launcherKey.mockReturnValue(null);
     spawnDeps.subscriptionAuthed.mockReturnValue(true);
     spawnDeps.subscriptionStatusAuthed.mockReturnValue(true);
+    spawnDeps.refreshAgyAuth.mockResolvedValue({
+      value: true,
+      cacheUpdated: true,
+    });
     spawnDeps.resolveAuthStrategy.mockReturnValue({
       strategy: 'subscription',
       injectKey: false,
@@ -333,6 +370,66 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
 
     expect(spawnDeps.subscriptionStatusAuthed).toHaveBeenCalled();
     expect(spawnDeps.subscriptionAuthed).not.toHaveBeenCalled();
+  });
+
+  it('consumes the AGY auth proof warmed before spawn without synchronous Keychain access', () => {
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.subscriptionStatusAuthed.mockReturnValue(true);
+    spawnDeps.resolveAuthStrategy.mockImplementation((input) =>
+      input.subscriptionAuthed
+        ? {
+            strategy: 'subscription',
+            injectKey: false,
+            suppressKeyEnv: true,
+          }
+        : {
+            strategy: 'login-needed',
+            injectKey: false,
+            suppressKeyEnv: false,
+          },
+    );
+
+    expect(
+      prepareProviderSpawn('agy', {
+        model: 'gemini-3.6-flash-high',
+      }),
+    ).toMatchObject({
+      ok: true,
+      overrides: {
+        binPath: '/opt/homebrew/bin/agy',
+        keyEnv: {},
+      },
+    });
+    expect(spawnDeps.subscriptionStatusAuthed).toHaveBeenCalledWith('agy');
+    expect(spawnDeps.subscriptionAuthed).not.toHaveBeenCalled();
+  });
+
+  it('revalidates AGY auth asynchronously for the autonomous spawn boundary', async () => {
+    spawnDeps.resolveAuthStrategy.mockImplementation((input) =>
+      input.subscriptionAuthed
+        ? {
+            strategy: 'subscription',
+            injectKey: false,
+            suppressKeyEnv: true,
+          }
+        : {
+            strategy: 'login-needed',
+            injectKey: false,
+            suppressKeyEnv: false,
+          },
+    );
+
+    await expect(
+      providerAuthStrategyAuthoritativeAsync(
+        'agy',
+        'gemini-3.6-flash-high',
+      ),
+    ).resolves.toBe('subscription');
+    expect(spawnDeps.refreshAgyAuth).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined,
+      { authoritative: true },
+    );
   });
 
   it.each([

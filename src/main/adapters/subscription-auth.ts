@@ -69,8 +69,10 @@ export function resolveAuthStrategy(input: {
 // ---------------------------------------------------------------------------
 
 const CACHE_TTL_MS = 60_000;
+const AGY_AUTHORITATIVE_PROOF_TTL_MS = 5_000;
 const cache = new Map<string, { value: boolean; at: number }>();
 let claudeRefreshInFlight: Promise<ClaudeAuthRefreshResult> | null = null;
+let agyRefreshInFlight: Promise<ClaudeAuthRefreshResult> | null = null;
 
 export interface SubscriptionAuthDetectionOptions {
   /**
@@ -105,7 +107,9 @@ function cachedSubscriptionAuth(
   adapterId: string,
   model?: string,
 ): boolean | null {
-  const hit = cache.get(subscriptionCacheKey(adapterId, model));
+  const hit =
+    cache.get(subscriptionCacheKey(adapterId, model)) ??
+    (model?.trim() ? cache.get(adapterId) : undefined);
   return hit && Date.now() - hit.at < CACHE_TTL_MS ? hit.value : null;
 }
 
@@ -311,11 +315,59 @@ let agyKeychainMemo: {
   readonly home: string;
   readonly value: boolean;
   readonly at: number;
+  readonly authoritative: boolean;
 } | null = null;
 
 export interface AgyKeychainProbeOptions {
   /** Test seam; production resolves the OS-account HOME, never process HOME. */
   readonly nativeHome?: string;
+  /** Authority-critical spawn checks must observe the Keychain as it is now. */
+  readonly bypassCache?: boolean;
+}
+
+function resolveAgyNativeHome(requestedHome: string): string | null {
+  if (!path.isAbsolute(requestedHome) || requestedHome.includes('\0')) {
+    return null;
+  }
+  try {
+    const nativeHome = fs.realpathSync.native(requestedHome);
+    return fs.statSync(nativeHome).isDirectory() ? nativeHome : null;
+  } catch {
+    return null;
+  }
+}
+
+function reusableAgyKeychainValue(
+  nativeHome: string,
+  options: AgyKeychainProbeOptions,
+): boolean | null {
+  if (agyKeychainMemo?.home !== nativeHome) return null;
+  const age = Date.now() - agyKeychainMemo.at;
+  if (options.bypassCache !== true && age < CACHE_TTL_MS) {
+    return agyKeychainMemo.value;
+  }
+  if (
+    options.bypassCache === true &&
+    agyKeychainMemo.authoritative &&
+    agyKeychainMemo.value &&
+    age < AGY_AUTHORITATIVE_PROOF_TTL_MS
+  ) {
+    return true;
+  }
+  return null;
+}
+
+function rememberAgyKeychainValue(
+  nativeHome: string,
+  value: boolean,
+  options: AgyKeychainProbeOptions,
+): void {
+  agyKeychainMemo = {
+    home: nativeHome,
+    value,
+    at: Date.now(),
+    authoritative: options.bypassCache === true,
+  };
 }
 
 export function agyKeychainCredentialIsUsable(
@@ -323,26 +375,12 @@ export function agyKeychainCredentialIsUsable(
   options: AgyKeychainProbeOptions = {},
 ): boolean {
   if (process.platform !== 'darwin') return false;
-  const requestedHome = options.nativeHome ?? realUserHome();
-  if (
-    !path.isAbsolute(requestedHome) ||
-    requestedHome.includes('\0')
-  ) {
-    return false;
-  }
-  let nativeHome: string;
-  try {
-    nativeHome = fs.realpathSync.native(requestedHome);
-    if (!fs.statSync(nativeHome).isDirectory()) return false;
-  } catch {
-    return false;
-  }
-  if (
-    agyKeychainMemo?.home === nativeHome &&
-    Date.now() - agyKeychainMemo.at < CACHE_TTL_MS
-  ) {
-    return agyKeychainMemo.value;
-  }
+  const nativeHome = resolveAgyNativeHome(
+    options.nativeHome ?? realUserHome(),
+  );
+  if (!nativeHome) return false;
+  const cached = reusableAgyKeychainValue(nativeHome, options);
+  if (cached !== null) return cached;
   let value = false;
   try {
     const raw = execImpl(
@@ -372,8 +410,51 @@ export function agyKeychainCredentialIsUsable(
     // Locked keychain / TCC denial inside packaged Electron → fail closed.
     value = false;
   }
-  agyKeychainMemo = { home: nativeHome, value, at: Date.now() };
+  rememberAgyKeychainValue(nativeHome, value, options);
   return value;
+}
+
+/** Non-blocking AGY Keychain proof for provider snapshots and mission setup UI. */
+export function agyKeychainCredentialIsUsableAsync(
+  execImpl: typeof execFile = execFile,
+  options: AgyKeychainProbeOptions = {},
+): Promise<boolean> {
+  if (process.platform !== 'darwin') return Promise.resolve(false);
+  const nativeHome = resolveAgyNativeHome(
+    options.nativeHome ?? realUserHome(),
+  );
+  if (!nativeHome) return Promise.resolve(false);
+  const cached = reusableAgyKeychainValue(nativeHome, options);
+  if (cached !== null) return Promise.resolve(cached);
+  return new Promise((resolve) => {
+    try {
+      execImpl(
+        '/usr/bin/security',
+        ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'],
+        {
+          timeout: 5_000,
+          killSignal: 'SIGKILL',
+          windowsHide: true,
+          encoding: 'utf8',
+          env: {
+            HOME: nativeHome,
+            USERPROFILE: nativeHome,
+            PATH: '/usr/bin:/bin',
+            LANG: 'C',
+            LC_ALL: 'C',
+          },
+        },
+        (error, stdout) => {
+          const value = error === null && agyKeychainBlobIsUsable(stdout);
+          rememberAgyKeychainValue(nativeHome, value, options);
+          resolve(value);
+        },
+      );
+    } catch {
+      rememberAgyKeychainValue(nativeHome, false, options);
+      resolve(false);
+    }
+  });
 }
 
 /** Test seam: drop the memoized AGY keychain probe result. */
@@ -546,7 +627,7 @@ export function detectSubscriptionAuth(
       // isolated HOME, so readiness must query that same native authority.
       if (options.probeAgyKeychain === false) return false;
       if (options.agyKeychainProbe) return options.agyKeychainProbe();
-      return agyKeychainCredentialIsUsable();
+      return agyKeychainCredentialIsUsable(execFileSync);
     case 'kimi':
       // Require a non-empty access/refresh token. The zero-byte oauth marker
       // and the empty credentials shell both survive logout and must not
@@ -579,7 +660,12 @@ export function hasSubscriptionAuth(
 ): boolean {
   const hit = cachedSubscriptionAuth(adapterId, model);
   if (hit !== null) return hit;
-  const value = detectSubscriptionAuth(adapterId, os.homedir(), model);
+  const value = detectSubscriptionAuth(
+    adapterId,
+    os.homedir(),
+    model,
+    adapterId === 'agy' ? { probeAgyKeychain: false } : {},
+  );
   cacheSubscriptionAuth(adapterId, value, model);
   return value;
 }
@@ -600,14 +686,18 @@ export function hasSubscriptionAuthForStatus(
 ): boolean {
   const hit = cachedSubscriptionAuth(adapterId, model);
   if (hit !== null) return hit;
-  if (adapterId !== 'claude') return hasSubscriptionAuth(adapterId, model);
+  if (adapterId !== 'claude' && adapterId !== 'agy') {
+    return hasSubscriptionAuth(adapterId, model);
+  }
 
-  const fileBacked = detectSubscriptionAuth(
-    adapterId,
-    home,
-    model,
-    { probeClaudeKeychain: false },
-  );
+  const fileBacked =
+    adapterId === 'agy'
+      ? detectSubscriptionAuth(adapterId, home, model, {
+          probeAgyKeychain: false,
+        })
+      : detectSubscriptionAuth(adapterId, home, model, {
+          probeClaudeKeychain: false,
+        });
   if (fileBacked) cacheSubscriptionAuth(adapterId, true, model);
   return fileBacked;
 }
@@ -660,8 +750,55 @@ export function refreshClaudeSubscriptionAuthCache(
   return claudeRefreshInFlight;
 }
 
+/** Warm AGY's Keychain-only status without blocking Electron's main loop. */
+export function refreshAgySubscriptionAuthCache(
+  home = os.homedir(),
+  keychainProbe?: () => Promise<boolean>,
+  options: { authoritative?: boolean } = {},
+): Promise<ClaudeAuthRefreshResult> {
+  const cached = cachedSubscriptionAuth('agy');
+  if (options.authoritative !== true && cached === true) {
+    return Promise.resolve({ value: cached, cacheUpdated: false });
+  }
+  const fileBacked = detectSubscriptionAuth(
+    'agy',
+    home,
+    undefined,
+    { probeAgyKeychain: false },
+  );
+  if (fileBacked) {
+    cacheSubscriptionAuth('agy', true);
+    return Promise.resolve({ value: true, cacheUpdated: true });
+  }
+  if (agyRefreshInFlight) return agyRefreshInFlight;
+  const runKeychainProbe =
+    keychainProbe ??
+    (() =>
+      agyKeychainCredentialIsUsableAsync(execFile, {
+        // Even status refreshes must see OAuth completed after a recent
+        // negative result. The process is asynchronous, so rechecking cannot
+        // freeze Main; a positive proof is reusable by the adjacent spawn gate.
+        bypassCache: true,
+      }));
+  agyRefreshInFlight = Promise.resolve()
+    .then(runKeychainProbe)
+    .catch(() => false)
+    .then((value) => {
+      cacheSubscriptionAuth('agy', value);
+      return {
+        value,
+        cacheUpdated: value ? cached !== true : cached === true,
+      };
+    })
+    .finally(() => {
+      agyRefreshInFlight = null;
+    });
+  return agyRefreshInFlight;
+}
+
 /** Test hook. */
 export function resetSubscriptionAuthCacheForTests(): void {
   cache.clear();
   claudeRefreshInFlight = null;
+  agyRefreshInFlight = null;
 }
