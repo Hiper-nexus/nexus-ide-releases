@@ -24,6 +24,10 @@ Data: 2026-07-29
   desaparece, o dispatch retorna a `pending` com backoff e o substituto só
   assume após rebind exato de missão, pane, sessão e encarnação. Falha de
   heartbeat ou persistência nunca duplica um worker ainda vivo.
+- **Renderer só abre depois do Main estar pronto**: a janela e o Dock nascem
+  cedo, mas React só navega após todos os canais IPC estarem registrados.
+  Primeiro launch lento deixa de fixar stores em fallback ou imprimir
+  `No handler registered` até uma recarga.
 
 ### Autopiloto multi-CLI
 
@@ -68,6 +72,9 @@ Data: 2026-07-29
 - **Gates honestos**: risco em português recebe a severidade correta,
   requisitos explícitos desconhecidos continuam pendentes e
   `.dev-user-data/**` não contamina testes ou indexadores.
+- **Smoke mantém autoridade até o resultado**: o deadline do runner permanece
+  vivo enquanto o app assinado inicia. Gatekeeper lento não faz mais o Node
+  encerrar com código zero e evidência vazia antes do primeiro evento.
 
 ## 0.19.36 — Bootstrap multi-CLI sem corrida
 

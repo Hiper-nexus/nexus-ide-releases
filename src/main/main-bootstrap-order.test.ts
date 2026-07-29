@@ -6,6 +6,10 @@ const bootstrapSource = mainSource.slice(
   mainSource.indexOf("function bootstrap(): void"),
   mainSource.indexOf("function isAutomatedReleaseTest"),
 );
+const appReadySource = mainSource.slice(
+  mainSource.indexOf("app.whenReady().then"),
+  mainSource.indexOf("app.on(\"second-instance\""),
+);
 
 describe("main bootstrap settings migration order", () => {
   it("migrates retired provider defaults before any orchestration runtime is configured", () => {
@@ -44,5 +48,31 @@ describe("main bootstrap settings migration order", () => {
     expect(bootstrapSource).toMatch(
       /try\s*\{\s*migrateRetiredOrchestratorSettings\(\{[\s\S]*?\}\);\s*\}\s*catch\s*\(error\)\s*\{[\s\S]*?console\.warn/um,
     );
+  });
+
+  it("constructs the native window early but starts React only after every bootstrap IPC is registered", () => {
+    const createWindow = appReadySource.indexOf(
+      "createMainWindow({ deferRendererLoad: true })",
+    );
+    const resolvePath = appReadySource.indexOf("await resolveUserPath();");
+    const bootstrap = appReadySource.indexOf("bootstrap();");
+    const startRenderer = appReadySource.indexOf(
+      "startMainWindowRenderer(mainWindow)",
+    );
+    const bootstrapFailure = appReadySource.indexOf(
+      "bootstrap failed before renderer navigation",
+    );
+
+    expect([
+      createWindow,
+      resolvePath,
+      bootstrap,
+      startRenderer,
+      bootstrapFailure,
+    ]).not.toContain(-1);
+    expect(createWindow).toBeLessThan(resolvePath);
+    expect(resolvePath).toBeLessThan(bootstrap);
+    expect(bootstrap).toBeLessThan(startRenderer);
+    expect(startRenderer).toBeLessThan(bootstrapFailure);
   });
 });

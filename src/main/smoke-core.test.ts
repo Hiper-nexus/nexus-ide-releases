@@ -158,7 +158,7 @@ describe('smoke isolation', () => {
     const readyStart = mainSource.indexOf('app.whenReady().then(async () => {');
     const hookSection = mainSource.indexOf('// Gap A:', readyStart);
     const createWindowAtReady = mainSource.indexOf(
-      '    const mainWindow = createMainWindow();',
+      '    const mainWindow = createMainWindow({ deferRendererLoad: true });',
       readyStart,
     );
     const awaitRealMissionHarness = mainSource.indexOf(

@@ -9,7 +9,10 @@ import {
   systemPreferences,
 } from "electron";
 import { resolveUserPath } from "./path-resolver";
-import { createMainWindow } from "./window";
+import {
+  createMainWindow,
+  startMainWindowRenderer,
+} from "./window";
 import {
   installRendererProtocol,
   registerRendererProtocolScheme,
@@ -653,7 +656,7 @@ if (!wireDeepLinks()) {
     // No service initialization belongs before this call. Some macOS APIs
     // (notably Keychain-backed providers) can block the Electron main thread;
     // the native window/Dock item must already exist before touching them.
-    const mainWindow = createMainWindow();
+    const mainWindow = createMainWindow({ deferRendererLoad: true });
     if (!mainWindow) {
       // createMainWindow reports the native error. Do not continue bootstrap:
       // it can create auxiliary renderer windows, which must never load after
@@ -674,13 +677,11 @@ if (!wireDeepLinks()) {
     getAgentAwakeService();
     registerAgentHookIpc();
 
-    // The desktop shell must be visible before any optional integration starts.
-    // In particular, starting the local agent-hook server may wait on a port or
-    // a stale child process. Awaiting it here used to leave Electron alive as a
-    // background/UIElement process with no BrowserWindow, so macOS hid Nexus
-    // from the Dock and the user saw no actionable error. Bootstrap the window
-    // first; integrations below are deliberately best-effort and may continue
-    // asynchronously after the UI is available.
+    // The native BrowserWindow/Dock ownership exists before any optional
+    // integration starts, but renderer navigation remains deferred. Loading
+    // React before bootstrap registered preload IPC made the first launch race
+    // through "No handler registered" responses and could strand stores on
+    // their fallback state until a reload.
     // This must remain the first potentially visible operation after Electron
     // is ready. Do not move it into bootstrap(): synchronous adapter, settings,
     // database, or keychain setup can otherwise classify the process as a
@@ -689,8 +690,28 @@ if (!wireDeepLinks()) {
     // asynchronously after the native window is visible, then initialize the
     // adapter registry with the completed value. Slow shell profiles no longer
     // freeze Electron's main event loop.
-    await resolveUserPath();
-    bootstrap();
+    try {
+      await resolveUserPath();
+      bootstrap();
+      if (!startMainWindowRenderer(mainWindow)) {
+        throw new Error(
+          "renderer start authority disappeared before bootstrap completed",
+        );
+      }
+    } catch (error) {
+      console.error("[main] bootstrap failed before renderer navigation:", error);
+      try {
+        dialog.showErrorBox(
+          "NexusIDE não conseguiu inicializar",
+          "O núcleo do aplicativo falhou antes de abrir a interface. " +
+            "Reinicie o Nexus; nenhum renderer parcial foi carregado.",
+        );
+      } catch {
+        // The process still exits instead of exposing a renderer with partial IPC.
+      }
+      app.quit();
+      return;
+    }
 
     // Bootstrap can create auxiliary native windows after the main window is
     // visible. Re-arm the short Dock check after that graph has settled; the

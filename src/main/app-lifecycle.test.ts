@@ -18,7 +18,9 @@ describe('macOS activate lifecycle', () => {
 
   it('stops bootstrap when the fail-closed CSP boundary refuses the main window', () => {
     const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
-    const windowAttempt = source.indexOf('const mainWindow = createMainWindow();');
+    const windowAttempt = source.indexOf(
+      'const mainWindow = createMainWindow({ deferRendererLoad: true });',
+    );
     const failedGuard = source.indexOf('if (!mainWindow)', windowAttempt);
     const quit = source.indexOf('app.quit();', failedGuard);
     const bootstrap = source.indexOf('bootstrap();', windowAttempt);
@@ -38,7 +40,7 @@ describe('macOS activate lifecycle', () => {
       readyStart,
     );
     const windowAttempt = source.indexOf(
-      'const mainWindow = createMainWindow();',
+      'const mainWindow = createMainWindow({ deferRendererLoad: true });',
       readyStart,
     );
 
@@ -52,7 +54,9 @@ describe('macOS activate lifecycle', () => {
     expect(source).toContain('show: false');
     expect(source).toContain('showNativeWindow();');
     expect(source).toContain('ensureRegularMacOSActivation();');
-    expect(source).toContain("win.webContents.once('did-finish-load', ensureMacDockPresence)");
+    expect(source).toContain(
+      "wc.once('did-finish-load', ensureMacDockPresence)",
+    );
   });
 
   it('keeps mount recovery on a Main-owned deadline across renderer lifecycle changes', () => {

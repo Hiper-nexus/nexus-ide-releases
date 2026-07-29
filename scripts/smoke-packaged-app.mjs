@@ -1167,7 +1167,10 @@ export async function runPackagedSmoke(
           ),
         );
       }, timeoutMs);
-      timeout.unref?.();
+      // This deadline owns the harness liveness. The packaged app is launched
+      // as a detached process group, so unref'ing every timer can let Node exit
+      // cleanly before a slow first launch (Gatekeeper/notarization) emits
+      // either `close` or renderer proof. `finish()` always clears the timer.
 
       child.once('close', (exitCode, signalCode) => {
         if (settled) return;

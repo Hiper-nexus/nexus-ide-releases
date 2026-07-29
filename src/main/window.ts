@@ -192,6 +192,23 @@ export function registerExternalLinkIpc(): void {
 }
 
 let cspRegistered = false;
+const deferredRendererStarts = new WeakMap<BrowserWindow, () => void>();
+
+export interface CreateMainWindowOptions {
+  /**
+   * Construct the native window and Dock ownership immediately, but leave its
+   * renderer on about:blank until Main has registered every preload IPC.
+   */
+  readonly deferRendererLoad?: boolean;
+}
+
+export function startMainWindowRenderer(win: BrowserWindow): boolean {
+  const start = deferredRendererStarts.get(win);
+  if (!start) return false;
+  deferredRendererStarts.delete(win);
+  start();
+  return true;
+}
 
 /**
  * Apply the CSP via response headers on the default session so it also covers
@@ -223,7 +240,9 @@ export function ensureMacDockPresence(): void {
   reassertMacOSDockPresence();
 }
 
-export function createMainWindow(): BrowserWindow | null {
+export function createMainWindow(
+  options: CreateMainWindowOptions = {},
+): BrowserWindow | null {
   const devServerUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL;
   const rendererUrl = devServerUrl ?? RENDERER_PROTOCOL_ENTRY_URL;
 
@@ -281,9 +300,6 @@ export function createMainWindow(): BrowserWindow | null {
   // Electron has a live Dock controller. Avoid a second dock.show() here —
   // show() thrash is what left a 12×0 ghost tile on some launches.
   applyMacOSDockIcon();
-  // Final presence check once the renderer has actually loaded.
-  win.webContents.once('did-finish-load', ensureMacDockPresence);
-
   bindTrustedMainWindow(win, rendererUrl);
 
   // External-link/auth/legal IPC remains an optional native integration. It is
@@ -377,6 +393,7 @@ export function createMainWindow(): BrowserWindow | null {
   let loadFailures = 0;
   let suppressAbortedLoadUntil = 0;
   let loadWatchdog: NodeJS.Timeout | null = null;
+  let rendererStartAuthorized = false;
   const showNativeWindow = (): void => {
     if (win.isDestroyed()) return;
     if (win.isMinimized()) win.restore();
@@ -475,6 +492,7 @@ export function createMainWindow(): BrowserWindow | null {
   // Capture wc up front: inside 'destroyed' the win.webContents getter can
   // already throw "Object has been destroyed".
   wc.once('destroyed', () => {
+    deferredRendererStarts.delete(win);
     bootRecovery.dispose();
     if (loadWatchdog) {
       clearInterval(loadWatchdog);
@@ -510,6 +528,7 @@ export function createMainWindow(): BrowserWindow | null {
   // instead of looping forever.
   wc.on('render-process-gone', (_e, details) => {
     console.warn('[window] renderer morreu:', details.reason);
+    if (!rendererStartAuthorized) return;
     stopMountMonitoring();
     const decision = handleRenderProcessGone({
       details: {
@@ -544,7 +563,13 @@ export function createMainWindow(): BrowserWindow | null {
   // janela abria preta e exigia fechar/reabrir). Auto-retry até carregar; o
   // backoff curto cobre o boot do Vite sem atrasar o caso saudável.
   const load = () => {
-    if (win.isDestroyed() || bootRecovery.isStopped) return;
+    if (
+      !rendererStartAuthorized ||
+      win.isDestroyed() ||
+      bootRecovery.isStopped
+    ) {
+      return;
+    }
     // Rejeições são esperadas durante o boot do Vite (ERR_ABORTED em reload
     // concorrente) — o watchdog cuida do retry; nunca deixar virar unhandled.
     finished = false;
@@ -558,6 +583,7 @@ export function createMainWindow(): BrowserWindow | null {
   };
   wc.on('did-fail-load', (_e, code, desc, _validatedUrl, isMainFrame) => {
     if (win.isDestroyed()) return;
+    if (!rendererStartAuthorized) return;
     if (!isMainFrame) return;
     if (code === -3 && Date.now() < suppressAbortedLoadUntil) return;
     loadFailures += 1;
@@ -581,7 +607,13 @@ export function createMainWindow(): BrowserWindow | null {
   // síncrono no React que congele completamente o renderer chega à recuperação
   // após 20s. Após MAX, tela de recuperação.
   const startLoadWatchdog = (): void => {
-    if (loadWatchdog || win.isDestroyed()) return;
+    if (
+      !rendererStartAuthorized ||
+      loadWatchdog ||
+      win.isDestroyed()
+    ) {
+      return;
+    }
     loadWatchdog = setInterval(() => {
       if (win.isDestroyed()) {
         if (loadWatchdog) clearInterval(loadWatchdog);
@@ -617,6 +649,10 @@ export function createMainWindow(): BrowserWindow | null {
   };
   const MOUNT_POLL_MS = 2_000;
   wc.on('did-finish-load', () => {
+    // BrowserWindow may finish its implicit about:blank before Main bootstrap
+    // authorizes the real renderer. That page must not consume mount/Dock
+    // proof or arm a reload that could bypass the deferred-load boundary.
+    if (!rendererStartAuthorized) return;
     finished = true;
     loadFailures = 0;
     bootRecovery.cancelPending();
@@ -692,6 +728,7 @@ export function createMainWindow(): BrowserWindow | null {
     mountPoll = poll;
   });
   wc.on('did-start-navigation', (details) => {
+    if (!rendererStartAuthorized) return;
     if (!details.isMainFrame || details.isSameDocument) return;
     // A única navegação possível depois da tela injetada é o clique explícito
     // em "Recarregar". Isso abre um novo budget; eventos automáticos não.
@@ -707,8 +744,19 @@ export function createMainWindow(): BrowserWindow | null {
     stopMountMonitoring();
     startLoadWatchdog();
   });
-  startLoadWatchdog();
-  load();
+  const startRenderer = (): void => {
+    if (rendererStartAuthorized || win.isDestroyed()) return;
+    rendererStartAuthorized = true;
+    // Register this only after about:blank has been fenced out so the once
+    // listener belongs to the actual Nexus renderer navigation.
+    wc.once('did-finish-load', ensureMacDockPresence);
+    startLoadWatchdog();
+    load();
+  };
+  deferredRendererStarts.set(win, startRenderer);
+  if (options.deferRendererLoad !== true) {
+    startMainWindowRenderer(win);
+  }
 
   return win;
 }
