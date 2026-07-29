@@ -72,6 +72,55 @@ function integrationRef(git: GitRunner, root: string): string {
   return reference;
 }
 
+/**
+ * Captures the current working tree as a commit the worker can branch from,
+ * without mutating the operator's checkout.
+ *
+ * `read-tree HEAD` + `add -A` + `write-tree` run against a Nexus-private index
+ * file, so the operator's staged state, working tree and HEAD are untouched;
+ * `.gitignore` is still honoured because `add -A` applies it. The resulting
+ * commit is parented on HEAD, which keeps history linear for the later merge.
+ *
+ * Returns HEAD unchanged when the snapshot produces the same tree, so a
+ * clean-enough repository never grows an empty baseline commit.
+ */
+export function snapshotWorkingTreeCommit(
+  git: GitRunner,
+  root: string,
+  headSha: string,
+): string {
+  const privateIndex = createPrivateGitIndex();
+  try {
+    const withIndex = { privateIndexFile: privateIndex.path } as const;
+    git.run(root, ["read-tree", headSha], withIndex);
+    git.run(root, ["add", "-A", "--", "."], withIndex);
+    const treeSha = assertSha(
+      git.run(root, ["write-tree"], withIndex).stdout.trim(),
+      "guided worktree snapshot tree",
+    );
+    const headTree = assertSha(
+      git.run(root, ["rev-parse", `${headSha}^{tree}`]).stdout.trim(),
+      "guided HEAD tree",
+    );
+    if (treeSha === headTree) return headSha;
+    return assertSha(
+      git
+        .run(root, [
+          "commit-tree",
+          treeSha,
+          "-p",
+          headSha,
+          "-m",
+          "nexus: baseline da árvore de trabalho (snapshot automático)",
+        ])
+        .stdout.trim(),
+      "guided worktree snapshot commit",
+    );
+  } finally {
+    privateIndex.dispose();
+  }
+}
+
 function cleanStatus(git: GitRunner, root: string): boolean {
   return (
     git.run(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
@@ -712,9 +761,25 @@ export function ensureGuidedGitBaseline(
       }
     }
     if (!cleanStatus(git, rootRealPath)) {
-      throw new Error(
-        "guided_git_baseline_dirty: deixe o workspace limpo antes de iniciar a missão",
-      );
+      // Field trap (28/07): demanding a clean tree meant every mission started
+      // from a repository the operator was actively working in was refused —
+      // "deixe o workspace limpo antes de iniciar a missão" — and the Maestro
+      // then exited before the first dispatch. The reason behind the gate is
+      // real (a worker branching from HEAD would not see uncommitted work and
+      // the later merge would conflict or drop it), so we satisfy it instead
+      // of removing it: snapshot the working tree into a baseline commit the
+      // worker can branch from. Nothing in the operator's checkout or index is
+      // touched — the snapshot is built in a Nexus-private index.
+      return Object.freeze({
+        kind: "existing",
+        rootRealPath,
+        integrationRef: reference,
+        headSha: snapshotWorkingTreeCommit(
+          git,
+          rootRealPath,
+          assertSha(head.stdout.trim(), "guided integration HEAD"),
+        ),
+      });
     }
     if (dependencies.approvedIntent) {
       const expected = renderGuidedGreenfieldBrief(

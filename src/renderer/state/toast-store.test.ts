@@ -64,8 +64,8 @@ describe('toast store UX policy', () => {
         'A missão não foi autorizada: Error invoking remote method ' +
           "'orch:missions.approveIntent': Error: provider temporarily unavailable",
       ),
-    ).toBe(
-      'Não foi possível concluir esta etapa. Tente novamente. Se continuar, abra Operações para ver o diagnóstico.',
+    ).toMatch(
+      /^Não foi possível concluir esta etapa\. Tente novamente\. Se continuar, abra Operações para ver o diagnóstico\. Detalhe técnico: /,
     );
   });
 

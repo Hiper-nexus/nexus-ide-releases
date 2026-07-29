@@ -59,6 +59,46 @@ function knownMissionRecovery(raw: string): string | null {
   if (/guided_plan_roster_route_unavailable/i.test(raw)) {
     return "Um integrante da equipe não está disponível nesta máquina. Revise a equipe e tente novamente.";
   }
+  if (
+    /guided_prevc_context_bootstrap_blocked/i.test(raw) ||
+    /guided_plan_preflight_blocked:[\s\S]*guided_prevc_context_bootstrap_blocked/i.test(
+      raw,
+    )
+  ) {
+    if (
+      /invalid-context-attestation|missing-context-attestation/i.test(raw)
+    ) {
+      return "O contexto do projeto precisa de revisão (documentos/.context). Abra Operações › Contexto ou remova attestations inválidas e tente de novo.";
+    }
+    return "O contexto governado não ficou pronto antes de iniciar. Abra Operações › Contexto e tente novamente.";
+  }
+  if (
+    /workflow binding requires a clean committed checkout of the evidence surface/i.test(
+      raw,
+    )
+  ) {
+    return "Há arquivos não commitados em .context (evidência). Faça commit ou remova o arquivo sujo e tente novamente.";
+  }
+  if (/squad_runtime_unavailable:executor-unavailable/i.test(raw)) {
+    return "Falta um executor com CLI autenticada e rota ativa (não-Claude). Troque o executor no squad ou autentique a CLI.";
+  }
+  if (/squad_runtime_unavailable:reviewer-unavailable/i.test(raw)) {
+    return "Falta um reviewer/QA com CLI autenticada e rota ativa (não-Claude). Troque o reviewer ou autentique a CLI.";
+  }
+  if (/squad_runtime_unavailable:maestro-unverified/i.test(raw)) {
+    return "O Maestro escolhido não está verificado nesta release. Ative Escolha livre em Configurações › Orquestração ou use Claude/Codex.";
+  }
+  if (/squad_runtime_unavailable:maestro-unavailable/i.test(raw)) {
+    return "O Maestro não tem rota ativa. Autentique a CLI do Maestro e tente novamente.";
+  }
+  if (/squad_runtime_unavailable:/i.test(raw)) {
+    const detail = /squad_runtime_unavailable:[a-z-]+:\s*(.+)$/i.exec(raw)?.[1];
+    return detail
+      ? truncateAtWord(
+          `${detail.charAt(0).toLocaleUpperCase("pt-BR")}${detail.slice(1)}.`,
+        )
+      : "A equipe não está pronta para iniciar. Revise Maestro, executor e reviewer.";
+  }
   if (/project runtime contains an invalid worktree state/i.test(raw)) {
     return "O estado local de uma execução anterior ficou inconsistente. Nenhum agente foi iniciado; encerre a missão travada antes de tentar novamente.";
   }
@@ -95,18 +135,14 @@ function stripTransportWrappers(raw: string): string {
   );
 }
 
-function looksLikeInternalDiagnostic(value: string): boolean {
+/**
+ * Machine residue that is never operator copy in any language: internal snake
+ * codes, stack frames, URLs, filesystem paths and errno-style constants.
+ */
+function containsMachineResidue(value: string): boolean {
   return (
     /(?:^|\s)[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}(?=[:\s]|$)/i.test(value) ||
-    /\b(?:ipc|preflight|bootstrap|worktree|stack trace|typeerror|referenceerror)\b/i.test(
-      value,
-    ) ||
-    /\b(?:failed|failure|unavailable|invalid|missing|not authorized|not found|cannot|did not|timed? out|timeout|temporarily)\b/i.test(
-      value,
-    ) ||
-    /\b(?:connection|refused|permission denied|access denied|unexpected|unable|could not|was not|is not|server|service|request|response|provider|try again|later)\b/i.test(
-      value,
-    ) ||
+    /\b(?:stack trace|typeerror|referenceerror)\b/i.test(value) ||
     /https?:\/\/|\bwww\./i.test(value) ||
     /\bE[A-Z]{3,}\b|(?:\/[^/\s]+){2,}/.test(value) ||
     /\bat\s+\S+\s+\([^)]*:\d+:\d+\)/i.test(value)
@@ -114,8 +150,66 @@ function looksLikeInternalDiagnostic(value: string): boolean {
 }
 
 /**
+ * Portuguese prose here means copy a Nexus author wrote for the operator.
+ * Accents or common function words are enough — these strings are authored,
+ * not emitted by a transport or a provider SDK.
+ */
+function looksLikeAuthoredPortuguese(value: string): boolean {
+  return (
+    /[áàâãéêíóôõúüç]/i.test(value) ||
+    /\b(?:não|missão|equipe|objetivo|aprovada?|exige|revise|tente|novamente|pasta|antes|nenhum|precisa|quando|porque)\b/i.test(
+      value,
+    )
+  );
+}
+
+/**
+ * Guards the golden path against raw transport/provider English.
+ *
+ * Field trap (28/07): the word list also matched *authored Portuguese* that
+ * merely mentioned a technical noun — "O bootstrap exige uma missão running
+ * com intenção aprovada. CTA: Retomar missão." was replaced by "tente
+ * novamente", discarding a message that already told the operator exactly what
+ * to do. Authored Portuguese now passes through; only machine residue and
+ * genuinely English diagnostics are withheld.
+ */
+function looksLikeInternalDiagnostic(value: string): boolean {
+  if (containsMachineResidue(value)) return true;
+  if (looksLikeAuthoredPortuguese(value)) return false;
+  return (
+    /\b(?:ipc|preflight|bootstrap|worktree)\b/i.test(value) ||
+    /\b(?:failed|failure|unavailable|invalid|missing|not authorized|not found|cannot|did not|timed? out|timeout|temporarily)\b/i.test(
+      value,
+    ) ||
+    /\b(?:connection|refused|permission denied|access denied|unexpected|unable|could not|was not|is not|server|service|request|response|provider|try again|later)\b/i.test(
+      value,
+    )
+  );
+}
+
+const MAX_TECHNICAL_DETAIL_LENGTH = 160;
+
+/**
+ * Last-resort disclosure for a failure with no mapped recovery.
+ *
+ * The golden path deliberately keeps English transport noise out of mapped
+ * errors, and that stays true. But a *pre-launch* failure has no mission
+ * journal to fall back on — "tente novamente" with nothing else left the
+ * operator retrying a mission that could never start, with no way to report
+ * what broke. When we genuinely have no recovery to offer, an opaque message
+ * is worse than a technical one: the raw reason is appended, clearly labelled
+ * and truncated, so it can be acted on or reported.
+ */
+function technicalDetailSuffix(raw: string): string {
+  const stripped = stripTransportWrappers(raw) || raw;
+  const detail = truncateAtWord(stripped, MAX_TECHNICAL_DETAIL_LENGTH);
+  return detail ? ` Detalhe técnico: ${detail}` : "";
+}
+
+/**
  * Converts transport/provider diagnostics into brief recovery copy for the
- * golden path. Raw details remain available in Operações and mission journals.
+ * golden path. Mapped errors stay clean; only the unmapped fallback carries
+ * the raw reason, because there is nothing better to give the operator.
  */
 export function humanizeMissionErrorDetail(
   detail: string | undefined,
@@ -130,7 +224,7 @@ export function humanizeMissionErrorDetail(
 
   const sentence = stripTransportWrappers(raw);
   if (!sentence || looksLikeInternalDiagnostic(sentence)) {
-    return fallback;
+    return `${fallback}${technicalDetailSuffix(raw)}`;
   }
 
   const capitalized = `${sentence.charAt(0).toLocaleUpperCase("pt-BR")}${sentence.slice(1)}`;

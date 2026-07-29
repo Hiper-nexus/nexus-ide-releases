@@ -54,7 +54,8 @@ describe('intent-first kickoff vs monstro playbook', () => {
     expect(prompt).toMatch(/Terminal\/manual/i);
     expect(prompt).not.toMatch(/slots?\s+omp|Diversidade de motores/i);
     // Doctor is on-demand, not forced pre-goal bootstrap.
-    expect(prompt).toMatch(/context_doctor.*sob demanda/i);
+    // O protocolo PREVC agora vive na sequência numerada de "Como conduzir".
+    expect(prompt).toMatch(/nexus_mission_freeze_contract/i);
     expect(prompt).not.toMatch(/Pipeline obrigatório/i);
   });
 

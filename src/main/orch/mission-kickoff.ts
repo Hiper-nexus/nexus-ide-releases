@@ -6,6 +6,8 @@ import {
   isAutoDerivedCriterion,
 } from '../../shared/mission-intent';
 import { buildIntentDispatchKickoffPrompt } from '../../shared/mission-dispatch-kickoff';
+import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
+import { getOrchSettings } from '../persistence/settings-store';
 import type { Mission, Squad } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import type { PaneSessionState, ProjectExecutionScope } from '../../shared/types';
@@ -557,6 +559,7 @@ export function buildCanonicalMissionKickoffPrompt(
     promotedPlan: contract.promotedPlan
       ? assertPromotedPlanSnapshot(contract.promotedPlan)
       : undefined,
+    operatorChoice: isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
   });
 }
 

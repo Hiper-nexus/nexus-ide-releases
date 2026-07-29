@@ -68,6 +68,13 @@ export interface SubscriptionAuthDetectionOptions {
   probeClaudeKeychain?: boolean;
   /** Test seam for proving that a non-blocking caller never enters Keychain. */
   claudeKeychainProbe?: () => boolean;
+  /**
+   * AGY's antigravity route keeps its session in the login keychain. Opt-out
+   * for callers that must stay off the Keychain path entirely.
+   */
+  probeAgyKeychain?: boolean;
+  /** Test seam mirroring `claudeKeychainProbe` for the AGY keychain route. */
+  agyKeychainProbe?: () => boolean;
 }
 
 export interface ClaudeAuthRefreshResult {
@@ -223,6 +230,105 @@ export function agyOauthCredsFileIsUsable(home = os.homedir()): boolean {
   return false;
 }
 
+const GO_KEYRING_BASE64_PREFIX = 'go-keyring-base64:';
+
+function hasNonEmptyString(source: unknown, ...keys: string[]): boolean {
+  if (!source || typeof source !== 'object') return false;
+  const record = source as Record<string, unknown>;
+  return keys.some((key) => {
+    const value = record[key];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
+
+/**
+ * Pure payload check for the AGY login-keychain item. go-keyring stores the
+ * value base64-wrapped; the antigravity CLI writes
+ * `{auth_method, token: {access_token, refresh_token, token_type, expiry}}`.
+ *
+ * Presence of the keychain item alone was deliberately distrusted (install
+ * trees leave stale items behind), so readiness requires a real token inside
+ * the payload. A refresh token counts: like Kimi, the CLI refreshes on spawn,
+ * so demanding an unexpired access token would report a daily-use session as
+ * logged out. Both the nested and flat shapes are accepted so a CLI-side
+ * layout change degrades to the file probe instead of silently locking AGY
+ * out. The secret itself is never returned or logged.
+ */
+export function agyKeychainBlobIsUsable(blob: string): boolean {
+  const trimmed = blob.trim();
+  if (!trimmed) return false;
+  let payload = trimmed;
+  if (trimmed.startsWith(GO_KEYRING_BASE64_PREFIX)) {
+    try {
+      payload = Buffer.from(
+        trimmed.slice(GO_KEYRING_BASE64_PREFIX.length),
+        'base64',
+      ).toString('utf8');
+    } catch {
+      return false;
+    }
+  }
+  if (!payload.trim()) return false;
+  try {
+    const parsed = JSON.parse(payload) as {
+      token?: unknown;
+    };
+    // Nested shape written by the antigravity CLI.
+    if (hasNonEmptyString(parsed.token, 'access_token', 'refresh_token')) {
+      return true;
+    }
+    // Flat shapes: `token` as a bare string, or top-level OAuth fields.
+    return hasNonEmptyString(parsed, 'token', 'access_token', 'refresh_token');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * AGY (antigravity) has no oauth_creds.json on this route: the live session
+ * token lives in the macOS login keychain under service `gemini`, account
+ * `antigravity`. Detecting only the ~/.gemini files reported "login
+ * necessário" for a fully signed-in CLI and removed AGY from squad selection.
+ *
+ * Reading the payload costs one `security` process, so the result is memoized
+ * for the normal TTL — the provider snapshot filters readiness per model and
+ * would otherwise spawn one probe per model.
+ */
+let agyKeychainMemo: { value: boolean; at: number } | null = null;
+
+export function agyKeychainCredentialIsUsable(
+  execImpl: typeof execFileSync = execFileSync,
+): boolean {
+  if (process.platform !== 'darwin') return false;
+  if (agyKeychainMemo && Date.now() - agyKeychainMemo.at < CACHE_TTL_MS) {
+    return agyKeychainMemo.value;
+  }
+  let value = false;
+  try {
+    const raw = execImpl(
+      'security',
+      ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'],
+      {
+        stdio: 'pipe',
+        timeout: 5_000,
+        killSignal: 'SIGKILL',
+        encoding: 'utf8',
+      },
+    );
+    value = agyKeychainBlobIsUsable(typeof raw === 'string' ? raw : '');
+  } catch {
+    // Locked keychain / TCC denial inside packaged Electron → fail closed.
+    value = false;
+  }
+  agyKeychainMemo = { value, at: Date.now() };
+  return value;
+}
+
+/** Test seam: drop the memoized AGY keychain probe result. */
+export function resetAgyKeychainCache(): void {
+  agyKeychainMemo = null;
+}
+
 /** True when google_accounts.json names a live active account email. */
 export function agyGoogleAccountIsActive(home = os.homedir()): boolean {
   const candidates = [path.join(home, '.gemini', 'google_accounts.json')];
@@ -260,11 +366,17 @@ function existsInEnv(envVar: string, ...segments: string[]): boolean {
 }
 
 /**
- * Kimi's credentials file can exist with non-empty but expired tokens. A
- * refresh token alone is not proof of a live login: the CLI may reject it and
- * erase the copied isolated credentials. Require an access token with a
- * declared expiry more than five minutes away so UI readiness and release
- * staging never advertise a dead session.
+ * Kimi's credentials file can exist with non-empty but expired tokens, and the
+ * empty shell survives logout — neither may advertise a session.
+ *
+ * A live access token (expiry more than five minutes away) is the strong
+ * signal. An *expired* access token paired with a refresh token is still a
+ * live login: the CLI silently refreshes on spawn, which is why the operator
+ * sees `kimi` working in the terminal. Requiring an unexpired access token
+ * reported "login necessário" for a session in daily use — a false negative
+ * that removed Kimi from squad selection. The refresh token must accompany a
+ * real access token: a refresh token on an empty shell is not evidence, and
+ * the spawn boundary stays authoritative if the refresh is ultimately refused.
  */
 export function kimiCredentialsBlobIsUsable(
   blob: string,
@@ -273,17 +385,24 @@ export function kimiCredentialsBlobIsUsable(
   try {
     const parsed = JSON.parse(blob) as {
       access_token?: unknown;
+      refresh_token?: unknown;
       expires_at?: unknown;
     };
     const access =
       typeof parsed.access_token === 'string' ? parsed.access_token.trim() : '';
+    if (!access) return false;
+    const refresh =
+      typeof parsed.refresh_token === 'string'
+        ? parsed.refresh_token.trim()
+        : '';
     const rawExpiry = Number(parsed.expires_at);
-    if (!access || !Number.isFinite(rawExpiry) || rawExpiry <= 0) return false;
+    if (!Number.isFinite(rawExpiry) || rawExpiry <= 0) return false;
     const expirySeconds =
       rawExpiry >= 1_000_000_000_000
         ? Math.floor(rawExpiry / 1000)
         : Math.floor(rawExpiry);
-    return expirySeconds - nowSeconds > 5 * 60;
+    if (expirySeconds - nowSeconds > 5 * 60) return true;
+    return refresh.length > 0;
   } catch {
     return false;
   }
@@ -440,10 +559,17 @@ export function detectSubscriptionAuth(
       // Installation dirs made google_accounts.active=null + leftover keychain
       // look "staged" in the release gate while the UI said "login new" and
       // disabled Usar este squad.
-      return (
-        agyOauthCredsFileIsUsable(home) ||
-        agyGoogleAccountIsActive(home)
-      );
+      if (agyOauthCredsFileIsUsable(home) || agyGoogleAccountIsActive(home)) {
+        return true;
+      }
+      // The antigravity CLI route writes no oauth_creds.json: its session
+      // token lives in the login keychain. File-only detection reported
+      // "login necessário" for a signed-in CLI. A non-default home cannot
+      // redirect the macOS keychain, so only the real operator home probes it.
+      if (options.probeAgyKeychain === false) return false;
+      if (options.agyKeychainProbe) return options.agyKeychainProbe();
+      if (home !== os.homedir()) return false;
+      return agyKeychainCredentialIsUsable();
     case 'kimi':
       // Require a non-empty access/refresh token. The zero-byte oauth marker
       // and the empty credentials shell both survive logout and must not

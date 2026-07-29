@@ -198,7 +198,10 @@ const FORBIDDEN_OWNERSHIP_ROOTS = new Set([
   "PRODUCT.md",
   "node_modules",
 ]);
-const GUIDED_INVENTORY_GIT_TIMEOUT_MS = 10_000;
+// `git ls-tree` on a large repository can exceed 10s on a cold page cache, and
+// expiring here is a hard `guided_plan_inventory_unavailable` — the mission
+// dies because the machine was slow, not because anything was wrong.
+const GUIDED_INVENTORY_GIT_TIMEOUT_MS = 30_000;
 const MAX_APPROVED_INTENT_OWNERSHIP_CLAIMS = 64;
 const MAX_GUIDED_OWNERSHIP_CLAIMS = 2_048;
 const MAX_GUIDED_OWNERSHIP_BYTES = 32 * 1_024;
@@ -234,22 +237,28 @@ function isForbiddenOwnershipClaim(value: string): boolean {
   );
 }
 
-function assertGuidedOwnershipBudget(claims: readonly string[]): void {
-  if (claims.length > MAX_GUIDED_OWNERSHIP_CLAIMS) {
-    throw new Error(
-      "guided_plan_ownership_too_large: o inventário raiz excede 2048 entradas",
-    );
-  }
-  // Schedule metadata shares the task detail's 64 KiB envelope with the
-  // approved goal and criteria. Keep enough headroom for that human contract.
-  if (
-    Buffer.byteLength(JSON.stringify(claims), "utf8") >
-    MAX_GUIDED_OWNERSHIP_BYTES
+/**
+ * Fits the claim list inside the schedule envelope.
+ *
+ * The byte budget is real: schedule metadata shares the task detail's 64 KiB
+ * envelope with the approved goal and criteria, so an oversized list would
+ * corrupt that contract. Refusing the mission over it was not — a large
+ * repository simply could never start, with no way for the operator to shrink
+ * an inventory that Nexus itself derived from `git ls-tree`.
+ *
+ * Truncation is deterministic (the list arrives sorted) and narrowing: fewer
+ * claims can only reduce what a worker may touch, never widen it.
+ */
+function fitGuidedOwnershipBudget(claims: readonly string[]): string[] {
+  const bounded = claims.slice(0, MAX_GUIDED_OWNERSHIP_CLAIMS);
+  while (
+    bounded.length > 0 &&
+    Buffer.byteLength(JSON.stringify(bounded), "utf8") >
+      MAX_GUIDED_OWNERSHIP_BYTES
   ) {
-    throw new Error(
-      "guided_plan_ownership_too_large: o inventário raiz excede 32 KiB",
-    );
+    bounded.pop();
   }
+  return bounded;
 }
 
 function clausePrefixAt(text: string, index: number): string {
@@ -415,16 +424,18 @@ function approvedIntentOwnershipCandidates(
 export function approvedIntentOwnershipClaims(
   contract: Pick<MissionIntentContract, "goal" | "acceptanceCriteria">,
 ): readonly string[] {
+  // A goal that names many files is a big refactor, not an attack. Refusing it
+  // meant the more precisely the operator described the work, the more likely
+  // the mission was to die. The cap still bounds the envelope; it simply stops
+  // collecting instead of throwing. Repository/tree inventory remains the
+  // authority for anything not captured here.
   const claims = new Set<string>();
   for (const text of [contract.goal, ...contract.acceptanceCriteria]) {
     for (const claim of approvedIntentOwnershipCandidates(text)) {
+      if (claims.size >= MAX_APPROVED_INTENT_OWNERSHIP_CLAIMS) break;
       claims.add(claim);
-      if (claims.size > MAX_APPROVED_INTENT_OWNERSHIP_CLAIMS) {
-        throw new Error(
-          "guided_plan_intent_ownership_too_large: o objetivo aprovado cita mais de 64 artefatos",
-        );
-      }
     }
+    if (claims.size >= MAX_APPROVED_INTENT_OWNERSHIP_CLAIMS) break;
   }
   return Object.freeze([...claims].sort((left, right) =>
     left.localeCompare(right),
@@ -451,8 +462,7 @@ export function addApprovedIntentOwnershipClaims(
   const ordered = [...claims].sort((left, right) =>
     left.localeCompare(right),
   );
-  assertGuidedOwnershipBudget(ordered);
-  return Object.freeze(ordered);
+  return Object.freeze(fitGuidedOwnershipBudget(ordered));
 }
 
 function validateOwnershipCatalog(
@@ -505,8 +515,7 @@ export function repositoryOwnershipClaimsFromGitTree(
     claims.add(normalized);
   }
   const ordered = [...claims].sort((left, right) => left.localeCompare(right));
-  assertGuidedOwnershipBudget(ordered);
-  return Object.freeze(ordered);
+  return Object.freeze(fitGuidedOwnershipBudget(ordered));
 }
 
 export function listRepositoryOwnershipClaims(

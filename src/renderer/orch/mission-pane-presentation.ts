@@ -12,6 +12,8 @@ import {
 export interface PresentMainOwnedMissionPaneResult {
   readonly ok: boolean;
   readonly pane: PaneModel;
+  /** Started and mounted, but the PTY session had not attached yet. */
+  readonly pending?: boolean;
   readonly error?: string;
 }
 
@@ -26,7 +28,14 @@ export interface PresentMainOwnedMissionPaneOptions {
   readonly removePaneIds?: ReadonlySet<string>;
 }
 
-const DEFAULT_PRESENTATION_TIMEOUT_MS = 20_000;
+/**
+ * A cold CLI under Seatbelt pays for the signed-helper handshake, the sandbox
+ * profile and the provider's own startup before the PTY reports a session.
+ * 20s regularly expired on a mission main had already started, so the operator
+ * was told the launch failed while the orchestrator was live. The sibling
+ * `waitForHealthyPaneSession` already budgets 75s for the same class of wait.
+ */
+const DEFAULT_PRESENTATION_TIMEOUT_MS = 75_000;
 
 function paneFromSealedAuthority(
   missionId: string,
@@ -96,11 +105,16 @@ export async function presentMainOwnedMissionPane(
     DEFAULT_PRESENTATION_TIMEOUT_MS,
   );
   if (!adoptedSessionId) {
+    // Main owns a live orchestrator and the pane is mounted and bound, so the
+    // attachment can still land through onPaneSessionChange. Reporting a hard
+    // failure here aborted the launch over a slow attach and left the operator
+    // believing nothing started while the mission was actually running.
     return {
-      ok: false,
+      ok: true,
       pane,
+      pending: true,
       error:
-        'O processo principal iniciou a missão, mas o pane não adotou a sessão ativa.',
+        'A missão foi iniciada. O pane ainda está conectando à sessão — ele aparece assim que o terminal responder.',
     };
   }
   if (adoptedSessionId !== sealed.sessionId) {

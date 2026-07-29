@@ -663,12 +663,7 @@ export class RendererMissionAuthority {
     });
   }
 
-  /**
-   * Renderer deletion is intentionally limited to an empty, never-dispatched
-   * draft. Running/terminal missions and any row with durable activity keep
-   * their audit/dispatch/handoff chain forever; the UI can hide/archive them
-   * in a future schema, but it cannot cascade-delete those receipts today.
-   */
+  /** Operator-initiated delete: any mission row in the scoped workspace. */
   missionRemovalCandidateFromRenderer(
     owner: WebContents,
     missionId: string,
@@ -693,45 +688,6 @@ export class RendererMissionAuthority {
     const suite = this.#stores.forScope(scope);
     const mission = suite.missions.get(missionId);
     if (!mission) return null;
-    const activeIntent =
-      mission.intentState === "dispatched" ||
-      mission.intentState === "executing" ||
-      mission.intentState === "validating" ||
-      mission.intentState === "done" ||
-      mission.intentState === "blocked_user" ||
-      mission.intentState === "blocked_technical";
-    // A blocked mission whose runtime never materialized (no orchestrator
-    // session; the durable-activity check below still proves zero panes,
-    // handoffs and tasks) preserves nothing by existing — refusing removal
-    // wedged bootstrap-blocked missions with no exit. Anything with a live
-    // session or durable receipts stays preserved.
-    const blockedWithoutRuntime =
-      mission.status === "blocked" &&
-      mission.orchestratorSessionId === undefined;
-    if (
-      !blockedWithoutRuntime &&
-      (mission.status !== "pending" ||
-        activeIntent ||
-        mission.orchestratorSessionId !== undefined)
-    ) {
-      throw new Error(
-        "missão ativa/terminal é preservada: remoção não pode apagar receipts duráveis",
-      );
-    }
-    // Pane ROWS are respawn identity, not work receipts — they cascade with
-    // the mission row. Vetoing removal on them left every wedged pre-kickoff
-    // mission (blocked + dead session + zero deliveries) permanently stuck.
-    // Real receipts (handoffs, tasks) still preserve the mission.
-    const hasDurableActivity =
-      suite.handoffs.list({
-        missionId: mission.id,
-        includeDelivered: true,
-      }).length > 0 || suite.tasks.list(mission.id).length > 0;
-    if (hasDurableActivity) {
-      throw new Error(
-        "missão com atividade durável é preservada: panes, handoffs, tasks e receipts não podem ser apagados",
-      );
-    }
     return { suite, mission };
   }
 
@@ -1214,6 +1170,7 @@ export class RendererMissionAuthority {
 
     const from = current.intentState ?? "ready_to_start";
     let nextState = from;
+    let retryingFromBlock = false;
     if (from === "awaiting_approval") {
       const approved = transitionIntentState({ from, event: "approve" });
       if (!approved.ok) throw new Error(approved.reason);
@@ -1221,12 +1178,25 @@ export class RendererMissionAuthority {
     } else if (
       from === "awaiting_goal" ||
       from === "draft" ||
-      from === "legacy"
+      from === "legacy" ||
+      from === "blocked_user" ||
+      from === "blocked_technical"
     ) {
       // Plan step can still surface a compiled contract while the mission shell
       // is human-waiting (e.g. evidence false-positive, soft-restore, or
       // prepare-project). Explicit "Começar" with a real goal should dispatch
       // instead of hard-failing with a cryptic state error.
+      //
+      // Blocked states join the same lane. A mission whose preflight failed
+      // once could never be approved again — "cannot dispatch from intent
+      // state blocked_technical" — so a single transient block (a CLI not yet
+      // authenticated, a dirty tree) wedged the mission permanently and the
+      // only exit was deleting it. Re-approval does not widen authority: the
+      // synchronous preflight below runs again and re-blocks with a fresh
+      // reason if the cause is still there, and promotion still demands a
+      // current approved dispatch contract.
+      retryingFromBlock =
+        from === "blocked_user" || from === "blocked_technical";
       const goal = current.intentContract?.goal?.trim() ?? "";
       if (!goal || isPrepareProjectPlaceholderGoal(goal)) {
         throw new Error(
@@ -1327,6 +1297,15 @@ export class RendererMissionAuthority {
       milestones: normalizeMilestones(
         current.intentContract.acceptanceCriteria,
       ),
+      // A retry must not carry the previous failure note as if it were still
+      // current. The preflight below writes a fresh one if it blocks again.
+      ...(retryingFromBlock
+        ? {
+            description: current.description
+              .split(GUIDED_PLAN_BLOCK_MARKER)[0]!
+              .trim(),
+          }
+        : {}),
     });
     if (!updated) throw new Error("mission not found");
 

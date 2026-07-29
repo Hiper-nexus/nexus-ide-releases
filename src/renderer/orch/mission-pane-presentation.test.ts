@@ -106,7 +106,7 @@ describe('presentMainOwnedMissionPane', () => {
         role: 'orchestrator',
       }),
     ]);
-    expect(harness.waitForSession).toHaveBeenCalledWith('pane-new', 20_000);
+    expect(harness.waitForSession).toHaveBeenCalledWith('pane-new', 75_000);
     expect(harness.focus).toHaveBeenCalledWith('pane-new');
     expect(harness.hide).toHaveBeenCalledOnce();
   });
@@ -130,7 +130,11 @@ describe('presentMainOwnedMissionPane', () => {
     ]);
   });
 
-  it('fails when renderer adopts no session or a different physical session', async () => {
+  it('keeps a slow attach alive instead of failing the started mission', async () => {
+    // Field trap (28/07): main owned a live orchestrator and the pane was
+    // already mounted and bound, but a slow PTY attach aborted the launch and
+    // told the operator nothing had started. The attach can still land through
+    // onPaneSessionChange, so this is pending, not failure.
     harness.waitForSession.mockResolvedValueOnce(null);
     const missing = await presentMainOwnedMissionPane(
       'mission-a',
@@ -139,8 +143,9 @@ describe('presentMainOwnedMissionPane', () => {
       { waitForSession: harness.waitForSession },
     );
     expect(missing).toMatchObject({
-      ok: false,
-      error: expect.stringMatching(/não adotou/i),
+      ok: true,
+      pending: true,
+      error: expect.stringMatching(/ainda está conectando/i),
     });
 
     harness.waitForSession.mockResolvedValueOnce('session-other');

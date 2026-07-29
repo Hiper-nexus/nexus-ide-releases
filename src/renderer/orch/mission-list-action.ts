@@ -1,12 +1,6 @@
 import type { Mission } from '../../shared/orch-types';
 import { missionHasLiveRuntime } from '../lib/mission-rail-groups';
 
-/**
- * Durable mission rows are audit/history records. The renderer never decides
- * what may be deleted: it only offers the gesture for rows with no live
- * runtime, and main refuses (with its own message) anything that still holds
- * receipts — handoffs, tasks, deliveries.
- */
 export function canDiscardMission(mission: Mission): boolean {
   if (mission.orchestratorSessionId !== undefined) return false;
   if (mission.status !== 'pending') return false;
@@ -24,21 +18,16 @@ export function canDiscardMission(mission: Mission): boolean {
 export type MissionListAction =
   | 'close-runtime'
   | 'discard'
-  | 'archive'
+  | 'remove'
   | 'none';
 
 export function missionListAction(
   mission: Mission,
   hasVisiblePanes: boolean,
 ): MissionListAction {
-  // Encerrar só existe enquanto há runtime físico para encerrar.
   if (missionHasLiveRuntime(mission, hasVisiblePanes)) return 'close-runtime';
-  // Rascunho nunca despachado não guarda nada: sai da base de verdade.
   if (canDiscardMission(mission)) return 'discard';
-  // Missão já despachada carrega receipts que o main se recusa (corretamente)
-  // a apagar. Arquivar tira da vista sem tocar em nada durável — é a única
-  // saída honesta para o operador que encerrou tudo e quer a lista limpa.
-  return 'archive';
+  return 'remove';
 }
 
 /** Rótulo curto do botão de cada ação — usado em title/aria-label. */
@@ -54,17 +43,16 @@ export function missionActionCopy(action: MissionListAction): {
       };
     case 'discard':
       return { verb: 'Descartar', title: 'Descartar este rascunho' };
-    case 'archive':
+    case 'remove':
       return {
-        verb: 'Arquivar',
-        title: 'Arquivar: some da lista, histórico preservado',
+        verb: 'Remover',
+        title: 'Apagar missão e todo o histórico desta execução',
       };
     default:
       return { verb: 'Missão', title: '' };
   }
 }
 
-/** Cópia honesta: o rascunho some da base; a arquivada some só da vista. */
 export function discardMissionPrompt(mission: Mission): {
   title: string;
   body: string;
@@ -77,17 +65,19 @@ export function discardMissionPrompt(mission: Mission): {
   };
 }
 
-export function archiveMissionPrompt(mission: Mission): {
+export function removeMissionPrompt(mission: Mission): {
   title: string;
   body: string;
   confirmLabel: string;
 } {
   return {
-    title: `Arquivar "${mission.title}"?`,
+    title: `Remover "${mission.title}"?`,
     body:
-      'A missão sai da lista de trabalho. Nada é apagado: tasks, entregas, ' +
-      'receipts e histórico continuam salvos, e ela reaparece em ' +
-      '“Arquivadas” — de onde dá pra desarquivar ou retomar quando quiser.',
-    confirmLabel: 'Arquivar missão',
+      'Apaga a missão da base deste projeto: panes, entregas, tasks, ' +
+      'receipts e histórico. Não dá para desfazer.',
+    confirmLabel: 'Remover missão',
   };
 }
+
+/** @deprecated use removeMissionPrompt — kept for tests migrating off archive */
+export const archiveMissionPrompt = removeMissionPrompt;

@@ -334,14 +334,12 @@ describe("renderer mission authority", () => {
   });
 
   it.each([
-    ["running", [], [], []],
-    ["done", [], [], []],
+    ["running", [], [{ id: "handoff-a" }], []],
+    ["done", [], [], [{ id: "task-a" }]],
     ["blocked", [], [{ id: "handoff-a" }], []],
-    ["blocked", [], [], [{ id: "task-a" }]],
-    ["pending", [], [{ id: "handoff-a" }], []],
     ["pending", [], [], [{ id: "task-a" }]],
   ] as const)(
-    "preserva missão/receipts quando status=%s ou há atividade durável",
+    "remove missão mesmo com status=%s ou atividade durável",
     (status, panes, handoffs, tasks) => {
       deps.getMission.mockReturnValue({
         ...mission,
@@ -353,10 +351,8 @@ describe("renderer mission authority", () => {
       deps.listHandoffs.mockReturnValue(handoffs);
       deps.listTasks.mockReturnValue(tasks);
 
-      expect(() =>
-        authority.removeMissionFromRenderer(owner, "mission-a"),
-      ).toThrow(/preservada|receipts|atividade/i);
-      expect(deps.removeMission).not.toHaveBeenCalled();
+      expect(authority.removeMissionFromRenderer(owner, "mission-a")).toBe(true);
+      expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
     },
   );
 
@@ -379,7 +375,7 @@ describe("renderer mission authority", () => {
     expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
   });
 
-  it("preserva missão bloqueada que ainda tem sessão de orquestrador", () => {
+  it("remove missão bloqueada mesmo com sessão de orquestrador registrada", () => {
     deps.getMission.mockReturnValue({
       ...mission,
       status: "blocked",
@@ -390,10 +386,8 @@ describe("renderer mission authority", () => {
     deps.listHandoffs.mockReturnValue([]);
     deps.listTasks.mockReturnValue([]);
 
-    expect(() =>
-      authority.removeMissionFromRenderer(owner, "mission-a"),
-    ).toThrow(/preservada/i);
-    expect(deps.removeMission).not.toHaveBeenCalled();
+    expect(authority.removeMissionFromRenderer(owner, "mission-a")).toBe(true);
+    expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
   });
 
   it("turns the approved intent criteria into durable PREVC milestones", () => {
@@ -1291,6 +1285,65 @@ describe("renderer mission authority", () => {
       status: "running",
       intentState: "dispatched",
     });
+  });
+
+  it("re-approves a mission whose preflight blocked it, clearing the stale note", () => {
+    // Field trap (28/07): a mission blocked once by a transient preflight
+    // failure (CLI not yet authenticated, dirty tree) could never be approved
+    // again — "cannot dispatch from intent state blocked_technical" — so the
+    // only exit was deleting it.
+    const blocked = {
+      ...approvedMission,
+      status: "blocked" as const,
+      intentState: "blocked_technical" as const,
+      description:
+        "Objetivo original.\n\n<!-- nexus:guided-plan-block -->\n## Execução não iniciada\nfalha anterior.",
+      intentContract: {
+        ...approvedMission.intentContract,
+        goal: "Atualize o repo e corrija o bug do print na tela ohmipy",
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+        evidenceAttached: false,
+      },
+    };
+    useStatefulMission(blocked);
+
+    const result = authority.approveIntentFromRenderer(owner, {
+      missionId: mission.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "running",
+      intentState: "dispatched",
+    });
+    // The previous failure note must not survive as if it were current.
+    const patched = deps.updateMission.mock.calls.find(
+      (call) => (call[1] as Partial<Mission>)?.description !== undefined,
+    );
+    expect((patched?.[1] as Partial<Mission>)?.description).toBe(
+      "Objetivo original.",
+    );
+    expect((patched?.[1] as Partial<Mission>)?.description).not.toContain(
+      "guided-plan-block",
+    );
+  });
+
+  it("still refuses re-approval of a blocked mission with no real goal", () => {
+    useStatefulMission({
+      ...approvedMission,
+      status: "blocked" as const,
+      intentState: "blocked_technical" as const,
+      intentContract: {
+        ...approvedMission.intentContract,
+        goal: "   ",
+        approvedAt: undefined,
+        dispatchedAt: undefined,
+      },
+    });
+
+    expect(() =>
+      authority.approveIntentFromRenderer(owner, { missionId: mission.id }),
+    ).toThrow(/intent_required/i);
   });
 
   it("refuses awaiting_goal start when evidence is still promised", () => {

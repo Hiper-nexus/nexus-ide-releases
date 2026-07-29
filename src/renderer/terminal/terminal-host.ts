@@ -1407,7 +1407,10 @@ export function getPaneSessionId(paneId: string): string | null {
   return hosts.get(paneId)?.sessionId ?? null;
 }
 
-const SESSION_WAIT_TIMEOUT_MS = 20_000;
+// Cold CLI start under Seatbelt pays for the signed-helper handshake and the
+// sandbox profile before the PTY reports a session. 20s expired on machines
+// that were merely slow, turning "still starting" into "failed".
+const SESSION_WAIT_TIMEOUT_MS = 60_000;
 
 /**
  * Resolve with a pane's PTY session id once it materializes (spawn is async),

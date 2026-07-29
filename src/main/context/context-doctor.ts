@@ -17,10 +17,11 @@ import {
 } from '../orch/workspace-path';
 import { detectContextConflicts } from './ambiguity-engine';
 import { canonicalJson } from './canonical-json';
+import { inspectContextAttestations } from './context-attestation';
 import {
-  inspectContextAttestations,
-  type ContextAttestationDiagnostic,
-} from './context-attestation';
+  authorityFactLocators,
+  partitionAttestationDiagnostics,
+} from './context-attestation-readiness';
 import { ingestProjectContext } from './context-ingestor';
 import type { SensorDefinition } from './sensor-broker';
 
@@ -732,37 +733,6 @@ function addMissingDocs(
   }
 }
 
-function partitionAttestationDiagnostics(
-  diagnostics: readonly ContextAttestationDiagnostic[],
-): {
-  readonly blocking: readonly ContextAttestationDiagnostic[];
-  readonly sourceDrift: readonly ContextAttestationDiagnostic[];
-  readonly sourceDriftTargets: ReadonlySet<string>;
-} {
-  const byPath = new Map<string, ContextAttestationDiagnostic[]>();
-  const blocking = diagnostics.filter((item) => {
-    if (!item.attestationPath) return true;
-    const group = byPath.get(item.attestationPath) ?? [];
-    group.push(item);
-    byPath.set(item.attestationPath, group);
-    return false;
-  });
-  const sourceDrift: ContextAttestationDiagnostic[] = [];
-  const sourceDriftTargets = new Set<string>();
-  for (const group of byPath.values()) {
-    const isSourceDriftOnly = group.every(
-      (item) => item.code === 'source-hash-mismatch' && item.targetPath,
-    );
-    if (!isSourceDriftOnly) {
-      blocking.push(...group);
-      continue;
-    }
-    sourceDrift.push(...group);
-    for (const item of group) sourceDriftTargets.add(item.targetPath!);
-  }
-  return { blocking, sourceDrift, sourceDriftTargets };
-}
-
 export function ensureContextScaffold(
   scope: ProjectExecutionScope,
 ): ContextScaffoldResult {
@@ -900,6 +870,14 @@ export function inspectContextReadiness(
       details: attestationDiagnostics.sourceDrift.map((item) => item.message),
     });
   }
+  if (attestationDiagnostics.quarantined.length > 0) {
+    warnings.push({
+      code: 'invalid-context-attestation',
+      message:
+        'Uma attestation ilegível foi ignorada (quarentena). Remova ou regenere o arquivo.',
+      details: attestationDiagnostics.quarantined.map((item) => item.message),
+    });
+  }
   try {
     const corpus = ingestProjectContext(scope);
     corpusRevision = corpus.contextRevision;
@@ -924,7 +902,7 @@ export function inspectContextReadiness(
     const authorityTargets = new Set<string>([
       ...REQUIRED_BUSINESS_DOCS.filter((relative) => fileExistsWithoutFollowing(scope, relative)),
       ...REQUIRED_TECHNICAL_DOCS.filter((relative) => fileExistsWithoutFollowing(scope, relative)),
-      ...corpus.facts.map((fact) => fact.source.locator),
+      ...authorityFactLocators(corpus.facts),
     ]);
     const missingAttestations = [...authorityTargets]
       .filter((relative) => !reviewedTargets.has(relative))

@@ -4,10 +4,13 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  agyKeychainBlobIsUsable,
+  agyKeychainCredentialIsUsable,
   claudeKeychainHas,
   claudeKeychainHasAsync,
   claudeOauthEmail,
   detectSubscriptionAuth,
+  resetAgyKeychainCache,
   hasSubscriptionAuthForStatus,
   kimiCredentialsBlobIsUsable,
   refreshClaudeSubscriptionAuthCache,
@@ -122,6 +125,90 @@ describe('resolveAuthStrategy', () => {
   });
 });
 
+describe('agyKeychainBlobIsUsable', () => {
+  const wrap = (value: unknown) =>
+    `go-keyring-base64:${Buffer.from(JSON.stringify(value), 'utf8').toString('base64')}`;
+
+  it('accepts the nested shape the antigravity CLI actually writes', () => {
+    expect(
+      agyKeychainBlobIsUsable(
+        wrap({
+          auth_method: 'oauth',
+          token: {
+            access_token: 'ya29.tok',
+            token_type: 'Bearer',
+            refresh_token: 'rt',
+            expiry: '2026-07-28T21:50:49.000Z',
+          },
+        }),
+      ),
+    ).toBe(true);
+    // An expired access token still refreshes on spawn — refresh token counts.
+    expect(
+      agyKeychainBlobIsUsable(
+        wrap({ auth_method: 'oauth', token: { refresh_token: 'rt' } }),
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts flat payload shapes for keyring/CLI variants', () => {
+    expect(
+      agyKeychainBlobIsUsable(wrap({ auth_method: 'oauth', token: 'ya29.tok' })),
+    ).toBe(true);
+    // Raw (unwrapped) JSON is accepted for keyring variants that skip base64.
+    expect(agyKeychainBlobIsUsable(JSON.stringify({ token: 'tok' }))).toBe(true);
+    expect(
+      agyKeychainBlobIsUsable(JSON.stringify({ access_token: 'tok' })),
+    ).toBe(true);
+  });
+
+  it('rejects empty, tokenless and malformed payloads', () => {
+    expect(agyKeychainBlobIsUsable('')).toBe(false);
+    expect(agyKeychainBlobIsUsable('   ')).toBe(false);
+    expect(agyKeychainBlobIsUsable(wrap({ auth_method: 'oauth' }))).toBe(false);
+    expect(agyKeychainBlobIsUsable(wrap({ token: '' }))).toBe(false);
+    expect(agyKeychainBlobIsUsable(wrap({ token: '   ' }))).toBe(false);
+    // Nested object present but carrying no usable token.
+    expect(
+      agyKeychainBlobIsUsable(wrap({ token: { token_type: 'Bearer' } })),
+    ).toBe(false);
+    expect(
+      agyKeychainBlobIsUsable(wrap({ token: { access_token: '  ' } })),
+    ).toBe(false);
+    expect(agyKeychainBlobIsUsable('go-keyring-base64:not-base64-json')).toBe(
+      false,
+    );
+    expect(agyKeychainBlobIsUsable('plain text, not json')).toBe(false);
+  });
+});
+
+describe('agyKeychainCredentialIsUsable', () => {
+  afterEach(() => resetAgyKeychainCache());
+
+  it('memoizes the keychain probe so per-model readiness spawns one process', () => {
+    if (process.platform !== 'darwin') return;
+    const exec = vi.fn(
+      () =>
+        `go-keyring-base64:${Buffer.from(
+          JSON.stringify({ auth_method: 'oauth', token: 'tok' }),
+          'utf8',
+        ).toString('base64')}`,
+    ) as unknown as typeof import('node:child_process').execFileSync;
+    expect(agyKeychainCredentialIsUsable(exec)).toBe(true);
+    expect(agyKeychainCredentialIsUsable(exec)).toBe(true);
+    expect(agyKeychainCredentialIsUsable(exec)).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when the keychain lookup throws', () => {
+    if (process.platform !== 'darwin') return;
+    const exec = vi.fn(() => {
+      throw new Error('SecKeychainSearchCopyNext: item not found');
+    }) as unknown as typeof import('node:child_process').execFileSync;
+    expect(agyKeychainCredentialIsUsable(exec)).toBe(false);
+  });
+});
+
 describe('kimiCredentialsBlobIsUsable', () => {
   it('requires a live access token with a safe expiry window', () => {
     const now = 2_000_000_000;
@@ -136,11 +223,24 @@ describe('kimiCredentialsBlobIsUsable', () => {
       ),
     ).toBe(false);
     expect(kimiCredentialsBlobIsUsable('{"kimi":1}', now)).toBe(false);
+    // An expired access token WITH a refresh token is a live login: the CLI
+    // refreshes on spawn. Treating it as logged out hid Kimi from the squad.
     expect(
       kimiCredentialsBlobIsUsable(
         JSON.stringify({
           access_token: 'at-expired',
-          refresh_token: 'rt-present-but-unproven',
+          refresh_token: 'rt-live',
+          expires_at: now - 1,
+        }),
+        now,
+      ),
+    ).toBe(true);
+    // Expired access token and no refresh token is still logged out.
+    expect(
+      kimiCredentialsBlobIsUsable(
+        JSON.stringify({
+          access_token: 'at-expired',
+          refresh_token: '',
           expires_at: now - 1,
         }),
         now,
@@ -532,6 +632,40 @@ describe('detectSubscriptionAuth', () => {
     );
     touch(path.join(home, '.gemini'), 'antigravity');
     expect(detectSubscriptionAuth('agy', home)).toBe(false);
+  });
+
+  it('detects AGY from the login keychain when ~/.gemini has no oauth files', () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.gemini', 'google_accounts.json'),
+      JSON.stringify({ active: null, old: ['user@example.com'] }),
+    );
+    // The antigravity CLI stores its session token in the keychain only.
+    expect(
+      detectSubscriptionAuth('agy', home, undefined, {
+        agyKeychainProbe: () => true,
+      }),
+    ).toBe(true);
+    expect(
+      detectSubscriptionAuth('agy', home, undefined, {
+        agyKeychainProbe: () => false,
+      }),
+    ).toBe(false);
+    // Opt-out keeps a caller entirely off the Keychain path.
+    expect(
+      detectSubscriptionAuth('agy', home, undefined, {
+        probeAgyKeychain: false,
+        agyKeychainProbe: () => true,
+      }),
+    ).toBe(false);
+  });
+
+  it('never reaches the AGY keychain for a non-default home', () => {
+    // A non-default home cannot redirect the macOS keychain, so a temp home
+    // must stay file-only and report logged out — even on a machine whose
+    // real login keychain holds a live antigravity token.
+    expect(detectSubscriptionAuth('agy', tempHome())).toBe(false);
   });
 
   it('fails closed for a custom adapter without an auth detector', () => {

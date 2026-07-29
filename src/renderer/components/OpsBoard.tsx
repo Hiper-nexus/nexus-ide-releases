@@ -20,7 +20,6 @@ import { useLayoutStore } from '../state/layout-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import {
   loadArchivedMissionIds,
-  setMissionArchived,
 } from '../lib/mission-rail-prefs';
 import { useSessionStateStore } from '../state/session-state-store';
 import { listPanes } from '../lib/split-tree';
@@ -32,7 +31,7 @@ import {
   type AgentVisualState,
 } from './AgentAvatar';
 import {
-  archiveMissionPrompt,
+  removeMissionPrompt,
   discardMissionPrompt,
   missionActionCopy,
   missionListAction,
@@ -41,6 +40,7 @@ import {
   closeMissionNote,
   closeMissionRuntimeAndPanes,
 } from '../orch/close-mission-runtime';
+import { toUserFacingMissionError } from '../lib/user-facing-mission-error';
 
 /**
  * Ops Board — o pipeline de missões como superfície espacial (war-room).
@@ -139,19 +139,9 @@ export function OpsBoard() {
       }
       return;
     }
-    if (action === 'archive') {
-      const ok = await askConfirm({
-        ...archiveMissionPrompt(m),
-        confirmLabel: 'Arquivar missão',
-      });
-      if (!ok) return;
-      setMissionArchived(workspacePath, m.id, true);
-      setNote('Missão arquivada. Nada foi apagado — desarquive pelo rail.');
-      // Board lê a preferência no render; força um repaint pelo store.
-      useOrchStore.setState((state) => ({ ...state }));
-      return;
-    }
-    const ok = await askConfirm({ ...discardMissionPrompt(m), danger: true });
+    const prompt =
+      action === 'remove' ? removeMissionPrompt(m) : discardMissionPrompt(m);
+    const ok = await askConfirm({ ...prompt, danger: true });
     if (!ok) return;
     void window.nexus.orch
       .removeMission(m.id)
@@ -159,9 +149,7 @@ export function OpsBoard() {
         if (!r.removed) setNote('Missão já não estava na lista.');
       })
       .catch((cause) => {
-        setNote(
-          cause instanceof Error ? cause.message : 'Falha ao remover a missão.',
-        );
+        setNote(toUserFacingMissionError(cause, 'Falha ao remover a missão.'));
       });
   }
 

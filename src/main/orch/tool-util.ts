@@ -61,7 +61,10 @@ export { assertSafePtyPrompt } from './pty-prompt-safety';
 const PROMPT_SETTLE_MS = 500;
 /** Janela para provar o submit: sessão ainda idle depois disto → CR comido. */
 const ENTER_RETRY_MS = 400;
-const AGENT_BOOT_TIMEOUT_MS = 20_000;
+// Wait for the CLI's first idle before typing. Expiring early types the brief
+// into a terminal that is still booting, so the prompt is swallowed and the
+// pane sits idle while every watchdog waits for a busy transition.
+const AGENT_BOOT_TIMEOUT_MS = 60_000;
 /** Max wait for Claude-family bypass/trust menus before typing the mission prompt. */
 /**
  * After a brief is typed, the session must report busy within this window.

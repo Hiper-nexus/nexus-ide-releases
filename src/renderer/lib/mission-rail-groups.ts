@@ -27,10 +27,20 @@ export function missionHasLiveRuntime(
   mission: Mission,
   hasVisiblePanes: boolean,
 ): boolean {
+  // Physical evidence first.
+  if (hasVisiblePanes) return true;
+  if (mission.orchestratorSessionId !== undefined) return true;
+  if (mission.status === 'running') return true;
+  // Field trap (28/07): a stale intent state is not evidence of life. A
+  // mission left at `blocked` + `dispatched` with no session and no panes
+  // still claimed a runtime, so the rail offered "Encerrar" forever and never
+  // "Remover" — clicking it closed nothing ("nenhum processo restava vivo")
+  // and the mission could never be deleted. A blocked mission with no session
+  // has nothing to terminate, whatever its intent state says.
+  if (mission.status === 'blocked') return false;
+  // Otherwise the intent state still covers a mission whose pane bind failed
+  // while its terminal is genuinely running.
   return (
-    hasVisiblePanes ||
-    mission.orchestratorSessionId !== undefined ||
-    mission.status === 'running' ||
     mission.intentState === 'dispatched' ||
     mission.intentState === 'executing' ||
     mission.intentState === 'validating'

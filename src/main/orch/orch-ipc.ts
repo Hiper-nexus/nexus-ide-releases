@@ -4,6 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
+import {
+  isOperatorSubmit,
+  operatorSubmitUnparkPatch,
+} from "./mission-operator-reply";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   missionPatchSchema,
@@ -170,6 +174,7 @@ import {
   closeMissionRuntimePreservingHistory,
   prepareMissionRuntimeTermination,
   settleMissionRuntimeDemotion,
+  terminateMissionRuntime,
 } from './mission-runtime-termination';
 import {
   applyExclusiveOrchestratorReplacement,
@@ -186,7 +191,6 @@ import { commitPromotedPlanToGit } from "./promoted-plan-git-authority";
  */
 
 const listeners = new Set<WebContents>();
-const missionRemovalConfirmations = new WeakSet<WebContents>();
 const missionAuthorityConfirmations = new WeakSet<WebContents>();
 const immediateSquadConfirmations = new WeakSet<WebContents>();
 const squadDeleteConfirmations = new WeakSet<WebContents>();
@@ -797,41 +801,6 @@ async function confirmCatalogInstallPayload(
       "A instalação é global para CLIs futuras e publicará somente este digest.",
   });
   return result.response === 1;
-}
-
-async function confirmMissionRemoval(
-  owner: WebContents,
-  scope: ProjectExecutionScope,
-  candidate: { missionId: string; title: string },
-): Promise<boolean> {
-  const window = BrowserWindow.fromWebContents(owner);
-  if (!window || window.isDestroyed()) {
-    throw new Error("renderer window is unavailable");
-  }
-  if (missionRemovalConfirmations.has(owner)) {
-    throw new Error("mission removal confirmation is already pending");
-  }
-  missionRemovalConfirmations.add(owner);
-  try {
-    const result = await dialog.showMessageBox(window, {
-      type: "warning",
-      title: "Nexus IDE — remover rascunho",
-      buttons: ["Cancelar", "Remover rascunho"],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      message: "Remover este rascunho de missão vazio?",
-      detail:
-        `Workspace: ${safeDialogLabel(scope.rootRealPath, 512)}\n` +
-        `Missão: ${safeDialogLabel(candidate.title, 256)}\n` +
-        `ID: ${safeDialogLabel(candidate.missionId, 128)}\n\n` +
-        "Missões ativas, concluídas ou com panes, tasks, handoffs e receipts " +
-        "são preservadas e não podem ser removidas por esta ação.",
-    });
-    return result.response === 1;
-  } finally {
-    missionRemovalConfirmations.delete(owner);
-  }
 }
 
 async function confirmMissionAuthorityChange(
@@ -1802,11 +1771,20 @@ export function registerOrchIpc(): void {
     const info = getOwnedAgentSessionInfo(event.sender, sessionId);
     if (!info?.missionId) return false;
     const scope = requireLiveRendererWorkspaceScope(event.sender);
-    const mission = getProjectDomainStores(scope).missions.get(info.missionId);
+    const missions = getProjectDomainStores(scope).missions;
+    const mission = missions.get(info.missionId);
     if (!mission || mission.status === "done" || mission.status === "failed") {
       return false;
     }
-    return orchWriteSession(sessionId, data, { markInputBusy: true });
+    const written = orchWriteSession(sessionId, data, { markInputBusy: true });
+    // The answer landing is what unparks the mission. Without this the agent
+    // received the reply while the mission stayed `blocked_user` forever —
+    // rail stuck on "Aguarda você", wizard bouncing back to the home screen.
+    if (written && isOperatorSubmit(data)) {
+      const unpark = operatorSubmitUnparkPatch(mission);
+      if (unpark) missions.update(info.missionId, unpark);
+    }
+    return written;
   });
 
   ipcMain.on(ORCH_CHANNELS.panesSync, (event, raw) => {
@@ -2078,6 +2056,7 @@ export function registerOrchIpc(): void {
     }
     return rearmBlockedMissionFromRenderer(event.sender, parsed.data);
   });
+
 
   const missionPromotePlanSchema = z
     .object({
@@ -2375,20 +2354,26 @@ export function registerOrchIpc(): void {
     if (!parsed.success) throw new Error("invalid mission remove payload");
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const authority = requireMissionAuthority();
+    const suite = requireProjectStores(event.sender);
     const candidate = authority.missionRemovalCandidateFromRenderer(
       event.sender,
       parsed.data.missionId,
     );
     if (!candidate) return { removed: false };
-    const approved = await confirmMissionRemoval(
-      event.sender,
-      scope,
-      candidate,
-    );
-    if (!approved) return { removed: false };
-    // A native click can outlive the renderer or its project binding. Recheck
-    // both the exact scope and every durable-activity predicate immediately
-    // before the cascade-capable store call.
+    try {
+      await terminateMissionRuntime({
+        scope,
+        suite,
+        missionId: candidate.missionId,
+        reason: "operator-close",
+        collapsePanes: true,
+      });
+    } catch (error) {
+      console.warn(
+        `[orch] mission remove: runtime teardown partial mission=${candidate.missionId}`,
+        error,
+      );
+    }
     requireLiveRendererWorkspaceScope(event.sender, scope);
     const removed = authority.removeMissionFromRenderer(
       event.sender,

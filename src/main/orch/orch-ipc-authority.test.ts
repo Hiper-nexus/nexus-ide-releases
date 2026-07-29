@@ -2290,29 +2290,12 @@ describe('mission removal IPC authority', () => {
     expect(harness.missionRemovalCandidate).not.toHaveBeenCalled();
   });
 
-  it('exige confirmação nativa e revalida o mesmo workspace antes de remover', async () => {
+  it('remove direto após confirmação do renderer (sem modal nativo)', async () => {
     const sender = owner();
     harness.scopes.set(sender.id, SCOPE_A);
     harness.windows.set(sender.id, { isDestroyed: () => false });
     const handler = configureAndGetHandler();
 
-    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
-    await expect(
-      handler({ sender }, { missionId: 'mission-draft' }),
-    ).resolves.toEqual({ removed: false });
-    expect(harness.removeMission).not.toHaveBeenCalled();
-
-    harness.dialog.showMessageBox.mockImplementationOnce(async () => {
-      harness.scopes.set(sender.id, SCOPE_B);
-      return { response: 1 };
-    });
-    await expect(
-      handler({ sender }, { missionId: 'mission-draft' }),
-    ).rejects.toThrow(/workspace authority changed/i);
-    expect(harness.removeMission).not.toHaveBeenCalled();
-
-    harness.scopes.set(sender.id, SCOPE_A);
-    harness.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
     await expect(
       handler({ sender }, { missionId: 'mission-draft' }),
     ).resolves.toEqual({ removed: true });
@@ -2320,26 +2303,19 @@ describe('mission removal IPC authority', () => {
       sender,
       'mission-draft',
     );
-    const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
-    if (!options) throw new Error('missing native removal confirmation options');
-    expect(options).toMatchObject({ defaultId: 0, cancelId: 0, noLink: true });
-    expect(options.detail).toContain(SCOPE_A.rootRealPath);
-    expect(options.detail).toContain('mission-draft');
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
   });
 
-  it('não abre modal quando a autoridade recusa missão ativa ou terminal', async () => {
+  it('retorna removed:false quando a missão já não existe', async () => {
     const sender = owner();
     harness.scopes.set(sender.id, SCOPE_A);
     harness.windows.set(sender.id, { isDestroyed: () => false });
-    harness.missionRemovalCandidate.mockImplementationOnce(() => {
-      throw new Error('missão ativa/terminal é preservada');
-    });
+    harness.missionRemovalCandidate.mockReturnValueOnce(null);
     const handler = configureAndGetHandler();
 
     await expect(
-      handler({ sender }, { missionId: 'mission-running' }),
-    ).rejects.toThrow(/preservada/i);
-    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+      handler({ sender }, { missionId: 'mission-gone' }),
+    ).resolves.toEqual({ removed: false });
     expect(harness.removeMission).not.toHaveBeenCalled();
   });
 });

@@ -30,7 +30,13 @@ import {
 } from './AgentAvatar';
 import { ProviderLogo } from './ProviderLogo';
 import { livePaneIdsForMission } from '../orch/mission-reopen';
-import { missionListAction } from '../orch/mission-list-action';
+import {
+  discardMissionPrompt,
+  missionActionCopy,
+  missionListAction,
+  removeMissionPrompt,
+} from '../orch/mission-list-action';
+import { toUserFacingMissionError } from '../lib/user-facing-mission-error';
 import { closeMissionRuntimeAndPanes } from '../orch/close-mission-runtime';
 
 /**
@@ -104,16 +110,8 @@ function MissionRow({
           <button
             className="orch-item__remove"
             onClick={() => onRemove(mission)}
-            title={
-              listAction === 'close-runtime'
-                ? 'Encerrar processos e panes; preservar histórico'
-                : 'Descartar rascunho'
-            }
-            aria-label={
-              listAction === 'close-runtime'
-                ? `Encerrar missão ${mission.title}`
-                : `Descartar missão ${mission.title}`
-            }
+            title={missionActionCopy(listAction).title}
+            aria-label={`${missionActionCopy(listAction).verb} missão ${mission.title}`}
           >
             <CloseIcon />
           </button>
@@ -356,16 +354,20 @@ export function OrchestrationPanel() {
       );
       return;
     }
-    const ok = await askConfirm({
-      title: `Descartar "${mission.title}"?`,
-      body: 'Este rascunho ainda não foi despachado e será removido.',
-      confirmLabel: 'Descartar missão',
-      danger: true,
-    });
+    const prompt =
+      action === 'remove'
+        ? removeMissionPrompt(mission)
+        : discardMissionPrompt(mission);
+    const ok = await askConfirm({ ...prompt, danger: true });
     if (!ok) return;
-    void window.nexus.orch.removeMission(mission.id).then((r) => {
-      if (!r.removed) setNotice('Missão já não estava na lista.');
-    });
+    void window.nexus.orch
+      .removeMission(mission.id)
+      .then((r) => {
+        if (!r.removed) setNotice('Missão já não estava na lista.');
+      })
+      .catch((cause) => {
+        setNotice(toUserFacingMissionError(cause, 'Falha ao remover a missão.'));
+      });
   }
 
   const visibleTodoLists = todoLists.filter((l) => l.items.length > 0);

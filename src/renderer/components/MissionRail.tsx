@@ -6,6 +6,7 @@ import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useOmpRpcStore } from '../state/omp-rpc-store';
 import { livePaneIdsForMission } from '../orch/mission-reopen';
+import { useHomeStore } from '../state/home-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import {
   groupMissionsForRail,
@@ -38,6 +39,7 @@ import { PixelIcon } from './PixelIcon';
 import { ActionCard, EmptyState } from './ActionCard';
 import { OperatorHud } from './OperatorHud';
 import { askConfirm } from '../state/confirm-store';
+import { toUserFacingMissionError } from '../lib/user-facing-mission-error';
 import { confirmAndBlockMission } from '../orch/block-mission';
 import { promotePlanMissionToExecution } from '../orch/plan-promote-flow';
 import { usePlanLaneMetricsStore } from '../state/plan-lane-metrics-store';
@@ -58,7 +60,7 @@ import { EndorphinPresence } from './EndorphinPresence';
 import { missionRouteDisplay } from '../lib/mission-route-display';
 import { MissionClarifyCards } from './MissionClarifyCards';
 import {
-  archiveMissionPrompt,
+  removeMissionPrompt,
   discardMissionPrompt,
   missionActionCopy,
   missionListAction,
@@ -349,17 +351,8 @@ export function MissionRail() {
       }
       return;
     }
-    if (action === 'archive') {
-      const ok = await askConfirm({
-        ...archiveMissionPrompt(m),
-        confirmLabel: 'Arquivar missão',
-      });
-      if (!ok) return;
-      setArchivedIds(setMissionArchived(workspacePath, m.id, true));
-      setNote('Missão arquivada. Nada foi apagado — está em “Arquivadas”.');
-      return;
-    }
-    const prompt = discardMissionPrompt(m);
+    const prompt =
+      action === 'remove' ? removeMissionPrompt(m) : discardMissionPrompt(m);
     const ok = await askConfirm({ ...prompt, danger: true });
     if (!ok) return;
     setNote(null);
@@ -372,12 +365,32 @@ export function MissionRail() {
           savePinnedMissionIds(workspacePath, next);
           return next;
         });
+        setArchivedIds((prev) => prev.filter((id) => id !== m.id));
       })
       .catch((cause) => {
-        setNote(
-          cause instanceof Error ? cause.message : 'Falha ao remover a missão.',
-        );
+        setNote(toUserFacingMissionError(cause, 'Falha ao remover a missão.'));
       });
+  }
+
+  async function purgeMission(m: Mission) {
+    const ok = await askConfirm({ ...removeMissionPrompt(m), danger: true });
+    if (!ok) return;
+    setBusy(m.id);
+    setNote(null);
+    try {
+      const r = await window.nexus.orch.removeMission(m.id);
+      if (!r.removed) setNote('Missão já não estava na lista.');
+      setPinnedIds((prev) => {
+        const next = prev.filter((x) => x !== m.id);
+        savePinnedMissionIds(workspacePath, next);
+        return next;
+      });
+      setArchivedIds((prev) => prev.filter((id) => id !== m.id));
+    } catch (cause) {
+      setNote(toUserFacingMissionError(cause, 'Falha ao remover a missão.'));
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function blockMission(m: Mission) {
@@ -525,10 +538,25 @@ export function MissionRail() {
       setBusy(null);
       return;
     }
+    // Already on screen: bring it to the front. Clicking a mission whose pane
+    // was alive fell straight into reopen, which neither focused the pane nor
+    // dismissed the home screen — so the mission "did not open" and the
+    // operator kept looking at "Pronto para planejar".
+    const livePanes = livePaneIdsForMission(m.id);
+    if (livePanes.length > 0) {
+      useHomeStore.getState().hide();
+      focusPane(livePanes[0]!);
+      setBusy(null);
+      return;
+    }
     void confirmAndReopenMission(m)
       .then((r) => {
         if (!r.ok) setNote(r.error ?? 'Falha ao retomar.');
-        else setNote(null);
+        else {
+          setNote(null);
+          // A reopened mission owns the screen; the home panel must step aside.
+          useHomeStore.getState().hide();
+        }
       })
       .catch((cause) => {
         setNote(
@@ -852,13 +880,14 @@ export function MissionRail() {
                         const canBlockMission =
                           m.status === 'pending' || m.status === 'running';
                         const listAction = missionListAction(m, liveInGrid);
-                        const hasListAction =
-                          archivedIds.includes(m.id) || listAction !== 'none';
+                        const isArchived = archivedIds.includes(m.id);
+                        const hasRemoveAction = listAction !== 'none';
                         const rowActionCount =
                           Number(canPromotePlan) +
                           Number(canBlockMission) +
                           1 +
-                          Number(hasListAction);
+                          Number(isArchived) +
+                          Number(hasRemoveAction);
                         const dotStatus =
                           statusUi.tone === 'blocked' ||
                           statusUi.tone === 'failed' ||
@@ -1034,10 +1063,10 @@ export function MissionRail() {
                                   size={11}
                                 />
                               </button>
-                              {archivedIds.includes(m.id) ? (
+                              {isArchived && (
                                 <button
                                   type="button"
-                                  className="mission-rail__row-action mission-rail__row-action--remove"
+                                  className="mission-rail__row-action mission-rail__row-action--restore"
                                   disabled={busy !== null}
                                   title="Trazer de volta para a lista"
                                   aria-label={`Desarquivar missão ${m.title}`}
@@ -1055,24 +1084,33 @@ export function MissionRail() {
                                 >
                                   <PixelIcon name="restart" size={10} />
                                 </button>
-                              ) : (
-                                listAction !== 'none' && (
-                                  <button
-                                    type="button"
-                                    className="mission-rail__row-action mission-rail__row-action--remove"
-                                    disabled={busy !== null}
-                                    title={missionActionCopy(listAction).title}
-                                    aria-label={`${
-                                      missionActionCopy(listAction).verb
-                                    } missão ${m.title}`}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void closeOrDiscardMission(m, liveInGrid);
-                                    }}
-                                  >
-                                    <PixelIcon name="close" size={10} />
-                                  </button>
-                                )
+                              )}
+                              {hasRemoveAction && (
+                                <button
+                                  type="button"
+                                  className="mission-rail__row-action mission-rail__row-action--remove"
+                                  disabled={busy !== null}
+                                  title={
+                                    isArchived
+                                      ? removeMissionPrompt(m).confirmLabel
+                                      : missionActionCopy(listAction).title
+                                  }
+                                  aria-label={`${
+                                    isArchived
+                                      ? 'Remover'
+                                      : missionActionCopy(listAction).verb
+                                  } missão ${m.title}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isArchived) {
+                                      void purgeMission(m);
+                                      return;
+                                    }
+                                    void closeOrDiscardMission(m, liveInGrid);
+                                  }}
+                                >
+                                  <PixelIcon name="close" size={10} />
+                                </button>
                               )}
                             </div>
                           </li>

@@ -2,6 +2,8 @@ import type { WebContents } from "electron";
 import { z } from "zod";
 import { GUIDED_PLAN_BLOCK_MARKER } from "../../shared/guided-mission-plan";
 import { buildIntentDispatchKickoffPrompt } from "../../shared/mission-dispatch-kickoff";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
+import { getOrchSettings } from "../persistence/settings-store";
 import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
@@ -895,6 +897,11 @@ export class MissionOrchestratorBootstrapService {
           : undefined,
         guidedPrevcRequired,
         guidedPrevcFrozen,
+        // The prompt must state the policy actually in force; otherwise the
+        // Maestro substitutes Codex for the operator's chosen executor.
+        operatorChoice: isOperatorChoicePolicy(
+          getOrchSettings().squadCliPolicy,
+        ),
       });
       const kickoff = await this.#deps.submitKickoff(scope, {
         missionId,
@@ -1611,20 +1618,32 @@ export function blockedBootstrapResumePatch(mission: Mission):
       ok: false;
       error: string;
     } {
-  // Qualquer blocked_technical com contrato aprovado vigente é resumível
-  // pelo bootstrap: os re-bloqueios do próprio ciclo (kickoff sem recibo,
+  // Qualquer missão bloqueada com contrato aprovado vigente é resumível pelo
+  // bootstrap: os re-bloqueios do próprio ciclo (kickoff sem recibo,
   // provider_exited) NÃO anexam o marker, e exigi-lo aqui devolvia a missão
   // ao restore de panes — que recria a identidade morta que o bootstrap
   // recusa (beco circular). O bootstrap revalida squad/contrato/runtime de
-  // qualquer forma. blocked_user segue no caminho de re-arme com panes.
-  if (
-    mission.status !== "blocked" ||
-    (mission.intentState !== "blocked_technical" &&
-      mission.intentState !== "blocked_user")
-  ) {
+  // qualquer forma.
+  //
+  // Field trap (28/07): exigir também que o intentState fosse blocked_* fechava
+  // um segundo beco. Um bloqueio pode gravar status=blocked deixando o
+  // intentState anterior (ex.: `dispatched`), e esse par inconsistente era
+  // recusado pelos DOIS lados — o início pedia `running`, a retomada pedia
+  // `blocked_*` — prendendo a missão para sempre:
+  //   failed to start: ... (status=blocked/dispatched — missão precisa estar running)
+  //   retomada recusada: Só uma missão bloqueada pode ser retomada por aqui.
+  // `status === "blocked"` já é o sinal de autoridade; o par desalinhado é
+  // exatamente o que este patch cura, ao gravar running/executing junto.
+  if (mission.status !== "blocked") {
     return {
       ok: false,
       error: "Só uma missão bloqueada pode ser retomada por aqui.",
+    };
+  }
+  if (mission.intentState === "done") {
+    return {
+      ok: false,
+      error: "Esta missão já foi concluída; abra uma nova para continuar.",
     };
   }
   // The approved contract must still be current; everything else (squad hash,

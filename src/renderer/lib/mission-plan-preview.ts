@@ -176,9 +176,10 @@ export function buildRosterCostPreview(input: {
       lines,
       complete: false,
       totalLabel:
-        'Indisponível: pelo menos um modelo do time não tem preço no catálogo.',
+        'Faixa de referência indisponível: algum modelo do time não tem preço no catálogo.',
       caveat:
-        'O Nexus não preenche preço ausente nem trata modelo sem catálogo como gratuito.',
+        'Isto não impede iniciar a missão — é só o preview de custo. O Nexus ' +
+        'apenas não inventa preço ausente nem trata modelo sem catálogo como gratuito.',
     };
   }
 

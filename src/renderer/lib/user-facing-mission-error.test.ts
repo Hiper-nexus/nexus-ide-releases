@@ -16,22 +16,70 @@ describe("user-facing mission errors", () => {
     );
   });
 
-  it("never exposes unknown English provider diagnostics in the golden path", () => {
+  it("leads with recovery copy but discloses the raw reason when unmapped", () => {
+    // Field trap (28/07): an unmapped pre-launch failure showed only "tente
+    // novamente". There is no mission journal before launch, so the operator
+    // retried a mission that could never start and had nothing to report.
+    // The recovery sentence still leads; the raw reason follows it, labelled.
     const message = toUserFacingMissionError(
       new Error("provider temporarily unavailable"),
       "Não foi possível preparar a equipe. Tente novamente.",
     );
 
-    expect(message).toBe(
+    expect(message).toMatch(
+      /^Não foi possível preparar a equipe\. Tente novamente\./,
+    );
+    expect(message).toContain("Detalhe técnico:");
+    expect(message).toContain("provider temporarily unavailable");
+
+    const transport = toUserFacingMissionError(
+      "connection refused while opening /private/tmp/nexus/socket",
       "Não foi possível preparar a equipe. Tente novamente.",
     );
-    expect(message).not.toMatch(/provider|unavailable/i);
+    expect(transport).toMatch(
+      /^Não foi possível preparar a equipe\. Tente novamente\. Detalhe técnico: /,
+    );
+  });
+
+  it("shows authored Portuguese copy that mentions a technical noun", () => {
+    // Field trap (28/07): this message already told the operator what to do,
+    // but "bootstrap" put it on the internal-diagnostic list and it was
+    // replaced by a bare "tente novamente".
     expect(
       toUserFacingMissionError(
-        "connection refused while opening /private/tmp/nexus/socket",
-        "Não foi possível preparar a equipe. Tente novamente.",
+        new Error(
+          "O bootstrap exige uma missão running com intenção aprovada. " +
+            "CTA: Retomar missão.",
+        ),
+        "Não foi possível iniciar a missão. Tente novamente.",
       ),
-    ).toBe("Não foi possível preparar a equipe. Tente novamente.");
+    ).toBe(
+      "O bootstrap exige uma missão running com intenção aprovada. CTA: Retomar missão.",
+    );
+  });
+
+  it("still withholds English transport noise and machine residue", () => {
+    const english = toUserFacingMissionError(
+      new Error("connection refused"),
+      "Não foi possível iniciar a missão. Tente novamente.",
+    );
+    expect(english).toMatch(/^Não foi possível iniciar a missão\./);
+
+    // Portuguese wrapper around a snake_case code is still machine residue.
+    const residue = toUserFacingMissionError(
+      new Error("A missão falhou: mission_runtime_seal_absent"),
+      "Não foi possível iniciar a missão. Tente novamente.",
+    );
+    expect(residue).toMatch(/^Não foi possível iniciar a missão\./);
+  });
+
+  it("keeps mapped recoveries free of technical noise", () => {
+    const mapped = toUserFacingMissionError(
+      new Error("invalid transition executing --submit_goal-->"),
+      "Não foi possível iniciar a missão. Tente novamente.",
+    );
+    expect(mapped).not.toContain("Detalhe técnico:");
+    expect(mapped).not.toMatch(/submit_goal|invalid transition/i);
   });
 
   it("preserves already actionable Portuguese copy", () => {
@@ -56,5 +104,32 @@ describe("user-facing mission errors", () => {
     ).toBe(
       "A missão já está em execução e não aceita um novo objetivo agora. Pare a missão para redirecioná-la.",
     );
+  });
+
+  it("maps guided context bootstrap attestation blockers to a concrete recovery", () => {
+    expect(
+      toUserFacingMissionError(
+        new Error(
+          "Error invoking remote method 'orch:missions.approveIntent': Error: " +
+            "guided_plan_preflight_blocked: guided_prevc_context_bootstrap_blocked: " +
+            "o contexto governado não ficou pronto; blockers=invalid-context-attestation, " +
+            "missing-context-attestation; Context not ready.",
+        ),
+        "Não foi possível iniciar a missão. Tente novamente.",
+      ),
+    ).toMatch(/contexto do projeto precisa de revisão/i);
+  });
+
+  it("maps dirty evidence-surface git binding to a commit/cleanup instruction", () => {
+    expect(
+      toUserFacingMissionError(
+        new Error(
+          "guided_plan_preflight_blocked: workflow binding requires a clean " +
+            "committed checkout of the evidence surface: " +
+            ".context/nexus/attestations/att-bad.json",
+        ),
+        "Não foi possível iniciar a missão. Tente novamente.",
+      ),
+    ).toMatch(/arquivos não commitados em \.context/i);
   });
 });

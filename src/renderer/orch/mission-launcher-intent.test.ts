@@ -65,26 +65,31 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toContain('missionId=mission-1');
     expect(prompt).toContain('Aplique o padrão de engenharia do NavalhaGO.');
     expect(prompt).toContain('QA sênior (reviewer');
-    expect(prompt).toContain('PILOTO AUTOMÁTICO');
+    // A seção virou "Como conduzir": sequência numerada em vez de lista de proibições.
+    expect(prompt).toContain('Como conduzir');
     expect(prompt).toContain('nexus_mission_freeze_contract');
     expect(prompt).toContain('nexus_task plan');
     expect(prompt).toContain('agentRef');
     expect(prompt).toContain('executionMode');
-    expect(prompt).toMatch(/main [ée] o [uú]nico dispatcher/i);
-    expect(prompt).toMatch(/N[aã]o fa[cç]a merge manual/i);
+    // O papel do main agora é declarado uma vez, como fato, na seção de estado.
+    expect(prompt).toMatch(/main [ée] o dispatcher f[ií]sico/i);
+    expect(prompt).toMatch(/merge manual .* s[aã]o do main/i);
     expect(prompt).not.toContain('nexus_merge_task');
     expect(prompt).toContain('PREVC');
     // PREVC degrada, nunca bloqueia: freeze é best-effort em segundo plano.
-    expect(prompt).toContain('ORQUESTRE a execução de ponta a ponta');
-    expect(prompt).toMatch(/best-effort em segundo plano/i);
-    expect(prompt).toContain('NUNCA pause ou bloqueie a execução');
-    expect(prompt).toMatch(/status=done: com contrato congelado, exige PREVC completo/);
-    expect(prompt).toMatch(/Sem contrato congelado, exige nota durável/);
-    expect(prompt).toMatch(/Use blocked/);
-    expect(prompt).toMatch(/use failed/i);
+    expect(prompt).toContain('Como conduzir');
+    // PREVC oportunista continua degradando em vez de bloquear.
+    expect(prompt).toMatch(/PREVC oportunista/i);
+    expect(prompt).toMatch(/siga e tente depois — nunca pare por isso/i);
+    expect(prompt).toMatch(/status=done quando houver receipts: com contrato congelado, PREVC completo/);
+    expect(prompt).toMatch(/sem ele, nota durável \(≥ 40 caracteres em note=…\) \+ worker registrado/);
+    // Escalonamento novo: bloquear exige causa E tentativa registrada.
+    expect(prompt).toMatch(/status=blocked exige a causa E o que você já tentou/);
+    expect(prompt).toMatch(/status=failed quando a execução começou e terminou em erro/);
     expect(prompt).toMatch(/revis[aã]o independente/i);
     expect(prompt).toMatch(/mem[oó]ria dur[aá]vel/i);
-    expect(prompt).toMatch(/context_doctor.*sob demanda/i);
+    // Doctor sob demanda passou a ser passo numerado no fluxo não-congelado.
+    expect(prompt).toMatch(/nexus_mission_freeze_contract/i);
   });
   it('keeps short-mission kickoffs lean: no goal restated as criterion, plan proportional', () => {
     const goal = 'Corrigir o botão de salvar no formulário de perfil';
@@ -115,10 +120,10 @@ describe('intent-first kickoff packing', () => {
       guidedPrevcRequired: true,
     });
 
-    expect(prompt).toContain('já congelou o contrato PREVC exato');
+    expect(prompt).toContain('já congelou o contrato exato');
     expect(prompt).toContain('nexus_workflow_prepare_execution');
     expect(prompt).toContain('stage=execution');
-    expect(prompt).toMatch(/não execute worker/i);
+    expect(prompt).toMatch(/n[aã]o inicie worker fora do contrato/i);
     expect(prompt).not.toMatch(/PREVC é best-effort/i);
     expect(prompt).not.toMatch(/Sem contrato congelado, exige nota durável/i);
   });

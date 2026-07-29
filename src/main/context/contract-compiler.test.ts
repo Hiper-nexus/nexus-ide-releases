@@ -1,4 +1,29 @@
 import { describe, expect, it } from 'vitest';
+import { normalizeDomainLabel } from './contract-compiler';
+
+describe('normalizeDomainLabel', () => {
+  it('normalizes human-written domains instead of refusing the mission', () => {
+    // Field trap (28/07): a goal written in Portuguese produced domains that
+    // failed the identifier regex, and `impactedDomains.0: Invalid input`
+    // killed the mission before any provider ran.
+    expect(normalizeDomainLabel('área de login')).toBe('area-de-login');
+    expect(normalizeDomainLabel('billing/efi')).toBe('billing-efi');
+    expect(normalizeDomainLabel('notificação WhatsApp')).toBe(
+      'notificacao-WhatsApp',
+    );
+    expect(normalizeDomainLabel('-leading-dash')).toBe('leading-dash');
+  });
+
+  it('leaves an already-valid identifier untouched', () => {
+    expect(normalizeDomainLabel('auth')).toBe('auth');
+    expect(normalizeDomainLabel('api.v2:users')).toBe('api.v2:users');
+  });
+
+  it('reports labels that carry no identifier at all', () => {
+    expect(normalizeDomainLabel('***')).toBeNull();
+    expect(normalizeDomainLabel('   ')).toBeNull();
+  });
+});
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   compileMissionContract,
@@ -77,25 +102,39 @@ describe('compileMissionContract', () => {
     );
   });
 
-  it('fails closed for unresolved invariants, sensors or context conflicts', () => {
-    expect(() =>
-      compileMissionContract(proposal(), {
-        ...context,
-        invariantRefs: new Set(),
-      }),
-    ).toThrow(ContractCompilationError);
-    expect(() =>
-      compileMissionContract(proposal(), {
-        ...context,
-        availableSensorIds: new Set(),
-      }),
-    ).toThrow(/unknown sensor/i);
+  it('drops unresolved invariants and sensors instead of refusing the mission', () => {
+    // The proposing model invents plausible ids. One invented ref used to kill
+    // the whole mission before any provider ran; now the context pack is just
+    // that fact poorer, which is what the reviewer stage exists to catch.
+    const withoutInvariants = compileMissionContract(proposal(), {
+      ...context,
+      invariantRefs: new Set(),
+    });
+    expect(withoutInvariants.businessInvariantRefs).toEqual([]);
+
+    const withoutSensors = compileMissionContract(proposal(), {
+      ...context,
+      availableSensorIds: new Set(),
+    });
+    expect(withoutSensors.requiredSensors).toEqual([]);
+  });
+
+  it('still fails closed on a blocking context conflict', () => {
+    // A conflict is contradictory evidence about the repo, not a missing
+    // label. Coding against it would produce confidently wrong work, so this
+    // gate stays hard.
     expect(() =>
       compileMissionContract(proposal(), {
         ...context,
         blockingConflictIds: ['conflict-a'],
       }),
     ).toThrow(/blocking context conflict/i);
+    expect(() =>
+      compileMissionContract(proposal(), {
+        ...context,
+        blockingConflictIds: ['conflict-a'],
+      }),
+    ).toThrow(ContractCompilationError);
   });
 
   it('rejects caller-declared low risk when automatic signals require critical', () => {
@@ -116,9 +155,15 @@ describe('compileMissionContract', () => {
     const contract = compileMissionContract(input, context);
 
     expect(contract.requiredSensors).toContain('design-system');
-    expect(() => compileMissionContract(input, {
+
+    // Field trap (28/07): `design-system` is auto-injected, so a project that
+    // never registered that sensor had EVERY UI mission refused at compile
+    // time by a requirement the operator never asked for and could not see.
+    // It is now dropped, and the UI mission runs.
+    const withoutDesignSystem = compileMissionContract(input, {
       ...context,
       availableSensorIds: new Set(['unit', 'typecheck']),
-    })).toThrow(/unknown sensor: design-system/);
+    });
+    expect(withoutDesignSystem.requiredSensors).not.toContain('design-system');
   });
 });

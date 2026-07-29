@@ -85,7 +85,21 @@ function workerCapabilityLabel(
   adapterId: string,
   agentCategory: SquadAgent["category"],
   orchestratorCli: string | undefined,
+  options: {
+    readonly operatorChoice: boolean;
+    readonly authenticated: boolean;
+    readonly selectable: boolean;
+  },
 ): string {
+  // Operator-choice: brand is not the jail. NEVER reuse governedWriter /
+  // autonomousReadOnly / advisory labels ("escrita confinada", "leitura
+  // supervisionada", "somente manual") — those are the release ladder, not
+  // the free-choice truth. Auth is the only soft gate; Seatbelt is the jail.
+  if (options.operatorChoice) {
+    if (!options.authenticated) return "login necessário";
+    if (!capabilities.launchable || !options.selectable) return "indisponível";
+    return "pronta · Seatbelt";
+  }
   if (capabilities.governedWriter) return "escrita confinada";
   if (capabilities.autonomousReadOnly) return "leitura supervisionada";
   if (
@@ -200,10 +214,10 @@ export function MissionWizardReview({
       isAdvisorRole &&
       supportsAdvisoryParticipationCli(adapter.id) &&
       (adapter.id !== "claude" || orchestratorAgent?.cli !== "claude");
-    // Operator-choice: any installed CLI qualifies for any worker role.
-    // Governed: writers need governedWriter; advisors need read/advisory lane.
+    // Operator-choice: any installed + authenticated cli-pty may take any
+    // worker role (Seatbelt is the jail). Governed keeps the release ladder.
     const roleQualified = operatorChoice
-      ? adapter.installed
+      ? adapter.installed && capabilities.launchable
       : isAdvisorRole
         ? Boolean(
             capabilities.governedWriter ||
@@ -211,6 +225,11 @@ export function MissionWizardReview({
               advisoryLane,
           )
         : Boolean(capabilities.governedWriter);
+    const routeReady = operatorChoice
+      ? capabilities.launchable
+      : capabilities.launchable &&
+        capabilities.promptInjectable &&
+        capabilities.statusObservable;
     return Boolean(
       (adapter.id !== "claude" ||
         advisoryLane ||
@@ -219,9 +238,7 @@ export function MissionWizardReview({
           orchestratorAgent?.cli !== "claude")) &&
         adapter.kind === "cli-pty" &&
         adapter.installed &&
-        capabilities.launchable &&
-        capabilities.promptInjectable &&
-        capabilities.statusObservable &&
+        routeReady &&
         roleQualified &&
         isAdapterModelAuthenticated(
           adapter,
@@ -285,6 +302,9 @@ export function MissionWizardReview({
           return isAdvisorRole
             ? `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} como advisor read_only nesta release.`
             : `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} automaticamente nesta release.`;
+        }
+        if (operatorChoice) {
+          return `${label} precisa estar instalada, autenticada e pronta para lançar o worker ${unqualifiedWorker.agentName}. O Seatbelt do Nexus confina a escrita — não a marca da CLI.`;
         }
         if (
           capabilities.launchable &&
@@ -490,7 +510,10 @@ export function MissionWizardReview({
                             )}
                             {selectableOrchestratorAdapters.map((adapter) => (
                               <option key={adapter.id} value={adapter.id}>
-                                {adapter.label} · verificado
+                                {adapter.label} ·{" "}
+                                {operatorChoice
+                                  ? "pronta · Seatbelt"
+                                  : "verificado"}
                               </option>
                             ))}
                             {a.cli &&
@@ -499,9 +522,13 @@ export function MissionWizardReview({
                               ) && (
                                 <option value={a.cli} disabled>
                                   {cliAdapter?.label ?? a.cli} ·{" "}
-                                  {orchestratorManualOnly
-                                    ? "somente manual"
-                                    : "indisponível"}
+                                  {operatorChoice
+                                    ? orchestratorModelAuthenticated
+                                      ? "indisponível"
+                                      : "login necessário"
+                                    : orchestratorManualOnly
+                                      ? "somente manual"
+                                      : "indisponível"}
                                 </option>
                               )}
                           </select>
@@ -520,12 +547,20 @@ export function MissionWizardReview({
                             }
                           >
                             {workerAdapterCandidates.map((x) => {
+                              const candidateModel =
+                                x.id === a.cli
+                                  ? a.model
+                                  : x.models.default;
+                              const authenticated = isAdapterModelAuthenticated(
+                                x,
+                                providers,
+                                candidateModel,
+                                accounts,
+                              );
                               const qualified = workerAdapterQualified(
                                 a,
                                 x,
-                                x.id === a.cli
-                                  ? a.model
-                                  : x.models.default,
+                                candidateModel,
                               );
                               return (
                                 <option
@@ -539,6 +574,11 @@ export function MissionWizardReview({
                                     x.id,
                                     a.category,
                                     orchestratorAgent?.cli,
+                                    {
+                                      operatorChoice,
+                                      authenticated,
+                                      selectable: qualified,
+                                    },
                                   )}
                                 </option>
                               );

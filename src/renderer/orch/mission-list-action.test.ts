@@ -1,10 +1,39 @@
 import { describe, expect, it } from 'vitest';
+
+describe('missionListAction — missão encalhada', () => {
+  const wedged = {
+    id: 'mission-a',
+    title: 'teste panes',
+    status: 'blocked',
+    intentState: 'dispatched',
+    orchestratorSessionId: undefined,
+  } as unknown as Mission;
+
+  it('offers Remover for a blocked mission with nothing alive', () => {
+    // Field trap (28/07): `intentState=dispatched` alone claimed a live
+    // runtime, so the rail showed "Encerrar" forever. Clicking it closed
+    // nothing and the mission could never be deleted.
+    expect(missionListAction(wedged, false)).toBe('remove');
+  });
+
+  it('still offers Encerrar while a pane is really on screen', () => {
+    expect(missionListAction(wedged, true)).toBe('close-runtime');
+  });
+
+  it('still offers Encerrar when the orchestrator session is alive', () => {
+    const live = {
+      ...wedged,
+      orchestratorSessionId: 'session-a',
+    } as unknown as Mission;
+    expect(missionListAction(live, false)).toBe('close-runtime');
+  });
+});
 import type { Mission } from '../../shared/orch-types';
 import {
-  archiveMissionPrompt,
   canDiscardMission,
   discardMissionPrompt,
   missionListAction,
+  removeMissionPrompt,
 } from './mission-list-action';
 
 function mission(patch: Partial<Mission> = {}): Mission {
@@ -48,21 +77,19 @@ describe('mission list action policy', () => {
     ).toBe('close-runtime');
   });
 
-  it('após encerrar, a ação vira remoção — o operador não fica sem saída', () => {
-    // Regressão: enquanto "encerrar" ficava para sempre, cada clique repetia
-    // um no-op e a lista nunca esvaziava ("travado em 7 missões").
+  it('após encerrar, a ação vira remover — o operador limpa a lista', () => {
     const closed = mission({
       status: 'blocked',
       intentState: 'blocked_user',
     });
-    expect(missionListAction(closed, false)).toBe('archive');
-    expect(archiveMissionPrompt(closed).confirmLabel).toBe('Arquivar missão');
-    expect(archiveMissionPrompt(closed).body).toMatch(/Nada é apagado/i);
+    expect(missionListAction(closed, false)).toBe('remove');
+    expect(removeMissionPrompt(closed).confirmLabel).toBe('Remover missão');
+    expect(removeMissionPrompt(closed).body).toMatch(/Não dá para desfazer/i);
   });
 
-  it('missão concluída também sai da vista por arquivamento, nunca por apagar', () => {
+  it('missão concluída também pode ser removida quando parada', () => {
     expect(missionListAction(mission({ status: 'done' }), false)).toBe(
-      'archive',
+      'remove',
     );
     expect(canDiscardMission(mission({ status: 'done' }))).toBe(false);
   });

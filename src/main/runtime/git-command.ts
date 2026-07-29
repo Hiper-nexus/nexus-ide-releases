@@ -181,6 +181,51 @@ export class ProcessGitRunner implements GitRunner {
   }
 }
 
+/**
+ * Decides whether a matched config entry can actually run a command.
+ *
+ * The regexp above selects candidate *keys*; refusing on the key alone was
+ * value-blind and produced false positives that blocked the whole repository.
+ * `core.fsmonitor=true` is the most common one: the boolean form selects Git's
+ * built-in fsmonitor daemon and executes nothing, while only a path/command
+ * value spawns a process. A repository was refused over a pure performance
+ * setting, and every worker in it was blocked.
+ */
+export function isExecutableGitConfigEntry(
+  key: string,
+  value: string,
+): boolean {
+  const normalizedKey = key.trim().toLowerCase();
+  const normalizedValue = value.trim();
+  // An empty value disables the setting; nothing can be spawned from it.
+  if (!normalizedValue) return false;
+  if (normalizedKey === 'core.fsmonitor') {
+    // Boolean = built-in daemon. Anything else is a hook path/command.
+    return !/^(true|false)$/i.test(normalizedValue);
+  }
+  if (
+    normalizedKey.startsWith('submodule.') &&
+    normalizedKey.endsWith('.update')
+  ) {
+    // Only the `!command` form executes; checkout/rebase/merge/none do not.
+    return normalizedValue.startsWith('!');
+  }
+  return true;
+}
+
+function executableGitConfigEntries(stdout: string): string[] {
+  const offenders: string[] = [];
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const separator = trimmed.indexOf(' ');
+    const key = separator === -1 ? trimmed : trimmed.slice(0, separator);
+    const value = separator === -1 ? '' : trimmed.slice(separator + 1);
+    if (isExecutableGitConfigEntry(key, value)) offenders.push(key);
+  }
+  return offenders;
+}
+
 export function assertSafeLocalGitConfig(
   runner: GitRunner,
   cwd: string,
@@ -193,9 +238,15 @@ export function assertSafeLocalGitConfig(
   ] as const;
   const config = runner.run(cwd, args, { allowFailure: true });
   if (config.status === 0 && config.stdout.trim().length > 0) {
-    throw new Error(
-      'repository contains executable Git config (hooks, filters, diff, merge, or fsmonitor)',
-    );
+    const offenders = executableGitConfigEntries(config.stdout);
+    if (offenders.length > 0) {
+      // Name the keys: "executable Git config" alone gave the operator nothing
+      // to inspect or unset in their own repository.
+      throw new Error(
+        'repository contains executable Git config (hooks, filters, diff, ' +
+          `merge, or fsmonitor): ${[...new Set(offenders)].sort().join(', ')}`,
+      );
+    }
   }
   if (config.status !== 0 && config.status !== 1) {
     // `git config --local` fora de um repo sai 128 — reportar isso como

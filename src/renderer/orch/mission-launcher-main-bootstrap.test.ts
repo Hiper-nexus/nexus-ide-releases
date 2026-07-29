@@ -201,9 +201,11 @@ describe('approved mission main-owned presentation', () => {
         role: 'orchestrator',
       }),
     ]);
+    // A cold CLI under Seatbelt regularly needed more than 20s to report a
+    // session, and expiring here reported a live mission as failed.
     expect(harness.waitForSession).toHaveBeenCalledWith(
       'pane-main-orch',
-      20_000,
+      75_000,
     );
     expect(harness.toast).not.toHaveBeenCalled();
   });

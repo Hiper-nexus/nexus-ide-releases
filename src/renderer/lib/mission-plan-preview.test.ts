@@ -116,8 +116,11 @@ describe('mission plan preview', () => {
     expect(preview.complete).toBe(false);
     expect(preview.lines[1]?.rateLabel).toContain('indisponível');
     expect(preview.lines[1]?.estimateLabel).toContain('indisponível');
-    expect(preview.totalLabel).toContain('Indisponível');
+    expect(preview.totalLabel).toMatch(/indispon[íi]vel/i);
     expect(preview.totalLabel).not.toMatch(/\$\d/);
+    // The cost preview is informational: a missing catalog price must never
+    // read as a launch blocker, because nothing in the wizard gates on it.
+    expect(preview.caveat).toMatch(/não impede iniciar a missão/i);
   });
 
   it('distinguishes catalog loading from a confirmed missing price', () => {
