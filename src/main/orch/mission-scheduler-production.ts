@@ -1261,10 +1261,10 @@ async function tickMission(
         );
       }
     },
-    // A task that handed off no longer needs a provider process. Prove exit of
-    // the exact task/session/incarnation before maxWorkers admits a successor.
-    // Soft-fail: an unproven exit must keep occupying capacity, but must never
-    // abort the same-tick post-merge completion / PREVC bridge.
+    // A terminal task no longer reserves logical maxWorkers capacity. Attempt
+    // exact task/session/incarnation cleanup before launching the next wave;
+    // an unproven exit stays retryable without aborting same-tick completion,
+    // PREVC or sibling cleanup.
     retireWorkers: async (passSignal) => {
       throwIfMissionSchedulerAborted(passSignal);
       try {

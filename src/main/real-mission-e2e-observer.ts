@@ -888,12 +888,18 @@ export class RealMissionObserver {
       },
       dispatches: dispatchProofs,
       handoffs: handoffProofs,
-      // A prova só selar os handoffs dos workers da cadeia; consumptions
-      // Main-owned extras (ex.: nexus-prevc-autopilot) ficam fora do set.
+      // A prova sela só os handoffs aceitos dos workers da cadeia. No topology
+      // delivery, a aceitação física da sessão atual já é autoridade durável;
+      // consumo manual continua projetado quando realmente ocorreu.
       durableHandoffs: (() => {
-        const proofIds = handoffProofs.map((handoff) => handoff.id);
-        const ids = proofIds.filter((id) =>
-          durableAuthority.handoffConsumptions.has(id),
+        const ids = handoffProofs.flatMap((handoff) =>
+          handoff.deliveryAttempts.some(
+            (attempt) =>
+              attempt.state === "accepted" &&
+              attempt.orchestratorSessionId === this.#kickoff.sessionId,
+          )
+            ? [handoff.id]
+            : [],
         );
         return { count: ids.length, ids };
       })(),

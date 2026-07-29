@@ -331,7 +331,8 @@ function verifyCompletedTaskPlanAuthority(
       readonly handoffId: string;
       readonly deliveryAttemptId: string;
       readonly acceptedAt: number;
-      readonly consumedAt: number;
+      readonly consumedAt: number | null;
+      readonly hasExactConsumption: boolean;
     }> = [];
     for (const entry of plan.tasks) {
       const row = dispatchByTask.get(entry.taskId);
@@ -589,18 +590,27 @@ function verifyCompletedTaskPlanAuthority(
             accepted_at: number | null;
           }
         | undefined;
+      const hasExactConsumption =
+        delivery?.delivery_state === "consumed" &&
+        delivery.consumed_at !== null &&
+        delivery.consumed_by_session === mission.orch_session_id &&
+        delivery.consumed_delivery_attempt_id ===
+          delivery.accepted_attempt_id;
+      const isAwaitingExplicitConsumption =
+        (delivery?.delivery_state === "submitted" ||
+          delivery?.delivery_state === "acknowledged") &&
+        delivery.consumed_at === null &&
+        delivery.consumed_by_session === null &&
+        delivery.consumed_delivery_attempt_id === null;
       if (
         !delivery ||
         delivery.status !== "success" ||
         delivery.session_id !== row.session_id ||
         delivery.worker_incarnation_id !== row.worker_incarnation_id ||
         delivery.delivered !== 1 ||
-        delivery.delivery_state !== "consumed" ||
-        delivery.consumed_at === null ||
-        delivery.consumed_by_session !== mission.orch_session_id ||
         !delivery.accepted_attempt_id ||
         delivery.accepted_at === null ||
-        delivery.consumed_delivery_attempt_id !== delivery.accepted_attempt_id
+        (!hasExactConsumption && !isAwaitingExplicitConsumption)
       ) {
         return false;
       }
@@ -609,6 +619,7 @@ function verifyCompletedTaskPlanAuthority(
         deliveryAttemptId: delivery.accepted_attempt_id,
         acceptedAt: delivery.accepted_at,
         consumedAt: delivery.consumed_at,
+        hasExactConsumption,
       });
     }
     if (
@@ -642,6 +653,12 @@ function verifyCompletedTaskPlanAuthority(
     let latestFanoutAckAt = 0;
     if (sealedTopology === "team-read-only-fanout") {
       for (const delivery of completedDeliveries) {
+        if (
+          !delivery.hasExactConsumption ||
+          delivery.consumedAt === null
+        ) {
+          return false;
+        }
         const ackAt = verifiedFanoutAckTime(db, binding, {
           missionId,
           orchestratorSessionId: mission.orch_session_id,
@@ -705,8 +722,11 @@ function verifyCompletedTaskPlanAuthority(
     const authorityNote =
       `## Conclusão automática verificada\nO motor Nexus integrou e validou ` +
       `${plan.tasks.length} task(s) do plano ${rawPlan.plan_hash.slice(0, 12)}, ` +
-      "com nexus_handoff_submit físicos, handoffs entregues, consumo " +
-      "explicitamente reconhecido e receipts duráveis.";
+      (sealedTopology === "team-read-only-fanout"
+        ? "com nexus_handoff_submit físicos, handoffs entregues, consumo " +
+          "explicitamente reconhecido e receipts duráveis."
+        : "com nexus_handoff_submit físicos, handoffs aceitos pela sessão " +
+          "atual e receipts duráveis.");
     // The visible fan-out result is the product, not an append-only diagnostic.
     // Preserve it byte-for-byte within the same 64 KiB bound used by the
     // physical receipt. Prefixing old learnings used to truncate the newest

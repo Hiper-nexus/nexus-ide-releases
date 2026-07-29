@@ -155,7 +155,7 @@ describe("task dispatch worker retirement", () => {
     expect(launchNext).toHaveBeenCalledOnce();
   });
 
-  it("keeps capacity fail-closed when physical close is not proven", async () => {
+  it("keeps an unproven cleanup retryable without reserving terminal scheduler capacity", async () => {
     const terminalA = dispatch("a");
     const coordinator = new TaskDispatchWorkerRetirementCoordinator();
     const closeWorker = vi.fn(async () => false);
@@ -170,9 +170,60 @@ describe("task dispatch worker retirement", () => {
           closeWorker,
         },
       }),
-    ).rejects.toThrow(/exit_unproven/i);
+    ).resolves.toMatchObject({
+      retiredTaskIds: [],
+      deferredTaskIds: ["a"],
+    });
 
     expect(closeWorker).toHaveBeenCalledOnce();
+    expect(
+      projectMissionSchedulerWorkerSlots(
+        missionId,
+        [workerRow("a")],
+        [terminalA],
+      ).activeDispatchCount,
+    ).toBe(0);
+  });
+
+  it("continues retiring siblings and retries only the cleanup that lacks proof", async () => {
+    const terminalA = dispatch("a");
+    const terminalB = dispatch("b");
+    const byTask = new Map([
+      [terminalA.taskId, terminalA],
+      [terminalB.taskId, terminalB],
+    ]);
+    let canRetireA = false;
+    const closeWorker = vi.fn(async ({ taskId }: { taskId: string }) =>
+      taskId === "a" ? canRetireA : true,
+    );
+    const coordinator = new TaskDispatchWorkerRetirementCoordinator();
+    const input = {
+      scope,
+      missionId,
+      dispatches: [terminalA, terminalB],
+      deps: {
+        getDispatch: (taskId: string) => byTask.get(taskId) ?? null,
+        closeWorker,
+      },
+    };
+
+    await expect(coordinator.retireMissionWorkers(input)).resolves.toMatchObject({
+      retiredTaskIds: ["b"],
+      alreadyRetiredTaskIds: [],
+      deferredTaskIds: ["a"],
+    });
+
+    canRetireA = true;
+    await expect(coordinator.retireMissionWorkers(input)).resolves.toMatchObject({
+      retiredTaskIds: ["a"],
+      alreadyRetiredTaskIds: ["b"],
+      deferredTaskIds: [],
+    });
+    expect(closeWorker.mock.calls.map(([request]) => request.taskId)).toEqual([
+      "a",
+      "b",
+      "a",
+    ]);
   });
 
   it("finishes the in-flight close, preserves the exact abort reason, and starts no sibling", async () => {

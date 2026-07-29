@@ -36,9 +36,10 @@ interface HandoffDeliveryOutboxDependencies {
  * Queued and accepted-but-not-consumed handoffs form the durable outbox.
  *
  * The submit transaction writes that state before any in-memory enqueue or
- * Pet Studio completion callback. Accepted scheduler delivery is also replayed
- * after a crash before consumption. Reconciliation is safe to repeat: queued
- * PTY work deduplicates and accepted consumption uses the exact durable CAS.
+ * Pet Studio completion callback. Accepted scheduler delivery is re-proven
+ * after a crash without synthesizing a Maestro ACK; its sealed topology owns
+ * final settlement. Reconciliation is safe to repeat and queued PTY work
+ * deduplicates by exact mission/session authority.
  */
 export function reconcilePendingHandoffDeliveryOutbox(
   dependencies: HandoffDeliveryOutboxDependencies = {},

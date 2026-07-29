@@ -913,10 +913,32 @@ describe("independent evidence verifier", () => {
     );
   });
 
-  it("requires consumed state bound to exactly one accepted delivery attempt", () => {
-    const acknowledged = validEvidence();
-    acknowledged.handoffs[0].deliveryState = "acknowledged";
-    expect(() => assertRealMissionPassEvidence(acknowledged)).toThrow(
+  it("accepts the delivery chain after exact current-session acceptance without manual consumption", () => {
+    const submitted = validEvidence();
+    for (const handoff of submitted.handoffs) {
+      handoff.deliveryState = "submitted";
+      handoff.consumedAt = null;
+      handoff.consumedBySessionId = null;
+      handoff.consumedDeliveryAttemptId = null;
+    }
+
+    expect(assertRealMissionPassEvidence(submitted).status).toBe("pass");
+    expect(assertRealMissionReleaseEvidence(submitted).status).toBe("pass");
+  });
+
+  it("rejects partial delivery state, forged consumption or duplicate acceptance", () => {
+    const partial = validEvidence();
+    partial.handoffs[0].deliveryState = "acknowledged";
+    partial.handoffs[0].consumedBySessionId = null;
+    expect(() => assertRealMissionPassEvidence(partial)).toThrow(
+      /incomplete/,
+    );
+
+    const consumedWithoutReceipt = validEvidence();
+    consumedWithoutReceipt.handoffs[0].consumedAt = null;
+    consumedWithoutReceipt.handoffs[0].consumedBySessionId = null;
+    consumedWithoutReceipt.handoffs[0].consumedDeliveryAttemptId = null;
+    expect(() => assertRealMissionPassEvidence(consumedWithoutReceipt)).toThrow(
       /incomplete/,
     );
 

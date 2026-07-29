@@ -1,4 +1,5 @@
 import type { Handoff } from '../../shared/orch-types';
+import type { StandardMissionTopology } from '../../shared/mission-topology';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   orchWriteSession,
@@ -25,7 +26,10 @@ import {
   isSessionInjectableIdle,
   tapAgentSemanticStatus,
 } from './agent-status';
-import { findCurrentSchedulerOwnedHandoffDispatch } from './mission-scheduler-authority';
+import {
+  findCurrentSchedulerOwnedHandoffDispatch,
+  missionSchedulerCompletionTopology,
+} from './mission-scheduler-authority';
 
 /**
  * Automatic handoff delivery: when a worker submits a
@@ -66,14 +70,20 @@ interface PendingEnter {
   readonly handoffId: string;
   readonly attemptId: string;
   readonly attemptNo: number;
-  readonly timer: ReturnType<typeof setTimeout>;
   retryTimer?: ReturnType<typeof setTimeout>;
   acceptanceTimer?: ReturnType<typeof setTimeout>;
   submitStarted?: boolean;
 }
 
+interface PendingDeliveryStart {
+  readonly authority: DeliveryAuthority;
+  readonly handoff: Handoff;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
 const queues = new Map<string, QueuedHandoff[]>();
 const pendingEnters = new Set<PendingEnter>();
+const pendingDeliveryStarts = new Set<PendingDeliveryStart>();
 const ownerKeys = new WeakMap<NonNullable<PaneRuntimeAuthority['owner']>, number>();
 let nextOwnerKey = 1;
 let untapState: (() => void) | null = null;
@@ -99,6 +109,7 @@ const MAX_DELIVERY_SUMMARY = 4000;
  * sempre (markSubmitted é durável e o replay só olha não-entregues).
  */
 const SUBMIT_ACCEPTANCE_WINDOW_MS = 12_000;
+const DELIVERY_IDLE_STABILITY_MS = 150;
 const MAX_DELIVERY_ATTEMPTS = MAX_HANDOFF_DELIVERY_ATTEMPTS;
 const HANDOFF_DELIVERY_CTA =
   'Handoff não entregue. Clique em Reabrir para retomar o orquestrador e reenviar a entrega.';
@@ -319,7 +330,10 @@ export const SYSTEM_HANDOFF_AGENTS = new Set(['nexus-delegation-supervisor']);
  * untrusted; system supervisor handoffs are labeled so the orchestrator does
  * not treat recovery as injection/spam.
  */
-export function formatDelivery(handoff: Handoff): string {
+export function formatDelivery(
+  handoff: Handoff,
+  schedulerTopology?: StandardMissionTopology | null,
+): string {
   const from = sanitizeForTerminal(handoff.fromAgent ?? 'worker').slice(0, 128);
   const summary = sanitizeForTerminal(handoff.summary).slice(
     0,
@@ -343,9 +357,19 @@ export function formatDelivery(handoff: Handoff): string {
   const isSystem = SYSTEM_HANDOFF_AGENTS.has(handoff.fromAgent ?? '');
   const claimTrust = isSystem ? 'system' : 'untrusted';
   const evidenceLabel = isSystem ? 'nexus_system' : evidence;
+  const acknowledgementAuthority =
+    schedulerTopology === 'delivery'
+      ? 'scheduler_owned=true topology=delivery no_manual_ack_required=true'
+      : schedulerTopology === 'team-read-only-fanout'
+        ? 'scheduler_owned=true topology=team-read-only-fanout ' +
+          'consume_with=nexus_handoff_ack'
+        : schedulerTopology === null
+          ? 'scheduler_owned=true topology=invalid ' +
+            'consume_with=nexus_handoff_ack'
+          : 'consume_with=nexus_handoff_ack';
   return (
     `[nexus handoff delivery_metadata] from=${from} ` +
-    `handoff_id=${handoff.id} consume_with=nexus_handoff_ack ` +
+    `handoff_id=${handoff.id} ${acknowledgementAuthority} ` +
     `reported_status=${handoff.status} claim_trust=${claimTrust} ` +
     `evidence=${evidenceLabel} does_not_complete_mission=true ` +
     `summary: ${summary}${artifacts}`
@@ -391,16 +415,25 @@ function isCurrentAuthority(authority: DeliveryAuthority): boolean {
 }
 
 function clearPendingEnter(pending: PendingEnter): void {
-  clearTimeout(pending.timer);
   if (pending.retryTimer) clearTimeout(pending.retryTimer);
   if (pending.acceptanceTimer) clearTimeout(pending.acceptanceTimer);
   pendingEnters.delete(pending);
 }
 
-function hasPendingEnter(authority: DeliveryAuthority): boolean {
+function clearPendingDeliveryStart(pending: PendingDeliveryStart): void {
+  clearTimeout(pending.timer);
+  pendingDeliveryStarts.delete(pending);
+}
+
+function hasPendingDelivery(authority: DeliveryAuthority): boolean {
   const key = authorityKey(authority);
-  return [...pendingEnters].some(
-    (pending) => authorityKey(pending.authority) === key,
+  return (
+    [...pendingEnters].some(
+      (pending) => authorityKey(pending.authority) === key,
+    ) ||
+    [...pendingDeliveryStarts].some(
+      (pending) => authorityKey(pending.authority) === key,
+    )
   );
 }
 
@@ -412,10 +445,25 @@ function enqueueHandoff(authority: DeliveryAuthority, handoff: Handoff): void {
     [...pendingEnters].some((pending) =>
       pending.handoffId === handoff.id &&
       authorityKey(pending.authority) === key,
+    ) ||
+    [...pendingDeliveryStarts].some(
+      (pending) =>
+        pending.handoff.id === handoff.id &&
+        authorityKey(pending.authority) === key,
     )
   ) return;
   queue.push({ handoff, authority });
   queues.set(key, queue);
+}
+
+function requeuePendingDeliveryStarts(sessionId: string): void {
+  for (const pending of [...pendingDeliveryStarts]) {
+    if (pending.authority.sessionId !== sessionId) continue;
+    clearPendingDeliveryStart(pending);
+    if (isCurrentAuthority(pending.authority)) {
+      enqueueHandoff(pending.authority, pending.handoff);
+    }
+  }
 }
 
 function acceptPendingEnters(sessionId: string): void {
@@ -476,6 +524,29 @@ function schedulerDeliveryAuthority(
   } catch {
     return null;
   }
+}
+
+function schedulerDeliveryTopology(
+  authority: DeliveryAuthority,
+  handoff: Handoff,
+): StandardMissionTopology | null | undefined {
+  const schedulerAuthority = schedulerDeliveryAuthority(
+    handoff,
+    authority.scope,
+  );
+  if (
+    schedulerAuthority?.missionId !== authority.missionId ||
+    schedulerAuthority.sessionId !== authority.sessionId
+  ) {
+    return undefined;
+  }
+  const stores = getProjectDomainStores(authority.scope);
+  const mission = stores.missions.get(authority.missionId);
+  if (!mission) return null;
+  return missionSchedulerCompletionTopology(
+    mission,
+    stores.taskDispatches.list(authority.missionId),
+  );
 }
 
 function durableDispatchOwnsHandoff(
@@ -620,71 +691,47 @@ function retryOrBlockDelivery(
   }
 }
 
-function scheduleEnter(
+function submitDelivery(
   authority: DeliveryAuthority,
   handoffId: string,
   attempt: HandoffDeliveryAttempt,
 ): void {
-  let pending: PendingEnter;
-  const timer = setTimeout(() => {
-    if (!isCurrentAuthority(authority)) {
-      handleSubmitNotAccepted(pending, 'authority_lost_before_submit');
-      return;
-    }
-    if (!isSessionInjectableIdle(authority.sessionId)) {
-      handleSubmitNotAccepted(pending, 'awaiting_input_before_submit');
-      return;
-    }
-    // Arm before write(): test transports and very fast CLIs can publish the
-    // busy edge synchronously while the CR is being written.
-    try {
-      getProjectDomainStores(authority.scope).handoffs.markDeliveryAttemptPasted({
-        attemptId: attempt.id,
-        handoffId,
-        acceptDeadlineAt: Date.now() + SUBMIT_ACCEPTANCE_WINDOW_MS,
-      });
-    } catch {
-      handleSubmitNotAccepted(pending, 'mark_pasted_failed');
-      return;
-    }
-    pending.submitStarted = true;
-    const submitted = orchWriteSession(authority.sessionId, '\r', {
-      markInputBusy: false,
-    });
-    if (!submitted) {
-      handleSubmitNotAccepted(pending, 'submit_write_failed');
-      return;
-    }
-    // A test/fake transport may publish busy synchronously from write().
-    // The busy tap already finalized and removed this pending delivery.
-    if (!pendingEnters.has(pending)) return;
-    pending.acceptanceTimer = setTimeout(
-      () => handleSubmitNotAccepted(pending),
-      SUBMIT_ACCEPTANCE_WINDOW_MS,
-    );
-    // Some interactive CLIs consume the first CR while leaving the pasted
-    // prompt in their editor (notably after resume/modal transitions). A
-    // bounded second CR is safe only while the exact session is still
-    // idle; once it became busy the first submit is proven and we stop.
-    pending.retryTimer = setTimeout(() => {
-      if (
-        isCurrentAuthority(authority) &&
-        isSessionInjectableIdle(authority.sessionId)
-      ) {
-        orchWriteSession(authority.sessionId, '\r', {
-          markInputBusy: false,
-        });
-      }
-    }, 400);
-  }, 150);
-  pending = {
+  const pending: PendingEnter = {
     authority,
     handoffId,
     attemptId: attempt.id,
     attemptNo: attempt.attemptNo,
-    timer,
+    submitStarted: true,
   };
   pendingEnters.add(pending);
+  const submitted = orchWriteSession(authority.sessionId, '\r', {
+    markInputBusy: false,
+  });
+  if (!submitted) {
+    handleSubmitNotAccepted(pending, 'submit_write_failed');
+    return;
+  }
+  // A test/fake transport may publish busy synchronously from write().
+  // The busy tap already finalized and removed this pending delivery.
+  if (!pendingEnters.has(pending)) return;
+  pending.acceptanceTimer = setTimeout(
+    () => handleSubmitNotAccepted(pending),
+    SUBMIT_ACCEPTANCE_WINDOW_MS,
+  );
+  // Some interactive CLIs consume the first CR while leaving the pasted
+  // prompt in their editor (notably after resume/modal transitions). A
+  // bounded second CR is safe only while the exact session is still
+  // idle; once it became busy the first submit is proven and we stop.
+  pending.retryTimer = setTimeout(() => {
+    if (
+      isCurrentAuthority(authority) &&
+      isSessionInjectableIdle(authority.sessionId)
+    ) {
+      orchWriteSession(authority.sessionId, '\r', {
+        markInputBusy: false,
+      });
+    }
+  }, 400);
 }
 
 function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
@@ -709,9 +756,16 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     }
     return false;
   }
-  const ok = orchWriteSession(authority.sessionId, formatDelivery(current), {
-    markInputBusy: false,
-  });
+  const ok = orchWriteSession(
+    authority.sessionId,
+    formatDelivery(
+      current,
+      schedulerDeliveryTopology(authority, current),
+    ),
+    {
+      markInputBusy: false,
+    },
+  );
   if (!ok) {
     stores.handoffs.failDeliveryAttempt({
       attemptId: attempt.id,
@@ -721,8 +775,47 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     retryOrBlockDelivery(authority, current.id, attempt.attemptNo);
     return true;
   }
-  // Enter arrives as a separate write so TUIs treat it as a submit keypress.
-  scheduleEnter(authority, current.id, attempt);
+  try {
+    stores.handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: current.id,
+      acceptDeadlineAt: Date.now() + SUBMIT_ACCEPTANCE_WINDOW_MS,
+    });
+  } catch {
+    stores.handoffs.failDeliveryAttempt({
+      attemptId: attempt.id,
+      handoffId: current.id,
+      failureCode: 'mark_pasted_failed',
+    });
+    retryOrBlockDelivery(authority, current.id, attempt.attemptNo);
+    return true;
+  }
+  // Paste, durable "pasted" transition and Enter share one JS turn. No other
+  // agent activity can steal the 150 ms gap that previously existed here.
+  submitDelivery(authority, current.id, attempt);
+  return true;
+}
+
+function scheduleStableDelivery(
+  authority: DeliveryAuthority,
+  handoff: Handoff,
+): boolean {
+  if (
+    !isCurrentAuthority(authority) ||
+    !isSessionInjectableIdle(authority.sessionId)
+  ) return false;
+  let pending: PendingDeliveryStart;
+  const timer = setTimeout(() => {
+    clearPendingDeliveryStart(pending);
+    if (!isCurrentAuthority(authority)) return;
+    if (!isSessionInjectableIdle(authority.sessionId)) {
+      enqueueHandoff(authority, handoff);
+      return;
+    }
+    deliverNow(authority, handoff);
+  }, DELIVERY_IDLE_STABILITY_MS);
+  pending = { authority, handoff, timer };
+  pendingDeliveryStarts.add(pending);
   return true;
 }
 
@@ -737,12 +830,12 @@ function flushQueue(sessionId: string): void {
     return;
   }
   const [key, queue] = matches[0];
-  if (hasPendingEnter(queue[0]!.authority)) return;
+  if (hasPendingDelivery(queue[0]!.authority)) return;
   // One handoff per idle transition: after delivery the orchestrator goes
   // busy processing it; remaining handoffs flush on subsequent idles.
   const next = queue.shift()!;
   if (queue.length === 0) queues.delete(key);
-  if (!deliverNow(next.authority, next.handoff)) {
+  if (!scheduleStableDelivery(next.authority, next.handoff)) {
     // Session died — drop the rest of its queue.
     queues.delete(key);
   }
@@ -752,6 +845,7 @@ export function initIdleDelivery(): void {
   if (untapState) return;
   untapState = tapSessionState((sessionId, state) => {
     if (state === 'busy') acceptPendingEnters(sessionId);
+    if (state !== 'idle') requeuePendingDeliveryStarts(sessionId);
     if (state === 'idle') flushQueue(sessionId);
   });
   untapSemanticStatus = tapAgentSemanticStatus((entry) => {
@@ -760,6 +854,8 @@ export function initIdleDelivery(): void {
       isSessionInjectableIdle(entry.sessionId)
     ) {
       flushQueue(entry.sessionId);
+    } else {
+      requeuePendingDeliveryStarts(entry.sessionId);
     }
   });
   untapExit = tapSessionExit((sessionId) => {
@@ -774,6 +870,10 @@ export function initIdleDelivery(): void {
         failureCode: 'orchestrator_session_exited',
       });
       clearPendingEnter(pending);
+    }
+    for (const pending of [...pendingDeliveryStarts]) {
+      if (pending.authority.sessionId !== sessionId) continue;
+      clearPendingDeliveryStart(pending);
     }
   });
   unsubscribeScopeChanges = onRendererWorkspaceScopeChange(
@@ -802,6 +902,15 @@ export function initIdleDelivery(): void {
         });
         clearPendingEnter(pending);
       }
+      for (const pending of [...pendingDeliveryStarts]) {
+        if (
+          pending.authority.owner?.id !== owner.id ||
+          !sameProjectScope(pending.authority.scope, previous)
+        ) {
+          continue;
+        }
+        clearPendingDeliveryStart(pending);
+      }
     },
   );
 }
@@ -818,6 +927,9 @@ export function shutdownIdleDelivery(): void {
   queues.clear();
   configureHandoffDeliveryRuntimeRecovery(null);
   for (const pending of [...pendingEnters]) clearPendingEnter(pending);
+  for (const pending of [...pendingDeliveryStarts]) {
+    clearPendingDeliveryStart(pending);
+  }
 }
 
 /** Resolve the exact owner/scope/mission authority for the orchestrator. */
@@ -871,9 +983,9 @@ export function onHandoffSubmitted(
   if (!authority) return null; // No trusted orchestrator — stays listed as pending.
   if (
     isSessionInjectableIdle(authority.sessionId) &&
-    !hasPendingEnter(authority)
+    !hasPendingDelivery(authority)
   ) {
-    deliverNow(authority, handoff);
+    scheduleStableDelivery(authority, handoff);
     return null;
   }
   enqueueHandoff(authority, handoff);

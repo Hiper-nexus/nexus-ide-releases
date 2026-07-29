@@ -552,6 +552,25 @@ export function assertRealMissionPassEvidence(raw) {
     }
     return attempt;
   };
+  const deliveryAuthorityMatches = (handoff, accepted) => {
+    const hasNoManualConsumption =
+      handoff?.consumedAt === null &&
+      handoff?.consumedBySessionId === null &&
+      handoff?.consumedDeliveryAttemptId === null;
+    if (
+      handoff?.deliveryState === "submitted" ||
+      handoff?.deliveryState === "acknowledged"
+    ) {
+      return hasNoManualConsumption;
+    }
+    return (
+      handoff?.deliveryState === "consumed" &&
+      Number.isInteger(handoff?.consumedAt) &&
+      accepted.acceptedAt <= handoff.consumedAt &&
+      handoff?.consumedBySessionId === kickoff?.sessionId &&
+      handoff?.consumedDeliveryAttemptId === accepted.id
+    );
+  };
   const handoffMatches = (handoff, dispatch, fromAgent) => {
     const physical = record(handoff?.physicalReceipt);
     const audit = record(handoff?.auditIntent);
@@ -639,11 +658,7 @@ export function assertRealMissionPassEvidence(raw) {
       handoff?.workerIncarnationId === dispatch?.workerIncarnationId &&
       handoff?.status === "success" &&
       handoff?.delivered === true &&
-      handoff?.deliveryState === "consumed" &&
-      Number.isInteger(handoff?.consumedAt) &&
-      accepted.acceptedAt <= handoff.consumedAt &&
-      handoff?.consumedBySessionId === kickoff?.sessionId &&
-      handoff?.consumedDeliveryAttemptId === accepted.id
+      deliveryAuthorityMatches(handoff, accepted)
     );
   };
   const completionDriver = record(completion?.driver);
@@ -1029,9 +1044,16 @@ export function assertRealMissionPassEvidence(raw) {
         )
       );
     }) &&
-    chainHandoffs.every(
-      (handoff) => handoff?.consumedAt <= completion?.completedAt,
-    );
+    chainHandoffs.every((handoff) => {
+      const accepted = exactAcceptedAttempt(handoff);
+      const deliveredAt = Number.isInteger(handoff?.consumedAt)
+        ? handoff.consumedAt
+        : accepted?.acceptedAt;
+      return (
+        Number.isInteger(deliveredAt) &&
+        deliveredAt <= completion?.completedAt
+      );
+    });
   // O roster advisor é canônico: as seis CLIs na ordem do contrato, com o
   // tier exato; skipped não pode carregar recibo físico.
   const participationIsCanonical =

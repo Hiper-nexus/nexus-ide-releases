@@ -823,11 +823,6 @@ function verifiedPlanFixture(
       attemptId: attempt.id,
       handoffId: handoff.id,
     });
-    handoffs.markConsumedAfterAcceptedDelivery(
-      handoff.id,
-      mission.id,
-      'orchestrator-golden',
-    );
     return { claim, handoff };
   };
   const primary = completePlannedTask({
@@ -2559,10 +2554,6 @@ describe('durable task dispatcher authority', () => {
         handoffId: handoff.id,
       }),
     ).toBe(true);
-    expect(
-      handoffs.markConsumedAfterAcceptedDelivery(handoff.id, mission.id, 'orchestrator-golden'),
-    ).toBe(true);
-
     runtime.close(scope);
     const restartedMissions = createScopedMissionStore(runtime, scope);
     const restartedDispatches = createTaskDispatchStore(runtime, scope);
@@ -2604,13 +2595,11 @@ describe('durable task dispatcher authority', () => {
         handoffId: handoff.id,
       }),
     ).toBe(true);
-    expect(
-      restartedHandoffs.markConsumedAfterAcceptedDelivery(
-        handoff.id,
-        mission.id,
-        'orchestrator-golden-rebound',
-      ),
-    ).toBe(true);
+    expect(restartedHandoffs.get(handoff.id)).toMatchObject({
+      delivered: true,
+      deliveryState: 'submitted',
+      consumedAt: undefined,
+    });
     expect(restartedDispatches.get(task!.id)?.integrationReceipt).toMatchObject({
       kind: 'worktree_integrated',
       reference: repositoryHead(),
@@ -2670,7 +2659,7 @@ describe('durable task dispatcher authority', () => {
       intentState: 'done',
     });
     expect(restartedMissions.get(mission.id)?.learnings).toMatch(
-      /Conclusão automática verificada[\s\S]*handoffs entregues/i,
+      /Conclusão automática verificada[\s\S]*handoffs aceitos pela sessão atual/i,
     );
     expect(
       restartedDispatches.completeMissionFromVerifiedPlan({

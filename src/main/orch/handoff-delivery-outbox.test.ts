@@ -46,6 +46,7 @@ describe("durable handoff delivery outbox", () => {
       title: "Accepted delivery crash",
       orchestratorSessionId: "orchestrator-current",
     });
+    missions.setStatus("mission-accepted-crash", "running");
     const handoff = handoffs.submit({
       missionId: "mission-accepted-crash",
       sessionId: "worker-current",
@@ -139,6 +140,7 @@ describe("durable handoff delivery outbox", () => {
       title: "Rebound delivery",
       orchestratorSessionId: "orchestrator-retired",
     });
+    missions.setStatus("mission-rebound", "running");
     const handoff = handoffs.submit({
       missionId: "mission-rebound",
       sessionId: "worker-rebound",
@@ -238,6 +240,61 @@ describe("durable handoff delivery outbox", () => {
     expect(deliver).toHaveBeenCalledWith(queued, scope);
   });
 
+  it("does not rescan accepted delivery history after its mission is terminal", () => {
+    const baseDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nexus-handoff-outbox-terminal-"),
+    );
+    directories.push(baseDir);
+    const scope = testProjectScope();
+    const currentRuntime = runtime(baseDir);
+    const missions = createScopedMissionStore(currentRuntime, scope, {
+      idFactory: () => "mission-terminal",
+    });
+    const handoffs = createScopedHandoffStore(currentRuntime, scope, {
+      idFactory: (prefix) => `${prefix}-terminal`,
+    });
+    missions.create({
+      title: "Terminal accepted delivery",
+      orchestratorSessionId: "orchestrator-terminal",
+    });
+    missions.setStatus("mission-terminal", "running");
+    const handoff = handoffs.submit({
+      missionId: "mission-terminal",
+      sessionId: "worker-terminal",
+      status: "success",
+      summary: "Transport accepted before the mission reached done.",
+    });
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: "mission-terminal",
+      orchestratorSessionId: "orchestrator-terminal",
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: handoff.id,
+      }),
+    ).toBe(true);
+    expect(handoffs.listDeliveryOutboxCandidates()).toHaveLength(1);
+
+    missions.setStatus("mission-terminal", "done");
+
+    const recoverAccepted = vi.fn();
+    expect(
+      reconcilePendingHandoffDeliveryOutbox({
+        suites: [{ scope, handoffs }],
+        recoverAccepted,
+      }),
+    ).toEqual({ attempted: 0, failed: 0 });
+    expect(recoverAccepted).not.toHaveBeenCalled();
+  });
+
   it("recovers queued work after restart and retries a throwing callback", () => {
     const baseDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nexus-handoff-outbox-"),
@@ -249,6 +306,7 @@ describe("durable handoff delivery outbox", () => {
       idFactory: () => "mission-outbox",
     });
     missions.create({ title: "Durable outbox" });
+    missions.setStatus("mission-outbox", "running");
     const firstHandoffs = createScopedHandoffStore(firstRuntime, scope, {
       idFactory: () => "handoff-outbox",
     });

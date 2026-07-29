@@ -17,8 +17,8 @@ const ACTIVE_WORKER_STATES = new Set<TaskDispatchState>([
 ]);
 
 // Only terminal states. Retiring during handoff_ready/merging races the
-// merge-council author pane (still needed for resolveAuthor) and throws
-// worker_retirement_exit_unproven while the PTY is legitimately alive.
+// merge-council author pane (still needed for resolveAuthor) and would request
+// cleanup while the PTY is legitimately alive.
 const RETIRABLE_WORKER_STATES = new Set<TaskDispatchState>([
   "completed",
   "blocked",
@@ -56,6 +56,18 @@ export interface TaskDispatchWorkerRetirementResult {
   readonly retiredTaskIds: readonly string[];
   readonly alreadyRetiredTaskIds: readonly string[];
   readonly unboundTaskIds: readonly string[];
+  /** Exact identities whose physical cleanup remains retryable. */
+  readonly deferredTaskIds: readonly string[];
+}
+
+class WorkerRetirementCleanupDeferredError extends Error {
+  constructor(missionId: string, taskId: string) {
+    super(
+      `worker_retirement_cleanup_deferred: ${missionId}/${taskId} ` +
+        "aguarda prova de saída física; o dispatch terminal não reserva maxWorkers",
+    );
+    this.name = "WorkerRetirementCleanupDeferredError";
+  }
 }
 
 function hasPhysicalWorkerIdentity(
@@ -146,6 +158,7 @@ export class TaskDispatchWorkerRetirementCoordinator {
     const retiredTaskIds: string[] = [];
     const alreadyRetiredTaskIds: string[] = [];
     const unboundTaskIds: string[] = [];
+    const deferredTaskIds: string[] = [];
 
     for (const snapshot of input.dispatches) {
       throwIfMissionSchedulerAborted(input.signal);
@@ -172,7 +185,16 @@ export class TaskDispatchWorkerRetirementCoordinator {
       }
       const existingFlight = this.#flights.get(key);
       if (existingFlight) {
-        await existingFlight;
+        try {
+          await existingFlight;
+        } catch (error) {
+          throwIfMissionSchedulerAborted(input.signal);
+          if (!(error instanceof WorkerRetirementCleanupDeferredError)) {
+            throw error;
+          }
+          deferredTaskIds.push(snapshot.taskId);
+          continue;
+        }
         throwIfMissionSchedulerAborted(input.signal);
         alreadyRetiredTaskIds.push(snapshot.taskId);
         continue;
@@ -181,7 +203,16 @@ export class TaskDispatchWorkerRetirementCoordinator {
       const flight = this.#retireOne(input.scope, snapshot, input.deps);
       this.#flights.set(key, flight);
       try {
-        await flight;
+        try {
+          await flight;
+        } catch (error) {
+          throwIfMissionSchedulerAborted(input.signal);
+          if (!(error instanceof WorkerRetirementCleanupDeferredError)) {
+            throw error;
+          }
+          deferredTaskIds.push(snapshot.taskId);
+          continue;
+        }
         this.#retired.add(key);
         retiredTaskIds.push(snapshot.taskId);
         throwIfMissionSchedulerAborted(input.signal);
@@ -195,6 +226,7 @@ export class TaskDispatchWorkerRetirementCoordinator {
       retiredTaskIds: Object.freeze(retiredTaskIds),
       alreadyRetiredTaskIds: Object.freeze(alreadyRetiredTaskIds),
       unboundTaskIds: Object.freeze(unboundTaskIds),
+      deferredTaskIds: Object.freeze(deferredTaskIds),
     });
   }
 
@@ -226,9 +258,9 @@ export class TaskDispatchWorkerRetirementCoordinator {
       scope,
     });
     if (!closed) {
-      throw new Error(
-        `worker_retirement_exit_unproven: ${expected.missionId}/${expected.taskId} ` +
-          "permanece ocupando capacidade até a saída física exata ser provada",
+      throw new WorkerRetirementCleanupDeferredError(
+        expected.missionId,
+        expected.taskId,
       );
     }
     assertCurrentRetirementAuthority(
@@ -250,10 +282,10 @@ export interface MissionSchedulerWorkerSlotProjection {
 /**
  * Project maxWorkers without counting a completed dispatch twice forever.
  *
- * Bound scheduler rows are represented by their durable dispatch. Historical
- * rows for a terminal dispatch are excluded only on the scheduler path, whose
- * caller first awaits physical retirement. Rows without an exact dispatch
- * identity remain unmanaged and retain the existing live-pane fail-safe.
+ * Bound scheduler rows are represented by their durable dispatch. A terminal
+ * receipt releases logical maxWorkers capacity; exact PTY cleanup remains a
+ * separate retryable lane and never fabricates exit proof. Rows without an
+ * exact dispatch identity remain unmanaged and retain the live-pane fail-safe.
  */
 export function projectMissionSchedulerWorkerSlots(
   missionId: string,

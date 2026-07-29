@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+  REAL_MISSION_E2E_ORCHESTRATOR_NAME,
   REAL_MISSION_E2E_SQUAD_ID,
 } from "../shared/real-mission-e2e";
 import type { FailureCode } from "./real-mission-e2e-lifecycle";
@@ -19,6 +20,7 @@ const harness = vi.hoisted(() => ({
   mission: null as unknown,
   dispatches: [] as unknown[],
   handoffs: new Map<string, unknown>(),
+  deliveryAttempts: new Map<string, unknown[]>(),
 }));
 
 vi.mock("electron", () => ({
@@ -162,7 +164,8 @@ function suiteStub() {
     },
     handoffs: {
       get: (id: string) => harness.handoffs.get(id) ?? null,
-      listDeliveryAttempts: () => [],
+      listDeliveryAttempts: (id: string) =>
+        harness.deliveryAttempts.get(id) ?? [],
       onChange: () => () => {},
     },
   } as unknown as ConstructorParameters<typeof RealMissionObserver>[0]["suite"];
@@ -220,6 +223,7 @@ describe("real mission observer advisor participation", () => {
     harness.mission = null;
     harness.dispatches = [];
     harness.handoffs = new Map();
+    harness.deliveryAttempts = new Map();
   });
 
   it("finishes with advisor-absent when done misses a credentialed advisor handoff", () => {
@@ -275,7 +279,21 @@ describe("real mission observer advisor participation", () => {
   });
 
   it("records spawn, first nexus_* tool and handoff receipts in the evidence", () => {
-    harness.mission = { id: MISSION_ID, status: "running" };
+    harness.mission = {
+      id: MISSION_ID,
+      status: "running",
+      orchestratorSessionId: "session-orch",
+    };
+    harness.agentInfos.set("session-orch", {
+      sessionId: "session-orch",
+      missionId: MISSION_ID,
+      adapterId: "codex",
+      role: "orchestrator",
+      agentName: REAL_MISSION_E2E_ORCHESTRATOR_NAME,
+      squadId: REAL_MISSION_E2E_SQUAD_ID,
+      readOnly: false,
+      nativeReadOnly: false,
+    });
     harness.agentInfos.set("session-grok", {
       sessionId: "session-grok",
       missionId: MISSION_ID,
@@ -306,6 +324,21 @@ describe("real mission observer advisor participation", () => {
       deliveryState: "consumed",
       delivered: true,
     });
+    harness.deliveryAttempts.set("handoff-grok", [
+      {
+        id: "attempt-grok",
+        handoffId: "handoff-grok",
+        missionId: MISSION_ID,
+        orchestratorSessionId: "session-orch",
+        attemptNo: 1,
+        state: "accepted",
+        startedAt: 291,
+        acceptDeadlineAt: 301,
+        acceptedAt: 300,
+        failedAt: null,
+        failureCode: null,
+      },
+    ]);
     harness.auditEntries = [
       {
         session: "session-grok",
@@ -332,6 +365,7 @@ describe("real mission observer advisor participation", () => {
 
     const observer = createObserver();
     observer.start();
+    harness.stateTap?.("session-orch", "idle");
     harness.stateTap?.("session-grok", "busy");
 
     const evidence = observer.evidence(Date.now(), "fail", "timeout");
@@ -343,6 +377,10 @@ describe("real mission observer advisor participation", () => {
       handoffAt: 290,
     });
     expect(typeof grok?.spawnedAt).toBe("number");
+    expect(evidence.durableHandoffs).toEqual({
+      count: 1,
+      ids: ["handoff-grok"],
+    });
     // A sessão advisor nunca entra no conjunto PTY codex de quatro panes.
     expect(evidence.physicalPty.ids).not.toContain("session-grok");
     observer.stop();

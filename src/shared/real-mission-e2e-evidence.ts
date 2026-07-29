@@ -497,6 +497,29 @@ export const realMissionE2EEvidenceSchema = z
       }
       return attempt;
     };
+    const deliveryAuthorityMatches = (
+      handoff: (typeof evidence.handoffs)[number],
+      accepted: (typeof evidence.handoffs)[number]["deliveryAttempts"][number],
+    ): boolean => {
+      const hasNoManualConsumption =
+        handoff.consumedAt === null &&
+        handoff.consumedBySessionId === null &&
+        handoff.consumedDeliveryAttemptId === null;
+      if (
+        handoff.deliveryState === "submitted" ||
+        handoff.deliveryState === "acknowledged"
+      ) {
+        return hasNoManualConsumption;
+      }
+      return (
+        handoff.deliveryState === "consumed" &&
+        handoff.consumedAt !== null &&
+        accepted.acceptedAt !== null &&
+        accepted.acceptedAt <= handoff.consumedAt &&
+        handoff.consumedBySessionId === evidence.kickoff.sessionId &&
+        handoff.consumedDeliveryAttemptId === accepted.id
+      );
+    };
     const handoffMatchesDispatch = (
       handoff: (typeof evidence.handoffs)[number] | undefined,
       dispatch: (typeof evidence.dispatches)[number] | undefined,
@@ -531,17 +554,13 @@ export const realMissionE2EEvidenceSchema = z
           handoff.workerIncarnationId === dispatch.workerIncarnationId &&
           handoff.status === "success" &&
           handoff.delivered &&
-          handoff.deliveryState === "consumed" &&
           accepted.acceptedAt !== null &&
           accepted.failedAt === null &&
           accepted.failureCode === null &&
           accepted.acceptDeadlineAt !== null &&
           accepted.startedAt <= accepted.acceptedAt &&
           accepted.acceptedAt <= accepted.acceptDeadlineAt &&
-          handoff.consumedAt !== null &&
-          accepted.acceptedAt <= handoff.consumedAt &&
-          handoff.consumedBySessionId === evidence.kickoff.sessionId &&
-          handoff.consumedDeliveryAttemptId === accepted.id,
+          deliveryAuthorityMatches(handoff, accepted),
       );
     };
     const chainPlanIsExact =
@@ -696,11 +715,16 @@ export const realMissionE2EEvidenceSchema = z
             ),
         );
       }) &&
-      chainHandoffs.every(
-        (handoff) =>
-          (handoff?.consumedAt ?? Number.MAX_SAFE_INTEGER) <=
-          (completion?.completedAt ?? -1),
-      );
+      chainHandoffs.every((handoff) => {
+        if (!handoff) return false;
+        const accepted = exactAcceptedAttempt(handoff);
+        const deliveredAt = handoff.consumedAt ?? accepted?.acceptedAt;
+        return (
+          deliveredAt !== null &&
+          deliveredAt !== undefined &&
+          deliveredAt <= (completion?.completedAt ?? -1)
+        );
+      });
     // Cada advisor credenciada prova PTY físico, primeira tool nexus_* e o
     // handoff físico; handoffAt casa exatamente com o receipt MCP auditado.
     const participationIsExact = evidence.participation.every((row) => {

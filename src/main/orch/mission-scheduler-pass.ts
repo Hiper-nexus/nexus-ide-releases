@@ -4,7 +4,7 @@ export interface MissionSchedulerLaunchPassOptions<TSnapshot, TResult> {
   readonly signal?: AbortSignal;
   /** Converge terminal handoffs/merges into durable task state. */
   readonly reconcile: (signal?: AbortSignal) => Promise<void> | void;
-  /** Prove exact worker exit before freeing the scheduler slot. */
+  /** Attempt exact terminal-worker cleanup before the next launch decision. */
   readonly retireWorkers: (signal?: AbortSignal) => Promise<void> | void;
   /** Read a new snapshot only after both durable boundaries above complete. */
   readonly snapshot: (signal?: AbortSignal) => TSnapshot;

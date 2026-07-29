@@ -10,6 +10,11 @@ Data: 2026-07-29
   no fluxo executor → revisão → QA. Rodadas explícitas como “cada pane diga o
   que faz” despacham todos os especialistas em paralelo, preservam cada
   resposta e só terminam após a consolidação durável do Maestro.
+- **Maestro ocupado não é Maestro quebrado**: a entrega aguarda um `idle`
+  estável antes de tocar no terminal. Uma mudança transitória para `busy` não
+  gasta retry, não cria prompt duplicado e não substitui uma sessão saudável.
+  Missões de entrega usam o aceite físico do transporte; ACK individual
+  continua obrigatório somente quando o Maestro precisa consolidar um fanout.
 - **Aprovação sem espera artificial**: o clique de aprovação retorna assim que
   o Main sela e persiste a missão. Descoberta de contas, quota, PREVC e
   preparação dos agentes continuam em paralelo, sem manter o wizard em

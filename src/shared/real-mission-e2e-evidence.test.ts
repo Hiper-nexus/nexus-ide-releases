@@ -184,11 +184,39 @@ describe("real mission E2E PASS graph", () => {
     );
   });
 
-  it("requires consumed delivery bound to the one exact accepted attempt", () => {
-    const acknowledgedOnly = validPassEvidence();
-    (acknowledgedOnly.handoffs as Array<Record<string, unknown>>)[0]
-      .deliveryState = "acknowledged";
-    expect(() => parseRealMissionE2EEvidence(acknowledgedOnly)).toThrow(
+  it("accepts the delivery chain after exact current-session acceptance without manual consumption", () => {
+    const evidence = validPassEvidence("product-wizard");
+    for (const handoff of evidence.handoffs as Array<
+      Record<string, unknown>
+    >) {
+      handoff.deliveryState = "submitted";
+      handoff.consumedAt = null;
+      handoff.consumedBySessionId = null;
+      handoff.consumedDeliveryAttemptId = null;
+    }
+
+    expect(parseRealMissionE2EEvidence(evidence).status).toBe("pass");
+  });
+
+  it("rejects partial delivery state, forged consumption or duplicate acceptance", () => {
+    const partial = validPassEvidence();
+    const partialHandoff = (
+      partial.handoffs as Array<Record<string, unknown>>
+    )[0]!;
+    partialHandoff.deliveryState = "acknowledged";
+    partialHandoff.consumedBySessionId = null;
+    expect(() => parseRealMissionE2EEvidence(partial)).toThrow(
+      /real-mission invariants/,
+    );
+
+    const consumedWithoutReceipt = validPassEvidence();
+    const consumedHandoff = (
+      consumedWithoutReceipt.handoffs as Array<Record<string, unknown>>
+    )[0]!;
+    consumedHandoff.consumedAt = null;
+    consumedHandoff.consumedBySessionId = null;
+    consumedHandoff.consumedDeliveryAttemptId = null;
+    expect(() => parseRealMissionE2EEvidence(consumedWithoutReceipt)).toThrow(
       /real-mission invariants/,
     );
 
