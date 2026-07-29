@@ -7,6 +7,14 @@ const require = createRequire(import.meta.url);
 // straight from node_modules (dev) / app.asar.unpacked (prod) instead of being
 // pulled into the Rollup graph, which would break the .node binaries.
 export default defineConfig({
+  server: {
+    // Runtime data, never source: worker worktrees under `.dev-user-data/`
+    // are full repository checkouts inside the watch root. Without this the
+    // dev server rebuilds (and restarts Electron) on every worker dispatch.
+    watch: {
+      ignored: ['**/.dev-user-data/**', '**/.vite/**', '**/.dev-electron/**'],
+    },
+  },
   // A chave publica de licenca e lida via process.env.NEXUS_LICENSE_PUBKEY em
   // src/main/persistence/billing-ipc.ts. Um app EMPACOTADO (.dmg) nao recebe a
   // env do shell em runtime, entao assamos o valor no bundle do main aqui:

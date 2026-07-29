@@ -6,6 +6,14 @@ import { defineConfig } from 'vite';
 // app.asar.unpacked (prod), exactly like the main bundle, so its .node binary
 // is never pulled into the Rollup graph.
 export default defineConfig({
+  server: {
+    // Runtime data, never source: worker worktrees under `.dev-user-data/`
+    // are full repository checkouts inside the watch root. Without this the
+    // dev server rebuilds (and restarts Electron) on every worker dispatch.
+    watch: {
+      ignored: ['**/.dev-user-data/**', '**/.vite/**', '**/.dev-electron/**'],
+    },
+  },
   build: {
     rollupOptions: {
       external: ['@lydell/node-pty'],

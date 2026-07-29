@@ -4,6 +4,21 @@ import react from '@vitejs/plugin-react';
 // Renderer runs React 18 in an isolated, sandboxed BrowserWindow.
 export default defineConfig({
   plugins: [react()],
+  server: {
+    watch: {
+      /**
+       * Worker worktrees are materialized under `.dev-user-data/` — inside the
+       * repository, therefore inside Vite's watch root. Each one is a full
+       * checkout, so the moment a mission dispatched a worker the dev server
+       * saw hundreds of new files (including tsconfig.json, which forces a
+       * cache clear + full reload) and put the renderer into a reload storm:
+       * the window went black and never finished navigating
+       * ("renderer sem navegação ativa"), while the mission itself kept
+       * running fine in main. Runtime data is never renderer source.
+       */
+      ignored: ['**/.dev-user-data/**', '**/.vite/**', '**/.dev-electron/**'],
+    },
+  },
   build: {
     // AudioWorklet modules are loaded as scripts at runtime. Inlining `?url`
     // assets as data: URLs makes production CSP reject addModule(), silently
