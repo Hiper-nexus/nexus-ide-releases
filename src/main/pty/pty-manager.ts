@@ -65,7 +65,10 @@ import {
   requiresAdvisoryProcessSandbox,
   resolveAdvisoryProcessSandbox,
 } from "./advisory-process-sandbox";
-import { resolveAgyNativeProfile } from "./agy-native-profile";
+import {
+  resolveAgyNativeProfile,
+  resolveNativeUserHome,
+} from "./agy-native-profile";
 import { resolveMissionCliExecutionPolicy } from "./mission-cli-execution-policy";
 import { getOrchSettings } from "../persistence/settings-store";
 
@@ -1264,6 +1267,22 @@ export function spawnAgentSession(
       !args.includes("--search")
     ) {
       args.push("--search");
+    }
+    if (
+      executionPolicy.isFrictionless &&
+      adapter.id === "agy" &&
+      isMissionParticipant
+    ) {
+      // AGY authenticates against the native macOS account profile. Release
+      // E2E runs Electron with an isolated HOME, so letting that environment
+      // escape into the provider makes the preflight see a valid Keychain
+      // session while the actual CLI falls back to OAuth and waits forever.
+      // Resolve only HOME here: frictionless mode must still let a user open
+      // AGY to authenticate when its provider-state directories do not exist.
+      const nativeHome = resolveNativeUserHome({ inheritedHome: env.HOME });
+      env.HOME = nativeHome;
+      env.USERPROFILE = nativeHome;
+      delete env.GEMINI_CLI_HOME;
     }
   } catch (error) {
     decoration?.onSpawnFailed?.();

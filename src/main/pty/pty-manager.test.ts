@@ -1080,6 +1080,74 @@ describe("AGY advisory native profile", () => {
       }
     },
   );
+
+  macosIt(
+    "uses the native OS profile for a frictionless read-only AGY worker without Seatbelt",
+    async () => {
+      setSquadCliPolicyLookupForTests(() => "operator-choice");
+      const root = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nexus-agy-frictionless-"),
+      );
+      const worktree = path.join(root, "project", "worktree");
+      const nativeHome = path.join(root, "native-home");
+      const electronHome = path.join(root, "electron-home");
+      const legacyGeminiHome = path.join(root, "legacy-gemini-home");
+      fs.mkdirSync(worktree, { recursive: true });
+      fs.mkdirSync(nativeHome, { recursive: true });
+      fs.mkdirSync(electronHome, { recursive: true });
+      fs.mkdirSync(legacyGeminiHome, { recursive: true });
+      const nativeUser = os.userInfo();
+      const userInfoSpy = vi.spyOn(os, "userInfo").mockReturnValue({
+        ...nativeUser,
+        homedir: nativeHome,
+      });
+      vi.stubEnv("HOME", electronHome);
+      vi.stubEnv("USERPROFILE", electronHome);
+      setAgentSpawnHook(null);
+      const host = fakeHost();
+      setPtyHost(host.host);
+      const baseAuthority = revisionBoundWorker(
+        fs.realpathSync.native(worktree),
+      );
+      const authority: BoundSpawnAuthority = {
+        ...baseAuthority,
+        context: {
+          ...baseAuthority.context!,
+          readOnly: true,
+          nativeReadOnly: false,
+        },
+      };
+      let sessionId: string | null = null;
+
+      try {
+        ({ sessionId } = spawnMainOwnedAgentSession(
+          {
+            kind: "cli-agent",
+            paneId: "agy-frictionless-native-profile",
+            cols: 100,
+            rows: 30,
+          },
+          builtinCliPtyAdapter("agy"),
+          { keyEnv: { GEMINI_CLI_HOME: legacyGeminiHome } },
+          authority,
+        ));
+
+        const spec = host.specFor(sessionId);
+        const expectedHome = fs.realpathSync.native(nativeHome);
+        expect(spec.file).toBe("/mock/bin/agy");
+        expect(spec.args).toContain("--dangerously-skip-permissions");
+        expect(spec.args).not.toContain("/usr/bin/sandbox-exec");
+        expect(spec.env.HOME).toBe(expectedHome);
+        expect(spec.env.USERPROFILE).toBe(expectedHome);
+        expect(spec.env.GEMINI_CLI_HOME).toBeUndefined();
+      } finally {
+        if (sessionId) await orchTerminateSession(sessionId);
+        userInfoSpy.mockRestore();
+        vi.unstubAllEnvs();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("cli-agent spawn argv hardening", () => {
