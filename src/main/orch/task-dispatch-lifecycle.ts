@@ -1,11 +1,17 @@
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   getAgentSessionInfo,
+  getSessionState,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
 } from '../pty/pty-manager';
-import { getContextBySession } from './gate';
+import {
+  getAgentSemanticStatusBySession,
+  tapAgentSemanticStatus,
+  type AgentSemanticStatus,
+} from './agent-status';
+import { getContextBySession, MAX_STOP_ATTEMPTS } from './gate';
 import { ensureGuidedGitBaselineForWorktreeAsync } from '../runtime/guided-greenfield-baseline';
 import { getExternalWorkerSessionInfo } from './external-worker-session-registry';
 import {
@@ -19,13 +25,20 @@ import {
   TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
 } from './task-dispatch-store';
 import { productionTaskDispatchWorkerRetirement } from './task-dispatch-worker-retirement';
+import { sameProjectScope } from './project-scoped-broadcast';
+import { submitPendingAgentPrompt } from './tool-util';
 
 export { TASK_DISPATCH_SESSION_EXIT_REASON };
 export const TASK_DISPATCH_ACTIVITY_THROTTLE_MS = 60_000;
 export const TASK_DISPATCH_HEARTBEAT_LEASE_MS = 10 * 60_000;
+export const TASK_DISPATCH_UNVERIFIED_ACTIVITY_MAX_MS = 30 * 60_000;
 export const TASK_DISPATCH_RECONCILE_MS = 30_000;
+export const TASK_DISPATCH_TERMINAL_GRACE_MS = 2_000;
+export const TASK_DISPATCH_STOP_GATE_GRACE_MS = 60_000;
 export const TASK_DISPATCH_STALLED_REASON =
   'O worker ficou sem atividade e sem heartbeat por 10 minutos (stalled).';
+export const TASK_DISPATCH_TURN_ENDED_REASON =
+  'O worker terminou o turno sem submeter handoff; a task será retomada automaticamente.';
 
 interface TaskDispatchLifecycleOptions {
   readonly now?: () => number;
@@ -34,6 +47,13 @@ interface TaskDispatchLifecycleOptions {
 const suites = new Map<string, ProjectDomainStoreSuite>();
 const lastActivityRefresh = new Map<string, number>();
 const pendingExitReasons = new Map<string, string>();
+const terminalRecoveryTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
+const terminalRecoveriesInFlight = new Set<string>();
+const terminalRecoveryAttempts = new Map<string, number>();
+const unverifiedActivityDeadlines = new Map<string, number>();
 let now: () => number = Date.now;
 let disposers: Array<() => void> = [];
 const retirementPasses = new Map<
@@ -61,6 +81,26 @@ function physicalWorkerKey(
   return `${sessionId}\0${workerIncarnationId}`;
 }
 
+function isTerminalTurnStatus(status: AgentSemanticStatus): boolean {
+  return status === 'completed' || status === 'error';
+}
+
+function clearTerminalRecovery(
+  sessionId: string,
+  workerIncarnationId?: string,
+): void {
+  const exactKey = workerIncarnationId
+    ? physicalWorkerKey(sessionId, workerIncarnationId)
+    : null;
+  for (const [key, handle] of terminalRecoveryTimers) {
+    if (exactKey ? key !== exactKey : !key.startsWith(`${sessionId}\0`)) {
+      continue;
+    }
+    clearTimeout(handle);
+    terminalRecoveryTimers.delete(key);
+  }
+}
+
 function suiteForSession(sessionId: string): ProjectDomainStoreSuite | null {
   const context = sessionAuthority(sessionId);
   if (!context || context.role !== 'worker' || !context.missionId) return null;
@@ -70,6 +110,281 @@ function suiteForSession(sessionId: string): ProjectDomainStoreSuite | null {
 function sessionAuthority(sessionId: string) {
   return getContextBySession(sessionId) ??
     getExternalWorkerSessionInfo(sessionId);
+}
+
+interface TerminalRecoveryTarget {
+  readonly suite: ProjectDomainStoreSuite;
+  readonly dispatchId: string;
+  readonly taskId: string;
+  readonly missionId: string;
+  readonly intentVersion: number;
+  readonly adapterId?: string;
+  readonly paneId: string;
+  readonly sessionId: string;
+  readonly workerIncarnationId: string;
+  readonly terminalObservedAt: number;
+}
+
+function hasCurrentTerminalRecoveryAuthority(
+  target: TerminalRecoveryTarget,
+): boolean {
+  if (suites.get(scopeKey(target.suite.scope)) !== target.suite) return false;
+  const context = getContextBySession(target.sessionId);
+  if (
+    !context ||
+    context.role !== 'worker' ||
+    context.missionId !== target.missionId ||
+    context.workerIncarnationId !== target.workerIncarnationId ||
+    !sameProjectScope(context.scope, target.suite.scope)
+  ) {
+    return false;
+  }
+  let current;
+  try {
+    current = target.suite.taskDispatches.assertLifecycleAuthority({
+      taskId: target.taskId,
+      missionId: target.missionId,
+      intentVersion: target.intentVersion,
+      expectedStates: ['running'],
+    });
+  } catch {
+    return false;
+  }
+  if (
+    current.id !== target.dispatchId ||
+    current.state !== 'running' ||
+    current.missionId !== target.missionId ||
+    current.intentVersion !== target.intentVersion ||
+    current.adapterId !== target.adapterId ||
+    current.sessionId !== target.sessionId ||
+    current.workerIncarnationId !== target.workerIncarnationId ||
+    current.handoffId ||
+    current.handoffAcceptedAt ||
+    current.integrationReceipt ||
+    current.completedAt
+  ) {
+    return false;
+  }
+  const live = getAgentSessionInfo(target.sessionId);
+  const executionScope = context.executionScope ?? context.scope;
+  return Boolean(
+    live &&
+    live.role === 'worker' &&
+    live.missionId === target.missionId &&
+    live.workerIncarnationId === target.workerIncarnationId &&
+    live.paneId === target.paneId &&
+    (current.paneId ?? live.paneId) === target.paneId &&
+    sameProjectScope(live.scope, executionScope),
+  );
+}
+
+function remainingTerminalRecoveryGraceMs(
+  target: TerminalRecoveryTarget,
+): number {
+  const requiredGrace = terminalRecoveryGraceMs(target.sessionId);
+  const elapsed = Math.max(0, Date.now() - target.terminalObservedAt);
+  return Math.max(0, requiredGrace - elapsed);
+}
+
+async function retireTerminalTurnWorkerOnce(
+  target: TerminalRecoveryTarget,
+): Promise<void> {
+  if (remainingTerminalRecoveryGraceMs(target) > 0) {
+    scheduleTerminalTurnRecovery(target);
+    return;
+  }
+  const semantic = getAgentSemanticStatusBySession(target.sessionId);
+  if (
+    !semantic ||
+    !isTerminalTurnStatus(semantic.status) ||
+    !hasCurrentTerminalRecoveryAuthority(target)
+  ) {
+    return;
+  }
+
+  const workerKey = physicalWorkerKey(
+    target.sessionId,
+    target.workerIncarnationId,
+  );
+  const recoveryAttempt = terminalRecoveryAttempts.get(workerKey) ?? 0;
+  if (
+    recoveryAttempt === 0 &&
+    getSessionState(target.sessionId) === 'idle'
+  ) {
+    terminalRecoveryAttempts.set(workerKey, 1);
+    try {
+      const resumed = await submitPendingAgentPrompt(
+        target.sessionId,
+        {
+          assertCurrentAuthority: () => {
+            if (!hasCurrentTerminalRecoveryAuthority(target)) {
+              throw new Error('terminal-turn recovery authority was revoked');
+            }
+          },
+        },
+        {
+          adapterId: target.adapterId,
+          canSubmit: () =>
+            remainingTerminalRecoveryGraceMs(target) === 0 &&
+            isTerminalTurnStatus(
+              getAgentSemanticStatusBySession(target.sessionId)?.status ??
+                'idle',
+            ) &&
+            hasCurrentTerminalRecoveryAuthority(target),
+        },
+      );
+      if (resumed) return;
+    } catch (error) {
+      if (!hasCurrentTerminalRecoveryAuthority(target)) return;
+      console.warn(
+        '[task-dispatch-lifecycle] restored prompt resume failed:',
+        error,
+      );
+    }
+    if (remainingTerminalRecoveryGraceMs(target) > 0) {
+      scheduleTerminalTurnRecovery(target);
+      return;
+    }
+    const currentSemantic = getAgentSemanticStatusBySession(target.sessionId);
+    if (
+      !currentSemantic ||
+      !isTerminalTurnStatus(currentSemantic.status) ||
+      !hasCurrentTerminalRecoveryAuthority(target)
+    ) {
+      return;
+    }
+  }
+
+  pendingExitReasons.set(workerKey, TASK_DISPATCH_TURN_ENDED_REASON);
+  let retired = false;
+  try {
+    retired = await requestMissionWorkerPaneRetirement({
+      paneId: target.paneId,
+      sessionId: target.sessionId,
+      missionId: target.missionId,
+      workerIncarnationId: target.workerIncarnationId,
+      scope: target.suite.scope,
+    });
+  } catch (error) {
+    console.warn(
+      '[task-dispatch-lifecycle] terminal-turn worker retirement failed:',
+      error,
+    );
+  }
+  if (!retired) {
+    pendingExitReasons.delete(workerKey);
+    console.warn(
+      '[task-dispatch-lifecycle] terminal-turn worker exit not proven:',
+      `${target.missionId}/${target.taskId}`,
+    );
+    return;
+  }
+
+  lastActivityRefresh.delete(target.sessionId);
+  try {
+    target.suite.taskDispatches.blockSessionExit({
+      sessionId: target.sessionId,
+      workerIncarnationId: target.workerIncarnationId,
+      reason: TASK_DISPATCH_TURN_ENDED_REASON,
+    });
+  } finally {
+    pendingExitReasons.delete(workerKey);
+  }
+}
+
+async function retireTerminalTurnWorker(
+  target: TerminalRecoveryTarget,
+): Promise<void> {
+  const workerKey = physicalWorkerKey(
+    target.sessionId,
+    target.workerIncarnationId,
+  );
+  if (terminalRecoveriesInFlight.has(workerKey)) return;
+  terminalRecoveriesInFlight.add(workerKey);
+  try {
+    await retireTerminalTurnWorkerOnce(target);
+  } finally {
+    terminalRecoveriesInFlight.delete(workerKey);
+  }
+}
+
+function scheduleTerminalTurnRecovery(
+  target: TerminalRecoveryTarget,
+): void {
+  const workerKey = physicalWorkerKey(
+    target.sessionId,
+    target.workerIncarnationId,
+  );
+  if (terminalRecoveryTimers.has(workerKey)) return;
+  const handle = setTimeout(() => {
+    terminalRecoveryTimers.delete(workerKey);
+    void retireTerminalTurnWorker(target).catch((error) => {
+      console.warn(
+        '[task-dispatch-lifecycle] terminal-turn recovery deferred:',
+        error,
+      );
+    });
+  }, remainingTerminalRecoveryGraceMs(target));
+  handle.unref?.();
+  terminalRecoveryTimers.set(workerKey, handle);
+}
+
+function terminalRecoveryGraceMs(sessionId: string): number {
+  const context = getContextBySession(sessionId);
+  const isRejectedStop =
+    context?.role === 'worker' &&
+    context.handoffSubmitted === false &&
+    context.stopAttempts > 0 &&
+    context.stopAttempts < MAX_STOP_ATTEMPTS;
+  return isRejectedStop
+    ? TASK_DISPATCH_STOP_GATE_GRACE_MS
+    : TASK_DISPATCH_TERMINAL_GRACE_MS;
+}
+
+function scheduleTerminalTurnRecoveryForSession(sessionId: string): void {
+  const semantic = getAgentSemanticStatusBySession(sessionId);
+  if (!semantic || !isTerminalTurnStatus(semantic.status)) {
+    clearTerminalRecovery(sessionId);
+    return;
+  }
+  const authority = sessionAuthority(sessionId);
+  const live = getAgentSessionInfo(sessionId);
+  if (
+    !authority ||
+    authority.role !== 'worker' ||
+    !authority.missionId ||
+    !authority.workerIncarnationId ||
+    !live ||
+    live.role !== 'worker' ||
+    live.missionId !== authority.missionId ||
+    live.workerIncarnationId !== authority.workerIncarnationId ||
+    !sameCoordinates(live.scope, authority.scope)
+  ) {
+    return;
+  }
+  const suite = suites.get(scopeKey(authority.scope));
+  if (!suite) return;
+  const dispatch = suite.taskDispatches.list().find(
+    (candidate) =>
+      candidate.state === 'running' &&
+      candidate.missionId === authority.missionId &&
+      candidate.sessionId === sessionId &&
+      candidate.workerIncarnationId === authority.workerIncarnationId,
+  );
+  const paneId = dispatch?.paneId ?? live.paneId;
+  if (!dispatch || !paneId) return;
+  scheduleTerminalTurnRecovery({
+    suite,
+    dispatchId: dispatch.id,
+    taskId: dispatch.taskId,
+    missionId: dispatch.missionId,
+    intentVersion: dispatch.intentVersion,
+    adapterId: dispatch.adapterId,
+    paneId,
+    sessionId,
+    workerIncarnationId: authority.workerIncarnationId,
+    terminalObservedAt: Date.now(),
+  });
 }
 
 async function retireTerminalWorkers(
@@ -169,6 +484,41 @@ function renewFromActivity(sessionId: string): void {
     !context.missionId ||
     !context.workerIncarnationId
   ) return;
+  const pty = getAgentSessionInfo(sessionId);
+  const semantic = getAgentSemanticStatusBySession(sessionId);
+  let leaseMs = TASK_DISPATCH_HEARTBEAT_LEASE_MS;
+  const hasFreshWorkingSemantic =
+    semantic?.status === 'working' &&
+    at - Math.min(at, semantic.updatedAt) <
+      TASK_DISPATCH_UNVERIFIED_ACTIVITY_MAX_MS;
+  if (pty && hasFreshWorkingSemantic) {
+    const semanticDeadline =
+      Math.min(at, semantic.updatedAt) +
+      TASK_DISPATCH_UNVERIFIED_ACTIVITY_MAX_MS;
+    leaseMs = Math.min(leaseMs, semanticDeadline - at);
+    unverifiedActivityDeadlines.delete(
+      physicalWorkerKey(sessionId, context.workerIncarnationId),
+    );
+  } else if (pty) {
+    if (semantic && semantic.status !== 'working') return;
+    const workerKey = physicalWorkerKey(
+      sessionId,
+      context.workerIncarnationId,
+    );
+    const semanticDeadline =
+      semantic?.status === 'working'
+        ? Math.min(at, semantic.updatedAt) +
+          TASK_DISPATCH_UNVERIFIED_ACTIVITY_MAX_MS
+        : null;
+    const deadline =
+      unverifiedActivityDeadlines.get(workerKey) ??
+      semanticDeadline ??
+      at + TASK_DISPATCH_UNVERIFIED_ACTIVITY_MAX_MS;
+    unverifiedActivityDeadlines.set(workerKey, deadline);
+    const remaining = deadline - at;
+    if (remaining <= 0) return;
+    leaseMs = Math.min(leaseMs, remaining);
+  }
   const suite = suites.get(scopeKey(context.scope));
   if (!suite) return;
   try {
@@ -176,7 +526,7 @@ function renewFromActivity(sessionId: string): void {
       sessionId,
       missionId: context.missionId,
       workerIncarnationId: context.workerIncarnationId,
-      leaseMs: TASK_DISPATCH_HEARTBEAT_LEASE_MS,
+      leaseMs,
     });
     if (dispatch.missionId !== context.missionId) {
       throw new Error('heartbeat retornou dispatch de outra missão');
@@ -208,6 +558,9 @@ function blockExitedSession(
     sessionId,
     authority.workerIncarnationId,
   );
+  clearTerminalRecovery(sessionId, authority.workerIncarnationId);
+  terminalRecoveryAttempts.delete(workerKey);
+  unverifiedActivityDeadlines.delete(workerKey);
   const reason =
     pendingExitReasons.get(workerKey) ?? TASK_DISPATCH_SESSION_EXIT_REASON;
   const preferred = suiteForSession(sessionId);
@@ -255,6 +608,13 @@ export function prepareTaskDispatchLifecycle(
     tapSessionState((sessionId, state) => {
       if (state === 'busy') renewFromActivity(sessionId);
     }),
+    tapAgentSemanticStatus((entry) => {
+      if (isTerminalTurnStatus(entry.status)) {
+        scheduleTerminalTurnRecoveryForSession(entry.sessionId);
+      } else {
+        clearTerminalRecovery(entry.sessionId);
+      }
+    }),
     tapSessionExit((sessionId, authority) =>
       blockExitedSession(sessionId, authority),
     ),
@@ -263,9 +623,13 @@ export function prepareTaskDispatchLifecycle(
 
 /**
  * Boot/tick recovery. Process existence prevents a duplicate spawn, but never
- * renews a worker lease by itself: only PTY activity or an explicit worker
- * heartbeat proves progress. An expired exact worker is retired first and
- * then requeued through the same physical-exit fence as a natural exit.
+ * renews a worker lease by itself: only fresh provider-semantic `working`
+ * activity or an explicit nexus_worker_heartbeat proves PTY progress. A
+ * working hook has an absolute freshness limit; hookless CLIs receive the same
+ * bounded compatibility window and must use the explicit heartbeat for longer
+ * turns. Thus an idle TUI repaint cannot keep a task alive forever. An expired
+ * exact worker is retired first and then requeued through the same
+ * physical-exit fence as a natural exit.
  * Missing runtimes and expired ambiguous pre-bind effects also return to the
  * scheduler with bounded backoff; none of these technical failures blocks the
  * mission.
@@ -296,6 +660,33 @@ export async function reconcileTaskDispatchLifecycle(
         live.workerIncarnationId === dispatch.workerIncarnationId &&
         sameCoordinates(live.scope, suite.scope);
       if (hasExactLiveRuntime) {
+        const semantic = dispatch.sessionId
+          ? getAgentSemanticStatusBySession(dispatch.sessionId)
+          : null;
+        if (
+          ptyLive &&
+          semantic &&
+          isTerminalTurnStatus(semantic.status) &&
+          dispatch.state === 'running'
+        ) {
+          const paneId = dispatch.paneId ?? ptyLive.paneId;
+          if (paneId) {
+            scheduleTerminalTurnRecovery({
+              suite,
+              dispatchId: dispatch.id,
+              taskId: dispatch.taskId,
+              missionId: dispatch.missionId,
+              intentVersion: dispatch.intentVersion,
+              adapterId: dispatch.adapterId,
+              paneId,
+              sessionId: dispatch.sessionId!,
+              workerIncarnationId: dispatch.workerIncarnationId!,
+              terminalObservedAt: Date.now(),
+            });
+          }
+          continue;
+        }
+        if (semantic?.status === 'awaiting-input') continue;
         if (dispatch.leaseExpiresAt >= at) continue;
         if (!ptyLive) {
           // External transports need their own close-and-exit proof. There is
@@ -379,6 +770,10 @@ export async function reconcileTaskDispatchLifecycle(
 
 export function shutdownTaskDispatchLifecycle(): void {
   for (const dispose of disposers.splice(0)) dispose();
+  for (const handle of terminalRecoveryTimers.values()) clearTimeout(handle);
+  terminalRecoveryTimers.clear();
+  terminalRecoveryAttempts.clear();
+  unverifiedActivityDeadlines.clear();
   for (const handle of retirementPasses.values()) clearImmediate(handle);
   retirementPasses.clear();
   productionTaskDispatchWorkerRetirement.reset();

@@ -176,6 +176,7 @@ import {
   deliverAgentPrompt,
   injectPrompt,
   spawnPaneAndMaybePrompt,
+  submitPendingAgentPrompt,
   withHandoffContract,
 } from './tool-util';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -754,6 +755,185 @@ describe('agent prompt injection', () => {
       expect(stubs.stateTaps).toHaveLength(0);
       expect(stubs.dataTaps).toHaveLength(0);
       expect(stubs.exitTaps).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resubmits the prompt already restored in an idle agent editor', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'restored turn accepted');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      const pending = submitPendingAgentPrompt(
+        'session-1',
+        { assertCurrentAuthority: vi.fn() },
+        { adapterId: 'kimi' },
+      );
+      await vi.advanceTimersByTimeAsync(900);
+
+      await expect(pending).resolves.toBe(true);
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        1,
+        'session-1',
+        '',
+        { markInputBusy: false },
+      );
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        2,
+        'session-1',
+        '\r',
+        { markInputBusy: false },
+      );
+      expect(stubs.writeSession).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('terminates a resumed turn when authority is lost after Enter acceptance', async () => {
+    vi.useFakeTimers();
+    try {
+      let isCurrent = true;
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              isCurrent = false;
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'turn accepted after handoff race');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      const pending = submitPendingAgentPrompt(
+        'session-1',
+        {
+          assertCurrentAuthority: () => {
+            if (!isCurrent) throw new Error('handoff won the race');
+          },
+        },
+        { adapterId: 'kimi' },
+      );
+      const rejected = expect(pending).rejects.toThrow(/handoff won the race/i);
+      await vi.advanceTimersByTimeAsync(900);
+
+      await rejected;
+      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not press Enter when recovery authority changes at submit time', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+
+      const pending = submitPendingAgentPrompt(
+        'session-1',
+        { assertCurrentAuthority: vi.fn() },
+        { adapterId: 'kimi', canSubmit: () => false },
+      );
+      await vi.advanceTimersByTimeAsync(900);
+
+      await expect(pending).resolves.toBe(false);
+      expect(stubs.writeSession).toHaveBeenCalledOnce();
+      expect(stubs.writeSession).toHaveBeenCalledWith(
+        'session-1',
+        '',
+        { markInputBusy: false },
+      );
+      expect(stubs.writeSession).not.toHaveBeenCalledWith(
+        'session-1',
+        '\r',
+        expect.anything(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rechecks recovery authority before a retry Enter', async () => {
+    vi.useFakeTimers();
+    try {
+      let checks = 0;
+      stubs.sessionState.mockReturnValue('idle');
+
+      const pending = submitPendingAgentPrompt(
+        'session-1',
+        { assertCurrentAuthority: vi.fn() },
+        {
+          adapterId: 'kimi',
+          canSubmit: () => {
+            checks += 1;
+            return checks === 1;
+          },
+        },
+      );
+      await vi.advanceTimersByTimeAsync(4_100);
+
+      await expect(pending).resolves.toBe(false);
+      const enterWrites = (
+        stubs.writeSession.mock.calls as unknown as Array<
+          readonly [sessionId: string, data: string]
+        >
+      ).filter(([, data]) => data === '\r');
+      expect(checks).toBe(2);
+      expect(enterWrites).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fences a resumed turn when authority is lost without acceptance proof', async () => {
+    vi.useFakeTimers();
+    try {
+      let isCurrent = true;
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(
+        ((_sessionId: string, data: string) => {
+          if (data === '\r') isCurrent = false;
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      const pending = submitPendingAgentPrompt(
+        'session-1',
+        {
+          assertCurrentAuthority: () => {
+            if (!isCurrent) throw new Error('recovery authority expired');
+          },
+        },
+        { adapterId: 'kimi' },
+      );
+      const rejected = expect(pending).rejects.toThrow(
+        /recovery authority expired/i,
+      );
+      await vi.advanceTimersByTimeAsync(4_100);
+
+      await rejected;
+      expect(stubs.terminateSession).toHaveBeenCalledWith('session-1');
     } finally {
       vi.useRealTimers();
     }

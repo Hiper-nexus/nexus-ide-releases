@@ -77,6 +77,7 @@ const AGENT_BOOT_TIMEOUT_MS = 60_000;
  * blind to idle panes: stall needs busy, login-stuck needs a busy transition).
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
+const RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS = 3_000;
 const CLAUDE_FAMILY_TURN_PROOF_ADAPTERS = new Set([
   'claude',
   'glm',
@@ -191,7 +192,7 @@ export async function injectPrompt(
 async function submitEnter(
   sessionId: string,
   invocation?: McpToolInvocation,
-  onBeforeSubmit?: () => void,
+  onBeforeSubmit?: () => boolean | void,
   requireInjectableIdle = false,
 ): Promise<void> {
   let observedBusy = getSessionState(sessionId) === 'busy';
@@ -210,7 +211,7 @@ async function submitEnter(
       }
     }
     assertMcpInvocationCurrent(invocation);
-    onBeforeSubmit?.();
+    if (onBeforeSubmit?.() === false) return;
     orchWriteSession(sessionId, '\r', { markInputBusy: false });
     await delay(ENTER_RETRY_MS);
     if (
@@ -220,6 +221,7 @@ async function submitEnter(
         : getSessionState(sessionId) === 'idle')
     ) {
       assertMcpInvocationCurrent(invocation);
+      if (onBeforeSubmit?.() === false) return;
       orchWriteSession(sessionId, '\r', { markInputBusy: false });
     }
   } catch (error) {
@@ -264,6 +266,24 @@ export async function injectPastedPrompt(
   await submitEnter(sessionId, invocation);
 }
 
+async function assertAcceptedPromptAuthority(
+  sessionId: string,
+  invocation?: McpToolInvocation,
+): Promise<void> {
+  try {
+    assertMcpInvocationCurrent(invocation);
+  } catch (error) {
+    const exited = await orchTerminateSession(sessionId);
+    if (!exited && getSessionState(sessionId) !== null) {
+      throw new Error(
+        'session_authority_revoked; accepted turn could not be fenced ' +
+          'because physical session exit was not proven',
+      );
+    }
+    throw error;
+  }
+}
+
 /**
  * Execute one prompt injection while observing the complete idle→busy edge.
  * The observer is armed BEFORE submitEnter's 400 ms retry delay: polling only
@@ -277,6 +297,7 @@ async function injectWithBusyProof(
   invocation?: McpToolInvocation,
   allowSilentBusyProof = false,
   requireTurnStartProof = false,
+  canSubmit?: () => boolean,
 ): Promise<boolean> {
   // Never interleave a brief with boot or a turn already in progress. The
   // caller may retry only after an actual idle snapshot/edge.
@@ -344,18 +365,26 @@ async function injectWithBusyProof(
       sessionId,
       invocation,
       () => {
-        turnStartBaseline = getAgentTurnStartSequence(sessionId);
-        submitted = true;
+        if (canSubmit && !canSubmit()) return false;
+        if (!submitted) {
+          turnStartBaseline = getAgentTurnStartSequence(sessionId);
+          submitted = true;
+        }
+        return true;
       },
       true,
     );
+    if (!submitted) return false;
     if (getAgentTurnStartSequence(sessionId) > turnStartBaseline) {
       turnStartObserved = true;
     }
     if (getSessionState(sessionId) === 'busy') observedBusy = true;
-    if (hasAcceptanceProof()) return true;
+    if (hasAcceptanceProof()) {
+      await assertAcceptedPromptAuthority(sessionId, invocation);
+      return true;
+    }
     if (sessionExited || getSessionState(sessionId) === null) return false;
-    return await new Promise<boolean>((resolve) => {
+    const accepted = await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         settle = null;
         resolve(hasAcceptanceProof());
@@ -368,6 +397,10 @@ async function injectWithBusyProof(
       // Immediate settle if we already have proof.
       if (hasAcceptanceProof()) settle(true);
     });
+    if (submitted && getSessionState(sessionId) !== null) {
+      await assertAcceptedPromptAuthority(sessionId, invocation);
+    }
+    return accepted;
   } finally {
     settle = null;
     untapState();
@@ -375,6 +408,32 @@ async function injectWithBusyProof(
     untapExit();
     untapTurnStart();
   }
+}
+
+/**
+ * Submit text that the provider restored in its own editor after an
+ * interrupted turn. No prompt bytes are added: this presses Enter only while
+ * the main-owned semantic latch says the session is safely injectable, then
+ * requires the same busy/output (or native UserPromptSubmit) proof used by a
+ * fresh delivery.
+ */
+export function submitPendingAgentPrompt(
+  sessionId: string,
+  invocation?: McpToolInvocation,
+  options: {
+    readonly adapterId?: string;
+    readonly canSubmit?: () => boolean;
+  } = {},
+): Promise<boolean> {
+  return injectWithBusyProof(
+    sessionId,
+    '',
+    RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS,
+    invocation,
+    options.adapterId === 'codex',
+    CLAUDE_FAMILY_TURN_PROOF_ADAPTERS.has(options.adapterId ?? ''),
+    options.canSubmit,
+  );
 }
 
 /**
