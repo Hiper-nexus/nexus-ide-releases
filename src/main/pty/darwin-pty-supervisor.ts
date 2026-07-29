@@ -854,7 +854,71 @@ function resolveDevelopmentDarwinPtySupervisorSeal(
   );
 }
 
+/**
+ * Memoized supervisor seal, keyed by the physical identity of the code it
+ * verifies.
+ *
+ * The seal is resolved on EVERY spawn message (pty-host-entry), and the
+ * packaged path costs ~408 ms — dominated by one
+ * `codesign --verify --deep --strict` over the whole app bundle. The pty host
+ * is single-threaded, so that cost serialized every pane launch on top of an
+ * already sequential dispatch loop. Verification itself is unchanged: the key
+ * carries the real path plus dev/ino/mtime/size, so any replaced or rewritten
+ * binary misses the cache and is verified again. Same pattern as
+ * `trusted-native-cli-binary.ts`, which already memoizes its codesign result.
+ */
+const supervisorSealCache = new Map<
+  string,
+  { readonly seal: DarwinPtySupervisorSeal; readonly identity: string }
+>();
+
+function supervisorRuntimeKey(runtime: DarwinPtySupervisorRuntime): string {
+  return [
+    runtime.packaged ? "packaged" : "dev",
+    runtime.trustProfile ?? "",
+    runtime.resourcesPath ?? "",
+    runtime.cwd,
+    runtime.moduleDir,
+  ].join(" ");
+}
+
+/** Physical identity of the verified executable: any rewrite changes it. */
+function supervisorExecutableIdentity(executablePath: string): string | null {
+  try {
+    const realPath = fs.realpathSync(executablePath);
+    const stat = fs.statSync(realPath);
+    return `${realPath} ${stat.dev} ${stat.ino} ${stat.mtimeMs} ${stat.size}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Test seam: drop every memoized seal. */
+export function resetDarwinPtySupervisorSealCache(): void {
+  supervisorSealCache.clear();
+}
+
 function resolveDarwinPtySupervisorSeal(
+  runtime: DarwinPtySupervisorRuntime,
+): DarwinPtySupervisorSeal {
+  const cacheKey = supervisorRuntimeKey(runtime);
+  const cached = supervisorSealCache.get(cacheKey);
+  if (cached) {
+    // Revalidate by stat (microseconds) instead of re-running codesign: a
+    // replaced or rewritten binary changes this identity and is verified again.
+    const identity = supervisorExecutableIdentity(cached.seal.executablePath);
+    if (identity !== null && identity === cached.identity) return cached.seal;
+    supervisorSealCache.delete(cacheKey);
+  }
+  const seal = resolveDarwinPtySupervisorSealUncached(runtime);
+  const fresh = supervisorExecutableIdentity(seal.executablePath);
+  if (fresh !== null) {
+    supervisorSealCache.set(cacheKey, { seal, identity: fresh });
+  }
+  return seal;
+}
+
+function resolveDarwinPtySupervisorSealUncached(
   runtime: DarwinPtySupervisorRuntime,
 ): DarwinPtySupervisorSeal {
   assertSystemPerlLauncher();

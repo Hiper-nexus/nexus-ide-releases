@@ -150,12 +150,19 @@ function assertExpectedRoute(
   mission: { readonly status: MissionStatus; readonly intent_version: number },
   at: number,
 ): void {
-  if (
-    reservation.missionId !== expected.missionId ||
-    mission.status !== 'running'
-  ) {
+  // One message for two causes sent the agent in circles: when the mission had
+  // stopped running, "chame nexus_route_task novamente" led straight back to
+  // reserveRouteDecision, which refuses on the same predicate. Same checks,
+  // separate CTAs — the one for a stopped mission now points at the exit that
+  // actually exists.
+  if (reservation.missionId !== expected.missionId) {
     throw new Error(
-      'route_reservation_invalid: a reserva não pertence a uma missão em execução; chame nexus_route_task novamente',
+      'route_reservation_invalid: a reserva pertence a outra missão; chame nexus_route_task novamente',
+    );
+  }
+  if (mission.status !== 'running') {
+    throw new Error(
+      `route_reservation_invalid: a missão não está em execução (status=${mission.status}); use “Retomar missão” antes de rotear`,
     );
   }
   if (reservation.intentVersion !== mission.intent_version) {

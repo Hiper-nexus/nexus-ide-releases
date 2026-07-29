@@ -71,9 +71,11 @@ export function blockTaskDispatchMission(
   now: number,
 ): void {
   const row = db
-    .prepare(`SELECT status, description FROM missions WHERE id = ?`)
+    .prepare(
+      `SELECT status, intent_state, description FROM missions WHERE id = ?`,
+    )
     .get(missionId) as
-    | { status: string; description: string }
+    | { status: string; intent_state: string | null; description: string }
     | undefined;
   if (!row)
     throw new Error(`missão não encontrada para bloqueio: ${missionId}`);
@@ -91,10 +93,28 @@ export function blockTaskDispatchMission(
         0,
         65_536,
       );
+  // Field trap (28/07): this raw UPDATE set status='blocked' and left
+  // intent_state untouched, so every dispatch block produced the inconsistent
+  // pair `blocked` + `dispatched|executing|validating`. MissionStore.update()
+  // normalizes that pair, but this SQL bypasses it, and #fromRow returns the
+  // raw column — so guards reading `mission.intentState` saw `dispatched`
+  // while `resolveEffectiveIntentState` projected `blocked_user`. That split
+  // between projection and column is what wedged missions with no exit.
+  //
+  // These are dispatch failures — worktree, merge, expired lease, session exit.
+  // `blocked_technical` is what every other mission blocker writes here
+  // (missionBlockPatch('technical')). It also matters for recovery: the
+  // projection default for a dirty pair is `blocked_user`, which makes
+  // `isRecoveryEligibleIntentState` false and silently drops the mission from
+  // the Mission Driver scan and the delegation supervisor — automatic recovery
+  // switched off with nothing saying so. Nothing auto-resumes
+  // `blocked_technical` (driver, scheduler and bootstrap all require running),
+  // so this restores the truth without widening any authority.
   db.prepare(
-    `UPDATE missions SET status = 'blocked', description = ?, updated_at = ?
-     WHERE id = ?`,
-  ).run(description, now, missionId);
+    `UPDATE missions
+        SET status = 'blocked', intent_state = ?, description = ?, updated_at = ?
+      WHERE id = ?`,
+  ).run('blocked_technical', description, now, missionId);
 }
 
 /**

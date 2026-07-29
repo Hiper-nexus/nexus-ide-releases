@@ -500,12 +500,13 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     // Closing the LAST pane replaces it with a fresh shell — visually a no-op.
     // Surface the Home deck so the click has feedback and a next step.
     //
-    // Only for a close the OPERATOR asked for. Field trap (28/07): when a
-    // mission died its pane was closed by the runtime, Home popped over the
-    // terminal and swallowed the very output explaining the failure — the
-    // mission "started and went back to the home screen" with no reason left
-    // on screen. A pane that dies on its own must leave its transcript visible.
-    if (next === null && reason === 'user') useHomeStore.getState().show();
+    // This must fire for EVERY reason, not only an operator click. Gating it on
+    // `reason === 'user'` (an attempt to stop Home from covering a dead
+    // mission's transcript) left the window completely black when the runtime
+    // closed the last pane: there was no transcript left to protect and nothing
+    // took Home's place. Keeping a dead mission's output on screen has to be
+    // solved by not closing its pane, never by rendering nothing.
+    if (next === null) useHomeStore.getState().show();
   },
 
   toggleMaximizePane: (paneId) => {

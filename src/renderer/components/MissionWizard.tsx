@@ -1597,10 +1597,25 @@ export function MissionWizard() {
     // sair de blocked_* e o erro cru de IPC vazava para o usuário sem saída.
     // A retomada main-owned é o caminho sancionado — ela re-arma o estado e
     // revalida squad, contrato e runtime antes de qualquer spawn.
+    //
+    // Field trap (28/07): this short-circuit caught EVERY blocked mission,
+    // including one blocked before it ever had an approval — "Encerrar como
+    // bloqueada" on a pending mission. Resume then refuses with "A aprovação
+    // da missão não está mais vigente", the OpsBoard refuses the lifecycle
+    // change, and ✕ only offers a destructive delete: the mission is wedged
+    // with deletion as the only exit. The re-approval lane for blocked_* was
+    // already implemented in approveIntentFromRenderer and simply never
+    // reached, because this branch intercepted first. Resume is the sanctioned
+    // path only while an approval is actually current; otherwise the mission
+    // needs approval, which is exactly what the code below does.
     const live = await currentMissionSnapshot(planned.id);
-    if ((live ?? planned).status === "blocked") {
+    const blockedSnapshot = live ?? planned;
+    if (
+      blockedSnapshot.status === "blocked" &&
+      blockedSnapshot.intentContract?.approvedAt !== undefined
+    ) {
       const { reopenMission } = await import("../orch/mission-reopen");
-      const resumed = await reopenMission(live ?? planned);
+      const resumed = await reopenMission(blockedSnapshot);
       if (!resumed.ok) {
         setError(
           toUserFacingMissionError(
