@@ -12,11 +12,15 @@ import {
   REAL_MISSION_E2E_SQUAD_ID,
   parseRealMissionE2EEvidence,
   realMissionE2EAdvisorSkipClis,
+  type RealMissionE2EAdvisorCli,
   type RealMissionE2EEvidence,
 } from "../shared/real-mission-e2e";
-import { hasNexusMcpCapability } from "../shared/adapter-types";
+import type { Adapter } from "../shared/adapter-types";
 import type { Mission } from "../shared/orch-types";
-import { getAdapter } from "./adapters/adapter-registry";
+import {
+  getAdapter,
+  taskHandoffCapabilityForAdapter,
+} from "./adapters/adapter-registry";
 import { getSquad } from "./orch/squad-store";
 import {
   isExactRealMissionE2ESquadFixture,
@@ -347,8 +351,9 @@ export function validateHarnessCodexAdapter(): boolean {
 
 /**
  * Cada CLI advisor **presente** no roster (após NEXUS_REAL_MISSION_ADVISOR_SKIP)
- * precisa de um adapter cli-pty real com PTY obrigatório e rota Nexus MCP —
- * sem isso o fan-out consultivo não tem caminho físico de injeção/observação.
+ * precisa de um adapter cli-pty real com PTY obrigatório e uma rota física de
+ * handoff. Essa rota pode ser MCP ou o marcador observado no stream PTY; AGY
+ * 1.1 usa intencionalmente a segunda porque ignora projeções MCP privadas.
  * Advisors pulados por env não entram na prova desta rodada.
  */
 /**
@@ -361,28 +366,35 @@ function realMissionAdvisorHostBin(cli: string): string {
   return cli;
 }
 
+export function isHarnessAdvisorAdapter(
+  cli: RealMissionE2EAdvisorCli,
+  adapter: Adapter | null,
+): boolean {
+  const hostBin = realMissionAdvisorHostBin(cli);
+  return Boolean(
+    adapter &&
+      adapter.kind === "cli-pty" &&
+      adapter.id === cli &&
+      adapter.bin === hostBin &&
+      adapter.spawn.ptyRequired &&
+      taskHandoffCapabilityForAdapter(adapter, "builtin"),
+  );
+}
+
 export function validateHarnessAdvisorAdapters(): boolean {
   const skipped = new Set(realMissionE2EAdvisorSkipClis());
   return REAL_MISSION_E2E_ADVISORS.filter(
     (advisor) => !skipped.has(advisor.cli),
-  ).every((advisor) => {
-    const adapter = getAdapter(advisor.cli);
-    const hostBin = realMissionAdvisorHostBin(advisor.cli);
-    return Boolean(
-      adapter &&
-        adapter.kind === "cli-pty" &&
-        adapter.id === advisor.cli &&
-        adapter.bin === hostBin &&
-        adapter.spawn.ptyRequired &&
-        hasNexusMcpCapability(adapter.quirks),
-    );
-  });
+  ).every((advisor) =>
+    isHarnessAdvisorAdapter(advisor.cli, getAdapter(advisor.cli)),
+  );
 }
 
 /**
  * Roster completo do harness multi-CLI: o squad persistido é o fixture exato
  * (ids/categorias/CLIs, env-skip aplicado), o adapter codex mantém o shape
- * release-pinado e cada CLI advisor tem caminho físico PTY + Nexus MCP.
+ * release-pinado e cada CLI advisor tem caminho físico de prompt, observação e
+ * handoff (MCP ou marcador no stream PTY).
  */
 export function validateHarnessRoster(): boolean {
   return (
