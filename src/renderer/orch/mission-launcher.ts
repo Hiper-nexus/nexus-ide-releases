@@ -254,6 +254,8 @@ export interface SquadLaunchResult {
   paneId?: string;
   /** Intent-first: mission armed without an agent pane. */
   armed?: boolean;
+  /** Main still owns the approved mission and will retry without operator input. */
+  recovering?: boolean;
   missionId?: string;
   error?: string;
 }
@@ -687,6 +689,13 @@ export async function launchSquadMission(
       };
     }
     if (!bootstrap.ok) {
+      if (bootstrap.retryScheduled) {
+        return {
+          ok: true,
+          recovering: true,
+          missionId: bootstrap.missionId,
+        };
+      }
       return {
         ok: false,
         error: `${bootstrap.error} CTA: ${bootstrap.cta}.`,
@@ -702,13 +711,21 @@ export async function launchSquadMission(
     }
     const orchPane = presentation.pane;
     if (!bootstrap.kickoff.accepted) {
+      if (!bootstrap.kickoff.retryScheduled) {
+        return {
+          ok: false,
+          paneId: orchPane.id,
+          missionId: bootstrap.missionId,
+          error:
+            `${bootstrap.kickoff.detail} ` +
+            `Próxima ação: ${bootstrap.kickoff.cta}.`,
+        };
+      }
       return {
-        ok: false,
+        ok: true,
         paneId: orchPane.id,
         missionId: bootstrap.missionId,
-        error:
-          `${bootstrap.kickoff.detail} ` +
-          `Próxima ação: ${bootstrap.kickoff.cta}.`,
+        recovering: true,
       };
     }
     return {
@@ -868,7 +885,7 @@ export async function launchSquadMission(
         sessionId,
         missionId: mission.id,
       });
-      if (!result.accepted) {
+      if (!result.accepted && !result.retryScheduled) {
         useToastStore.getState().push('error', 'Kickoff não foi aceito', {
           detail: result.detail,
           action: {

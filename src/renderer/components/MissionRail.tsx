@@ -8,8 +8,9 @@ import { useHomeStore } from '../state/home-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
 import {
   groupMissionsForRail,
-  missionHasLiveRuntime,
+  missionIsOperationallyActive,
   missionRailResumeCopy,
+  railDotStatus,
   railStatusDisplay,
   statusLabel,
 } from '../lib/mission-rail-groups';
@@ -63,6 +64,7 @@ import {
   closeMissionRuntimeAndPanes,
 } from '../orch/close-mission-runtime';
 import { paneSessionView } from '../../shared/pane-session-view';
+import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 
 /**
  * Activity Rail — missões **deste workspace** apenas:
@@ -258,10 +260,11 @@ export function MissionRail() {
     [listReady, missions, openMissionIds, pinnedIds, archivedIds, query],
   );
 
-  // Contador de ativas segue o runtime físico: encerrar precisa fazer o número
-  // cair, senão o operador encerra tudo e o rail insiste que há 7 rodando.
+  // Entre tentativas técnicas o PTY pode não existir, mas o Main ainda possui
+  // a missão e o backoff. Conte essa janela como ativa sem confundi-la com um
+  // runtime físico; bloqueio humano encerrado continua fazendo o número cair.
   const activeCount = localMissions.filter((m) =>
-    missionHasLiveRuntime(m, openMissionIds.has(m.id)),
+    missionIsOperationallyActive(m, openMissionIds.has(m.id)),
   ).length;
 
   const workspaceBudget = useMemo(
@@ -293,7 +296,7 @@ export function MissionRail() {
   async function closeOrDiscardMission(m: Mission, active: boolean) {
     const action = missionListAction(m, active);
     if (action === 'none') return;
-    if (action === 'close-runtime') {
+    if (action === 'close-runtime' || action === 'stop-recovery') {
       setBusy(m.id);
       try {
         const result = await closeMissionRuntimeAndPanes(
@@ -387,6 +390,11 @@ export function MissionRail() {
   }
 
   function missionMeta(mission: Mission, liveInGrid: boolean): string {
+    const recovering = hasAutomaticTechnicalRecovery(mission);
+    const displayIntentState =
+      mission.intentState === 'blocked_technical' && !recovering
+        ? 'blocked_user'
+        : mission.intentState;
     const hands = handoffCountByMission.get(mission.id) ?? 0;
     const handBit =
       hands > 0 ? ` · ${hands} entrega${hands === 1 ? '' : 's'}` : '';
@@ -411,6 +419,15 @@ export function MissionRail() {
     // Status já vai na pill — meta fica operacional (tempo / panes / budget).
     if (mission.status === 'pending' && !liveInGrid) {
       return `Retomar · ${started}${laneBit}${handBit}${budgetBit}${routeBit}`;
+    }
+
+    if (recovering) {
+      const recovery = missionRailResumeCopy(
+        mission.status,
+        liveInGrid,
+        'blocked_technical',
+      );
+      return `${recovery.meta ?? 'Recuperação automática'}${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
 
     if (liveInGrid) {
@@ -461,11 +478,11 @@ export function MissionRail() {
     }
 
     if (mission.status === 'running') {
-      return `${missionRailResumeCopy(mission.status, liveInGrid, mission.intentState).meta ?? 'Retomar'}${laneBit}${handBit}${budgetBit}${routeBit}`;
+      return `${missionRailResumeCopy(mission.status, liveInGrid, displayIntentState).meta ?? 'Retomar'}${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
     if (mission.status === 'blocked') {
       return `${
-        missionRailResumeCopy(mission.status, liveInGrid, mission.intentState)
+        missionRailResumeCopy(mission.status, liveInGrid, displayIntentState)
           .meta ?? 'Clique para retomar'
       }${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
@@ -486,6 +503,11 @@ export function MissionRail() {
     if (livePanes.length > 0) {
       useHomeStore.getState().hide();
       focusPane(livePanes[0]!);
+      setBusy(null);
+      return;
+    }
+    if (hasAutomaticTechnicalRecovery(m)) {
+      setNote('Recuperação automática em andamento.');
       setBusy(null);
       return;
     }
@@ -783,10 +805,17 @@ export function MissionRail() {
                           hasActivePaneRuntime ||
                           (!hasObservedRuntime &&
                             Boolean(m.orchestratorSessionId));
+                        const recovering =
+                          hasAutomaticTechnicalRecovery(m);
+                        const displayIntentState = recovering
+                          ? 'blocked_technical'
+                          : m.intentState === 'blocked_technical'
+                            ? 'blocked_user'
+                            : m.intentState;
                         const statusUi = railStatusDisplay(
                           m.status,
                           liveInGrid,
-                          m.intentState,
+                          displayIntentState,
                           lane,
                           {
                             hasActiveRuntime,
@@ -797,7 +826,9 @@ export function MissionRail() {
                         const resumeCopy = missionRailResumeCopy(
                           m.status,
                           liveInGrid,
-                          m.intentState,
+                          recovering
+                            ? 'blocked_technical'
+                            : displayIntentState,
                           lane,
                         );
                         const routeDisplay = missionRouteDisplay(m.latestRoute);
@@ -816,14 +847,11 @@ export function MissionRail() {
                           1 +
                           Number(isArchived) +
                           Number(hasRemoveAction);
-                        const dotStatus =
-                          statusUi.tone === 'blocked' ||
-                          statusUi.tone === 'failed' ||
-                          statusUi.tone === 'done'
-                            ? statusUi.tone
-                            : liveInGrid || m.status === 'running'
-                              ? 'running'
-                              : m.status;
+                        const dotStatus = railDotStatus(
+                          m.status,
+                          statusUi.tone,
+                          liveInGrid,
+                        );
                         return (
                           <li
                             key={m.id}

@@ -790,7 +790,7 @@ export const realMissionE2EEvidenceSchema = z
       evidence.panes.every(physicalPaneIsComplete) &&
       exactPhysicalPtySet &&
       orchestrators[0]?.readOnly === false &&
-      orchestrators[0]?.nativeReadOnly === true &&
+      orchestrators[0]?.nativeReadOnly === false &&
       // Variante coerente: orquestrador Claude exige a advisor claude marcada
       // orchestrator-reserved (reserveClaude); orquestrador codex proíbe essa
       // marca (lá a advisor claude participa ou é no-credential).
@@ -803,9 +803,9 @@ export const realMissionE2EEvidenceSchema = z
       executors[0]?.readOnly === false &&
       executors[0]?.nativeReadOnly === false &&
       reviewers[0]?.readOnly === true &&
-      reviewers[0]?.nativeReadOnly === true &&
+      reviewers[0]?.nativeReadOnly === false &&
       qualityAssurers[0]?.readOnly === true &&
-      qualityAssurers[0]?.nativeReadOnly === true &&
+      qualityAssurers[0]?.nativeReadOnly === false &&
       executors[0]?.workerIncarnationId !== null &&
       reviewers[0]?.workerIncarnationId !== null &&
       qualityAssurers[0]?.workerIncarnationId !== null &&

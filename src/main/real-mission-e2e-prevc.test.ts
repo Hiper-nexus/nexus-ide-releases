@@ -89,7 +89,7 @@ function fixture(missionId: string) {
       orchestratorRuntime: {
         adapterId: "codex",
         readOnly: false as const,
-        nativeReadOnly: true as const,
+        nativeReadOnly: false as const,
       },
     },
     createdAt: 1,
@@ -206,6 +206,33 @@ describe("real mission E2E PREVC production review boundary", () => {
       throw new Error("fixture mission is missing its intent contract");
     }
     harness.mission.intentContract.goal = "missão arbitrária";
+    expect(
+      freezeRealMissionE2EPrevCIfNeeded(
+        harness.suite,
+        harness.missionId,
+        harness.scope,
+      ),
+    ).toEqual({ frozen: false, reason: "not-e2e-mission" });
+  });
+
+  it("rejects Hardened native authority in the Autopilot release fixture", () => {
+    const harness = fixture("mission-hardened-drift");
+    if (!harness.mission.intentContract?.orchestratorRuntime) {
+      throw new Error("fixture mission is missing its runtime snapshot");
+    }
+    harness.mission.intentContract.orchestratorRuntime = {
+      ...harness.mission.intentContract.orchestratorRuntime,
+      nativeReadOnly: true,
+    };
+    process.env.NEXUS_REAL_MISSION_E2E = "1";
+    mocks.workflow.getMissionWorkflow.mockReturnValue(harness.workflow);
+    mocks.getContextBySession.mockReturnValue({
+      role: "orchestrator",
+      missionId: harness.missionId,
+      sessionId: harness.mission.orchestratorSessionId,
+      agentName: "E2E Orquestrador",
+    });
+
     expect(
       freezeRealMissionE2EPrevCIfNeeded(
         harness.suite,

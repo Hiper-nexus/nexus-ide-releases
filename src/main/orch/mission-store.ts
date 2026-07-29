@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import {
@@ -14,12 +15,14 @@ import {
   type MissionIntentContract,
   type MissionIntentState,
   type MissionMilestone,
+  type MissionPaneAuthoritySeal,
   type MissionPatch,
   type MissionStatus,
 } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { hasRetiredRosterRouteMarker } from '../../shared/retired-adapter-policy';
 import {
+  hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
   missionBlockKindSchema,
   missionBlockPatch,
@@ -45,9 +48,11 @@ import {
   MAX_HANDOFF_DELIVERY_ATTEMPTS,
 } from './handoff-delivery-policy';
 import {
+  MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
   missionOrchestratorExitDescription,
   sanitizeMissionOrchestratorExitOutput,
+  stripMissionOrchestratorExitDescription,
 } from './mission-orchestrator-exit-policy';
 import { hashMissionIntentContract } from './mission-pane-authority';
 import {
@@ -140,6 +145,7 @@ const missionDriveStateRowSchema = z
 
 export type ScopedMission = ScopedEntity<Mission>;
 export type CreateMissionInput = z.input<typeof createMissionInputSchema>;
+export type MissionRemovalResult = 'removed' | 'missing' | 'changed';
 
 export interface MissionDriveRuntimeState {
   readonly missionId: string;
@@ -217,6 +223,24 @@ function cloneMission(mission: ScopedMission): ScopedMission {
           },
         }
       : {}),
+  };
+}
+
+function missionRemovalSnapshot(mission: Readonly<Mission>): object {
+  return {
+    id: mission.id,
+    title: mission.title,
+    description: mission.description,
+    status: mission.status,
+    squadId: mission.squadId ?? null,
+    milestones: mission.milestones,
+    learnings: mission.learnings,
+    orchestratorSessionId: mission.orchestratorSessionId ?? null,
+    intentState: mission.intentState ?? null,
+    intentContract: mission.intentContract ?? null,
+    intentVersion: mission.intentVersion ?? 0,
+    createdAt: mission.createdAt,
+    updatedAt: mission.updatedAt,
   };
 }
 
@@ -599,6 +623,119 @@ export class ScopedMissionStore {
     if (result.changes !== 1) return null;
     this.#binding.emitChange();
     return this.get(id);
+  }
+
+  /**
+   * Commit an intentionally retired orchestrator binding after physical exit
+   * proof. If the synchronous exit tap won the race and produced the exact
+   * pre-dispatch block, heal that block in the same SQLite transaction.
+   * Unrelated/user blocks are preserved and therefore cannot be overwritten
+   * by a late teardown completion.
+   */
+  retireOrchestratorSessionForReplacement(
+    rawId: string,
+    rawExpectedSessionId: string,
+    rawExpectedAuthoritySeal: MissionPaneAuthoritySeal,
+  ): ScopedMission | null {
+    const id = entityIdSchema.parse(rawId);
+    const expectedSessionId = sessionIdSchema.parse(rawExpectedSessionId);
+    const expectedAuthoritySeal = {
+      intentVersion: z.number().int().positive().max(1_000_000).parse(
+        rawExpectedAuthoritySeal.intentVersion,
+      ),
+      intentContractHash: hashSchema.parse(
+        rawExpectedAuthoritySeal.intentContractHash,
+      ),
+      squadRevisionHash: hashSchema.parse(
+        rawExpectedAuthoritySeal.squadRevisionHash,
+      ),
+    };
+    const db = this.#binding.writeDatabase();
+    const updated = db.transaction(() => {
+      const current = this.#getFromDatabase(db, id);
+      if (!current || current.orchestratorSessionId !== expectedSessionId) {
+        return null;
+      }
+      const hasCurrentDispatch = Boolean(
+        db.prepare(
+          `SELECT 1
+             FROM task_dispatch_queue
+            WHERE mission_id = ?
+              AND intent_version = ?
+            LIMIT 1`,
+        ).get(id, current.intentVersion ?? 0),
+      );
+      const hasExpectedAuthority =
+        (current.intentVersion ?? 0) ===
+          expectedAuthoritySeal.intentVersion &&
+        Boolean(
+          current.intentContract &&
+            hashMissionIntentContract(current.intentContract) ===
+              expectedAuthoritySeal.intentContractHash &&
+            current.intentContract.squadRevisionHash ===
+              expectedAuthoritySeal.squadRevisionHash,
+        );
+      const exitIdentityHash = createHash('sha256')
+        .update(
+          `${id}\0${current.intentVersion ?? 0}\0${expectedSessionId}`,
+        )
+        .digest('hex');
+      const hasExactExitEvent = Boolean(
+        db.prepare(
+          `SELECT 1
+             FROM mission_events
+            WHERE mission_id = ?
+              AND idempotency_key = ?
+              AND event_type = 'agent.finished'
+            LIMIT 1`,
+        ).get(id, `orch-exit-${exitIdentityHash}`),
+      );
+      const shouldRearm =
+        current.status === 'blocked' &&
+        current.intentState === 'blocked_technical' &&
+        current.description.includes(
+          MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
+        ) &&
+        hasCurrentApprovedDispatchContract(current) &&
+        hasExpectedAuthority &&
+        hasExactExitEvent &&
+        !hasCurrentDispatch;
+      const nextStatus = shouldRearm ? 'running' : current.status;
+      const nextIntentState = shouldRearm
+        ? 'executing'
+        : current.intentState ?? null;
+      const nextDescription = shouldRearm
+        ? stripMissionOrchestratorExitDescription(current.description)
+        : current.description;
+      const result = db.prepare(
+        `UPDATE missions
+            SET orch_session_id = NULL,
+                status = ?,
+                intent_state = ?,
+                description = ?,
+                updated_at = ?
+          WHERE id = ?
+            AND orch_session_id = ?
+            AND updated_at = ?`,
+      ).run(
+        nextStatus,
+        nextIntentState,
+        nextDescription,
+        this.#binding.now(),
+        id,
+        expectedSessionId,
+        current.updatedAt,
+      );
+      if (result.changes !== 1) {
+        throw new Error(
+          'intentional orchestrator retirement lost mission CAS',
+        );
+      }
+      return this.#getFromDatabase(db, id);
+    }).immediate();
+    if (!updated) return null;
+    this.#binding.emitChange();
+    return updated;
   }
 
   /**
@@ -1370,6 +1507,47 @@ export class ScopedMissionStore {
     if (result.changes === 0) return false;
     this.#binding.emitChange();
     return true;
+  }
+
+  /**
+   * Deletes only the exact durable revision observed by the caller.
+   *
+   * The read/compare/delete runs in one IMMEDIATE SQLite transaction, closing
+   * the gap where recovery or another Main writer could re-arm the mission
+   * after physical teardown but before an unconditional DELETE.
+   */
+  removeIfUnchanged(
+    rawId: string,
+    expected: Readonly<Mission>,
+  ): MissionRemovalResult {
+    const id = entityIdSchema.parse(rawId);
+    if (expected.id !== id) {
+      throw new Error('mission removal expectation id mismatch');
+    }
+    const db = this.#binding.writeDatabase();
+    const outcome = db
+      .transaction((): MissionRemovalResult => {
+        const current = this.#getFromDatabase(db, id);
+        if (!current) return 'missing';
+        if (
+          !isDeepStrictEqual(
+            missionRemovalSnapshot(current),
+            missionRemovalSnapshot(expected),
+          )
+        ) {
+          return 'changed';
+        }
+        const result = db
+          .prepare('DELETE FROM missions WHERE id = ?')
+          .run(id);
+        if (result.changes !== 1) {
+          throw new Error('mission removal CAS failed after exact comparison');
+        }
+        return 'removed';
+      })
+      .immediate();
+    if (outcome === 'removed') this.#binding.emitChange();
+    return outcome;
   }
 
   setStatus(rawId: string, rawStatus: MissionStatus): ScopedMission | null {

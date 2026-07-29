@@ -135,6 +135,7 @@ describe('approved mission main-owned presentation', () => {
               reason: 'timeout' as const,
               detail: 'Sem borda idle→busy.',
               cta: 'Retomar missão',
+              retryScheduled: true,
             },
           })),
           bindMissionOrchestrator: vi.fn(),
@@ -171,10 +172,10 @@ describe('approved mission main-owned presentation', () => {
     );
 
     expect(result).toEqual({
-      ok: false,
+      ok: true,
       paneId: 'pane-main-orch',
       missionId: 'mission-approved',
-      error: 'Sem borda idle→busy. Próxima ação: Retomar missão.',
+      recovering: true,
     });
     expect(authorizeDispatch).toHaveBeenCalledOnce();
     expect(window.nexus.orch.bootstrapMissionOrchestrator).toHaveBeenCalledWith({
@@ -208,6 +209,91 @@ describe('approved mission main-owned presentation', () => {
       75_000,
     );
     expect(harness.toast).not.toHaveBeenCalled();
+  });
+
+  it('closes the approval flow while Main retries a technical bootstrap failure', async () => {
+    vi.mocked(
+      window.nexus.orch.bootstrapMissionOrchestrator,
+    ).mockResolvedValueOnce({
+      ok: false,
+      missionId: 'mission-approved',
+      reason: 'spawn_failed',
+      error: 'CLI ainda não ficou pronta.',
+      cta: 'Recuperação automática',
+      retryScheduled: true,
+    });
+
+    const result = await launchSquadMission(
+      squad,
+      [
+        {
+          id: 'codex',
+          kind: 'cli-pty',
+          label: 'Codex',
+          icon: 'C',
+          models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
+          installed: true,
+          installCommand: 'npm i -g codex',
+          idleTimeoutMs: 800,
+          orchestratorCapable: true,
+          orchestrationEvidence: 'verified',
+        },
+      ],
+      {
+        existingMissionId: 'mission-approved',
+        goalPrompt: 'approved goal',
+        authorizeDispatch: vi.fn(async () => undefined),
+      },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      recovering: true,
+      missionId: 'mission-approved',
+    });
+    expect(harness.setPanes).not.toHaveBeenCalled();
+  });
+
+  it('keeps the approval flow open for a real operator decision', async () => {
+    vi.mocked(
+      window.nexus.orch.bootstrapMissionOrchestrator,
+    ).mockResolvedValueOnce({
+      ok: false,
+      missionId: 'mission-approved',
+      reason: 'preflight_failed',
+      error: 'O runtime mudou desde a aprovação.',
+      cta: 'Retomar missão',
+    });
+
+    const result = await launchSquadMission(
+      squad,
+      [
+        {
+          id: 'codex',
+          kind: 'cli-pty',
+          label: 'Codex',
+          icon: 'C',
+          models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
+          installed: true,
+          installCommand: 'npm i -g codex',
+          idleTimeoutMs: 800,
+          orchestratorCapable: true,
+          orchestrationEvidence: 'verified',
+        },
+      ],
+      {
+        existingMissionId: 'mission-approved',
+        goalPrompt: 'approved goal',
+        authorizeDispatch: vi.fn(async () => undefined),
+      },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        'O runtime mudou desde a aprovação. CTA: Retomar missão.',
+    });
+    expect(harness.setPanes).not.toHaveBeenCalled();
   });
 
   it('leaves exclusive replacement to the single main-owned approval', async () => {

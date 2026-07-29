@@ -9,6 +9,7 @@ import {
   prepareExclusiveOrchestratorReplacement,
   type ExclusiveOrchestratorReplacementDeps,
 } from './exclusive-orchestrator-replacement';
+import { withMissionLifecycleLock } from './mission-lifecycle-lock';
 
 const scope: ProjectExecutionScope = Object.freeze({
   version: 1,
@@ -49,6 +50,17 @@ function session(overrides: Partial<OwnedAgentSessionInfo> = {}): OwnedAgentSess
   };
 }
 
+function deferred(): {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+} {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function harness(options: {
   sessions?: OwnedAgentSessionInfo[];
   status?: Mission['status'];
@@ -87,9 +99,18 @@ function harness(options: {
       };
     }),
   };
-  return { deps, block, suite, setSessions: (next: OwnedAgentSessionInfo[]) => {
-    sessions = next;
-  } };
+  return {
+    deps,
+    block,
+    suite,
+    current: () => current,
+    setCurrent: (next: Mission) => {
+      current = next;
+    },
+    setSessions: (next: OwnedAgentSessionInfo[]) => {
+      sessions = next;
+    },
+  };
 }
 
 describe('exclusive orchestrator replacement', () => {
@@ -120,6 +141,62 @@ describe('exclusive orchestrator replacement', () => {
     expect(exclusiveReplacementDialogSummary(candidate)).toMatch(
       /substitui 1 missão.*saída física.*Missão anterior/i,
     );
+  });
+
+  it('coalesces manifest and provisional sessions under one lifecycle lock', async () => {
+    const provisionalScope: ProjectExecutionScope = Object.freeze({
+      ...scope,
+      identitySource: 'provisional',
+    });
+    const h = harness({
+      sessions: [
+        session(),
+        session({
+          sessionId: 'pty-provisional',
+          paneId: 'pane-provisional',
+          scope: provisionalScope,
+        }),
+      ],
+    });
+    h.deps.prepareTermination = vi.fn(() => ({
+      missionId: 'mission-old',
+      missionTitle: 'Missão anterior',
+      reason: 'authority-revoked' as const,
+      sessionIds: ['pty-old', 'pty-provisional'],
+      fence: 'runtime-1',
+    }));
+    h.deps.settleDemotion = vi.fn(async () => {
+      h.setSessions([]);
+      return {
+        mission: h.current(),
+        termination: {
+          ok: true,
+          terminatedSessionIds: ['pty-old', 'pty-provisional'],
+        },
+      };
+    });
+
+    const candidate = prepareExclusiveOrchestratorReplacement(
+      { incomingMissionId: 'mission-new', incomingAdapterId: 'claude' },
+      h.deps,
+    );
+
+    expect(candidate.entries).toHaveLength(1);
+    expect(candidate.entries[0]?.sessionIds).toEqual([
+      'pty-old',
+      'pty-provisional',
+    ]);
+    await expect(
+      applyExclusiveOrchestratorReplacement(
+        {
+          incomingMissionId: 'mission-new',
+          incomingAdapterId: 'claude',
+          expectedFence: candidate.fence,
+        },
+        h.deps,
+      ),
+    ).resolves.toEqual(['pty-old', 'pty-provisional']);
+    expect(h.deps.settleDemotion).toHaveBeenCalledOnce();
   });
 
   it('fails closed for an exclusive process without mission authority', () => {
@@ -174,5 +251,106 @@ describe('exclusive orchestrator replacement', () => {
       /changed while mission approval was open|not bound to the authoritative runtime/i,
     );
     expect(h.block).not.toHaveBeenCalled();
+  });
+
+  it('lets a Retomar that won the lifecycle lock invalidate replacement before demotion', async () => {
+    const h = harness();
+    const candidate = prepareExclusiveOrchestratorReplacement(
+      { incomingMissionId: 'mission-new', incomingAdapterId: 'claude' },
+      h.deps,
+    );
+    const resumeEntered = deferred();
+    const continueResume = deferred();
+
+    const resume = withMissionLifecycleLock(
+      scope,
+      'mission-old',
+      async () => {
+        resumeEntered.resolve();
+        await continueResume.promise;
+        h.setCurrent({
+          ...h.current(),
+          status: 'running',
+          updatedAt: 2,
+        });
+      },
+    );
+    await resumeEntered.promise;
+
+    const replacement = applyExclusiveOrchestratorReplacement(
+      {
+        incomingMissionId: 'mission-new',
+        incomingAdapterId: 'claude',
+        expectedFence: candidate.fence,
+      },
+      h.deps,
+    );
+    await Promise.resolve();
+    continueResume.resolve();
+    await resume;
+
+    await expect(replacement).rejects.toThrow(
+      /changed before locked replacement/i,
+    );
+    expect(h.block).not.toHaveBeenCalled();
+    expect(h.deps.settleDemotion).not.toHaveBeenCalled();
+  });
+
+  it('keeps Retomar queued until replacement proves physical exit', async () => {
+    const h = harness({ mutateOnSettle: false });
+    const candidate = prepareExclusiveOrchestratorReplacement(
+      { incomingMissionId: 'mission-new', incomingAdapterId: 'claude' },
+      h.deps,
+    );
+    const settleEntered = deferred();
+    const continueSettle = deferred();
+    const order: string[] = [];
+    h.deps.settleDemotion = vi.fn(async () => {
+      order.push('replace:start');
+      settleEntered.resolve();
+      await continueSettle.promise;
+      order.push('replace:end');
+      h.setSessions([]);
+      return {
+        mission: h.current(),
+        termination: {
+          ok: true,
+          terminatedSessionIds: ['pty-old'],
+        },
+      };
+    });
+
+    const replacement = applyExclusiveOrchestratorReplacement(
+      {
+        incomingMissionId: 'mission-new',
+        incomingAdapterId: 'claude',
+        expectedFence: candidate.fence,
+      },
+      h.deps,
+    );
+    await settleEntered.promise;
+
+    const resume = withMissionLifecycleLock(
+      scope,
+      'mission-old',
+      async () => {
+        order.push('resume');
+        h.setCurrent({
+          ...h.current(),
+          status: 'running',
+          updatedAt: h.current().updatedAt + 1,
+        });
+      },
+    );
+    await Promise.resolve();
+    expect(order).toEqual(['replace:start']);
+
+    continueSettle.resolve();
+    await expect(replacement).resolves.toEqual(['pty-old']);
+    await resume;
+
+    expect(order).toEqual(['replace:start', 'replace:end', 'resume']);
+    expect(h.deps.settleDemotion).toHaveBeenCalledOnce();
+    expect(h.current().status).toBe('running');
   });
 });

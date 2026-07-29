@@ -4,6 +4,7 @@ import type {
   MissionStatus,
 } from '../../shared/orch-types';
 import type { MissionLane } from '../../shared/mission-intent';
+import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 import type { RailSectionId } from './mission-rail-prefs';
 
 export interface RailSection {
@@ -48,6 +49,22 @@ export function missionHasLiveRuntime(
 }
 
 /**
+ * Operational ownership extends across the short no-PTY interval between
+ * technical retry attempts. This is intentionally broader than physical
+ * liveness: the Main coordinator still owns the backoff and must keep the
+ * mission in the active surface until it resumes or asks for a human.
+ */
+export function missionIsOperationallyActive(
+  mission: Mission,
+  hasVisiblePanes: boolean,
+): boolean {
+  return (
+    missionHasLiveRuntime(mission, hasVisiblePanes) ||
+    hasAutomaticTechnicalRecovery(mission)
+  );
+}
+
+/**
  * Group missions into rail sections:
  * - pinned
  * - active ("Em progresso"): panes ao vivo no grid **ou** status running/blocked
@@ -81,13 +98,16 @@ export function groupMissionsForRail(opts: {
 
   const isLive = (m: Mission): boolean =>
     missionHasLiveRuntime(m, opts.openMissionIds.has(m.id));
+  const isOperationallyActive = (m: Mission): boolean =>
+    missionIsOperationallyActive(m, opts.openMissionIds.has(m.id));
 
-  // Uma missão arquivada que voltou a rodar não pode ficar escondida: o
-  // runtime vivo cancela o arquivamento na vista.
+  // Uma missão arquivada que voltou a rodar ou entrou em retry técnico não
+  // pode ficar escondida. Entre tentativas pode não existir um PTY físico por
+  // alguns segundos, mas o Main ainda é dono do trabalho e do backoff.
   const archivedSet = new Set(
     (opts.archivedIds ?? []).filter((id) => {
       const mission = opts.missions.find((m) => m.id === id);
-      return mission ? !isLive(mission) : true;
+      return mission ? !isOperationallyActive(mission) : true;
     }),
   );
   const archived = filtered
@@ -100,7 +120,7 @@ export function groupMissionsForRail(opts: {
     .sort(byUpdated);
 
   const active = visible
-    .filter((m) => isLive(m) && !pinnedSet.has(m.id))
+    .filter((m) => isOperationallyActive(m) && !pinnedSet.has(m.id))
     .sort(byUpdated);
 
   const terminal: MissionStatus[] = ['done', 'failed'];
@@ -126,7 +146,7 @@ export function groupMissionsForRail(opts: {
     .filter(
       (m) =>
         !pinnedSet.has(m.id) &&
-        !isLive(m) &&
+        !isOperationallyActive(m) &&
         m.status !== 'pending' &&
         !terminal.includes(m.status),
     )
@@ -173,6 +193,17 @@ export interface MissionRuntimeEvidence {
   readonly latestHandoffStatus?: HandoffStatus | null;
 }
 
+/** Cor do ponto segue o estado operacional, não só o status persistido. */
+export function railDotStatus(
+  status: MissionStatus,
+  tone: RailStatusTone,
+  liveInGrid: boolean,
+): MissionStatus {
+  if (tone === 'blocked' || tone === 'failed' || tone === 'done') return tone;
+  if (tone === 'running' || tone === 'live') return 'running';
+  return liveInGrid || status === 'running' ? 'running' : status;
+}
+
 export function railStatusDisplay(
   status: MissionStatus,
   liveInGrid: boolean,
@@ -202,6 +233,8 @@ export function railStatusDisplay(
       return { label: 'Aguarda você', tone: 'blocked' };
     case 'blocked_user':
       return { label: 'Aguarda você', tone: 'blocked' };
+    case 'blocked_technical':
+      return { label: 'Recuperando', tone: 'running' };
     default:
       break;
   }
@@ -257,6 +290,12 @@ export function missionRailResumeCopy(
   intentState?: Mission['intentState'],
   lane?: MissionLane | null,
 ): { meta: string | null; title: string } {
+  if (status === 'blocked' && intentState === 'blocked_technical') {
+    return {
+      meta: 'Recuperação automática',
+      title: 'O Nexus está preparando uma nova tentativa',
+    };
+  }
   if (liveInGrid) {
     return {
       meta: null,

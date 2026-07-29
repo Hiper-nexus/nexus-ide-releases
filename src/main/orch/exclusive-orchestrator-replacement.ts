@@ -15,6 +15,10 @@ import {
   type MissionRuntimeDemotionResult,
   type MissionRuntimeTerminationCandidate,
 } from './mission-runtime-termination';
+import {
+  missionLifecycleKey,
+  withMissionLifecycleLock,
+} from './mission-lifecycle-lock';
 
 export interface ExclusiveOrchestratorReplacementEntry {
   readonly missionId: string;
@@ -54,17 +58,6 @@ const productionDeps: ExclusiveOrchestratorReplacementDeps = {
   settleDemotion: settleMissionRuntimeDemotion,
 };
 
-function scopeKey(scope: Readonly<ProjectExecutionScope>): string {
-  return [
-    scope.version,
-    scope.installationId,
-    scope.projectId,
-    scope.checkoutId,
-    scope.rootRealPath,
-    scope.identitySource,
-  ].join('\0');
-}
-
 function replacementFence(input: {
   readonly incomingMissionId: string;
   readonly authFamily: string | null;
@@ -77,13 +70,25 @@ function replacementFence(input: {
         authFamily: input.authFamily,
         entries: input.entries.map((entry) => ({
           missionId: entry.missionId,
-          scope: scopeKey(entry.scope),
+          lifecycleKey: missionLifecycleKey(entry.scope, entry.missionId),
           sessionIds: entry.sessionIds,
           runtimeFence: entry.runtimeFence,
         })),
       }),
     )
     .digest('hex');
+}
+
+function withExclusiveReplacementLocks<T>(
+  entries: readonly ExclusiveOrchestratorReplacementEntry[],
+  operation: () => Promise<T>,
+  index = 0,
+): Promise<T> {
+  const entry = entries[index];
+  if (!entry) return operation();
+  return withMissionLifecycleLock(entry.scope, entry.missionId, () =>
+    withExclusiveReplacementLocks(entries, operation, index + 1),
+  );
 }
 
 /**
@@ -123,7 +128,7 @@ export function prepareExclusiveOrchestratorReplacement(
             `${session.sessionId} without mission authority; close it explicitly`,
         );
       }
-      const key = `${scopeKey(session.scope)}\0${session.missionId}`;
+      const key = missionLifecycleKey(session.scope, session.missionId);
       let group = groups.get(key);
       if (!group) {
         group = {
@@ -163,8 +168,9 @@ export function prepareExclusiveOrchestratorReplacement(
       });
     })
     .sort((left, right) => {
-      const byScope = scopeKey(left.scope).localeCompare(scopeKey(right.scope));
-      return byScope || left.missionId.localeCompare(right.missionId);
+      return missionLifecycleKey(left.scope, left.missionId).localeCompare(
+        missionLifecycleKey(right.scope, right.missionId),
+      );
     });
 
   return Object.freeze({
@@ -200,52 +206,67 @@ export async function applyExclusiveOrchestratorReplacement(
     );
   }
 
-  const terminated = new Set<string>();
-  for (const entry of candidate.entries) {
-    const suite = deps.storesForScope(entry.scope);
-    const current = suite.missions.get(entry.missionId);
-    if (!current) {
-      throw new Error(
-        `exclusive orchestrator mission ${entry.missionId} disappeared`,
-      );
-    }
-    if (current.status === 'done') {
-      throw new Error(
-        `completed mission ${entry.missionId} still has a live orchestrator`,
-      );
-    }
-    const demoted =
-      current.status === 'blocked' || current.status === 'failed'
-        ? current
-        : suite.missions.block(entry.missionId, 'user');
-    if (!demoted) {
-      throw new Error(
-        `exclusive orchestrator mission ${entry.missionId} could not be blocked`,
-      );
-    }
-    const settled = await deps.settleDemotion({
-      scope: entry.scope,
-      suite,
-      demotedMission: demoted,
-    });
-    if (!settled.termination.ok) {
-      throw new Error(
-        settled.termination.error ??
-          `physical exit was not proven for mission ${entry.missionId}`,
-      );
-    }
-    for (const sessionId of settled.termination.terminatedSessionIds) {
-      terminated.add(sessionId);
-    }
-  }
-
-  const remaining = prepareExclusiveOrchestratorReplacement(input, deps);
-  if (remaining.entries.length > 0) {
-    throw new Error(
-      'an exclusive orchestrator remained live after physical termination',
+  return withExclusiveReplacementLocks(candidate.entries, async () => {
+    // The dialog fence is checked once more only after every affected mission
+    // lock is held. A Retomar/rebind that won any lock invalidates the whole
+    // replacement before the first durable demotion.
+    const lockedCandidate = prepareExclusiveOrchestratorReplacement(
+      input,
+      deps,
     );
-  }
-  return Object.freeze([...terminated].sort());
+    if (lockedCandidate.fence !== input.expectedFence) {
+      throw new Error(
+        'exclusive orchestrator runtime changed before locked replacement',
+      );
+    }
+
+    const terminated = new Set<string>();
+    for (const entry of lockedCandidate.entries) {
+      const suite = deps.storesForScope(entry.scope);
+      const current = suite.missions.get(entry.missionId);
+      if (!current) {
+        throw new Error(
+          `exclusive orchestrator mission ${entry.missionId} disappeared`,
+        );
+      }
+      if (current.status === 'done') {
+        throw new Error(
+          `completed mission ${entry.missionId} still has a live orchestrator`,
+        );
+      }
+      const demoted =
+        current.status === 'blocked' || current.status === 'failed'
+          ? current
+          : suite.missions.block(entry.missionId, 'user');
+      if (!demoted) {
+        throw new Error(
+          `exclusive orchestrator mission ${entry.missionId} could not be blocked`,
+        );
+      }
+      const settled = await deps.settleDemotion({
+        scope: entry.scope,
+        suite,
+        demotedMission: demoted,
+      });
+      if (!settled.termination.ok) {
+        throw new Error(
+          settled.termination.error ??
+            `physical exit was not proven for mission ${entry.missionId}`,
+        );
+      }
+      for (const sessionId of settled.termination.terminatedSessionIds) {
+        terminated.add(sessionId);
+      }
+    }
+
+    const remaining = prepareExclusiveOrchestratorReplacement(input, deps);
+    if (remaining.entries.length > 0) {
+      throw new Error(
+        'an exclusive orchestrator remained live after physical termination',
+      );
+    }
+    return Object.freeze([...terminated].sort());
+  });
 }
 
 export function exclusiveReplacementDialogSummary(

@@ -84,6 +84,7 @@ import {
   rememberMissionApprovalTrust,
 } from "./mission-approval-trust";
 import { deleteMissionPromptQueue } from "./mission-prompt-queue-registry";
+import { withMissionLifecycleLock } from "./mission-lifecycle-lock";
 import {
   ProjectDomainStoreRegistry,
   configureProjectDomainStoreRegistry,
@@ -2249,14 +2250,11 @@ export function registerOrchIpc(): void {
       throw new Error("invalid mission update payload");
     }
     const authority = requireMissionAuthority();
-    let fence: string | undefined;
-    let demotionScope: ProjectExecutionScope | undefined;
     if (
       parsed.data.patch.status === "blocked" ||
       parsed.data.patch.status === "failed"
     ) {
       const scope = requireLiveRendererWorkspaceScope(event.sender);
-      demotionScope = scope;
       const candidate = authority.missionLifecycleCandidateFromRenderer(
         event.sender,
         parsed.data.missionId,
@@ -2268,27 +2266,34 @@ export function registerOrchIpc(): void {
         candidate,
       );
       if (!approved) throw new Error("user_denied");
-      requireLiveRendererWorkspaceScope(event.sender, scope);
-      fence = candidate.fence;
+      return withMissionLifecycleLock(
+        scope,
+        parsed.data.missionId,
+        async () => {
+          requireLiveRendererWorkspaceScope(event.sender, scope);
+          const mission = authority.updateMissionFromRenderer(
+            event.sender,
+            parsed.data.missionId,
+            parsed.data.patch,
+            candidate.fence,
+          );
+          if (!mission) throw new Error("mission not found");
+          const suite = requireProjectStores(event.sender);
+          const settled = await settleMissionRuntimeDemotion({
+            scope,
+            suite,
+            demotedMission: mission,
+          });
+          return settled.mission;
+        },
+      );
     }
     const mission = authority.updateMissionFromRenderer(
       event.sender,
       parsed.data.missionId,
       parsed.data.patch,
-      fence,
     );
-    if (!mission) {
-      throw new Error("mission not found");
-    }
-    if (demotionScope) {
-      const suite = requireProjectStores(event.sender);
-      const settled = await settleMissionRuntimeDemotion({
-        scope: demotionScope,
-        suite,
-        demotedMission: mission,
-      });
-      return settled.mission;
-    }
+    if (!mission) throw new Error("mission not found");
     return mission;
   });
 
@@ -2320,67 +2325,81 @@ export function registerOrchIpc(): void {
         terminatedSessionIds: [],
       };
     }
-    requireLiveRendererWorkspaceScope(event.sender, scope);
-    // O operador aprova ENCERRAR ESTA MISSÃO, não o inventário de sessões que
-    // o modal exibiu. Reconferir aqui o fence de runtime (que hasheia
-    // updatedAt/intentVersion e a lista física) derrubava o encerramento a
-    // cada escrita durável ou spawn/exit ocorrido nos segundos do modal — ou
-    // seja, justamente nas missões VIVAS, as que mais escrevem. O que precisa
-    // continuar valendo é a identidade da autoridade: o mesmo escopo de
-    // workspace (recheado na linha acima, igual ao caminho de remoção).
-    // O inventário é re-derivado do estado físico atual por
-    // closeMissionRuntimePreservingHistory, que segue exigindo prova de saída
-    // para cada processo que encontrar e recusa missão inexistente/concluída.
-    return closeMissionRuntimePreservingHistory({
+    return withMissionLifecycleLock(
       scope,
-      suite,
-      missionId: parsed.data.missionId,
-    });
+      parsed.data.missionId,
+      () => {
+        requireLiveRendererWorkspaceScope(event.sender, scope);
+        // O operador aprova ENCERRAR ESTA MISSÃO, não o inventário de sessões
+        // mostrado no modal. Sob o mesmo lock de recovery/bootstrap, rederive
+        // o inventário físico e grave blocked_user antes do primeiro await.
+        // Assim um retry já enfileirado não pode relançar o PTY depois do stop.
+        return closeMissionRuntimePreservingHistory({
+          scope,
+          suite,
+          missionId: parsed.data.missionId,
+        });
+      },
+    );
   });
 
   ipcMain.handle(ORCH_CHANNELS.missionRemove, async (event, raw) => {
     const parsed = missionRemoveSchema.safeParse(raw);
     if (!parsed.success) throw new Error("invalid mission remove payload");
     const scope = requireLiveRendererWorkspaceScope(event.sender);
-    const authority = requireMissionAuthority();
-    const suite = requireProjectStores(event.sender);
-    const candidate = authority.missionRemovalCandidateFromRenderer(
-      event.sender,
+    return withMissionLifecycleLock(
+      scope,
       parsed.data.missionId,
+      async () => {
+        requireLiveRendererWorkspaceScope(event.sender, scope);
+        const authority = requireMissionAuthority();
+        const suite = requireProjectStores(event.sender);
+        const candidate = authority.missionRemovalCandidateFromRenderer(
+          event.sender,
+          parsed.data.missionId,
+        );
+        if (!candidate) return { removed: false };
+        const prepared = authority.prepareMissionRemovalFromMain(
+          event.sender,
+          candidate.missionId,
+          candidate.fence,
+        );
+        if (!prepared) return { removed: false };
+        let terminationError: string | null = null;
+        try {
+          const termination = await terminateMissionRuntime({
+            scope,
+            suite,
+            missionId: prepared.missionId,
+            reason: "operator-close",
+            collapsePanes: true,
+          });
+          if (!termination.ok) {
+            terminationError =
+              termination.error ??
+              "o runtime não forneceu prova física de saída";
+          }
+        } catch (error) {
+          terminationError =
+            error instanceof Error ? error.message : String(error);
+        }
+        if (terminationError) {
+          throw new Error(
+            "Remoção recusada. O histórico foi preservado junto com a missão, " +
+              "tasks e receipts porque o teardown não comprovou a saída física: " +
+              terminationError,
+          );
+        }
+        requireLiveRendererWorkspaceScope(event.sender, scope);
+        const removed = authority.removeMissionFromRenderer(
+          event.sender,
+          parsed.data.missionId,
+          prepared.fence,
+        );
+        if (removed) deleteMissionPromptQueue(scope, parsed.data.missionId);
+        return { removed };
+      },
     );
-    if (!candidate) return { removed: false };
-    let terminationError: string | null = null;
-    try {
-      const termination = await terminateMissionRuntime({
-        scope,
-        suite,
-        missionId: candidate.missionId,
-        reason: "operator-close",
-        collapsePanes: true,
-      });
-      if (!termination.ok) {
-        terminationError =
-          termination.error ??
-          "o runtime não forneceu prova física de saída";
-      }
-    } catch (error) {
-      terminationError =
-        error instanceof Error ? error.message : String(error);
-    }
-    if (terminationError) {
-      throw new Error(
-        "Remoção recusada. O histórico foi preservado junto com a missão, " +
-          "tasks e receipts porque o teardown não comprovou a saída física: " +
-          terminationError,
-      );
-    }
-    requireLiveRendererWorkspaceScope(event.sender, scope);
-    const removed = authority.removeMissionFromRenderer(
-      event.sender,
-      parsed.data.missionId,
-    );
-    if (removed) deleteMissionPromptQueue(scope, parsed.data.missionId);
-    return { removed };
   });
 
   ipcMain.handle(ORCH_CHANNELS.handoffsList, (event) =>

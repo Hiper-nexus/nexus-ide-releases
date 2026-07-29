@@ -15,6 +15,7 @@ import type {
   Mission,
   MissionOrchestratorBootstrapResult,
   MissionOrchestratorPane,
+  MissionPaneAuthoritySeal,
   MissionPaneSpec,
   MissionPatch,
   PaneSnapshot,
@@ -38,6 +39,7 @@ import type {
   RecordMissionPaneInput,
 } from "./mission-pane-store";
 import {
+  hasExactMissionKickoffContinuation,
   hasPendingMissionKickoffFlight,
   submitMissionKickoffFromMain,
   type MissionKickoffResult,
@@ -57,6 +59,8 @@ import {
   getProjectDomainStores,
   requireProjectDomainStoreRegistry,
 } from "./project-domain-store-registry";
+import { withMissionLifecycleLock } from "./mission-lifecycle-lock";
+import { suppressIntentionalMissionOrchestratorExit } from "./mission-orchestrator-exit-lifecycle";
 import { getSquad } from "./squad-store";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import {
@@ -75,10 +79,14 @@ import { assertPromotedPlanSnapshot } from "./plan-promotion-authority";
 import { ensurePlanLaneGitBaseline } from "../runtime/guided-greenfield-baseline";
 import { commitPromotedPlanToGit } from "./promoted-plan-git-authority";
 import {
-  hasTerminalOperationalFailureMarker,
+  classifyOperationalFailure,
   terminalOperationalFailureReason,
 } from "../runtime/operational-failure-policy";
 import { hasRetiredRosterRouteMarker } from "../../shared/retired-adapter-policy";
+import {
+  hasAutomaticTechnicalRecovery,
+  hasTerminalOperationalFailureMarker,
+} from "../../shared/mission-recovery-policy";
 import type {
   TaskDispatchRecord,
   TaskDispatchState,
@@ -89,6 +97,7 @@ export {
   type ResolvedMissionOrchestratorRuntime,
 } from "./mission-orchestrator-runtime";
 import {
+  hashMissionIntentContract,
   resolveMissionPaneAuthoritySeal,
   sameMissionPaneApprovalSeal,
   sameMissionPaneAuthoritySeal,
@@ -102,6 +111,7 @@ const PLAN_PROMOTION_BLOCK_MARKER =
 const PLAN_PROMOTION_TEARDOWN_BLOCK_MARKER =
   "<!-- nexus:plan-promotion-teardown-blocked -->";
 const BOOTSTRAP_CTA = "Retomar missão";
+const BOOTSTRAP_AUTO_RETRY_CTA = "Recuperação automática";
 
 function bootstrapFlightKey(
   scope: Readonly<ProjectExecutionScope>,
@@ -128,6 +138,20 @@ function bootstrapMissionSnapshot(mission: Mission): string {
     intentVersion: mission.intentVersion ?? 0,
     intentContract: mission.intentContract ?? null,
   });
+}
+
+function missionMatchesExpectedAuthoritySeal(
+  mission: Mission,
+  expected: MissionPaneAuthoritySeal,
+): boolean {
+  return Boolean(
+    mission.intentVersion === expected.intentVersion &&
+      mission.intentContract &&
+      hashMissionIntentContract(mission.intentContract) ===
+        expected.intentContractHash &&
+      mission.intentContract.squadRevisionHash ===
+        expected.squadRevisionHash,
+  );
 }
 
 function bootstrapMissionApprovalSnapshot(mission: Mission): string {
@@ -186,6 +210,12 @@ export interface MissionOrchestratorBootstrapDeps {
     missionId: string,
     expectedSessionId: string,
   ): Mission | null;
+  retireOrchestratorSessionForReplacement(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    expectedSessionId: string,
+    expectedAuthoritySeal: MissionPaneAuthoritySeal,
+  ): Mission | null;
   hasCurrentKickoffAcceptance(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -217,6 +247,14 @@ export interface MissionOrchestratorBootstrapDeps {
     },
   ): ReturnType<typeof spawnMainOwnedMissionPane>;
   closePane(paneId: string): boolean | Promise<boolean>;
+  suppressIntentionalExit(input: {
+    readonly scope: ProjectExecutionScope;
+    readonly missionId: string;
+    readonly orchestratorSessionId: string;
+    readonly authoritySeal: MissionPaneAuthoritySeal;
+  }): () => void;
+  /** Trusted physical inventory used to distinguish a dead row from a live orphan. */
+  listRuntimePanes(): PaneSnapshot[];
   getSessionState: typeof getSessionState;
   getAgentSessionInfo(sessionId: string): OwnedAgentSessionInfo | null;
   getRuntimeAuthority(sessionId: string): PaneRuntimeAuthority | null;
@@ -301,12 +339,45 @@ function isRetryableBootstrapResult(
   result: MissionOrchestratorBootstrapResult,
 ): boolean {
   if (result.ok) return result.kickoff.accepted === false;
+  if (hasTerminalOperationalFailureMarker(result.error)) return false;
   return (
+    result.reason === "not_authorized" ||
     result.reason === "preflight_failed" ||
     result.reason === "spawn_failed" ||
     result.reason === "materialization_failed" ||
     result.reason === "provider_exited"
   );
+}
+
+function hasScheduledBootstrapKickoffRecovery(
+  deps: MissionOrchestratorBootstrapDeps,
+  scope: ProjectExecutionScope,
+  missionId: string,
+  sessionId: string,
+): boolean {
+  try {
+    const mission = deps.getMission(scope, missionId);
+    if (mission && hasAutomaticTechnicalRecovery(mission)) return true;
+    const pane =
+      deps
+        .listMissionPanes(scope, missionId)
+        .find((candidate) => candidate.role === "orchestrator") ?? null;
+    return hasExactMissionKickoffContinuation({
+      scope,
+      mission,
+      expectedSessionId: sessionId,
+      hasCurrentKickoffAcceptance: deps.hasCurrentKickoffAcceptance(
+        scope,
+        missionId,
+      ),
+      sessionState: deps.getSessionState(sessionId),
+      pane,
+      agent: deps.getAgentSessionInfo(sessionId),
+      authority: deps.getRuntimeAuthority(sessionId),
+    });
+  } catch {
+    return false;
+  }
 }
 
 export function needsMissionOrchestratorBootstrapRecovery(
@@ -452,6 +523,72 @@ export function runtimeAuthorityMismatches(
   return mismatches;
 }
 
+type RetirementPhysicalIdentity =
+  | { readonly ok: true; readonly paneId: string }
+  | { readonly ok: false; readonly detail: string };
+
+function resolveRetirementPhysicalIdentity(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId: string;
+  readonly sessionId: string;
+  readonly pane?: MissionPaneSpec;
+  readonly expectedAuthoritySeal: MissionPaneAuthoritySeal;
+  readonly agent: OwnedAgentSessionInfo | null;
+  readonly authority: PaneRuntimeAuthority | null;
+}): RetirementPhysicalIdentity {
+  const { scope, missionId, sessionId, pane, agent, authority } = input;
+  const paneId = pane?.paneId ?? agent?.paneId;
+  const mismatches: string[] = [];
+  if (!paneId) mismatches.push("paneId ausente");
+  if (pane) {
+    if (pane.missionId !== missionId) mismatches.push("pane.missionId");
+    if (pane.role !== "orchestrator") mismatches.push("pane.role");
+    if (pane.scope && !sameScope(pane.scope, scope)) {
+      mismatches.push("pane.scope");
+    }
+  }
+  if (!agent) {
+    mismatches.push("agent ausente");
+  } else {
+    if (agent.sessionId !== sessionId) mismatches.push("agent.sessionId");
+    if (agent.paneId !== paneId) mismatches.push("agent.paneId");
+    if (agent.missionId !== missionId) mismatches.push("agent.missionId");
+    if (agent.role !== "orchestrator") mismatches.push("agent.role");
+    if (!sameScope(agent.scope, scope)) mismatches.push("agent.scope");
+    const trustedSeal = pane
+      ? pane.authoritySeal
+      : input.expectedAuthoritySeal;
+    if (
+      trustedSeal &&
+      !sameMissionPaneAuthoritySeal(agent.authoritySeal, trustedSeal)
+    ) {
+      mismatches.push("agent.authoritySeal");
+    }
+  }
+  if (!authority) {
+    mismatches.push("runtime authority ausente");
+  } else {
+    if (authority.sessionId !== sessionId) {
+      mismatches.push("authority.sessionId");
+    }
+    if (authority.paneId !== paneId) mismatches.push("authority.paneId");
+    if (authority.kind !== "cli-agent") mismatches.push("authority.kind");
+    if (authority.missionId !== missionId) {
+      mismatches.push("authority.missionId");
+    }
+    if (authority.role !== "orchestrator") mismatches.push("authority.role");
+    if (!authority.scope || !sameScope(authority.scope, scope)) {
+      mismatches.push("authority.scope");
+    }
+  }
+  return paneId && mismatches.length === 0
+    ? { ok: true, paneId }
+    : {
+        ok: false,
+        detail: mismatches.slice(0, 8).join("; ") || "identidade ausente",
+      };
+}
+
 function paneResult(
   pane: MissionPaneSpec,
   sessionId: string,
@@ -479,8 +616,11 @@ function failureDetail(reason: string, cause?: unknown): string {
       ? ` ${cause.message.trim()}`
       : "";
   const detail = `${reason}${suffix}`.slice(0, 4_096);
+  if (hasTerminalOperationalFailureMarker(detail)) return detail;
+  const disposition = classifyOperationalFailure(cause ?? detail);
+  const detailDisposition = classifyOperationalFailure(detail);
   return (
-    hasRetiredRosterRouteMarker(cause ?? detail)
+    disposition === "terminal" || detailDisposition === "terminal"
       ? terminalOperationalFailureReason(detail)
       : detail
   ).slice(0, 4_096);
@@ -500,6 +640,19 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
     getProjectDomainStores(scope).missions.clearOrchestratorSessionIfMatches(
       missionId,
       expectedSessionId,
+    ),
+  retireOrchestratorSessionForReplacement: (
+    scope,
+    missionId,
+    expectedSessionId,
+    expectedAuthoritySeal,
+  ) =>
+    getProjectDomainStores(
+      scope,
+    ).missions.retireOrchestratorSessionForReplacement(
+      missionId,
+      expectedSessionId,
+      expectedAuthoritySeal,
     ),
   hasCurrentKickoffAcceptance: (scope, missionId) =>
     getProjectDomainStores(scope).missions.hasCurrentKickoffAcceptance(
@@ -522,6 +675,9 @@ const productionDeps: MissionOrchestratorBootstrapDeps = {
     resolveProductionMissionOrchestratorRuntime(squad, orchestrator),
   spawnMainOwnedPane: (input) => spawnMainOwnedMissionPane(input),
   closePane: (paneId) => requestPaneClose(paneId),
+  suppressIntentionalExit: (input) =>
+    suppressIntentionalMissionOrchestratorExit(input),
+  listRuntimePanes: () => listPaneSnapshots(),
   getSessionState: (sessionId) => getSessionState(sessionId),
   getAgentSessionInfo: (sessionId) => getAgentSessionInfo(sessionId),
   getRuntimeAuthority: (sessionId) =>
@@ -654,6 +810,8 @@ export class MissionOrchestratorBootstrapService {
         missionId,
         "squad_missing",
         "O squad salvo ou seu orquestrador não está disponível.",
+        undefined,
+        "user",
       );
     }
     const squadSnapshot = snapshotSquadAuthority(squad);
@@ -664,6 +822,8 @@ export class MissionOrchestratorBootstrapService {
         "preflight_failed",
         "O squad salvo mudou depois da aprovação. Revise a intenção e aprove " +
           "novamente antes de iniciar qualquer provider.",
+        undefined,
+        "user",
       );
     }
     const authoritySeal = resolveMissionPaneAuthoritySeal(
@@ -677,6 +837,8 @@ export class MissionOrchestratorBootstrapService {
         missionId,
         "preflight_failed",
         "A revisão aprovada não pôde ser selada para o pane. Replaneje e aprove novamente.",
+        undefined,
+        "user",
       );
     }
 
@@ -688,6 +850,8 @@ export class MissionOrchestratorBootstrapService {
         "preflight_failed",
         "O contrato aprovado não contém o snapshot do runtime inicial. " +
           "Revise a intenção e reaprove antes de iniciar qualquer provider.",
+        undefined,
+        "user",
       );
     }
 
@@ -702,6 +866,8 @@ export class MissionOrchestratorBootstrapService {
         missionId,
         "preflight_failed",
         failureDetail("O preflight do runtime do orquestrador falhou.", error),
+        undefined,
+        "user",
       );
     }
     if (!sameMissionOrchestratorRuntime(approvedRuntime, resolvedRuntime)) {
@@ -711,6 +877,8 @@ export class MissionOrchestratorBootstrapService {
         "preflight_failed",
         "O runtime do orquestrador mudou desde a aprovação (provider, modelo, " +
           "conta, esforço ou confinamento). Revise e reaprove antes de iniciar.",
+        undefined,
+        "user",
       );
     }
     // External effects consume the persisted approval, never a mutable
@@ -738,6 +906,7 @@ export class MissionOrchestratorBootstrapService {
       }
     };
 
+    let activeOrchestratorSessionId = initial.orchestratorSessionId;
     let persistedOrchestrator = this.#deps
       .listMissionPanes(scope, missionId)
       .find((pane) => pane.role === "orchestrator");
@@ -775,6 +944,28 @@ export class MissionOrchestratorBootstrapService {
             ),
           );
         }
+      } else if (!persistedOrchestrator.authoritySeal) {
+        // Pre-seal releases persisted orchestrator rows without revision
+        // authority. A currently approved contract is enough to retire that
+        // legacy physical identity; it is not a reason to make the operator
+        // replan the same intent forever.
+        const retired = activeOrchestratorSessionId
+          ? await this.#retireUnacceptedKickoffSession(
+              scope,
+              missionId,
+              persistedOrchestrator,
+              activeOrchestratorSessionId,
+              authoritySeal,
+            )
+          : await this.#retireUnboundPersistedOrchestrator(
+              scope,
+              missionId,
+              persistedOrchestrator,
+              authoritySeal,
+            );
+        if (!retired.ok) return retired.result;
+        activeOrchestratorSessionId = undefined;
+        persistedOrchestrator = undefined;
       } else {
         return this.#failure(
           scope,
@@ -782,40 +973,83 @@ export class MissionOrchestratorBootstrapService {
           "preflight_failed",
           "O pane persistido pertence a outra revisão de intenção, contexto, " +
             "contrato ou squad. Replaneje e aprove antes de retomar.",
+          undefined,
+          "user",
         );
       }
     }
-    if (initial.orchestratorSessionId || persistedOrchestrator) {
-      const sessionId = initial.orchestratorSessionId;
-      const agent = sessionId
-        ? this.#deps.getAgentSessionInfo(sessionId)
-        : null;
-      const authority = sessionId
-        ? this.#deps.getRuntimeAuthority(sessionId)
-        : null;
-      const hasExactLiveRuntime = Boolean(
-        sessionId &&
-          persistedOrchestrator &&
-          this.#deps.getSessionState(sessionId) !== null &&
-          runtimeAuthorityMismatches(
-            scope,
-            initial,
-            persistedOrchestrator,
-            agent,
-            authority,
-            runtime,
-          ).length === 0,
+
+    // A mission-session binding without its pane row is a torn transaction.
+    // It must be physically retired (or proven already dead) before minting a
+    // replacement, otherwise every reconciler pass either loops or duplicates
+    // a still-running provider.
+    if (activeOrchestratorSessionId && !persistedOrchestrator) {
+      const retired = await this.#retireUnacceptedKickoffSession(
+        scope,
+        missionId,
+        undefined,
+        activeOrchestratorSessionId,
+        authoritySeal,
       );
-      if (!hasExactLiveRuntime || !sessionId || !persistedOrchestrator) {
+      if (!retired.ok) return retired.result;
+      activeOrchestratorSessionId = undefined;
+    }
+    if (!activeOrchestratorSessionId && persistedOrchestrator) {
+      const retired = await this.#retireUnboundPersistedOrchestrator(
+        scope,
+        missionId,
+        persistedOrchestrator,
+        authoritySeal,
+      );
+      if (!retired.ok) return retired.result;
+      persistedOrchestrator = undefined;
+    }
+
+    if (activeOrchestratorSessionId && persistedOrchestrator) {
+      const sessionId = activeOrchestratorSessionId;
+      const sessionState = this.#deps.getSessionState(sessionId);
+      const agent = this.#deps.getAgentSessionInfo(sessionId);
+      const authority = this.#deps.getRuntimeAuthority(sessionId);
+      const mismatches =
+        sessionState === null
+          ? []
+          : runtimeAuthorityMismatches(
+              scope,
+              initial,
+              persistedOrchestrator,
+              agent,
+              authority,
+              runtime,
+            );
+      const hasExactLiveRuntime = Boolean(
+        sessionState !== null && mismatches.length === 0,
+      );
+      if (sessionState === null) {
+        const retired = await this.#retireUnacceptedKickoffSession(
+          scope,
+          missionId,
+          persistedOrchestrator,
+          sessionId,
+          authoritySeal,
+        );
+        if (!retired.ok) return retired.result;
+        activeOrchestratorSessionId = undefined;
+        persistedOrchestrator = undefined;
+      } else if (!hasExactLiveRuntime) {
         return this.#failure(
           scope,
           missionId,
-          "provider_exited",
-          "O provider do orquestrador encerrou. O Nexus preservou a missão e " +
-            "não repetiu o kickoff automaticamente; clique em “Retomar missão” " +
-            "para revisar e iniciar uma nova sessão.",
+          "preflight_failed",
+          failureDetail(
+            "A autoridade física do orquestrador persistido divergiu do contrato aprovado.",
+            new Error(mismatches.slice(0, 8).join("; ")),
+          ),
         );
       }
+    }
+
+    if (activeOrchestratorSessionId && persistedOrchestrator) {
+      const sessionId = activeOrchestratorSessionId;
       preparePrevcInBackground();
       if (this.#deps.hasCurrentKickoffAcceptance(scope, missionId)) {
         return {
@@ -845,8 +1079,10 @@ export class MissionOrchestratorBootstrapService {
         missionId,
         persistedOrchestrator,
         sessionId,
+        authoritySeal,
       );
       if (!retired.ok) return retired.result;
+      activeOrchestratorSessionId = undefined;
       persistedOrchestrator = undefined;
     }
 
@@ -873,6 +1109,8 @@ export class MissionOrchestratorBootstrapService {
         missionId,
         "preflight_failed",
         failureDetail("A validação dos anexos da missão falhou.", error),
+        undefined,
+        "user",
       );
     }
 
@@ -979,11 +1217,23 @@ export class MissionOrchestratorBootstrapService {
           getOrchSettings().squadCliPolicy,
         ),
       });
-      const kickoff = await this.#deps.submitKickoff(scope, {
+      const kickoffAttempt = await this.#deps.submitKickoff(scope, {
         missionId,
         sessionId: spawn.sessionId,
         prompt,
       });
+      const kickoff =
+        kickoffAttempt.accepted
+          ? kickoffAttempt
+          : {
+              ...kickoffAttempt,
+              retryScheduled: hasScheduledBootstrapKickoffRecovery(
+                this.#deps,
+                scope,
+                missionId,
+                spawn.sessionId,
+              ),
+            };
       return {
         ok: true,
         missionId,
@@ -1034,12 +1284,90 @@ export class MissionOrchestratorBootstrapService {
   async #retireUnacceptedKickoffSession(
     scope: ProjectExecutionScope,
     missionId: string,
-    pane: MissionPaneSpec,
+    pane: MissionPaneSpec | undefined,
     sessionId: string,
+    expectedAuthoritySeal: MissionPaneAuthoritySeal,
   ): Promise<KickoffSessionRetirementResult> {
     const detail =
       "A sessão existe sem receipt durável nem kickoff em voo. O Nexus precisa " +
       "encerrar esse processo antes de iniciar uma sessão fresca.";
+    const releaseExitSuppression = this.#deps.suppressIntentionalExit({
+      scope,
+      missionId,
+      orchestratorSessionId: sessionId,
+      authoritySeal: expectedAuthoritySeal,
+    });
+    try {
+      if (this.#deps.getSessionState(sessionId) === null) {
+        if (pane?.paneId) {
+          // Best-effort registry/UI cleanup. The absent PTY state is already
+          // the proof that no process can race the fresh spawn. Keep the exact
+          // exit lease through durable binding cleanup so the reconciler
+          // cannot manufacture a pre-dispatch block in between.
+          await this.#closePaneWithExitProof(pane.paneId);
+        }
+        return this.#clearRetiredKickoffIdentity(
+          scope,
+          missionId,
+          pane,
+          sessionId,
+          expectedAuthoritySeal,
+        );
+      }
+      const physical = resolveRetirementPhysicalIdentity({
+        scope,
+        missionId,
+        sessionId,
+        pane,
+        expectedAuthoritySeal,
+        agent: this.#deps.getAgentSessionInfo(sessionId),
+        authority: this.#deps.getRuntimeAuthority(sessionId),
+      });
+      if (!physical.ok) {
+        return {
+          ok: false,
+          result: this.#failure(
+            scope,
+            missionId,
+            "preflight_failed",
+            terminalOperationalFailureReason(
+              "A sessão antiga continua viva, mas sua identidade física divergiu " +
+                `da missão aprovada (${physical.detail}).`,
+            ),
+          ),
+        };
+      }
+      const physicallyClosed = await this.#closePaneWithExitProof(
+        physical.paneId,
+      );
+      if (!physicallyClosed) {
+        const result = this.#failure(
+          scope,
+          missionId,
+          "materialization_failed",
+          detail,
+        );
+        this.#markTerminationPending(scope, missionId, sessionId, detail);
+        return { ok: false, result };
+      }
+      return this.#clearRetiredKickoffIdentity(
+        scope,
+        missionId,
+        pane,
+        sessionId,
+        expectedAuthoritySeal,
+      );
+    } finally {
+      releaseExitSuppression();
+    }
+  }
+
+  async #retireUnboundPersistedOrchestrator(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    pane: MissionPaneSpec,
+    expectedAuthoritySeal: MissionPaneAuthoritySeal,
+  ): Promise<KickoffSessionRetirementResult> {
     const paneId = pane.paneId;
     if (!paneId) {
       return {
@@ -1047,27 +1375,96 @@ export class MissionOrchestratorBootstrapService {
         result: this.#failure(
           scope,
           missionId,
-          "not_authorized",
-          "A sessão sem receipt não possui identidade física de pane.",
+          "preflight_failed",
+          terminalOperationalFailureReason(
+            "O registro legado do orquestrador não possui identidade física.",
+          ),
         ),
       };
     }
-    const physicallyClosed = await this.#closePaneWithExitProof(paneId);
-    if (!physicallyClosed) {
-      const result = this.#failure(
+    const matches = this.#deps
+      .listRuntimePanes()
+      .filter((candidate) => candidate.paneId === paneId);
+    if (matches.length > 1) {
+      return {
+        ok: false,
+        result: this.#failure(
+          scope,
+          missionId,
+          "preflight_failed",
+          terminalOperationalFailureReason(
+            "Mais de um pane físico reivindica a identidade do orquestrador legado.",
+          ),
+        ),
+      };
+    }
+    const runtimePane = matches[0];
+    const sessionId = runtimePane?.sessionId ?? null;
+    if (runtimePane && !this.#isExactRuntimePane(scope, missionId, runtimePane)) {
+      return {
+        ok: false,
+        result: this.#failure(
+          scope,
+          missionId,
+          "preflight_failed",
+          terminalOperationalFailureReason(
+            "O pane físico legado pertence a outra missão, função ou workspace.",
+          ),
+        ),
+      };
+    }
+    if (sessionId && this.#deps.getSessionState(sessionId) !== null) {
+      const physical = resolveRetirementPhysicalIdentity({
         scope,
         missionId,
-        "materialization_failed",
-        detail,
-      );
-      this.#markTerminationPending(scope, missionId, sessionId, detail);
-      return { ok: false, result };
+        sessionId,
+        pane,
+        expectedAuthoritySeal,
+        agent: this.#deps.getAgentSessionInfo(sessionId),
+        authority: this.#deps.getRuntimeAuthority(sessionId),
+      });
+      if (!physical.ok) {
+        return {
+          ok: false,
+          result: this.#failure(
+            scope,
+            missionId,
+            "preflight_failed",
+            terminalOperationalFailureReason(
+              "A sessão física do pane legado divergiu da missão aprovada " +
+                `(${physical.detail}).`,
+            ),
+          ),
+        };
+      }
+      if (!(await this.#closePaneWithExitProof(physical.paneId))) {
+        return {
+          ok: false,
+          result: this.#failure(
+            scope,
+            missionId,
+            "materialization_failed",
+            "O pane legado continua vivo; o Nexus tentará o teardown novamente.",
+          ),
+        };
+      }
+    } else if (runtimePane) {
+      // No live PTY remains. Ask the registry to drop its presentation entry,
+      // but do not let an already-dead pane hold mission execution hostage.
+      await this.#closePaneWithExitProof(paneId);
     }
-    return this.#clearRetiredKickoffIdentity(
-      scope,
-      missionId,
-      pane,
-      sessionId,
+    return this.#removeRetiredPaneIdentity(scope, missionId, pane);
+  }
+
+  #isExactRuntimePane(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    pane: PaneSnapshot,
+  ): boolean {
+    return (
+      pane.missionId === missionId &&
+      pane.role === "orchestrator" &&
+      Boolean(pane.scope && sameScope(pane.scope, scope))
     );
   }
 
@@ -1082,8 +1479,9 @@ export class MissionOrchestratorBootstrapService {
   #clearRetiredKickoffIdentity(
     scope: ProjectExecutionScope,
     missionId: string,
-    pane: MissionPaneSpec,
+    pane: MissionPaneSpec | undefined,
     sessionId: string,
+    expectedAuthoritySeal: MissionPaneAuthoritySeal,
   ): KickoffSessionRetirementResult {
     const current = this.#deps.getMission(scope, missionId);
     if (!current || current.orchestratorSessionId !== sessionId) {
@@ -1097,10 +1495,11 @@ export class MissionOrchestratorBootstrapService {
         ),
       };
     }
-    const cleared = this.#deps.clearOrchestratorSessionIfMatches(
+    const cleared = this.#deps.retireOrchestratorSessionForReplacement(
       scope,
       missionId,
       sessionId,
+      expectedAuthoritySeal,
     );
     if (!cleared) {
       return {
@@ -1117,6 +1516,76 @@ export class MissionOrchestratorBootstrapService {
       bootstrapFlightKey(scope, missionId),
       bootstrapMissionSnapshot(cleared),
     );
+    const paneRetirement: KickoffSessionRetirementResult = pane
+      ? this.#removeRetiredPaneIdentity(
+          scope,
+          missionId,
+          pane,
+          bootstrapMissionSnapshot(cleared),
+        )
+      : { ok: true };
+    if (!paneRetirement.ok) return paneRetirement;
+    if (
+      cleared.status === "running" &&
+      hasCurrentDispatchAuthority(cleared) &&
+      missionMatchesExpectedAuthoritySeal(
+        cleared,
+        expectedAuthoritySeal,
+      ) &&
+      bootstrapMissionApprovalSnapshot(cleared) ===
+        this.#authorizedApprovalSnapshots.get(
+          bootstrapFlightKey(scope, missionId),
+        )
+    ) {
+      return { ok: true };
+    }
+    const retryScheduled = hasAutomaticTechnicalRecovery(cleared);
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        missionId,
+        reason: retryScheduled ? "provider_exited" : "not_authorized",
+        error:
+          "A sessão antiga encerrou, mas a missão mudou antes do respawn. " +
+          (retryScheduled
+            ? "A recuperação automática continuará com o contrato vigente."
+            : "O Nexus preservou o novo estado da missão."),
+        cta: retryScheduled ? BOOTSTRAP_AUTO_RETRY_CTA : BOOTSTRAP_CTA,
+        ...(retryScheduled ? { retryScheduled: true } : {}),
+      },
+    };
+  }
+
+  #removeRetiredPaneIdentity(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    pane: MissionPaneSpec,
+    expectedCurrentSnapshot?: string,
+  ): KickoffSessionRetirementResult {
+    const durable = this.#deps
+      .listMissionPanes(scope, missionId)
+      .find((candidate) => candidate.id === pane.id);
+    if (
+      durable &&
+      (durable.missionId !== missionId ||
+        durable.paneId !== pane.paneId ||
+        durable.role !== "orchestrator")
+    ) {
+      return {
+        ok: false,
+        result: this.#failure(
+          scope,
+          missionId,
+          "preflight_failed",
+          terminalOperationalFailureReason(
+            "A identidade durável do pane mudou durante o teardown.",
+          ),
+          expectedCurrentSnapshot,
+        ),
+      };
+    }
+    if (!durable) return { ok: true };
     const removed = this.#deps.removeMissionPane(scope, pane.id);
     const stillPersisted =
       !removed &&
@@ -1131,7 +1600,7 @@ export class MissionOrchestratorBootstrapService {
           missionId,
           "materialization_failed",
           "O processo antigo encerrou, mas o registro do pane não pôde ser removido.",
-          bootstrapMissionSnapshot(cleared),
+          expectedCurrentSnapshot,
         ),
       };
     }
@@ -1180,6 +1649,7 @@ export class MissionOrchestratorBootstrapService {
     >["reason"],
     detail: string,
     expectedCurrentSnapshot?: string,
+    blockKind: "technical" | "user" = "technical",
   ): MissionOrchestratorBootstrapResult {
     const current = this.#deps.getMission(scope, missionId);
     const key = bootstrapFlightKey(scope, missionId);
@@ -1187,6 +1657,12 @@ export class MissionOrchestratorBootstrapService {
     const authorizedApprovalSnapshot =
       this.#authorizedApprovalSnapshots.get(key);
     const exactSnapshot = expectedCurrentSnapshot ?? authorizedSnapshot;
+    const effectiveBlockKind =
+      blockKind === "technical" &&
+      hasTerminalOperationalFailureMarker(detail)
+        ? "user"
+        : blockKind;
+    let retryScheduled = false;
     if (
       reason !== "not_authorized" &&
       exactSnapshot !== undefined &&
@@ -1198,26 +1674,34 @@ export class MissionOrchestratorBootstrapService {
       current.status !== "done" &&
       current.status !== "failed"
     ) {
+      const nextCta =
+        effectiveBlockKind === "technical"
+          ? BOOTSTRAP_AUTO_RETRY_CTA
+          : BOOTSTRAP_CTA;
       const note =
         `${BOOTSTRAP_BLOCK_MARKER}\n## Orquestrador não iniciado\n${detail} ` +
-        `CTA: ${BOOTSTRAP_CTA}.`;
+        `CTA: ${nextCta}.`;
       const description = current.description.includes(BOOTSTRAP_BLOCK_MARKER)
         ? current.description
         : [current.description.trim(), note]
             .filter(Boolean)
             .join("\n\n")
             .slice(0, 65_536);
-      this.#deps.updateMission(scope, missionId, {
-        ...missionBlockPatch("technical"),
+      const blocked = this.#deps.updateMission(scope, missionId, {
+        ...missionBlockPatch(effectiveBlockKind),
         description,
       });
+      retryScheduled = blocked
+        ? hasAutomaticTechnicalRecovery(blocked)
+        : false;
     }
     return {
       ok: false,
       missionId,
       reason,
       error: detail,
-      cta: BOOTSTRAP_CTA,
+      cta: retryScheduled ? BOOTSTRAP_AUTO_RETRY_CTA : BOOTSTRAP_CTA,
+      ...(retryScheduled ? { retryScheduled: true } : {}),
     };
   }
 }
@@ -1278,9 +1762,7 @@ export class MissionOrchestratorBootstrapRecovery {
       for (const mission of missions) {
         if (mission.status === "blocked") {
           if (
-            mission.intentState === "blocked_user" ||
-            hasTerminalOperationalFailureMarker(mission.description) ||
-            !hasCurrentApprovedDispatchContract(mission) ||
+            !hasAutomaticTechnicalRecovery(mission) ||
             !this.#deps.resumeBlocked
           ) {
             continue;
@@ -1413,18 +1895,13 @@ const productionRecovery = new MissionOrchestratorBootstrapRecovery({
     });
     const technicallyBlocked = stores.missions
       .list("blocked")
-      .filter(
-        (mission) =>
-          mission.intentState !== "blocked_user" &&
-          !hasTerminalOperationalFailureMarker(mission.description) &&
-          hasCurrentApprovedDispatchContract(mission),
-      );
+      .filter(hasAutomaticTechnicalRecovery);
     return [...running, ...technicallyBlocked];
   },
   bootstrap: (scope, missionId) =>
-    productionService.bootstrap(scope, missionId),
+    bootstrapMissionOrchestratorForScope(scope, missionId),
   resumeBlocked: (scope, missionId) =>
-    resumeBlockedMissionBootstrapForScope(scope, missionId),
+    resumeAutomaticallyBlockedMissionBootstrapForScope(scope, missionId),
 });
 let disposeProductionScopeListener: (() => void) | null = null;
 
@@ -1442,7 +1919,9 @@ export function bootstrapMissionOrchestratorForScope(
   scope: ProjectExecutionScope,
   missionId: string,
 ): Promise<MissionOrchestratorBootstrapResult> {
-  return productionService.bootstrap(scope, missionId);
+  return withMissionLifecycleLock(scope, missionId, () =>
+    productionService.bootstrap(scope, missionId),
+  );
 }
 
 export interface PlanPromotionRestartDeps {
@@ -1506,6 +1985,13 @@ const productionPlanPromotionRestartDeps: PlanPromotionRestartDeps = {
   ensureMissionPlan: ensureGuidedMissionPlanForScope,
   bootstrap: bootstrapMissionOrchestratorForScope,
 };
+
+const productionPlanPromotionRestartWithinLifecycleLockDeps:
+  PlanPromotionRestartDeps = {
+    ...productionPlanPromotionRestartDeps,
+    bootstrap: (scope, missionId) =>
+      productionService.bootstrap(scope, missionId),
+  };
 
 function planPromotionTeardownFailure(
   scope: ProjectExecutionScope,
@@ -2066,6 +2552,15 @@ export function blockedMissionRearmPatch(mission: Mission):
 export function rearmBlockedMissionForScope(
   scope: ProjectExecutionScope,
   missionId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  return withMissionLifecycleLock(scope, missionId, () =>
+    rearmBlockedMissionWithinLifecycleLock(scope, missionId),
+  );
+}
+
+function rearmBlockedMissionWithinLifecycleLock(
+  scope: ProjectExecutionScope,
+  missionId: string,
 ): { ok: true } | { ok: false; error: string } {
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
@@ -2088,7 +2583,7 @@ export function rearmBlockedMissionForScope(
 export function rearmBlockedMissionFromRenderer(
   owner: WebContents,
   raw: unknown,
-): { ok: true } | { ok: false; error: string } {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const input = missionOrchestratorBootstrapRequestSchema.parse(raw);
   const scope = requireRendererWorkspaceScope(owner);
   return rearmBlockedMissionForScope(scope, input.missionId);
@@ -2579,7 +3074,59 @@ export async function prepareDeadGraphReapprovalForScope(
  * The bootstrap re-validates every authority (squad hash, contract, runtime)
  * and re-blocks with an actionable marker if the retry fails again.
  */
-export async function resumeBlockedMissionBootstrapForScope(
+export function resumeBlockedMissionBootstrapForScope(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): Promise<MissionOrchestratorBootstrapResult> {
+  return withMissionLifecycleLock(scope, missionId, () =>
+    resumeBlockedMissionBootstrapWithinLifecycleLock(scope, missionId),
+  );
+}
+
+export interface AutomaticMissionBootstrapResumeDeps {
+  readonly getMission: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => Mission | null;
+  readonly resumeWithinLifecycleLock: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => Promise<MissionOrchestratorBootstrapResult>;
+}
+
+/**
+ * Automatic recovery must re-authorize after waiting for the lifecycle lock.
+ * A coordinator snapshot may say blocked_technical while an operator's Parar
+ * wins the lock first and demotes it to blocked_user.
+ */
+export function resumeAutomaticallyBlockedMissionBootstrapForScope(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  deps: AutomaticMissionBootstrapResumeDeps = {
+    getMission: (currentScope, currentMissionId) =>
+      getProjectDomainStores(currentScope).missions.get(currentMissionId),
+    resumeWithinLifecycleLock:
+      resumeBlockedMissionBootstrapWithinLifecycleLock,
+  },
+): Promise<MissionOrchestratorBootstrapResult> {
+  return withMissionLifecycleLock(scope, missionId, () => {
+    const current = deps.getMission(scope, missionId);
+    if (!current || !hasAutomaticTechnicalRecovery(current)) {
+      return {
+        ok: false,
+        missionId,
+        reason: "not_authorized",
+        error:
+          "A recuperação automática foi cancelada porque a missão agora " +
+          "aguarda uma decisão do operador ou perdeu a aprovação vigente.",
+        cta: BOOTSTRAP_CTA,
+      };
+    }
+    return deps.resumeWithinLifecycleLock(scope, missionId);
+  });
+}
+
+async function resumeBlockedMissionBootstrapWithinLifecycleLock(
   scope: ProjectExecutionScope,
   missionId: string,
 ): Promise<MissionOrchestratorBootstrapResult> {
@@ -2627,6 +3174,7 @@ export async function resumeBlockedMissionBootstrapForScope(
       scope,
       missionId,
       promotionResume.intentVersion,
+      productionPlanPromotionRestartWithinLifecycleLockDeps,
     );
   }
   const resume = blockedBootstrapResumePatch(mission);
@@ -2639,21 +3187,11 @@ export async function resumeBlockedMissionBootstrapForScope(
       cta: BOOTSTRAP_CTA,
     };
   }
-  // Bootstrap re-entry refuses while a stale orchestrator identity persists
-  // (dead session + pane row): it #failures with the SAME "Retomar missão"
-  // CTA this resume implements — a circular dead end. A PROVEN-dead session
-  // (no PTY state) holds no execution; clear the durable identity so the
-  // bootstrap takes its fresh spawn+kickoff path. A live session is left
-  // untouched — its duplicate-kickoff guard stands.
-  const staleSessionId = mission.orchestratorSessionId;
-  if (!staleSessionId || getSessionState(staleSessionId) === null) {
-    if (staleSessionId) {
-      stores.missions.setOrchestratorSession(missionId, null);
-    }
-    for (const row of stores.missionPanes.list(missionId)) {
-      if (row.role === "orchestrator") stores.missionPanes.remove(row.id);
-    }
-  }
+  // Preserve every durable identity through re-arm. The bootstrap owns the
+  // only safe replacement path: it inventories the exact physical pane,
+  // proves/awaits process exit, then CAS-removes the row before spawning.
+  // Deleting a row here when orch_session_id was null turned a torn binding
+  // with a live provider into an invisible duplicate process.
   const updated = stores.missions.update(missionId, resume.patch);
   if (!updated) {
     return {
@@ -2664,7 +3202,7 @@ export async function resumeBlockedMissionBootstrapForScope(
       cta: BOOTSTRAP_CTA,
     };
   }
-  return bootstrapMissionOrchestratorForScope(scope, missionId);
+  return productionService.bootstrap(scope, missionId);
 }
 
 /** Starts durable-scope discovery before the coordinator's first pass. */

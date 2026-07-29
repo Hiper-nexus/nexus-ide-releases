@@ -22,7 +22,9 @@ const deps = vi.hoisted(() => ({
   rebindMissionOrchestratorSession: vi.fn(),
   updateMission: vi.fn(),
   commitPlanPromotionRevision: vi.fn(),
+  blockMission: vi.fn(),
   removeMission: vi.fn(),
+  removeMissionIfUnchanged: vi.fn(),
   recordMissionPane: vi.fn(),
   removeMissionPane: vi.fn(),
   findMissionPaneByPaneId: vi.fn(),
@@ -230,6 +232,8 @@ beforeEach(() => {
   deps.rebindMissionOrchestratorSession.mockReset();
   deps.updateMission.mockReset();
   deps.removeMission.mockReset();
+  deps.removeMissionIfUnchanged.mockReset();
+  deps.blockMission.mockReset();
   deps.findPaneOwnedBy.mockReturnValue({
     paneId: "pane-a",
     sessionId: "pty-a",
@@ -255,6 +259,16 @@ beforeEach(() => {
   deps.rebindMissionOrchestratorSession.mockReturnValue(mission);
   deps.updateMission.mockReturnValue(mission);
   deps.removeMission.mockReturnValue(true);
+  deps.removeMissionIfUnchanged.mockReturnValue("removed");
+  deps.blockMission.mockImplementation(
+    (_missionId: string, kind: "user" | "technical") => ({
+      ...mission,
+      status: "blocked",
+      intentState:
+        kind === "user" ? "blocked_user" : "blocked_technical",
+      updatedAt: 2,
+    }),
+  );
   deps.listMissionPanes.mockReturnValue([]);
   deps.listHandoffs.mockReturnValue([]);
   deps.getHandoff.mockReturnValue(null);
@@ -305,7 +319,9 @@ beforeEach(() => {
       update: deps.updateMission,
       commitPlanPromotionRevision:
         deps.commitPlanPromotionRevision,
+      block: deps.blockMission,
       remove: deps.removeMission,
+      removeIfUnchanged: deps.removeMissionIfUnchanged,
     },
     missionPanes: {
       record: deps.recordMissionPane,
@@ -326,11 +342,26 @@ describe("renderer mission authority", () => {
       intentState: "awaiting_goal",
     });
 
+    const candidate = authority.missionRemovalCandidateFromRenderer(
+      owner,
+      "mission-a",
+    );
+    expect(candidate).toEqual({
+      missionId: "mission-a",
+      title: "Review",
+      fence: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     expect(
-      authority.missionRemovalCandidateFromRenderer(owner, "mission-a"),
-    ).toEqual({ missionId: "mission-a", title: "Review" });
-    expect(authority.removeMissionFromRenderer(owner, "mission-a")).toBe(true);
-    expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
+      authority.removeMissionFromRenderer(
+        owner,
+        "mission-a",
+        candidate!.fence,
+      ),
+    ).toBe(true);
+    expect(deps.removeMissionIfUnchanged).toHaveBeenCalledWith(
+      "mission-a",
+      expect.objectContaining({ id: "mission-a", title: "Review" }),
+    );
   });
 
   it.each([
@@ -351,28 +382,101 @@ describe("renderer mission authority", () => {
       deps.listHandoffs.mockReturnValue(handoffs);
       deps.listTasks.mockReturnValue(tasks);
 
-      expect(authority.removeMissionFromRenderer(owner, "mission-a")).toBe(true);
-      expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
+      const candidate = authority.missionRemovalCandidateFromRenderer(
+        owner,
+        "mission-a",
+      );
+      expect(
+        authority.removeMissionFromRenderer(
+          owner,
+          "mission-a",
+          candidate!.fence,
+        ),
+      ).toBe(true);
+      expect(deps.removeMissionIfUnchanged).toHaveBeenCalledWith(
+        "mission-a",
+        expect.objectContaining({ id: "mission-a", status }),
+      );
     },
   );
 
-  it("permite remover missão bloqueada sem runtime nem atividade durável (wedge do bootstrap)", () => {
-    // Bootstrap falhou antes de materializar qualquer coisa: sem sessão, sem
-    // panes, sem handoffs, sem tasks. Não há receipt a preservar — recusar a
-    // remoção deixava a missão presa sem nenhuma saída.
-    deps.getMission.mockReturnValue({
-      ...mission,
-      status: "blocked",
+  it("revoga a recuperação automática antes de permitir o delete", () => {
+    const automatic = {
+      ...approvedMission,
+      status: "blocked" as const,
       orchestratorSessionId: undefined,
-      intentState: "blocked_technical",
-    });
-    // Pane rows são identidade de respawn e caem em cascata — não vetam.
-    deps.listMissionPanes.mockReturnValue([{ role: "orchestrator" }]);
-    deps.listHandoffs.mockReturnValue([]);
-    deps.listTasks.mockReturnValue([]);
+      intentState: "blocked_technical" as const,
+    };
+    const revoked = {
+      ...automatic,
+      intentState: "blocked_user" as const,
+      updatedAt: 2,
+    };
+    deps.getMission.mockReturnValue(automatic);
+    deps.blockMission.mockReturnValue(revoked);
+    const candidate = authority.missionRemovalCandidateFromRenderer(
+      owner,
+      "mission-a",
+    );
 
-    expect(authority.removeMissionFromRenderer(owner, "mission-a")).toBe(true);
-    expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
+    expect(() =>
+      authority.removeMissionFromRenderer(
+        owner,
+        "mission-a",
+        candidate!.fence,
+      ),
+    ).toThrow(/recuperação automática|recovery_active/i);
+    expect(deps.removeMissionIfUnchanged).not.toHaveBeenCalled();
+
+    const prepared = authority.prepareMissionRemovalFromMain(
+      owner,
+      "mission-a",
+      candidate!.fence,
+    );
+    expect(deps.blockMission).toHaveBeenCalledWith("mission-a", "user");
+    expect(prepared!.fence).not.toBe(candidate!.fence);
+    deps.getMission.mockReturnValue(revoked);
+    expect(
+      authority.removeMissionFromRenderer(
+        owner,
+        "mission-a",
+        prepared!.fence,
+      ),
+    ).toBe(true);
+  });
+
+  it("revoga uma execução running antes do primeiro await de teardown", () => {
+    const running = {
+      ...mission,
+      status: "running" as const,
+      intentState: "executing" as const,
+    };
+    const blocked = {
+      ...running,
+      status: "blocked" as const,
+      intentState: "blocked_user" as const,
+      updatedAt: 2,
+    };
+    deps.getMission.mockReturnValue(running);
+    deps.blockMission.mockReturnValue(blocked);
+    const candidate = authority.missionRemovalCandidateFromRenderer(
+      owner,
+      "mission-a",
+    );
+
+    const prepared = authority.prepareMissionRemovalFromMain(
+      owner,
+      "mission-a",
+      candidate!.fence,
+    );
+
+    expect(deps.blockMission).toHaveBeenCalledWith("mission-a", "user");
+    expect(prepared).toEqual({
+      missionId: "mission-a",
+      title: "Review",
+      fence: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(prepared!.fence).not.toBe(candidate!.fence);
   });
 
   it("remove missão bloqueada mesmo com sessão de orquestrador registrada", () => {
@@ -386,8 +490,58 @@ describe("renderer mission authority", () => {
     deps.listHandoffs.mockReturnValue([]);
     deps.listTasks.mockReturnValue([]);
 
-    expect(authority.removeMissionFromRenderer(owner, "mission-a")).toBe(true);
-    expect(deps.removeMission).toHaveBeenCalledWith("mission-a");
+    const candidate = authority.missionRemovalCandidateFromRenderer(
+      owner,
+      "mission-a",
+    );
+    expect(
+      authority.removeMissionFromRenderer(
+        owner,
+        "mission-a",
+        candidate!.fence,
+      ),
+    ).toBe(true);
+    expect(deps.removeMissionIfUnchanged).toHaveBeenCalledWith(
+      "mission-a",
+      expect.objectContaining({
+        status: "blocked",
+        intentState: "blocked_user",
+      }),
+    );
+  });
+
+  it("recusa o delete se a missão mudar depois do teardown", () => {
+    const observed = {
+      ...mission,
+      orchestratorSessionId: undefined,
+      intentState: "awaiting_goal" as const,
+    };
+    deps.getMission
+      .mockReturnValueOnce(observed)
+      .mockReturnValueOnce(observed)
+      .mockReturnValueOnce({
+        ...observed,
+        description: "Estado alterado durante o teardown.",
+        updatedAt: 2,
+      });
+    const candidate = authority.missionRemovalCandidateFromRenderer(
+      owner,
+      "mission-a",
+    );
+    const prepared = authority.prepareMissionRemovalFromMain(
+      owner,
+      "mission-a",
+      candidate!.fence,
+    );
+
+    expect(() =>
+      authority.removeMissionFromRenderer(
+        owner,
+        "mission-a",
+        prepared!.fence,
+      ),
+    ).toThrow(/remoção.*stale|mudou.*teardown/i);
+    expect(deps.removeMissionIfUnchanged).not.toHaveBeenCalled();
   });
 
   it("turns the approved intent criteria into durable PREVC milestones", () => {

@@ -1,5 +1,8 @@
 import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
-import type { Mission } from '../../shared/orch-types';
+import type {
+  Mission,
+  MissionPaneAuthoritySeal,
+} from '../../shared/orch-types';
 import {
   getAgentSessionInfo,
   tapSessionExit,
@@ -65,6 +68,15 @@ const productionDeps: MissionOrchestratorExitLifecycleDeps = {
 
 let disposeExitTap: (() => void) | null = null;
 const pendingExitTombstones = new Map<string, PendingOrchestratorExit>();
+interface IntentionalExitSuppression {
+  readonly intentContractHash: string;
+  readonly squadRevisionHash: string;
+  readonly references: number;
+}
+const intentionalExitSuppressions = new Map<
+  string,
+  IntentionalExitSuppression
+>();
 
 function exitKey(
   scope: Readonly<OwnedAgentSessionInfo['scope']>,
@@ -82,6 +94,70 @@ function exitKey(
     input.intentVersion,
     input.orchestratorSessionId,
   ].join('\0');
+}
+
+function isIntentionalExitSuppressed(
+  pending: PendingOrchestratorExit,
+): boolean {
+  const suppression = intentionalExitSuppressions.get(
+    exitKey(pending.scope, pending.input),
+  );
+  return Boolean(
+    suppression &&
+      suppression.intentContractHash === pending.input.intentContractHash &&
+      suppression.squadRevisionHash === pending.input.squadRevisionHash,
+  );
+}
+
+/**
+ * Suppress only the exact exit that Main is intentionally tearing down.
+ *
+ * The lease remains active through physical exit proof and durable binding
+ * cleanup, so both the synchronous exit tap and the 1s missing-session
+ * reconciler observe the same intent. Releasing it without clearing the
+ * binding restores the normal durable block behavior.
+ */
+export function suppressIntentionalMissionOrchestratorExit(input: {
+  readonly scope: OwnedAgentSessionInfo['scope'];
+  readonly missionId: string;
+  readonly orchestratorSessionId: string;
+  readonly authoritySeal: MissionPaneAuthoritySeal;
+}): () => void {
+  const key = exitKey(input.scope, {
+    missionId: input.missionId,
+    orchestratorSessionId: input.orchestratorSessionId,
+    intentVersion: input.authoritySeal.intentVersion,
+  });
+  const existing = intentionalExitSuppressions.get(key);
+  if (
+    existing &&
+    (existing.intentContractHash !== input.authoritySeal.intentContractHash ||
+      existing.squadRevisionHash !== input.authoritySeal.squadRevisionHash)
+  ) {
+    throw new Error(
+      'intentional orchestrator exit suppression authority changed',
+    );
+  }
+  intentionalExitSuppressions.set(key, {
+    intentContractHash: input.authoritySeal.intentContractHash,
+    squadRevisionHash: input.authoritySeal.squadRevisionHash,
+    references: (existing?.references ?? 0) + 1,
+  });
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const current = intentionalExitSuppressions.get(key);
+    if (!current) return;
+    if (current.references > 1) {
+      intentionalExitSuppressions.set(key, {
+        ...current,
+        references: current.references - 1,
+      });
+    } else {
+      intentionalExitSuppressions.delete(key);
+    }
+  };
 }
 
 function rememberExit(pending: PendingOrchestratorExit): string {
@@ -196,6 +272,7 @@ export function handleMissionOrchestratorSessionExit(
       outputTail: OUTPUT_UNAVAILABLE,
     }),
   });
+  if (isIntentionalExitSuppressed(fallback)) return false;
   const key = rememberExit(fallback);
   try {
     rememberExit(Object.freeze({
@@ -229,6 +306,7 @@ export function reconcileMissionOrchestratorExits(
   let complete = true;
   const attempted = new Set<string>();
   for (const [key, pending] of [...pendingExitTombstones]) {
+    if (isIntentionalExitSuppressed(pending)) continue;
     attempted.add(key);
     if (persistPendingExit(key, pending, deps) === 'retry') {
       complete = false;
@@ -261,6 +339,7 @@ export function reconcileMissionOrchestratorExits(
     for (const mission of missions) {
       const pending = pendingFromMission(stores.scope, mission);
       if (!pending) continue;
+      if (isIntentionalExitSuppressed(pending)) continue;
       let live: OwnedAgentSessionInfo | null;
       try {
         live = deps.getAgentSessionInfo(
@@ -328,4 +407,5 @@ export function shutdownMissionOrchestratorExitLifecycle(): void {
 export function resetMissionOrchestratorExitLifecycleForTests(): void {
   shutdownMissionOrchestratorExitLifecycle();
   pendingExitTombstones.clear();
+  intentionalExitSuppressions.clear();
 }

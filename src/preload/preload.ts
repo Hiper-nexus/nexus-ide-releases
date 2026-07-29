@@ -503,8 +503,15 @@ ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
 
 let realMissionProductWizardE2EPrepared = false;
 let realMissionProductWizardCapability: string | null = null;
+type RealMissionProductWizardGestureState =
+  | {
+      readonly active: true;
+      readonly runId: string;
+      readonly capability: string;
+    }
+  | { readonly active: false };
 let realMissionProductWizardGesture:
-  | Promise<{ runId: string; capability: string }>
+  | Promise<RealMissionProductWizardGestureState>
   | null = null;
 
 /**
@@ -543,7 +550,19 @@ window.addEventListener(
         if (
           !raw ||
           typeof raw !== 'object' ||
-          Array.isArray(raw) ||
+          Array.isArray(raw)
+        ) {
+          throw new Error('main rejected the trusted product wizard gesture');
+        }
+        if (
+          (raw as { ok?: unknown }).ok === true &&
+          (raw as { inactive?: unknown }).inactive === true
+        ) {
+          realMissionProductWizardE2EPrepared = false;
+          realMissionProductWizardCapability = null;
+          return { active: false } as const;
+        }
+        if (
           (raw as { ok?: unknown }).ok !== true ||
           typeof (raw as { runId?: unknown }).runId !== 'string'
         ) {
@@ -554,6 +573,7 @@ window.addEventListener(
         );
         realMissionProductWizardCapability = capability;
         return {
+          active: true as const,
           runId: (raw as { runId: string }).runId,
           capability,
         };
@@ -583,7 +603,10 @@ async function recordRealMissionProductWizardStepFromPreload(input: {
   if (!gesture) {
     throw new Error('trusted product wizard gesture was not observed');
   }
-  await gesture;
+  const gestureState = await gesture;
+  if (!gestureState.active || !realMissionProductWizardE2EPrepared) {
+    return { ok: true, inactive: true };
+  }
   const capability = realMissionProductWizardCapability;
   // Consume before IPC. A timeout, main rejection or renderer replay can never
   // reuse preload authority.
@@ -602,6 +625,12 @@ async function recordRealMissionProductWizardStepFromPreload(input: {
     (raw as { ok?: unknown }).ok !== true
   ) {
     throw new Error('main rejected the product wizard causal step');
+  }
+  if ((raw as { inactive?: unknown }).inactive === true) {
+    realMissionProductWizardE2EPrepared = false;
+    realMissionProductWizardGesture = null;
+    realMissionProductWizardCapability = null;
+    return { ok: true, inactive: true };
   }
   const next = (raw as { nextCapability?: unknown }).nextCapability;
   if (next !== undefined) {

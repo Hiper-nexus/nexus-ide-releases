@@ -26,6 +26,7 @@ import {
   GUIDED_PLAN_BLOCK_MARKER,
 } from "../../shared/guided-mission-plan";
 import { hasRetiredRosterRouteMarker } from "../../shared/retired-adapter-policy";
+import { hasAutomaticTechnicalRecovery } from "../../shared/mission-recovery-policy";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import {
   NEXUS_PLAN_SQUAD_ID,
@@ -196,6 +197,12 @@ export interface RendererMissionLifecycleCandidate {
   readonly fence: string;
 }
 
+export interface RendererMissionRemovalCandidate {
+  readonly missionId: string;
+  readonly title: string;
+  readonly fence: string;
+}
+
 interface MissionApprovalFenceInput {
   readonly evidenceAttached: boolean;
   readonly attachmentPaths: readonly string[];
@@ -301,6 +308,38 @@ function missionAuthorityFence(
       }),
     )
     .digest("hex");
+}
+
+function missionRemovalFence(mission: Readonly<Mission>): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        id: mission.id,
+        title: mission.title,
+        description: mission.description,
+        status: mission.status,
+        squadId: mission.squadId ?? null,
+        milestones: mission.milestones,
+        learnings: mission.learnings,
+        orchestratorSessionId: mission.orchestratorSessionId ?? null,
+        intentState: mission.intentState ?? null,
+        intentContract: mission.intentContract ?? null,
+        intentVersion: mission.intentVersion ?? 0,
+        createdAt: mission.createdAt,
+        updatedAt: mission.updatedAt,
+      }),
+    )
+    .digest("hex");
+}
+
+function missionRemovalCandidate(
+  mission: Readonly<Mission>,
+): RendererMissionRemovalCandidate {
+  return Object.freeze({
+    missionId: mission.id,
+    title: mission.title,
+    fence: missionRemovalFence(mission),
+  });
 }
 
 function rendererMissionUpdateFence(
@@ -665,21 +704,86 @@ export class RendererMissionAuthority {
     });
   }
 
-  /** Operator-initiated delete: any mission row in the scoped workspace. */
+  /** Operator delete candidate. Recovery is revoked in the prepared phase. */
   missionRemovalCandidateFromRenderer(
     owner: WebContents,
     missionId: string,
-  ): { missionId: string; title: string } | null {
+  ): RendererMissionRemovalCandidate | null {
     const candidate = this.#removableMission(owner, missionId);
-    return candidate
-      ? { missionId: candidate.mission.id, title: candidate.mission.title }
-      : null;
+    return candidate ? missionRemovalCandidate(candidate.mission) : null;
   }
 
-  removeMissionFromRenderer(owner: WebContents, missionId: string): boolean {
+  /**
+   * Revokes a running mission before the first teardown await.
+   *
+   * This prevents both late spawns and the ordinary physical-exit lifecycle
+   * from converting an operator-requested removal into a fresh automatic
+   * recovery flight. The initial fence proves this is still the exact mission
+   * revision that passed the automatic-recovery refusal above.
+   */
+  prepareMissionRemovalFromMain(
+    owner: WebContents,
+    missionId: string,
+    expectedFence: string,
+  ): RendererMissionRemovalCandidate | null {
+    if (!/^[a-f0-9]{64}$/.test(expectedFence)) {
+      throw new Error("invalid mission removal fence");
+    }
+    const candidate = this.#removableMission(owner, missionId);
+    if (!candidate) return null;
+    if (missionRemovalFence(candidate.mission) !== expectedFence) {
+      throw new Error(
+        "mission_removal_stale: a missão mudou antes do teardown",
+      );
+    }
+    if (
+      candidate.mission.status !== "running" &&
+      !hasAutomaticTechnicalRecovery(candidate.mission)
+    ) {
+      return missionRemovalCandidate(candidate.mission);
+    }
+    const blocked = candidate.suite.missions.block(
+      candidate.mission.id,
+      "user",
+    );
+    if (!blocked) {
+      throw new Error(
+        "mission_removal_stale: não foi possível revogar a execução antes do teardown",
+      );
+    }
+    return missionRemovalCandidate(blocked);
+  }
+
+  removeMissionFromRenderer(
+    owner: WebContents,
+    missionId: string,
+    expectedFence: string,
+  ): boolean {
+    if (!/^[a-f0-9]{64}$/.test(expectedFence)) {
+      throw new Error("invalid mission removal fence");
+    }
     const candidate = this.#removableMission(owner, missionId);
     if (!candidate) return false;
-    return candidate.suite.missions.remove(candidate.mission.id);
+    if (hasAutomaticTechnicalRecovery(candidate.mission)) {
+      throw new Error(
+        "mission_removal_recovery_active: revogue a recuperação automática antes do delete",
+      );
+    }
+    if (missionRemovalFence(candidate.mission) !== expectedFence) {
+      throw new Error(
+        "mission_removal_stale: a missão mudou durante o teardown; o histórico foi preservado",
+      );
+    }
+    const result = candidate.suite.missions.removeIfUnchanged(
+      candidate.mission.id,
+      candidate.mission,
+    );
+    if (result === "changed") {
+      throw new Error(
+        "mission_removal_stale: a missão mudou durante o teardown; o histórico foi preservado",
+      );
+    }
+    return result === "removed";
   }
 
   #removableMission(

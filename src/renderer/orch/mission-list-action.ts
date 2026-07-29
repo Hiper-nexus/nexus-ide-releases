@@ -1,5 +1,9 @@
 import type { Mission } from '../../shared/orch-types';
-import { missionHasLiveRuntime } from '../lib/mission-rail-groups';
+import {
+  missionHasLiveRuntime,
+  missionIsOperationallyActive,
+} from '../lib/mission-rail-groups';
+import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 
 export function canDiscardMission(mission: Mission): boolean {
   if (mission.orchestratorSessionId !== undefined) return false;
@@ -17,6 +21,7 @@ export function canDiscardMission(mission: Mission): boolean {
 
 export type MissionListAction =
   | 'close-runtime'
+  | 'stop-recovery'
   | 'discard'
   | 'remove'
   | 'none';
@@ -25,7 +30,9 @@ export function missionListAction(
   mission: Mission,
   hasVisiblePanes: boolean,
 ): MissionListAction {
+  if (hasAutomaticTechnicalRecovery(mission)) return 'stop-recovery';
   if (missionHasLiveRuntime(mission, hasVisiblePanes)) return 'close-runtime';
+  if (missionIsOperationallyActive(mission, hasVisiblePanes)) return 'none';
   if (canDiscardMission(mission)) return 'discard';
   return 'remove';
 }
@@ -40,6 +47,11 @@ export function missionActionCopy(action: MissionListAction): {
       return {
         verb: 'Encerrar',
         title: 'Encerrar processos e panes desta missão',
+      };
+    case 'stop-recovery':
+      return {
+        verb: 'Parar',
+        title: 'Parar a recuperação automática e preservar o histórico',
       };
     case 'discard':
       return { verb: 'Descartar', title: 'Descartar este rascunho' };

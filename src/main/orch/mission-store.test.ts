@@ -511,6 +511,30 @@ describe('scoped mission store', () => {
     expect(reopened.remove('mission-stable')).toBe(false);
   });
 
+  it('remove somente a revisão durável exata observada antes do teardown', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'mission-remove-cas' });
+    let now = 100;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-remove-cas',
+    });
+    const observed = store.create({
+      title: 'Remoção protegida',
+      intentState: 'awaiting_goal',
+    });
+    const changed = store.update(observed.id, {
+      description: 'Recuperação rearmou a missão durante o teardown.',
+    });
+    if (!changed) throw new Error('mission must exist');
+
+    expect(store.removeIfUnchanged(observed.id, observed)).toBe('changed');
+    expect(store.get(observed.id)).toEqual(changed);
+    expect(store.removeIfUnchanged(changed.id, changed)).toBe('removed');
+    expect(store.get(observed.id)).toBeNull();
+    expect(store.removeIfUnchanged(changed.id, changed)).toBe('missing');
+  });
+
   it('completes Driver-owned status and intent in one CAS projection', () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: 'driver-complete-atomic' });
@@ -1046,6 +1070,95 @@ describe('scoped mission store', () => {
     });
     expect(payload.outputTail).toContain('última linha segura');
     expect(payload.outputTail).not.toContain('nao-persistir');
+
+    const race = createRunningMission(
+      'orch-intentional-race',
+      'Missão com teardown intencional',
+    );
+    const raceBlocked = store.blockOrchestratorPreDispatchExit(
+      exitInput(
+        race,
+        'orch-intentional-race',
+        'exit publicado durante close intencional',
+      ),
+    );
+    expect(raceBlocked).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    const raceCurrent = store.get(race.id)!;
+    const raceSeal = {
+      intentVersion: 1,
+      intentContractHash: hashMissionIntentContract(
+        raceCurrent.intentContract,
+      ),
+      contextRevision: 'd'.repeat(64),
+      contractHash: 'e'.repeat(64),
+      squadRevisionHash: raceCurrent.intentContract!.squadRevisionHash!,
+    };
+    const exactRaceExit = db.prepare(
+      `SELECT payload_json
+         FROM mission_events
+        WHERE mission_id = ?
+          AND event_type = 'agent.finished'`,
+    ).get(race.id) as { payload_json: string };
+    expect(JSON.parse(exactRaceExit.payload_json)).toMatchObject({
+      event: 'orchestrator.pre_dispatch_exit',
+      sessionId: 'orch-intentional-race',
+      intentVersion: 1,
+    });
+    expect(hashMissionIntentContract(raceCurrent.intentContract)).toBe(
+      raceSeal.intentContractHash,
+    );
+    expect(
+      store.retireOrchestratorSessionForReplacement(
+        race.id,
+        'orch-intentional-race',
+        raceSeal,
+      ),
+    ).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+      orchestratorSessionId: undefined,
+    });
+    expect(store.get(race.id)?.description).not.toContain(
+      MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
+    );
+
+    const operatorBlocked = createRunningMission(
+      'orch-operator-block',
+      'Missão interrompida pelo operador',
+    );
+    store.blockOrchestratorPreDispatchExit(
+      exitInput(
+        operatorBlocked,
+        'orch-operator-block',
+        'exit anterior ao bloqueio humano',
+      ),
+    );
+    store.update(operatorBlocked.id, {
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
+    const operatorCurrent = store.get(operatorBlocked.id)!;
+    expect(
+      store.retireOrchestratorSessionForReplacement(
+        operatorBlocked.id,
+        'orch-operator-block',
+        {
+          ...raceSeal,
+          intentContractHash: hashMissionIntentContract(
+            operatorCurrent.intentContract,
+          ),
+          squadRevisionHash:
+            operatorCurrent.intentContract!.squadRevisionHash!,
+        },
+      ),
+    ).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      orchestratorSessionId: undefined,
+    });
 
     expect(
       store.blockOrchestratorPreDispatchExit(

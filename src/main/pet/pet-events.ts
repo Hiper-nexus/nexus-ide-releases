@@ -1,4 +1,6 @@
 import type { PetEvent } from '../../shared/pet-types';
+import type { MissionIntentContract } from '../../shared/mission-intent';
+import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 
 /**
  * Detecção de TRANSIÇÕES — o pet reage a mudanças, não a estados. Funções
@@ -11,10 +13,25 @@ interface MissionLike {
   title: string;
   description?: string;
   status: string;
+  intentState?: string;
+  intentVersion?: number | null;
+  intentContract?: MissionIntentContract | null;
+}
+
+function missionAttentionState(mission: MissionLike): string {
+  if (mission.status === 'blocked') {
+    return hasAutomaticTechnicalRecovery({
+      ...mission,
+      description: mission.description ?? '',
+    })
+      ? 'blocked:technical'
+      : 'blocked:user';
+  }
+  return mission.status;
 }
 
 export class MissionTransitionTracker {
-  /** status anterior por `scope missionId`. */
+  /** status + intenção anterior por `scope missionId`. */
   private last = new Map<string, string>();
 
   /**
@@ -31,15 +48,22 @@ export class MissionTransitionTracker {
       const key = `${prefix}${mission.id}`;
       liveKeys.add(key);
       const before = this.last.get(key);
-      this.last.set(key, mission.status);
-      if (!seenScope || before === mission.status || before === undefined) {
+      const current = missionAttentionState(mission);
+      this.last.set(key, current);
+      if (!seenScope || before === current || before === undefined) {
         continue;
       }
       if (mission.status === 'done') {
         events.push({ kind: 'mission-done', title: mission.title, at });
       } else if (mission.status === 'failed') {
         events.push({ kind: 'mission-failed', title: mission.title, at });
-      } else if (mission.status === 'blocked') {
+      } else if (
+        mission.status === 'blocked' &&
+        !hasAutomaticTechnicalRecovery({
+          ...mission,
+          description: mission.description ?? '',
+        })
+      ) {
         // O aviso que mais importa: a missão parou esperando um humano.
         const handoffDeliveryFailed = mission.description?.includes(
           '<!-- nexus:handoff-delivery-failed:',
@@ -64,7 +88,7 @@ export class MissionTransitionTracker {
   /** Semeia o escopo com a lista corrente SEM emitir eventos (hidratação). */
   seed(scope: string, missions: readonly MissionLike[]): void {
     for (const mission of missions) {
-      this.last.set(`${scope} ${mission.id}`, mission.status);
+      this.last.set(`${scope} ${mission.id}`, missionAttentionState(mission));
     }
   }
 }

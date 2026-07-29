@@ -42,11 +42,21 @@ interface ProductWizardGestureCapability {
 }
 
 const PRODUCT_WIZARD_GESTURE_CAPABILITY_TTL_MS = 2 * 60_000;
+const PRODUCT_WIZARD_INACTIVE_ACK = Object.freeze({
+  ok: true as const,
+  inactive: true as const,
+});
 
 export interface RealMissionProductWizardReceiptAuthority {
   readonly receiptForMission: (
     missionId: string,
   ) => RealMissionE2EProductWizardReceipt | null;
+  /**
+   * Closes evidence authority while keeping terminal IPC acknowledgements
+   * installed until Electron tears down the renderer. This drains a wizard
+   * edge that was already queued when the observer reached a final verdict.
+   */
+  readonly quiesce: () => void;
   readonly dispose: () => void;
 }
 
@@ -188,6 +198,7 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
   let receipt: RealMissionE2EProductWizardReceipt | null = null;
   let gestureCapability: ProductWizardGestureCapability | null = null;
   let gestureStarted = false;
+  let isQuiesced = false;
 
   const fail = (message: string): never => {
     throw new Error(message);
@@ -209,6 +220,9 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
     REAL_MISSION_E2E_CHANNELS.beginProductWizardGesture,
     (event, raw) => {
       try {
+        if (isQuiesced) {
+          return PRODUCT_WIZARD_INACTIVE_ACK;
+        }
         const owner = input.owner();
         const scratchPath = input.scratchPath();
         if (
@@ -254,6 +268,9 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
     REAL_MISSION_E2E_CHANNELS.recordProductWizardStep,
     (event, raw) => {
       try {
+        if (isQuiesced) {
+          return PRODUCT_WIZARD_INACTIVE_ACK;
+        }
         const owner = input.owner();
         const scratchPath = input.scratchPath();
         const parsed =
@@ -408,7 +425,12 @@ export function installRealMissionProductWizardReceiptAuthority(input: {
   return Object.freeze({
     receiptForMission: (missionId: string) =>
       receipt?.missionId === missionId ? receipt : null,
+    quiesce: () => {
+      isQuiesced = true;
+      gestureCapability = null;
+    },
     dispose: () => {
+      isQuiesced = true;
       gestureCapability = null;
       ipcMain.removeHandler(
         REAL_MISSION_E2E_CHANNELS.beginProductWizardGesture,

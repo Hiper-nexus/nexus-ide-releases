@@ -616,6 +616,7 @@ export interface NexusApi {
           reason: 'boot_timeout' | 'timeout' | 'session_exited' | 'write_failed' | 'authority_lost';
           detail: string;
           cta: string;
+          retryScheduled?: boolean;
         }
     >;
     /** Explicit prepare-project while still awaiting a real goal. */

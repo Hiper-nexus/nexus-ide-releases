@@ -81,6 +81,7 @@ const harness = vi.hoisted(() => {
     restartPlanPromotion: vi.fn(),
     terminatePty: vi.fn(async (_sessionId: string) => true),
     missionRemovalCandidate: vi.fn(),
+    prepareMissionRemoval: vi.fn(),
     removeMission: vi.fn(),
     missionApprovalCandidate: vi.fn(),
     approveMission: vi.fn(),
@@ -414,8 +415,19 @@ vi.mock('./renderer-mission-authority', () => ({
     missionRemovalCandidateFromRenderer(owner: unknown, missionId: string) {
       return harness.missionRemovalCandidate(owner, missionId);
     }
-    removeMissionFromRenderer(owner: unknown, missionId: string) {
-      return harness.removeMission(owner, missionId);
+    prepareMissionRemovalFromMain(
+      owner: unknown,
+      missionId: string,
+      fence: string,
+    ) {
+      return harness.prepareMissionRemoval(owner, missionId, fence);
+    }
+    removeMissionFromRenderer(
+      owner: unknown,
+      missionId: string,
+      fence: string,
+    ) {
+      return harness.removeMission(owner, missionId, fence);
     }
   },
 }));
@@ -739,6 +751,12 @@ beforeEach(() => {
   harness.missionRemovalCandidate.mockReturnValue({
     missionId: 'mission-draft',
     title: 'Rascunho seguro',
+    fence: 'removal-fence-a',
+  });
+  harness.prepareMissionRemoval.mockReturnValue({
+    missionId: 'mission-draft',
+    title: 'Rascunho seguro',
+    fence: 'removal-fence-a',
   });
   harness.removeMission.mockReturnValue(true);
   harness.missionApprovalCandidate.mockReturnValue({
@@ -2175,7 +2193,7 @@ describe('mission authority native confirmation', () => {
     ).rejects.toThrow(/main-owned/i);
   });
 
-  it('returns an honest technical block when demotion cannot prove physical exit', async () => {
+  it('preserves the operator stop when demotion cannot prove physical exit', async () => {
     const sender = owner();
     harness.scopes.set(sender.id, SCOPE_A);
     harness.windows.set(sender.id, { isDestroyed: () => false });
@@ -2250,7 +2268,7 @@ describe('mission authority native confirmation', () => {
       ),
     ).resolves.toMatchObject({
       status: 'blocked',
-      intentState: 'blocked_technical',
+      intentState: 'blocked_user',
       orchestratorSessionId: 'pty-stuck',
       description: expect.stringMatching(/encerramento físico.*pendente/i),
     });
@@ -2313,8 +2331,60 @@ describe('mission removal IPC authority', () => {
     expect(harness.removeMission).toHaveBeenCalledWith(
       sender,
       'mission-draft',
+      'removal-fence-a',
+    );
+    expect(harness.prepareMissionRemoval).toHaveBeenCalledWith(
+      sender,
+      'mission-draft',
+      'removal-fence-a',
     );
     expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('mantém o fence durável preparado até o CAS após teardown', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const mission = {
+      id: 'mission-draft',
+      title: 'Runtime vivo',
+      description: 'O exit lifecycle atualizou a revisão.',
+      status: 'blocked' as const,
+      intentState: 'blocked_user' as const,
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 3,
+    };
+    harness.projectStores.forScope.mockReturnValueOnce({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === mission.id ? mission : null,
+        list: () => [mission],
+      },
+      missionPanes: { list: () => [] },
+    });
+    harness.missionRemovalCandidate.mockReturnValueOnce({
+      missionId: 'mission-draft',
+      title: 'Runtime vivo',
+      fence: 'fence-before-teardown',
+    });
+    harness.prepareMissionRemoval.mockReturnValueOnce({
+      missionId: 'mission-draft',
+      title: 'Runtime vivo',
+      fence: 'fence-blocked-user',
+    });
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-draft' }),
+    ).resolves.toEqual({ removed: true });
+    expect(harness.removeMission).toHaveBeenCalledWith(
+      sender,
+      'mission-draft',
+      'fence-blocked-user',
+    );
   });
 
   it('retorna removed:false quando a missão já não existe', async () => {

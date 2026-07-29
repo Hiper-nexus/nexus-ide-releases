@@ -20,6 +20,7 @@ import {
   needsMissionOrchestratorBootstrapRecovery,
   prepareDeadGraphReapprovalForScope,
   preferredMissionOrchestratorAdapterId,
+  resumeAutomaticallyBlockedMissionBootstrapForScope,
   restartMissionOrchestratorAfterPlanPromotionForScope,
   runtimeAuthorityMismatches,
   stopMissionOrchestratorBeforePlanPromotionForScope,
@@ -27,6 +28,7 @@ import {
   type DeadGraphReapprovalDeps,
   type PlanPromotionRestartDeps,
 } from './mission-orchestrator-bootstrap';
+import { withMissionLifecycleLock } from './mission-lifecycle-lock';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 import { createMissionPaneAuthoritySeal } from './mission-pane-authority';
 import { NEXUS_STORY_IMPLEMENTATION_SQUAD_ID } from '../../shared/builtin-squad-ids';
@@ -199,6 +201,24 @@ function harness(): Harness {
       };
       return value.mission;
     },
+    retireOrchestratorSessionForReplacement: (
+      _scope,
+      missionId,
+      expectedSessionId,
+    ) => {
+      if (
+        missionId !== value.mission.id ||
+        value.mission.orchestratorSessionId !== expectedSessionId
+      ) {
+        return null;
+      }
+      value.mission = {
+        ...value.mission,
+        orchestratorSessionId: undefined,
+        updatedAt: Date.now(),
+      };
+      return value.mission;
+    },
     hasCurrentKickoffAcceptance: () => value.kickoffAccepted,
     hasPendingKickoffFlight: () => value.kickoffFlightPending,
     listMissionPanes: () => [],
@@ -233,6 +253,8 @@ function harness(): Harness {
       value.closedPanes.push(paneId);
       return true;
     },
+    suppressIntentionalExit: () => () => {},
+    listRuntimePanes: () => [],
     getSessionState: () => 'idle',
     getAgentSessionInfo: (sessionId) =>
       sessionId === 'pty-main-orch'
@@ -342,6 +364,124 @@ function harness(): Harness {
   return value;
 }
 
+function installLiveUnboundOrchestrator(
+  value: Harness,
+  closeResult: boolean,
+): {
+  readonly effects: string[];
+  readonly rows: MissionPaneSpec[];
+} {
+  const blocked: Mission = {
+    ...value.mission,
+    status: 'blocked',
+    intentState: 'blocked_technical',
+    orchestratorSessionId: undefined,
+  };
+  const resume = blockedBootstrapResumePatch(blocked);
+  if (!resume.ok) throw new Error(resume.error);
+  value.mission = { ...blocked, ...resume.patch };
+  const pane: MissionPaneSpec = {
+    id: 'mpane-unbound-live',
+    missionId: value.mission.id,
+    paneId: 'pane-unbound-live',
+    adapterId: 'codex',
+    model: 'gpt-5.6-sol',
+    accountId: 'account-codex',
+    effort: 'high',
+    cwd: scope.rootRealPath,
+    title: 'Squad salvo · unbound',
+    agentName: 'Maestro',
+    role: 'orchestrator',
+    allowedTools: ['nexus_task'],
+    allowedSkills: ['check-work'],
+    readOnly: false,
+    authoritySeal: authoritySealFor(value.mission),
+    scope,
+    executionScope: scope,
+    createdAt: 1,
+  };
+  const rows = [pane];
+  const runtimePanes: PaneSnapshot[] = [
+    {
+      paneId: 'pane-unbound-live',
+      sessionId: 'pty-unbound-live',
+      title: pane.title,
+      kind: 'cli-agent',
+      state: 'idle',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      accountId: 'account-codex',
+      missionId: value.mission.id,
+      agentName: 'Maestro',
+      role: 'orchestrator',
+      scope,
+      executionScope: scope,
+      readOnly: false,
+      nativeReadOnly: true,
+    },
+  ];
+  const effects: string[] = [];
+  const getAgentSessionInfo = value.deps.getAgentSessionInfo;
+  const getRuntimeAuthority = value.deps.getRuntimeAuthority;
+  const spawnMainOwnedPane = value.deps.spawnMainOwnedPane;
+  value.deps.listMissionPanes = () => [...rows];
+  value.deps.listRuntimePanes = () => [...runtimePanes];
+  value.deps.getAgentSessionInfo = (sessionId) =>
+    sessionId === 'pty-unbound-live'
+      ? {
+          sessionId,
+          paneId: 'pane-unbound-live',
+          adapterId: 'codex',
+          model: 'gpt-5.6-sol',
+          requestedModel: 'gpt-5.6-sol',
+          accountId: 'account-codex',
+          effort: 'high',
+          cwd: scope.rootRealPath,
+          scope,
+          source: 'pending',
+          role: 'orchestrator',
+          missionId: value.mission.id,
+          agentName: 'Maestro',
+          readOnly: false,
+          nativeReadOnly: true,
+          allowedTools: ['nexus_task'],
+          allowedSkills: ['check-work'],
+          authoritySeal: pane.authoritySeal,
+        }
+      : getAgentSessionInfo(sessionId);
+  value.deps.getRuntimeAuthority = (sessionId) =>
+    sessionId === 'pty-unbound-live'
+      ? {
+          owner: null,
+          paneId: 'pane-unbound-live',
+          sessionId,
+          kind: 'cli-agent',
+          missionId: value.mission.id,
+          role: 'orchestrator',
+          scope,
+        }
+      : getRuntimeAuthority(sessionId);
+  value.deps.closePane = (paneId) => {
+    effects.push(`close:${paneId}`);
+    value.closedPanes.push(paneId);
+    if (closeResult) runtimePanes.splice(0, runtimePanes.length);
+    return closeResult;
+  };
+  value.deps.removeMissionPane = (_inputScope, id) => {
+    effects.push(`remove:${id}`);
+    const index = rows.findIndex((row) => row.id === id);
+    if (index < 0) return false;
+    rows.splice(index, 1);
+    value.removedPaneRows.push(id);
+    return true;
+  };
+  value.deps.spawnMainOwnedPane = (input) => {
+    effects.push('spawn');
+    return spawnMainOwnedPane(input);
+  };
+  return { effects, rows };
+}
+
 describe('initial main-owned orchestrator bootstrap', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -409,7 +549,8 @@ describe('initial main-owned orchestrator bootstrap', () => {
       ok: false,
       reason: 'preflight_failed',
       error: expect.stringMatching(/main-owned.*guided_plan_route_unavailable/i),
-      cta: 'Retomar missão',
+      cta: 'Recuperação automática',
+      retryScheduled: true,
     });
     expect(h.spawned).toEqual([]);
     expect(h.recorded).toEqual([]);
@@ -534,6 +675,89 @@ describe('initial main-owned orchestrator bootstrap', () => {
     });
   });
 
+  it('turns a deterministic physical authority divergence into a human wait', async () => {
+    const value = harness();
+    const getAgentSessionInfo = value.deps.getAgentSessionInfo;
+    value.deps.getAgentSessionInfo = (sessionId) => {
+      const agent = getAgentSessionInfo(sessionId);
+      return agent
+        ? { ...agent, allowedTools: ['nexus_task', 'unexpected_write'] }
+        : null;
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    const result = await service.bootstrap(scope, value.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'materialization_failed',
+      cta: 'Retomar missão',
+    });
+    expect(result).not.toHaveProperty('retryScheduled');
+    expect(value.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description: expect.stringContaining(
+        TERMINAL_OPERATIONAL_FAILURE_MARKER,
+      ),
+    });
+  });
+
+  it('does not retry-loop a persisted live authority divergence', async () => {
+    const value = harness();
+    value.mission = {
+      ...value.mission,
+      orchestratorSessionId: 'pty-main-orch',
+    };
+    value.deps.listMissionPanes = () => [
+      {
+        id: 'mpane-live-diverged',
+        missionId: value.mission.id,
+        paneId: 'pane-main-orch',
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        accountId: 'account-codex',
+        effort: 'high',
+        cwd: scope.rootRealPath,
+        title: 'Squad salvo · orq',
+        agentName: 'Maestro',
+        role: 'orchestrator',
+        allowedTools: ['nexus_task'],
+        allowedSkills: ['check-work'],
+        readOnly: false,
+        authoritySeal: authoritySealFor(value.mission),
+        scope,
+        executionScope: scope,
+        createdAt: 1,
+      },
+    ];
+    const getAgentSessionInfo = value.deps.getAgentSessionInfo;
+    value.deps.getAgentSessionInfo = (sessionId) => {
+      const agent = getAgentSessionInfo(sessionId);
+      return agent
+        ? { ...agent, allowedTools: ['nexus_task', 'unexpected_write'] }
+        : null;
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    const result = await service.bootstrap(scope, value.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'preflight_failed',
+      cta: 'Retomar missão',
+    });
+    expect(result).not.toHaveProperty('retryScheduled');
+    expect(value.spawned).toEqual([]);
+    expect(value.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+      description: expect.stringContaining(
+        TERMINAL_OPERATIONAL_FAILURE_MARKER,
+      ),
+    });
+  });
+
   it('nega bootstrap prematuro sem alterar a missão byte a byte', async () => {
     const value = harness();
     value.mission = {
@@ -603,7 +827,8 @@ describe('initial main-owned orchestrator bootstrap', () => {
     await expect(service.bootstrap(scope, value.mission.id)).resolves.toMatchObject({
       ok: false,
       reason: 'materialization_failed',
-      cta: 'Retomar missão',
+      cta: 'Recuperação automática',
+      retryScheduled: true,
     });
     expect(value.closedPanes).toEqual(['pane-main-orch']);
     expect(value.removedPaneRows).toEqual([]);
@@ -964,7 +1189,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(resumeBlocked).toHaveBeenCalledTimes(2);
   });
 
-  it('retries a transient technical block with bounded backoff', async () => {
+  it('retries a transient technical authorization gap with bounded backoff', async () => {
     const value = harness();
     let blocked: Mission = {
       ...value.mission,
@@ -978,8 +1203,8 @@ describe('initial main-owned orchestrator bootstrap', () => {
       return {
         ok: false as const,
         missionId: blocked.id,
-        reason: 'provider_exited' as const,
-        error: 'provider exited during boot',
+        reason: 'not_authorized' as const,
+        error: 'o dispatch anterior ainda está terminando',
         cta: 'retry',
       };
     });
@@ -1031,6 +1256,58 @@ describe('initial main-owned orchestrator bootstrap', () => {
 
     expect(resumeBlocked).not.toHaveBeenCalled();
     expect(bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('cancels a queued automatic retry when operator stop wins the lifecycle lock', async () => {
+    const value = harness();
+    let current: Mission = {
+      ...value.mission,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    };
+    let releaseStop!: () => void;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    let stopEntered!: () => void;
+    const stopEnteredGate = new Promise<void>((resolve) => {
+      stopEntered = resolve;
+    });
+    const stop = withMissionLifecycleLock(scope, current.id, async () => {
+      current = {
+        ...current,
+        status: 'blocked',
+        intentState: 'blocked_user',
+      };
+      stopEntered();
+      await stopGate;
+    });
+    await stopEnteredGate;
+    const resumeWithinLifecycleLock = vi.fn();
+    const automaticRetry =
+      resumeAutomaticallyBlockedMissionBootstrapForScope(
+        scope,
+        current.id,
+        {
+          getMission: () => current,
+          resumeWithinLifecycleLock,
+        },
+      );
+
+    releaseStop();
+    await stop;
+    const result = await automaticRetry;
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'not_authorized',
+      cta: 'Retomar missão',
+    });
+    expect(resumeWithinLifecycleLock).not.toHaveBeenCalled();
+    expect(current).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
   });
 
   it('never auto-resumes a proven terminal authority block', async () => {
@@ -1177,7 +1454,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
       orchestratorSessionId: 'pty-main-orch',
     };
     raced.deps.listMissionPanes = () => [livePane(raced.mission.id)];
-    raced.deps.clearOrchestratorSessionIfMatches = () => {
+    raced.deps.retireOrchestratorSessionForReplacement = () => {
       raced.mission = {
         ...raced.mission,
         orchestratorSessionId: 'pty-concurrent-rebind',
@@ -1239,6 +1516,295 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(inflight.mission.status).toBe('running');
   });
 
+  it('physically retires a live orphan session before replacing a torn binding', async () => {
+    const value = harness();
+    value.mission = {
+      ...value.mission,
+      orchestratorSessionId: 'pty-orphan',
+    };
+    const getAgentSessionInfo = value.deps.getAgentSessionInfo;
+    const getRuntimeAuthority = value.deps.getRuntimeAuthority;
+    value.deps.getAgentSessionInfo = (sessionId) =>
+      sessionId === 'pty-orphan'
+        ? {
+            sessionId,
+            paneId: 'pane-orphan',
+            adapterId: 'codex',
+            model: 'gpt-5.6-sol',
+            requestedModel: 'gpt-5.6-sol',
+            accountId: 'account-codex',
+            effort: 'high',
+            cwd: scope.rootRealPath,
+            scope,
+            source: 'pending',
+            role: 'orchestrator',
+            missionId: value.mission.id,
+            agentName: 'Maestro',
+            readOnly: false,
+            nativeReadOnly: true,
+            allowedTools: ['nexus_task'],
+            allowedSkills: ['check-work'],
+            authoritySeal: authoritySealFor(value.mission),
+          }
+        : getAgentSessionInfo(sessionId);
+    value.deps.getRuntimeAuthority = (sessionId) =>
+      sessionId === 'pty-orphan'
+        ? {
+            owner: null,
+            paneId: 'pane-orphan',
+            sessionId,
+            kind: 'cli-agent',
+            missionId: value.mission.id,
+            role: 'orchestrator',
+            scope,
+          }
+        : getRuntimeAuthority(sessionId);
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    const result = await service.bootstrap(scope, value.mission.id);
+
+    expect(result).toMatchObject({
+      ok: true,
+      pane: {
+        paneId: 'pane-main-orch',
+        sessionId: 'pty-main-orch',
+      },
+      kickoff: { accepted: true },
+    });
+    expect(value.closedPanes).toEqual(['pane-orphan']);
+    expect(value.spawned).toHaveLength(1);
+    expect(value.mission.orchestratorSessionId).toBe('pty-main-orch');
+  });
+
+  it('closes a live unbound pane before the single replacement spawn', async () => {
+    const value = harness();
+    const installed = installLiveUnboundOrchestrator(value, true);
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    const result = await service.bootstrap(scope, value.mission.id);
+
+    expect(result).toMatchObject({
+      ok: true,
+      pane: {
+        paneId: 'pane-main-orch',
+        sessionId: 'pty-main-orch',
+      },
+      kickoff: { accepted: true },
+    });
+    expect(installed.effects).toEqual([
+      'close:pane-unbound-live',
+      'remove:mpane-unbound-live',
+      'spawn',
+    ]);
+    expect(value.spawned).toHaveLength(1);
+    expect(installed.rows).toHaveLength(0);
+  });
+
+  it('preserves a live unbound row and never spawns when teardown is unproven', async () => {
+    const value = harness();
+    const installed = installLiveUnboundOrchestrator(value, false);
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    const result = await service.bootstrap(scope, value.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'materialization_failed',
+      retryScheduled: true,
+    });
+    expect(installed.effects).toEqual(['close:pane-unbound-live']);
+    expect(value.spawned).toEqual([]);
+    expect(value.removedPaneRows).toEqual([]);
+    expect(installed.rows).toHaveLength(1);
+    expect(value.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      orchestratorSessionId: undefined,
+    });
+  });
+
+  it('preserves a newer approved revision that wins during physical teardown', async () => {
+    const value = harness();
+    value.mission = {
+      ...value.mission,
+      orchestratorSessionId: 'pty-main-orch',
+    };
+    value.deps.listMissionPanes = () => [
+      {
+        id: 'mpane-revision-v1',
+        missionId: value.mission.id,
+        paneId: 'pane-main-orch',
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        accountId: 'account-codex',
+        effort: 'high',
+        cwd: scope.rootRealPath,
+        title: 'Squad salvo · revisão v1',
+        agentName: 'Maestro',
+        role: 'orchestrator',
+        allowedTools: ['nexus_task'],
+        allowedSkills: ['check-work'],
+        readOnly: false,
+        authoritySeal: authoritySealFor(value.mission),
+        scope,
+        executionScope: scope,
+        createdAt: 1,
+      },
+    ];
+    value.deps.retireOrchestratorSessionForReplacement = () => {
+      value.mission = {
+        ...value.mission,
+        orchestratorSessionId: undefined,
+        intentVersion: 2,
+        intentContract: {
+          ...value.mission.intentContract!,
+          intentVersion: 2,
+          approvedAt: 200,
+          dispatchedAt: 200,
+        },
+        updatedAt: value.mission.updatedAt + 1,
+      };
+      return value.mission;
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    const result = await service.bootstrap(scope, value.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'not_authorized',
+      cta: 'Retomar missão',
+    });
+    expect(result).not.toHaveProperty('retryScheduled');
+    expect(value.closedPanes).toEqual(['pane-main-orch']);
+    expect(value.spawned).toEqual([]);
+    expect(value.mission).toMatchObject({
+      status: 'running',
+      intentVersion: 2,
+      orchestratorSessionId: undefined,
+    });
+  });
+
+  it('retires a live seal-less blocked/dispatched legacy pane and resumes without a loop', async () => {
+    const value = harness();
+    const blocked: Mission = {
+      ...value.mission,
+      status: 'blocked',
+      intentState: 'dispatched',
+      orchestratorSessionId: 'pty-legacy',
+    };
+    const resume = blockedBootstrapResumePatch(blocked);
+    if (!resume.ok) throw new Error(resume.error);
+    value.mission = { ...blocked, ...resume.patch };
+    const legacyPane: MissionPaneSpec = {
+      id: 'mpane-legacy',
+      missionId: value.mission.id,
+      paneId: 'pane-legacy',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      accountId: 'account-codex',
+      effort: 'high',
+      cwd: scope.rootRealPath,
+      title: 'Squad salvo · legado',
+      agentName: 'Maestro',
+      role: 'orchestrator',
+      allowedTools: ['nexus_task'],
+      allowedSkills: ['check-work'],
+      readOnly: false,
+      scope,
+      executionScope: scope,
+      createdAt: 1,
+    };
+    const rows: MissionPaneSpec[] = [legacyPane];
+    const recordMissionPane = value.deps.recordMissionPane;
+    value.deps.listMissionPanes = () => [...rows];
+    value.deps.recordMissionPane = (inputScope, input) => {
+      const row = recordMissionPane(inputScope, input);
+      rows.push(row);
+      return row;
+    };
+    value.deps.removeMissionPane = (_inputScope, id) => {
+      const index = rows.findIndex((row) => row.id === id);
+      if (index < 0) return false;
+      rows.splice(index, 1);
+      value.removedPaneRows.push(id);
+      return true;
+    };
+    const getAgentSessionInfo = value.deps.getAgentSessionInfo;
+    const getRuntimeAuthority = value.deps.getRuntimeAuthority;
+    value.deps.getAgentSessionInfo = (sessionId) =>
+      sessionId === 'pty-legacy'
+        ? {
+            sessionId,
+            paneId: 'pane-legacy',
+            adapterId: 'codex',
+            model: 'gpt-5.6-sol',
+            requestedModel: 'gpt-5.6-sol',
+            accountId: 'account-codex',
+            effort: 'high',
+            cwd: scope.rootRealPath,
+            scope,
+            source: 'pending',
+            role: 'orchestrator',
+            missionId: value.mission.id,
+            agentName: 'Maestro',
+            readOnly: false,
+            nativeReadOnly: true,
+            allowedTools: ['nexus_task'],
+            allowedSkills: ['check-work'],
+          }
+        : getAgentSessionInfo(sessionId);
+    value.deps.getRuntimeAuthority = (sessionId) =>
+      sessionId === 'pty-legacy'
+        ? {
+            owner: null,
+            paneId: 'pane-legacy',
+            sessionId,
+            kind: 'cli-agent',
+            missionId: value.mission.id,
+            role: 'orchestrator',
+            scope,
+          }
+        : getRuntimeAuthority(sessionId);
+    let isExitSuppressed = false;
+    const closePane = value.deps.closePane;
+    value.deps.suppressIntentionalExit = (input) => {
+      expect(input).toMatchObject({
+        missionId: value.mission.id,
+        orchestratorSessionId: 'pty-legacy',
+        authoritySeal: authoritySealFor(value.mission),
+      });
+      isExitSuppressed = true;
+      return () => {
+        isExitSuppressed = false;
+      };
+    };
+    value.deps.closePane = (paneId) => {
+      expect(isExitSuppressed).toBe(true);
+      return closePane(paneId);
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    const first = await service.bootstrap(scope, value.mission.id);
+    const second = await service.bootstrap(scope, value.mission.id);
+
+    expect(first).toMatchObject({
+      ok: true,
+      pane: {
+        paneId: 'pane-main-orch',
+        sessionId: 'pty-main-orch',
+      },
+      kickoff: { accepted: true },
+    });
+    expect(second).toMatchObject({ ok: true, reused: true });
+    expect(value.closedPanes).toEqual(['pane-legacy']);
+    expect(value.removedPaneRows).toEqual(['mpane-legacy']);
+    expect(value.spawned).toHaveLength(1);
+    expect(value.kickoffPrompts).toHaveLength(1);
+    expect(value.mission.orchestratorSessionId).toBe('pty-main-orch');
+    expect(isExitSuppressed).toBe(false);
+  });
+
   it('blocks with one PT-BR CTA when main-owned bootstrap throws unexpectedly', async () => {
     const value = harness();
     value.deps.spawnMainOwnedPane = () => {
@@ -1250,13 +1816,16 @@ describe('initial main-owned orchestrator bootstrap', () => {
       ok: false,
       reason: 'materialization_failed',
       error: expect.stringMatching(/falha física inesperada/i),
-      cta: 'Retomar missão',
+      cta: 'Recuperação automática',
+      retryScheduled: true,
     });
     expect(value.mission).toMatchObject({
       status: 'blocked',
       intentState: 'blocked_technical',
     });
-    expect(value.mission.description.match(/CTA: Retomar missão/g)).toHaveLength(1);
+    expect(
+      value.mission.description.match(/CTA: Recuperação automática/g),
+    ).toHaveLength(1);
   });
 
   it('fails closed before spawn when a persisted attachment is no longer valid', async () => {
@@ -1272,7 +1841,10 @@ describe('initial main-owned orchestrator bootstrap', () => {
       error: expect.stringMatching(/anexo fora/i),
     });
     expect(value.spawned).toEqual([]);
-    expect(value.mission.status).toBe('blocked');
+    expect(value.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
   });
 
   it('blocks same-path byte mutation after approval before provider spawn', async () => {
@@ -1348,7 +1920,7 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.spawned).toEqual([]);
     expect(value.mission).toMatchObject({
       status: 'blocked',
-      intentState: 'blocked_technical',
+      intentState: 'blocked_user',
     });
     expect(value.mission.description).toContain(
       TERMINAL_OPERATIONAL_FAILURE_MARKER,
@@ -1371,10 +1943,13 @@ describe('initial main-owned orchestrator bootstrap', () => {
       error: expect.stringMatching(/read-only|confinamento/i),
     });
     expect(value.spawned).toEqual([]);
-    expect(value.mission.status).toBe('blocked');
+    expect(value.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
   });
 
-  it('does not blindly respawn a provider that already died', async () => {
+  it('cleans a proven-dead provider before respawning it', async () => {
     const value = harness();
     value.mission = {
       ...value.mission,
@@ -1401,20 +1976,32 @@ describe('initial main-owned orchestrator bootstrap', () => {
         createdAt: 1,
       },
     ];
-    value.deps.getSessionState = () => null;
-    value.deps.getAgentSessionInfo = () => null;
-    value.deps.getRuntimeAuthority = () => null;
+    const getSessionState = value.deps.getSessionState;
+    const getAgentSessionInfo = value.deps.getAgentSessionInfo;
+    const getRuntimeAuthority = value.deps.getRuntimeAuthority;
+    value.deps.getSessionState = (sessionId) =>
+      sessionId === 'pty-dead' ? null : getSessionState(sessionId);
+    value.deps.getAgentSessionInfo = (sessionId) =>
+      sessionId === 'pty-dead' ? null : getAgentSessionInfo(sessionId);
+    value.deps.getRuntimeAuthority = (sessionId) =>
+      sessionId === 'pty-dead' ? null : getRuntimeAuthority(sessionId);
     const service = new MissionOrchestratorBootstrapService(value.deps);
 
     await expect(service.bootstrap(scope, value.mission.id)).resolves.toMatchObject({
-      ok: false,
-      reason: 'provider_exited',
-      cta: expect.stringMatching(/retomar/i),
+      ok: true,
+      pane: {
+        paneId: 'pane-main-orch',
+        sessionId: 'pty-main-orch',
+      },
+      kickoff: { accepted: true },
     });
-    expect(value.spawned).toEqual([]);
-    expect(value.mission.status).toBe('blocked');
-    expect(value.mission.intentState).toBe('blocked_technical');
-    expect(value.mission.description).toMatch(/provider.*encerrou/i);
+    expect(value.closedPanes).toEqual(['pane-dead']);
+    expect(value.removedPaneRows).toEqual(['mpane-dead']);
+    expect(value.spawned).toHaveLength(1);
+    expect(value.mission).toMatchObject({
+      status: 'running',
+      orchestratorSessionId: 'pty-main-orch',
+    });
   });
 
   it('fails closed when the saved roster has no explicit orchestrator', async () => {
@@ -1433,7 +2020,10 @@ describe('initial main-owned orchestrator bootstrap', () => {
       cta: 'Retomar missão',
     });
     expect(value.spawned).toEqual([]);
-    expect(value.mission.status).toBe('blocked');
+    expect(value.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
   });
 
   it('não spawna quando o squad salvo diverge do hash aprovado', async () => {
@@ -1481,10 +2071,37 @@ describe('initial main-owned orchestrator bootstrap', () => {
         accepted: false,
         reason: 'timeout',
         cta: 'Retomar missão',
+        retryScheduled: true,
       },
     });
     expect(value.mission.status).toBe('blocked');
     expect(value.closedPanes).toEqual([]);
+  });
+
+  it('does not promise retry when a rejected kickoff retained no recovery proof', async () => {
+    const value = harness();
+    value.deps.submitKickoff = async () => ({
+      accepted: false,
+      reason: 'authority_lost',
+      detail: 'A sessão antiga perdeu autoridade.',
+      cta: 'Retomar missão',
+    });
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    const result = await service.bootstrap(scope, value.mission.id);
+
+    expect(result).toMatchObject({
+      ok: true,
+      kickoff: {
+        accepted: false,
+        reason: 'authority_lost',
+        retryScheduled: false,
+      },
+    });
+    expect(value.mission).toMatchObject({
+      status: 'running',
+      intentState: 'dispatched',
+    });
   });
 });
 

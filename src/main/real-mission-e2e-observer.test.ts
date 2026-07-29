@@ -280,7 +280,7 @@ describe("real mission observer advisor participation", () => {
       agentName: "E2E Advisor Grok",
       workerIncarnationId: "incarnation-grok",
       readOnly: true,
-      nativeReadOnly: true,
+      nativeReadOnly: false,
     });
     harness.dispatches = [
       {
@@ -363,5 +363,51 @@ describe("real mission observer advisor participation", () => {
 
     expect(harness.finishes).toEqual(["invariant-failed"]);
     observer.stop();
+  });
+
+  it("keeps observing an approved technical retry but closes on a human block", () => {
+    harness.mission = {
+      id: MISSION_ID,
+      status: "blocked",
+      intentState: "blocked_technical",
+      intentVersion: 1,
+      squadId: REAL_MISSION_E2E_SQUAD_ID,
+      milestones: [],
+      intentContract: {
+        goal: "Executar a missão real",
+        intentVersion: 1,
+        approvedAt: 100,
+        dispatchedAt: 110,
+        squadRevisionHash: squadBinding.squadRevisionHash,
+      },
+    };
+
+    const observer = createObserver();
+    observer.start();
+    expect(harness.finishes).toEqual([]);
+    observer.stop();
+
+    harness.mission = {
+      ...(harness.mission as Record<string, unknown>),
+      intentState: "blocked_user",
+    };
+    const humanBlockedObserver = createObserver();
+    humanBlockedObserver.start();
+
+    expect(harness.finishes).toEqual(["mission-blocked"]);
+    humanBlockedObserver.stop();
+
+    harness.finishes = [];
+    harness.mission = {
+      ...(harness.mission as Record<string, unknown>),
+      intentState: "blocked_technical",
+      description:
+        "[NEXUS_FAILURE:terminal] a autoridade aprovada divergiu",
+    };
+    const terminalBlockedObserver = createObserver();
+    terminalBlockedObserver.start();
+
+    expect(harness.finishes).toEqual(["mission-blocked"]);
+    terminalBlockedObserver.stop();
   });
 });

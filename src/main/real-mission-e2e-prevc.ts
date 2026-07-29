@@ -154,7 +154,7 @@ function isExactRealMissionE2EIntent(
       contract.squadRevisionHash === profile.binding.squadRevisionHash &&
       contract.orchestratorRuntime?.adapterId === "codex" &&
       contract.orchestratorRuntime.readOnly === false &&
-      contract.orchestratorRuntime.nativeReadOnly === true &&
+      contract.orchestratorRuntime.nativeReadOnly === false &&
       contract.parentTaskId === undefined &&
       contract.requiredWorkerAgentRef === undefined,
   );

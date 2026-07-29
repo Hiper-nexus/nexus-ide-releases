@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
 import {
   groupMissionsForRail,
+  missionIsOperationallyActive,
   missionRailResumeCopy,
+  railDotStatus,
   railStatusDisplay,
 } from './mission-rail-groups';
 
@@ -18,6 +20,18 @@ function mission(
     updatedAt: partial.updatedAt ?? 1,
   };
 }
+
+const automaticRecoveryAuthority: Pick<
+  Mission,
+  'intentVersion' | 'intentContract'
+> = {
+  intentVersion: 1,
+  intentContract: {
+    goal: 'Recuperar missão',
+    intentVersion: 1,
+    approvedAt: 1,
+  } as Mission['intentContract'],
+};
 
 describe('groupMissionsForRail', () => {
   const missions: Mission[] = [
@@ -108,6 +122,32 @@ describe('groupMissionsForRail', () => {
     expect(map.done).not.toContain('blk');
   });
 
+  it('keeps a technical retry in progress even while its replacement PTY is pending', () => {
+    const recovering = mission({
+      id: 'retry',
+      title: 'Recovering provider boot',
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      ...automaticRecoveryAuthority,
+      updatedAt: 40,
+    });
+    const sections = groupMissionsForRail({
+      missions: [...missions, recovering],
+      openMissionIds: new Set(),
+      pinnedIds: [],
+      query: '',
+    });
+    const map = Object.fromEntries(
+      sections.map((section) => [
+        section.id,
+        section.missions.map((entry) => entry.id),
+      ]),
+    );
+
+    expect(map.active).toContain('retry');
+    expect(map.stopped).not.toContain('retry');
+  });
+
   it('reabrir a missão devolve o card para Em progresso', () => {
     const reopened = mission({
       id: 'blk',
@@ -156,6 +196,61 @@ describe('groupMissionsForRail', () => {
   });
 });
 
+describe('missionIsOperationallyActive', () => {
+  it('counts Main-owned technical backoff without inventing a live PTY', () => {
+    expect(
+      missionIsOperationallyActive(
+        mission({
+          id: 'retry',
+          title: 'Retry',
+          status: 'blocked',
+          intentState: 'blocked_technical',
+          ...automaticRecoveryAuthority,
+        }),
+        false,
+      ),
+    ).toBe(true);
+    expect(
+      missionIsOperationallyActive(
+        mission({
+          id: 'human',
+          title: 'Human wait',
+          status: 'blocked',
+          intentState: 'blocked_user',
+        }),
+        false,
+      ),
+    ).toBe(false);
+  });
+
+  it('does not promise recovery for a stale or terminal technical row', () => {
+    expect(
+      missionIsOperationallyActive(
+        mission({
+          id: 'stale',
+          title: 'Stale',
+          status: 'blocked',
+          intentState: 'blocked_technical',
+        }),
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      missionIsOperationallyActive(
+        mission({
+          id: 'terminal',
+          title: 'Terminal',
+          status: 'blocked',
+          intentState: 'blocked_technical',
+          ...automaticRecoveryAuthority,
+          description: '[NEXUS_FAILURE:terminal] autoridade divergente',
+        }),
+        false,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe('railStatusDisplay', () => {
   it('marks live grid as Ao vivo', () => {
     expect(railStatusDisplay('pending', true)).toEqual({
@@ -198,9 +293,12 @@ describe('railStatusDisplay', () => {
     expect(railStatusDisplay('running', false, 'executing').label).toBe(
       'Em curso',
     );
-    expect(railStatusDisplay('blocked', false, 'blocked_technical').label).toBe(
-      'Bloqueada',
-    );
+    expect(
+      railStatusDisplay('blocked', false, 'blocked_technical'),
+    ).toEqual({
+      label: 'Recuperando',
+      tone: 'running',
+    });
     expect(railStatusDisplay('blocked', true).label).toBe('Bloqueada');
   });
 
@@ -253,6 +351,25 @@ describe('railStatusDisplay', () => {
 });
 
 describe('missionRailResumeCopy', () => {
+  it('describes technical retry as automatic recovery, not a human block', () => {
+    expect(
+      missionRailResumeCopy(
+        'blocked',
+        false,
+        'blocked_technical',
+      ),
+    ).toEqual({
+      meta: 'Recuperação automática',
+      title: 'O Nexus está preparando uma nova tentativa',
+    });
+    expect(
+      missionRailResumeCopy('blocked', true, 'blocked_technical'),
+    ).toEqual({
+      meta: 'Recuperação automática',
+      title: 'O Nexus está preparando uma nova tentativa',
+    });
+  });
+
   it('labels an off-grid running mission as recoverable instead of focusable', () => {
     expect(missionRailResumeCopy('running', false)).toEqual({
       meta: 'Retomar panes salvos',
@@ -300,6 +417,19 @@ describe('missionRailResumeCopy', () => {
       meta: 'Continuar plano',
       title: 'Plano armado — clique para revisar e começar',
     });
+  });
+});
+
+describe('railDotStatus', () => {
+  it('keeps the activity dot running throughout technical recovery', () => {
+    expect(railDotStatus('blocked', 'running', false)).toBe('running');
+    expect(railDotStatus('blocked', 'running', true)).toBe('running');
+  });
+
+  it('preserves real human blocks and terminal outcomes', () => {
+    expect(railDotStatus('blocked', 'blocked', false)).toBe('blocked');
+    expect(railDotStatus('failed', 'failed', true)).toBe('failed');
+    expect(railDotStatus('done', 'done', true)).toBe('done');
   });
 });
 

@@ -693,13 +693,13 @@ describe("independent evidence verifier", () => {
   it("requires the exact physical mutation authority for every runtime role", () => {
     const mutations = [
       [0, "readOnly", true],
-      [0, "nativeReadOnly", false],
+      [0, "nativeReadOnly", true],
       [1, "readOnly", true],
       [1, "nativeReadOnly", true],
       [2, "readOnly", false],
-      [2, "nativeReadOnly", false],
+      [2, "nativeReadOnly", true],
       [3, "readOnly", false],
-      [3, "nativeReadOnly", false],
+      [3, "nativeReadOnly", true],
     ];
 
     for (const [paneIndex, field, value] of mutations) {

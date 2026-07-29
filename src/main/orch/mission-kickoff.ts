@@ -8,7 +8,7 @@ import {
 import { buildIntentDispatchKickoffPrompt } from '../../shared/mission-dispatch-kickoff';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { getOrchSettings } from '../persistence/settings-store';
-import type { Mission, Squad } from '../../shared/orch-types';
+import type { Mission, MissionPaneSpec, Squad } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import type { PaneSessionState, ProjectExecutionScope } from '../../shared/types';
 import {
@@ -18,11 +18,17 @@ import {
   tapSessionData,
   tapSessionExit,
   tapSessionState,
+  type OwnedAgentSessionInfo,
 } from '../pty/pty-manager';
 import { requireRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import { getContextBySession } from './gate';
-import { getPaneRuntimeAuthorityBySession } from './pane-registry';
+import {
+  getPaneRuntimeAuthorityBySession,
+  type PaneRuntimeAuthority,
+} from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { sameMissionPaneAuthoritySeal } from './mission-pane-authority';
+import { sameProjectScope } from './project-scoped-broadcast';
 import { assertSafePtyPrompt } from './pty-prompt-safety';
 import { getSquad } from './squad-store';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
@@ -34,6 +40,7 @@ import {
   tapAgentTurnStart,
 } from './agent-status';
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
+import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import {
   getPtyStreamMissionControl,
@@ -100,7 +107,94 @@ export type MissionKickoffResult =
       readonly reason: MissionKickoffFailureReason;
       readonly detail: string;
       readonly cta: string;
+      readonly retryScheduled?: boolean;
     };
+
+export interface MissionKickoffContinuationEvidence {
+  readonly scope: Readonly<ProjectExecutionScope>;
+  readonly mission: Mission | null;
+  readonly expectedSessionId: string;
+  readonly hasCurrentKickoffAcceptance: boolean;
+  readonly sessionState: PaneSessionState | null;
+  readonly pane: MissionPaneSpec | null;
+  readonly agent: OwnedAgentSessionInfo | null;
+  readonly authority: PaneRuntimeAuthority | null;
+}
+
+function sameMissionCapabilities(
+  rawLeft: readonly string[] | null | undefined,
+  rawRight: readonly string[] | null | undefined,
+): boolean {
+  const left = rawLeft ?? null;
+  const right = rawRight ?? null;
+  return (
+    left === right ||
+    (Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => value === right[index]))
+  );
+}
+
+/**
+ * A running status alone is not recovery proof. A rejected kickoff may claim
+ * that Main will continue only when the exact current session still has its
+ * durable receipt, persisted pane and live physical authority.
+ */
+export function hasExactMissionKickoffContinuation(
+  input: MissionKickoffContinuationEvidence,
+): boolean {
+  const {
+    scope,
+    mission,
+    expectedSessionId,
+    pane,
+    agent,
+    authority,
+  } = input;
+  const paneId = pane?.paneId;
+  const isLive =
+    input.sessionState === 'spawning' ||
+    input.sessionState === 'busy' ||
+    input.sessionState === 'idle';
+  return Boolean(
+    mission &&
+      mission.orchestratorSessionId === expectedSessionId &&
+      hasCurrentDispatchAuthority(mission) &&
+      input.hasCurrentKickoffAcceptance &&
+      isLive &&
+      pane &&
+      paneId &&
+      pane.missionId === mission.id &&
+      pane.role === 'orchestrator' &&
+      pane.authoritySeal?.intentVersion === mission.intentVersion &&
+      pane.scope &&
+      sameProjectScope(pane.scope, scope) &&
+      agent &&
+      agent.sessionId === expectedSessionId &&
+      agent.paneId === paneId &&
+      agent.adapterId === pane.adapterId &&
+      agent.requestedModel === pane.model &&
+      agent.accountId === pane.accountId &&
+      agent.effort === pane.effort &&
+      agent.cwd === pane.cwd &&
+      agent.missionId === mission.id &&
+      agent.role === 'orchestrator' &&
+      agent.readOnly === (pane.readOnly === true) &&
+      sameMissionCapabilities(agent.allowedTools, pane.allowedTools) &&
+      sameMissionCapabilities(agent.allowedSkills, pane.allowedSkills) &&
+      sameMissionPaneAuthoritySeal(agent.authoritySeal, pane.authoritySeal) &&
+      sameProjectScope(agent.scope, scope) &&
+      authority &&
+      authority.sessionId === expectedSessionId &&
+      authority.paneId === paneId &&
+      authority.kind === 'cli-agent' &&
+      authority.missionId === mission.id &&
+      authority.role === 'orchestrator' &&
+      authority.scope &&
+      sameProjectScope(authority.scope, scope),
+  );
+}
 
 export interface MissionKickoffAcceptancePorts {
   readonly getState: (sessionId: string) => PaneSessionState | null;
@@ -717,6 +811,36 @@ export function submitMissionKickoffFromMain(
   return submitMissionKickoffWithAuthority(scope, input, initial);
 }
 
+function hasScheduledKickoffRecovery(
+  scope: Readonly<ProjectExecutionScope>,
+  missionId: string,
+  sessionId: string,
+  stores: ReturnType<typeof getProjectDomainStores>,
+): boolean {
+  try {
+    const mission = stores.missions.get(missionId);
+    if (mission && hasAutomaticTechnicalRecovery(mission)) return true;
+    const pane =
+      stores.missionPanes
+        .list(missionId)
+        .find((candidate) => candidate.role === 'orchestrator') ?? null;
+    return hasExactMissionKickoffContinuation({
+      scope,
+      mission,
+      expectedSessionId: sessionId,
+      hasCurrentKickoffAcceptance:
+        stores.missions.hasCurrentKickoffAcceptance(missionId),
+      sessionState: getSessionState(sessionId),
+      pane,
+      agent: getAgentSessionInfo(sessionId),
+      authority: getPaneRuntimeAuthorityBySession(sessionId),
+    });
+  } catch {
+    // A promise of automatic recovery requires positive durable proof.
+    return false;
+  }
+}
+
 function submitMissionKickoffWithAuthority(
   scope: Readonly<ProjectExecutionScope>,
   input: z.infer<typeof missionKickoffRequestSchema>,
@@ -800,7 +924,8 @@ function submitMissionKickoffWithAuthority(
         const note =
           `${KICKOFF_BLOCK_MARKER}\n${missionKickoffFailureMarker(reason)}\n` +
           `## Kickoff não aceito\n${detail} ` +
-          `Clique em “${KICKOFF_CTA}” para reabrir o terminal e reenviar.`;
+          'O Nexus tentará novamente automaticamente; nenhuma nova aprovação ' +
+          'é necessária enquanto este contrato continuar vigente.';
         const description = current.description.includes(KICKOFF_BLOCK_MARKER)
           ? current.description
           : [current.description.trim(), note]
@@ -815,7 +940,17 @@ function submitMissionKickoffWithAuthority(
       },
     },
   ).then((result) => {
-    if (!result.accepted) return result;
+    if (!result.accepted) {
+      return {
+        ...result,
+        retryScheduled: hasScheduledKickoffRecovery(
+          scope,
+          input.missionId,
+          input.sessionId,
+          initial.stores,
+        ),
+      };
+    }
     // The observed edge is not scheduler authority until the exact
     // mission/revision/session receipt commits. Revalidate after the async PTY
     // window so a concurrent rebind cannot inherit a stale successful edge.

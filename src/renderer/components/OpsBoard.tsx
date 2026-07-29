@@ -15,6 +15,7 @@ import {
   canDropMission,
   formatAgo,
   groupMissionsIntoColumns,
+  isMissionBoardRecovering,
 } from '../lib/ops-board';
 import { useLayoutStore } from '../state/layout-store';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -122,7 +123,7 @@ export function OpsBoard() {
   async function closeOrDiscard(m: Mission, active: boolean) {
     const action = missionListAction(m, active);
     if (action === 'none') return;
-    if (action === 'close-runtime') {
+    if (action === 'close-runtime' || action === 'stop-recovery') {
       setBusy(m.id);
       try {
         const result = await closeMissionRuntimeAndPanes(
@@ -275,6 +276,7 @@ export function OpsBoard() {
                   ) : (
                     col.missions.map((m) => {
                       const active = openMissionIds.has(m.id);
+                      const recovering = isMissionBoardRecovering(m);
                       const squad = m.squadId
                         ? squads.find((candidate) => candidate.id === m.squadId)
                         : undefined;
@@ -310,9 +312,13 @@ export function OpsBoard() {
                             'ops-board__card',
                             drag?.id === m.id ? 'ops-board__card--dragging' : '',
                           ].join(' ')}
-                          draggable
+                          draggable={!recovering}
                           aria-roledescription="cartão de missão"
                           onDragStart={(e) => {
+                            if (recovering) {
+                              e.preventDefault();
+                              return;
+                            }
                             e.dataTransfer.effectAllowed = 'move';
                             e.dataTransfer.setData('text/plain', m.title);
                             setDrag({ id: m.id, from: col.status });
@@ -330,9 +336,17 @@ export function OpsBoard() {
                                 ? (squadNames.get(m.squadId) ?? 'squad')
                                 : 'livre'}
                             </span>
-                            {active && (
-                              <span className="ops-board__live" title="Missão aberta no grid">
-                                <span className="ops-board__dot" aria-hidden="true" /> aberta
+                            {(active || recovering) && (
+                              <span
+                                className="ops-board__live"
+                                title={
+                                  recovering
+                                    ? 'Recuperação automática em andamento'
+                                    : 'Missão aberta no grid'
+                                }
+                              >
+                                <span className="ops-board__dot" aria-hidden="true" />{' '}
+                                {recovering ? 'recuperando' : 'aberta'}
                               </span>
                             )}
                           </div>
@@ -390,7 +404,7 @@ export function OpsBoard() {
                             )}
                           </div>
                           <div className="ops-board__card-actions">
-                            {!active && (
+                            {!active && !recovering && (
                               <button
                                 className="ops-board__card-btn"
                                 disabled={busy !== null}

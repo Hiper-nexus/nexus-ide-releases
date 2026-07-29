@@ -72,6 +72,17 @@ export async function confirmAndReopenMission(
     return resumeIntentFirstMissionShell(mission);
   }
 
+  // Blocked missions are owned by Main's bootstrap recovery. Renderer pane
+  // inspection is both stale and misleading here: between retry attempts no
+  // PTY may exist, and a persisted exclusive-login pane must not trigger an
+  // "Encerrar e retomar" prompt before Main has adopted or retired it.
+  if (mission.status === 'blocked') {
+    const result = await reopenMission(mission);
+    return result.intentShell
+      ? resumeIntentFirstMissionShell(mission)
+      : result;
+  }
+
   if (hardReopenWouldDisplaceLayout(mission.id)) {
     // Peek orchestrator adapter from a lightweight hard path only when kill needed.
     // We confirm aggressively only for shared-login conflicts; pure layout merge is silent.

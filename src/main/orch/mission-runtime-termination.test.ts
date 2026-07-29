@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mission, MissionPaneSpec } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { compileIntentContract } from '../../shared/mission-intent';
 
 const runtime = vi.hoisted(() => ({
   pty: [] as Array<Record<string, unknown>>,
@@ -47,7 +48,10 @@ import {
   prepareMissionRuntimeTermination,
   settleMissionRuntimeDemotion,
   terminateMissionRuntime,
+  terminateUnauthorizedMissionRuntimes,
 } from './mission-runtime-termination';
+import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
+import { withMissionLifecycleLock } from './mission-lifecycle-lock';
 
 const scope: ProjectExecutionScope = Object.freeze({
   version: 1,
@@ -68,6 +72,24 @@ const mission = {
   createdAt: 1,
   updatedAt: 2,
 } as Mission;
+
+function authorizedMission(): Mission {
+  const contract = compileIntentContract({
+    goal: 'Continuar a execução aprovada',
+    intentVersion: 1,
+  });
+  return {
+    ...mission,
+    status: 'running',
+    intentState: 'executing',
+    intentVersion: 1,
+    intentContract: {
+      ...contract,
+      approvedAt: 10,
+      dispatchedAt: 11,
+    },
+  };
+}
 
 function pane(
   paneId: string,
@@ -377,7 +399,7 @@ describe('mission runtime physical inventory termination', () => {
     });
   });
 
-  it('persists technical teardown-pending state when demotion cannot prove exit', async () => {
+  it('preserves a user stop while teardown proof remains pending', async () => {
     let current: Mission = {
       ...mission,
       description: 'Bloqueio solicitado pelo operador.',
@@ -413,7 +435,7 @@ describe('mission runtime physical inventory termination', () => {
     expect(result.termination.ok).toBe(false);
     expect(result.mission).toMatchObject({
       status: 'blocked',
-      intentState: 'blocked_technical',
+      intentState: 'blocked_user',
       orchestratorSessionId: 'pty-daemon',
     });
     expect(result.mission.description).toMatch(/encerramento físico.*pendente/i);
@@ -422,7 +444,155 @@ describe('mission runtime physical inventory termination', () => {
   });
 });
 
+describe('unauthorized runtime reconciliation lifecycle lock', () => {
+  it('does not terminate when an approved resume wins the mission lock', async () => {
+    const blocked: Mission = {
+      ...mission,
+      intentState: 'blocked_technical',
+    };
+    let current = blocked;
+    const persisted = pane('pane-resume-wins', 'inc-resume-wins');
+    runtime.pty = [
+      physical('pty-resume-wins', 'pane-resume-wins', 'inc-resume-wins'),
+    ];
+    const stores = {
+      missions: {
+        // Deliberately stale wake-up snapshot.
+        list: () => [blocked],
+        get: (missionId: string) =>
+          missionId === current.id ? current : null,
+      },
+      missionPanes: {
+        list: (missionId: string) =>
+          missionId === current.id ? [persisted] : [],
+      },
+    } as never;
+    let releaseResume!: () => void;
+    const resumeGate = new Promise<void>((resolve) => {
+      releaseResume = resolve;
+    });
+    let resumeEntered!: () => void;
+    const resumeEnteredGate = new Promise<void>((resolve) => {
+      resumeEntered = resolve;
+    });
+    const resume = withMissionLifecycleLock(scope, mission.id, async () => {
+      current = authorizedMission();
+      resumeEntered();
+      await resumeGate;
+    });
+    await resumeEnteredGate;
+
+    const reconcile = terminateUnauthorizedMissionRuntimes(scope, stores);
+    releaseResume();
+    await resume;
+
+    await expect(reconcile).resolves.toEqual([]);
+    expect(runtime.terminatePty).not.toHaveBeenCalled();
+    expect(runtime.pty).toHaveLength(1);
+  });
+
+  it('makes resume wait for teardown and then start exactly once', async () => {
+    let current: Mission = {
+      ...mission,
+      intentState: 'blocked_technical',
+    };
+    const persisted = pane('pane-reconcile-wins', 'inc-reconcile-wins');
+    runtime.pty = [
+      physical(
+        'pty-reconcile-wins',
+        'pane-reconcile-wins',
+        'inc-reconcile-wins',
+      ),
+    ];
+    const stores = {
+      missions: {
+        list: () => [current],
+        get: (missionId: string) =>
+          missionId === current.id ? current : null,
+      },
+      missionPanes: {
+        list: (missionId: string) =>
+          missionId === current.id ? [persisted] : [],
+      },
+    } as never;
+    const effects: string[] = [];
+    let releaseTermination!: () => void;
+    const terminationGate = new Promise<void>((resolve) => {
+      releaseTermination = resolve;
+    });
+    let terminationEntered!: () => void;
+    const terminationEnteredGate = new Promise<void>((resolve) => {
+      terminationEntered = resolve;
+    });
+    runtime.terminatePty.mockImplementation(async () => {
+      effects.push('terminate:start');
+      terminationEntered();
+      await terminationGate;
+      effects.push('terminate:end');
+      return true;
+    });
+
+    const reconcile = terminateUnauthorizedMissionRuntimes(scope, stores);
+    await terminationEnteredGate;
+    const resume = withMissionLifecycleLock(scope, mission.id, () => {
+      effects.push('spawn');
+      current = authorizedMission();
+    });
+    releaseTermination();
+    const [results] = await Promise.all([reconcile, resume]);
+
+    expect(results).toEqual([
+      {
+        ok: true,
+        terminatedSessionIds: ['pty-reconcile-wins'],
+      },
+    ]);
+    expect(effects).toEqual(['terminate:start', 'terminate:end', 'spawn']);
+    expect(runtime.terminatePty).toHaveBeenCalledOnce();
+    expect(current).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+  });
+});
+
 describe('operator close preserves durable mission history', () => {
+  it('revoga a recuperação automática mesmo quando nenhum PTY está vivo', async () => {
+    const recovering: Mission = {
+      ...mission,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      intentVersion: 1,
+      intentContract: {
+        goal: 'Recuperar missão sem apagar histórico',
+        intentVersion: 1,
+        approvedAt: 1,
+      } as Mission['intentContract'],
+      orchestratorSessionId: undefined,
+    };
+    const stores = closeSuite(recovering, []);
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: recovering.id,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      terminatedSessionIds: [],
+      mission: {
+        id: recovering.id,
+        status: 'blocked',
+        intentState: 'blocked_user',
+      },
+    });
+    expect(stores.current()).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
+  });
+
   it('closes an already-blocked mission runtime and clears its session binding', async () => {
     const blocked: Mission = {
       ...mission,
@@ -527,7 +697,7 @@ describe('operator close preserves durable mission history', () => {
       ok: false,
       terminatedSessionIds: [],
       mission: {
-        intentState: 'blocked_technical',
+        intentState: 'blocked_user',
         orchestratorSessionId: 'pty-ghost-live',
       },
     });
@@ -580,7 +750,7 @@ describe('operator close preserves durable mission history', () => {
     expect(runtime.terminatePty).not.toHaveBeenCalled();
   });
 
-  it('keeps the binding and records technical block when exit proof fails', async () => {
+  it('keeps the binding and user stop when exit proof fails', async () => {
     const blocked: Mission = {
       ...mission,
       intentState: 'blocked_user',
@@ -602,10 +772,46 @@ describe('operator close preserves durable mission history', () => {
       terminatedSessionIds: [],
       mission: {
         status: 'blocked',
-        intentState: 'blocked_technical',
+        intentState: 'blocked_user',
         orchestratorSessionId: 'pty-stuck',
         description: expect.stringMatching(/encerramento físico.*pendente/i),
       },
     });
+  });
+
+  it('never turns a failed mission into automatic recovery when exit proof fails', async () => {
+    const failed: Mission = {
+      ...mission,
+      status: 'failed',
+      intentState: 'blocked_technical',
+      intentVersion: 1,
+      intentContract: {
+        goal: 'Missão que já falhou',
+        intentVersion: 1,
+        approvedAt: 1,
+      } as Mission['intentContract'],
+      orchestratorSessionId: 'pty-failed',
+    };
+    const persisted = pane('pane-failed', 'inc-failed');
+    runtime.pty = [physical('pty-failed', 'pane-failed', 'inc-failed')];
+    runtime.terminatePty.mockResolvedValueOnce(false);
+    const stores = closeSuite(failed, [persisted]);
+
+    const result = await closeMissionRuntimePreservingHistory({
+      scope,
+      suite: stores.suite,
+      missionId: failed.id,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      mission: {
+        status: 'failed',
+        orchestratorSessionId: 'pty-failed',
+        description: expect.stringMatching(/encerramento físico.*pendente/i),
+      },
+    });
+    if (!result.mission) throw new Error('mission result expected');
+    expect(hasAutomaticTechnicalRecovery(result.mission)).toBe(false);
   });
 });

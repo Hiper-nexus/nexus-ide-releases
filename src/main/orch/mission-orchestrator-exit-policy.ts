@@ -79,3 +79,13 @@ export function missionOrchestratorExitDescription(
     65_536,
   );
 }
+
+/** Remove only the exact Main-authored pre-dispatch exit notice. */
+export function stripMissionOrchestratorExitDescription(
+  description: string,
+): string {
+  const notice = missionOrchestratorExitDescription('');
+  return description.startsWith(notice)
+    ? description.slice(notice.length).replace(/^\n\n/u, '').trim()
+    : description;
+}

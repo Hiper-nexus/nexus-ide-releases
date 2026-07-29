@@ -149,6 +149,7 @@ import {
   bindOwnedAgentSessionMission,
   configureAgentHookEndpointPath,
   consumeMissionOrchestratorGrant,
+  getAgentSessionInfo,
   getOwnedAgentSessionInfo,
   getSessionState,
   adoptMainOwnedAgentSession,
@@ -1777,6 +1778,50 @@ describe("cli-agent spawn argv hardening", () => {
       }
     },
   );
+
+  it("records the native authority actually applied to an autopilot orchestrator", () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const base = trustedSpawn();
+    const authority: BoundSpawnAuthority = {
+      ...base,
+      source: "pending",
+      coordinationScope: base.scope,
+      context: {
+        missionId: "mission-autopilot-orchestrator",
+        contextRevision: "revision-autopilot-orchestrator",
+        role: "orchestrator",
+        readOnly: false,
+        nativeReadOnly: false,
+        allowedTools: ["nexus_pane_spawn"],
+        allowedSkills: null,
+        scope: base.scope,
+        executionScope: base.scope,
+      },
+    };
+
+    const spawned = spawnMainOwnedAgentSession(
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+        paneId: "pane-autopilot-orchestrator",
+        adapterId: "test-cli",
+      },
+      makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+      {},
+      authority,
+    );
+
+    expect(getAgentSessionInfo(spawned.sessionId)).toMatchObject({
+      role: "orchestrator",
+      missionId: "mission-autopilot-orchestrator",
+      readOnly: false,
+      nativeReadOnly: false,
+    });
+    orchKillSession(spawned.sessionId);
+  });
 
   it("refuses an autopilot read-only worker in the real checkout", () => {
     setSquadCliPolicyLookupForTests(() => "operator-choice");

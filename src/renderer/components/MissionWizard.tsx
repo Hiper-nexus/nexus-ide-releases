@@ -1766,7 +1766,13 @@ export function MissionWizard() {
       );
       return false;
     }
-    useToastStore.getState().push("success", "Missão iniciada", planned.title);
+    useToastStore.getState().push(
+      result.recovering ? "info" : "success",
+      result.recovering ? "Missão em recuperação" : "Missão iniciada",
+      result.recovering
+        ? `${planned.title} · o Nexus tentará novamente sem precisar de outro clique`
+        : planned.title,
+    );
     discardAndClose();
     return true;
   }

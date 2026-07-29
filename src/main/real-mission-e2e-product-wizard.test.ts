@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { WebContents } from "electron";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -306,6 +307,70 @@ describe("main-owned product wizard causal receipt authority", () => {
         REAL_MISSION_E2E_CHANNELS.beginProductWizardGesture,
       ),
     ).toBe(false);
+  });
+
+  it("drains queued renderer edges after observer finalization without reopening evidence authority", () => {
+    const { authority, onInvalid } = install();
+    const launched = begin();
+    harness.mission = armedMission();
+    harness.missionCount = 1;
+
+    authority.quiesce();
+
+    const beginHandler = harness.handlers.get(
+      REAL_MISSION_E2E_CHANNELS.beginProductWizardGesture,
+    );
+    expect(beginHandler).toBeDefined();
+    expect(
+      beginHandler?.(
+        { sender: owner },
+        { source: "trusted-mission-wizard-launch" },
+      ),
+    ).toEqual({ ok: true, inactive: true });
+    expect(
+      invoke(owner, "mission-armed", launched.capability),
+    ).toEqual({ ok: true, inactive: true });
+    expect(authority.receiptForMission(missionId)).toBeNull();
+    expect(onInvalid).not.toHaveBeenCalled();
+    expect(
+      harness.handlers.has(
+        REAL_MISSION_E2E_CHANNELS.recordProductWizardStep,
+      ),
+    ).toBe(true);
+
+    authority.dispose();
+    expect(
+      harness.handlers.has(
+        REAL_MISSION_E2E_CHANNELS.recordProductWizardStep,
+      ),
+    ).toBe(false);
+  });
+
+  it("quiesces the live renderer channel before the packaged gate quits", () => {
+    const source = readFileSync(
+      new URL("./real-mission-e2e.ts", import.meta.url),
+      "utf8",
+    );
+    const finishStart = source.indexOf(
+      "const finish = (failureCode: FailureCode | null) =>",
+    );
+    const finishEnd = source.indexOf(
+      "const prematureExitHandlers =",
+      finishStart,
+    );
+    const finishSource = source.slice(finishStart, finishEnd);
+
+    expect(finishStart).toBeGreaterThan(0);
+    expect(finishEnd).toBeGreaterThan(finishStart);
+    expect(finishSource).toContain(
+      "productWizardReceiptAuthority?.quiesce()",
+    );
+    expect(finishSource).not.toContain(
+      "productWizardReceiptAuthority?.dispose()",
+    );
+    expect(finishSource.indexOf(".quiesce()")).toBeLessThan(
+      finishSource.indexOf("app.quit()"),
+    );
   });
 
   it("fails closed without a gesture and on replayed, foreign, or effected steps", () => {

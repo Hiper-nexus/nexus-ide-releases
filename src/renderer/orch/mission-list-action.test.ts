@@ -32,6 +32,7 @@ import type { Mission } from '../../shared/orch-types';
 import {
   canDiscardMission,
   discardMissionPrompt,
+  missionActionCopy,
   missionListAction,
   removeMissionPrompt,
 } from './mission-list-action';
@@ -49,6 +50,18 @@ function mission(patch: Partial<Mission> = {}): Mission {
     ...patch,
   };
 }
+
+const automaticRecoveryAuthority: Pick<
+  Mission,
+  'intentVersion' | 'intentContract'
+> = {
+  intentVersion: 1,
+  intentContract: {
+    goal: 'Recuperar missão',
+    intentVersion: 1,
+    approvedAt: 1,
+  } as Mission['intentContract'],
+};
 
 describe('mission list action policy', () => {
   it('nunca oferece remoção enquanto existe runtime vivo', () => {
@@ -85,6 +98,29 @@ describe('mission list action policy', () => {
     expect(missionListAction(closed, false)).toBe('remove');
     expect(removeMissionPrompt(closed).confirmLabel).toBe('Remover missão');
     expect(removeMissionPrompt(closed).body).toMatch(/Não dá para desfazer/i);
+  });
+
+  it('oferece parar sem apagar enquanto o Main prepara um retry técnico', () => {
+    const recovering = mission({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      ...automaticRecoveryAuthority,
+    });
+
+    expect(missionListAction(recovering, false)).toBe('stop-recovery');
+    expect(missionActionCopy('stop-recovery')).toEqual({
+      verb: 'Parar',
+      title: 'Parar a recuperação automática e preservar o histórico',
+    });
+  });
+
+  it('permite remover bloqueio técnico sem autoridade de retry', () => {
+    const stale = mission({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+
+    expect(missionListAction(stale, false)).toBe('remove');
   });
 
   it('missão concluída também pode ser removida quando parada', () => {

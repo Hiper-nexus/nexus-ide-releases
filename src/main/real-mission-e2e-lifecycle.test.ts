@@ -166,7 +166,7 @@ describe("real mission premature exit receipts", () => {
       agentName: "E2E Merge Auxiliar",
       role: "worker",
       readOnly: true,
-      nativeReadOnly: true,
+      nativeReadOnly: false,
     });
 
     expect(gate.inspect(auxiliary.sessionId, auxiliary)).toEqual({
@@ -182,7 +182,7 @@ describe("real mission premature exit receipts", () => {
       agentName: "reviewer-codex-1-63549194f40b",
       role: "worker",
       readOnly: true,
-      nativeReadOnly: true,
+      nativeReadOnly: false,
     });
 
     expect(gate.inspect(council.sessionId, council)).toEqual({
@@ -199,7 +199,7 @@ describe("real mission premature exit receipts", () => {
         agentName: REAL_MISSION_E2E_ORCHESTRATOR_NAME,
         role: "orchestrator",
         readOnly: false,
-        nativeReadOnly: true,
+        nativeReadOnly: false,
       }),
       rosterPty({
         sessionId: "pty-executor",
@@ -213,14 +213,14 @@ describe("real mission premature exit receipts", () => {
         agentName: REAL_MISSION_E2E_REVIEWER_NAME,
         role: "worker",
         readOnly: true,
-        nativeReadOnly: true,
+        nativeReadOnly: false,
       }),
       rosterPty({
         sessionId: "pty-qa",
         agentName: REAL_MISSION_E2E_QA_NAME,
         role: "worker",
         readOnly: true,
-        nativeReadOnly: true,
+        nativeReadOnly: false,
       }),
     ];
     const identities: RealMissionPhysicalPtyIdentity[] = [
@@ -243,7 +243,7 @@ describe("real mission premature exit receipts", () => {
       agentName: REAL_MISSION_E2E_REVIEWER_NAME,
       role: "worker",
       readOnly: true,
-      nativeReadOnly: true,
+      nativeReadOnly: false,
     });
     expect(
       gate.inspect(duplicateReviewer.sessionId, duplicateReviewer),

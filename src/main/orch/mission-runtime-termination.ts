@@ -5,6 +5,7 @@ import {
   hasCurrentDispatchAuthority,
   missionBlockPatch,
 } from '../../shared/mission-intent';
+import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 import type {
   Mission,
   MissionPaneSpec,
@@ -22,6 +23,7 @@ import {
   requestMissionPaneClose,
 } from './pane-registry';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
+import { withMissionLifecycleLock } from './mission-lifecycle-lock';
 import { sameProjectScope } from './project-scoped-broadcast';
 
 export type MissionRuntimeTerminationReason =
@@ -474,8 +476,21 @@ export async function settleMissionRuntimeDemotion(input: {
         .filter(Boolean)
         .join('\n\n')
         .slice(0, 65_536);
+  const pendingState =
+    input.demotedMission.status === 'failed'
+      ? {
+          status: 'failed' as const,
+          ...(input.demotedMission.intentState
+            ? { intentState: input.demotedMission.intentState }
+            : {}),
+        }
+      : missionBlockPatch(
+          input.demotedMission.intentState === 'blocked_user'
+            ? 'user'
+            : 'technical',
+        );
   const pending = input.suite.missions.update(current.id, {
-    ...missionBlockPatch('technical'),
+    ...pendingState,
     description,
   });
   if (!pending) {
@@ -511,7 +526,8 @@ export async function closeMissionRuntimePreservingHistory(input: {
     };
   }
   const blocked =
-    current.status === 'blocked' || current.status === 'failed'
+    (current.status === 'blocked' || current.status === 'failed') &&
+    !hasAutomaticTechnicalRecovery(current)
       ? current
       : input.suite.missions.block(current.id, 'user');
   if (!blocked) {
@@ -550,33 +566,42 @@ export async function terminateUnauthorizedMissionRuntimes(
   suite: ProjectDomainStoreSuite,
 ): Promise<MissionRuntimeTerminationResult[]> {
   const results: MissionRuntimeTerminationResult[] = [];
-  for (const mission of suite.missions.list()) {
-    if (hasCurrentDispatchAuthority(mission)) continue;
-    let targets: RuntimeTarget[];
-    try {
-      targets = runtimeTargets({
-        scope,
-        mission,
-        panes: suite.missionPanes.list(mission.id),
-      });
-    } catch (error) {
-      results.push({
-        ok: false,
-        terminatedSessionIds: [],
-        error: error instanceof Error ? error.message : String(error),
-      });
-      continue;
-    }
-    if (targets.length === 0) continue;
-    results.push(
-      await terminateMissionRuntime({
-        scope,
-        suite,
-        missionId: mission.id,
-        reason: 'authority-revoked',
-        collapsePanes: true,
-      }),
+  const missionIds = suite.missions.list().map((mission) => mission.id);
+  for (const missionId of missionIds) {
+    const result = await withMissionLifecycleLock(
+      scope,
+      missionId,
+      async (): Promise<MissionRuntimeTerminationResult | null> => {
+        // The list() result is only a wake-up hint. Re-authorize after waiting
+        // for the same mutex used by resume/bootstrap so an approved runtime
+        // that won the lock cannot be killed from a stale blocked snapshot.
+        const current = suite.missions.get(missionId);
+        if (!current || hasCurrentDispatchAuthority(current)) return null;
+        let targets: RuntimeTarget[];
+        try {
+          targets = runtimeTargets({
+            scope,
+            mission: current,
+            panes: suite.missionPanes.list(current.id),
+          });
+        } catch (error) {
+          return {
+            ok: false,
+            terminatedSessionIds: [],
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+        if (targets.length === 0) return null;
+        return terminateMissionRuntime({
+          scope,
+          suite,
+          missionId,
+          reason: 'authority-revoked',
+          collapsePanes: true,
+        });
+      },
     );
+    if (result) results.push(result);
   }
   return results;
 }

@@ -91,15 +91,21 @@ describe("real mission E2E PASS graph", () => {
   });
 
   it("requires the exact physical mutation authority for every runtime role", () => {
+    expect(
+      (validPassEvidence().panes as Array<Record<string, unknown>>).map(
+        (pane) => pane.nativeReadOnly,
+      ),
+    ).toEqual([false, false, false, false]);
+
     const mutations = [
       [0, "readOnly", true],
-      [0, "nativeReadOnly", false],
+      [0, "nativeReadOnly", true],
       [1, "readOnly", true],
       [1, "nativeReadOnly", true],
       [2, "readOnly", false],
-      [2, "nativeReadOnly", false],
+      [2, "nativeReadOnly", true],
       [3, "readOnly", false],
-      [3, "nativeReadOnly", false],
+      [3, "nativeReadOnly", true],
     ] as const;
 
     for (const [paneIndex, field, value] of mutations) {

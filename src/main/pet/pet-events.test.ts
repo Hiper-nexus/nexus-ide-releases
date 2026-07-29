@@ -4,8 +4,17 @@ import {
   AgentTransitionTracker,
   MissionTransitionTracker,
 } from './pet-events';
+import type { MissionIntentContract } from '../../shared/mission-intent';
 
 const at = 1_000;
+const automaticRecoveryAuthority = {
+  intentVersion: 1,
+  intentContract: {
+    goal: 'Recuperar missão',
+    intentVersion: 1,
+    approvedAt: 1,
+  } as MissionIntentContract,
+};
 
 describe('MissionTransitionTracker', () => {
   it('não dispara nada na primeira leva (seed), mesmo com done presente', () => {
@@ -29,6 +38,105 @@ describe('MissionTransitionTracker', () => {
     expect(
       t.ingest('a', [{ id: '1', title: 'Deploy', status: 'blocked' }], at),
     ).toEqual([{ kind: 'mission-blocked', title: 'Deploy', at }]);
+  });
+
+  it('não pede intervenção durante retry técnico, mas avisa se virar espera humana', () => {
+    const t = new MissionTransitionTracker();
+    t.ingest(
+      'a',
+      [{ id: '1', title: 'Deploy', status: 'running', intentState: 'executing' }],
+      at,
+    );
+    expect(
+      t.ingest(
+        'a',
+        [
+          {
+            id: '1',
+            title: 'Deploy',
+            status: 'blocked',
+            intentState: 'blocked_technical',
+            ...automaticRecoveryAuthority,
+          },
+        ],
+        at + 1,
+      ),
+    ).toEqual([]);
+    expect(
+      t.ingest(
+        'a',
+        [
+          {
+            id: '1',
+            title: 'Deploy',
+            status: 'blocked',
+            intentState: 'blocked_user',
+          },
+        ],
+        at + 2,
+      ),
+    ).toEqual([
+      { kind: 'mission-blocked', title: 'Deploy', at: at + 2 },
+    ]);
+  });
+
+  it('avisa quando blocked_technical não possui autoridade de retry', () => {
+    const t = new MissionTransitionTracker();
+    t.ingest('a', [{ id: '1', title: 'Deploy', status: 'running' }], at);
+
+    expect(
+      t.ingest(
+        'a',
+        [
+          {
+            id: '1',
+            title: 'Deploy',
+            status: 'blocked',
+            intentState: 'blocked_technical',
+          },
+        ],
+        at + 1,
+      ),
+    ).toEqual([
+      { kind: 'mission-blocked', title: 'Deploy', at: at + 1 },
+    ]);
+  });
+
+  it('não repete alerta ao normalizar bloqueio legado para blocked_user', () => {
+    const t = new MissionTransitionTracker();
+    t.ingest('a', [{ id: '1', title: 'Deploy', status: 'running' }], at);
+
+    expect(
+      t.ingest(
+        'a',
+        [
+          {
+            id: '1',
+            title: 'Deploy',
+            status: 'blocked',
+            intentState: 'dispatched',
+          },
+        ],
+        at + 1,
+      ),
+    ).toEqual([
+      { kind: 'mission-blocked', title: 'Deploy', at: at + 1 },
+    ]);
+
+    expect(
+      t.ingest(
+        'a',
+        [
+          {
+            id: '1',
+            title: 'Deploy',
+            status: 'blocked',
+            intentState: 'blocked_user',
+          },
+        ],
+        at + 2,
+      ),
+    ).toEqual([]);
   });
 
   it('expõe “Handoff não entregue” no alerta quando esse foi o bloqueio', () => {

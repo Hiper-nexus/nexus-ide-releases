@@ -9,6 +9,7 @@ import {
   reconcileMissionOrchestratorExits,
   resetMissionOrchestratorExitLifecycleForTests,
   shutdownMissionOrchestratorExitLifecycle,
+  suppressIntentionalMissionOrchestratorExit,
   type MissionOrchestratorExitLifecycleDeps,
 } from './mission-orchestrator-exit-lifecycle';
 import { hashMissionIntentContract } from './mission-pane-authority';
@@ -220,6 +221,31 @@ describe('physical Maestro exit lifecycle', () => {
     expect(
       handleMissionOrchestratorSessionExit('orch-a', authority, f.deps),
     ).toBe(true);
+    expect(f.currentMission()).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+  });
+
+  it('suppresses only an exact intentional teardown through durable cleanup', () => {
+    const f = fixture();
+    const release = suppressIntentionalMissionOrchestratorExit({
+      scope,
+      missionId: mission.id,
+      orchestratorSessionId: 'orch-a',
+      authoritySeal: authority.authoritySeal!,
+    });
+
+    expect(
+      handleMissionOrchestratorSessionExit('orch-a', authority, f.deps),
+    ).toBe(false);
+    f.setLiveSession(null);
+    expect(reconcileMissionOrchestratorExits(f.deps)).toBe(true);
+    expect(f.blockOrchestratorPreDispatchExit).not.toHaveBeenCalled();
+
+    release();
+    expect(reconcileMissionOrchestratorExits(f.deps)).toBe(true);
+    expect(f.blockOrchestratorPreDispatchExit).toHaveBeenCalledOnce();
     expect(f.currentMission()).toMatchObject({
       status: 'blocked',
       intentState: 'blocked_technical',

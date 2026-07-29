@@ -8,8 +8,13 @@ Data: 2026-07-29
 
 - **Falha técnica vira retry**: spawn, bootstrap, capacidade temporária e
   recuperação depois de reiniciar o app voltam para uma fila durável com
-  backoff. `blocked` fica reservado para autenticação, decisão humana,
-  ambiguidade real ou ação sensível.
+  backoff. Durante a troca de PTY o rail mostra `Recuperando`, mantém a missão
+  entre as ativas e não chama o operador pelo pet. O comando `Parar` interrompe
+  o retry sem apagar o histórico quando o operador quiser assumir a decisão.
+- **Autopiloto não herda o confinamento Hardened**: a sessão física registra a
+  policy realmente aplicada. Um orquestrador aprovado com
+  `nativeReadOnly=false` não reaparece como `true` e não se autobloqueia por
+  divergência antes do primeiro dispatch.
 - **Autoridade antiga é reconciliada**: panes persistidos em estados
   incompatíveis deixam de produzir `stale persisted mission pane authority`.
   Missões são retomadas pelo Main, independentemente da preferência usada para
@@ -28,6 +33,10 @@ Data: 2026-07-29
   cedo, mas React só navega após todos os canais IPC estarem registrados.
   Primeiro launch lento deixa de fixar stores em fallback ou imprimir
   `No handler registered` até uma recarga.
+- **Finalização do wizard drena eventos já enviados**: ao concluir ou falhar,
+  o gate deixa o IPC em modo inativo até o renderer terminar a cadeia do
+  clique. Um `approval-returned` tardio não encontra mais handler removido nem
+  cria receipt depois do veredito.
 
 ### Autopiloto multi-CLI
 

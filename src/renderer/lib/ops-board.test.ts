@@ -6,6 +6,7 @@ import {
   canDropMission,
   formatAgo,
   groupMissionsIntoColumns,
+  isMissionBoardRecovering,
 } from './ops-board';
 
 function mkMission(over: Partial<Mission> & { id: string }): Mission {
@@ -20,6 +21,18 @@ function mkMission(over: Partial<Mission> & { id: string }): Mission {
     ...over,
   };
 }
+
+const automaticRecoveryAuthority: Pick<
+  Mission,
+  'intentVersion' | 'intentContract'
+> = {
+  intentVersion: 1,
+  intentContract: {
+    goal: 'Recuperar missão',
+    intentVersion: 1,
+    approvedAt: 1,
+  } as Mission['intentContract'],
+};
 
 describe('groupMissionsIntoColumns', () => {
   test('returns the five columns in fixed pipeline order even without missions', () => {
@@ -60,6 +73,33 @@ describe('groupMissionsIntoColumns', () => {
     const pending = groupMissionsIntoColumns(missions)[0];
 
     expect(pending.missions.map((m) => m.id)).toEqual(['new', 'mid', 'old']);
+  });
+
+  test('projects a technical retry as operational instead of human-blocked', () => {
+    const retrying = mkMission({
+      id: 'retry',
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      ...automaticRecoveryAuthority,
+    });
+    const waiting = mkMission({
+      id: 'human',
+      status: 'blocked',
+      intentState: 'blocked_user',
+    });
+    const columns = groupMissionsIntoColumns([retrying, waiting]);
+    const byStatus = Object.fromEntries(
+      columns.map((column) => [column.status, column.missions]),
+    );
+
+    expect(isMissionBoardRecovering(retrying)).toBe(true);
+    expect(isMissionBoardRecovering(waiting)).toBe(false);
+    expect(byStatus.running.map((mission: Mission) => mission.id)).toEqual([
+      'retry',
+    ]);
+    expect(byStatus.blocked.map((mission: Mission) => mission.id)).toEqual([
+      'human',
+    ]);
   });
 });
 

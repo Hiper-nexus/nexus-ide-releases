@@ -1,4 +1,5 @@
 import type { Mission, MissionStatus } from '../../shared/orch-types';
+import { hasAutomaticTechnicalRecovery } from '../../shared/mission-recovery-policy';
 
 /**
  * Lógica pura do Ops Board — pipeline espacial de missões. O board é uma
@@ -29,12 +30,24 @@ export interface BoardColumn {
   missions: Mission[];
 }
 
+/**
+ * Retry técnico continua sob autoridade do Main. No board ele pertence ao
+ * trabalho em andamento, não à fila de decisões humanas.
+ */
+export function isMissionBoardRecovering(mission: Mission): boolean {
+  return hasAutomaticTechnicalRecovery(mission);
+}
+
+function missionBoardStatus(mission: Mission): MissionStatus {
+  return isMissionBoardRecovering(mission) ? 'running' : mission.status;
+}
+
 /** Agrupa missões nas 5 colunas do pipeline, mais recentes primeiro. */
 export function groupMissionsIntoColumns(missions: Mission[]): BoardColumn[] {
   return BOARD_ORDER.map((status) => ({
     status,
     missions: missions
-      .filter((m) => m.status === status)
+      .filter((mission) => missionBoardStatus(mission) === status)
       .sort((a, b) => b.updatedAt - a.updatedAt),
   }));
 }

@@ -318,7 +318,12 @@ export function initRealMissionE2E(): void {
     observedMissionId = null;
     unsubscribeProductWizardMission?.();
     unsubscribeProductWizardMission = null;
-    productWizardReceiptAuthority?.dispose();
+    // The observer can reach a final verdict while the renderer is still
+    // unwinding a trusted launch click (for example, approval transitions the
+    // mission to blocked before the queued `approval-returned` receipt edge).
+    // Keep terminal acknowledgements installed until process teardown so that
+    // finalization cannot orphan an already-authorized renderer invoke.
+    productWizardReceiptAuthority?.quiesce();
     clearTimeout(timeout);
     ipcMain.removeListener(WINDOW_CHANNELS.mounted, onMounted);
     ipcMain.removeHandler(REAL_MISSION_E2E_CHANNELS.prepareFixture);

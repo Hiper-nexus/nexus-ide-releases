@@ -1168,7 +1168,7 @@ export function assertRealMissionPassEvidence(raw) {
         (pane?.adapterId === "codex" || pane?.adapterId === "claude") &&
         pane?.agentRef === "e2e-orchestrator" &&
         pane?.readOnly === false &&
-        pane?.nativeReadOnly === true,
+        pane?.nativeReadOnly === false,
     ).length === 1 &&
     // Variante coerente: orquestrador Claude exige a advisor claude marcada
     // orchestrator-reserved (reserveClaude); orquestrador codex proíbe a marca.
@@ -1193,7 +1193,7 @@ export function assertRealMissionPassEvidence(raw) {
         pane?.adapterId === "codex" &&
         pane?.agentRef === "e2e-reviewer" &&
         pane?.readOnly === true &&
-        pane?.nativeReadOnly === true &&
+        pane?.nativeReadOnly === false &&
         typeof pane?.workerIncarnationId === "string",
     ).length === 1 &&
     panes.filter(
@@ -1202,7 +1202,7 @@ export function assertRealMissionPassEvidence(raw) {
         pane?.adapterId === "codex" &&
         pane?.agentRef === "e2e-qa" &&
         pane?.readOnly === true &&
-        pane?.nativeReadOnly === true &&
+        pane?.nativeReadOnly === false &&
         typeof pane?.workerIncarnationId === "string",
     ).length === 1 &&
     chainDispatchIsExact &&

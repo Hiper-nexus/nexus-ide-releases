@@ -597,6 +597,7 @@ export type MissionOrchestratorBootstrapResult =
               | 'authority_lost';
             readonly detail: string;
             readonly cta: string;
+            readonly retryScheduled?: boolean;
           };
       readonly reused?: boolean;
     }
@@ -613,6 +614,11 @@ export type MissionOrchestratorBootstrapResult =
         | 'provider_exited';
       readonly error: string;
       readonly cta: string;
+      /**
+       * Main retained the approved authority and durably scheduled another
+       * attempt. Renderers must present this as recovery, not ask for a click.
+       */
+      readonly retryScheduled?: boolean;
       /** Fresh main-owned revision that must pass native approval before spawn. */
       readonly intentVersion?: number;
     };

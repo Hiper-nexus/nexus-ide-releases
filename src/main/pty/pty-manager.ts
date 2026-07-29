@@ -1578,9 +1578,11 @@ export function spawnAgentSession(
       immediateMissionGoal: authority.context?.immediateMissionGoal,
       workerIncarnationId: authority.context?.workerIncarnationId,
       readOnly: authority.context?.readOnly === true,
-      // Record the sealed task semantic, even when the default autopilot does
-      // not turn it into a provider/kernel confinement profile.
-      nativeReadOnly: requestedNativeReadOnly,
+      // Report the authority actually applied to the provider process. The
+      // default autopilot deliberately does not enforce the read-only profile;
+      // persisting the pre-policy request here would make the live session
+      // diverge from its approved runtime snapshot and fail reattachment.
+      nativeReadOnly,
       allowedTools:
         authority.context?.allowedTools === null ||
         authority.context?.allowedTools === undefined

@@ -7,14 +7,19 @@
  * worktree so a repair can produce a new commit.
  */
 import { hasRetiredRosterRouteMarker } from "../../shared/retired-adapter-policy";
+import {
+  TERMINAL_OPERATIONAL_FAILURE_MARKER,
+} from "../../shared/mission-recovery-policy";
+
+export {
+  hasTerminalOperationalFailureMarker,
+  TERMINAL_OPERATIONAL_FAILURE_MARKER,
+} from "../../shared/mission-recovery-policy";
 
 export type OperationalFailureDisposition =
   | "retryable"
   | "repair"
   | "terminal";
-
-export const TERMINAL_OPERATIONAL_FAILURE_MARKER =
-  "[NEXUS_FAILURE:terminal]";
 
 const REPAIR_ERROR_NAMES = new Set(["MergeValidationRejectedError"]);
 
@@ -75,10 +80,4 @@ export function terminalOperationalFailureReason(reason: string): string {
   return `${TERMINAL_OPERATIONAL_FAILURE_MARKER} ${
     detail || "terminal operational authority failure"
   }`;
-}
-
-export function hasTerminalOperationalFailureMarker(
-  value: string,
-): boolean {
-  return value.includes(TERMINAL_OPERATIONAL_FAILURE_MARKER);
 }

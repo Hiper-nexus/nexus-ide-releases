@@ -80,6 +80,7 @@ import {
   type ScratchRepository,
 } from "./real-mission-e2e-workspace";
 import type { RealMissionEvidenceAttester } from "./real-mission-e2e-attestation";
+import { hasAutomaticTechnicalRecovery } from "../shared/mission-recovery-policy";
 
 const DONE_SETTLE_MS = 20_000;
 const OBSERVE_INTERVAL_MS = 500;
@@ -1150,7 +1151,16 @@ export class RealMissionObserver {
         return;
       }
     }
-    if (mission.status === "blocked") {
+    // `blocked_technical` is a durable retry checkpoint, not a terminal
+    // outcome. The production bootstrap coordinator re-arms it with bounded
+    // backoff; ending the gate on the first checkpoint would certify the exact
+    // dead-end UX that the release is meant to prevent. A human block remains
+    // terminal for unattended validation, while a stuck technical retry is
+    // still caught by the outer real-mission timeout.
+    if (
+      mission.status === "blocked" &&
+      !hasAutomaticTechnicalRecovery(mission)
+    ) {
       this.#onFinish("mission-blocked");
       return;
     }

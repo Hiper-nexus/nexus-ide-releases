@@ -215,7 +215,7 @@ describe("real mission physical PTY gate with advisors", () => {
       agentName,
       workerIncarnationId: `incarnation-${cli}`,
       readOnly: true,
-      nativeReadOnly: cli !== "kimi",
+      nativeReadOnly: false,
     }) as unknown as PhysicalPtyAgent;
 
   const gate = () =>
@@ -276,7 +276,7 @@ describe("real mission physical PTY gate with advisors", () => {
         agentName: "E2E Orquestrador",
         squadId: "agentic-nexus-real-mission-e2e",
         readOnly: false,
-        nativeReadOnly: true,
+        nativeReadOnly: false,
       }) as unknown as PhysicalPtyAgent;
 
     const claudeGate = new ExactRealMissionPhysicalPtyGate(
