@@ -12,7 +12,7 @@ import {
   suppressIntentionalMissionOrchestratorExit,
   type MissionOrchestratorExitLifecycleDeps,
 } from './mission-orchestrator-exit-lifecycle';
-import { hashMissionIntentContract } from './mission-pane-authority';
+import { hashMissionIntentAuthority } from './mission-pane-authority';
 import type { OrchestratorPreDispatchExitInput } from './mission-store';
 
 const scope = testProjectScope({ checkoutId: 'orchestrator-exit-lifecycle' });
@@ -55,7 +55,7 @@ const authority: OwnedAgentSessionInfo = {
   allowedSkills: null,
   authoritySeal: {
     intentVersion: 2,
-    intentContractHash: hashMissionIntentContract(contract),
+    intentContractHash: hashMissionIntentAuthority(contract),
     contextRevision: 'b'.repeat(64),
     contractHash: 'c'.repeat(64),
     squadRevisionHash: contract.squadRevisionHash,
@@ -90,7 +90,7 @@ function fixture() {
           input.orchestratorSessionId ||
         (currentMission.intentVersion ?? 0) !== input.intentVersion ||
         !currentContract ||
-        hashMissionIntentContract(currentContract) !==
+        hashMissionIntentAuthority(currentContract) !==
           input.intentContractHash ||
         currentContract.squadRevisionHash !== input.squadRevisionHash ||
         dispatchIntentVersions.includes(input.intentVersion)

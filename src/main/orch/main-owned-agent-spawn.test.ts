@@ -1,9 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  PendingRecoverySpawnMeta,
+  PendingSpawnMeta,
+} from "./pane-registry";
 
 const registryDeps = vi.hoisted(() => ({
   assertMissionSpawnAuthorityCurrent: vi.fn(),
   assertPendingSpawnGrantActive: vi.fn(),
   assertPendingRecoverySpawnGrantActive: vi.fn(),
+  claimPendingSpawnMeta: vi.fn((): PendingSpawnMeta | null => null),
+  claimPendingSpawnMetaByPane: vi.fn(
+    (): PendingSpawnMeta | null => null,
+  ),
+  claimPendingRecoverySpawnMeta: vi.fn(
+    (): PendingRecoverySpawnMeta | null => null,
+  ),
+  hasLivePaneSession: vi.fn(() => false),
   bindPendingSpawnSession: vi.fn(() => true),
   bindPendingRecoverySpawnSession: vi.fn(() => true),
   attachSessionScope: vi.fn(),
@@ -11,6 +23,9 @@ const registryDeps = vi.hoisted(() => ({
 }));
 const missionDeps = vi.hoisted(() => ({
   mission: null as { id: string; squadId?: string } | null,
+}));
+const missionPaneDeps = vi.hoisted(() => ({
+  pane: null as typeof persistedPane | null,
 }));
 
 vi.mock("./pane-registry", () => ({
@@ -20,6 +35,11 @@ vi.mock("./pane-registry", () => ({
     registryDeps.assertPendingSpawnGrantActive,
   assertPendingRecoverySpawnGrantActive:
     registryDeps.assertPendingRecoverySpawnGrantActive,
+  claimPendingSpawnMeta: registryDeps.claimPendingSpawnMeta,
+  claimPendingSpawnMetaByPane: registryDeps.claimPendingSpawnMetaByPane,
+  claimPendingRecoverySpawnMeta:
+    registryDeps.claimPendingRecoverySpawnMeta,
+  hasLivePaneSession: registryDeps.hasLivePaneSession,
   bindPendingSpawnSession: registryDeps.bindPendingSpawnSession,
   bindPendingRecoverySpawnSession:
     registryDeps.bindPendingRecoverySpawnSession,
@@ -31,12 +51,21 @@ vi.mock("./mission-store", () => ({
     get: () => missionDeps.mission,
   }),
 }));
+vi.mock("./mission-pane-store", () => ({
+  createScopedMissionPaneStore: () => ({
+    findByPaneId: () => missionPaneDeps.pane,
+  }),
+}));
+vi.mock("../persistence/renderer-workspace-scope", () => ({
+  requireRendererWorkspaceScope: () => scope,
+}));
 vi.mock("../../shared/mission-intent", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../shared/mission-intent")>()),
   hasCurrentDispatchAuthority: () => true,
 }));
 
 import {
+  authorizeMainOwnedAgentSpawn,
   assertMainOwnedAgentSpawnGrantActive,
   bindMissionLaunchAuthority,
   settleSpawnedMainOwnedAgentSession,
@@ -114,8 +143,85 @@ describe("main-owned agent spawn boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     missionDeps.mission = null;
+    missionPaneDeps.pane = null;
+    registryDeps.claimPendingSpawnMeta.mockReturnValue(null);
+    registryDeps.claimPendingSpawnMetaByPane.mockReturnValue(null);
+    registryDeps.claimPendingRecoverySpawnMeta.mockReturnValue(null);
+    registryDeps.hasLivePaneSession.mockReturnValue(false);
     registryDeps.bindPendingSpawnSession.mockReturnValue(true);
     registryDeps.bindPendingRecoverySpawnSession.mockReturnValue(true);
+  });
+
+  it("restores the main-sealed pending authority when presentation loses its token", () => {
+    const sealedRequest = {
+      requestId: "spawn-a",
+      paneId: "pane-a",
+      adapterId: "claude",
+      model: undefined,
+      accountId: undefined,
+      effort: undefined,
+      cwd: scope.rootRealPath,
+      title: "Worker",
+      missionId: "mission-a",
+      agentName: "worker-a",
+      role: "worker" as const,
+      resume: false,
+      resumeLatestOnly: false,
+      restorePersistedAuthority: false,
+    } as const;
+    registryDeps.claimPendingSpawnMetaByPane.mockReturnValueOnce({
+      ...pending,
+      requestedCwd: scope.rootRealPath,
+      sealedRequest,
+    });
+
+    const authorized = authorizeMainOwnedAgentSpawn(
+      owner as never,
+      {
+        kind: "cli-agent",
+        cols: 80,
+        rows: 24,
+        adapterId: "claude",
+        cwd: scope.rootRealPath,
+        paneId: "pane-a",
+        missionId: "mission-a",
+      },
+      {} as never,
+    );
+
+    expect(registryDeps.claimPendingSpawnMetaByPane).toHaveBeenCalledWith(
+      { paneId: "pane-a", missionId: "mission-a" },
+      owner,
+    );
+    expect(authorized.pending?.sealedRequest).toEqual(sealedRequest);
+    expect(authorized.request).toMatchObject({
+      kind: "cli-agent",
+      cols: 120,
+      rows: 36,
+      adapterId: "claude",
+      cwd: scope.rootRealPath,
+      orchRequestId: "spawn-a",
+      paneId: "pane-a",
+      missionId: "mission-a",
+    });
+  });
+
+  it("classifies an orphaned mission layout pane as stale persisted authority", () => {
+    expect(() =>
+      authorizeMainOwnedAgentSpawn(
+        owner as never,
+        {
+          kind: "cli-agent",
+          cols: 80,
+          rows: 24,
+          adapterId: "claude",
+          cwd: scope.rootRealPath,
+          paneId: "pane-from-deleted-mission",
+          missionId: "mission-deleted",
+        },
+        {} as never,
+      ),
+    ).toThrow(/persisted mission pane authority.*no longer registered/i);
   });
 
   it("derives persisted squad identity only from the current scoped mission", () => {

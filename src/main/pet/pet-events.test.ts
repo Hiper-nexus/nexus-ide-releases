@@ -5,6 +5,7 @@ import {
   MissionTransitionTracker,
 } from './pet-events';
 import type { MissionIntentContract } from '../../shared/mission-intent';
+import { TERMINAL_OPERATIONAL_FAILURE_MARKER } from '../../shared/mission-recovery-policy';
 
 const at = 1_000;
 const automaticRecoveryAuthority = {
@@ -80,7 +81,7 @@ describe('MissionTransitionTracker', () => {
     ]);
   });
 
-  it('avisa quando blocked_technical não possui autoridade de retry', () => {
+  it('reporta falha técnica quando blocked_technical esgotou o retry', () => {
     const t = new MissionTransitionTracker();
     t.ingest('a', [{ id: '1', title: 'Deploy', status: 'running' }], at);
 
@@ -98,7 +99,51 @@ describe('MissionTransitionTracker', () => {
         at + 1,
       ),
     ).toEqual([
-      { kind: 'mission-blocked', title: 'Deploy', at: at + 1 },
+      { kind: 'mission-technical-failure', title: 'Deploy', at: at + 1 },
+    ]);
+  });
+
+  it('muda de recuperação silenciosa para falha técnica ao esgotar retries', () => {
+    const t = new MissionTransitionTracker();
+    t.ingest(
+      'a',
+      [{ id: '1', title: 'Deploy', status: 'running', intentState: 'executing' }],
+      at,
+    );
+    expect(
+      t.ingest(
+        'a',
+        [
+          {
+            id: '1',
+            title: 'Deploy',
+            description: '',
+            status: 'blocked',
+            intentState: 'blocked_technical',
+            ...automaticRecoveryAuthority,
+          },
+        ],
+        at + 1,
+      ),
+    ).toEqual([]);
+
+    expect(
+      t.ingest(
+        'a',
+        [
+          {
+            id: '1',
+            title: 'Deploy',
+            description: TERMINAL_OPERATIONAL_FAILURE_MARKER,
+            status: 'blocked',
+            intentState: 'blocked_technical',
+            ...automaticRecoveryAuthority,
+          },
+        ],
+        at + 2,
+      ),
+    ).toEqual([
+      { kind: 'mission-technical-failure', title: 'Deploy', at: at + 2 },
     ]);
   });
 

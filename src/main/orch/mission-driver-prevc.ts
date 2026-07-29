@@ -5,6 +5,7 @@ import {
   type WorkflowState,
 } from '../context/prevc-engine';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { getProjectDomainStores } from './project-domain-store-registry';
 
 /**
  * PREVC bridge for mission-driver advance/complete (Fase C).
@@ -69,6 +70,12 @@ export function createProductionPrevcPort(
       missionId: string,
       stepId: string,
       evidenceIds: readonly string[],
+      options?: {
+        readonly preExecutionPlanBinding?: {
+          readonly intentVersion: number;
+          readonly planHash: string;
+        };
+      },
     ): unknown;
     isMissionDriverComplete(
       missionId: string,
@@ -90,7 +97,31 @@ export function createProductionPrevcPort(
       if (!next) {
         throw new Error(`PREVC workflow has no valid next stage for mission ${missionId}`);
       }
-      service.advanceMissionStep(missionId, stepId, evidenceIds);
+      const isLeavingPreExecutionReview =
+        workflow.stage === 'review-primary' ||
+        workflow.stage === 'review-secondary';
+      if (!isLeavingPreExecutionReview) {
+        service.advanceMissionStep(missionId, stepId, evidenceIds);
+        return;
+      }
+      const stores = getProjectDomainStores(scope);
+      const mission = stores.missions.get(missionId);
+      const intentVersion = mission?.intentContract?.intentVersion;
+      const receipt =
+        intentVersion === undefined
+          ? null
+          : stores.tasks.getPlanReceipt(missionId, intentVersion);
+      if (!receipt) {
+        throw new Error(
+          `PREVC sealed plan missing for mission ${missionId}`,
+        );
+      }
+      service.advanceMissionStep(missionId, stepId, evidenceIds, {
+        preExecutionPlanBinding: {
+          intentVersion: receipt.intentVersion,
+          planHash: receipt.planHash,
+        },
+      });
     },
     isMissionComplete(missionId, scope, stepIds) {
       const service = getService(scope);

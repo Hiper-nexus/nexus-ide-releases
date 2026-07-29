@@ -192,7 +192,9 @@ export function guidedIndependentReviewDetail(
     "Objetivo aprovado:",
     contract.goal,
     "",
-    "Critérios a revisar um a um:",
+    ...guidedVerificationAuthorityBoundary("revisão"),
+    "",
+    "Critérios aprovados:",
     ...contract.acceptanceCriteria.map(
       (criterion, criterionIndex) => `${criterionIndex + 1}. ${criterion}`,
     ),
@@ -218,13 +220,15 @@ export function guidedQualityGateDetail(
       "Objetivo aprovado:",
       contract.goal,
       "",
-      "Critérios que você deve provar um a um:",
+      ...guidedVerificationAuthorityBoundary("gate"),
+      "",
+      "Critérios aprovados:",
       ...contract.acceptanceCriteria.map(
         (criterion, index) => `${index + 1}. ${criterion}`,
       ),
       "",
       "Se encontrar qualquer defeito, não o corrija: envie handoff blocked com a evidência exata para o Nexus impedir a entrega.",
-      "Se todos os critérios estiverem verdes, envie handoff success descrevendo exatamente os checks executados e as evidências observadas.",
+      "Se todas as verificações observáveis sob sua autoridade estiverem verdes, envie handoff success descrevendo exatamente os checks executados e as evidências observadas.",
       "O Nexus verificará fisicamente que HEAD e diff permaneceram intactos e executará os sensores main-owned antes de aceitar a missão.",
     ].join("\n");
   }
@@ -235,15 +239,34 @@ export function guidedQualityGateDetail(
     "Objetivo aprovado:",
     contract.goal,
     "",
-    "Critérios que você deve provar um a um:",
+    ...guidedVerificationAuthorityBoundary("gate"),
+    "",
+    "Critérios aprovados:",
     ...contract.acceptanceCriteria.map(
       (criterion, index) => `${index + 1}. ${criterion}`,
     ),
     ...guidedUiReviewArtifactInstructions(mission),
     "",
     "Se encontrar defeito, corrija-o no mesmo worktree e acrescente ou fortaleça uma verificação durável ligada aos critérios (teste de regressão/aceite, assertion de acessibilidade, validação de segurança ou automação equivalente). Faça commit apenas dessa correção verificável.",
-    "Se todos os critérios já estiverem verdes e nenhuma correção for necessária, não altere arquivos e não crie commit: envie handoff success descrevendo exatamente os checks executados. O Nexus provará fisicamente que HEAD e diff permaneceram intactos.",
+    "Se todas as verificações observáveis sob sua autoridade estiverem verdes e nenhuma correção for necessária, não altere arquivos e não crie commit: envie handoff success descrevendo exatamente os checks executados. O Nexus provará fisicamente que HEAD e diff permaneceram intactos.",
     "Não crie mudança cosmética, documento decorativo nem commit vazio só para concluir.",
     "A integração Nexus executará novamente sensores main-owned e revisão independente antes de aceitar uma correção ou emitir o receipt físico de validação sem mudança.",
   ].join("\n");
+}
+
+function guidedVerificationAuthorityBoundary(
+  role: "gate" | "revisão",
+): readonly string[] {
+  const heading =
+    role === "gate"
+      ? "Fronteira temporal e de autoridade do gate:"
+      : "Fronteira temporal e de autoridade da revisão:";
+  return [
+    heading,
+    "Valide agora o HEAD, o comportamento, os checks e os handoffs predecessores que esta tarefa consegue observar.",
+    "São provas Main-owned: dispatch, sessão, encarnação, PTY, tool call, tier de confinamento, ordem de integração, receipts mecânicos e a transição final da missão. O processo principal valida essas provas na etapa apropriada; não tente recriá-las nem exija que nexus_handoff_list as exponha.",
+    "A ausência, antes do seu handoff, de receipt final ou de missão done é esperada: ambos só podem existir depois que você enviar o handoff. Isso não é defeito da entrega.",
+    "Uma CLI removida do roster pelo preflight ou registrada como skipped por indisponibilidade não é participação pendente. Valide somente os predecessores que a tarefa efetivamente recebeu.",
+    "Nunca envie handoff blocked somente porque uma prova Main-owned futura, um advisor não admitido ou um estado pós-handoff ainda não existe. Use blocked apenas para defeito concreto e reproduzível no resultado que você pode observar agora.",
+  ];
 }

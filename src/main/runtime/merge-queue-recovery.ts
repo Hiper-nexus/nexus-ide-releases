@@ -5,6 +5,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import {
   MergeAuthorityRevokedError,
   MergeCasError,
+  MergeOperationAbortedError,
   MergeQueueStateError,
   MergeRetryRequiredError,
   MergeValidationRejectedError,
@@ -30,6 +31,8 @@ import {
   type PreparedWorktreeIntegration,
   type WorktreeRecord,
 } from './worktree-manager';
+
+const GIT_COMMIT_SHA = /^[a-f0-9]{40,64}$/;
 
 export interface MergeRetryAttempt {
   readonly claimed: MergeQueueClaim;
@@ -243,6 +246,15 @@ export class MergeQueueRecovery {
       input.missionId,
       input.taskId,
     );
+    if (
+      input.expectedTaskHeadSha !== undefined &&
+      (!GIT_COMMIT_SHA.test(input.expectedTaskHeadSha) ||
+        prepared.taskHeadSha !== input.expectedTaskHeadSha)
+    ) {
+      throw new MergeCasError(
+        'retry task HEAD does not match the physical handoff HEAD',
+      );
+    }
     const integratedCandidateSha = this.#integratedCandidate(
       blockedEntry,
       prepared,
@@ -376,6 +388,10 @@ export class MergeQueueRecovery {
           candidateSha,
           diffHash,
           changedFiles: Object.freeze([...attempt.prepared.changedFiles]),
+          ...(input.signal ? { signal: input.signal } : {}),
+          ...(input.assertCurrentAuthority
+            ? { assertCurrentAuthority: input.assertCurrentAuthority }
+            : {}),
         }));
         const decision =
           pendingDecision &&
@@ -482,6 +498,14 @@ export class MergeQueueRecovery {
   }
 
   #assertCurrentAuthority(input: RetryMergeInput): void {
+    if (input.signal?.aborted) {
+      throw new MergeOperationAbortedError(
+        input.signal.reason ??
+          Object.assign(new Error('merge recovery was aborted'), {
+            name: 'AbortError',
+          }),
+      );
+    }
     if (!input.assertCurrentAuthority) return;
     try {
       input.assertCurrentAuthority();

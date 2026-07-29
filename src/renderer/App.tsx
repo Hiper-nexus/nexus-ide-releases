@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   useLayoutStore,
-  switchWorkspaceLayout,
+  switchWorkspaceLayoutWithFallback,
   detachWorkspaceLayout,
 } from './state/layout-store';
 import { WorkspaceBar } from './components/WorkspaceBar';
@@ -232,7 +232,12 @@ export function App() {
     // A new workspace root invalidates the file tree cache.
     if (path !== lastWorkspacePath.current) useFilesStore.getState().reset();
     lastWorkspacePath.current = path;
-    void switchWorkspaceLayout(path).then(() => {
+    const isCurrentWorkspace = () =>
+      useWorkspaceStore.getState().current?.path === path;
+    void switchWorkspaceLayoutWithFallback(path, {
+      isCurrent: isCurrentWorkspace,
+    }).then(() => {
+      if (!isCurrentWorkspace()) return;
       // Show the (non-modal) Home deck whenever what loaded is just a single
       // bare shell — a fresh folder AND a trivially-restored one look the same
       // to the user (an empty prompt), so both get the deck. A real mission
@@ -247,6 +252,15 @@ export function App() {
       if (loneBarShell && !useMissionWizardStore.getState().open) {
         useHomeStore.getState().show();
       }
+    }).catch((error) => {
+      if (!isCurrentWorkspace()) return;
+      console.error('[layout] workspace load failed after retry:', error);
+      useHomeStore.getState().show();
+      useToastStore.getState().push(
+        'error',
+        'Layout não pôde ser restaurado',
+        'Abri um terminal seguro sem sobrescrever seu layout salvo. Reabra o workspace para tentar novamente.',
+      );
     });
   }, [workspaceHydrated, currentWorkspace]);
 
@@ -443,15 +457,32 @@ export function App() {
       offs.push(
         petApi.onAttention((event) => {
           const isBlock = event.kind === 'mission-blocked';
+          const isTechnicalFailure =
+            event.kind === 'mission-technical-failure';
           const isWait = event.kind === 'agent-waiting';
           const isDone = event.kind === 'mission-done';
-          if (!isBlock && !isWait && !isDone) return;
+          if (!isBlock && !isTechnicalFailure && !isWait && !isDone) return;
           if (isDone) {
             useToastStore.getState().push(
               'success',
               'Missão concluída',
               `${event.title} — o resultado final foi validado.`,
             );
+            return;
+          }
+          if (isTechnicalFailure) {
+            useToastStore.getState().push('error', 'Falha técnica na missão', {
+              detail: `${event.title} — a recuperação automática parou. Abra o Ops Board para ver o diagnóstico e tentar novamente.`,
+              action: {
+                label: 'Ver diagnóstico',
+                onClick: () => {
+                  const orch = useOrchStore.getState();
+                  if (!orch.boardOpen) orch.toggleBoard();
+                  orch.openPanel('missions');
+                },
+              },
+              dedupeKey: `mission-technical-failure:${event.title}`,
+            });
             return;
           }
           const multi = /·|\d+\s+(missões|agentes)/i.test(event.title);

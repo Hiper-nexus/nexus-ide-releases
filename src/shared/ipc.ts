@@ -87,6 +87,7 @@ const paneModelSchema = z.object({
   titlePinned: z.boolean().optional(),
   orchRequestId: z.string().min(1).max(128).optional(),
   missionId: z.string().min(1).max(128).optional(),
+  transient: z.literal(true).optional(),
   terminalScrollback: z.string().max(256_000).optional(),
 });
 

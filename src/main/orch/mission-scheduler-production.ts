@@ -53,6 +53,7 @@ import {
 } from "./mission-scheduler-reconciliation";
 import { runMissionSchedulerLaunchPass } from "./mission-scheduler-pass";
 import { createMissionSchedulerTickLifecycle } from "./mission-scheduler-tick-lifecycle";
+import { throwIfMissionSchedulerAborted } from "./mission-scheduler-abort";
 import {
   classifyOperationalFailure,
   terminalOperationalFailureReason,
@@ -61,7 +62,10 @@ import type {
   MergeQueueEntry,
   MergeQueueStateSnapshot,
 } from "../runtime/merge-queue-contract";
+import type { WorktreeRecord } from "../runtime/worktree-contract";
+import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { taskDispatchQualityRepairReason } from "./task-dispatch-store";
+import { reconcileLegacyGuidedDirtyCheckoutBootstrap } from "./task-dispatch-lifecycle";
 
 export {
   awaitMissionSchedulerAuthorityFence,
@@ -132,6 +136,66 @@ export function projectTerminalFinalizationFailure(
 }
 export { buildMissionSchedulerTaskPrompt } from "./mission-scheduler-task-prompt";
 
+export async function prepareMissionSchedulerPrevcPromotion(
+  input: {
+    readonly scope: ProjectExecutionScope;
+    readonly missionId: string;
+    readonly signal?: AbortSignal;
+    readonly assertCurrentAuthority: () => void;
+  },
+  prepare: typeof ensurePrevcMergeReady = ensurePrevcMergeReady,
+): Promise<void> {
+  throwIfMissionSchedulerAborted(input.signal);
+  await prepare(input.scope, input.missionId, {
+    assertCurrentAuthority: input.assertCurrentAuthority,
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+  throwIfMissionSchedulerAborted(input.signal);
+  input.assertCurrentAuthority();
+  throwIfMissionSchedulerAborted(input.signal);
+}
+
+interface ReconciliationOrderDispatch {
+  readonly state: string;
+  readonly executionMode: string;
+  readonly ownership: {
+    readonly domains: readonly string[];
+  };
+}
+
+/**
+ * Settle bounded/no-change handoffs before entering a model-backed merge.
+ *
+ * One executor review may legitimately take minutes. It must not keep already
+ * finished read-only advisors looking active merely because their rows happen
+ * to sort after the executor.
+ */
+export function orderMissionDispatchesForReconciliation<
+  T extends ReconciliationOrderDispatch,
+>(dispatches: readonly T[]): readonly T[] {
+  const priority = (dispatch: ReconciliationOrderDispatch): number => {
+    if (!["handoff_ready", "merging"].includes(dispatch.state)) return 4;
+    if (dispatch.executionMode === "same_checkout") return 0;
+    if (dispatch.executionMode === "read_only") return 1;
+    if (
+      dispatch.ownership.domains.includes("guided-isolated-advisory")
+    ) {
+      return 2;
+    }
+    return 3;
+  };
+  return Object.freeze(
+    dispatches
+      .map((dispatch, index) => ({ dispatch, index }))
+      .sort(
+        (left, right) =>
+          priority(left.dispatch) - priority(right.dispatch) ||
+          left.index - right.index,
+      )
+      .map(({ dispatch }) => dispatch),
+  );
+}
+
 /**
  * A restart during post-validation/finalization leaves Git integrated but the
  * durable task receipt unfinished. This exact retryable block is executable
@@ -158,6 +222,63 @@ export function recoverableIntegratedMergeEntry(
       Boolean(candidate.integratedSha),
   );
   return entry ?? null;
+}
+
+interface RestartedIntegratedMergeEntry {
+  readonly taskHeadSha?: string;
+  readonly integratedSha: string;
+  readonly evidenceIds: readonly string[];
+}
+
+interface RestartedIntegratedMergeDeps {
+  assertLifecycleAuthority(): void;
+  assertPhysicalHandoffTaskHead(): string;
+  complete(
+    revision: number,
+    receipt: {
+      readonly kind: "worktree_integrated";
+      readonly reference: string;
+      readonly completedAt: number;
+      readonly evidenceIds: readonly string[];
+    },
+  ): void;
+  now(): number;
+}
+
+/**
+ * Close the crash window after MergeQueue durably integrated Git but before
+ * task completion persisted.
+ *
+ * Physical ancestry is intentionally insufficient here: a later worker commit
+ * W2 is a descendant of the accepted handoff W and would pass the final store's
+ * ancestry check. The durable queue entry must name W exactly before Main may
+ * mint the recovered integration receipt.
+ */
+export function finalizeRestartedIntegratedMerge(
+  input: {
+    readonly dispatchRevision: number;
+    readonly mergeEntry: RestartedIntegratedMergeEntry;
+  },
+  deps: RestartedIntegratedMergeDeps,
+): true {
+  deps.assertLifecycleAuthority();
+  const physicalTaskHeadSha = deps.assertPhysicalHandoffTaskHead();
+  if (
+    !input.mergeEntry.taskHeadSha ||
+    input.mergeEntry.taskHeadSha !== physicalTaskHeadSha
+  ) {
+    throw new MissionSchedulerDispatchAuthorityError(
+      "restart integrated merge task HEAD does not match the physical handoff HEAD",
+    );
+  }
+  deps.assertLifecycleAuthority();
+  deps.complete(input.dispatchRevision, {
+    kind: "worktree_integrated",
+    reference: input.mergeEntry.integratedSha,
+    completedAt: deps.now(),
+    evidenceIds: [...input.mergeEntry.evidenceIds],
+  });
+  return true;
 }
 
 interface QualityRepairDispatchSnapshot {
@@ -304,12 +425,78 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let started = false;
 let externalReconcileRequest: (() => boolean) | null = null;
 const tickLifecycle = createMissionSchedulerTickLifecycle({
-  runPass: () => tick(),
+  runPass: (signal) => tick(signal),
   isLegacyLoopRunning: () => started,
 });
 
 function missionKey(scope: ProjectExecutionScope, missionId: string): string {
   return `${scope.projectId}:${scope.checkoutId}:${missionId}`;
+}
+
+const ACTIVE_SCHEDULER_DISPATCH_STATES = new Set<
+  TaskDispatchRecord["state"]
+>([
+  "claimed",
+  "routed",
+  "spawning",
+  "running",
+  "handoff_ready",
+  "merging",
+]);
+
+type SchedulerActiveWorkerInput = Pick<
+  TaskDispatchRecord,
+  "taskId" | "state" | "ownership"
+>;
+
+type SchedulerWorktreeInput = Pick<
+  WorktreeRecord,
+  "taskId" | "status" | "ownership"
+>;
+
+/**
+ * Project physical scheduler capacity without letting a retained retry
+ * worktree reserve the slot that its next worker incarnation must reclaim.
+ *
+ * A superseded dispatch is a durable proof that the previous runtime no
+ * longer owns capacity. Worktrees without any durable scheduler identity stay
+ * conservative because they may represent an interrupted legacy reservation.
+ */
+export function projectMissionSchedulerActiveWorkers(
+  dispatches: readonly SchedulerActiveWorkerInput[],
+  worktrees: readonly SchedulerWorktreeInput[],
+): readonly {
+  readonly taskId: string;
+  readonly ownership: SchedulerRuntimeTask["ownership"];
+}[] {
+  const durable = dispatches
+    .filter((record) =>
+      ACTIVE_SCHEDULER_DISPATCH_STATES.has(record.state),
+    )
+    .map((record) => ({
+      taskId: record.taskId,
+      ownership: record.ownership,
+    }));
+  const durableIds = new Set(durable.map((record) => record.taskId));
+  const retryableIds = new Set(
+    dispatches
+      .filter((record) => record.state === "superseded")
+      .map((record) => record.taskId),
+  );
+  const unmanagedWorktrees = worktrees
+    .filter(
+      (record) => record.status === "ready" || record.status === "queued",
+    )
+    .filter(
+      (record) =>
+        !durableIds.has(record.taskId) &&
+        !retryableIds.has(record.taskId),
+    )
+    .map((record) => ({
+      taskId: record.taskId,
+      ownership: record.ownership,
+    }));
+  return Object.freeze([...durable, ...unmanagedWorktrees]);
 }
 
 function activeWorkers(
@@ -319,26 +506,10 @@ function activeWorkers(
   readonly taskId: string;
   readonly ownership: SchedulerRuntimeTask["ownership"];
 }[] {
-  const durable = getProjectDomainStores(scope)
-    .taskDispatches.list(missionId)
-    .filter((record) =>
-      [
-        "claimed",
-        "routed",
-        "spawning",
-        "running",
-        "handoff_ready",
-        "merging",
-      ].includes(record.state),
-    )
-    .map((record) => ({ taskId: record.taskId, ownership: record.ownership }));
-  const durableIds = new Set(durable.map((record) => record.taskId));
-  const worktrees = requireWorktreeRuntimeRegistry()
-    .listMission(scope, missionId)
-    .filter((record) => record.status === "ready" || record.status === "queued")
-    .filter((record) => !durableIds.has(record.taskId))
-    .map((record) => ({ taskId: record.taskId, ownership: record.ownership }));
-  return [...durable, ...worktrees];
+  return projectMissionSchedulerActiveWorkers(
+    getProjectDomainStores(scope).taskDispatches.list(missionId),
+    requireWorktreeRuntimeRegistry().listMission(scope, missionId),
+  );
 }
 
 function schedulerTasks(
@@ -374,7 +545,9 @@ async function mergeCompletedTask(
   scope: ProjectExecutionScope,
   missionId: string,
   taskId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
+  throwIfMissionSchedulerAborted(signal);
   const key = missionKey(scope, missionId) + `:${taskId}`;
   const mergeSkip = (reason: string) =>
     console.warn(
@@ -407,6 +580,13 @@ async function mergeCompletedTask(
   if (isGuidedIsolatedAdvisory(dispatch)) {
     merging.add(key);
     try {
+      const expectedTaskHeadSha =
+        domainStores.taskDispatches.assertPhysicalHandoffTaskHead({
+          taskId,
+          missionId,
+          intentVersion: mergeIntentVersion,
+          expectedStates: ["handoff_ready", "merging"],
+        });
       if (worktree.status !== "ready" && !noChangeMarker) {
         throw new MissionSchedulerDispatchAuthorityError(
           `guided isolated advisory cannot finalize from worktree status ${worktree.status}`,
@@ -414,19 +594,40 @@ async function mergeCompletedTask(
       }
       const registry = requireWorktreeRuntimeRegistry();
       finalizeGuidedIsolatedAdvisory(
-        { scope, missionId, taskId, dispatch },
+        {
+          scope,
+          missionId,
+          taskId,
+          dispatch,
+          expectedTaskHeadSha,
+        },
         {
           prepare: () =>
             registry.prepareNoChangeValidation(scope, missionId, taskId),
           beginMerge: (revision) =>
             domainStores.taskDispatches.beginMerge({ taskId, revision }),
-          assertAuthority: () =>
-            domainStores.taskDispatches.assertLifecycleAuthority({
-              taskId,
-              missionId,
-              intentVersion: mergeIntentVersion,
-              expectedStates: ["merging"],
-            }),
+          assertAuthority: () => {
+            const current =
+              domainStores.taskDispatches.assertLifecycleAuthority({
+                taskId,
+                missionId,
+                intentVersion: mergeIntentVersion,
+                expectedStates: ["merging"],
+              });
+            const currentPhysicalHead =
+              domainStores.taskDispatches.assertPhysicalHandoffTaskHead({
+                taskId,
+                missionId,
+                intentVersion: mergeIntentVersion,
+                expectedStates: ["merging"],
+              });
+            if (currentPhysicalHead !== expectedTaskHeadSha) {
+              throw new MissionSchedulerDispatchAuthorityError(
+                "guided isolated advisory physical handoff HEAD changed",
+              );
+            }
+            return current;
+          },
           markValidated: (prepared) => {
             registry.markValidatedNoChange(
               scope,
@@ -448,6 +649,7 @@ async function mergeCompletedTask(
         },
       );
     } catch (error) {
+      throwIfMissionSchedulerAborted(signal);
       const terminal = projectTerminalFinalizationFailure(
         {
           missionId,
@@ -475,20 +677,43 @@ async function mergeCompletedTask(
   ) {
     merging.add(key);
     try {
-      const assertPreparationAuthority = () => {
-        getProjectDomainStores(scope).taskDispatches.assertLifecycleAuthority({
+      const expectedTaskHeadSha =
+        domainStores.taskDispatches.assertPhysicalHandoffTaskHead({
           taskId,
           missionId,
           intentVersion: mergeIntentVersion,
           expectedStates: ["handoff_ready", "merging"],
         });
+      const assertPreparationAuthority = () => {
+        const stores = getProjectDomainStores(scope);
+        stores.taskDispatches.assertLifecycleAuthority({
+          taskId,
+          missionId,
+          intentVersion: mergeIntentVersion,
+          expectedStates: ["handoff_ready", "merging"],
+        });
+        if (
+          stores.taskDispatches.assertPhysicalHandoffTaskHead({
+            taskId,
+            missionId,
+            intentVersion: mergeIntentVersion,
+            expectedStates: ["handoff_ready", "merging"],
+          }) !== expectedTaskHeadSha
+        ) {
+          throw new MissionSchedulerDispatchAuthorityError(
+            "guided no-change physical handoff HEAD changed",
+          );
+        }
       };
       try {
-        await ensurePrevcMergeReady(scope, missionId, {
+        await prepareMissionSchedulerPrevcPromotion({
+          scope,
+          missionId,
           assertCurrentAuthority: assertPreparationAuthority,
+          ...(signal ? { signal } : {}),
         });
-        assertPreparationAuthority();
       } catch (error) {
+        throwIfMissionSchedulerAborted(signal);
         // The no-change QA path bypasses MergeQueue, but it is still a final
         // promotion. Capacity stays retryable; corrupt/stale authority is
         // projected once instead of leaving the mission in an infinite loop.
@@ -512,19 +737,40 @@ async function mergeCompletedTask(
       const service = getContextWorkflowService(scope);
       const validator = new MergeValidationCoordinator(service);
       const handled = await finalizeGuidedNoChangeQualityGate(
-        { scope, missionId, taskId, dispatch },
+        {
+          scope,
+          missionId,
+          taskId,
+          dispatch,
+          expectedTaskHeadSha,
+        },
         {
           prepare: () =>
             registry.prepareNoChangeValidation(scope, missionId, taskId),
           beginMerge: (revision) =>
             domainStores.taskDispatches.beginMerge({ taskId, revision }),
-          assertAuthority: () =>
-            domainStores.taskDispatches.assertLifecycleAuthority({
-              taskId,
-              missionId,
-              intentVersion: mergeIntentVersion,
-              expectedStates: ["merging"],
-            }),
+          assertAuthority: () => {
+            const current =
+              domainStores.taskDispatches.assertLifecycleAuthority({
+                taskId,
+                missionId,
+                intentVersion: mergeIntentVersion,
+                expectedStates: ["merging"],
+              });
+            if (
+              domainStores.taskDispatches.assertPhysicalHandoffTaskHead({
+                taskId,
+                missionId,
+                intentVersion: mergeIntentVersion,
+                expectedStates: ["merging"],
+              }) !== expectedTaskHeadSha
+            ) {
+              throw new MissionSchedulerDispatchAuthorityError(
+                "guided no-change physical handoff HEAD changed",
+              );
+            }
+            return current;
+          },
           validate: (context) => validator.validate(context),
           markValidated: (prepared) => {
             registry.markValidatedNoChange(
@@ -550,6 +796,7 @@ async function mergeCompletedTask(
       );
       if (handled) return;
     } catch (error) {
+      throwIfMissionSchedulerAborted(signal);
       if (classifyOperationalFailure(error) === "terminal") {
         projectTerminalMergeFailure(
           {
@@ -584,24 +831,63 @@ async function mergeCompletedTask(
           entry.taskId === taskId &&
           ["finalizing", "integrated"].includes(entry.status) &&
           Boolean(entry.integratedSha),
-      );
+    );
     if (!mergeEntry?.integratedSha) return;
-    domainStores.taskDispatches.assertLifecycleAuthority({
-      taskId,
-      missionId,
-      intentVersion: mergeIntentVersion,
-      expectedStates: ["handoff_ready", "merging"],
-    });
-    domainStores.taskDispatches.completeByCoordinator({
-      taskId,
-      revision: dispatch.revision,
-      receipt: {
-        kind: "worktree_integrated",
-        reference: mergeEntry.integratedSha,
-        completedAt: Date.now(),
-        evidenceIds: [...mergeEntry.evidenceIds],
-      },
-    });
+    try {
+      finalizeRestartedIntegratedMerge(
+        {
+          dispatchRevision: dispatch.revision,
+          mergeEntry: {
+            taskHeadSha: mergeEntry.taskHeadSha,
+            integratedSha: mergeEntry.integratedSha,
+            evidenceIds: mergeEntry.evidenceIds,
+          },
+        },
+        {
+          assertLifecycleAuthority: () => {
+            domainStores.taskDispatches.assertLifecycleAuthority({
+              taskId,
+              missionId,
+              intentVersion: mergeIntentVersion,
+              expectedStates: ["handoff_ready", "merging"],
+            });
+          },
+          assertPhysicalHandoffTaskHead: () =>
+            domainStores.taskDispatches.assertPhysicalHandoffTaskHead({
+              taskId,
+              missionId,
+              intentVersion: mergeIntentVersion,
+              expectedStates: ["handoff_ready", "merging"],
+            }),
+          complete: (revision, receipt) => {
+            domainStores.taskDispatches.completeByCoordinator({
+              taskId,
+              revision,
+              receipt: {
+                ...receipt,
+                evidenceIds: [...receipt.evidenceIds],
+              },
+            });
+          },
+          now: () => Date.now(),
+        },
+      );
+    } catch (error) {
+      const terminal = projectTerminalFinalizationFailure(
+        {
+          missionId,
+          taskId,
+          error,
+        },
+        domainStores.taskDispatches,
+      );
+      console.warn(
+        `[mission-scheduler] restarted integration ${
+          terminal ? "blocked" : "finalization deferred"
+        } for ${missionId}/${taskId}:`,
+        error,
+      );
+    }
     return;
   }
   if (worktree.status === "failed") {
@@ -627,20 +913,43 @@ async function mergeCompletedTask(
   }
   merging.add(key);
   try {
-    const assertPreparationAuthority = () => {
-      getProjectDomainStores(scope).taskDispatches.assertLifecycleAuthority({
+    const expectedTaskHeadSha =
+      domainStores.taskDispatches.assertPhysicalHandoffTaskHead({
         taskId,
         missionId,
         intentVersion: mergeIntentVersion,
         expectedStates: ["handoff_ready", "merging"],
       });
+    const assertPreparationAuthority = () => {
+      const stores = getProjectDomainStores(scope);
+      stores.taskDispatches.assertLifecycleAuthority({
+        taskId,
+        missionId,
+        intentVersion: mergeIntentVersion,
+        expectedStates: ["handoff_ready", "merging"],
+      });
+      if (
+        stores.taskDispatches.assertPhysicalHandoffTaskHead({
+          taskId,
+          missionId,
+          intentVersion: mergeIntentVersion,
+          expectedStates: ["handoff_ready", "merging"],
+        }) !== expectedTaskHeadSha
+      ) {
+        throw new MissionSchedulerDispatchAuthorityError(
+          "merge physical handoff HEAD changed",
+        );
+      }
     };
     try {
-      await ensurePrevcMergeReady(scope, missionId, {
+      await prepareMissionSchedulerPrevcPromotion({
+        scope,
+        missionId,
         assertCurrentAuthority: assertPreparationAuthority,
+        ...(signal ? { signal } : {}),
       });
-      assertPreparationAuthority();
     } catch (error) {
+      throwIfMissionSchedulerAborted(signal);
       // PREVC preparation is deliberately opportunistic while workers run and
       // mandatory only at promotion. Capacity remains a retryable wait, while
       // durable authority/configuration failures receive an actionable state.
@@ -668,9 +977,8 @@ async function mergeCompletedTask(
     }
     let finalizedIntegrationReference: string | null = null;
     const assertCurrentMergeAuthority = () => {
-      const current = getProjectDomainStores(
-        scope,
-      ).taskDispatches.assertLifecycleAuthority({
+      const stores = getProjectDomainStores(scope);
+      const current = stores.taskDispatches.assertLifecycleAuthority({
         taskId,
         missionId,
         intentVersion: mergeIntentVersion,
@@ -678,6 +986,19 @@ async function mergeCompletedTask(
           ? ["completed"]
           : ["merging"],
       });
+      if (
+        !finalizedIntegrationReference &&
+        stores.taskDispatches.assertPhysicalHandoffTaskHead({
+          taskId,
+          missionId,
+          intentVersion: mergeIntentVersion,
+          expectedStates: ["merging"],
+        }) !== expectedTaskHeadSha
+      ) {
+        throw new MissionSchedulerDispatchAuthorityError(
+          "merge physical handoff HEAD changed",
+        );
+      }
       if (
         finalizedIntegrationReference &&
         (current.integrationReceipt?.kind !== "worktree_integrated" ||
@@ -709,6 +1030,8 @@ async function mergeCompletedTask(
       scope,
       missionId,
       taskId,
+      expectedTaskHeadSha,
+      ...(signal ? { signal } : {}),
       assertCurrentAuthority: assertCurrentMergeAuthority,
       validate: (context) => validator.validate(context),
       finalize: (result) => {
@@ -733,7 +1056,9 @@ async function mergeCompletedTask(
         }
       },
     });
+    throwIfMissionSchedulerAborted(signal);
   } catch (error) {
+    throwIfMissionSchedulerAborted(signal);
     let repairProjected = projectQualityRepairFailure(
       { taskId, error },
       getProjectDomainStores(scope).taskDispatches,
@@ -769,13 +1094,16 @@ async function mergeCompletedTask(
 async function retireMissionTaskWorkers(
   scope: ProjectExecutionScope,
   missionId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
+  throwIfMissionSchedulerAborted(signal);
   const stores = getProjectDomainStores(scope);
   const dispatches = stores.taskDispatches.list(missionId);
   const retired = await productionTaskDispatchWorkerRetirement.retireMissionWorkers({
     scope,
     missionId,
     dispatches,
+    ...(signal ? { signal } : {}),
     deps: {
       getDispatch: (taskId) => stores.taskDispatches.get(taskId),
       closeWorker: ({
@@ -791,9 +1119,10 @@ async function retireMissionTaskWorkers(
           missionId: workerMissionId,
           workerIncarnationId,
           scope: workerScope,
-        }),
+      }),
     },
   });
+  throwIfMissionSchedulerAborted(signal);
   requeueRetiredQualityRepairs({
     dispatches,
     retiredTaskIds: retired.retiredTaskIds,
@@ -805,7 +1134,9 @@ async function retireMissionTaskWorkers(
 async function tickMission(
   scope: ProjectExecutionScope,
   missionId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
+  throwIfMissionSchedulerAborted(signal);
   const stores = getProjectDomainStores(scope);
   // Nothing downstream—merge, spawn or mission completion—may advance before
   // the finite idle→busy kickoff proof commits for the current revision and
@@ -827,9 +1158,13 @@ async function tickMission(
   const key = missionKey(scope, missionId);
   const state = states.get(key) ?? createSchedulerRuntimeState();
   const result = await runMissionSchedulerLaunchPass({
-    reconcile: async () => {
-      const dispatches = stores.taskDispatches.list(missionId);
+    ...(signal ? { signal } : {}),
+    reconcile: async (passSignal) => {
+      const dispatches = orderMissionDispatchesForReconciliation(
+        stores.taskDispatches.list(missionId),
+      );
       for (const dispatch of dispatches) {
+        throwIfMissionSchedulerAborted(passSignal);
         if (!["handoff_ready", "merging"].includes(dispatch.state)) continue;
         if (
           dispatch.executionMode === "same_checkout" &&
@@ -896,25 +1231,36 @@ async function tickMission(
           }
           continue;
         }
-        await mergeCompletedTask(scope, missionId, dispatch.taskId);
+        await mergeCompletedTask(
+          scope,
+          missionId,
+          dispatch.taskId,
+          passSignal,
+        );
       }
     },
     // A task that handed off no longer needs a provider process. Prove exit of
     // the exact task/session/incarnation before maxWorkers admits a successor.
     // Soft-fail: an unproven exit must keep occupying capacity, but must never
     // abort the same-tick post-merge completion / PREVC bridge.
-    retireWorkers: async () => {
+    retireWorkers: async (passSignal) => {
+      throwIfMissionSchedulerAborted(passSignal);
       try {
-        await retireMissionTaskWorkers(scope, missionId);
+        await retireMissionTaskWorkers(scope, missionId, passSignal);
       } catch (error) {
+        throwIfMissionSchedulerAborted(passSignal);
         console.warn(
           `[mission-scheduler] worker retirement deferred for ${missionId}:`,
           error,
         );
       }
+      throwIfMissionSchedulerAborted(passSignal);
     },
-    snapshot: () => schedulerTasks(scope, missionId),
-    launchNext: (currentSchedulerTasks) =>
+    snapshot: (passSignal) => {
+      throwIfMissionSchedulerAborted(passSignal);
+      return schedulerTasks(scope, missionId);
+    },
+    launchNext: (currentSchedulerTasks, passSignal) =>
       runSchedulerTick(
         {
           isParallelSchedulerEnabled: () =>
@@ -931,8 +1277,13 @@ async function tickMission(
             paneBudget: 8,
           }),
           now: () => configured?.now?.() ?? Date.now(),
-          dispatchTask: (request) =>
-            dispatchMissionSchedulerTask(scope, missionId, request),
+          dispatchTask: (request, dispatchSignal) =>
+            dispatchMissionSchedulerTask(
+              scope,
+              missionId,
+              request,
+              dispatchSignal,
+            ),
           isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
           getChangedFiles: async () => [],
           mergeTask: async () => undefined,
@@ -956,8 +1307,10 @@ async function tickMission(
           reRunSequentially: async () => undefined,
         },
         state,
+        passSignal,
       ),
   });
+  throwIfMissionSchedulerAborted(signal);
   states.set(key, result.state);
   const currentMission = stores.missions.get(missionId);
   await reconcileMissionCompletionAfterSchedulerTick({
@@ -974,24 +1327,34 @@ async function tickMission(
       });
     },
   });
+  throwIfMissionSchedulerAborted(signal);
 }
 
-async function tick(): Promise<void> {
+async function tick(signal?: AbortSignal): Promise<void> {
+  throwIfMissionSchedulerAborted(signal);
   if (!configured) return;
   await runBoundedMissionSchedulerPass({
     scopes: configured.listScopes(),
     scopeConcurrency: MISSION_SCHEDULER_CONCURRENCY_LIMITS.scopes,
     missionConcurrency: MISSION_SCHEDULER_CONCURRENCY_LIMITS.missionsPerScope,
-    reconcileScope: (scope) => {
+    reconcileScope: async (scope) => {
+      throwIfMissionSchedulerAborted(signal);
+      await reconcileLegacyGuidedDirtyCheckoutBootstrap(
+        getProjectDomainStores(scope),
+      );
+      throwIfMissionSchedulerAborted(signal);
       reconcileInterruptedWorktreeReservationFailuresForScope(scope);
       reconcileTerminalMergeFailureForScope(scope);
     },
-    listMissions: (scope) =>
-      getProjectDomainStores(scope).missions.list("running"),
+    listMissions: (scope) => {
+      throwIfMissionSchedulerAborted(signal);
+      return getProjectDomainStores(scope).missions.list("running");
+    },
     runMission: async (scope, mission) => {
       try {
-        await tickMission(scope, mission.id);
+        await tickMission(scope, mission.id, signal);
       } catch (error) {
+        throwIfMissionSchedulerAborted(signal);
         console.warn(
           `[mission-scheduler] tick failed for ${mission.id}:`,
           error,
@@ -999,6 +1362,7 @@ async function tick(): Promise<void> {
       }
     },
   });
+  throwIfMissionSchedulerAborted(signal);
 }
 
 export function requestMissionSchedulerTick(): void {
@@ -1016,14 +1380,18 @@ export function setMissionSchedulerReconcileRequest(
 }
 
 /** One single-flight pass for the main-owned orchestration coordinator. */
-export async function reconcileMissionScheduler(): Promise<void> {
+export async function reconcileMissionScheduler(
+  signal?: AbortSignal,
+): Promise<void> {
+  throwIfMissionSchedulerAborted(signal);
   if (!configured) {
     console.warn(
       "[mission-scheduler] reconcile ignorado: scheduler não configurado",
     );
     return;
   }
-  await tickLifecycle.reconcile();
+  await tickLifecycle.reconcile(signal);
+  throwIfMissionSchedulerAborted(signal);
 }
 
 export function configureMissionScheduler(

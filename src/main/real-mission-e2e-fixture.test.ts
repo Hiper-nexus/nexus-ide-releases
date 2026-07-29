@@ -106,7 +106,7 @@ describe("main-owned real mission squad fixture", () => {
       }),
       expect.objectContaining({
         id: "e2e-advisor-grok",
-        category: "reviewer",
+        category: "scout",
         cli: "grok",
         allowedTools: [],
       }),
@@ -130,7 +130,7 @@ describe("main-owned real mission squad fixture", () => {
       }),
       expect.objectContaining({
         id: "e2e-advisor-claude",
-        category: "reviewer",
+        category: "scout",
         cli: "claude",
         allowedTools: [],
       }),

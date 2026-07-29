@@ -24,6 +24,7 @@ import {
 } from "../shared/real-mission-e2e";
 import {
   getAgentSessionInfo,
+  getSessionState,
   listAgentSessions,
   tapSessionData,
   tapSessionExit,
@@ -61,6 +62,8 @@ import {
   type PhysicalPtyCapture,
   type RealMissionPhysicalPtyAgent,
   type RealMissionPhysicalPtyIdentity,
+  type RealMissionPhysicalPtyReplacement,
+  type RealMissionPhysicalPtyReplacementDecision,
 } from "./real-mission-e2e-physical";
 import {
   buildRealMissionParticipation,
@@ -209,6 +212,7 @@ export class RealMissionObserver {
       input.missionId,
       realMissionAdvisorPtyExpectations(this.#advisorExpectations),
       input.orchestratorCli ?? realMissionE2EOrchestratorCli(),
+      (replacement) => this.#authorizeAdvisorRetry(replacement),
     );
   }
 
@@ -957,7 +961,6 @@ export class RealMissionObserver {
       if (
         result.reason === "already-frozen" ||
         result.reason === "kickoff-pending" ||
-        result.reason === "gate-context-unavailable" ||
         result.reason.startsWith("status-")
       ) {
         return;
@@ -993,6 +996,59 @@ export class RealMissionObserver {
       : null;
   }
 
+  #authorizeAdvisorRetry(
+    replacement: RealMissionPhysicalPtyReplacement,
+  ): RealMissionPhysicalPtyReplacementDecision {
+    if (!replacement.identity.startsWith("advisor:")) return "reject";
+    if (getSessionState(replacement.priorSessionId) !== null) return "reject";
+    const cli = replacement.identity.slice("advisor:".length);
+    const expected = this.#advisorExpectations.find(
+      (candidate) =>
+        candidate.cli === cli &&
+        candidate.skipped === null &&
+        candidate.agentName === replacement.nextAgent.agentName,
+    );
+    if (!expected) return "reject";
+    const roster = HARNESS_WORKER_ROSTER.get(expected.agentRef);
+    if (
+      !roster ||
+      roster.cli !== replacement.nextAgent.adapterId ||
+      replacement.priorAgent.workerIncarnationId ===
+        replacement.nextAgent.workerIncarnationId
+    ) {
+      return "reject";
+    }
+    const matches = this.#suite.taskDispatches
+      .list(this.#missionId)
+      .filter(
+        (dispatch) =>
+          dispatch.agentRef === expected.agentRef &&
+          dispatch.agentCategory === roster.agentCategory &&
+          dispatch.executionMode === "read_only" &&
+          dispatch.adapterId === replacement.nextAgent.adapterId &&
+          dispatch.routeContract?.adapterId ===
+            replacement.nextAgent.adapterId &&
+          Boolean(dispatch.routeReservationId) &&
+          dispatch.workerId === replacement.nextAgent.agentName &&
+          dispatch.workerIncarnationId ===
+            replacement.nextAgent.workerIncarnationId &&
+          dispatch.attempt > 1,
+      );
+    if (matches.length !== 1) return "reject";
+    const dispatch = matches[0]!;
+    if (dispatch.state === "spawning" && !dispatch.sessionId) return "defer";
+    if (
+      dispatch.sessionId === replacement.nextSessionId &&
+      (dispatch.state === "running" ||
+        dispatch.state === "handoff_ready" ||
+        dispatch.state === "merging" ||
+        dispatch.state === "completed")
+    ) {
+      return "accept";
+    }
+    return "reject";
+  }
+
   /** PTY advisor fica fora do conjunto codex de quatro panes: vira recibo de
    * participação, nunca prova do pipeline executor → revisor → QA. */
   #recordAdvisorSpawn(
@@ -1002,8 +1058,12 @@ export class RealMissionObserver {
   ): void {
     if (!identity.startsWith("advisor:")) return;
     const cli = identity.slice("advisor:".length);
-    if (this.#advisorPty.has(cli)) return;
-    this.#advisorPty.set(cli, { sessionId, spawnedAt: at });
+    const previous = this.#advisorPty.get(cli);
+    if (previous?.sessionId === sessionId) return;
+    this.#advisorPty.set(cli, {
+      sessionId,
+      spawnedAt: Math.min(previous?.spawnedAt ?? at, at),
+    });
   }
 
   /** Recibos de participação por CLI advisor a partir das fontes físicas. */

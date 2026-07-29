@@ -24,7 +24,7 @@ const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
 
 const SQUAD_CLI_POLICY_LABELS: Record<OrchSettings["squadCliPolicy"], string> =
   {
-    "operator-choice": "Autopiloto — qualquer CLI autenticada + web (padrão)",
+    "operator-choice": "Autopiloto — qualquer CLI autenticada + rede (padrão)",
     governed: "Hardened — sandbox e CLIs qualificadas",
   };
 
@@ -365,7 +365,7 @@ export function OrchestratorDefaults() {
       </div>
       <p className="settings-field__note">
         Padrão: autopiloto — monta o squad com qualquer CLI autenticada, mantém
-        autoaprovação e web liberadas, trabalha em worktree isolado e só o
+        autoaprovação e acesso de rede, trabalha em worktree isolado e só o
         Nexus faz o merge validado. Hardened adiciona sandbox de processo e a
         lista estreita de CLIs qualificadas.
       </p>

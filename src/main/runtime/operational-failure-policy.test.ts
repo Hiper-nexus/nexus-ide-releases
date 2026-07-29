@@ -3,6 +3,7 @@ import {
   MergeAuthorityRevokedError,
   MergeCasError,
   MergeConflictError,
+  MergeOperationAbortedError,
   MergeQueuePersistenceError,
   MergeQueueStateError,
   MergeValidationRejectedError,
@@ -26,6 +27,14 @@ describe("operational failure policy", () => {
         new MergeValidationRejectedError("candidate", ["review:finding"]),
       ),
     ).toBe("repair");
+  });
+
+  it("keeps parent merge cancellation retryable", () => {
+    expect(
+      classifyOperationalFailure(
+        new MergeOperationAbortedError(new Error("reconciler stopped")),
+      ),
+    ).toBe("retryable");
   });
 
   it("separates transient queue storage failure from invalid durable state", () => {

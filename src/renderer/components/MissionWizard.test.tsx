@@ -7,6 +7,7 @@ import { useMissionWizardStore } from "../state/mission-wizard-store";
 import { useOrchStore } from "../state/orch-store";
 import { useWorkspaceStore } from "../state/workspace-store";
 import { useProviderStore } from "../state/provider-store";
+import { useToastStore } from "../state/toast-store";
 import type { Mission, Squad } from "../../shared/orch-types";
 import type { AdapterInfo } from "../../shared/types";
 import type { ProviderSettingsInfo } from "../../shared/provider-settings-types";
@@ -499,6 +500,9 @@ describe("MissionWizard guided approval handoff", () => {
       updatedAt: 1,
     };
     const approveMissionIntent = vi.fn(async () => planned);
+    const pushToast = vi
+      .spyOn(useToastStore.getState(), "push")
+      .mockImplementation(() => undefined);
     const submitGuidedIntent = vi.fn(() => compileMission);
     const saveSquad = vi.fn(async (squad: Squad) => ({
       ok: true,
@@ -526,7 +530,7 @@ describe("MissionWizard guided approval handoff", () => {
         return {
           ok: true,
           missionId: planned.id,
-          paneId: "pane-orchestrator",
+          starting: true,
         };
       },
     );
@@ -619,6 +623,11 @@ describe("MissionWizard guided approval handoff", () => {
       evidenceAttached: false,
       attachmentPaths: undefined,
     });
+    expect(pushToast).toHaveBeenCalledWith(
+      "info",
+      "Missão iniciando",
+      expect.stringMatching(/processo principal.*assumiu/i),
+    );
     expect(useMissionWizardStore.getState().open).toBe(false);
   });
 });

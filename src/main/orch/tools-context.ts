@@ -4,7 +4,10 @@ import {
   getContextKnowledgeService,
   getContextWorkflowService,
 } from '../context/context-workflow-registry';
-import { workflowStageSchema } from '../context/contract-compiler';
+import {
+  workflowStageSchema,
+  type WorkflowStage,
+} from '../context/contract-compiler';
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
@@ -129,10 +132,19 @@ const freezeSchema = z
     riskHints: z.array(z.string().trim().min(1).max(256)).max(256).default([]),
   })
   .strict();
+const REVIEW_SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
+const REVIEW_CATEGORIES = [
+  'correctness',
+  'business',
+  'security',
+  'data',
+  'performance',
+  'ux',
+] as const;
 const findingSchema = z
   .object({
-    severity: z.enum(['critical', 'high', 'medium', 'low']),
-    category: z.enum(['correctness', 'business', 'security', 'data', 'performance', 'ux']),
+    severity: z.enum(REVIEW_SEVERITIES),
+    category: z.enum(REVIEW_CATEGORIES),
     file: z.string().trim().min(1).max(4_096),
     line: z.number().int().positive().optional(),
     criterionRefs: z.array(identifier).max(256).default([]),
@@ -141,6 +153,45 @@ const findingSchema = z
     recommendation: z.string().trim().min(1).max(65_536),
   })
   .strict();
+const findingInputJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    severity: { type: 'string', enum: [...REVIEW_SEVERITIES] },
+    category: { type: 'string', enum: [...REVIEW_CATEGORIES] },
+    file: { type: 'string', minLength: 1, maxLength: 4_096 },
+    line: {
+      type: 'integer',
+      minimum: 1,
+      maximum: 100_000_000,
+    },
+    criterionRefs: {
+      type: 'array',
+      items: { type: 'string' },
+      maxItems: 256,
+      default: [],
+    },
+    invariantRefs: {
+      type: 'array',
+      items: { type: 'string' },
+      maxItems: 256,
+      default: [],
+    },
+    evidence: { type: 'string', minLength: 1, maxLength: 65_536 },
+    recommendation: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 65_536,
+    },
+  },
+  required: [
+    'severity',
+    'category',
+    'file',
+    'evidence',
+    'recommendation',
+  ],
+} as const;
 const contentHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 // sourceHash opcional: agentes hospedados não têm tool de hash — o Nexus
 // computa o sha256 do arquivo no propose e re-verifica em review/apply.
@@ -158,6 +209,37 @@ function missionIdentity(ctx: AgentGateContext) {
     sessionId: ctx.sessionId,
     provider: ctx.providerId ?? ctx.label,
   };
+}
+
+function mainOwnedPreExecutionPlanBinding(
+  ctx: AgentGateContext,
+  missionId: string,
+  stage: WorkflowStage | null | undefined,
+):
+  | {
+      readonly intentVersion: number;
+      readonly planHash: string;
+    }
+  | undefined {
+  if (stage !== 'review-primary' && stage !== 'review-secondary') {
+    return undefined;
+  }
+  const stores = getProjectDomainStores(ctx.scope);
+  const mission = stores.missions.get(missionId);
+  const intentVersion = mission?.intentContract?.intentVersion;
+  const receipt =
+    intentVersion === undefined
+      ? null
+      : stores.tasks.getPlanReceipt(missionId, intentVersion);
+  if (!receipt) {
+    throw new Error(
+      'pre-execution authority requires the current Main-owned sealed task plan',
+    );
+  }
+  return Object.freeze({
+    intentVersion: receipt.intentVersion,
+    planHash: receipt.planHash,
+  });
 }
 
 function assertMission(ctx: AgentGateContext, requested: string): void {
@@ -879,9 +961,14 @@ const reviewTool: McpToolDef = {
     'Submit structured review findings bound to the exact contract/context/base/head/diff. Author/self-session review is rejected.',
   inputSchema: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       missionId: { type: 'string' },
-      findings: { type: 'array', items: { type: 'object' } },
+      findings: {
+        type: 'array',
+        items: findingInputJsonSchema,
+        maxItems: 4_096,
+      },
     },
     required: ['missionId', 'findings'],
   },
@@ -891,10 +978,20 @@ const reviewTool: McpToolDef = {
       findings: z.array(findingSchema).max(4_096),
     }).strict().parse(args);
     assertMission(ctx, input.missionId);
-    return getContextWorkflowService(ctx.scope).submitReview({
+    const service = getContextWorkflowService(ctx.scope);
+    const workflow = service.getMissionWorkflow(input.missionId).workflow;
+    const preExecutionPlanBinding = mainOwnedPreExecutionPlanBinding(
+      ctx,
+      input.missionId,
+      workflow?.stage,
+    );
+    return service.submitReview({
       missionId: input.missionId,
       reviewer: missionIdentity(ctx),
       findings: input.findings,
+      ...(preExecutionPlanBinding
+        ? { preExecutionPlanBinding }
+        : {}),
     });
   },
 };
@@ -943,7 +1040,18 @@ const advanceTool: McpToolDef = {
         'final PREVC complete transition is owned by the atomic mission-step receipt path',
       );
     }
-    return getContextWorkflowService(ctx.scope).advance(input.missionId, input.next);
+    const service = getContextWorkflowService(ctx.scope);
+    const workflow = service.getMissionWorkflow(input.missionId).workflow;
+    const preExecutionPlanBinding = mainOwnedPreExecutionPlanBinding(
+      ctx,
+      input.missionId,
+      workflow?.stage,
+    );
+    return service.advance(input.missionId, input.next, {
+      ...(preExecutionPlanBinding
+        ? { preExecutionPlanBinding }
+        : {}),
+    });
   },
 };
 
@@ -1123,9 +1231,14 @@ const mergeReviewSubmitTool: McpToolDef = {
     'Submit the structured result of an active Nexus merge review. The opaque review session, reviewer PTY and candidate checkout must all match.',
   inputSchema: {
     type: 'object',
+    additionalProperties: false,
     properties: {
-      reviewSessionId: { type: 'string' },
-      findings: { type: 'array', items: { type: 'object' } },
+      reviewSessionId: { type: 'string', format: 'uuid' },
+      findings: {
+        type: 'array',
+        items: findingInputJsonSchema,
+        maxItems: 4_096,
+      },
     },
     required: ['reviewSessionId', 'findings'],
   },

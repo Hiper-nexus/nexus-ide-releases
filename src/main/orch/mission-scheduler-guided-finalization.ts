@@ -112,6 +112,7 @@ export function finalizeGuidedIsolatedAdvisory(
     readonly scope: ProjectExecutionScope;
     readonly missionId: string;
     readonly taskId: string;
+    readonly expectedTaskHeadSha?: string;
     readonly dispatch: TaskDispatchRecord;
   },
   deps: GuidedIsolatedAdvisoryDeps,
@@ -152,6 +153,8 @@ export function finalizeGuidedIsolatedAdvisory(
       prepared.record.ownership.domains,
       input.dispatch.ownership.domains,
     ) ||
+    (input.expectedTaskHeadSha !== undefined &&
+      prepared.taskHeadSha !== input.expectedTaskHeadSha) ||
     prepared.taskHeadSha !== prepared.integrationHeadSha ||
     prepared.changedFiles.length !== 0 ||
     !GIT_SHA.test(prepared.taskHeadSha) ||
@@ -159,7 +162,10 @@ export function finalizeGuidedIsolatedAdvisory(
     prepared.diffHash !== EMPTY_GIT_DIFF_SHA256
   ) {
     throw new MissionSchedulerDispatchAuthorityError(
-      "guided isolated advisory preparation diverged from the authorized task identity",
+      input.expectedTaskHeadSha !== undefined &&
+        prepared.taskHeadSha !== input.expectedTaskHeadSha
+        ? "guided isolated advisory diverged from the physical handoff HEAD"
+        : "guided isolated advisory preparation diverged from the authorized task identity",
     );
   }
   let dispatch = input.dispatch;
@@ -216,6 +222,7 @@ export async function finalizeGuidedNoChangeQualityGate(
     readonly scope: ProjectExecutionScope;
     readonly missionId: string;
     readonly taskId: string;
+    readonly expectedTaskHeadSha?: string;
     readonly dispatch: TaskDispatchRecord;
   },
   deps: GuidedNoChangeQualityGateDeps,
@@ -252,13 +259,18 @@ export async function finalizeGuidedNoChangeQualityGate(
       prepared.record.ownership.domains,
       input.dispatch.ownership.domains,
     ) ||
+    (input.expectedTaskHeadSha !== undefined &&
+      prepared.taskHeadSha !== input.expectedTaskHeadSha) ||
     prepared.taskHeadSha !== prepared.integrationHeadSha ||
     prepared.changedFiles.length !== 0 ||
     !GIT_SHA.test(prepared.taskHeadSha) ||
     !SHA256.test(prepared.diffHash)
   ) {
     throw new Error(
-      "guided no-change preparation diverged from the authorized task identity",
+      input.expectedTaskHeadSha !== undefined &&
+        prepared.taskHeadSha !== input.expectedTaskHeadSha
+        ? "guided no-change preparation diverged from the physical handoff HEAD"
+        : "guided no-change preparation diverged from the authorized task identity",
     );
   }
   let dispatch = input.dispatch;

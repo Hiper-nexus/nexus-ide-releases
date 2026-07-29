@@ -4,6 +4,7 @@ import type {
   TaskDispatchRecord,
   TaskDispatchState,
 } from "./task-dispatch-codec";
+import { throwIfMissionSchedulerAborted } from "./mission-scheduler-abort";
 
 const ACTIVE_WORKER_STATES = new Set<TaskDispatchState>([
   "claimed",
@@ -138,13 +139,16 @@ export class TaskDispatchWorkerRetirementCoordinator {
     readonly scope: Readonly<ProjectExecutionScope>;
     readonly missionId: string;
     readonly dispatches: readonly WorkerDispatchIdentity[];
+    readonly signal?: AbortSignal;
     readonly deps: TaskDispatchWorkerRetirementDeps;
   }): Promise<TaskDispatchWorkerRetirementResult> {
+    throwIfMissionSchedulerAborted(input.signal);
     const retiredTaskIds: string[] = [];
     const alreadyRetiredTaskIds: string[] = [];
     const unboundTaskIds: string[] = [];
 
     for (const snapshot of input.dispatches) {
+      throwIfMissionSchedulerAborted(input.signal);
       if (
         snapshot.missionId !== input.missionId ||
         !RETIRABLE_WORKER_STATES.has(snapshot.state)
@@ -169,6 +173,7 @@ export class TaskDispatchWorkerRetirementCoordinator {
       const existingFlight = this.#flights.get(key);
       if (existingFlight) {
         await existingFlight;
+        throwIfMissionSchedulerAborted(input.signal);
         alreadyRetiredTaskIds.push(snapshot.taskId);
         continue;
       }
@@ -179,11 +184,13 @@ export class TaskDispatchWorkerRetirementCoordinator {
         await flight;
         this.#retired.add(key);
         retiredTaskIds.push(snapshot.taskId);
+        throwIfMissionSchedulerAborted(input.signal);
       } finally {
         if (this.#flights.get(key) === flight) this.#flights.delete(key);
       }
     }
 
+    throwIfMissionSchedulerAborted(input.signal);
     return Object.freeze({
       retiredTaskIds: Object.freeze(retiredTaskIds),
       alreadyRetiredTaskIds: Object.freeze(alreadyRetiredTaskIds),

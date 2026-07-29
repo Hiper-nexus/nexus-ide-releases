@@ -4,16 +4,20 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   BrowserPaneOpenRequest,
+  MissionPanePresentationRequest,
   MissionPaneRecoveryRequest,
+  OrchPaneSpawnRequest,
   PaneCloseRequest,
 } from '../../shared/orch-types';
 import { listPanes } from '../lib/split-tree';
+import { setActiveWorkspacePath } from '../state/active-workspace';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { useOrchBridge } from './orch-bridge';
 
 const terminal = vi.hoisted(() => ({
   cancelPaneRecovery: vi.fn(),
-  getPaneSessionId: vi.fn(() => null as string | null),
+  getPaneSessionId: vi.fn((_paneId: string) => null as string | null),
   isPaneSessionHealthy: vi.fn(() => true),
   markPersistedAuthorityOnSpawn: vi.fn(),
   onPaneSessionChange: vi.fn(() => vi.fn()),
@@ -50,9 +54,301 @@ function mount(): { root: Root; host: HTMLDivElement } {
 
 describe('orchestration bridge pane recovery', () => {
   afterEach(() => {
+    setActiveWorkspacePath(null);
     Reflect.deleteProperty(window, 'nexus');
     document.body.innerHTML = '';
     vi.clearAllMocks();
+    terminal.getPaneSessionId.mockReset().mockReturnValue(null);
+    terminal.isPaneSessionHealthy.mockReset().mockReturnValue(true);
+    terminal.waitForSession.mockReset().mockResolvedValue('session-new');
+  });
+
+  it('adopts an exact live main-owned session after reload without respawning it', async () => {
+    let presentationHandler:
+      | ((req: MissionPanePresentationRequest) => void)
+      | null = null;
+    terminal.waitForSession.mockResolvedValueOnce('session-live');
+    terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+      paneId === 'pane-live' &&
+      listPanes(useLayoutStore.getState().root).some(
+        (pane) => pane.id === paneId,
+      )
+        ? 'session-live'
+        : null,
+    );
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPanePresentationRequest: vi.fn(
+            (cb: (req: MissionPanePresentationRequest) => void) => {
+              presentationHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+        },
+      },
+    });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-shell',
+        pane: { id: 'shell-1', kind: 'shell', title: 'Shell' },
+      },
+      focusedPaneId: 'shell-1',
+    });
+    const mounted = mount();
+    const request: MissionPanePresentationRequest = {
+      missionId: 'mission-live',
+      paneId: 'pane-live',
+      sessionId: 'session-live',
+      role: 'orchestrator',
+      pane: {
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        cwd: '/workspace/a',
+        title: 'Execução + QA · orq',
+        agentName: 'Maestro',
+        role: 'orchestrator',
+      },
+    };
+
+    await act(async () => {
+      presentationHandler?.(request);
+      await vi.waitFor(() => {
+        expect(terminal.waitForSession).toHaveBeenCalledWith(
+          'pane-live',
+          75_000,
+        );
+      });
+    });
+    // Main may replay the same presentation hint until the adopted session is
+    // mirrored back. The renderer must treat the exact identity idempotently.
+    act(() => presentationHandler?.(request));
+
+    expect(terminal.markPersistedAuthorityOnSpawn).toHaveBeenCalledOnce();
+    expect(terminal.markPersistedAuthorityOnSpawn).toHaveBeenCalledWith(
+      'pane-live',
+    );
+    expect(terminal.respawnMissionPaneFresh).not.toHaveBeenCalled();
+    expect(terminal.cancelPaneRecovery).not.toHaveBeenCalled();
+    expect(listPanes(useLayoutStore.getState().root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'pane-live',
+          missionId: 'mission-live',
+          role: 'orchestrator',
+        }),
+      ]),
+    );
+    act(() => mounted.root.unmount());
+  });
+
+  it('re-presents the same live pane after switching A to B and back to A', async () => {
+    let presentationHandler:
+      | ((req: MissionPanePresentationRequest) => void)
+      | null = null;
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPanePresentationRequest: vi.fn(
+            (cb: (req: MissionPanePresentationRequest) => void) => {
+              presentationHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+        },
+      },
+    });
+    const request: MissionPanePresentationRequest = {
+      missionId: 'mission-returning',
+      paneId: 'pane-returning',
+      sessionId: 'session-returning',
+      role: 'orchestrator',
+      pane: {
+        adapterId: 'codex',
+        cwd: '/workspace/a',
+        title: 'Returning orchestrator',
+        role: 'orchestrator',
+      },
+    };
+    terminal.waitForSession.mockResolvedValue('session-returning');
+    terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+      paneId === request.paneId &&
+      listPanes(useLayoutStore.getState().root).some(
+        (pane) => pane.id === request.paneId,
+      )
+        ? request.sessionId
+        : null,
+    );
+    setActiveWorkspacePath('/workspace/a');
+    useOrchStore.setState({ workspaceEpoch: 10 });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-a',
+        pane: { id: 'shell-a', kind: 'shell', title: 'A' },
+      },
+      focusedPaneId: 'shell-a',
+    });
+    const mounted = mount();
+
+    act(() => presentationHandler?.(request));
+    await vi.waitFor(() => {
+      expect(terminal.markPersistedAuthorityOnSpawn).toHaveBeenCalledTimes(1);
+    });
+
+    setActiveWorkspacePath('/workspace/b');
+    useOrchStore.setState({ workspaceEpoch: 11 });
+    act(() => {
+      useLayoutStore.getState().setPanes([
+        { id: 'shell-b', kind: 'shell', title: 'B' },
+      ]);
+    });
+    setActiveWorkspacePath('/workspace/a');
+    useOrchStore.setState({ workspaceEpoch: 12 });
+    act(() => {
+      useLayoutStore.getState().setPanes([
+        { id: 'shell-a-returned', kind: 'shell', title: 'A again' },
+      ]);
+      presentationHandler?.(request);
+    });
+
+    await vi.waitFor(() => {
+      expect(terminal.markPersistedAuthorityOnSpawn).toHaveBeenCalledTimes(2);
+    });
+    expect(listPanes(useLayoutStore.getState().root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: request.paneId,
+          missionId: request.missionId,
+        }),
+      ]),
+    );
+    act(() => mounted.root.unmount());
+  });
+
+  it('does not let a late A presentation flight poison the next A epoch', async () => {
+    let presentationHandler:
+      | ((req: MissionPanePresentationRequest) => void)
+      | null = null;
+    let settleA: ((sessionId: string | null) => void) | null = null;
+    terminal.waitForSession
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            settleA = resolve;
+          }),
+      )
+      .mockResolvedValueOnce('session-flight');
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPanePresentationRequest: vi.fn(
+            (cb: (req: MissionPanePresentationRequest) => void) => {
+              presentationHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+        },
+      },
+    });
+    const request: MissionPanePresentationRequest = {
+      missionId: 'mission-flight',
+      paneId: 'pane-flight',
+      sessionId: 'session-flight',
+      role: 'worker',
+      pane: {
+        adapterId: 'codex',
+        cwd: '/workspace/a',
+        title: 'Worker flight',
+        role: 'worker',
+      },
+    };
+    setActiveWorkspacePath('/workspace/a');
+    useOrchStore.setState({ workspaceEpoch: 20 });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-flight-a',
+        pane: { id: 'shell-flight-a', kind: 'shell', title: 'A' },
+      },
+      focusedPaneId: 'shell-flight-a',
+    });
+    const mounted = mount();
+
+    act(() => presentationHandler?.(request));
+    await vi.waitFor(() => expect(settleA).not.toBeNull());
+    setActiveWorkspacePath('/workspace/b');
+    useOrchStore.setState({ workspaceEpoch: 21 });
+    act(() => {
+      useLayoutStore.getState().setPanes([
+        { id: 'shell-flight-b', kind: 'shell', title: 'B' },
+      ]);
+      settleA?.(request.sessionId);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['shell-flight-b']);
+
+    setActiveWorkspacePath('/workspace/a');
+    useOrchStore.setState({ workspaceEpoch: 22 });
+    act(() => {
+      useLayoutStore.getState().setPanes([
+        { id: 'shell-flight-a-returned', kind: 'shell', title: 'A again' },
+      ]);
+      presentationHandler?.(request);
+    });
+    await vi.waitFor(() => {
+      expect(terminal.markPersistedAuthorityOnSpawn).toHaveBeenCalledTimes(2);
+    });
+    expect(listPanes(useLayoutStore.getState().root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: request.paneId }),
+      ]),
+    );
+    act(() => mounted.root.unmount());
   });
 
   it('respawns the stable pane fresh, rebinds it and acknowledges a new session', async () => {
@@ -481,6 +777,233 @@ describe('orchestration bridge pane recovery', () => {
       ok: true,
       paneId: 'browser-created',
     });
+    act(() => mounted.root.unmount());
+  });
+
+  it('removes a failed orchestration pane before reporting a missing session and retries without growth', async () => {
+    let spawnHandler: ((request: OrchPaneSpawnRequest) => void) | null = null;
+    const sendPaneSpawnResult = vi.fn();
+    const syncPanes = vi.fn();
+    let settleFirstWait: ((sessionId: string | null) => void) | null = null;
+    terminal.waitForSession
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            settleFirstWait = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(null);
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: vi.fn(
+            (cb: (request: OrchPaneSpawnRequest) => void) => {
+              spawnHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes,
+          sendPaneSpawnResult,
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+          rebindMissionOrchestrator: vi.fn(async () => ({ ok: true })),
+        },
+      },
+    });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-shell',
+        pane: { id: 'pane-shell', kind: 'shell', title: 'Shell' },
+      },
+      focusedPaneId: 'pane-shell',
+    });
+    const mounted = mount();
+    const request: OrchPaneSpawnRequest = {
+      requestId: 'orchspawn-failed',
+      paneId: 'pane-failed',
+      adapterId: 'codex',
+      missionId: 'mission-a',
+      role: 'worker',
+      resume: false,
+      resumeLatestOnly: false,
+      restorePersistedAuthority: false,
+    };
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      act(() => spawnHandler?.(request));
+      if (attempt === 0) {
+        await vi.waitFor(() => {
+          expect(
+            listPanes(useLayoutStore.getState().root).some(
+              (pane) => pane.id === request.paneId,
+            ),
+          ).toBe(true);
+        });
+        // Terminal spawn failure historically cleared the spent token before
+        // waitForSession returned. The still-in-flight sealed request retains
+        // cleanup ownership of its exact Main-minted pane id.
+        act(() => {
+          useLayoutStore.getState().clearOrchRequestId(request.paneId);
+          settleFirstWait?.(null);
+        });
+      }
+      await vi.waitFor(() => {
+        expect(sendPaneSpawnResult).toHaveBeenCalledTimes(attempt + 1);
+      });
+      expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+        .toEqual(['pane-shell']);
+    }
+
+    expect(sendPaneSpawnResult).toHaveBeenLastCalledWith({
+      requestId: request.requestId,
+      ok: false,
+      paneId: request.paneId,
+      error: 'session did not start (adapter missing or spawn failed)',
+    });
+    expect(syncPanes).toHaveBeenLastCalledWith([
+      expect.objectContaining({ paneId: 'pane-shell' }),
+    ]);
+    act(() => mounted.root.unmount());
+  });
+
+  it('removes and synchronizes an orchestration pane when session materialization throws', async () => {
+    let spawnHandler: ((request: OrchPaneSpawnRequest) => void) | null = null;
+    const sendPaneSpawnResult = vi.fn();
+    const syncPanes = vi.fn();
+    terminal.waitForSession.mockRejectedValueOnce(
+      new Error('session materialization crashed'),
+    );
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: vi.fn(
+            (cb: (request: OrchPaneSpawnRequest) => void) => {
+              spawnHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes,
+          sendPaneSpawnResult,
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+          rebindMissionOrchestrator: vi.fn(async () => ({ ok: true })),
+        },
+      },
+    });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-shell',
+        pane: { id: 'pane-shell', kind: 'shell', title: 'Shell' },
+      },
+      focusedPaneId: 'pane-shell',
+    });
+    const mounted = mount();
+    const request: OrchPaneSpawnRequest = {
+      requestId: 'orchspawn-threw',
+      paneId: 'pane-threw',
+      adapterId: 'codex',
+      missionId: 'mission-a',
+      role: 'worker',
+      resume: false,
+      resumeLatestOnly: false,
+      restorePersistedAuthority: false,
+    };
+
+    act(() => spawnHandler?.(request));
+    await vi.waitFor(() => {
+      expect(sendPaneSpawnResult).toHaveBeenCalledWith({
+        requestId: request.requestId,
+        ok: false,
+        error: 'session materialization crashed',
+      });
+    });
+
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['pane-shell']);
+    expect(syncPanes).toHaveBeenLastCalledWith([
+      expect.objectContaining({ paneId: 'pane-shell' }),
+    ]);
+    act(() => mounted.root.unmount());
+  });
+
+  it('honors a sealed orchestration close and ignores a foreign request', () => {
+    let closeHandler: ((request: PaneCloseRequest) => void) | null = null;
+    const syncPanes = vi.fn();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: vi.fn(
+            (cb: (request: PaneCloseRequest) => void) => {
+              closeHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes,
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+          rebindMissionOrchestrator: vi.fn(async () => ({ ok: true })),
+        },
+      },
+    });
+    const panes = [
+      { id: 'pane-shell', kind: 'shell' as const, title: 'Shell' },
+      {
+        id: 'pane-worker',
+        kind: 'cli-agent' as const,
+        title: 'Worker',
+        adapterId: 'codex',
+        orchRequestId: 'orchspawn-owner',
+      },
+    ];
+    useLayoutStore.getState().setPanes(panes);
+    const mounted = mount();
+    syncPanes.mockClear();
+
+    act(() => {
+      closeHandler?.({
+        paneId: 'pane-worker',
+        requestId: 'orchspawn-foreign',
+      });
+    });
+    expect(listPanes(useLayoutStore.getState().root)).toHaveLength(2);
+    expect(syncPanes).not.toHaveBeenCalled();
+
+    act(() => {
+      closeHandler?.({
+        paneId: 'pane-worker',
+        requestId: 'orchspawn-owner',
+      });
+    });
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['pane-shell']);
+    expect(syncPanes).toHaveBeenCalled();
     act(() => mounted.root.unmount());
   });
 });

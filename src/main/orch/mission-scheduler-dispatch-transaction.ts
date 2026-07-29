@@ -1,6 +1,9 @@
 import { app } from "electron";
 import type { Mission, Squad } from "../../shared/orch-types";
-import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
+import {
+  hasCurrentDispatchAuthority,
+  missionIntentAuthoritySnapshot,
+} from "../../shared/mission-intent";
 import type { ProviderQuotaEntry } from "../../shared/quota-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
@@ -24,10 +27,9 @@ import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { quotaAvailabilityScore } from "../quota/quota-policy";
 import { requireQuotaService } from "../quota/quota-service";
 import { trustRealMissionCodexProjectPath } from "../real-mission-codex-trust";
-import { ensureGuidedGitBaseline } from "../runtime/guided-greenfield-baseline";
+import { ensureGuidedGitBaselineForWorktreeAsync } from "../runtime/guided-greenfield-baseline";
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import { classifyOperationalFailure } from "../runtime/operational-failure-policy";
-import { isGuidedDeliveryTaskKind } from "./guided-task-kind";
 import {
   awaitMissionSchedulerAuthorityFence,
   missionSchedulerHasKickoffAuthority,
@@ -61,6 +63,7 @@ import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import type { PlannedTaskRecord } from "./task-store";
 import { reserveWorkerSpawnSlot } from "./tools-panes";
 import { requestMissionPaneClose } from "./pane-registry";
+import { throwIfMissionSchedulerAborted } from "./mission-scheduler-abort";
 
 export const MISSION_SCHEDULER_BOOTSTRAP_FAILURE_PREFIX =
   "Falha durante o bootstrap do worker:";
@@ -154,6 +157,15 @@ interface MissionSchedulerDispatchFailureStore {
     readonly workerIncarnationId: string;
     readonly error: string;
   }): unknown;
+  failSupersededBootstrap(input: {
+    readonly taskId: string;
+    readonly missionId: string;
+    readonly leaseToken: string;
+    readonly paneId: string;
+    readonly sessionId: string;
+    readonly workerIncarnationId: string;
+    readonly error: string;
+  }): unknown;
   fail(input: {
     readonly taskId: string;
     readonly revision: number;
@@ -172,8 +184,9 @@ const TERMINAL_DISPATCH_FAILURE_STATES = new Set([
 
 /**
  * Persist the failure observed by the scheduler bootstrap catch. If the PTY
- * exit tap already won the race, the durable row is generic+blocked; only the
- * exact bound physical identity and original lease may refine that metadata.
+ * exit tap already won the race, the durable row is generic+blocked on legacy
+ * state or superseded on the recoverable path. Only the exact bound physical
+ * identity and original lease may refine or terminalize that attempt.
  * A later/execution exit has no active scheduler catch and retains the generic
  * lifecycle reason.
  */
@@ -216,6 +229,30 @@ export function persistMissionSchedulerDispatchFailure(input: {
       error: detail,
     });
     return "refined";
+  }
+  const recoverableSessionExitWon =
+    current.state === "superseded" &&
+    current.lastError === TASK_DISPATCH_SESSION_EXIT_REASON &&
+    classifyOperationalFailure(input.error) === "terminal";
+  if (
+    recoverableSessionExitWon &&
+    input.paneId &&
+    input.sessionId &&
+    input.workerIncarnationId &&
+    current.paneId === input.paneId &&
+    current.sessionId === input.sessionId &&
+    current.workerIncarnationId === input.workerIncarnationId
+  ) {
+    input.store.failSupersededBootstrap({
+      taskId: input.taskId,
+      missionId: input.missionId,
+      leaseToken: input.leaseToken,
+      paneId: input.paneId,
+      sessionId: input.sessionId,
+      workerIncarnationId: input.workerIncarnationId,
+      error: detail,
+    });
+    return "failed";
   }
   if (TERMINAL_DISPATCH_FAILURE_STATES.has(current.state)) {
     return "unchanged";
@@ -314,7 +351,11 @@ function intentAuthoritySnapshot(mission: Mission): string {
   return hashMissionIntentContract({
     id: mission.id,
     intentVersion: mission.intentVersion ?? 0,
-    intentContract: mission.intentContract ?? null,
+    // Spend is a live runtime ledger, not approved intent. Tool use by one
+    // sibling must not revoke another sibling's already-sealed bootstrap.
+    intentContract: mission.intentContract
+      ? missionIntentAuthoritySnapshot(mission.intentContract)
+      : null,
     squadId: mission.squadId ?? null,
   });
 }
@@ -513,7 +554,9 @@ export async function dispatchMissionSchedulerTask(
   scope: ProjectExecutionScope,
   missionId: string,
   request: SchedulerDispatchRequest,
+  signal?: AbortSignal,
 ): Promise<void> {
+  throwIfMissionSchedulerAborted(signal);
   const { taskId } = request;
   const stores = getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
@@ -639,6 +682,7 @@ export async function dispatchMissionSchedulerTask(
         ? resolveMissionSpawnAccountId(sealedRoute.decision.adapterId)
         : Promise.resolve(undefined),
   });
+  throwIfMissionSchedulerAborted(signal);
   if (executionMode === "read_only" && !operatorChoice) {
     const adapterId = sealedRoute.decision.adapterId;
     // Two ways to earn a read_only lane, both enforced outside the prompt:
@@ -666,6 +710,7 @@ export async function dispatchMissionSchedulerTask(
     stores.missionPanes.list(missionId),
     dispatches,
   );
+  throwIfMissionSchedulerAborted(signal);
   const reservation = reserveWorkerSpawnSlot({
     scope,
     missionId,
@@ -694,15 +739,13 @@ export async function dispatchMissionSchedulerTask(
   let boundPaneId: string | null = null;
   let boundSessionId: string | null = null;
   try {
+    throwIfMissionSchedulerAborted(signal);
     assertCurrentDispatchAuthority();
-    if (
-      executionMode === "isolated_worktree" &&
-      isGuidedDeliveryTaskKind(meta.guidedTaskKind)
-    ) {
-      // Beginner greenfields reach WorktreeManager with a real, clean commit.
-      // The helper initializes only a physically empty folder or a clean
-      // unborn repo and never stages user files.
-      ensureGuidedGitBaseline(scope);
+    if (useTaskWorktree) {
+      // Every WorktreeManager reservation needs a real, clean base. Existing
+      // operator bytes are checkpointed before the first claim so a local Git
+      // precondition never consumes a durable dispatch attempt.
+      await ensureGuidedGitBaselineForWorktreeAsync(scope);
     }
     const claim = stores.taskDispatches.claim({
       missionId,
@@ -733,6 +776,7 @@ export async function dispatchMissionSchedulerTask(
             dependsOn: worktreeDependencies,
           })
         : null;
+    throwIfMissionSchedulerAborted(signal);
     worktreeCreated = worktree !== null;
     const executionRoot = worktree?.worktreePath ?? scope.rootRealPath;
     if (worktree?.worktreePath) {
@@ -790,6 +834,7 @@ export async function dispatchMissionSchedulerTask(
         );
       }
     };
+    throwIfMissionSchedulerAborted(signal);
     assertCurrentSpawnAuthority();
     await spawnPaneAndMaybePrompt(
       {
@@ -829,6 +874,7 @@ export async function dispatchMissionSchedulerTask(
       },
       {
         invocation: {
+          ...(signal ? { signal } : {}),
           assertCurrentAuthority: assertCurrentSpawnAuthority,
         },
         onPaneCreated: (paneId, sessionId) => {
@@ -887,7 +933,31 @@ export async function dispatchMissionSchedulerTask(
           : {}),
       },
     );
+    throwIfMissionSchedulerAborted(signal);
   } catch (error) {
+    if (signal?.aborted) {
+      if (dispatchLeaseToken && dispatchWorkerIncarnationId) {
+        try {
+          await compensateRetryableBootstrapFailure({
+            scope,
+            missionId,
+            taskId,
+            stores,
+            leaseToken: dispatchLeaseToken,
+            workerIncarnationId: dispatchWorkerIncarnationId,
+            paneId: boundPaneId,
+            sessionId: boundSessionId,
+            error: signal.reason ?? error,
+          });
+        } catch (recoveryError) {
+          throw new MissionSchedulerDispatchAuthorityError(
+            "dispatch abortado não pôde provar o encerramento físico exato",
+            recoveryError,
+          );
+        }
+      }
+      throwIfMissionSchedulerAborted(signal);
+    }
     if (isMissionSchedulerCapacityWait(error)) {
       throw error instanceof MissionSchedulerCapacityWaitError
         ? error
@@ -934,23 +1004,11 @@ export async function dispatchMissionSchedulerTask(
       );
     }
     const failureDetail = missionSchedulerBootstrapFailureDetail(error);
-    if (worktreeCreated) {
-      try {
-        requireWorktreeRuntimeRegistry().markFailed(
-          scope,
-          missionId,
-          taskId,
-          failureDetail,
-        );
-      } catch (markError) {
-        console.error(
-          "[mission-scheduler] failed to mark dispatch failure:",
-          markError,
-        );
-      }
-    }
+    let persistedFailure: ReturnType<
+      typeof persistMissionSchedulerDispatchFailure
+    > = "unchanged";
     try {
-      persistMissionSchedulerDispatchFailure({
+      persistedFailure = persistMissionSchedulerDispatchFailure({
         store: stores.taskDispatches,
         missionId,
         taskId,
@@ -965,6 +1023,24 @@ export async function dispatchMissionSchedulerTask(
         "[mission-scheduler] failed to persist dispatch failure:",
         dispatchError,
       );
+    }
+    // Never poison a reusable worktree while the durable dispatch still owns
+    // an open retry lane. Only a persisted terminal transition may terminalize
+    // the corresponding worktree.
+    if (worktreeCreated && persistedFailure !== "unchanged") {
+      try {
+        requireWorktreeRuntimeRegistry().markFailed(
+          scope,
+          missionId,
+          taskId,
+          failureDetail,
+        );
+      } catch (markError) {
+        console.error(
+          "[mission-scheduler] failed to mark dispatch failure:",
+          markError,
+        );
+      }
     }
     throw error;
   } finally {

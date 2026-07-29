@@ -30,6 +30,7 @@ type PrevcMergeWorkflowPort = Pick<
   | "freezeContract"
   | "getMissionWorkflow"
   | "inspectReadiness"
+  | "inspectCurrentPreExecutionReviewGate"
   | "refreezeContract"
 >;
 
@@ -63,6 +64,14 @@ export interface PrevcMergePreparationDependencies {
     readonly sensorIds: ReadonlySet<string>;
     readonly invariantRefs: ReadonlySet<string>;
   };
+  readonly getPreExecutionPlanBinding?: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+    intentVersion: number,
+  ) => {
+    readonly intentVersion: number;
+    readonly planHash: string;
+  } | null;
 }
 
 const PRODUCTION_DEPS: PrevcMergePreparationDependencies = {
@@ -90,6 +99,18 @@ const PRODUCTION_DEPS: PrevcMergePreparationDependencies = {
       assertCurrentAuthority: input.assertCurrentAuthority,
       ...(input.signal ? { signal: input.signal } : {}),
     }),
+  getPreExecutionPlanBinding: (scope, missionId, intentVersion) => {
+    const receipt = getProjectDomainStores(scope).tasks.getPlanReceipt(
+      missionId,
+      intentVersion,
+    );
+    return receipt
+      ? Object.freeze({
+          intentVersion: receipt.intentVersion,
+          planHash: receipt.planHash,
+        })
+      : null;
+  },
   inspectRequirements: (scope) => {
     const config = loadContextConfiguration(scope);
     return Object.freeze({
@@ -122,8 +143,18 @@ const TERMINAL_PREVC_FAILURE_CODES = Object.freeze([
   "prevc_merge_workflow_corrupt",
   "prevc_merge_contract_stale",
   "prevc_merge_freeze_failed",
-  "prevc_merge_requirements_pending",
   "prevc_merge_stage_invalid",
+]);
+
+const PENDING_PREVC_FAILURE_CODES = Object.freeze([
+  "prevc_merge_context_pending",
+  "prevc_merge_not_ready",
+  // A missing project sensor/invariant may be supplied by the candidate or by
+  // context bootstrap. It is not proof of terminal mission authority loss.
+  "prevc_merge_requirements_pending",
+  // Current production advances repairable pre-execution findings as durable
+  // guidance. Keep legacy/restart projections non-terminal as well.
+  "prevc_merge_review_blocked",
 ]);
 
 /**
@@ -150,10 +181,7 @@ export function classifyPrevcMergeFailure(
   ) {
     return "terminal";
   }
-  if (
-    message.includes("prevc_merge_context_pending") ||
-    message.includes("prevc_merge_not_ready")
-  ) {
+  if (PENDING_PREVC_FAILURE_CODES.some((code) => message.includes(code))) {
     return "retryable";
   }
   return classifyOperationalFailure(error);
@@ -174,8 +202,9 @@ function scopeMissionKey(
 
 /**
  * Starts only project-context preparation. It intentionally does not freeze a
- * contract, because a pre-execution freeze could turn optional preparation
- * into a worker gate. Final promotion calls `ensurePrevcMergeReady`.
+ * contract: freezing rotates the PREVC authority seal and would invalidate
+ * workers that are already running. Final promotion calls
+ * `ensurePrevcMergeReady` after their handoffs are durable.
  */
 export function prepareOpportunisticPrevcContext(
   scope: ProjectExecutionScope,
@@ -268,6 +297,37 @@ export async function ensurePrevcMergeReady(
     readonly assertCurrentAuthority?: () => void;
   } = {},
   dependencies: PrevcMergePreparationDependencies = PRODUCTION_DEPS,
+): Promise<{
+  readonly stage: "execution";
+  readonly frozenNow: boolean;
+  readonly refrozen: boolean;
+}> {
+  if (options.signal?.aborted) {
+    throw options.signal.reason instanceof Error
+      ? options.signal.reason
+      : new Error("PREVC merge preparation was aborted");
+  }
+  if (opportunisticContextFlights.has(scopeMissionKey(scope, missionId))) {
+    throw new Error(
+      "prevc_merge_context_pending: background PREVC preparation is still running",
+    );
+  }
+  return ensurePrevcMergeReadyCore(
+    scope,
+    missionId,
+    options,
+    dependencies,
+  );
+}
+
+async function ensurePrevcMergeReadyCore(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly assertCurrentAuthority?: () => void;
+  },
+  dependencies: PrevcMergePreparationDependencies,
 ): Promise<{
   readonly stage: "execution";
   readonly frozenNow: boolean;
@@ -383,6 +443,39 @@ export async function ensurePrevcMergeReady(
     current = service.getMissionWorkflow(missionId);
   }
   if (current.workflow?.stage !== "execution") {
+    if (
+      current.workflow &&
+      ["review-primary", "review-secondary"].includes(
+        current.workflow.stage,
+      )
+    ) {
+      const planBinding = (
+        dependencies.getPreExecutionPlanBinding ??
+        PRODUCTION_DEPS.getPreExecutionPlanBinding!
+      )(
+        scope,
+        missionId,
+        mission.intentContract.intentVersion,
+      );
+      if (!planBinding) {
+        throw new Error(
+          "prevc_merge_not_ready: current sealed task plan is missing",
+        );
+      }
+      const gate = service.inspectCurrentPreExecutionReviewGate(
+        missionId,
+        planBinding,
+      );
+      if (
+        gate.reportCount > 0 &&
+        gate.reason !== "review-quorum-missing"
+      ) {
+        throw new Error(
+          "prevc_merge_review_blocked: " +
+            `${gate.reason}; evidence=${gate.evidenceIds.join(",")}`,
+        );
+      }
+    }
     throw new Error(
       `prevc_merge_not_ready: workflow ended at ${current.workflow?.stage ?? "missing"}`,
     );

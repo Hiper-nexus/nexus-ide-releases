@@ -356,6 +356,11 @@ export interface PaneModel {
   orchRequestId?: string;
   /** Mission selector for a main-verified post-approval orchestrator spawn. */
   missionId?: string;
+  /**
+   * Process-local orchestration surface. It may be visible while active but
+   * must never enter the durable workspace layout or cold-start restore.
+   */
+  transient?: true;
   /** Bounded ANSI snapshot used only to repaint scrollback after a cold restart. */
   terminalScrollback?: string;
 }

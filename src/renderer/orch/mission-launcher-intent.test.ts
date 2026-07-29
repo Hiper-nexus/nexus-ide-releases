@@ -69,7 +69,9 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toContain('Como conduzir');
     expect(prompt).toMatch(/PREVC paralelo/i);
     expect(prompt).toMatch(/n[aã]o pare a miss[aã]o para rodar Doctor\/freeze/i);
-    expect(prompt).toContain('nexus_task plan');
+    expect(prompt).toMatch(/plano desta inten[cç][aã]o j[aá] [ée] selado pelo Main/i);
+    expect(prompt).toMatch(/lista vazia [ée] recupera[cç][aã]o transit[oó]ria do Main/i);
+    expect(prompt).not.toContain('nexus_task plan');
     expect(prompt).toContain('agentRef');
     expect(prompt).toContain('executionMode');
     // O papel do main agora é declarado uma vez, como fato, na seção de estado.
@@ -87,7 +89,7 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toMatch(/mem[oó]ria dur[aá]vel/i);
     expect(prompt).not.toContain('nexus_mission_freeze_contract');
   });
-  it('keeps short-mission kickoffs lean: no goal restated as criterion, plan proportional', () => {
+  it('keeps short-mission kickoffs lean without asking the Maestro to replan', () => {
     const goal = 'Corrigir o botão de salvar no formulário de perfil';
     const prompt = buildIntentDispatchKickoffPrompt({
       squad,
@@ -102,7 +104,8 @@ describe('intent-first kickoff packing', () => {
     expect(prompt.split(goal).length - 1).toBe(1);
     expect(prompt).not.toContain(AUTO_DERIVED_CRITERION_PREFIX);
     expect(prompt).toContain('validado pelo PREVC');
-    expect(prompt).toMatch(/proporcional ao objetivo/i);
+    expect(prompt).toMatch(/plano desta inten[cç][aã]o j[aá] [ée] selado pelo Main/i);
+    expect(prompt).not.toContain('nexus_task plan');
   });
 
   it('keeps a prepared guided PREVC contract as a promotion gate without blocking workers', () => {
@@ -207,7 +210,7 @@ describe('orientationForKickoff', () => {
     expect(prompt).not.toContain('nexus_mission_freeze_contract');
   });
 
-  it('standard kickoff tells the pilot to use bg tools for long tasks', () => {
+  it('standard kickoff keeps long-running execution with Main-owned workers', () => {
     const prompt = buildIntentDispatchKickoffPrompt({
       squad,
       missionId: 'mission-std',
@@ -217,8 +220,9 @@ describe('orientationForKickoff', () => {
       maxWorkers: 2,
       lane: 'standard',
     });
-    expect(prompt).toContain('nexus_bg_run');
-    expect(prompt).toContain('nexus_bg_wait');
+    expect(prompt).toContain('O main é o dispatcher físico');
+    expect(prompt).toMatch(/comandos longos de implementa[cç][aã]o rodam no worktree da task/i);
+    expect(prompt).not.toContain('nexus_bg_run');
   });
 });
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   REAL_MISSION_E2E_CTA,
   parseRealMissionE2EEvidence,
+  realMissionE2EAcceptanceCriteria,
 } from "./real-mission-e2e";
 import { sha, validPassEvidence } from "./real-mission-e2e-test-support";
 
@@ -413,15 +414,17 @@ describe("real mission E2E v9 claude orchestrator variant", () => {
     );
 
     expect(parsed.status).toBe("pass");
-    // Sem advisor Claude: 4 scouts + executor + revisor + grok + QA.
+    // Sem advisor Claude: 5 advisors + executor + revisor + QA.
     expect(parsed.plan?.tasks).toHaveLength(8);
     expect(parsed.dispatches).toHaveLength(8);
     expect(parsed.handoffs).toHaveLength(8);
-    expect(parsed.dependencyConsumptions).toHaveLength(3);
+    expect(parsed.dependencyConsumptions).toHaveLength(2);
     expect(
       parsed.participation.find((row) => row.cli === "claude")?.skipped,
     ).toBe("orchestrator-reserved");
-    expect(parsed.completion?.milestones).toHaveLength(10);
+    expect(parsed.completion?.milestones).toHaveLength(
+      realMissionE2EAcceptanceCriteria("claude").length,
+    );
     const orchestrator = parsed.panes.find(
       (pane) => pane.role === "orchestrator",
     );

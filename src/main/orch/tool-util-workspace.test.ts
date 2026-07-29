@@ -8,7 +8,13 @@ const stubs = vi.hoisted(() => ({
     sessionId: 'session-1',
   })),
   requestPaneClose: vi.fn(async () => true),
-  waitForIdle: vi.fn(async () => 'idle'),
+  waitForIdle: vi.fn<
+    (
+      sessionId: string,
+      timeoutMs?: number,
+      signal?: AbortSignal,
+    ) => Promise<string>
+  >(async () => 'idle'),
   readSessionOutput: vi.fn(() => ''),
   preSpawnProbe: vi.fn<
     (adapterId: string, options?: { model?: string }) => Promise<void>
@@ -19,6 +25,10 @@ const stubs = vi.hoisted(() => ({
   stateTaps: [] as Array<(sessionId: string, state: string) => void>,
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
   exitTaps: [] as Array<(sessionId: string) => void>,
+  turnStartSequence: 0,
+  turnStartTaps: [] as Array<
+    (entry: { sessionId: string; sequence: number }) => void
+  >,
   missionPanesRecord: vi.fn(),
   missionGet: vi.fn((missionId: string) =>
     missionId === 'm1'
@@ -85,6 +95,16 @@ vi.mock('../pty/pty-manager', () => ({
 vi.mock('./agent-status', () => ({
   isSessionInjectableIdle: vi.fn(
     () => stubs.sessionState() === 'idle' && stubs.injectable,
+  ),
+  getAgentTurnStartSequence: vi.fn(() => stubs.turnStartSequence),
+  tapAgentTurnStart: vi.fn(
+    (tap: (entry: { sessionId: string; sequence: number }) => void) => {
+      stubs.turnStartTaps.push(tap);
+      return () => {
+        const index = stubs.turnStartTaps.indexOf(tap);
+        if (index >= 0) stubs.turnStartTaps.splice(index, 1);
+      };
+    },
   ),
 }));
 vi.mock('../adapters/adapter-registry', () => ({
@@ -173,6 +193,8 @@ describe('agent pane workspace confinement', () => {
     stubs.stateTaps.length = 0;
     stubs.dataTaps.length = 0;
     stubs.exitTaps.length = 0;
+    stubs.turnStartSequence = 0;
+    stubs.turnStartTaps.length = 0;
     stubs.resolveCwdForScope.mockReturnValue('/workspace');
     stubs.preSpawnProbe.mockResolvedValue(undefined);
     stubs.waitForIdle.mockResolvedValue('idle');
@@ -229,6 +251,23 @@ describe('agent pane workspace confinement', () => {
         },
       }),
     );
+  });
+
+  it('never records an ephemeral internal reviewer in mission composition', async () => {
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'codex',
+      missionId: 'm1',
+      role: 'worker',
+      readOnly: true,
+      transient: true,
+      scope,
+      executionScope: taskExecutionScope,
+    });
+
+    expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ transient: true }),
+    );
+    expect(stubs.missionPanesRecord).not.toHaveBeenCalled();
   });
 
   it('rejects revision-bound writable workers without a distinct execution worktree before probing', async () => {
@@ -408,15 +447,20 @@ describe('agent pane workspace confinement', () => {
   });
 
   it('revalidates after boot wait and closes the pane before a revoked prompt paste', async () => {
-    let finishBoot: ((state: string) => void) | undefined;
+    const reason = new Error('participant mission-scheduler exceeded 30000ms');
     stubs.waitForIdle.mockImplementationOnce(
-      () =>
-        new Promise<string>((resolve) => {
-          finishBoot = resolve;
+      (
+        _sessionId: string,
+        _timeoutMs?: number,
+        signal?: AbortSignal,
+      ) =>
+        new Promise<string>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), {
+            once: true,
+          });
         }),
     );
     const controller = new AbortController();
-    let current = true;
     const pending = spawnPaneAndMaybePrompt(
       {
         adapterId: 'codex',
@@ -429,19 +473,20 @@ describe('agent pane workspace confinement', () => {
       {
         invocation: {
           signal: controller.signal,
-          assertCurrentAuthority: () => {
-            if (!current) throw new Error('session_authority_revoked');
-          },
+          assertCurrentAuthority: vi.fn(),
         },
       },
     );
     await vi.waitFor(() => expect(stubs.waitForIdle).toHaveBeenCalledOnce());
 
-    current = false;
-    controller.abort('session_authority_revoked');
-    finishBoot?.('idle');
+    expect(stubs.waitForIdle).toHaveBeenCalledWith(
+      'session-1',
+      expect.any(Number),
+      controller.signal,
+    );
+    controller.abort(reason);
 
-    await expect(pending).rejects.toThrow('session_authority_revoked');
+    await expect(pending).rejects.toBe(reason);
     expect(stubs.writeSession).not.toHaveBeenCalled();
     expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-1');
   });
@@ -526,10 +571,7 @@ describe('worker handoff capability contract', () => {
     stubs.writeSession.mockImplementation(
       ((sessionId: string, data: string) => {
         writes.push(String(data));
-        if (
-          String(data).includes('nexus_merge_review_submit') ||
-          String(data).includes('200~')
-        ) {
+        if (data === '\r') {
           queueMicrotask(() => {
             stubs.sessionState.mockReturnValue('busy');
             for (const tap of stubs.stateTaps) tap(sessionId, 'busy');
@@ -566,6 +608,8 @@ describe('agent prompt injection', () => {
     stubs.writeSession.mockReturnValue(true);
     stubs.sessionState.mockReturnValue('busy');
     stubs.injectable = true;
+    stubs.turnStartSequence = 0;
+    stubs.turnStartTaps.length = 0;
   });
 
   it('submits multiline briefs as one bracketed-paste transaction', async () => {
@@ -711,6 +755,143 @@ describe('agent prompt injection', () => {
       expect(stubs.dataTaps).toHaveLength(0);
       expect(stubs.exitTaps).toHaveLength(0);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not treat Claude paste echo plus a false busy edge as prompt acceptance', async () => {
+    vi.useFakeTimers();
+    const previous = process.env.NEXUS_REAL_MISSION_E2E;
+    process.env.NEXUS_REAL_MISSION_E2E = '1';
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      const pending = deliverAgentPrompt(
+        'session-1',
+        'review this task',
+        undefined,
+        { adapterId: 'claude' },
+      );
+      const rejected = expect(pending).rejects.toThrow(/did not start/i);
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stubs.writeSession).toHaveBeenCalledTimes(1);
+      for (const tap of [...stubs.dataTaps]) {
+        tap('session-1', 'local paste repaint only');
+      }
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
+      stubs.sessionState.mockReturnValue('busy');
+
+      await vi.advanceTimersByTimeAsync(13_000);
+      await rejected;
+      expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEXUS_REAL_MISSION_E2E;
+      } else {
+        process.env.NEXUS_REAL_MISSION_E2E = previous;
+      }
+      vi.useRealTimers();
+    }
+  });
+
+  it('requires Claude UserPromptSubmit even when plugin bootstrap emits busy and output after Enter', async () => {
+    vi.useFakeTimers();
+    const previous = process.env.NEXUS_REAL_MISSION_E2E;
+    process.env.NEXUS_REAL_MISSION_E2E = '1';
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'updating plugin marketplace');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+      const pending = deliverAgentPrompt(
+        'session-1',
+        'review this task',
+        undefined,
+        { adapterId: 'claude' },
+      );
+      const rejected = expect(pending).rejects.toThrow(/did not start/i);
+
+      await vi.advanceTimersByTimeAsync(13_000);
+      await rejected;
+      expect(stubs.turnStartSequence).toBe(0);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEXUS_REAL_MISSION_E2E;
+      } else {
+        process.env.NEXUS_REAL_MISSION_E2E = previous;
+      }
+      vi.useRealTimers();
+    }
+  });
+
+  it('accepts Claude only after the exact session emits UserPromptSubmit', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.turnStartSequence += 1;
+              for (const tap of [...stubs.turnStartTaps]) {
+                tap({ sessionId, sequence: stubs.turnStartSequence });
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+      const pending = deliverAgentPrompt(
+        'session-1',
+        'review this task',
+        undefined,
+        { adapterId: 'claude' },
+      );
+
+      await vi.advanceTimersByTimeAsync(900);
+
+      await expect(pending).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the release-only Codex silent busy proof bounded to Codex', async () => {
+    vi.useFakeTimers();
+    const previous = process.env.NEXUS_REAL_MISSION_E2E;
+    process.env.NEXUS_REAL_MISSION_E2E = '1';
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      const pending = deliverAgentPrompt(
+        'session-1',
+        'run the task',
+        undefined,
+        { adapterId: 'codex' },
+      );
+
+      await vi.advanceTimersByTimeAsync(500);
+      for (const tap of [...stubs.stateTaps]) tap('session-1', 'busy');
+      stubs.sessionState.mockReturnValue('busy');
+      await vi.advanceTimersByTimeAsync(400);
+
+      await expect(pending).resolves.toBe(true);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NEXUS_REAL_MISSION_E2E;
+      } else {
+        process.env.NEXUS_REAL_MISSION_E2E = previous;
+      }
       vi.useRealTimers();
     }
   });

@@ -15,13 +15,31 @@ interface RingBuffer {
 
 interface IdleWaiter {
   sessionId: string;
-  resolve: (state: "idle" | "exited") => void;
+  resolve: (state: "idle" | "exited" | "timeout") => void;
+  reject: (reason?: unknown) => void;
   timer?: ReturnType<typeof setTimeout>;
+  abortCleanup?: () => void;
 }
 
 const buffers = new Map<string, RingBuffer>();
 const sessionStates = new Map<string, PaneSessionState>();
 const idleWaiters = new Set<IdleWaiter>();
+
+function idleWaitAbortFallback(): Error {
+  const error = new Error("pane idle wait was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function settleIdleWaiter(
+  waiter: IdleWaiter,
+  state: "idle" | "exited" | "timeout",
+): void {
+  if (!idleWaiters.delete(waiter)) return;
+  if (waiter.timer) clearTimeout(waiter.timer);
+  waiter.abortCleanup?.();
+  waiter.resolve(state);
+}
 
 // Retain dead-session output briefly for delayed handoffs, then release it.
 setInterval(() => {
@@ -55,9 +73,7 @@ export function recordPaneSessionState(
   if (state !== "idle") return;
   for (const waiter of [...idleWaiters]) {
     if (waiter.sessionId !== sessionId) continue;
-    idleWaiters.delete(waiter);
-    if (waiter.timer) clearTimeout(waiter.timer);
-    waiter.resolve("idle");
+    settleIdleWaiter(waiter, "idle");
   }
 }
 
@@ -70,9 +86,7 @@ export function recordPaneSessionExit(sessionId: string): void {
   }
   for (const waiter of [...idleWaiters]) {
     if (waiter.sessionId !== sessionId) continue;
-    idleWaiters.delete(waiter);
-    if (waiter.timer) clearTimeout(waiter.timer);
-    waiter.resolve("exited");
+    settleIdleWaiter(waiter, "exited");
   }
 }
 
@@ -125,7 +139,11 @@ export function sessionOutputExitedAt(sessionId: string): number | null {
 export function waitForIdle(
   sessionId: string,
   timeoutMs = 120_000,
+  signal?: AbortSignal,
 ): Promise<"idle" | "exited" | "timeout"> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason ?? idleWaitAbortFallback());
+  }
   const current = sessionStates.get(sessionId) ?? getSessionState(sessionId);
   if (current === "idle") return Promise.resolve("idle");
   if (current === null || current === undefined) {
@@ -133,11 +151,23 @@ export function waitForIdle(
       buffers.get(sessionId)?.exited ? "exited" : "timeout",
     );
   }
-  return new Promise((resolve) => {
-    const waiter: IdleWaiter = { sessionId, resolve };
+  return new Promise((resolve, reject) => {
+    const waiter: IdleWaiter = { sessionId, resolve, reject };
     idleWaiters.add(waiter);
     waiter.timer = setTimeout(() => {
-      if (idleWaiters.delete(waiter)) resolve("timeout");
+      settleIdleWaiter(waiter, "timeout");
     }, timeoutMs);
+    if (signal) {
+      const onAbort = () => {
+        if (!idleWaiters.delete(waiter)) return;
+        if (waiter.timer) clearTimeout(waiter.timer);
+        waiter.abortCleanup?.();
+        waiter.reject(signal.reason ?? idleWaitAbortFallback());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      waiter.abortCleanup = () =>
+        signal.removeEventListener("abort", onAbort);
+      if (signal.aborted) onAbort();
+    }
   });
 }

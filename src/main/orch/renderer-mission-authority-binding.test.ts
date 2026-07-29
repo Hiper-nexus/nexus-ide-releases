@@ -73,6 +73,7 @@ vi.mock("./pane-activity-summary", () => ({
 import { RendererMissionAuthority } from "./renderer-mission-authority";
 import { resetMissionPromptQueues } from "./mission-prompt-queue-registry";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
+import { createMissionPaneAuthoritySeal } from "./mission-pane-authority";
 
 const owner = { id: 7 } as WebContents;
 const scope = testProjectScope({
@@ -717,5 +718,112 @@ describe("renderer mission authority", () => {
     expect(() =>
       authority.listMissionPanesForRenderer(owner, "mission-a"),
     ).toThrow(/outside renderer workspace scope/);
+  });
+
+  it("confirms restore only for the exact pane on the current approved revision", () => {
+    const authoritySeal = createMissionPaneAuthoritySeal({
+      mission: approvedMission,
+      squad: savedSquad,
+    });
+    expect(authoritySeal).not.toBeNull();
+    deps.getMission.mockReturnValue(approvedMission);
+    deps.findMissionPaneByPaneId.mockReturnValue({
+      id: "mpane-a",
+      missionId: "mission-a",
+      paneId: "pane-a",
+      adapterId: "codex",
+      cwd: session.cwd,
+      title: "Review · orq",
+      role: "orchestrator",
+      scope,
+      authoritySeal,
+      createdAt: 1,
+    });
+
+    expect(
+      authority.canRestoreMissionPaneForRenderer(
+        owner,
+        "mission-a",
+        "pane-a",
+      ),
+    ).toBe(true);
+    expect(
+      authority.canRestoreMissionPaneForRenderer(
+        owner,
+        "mission-a",
+        "pane-forged",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects legacy pane composition without a current authority seal", () => {
+    deps.getMission.mockReturnValue(approvedMission);
+    deps.findMissionPaneByPaneId.mockReturnValue({
+      id: "mpane-legacy",
+      missionId: "mission-a",
+      paneId: "pane-legacy",
+      adapterId: "codex",
+      cwd: session.cwd,
+      title: "Legacy",
+      role: "orchestrator",
+      scope,
+      createdAt: 1,
+    });
+
+    expect(
+      authority.canRestoreMissionPaneForRenderer(
+        owner,
+        "mission-a",
+        "pane-legacy",
+      ),
+    ).toBe(false);
+  });
+
+  it("never exposes a legacy PREVC reviewer to renderer reopen", () => {
+    const orchestrator = {
+      id: "mpane-orchestrator",
+      missionId: "mission-a",
+      paneId: "pane-orchestrator",
+      adapterId: "codex",
+      cwd: session.cwd,
+      executionScope: scope,
+      title: "Maestro",
+      role: "orchestrator" as const,
+      scope,
+      createdAt: 1,
+    };
+    const reviewerSuffix = "a1b2c3d4e5f6";
+    const ephemeralReviewer = {
+      id: "mpane-reviewer",
+      missionId: "mission-a",
+      paneId: "pane-reviewer",
+      adapterId: "claude",
+      cwd: "/tmp/nexus-prevc-review-crashed/checkout",
+      executionScope: {
+        ...scope,
+        rootRealPath: "/tmp/nexus-prevc-review-crashed/checkout",
+      },
+      title: `review-mission-a-1-${reviewerSuffix}`,
+      agentName: `reviewer-claude-1-${reviewerSuffix}`,
+      role: "worker" as const,
+      readOnly: true,
+      allowedTools: ["nexus_git_diff", "nexus_merge_review_submit"],
+      scope,
+      createdAt: 2,
+    };
+    deps.resolvePaneActivity.mockReturnValue(null);
+    deps.listMissionPanes.mockReturnValueOnce([
+      orchestrator,
+      ephemeralReviewer,
+    ]);
+
+    expect(
+      authority.listMissionPanesForRenderer(owner, "mission-a"),
+    ).toEqual([
+      expect.objectContaining({ paneId: "pane-orchestrator" }),
+    ]);
+    expect(deps.resolvePaneActivity).not.toHaveBeenCalledWith(
+      expect.objectContaining({ paneId: "pane-reviewer" }),
+    );
   });
 });

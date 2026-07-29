@@ -1023,6 +1023,36 @@ export class ScopedHandoffStore {
     return rows.map((row) => this.#fromRow(row, db));
   }
 
+  /**
+   * Bounded durable outbox scan. Accepted-but-not-consumed rows are included
+   * so a crash between those two commits can be reconciled after restart.
+   * Terminal consumed rows and the rest of handoff history never enter the
+   * one-second reconciliation loop.
+   */
+  listDeliveryOutboxCandidates(): ScopedHandoff[] {
+    const db = this.#binding.readDatabase();
+    const rows = db
+      .prepare(
+        `${HANDOFF_SELECT}
+         WHERE (delivered = 0 AND delivery_state = 'queued')
+            OR (
+              delivered = 1
+              AND delivery_state IN ('submitted', 'acknowledged')
+              AND EXISTS (
+                SELECT 1
+                FROM handoff_delivery_attempts AS attempt
+                WHERE attempt.handoff_id = handoffs.id
+                  AND attempt.mission_id = handoffs.mission_id
+                  AND attempt.state = 'accepted'
+                  AND attempt.accepted_at IS NOT NULL
+              )
+            )
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all();
+    return rows.map((row) => this.#fromRow(row, db));
+  }
+
   get(rawId: string): ScopedHandoff | null {
     const id = identifierSchema.parse(rawId);
     const db = this.#binding.readDatabase();

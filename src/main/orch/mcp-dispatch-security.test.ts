@@ -1691,6 +1691,42 @@ describe("MCP dispatch effect safety", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
+  it("accepts a heartbeat from a worker dispatched before the contract freeze", async () => {
+    const preFreezeRevision = "context-revision-before-freeze";
+    const handler = vi.fn(async (_args, ctx) => ({
+      contextRevision: ctx.contextRevision,
+    }));
+    const resolveWorkflowAuthority = vi.fn(() => ({
+      contextRevision: TEST_CONTEXT_REVISION,
+      assertExecutionEffectAllowed: () => undefined,
+    }));
+
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith({
+        name: "nexus_worker_heartbeat",
+        description: "worker liveness receipt",
+        inputSchema: { type: "object", properties: {} },
+        handler,
+      }),
+      "nexus_worker_heartbeat",
+      {},
+      missionContext(preFreezeRevision),
+      {
+        ...workflowOptions(),
+        resolveWorkflowAuthority,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: { contextRevision: preFreezeRevision },
+      userAuthorized: false,
+    });
+    expect(resolveWorkflowAuthority).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it("marks a failed PREVC handler as possibly committed without conflating it with confirmation", async () => {
     const result = await dispatchToolCall(
       "http-mcp",

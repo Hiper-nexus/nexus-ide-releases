@@ -2,17 +2,18 @@
  * One adaptive clock for every orchestration supervisor.
  *
  * Participants keep their domain decisions/IO, while this coordinator owns
- * cadence, single-flight execution, error isolation and trailing event wakes.
- * There is never more than one armed timer and never more than one pass.
+ * cadence, per-participant single-flight execution, error isolation and
+ * trailing event wakes. One long participant never holds the cadence of an
+ * independent sibling.
  */
 
 export interface OrchestrationReconcileParticipant {
   readonly id: string;
   readonly cadenceMs: number;
   /**
-   * Maximum time the shared pass waits for this participant. Timing out does
-   * not make it safe to start the participant again: its original promise
-   * remains observed and single-flight until it really settles.
+   * Maximum time before this participant is aborted and reported. Timing out
+   * does not make it safe to start it again: its original promise remains
+   * observed and single-flight until it really settles.
    */
   readonly timeoutMs?: number;
   readonly run: (now: number, signal?: AbortSignal) => void | Promise<void>;
@@ -48,6 +49,7 @@ interface ParticipantFlight {
   readonly controller: AbortController;
   settlement: Promise<void>;
   detachedReason: 'stop' | 'timeout' | null;
+  timeoutHandle: ReturnType<typeof setTimeout> | null;
 }
 
 const DEFAULT_PARTICIPANT_TIMEOUT_MS = 30_000;
@@ -128,7 +130,6 @@ export function createOrchestrationReconciler(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let timerDueAt = Number.POSITIVE_INFINITY;
   let generation = 0;
-  let inFlight: Promise<void> | null = null;
   let stopFlight: Promise<void> | null = null;
 
   const clearArmedTimer = () => {
@@ -138,14 +139,12 @@ export function createOrchestrationReconciler(
   };
 
   const launchDrain = () => {
-    if (inFlight) return;
-    const pass = drain(generation);
-    inFlight = pass;
-    const finish = () => {
-      if (inFlight === pass) inFlight = null;
+    if (running) return;
+    try {
+      drain(generation);
+    } finally {
       schedule();
-    };
-    void pass.then(finish, finish);
+    }
   };
 
   const schedule = () => {
@@ -185,6 +184,12 @@ export function createOrchestrationReconciler(
     reportWarning(message, error);
   };
 
+  const clearParticipantTimeout = (flight: ParticipantFlight): void => {
+    if (flight.timeoutHandle === null) return;
+    clearTimeout(flight.timeoutHandle);
+    flight.timeoutHandle = null;
+  };
+
   const startParticipant = (
     state: ParticipantState,
     runAt: number,
@@ -193,6 +198,7 @@ export function createOrchestrationReconciler(
       controller: new AbortController(),
       settlement: Promise.resolve(),
       detachedReason: null,
+      timeoutHandle: null,
     };
     state.inFlight = flight;
 
@@ -207,7 +213,29 @@ export function createOrchestrationReconciler(
       () => ({ ok: true as const }),
       (error: unknown) => ({ ok: false as const, error }),
     );
+    const timeoutMs =
+      state.participant.timeoutMs ?? defaultParticipantTimeoutMs;
+    flight.timeoutHandle = setTimeout(() => {
+      flight.timeoutHandle = null;
+      if (
+        state.inFlight !== flight ||
+        flight.detachedReason !== null
+      ) {
+        return;
+      }
+      const error = timeoutError(state.participant, timeoutMs);
+      flight.detachedReason = 'timeout';
+      flight.controller.abort(error);
+      reportParticipantWarning(
+        state,
+        `[orchestration-reconciler] participant ${state.participant.id} timed out:`,
+        error,
+      );
+    }, timeoutMs);
+    flight.timeoutHandle.unref?.();
+
     flight.settlement = outcome.then((settled) => {
+      clearParticipantTimeout(flight);
       if (!settled.ok && flight.detachedReason === null) {
         reportParticipantWarning(
           state,
@@ -232,81 +260,26 @@ export function createOrchestrationReconciler(
     return flight;
   };
 
-  const waitForParticipant = async (
-    state: ParticipantState,
-    flight: ParticipantFlight,
-  ): Promise<'settled' | 'stopped' | 'timed-out'> => {
-    const timeoutMs =
-      state.participant.timeoutMs ?? defaultParticipantTimeoutMs;
-    let timerHandle: ReturnType<typeof setTimeout> | null = null;
-    let removeAbortListener = () => {};
-    const boundary = new Promise<'stopped' | 'timed-out'>((resolve) => {
-      const onAbort = () => {
-        resolve(
-          flight.detachedReason === 'timeout' ? 'timed-out' : 'stopped',
-        );
-      };
-      if (flight.controller.signal.aborted) {
-        onAbort();
-        return;
-      }
-      flight.controller.signal.addEventListener('abort', onAbort, { once: true });
-      removeAbortListener = () => {
-        flight.controller.signal.removeEventListener('abort', onAbort);
-      };
-      timerHandle = setTimeout(() => {
-        if (flight.detachedReason !== null) return;
-        flight.detachedReason = 'timeout';
-        flight.controller.abort(timeoutError(state.participant, timeoutMs));
-      }, timeoutMs);
-      timerHandle.unref?.();
-    });
-
-    try {
-      return await Promise.race([
-        flight.settlement.then(() => 'settled' as const),
-        boundary,
-      ]);
-    } finally {
-      if (timerHandle) clearTimeout(timerHandle);
-      removeAbortListener();
-    }
-  };
-
-  async function drain(passGeneration: number): Promise<void> {
+  function drain(passGeneration: number): void {
     if (!started || running) return;
     running = true;
     try {
       const passNow = now();
       const due = [...states.values()].filter((state) => state.dueAt <= passNow);
-      await Promise.all(
-        due.map(async (state) => {
-          if (!started || generation !== passGeneration) return;
-          if (state.inFlight) {
-            // Do not spin an overdue zero-delay timer and, critically, do not
-            // overlap a timed-out effect that ignored its AbortSignal.
-            state.dueAt = Number.POSITIVE_INFINITY;
-            return;
-          }
-          // Set the ordinary next cadence before IO. Every due participant is
-          // started before this pass awaits any sibling, while each participant
-          // retains its own singleflight and timeout boundary.
-          const runAt = now();
-          state.dueAt = runAt + state.participant.cadenceMs;
-          const flight = startParticipant(state, runAt);
-          const outcome = await waitForParticipant(state, flight);
-          if (outcome === 'timed-out') {
-            reportParticipantWarning(
-              state,
-              `[orchestration-reconciler] participant ${state.participant.id} timed out:`,
-              timeoutError(
-                state.participant,
-                state.participant.timeoutMs ?? defaultParticipantTimeoutMs,
-              ),
-            );
-          }
-        }),
-      );
+      for (const state of due) {
+        if (!started || generation !== passGeneration) return;
+        if (state.inFlight) {
+          // Preserve one trailing wake without overlapping a participant whose
+          // original physical effect is still running.
+          state.dueAt = Number.POSITIVE_INFINITY;
+          continue;
+        }
+        // Set the ordinary next cadence before IO. Settlement and timeout are
+        // tracked by this participant's flight, never by the shared clock.
+        const runAt = now();
+        state.dueAt = runAt + state.participant.cadenceMs;
+        startParticipant(state, runAt);
+      }
     } finally {
       running = false;
     }
@@ -342,6 +315,7 @@ export function createOrchestrationReconciler(
           const flight = state.inFlight;
           if (!flight) continue;
           participantFlights.push(flight);
+          clearParticipantTimeout(flight);
           if (flight.detachedReason === null) {
             flight.detachedReason = 'stop';
             flight.controller.abort(
@@ -351,10 +325,8 @@ export function createOrchestrationReconciler(
             );
           }
         }
-        // The shared drain may return as soon as AbortSignal is raised. Store
-        // teardown is safe only after every original participant promise has
-        // really settled, even when a participant ignored cancellation.
-        await (inFlight ?? Promise.resolve());
+        // Store teardown is safe only after every original participant promise
+        // has really settled, even when a participant ignored cancellation.
         if (participantFlights.length === 0) return;
         let timeout: ReturnType<typeof setTimeout> | null = null;
         try {

@@ -49,7 +49,7 @@ describe('intent-first kickoff vs monstro playbook', () => {
     expect(prompt).toContain('You are the orchestrator.');
     expect(prompt).toContain('Worker (executor');
     expect(prompt).toMatch(/Use EXATAMENTE o roster aprovado/i);
-    expect(prompt).toMatch(/worktree isolado.*web liberada/i);
+    expect(prompt).toMatch(/worktree isolado.*acesso de rede/i);
     expect(prompt).toMatch(/Falha técnica.*retentada/i);
     expect(prompt).not.toMatch(/somente o Codex builtin/i);
     expect(prompt).not.toMatch(/Diversidade de motores/i);

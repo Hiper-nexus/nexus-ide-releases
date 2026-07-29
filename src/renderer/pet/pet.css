@@ -212,13 +212,22 @@ body,
 }
 
 .pet__balloon--mission-failed::after,
+.pet__balloon--mission-technical-failure::after,
 .pet__balloon--agent-exited::after {
   border-color: var(--pet-danger);
 }
 
 .pet__balloon--mission-failed,
+.pet__balloon--mission-technical-failure,
 .pet__balloon--agent-exited {
   border-color: var(--pet-danger);
+}
+
+.pet__balloon--mission-technical-failure.pet__balloon--urgent {
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.5),
+    0 0 0 1px color-mix(in srgb, var(--pet-danger) 50%, transparent),
+    0 0 18px color-mix(in srgb, var(--pet-danger) 28%, transparent);
 }
 
 /* Intervenção humana: âmbar — atenção, não falha. */
@@ -351,6 +360,12 @@ body,
   border-color: var(--pet-warn);
   color: var(--pet-warn);
   background: color-mix(in srgb, var(--pet-warn) 16%, transparent);
+}
+
+.pet__balloon--mission-technical-failure .pet__balloon-cta {
+  border-color: var(--pet-danger);
+  color: var(--pet-danger);
+  background: color-mix(in srgb, var(--pet-danger) 16%, transparent);
 }
 
 .pet__balloon-dismiss {

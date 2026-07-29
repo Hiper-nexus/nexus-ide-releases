@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import type { MissionContract } from "./context/contract-compiler";
 import type { ProjectDomainStoreSuite } from "./orch/project-domain-store-registry";
@@ -16,27 +25,26 @@ import {
 const mocks = vi.hoisted(() => ({
   workflow: {
     getMissionWorkflow: vi.fn(),
+    freezeContract: vi.fn(),
+    advance: vi.fn(),
   },
-  getContextBySession: vi.fn(),
 }));
 
 vi.mock("./context/context-workflow-registry", () => ({
   getContextWorkflowService: () => mocks.workflow,
 }));
 
-vi.mock("./orch/gate", () => ({
-  getContextBySession: mocks.getContextBySession,
-}));
-
 import {
   freezeRealMissionE2EPrevCIfNeeded,
+  stageRealMissionE2EContextCorpus,
 } from "./real-mission-e2e-prevc";
 
 const originalE2EEnvironment = process.env.NEXUS_REAL_MISSION_E2E;
 
 afterEach(() => {
   mocks.workflow.getMissionWorkflow.mockReset();
-  mocks.getContextBySession.mockReset();
+  mocks.workflow.freezeContract.mockReset();
+  mocks.workflow.advance.mockReset();
   if (originalE2EEnvironment === undefined) {
     delete process.env.NEXUS_REAL_MISSION_E2E;
   } else {
@@ -44,10 +52,10 @@ afterEach(() => {
   }
 });
 
-function fixture(missionId: string) {
+function fixture(missionId: string, rootRealPath = `/workspace/${missionId}`) {
   const scope = testProjectScope({
     checkoutId: `checkout-${missionId}`,
-    rootRealPath: `/workspace/${missionId}`,
+    rootRealPath,
   });
   const squadRevisionHash = snapshotSquadAuthority(
     createRealMissionE2ESquadFixture(),
@@ -135,9 +143,9 @@ function fixture(missionId: string) {
     contract: {
       contract,
       author: {
-        id: "e2e-orchestrator",
-        sessionId: mission.orchestratorSessionId,
-        provider: "codex",
+        id: "nexus-real-mission-e2e-prevc",
+        sessionId: `main:${missionId}:release-prevc`,
+        provider: "nexus-main",
       },
       frozenAt: 12,
     },
@@ -178,12 +186,6 @@ function fixture(missionId: string) {
 function freezeExactFixture(harness: ReturnType<typeof fixture>) {
   process.env.NEXUS_REAL_MISSION_E2E = "1";
   mocks.workflow.getMissionWorkflow.mockReturnValue(harness.workflow);
-  mocks.getContextBySession.mockReturnValue({
-    role: "orchestrator",
-    missionId: harness.missionId,
-    sessionId: harness.mission.orchestratorSessionId,
-    agentName: "E2E Orquestrador",
-  });
   expect(
     freezeRealMissionE2EPrevCIfNeeded(
       harness.suite,
@@ -194,6 +196,92 @@ function freezeExactFixture(harness: ReturnType<typeof fixture>) {
 }
 
 describe("real mission E2E PREVC production review boundary", () => {
+  it("stages outcome-sensitive sensors that reject a missing or incorrect deliverable", () => {
+    const root = mkdtempSync(
+      path.join(os.tmpdir(), "nexus-real-mission-prevc-sensors-"),
+    );
+    try {
+      stageRealMissionE2EContextCorpus(root);
+      const config = JSON.parse(
+        readFileSync(
+          path.join(root, ".context/config/sensors.json"),
+          "utf8",
+        ),
+      ) as {
+        sensors: Array<{ id: string; command: string[] }>;
+      };
+      const run = (sensorId: string) => {
+        const sensor = config.sensors.find(
+          (candidate) => candidate.id === sensorId,
+        );
+        if (!sensor) throw new Error(`missing sensor ${sensorId}`);
+        return spawnSync(sensor.command[0]!, sensor.command.slice(1), {
+          cwd: root,
+          encoding: "utf8",
+        }).status;
+      };
+
+      expect(run("typecheck")).not.toBe(0);
+      expect(run("unit")).not.toBe(0);
+
+      writeFileSync(path.join(root, "resultado.txt"), "incorrect\n", "utf8");
+      expect(run("typecheck")).toBe(0);
+      expect(run("unit")).not.toBe(0);
+
+      writeFileSync(
+        path.join(root, "resultado.txt"),
+        "nexus-real-mission-e2e-ok\n",
+        "utf8",
+      );
+      expect(run("typecheck")).toBe(0);
+      expect(run("unit")).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("freezes a fresh exact fixture with durable Main-owned authority after the Maestro exits", () => {
+    const root = mkdtempSync(
+      path.join(os.tmpdir(), "nexus-real-mission-prevc-main-"),
+    );
+    try {
+      stageRealMissionE2EContextCorpus(root);
+      const harness = fixture("mission-main-freeze", realpathSync(root));
+      let isAdvanced = false;
+      mocks.workflow.getMissionWorkflow.mockImplementation(() =>
+        isAdvanced
+          ? harness.workflow
+          : { contract: null, workflow: null },
+      );
+      mocks.workflow.freezeContract.mockReturnValue(harness.workflow.contract);
+      mocks.workflow.advance.mockImplementation(() => {
+        isAdvanced = true;
+        return harness.workflow.workflow;
+      });
+      process.env.NEXUS_REAL_MISSION_E2E = "1";
+
+      expect(
+        freezeRealMissionE2EPrevCIfNeeded(
+          harness.suite,
+          harness.missionId,
+          harness.scope,
+        ),
+      ).toEqual({ frozen: true, reason: "frozen" });
+      expect(mocks.workflow.freezeContract).toHaveBeenCalledOnce();
+      expect(mocks.workflow.freezeContract.mock.calls[0]?.[1]).toEqual({
+        id: "nexus-real-mission-e2e-prevc",
+        sessionId: `main:${harness.missionId}:release-prevc`,
+        provider: "nexus-main",
+      });
+      expect(mocks.workflow.advance).toHaveBeenCalledWith(
+        harness.missionId,
+        "execution",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("accepts an already frozen exact fixture without installing a review seam", () => {
     const harness = fixture("mission-authorized");
     freezeExactFixture(harness);
@@ -226,12 +314,6 @@ describe("real mission E2E PREVC production review boundary", () => {
     };
     process.env.NEXUS_REAL_MISSION_E2E = "1";
     mocks.workflow.getMissionWorkflow.mockReturnValue(harness.workflow);
-    mocks.getContextBySession.mockReturnValue({
-      role: "orchestrator",
-      missionId: harness.missionId,
-      sessionId: harness.mission.orchestratorSessionId,
-      agentName: "E2E Orquestrador",
-    });
 
     expect(
       freezeRealMissionE2EPrevCIfNeeded(
@@ -257,6 +339,9 @@ describe("real mission E2E PREVC production review boundary", () => {
     );
     expect(fixtureSource).not.toMatch(
       /AutomatedReviewSessionRegistry|realMissionE2EReviewDeps|sessions\.submit/u,
+    );
+    expect(fixtureSource).not.toMatch(
+      /from\s+["']\.\/orch\/gate["']|getContextBySession/u,
     );
     expect(schedulerSource).not.toContain(
       "realMissionE2EMergeValidationDeps",

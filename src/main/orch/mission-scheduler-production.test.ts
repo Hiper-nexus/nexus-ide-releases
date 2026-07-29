@@ -4,6 +4,7 @@ import {
   buildMissionSchedulerTaskPrompt,
   finalizeGuidedIsolatedAdvisory,
   finalizeGuidedNoChangeQualityGate,
+  finalizeRestartedIntegratedMerge,
   isGuidedDeliveryOwnership,
   loadMissionSchedulerDependencyHandoffs,
   MISSION_SCHEDULER_WORKER_LEASE_POLICY,
@@ -12,9 +13,12 @@ import {
   missionSchedulerLiveRosterAdapter,
   missionSchedulerRouteRequiresAccount,
   missionSchedulerHasKickoffAuthority,
+  orderMissionDispatchesForReconciliation,
+  projectMissionSchedulerActiveWorkers,
   projectQualityRepairFailure,
   projectUnchangedQueueRepair,
   projectTerminalFinalizationFailure,
+  prepareMissionSchedulerPrevcPromotion,
   projectTerminalMergeFailure,
   recoverableIntegratedMergeEntry,
   requeueRetiredQualityRepairs,
@@ -37,6 +41,164 @@ import type { Mission } from "../../shared/orch-types";
 import { MissionSchedulerDispatchAuthorityError } from "./mission-scheduler-dispatch-transaction";
 
 describe("mission scheduler asynchronous authority fence", () => {
+  it("does not let a preserved retry worktree consume its own maxWorkers=1 slot", () => {
+    const ownership = {
+      files: ["src/retry.ts"],
+      symbols: [],
+      domains: ["implementation"],
+    };
+    const retryWorktree = {
+      taskId: "task-retry",
+      status: "ready" as const,
+      ownership,
+    };
+
+    expect(
+      projectMissionSchedulerActiveWorkers(
+        [{
+          taskId: "task-retry",
+          state: "superseded",
+          ownership,
+        }],
+        [retryWorktree],
+      ),
+    ).toEqual([]);
+
+    expect(
+      projectMissionSchedulerActiveWorkers(
+        [
+          {
+            taskId: "task-retry",
+            state: "superseded",
+            ownership,
+          },
+          {
+            taskId: "task-live",
+            state: "running",
+            ownership: {
+              files: ["src/live.ts"],
+              symbols: [],
+              domains: ["implementation"],
+            },
+          },
+        ],
+        [
+          retryWorktree,
+          {
+            taskId: "task-unmanaged",
+            status: "queued",
+            ownership: {
+              files: ["src/unmanaged.ts"],
+              symbols: [],
+              domains: ["implementation"],
+            },
+          },
+        ],
+      ).map(({ taskId }) => taskId),
+    ).toEqual(["task-live", "task-unmanaged"]);
+  });
+
+  it("settles bounded handoffs before a model-backed executor merge", () => {
+    const dispatch = (
+      taskId: string,
+      executionMode: string,
+      domains: readonly string[],
+    ) => ({
+      taskId,
+      state: "handoff_ready",
+      executionMode,
+      ownership: { domains },
+    });
+    const executor = dispatch(
+      "executor",
+      "isolated_worktree",
+      ["guided-implementation"],
+    );
+    const isolatedAdvisor = dispatch(
+      "advisor-isolated",
+      "isolated_worktree",
+      ["guided-isolated-advisory"],
+    );
+    const readOnly = dispatch("advisor-read-only", "read_only", []);
+    const legacy = dispatch("legacy", "same_checkout", []);
+    const original = [executor, isolatedAdvisor, readOnly, legacy];
+
+    const ordered = orderMissionDispatchesForReconciliation(original);
+
+    expect(ordered.map(({ taskId }) => taskId)).toEqual([
+      "legacy",
+      "advisor-read-only",
+      "advisor-isolated",
+      "executor",
+    ]);
+    expect(original.map(({ taskId }) => taskId)).toEqual([
+      "executor",
+      "advisor-isolated",
+      "advisor-read-only",
+      "legacy",
+    ]);
+  });
+
+  it("forwards PREVC cancellation and rethrows the exact reconciler reason before promotion", async () => {
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const reason = new Error("participant mission-scheduler exceeded 30000ms");
+    const assertCurrentAuthority = vi.fn();
+    const scope = testProjectScope();
+    const prepare = vi.fn(
+      async (
+        _scope: ReturnType<typeof testProjectScope>,
+        _missionId: string,
+        options?: {
+          readonly signal?: AbortSignal;
+          readonly assertCurrentAuthority?: () => void;
+        },
+      ) => {
+        expect(options?.signal).toBe(firstController.signal);
+        firstController.abort(reason);
+        return {
+          stage: "execution" as const,
+          frozenNow: false,
+          refrozen: false,
+        };
+      },
+    );
+
+    await expect(
+      prepareMissionSchedulerPrevcPromotion(
+        {
+          scope,
+          missionId: "mission-aborted",
+          signal: firstController.signal,
+          assertCurrentAuthority,
+        },
+        prepare,
+      ),
+    ).rejects.toBe(reason);
+    expect(assertCurrentAuthority).not.toHaveBeenCalled();
+
+    prepare.mockImplementationOnce(async (_scope, _missionId, options) => {
+      expect(options?.signal).toBe(secondController.signal);
+      return {
+        stage: "execution" as const,
+        frozenNow: false,
+        refrozen: false,
+      };
+    });
+    await expect(
+      prepareMissionSchedulerPrevcPromotion(
+        {
+          scope,
+          missionId: "mission-fresh",
+          signal: secondController.signal,
+          assertCurrentAuthority,
+        },
+        prepare,
+      ),
+    ).resolves.toBeUndefined();
+    expect(assertCurrentAuthority).toHaveBeenCalledOnce();
+  });
+
   it("defers transient finalization failures and projects only proven terminal authority loss", () => {
     const blockMergeFailureByCoordinator = vi.fn();
     const dispatches = {
@@ -120,6 +282,87 @@ describe("mission scheduler asynchronous authority fence", () => {
         "task-a",
       ),
     ).toBeNull();
+  });
+
+  it("rejects a descendant W2 on restart when the physical handoff sealed W", () => {
+    const physicalHandoffHead = "a".repeat(40);
+    const laterDescendantHead = "b".repeat(40);
+    const complete = vi.fn();
+
+    expect(() =>
+      finalizeRestartedIntegratedMerge(
+        {
+          dispatchRevision: 9,
+          mergeEntry: {
+            taskHeadSha: laterDescendantHead,
+            integratedSha: "c".repeat(40),
+            evidenceIds: ["review:approved"],
+          },
+        },
+        {
+          assertLifecycleAuthority: vi.fn(),
+          assertPhysicalHandoffTaskHead: () => physicalHandoffHead,
+          complete,
+          now: () => 42,
+        },
+      ),
+    ).toThrow(/task HEAD.*physical handoff/i);
+
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("rejects an upgraded integrated entry without its exact task HEAD", () => {
+    const complete = vi.fn();
+
+    expect(() =>
+      finalizeRestartedIntegratedMerge(
+        {
+          dispatchRevision: 9,
+          mergeEntry: {
+            integratedSha: "c".repeat(40),
+            evidenceIds: [],
+          },
+        },
+        {
+          assertLifecycleAuthority: vi.fn(),
+          assertPhysicalHandoffTaskHead: () => "a".repeat(40),
+          complete,
+          now: () => 42,
+        },
+      ),
+    ).toThrow(/task HEAD.*physical handoff/i);
+
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("finalizes a restarted integration only when its task HEAD equals the physical handoff", () => {
+    const physicalHandoffHead = "a".repeat(40);
+    const complete = vi.fn();
+
+    expect(
+      finalizeRestartedIntegratedMerge(
+        {
+          dispatchRevision: 9,
+          mergeEntry: {
+            taskHeadSha: physicalHandoffHead,
+            integratedSha: "c".repeat(40),
+            evidenceIds: ["review:approved"],
+          },
+        },
+        {
+          assertLifecycleAuthority: vi.fn(),
+          assertPhysicalHandoffTaskHead: () => physicalHandoffHead,
+          complete,
+          now: () => 42,
+        },
+      ),
+    ).toBe(true);
+    expect(complete).toHaveBeenCalledWith(9, {
+      kind: "worktree_integrated",
+      reference: "c".repeat(40),
+      completedAt: 42,
+      evidenceIds: ["review:approved"],
+    });
   });
 
   it("projects quality rejection to repair and requeues only after exact retirement proof", () => {
@@ -1078,6 +1321,7 @@ describe("mission scheduler worker lease contract", () => {
           scope,
           missionId: "mission-guided",
           taskId: "guided-advisory-opencode",
+          expectedTaskHeadSha: prepared.taskHeadSha,
           dispatch: handoffReady,
         },
         {
@@ -1100,6 +1344,36 @@ describe("mission scheduler worker lease contract", () => {
     expect(markValidated.mock.invocationCallOrder[0]).toBeLessThan(
       complete.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("rejects an isolated advisory whose prepared HEAD diverges from its physical handoff", () => {
+    const prepared = isolatedAdvisoryPreparation();
+    const beginMerge = vi.fn();
+    const markValidated = vi.fn();
+    const complete = vi.fn();
+
+    expect(() =>
+      finalizeGuidedIsolatedAdvisory(
+        {
+          scope: testProjectScope(),
+          missionId: "mission-guided",
+          taskId: "guided-advisory-opencode",
+          expectedTaskHeadSha: "f".repeat(40),
+          dispatch: guidedIsolatedAdvisoryDispatch(),
+        },
+        {
+          prepare: () => prepared,
+          beginMerge,
+          assertAuthority: vi.fn(),
+          markValidated,
+          complete,
+        },
+      ),
+    ).toThrow(/physical handoff HEAD/i);
+
+    expect(beginMerge).not.toHaveBeenCalled();
+    expect(markValidated).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
   });
 
   it("blocks a committed isolated advisory and never finalizes it", () => {
@@ -1214,6 +1488,7 @@ describe("mission scheduler worker lease contract", () => {
           scope,
           missionId: "mission-guided",
           taskId: "guided-quality-gate",
+          expectedTaskHeadSha: prepared.taskHeadSha,
           dispatch: handoffReady,
         },
         {
@@ -1255,6 +1530,39 @@ describe("mission scheduler worker lease contract", () => {
     expect(markValidated.mock.invocationCallOrder[0]).toBeLessThan(
       complete.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("rejects guided QA drift from the physical handoff before validation", async () => {
+    const validate = vi.fn();
+    const beginMerge = vi.fn();
+    const markValidated = vi.fn();
+    const complete = vi.fn();
+
+    await expect(
+      finalizeGuidedNoChangeQualityGate(
+        {
+          scope: testProjectScope(),
+          missionId: "mission-guided",
+          taskId: "guided-quality-gate",
+          expectedTaskHeadSha: "f".repeat(40),
+          dispatch: guidedQualityGateDispatch(),
+        },
+        {
+          prepare: () => noChangePreparation(),
+          beginMerge,
+          assertAuthority: vi.fn(),
+          validate,
+          markValidated,
+          complete,
+          now: () => 42,
+        },
+      ),
+    ).rejects.toThrow(/physical handoff HEAD/i);
+
+    expect(beginMerge).not.toHaveBeenCalled();
+    expect(validate).not.toHaveBeenCalled();
+    expect(markValidated).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
   });
 
   it("keeps corrective QA diffs on the ordinary MergeQueue path", async () => {

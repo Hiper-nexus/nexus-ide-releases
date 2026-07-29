@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { MissionRisk } from './contract-compiler';
 import {
+  CANDIDATE_REVIEW_EVALUATOR_VERSION,
   ReviewCouncil,
+  type PreExecutionPlanBinding,
+  type ReviewPurpose,
   type ReviewBinding,
   type ReviewFindingInput,
   type ReviewGateResult,
@@ -26,6 +29,9 @@ export interface OpenAutomatedReviewInput {
   readonly binding: ReviewBinding;
   readonly author: AutomatedReviewAuthor;
   readonly additionalAuthors?: readonly AutomatedReviewAuthor[];
+  readonly reviewPurpose?: Exclude<ReviewPurpose, 'legacy'>;
+  readonly evaluatorVersion?: string;
+  readonly preExecutionPlanBinding?: PreExecutionPlanBinding;
   readonly persist: (report: ReviewReport) => void;
 }
 
@@ -109,16 +115,12 @@ function freezeSurface(
 
 function resultFor(session: ReviewSession): AutomatedReviewResult | null {
   const reports = session.council.listReports();
-  const hasBlockingFinding = reports.some((report) =>
-    report.findings.some((finding) =>
-      finding.status === 'open' &&
-      (finding.severity === 'critical' || finding.severity === 'high'),
-    ),
-  );
   const gate = session.council.evaluate();
-  if (!hasBlockingFinding && !gate.ready) return null;
+  // Quorum is the only non-terminal state. Every other gate result is a
+  // complete Main-owned decision and must wake the caller immediately.
+  if (!gate.ready && gate.reason === 'review-quorum-missing') return null;
   return Object.freeze({
-    ready: gate.ready && !hasBlockingFinding,
+    ready: gate.ready,
     gate,
     reports,
     evidenceIds: Object.freeze(reports.map((report) => `review:${report.reviewId}`)),
@@ -129,10 +131,38 @@ export class AutomatedReviewSessionRegistry {
   readonly #sessions = new Map<string, ReviewSession>();
 
   open(input: OpenAutomatedReviewInput): string {
+    const reviewPurpose = input.reviewPurpose ?? 'candidate';
+    if (
+      reviewPurpose === 'pre-execution' &&
+      !input.preExecutionPlanBinding
+    ) {
+      throw new Error(
+        'pre-execution review requires a Main-owned sealed plan binding',
+      );
+    }
+    if (
+      reviewPurpose !== 'pre-execution' &&
+      input.preExecutionPlanBinding
+    ) {
+      throw new Error(
+        'candidate review must use only its exact Git binding',
+      );
+    }
     const id = randomUUID();
+    const sessionInput = Object.freeze({
+      ...input,
+      binding: Object.freeze({ ...input.binding }),
+      ...(input.preExecutionPlanBinding
+        ? {
+            preExecutionPlanBinding: Object.freeze({
+              ...input.preExecutionPlanBinding,
+            }),
+          }
+        : {}),
+    });
     this.#sessions.set(id, {
       id,
-      input,
+      input: sessionInput,
       council: new ReviewCouncil(input.risk, input.binding),
       waiters: new Set(),
       designSurface: null,
@@ -275,6 +305,20 @@ export class AutomatedReviewSessionRegistry {
     ) {
       throw new Error('author cannot review their own change or session');
     }
+    if (session.result) {
+      if (
+        session.result.reports.some(
+          (report) =>
+            report.reviewerId === reviewer.id ||
+            report.reviewerSessionId === reviewer.sessionId,
+        )
+      ) {
+        throw new Error(
+          'review quorum requires independent reviewer sessions',
+        );
+      }
+      throw new Error('automated review session is sealed');
+    }
     // Provider labels are evidence metadata, not an independence boundary.
     // Governed reviewers are separate main-owned panes; immutable agent and
     // physical PTY session identities above prevent author aliasing even when
@@ -302,6 +346,16 @@ export class AutomatedReviewSessionRegistry {
       authorSessionId: session.input.author.sessionId,
       authorProvider: session.input.author.provider,
       binding: session.input.binding,
+      reviewPurpose: session.input.reviewPurpose ?? 'candidate',
+      evaluatorVersion:
+        session.input.evaluatorVersion ??
+        CANDIDATE_REVIEW_EVALUATOR_VERSION,
+      ...(session.input.preExecutionPlanBinding
+        ? {
+            preExecutionPlanBinding:
+              session.input.preExecutionPlanBinding,
+          }
+        : {}),
       findings: [...findings],
     });
     session.input.persist(report);

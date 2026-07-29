@@ -4,9 +4,12 @@ import path from "node:path";
 import { isPlanLaneWritablePath } from "../../shared/mission-intent";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
+  AsyncProcessGitRunner,
   ProcessGitRunner,
+  assertSafeLocalGitConfigAsync,
   assertSafeLocalGitConfig,
   createPrivateGitIndex,
+  type AsyncGitRunner,
   type GitRunner,
 } from "./git-command";
 import {
@@ -30,6 +33,10 @@ export interface GuidedGitBaselineDeps {
   readonly approvedIntent?: GuidedGreenfieldApprovedIntent;
 }
 
+export interface GuidedGitBaselineAsyncDeps {
+  readonly asyncGitRunner?: AsyncGitRunner;
+}
+
 const BASELINE_COMMIT_ENV = Object.freeze({
   GIT_AUTHOR_NAME: "Nexus",
   GIT_AUTHOR_EMAIL: "nexus@localhost",
@@ -39,8 +46,89 @@ const BASELINE_COMMIT_ENV = Object.freeze({
 const EMPTY_BASELINE_COMMIT_MESSAGE = "chore: initialize Nexus workspace";
 const BRIEF_BASELINE_COMMIT_MESSAGE =
   "docs: record approved Nexus greenfield brief";
+const WORKTREE_CHECKPOINT_COMMIT_MESSAGE =
+  "nexus: baseline da árvore de trabalho (snapshot automático)";
 const BASELINE_TRANSACTION_REF_PREFIX =
   "refs/nexus/transactions/guided-baseline";
+const MAX_WORKTREE_CHECKPOINT_ATTEMPTS = 4;
+const SAFE_ENV_TEMPLATE_RE =
+  /^\.env\.(?:example|sample|template|defaults?)$/i;
+const CREDENTIAL_DATA_FILE_RE =
+  /^(?:credentials?|secrets?)(?:\.(?:json|ya?ml|toml|ini|env))?$/i;
+
+function isCredentialLikeUntrackedPath(rawPath: string): boolean {
+  const normalized = rawPath.replaceAll("\\", "/").replace(/^\.\/+/, "");
+  const segments = normalized.split("/").filter(Boolean);
+  const basename = segments.at(-1) ?? "";
+  const lower = basename.toLowerCase();
+  if (
+    lower.startsWith(".env") &&
+    !SAFE_ENV_TEMPLATE_RE.test(lower)
+  ) {
+    return true;
+  }
+  if (
+    [".npmrc", ".pypirc", ".netrc", ".git-credentials"].includes(lower) ||
+    [".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"].some((extension) =>
+      lower.endsWith(extension),
+    ) ||
+    /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?$/i.test(basename) ||
+    CREDENTIAL_DATA_FILE_RE.test(basename)
+  ) {
+    return true;
+  }
+  const lowerSegments = segments.map((segment) => segment.toLowerCase());
+  return (
+    lowerSegments.includes(".ssh") ||
+    (lowerSegments.includes(".aws") && lower === "credentials")
+  );
+}
+
+function assertNoUntrackedCredentialPaths(
+  untrackedOutput: string,
+): void {
+  const sensitive = untrackedOutput
+    .split("\0")
+    .filter(Boolean)
+    .filter(isCredentialLikeUntrackedPath);
+  if (sensitive.length === 0) return;
+  throw new Error(
+    "guided_git_checkpoint_untracked_credential: untracked credential-like " +
+      `path(s) require explicit git add or .gitignore: ${sensitive
+        .slice(0, 5)
+        .join(", ")}`,
+  );
+}
+
+function assertNoUntrackedCredentials(
+  git: GitRunner,
+  root: string,
+): void {
+  assertNoUntrackedCredentialPaths(
+    git.run(root, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+    ]).stdout,
+  );
+}
+
+async function assertNoUntrackedCredentialsAsync(
+  git: AsyncGitRunner,
+  root: string,
+): Promise<void> {
+  assertNoUntrackedCredentialPaths(
+    (
+      await git.run(root, [
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+      ])
+    ).stdout,
+  );
+}
 
 function canonicalRoot(scope: ProjectExecutionScope): string {
   const resolved = path.resolve(scope.rootRealPath);
@@ -72,6 +160,24 @@ function integrationRef(git: GitRunner, root: string): string {
   return reference;
 }
 
+async function integrationRefAsync(
+  git: AsyncGitRunner,
+  root: string,
+): Promise<string> {
+  const result = await git.run(
+    root,
+    ["symbolic-ref", "--quiet", "HEAD"],
+    { allowFailure: true },
+  );
+  const reference = result.stdout.trim();
+  if (result.status !== 0 || !reference.startsWith("refs/heads/")) {
+    throw new Error(
+      "guided_git_baseline_invalid_branch: o workspace precisa estar em uma branch Git",
+    );
+  }
+  return reference;
+}
+
 /**
  * Captures the current working tree as a commit the worker can branch from,
  * without mutating the operator's checkout.
@@ -89,6 +195,7 @@ export function snapshotWorkingTreeCommit(
   root: string,
   headSha: string,
 ): string {
+  assertNoUntrackedCredentials(git, root);
   const privateIndex = createPrivateGitIndex();
   try {
     const withIndex = { privateIndexFile: privateIndex.path } as const;
@@ -105,20 +212,352 @@ export function snapshotWorkingTreeCommit(
     if (treeSha === headTree) return headSha;
     return assertSha(
       git
-        .run(root, [
-          "commit-tree",
-          treeSha,
-          "-p",
-          headSha,
-          "-m",
-          "nexus: baseline da árvore de trabalho (snapshot automático)",
-        ])
+        .run(
+          root,
+          [
+            "commit-tree",
+            treeSha,
+            "-p",
+            headSha,
+            "-m",
+            WORKTREE_CHECKPOINT_COMMIT_MESSAGE,
+          ],
+          { env: BASELINE_COMMIT_ENV },
+        )
         .stdout.trim(),
       "guided worktree snapshot commit",
     );
   } finally {
     privateIndex.dispose();
   }
+}
+
+async function snapshotWorkingTreeCommitAsync(
+  git: AsyncGitRunner,
+  root: string,
+  headSha: string,
+): Promise<string> {
+  await assertNoUntrackedCredentialsAsync(git, root);
+  const privateIndex = createPrivateGitIndex();
+  try {
+    const withIndex = { privateIndexFile: privateIndex.path } as const;
+    await git.run(root, ["read-tree", headSha], withIndex);
+    await git.run(root, ["add", "-A", "--", "."], withIndex);
+    const treeSha = assertSha(
+      (await git.run(root, ["write-tree"], withIndex)).stdout.trim(),
+      "guided async worktree snapshot tree",
+    );
+    const headTree = assertSha(
+      (await git.run(root, ["rev-parse", `${headSha}^{tree}`])).stdout.trim(),
+      "guided async HEAD tree",
+    );
+    if (treeSha === headTree) return headSha;
+    return assertSha(
+      (
+        await git.run(
+          root,
+          [
+            "commit-tree",
+            treeSha,
+            "-p",
+            headSha,
+            "-m",
+            WORKTREE_CHECKPOINT_COMMIT_MESSAGE,
+          ],
+          { env: BASELINE_COMMIT_ENV },
+        )
+      ).stdout.trim(),
+      "guided async worktree snapshot commit",
+    );
+  } finally {
+    privateIndex.dispose();
+  }
+}
+
+function assertCheckpointGitOperationIdle(
+  git: GitRunner,
+  root: string,
+): void {
+  if (git.run(root, ["ls-files", "--unmerged", "-z"]).stdout.length > 0) {
+    throw new Error(
+      "guided_git_checkpoint_operation_active: o índice possui conflitos não resolvidos",
+    );
+  }
+  for (const marker of [
+    "MERGE_HEAD",
+    "REBASE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+  ]) {
+    const result = git.run(
+      root,
+      ["rev-parse", "--verify", "--quiet", marker],
+      { allowFailure: true },
+    );
+    if (result.status === 0) {
+      throw new Error(
+        `guided_git_checkpoint_operation_active: ${marker} está ativo`,
+      );
+    }
+  }
+  for (const statePath of ["rebase-merge", "rebase-apply", "BISECT_LOG"]) {
+    const resolved = git
+      .run(root, ["rev-parse", "--git-path", statePath])
+      .stdout.trim();
+    const absolute = path.isAbsolute(resolved)
+      ? resolved
+      : path.resolve(root, resolved);
+    if (fs.existsSync(absolute)) {
+      throw new Error(
+        `guided_git_checkpoint_operation_active: ${statePath} está ativo`,
+      );
+    }
+  }
+}
+
+async function assertCheckpointGitOperationIdleAsync(
+  git: AsyncGitRunner,
+  root: string,
+): Promise<void> {
+  if (
+    (await git.run(root, ["ls-files", "--unmerged", "-z"])).stdout.length > 0
+  ) {
+    throw new Error(
+      "guided_git_checkpoint_operation_active: o índice possui conflitos não resolvidos",
+    );
+  }
+  for (const marker of [
+    "MERGE_HEAD",
+    "REBASE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+  ]) {
+    const result = await git.run(
+      root,
+      ["rev-parse", "--verify", "--quiet", marker],
+      { allowFailure: true },
+    );
+    if (result.status === 0) {
+      throw new Error(
+        `guided_git_checkpoint_operation_active: ${marker} está ativo`,
+      );
+    }
+  }
+  for (const statePath of ["rebase-merge", "rebase-apply", "BISECT_LOG"]) {
+    const resolved = (
+      await git.run(root, ["rev-parse", "--git-path", statePath])
+    ).stdout.trim();
+    const absolute = path.isAbsolute(resolved)
+      ? resolved
+      : path.resolve(root, resolved);
+    if (fs.existsSync(absolute)) {
+      throw new Error(
+        `guided_git_checkpoint_operation_active: ${statePath} está ativo`,
+      );
+    }
+  }
+}
+
+function promoteWorktreeCheckpoint(
+  git: GitRunner,
+  root: string,
+  reference: string,
+  candidateSha: string,
+  parentSha: string,
+): boolean {
+  return (
+    git.run(
+      root,
+      ["update-ref", reference, candidateSha, parentSha],
+      { allowFailure: true },
+    ).status === 0
+  );
+}
+
+function checkpointDirtyWorktree(
+  git: GitRunner,
+  root: string,
+  reference: string,
+): string {
+  for (
+    let attempt = 0;
+    attempt < MAX_WORKTREE_CHECKPOINT_ATTEMPTS;
+    attempt += 1
+  ) {
+    assertCheckpointGitOperationIdle(git, root);
+    if (integrationRef(git, root) !== reference) {
+      throw new Error(
+        "guided_git_checkpoint_branch_raced: a branch ativa mudou durante o checkpoint",
+      );
+    }
+    const parentSha = currentHeadOrNull(git, root);
+    if (!parentSha) {
+      throw new Error(
+        "guided_git_checkpoint_head_missing: HEAD desapareceu durante o checkpoint",
+      );
+    }
+    if (cleanStatus(git, root)) return parentSha;
+
+    const candidateSha = snapshotWorkingTreeCommit(
+      git,
+      root,
+      parentSha,
+    );
+    if (
+      candidateSha !== parentSha &&
+      git.run(root, ["rev-parse", `${candidateSha}^`]).stdout.trim() !==
+        parentSha
+    ) {
+      throw new Error(
+        "guided_git_checkpoint_candidate_invalid: o parent do checkpoint divergiu",
+      );
+    }
+    if (integrationRef(git, root) !== reference) {
+      throw new Error(
+        "guided_git_checkpoint_branch_raced: a branch ativa mudou durante o checkpoint",
+      );
+    }
+    if (currentHeadOrNull(git, root) !== parentSha) {
+      continue;
+    }
+    if (
+      candidateSha !== parentSha &&
+      !promoteWorktreeCheckpoint(
+        git,
+        root,
+        reference,
+        candidateSha,
+        parentSha,
+      )
+    ) {
+      continue;
+    }
+    assertCheckpointGitOperationIdle(git, root);
+    if (
+      integrationRef(git, root) !== reference ||
+      currentHeadOrNull(git, root) !== candidateSha
+    ) {
+      continue;
+    }
+    git.run(root, ["read-tree", candidateSha]);
+    if (
+      integrationRef(git, root) === reference &&
+      currentHeadOrNull(git, root) === candidateSha &&
+      cleanStatus(git, root)
+    ) {
+      return candidateSha;
+    }
+  }
+  throw new Error(
+    `guided_git_checkpoint_raced: o workspace continuou mudando após ${MAX_WORKTREE_CHECKPOINT_ATTEMPTS} tentativas atômicas`,
+  );
+}
+
+async function currentHeadOrNullAsync(
+  git: AsyncGitRunner,
+  root: string,
+): Promise<string | null> {
+  const head = await git.run(
+    root,
+    ["rev-parse", "--verify", "HEAD^{commit}"],
+    { allowFailure: true },
+  );
+  if (head.status !== 0) return null;
+  return assertSha(head.stdout.trim(), "guided async baseline HEAD");
+}
+
+async function cleanStatusAsync(
+  git: AsyncGitRunner,
+  root: string,
+): Promise<boolean> {
+  return (
+    (
+      await git.run(root, [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+      ])
+    ).stdout.length === 0
+  );
+}
+
+async function checkpointDirtyWorktreeAsync(
+  git: AsyncGitRunner,
+  root: string,
+  reference: string,
+): Promise<string> {
+  for (
+    let attempt = 0;
+    attempt < MAX_WORKTREE_CHECKPOINT_ATTEMPTS;
+    attempt += 1
+  ) {
+    await assertCheckpointGitOperationIdleAsync(git, root);
+    if ((await integrationRefAsync(git, root)) !== reference) {
+      throw new Error(
+        "guided_git_checkpoint_branch_raced: a branch ativa mudou durante o checkpoint",
+      );
+    }
+    const parentSha = await currentHeadOrNullAsync(git, root);
+    if (!parentSha) {
+      throw new Error(
+        "guided_git_checkpoint_head_missing: HEAD desapareceu durante o checkpoint",
+      );
+    }
+    if (await cleanStatusAsync(git, root)) return parentSha;
+
+    const candidateSha = await snapshotWorkingTreeCommitAsync(
+      git,
+      root,
+      parentSha,
+    );
+    if (
+      candidateSha !== parentSha &&
+      (
+        await git.run(root, ["rev-parse", `${candidateSha}^`])
+      ).stdout.trim() !== parentSha
+    ) {
+      throw new Error(
+        "guided_git_checkpoint_candidate_invalid: o parent do checkpoint divergiu",
+      );
+    }
+    if ((await integrationRefAsync(git, root)) !== reference) {
+      throw new Error(
+        "guided_git_checkpoint_branch_raced: a branch ativa mudou durante o checkpoint",
+      );
+    }
+    if ((await currentHeadOrNullAsync(git, root)) !== parentSha) continue;
+    if (
+      candidateSha !== parentSha &&
+      (
+        await git.run(
+          root,
+          ["update-ref", reference, candidateSha, parentSha],
+          { allowFailure: true },
+        )
+      ).status !== 0
+    ) {
+      continue;
+    }
+    await assertCheckpointGitOperationIdleAsync(git, root);
+    if (
+      (await integrationRefAsync(git, root)) !== reference ||
+      (await currentHeadOrNullAsync(git, root)) !== candidateSha
+    ) {
+      continue;
+    }
+    await git.run(root, ["read-tree", candidateSha]);
+    if (
+      (await integrationRefAsync(git, root)) === reference &&
+      (await currentHeadOrNullAsync(git, root)) === candidateSha &&
+      (await cleanStatusAsync(git, root))
+    ) {
+      return candidateSha;
+    }
+  }
+  throw new Error(
+    `guided_git_checkpoint_raced: o workspace continuou mudando após ${MAX_WORKTREE_CHECKPOINT_ATTEMPTS} tentativas atômicas`,
+  );
 }
 
 function cleanStatus(git: GitRunner, root: string): boolean {
@@ -688,13 +1127,157 @@ export function ensureGuidedGitBaselineBeforeContext(
     : null;
 }
 
+async function commitEmptyBaselineAsync(
+  git: AsyncGitRunner,
+  root: string,
+  reference: string,
+): Promise<string> {
+  const privateIndex = createPrivateGitIndex();
+  try {
+    const withIndex = { privateIndexFile: privateIndex.path } as const;
+    await git.run(root, ["read-tree", "--empty"], withIndex);
+    const treeSha = assertSha(
+      (await git.run(root, ["write-tree"], withIndex)).stdout.trim(),
+      "guided async empty tree",
+    );
+    const committedHead = assertSha(
+      (
+        await git.run(
+          root,
+          [
+            "commit-tree",
+            treeSha,
+            "-m",
+            EMPTY_BASELINE_COMMIT_MESSAGE,
+          ],
+          { env: BASELINE_COMMIT_ENV },
+        )
+      ).stdout.trim(),
+      "guided async initial commit",
+    );
+    const promoted = await git.run(
+      root,
+      [
+        "update-ref",
+        reference,
+        committedHead,
+        "0".repeat(committedHead.length),
+      ],
+      { allowFailure: true },
+    );
+    if (promoted.status !== 0) {
+      const winner = await currentHeadOrNullAsync(git, root);
+      if (!winner) {
+        throw new Error(
+          "guided_git_baseline_parent_raced: HEAD mudou sem produzir um commit",
+        );
+      }
+      return winner;
+    }
+    await git.run(root, ["read-tree", committedHead]);
+    return committedHead;
+  } finally {
+    privateIndex.dispose();
+  }
+}
+
 /**
- * Materialize the only safe Git baseline variants for beginner greenfields.
+ * Scheduler-facing baseline. All potentially expensive repository walks and
+ * index writes use the asynchronous Git runner so Electron keeps servicing
+ * IPC/PTYS while a large workspace is checkpointed.
+ */
+export async function ensureGuidedGitBaselineForWorktreeAsync(
+  scope: ProjectExecutionScope,
+  dependencies: GuidedGitBaselineAsyncDeps = {},
+): Promise<GuidedGitBaselineResult> {
+  const rootRealPath = canonicalRoot(scope);
+  const git =
+    dependencies.asyncGitRunner ?? new AsyncProcessGitRunner();
+  const entries = (await fs.promises.readdir(rootRealPath)).filter(
+    (entry) => entry !== ".git",
+  );
+  const topLevel = await git.run(
+    rootRealPath,
+    ["rev-parse", "--show-toplevel"],
+    { allowFailure: true },
+  );
+  let initializedEmpty = false;
+
+  if (topLevel.status !== 0) {
+    if (entries.length !== 0) {
+      throw new Error(
+        "guided_git_baseline_nonempty_nonrepo: inicialize o Git ou escolha uma pasta vazia",
+      );
+    }
+    await git.run(rootRealPath, ["init", "--quiet"]);
+    await git.run(
+      rootRealPath,
+      ["symbolic-ref", "HEAD", "refs/heads/main"],
+    );
+    initializedEmpty = true;
+  } else {
+    const provedTopLevel = await fs.promises.realpath(topLevel.stdout.trim());
+    if (provedTopLevel !== rootRealPath) {
+      throw new Error(
+        "guided_git_baseline_nested_root: o workspace deve ser a raiz exata do repositório Git",
+      );
+    }
+  }
+
+  await assertSafeLocalGitConfigAsync(git, rootRealPath);
+  const reference = await integrationRefAsync(git, rootRealPath);
+  await assertCheckpointGitOperationIdleAsync(git, rootRealPath);
+  const headSha = await currentHeadOrNullAsync(git, rootRealPath);
+  if (!headSha) {
+    if (
+      entries.length !== 0 ||
+      !(await cleanStatusAsync(git, rootRealPath))
+    ) {
+      throw new Error(
+        "guided_git_baseline_unborn_with_files: faça o primeiro commit dos arquivos existentes antes de iniciar a missão",
+      );
+    }
+    const committedHead = await commitEmptyBaselineAsync(
+      git,
+      rootRealPath,
+      reference,
+    );
+    if (!(await cleanStatusAsync(git, rootRealPath))) {
+      throw new Error(
+        "guided_git_baseline_raced: o workspace mudou durante a criação da baseline",
+      );
+    }
+    return Object.freeze({
+      kind: initializedEmpty ? "initialized-empty" : "committed-unborn",
+      rootRealPath,
+      integrationRef: await integrationRefAsync(git, rootRealPath),
+      headSha: committedHead,
+    });
+  }
+
+  const baselineHead = (await cleanStatusAsync(git, rootRealPath))
+    ? headSha
+    : await checkpointDirtyWorktreeAsync(
+        git,
+        rootRealPath,
+        reference,
+      );
+  return Object.freeze({
+    kind: "existing",
+    rootRealPath,
+    integrationRef: reference,
+    headSha: baselineHead,
+  });
+}
+
+/**
+ * Materialize a safe Git baseline before Nexus creates an isolated worktree.
  *
- * Existing repositories are never rewritten. A repository is initialized only
- * when the physical folder has zero entries. An unborn repository receives an
- * empty main-owned commit only when status is completely clean, so Nexus never
- * stages or adopts user files merely to make WorktreeManager operational.
+ * A dirty existing repository is checkpointed from a private index, promoted
+ * with compare-and-swap and normalized by updating only the shared index; the
+ * operator's physical bytes are never rewritten. A repository is initialized
+ * only when the physical folder has zero entries. An unborn repository receives
+ * an empty main-owned commit only when status is completely clean.
  */
 export function ensureGuidedGitBaseline(
   scope: ProjectExecutionScope,
@@ -727,6 +1310,7 @@ export function ensureGuidedGitBaseline(
 
   assertSafeLocalGitConfig(git, rootRealPath);
   const reference = integrationRef(git, rootRealPath);
+  assertCheckpointGitOperationIdle(git, rootRealPath);
   const expectedContent = dependencies.approvedIntent
     ? renderGuidedGreenfieldBrief(dependencies.approvedIntent)
     : null;
@@ -750,6 +1334,7 @@ export function ensureGuidedGitBaseline(
     { allowFailure: true },
   );
   if (head.status === 0) {
+    assertCheckpointGitOperationIdle(git, rootRealPath);
     if (dependencies.approvedIntent) {
       const expected = renderGuidedGreenfieldBrief(
         dependencies.approvedIntent,
@@ -761,24 +1346,11 @@ export function ensureGuidedGitBaseline(
       }
     }
     if (!cleanStatus(git, rootRealPath)) {
-      // Field trap (28/07): demanding a clean tree meant every mission started
-      // from a repository the operator was actively working in was refused —
-      // "deixe o workspace limpo antes de iniciar a missão" — and the Maestro
-      // then exited before the first dispatch. The reason behind the gate is
-      // real (a worker branching from HEAD would not see uncommitted work and
-      // the later merge would conflict or drop it), so we satisfy it instead
-      // of removing it: snapshot the working tree into a baseline commit the
-      // worker can branch from. Nothing in the operator's checkout or index is
-      // touched — the snapshot is built in a Nexus-private index.
       return Object.freeze({
         kind: "existing",
         rootRealPath,
         integrationRef: reference,
-        headSha: snapshotWorkingTreeCommit(
-          git,
-          rootRealPath,
-          assertSha(head.stdout.trim(), "guided integration HEAD"),
-        ),
+        headSha: checkpointDirtyWorktree(git, rootRealPath, reference),
       });
     }
     if (dependencies.approvedIntent) {

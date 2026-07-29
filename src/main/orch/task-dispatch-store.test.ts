@@ -11,6 +11,9 @@ import { createScopedMissionStore } from './mission-store';
 import { createScopedTaskStore } from './task-store';
 import {
   createTaskDispatchStore,
+  LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
+  LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
+  TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
   TASK_DISPATCH_QUALITY_REPAIR_MARKER,
 } from './task-dispatch-store';
 import { EMPTY_GIT_DIFF_SHA256 } from './task-dispatch-codec';
@@ -24,6 +27,10 @@ import { compileMissionContract } from '../context/contract-compiler';
 import { createContextWorkflowStore } from '../context/context-workflow-store';
 import { createWorkflowState } from '../context/prevc-engine';
 import { ReviewCouncil } from '../context/review-council';
+import {
+  hasAutomaticTechnicalRecovery,
+  TERMINAL_OPERATIONAL_FAILURE_MARKER,
+} from '../../shared/mission-recovery-policy';
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -1272,6 +1279,20 @@ describe('durable task dispatcher authority', () => {
     expect(blockedMission.status).toBe('blocked');
     expect(blockedMission.description.match(/NEXUS_TASK_DISPATCH_BLOCKED/g)).toHaveLength(1);
     expect(blockedMission.description.match(/Clique em “Retomar missão”/g)).toHaveLength(1);
+  });
+
+  it('returns the immutable physical handoff HEAD as merge authority', () => {
+    const { dispatches, task, ready } = guidedNoChangeDispatchFixture();
+    const expectedHeadSha = repositoryHead();
+
+    expect(
+      dispatches.assertPhysicalHandoffTaskHead({
+        taskId: task.id,
+        missionId: ready.missionId,
+        intentVersion: ready.intentVersion,
+        expectedStates: ['handoff_ready'],
+      }),
+    ).toBe(expectedHeadSha);
   });
 
   it('requeues a quality-rejected merge only after the exact worker exit is proven', () => {
@@ -2784,6 +2805,114 @@ describe('durable task dispatcher authority', () => {
     ).toThrow(/capacity_wait.*retry técnico/i);
   });
 
+  it('stops retrying after bounded physical exits and preserves a terminal auth/config block', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let now = 1_000;
+    let id = 0;
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => now,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => now });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    const mission = missions.create({
+      title: 'Worker com login inválido',
+      intentVersion: 1,
+      intentState: 'dispatched',
+      intentContract: approvedIntentContract({
+        goal: 'Evitar retry infinito de uma CLI sem autenticação',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const task = tasks.create({
+      missionId: mission.id,
+      title: 'Executar advisor autenticado',
+    });
+    const route = missions.reserveRouteDecision(mission.id, task.title, {
+      tier: 'medium',
+      adapterId: 'grok',
+      effort: 'medium',
+      reason: 'rota de advisor',
+      alternatives: [],
+    });
+
+    for (
+      let attempt = 1;
+      attempt <= TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS;
+      attempt += 1
+    ) {
+      const claim = dispatches.claim({
+        missionId: mission.id,
+        taskId: task.id,
+        intentVersion: 1,
+        workerId: 'advisor-grok',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
+      });
+      expect(claim.attempt).toBe(attempt);
+      const routed = dispatches.attachRoute({
+        taskId: task.id,
+        revision: claim.revision,
+        leaseToken: claim.leaseToken,
+        routeReservationId: route.id,
+        adapterId: 'grok',
+      });
+      dispatches.bindSpawn({
+        taskId: task.id,
+        revision: routed.revision,
+        leaseToken: claim.leaseToken,
+        paneId: `pane-grok-${attempt}`,
+        sessionId: `session-grok-${attempt}`,
+        workerIncarnationId: claim.workerIncarnationId,
+      });
+
+      const exited = dispatches.blockSessionExit({
+        sessionId: `session-grok-${attempt}`,
+        workerIncarnationId: claim.workerIncarnationId,
+        reason: TASK_DISPATCH_SESSION_EXIT_REASON,
+      });
+      if (attempt < TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS) {
+        expect(exited?.state).toBe('superseded');
+        expect(tasks.list(mission.id)[0]?.status).toBe('pending');
+        expect(missions.get(mission.id)?.status).toBe('running');
+        now = exited!.leaseExpiresAt + 1;
+      } else {
+        expect(exited).toMatchObject({
+          state: 'blocked',
+          attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+        });
+      }
+    }
+
+    expect(tasks.list(mission.id)[0]?.status).toBe('failed');
+    const blockedMission = missions.get(mission.id)!;
+    expect(blockedMission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    expect(blockedMission.description).toContain(
+      TERMINAL_OPERATIONAL_FAILURE_MARKER,
+    );
+    expect(blockedMission.description).toMatch(
+      /3 tentativas físicas.*autenticação|autenticação.*3 tentativas físicas/is,
+    );
+    expect(hasAutomaticTechnicalRecovery(blockedMission)).toBe(false);
+    expect(() =>
+      dispatches.claim({
+        missionId: mission.id,
+        taskId: task.id,
+        intentVersion: 1,
+        workerId: 'advisor-grok',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
+      }),
+    ).toThrow(/missão running|task dispatch exige missão running/i);
+  });
+
   it('requeues a missing runtime and atomically rebinds the same persisted worker', () => {
     const runtime = manager();
     const scope = testProjectScope();
@@ -2889,6 +3018,112 @@ describe('durable task dispatcher authority', () => {
     ).toThrow(/dispatch|sess[aã]o|CAS/i);
   });
 
+  it('bounds repeated missing-runtime rebinds without losing the worktree identity', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let now = 1_000;
+    let id = 0;
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => now,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => now });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    const mission = missions.create({
+      title: 'Runtime desaparece repetidamente',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: approvedIntentContract({
+        goal: 'Parar recuperação física que não progride',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const task = tasks.create({
+      missionId: mission.id,
+      title: 'Preservar worktree do worker',
+    });
+    const route = missions.reserveRouteDecision(mission.id, task.title, {
+      tier: 'medium',
+      adapterId: 'codex',
+      reason: 'rota persistida',
+      alternatives: [],
+    });
+    const claim = dispatches.claim({
+      missionId: mission.id,
+      taskId: task.id,
+      intentVersion: 1,
+      workerId: 'worker-runtime-loop',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+    });
+    const routed = dispatches.attachRoute({
+      taskId: task.id,
+      revision: claim.revision,
+      leaseToken: claim.leaseToken,
+      routeReservationId: route.id,
+      adapterId: 'codex',
+    });
+    const paneId = 'pane-runtime-loop';
+    let sessionId = 'session-runtime-1';
+    let running = dispatches.bindSpawn({
+      taskId: task.id,
+      revision: routed.revision,
+      leaseToken: claim.leaseToken,
+      paneId,
+      sessionId,
+      workerIncarnationId: claim.workerIncarnationId,
+    });
+
+    for (
+      let attempt = 1;
+      attempt <= TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS;
+      attempt += 1
+    ) {
+      expect(running.attempt).toBe(attempt);
+      const recovered = dispatches.requeueMissingRuntime({
+        taskId: task.id,
+        revision: running.revision,
+      });
+      if (attempt < TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS) {
+        expect(recovered.state).toBe('superseded');
+        now = recovered.leaseExpiresAt + 1;
+        const replacementSessionId = `session-runtime-${attempt + 1}`;
+        running = dispatches.rebindRestartedWorker({
+          missionId: mission.id,
+          paneId,
+          expectedSessionId: sessionId,
+          replacementSessionId,
+          workerIncarnationId: claim.workerIncarnationId,
+          leaseMs: 30_000,
+        });
+        sessionId = replacementSessionId;
+        expect(running).toMatchObject({
+          state: 'running',
+          paneId,
+          sessionId,
+          workerIncarnationId: claim.workerIncarnationId,
+        });
+      } else {
+        expect(recovered).toMatchObject({
+          state: 'blocked',
+          attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+          paneId,
+          sessionId,
+        });
+      }
+    }
+
+    expect(tasks.list(mission.id)[0]?.status).toBe('failed');
+    const blockedMission = missions.get(mission.id)!;
+    expect(blockedMission.description).toContain(
+      TERMINAL_OPERATIONAL_FAILURE_MARKER,
+    );
+    expect(hasAutomaticTechnicalRecovery(blockedMission)).toBe(false);
+  });
+
   it('requeues an exact exited bootstrap attempt without blocking the mission', () => {
     const runtime = manager();
     const scope = testProjectScope();
@@ -2982,6 +3217,503 @@ describe('durable task dispatcher authority', () => {
     expect(second).toMatchObject({ state: 'claimed', attempt: 2 });
     expect(second.workerIncarnationId).not.toBe(first.workerIncarnationId);
     expect(tasks.list(mission.id)[0]?.status).toBe('running');
+  });
+
+  it('reopens the exact third session-exit block when bootstrap classifies it retryable', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let id = 0;
+    let now = 10_000;
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => now,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => now });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      idFactory: (prefix) => `${prefix}-${++id}`,
+      now: () => now,
+    });
+    const mission = missions.create({
+      title: 'Retry classificado após exit',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: approvedIntentContract({
+        goal: 'Distinguir exit transitório de bloqueio terminal',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const task = tasks.create({ missionId: mission.id, title: 'Worker' });
+    const route = missions.reserveRouteDecision(mission.id, task.title, {
+      tier: 'medium',
+      adapterId: 'codex',
+      reason: 'rota de bootstrap',
+      alternatives: [],
+    });
+
+    for (let attempt = 1; attempt < TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS; attempt += 1) {
+      const claim = dispatches.claim({
+        missionId: mission.id,
+        taskId: task.id,
+        intentVersion: 1,
+        workerId: 'worker-exit-retry',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
+      });
+      const routed = dispatches.attachRoute({
+        taskId: task.id,
+        revision: claim.revision,
+        leaseToken: claim.leaseToken,
+        routeReservationId: route.id,
+        adapterId: 'codex',
+      });
+      dispatches.markSpawning({
+        taskId: task.id,
+        revision: routed.revision,
+        leaseToken: claim.leaseToken,
+      });
+      const retry = dispatches.requeueTechnicalBootstrapFailure({
+        taskId: task.id,
+        missionId: mission.id,
+        leaseToken: claim.leaseToken,
+        workerIncarnationId: claim.workerIncarnationId,
+        error: `falha transitória ${attempt}`,
+      });
+      now = retry.leaseExpiresAt;
+    }
+
+    const claim = dispatches.claim({
+      missionId: mission.id,
+      taskId: task.id,
+      intentVersion: 1,
+      workerId: 'worker-exit-retry',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+    });
+    const routed = dispatches.attachRoute({
+      taskId: task.id,
+      revision: claim.revision,
+      leaseToken: claim.leaseToken,
+      routeReservationId: route.id,
+      adapterId: 'codex',
+    });
+    const paneId = 'pane-exit-retry-3';
+    const sessionId = 'session-exit-retry-3';
+    dispatches.bindSpawn({
+      taskId: task.id,
+      revision: routed.revision,
+      leaseToken: claim.leaseToken,
+      paneId,
+      sessionId,
+      workerIncarnationId: claim.workerIncarnationId,
+    });
+    const exitBlock = dispatches.blockSessionExit({
+      sessionId,
+      workerIncarnationId: claim.workerIncarnationId,
+      reason: TASK_DISPATCH_SESSION_EXIT_REASON,
+    });
+    expect(exitBlock).toMatchObject({
+      state: 'blocked',
+      attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+    });
+    expect(tasks.list(mission.id)[0]?.status).toBe('failed');
+    expect(missions.get(mission.id)?.status).toBe('blocked');
+
+    const retry = dispatches.requeueTechnicalBootstrapFailure({
+      taskId: task.id,
+      missionId: mission.id,
+      leaseToken: claim.leaseToken,
+      workerIncarnationId: claim.workerIncarnationId,
+      paneId,
+      sessionId,
+      error: 'provider saiu durante bootstrap retryable',
+    });
+
+    expect(retry).toMatchObject({
+      state: 'superseded',
+      attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+      lastError: 'provider saiu durante bootstrap retryable',
+    });
+    expect(tasks.list(mission.id)[0]?.status).toBe('pending');
+    expect(missions.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+    expect(missions.get(mission.id)?.description).not.toContain(
+      TERMINAL_OPERATIONAL_FAILURE_MARKER,
+    );
+    expect(() =>
+      dispatches.claim({
+        missionId: mission.id,
+        taskId: task.id,
+        intentVersion: 1,
+        workerId: 'worker-exit-retry',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
+      }),
+    ).toThrow(/capacity_wait.*retry técnico/i);
+  });
+
+  it('keeps retryable bootstrap failures live beyond three attempts with durable bounded backoff', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let id = 0;
+    let now = 10_000;
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => now,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => now });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      idFactory: (prefix) => `${prefix}-${++id}`,
+      now: () => now,
+    });
+    const mission = missions.create({
+      title: 'Bootstrap falha antes do pane',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: approvedIntentContract({
+        goal: 'Evitar loop de spawn sem processo físico',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const task = tasks.create({ missionId: mission.id, title: 'Worker' });
+    const route = missions.reserveRouteDecision(mission.id, task.title, {
+      tier: 'medium',
+      adapterId: 'codex',
+      reason: 'rota de bootstrap',
+      alternatives: [],
+    });
+
+    const retryableAttempts = TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS + 4;
+    let previousBackoffMs = 0;
+    for (let attempt = 1; attempt <= retryableAttempts; attempt += 1) {
+      const claim = dispatches.claim({
+        missionId: mission.id,
+        taskId: task.id,
+        intentVersion: 1,
+        workerId: 'worker-bootstrap-loop',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
+      });
+      expect(claim.attempt).toBe(attempt);
+      const routed = dispatches.attachRoute({
+        taskId: task.id,
+        revision: claim.revision,
+        leaseToken: claim.leaseToken,
+        routeReservationId: route.id,
+        adapterId: 'codex',
+      });
+      dispatches.markSpawning({
+        taskId: task.id,
+        revision: routed.revision,
+        leaseToken: claim.leaseToken,
+      });
+      const recovered = dispatches.requeueTechnicalBootstrapFailure({
+        taskId: task.id,
+        missionId: mission.id,
+        leaseToken: claim.leaseToken,
+        workerIncarnationId: claim.workerIncarnationId,
+        error: `provider falhou antes do pane (${attempt})`,
+      });
+      expect(recovered).toMatchObject({
+        state: 'superseded',
+        attempt,
+        lastError: `provider falhou antes do pane (${attempt})`,
+      });
+      expect(tasks.list(mission.id)[0]?.status).toBe('pending');
+      expect(missions.get(mission.id)).toMatchObject({
+        status: 'running',
+        intentState: 'executing',
+      });
+      const backoffMs = recovered.leaseExpiresAt - now;
+      expect(backoffMs).toBeGreaterThan(0);
+      expect(backoffMs).toBeGreaterThanOrEqual(previousBackoffMs);
+      expect(backoffMs).toBeLessThanOrEqual(30_000);
+      previousBackoffMs = backoffMs;
+
+      // The persisted retry fence must reject scheduler ticks until its exact
+      // deadline; this is the spawn-storm guard, not a retry-count terminal.
+      expect(() =>
+        dispatches.claim({
+          missionId: mission.id,
+          taskId: task.id,
+          intentVersion: 1,
+          workerId: 'worker-bootstrap-loop',
+          leaseOwner: 'main',
+          leaseMs: 30_000,
+        }),
+      ).toThrow(/capacity_wait.*retry técnico/i);
+
+      // A duplicated catch for the same physical attempt is idempotent, even
+      // after the old session-exit threshold.
+      expect(
+        dispatches.requeueTechnicalBootstrapFailure({
+          taskId: task.id,
+          missionId: mission.id,
+          leaseToken: claim.leaseToken,
+          workerIncarnationId: claim.workerIncarnationId,
+          error: `provider falhou antes do pane (${attempt})`,
+        }),
+      ).toEqual(recovered);
+      now = recovered.leaseExpiresAt;
+    }
+
+    expect(dispatches.get(task.id)).toMatchObject({
+      state: 'superseded',
+      attempt: retryableAttempts,
+    });
+    expect(tasks.list(mission.id)[0]?.status).toBe('pending');
+    const liveMission = missions.get(mission.id)!;
+    expect(liveMission).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+    expect(liveMission.description).not.toContain(
+      TERMINAL_OPERATIONAL_FAILURE_MARKER,
+    );
+  });
+
+  it('atomically reopens only the exhausted legacy dirty-checkout bootstrap block', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let id = 0;
+    let now = 10_000;
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => now,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => now });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      idFactory: (prefix) => `${prefix}-${++id}`,
+      now: () => now,
+    });
+    const mission = missions.create({
+      title: 'Checkout primário legado',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: approvedIntentContract({
+        goal: 'Continuar após o checkpoint automático corrigido',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const task = tasks.create({
+      missionId: mission.id,
+      title: 'Criar worker guided',
+    });
+    const siblingTask = tasks.create({
+      missionId: mission.id,
+      title: 'Criar reviewer guided',
+    });
+    const claim = dispatches.claim({
+      missionId: mission.id,
+      taskId: task.id,
+      intentVersion: 1,
+      workerId: 'worker-guided-legacy',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      ownership: {
+        files: ['src/worker.ts'],
+        symbols: [],
+        domains: [],
+      },
+    });
+    const siblingClaim = dispatches.claim({
+      missionId: mission.id,
+      taskId: siblingTask.id,
+      intentVersion: 1,
+      workerId: 'reviewer-guided-legacy',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      ownership: {
+        files: ['src/reviewer.ts'],
+        symbols: [],
+        domains: [],
+      },
+    });
+    dispatches.fail({
+      taskId: task.id,
+      revision: claim.revision,
+      leaseToken: claim.leaseToken,
+      error: LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
+    });
+    missions.update(mission.id, {
+      status: 'running',
+      intentState: 'executing',
+    });
+    dispatches.fail({
+      taskId: siblingTask.id,
+      revision: siblingClaim.revision,
+      leaseToken: siblingClaim.leaseToken,
+      error: LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
+    });
+    runtime
+      .open(scope)
+      .db.prepare(
+        `UPDATE task_dispatch_queue
+            SET state = 'blocked', attempt = ?
+          WHERE mission_id = ? AND state = 'failed'`,
+      )
+      .run(TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS, mission.id);
+
+    const blocked = dispatches.get(task.id)!;
+    expect(blocked).toMatchObject({
+      state: 'blocked',
+      attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+    });
+    expect(tasks.list(mission.id).map((record) => record.status)).toEqual([
+      'failed',
+      'failed',
+    ]);
+    expect(missions.get(mission.id)).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+
+    now += 1;
+    const recovered =
+      dispatches.recoverLegacyGuidedDirtyCheckoutBootstrap(task.id);
+    const recoveredSibling =
+      dispatches.recoverLegacyGuidedDirtyCheckoutBootstrap(siblingTask.id);
+    const recoveredAgain =
+      dispatches.recoverLegacyGuidedDirtyCheckoutBootstrap(task.id);
+
+    expect(recovered).toMatchObject({
+      state: 'superseded',
+      attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+      lastError: LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
+    });
+    expect(recovered).not.toBeNull();
+    if (!recovered) {
+      throw new Error('legacy dirty-checkout recovery returned null');
+    }
+    expect(recoveredAgain).toEqual(recovered);
+    expect(recoveredSibling).toMatchObject({
+      state: 'superseded',
+      attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+      lastError: LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
+    });
+    expect(recovered.leaseExpiresAt).toBeGreaterThan(now);
+    expect(tasks.list(mission.id).map((record) => record.status)).toEqual([
+      'pending',
+      'pending',
+    ]);
+    expect(missions.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+    expect(missions.get(mission.id)?.description).not.toContain(
+      TASK_DISPATCH_BLOCK_MARKER,
+    );
+  });
+
+  it('does not reopen an exhausted bootstrap block with another terminal cause', () => {
+    const fixture = claimedDispatchFixture();
+    const failed = fixture.dispatches.fail({
+      taskId: fixture.task.id,
+      revision: fixture.claim.revision,
+      leaseToken: fixture.claim.leaseToken,
+      error: 'authentication failed',
+    });
+
+    expect(failed.state).toBe('failed');
+    expect(
+      fixture.dispatches.recoverLegacyGuidedDirtyCheckoutBootstrap(
+        fixture.task.id,
+      ),
+    ).toBeNull();
+    expect(fixture.tasks.list(fixture.mission.id)[0]?.status).toBe('failed');
+    expect(fixture.missions.get(fixture.mission.id)?.status).toBe('blocked');
+  });
+
+  it('terminalizes an exact superseded bootstrap before it can poison a retry', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let id = 0;
+    let now = 20_000;
+    const missions = createScopedMissionStore(runtime, scope);
+    const tasks = createScopedTaskStore(runtime, scope);
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      idFactory: (prefix) => `${prefix}-${++id}`,
+      now: () => now,
+    });
+    const mission = missions.create({
+      title: 'Falha terminal durante bootstrap',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: approvedIntentContract({
+        goal: 'Não repetir um bootstrap cuja autoridade foi revogada',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const task = tasks.create({ missionId: mission.id, title: 'Worker' });
+    const route = missions.reserveRouteDecision(mission.id, task.title, {
+      tier: 'medium',
+      adapterId: 'codex',
+      reason: 'rota do bootstrap terminal',
+      alternatives: [],
+    });
+    const claim = dispatches.claim({
+      missionId: mission.id,
+      taskId: task.id,
+      intentVersion: 1,
+      workerId: 'worker-terminal',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+    });
+    const routed = dispatches.attachRoute({
+      taskId: task.id,
+      revision: claim.revision,
+      leaseToken: claim.leaseToken,
+      routeReservationId: route.id,
+      adapterId: 'codex',
+    });
+    dispatches.bindSpawn({
+      taskId: task.id,
+      revision: routed.revision,
+      leaseToken: claim.leaseToken,
+      paneId: 'pane-terminal',
+      sessionId: 'session-terminal',
+      workerIncarnationId: claim.workerIncarnationId,
+    });
+    dispatches.blockSessionExit({
+      sessionId: 'session-terminal',
+      workerIncarnationId: claim.workerIncarnationId,
+      reason: TASK_DISPATCH_SESSION_EXIT_REASON,
+    });
+
+    const failed = dispatches.failSupersededBootstrap({
+      taskId: task.id,
+      missionId: mission.id,
+      leaseToken: claim.leaseToken,
+      workerIncarnationId: claim.workerIncarnationId,
+      paneId: 'pane-terminal',
+      sessionId: 'session-terminal',
+      error: 'autoridade selada mudou antes do provider',
+    });
+
+    expect(failed).toMatchObject({
+      state: 'failed',
+      attempt: 1,
+      lastError: 'autoridade selada mudou antes do provider',
+    });
+    expect(tasks.list(mission.id)[0]?.status).toBe('failed');
+    expect(missions.get(mission.id)).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+
+    now = 60_000;
+    expect(() =>
+      dispatches.claim({
+        missionId: mission.id,
+        taskId: task.id,
+        intentVersion: 1,
+        workerId: 'worker-terminal',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
+      }),
+    ).toThrow(/missão running|dispatch exige missão running/i);
   });
 
   it('supersedes a running dispatch when intent changes and rejects late worker effects', () => {

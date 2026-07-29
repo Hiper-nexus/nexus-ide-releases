@@ -60,6 +60,32 @@ describe('pet-attention-policy', () => {
     expect(r.flushed[0]!.deliverPet).toBe(true);
   });
 
+  it('mantém falhas técnicas esgotadas fora da linguagem de decisão humana', () => {
+    let s = createAttentionPolicyState();
+    const t0 = 75_000;
+    let r = admitPetEvent(
+      s,
+      ev('mission-technical-failure', 'Build'),
+      t0,
+    );
+    s = r.state;
+    r = admitPetEvent(
+      s,
+      ev('mission-technical-failure', 'Testes'),
+      t0 + 100,
+    );
+    s = r.state;
+
+    r = admitPetEvent(s, ev('mission-done', 'noop'), t0 + DIGEST_WINDOW_MS, {
+      flushDigest: true,
+    });
+
+    expect(r.flushed).toHaveLength(1);
+    expect(r.flushed[0]!.event.kind).toBe('mission-technical-failure');
+    expect(r.flushed[0]!.event.title).toContain('2 missões com falha técnica');
+    expect(r.flushed[0]!.event.title).not.toContain('precisam de você');
+  });
+
   it('limita toasts de atenção no tempo', () => {
     let s = createAttentionPolicyState();
     const t0 = 100_000;

@@ -36,6 +36,17 @@ describe('balloonTextFor', () => {
     expect(text).not.toMatch(/uma\.\.\.$/);
   });
 
+  it('falha técnica esgotada oferece diagnóstico sem simular decisão humana', () => {
+    const text = balloonTextFor(
+      ev('mission-technical-failure', 'Execução + QA'),
+    );
+    expect(text).toContain('Falha técnica');
+    expect(text).toContain('Execução + QA');
+    expect(text).toContain('diagnóstico');
+    expect(text).not.toContain('Preciso de você');
+    expect(text).not.toContain('decisão');
+  });
+
   it('agent-waiting inclui o contexto do agente quando há título', () => {
     const text = balloonTextFor(ev('agent-waiting', 'Claude worker'));
     expect(text).toContain('Claude worker');
@@ -69,6 +80,16 @@ describe('enqueueBalloon / dismissBalloon', () => {
     expect(s.current?.kind).toBe('mission-blocked');
     expect(s.current?.urgent).toBe(true);
     expect(s.queued[0]?.kind).toBe('mission-done');
+  });
+
+  it('falha técnica esgotada é urgente e abre o diagnóstico no Ops', () => {
+    const s = enqueueBalloon(
+      EMPTY_BALLOON_QUEUE,
+      ev('mission-technical-failure', 'Deploy'),
+    );
+    expect(s.current?.urgent).toBe(true);
+    expect(s.current?.action).toBe('open-ops');
+    expect(s.current?.cta).toBe('Ver diagnóstico');
   });
 
   it('fila estoura descartando os mais antigos', () => {

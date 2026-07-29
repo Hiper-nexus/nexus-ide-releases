@@ -15,7 +15,7 @@ import {
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
 } from './mission-orchestrator-exit-policy';
-import { hashMissionIntentContract } from './mission-pane-authority';
+import { hashMissionIntentAuthority } from './mission-pane-authority';
 import { RETIRED_ROSTER_ROUTE_MARKER } from '../../shared/retired-adapter-policy';
 
 let baseDir = '';
@@ -1000,7 +1000,9 @@ describe('scoped mission store', () => {
         missionId: target.id,
         orchestratorSessionId,
         intentVersion: current.intentVersion!,
-        intentContractHash: hashMissionIntentContract(current.intentContract),
+        intentContractHash: hashMissionIntentAuthority(
+          current.intentContract!,
+        ),
         squadRevisionHash: current.intentContract!.squadRevisionHash!,
         observation,
         outputTail,
@@ -1089,8 +1091,8 @@ describe('scoped mission store', () => {
     const raceCurrent = store.get(race.id)!;
     const raceSeal = {
       intentVersion: 1,
-      intentContractHash: hashMissionIntentContract(
-        raceCurrent.intentContract,
+      intentContractHash: hashMissionIntentAuthority(
+        raceCurrent.intentContract!,
       ),
       contextRevision: 'd'.repeat(64),
       contractHash: 'e'.repeat(64),
@@ -1107,7 +1109,7 @@ describe('scoped mission store', () => {
       sessionId: 'orch-intentional-race',
       intentVersion: 1,
     });
-    expect(hashMissionIntentContract(raceCurrent.intentContract)).toBe(
+    expect(hashMissionIntentAuthority(raceCurrent.intentContract!)).toBe(
       raceSeal.intentContractHash,
     );
     expect(
@@ -1147,8 +1149,8 @@ describe('scoped mission store', () => {
         'orch-operator-block',
         {
           ...raceSeal,
-          intentContractHash: hashMissionIntentContract(
-            operatorCurrent.intentContract,
+          intentContractHash: hashMissionIntentAuthority(
+            operatorCurrent.intentContract!,
           ),
           squadRevisionHash:
             operatorCurrent.intentContract!.squadRevisionHash!,

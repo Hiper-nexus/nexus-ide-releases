@@ -304,7 +304,7 @@ export function MissionWizardReview({
             : `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} automaticamente nesta release.`;
         }
         if (operatorChoice) {
-          return `${label} precisa estar instalada, autenticada e pronta para lançar o worker ${unqualifiedWorker.agentName}. No autopiloto, a tarefa usa worktree isolado, web liberada e merge validado pelo Nexus.`;
+          return `${label} precisa estar instalada, autenticada e pronta para lançar o worker ${unqualifiedWorker.agentName}. No autopiloto, a tarefa usa worktree isolado, acesso de rede e merge validado pelo Nexus.`;
         }
         if (
           capabilities.launchable &&
@@ -455,7 +455,7 @@ export function MissionWizardReview({
           </div>
           <p className="wizard__hint-sm">
             {operatorChoice
-              ? "Autopiloto: qualquer CLI autenticada pode ser Maestro, executor ou reviewer. Cada tarefa usa worktree isolado, web liberada e merge validado pelo Nexus. Salvar a configuração não inicia agentes."
+              ? "Autopiloto: qualquer CLI autenticada pode ser Maestro, executor ou reviewer. Cada tarefa usa worktree isolado, acesso de rede e merge validado pelo Nexus. Salvar a configuração não inicia agentes."
               : "O Maestro automático usa somente provider com gate verificado. Executores e arquitetos exigem escrita confinada; reviewers e scouts também podem usar uma CLI com leitura autônoma confinada. CLIs sem essas qualificações continuam visíveis como uso manual no Terminal. Salvar a configuração não inicia agentes."}
           </p>
           <p className="wizard__hint-sm">

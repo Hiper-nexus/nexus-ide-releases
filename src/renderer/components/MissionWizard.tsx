@@ -1766,12 +1766,20 @@ export function MissionWizard() {
       );
       return false;
     }
+    const isStarting = result.starting === true;
+    const isRecovering = result.recovering === true;
     useToastStore.getState().push(
-      result.recovering ? "info" : "success",
-      result.recovering ? "Missão em recuperação" : "Missão iniciada",
-      result.recovering
-        ? `${planned.title} · o Nexus tentará novamente sem precisar de outro clique`
-        : planned.title,
+      isStarting || isRecovering ? "info" : "success",
+      isStarting
+        ? "Missão iniciando"
+        : isRecovering
+          ? "Missão em recuperação"
+          : "Missão iniciada",
+      isStarting
+        ? `${planned.title} · o processo principal já assumiu a execução`
+        : isRecovering
+          ? `${planned.title} · o Nexus tentará novamente sem precisar de outro clique`
+          : planned.title,
     );
     discardAndClose();
     return true;

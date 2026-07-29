@@ -1,3 +1,5 @@
+import { throwIfMissionSchedulerAborted } from "./mission-scheduler-abort";
+
 export interface MissionSchedulerTickLifecycle {
   /**
    * Event/interval entrypoint for the legacy public loop.
@@ -9,13 +11,13 @@ export interface MissionSchedulerTickLifecycle {
    */
   requestLegacyPass(): void;
   /** One single-flight pass for the production orchestration reconciler. */
-  reconcile(): Promise<void>;
+  reconcile(signal?: AbortSignal): Promise<void>;
   /** Revoke a pending trailing pass without overlapping an active effect. */
   reset(): void;
 }
 
 export function createMissionSchedulerTickLifecycle(deps: {
-  readonly runPass: () => Promise<void>;
+  readonly runPass: (signal?: AbortSignal) => Promise<void>;
   readonly isLegacyLoopRunning: () => boolean;
 }): MissionSchedulerTickLifecycle {
   let inFlight: Promise<void> | null = null;
@@ -24,7 +26,10 @@ export function createMissionSchedulerTickLifecycle(deps: {
   let currentFlightAllowsTrailing = false;
   let generation = 0;
 
-  const launch = (allowTrailing: boolean): Promise<void> => {
+  const launch = (
+    allowTrailing: boolean,
+    signal?: AbortSignal,
+  ): Promise<void> => {
     const flightGeneration = generation;
     legacyWakeDirty = false;
     legacyTrailingPass = false;
@@ -33,7 +38,9 @@ export function createMissionSchedulerTickLifecycle(deps: {
     // Defer the effect by one microtask so `inFlight` is installed before
     // synchronous store listeners can re-enter requestLegacyPass().
     const operation = Promise.resolve().then(async () => {
-      await deps.runPass();
+      throwIfMissionSchedulerAborted(signal);
+      await deps.runPass(signal);
+      throwIfMissionSchedulerAborted(signal);
       if (
         !allowTrailing ||
         flightGeneration !== generation ||
@@ -46,7 +53,8 @@ export function createMissionSchedulerTickLifecycle(deps: {
       legacyWakeDirty = false;
       legacyTrailingPass = true;
       try {
-        await deps.runPass();
+        await deps.runPass(signal);
+        throwIfMissionSchedulerAborted(signal);
       } finally {
         // A trailing pass is the bounded convergence attempt for this flight.
         // Any wake it emits is represented by the still-armed normal cadence.
@@ -79,8 +87,8 @@ export function createMissionSchedulerTickLifecycle(deps: {
       void launch(true);
     },
 
-    reconcile() {
-      return inFlight ?? launch(false);
+    reconcile(signal) {
+      return inFlight ?? launch(false, signal);
     },
 
     reset() {

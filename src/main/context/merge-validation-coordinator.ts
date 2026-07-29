@@ -44,6 +44,9 @@ export interface MergeValidationCoordinatorDependencies {
   readonly resolveAuthor?: (
     context: MergeValidationContext,
   ) => WorkflowIdentity;
+  readonly loadPreExecutionReviewGuidance?: (
+    context: MergeValidationContext,
+  ) => string;
 }
 
 export class MergeValidationCoordinator {
@@ -54,6 +57,9 @@ export class MergeValidationCoordinator {
     MergeValidationCoordinatorDependencies['runCandidateQuality']
   >;
   readonly #resolveAuthor: NonNullable<MergeValidationCoordinatorDependencies['resolveAuthor']>;
+  readonly #loadPreExecutionReviewGuidance: NonNullable<
+    MergeValidationCoordinatorDependencies['loadPreExecutionReviewGuidance']
+  >;
 
   constructor(
     service: ContextWorkflowService,
@@ -95,6 +101,32 @@ export class MergeValidationCoordinator {
         provider: pane.adapterId,
       });
     });
+    this.#loadPreExecutionReviewGuidance =
+      dependencies.loadPreExecutionReviewGuidance ??
+      ((context) => {
+        if (
+          typeof this.#service.compilePreExecutionReviewGuidance !==
+          'function'
+        ) {
+          return '';
+        }
+        const stores = getProjectDomainStores(context.scope);
+        const approved = stores.missions.get(context.missionId);
+        const intentVersion = approved?.intentContract?.intentVersion;
+        const receipt =
+          intentVersion === undefined
+            ? null
+            : stores.tasks.getPlanReceipt(context.missionId, intentVersion);
+        return receipt
+          ? this.#service.compilePreExecutionReviewGuidance(
+              context.missionId,
+              {
+                intentVersion: receipt.intentVersion,
+                planHash: receipt.planHash,
+              },
+            )
+          : '';
+      });
     this.#runSensor = dependencies.runSensor ?? (async (scope, input, authority) => {
       const config = loadContextConfiguration(this.#service.scope);
       return new SensorBroker(config.sensors).run({ scope, ...input }, authority);
@@ -157,6 +189,30 @@ export class MergeValidationCoordinator {
       });
     }
 
+    if (context.phase === 'post-integration') {
+      assertMcpInvocationCurrent(context);
+      const persistedGate = this.#service.inspectPersistedReviewGate(binding);
+      assertMcpInvocationCurrent(context);
+      evidenceIds.push(...persistedGate.evidenceIds);
+      if (persistedGate.ready) {
+        return Object.freeze({
+          sensorsPassed: true,
+          reviewPassed: true,
+          evidenceIds: Object.freeze([...new Set(evidenceIds)]),
+        });
+      }
+      // Concrete findings and reviewer disagreement remain authoritative.
+      // An incomplete quorum — including a partially persisted critical-risk
+      // review — must continue with a fresh physical council.
+      if (persistedGate.reason !== 'review-quorum-missing') {
+        return Object.freeze({
+          sensorsPassed: true,
+          reviewPassed: false,
+          evidenceIds: Object.freeze([...new Set(evidenceIds)]),
+        });
+      }
+    }
+
     const author = this.#resolveAuthor(context);
     let candidateQualityMarkdown = '';
     if (context.phase === 'candidate') {
@@ -214,15 +270,23 @@ export class MergeValidationCoordinator {
     const contextMarkdown = this.#service.compileMissionSnapshot(
       context.missionId,
     ).markdown;
+    const preExecutionGuidance =
+      context.phase === 'candidate'
+        ? this.#loadPreExecutionReviewGuidance(context)
+        : '';
     const review = await this.#runReview({
       scope: context.scope,
       checkoutPath: context.checkoutPath,
       contract,
       binding,
       author,
-      contextMarkdown: candidateQualityMarkdown
-        ? `${contextMarkdown}\n\n${candidateQualityMarkdown}`
-        : contextMarkdown,
+      reviewPurpose: 'candidate',
+      designInspection: 'required',
+      contextMarkdown: [
+        contextMarkdown,
+        preExecutionGuidance,
+        candidateQualityMarkdown,
+      ].filter(Boolean).join('\n\n'),
       persist: (report) => {
         assertMcpInvocationCurrent(context);
         this.#service.recordMergeReviewReport(report);

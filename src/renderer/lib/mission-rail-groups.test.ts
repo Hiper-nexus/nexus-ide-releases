@@ -302,6 +302,21 @@ describe('railStatusDisplay', () => {
     expect(railStatusDisplay('blocked', true).label).toBe('Bloqueada');
   });
 
+  it('labels exhausted technical recovery as a machine failure, not a human wait', () => {
+    expect(
+      railStatusDisplay(
+        'blocked',
+        false,
+        'blocked_technical',
+        null,
+        { technicalRecovery: 'exhausted' },
+      ),
+    ).toEqual({
+      label: 'Falha técnica',
+      tone: 'failed',
+    });
+  });
+
   it('keeps terminal outcomes authoritative over stale intent state', () => {
     expect(railStatusDisplay('failed', false, 'ready_to_start').label).toBe(
       'Falhou',
@@ -367,6 +382,21 @@ describe('missionRailResumeCopy', () => {
     ).toEqual({
       meta: 'Recuperação automática',
       title: 'O Nexus está preparando uma nova tentativa',
+    });
+  });
+
+  it('offers diagnosis and retry when technical recovery is exhausted', () => {
+    expect(
+      missionRailResumeCopy(
+        'blocked',
+        false,
+        'blocked_technical',
+        null,
+        'exhausted',
+      ),
+    ).toEqual({
+      meta: 'Falha técnica',
+      title: 'Ver diagnóstico e tentar novamente',
     });
   });
 

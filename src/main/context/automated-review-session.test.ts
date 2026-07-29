@@ -9,6 +9,43 @@ const binding = {
 };
 
 describe('automated review session registry', () => {
+  it('attaches the Main-owned sealed plan binding to pre-execution reports', () => {
+    const registry = new AutomatedReviewSessionRegistry();
+    const persist = vi.fn();
+    const preExecutionPlanBinding = {
+      intentVersion: 3,
+      planHash: 'f'.repeat(64),
+    };
+    const id = registry.open({
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+      risk: 'high',
+      binding,
+      author: {
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      },
+      reviewPurpose: 'pre-execution',
+      evaluatorVersion: 'pre-execution-plan-v2',
+      preExecutionPlanBinding,
+      persist,
+    });
+
+    const report = registry.submit(id, {
+      id: 'reviewer',
+      sessionId: 'review-session',
+      provider: 'claude',
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+    }, []);
+
+    expect(report.preExecutionPlanBinding).toEqual(preExecutionPlanBinding);
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({ preExecutionPlanBinding }),
+    );
+  });
+
   it('accepts only an independent reviewer bound to the exact candidate', async () => {
     const registry = new AutomatedReviewSessionRegistry();
     const persist = vi.fn();
@@ -70,6 +107,105 @@ describe('automated review session registry', () => {
       missionId: 'mission-a', checkoutPath: '/candidate-2',
     }, []);
     await expect(waiting).resolves.toMatchObject({ ready: true });
+  });
+
+  it('waits only for critical quorum and resolves medium divergence as advisory', async () => {
+    const registry = new AutomatedReviewSessionRegistry();
+    const id = registry.open({
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+      risk: 'critical',
+      binding,
+      author: {
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      },
+      persist: () => {},
+    });
+    const waiting = registry.wait(id, 10 * 60_000);
+    let settled = false;
+    void waiting.then(() => {
+      settled = true;
+    });
+
+    registry.submit(id, {
+      id: 'reviewer-a',
+      sessionId: 'review-a',
+      provider: 'codex',
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+    }, [{
+      severity: 'medium',
+      category: 'correctness',
+      file: 'src/a.ts',
+      line: 1,
+      criterionRefs: [],
+      invariantRefs: [],
+      evidence: 'The helper could be split for readability.',
+      recommendation: 'Consider extracting the parsing branch.',
+    }]);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    registry.submit(id, {
+      id: 'reviewer-b',
+      sessionId: 'review-b',
+      provider: 'claude',
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+    }, []);
+
+    await expect(waiting).resolves.toMatchObject({
+      ready: true,
+      gate: {
+        ready: true,
+        reason: 'ready',
+        blockingFindingCount: 0,
+        reportCount: 2,
+      },
+    });
+  });
+
+  it('seals the resolved report snapshot against a late reviewer submission', async () => {
+    const registry = new AutomatedReviewSessionRegistry();
+    const persist = vi.fn();
+    const id = registry.open({
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+      risk: 'high',
+      binding,
+      author: {
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      },
+      persist,
+    });
+    const first = registry.submit(id, {
+      id: 'reviewer-a',
+      sessionId: 'review-a',
+      provider: 'codex',
+      missionId: 'mission-a',
+      checkoutPath: '/candidate',
+    }, []);
+    const resolved = await registry.wait(id, 100);
+
+    expect(() =>
+      registry.submit(id, {
+        id: 'reviewer-b',
+        sessionId: 'review-b',
+        provider: 'claude',
+        missionId: 'mission-a',
+        checkoutPath: '/candidate',
+      }, []),
+    ).toThrow(/review session is sealed/i);
+
+    await expect(registry.wait(id, 100)).resolves.toBe(resolved);
+    expect(resolved.reports.map((report) => report.reviewId)).toEqual([
+      first.reviewId,
+    ]);
+    expect(persist).toHaveBeenCalledOnce();
   });
 
   it('blocks every co-author identity/session while allowing a shared provider', async () => {

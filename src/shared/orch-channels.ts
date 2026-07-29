@@ -18,6 +18,8 @@ export const ORCH_CHANNELS = {
   browserOpenResult: 'orch:browser.openResult',
   missionsList: 'orch:missions.list',
   missionPanesList: 'orch:missions.panes',
+  /** Main-owned proof that one restored layout pane still has live mission authority. */
+  missionPaneRestoreAuthority: 'orch:missions.paneRestoreAuthority',
   missionCreate: 'orch:missions.create',
   /** Native-confirmed, exact one-shot grant for Pet/legacy immediate launch. */
   missionAuthorizeImmediateSquad:
@@ -96,6 +98,8 @@ export const ORCH_CHANNELS = {
 
   // Main → renderer
   paneSpawnRequest: 'orch:pane.spawnRequest',
+  /** Re-present one exact Main-owned live PTY; never authorizes a new spawn. */
+  panePresentationRequest: 'orch:pane.presentationRequest',
   paneRecoveryRequest: 'orch:pane.recoveryRequest',
   browserOpenRequest: 'orch:browser.openRequest',
   paneCloseRequest: 'orch:pane.closeRequest',

@@ -7,6 +7,7 @@ import { getOrchSettings } from "../persistence/settings-store";
 import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
+  missionIntentAuthoritySnapshot,
   missionBlockPatch,
   type MissionAttachmentSnapshot,
   type MissionOrchestratorRuntimeSnapshot,
@@ -97,7 +98,7 @@ export {
   type ResolvedMissionOrchestratorRuntime,
 } from "./mission-orchestrator-runtime";
 import {
-  hashMissionIntentContract,
+  hashMissionIntentAuthority,
   resolveMissionPaneAuthoritySeal,
   sameMissionPaneApprovalSeal,
   sameMissionPaneAuthoritySeal,
@@ -136,7 +137,9 @@ function bootstrapMissionSnapshot(mission: Mission): string {
     orchestratorSessionId: mission.orchestratorSessionId ?? null,
     intentState: mission.intentState ?? null,
     intentVersion: mission.intentVersion ?? 0,
-    intentContract: mission.intentContract ?? null,
+    intentContract: mission.intentContract
+      ? missionIntentAuthoritySnapshot(mission.intentContract)
+      : null,
   });
 }
 
@@ -147,7 +150,7 @@ function missionMatchesExpectedAuthoritySeal(
   return Boolean(
     mission.intentVersion === expected.intentVersion &&
       mission.intentContract &&
-      hashMissionIntentContract(mission.intentContract) ===
+      hashMissionIntentAuthority(mission.intentContract) ===
         expected.intentContractHash &&
       mission.intentContract.squadRevisionHash ===
         expected.squadRevisionHash,
@@ -163,7 +166,9 @@ function bootstrapMissionApprovalSnapshot(mission: Mission): string {
     squadId: mission.squadId ?? null,
     intentState: mission.intentState ?? null,
     intentVersion: mission.intentVersion ?? 0,
-    intentContract: mission.intentContract ?? null,
+    intentContract: mission.intentContract
+      ? missionIntentAuthoritySnapshot(mission.intentContract)
+      : null,
   });
 }
 
@@ -784,8 +789,9 @@ export class MissionOrchestratorBootstrapService {
       bootstrapMissionApprovalSnapshot(initial),
     );
     const guidedPrevcRequired = missionRequiresGuidedPrevc(initial);
-    // Bootstrap never freezes PREVC. Main prepares context in parallel and
-    // completes the exact approved workflow only at the promotion boundary.
+    // Worker authority never depends on PREVC preparation. Main prepares only
+    // project context in parallel; freeze and review happen after handoff at
+    // the promotion boundary so their seal cannot invalidate live workers.
     const guidedPrevcFrozen = false;
     try {
       this.#deps.ensurePlanGitBaseline?.(scope, missionId);

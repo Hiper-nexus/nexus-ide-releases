@@ -480,6 +480,161 @@ export function assertCodexReady({
 const ADVISOR_AUTH_MAX_BYTES = 4 * 1024 * 1024;
 const ADVISOR_DATABASE_MAX_BYTES = 64 * 1024 * 1024;
 const KIMI_ACCESS_TOKEN_MIN_TTL_SECONDS = 5 * 60;
+const GROK_ACCESS_TOKEN_MIN_TTL_MS = 5 * 60_000;
+const GROK_AUTH_FAILURE_PATTERN =
+  /(?:you are not authenticated|not signed in|authentication required|login required|refresh[_ -]?token[_ -]?(?:rejected|expired|invalid)|re-?authorization required|token[_ -]?expired[_ -]?no[_ -]?refresh)/iu;
+
+function grokAuthProfiles(blob) {
+  try {
+    const parsed = JSON.parse(blob);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return [];
+    }
+    const candidates = [parsed, ...Object.values(parsed)];
+    return candidates.filter(
+      (candidate) =>
+        candidate &&
+        typeof candidate === "object" &&
+        !Array.isArray(candidate),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function grokExpiryMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value >= 1_000_000_000_000 ? value : value * 1_000;
+  }
+  if (typeof value !== "string" || !value.trim()) return Number.NaN;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric >= 1_000_000_000_000 ? numeric : numeric * 1_000;
+  }
+  return Date.parse(value);
+}
+
+export function grokCredentialsBlobIsFresh(
+  blob,
+  nowMs = Date.now(),
+) {
+  return grokAuthProfiles(blob).some((profile) => {
+    const access =
+      typeof profile.key === "string"
+        ? profile.key.trim()
+        : typeof profile.access_token === "string"
+          ? profile.access_token.trim()
+          : "";
+    const expiresAt = grokExpiryMs(profile.expires_at);
+    return (
+      access.length > 0 &&
+      Number.isFinite(expiresAt) &&
+      expiresAt - nowMs > GROK_ACCESS_TOKEN_MIN_TTL_MS
+    );
+  });
+}
+
+function grokCredentialsCanRefresh(blob) {
+  return grokAuthProfiles(blob).some(
+    (profile) =>
+      typeof profile.refresh_token === "string" &&
+      profile.refresh_token.trim().length > 0,
+  );
+}
+
+function isolatedAdvisorPreflightEnvironment(environment, home, grokHome) {
+  const inherited = Object.fromEntries(
+    Object.entries(environment).filter(
+      ([key, value]) =>
+        SAFE_CHILD_ENV_KEYS.has(key) && typeof value === "string",
+    ),
+  );
+  const temporaryDirectory = path.join(home, ".tmp");
+  fs.mkdirSync(temporaryDirectory, {
+    recursive: true,
+    mode: PRIVATE_DIRECTORY_MODE,
+  });
+  fs.chmodSync(temporaryDirectory, PRIVATE_DIRECTORY_MODE);
+  return {
+    ...inherited,
+    HOME: home,
+    USERPROFILE: home,
+    GROK_HOME: grokHome,
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    XDG_DATA_HOME: path.join(home, ".local", "share"),
+    XDG_STATE_HOME: path.join(home, ".local", "state"),
+    XDG_CACHE_HOME: path.join(home, ".cache"),
+    TMPDIR: temporaryDirectory,
+    TMP: temporaryDirectory,
+    TEMP: temporaryDirectory,
+    LANG: inherited.LANG ?? "C",
+    LC_ALL: "C",
+  };
+}
+
+/**
+ * Validate only the staged Grok profile. A fresh token needs no network; an
+ * expired token gets one bounded CLI refresh attempt inside the isolated HOME.
+ * Grok `models` exits 0 even when logged out, so both its output and the
+ * post-refresh auth file are checked.
+ */
+export function preflightStagedGrokAuthentication(
+  isolatedHome,
+  {
+    binary = "grok",
+    environment = process.env,
+    run = spawnSync,
+    nowMs = Date.now(),
+  } = {},
+) {
+  const home = path.resolve(isolatedHome);
+  const grokHome = path.join(home, ".grok");
+  const authFile = path.join(grokHome, "auth.json");
+  let before;
+  try {
+    before = fs.readFileSync(authFile, "utf8");
+  } catch {
+    return false;
+  }
+  if (grokCredentialsBlobIsFresh(before, nowMs)) return true;
+  if (
+    !grokCredentialsCanRefresh(before) ||
+    typeof binary !== "string" ||
+    !binary.trim()
+  ) {
+    return false;
+  }
+  let result;
+  try {
+    result = run(binary, ["models"], {
+      cwd: home,
+      encoding: "utf8",
+      env: isolatedAdvisorPreflightEnvironment(environment, home, grokHome),
+      shell: false,
+      timeout: 15_000,
+      maxBuffer: 256 * 1024,
+    });
+  } catch {
+    return false;
+  }
+  const output = `${result?.stdout ?? ""}\n${result?.stderr ?? ""}`;
+  if (
+    result?.error ||
+    result?.signal ||
+    result?.status !== 0 ||
+    GROK_AUTH_FAILURE_PATTERN.test(output)
+  ) {
+    return false;
+  }
+  try {
+    return grokCredentialsBlobIsFresh(
+      fs.readFileSync(authFile, "utf8"),
+      nowMs,
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * True only when a Kimi credentials JSON carries a non-empty access token
@@ -749,6 +904,7 @@ export function stageAdvisorAuthentication(
     sourceHome = os.homedir(),
     environment = process.env,
     run = spawnSync,
+    grokBinary = "grok",
   } = {},
 ) {
   const home = path.resolve(isolatedHome);
@@ -762,8 +918,9 @@ export function stageAdvisorAuthentication(
     return status;
   };
 
-  // grok: ~/.grok/auth.json (+ config.toml when present). config.toml is not
-  // a secret, so its source mode is tolerated; the staged copy is still 0600.
+  // grok: ~/.grok/auth.json (+ config.toml when present). Existence is not
+  // authentication: validate/refresh only the isolated copy before admitting
+  // this advisor to the physical release roster.
   const grokDestination = path.join(home, ".grok");
   const grokStaged = stageAdvisorAuthFile(
     path.join(source, ".grok", "auth.json"),
@@ -782,7 +939,21 @@ export function stageAdvisorAuthentication(
         privateRoot: home,
       },
     );
-    statuses.grok = report("grok", "staged");
+    const grokUsable = preflightStagedGrokAuthentication(home, {
+      binary: grokBinary,
+      environment,
+      run,
+    });
+    if (grokUsable) {
+      statuses.grok = report("grok", "staged");
+    } else {
+      try {
+        fs.rmSync(grokDestination, { recursive: true, force: true });
+      } catch {
+        // Best effort: the explicit skip still prevents a physical Grok PTY.
+      }
+      statuses.grok = report("grok", "skipped");
+    }
   }
 
   // kimi: ~/.kimi-code/credentials/kimi-code.json (+ device_id + config.toml).

@@ -26,6 +26,7 @@ import {
 } from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
 import { useHomeStore } from './home-store';
+import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 
 const DEFAULT_CANVAS_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 
@@ -66,6 +67,7 @@ interface LayoutState {
     title?: string;
     orchRequestId: string;
     missionId?: string;
+    transient?: true;
     agentName?: string;
     role?: 'orchestrator' | 'worker';
   }): string;
@@ -129,6 +131,48 @@ function rootWithTerminalSnapshots(root: LayoutNode): LayoutNode {
   };
 }
 
+function isTransientLayoutPane(pane: PaneModel): boolean {
+  return pane.transient === true || isAutomatedReviewerPaneIdentity(pane);
+}
+
+/**
+ * Process-local PREVC panes may be visible during a live review, but they are
+ * not workspace composition. Strip both the explicit marker and the exact
+ * legacy identity before persistence, hydration, or restore policy runs.
+ */
+export function sanitizeWorkspaceLayout(
+  layout: WorkspaceLayout,
+): WorkspaceLayout {
+  const transientPaneIds = listPanes(layout.root)
+    .filter(isTransientLayoutPane)
+    .map((pane) => pane.id);
+  let durableRoot: LayoutNode | null = layout.root;
+  for (const paneId of transientPaneIds) {
+    if (!durableRoot) break;
+    durableRoot = closePane(durableRoot, paneId);
+  }
+  const root = durableRoot ?? initialTree();
+  const durablePaneIds = new Set(listPanes(root).map((pane) => pane.id));
+  const focusedPaneId =
+    layout.focusedPaneId && durablePaneIds.has(layout.focusedPaneId)
+      ? layout.focusedPaneId
+      : firstPaneId(root);
+  const canvasNodeLayouts = layout.canvasNodeLayouts
+    ? Object.fromEntries(
+        Object.entries(layout.canvasNodeLayouts).filter(([paneId]) =>
+          durablePaneIds.has(paneId),
+        ),
+      )
+    : undefined;
+
+  return {
+    ...layout,
+    root,
+    focusedPaneId,
+    ...(canvasNodeLayouts ? { canvasNodeLayouts } : {}),
+  };
+}
+
 type PersistPayload = Pick<
   LayoutState,
   'root' | 'focusedPaneId' | 'viewKind' | 'canvasNodeLayouts' | 'canvasViewport'
@@ -140,12 +184,16 @@ function persist(state: PersistPayload): void {
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    void window.nexus.layout.save(key, {
-      root: rootWithTerminalSnapshots(state.root),
+    const durableLayout = sanitizeWorkspaceLayout({
+      root: state.root,
       focusedPaneId: state.focusedPaneId,
       viewKind: state.viewKind,
       canvasNodeLayouts: state.canvasNodeLayouts,
       canvasViewport: state.canvasViewport,
+    });
+    void window.nexus.layout.save(key, {
+      ...durableLayout,
+      root: rootWithTerminalSnapshots(durableLayout.root),
     });
   }, 300);
 }
@@ -158,12 +206,16 @@ export function flushLayout(sync = false): void {
   if (!persistKey) return;
   const { root, focusedPaneId, viewKind, canvasNodeLayouts, canvasViewport } =
     useLayoutStore.getState();
-  const snapshot = {
-    root: rootWithTerminalSnapshots(root),
+  const durableLayout = sanitizeWorkspaceLayout({
+    root,
     focusedPaneId,
     viewKind,
     canvasNodeLayouts,
     canvasViewport,
+  });
+  const snapshot = {
+    ...durableLayout,
+    root: rootWithTerminalSnapshots(durableLayout.root),
   };
   if (sync) {
     window.nexus.layout.saveSync(persistKey, snapshot);
@@ -264,8 +316,17 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     if (persistKey !== workspacePath) return true;
     // A local mutation landed while we were loading — it wins; don't hydrate.
     if (treeVersion !== versionAtStart) return layout !== null;
-    if (layout) restoredPanesHandler?.(listPanes(layout.root));
-    useLayoutStore.getState().hydrate(layout);
+    const durableLayout = layout ? sanitizeWorkspaceLayout(layout) : null;
+    if (durableLayout) restoredPanesHandler?.(listPanes(durableLayout.root));
+    useLayoutStore.getState().hydrate(durableLayout);
+    if (
+      layout &&
+      durableLayout &&
+      durableLayout.root !== layout.root
+    ) {
+      // Durable GC for layouts written by releases predating `transient`.
+      void window.nexus.layout.save(workspacePath, durableLayout);
+    }
     return layout !== null;
   })();
   inFlightSwitch = { path: workspacePath, promise: run };
@@ -274,6 +335,35 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
   };
   void run.then(clearInFlight, clearInFlight);
   return run;
+}
+
+const WORKSPACE_LAYOUT_LOAD_ATTEMPTS = 2;
+
+/**
+ * A transient layout read must not leave the renderer on BootScreen forever.
+ * Retry once, then hydrate an unsaved shell while keeping persistence detached
+ * so a failed read can never overwrite the durable layout it could not load.
+ */
+export async function switchWorkspaceLayoutWithFallback(
+  workspacePath: string,
+  options: { readonly isCurrent?: () => boolean } = {},
+): Promise<boolean> {
+  let lastError: unknown;
+  for (
+    let attempt = 0;
+    attempt < WORKSPACE_LAYOUT_LOAD_ATTEMPTS;
+    attempt += 1
+  ) {
+    if (options.isCurrent && !options.isCurrent()) return false;
+    try {
+      return await switchWorkspaceLayout(workspacePath);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (options.isCurrent && !options.isCurrent()) return false;
+  useLayoutStore.getState().hydrate(null);
+  throw lastError;
 }
 
 /** Leaving to the launcher: flush and stop persisting. */
@@ -343,6 +433,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       effort: req.effort,
       orchRequestId: req.orchRequestId,
       missionId: req.missionId,
+      transient: req.transient,
       agentName: req.agentName,
       role: req.role,
     };
@@ -614,21 +705,24 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       });
       return;
     }
-    const focusedPaneId = layout.focusedPaneId ?? firstPaneId(layout.root);
+    const durableLayout = sanitizeWorkspaceLayout(layout);
+    const focusedPaneId =
+      durableLayout.focusedPaneId ?? firstPaneId(durableLayout.root);
     const currentMaximized = get().maximizedPaneId;
-    const maximizedPaneId = listPanes(layout.root).some(
+    const maximizedPaneId = listPanes(durableLayout.root).some(
       (pane) => pane.id === currentMaximized,
     )
       ? currentMaximized
       : null;
     set({
-      root: layout.root,
+      root: durableLayout.root,
       focusedPaneId,
       maximizedPaneId,
       hydrated: true,
-      viewKind: layout.viewKind ?? 'grid',
-      canvasNodeLayouts: layout.canvasNodeLayouts ?? {},
-      canvasViewport: layout.canvasViewport ?? DEFAULT_CANVAS_VIEWPORT,
+      viewKind: durableLayout.viewKind ?? 'grid',
+      canvasNodeLayouts: durableLayout.canvasNodeLayouts ?? {},
+      canvasViewport:
+        durableLayout.canvasViewport ?? DEFAULT_CANVAS_VIEWPORT,
     });
   },
 

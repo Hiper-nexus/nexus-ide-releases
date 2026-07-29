@@ -16,6 +16,6 @@ describe('squad-cli-policy', () => {
   it('labels both modes in Portuguese for the UI', () => {
     expect(squadCliPolicyLabel('governed')).toContain('Hardened');
     expect(squadCliPolicyLabel('operator-choice')).toContain('Autopiloto');
-    expect(squadCliPolicyLabel('operator-choice')).toContain('web liberada');
+    expect(squadCliPolicyLabel('operator-choice')).toContain('acesso de rede');
   });
 });

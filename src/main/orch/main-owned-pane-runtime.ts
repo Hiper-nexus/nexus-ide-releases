@@ -51,6 +51,8 @@ export interface PaneOrchMeta {
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
   role?: "orchestrator" | "worker";
+  /** Process-local verification lanes remain headless across renderer reloads. */
+  transient?: true;
   scope?: Readonly<ProjectExecutionScope>;
   executionScope?: Readonly<ProjectExecutionScope>;
   readOnly?: boolean;
@@ -70,6 +72,8 @@ export interface PaneSpawnOptions {
   cwd?: string;
   title?: string;
   missionId?: string;
+  /** Renderer presentation is process-local and must not survive restart. */
+  transient?: true;
   contextRevision?: string;
   agentName?: string;
   workerIncarnationId?: string;
@@ -503,6 +507,7 @@ export function spawnMainOwnedMissionPane(
     allowedTools: options.allowedTools,
     allowedSkills: options.allowedSkills,
     role: options.role,
+    transient: options.transient === true ? true : undefined,
     scope: options.scope,
     executionScope,
     readOnly: options.readOnly === true,

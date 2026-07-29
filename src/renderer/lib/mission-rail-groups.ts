@@ -191,6 +191,8 @@ export interface MissionRuntimeEvidence {
   readonly hasActiveRuntime?: boolean;
   /** Most recent worker report; informative, never enough to claim success. */
   readonly latestHandoffStatus?: HandoffStatus | null;
+  /** Whether Main still owns a retry or already exhausted it. */
+  readonly technicalRecovery?: 'recovering' | 'exhausted';
 }
 
 /** Cor do ponto segue o estado operacional, não só o status persistido. */
@@ -234,7 +236,9 @@ export function railStatusDisplay(
     case 'blocked_user':
       return { label: 'Aguarda você', tone: 'blocked' };
     case 'blocked_technical':
-      return { label: 'Recuperando', tone: 'running' };
+      return evidence.technicalRecovery === 'exhausted'
+        ? { label: 'Falha técnica', tone: 'failed' }
+        : { label: 'Recuperando', tone: 'running' };
     default:
       break;
   }
@@ -289,8 +293,15 @@ export function missionRailResumeCopy(
   liveInGrid: boolean,
   intentState?: Mission['intentState'],
   lane?: MissionLane | null,
+  technicalRecovery: 'recovering' | 'exhausted' = 'recovering',
 ): { meta: string | null; title: string } {
   if (status === 'blocked' && intentState === 'blocked_technical') {
+    if (technicalRecovery === 'exhausted') {
+      return {
+        meta: 'Falha técnica',
+        title: 'Ver diagnóstico e tentar novamente',
+      };
+    }
     return {
       meta: 'Recuperação automática',
       title: 'O Nexus está preparando uma nova tentativa',

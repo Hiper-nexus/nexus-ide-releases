@@ -6,6 +6,7 @@ import {
   tapSessionState,
 } from '../pty/pty-manager';
 import { getContextBySession } from './gate';
+import { ensureGuidedGitBaselineForWorktreeAsync } from '../runtime/guided-greenfield-baseline';
 import { getExternalWorkerSessionInfo } from './external-worker-session-registry';
 import {
   requireProjectDomainStoreRegistry,
@@ -13,12 +14,18 @@ import {
 } from './project-domain-store-registry';
 import { requestMissionWorkerPaneRetirement } from './pane-registry';
 import { TASK_DISPATCH_SESSION_EXIT_REASON } from './task-dispatch-persistence';
+import {
+  LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
+  TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+} from './task-dispatch-store';
 import { productionTaskDispatchWorkerRetirement } from './task-dispatch-worker-retirement';
 
 export { TASK_DISPATCH_SESSION_EXIT_REASON };
 export const TASK_DISPATCH_ACTIVITY_THROTTLE_MS = 60_000;
 export const TASK_DISPATCH_HEARTBEAT_LEASE_MS = 10 * 60_000;
 export const TASK_DISPATCH_RECONCILE_MS = 30_000;
+export const TASK_DISPATCH_STALLED_REASON =
+  'O worker ficou sem atividade e sem heartbeat por 10 minutos (stalled).';
 
 interface TaskDispatchLifecycleOptions {
   readonly now?: () => number;
@@ -26,6 +33,7 @@ interface TaskDispatchLifecycleOptions {
 
 const suites = new Map<string, ProjectDomainStoreSuite>();
 const lastActivityRefresh = new Map<string, number>();
+const pendingExitReasons = new Map<string, string>();
 let now: () => number = Date.now;
 let disposers: Array<() => void> = [];
 const retirementPasses = new Map<
@@ -44,6 +52,13 @@ function sameCoordinates(
   return left.installationId === right.installationId &&
     left.projectId === right.projectId &&
     left.checkoutId === right.checkoutId;
+}
+
+function physicalWorkerKey(
+  sessionId: string,
+  workerIncarnationId: string,
+): string {
+  return `${sessionId}\0${workerIncarnationId}`;
 }
 
 function suiteForSession(sessionId: string): ProjectDomainStoreSuite | null {
@@ -105,6 +120,42 @@ function scheduleTerminalWorkerRetirement(
   retirementPasses.set(key, handle);
 }
 
+export async function reconcileLegacyGuidedDirtyCheckoutBootstrap(
+  suite: ProjectDomainStoreSuite,
+): Promise<void> {
+  const legacyBlocks = suite.taskDispatches.list().filter(
+    (dispatch) =>
+      dispatch.state === 'blocked' &&
+      dispatch.attempt === TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS &&
+      dispatch.lastError ===
+        LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
+  );
+  if (legacyBlocks.length === 0) return;
+  try {
+    const hasRecoverableBlock = legacyBlocks.some((dispatch) =>
+      suite.taskDispatches.canRecoverLegacyGuidedDirtyCheckoutBootstrap(
+        dispatch.taskId,
+      ),
+    );
+    if (!hasRecoverableBlock) return;
+
+    // Prove durable mission/task/intent eligibility before touching Git. The
+    // store repeats the complete CAS after the checkpoint, so a replan racing
+    // this pass can only turn the recovery into a no-op.
+    await ensureGuidedGitBaselineForWorktreeAsync(suite.scope);
+    for (const dispatch of legacyBlocks) {
+      suite.taskDispatches.recoverLegacyGuidedDirtyCheckoutBootstrap(
+        dispatch.taskId,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      '[task-dispatch-lifecycle] legacy dirty-checkout recovery deferred:',
+      error,
+    );
+  }
+}
+
 function renewFromActivity(sessionId: string): void {
   const at = now();
   const previous = lastActivityRefresh.get(sessionId);
@@ -153,6 +204,12 @@ function blockExitedSession(
   // process. Leave the durable lease to expire instead of blocking a newer
   // incarnation that happens to share transport coordinates.
   if (!authority?.workerIncarnationId) return;
+  const workerKey = physicalWorkerKey(
+    sessionId,
+    authority.workerIncarnationId,
+  );
+  const reason =
+    pendingExitReasons.get(workerKey) ?? TASK_DISPATCH_SESSION_EXIT_REASON;
   const preferred = suiteForSession(sessionId);
   const candidates = preferred ? [preferred] : [...suites.values()];
 
@@ -161,9 +218,12 @@ function blockExitedSession(
       const blocked = suite.taskDispatches.blockSessionExit({
         sessionId,
         workerIncarnationId: authority.workerIncarnationId,
-        reason: TASK_DISPATCH_SESSION_EXIT_REASON,
+        reason,
       });
-      if (blocked) return;
+      if (blocked) {
+        pendingExitReasons.delete(workerKey);
+        return;
+      }
     } catch (error) {
       console.warn('[task-dispatch-lifecycle] failed to persist worker exit:', error);
       // The preferred scope normally makes this a single candidate. During
@@ -172,6 +232,7 @@ function blockExitedSession(
       continue;
     }
   }
+  pendingExitReasons.delete(workerKey);
 }
 
 export function prepareTaskDispatchLifecycle(
@@ -201,22 +262,32 @@ export function prepareTaskDispatchLifecycle(
 }
 
 /**
- * Boot/tick recovery. Exact live sessions are adopted by renewing their lease.
- * A missing bound runtime or an expired ambiguous pre-bind effect returns to
- * the scheduler with bounded backoff; neither condition blocks the mission.
+ * Boot/tick recovery. Process existence prevents a duplicate spawn, but never
+ * renews a worker lease by itself: only PTY activity or an explicit worker
+ * heartbeat proves progress. An expired exact worker is retired first and
+ * then requeued through the same physical-exit fence as a natural exit.
+ * Missing runtimes and expired ambiguous pre-bind effects also return to the
+ * scheduler with bounded backoff; none of these technical failures blocks the
+ * mission.
  */
 export async function reconcileTaskDispatchLifecycle(
   at = now(),
 ): Promise<void> {
   for (const suite of suites.values()) {
-    const active = suite.taskDispatches.list().filter((dispatch) =>
+    await reconcileLegacyGuidedDirtyCheckoutBootstrap(suite);
+    const dispatches = suite.taskDispatches.list();
+    const active = dispatches.filter((dispatch) =>
       ['claimed', 'routed', 'spawning', 'running'].includes(dispatch.state),
     );
     for (const dispatch of active) {
-      const live = dispatch.sessionId
-        ? getAgentSessionInfo(dispatch.sessionId) ??
-          getExternalWorkerSessionInfo(dispatch.sessionId)
+      const ptyLive = dispatch.sessionId
+        ? getAgentSessionInfo(dispatch.sessionId)
         : null;
+      const externalLive =
+        dispatch.sessionId && !ptyLive
+          ? getExternalWorkerSessionInfo(dispatch.sessionId)
+          : null;
+      const live = ptyLive ?? externalLive;
       const hasExactLiveRuntime =
         live &&
         live.role === 'worker' &&
@@ -226,22 +297,62 @@ export async function reconcileTaskDispatchLifecycle(
         sameCoordinates(live.scope, suite.scope);
       if (hasExactLiveRuntime) {
         if (dispatch.leaseExpiresAt >= at) continue;
+        if (!ptyLive) {
+          // External transports need their own close-and-exit proof. There is
+          // no production registrar today; keeping the row fenced is safer
+          // than pretending a PTY pane retirement closed an external worker.
+          console.warn(
+            '[task-dispatch-lifecycle] expired external worker lacks close authority:',
+            `${dispatch.missionId}/${dispatch.taskId}`,
+          );
+          continue;
+        }
+        const paneId = dispatch.paneId ?? ptyLive.paneId;
+        if (!paneId) {
+          console.warn(
+            '[task-dispatch-lifecycle] expired live worker has no pane identity:',
+            dispatch.taskId,
+          );
+          continue;
+        }
+        const workerKey = physicalWorkerKey(
+          dispatch.sessionId!,
+          dispatch.workerIncarnationId!,
+        );
+        pendingExitReasons.set(workerKey, TASK_DISPATCH_STALLED_REASON);
+        let retired = false;
         try {
-          suite.taskDispatches.heartbeat({
+          retired = await requestMissionWorkerPaneRetirement({
+            paneId,
             sessionId: dispatch.sessionId!,
             missionId: dispatch.missionId,
-            dispatchId: dispatch.id,
             workerIncarnationId: dispatch.workerIncarnationId!,
-            leaseMs: TASK_DISPATCH_HEARTBEAT_LEASE_MS,
+            scope: suite.scope,
           });
-          lastActivityRefresh.set(dispatch.sessionId!, at);
-          continue;
         } catch (error) {
-          console.warn('[task-dispatch-lifecycle] live adoption failed:', error);
+          console.warn(
+            '[task-dispatch-lifecycle] stalled worker retirement failed:',
+            error,
+          );
         }
-        // Physical liveness is stronger than an expired durable lease. A
-        // transient SQLite failure must never convert a known-live worker into
-        // a retryable row and allow a duplicate process.
+        if (!retired) {
+          pendingExitReasons.delete(workerKey);
+          // Keep the expired row fenced while a physical process may still
+          // exist. The next coordinator pass retries exact retirement; it
+          // never starts a duplicate worker.
+          console.warn(
+            '[task-dispatch-lifecycle] stalled worker exit not proven:',
+            `${dispatch.missionId}/${dispatch.taskId}`,
+          );
+          continue;
+        }
+        lastActivityRefresh.delete(dispatch.sessionId!);
+        suite.taskDispatches.blockSessionExit({
+          sessionId: dispatch.sessionId!,
+          workerIncarnationId: dispatch.workerIncarnationId!,
+          reason: TASK_DISPATCH_STALLED_REASON,
+        });
+        pendingExitReasons.delete(workerKey);
         continue;
       }
       const hasMissingBoundRuntime =
@@ -273,5 +384,6 @@ export function shutdownTaskDispatchLifecycle(): void {
   productionTaskDispatchWorkerRetirement.reset();
   suites.clear();
   lastActivityRefresh.clear();
+  pendingExitReasons.clear();
   now = Date.now;
 }

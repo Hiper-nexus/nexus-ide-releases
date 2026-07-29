@@ -52,6 +52,7 @@ import {
   type PaneActivitySummary,
   type Squad,
 } from "../../shared/orch-types";
+import { isAutomatedReviewerCompositionPane } from "./mission-pane-store";
 import {
   resolveMissionPaneActivity,
   type MissionPaneActivityInput,
@@ -100,7 +101,10 @@ import {
   sameMissionOrchestratorRuntime,
   type ResolvedMissionOrchestratorRuntime,
 } from "./mission-orchestrator-runtime";
-import { resolveMissionPaneAuthoritySeal } from "./mission-pane-authority";
+import {
+  resolveMissionPaneAuthoritySeal,
+  sameMissionPaneAuthoritySeal,
+} from "./mission-pane-authority";
 import type { OrchestrationEvidence } from "../../shared/adapter-types";
 import {
   revalidatePhysicalPlanHandoff,
@@ -2209,9 +2213,15 @@ export class RendererMissionAuthority {
     missionId: string,
   ): MissionPaneSpec[] {
     const rendererScope = requireRendererWorkspaceScope(owner);
-    const specs = this.#stores
+    const persistedSpecs = this.#stores
       .forScope(rendererScope)
       .missionPanes.list(missionId);
+    // Legacy PREVC reviewers were process-local verification lanes, not
+    // mission composition. Never let a stale row recreate a deleted /tmp
+    // checkout during renderer reopen, even before startup GC can run.
+    const specs = persistedSpecs.filter(
+      (spec) => !isAutomatedReviewerCompositionPane(spec),
+    );
     if (
       specs.some(
         (spec) =>
@@ -2248,6 +2258,42 @@ export class RendererMissionAuthority {
             ? [...spec.allowedSkills]
             : undefined,
     }));
+  }
+
+  /**
+   * A saved renderer leaf is only a view model. Confirm the exact physical
+   * pane id against Main's scoped, current mission revision before the
+   * renderer is allowed to request provider resume.
+   */
+  canRestoreMissionPaneForRenderer(
+    owner: WebContents,
+    missionId: string,
+    paneId: string,
+  ): boolean {
+    const rendererScope = requireRendererWorkspaceScope(owner);
+    const suite = this.#stores.forScope(rendererScope);
+    const mission = suite.missions.get(missionId);
+    const spec = suite.missionPanes.findByPaneId(paneId);
+    if (
+      !mission ||
+      !spec ||
+      spec.missionId !== missionId ||
+      spec.paneId !== paneId ||
+      !spec.scope ||
+      !sameScope(rendererScope, spec.scope) ||
+      !hasCurrentDispatchAuthority(mission) ||
+      isAutomatedReviewerCompositionPane(spec)
+    ) {
+      return false;
+    }
+    const squad = mission.squadId ? this.#resolveSquad(mission.squadId) : null;
+    if (!squad) return false;
+    const currentSeal = resolveMissionPaneAuthoritySeal(
+      rendererScope,
+      mission,
+      squad,
+    );
+    return sameMissionPaneAuthoritySeal(spec.authoritySeal, currentSeal);
   }
 
   /** Activity is best-effort metadata: a resolver bug must not break reopen. */

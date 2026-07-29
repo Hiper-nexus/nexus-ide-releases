@@ -9,7 +9,7 @@ import {
   type OwnedAgentSessionInfo,
   type SessionExitTap,
 } from '../pty/pty-manager';
-import { hashMissionIntentContract } from './mission-pane-authority';
+import { hashMissionIntentAuthority } from './mission-pane-authority';
 import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
 import { readSessionOutput } from './pane-session-output';
 import {
@@ -230,7 +230,7 @@ function pendingFromMission(
       missionId: mission.id,
       orchestratorSessionId: sessionId,
       intentVersion,
-      intentContractHash: hashMissionIntentContract(contract),
+      intentContractHash: hashMissionIntentAuthority(contract),
       squadRevisionHash,
       observation: 'missing_session_reconcile',
       outputTail: OUTPUT_UNAVAILABLE,

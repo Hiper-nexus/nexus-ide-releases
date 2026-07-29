@@ -8,6 +8,55 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe("mission scheduler tick lifecycle", () => {
+  it("keeps an aborted effect single-flight until settlement and accepts a fresh signal afterward", async () => {
+    const firstController = new AbortController();
+    const nextController = new AbortController();
+    const abortReason = new Error("scheduler participant timed out");
+    let releaseFirst: (() => void) | undefined;
+    let activeEffects = 0;
+    let maxActiveEffects = 0;
+    const observedSignals: Array<AbortSignal | undefined> = [];
+    const runPass = vi.fn(async (signal?: AbortSignal) => {
+      observedSignals.push(signal);
+      activeEffects += 1;
+      maxActiveEffects = Math.max(maxActiveEffects, activeEffects);
+      try {
+        if (runPass.mock.calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      } finally {
+        activeEffects -= 1;
+      }
+    });
+    const lifecycle = createMissionSchedulerTickLifecycle({
+      runPass,
+      isLegacyLoopRunning: () => true,
+    });
+
+    const first = lifecycle.reconcile(firstController.signal);
+    await flushMicrotasks();
+    expect(runPass).toHaveBeenCalledTimes(1);
+    expect(observedSignals[0]).toBe(firstController.signal);
+
+    firstController.abort(abortReason);
+    const whileAbortedEffectSettles = lifecycle.reconcile(
+      nextController.signal,
+    );
+    expect(whileAbortedEffectSettles).toBe(first);
+    expect(runPass).toHaveBeenCalledTimes(1);
+
+    releaseFirst?.();
+    await expect(first).rejects.toBe(abortReason);
+
+    const next = lifecycle.reconcile(nextController.signal);
+    await expect(next).resolves.toBeUndefined();
+    expect(runPass).toHaveBeenCalledTimes(2);
+    expect(observedSignals[1]).toBe(nextController.signal);
+    expect(maxActiveEffects).toBe(1);
+  });
+
   it("coalesces wakes during an in-flight legacy tick into exactly one trailing pass", async () => {
     let running = true;
     const releases: Array<() => void> = [];

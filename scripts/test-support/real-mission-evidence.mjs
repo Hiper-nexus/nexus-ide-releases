@@ -98,7 +98,7 @@ export function makeValidRealMissionEvidence({
   };
   const acceptanceCriteria =
     launchSurface === "private-runner"
-      ? realMissionAcceptanceCriteria(orchestratorCli)
+      ? realMissionAcceptanceCriteria(orchestratorCli, presentAdvisorClis)
       : REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA;
 
   // Linha do tempo física do DAG: roots de advisory + executor se sobrepõem;

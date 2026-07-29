@@ -332,6 +332,7 @@ export const realMissionE2EEvidenceSchema = z
         ? REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA
         : realMissionE2EAcceptanceCriteria(
             orchestrators[0]?.adapterId === "claude" ? "claude" : "codex",
+            presentAdvisorClis,
           );
     const receiptMatchesMilestone = (
       receipt: (typeof completionReceipts)[number],

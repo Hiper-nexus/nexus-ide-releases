@@ -20,6 +20,12 @@ import {
 import { processSandboxRuntimeAvailable } from '../runtime/process-sandbox-capability';
 import { inspectGitBinding } from './git-binding';
 import type { EvidenceBinding } from './prevc-engine';
+import {
+  ReviewCouncil,
+  type ReviewBinding,
+  type ReviewFindingInput,
+  type ReviewReport,
+} from './review-council';
 
 let baseDir = '';
 const roots: string[] = [];
@@ -240,6 +246,42 @@ function recordMilestoneAttestationForTest(
   return id;
 }
 
+function createMergeReviewReport(
+  binding: ReviewBinding,
+  input: {
+    readonly id: string;
+    readonly provider?: string;
+    readonly findings?: readonly ReviewFindingInput[];
+    readonly reviewPurpose?: "pre-execution" | "candidate" | "legacy";
+    readonly evaluatorVersion?: string;
+    readonly preExecutionPlanBinding?: {
+      readonly intentVersion: number;
+      readonly planHash: string;
+    };
+  },
+): ReviewReport {
+  return new ReviewCouncil('low', binding).submit({
+    reviewId: `review-${input.id}`,
+    reviewerId: `reviewer-${input.id}`,
+    reviewerSessionId: `reviewer-session-${input.id}`,
+    reviewerProvider: input.provider ?? 'claude',
+    authorId: 'author-a',
+    authorSessionId: 'author-session',
+    authorProvider: 'codex',
+    binding,
+    findings: input.findings ?? [],
+    ...(input.reviewPurpose
+      ? { reviewPurpose: input.reviewPurpose }
+      : {}),
+    ...(input.evaluatorVersion
+      ? { evaluatorVersion: input.evaluatorVersion }
+      : {}),
+    ...(input.preExecutionPlanBinding
+      ? { preExecutionPlanBinding: input.preExecutionPlanBinding }
+      : {}),
+  });
+}
+
 beforeEach(() => {
   baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-workflow-runtime-'));
 });
@@ -251,6 +293,234 @@ afterEach(() => {
 });
 
 describe('native context workflow service', () => {
+  it('reuses pre-execution evidence only for the exact sealed plan receipt', () => {
+    const { service } = fixture();
+    service.freezeContract(
+      {
+        missionId: 'mission-a',
+        goal: 'Harden authentication and authorization safely',
+        acceptanceCriteria: [{
+          id: 'secure',
+          statement: 'Authentication remains secure',
+          requiredSensorIds: [],
+          invariantRefs: [],
+          requiredArtifactIds: [],
+        }],
+      },
+      { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+    );
+    service.advance('mission-a', 'review-primary');
+    const binding = service.getMissionWorkflow('mission-a').workflow!.binding;
+    const planA = {
+      intentVersion: 1,
+      planHash: 'a'.repeat(64),
+    };
+    const unbound = createMergeReviewReport(binding, {
+      id: 'unbound-current-evaluator',
+      findings: [],
+      reviewPurpose: 'pre-execution',
+      evaluatorVersion: 'pre-execution-plan-v2',
+    });
+    const report = createMergeReviewReport(binding, {
+      id: 'plan-a',
+      findings: [],
+      reviewPurpose: 'pre-execution',
+      evaluatorVersion: 'pre-execution-plan-v2',
+      preExecutionPlanBinding: planA,
+    });
+    service.recordMergeReviewReport(unbound);
+    service.recordMergeReviewReport(report);
+
+    expect(
+      service.inspectCurrentPreExecutionReviewGate('mission-a', planA),
+    ).toMatchObject({
+      ready: true,
+      reportCount: 1,
+      evidenceIds: [`review:${report.reviewId}`],
+    });
+    expect(
+      service.inspectCurrentPreExecutionReviewGate('mission-a', {
+        intentVersion: 2,
+        planHash: 'b'.repeat(64),
+      }),
+    ).toMatchObject({
+      ready: false,
+      reason: 'review-quorum-missing',
+      reportCount: 0,
+      evidenceIds: [],
+    });
+    expect(() =>
+      service.advance('mission-a', 'execution', {
+        preExecutionPlanBinding: {
+          intentVersion: 2,
+          planHash: 'b'.repeat(64),
+        },
+      }),
+    ).toThrow(/independent review.*missing/i);
+    expect(service.getMissionWorkflow('mission-a').workflow?.stage).toBe(
+      'review-primary',
+    );
+    expect(
+      service.advance('mission-a', 'execution', {
+        preExecutionPlanBinding: planA,
+      }),
+    ).toMatchObject({ stage: 'execution' });
+  });
+
+  it('compiles blocking guidance only from the current sealed plan', () => {
+    const { service } = fixture();
+    service.freezeContract(
+      {
+        missionId: 'mission-a',
+        goal: 'Harden authentication and authorization safely',
+        acceptanceCriteria: [{
+          id: 'secure',
+          statement: 'Authentication remains secure',
+          requiredSensorIds: [],
+          invariantRefs: [],
+          requiredArtifactIds: [],
+        }],
+      },
+      { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+    );
+    service.advance('mission-a', 'review-primary');
+    const binding = service.getMissionWorkflow('mission-a').workflow!.binding;
+    const currentPlan = { intentVersion: 2, planHash: '2'.repeat(64) };
+    const stale = createMergeReviewReport(binding, {
+      id: 'stale-plan',
+      reviewPurpose: 'pre-execution',
+      evaluatorVersion: 'pre-execution-plan-v2',
+      preExecutionPlanBinding: {
+        intentVersion: 1,
+        planHash: '1'.repeat(64),
+      },
+      findings: [{
+        severity: 'critical',
+        category: 'security',
+        file: 'src/stale.ts',
+        criterionRefs: ['secure'],
+        invariantRefs: [],
+        evidence: 'STALE PLAN FINDING',
+        recommendation: 'Ignore stale guidance.',
+      }],
+    });
+    const current = createMergeReviewReport(binding, {
+      id: 'current-plan',
+      reviewPurpose: 'pre-execution',
+      evaluatorVersion: 'pre-execution-plan-v2',
+      preExecutionPlanBinding: currentPlan,
+      findings: [{
+        severity: 'high',
+        category: 'correctness',
+        file: 'src/auth.ts',
+        line: 42,
+        criterionRefs: ['secure'],
+        invariantRefs: [],
+        evidence: 'The sealed plan omits the token revocation path.',
+        recommendation: 'Verify and implement token revocation in the candidate.',
+      }],
+    });
+    service.recordMergeReviewReport(stale);
+    service.recordMergeReviewReport(current);
+
+    const guidance = service.compilePreExecutionReviewGuidance(
+      'mission-a',
+      currentPlan,
+    );
+
+    expect(guidance).toContain('Pre-execution repair guidance');
+    expect(guidance).toContain(`review:${current.reviewId}`);
+    expect(guidance).toContain('src/auth.ts:42');
+    expect(guidance).toContain('omits the token revocation path');
+    expect(guidance).not.toContain('STALE PLAN FINDING');
+    expect(guidance.length).toBeLessThanOrEqual(12_000);
+    expect(
+      service.advance('mission-a', 'execution', {
+        preExecutionPlanBinding: currentPlan,
+      }),
+    ).toMatchObject({ stage: 'execution' });
+  });
+
+  it('ignores legacy baseline findings after the corrected pre-execution evaluator runs', () => {
+    const { service } = fixture();
+    const frozen = service.freezeContract(
+      {
+        missionId: 'mission-a',
+        goal: 'Harden authentication and authorization safely',
+        acceptanceCriteria: [{
+          id: 'secure',
+          statement: 'Authentication remains secure',
+          requiredSensorIds: [],
+          invariantRefs: [],
+          requiredArtifactIds: [],
+        }],
+      },
+      { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+    );
+    expect(frozen.contract.risk).toBe('high');
+    service.advance('mission-a', 'review-primary');
+    const binding = service.getMissionWorkflow('mission-a').workflow!.binding;
+    const legacy = createMergeReviewReport(binding, {
+      id: 'legacy-baseline',
+      findings: [{
+        severity: 'high',
+        category: 'correctness',
+        file: 'resultado.txt',
+        criterionRefs: ['secure'],
+        invariantRefs: [],
+        evidence:
+          'The future deliverable is absent from the pre-execution baseline.',
+        recommendation: 'Implement the future deliverable.',
+      }],
+    });
+    expect(legacy).toMatchObject({
+      reviewPurpose: 'legacy',
+      evaluatorVersion: 'legacy-v0',
+    });
+    service.recordMergeReviewReport(legacy);
+
+    const preExecutionPlanBinding = {
+      intentVersion: 1,
+      planHash: '1'.repeat(64),
+    };
+    expect(() => service.advance('mission-a', 'execution', {
+      preExecutionPlanBinding,
+    })).toThrow(
+      /independent review.*missing/i,
+    );
+
+    const current = service.submitReview({
+      missionId: 'mission-a',
+      preExecutionPlanBinding,
+      reviewer: {
+        id: 'reviewer-current',
+        sessionId: 'reviewer-current-session',
+        provider: 'claude',
+      },
+      findings: [],
+    });
+    expect(current.report).toMatchObject({
+      reviewPurpose: 'pre-execution',
+      evaluatorVersion: 'pre-execution-plan-v2',
+      preExecutionPlanBinding: {
+        intentVersion: 1,
+        planHash: '1'.repeat(64),
+      },
+    });
+    expect(current.gate.ready).toBe(true);
+    expect(service.advance('mission-a', 'execution', {
+      preExecutionPlanBinding,
+    })).toMatchObject({
+      stage: 'execution',
+    });
+    expect(service.listPersistedEvidenceIds('mission-a')).toEqual(
+      expect.arrayContaining([
+        `review:${legacy.reviewId}`,
+        `review:${current.report.reviewId}`,
+      ]),
+    );
+  });
+
   it('does not turn a Doctor warning or stale npm defaults into contract authority', () => {
     const { root, scope, manager, service } = fixture();
     fs.writeFileSync(
@@ -867,6 +1137,10 @@ describe('native context workflow service', () => {
 
     const preReview = service.submitReview({
       missionId: 'mission-a',
+      preExecutionPlanBinding: {
+        intentVersion: 1,
+        planHash: '2'.repeat(64),
+      },
       reviewer: { id: 'reviewer-pre', sessionId: 'review-pre', provider: 'claude' },
       findings: [],
     });
@@ -880,7 +1154,17 @@ describe('native context workflow service', () => {
       [preReviewEvidence],
     );
     submitHandoff('handoff-review', [reviewAttestation]);
-    expect(service.advanceMissionStep('mission-a', 'step-review', [reviewAttestation]))
+    expect(service.advanceMissionStep(
+      'mission-a',
+      'step-review',
+      [reviewAttestation],
+      {
+        preExecutionPlanBinding: {
+          intentVersion: 1,
+          planHash: '2'.repeat(64),
+        },
+      },
+    ))
       .toMatchObject({ fromStage: 'review-primary', toStage: 'execution' });
 
     const executionBinding = service.getMissionWorkflow('mission-a').workflow!.binding;
@@ -1101,5 +1385,176 @@ describe('native context workflow service', () => {
       'typecheck',
       'unit',
     ]);
+  });
+
+  it('replays only an approved reviewer quorum bound to the exact merge candidate', () => {
+    const { service } = fixture();
+    const frozen = service.freezeContract(
+      {
+        missionId: 'mission-a',
+        goal: 'Make one small verified change',
+        acceptanceCriteria: [{
+          id: 'works',
+          statement: 'The exact candidate is independently reviewed',
+          requiredSensorIds: [],
+          invariantRefs: [],
+          requiredArtifactIds: [],
+        }],
+      },
+      { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+    );
+    const binding: ReviewBinding = Object.freeze({
+      ...frozen.workflow.binding,
+      headSha: '1'.repeat(40),
+      diffHash: '2'.repeat(64),
+    });
+    const planningReport = createMergeReviewReport(binding, {
+      id: 'planning',
+      reviewPurpose: 'pre-execution',
+      evaluatorVersion: 'pre-execution-plan-v2',
+    });
+    service.recordMergeReviewReport(planningReport);
+    expect(service.inspectPersistedReviewGate(binding)).toMatchObject({
+      ready: false,
+      reason: 'review-quorum-missing',
+      evidenceIds: [],
+      reportCount: 0,
+      quorumReportCount: 0,
+    });
+
+    const staticReport = createMergeReviewReport(binding, {
+      id: 'static',
+      provider: 'nexus-static-analysis-v1',
+      reviewPurpose: 'candidate',
+      evaluatorVersion: 'candidate-implementation-v1',
+    });
+    service.recordMergeReviewReport(staticReport);
+
+    expect(service.inspectPersistedReviewGate(binding)).toMatchObject({
+      ready: false,
+      reason: 'review-quorum-missing',
+      reportCount: 1,
+      quorumReportCount: 0,
+      blockingFindingCount: 0,
+    });
+
+    const physicalReport = createMergeReviewReport(binding, {
+      id: 'physical',
+      reviewPurpose: 'candidate',
+      evaluatorVersion: 'candidate-implementation-v1',
+    });
+    service.recordMergeReviewReport(physicalReport);
+    expect(service.inspectPersistedReviewGate(binding)).toEqual({
+      ready: true,
+      reason: 'ready',
+      evidenceIds: [
+        `review:${physicalReport.reviewId}`,
+        `review:${staticReport.reviewId}`,
+      ],
+      reportCount: 2,
+      quorumReportCount: 1,
+      blockingFindingCount: 0,
+    });
+
+    const divergentBindings: readonly ReviewBinding[] = [
+      { ...binding, baseSha: '3'.repeat(40) },
+      { ...binding, headSha: '4'.repeat(40) },
+      { ...binding, diffHash: '5'.repeat(64) },
+    ];
+    for (const divergent of divergentBindings) {
+      expect(service.inspectPersistedReviewGate(divergent)).toMatchObject({
+        ready: false,
+        reason: 'review-quorum-missing',
+        evidenceIds: [],
+        reportCount: 0,
+        quorumReportCount: 0,
+      });
+    }
+    expect(() =>
+      service.inspectPersistedReviewGate({
+        ...binding,
+        contextHash: '6'.repeat(64),
+      }),
+    ).toThrow(/current frozen contract/i);
+    expect(() =>
+      service.inspectPersistedReviewGate({
+        ...binding,
+        contractHash: '7'.repeat(64),
+      }),
+    ).toThrow(/current frozen contract/i);
+    expect(() =>
+      service.inspectPersistedReviewGate({
+        ...binding,
+        projectId: 'project-divergent',
+      }),
+    ).toThrow(/another project scope/i);
+    expect(() =>
+      service.inspectPersistedReviewGate({
+        ...binding,
+        checkoutId: 'checkout-divergent',
+      }),
+    ).toThrow(/another project scope/i);
+    expect(() =>
+      service.inspectPersistedReviewGate({
+        ...binding,
+        missionId: 'mission-divergent',
+      }),
+    ).toThrow(/frozen mission contract/i);
+  });
+
+  it('does not turn persisted HIGH or CRITICAL findings into approval', () => {
+    const { service } = fixture();
+    const frozen = service.freezeContract(
+      {
+        missionId: 'mission-a',
+        goal: 'Make one small verified change',
+        acceptanceCriteria: [{
+          id: 'works',
+          statement: 'Blocking findings remain authoritative',
+          requiredSensorIds: [],
+          invariantRefs: [],
+          requiredArtifactIds: [],
+        }],
+      },
+      { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+    );
+    const binding: ReviewBinding = Object.freeze({
+      ...frozen.workflow.binding,
+      headSha: '1'.repeat(40),
+      diffHash: '2'.repeat(64),
+    });
+    const report = createMergeReviewReport(binding, {
+      id: 'blocked',
+      findings: [
+        {
+          severity: 'high',
+          category: 'correctness',
+          file: 'src/high.ts',
+          criterionRefs: ['works'],
+          invariantRefs: [],
+          evidence: 'The high severity defect is still reachable.',
+          recommendation: 'Repair the defect before promotion.',
+        },
+        {
+          severity: 'critical',
+          category: 'security',
+          file: 'src/critical.ts',
+          criterionRefs: ['works'],
+          invariantRefs: [],
+          evidence: 'The critical security defect remains exploitable.',
+          recommendation: 'Remove the exploit path before promotion.',
+        },
+      ],
+    });
+    service.recordMergeReviewReport(report);
+
+    expect(service.inspectPersistedReviewGate(binding)).toEqual({
+      ready: false,
+      reason: 'blocking-findings',
+      evidenceIds: [`review:${report.reviewId}`],
+      reportCount: 1,
+      quorumReportCount: 1,
+      blockingFindingCount: 2,
+    });
   });
 });

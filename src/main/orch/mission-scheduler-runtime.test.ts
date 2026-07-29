@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createSchedulerRuntimeState,
   finalizeTaskForMerge,
@@ -247,6 +247,34 @@ describe('mission-scheduler-runtime P2 flag + driver', () => {
     expect(second.dispatched).toEqual(['a']);
     expect(dispatched).toEqual(['a']);
     expect(failed).toEqual([]);
+  });
+
+  it('forwards cancellation into dispatch and rethrows the exact reconciler reason', async () => {
+    const tasks = [baseTask('a')];
+    const controller = new AbortController();
+    const reason = new Error('participant mission-scheduler exceeded 30000ms');
+    const fixture = makeDeps({ enabled: false, tasks });
+    const dispatchTask = vi.fn(
+      async (_request: unknown, signal?: AbortSignal) => {
+        expect(signal).toBe(controller.signal);
+        controller.abort(reason);
+      },
+    );
+
+    await expect(
+      runSchedulerTick(
+        {
+          ...fixture.deps,
+          dispatchTask,
+        },
+        createSchedulerRuntimeState(),
+        controller.signal,
+      ),
+    ).rejects.toBe(reason);
+
+    expect(dispatchTask).toHaveBeenCalledOnce();
+    expect(fixture.failed).toEqual([]);
+    expect(tasks[0]?.status).toBe('pending');
   });
 
   it('dependent task waits for next wave after merge', async () => {

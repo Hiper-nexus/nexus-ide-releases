@@ -44,6 +44,7 @@ vi.mock('./pane-registry', () => ({
 }));
 
 import {
+  closeOrphanedMissionRuntime,
   closeMissionRuntimePreservingHistory,
   prepareMissionRuntimeTermination,
   settleMissionRuntimeDemotion,
@@ -202,6 +203,70 @@ beforeEach(() => {
 });
 
 describe('mission runtime physical inventory termination', () => {
+  it('closes an orphan runtime idempotently without touching the same mission id in another scope', async () => {
+    const otherScope = Object.freeze({
+      ...scope,
+      projectId: 'project-other-orphan',
+      checkoutId: 'checkout-other-orphan',
+      rootRealPath: '/workspace/other-orphan',
+    });
+    runtime.pty = [
+      physical('pty-orphan-local', 'pane-orphan-local', 'inc-local'),
+      {
+        ...physical('pty-orphan-foreign', 'pane-orphan-foreign', 'inc-foreign'),
+        scope: otherScope,
+      },
+    ];
+    runtime.snapshots = [
+      {
+        paneId: 'pane-orphan-local',
+        sessionId: 'pty-orphan-local',
+        missionId: mission.id,
+        role: 'worker',
+        scope,
+      },
+      {
+        paneId: 'pane-orphan-foreign',
+        sessionId: 'pty-orphan-foreign',
+        missionId: mission.id,
+        role: 'worker',
+        scope: otherScope,
+      },
+    ];
+
+    await expect(
+      closeOrphanedMissionRuntime({
+        scope,
+        missionId: mission.id,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      terminatedSessionIds: ['pty-orphan-local'],
+    });
+    expect(runtime.terminatePty).toHaveBeenCalledWith('pty-orphan-local');
+    expect(runtime.terminatePty).not.toHaveBeenCalledWith('pty-orphan-foreign');
+    expect(runtime.closeMissionPane).toHaveBeenCalledWith({
+      paneId: 'pane-orphan-local',
+      missionId: mission.id,
+      scope,
+    });
+    expect(runtime.closeMissionPane).not.toHaveBeenCalledWith(
+      expect.objectContaining({ paneId: 'pane-orphan-foreign' }),
+    );
+
+    runtime.closeMissionPane.mockClear();
+    await expect(
+      closeOrphanedMissionRuntime({
+        scope,
+        missionId: mission.id,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      terminatedSessionIds: [],
+    });
+    expect(runtime.terminatePty).toHaveBeenCalledTimes(1);
+  });
+
   it('finds and terminates a detached PTY absent from renderer snapshots', async () => {
     runtime.pty = [physical('pty-hidden', 'pane-hidden', 'inc-hidden')];
     const stores = suite([pane('pane-hidden', 'inc-hidden')]);

@@ -179,7 +179,7 @@ describe("real mission E2E closed receipts", () => {
         },
         {
           id: "e2e-advisor-grok",
-          category: "reviewer",
+          category: "scout",
           cli: "grok",
           allowedTools: [],
         },
@@ -203,7 +203,7 @@ describe("real mission E2E closed receipts", () => {
         },
         {
           id: "e2e-advisor-claude",
-          category: "reviewer",
+          category: "scout",
           cli: "claude",
           allowedTools: [],
         },
@@ -346,23 +346,23 @@ describe("real mission E2E claude orchestrator variant", () => {
     const chain = realMissionE2EExpectedTaskChain(presentClis);
 
     expect(chain.map((member) => member.agentRef)).toEqual([
+      "e2e-advisor-grok",
       "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
       "e2e-advisor-glm",
       "e2e-executor",
       "e2e-reviewer",
-      "e2e-advisor-grok",
       "e2e-qa",
     ]);
     expect(chain.map((member) => member.plannerId)).toEqual([
-      "guided-advisory-1-e2e-advisor-kimi",
-      "guided-advisory-2-e2e-advisor-agy",
-      "guided-advisory-3-e2e-advisor-opencode",
-      "guided-advisory-4-e2e-advisor-glm",
+      "guided-advisory-1-e2e-advisor-grok",
+      "guided-advisory-2-e2e-advisor-kimi",
+      "guided-advisory-3-e2e-advisor-agy",
+      "guided-advisory-4-e2e-advisor-opencode",
+      "guided-advisory-5-e2e-advisor-glm",
       "guided-execution",
       "guided-review-1-e2e-reviewer",
-      "guided-review-2-e2e-advisor-grok",
       "guided-quality-gate",
     ]);
     expect(chain.map((member) => member.dependsOnPlannerIds)).toEqual([
@@ -371,9 +371,9 @@ describe("real mission E2E claude orchestrator variant", () => {
       [],
       [],
       [],
+      [],
       ["guided-execution"],
       ["guided-review-1-e2e-reviewer"],
-      ["guided-review-2-e2e-advisor-grok"],
     ]);
     // Nenhum worker claude OAuth em nenhuma posição da cadeia (glm ≠ claude).
     expect(chain.every((member) => member.cli !== "claude")).toBe(true);
@@ -394,9 +394,67 @@ describe("real mission E2E claude orchestrator variant", () => {
     expect(claudeCriteria.at(-1)).toBe(
       REAL_MISSION_E2E_CLAUDE_ORCHESTRATOR_CRITERION,
     );
-    expect(claudeCriteria.slice(0, -1)).toEqual([
-      ...REAL_MISSION_E2E_ACCEPTANCE_CRITERIA,
+    expect(claudeCriteria[8]).not.toContain("claude");
+    expect(claudeCriteria.slice(0, 8)).toEqual(
+      REAL_MISSION_E2E_ACCEPTANCE_CRITERIA.slice(0, 8),
+    );
+    expect(claudeCriteria[9]).toBe(
+      REAL_MISSION_E2E_ACCEPTANCE_CRITERIA[9],
+    );
+  });
+
+  it("makes post-QA authority and advisor preflight semantics explicit", () => {
+    expect(REAL_MISSION_E2E_ACCEPTANCE_CRITERIA[5]).toContain(
+      "read_only_validated",
+    );
+    expect(REAL_MISSION_E2E_ACCEPTANCE_CRITERIA[5]).toContain(
+      "worktree_validated_no_change",
+    );
+    expect(REAL_MISSION_E2E_ACCEPTANCE_CRITERIA[7]).toContain(
+      "Depois do handoff do QA",
+    );
+    expect(REAL_MISSION_E2E_ACCEPTANCE_CRITERIA[7]).toContain(
+      "prova Main-owned",
+    );
+    expect(REAL_MISSION_E2E_ACCEPTANCE_CRITERIA[7]).toContain(
+      "read_only_validated",
+    );
+    expect(REAL_MISSION_E2E_ACCEPTANCE_CRITERIA[7]).toContain(
+      "worktree_validated_no_change",
+    );
+    const criteria = realMissionE2EAcceptanceCriteria("codex", [
+      "opencode",
+      "claude",
+      "glm",
     ]);
+    const advisorCriterion = criteria.find((criterion) =>
+      criterion.includes("guided-advisory"),
+    );
+    const prevcCriterion = criteria.find((criterion) =>
+      criterion.includes("reviewer PREVC"),
+    );
+    expect(advisorCriterion).toContain("opencode, claude, glm");
+    expect(advisorCriterion).not.toMatch(/\b(?:grok|kimi|agy)\b/u);
+    expect(advisorCriterion).toContain("nexus_handoff_submit");
+    expect(prevcCriterion).toContain("nexus_merge_review_submit");
+    expect(prevcCriterion).not.toContain("nexus_handoff_submit");
+    expect(REAL_MISSION_E2E_GOAL).not.toContain("terceiro handoff");
+    expect(REAL_MISSION_E2E_GOAL).toContain(
+      "cadeia de entrega executor → revisor → QA",
+    );
+  });
+
+  it("keeps every admitted advisor in the advisory lane", () => {
+    const admitted = ["opencode", "claude", "glm"];
+    const chain = realMissionE2EExpectedTaskChain(admitted);
+    expect(
+      chain
+        .filter((member) => member.kind === "advisory")
+        .map((member) => member.cli),
+    ).toEqual(admitted);
+    expect(
+      chain.filter((member) => member.kind === "review").map((member) => member.cli),
+    ).toEqual(["codex"]);
   });
 
   it("arms observation for the variant pre-approval intent only with the variant criteria", () => {

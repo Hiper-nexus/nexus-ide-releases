@@ -54,7 +54,7 @@ import {
   sanitizeMissionOrchestratorExitOutput,
   stripMissionOrchestratorExitDescription,
 } from './mission-orchestrator-exit-policy';
-import { hashMissionIntentContract } from './mission-pane-authority';
+import { hashMissionIntentAuthority } from './mission-pane-authority';
 import {
   ScopedStoreBinding,
   ScopedStoreCorruptionError,
@@ -670,7 +670,7 @@ export class ScopedMissionStore {
           expectedAuthoritySeal.intentVersion &&
         Boolean(
           current.intentContract &&
-            hashMissionIntentContract(current.intentContract) ===
+            hashMissionIntentAuthority(current.intentContract) ===
               expectedAuthoritySeal.intentContractHash &&
             current.intentContract.squadRevisionHash ===
               expectedAuthoritySeal.squadRevisionHash,
@@ -885,7 +885,7 @@ export class ScopedMissionStore {
           (current.intentVersion ?? 0) !== input.intentVersion ||
           !hasCurrentDispatchAuthority(current) ||
           !current.intentContract ||
-          hashMissionIntentContract(current.intentContract) !==
+          hashMissionIntentAuthority(current.intentContract) !==
             input.intentContractHash ||
           current.intentContract.squadRevisionHash !== input.squadRevisionHash
         ) {

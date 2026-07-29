@@ -21,6 +21,7 @@ import {
   MergeAuthorityRevokedError,
   MergeCasError,
   MergeConflictError,
+  MergeOperationAbortedError,
   MergeQueueBlockedError,
   MergeQueueStateError,
   MergeValidationRejectedError,
@@ -43,6 +44,19 @@ import { MergeQueueRecovery } from './merge-queue-recovery';
 export * from './merge-queue-contract';
 
 const SHA_PATTERN = /^[a-f0-9]{40,64}$/;
+const QUEUED_MERGE_ABORTED = Symbol('queued-merge-aborted');
+
+function mergeOperationAbortedError(
+  signal: AbortSignal,
+): MergeOperationAbortedError {
+  const reason =
+    signal.reason ??
+    Object.assign(new Error('merge operation was aborted'), {
+      name: 'AbortError',
+    });
+  return new MergeOperationAbortedError(reason);
+}
+
 interface CandidateCheckout {
   readonly path: string;
   readonly treeSha: string;
@@ -167,11 +181,17 @@ export class MergeQueue {
   }
 
   enqueue(input: EnqueueMergeInput): Promise<MergeQueueResult> {
-    return this.#schedule(input.scope, () => this.#integrate(input));
+    return this.#schedule(input.scope, input.signal, () => {
+      this.#assertCurrentAuthority(input);
+      return this.#integrate(input);
+    });
   }
 
   retry(input: RetryMergeInput): Promise<MergeQueueResult> {
-    return this.#schedule(input.scope, () => this.#retry(input));
+    return this.#schedule(input.scope, input.signal, () => {
+      this.#assertCurrentAuthority(input);
+      return this.#retry(input);
+    });
   }
 
   /**
@@ -180,7 +200,10 @@ export class MergeQueue {
    * Terminal blocks remain available only to explicit recovery tooling.
    */
   retryRecoverable(input: EnqueueMergeInput): Promise<MergeQueueResult> {
-    return this.#schedule(input.scope, () => this.#retryRecoverable(input));
+    return this.#schedule(input.scope, input.signal, () => {
+      this.#assertCurrentAuthority(input);
+      return this.#retryRecoverable(input);
+    });
   }
 
   snapshot(scope: ProjectExecutionScope): MergeQueueStateSnapshot {
@@ -208,12 +231,34 @@ export class MergeQueue {
 
   #schedule(
     scope: ProjectExecutionScope,
+    signal: AbortSignal | undefined,
     run: () => Promise<MergeQueueResult>,
   ): Promise<MergeQueueResult> {
     const scopeKey = this.#worktrees.scopeKey(scope);
     const previous = this.#tails.get(scopeKey) ?? Promise.resolve();
-    const operation = previous.then(run);
-    const tail = operation.then(
+    let isWaiting = true;
+    let isCanceled = false;
+    let removeAbortListener: (() => void) | undefined;
+    let resolveOperation!: (result: MergeQueueResult) => void;
+    let rejectOperation!: (reason?: unknown) => void;
+    const operation = new Promise<MergeQueueResult>((resolve, reject) => {
+      resolveOperation = resolve;
+      rejectOperation = reject;
+    });
+    const queued = previous.then(async () => {
+      if (isCanceled) return QUEUED_MERGE_ABORTED;
+      isWaiting = false;
+      removeAbortListener?.();
+      removeAbortListener = undefined;
+      return run();
+    });
+    void queued.then(
+      (result) => {
+        if (result !== QUEUED_MERGE_ABORTED) resolveOperation(result);
+      },
+      (error: unknown) => rejectOperation(error),
+    );
+    const tail = queued.then(
       () => undefined,
       () => undefined,
     );
@@ -221,6 +266,19 @@ export class MergeQueue {
     void tail.then(() => {
       if (this.#tails.get(scopeKey) === tail) this.#tails.delete(scopeKey);
     });
+    if (signal) {
+      const onAbort = () => {
+        if (!isWaiting || isCanceled) return;
+        isCanceled = true;
+        removeAbortListener?.();
+        removeAbortListener = undefined;
+        rejectOperation(mergeOperationAbortedError(signal));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      removeAbortListener = () =>
+        signal.removeEventListener('abort', onAbort);
+      if (signal.aborted) onAbort();
+    }
     return operation;
   }
 
@@ -278,6 +336,27 @@ export class MergeQueue {
         input.missionId,
         input.taskId,
       );
+      const physicalTaskHeadSha =
+        input.expectedTaskHeadSha === undefined
+          ? resume?.expectedTaskHeadSha
+          : assertSha(input.expectedTaskHeadSha, 'expected task HEAD SHA');
+      if (
+        resume &&
+        input.expectedTaskHeadSha !== undefined &&
+        physicalTaskHeadSha !== resume.expectedTaskHeadSha
+      ) {
+        throw new MergeCasError(
+          'retry task HEAD authority diverged from the physical handoff',
+        );
+      }
+      if (
+        physicalTaskHeadSha !== undefined &&
+        prepared.taskHeadSha !== physicalTaskHeadSha
+      ) {
+        throw new MergeCasError(
+          'task HEAD does not match the physical handoff HEAD',
+        );
+      }
       this.#worktrees.markQueued(
         input.scope,
         input.missionId,
@@ -583,7 +662,8 @@ export class MergeQueue {
     if (attempt.mode === 'full') {
       return this.#integrate(input, {
         claimed: attempt.claimed,
-        expectedTaskHeadSha: attempt.prepared.taskHeadSha,
+        expectedTaskHeadSha:
+          input.expectedTaskHeadSha ?? attempt.prepared.taskHeadSha,
         acknowledgementEvidenceIds: attempt.acknowledgementEvidenceIds,
       });
     }
@@ -844,6 +924,9 @@ export class MergeQueue {
   }
 
   #assertCurrentAuthority(input: EnqueueMergeInput): void {
+    if (input.signal?.aborted) {
+      throw mergeOperationAbortedError(input.signal);
+    }
     if (!input.assertCurrentAuthority) return;
     try {
       input.assertCurrentAuthority();

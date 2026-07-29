@@ -128,6 +128,15 @@ export interface EnqueueMergeInput {
   readonly scope: ProjectExecutionScope;
   readonly missionId: string;
   readonly taskId: string;
+  /**
+   * Exact worker commit observed by Main while accepting the physical handoff.
+   *
+   * Scheduler-owned merges always provide this pin. It remains optional for
+   * backwards-compatible manual/recovery callers that own a different
+   * authority fence, but when present MergeQueue must reject any later worker
+   * commit before queueing, candidate construction, review, or Git CAS.
+   */
+  readonly expectedTaskHeadSha?: string;
   /** Parent MCP/reconciler cancellation for nested validation effects. */
   readonly signal?: AbortSignal;
   /**
@@ -238,6 +247,24 @@ export class MergeAuthorityRevokedError extends Error {
       cause,
     });
     this.name = 'MergeAuthorityRevokedError';
+  }
+}
+
+/**
+ * Parent lifecycle cancellation is recoverable: it revokes this physical
+ * attempt, not the mission's durable authority. Keeping it distinct prevents
+ * app shutdown/timeouts from terminally blocking the next scheduler pass.
+ */
+export class MergeOperationAbortedError extends Error {
+  constructor(cause?: unknown) {
+    const detail =
+      cause instanceof Error && cause.message.trim()
+        ? `: ${cause.message.trim()}`
+        : '';
+    super(`merge operation aborted${detail}`, {
+      cause,
+    });
+    this.name = 'MergeOperationAbortedError';
   }
 }
 

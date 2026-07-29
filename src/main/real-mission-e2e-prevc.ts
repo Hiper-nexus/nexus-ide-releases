@@ -21,7 +21,6 @@ import {
 } from "./context/context-attestation";
 import { getContextWorkflowService } from "./context/context-workflow-registry";
 import type { MissionContract } from "./context/contract-compiler";
-import { getContextBySession } from "./orch/gate";
 import type { ProjectDomainStoreSuite } from "./orch/project-domain-store-registry";
 import {
   resolveProductWizardRealMissionE2ESquadBinding,
@@ -303,13 +302,18 @@ export function stageRealMissionE2EContextCorpus(workspacePath: string): void {
         sensors: [
           {
             id: "typecheck",
-            command: ["/usr/bin/true"],
+            command: ["/bin/test", "-f", "resultado.txt"],
             timeoutMs: 60_000,
             network: false,
           },
           {
             id: "unit",
-            command: ["/usr/bin/true"],
+            command: [
+              "/usr/bin/cmp",
+              "-s",
+              "resultado.txt",
+              ".context/config/resultado.expected.txt",
+            ],
             timeoutMs: 60_000,
             network: false,
           },
@@ -319,6 +323,11 @@ export function stageRealMissionE2EContextCorpus(workspacePath: string): void {
       2,
     )}\n`,
   );
+  writeText(
+    workspacePath,
+    ".context/config/resultado.expected.txt",
+    "nexus-real-mission-e2e-ok\n",
+  );
 
   for (const name of CONTEXT_DOCS) {
     writeText(
@@ -327,6 +336,22 @@ export function stageRealMissionE2EContextCorpus(workspacePath: string): void {
       `# ${name}\n\nReal-mission release gate context for PREVC freeze.\n`,
     );
   }
+  writeText(
+    workspacePath,
+    ".context/docs/testing.md",
+    [
+      "# testing",
+      "",
+      "This repository is a release-gate fixture whose only implementation",
+      "deliverable is resultado.txt.",
+      "",
+      "- typecheck proves resultado.txt exists as a regular file.",
+      "- unit compares every byte against the committed expected fixture.",
+      "- both sensors fail before the worker creates the deliverable.",
+      "- both sensors run again on the exact merge candidate.",
+      "",
+    ].join("\n"),
+  );
 
   writeText(
     workspacePath,
@@ -359,8 +384,9 @@ export function stageRealMissionE2EContextCorpus(workspacePath: string): void {
         name: "nexus-real-mission-e2e",
         private: true,
         scripts: {
-          typecheck: 'node -e "process.exit(0)"',
-          test: 'node -e "process.exit(0)" --',
+          typecheck: "test -f resultado.txt",
+          test:
+            "cmp -s resultado.txt .context/config/resultado.expected.txt",
         },
       },
       null,
@@ -436,11 +462,6 @@ export function freezeRealMissionE2EPrevCIfNeeded(
     return { frozen: false, reason: "no-orchestrator-session" };
   }
 
-  const orch = getContextBySession(mission.orchestratorSessionId);
-  if (!orch || orch.role !== "orchestrator" || orch.missionId !== missionId) {
-    return { frozen: false, reason: "gate-context-unavailable" };
-  }
-
   const service = getContextWorkflowService(scope);
   const existing = service.getMissionWorkflow(missionId);
   if (existing.contract || existing.workflow) {
@@ -479,9 +500,9 @@ export function freezeRealMissionE2EPrevCIfNeeded(
         riskHints: ["small isolated behavior change"],
       },
       {
-        id: orch.agentName ?? "e2e-orchestrator",
-        sessionId: orch.sessionId ?? mission.orchestratorSessionId,
-        provider: "codex",
+        id: "nexus-real-mission-e2e-prevc",
+        sessionId: `main:${missionId}:release-prevc`,
+        provider: "nexus-main",
       },
     );
     // The production Guided Planner has already sealed all three main-owned

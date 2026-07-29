@@ -105,23 +105,41 @@ function prepareNoChangeValidationInternal(
       );
     }
     const integration = host.integrationSnapshot(record);
+    const integrationDescendsFrom = (ancestorSha: string): boolean =>
+      host.git.run(
+        record.rootRealPath,
+        [
+          "merge-base",
+          "--is-ancestor",
+          ancestorSha,
+          integration.headSha,
+        ],
+        { allowFailure: true },
+      ).status === 0;
     const integrationMatchesBase =
       integration.headSha === record.baseSha ||
-      (allowIntegrationAdvance &&
-        host.git.run(
-          record.rootRealPath,
-          [
-            "merge-base",
-            "--is-ancestor",
-            record.baseSha,
-            integration.headSha,
-          ],
-          { allowFailure: true },
-        ).status === 0);
-    if (!integrationMatchesBase) {
+      (allowIntegrationAdvance && integrationDescendsFrom(record.baseSha));
+    const validatedReceiptMatchesIntegration =
+      !isAlreadyValidated ||
+      (record.integratedSha !== undefined &&
+        (record.integratedSha === record.baseSha ||
+          host.git.run(
+            record.rootRealPath,
+            [
+              "merge-base",
+              "--is-ancestor",
+              record.baseSha,
+              record.integratedSha,
+            ],
+            { allowFailure: true },
+          ).status === 0) &&
+        (record.integratedSha === integration.headSha ||
+          (allowIntegrationAdvance &&
+            integrationDescendsFrom(record.integratedSha))));
+    if (!integrationMatchesBase || !validatedReceiptMatchesIntegration) {
       throw new WorktreeStateConflictError(
         allowIntegrationAdvance
-          ? "primary checkout no longer descends from the disposable worktree base"
+          ? "primary checkout no longer contains the disposable no-change receipt ancestry"
           : "primary checkout changed after validation worktree creation",
       );
     }

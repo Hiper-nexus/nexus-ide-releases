@@ -49,23 +49,17 @@ import {
 } from './project-domain-store-registry';
 import { inspectGuidedPrevcPostMergeAuthority } from './prevc-autopilot-coordinator';
 import { sameProjectScope } from './project-scoped-broadcast';
+import { missionHasSchedulerProgress } from './mission-scheduler-authority';
 
-/**
- * Camada IO do Mission Driver: monta DriveDeps a partir dos stores reais
- * (ScopedMissionStore + ScopedHandoffStore) e apply ports ativos.
- * Separada do runtime puro para unit-testabilidade sem DB.
- */
+/** Production Mission Driver IO over scoped stores and active apply ports. */
 
 function driveKey(missionId: string, scope: ProjectExecutionScope): string {
   return `${scope.projectId}:${scope.checkoutId}/${missionId}`;
 }
 
-/** Memória em-processo do último signal-stall emitido pelo drive (debounce). */
+/** In-process debounce for the latest driver stall signal. */
 const driveSignalMemory = new Map<string, number>();
-/**
- * Shadow mode remains observation-only, so its debounce/start anchors stay in
- * memory. Active mode uses mission_drive_state and survives app restarts.
- */
+/** Shadow start anchors stay in memory; active mode persists its runtime. */
 const driveStartedAtMemory = new Map<string, number>();
 let unsubscribeDriveStoreChanges: (() => void) | null = null;
 
@@ -101,15 +95,7 @@ export function findDeadMissionPane(
   );
 }
 
-/**
- * Only orchestrators are recoverable by the mission driver. Workers are
- * one-shot effects owned by the durable dispatch lifecycle: a live worker
- * stays untouched, an exact exit is blocked by task-dispatch-lifecycle, and a
- * lost exit is fenced by lease expiry. Recovering a worker from the renderer
- * mirror is unsafe because a freshly spawned physical PTY can exist before
- * its visual snapshot; the old logic interpreted that short gap as "dead" and
- * terminated the healthy worker while trying to replace it.
- */
+/** Workers belong to the durable dispatcher; only Maestro is driver-owned. */
 export function actionableMissionPanes(
   persisted: readonly MissionPaneSpec[],
 ): MissionPaneSpec[] {
@@ -216,10 +202,7 @@ export function loadDriveState(
     stores.missionPanes.list(missionId).filter((pane) => pane.paneId),
   );
   const snapshots = listPaneSnapshots();
-  // Absence is actionable only after the exact workspace has been mirrored.
-  // Readiness comes from the renderer sync heartbeat (covers an empty layout
-  // after crash) with the snapshot scan as fallback; dead-pane identity is
-  // compared exclusively against snapshots of this scope.
+  // Pane absence is actionable only after this exact workspace was mirrored.
   const mirrored =
     hasMirroredWorkspaceScope(scope) || hasMirroredScope(scope, snapshots);
   const paneDead =
@@ -228,7 +211,12 @@ export function loadDriveState(
       missionId,
       persistedPanes,
       snapshotsForScope(scope, snapshots),
-    ) !== null;
+    ) !== null &&
+    !missionHasSchedulerProgress(
+      mission,
+      stores.missions.hasCurrentKickoffAcceptance(missionId),
+      stores.taskDispatches.list(missionId),
+    );
   const workflowService = getContextWorkflowService(scope);
   const missionWorkflow = workflowService.getMissionWorkflow(missionId);
   const currentStep = mission.milestones.find(

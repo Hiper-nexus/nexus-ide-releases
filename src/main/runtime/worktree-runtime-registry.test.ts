@@ -122,6 +122,311 @@ describe("project worktree runtime registry", () => {
     });
   });
 
+  it("resolves a disposable no-change task validated after an executor merge across restart", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const baseSha = git(root, "rev-parse", "HEAD");
+    const disposable = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: "mission-disposable-after-merge",
+      taskId: "review-read-only",
+      workerId: "reviewer",
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ["review-only"],
+      },
+    });
+    const executor = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: disposable.missionId,
+      taskId: "executor",
+      workerId: "executor",
+      ownership: {
+        files: ["owned.txt"],
+        symbols: [],
+        domains: ["implementation"],
+      },
+    });
+    fs.writeFileSync(path.join(executor.worktreePath, "owned.txt"), "changed\n");
+    git(executor.worktreePath, "add", "owned.txt");
+    git(executor.worktreePath, "commit", "-qm", "executor change");
+    const merged = await registry.enqueue({
+      scope,
+      missionId: executor.missionId,
+      taskId: executor.taskId,
+      validate: () => ({
+        sensorsPassed: true,
+        reviewPassed: true,
+        evidenceIds: ["executor-evidence"],
+      }),
+    });
+    const prepared = registry.prepareDiscardedNoChangeValidation(
+      scope,
+      disposable.missionId,
+      disposable.taskId,
+    );
+    expect(prepared).toMatchObject({
+      taskHeadSha: baseSha,
+      integrationHeadSha: merged.integratedSha,
+      changedFiles: [],
+    });
+    registry.markDiscardedNoChange(
+      scope,
+      disposable.missionId,
+      disposable.taskId,
+      prepared!.taskHeadSha,
+      prepared!.integrationHeadSha,
+    );
+
+    expect(
+      registry.resolveIntegratedMission(scope, disposable.missionId, baseSha),
+    ).toMatchObject({
+      baseSha,
+      headSha: merged.integratedSha,
+    });
+
+    manager.close(scope);
+    const reopened = new WorktreeRuntimeRegistry(manager);
+    expect(
+      reopened.resolveIntegratedMission(scope, disposable.missionId, baseSha),
+    ).toMatchObject({
+      baseSha,
+      headSha: merged.integratedSha,
+    });
+  });
+
+  it("revalidates multiple disposable records against their current integration ancestry", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const baseSha = git(root, "rev-parse", "HEAD");
+    const firstDisposable = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: "mission-multiple-disposable",
+      taskId: "review-first",
+      workerId: "reviewer-first",
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ["review-first"],
+      },
+    });
+    const secondDisposable = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: firstDisposable.missionId,
+      taskId: "review-second",
+      workerId: "reviewer-second",
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ["review-second"],
+      },
+    });
+    const firstExecutor = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: firstDisposable.missionId,
+      taskId: "executor-first",
+      workerId: "executor-first",
+      ownership: {
+        files: ["owned.txt"],
+        symbols: [],
+        domains: ["implementation-first"],
+      },
+    });
+    fs.writeFileSync(
+      path.join(firstExecutor.worktreePath, "owned.txt"),
+      "first\n",
+    );
+    git(firstExecutor.worktreePath, "add", "owned.txt");
+    git(firstExecutor.worktreePath, "commit", "-qm", "first executor");
+    const firstMerge = await registry.enqueue({
+      scope,
+      missionId: firstExecutor.missionId,
+      taskId: firstExecutor.taskId,
+      validate: () => ({
+        sensorsPassed: true,
+        reviewPassed: true,
+        evidenceIds: ["first-executor-evidence"],
+      }),
+    });
+    const firstPrepared = registry.prepareDiscardedNoChangeValidation(
+      scope,
+      firstDisposable.missionId,
+      firstDisposable.taskId,
+    );
+    registry.markDiscardedNoChange(
+      scope,
+      firstDisposable.missionId,
+      firstDisposable.taskId,
+      firstPrepared!.taskHeadSha,
+      firstPrepared!.integrationHeadSha,
+    );
+
+    const secondExecutor = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: firstDisposable.missionId,
+      taskId: "executor-second",
+      workerId: "executor-second",
+      ownership: {
+        files: ["second.txt"],
+        symbols: [],
+        domains: ["implementation-second"],
+      },
+    });
+    fs.writeFileSync(
+      path.join(secondExecutor.worktreePath, "second.txt"),
+      "second\n",
+    );
+    git(secondExecutor.worktreePath, "add", "second.txt");
+    git(secondExecutor.worktreePath, "commit", "-qm", "second executor");
+    const secondMerge = await registry.enqueue({
+      scope,
+      missionId: secondExecutor.missionId,
+      taskId: secondExecutor.taskId,
+      validate: () => ({
+        sensorsPassed: true,
+        reviewPassed: true,
+        evidenceIds: ["second-executor-evidence"],
+      }),
+    });
+    const secondPrepared = registry.prepareDiscardedNoChangeValidation(
+      scope,
+      secondDisposable.missionId,
+      secondDisposable.taskId,
+    );
+    registry.markDiscardedNoChange(
+      scope,
+      secondDisposable.missionId,
+      secondDisposable.taskId,
+      secondPrepared!.taskHeadSha,
+      secondPrepared!.integrationHeadSha,
+    );
+
+    expect(firstPrepared?.integrationHeadSha).toBe(firstMerge.integratedSha);
+    expect(secondPrepared?.integrationHeadSha).toBe(secondMerge.integratedSha);
+    expect(
+      registry.resolveIntegratedMission(
+        scope,
+        firstDisposable.missionId,
+        baseSha,
+      ),
+    ).toMatchObject({
+      baseSha,
+      headSha: secondMerge.integratedSha,
+    });
+  });
+
+  it("does not resolve a queue-less no-change record whose physical worktree changed", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const baseSha = git(root, "rev-parse", "HEAD");
+    const record = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: "mission-dirty-no-change",
+      taskId: "review-dirty",
+      workerId: "reviewer",
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ["review-only"],
+      },
+    });
+    const prepared = registry.prepareNoChangeValidation(
+      scope,
+      record.missionId,
+      record.taskId,
+    );
+    registry.markValidatedNoChange(
+      scope,
+      record.missionId,
+      record.taskId,
+      prepared!.taskHeadSha,
+      prepared!.integrationHeadSha,
+    );
+    fs.writeFileSync(
+      path.join(record.worktreePath, "untrusted-after-validation.txt"),
+      "not part of the validated receipt\n",
+    );
+
+    expect(
+      registry.resolveIntegratedMission(scope, record.missionId, baseSha),
+    ).toBeNull();
+  });
+
+  it("does not resolve a queue-less no-change record with unrelated persisted integration ancestry", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    const baseSha = git(root, "rev-parse", "HEAD");
+    const record = await createTrackedWorktree(registry, manager, {
+      scope,
+      missionId: "mission-corrupt-no-change",
+      taskId: "review-corrupt",
+      workerId: "reviewer",
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ["review-only"],
+      },
+    });
+    const prepared = registry.prepareNoChangeValidation(
+      scope,
+      record.missionId,
+      record.taskId,
+    );
+    registry.markValidatedNoChange(
+      scope,
+      record.missionId,
+      record.taskId,
+      prepared!.taskHeadSha,
+      prepared!.integrationHeadSha,
+    );
+    const treeSha = git(root, "rev-parse", "HEAD^{tree}");
+    const unrelatedSha = git(root, "commit-tree", treeSha, "-m", "unrelated");
+    const runtime = registry.forScope(scope);
+    const key = runtime.worktrees.scopeKey(scope);
+    let snapshot = runtime.worktreeState.read(key);
+    expect(
+      runtime.worktreeState.compareAndSwap(
+        key,
+        snapshot.revision,
+        snapshot.records.map((candidate) =>
+          candidate.taskKey === record.taskKey
+            ? { ...candidate, integratedSha: unrelatedSha }
+            : candidate,
+        ),
+      ),
+    ).toBe(true);
+
+    expect(
+      registry.resolveIntegratedMission(scope, record.missionId, baseSha),
+    ).toBeNull();
+
+    const divergentDescendantSha = git(
+      root,
+      "commit-tree",
+      treeSha,
+      "-p",
+      baseSha,
+      "-m",
+      "divergent descendant",
+    );
+    snapshot = runtime.worktreeState.read(key);
+    expect(
+      runtime.worktreeState.compareAndSwap(
+        key,
+        snapshot.revision,
+        snapshot.records.map((candidate) =>
+          candidate.taskKey === record.taskKey
+            ? { ...candidate, integratedSha: divergentDescendantSha }
+            : candidate,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      registry.resolveIntegratedMission(scope, record.missionId, baseSha),
+    ).toBeNull();
+  });
+
   it("persists, validates, merges and resolves an exact integrated mission", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);

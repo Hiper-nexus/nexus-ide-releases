@@ -247,10 +247,16 @@ export function assertRealMissionPassEvidence(raw) {
     orchestratorPanes[0]?.adapterId === "claude"
       ? "claude"
       : "codex";
+  const participation = Array.isArray(evidence?.participation)
+    ? evidence.participation
+    : [];
+  const presentAdvisorClis = participation
+    .filter((row) => record(row)?.skipped === null)
+    .map((row) => row.cli);
   const expectedAcceptanceCriteria =
     evidence?.launchSurface === "product-wizard"
       ? REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA
-      : realMissionAcceptanceCriteria(orchestratorCli);
+      : realMissionAcceptanceCriteria(orchestratorCli, presentAdvisorClis);
   const physicalPty = record(evidence?.physicalPty);
   const physicalPtyIds = Array.isArray(physicalPty?.ids)
     ? physicalPty.ids
@@ -328,15 +334,8 @@ export function assertRealMissionPassEvidence(raw) {
     "ptyChunkSha256",
   ]);
   const expectedSha = sha256(REAL_MISSION_EXPECTED_CONTENT);
-  // O DAG selado deriva do roster advisor presente: scouts e executor são
-  // raízes do fan-out; a cadeia de reviewers parte do executor e termina no
-  // QA. Advisors skipped ficam fora do grafo.
-  const participation = Array.isArray(evidence?.participation)
-    ? evidence.participation
-    : [];
-  const presentAdvisorClis = participation
-    .filter((row) => record(row)?.skipped === null)
-    .map((row) => row.cli);
+  // O DAG selado deriva do roster realmente admitido: advisors e executor são
+  // raízes; a cadeia codex segue executor → revisor → QA.
   const chain = realMissionExpectedTaskChain(presentAdvisorClis);
   const chainPlans = chain.map((member) =>
     planTasks.find(

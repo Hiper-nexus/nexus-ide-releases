@@ -15,6 +15,7 @@ import {
   attachOrchMeta,
   bindPendingSpawnSession,
   claimPendingSpawnMeta,
+  claimPendingSpawnMetaByPane,
   findPane,
   findPaneOwnedBy,
   getOwnedPaneAuthzInfo,
@@ -234,6 +235,119 @@ describe("pending pane spawn authority", () => {
     syncPanes([], missionOwner);
   });
 
+  it("requests sealed renderer cleanup before resolving a failed pane spawn", async () => {
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      scope,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+
+    expect(resolvePaneSpawn({
+      requestId: request.requestId,
+      ok: false,
+      error: "renderer failed",
+    }, owner)).toBe(true);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: false,
+      error: "renderer failed",
+    });
+    expect(owner.send).toHaveBeenLastCalledWith(
+      ORCH_CHANNELS.paneCloseRequest,
+      { requestId: request.requestId, paneId: request.paneId },
+    );
+  });
+
+  it("still resolves an unclaimed failure when renderer cleanup send throws", async () => {
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      scope,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+    owner.send.mockImplementation(() => {
+      throw new Error("WebContents was destroyed");
+    });
+
+    expect(resolvePaneSpawn({
+      requestId: request.requestId,
+      ok: false,
+      error: "renderer failed",
+    }, owner)).toBe(true);
+
+    await expect(resultPromise).resolves.toEqual({
+      requestId: request.requestId,
+      ok: false,
+      error: "renderer failed",
+    });
+  });
+
+  it("requests sealed cleanup when an unclaimed pane spawn times out", async () => {
+    vi.useFakeTimers();
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      scope,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: false,
+      error: "pane spawn timed out",
+    });
+    expect(owner.send).toHaveBeenLastCalledWith(
+      ORCH_CHANNELS.paneCloseRequest,
+      { requestId: request.requestId, paneId: request.paneId },
+    );
+  });
+
+  it("aborts idempotently and requests sealed cleanup exactly once", async () => {
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    const abort = new AbortController();
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      scope,
+      abortSignal: abort.signal,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+
+    abort.abort("review superseded");
+    abort.abort("duplicate abort");
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: false,
+      error: "review superseded",
+    });
+    expect(owner.send.mock.calls.filter(([channel, payload]) =>
+      channel === ORCH_CHANNELS.paneCloseRequest &&
+      (payload as { requestId?: string }).requestId === request.requestId
+    )).toHaveLength(1);
+    expect(resolvePaneSpawn({
+      requestId: request.requestId,
+      ok: false,
+      error: "late renderer failure",
+    }, owner)).toBe(false);
+  });
+
   it("fails closed instead of falling back to a renderer from another workspace", async () => {
     const ownerB = renderer();
     const scopeA = testProjectScope({ projectId: "project-a" });
@@ -375,6 +489,66 @@ describe("pending pane spawn authority", () => {
     });
     expect(Object.isFrozen(claimed?.sealedRequest)).toBe(true);
     expect(Object.isFrozen(claimed?.authoritySeal)).toBe(true);
+    expect(claimPendingSpawnMeta(request.requestId, owner)).toBeNull();
+
+    resolvePaneSpawn(
+      { requestId: request.requestId, ok: false, error: "test cleanup" },
+      owner,
+    );
+    await expect(resultPromise).resolves.toMatchObject({ ok: false });
+  });
+
+  it("recovers a lost presentation token only for the exact owner, pane, and mission", async () => {
+    const owner = renderer();
+    const attacker = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      missionId: "mission-a",
+      agentName: "worker-a",
+      role: "worker",
+      contextRevision: missionAuthority.seal.contextRevision,
+      authoritySeal: missionAuthority.seal,
+      scope,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+
+    expect(
+      claimPendingSpawnMetaByPane(
+        {
+          paneId: request.paneId,
+          missionId: "mission-a",
+        },
+        attacker,
+      ),
+    ).toBeNull();
+    expect(
+      claimPendingSpawnMetaByPane(
+        {
+          paneId: request.paneId,
+          missionId: "mission-forged",
+        },
+        owner,
+      ),
+    ).toBeNull();
+
+    const claimed = claimPendingSpawnMetaByPane(
+      {
+        paneId: request.paneId,
+        missionId: "mission-a",
+      },
+      owner,
+    );
+
+    expect(claimed?.sealedRequest).toMatchObject({
+      requestId: request.requestId,
+      paneId: request.paneId,
+      missionId: "mission-a",
+      role: "worker",
+    });
     expect(claimPendingSpawnMeta(request.requestId, owner)).toBeNull();
 
     resolvePaneSpawn(

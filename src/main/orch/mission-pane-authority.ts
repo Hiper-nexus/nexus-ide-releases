@@ -5,7 +5,11 @@ import type {
   Squad,
 } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
-import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
+import {
+  hasCurrentDispatchAuthority,
+  missionIntentAuthoritySnapshot,
+  type MissionIntentContract,
+} from "../../shared/mission-intent";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 
@@ -33,6 +37,13 @@ export function hashMissionIntentContract(value: unknown): string {
   return sha256(value);
 }
 
+/** Stable hash of the operator-approved contract, excluding runtime ledger. */
+export function hashMissionIntentAuthority(
+  contract: MissionIntentContract,
+): string {
+  return sha256(missionIntentAuthoritySnapshot(contract));
+}
+
 export function createMissionPaneAuthoritySeal(input: {
   readonly mission: Mission;
   readonly squad: Squad;
@@ -57,7 +68,7 @@ export function createMissionPaneAuthoritySeal(input: {
   ) {
     return null;
   }
-  const intentContractHash = hashMissionIntentContract(intentContract);
+  const intentContractHash = hashMissionIntentAuthority(intentContract);
   return Object.freeze({
     intentVersion,
     intentContractHash,

@@ -132,8 +132,9 @@ export function buildMissionKickoffPrompt(
       'AGENTS.md/CLAUDE.md, inclua um starter baseado no repositório e registre descobertas úteis. ' +
       'Em tarefas de UI, leia o DESIGN.md do workspace ou `.context/docs/design-system.md`. ' +
       'Se o contrato visual faltar OU o objetivo citar URL/referência (inspirado em, parecido com, ' +
-      'mockup, brand site), chame `nexus_design_system_extract` sozinho — não espere o usuário ' +
-      'pedir Dembrandt. Preferir extract a inventar palette. Se o sistema externo for um kit ' +
+      'mockup, brand site), tente `nexus_design_system_extract` uma vez. Se retornar ' +
+      '`NETWORK_GUARD_UNAVAILABLE`, não repita nem bloqueie a missão: use contexto local/designmd ' +
+      'e registre a limitação, sem fingir que preflight protege redirects/subresources. Se o sistema externo for um kit ' +
       'designmd.ai, use nexus_design_system_search/get/import pelo fluxo de drafts; nunca publique ' +
       'com nexus_design_system_publish sem solicitação explícita. Finalize UI com crítica de UX, ' +
       'estados hover/focus/empty/error e validação visual (skill impeccable). Rejeite o ' +

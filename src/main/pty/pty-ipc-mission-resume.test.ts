@@ -49,6 +49,9 @@ const authorityDeps = vi.hoisted(() => {
     claimPendingSpawnMeta: vi.fn(
       (_requestId: string, _owner: unknown): unknown => null,
     ),
+    claimPendingSpawnMetaByPane: vi.fn(
+      (_input: unknown, _owner: unknown): unknown => null,
+    ),
     claimPendingRecoverySpawnMeta: vi.fn(
       (_requestId: string, _owner: unknown): unknown => null,
     ),
@@ -137,6 +140,7 @@ vi.mock("../orch/workspace-path", () => ({
 
 vi.mock("../orch/pane-registry", () => ({
   claimPendingSpawnMeta: authorityDeps.claimPendingSpawnMeta,
+  claimPendingSpawnMetaByPane: authorityDeps.claimPendingSpawnMetaByPane,
   claimPendingRecoverySpawnMeta:
     authorityDeps.claimPendingRecoverySpawnMeta,
   bindPendingSpawnSession: authorityDeps.bindPendingSpawnSession,
@@ -328,6 +332,7 @@ describe("registerPtyIpc account fail-fast", () => {
     authorityDeps.resolveCwdForScope.mockReset();
     authorityDeps.resolveCwdForScope.mockReturnValue("/workspace/a");
     authorityDeps.claimPendingSpawnMeta.mockReturnValue(null);
+    authorityDeps.claimPendingSpawnMetaByPane.mockReturnValue(null);
     authorityDeps.claimPendingRecoverySpawnMeta.mockReturnValue(null);
     authorityDeps.bindPendingSpawnSession.mockReturnValue(true);
     authorityDeps.bindPendingRecoverySpawnSession.mockReturnValue(true);

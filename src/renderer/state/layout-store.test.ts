@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PaneModel } from '../../shared/types';
+import type { PaneModel, WorkspaceLayout } from '../../shared/types';
 import { defaultCanvasLayout } from '../lib/canvas-layout';
 import { buildGridTree, listPanes } from '../lib/split-tree';
-import { switchWorkspaceLayout, useLayoutStore } from './layout-store';
+import {
+  detachWorkspaceLayout,
+  flushLayout,
+  sanitizeWorkspaceLayout,
+  setRestoredPanesHandler,
+  switchWorkspaceLayout,
+  switchWorkspaceLayoutWithFallback,
+  useLayoutStore,
+} from './layout-store';
 
 const basePane: PaneModel = {
   id: 'pane-a',
@@ -11,6 +19,8 @@ const basePane: PaneModel = {
 };
 
 afterEach(() => {
+  setRestoredPanesHandler(null);
+  detachWorkspaceLayout();
   vi.unstubAllGlobals();
 });
 
@@ -83,7 +93,160 @@ describe('layout-store pane maximize', () => {
   });
 });
 
+describe('layout-store transient pane recovery', () => {
+  it('removes new and legacy PREVC reviewers before hydrate or restore', async () => {
+    const reviewerSuffix = 'a1b2c3d4e5f6';
+    const durable: PaneModel = {
+      id: 'pane-durable',
+      kind: 'cli-agent',
+      title: 'Executor',
+      adapterId: 'codex',
+      missionId: 'mission-a',
+      role: 'worker',
+      agentName: 'executor',
+    };
+    const transient: PaneModel = {
+      id: 'pane-transient-reviewer',
+      kind: 'cli-agent',
+      title: 'PREVC reviewer',
+      adapterId: 'claude',
+      missionId: 'mission-a',
+      role: 'worker',
+      transient: true,
+    };
+    const legacy: PaneModel = {
+      id: 'pane-legacy-reviewer',
+      kind: 'cli-agent',
+      title: `review-mission-a-1-${reviewerSuffix}`,
+      adapterId: 'claude',
+      missionId: 'mission-a',
+      role: 'worker',
+      agentName: `reviewer-claude-1-${reviewerSuffix}`,
+    };
+    const crashedLayout = {
+      root: buildGridTree([durable, transient, legacy]),
+      focusedPaneId: legacy.id,
+      viewKind: 'canvas' as const,
+      canvasNodeLayouts: {
+        [durable.id]: defaultCanvasLayout(0),
+        [transient.id]: defaultCanvasLayout(1),
+        [legacy.id]: defaultCanvasLayout(2),
+      },
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    };
+
+    const sanitized = sanitizeWorkspaceLayout(crashedLayout);
+    expect(listPanes(sanitized.root).map((pane) => pane.id)).toEqual([
+      durable.id,
+    ]);
+    expect(sanitized.focusedPaneId).toBe(durable.id);
+    expect(Object.keys(sanitized.canvasNodeLayouts ?? {})).toEqual([
+      durable.id,
+    ]);
+
+    const onlyLegacyLayout = {
+      ...crashedLayout,
+      root: buildGridTree([legacy]),
+      focusedPaneId: legacy.id,
+      canvasNodeLayouts: {
+        [legacy.id]: defaultCanvasLayout(0),
+      },
+    };
+    const save = vi.fn(
+      async (_workspacePath: string, _layout: WorkspaceLayout) => undefined,
+    );
+    const saveSync = vi.fn(
+      (_workspacePath: string, _layout: WorkspaceLayout) => undefined,
+    );
+    const restored = vi.fn();
+    vi.stubGlobal('window', {
+      nexus: {
+        layout: {
+          load: vi.fn(async () => onlyLegacyLayout),
+          save,
+          saveSync,
+        },
+      },
+    });
+    setRestoredPanesHandler(restored);
+
+    await switchWorkspaceLayout('/workspace/crashed-prevc-reviewer');
+
+    const restoredPanes = restored.mock.calls[0]?.[0] as PaneModel[];
+    expect(restoredPanes).toHaveLength(1);
+    expect(restoredPanes[0]).toMatchObject({ kind: 'shell' });
+    expect(restoredPanes[0]?.id).not.toBe(legacy.id);
+    expect(save).toHaveBeenCalledWith(
+      '/workspace/crashed-prevc-reviewer',
+      expect.any(Object),
+    );
+
+    useLayoutStore.getState().spawnOrchPane({
+      paneId: 'pane-live-transient',
+      adapterId: 'claude',
+      title: 'PREVC live',
+      orchRequestId: 'orchspawn-live-transient',
+      missionId: 'mission-a',
+      role: 'worker',
+      transient: true,
+    });
+    expect(
+      listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
+    ).toContain('pane-live-transient');
+
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const durableSaves = save.mock.calls.filter(
+      ([workspacePath]) =>
+        workspacePath === '/workspace/crashed-prevc-reviewer',
+    );
+    const lastSavedLayout = durableSaves.at(-1)?.[1] as
+      | ReturnType<typeof sanitizeWorkspaceLayout>
+      | undefined;
+    expect(lastSavedLayout).toBeDefined();
+    expect(
+      listPanes(lastSavedLayout!.root).map((pane) => pane.id),
+    ).not.toContain('pane-live-transient');
+
+    flushLayout(true);
+    const syncLayout = saveSync.mock.calls.at(-1)?.[1] as
+      | ReturnType<typeof sanitizeWorkspaceLayout>
+      | undefined;
+    expect(syncLayout).toBeDefined();
+    expect(listPanes(syncLayout!.root).map((pane) => pane.id)).not.toContain(
+      'pane-live-transient',
+    );
+  });
+});
+
 describe('layout-store workspace load failure', () => {
+  it('retries once and hydrates a safe shell instead of trapping the app on boot', async () => {
+    const save = vi.fn(async () => undefined);
+    const load = vi.fn(async () => {
+      throw new Error('layout unavailable');
+    });
+    vi.stubGlobal('window', {
+      nexus: {
+        layout: {
+          load,
+          save,
+          saveSync: vi.fn(),
+        },
+      },
+    });
+    useLayoutStore.setState({ hydrated: false });
+
+    await expect(
+      switchWorkspaceLayoutWithFallback('/workspace/unavailable'),
+    ).rejects.toThrow('layout unavailable');
+
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(useLayoutStore.getState().hydrated).toBe(true);
+    expect(listPanes(useLayoutStore.getState().root)).toHaveLength(1);
+    useLayoutStore.getState().addShellPane();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('detaches persistence so outgoing panes cannot be saved under the failed target', async () => {
     const save = vi.fn(async () => undefined);
     vi.stubGlobal('window', {

@@ -25,9 +25,10 @@ function taskDispatchMissionBlock(detail: string): string {
 }
 
 /**
- * Removes only the exact technical block appended for this dispatch attempt.
- * A different block, an operator block, or lifecycle drift remains terminal:
- * callers may never reopen a mission merely because a provider retry is due.
+ * Removes the exact technical block appended for this dispatch attempt,
+ * including identical trailing copies left by legacy resume loops. A different
+ * block, an operator block, or lifecycle drift remains terminal: callers may
+ * never reopen a mission merely because a provider retry is due.
  */
 export function resumeTaskDispatchMissionAfterTechnicalFailure(
   db: TaskDispatchDatabase,
@@ -61,10 +62,13 @@ export function resumeTaskDispatchMissionAfterTechnicalFailure(
       "retry técnico não corresponde ao bloco canônico atual da missão",
     );
   }
-  const prefix = row.description.slice(0, -suffix.length);
-  const description = prefix.endsWith("\n\n")
-    ? prefix.slice(0, -2)
-    : prefix;
+  let description = row.description;
+  do {
+    const prefix = description.slice(0, -suffix.length);
+    description = prefix.endsWith("\n\n")
+      ? prefix.slice(0, -2)
+      : prefix;
+  } while (description.endsWith(suffix));
   const updated = db
     .prepare(
       `UPDATE missions

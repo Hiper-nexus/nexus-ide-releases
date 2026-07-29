@@ -66,6 +66,21 @@ let coordinator: OrchestrationReconciler | null = null;
 let disposeLoginWatchdog: (() => void) | null = null;
 let coordinatorStopFlight: Promise<void> | null = null;
 const MISSION_RUNTIME_AUTHORITY_RECONCILE_MS = 1_000;
+/**
+ * The merge council has its own 10-minute bound (20 minutes in the packaged
+ * physical release gate). Keep the outer participant just beyond that bound:
+ * otherwise a healthy reviewer is cancelled every 30 seconds and can never
+ * submit its durable report. Abort still reaches the whole scheduler on a
+ * genuine overrun or shutdown.
+ */
+export const MISSION_SCHEDULER_PARTICIPANT_TIMEOUT_MS = 21 * 60_000;
+
+export function runMissionSchedulerCoordinatorParticipant(
+  _now: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  return reconcileMissionScheduler(signal);
+}
 
 export function startOrchestrationCoordinator(): void {
   if (coordinator) return;
@@ -139,7 +154,8 @@ export function startOrchestrationCoordinator(): void {
     {
       id: 'mission-scheduler',
       cadenceMs: MISSION_SCHEDULER_TICK_MS,
-      run: () => reconcileMissionScheduler(),
+      timeoutMs: MISSION_SCHEDULER_PARTICIPANT_TIMEOUT_MS,
+      run: runMissionSchedulerCoordinatorParticipant,
     },
     {
       id: 'mission-driver',

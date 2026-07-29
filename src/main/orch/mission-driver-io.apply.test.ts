@@ -14,6 +14,9 @@ import {
   snapshotsForScope,
 } from './mission-driver-io';
 import type { PrevcAdvancePort } from './mission-driver-prevc';
+import {
+  missionHasSchedulerProgress as schedulerOwnsMissionProgress,
+} from './mission-scheduler-authority';
 
 const milestoneEvidence1 = `milestone:${'1'.repeat(64)}`;
 const milestoneEvidence2 = `milestone:${'2'.repeat(64)}`;
@@ -955,4 +958,71 @@ describe('createProductionApplyPorts advance/complete', () => {
     ).toHaveLength(1);
     expect(mission.description.match(/CTA: Retomar missão/g)).toHaveLength(1);
   });
+});
+
+describe('scheduler-owned mission progress', () => {
+  it('keeps a dead Maestro advisory after current kickoff dispatched durable work', () => {
+    const mission = makeMission([], {
+      orchestratorSessionId: 'orchestrator-current',
+      intentVersion: 7,
+    });
+
+    expect(
+      schedulerOwnsMissionProgress(mission, true, [
+        {
+          missionId: mission.id,
+          intentVersion: 7,
+          state: 'running',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it('keeps orchestrator death fail-closed before the first durable dispatch', () => {
+    const mission = makeMission([], {
+      orchestratorSessionId: 'orchestrator-current',
+      intentVersion: 7,
+    });
+
+    expect(schedulerOwnsMissionProgress(mission, true, [])).toBe(false);
+  });
+
+  it.each([
+    {
+      name: 'sem kickoff atual',
+      kickoffAccepted: false,
+      intentVersion: 7,
+      state: 'running' as const,
+    },
+    {
+      name: 'dispatch de intent obsoleta',
+      kickoffAccepted: true,
+      intentVersion: 6,
+      state: 'running' as const,
+    },
+    {
+      name: 'dispatch superseded',
+      kickoffAccepted: true,
+      intentVersion: 7,
+      state: 'superseded' as const,
+    },
+  ])(
+    'mantém paneDead fail-closed: $name',
+    ({ kickoffAccepted, intentVersion, state }) => {
+      const mission = makeMission([], {
+        orchestratorSessionId: 'orchestrator-current',
+        intentVersion: 7,
+      });
+
+      expect(
+        schedulerOwnsMissionProgress(mission, kickoffAccepted, [
+          {
+            missionId: mission.id,
+            intentVersion,
+            state,
+          },
+        ]),
+      ).toBe(false);
+    },
+  );
 });

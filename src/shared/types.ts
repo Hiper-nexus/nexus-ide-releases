@@ -72,6 +72,7 @@ import type {
   MissionPatch,
   OperatorReviewFeedbackInput,
   OperatorReviewFeedbackResult,
+  MissionPanePresentationRequest,
   MissionPaneRecoveryRequest,
   MissionPaneRecoveryResult,
   OrchPaneSpawnRequest,
@@ -513,6 +514,9 @@ export interface NexusApi {
     syncPanes(entries: PaneRegistryEntry[]): void;
     sendPaneSpawnResult(result: OrchPaneSpawnResult): void;
     onPaneSpawnRequest(cb: (req: OrchPaneSpawnRequest) => void): Unsubscribe;
+    onPanePresentationRequest?(
+      cb: (req: MissionPanePresentationRequest) => void,
+    ): Unsubscribe;
     sendPaneRecoveryResult(result: MissionPaneRecoveryResult): void;
     onPaneRecoveryRequest(
       cb: (req: MissionPaneRecoveryRequest) => void,
@@ -532,6 +536,15 @@ export interface NexusApi {
     listMissions(): Promise<Mission[]>;
     /** Recorded pane composition of a mission (for 1-click reopen). */
     listMissionPanes(missionId: string): Promise<MissionPaneSpec[]>;
+    /**
+     * Fail-closed restore proof. A renderer layout role/missionId is metadata,
+     * never authority; Main confirms the exact persisted pane against the
+     * mission's currently approved revision before any CLI may resume.
+     */
+    canRestoreMissionPane(input: {
+      missionId: string;
+      paneId: string;
+    }): Promise<boolean>;
     /** Point handoff delivery at the reopened orchestrator's new session. */
     rebindMissionOrchestrator(
       missionId: string,

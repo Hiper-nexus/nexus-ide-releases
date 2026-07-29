@@ -1184,6 +1184,7 @@ function registerPetIpc(): void {
       ![
         'mission-done',
         'mission-failed',
+        'mission-technical-failure',
         'mission-blocked',
         'agent-waiting',
         'agent-exited',

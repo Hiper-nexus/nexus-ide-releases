@@ -391,10 +391,7 @@ export function MissionRail() {
 
   function missionMeta(mission: Mission, liveInGrid: boolean): string {
     const recovering = hasAutomaticTechnicalRecovery(mission);
-    const displayIntentState =
-      mission.intentState === 'blocked_technical' && !recovering
-        ? 'blocked_user'
-        : mission.intentState;
+    const displayIntentState = mission.intentState;
     const hands = handoffCountByMission.get(mission.id) ?? 0;
     const handBit =
       hands > 0 ? ` · ${hands} entrega${hands === 1 ? '' : 's'}` : '';
@@ -428,6 +425,10 @@ export function MissionRail() {
         'blocked_technical',
       );
       return `${recovery.meta ?? 'Recuperação automática'}${laneBit}${handBit}${budgetBit}${routeBit}`;
+    }
+
+    if (mission.intentState === 'blocked_technical') {
+      return `Falha técnica · ver diagnóstico e tentar novamente${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
 
     if (liveInGrid) {
@@ -807,11 +808,13 @@ export function MissionRail() {
                             Boolean(m.orchestratorSessionId));
                         const recovering =
                           hasAutomaticTechnicalRecovery(m);
-                        const displayIntentState = recovering
-                          ? 'blocked_technical'
-                          : m.intentState === 'blocked_technical'
-                            ? 'blocked_user'
-                            : m.intentState;
+                        const displayIntentState = m.intentState;
+                        const technicalRecovery =
+                          m.intentState === 'blocked_technical'
+                            ? recovering
+                              ? 'recovering'
+                              : 'exhausted'
+                            : undefined;
                         const statusUi = railStatusDisplay(
                           m.status,
                           liveInGrid,
@@ -821,6 +824,7 @@ export function MissionRail() {
                             hasActiveRuntime,
                             latestHandoffStatus:
                               latestHandoffByMission.get(m.id)?.status,
+                            technicalRecovery,
                           },
                         );
                         const resumeCopy = missionRailResumeCopy(
@@ -830,6 +834,7 @@ export function MissionRail() {
                             ? 'blocked_technical'
                             : displayIntentState,
                           lane,
+                          technicalRecovery,
                         );
                         const routeDisplay = missionRouteDisplay(m.latestRoute);
                         const canPromotePlan =

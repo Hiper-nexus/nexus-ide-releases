@@ -17,6 +17,7 @@ import {
   bindPendingSpawnSession,
   claimPendingRecoverySpawnMeta,
   claimPendingSpawnMeta,
+  claimPendingSpawnMetaByPane,
   hasLivePaneSession,
   type PendingRecoverySpawnMeta,
   type PendingSpawnMeta,
@@ -404,10 +405,23 @@ export function authorizeMainOwnedAgentSpawn(
   let canonicalRequest = request;
   const pending = request.orchRequestId
     ? claimPendingSpawnMeta(request.orchRequestId, owner)
+    : request.paneId && request.missionId
+      ? claimPendingSpawnMetaByPane(
+          {
+            paneId: request.paneId,
+            missionId: request.missionId,
+          },
+          owner,
+        )
     : null;
   if (pending) {
+    const sealedRequestId = pending.sealedRequest?.requestId;
+    const pendingRequest =
+      !canonicalRequest.orchRequestId && sealedRequestId
+        ? { ...canonicalRequest, orchRequestId: sealedRequestId }
+        : canonicalRequest;
     canonicalRequest = canonicalizePendingSpawnRequest(
-      canonicalRequest,
+      pendingRequest,
       pending,
     );
   }
@@ -461,6 +475,17 @@ export function authorizeMainOwnedAgentSpawn(
   }
   if (recovery && !persistedPane) {
     throw new Error("pane recovery has no current persisted authority");
+  }
+  if (
+    !pending &&
+    !persistedPane &&
+    !canonicalRequest.orchRequestId &&
+    canonicalRequest.missionId &&
+    canonicalRequest.paneId
+  ) {
+    throw new Error(
+      "stale persisted mission pane authority: pane is no longer registered by Main",
+    );
   }
 
   return Object.freeze({

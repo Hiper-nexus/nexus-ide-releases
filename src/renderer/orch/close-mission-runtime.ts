@@ -22,25 +22,29 @@ export function closeMissionNote(terminatedCount: number): string {
  */
 export function isOrphanMissionPaneSweep(result: MissionRuntimeCloseResult): boolean {
   if (result.ok) return false;
-  const error = result.error ?? '';
-  return (
-    error === 'Missão não encontrada.' ||
-    error === 'Missão concluída não possui execução encerrável.' ||
-    error === 'A missão desapareceu durante o encerramento.'
+  const error = (result.error ?? '').trim();
+  return /(?:^|:\s*)(?:mission not found|Missão não encontrada\.?|Missão concluída não possui execução encerrável\.?|A missão desapareceu durante o encerramento\.?)$/iu.test(
+    error,
   );
 }
 
 function sweepMissionPanes(missionId: string, reason: string): void {
   const layout = useLayoutStore.getState();
-  const paneMissions = useOrchStore.getState().paneMissions;
-  const paneIds = listPanes(layout.root)
+  const orch = useOrchStore.getState();
+  const panes = listPanes(layout.root);
+  const paneIds = panes
     .filter(
-      (pane) => (pane.missionId ?? paneMissions[pane.id]) === missionId,
+      (pane) => (pane.missionId ?? orch.paneMissions[pane.id]) === missionId,
     )
     .map((pane) => pane.id);
   for (const paneId of paneIds) {
     useLayoutStore.getState().close(paneId, reason);
   }
+  orch.pruneMissionBindings(
+    new Set(
+      listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
+    ),
+  );
 }
 
 /**
@@ -61,7 +65,7 @@ export async function closeMissionRuntimeAndPanes(
     // Authority fences (scope change, runtime changed under the modal) reject
     // the IPC. Surfacing them as a result keeps the caller's busy state
     // recoverable instead of freezing the mission list on a dangling promise.
-    return {
+    result = {
       ok: false,
       terminatedSessionIds: [],
       error: error instanceof Error ? error.message : String(error),

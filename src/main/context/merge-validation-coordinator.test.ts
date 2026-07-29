@@ -389,4 +389,265 @@ describe('merge validation coordinator', () => {
     );
     expect(runReview).toHaveBeenCalledOnce();
   });
+
+  it('passes current pre-execution HIGH guidance to the candidate reviewer', async () => {
+    const runReview = vi.fn(async (input: RunAutomatedReviewInput) => {
+      expect(input.contextMarkdown).toContain(
+        '## Pre-execution repair guidance',
+      );
+      expect(input.contextMarkdown).toContain(
+        'The sealed plan omitted token revocation.',
+      );
+      return {
+        ready: false,
+        gate: {
+          ready: false,
+          reason: 'blocking-findings' as const,
+          blockingFindingCount: 1,
+          reportCount: 1,
+        },
+        reports: [],
+        evidenceIds: ['review:candidate-rejection'],
+      };
+    });
+    const service = {
+      scope: { projectId: 'project-a', checkoutId: 'checkout-a' },
+      getMissionWorkflow: () => ({
+        contract: {
+          contract: {
+            missionId: 'mission-a',
+            contractHash: 'c'.repeat(64),
+            contextRevision: 'd'.repeat(64),
+            requiredSensors: [],
+            risk: 'high',
+          },
+        },
+        workflow: { stage: 'execution' },
+      }),
+      recordMergeReviewReport: vi.fn(),
+      compileMissionSnapshot: () => ({ markdown: '# Context' }),
+    } as never;
+    const coordinator = new MergeValidationCoordinator(service, {
+      runReview,
+      resolveAuthor: () => ({
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      }),
+      loadPreExecutionReviewGuidance: () =>
+        [
+          '## Pre-execution repair guidance',
+          'The sealed plan omitted token revocation.',
+        ].join('\n'),
+      runCandidateQuality: async () => ({
+        version: 'candidate-quality-v1',
+        complete: true,
+        analysisHash: 'f'.repeat(64),
+        findings: [],
+        inspectedFiles: 1,
+        inspectedBytes: 100,
+        incompleteReasons: [],
+        reviewerMarkdown: '',
+      }),
+    });
+
+    await expect(
+      coordinator.validate(validationContext()),
+    ).resolves.toMatchObject({
+      sensorsPassed: true,
+      reviewPassed: false,
+      evidenceIds: expect.arrayContaining(['review:candidate-rejection']),
+    });
+    expect(runReview).toHaveBeenCalledOnce();
+  });
+
+  it('reruns post-integration sensors and reuses an approved exact-binding quorum', async () => {
+    const recordMergeSensorEvidence = vi.fn();
+    const inspectPersistedReviewGate = vi.fn(() => ({
+      ready: true,
+      reason: 'ready' as const,
+      evidenceIds: ['review:persisted-physical'],
+      reportCount: 2,
+      quorumReportCount: 1,
+      blockingFindingCount: 0,
+    }));
+    const compileMissionSnapshot = vi.fn();
+    const runReview = vi.fn();
+    const resolveAuthor = vi.fn();
+    const assertCurrentAuthority = vi.fn();
+    const contract = {
+      contract: {
+        missionId: 'mission-a',
+        contractHash: 'c'.repeat(64),
+        contextRevision: 'd'.repeat(64),
+        requiredSensors: ['unit'],
+        risk: 'medium',
+      },
+    };
+    const service = {
+      scope: { projectId: 'project-a', checkoutId: 'checkout-a' },
+      getMissionWorkflow: () => ({
+        contract,
+        workflow: { stage: 'execution' },
+      }),
+      recordMergeSensorEvidence,
+      inspectPersistedReviewGate,
+      compileMissionSnapshot,
+    } as never;
+    const runSensor = vi.fn(async () => evidence());
+    const coordinator = new MergeValidationCoordinator(service, {
+      runSensor,
+      runReview,
+      resolveAuthor,
+    });
+
+    await expect(
+      coordinator.validate(validationContext({
+        phase: 'post-integration',
+        assertCurrentAuthority,
+      })),
+    ).resolves.toEqual({
+      sensorsPassed: true,
+      reviewPassed: true,
+      evidenceIds: ['evidence-a', 'review:persisted-physical'],
+    });
+    expect(runSensor).toHaveBeenCalledOnce();
+    expect(recordMergeSensorEvidence).toHaveBeenCalledWith(evidence());
+    expect(inspectPersistedReviewGate).toHaveBeenCalledWith({
+      projectId: 'project-a',
+      checkoutId: 'checkout-a',
+      missionId: 'mission-a',
+      contractHash: 'c'.repeat(64),
+      contextHash: 'd'.repeat(64),
+      baseSha: 'a'.repeat(40),
+      headSha: 'b'.repeat(40),
+      diffHash: 'e'.repeat(64),
+    });
+    expect(assertCurrentAuthority.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(resolveAuthor).not.toHaveBeenCalled();
+    expect(compileMissionSnapshot).not.toHaveBeenCalled();
+    expect(runReview).not.toHaveBeenCalled();
+  });
+
+  it(
+    'does not mask persisted blocking findings in a post-integration gate',
+    async () => {
+      const reason = 'blocking-findings' as const;
+      const quorumReportCount = 1;
+      const blockingFindingCount = 1;
+      const runReview = vi.fn();
+      const resolveAuthor = vi.fn();
+      const contract = {
+        contract: {
+          missionId: 'mission-a',
+          contractHash: 'c'.repeat(64),
+          contextRevision: 'd'.repeat(64),
+          requiredSensors: [],
+          risk: 'medium',
+        },
+      };
+      const service = {
+        scope: { projectId: 'project-a', checkoutId: 'checkout-a' },
+        getMissionWorkflow: () => ({
+          contract,
+          workflow: { stage: 'execution' },
+        }),
+        inspectPersistedReviewGate: () => ({
+          ready: false,
+          reason,
+          evidenceIds: ['review:persisted-rejection'],
+          reportCount: quorumReportCount,
+          quorumReportCount,
+          blockingFindingCount,
+        }),
+      } as never;
+      const coordinator = new MergeValidationCoordinator(service, {
+        runReview,
+        resolveAuthor,
+      });
+
+      await expect(
+        coordinator.validate(validationContext({ phase: 'post-integration' })),
+      ).resolves.toEqual({
+        sensorsPassed: true,
+        reviewPassed: false,
+        evidenceIds: ['review:persisted-rejection'],
+      });
+      expect(resolveAuthor).not.toHaveBeenCalled();
+      expect(runReview).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      kind: 'static analysis',
+      evidenceId: 'review:static-analysis',
+      quorumReportCount: 0,
+    },
+    {
+      kind: 'a partial physical quorum',
+      evidenceId: 'review:partial-physical-quorum',
+      quorumReportCount: 1,
+    },
+  ])('does not reuse $kind when the persisted quorum is incomplete', async ({
+    evidenceId,
+    quorumReportCount,
+  }) => {
+    const inspectPersistedReviewGate = vi.fn(() => ({
+      ready: false,
+      reason: 'review-quorum-missing' as const,
+      evidenceIds: [evidenceId],
+      reportCount: 1,
+      quorumReportCount,
+      blockingFindingCount: 0,
+    }));
+    const runReview = vi.fn(async () => ({
+      ready: true,
+      gate: {
+        ready: true,
+        reason: 'ready' as const,
+        blockingFindingCount: 0,
+        reportCount: 1,
+      },
+      reports: [],
+      evidenceIds: ['review:physical-review'],
+    }));
+    const contract = {
+      contract: {
+        missionId: 'mission-a',
+        contractHash: 'c'.repeat(64),
+        contextRevision: 'd'.repeat(64),
+        requiredSensors: [],
+        risk: 'medium',
+      },
+    };
+    const service = {
+      scope: { projectId: 'project-a', checkoutId: 'checkout-a' },
+      getMissionWorkflow: () => ({
+        contract,
+        workflow: { stage: 'execution' },
+      }),
+      inspectPersistedReviewGate,
+      compileMissionSnapshot: () => ({ markdown: '# Context' }),
+      recordMergeReviewReport: vi.fn(),
+    } as never;
+    const coordinator = new MergeValidationCoordinator(service, {
+      runReview,
+      resolveAuthor: () => ({
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      }),
+    });
+
+    await expect(
+      coordinator.validate(validationContext({ phase: 'post-integration' })),
+    ).resolves.toEqual({
+      sensorsPassed: true,
+      reviewPassed: true,
+      evidenceIds: [evidenceId, 'review:physical-review'],
+    });
+    expect(inspectPersistedReviewGate).toHaveBeenCalledOnce();
+    expect(runReview).toHaveBeenCalledOnce();
+  });
 });

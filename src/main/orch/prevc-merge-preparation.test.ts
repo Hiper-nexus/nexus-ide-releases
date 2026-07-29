@@ -72,7 +72,7 @@ function approvedFrozenContract(
 }
 
 describe("PREVC merge preparation", () => {
-  it("separates transient preparation from terminal promotion authority failures", () => {
+  it("keeps repairable PREVC findings and missing project checks non-terminal", () => {
     expect(
       classifyPrevcMergeFailure(
         new Error("prevc_merge_context_pending: reviewer capacity"),
@@ -83,40 +83,61 @@ describe("PREVC merge preparation", () => {
         new Error("prevc_merge_not_ready: workflow ended at review-primary"),
       ),
     ).toBe("retryable");
+    expect(
+      classifyPrevcMergeFailure(
+        new Error("prevc_merge_review_blocked: blocking-findings"),
+      ),
+    ).toBe("retryable");
+    expect(
+      classifyPrevcMergeFailure(
+        new Error("prevc_merge_requirements_pending: sensors=security-audit"),
+      ),
+    ).toBe("retryable");
     for (const code of [
       "prevc_merge_workflow_corrupt",
       "prevc_merge_contract_stale",
       "prevc_merge_stage_invalid",
-      "prevc_merge_requirements_pending",
     ]) {
       expect(classifyPrevcMergeFailure(new Error(code))).toBe("terminal");
     }
   });
 
-  it("warms missing project context without freezing or delaying worker execution", async () => {
+  it("prepares only project context opportunistically without rotating worker authority", async () => {
+    let readiness = {
+      ready: false,
+      contextRevision: null,
+      blockers: [{ code: "missing-product-context" }],
+      warnings: [],
+      sensorIds: [],
+    } as never;
+    let workflow: {
+      contract: {
+        contract: ReturnType<typeof approvedFrozenContract>;
+      } | null;
+      workflow: { stage: string } | null;
+    } = { contract: null, workflow: null };
     const freezeContract = vi.fn();
     const bootstrapContext = vi.fn(async () => ({
-      readiness: ready(),
+      readiness: (readiness = ready()),
       blockingError: null,
       autopilotHint: "ready",
     }));
+    const prepareExecution = vi.fn();
     const deps: PrevcMergePreparationDependencies = {
       getMission: () => mission(),
       workflowForScope: () =>
         ({
-          inspectReadiness: () => ({
-            ready: false,
-            contextRevision: null,
-            blockers: [{ code: "missing-product-context" }],
-            warnings: [],
-            sensorIds: [],
-          }),
-          getMissionWorkflow: () => ({ contract: null, workflow: null }),
+          inspectReadiness: () => readiness,
+          getMissionWorkflow: () => workflow,
           freezeContract,
           refreezeContract: vi.fn(),
         }) as never,
       bootstrapContext,
-      prepareExecution: vi.fn(),
+      prepareExecution,
+      inspectRequirements: () => ({
+        sensorIds: new Set(["typecheck", "unit"]),
+        invariantRefs: new Set(),
+      }),
     };
 
     await expect(
@@ -124,6 +145,94 @@ describe("PREVC merge preparation", () => {
     ).resolves.toMatchObject({ prepared: true, ready: true });
     expect(bootstrapContext).toHaveBeenCalledOnce();
     expect(freezeContract).not.toHaveBeenCalled();
+    expect(prepareExecution).not.toHaveBeenCalled();
+    expect(workflow).toEqual({ contract: null, workflow: null });
+  });
+
+  it("keeps promotion retryable while opportunistic context bootstrap is running", async () => {
+    let readiness = {
+      ready: false,
+      contextRevision: null,
+      blockers: [{ code: "missing-product-context" }],
+      warnings: [],
+      sensorIds: [],
+    } as never;
+    let workflow: {
+      contract: {
+        contract: ReturnType<typeof approvedFrozenContract>;
+      } | null;
+      workflow: { stage: string } | null;
+    } = { contract: null, workflow: null };
+    let finishBootstrap!: () => void;
+    const bootstrapContext = vi.fn(
+      () =>
+        new Promise<
+          Awaited<
+            ReturnType<PrevcMergePreparationDependencies["bootstrapContext"]>
+          >
+        >((resolve) => {
+          finishBootstrap = () => {
+            readiness = ready();
+            resolve({
+              readiness,
+              blockingError: null,
+              autopilotHint: "ready",
+            });
+          };
+        }),
+    );
+    const freezeContract = vi.fn(() => {
+      workflow = {
+        contract: { contract: approvedFrozenContract() },
+        workflow: { stage: "planning" },
+      };
+    });
+    const prepareExecution = vi.fn(async () => {
+      workflow = {
+        ...workflow,
+        workflow: { stage: "execution" },
+      };
+    });
+    const deps: PrevcMergePreparationDependencies = {
+      getMission: () => mission(),
+      workflowForScope: () =>
+        ({
+          inspectReadiness: () => readiness,
+          getMissionWorkflow: () => workflow,
+          freezeContract,
+          refreezeContract: vi.fn(),
+        }) as never,
+      bootstrapContext,
+      prepareExecution,
+      inspectRequirements: () => ({
+        sensorIds: new Set(["typecheck", "unit"]),
+        invariantRefs: new Set(),
+      }),
+    };
+
+    const background = prepareOpportunisticPrevcContext(
+      scope,
+      "mission-a",
+      deps,
+    );
+    await vi.waitFor(() => expect(bootstrapContext).toHaveBeenCalledOnce());
+
+    await expect(
+      ensurePrevcMergeReady(scope, "mission-a", {}, deps),
+    ).rejects.toThrow(/prevc_merge_context_pending.*background/i);
+    expect(freezeContract).not.toHaveBeenCalled();
+    expect(prepareExecution).not.toHaveBeenCalled();
+
+    finishBootstrap();
+    await expect(background).resolves.toMatchObject({
+      prepared: true,
+      ready: true,
+    });
+    await expect(
+      ensurePrevcMergeReady(scope, "mission-a", {}, deps),
+    ).resolves.toMatchObject({ stage: "execution" });
+    expect(freezeContract).toHaveBeenCalledOnce();
+    expect(prepareExecution).toHaveBeenCalledOnce();
   });
 
   it("prepares context, freezes the approved intent and reaches execution only at promotion", async () => {

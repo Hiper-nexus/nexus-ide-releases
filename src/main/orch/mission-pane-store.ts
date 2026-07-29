@@ -4,6 +4,7 @@ import type {
   MissionPaneAuthoritySeal,
   MissionPaneSpec,
 } from '../../shared/orch-types';
+import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 import {
   projectExecutionScopeSchema,
   type ProjectExecutionScope,
@@ -90,6 +91,36 @@ export type RebindOrchestratorAuthorityInput = z.input<
 export interface ScopedMissionPaneSpec extends MissionPaneSpec {
   scope: ProjectExecutionScope;
   executionScope: ProjectExecutionScope;
+}
+
+/**
+ * Strict legacy signature for PREVC reviewers that were accidentally stored
+ * as durable mission composition. Ordinary reviewers keep a worker
+ * incarnation and/or the handoff contract, so they remain reopenable.
+ */
+export function isAutomatedReviewerCompositionPane(
+  pane: Pick<
+    MissionPaneSpec,
+    | 'missionId'
+    | 'adapterId'
+    | 'title'
+    | 'agentName'
+    | 'role'
+    | 'readOnly'
+    | 'workerIncarnationId'
+    | 'paneId'
+    | 'allowedTools'
+  >,
+): boolean {
+  return (
+    isAutomatedReviewerPaneIdentity(pane) &&
+    pane.readOnly === true &&
+    pane.workerIncarnationId === undefined &&
+    typeof pane.paneId === 'string' &&
+    Array.isArray(pane.allowedTools) &&
+    pane.allowedTools.includes('nexus_merge_review_submit') &&
+    !pane.allowedTools.includes('nexus_handoff_submit')
+  );
 }
 
 const persistedPaneScopesV2Schema = z
@@ -227,6 +258,12 @@ export class ScopedMissionPaneStore {
     options: ScopedStoreOptions = {},
   ) {
     this.#binding = new ScopedStoreBinding(runtimeManager, scope, options);
+    const removed = this.#garbageCollectLegacyAutomatedReviewers();
+    if (removed > 0) {
+      console.info(
+        `[orch] removed ${removed} transient PREVC reviewer pane(s) from durable composition`,
+      );
+    }
   }
 
   get scope(): ProjectExecutionScope {
@@ -547,6 +584,32 @@ export class ScopedMissionPaneStore {
       )
       .all(missionId);
     return rows.map((row) => this.#fromRow(row));
+  }
+
+  #garbageCollectLegacyAutomatedReviewers(): number {
+    const db = this.#binding.writeDatabase();
+    return db.transaction(() => {
+      const rows = db
+        .prepare(
+          `SELECT id, mission_id, adapter_id, model, account_id, effort, cwd,
+                  title, agent_name, role, pane_id, scope_json,
+                  allowed_tools_json, allowed_skills_json, created_at
+           FROM mission_panes
+           WHERE role = 'worker'
+             AND title LIKE 'review-%'
+             AND agent_name LIKE 'reviewer-%'
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all();
+      const remove = db.prepare('DELETE FROM mission_panes WHERE id = ?');
+      let removed = 0;
+      for (const row of rows) {
+        const pane = this.#fromRow(row);
+        if (!isAutomatedReviewerCompositionPane(pane)) continue;
+        removed += remove.run(pane.id).changes;
+      }
+      return removed;
+    })();
   }
 
   #findRowsByPaneId(

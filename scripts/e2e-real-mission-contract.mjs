@@ -3,10 +3,10 @@ import { createHash } from "node:crypto";
 export const REAL_MISSION_FLAG = "--nexus-real-mission-e2e";
 export const REAL_MISSION_PRODUCT_WIZARD_FLAG =
   "--nexus-real-mission-product-wizard-e2e";
-// O DAG multi-CLI v9 abre 4 scouts advisor e o executor como raízes do primeiro
-// fan-out; depois encadeia revisor Codex → 2 reviewers advisor → QA. São 9 PTYs
-// físicos de worker no roster completo (mais o orquestrador), com até cinco
-// tarefas elegíveis em paralelo antes da cadeia de revisão.
+// O DAG multi-CLI v9 abre todas as 6 CLIs advisor e o executor como raízes do
+// fan-out; depois encadeia revisor Codex → QA. São 9 PTYs físicos de worker no
+// roster completo (mais o orquestrador), com até sete tarefas elegíveis em
+// paralelo antes da cadeia de entrega.
 export const REAL_MISSION_TIMEOUT_MS = 32 * 60_000;
 export const REAL_MISSION_EVIDENCE_FILE = "real-mission-evidence.json";
 export const REAL_MISSION_EVIDENCE_SCHEMA_VERSION = 9;
@@ -65,8 +65,8 @@ export const REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE =
   "real-mission-evidence-claude-orchestrator.json";
 /**
  * Roster advisor multi-CLI do harness (Fase 2), na ordem canônica que a
- * evidência registra. Advisors entram somente em tarefas read_only do fan-out
- * consultivo; o pipeline executor → revisor → QA continua codex-only.
+ * evidência registra. Toda CLI advisor entra somente em tarefa read_only do
+ * fan-out consultivo; o pipeline executor → revisor → QA continua codex-only.
  * Tier: grok/claude = mechanically-confined (Seatbelt/argv governado nativo);
  * kimi/agy/opencode/glm = advisory-unconfined (MCP + Seatbelt Nexus).
  * GLM reuses the Claude Code binary with z.ai ANTHROPIC_* env (API key).
@@ -76,7 +76,7 @@ export const REAL_MISSION_ADVISORS = Object.freeze([
     id: "e2e-advisor-grok",
     name: "E2E Advisor Grok",
     cli: "grok",
-    category: "reviewer",
+    category: "scout",
     tier: "mechanically-confined",
   }),
   Object.freeze({
@@ -104,7 +104,7 @@ export const REAL_MISSION_ADVISORS = Object.freeze([
     id: "e2e-advisor-claude",
     name: "E2E Advisor Claude",
     cli: "claude",
-    category: "reviewer",
+    category: "scout",
     tier: "mechanically-confined",
   }),
   Object.freeze({
@@ -117,23 +117,19 @@ export const REAL_MISSION_ADVISORS = Object.freeze([
 ]);
 
 /**
- * DAG exato selado pelo Guided Planner para advisors presentes (não-skipped):
- * scouts e executor são raízes; o primeiro reviewer depende do executor, cada
- * reviewer seguinte depende do anterior e o QA depende do último reviewer.
+ * DAG exato selado pelo Guided Planner para advisors realmente admitidos:
+ * advisors e executor são raízes; o revisor Codex depende do executor e o QA
+ * depende desse revisor.
  */
 export function realMissionExpectedTaskChain(presentAdvisorClis) {
   const present = new Set(presentAdvisorClis);
-  const scouts = REAL_MISSION_ADVISORS.filter(
-    (advisor) => advisor.category === "scout" && present.has(advisor.cli),
-  );
-  const reviewAdvisors = REAL_MISSION_ADVISORS.filter(
-    (advisor) => advisor.category === "reviewer" && present.has(advisor.cli),
+  const advisors = REAL_MISSION_ADVISORS.filter((advisor) =>
+    present.has(advisor.cli),
   );
   const reviewers = [
     { id: "e2e-reviewer", name: "E2E Revisor", cli: "codex" },
-    ...reviewAdvisors,
   ];
-  const advisoryMembers = scouts.map((advisor, index) => ({
+  const advisoryMembers = advisors.map((advisor, index) => ({
       agentRef: advisor.id,
       agentName: advisor.name,
       cli: advisor.cli,
@@ -248,35 +244,98 @@ export const MISSION_DRIVER_WORKFLOW_STAGES = new Set([
   "confirmation",
   "complete",
 ]);
-export const REAL_MISSION_ACCEPTANCE_CRITERIA = Object.freeze([
+const REAL_MISSION_DELIVERY_ACCEPTANCE_CRITERIA = Object.freeze([
   "O executor Codex do roster cria resultado.txt no próprio worktree — nunca o orquestrador nem o processo main.",
   "resultado.txt contém exatamente nexus-real-mission-e2e-ok seguido de newline.",
-  "O próprio executor faz o commit local e chama nexus_handoff_submit; sessão e encarnação conferem com o primeiro dispatch.",
+  "O próprio executor faz o commit local e chama nexus_handoff_submit; sessão e encarnação conferem com o dispatch do executor.",
   "O motor Nexus integra o commit antes de liberar a tarefa dependente do revisor.",
-  "O revisor Codex abre um segundo PTY físico, valida o HEAD integrado e chama nexus_handoff_submit sem commit vazio nem alteração cosmética.",
-  "O motor Nexus emite worktree_validated_no_change para o revisor antes de liberar a tarefa dependente de QA.",
-  "O QA Codex abre um terceiro PTY físico, consome o handoff do revisor e valida o HEAD integrado; o QA não deve editar, alterar ou escrever arquivos e chama nexus_handoff_submit sem mudança artificial.",
-  "O motor Nexus emite o receipt final worktree_validated_no_change e marca a missão done sem atalho manual.",
-  "Cada CLI advisor credenciada (grok, kimi, agy, opencode, claude, glm) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
+  "O revisor Codex da cadeia de entrega abre seu próprio PTY físico, valida o HEAD integrado e chama nexus_handoff_submit sem commit vazio nem alteração cosmética.",
+  "O motor Nexus emite para o revisor um receipt Main-owned de validação sem mudança — read_only_validated ou worktree_validated_no_change conforme a rota — antes de liberar a tarefa dependente de QA; o QA consome o handoff predecessor sem precisar reconstruir esse receipt.",
+  "O QA Codex da cadeia de entrega abre seu próprio PTY físico, consome o handoff do revisor e valida o HEAD integrado; o QA não deve editar, alterar ou escrever arquivos e chama nexus_handoff_submit sem mudança artificial.",
+  "Depois do handoff do QA, o motor Nexus emite o receipt final Main-owned de validação sem mudança — read_only_validated ou worktree_validated_no_change conforme a rota — e marca a missão done sem atalho manual; esta é prova Main-owned futura e sua ausência antes do handoff não bloqueia o QA.",
 ]);
+
+function normalizedAdmittedAdvisorClis(orchestratorCli, admittedAdvisorClis) {
+  const admitted = new Set(admittedAdvisorClis);
+  return REAL_MISSION_ADVISORS.filter(
+    (advisor) =>
+      admitted.has(advisor.cli) &&
+      !(orchestratorCli === "claude" && advisor.cli === "claude"),
+  ).map((advisor) => advisor.cli);
+}
+
+function advisorAcceptanceCriterion(admittedAdvisorClis) {
+  if (admittedAdvisorClis.length === 0) {
+    return "Nenhuma CLI advisor foi admitida no roster desta missão; nenhuma tarefa, pane ou handoff da lane guided-advisory é exigida.";
+  }
+  return (
+    "As CLIs realmente admitidas no roster desta missão e na lane guided-advisory " +
+    `são exatamente: ${admittedAdvisorClis.join(", ")}. Cada uma abre PTY físico, ` +
+    "chama ao menos uma tool nexus_* e conclui sua própria tarefa com " +
+    "nexus_handoff_submit; esses handoffs advisor são independentes da cadeia de " +
+    "entrega executor → revisor → QA. A evidência Main-owned registra participação " +
+    "e tier somente dessas CLIs."
+  );
+}
+
+const REAL_MISSION_PREVC_REVIEW_CRITERION =
+  "Cada reviewer PREVC automático usa um processo separado das tarefas advisor e nexus_merge_review_submit como sinal exclusivo de conclusão; sua submissão não ocupa posição na cadeia de entrega executor → revisor → QA.";
+
+function buildRealMissionAcceptanceCriteria(
+  orchestratorCli,
+  admittedAdvisorClis,
+) {
+  const criteria = [
+    ...REAL_MISSION_DELIVERY_ACCEPTANCE_CRITERIA,
+    advisorAcceptanceCriterion(
+      normalizedAdmittedAdvisorClis(orchestratorCli, admittedAdvisorClis),
+    ),
+    REAL_MISSION_PREVC_REVIEW_CRITERION,
+  ];
+  if (orchestratorCli === "claude") {
+    criteria.push(REAL_MISSION_CLAUDE_ORCHESTRATOR_CRITERION);
+  }
+  return Object.freeze(criteria);
+}
+
+const ALL_ADVISOR_CLIS = REAL_MISSION_ADVISORS.map((advisor) => advisor.cli);
+export const REAL_MISSION_ACCEPTANCE_CRITERIA =
+  buildRealMissionAcceptanceCriteria("codex", ALL_ADVISOR_CLIS);
 export const REAL_MISSION_CLAUDE_ORCHESTRATOR_CRITERION =
   "A variante orquestrador Claude executa o ciclo completo (kickoff→dispatch→handoffs→integração→done) com o pipeline codex e advisors não-Claude, sem segundo processo Claude.";
 export const REAL_MISSION_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA =
-  Object.freeze([
-    ...REAL_MISSION_ACCEPTANCE_CRITERIA,
-    REAL_MISSION_CLAUDE_ORCHESTRATOR_CRITERION,
-  ]);
-export function realMissionAcceptanceCriteria(orchestratorCli) {
-  return orchestratorCli === "claude"
-    ? REAL_MISSION_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA
-    : REAL_MISSION_ACCEPTANCE_CRITERIA;
+  buildRealMissionAcceptanceCriteria("claude", ALL_ADVISOR_CLIS);
+export function realMissionAcceptanceCriteria(
+  orchestratorCli,
+  admittedAdvisorClis = orchestratorCli === "claude"
+    ? ALL_ADVISOR_CLIS.filter((cli) => cli !== "claude")
+    : ALL_ADVISOR_CLIS,
+) {
+  const normalized = normalizedAdmittedAdvisorClis(
+    orchestratorCli,
+    admittedAdvisorClis,
+  );
+  const canonical =
+    orchestratorCli === "claude"
+      ? ALL_ADVISOR_CLIS.filter((cli) => cli !== "claude")
+      : ALL_ADVISOR_CLIS;
+  if (
+    normalized.length === canonical.length &&
+    normalized.every((cli, index) => cli === canonical[index])
+  ) {
+    return orchestratorCli === "claude"
+      ? REAL_MISSION_CLAUDE_ORCHESTRATOR_ACCEPTANCE_CRITERIA
+      : REAL_MISSION_ACCEPTANCE_CRITERIA;
+  }
+  return buildRealMissionAcceptanceCriteria(orchestratorCli, normalized);
 }
 export const REAL_MISSION_GOAL =
   'Entregue resultado.txt com o conteúdo exato "nexus-real-mission-e2e-ok\\n". ' +
-  "O executor deve implementar e enviar seu handoff; depois um revisor independente " +
-  "deve validar o HEAD integrado e enviar seu handoff; por fim o QA deve validar a " +
-  "revisão integrada e enviar o terceiro handoff. O QA não deve editar, alterar ou " +
-  "escrever arquivos nem criar mudança artificial. " +
+  "Na cadeia de entrega executor → revisor → QA, o executor deve implementar e " +
+  "enviar seu handoff; depois o revisor independente valida o HEAD integrado e " +
+  "envia seu próprio handoff; por fim o QA consome essa revisão, valida o HEAD e " +
+  "envia seu próprio handoff. Handoffs da lane advisor são independentes dessa " +
+  "cadeia. O QA não deve editar, alterar ou escrever arquivos nem criar mudança artificial. " +
   "O orquestrador não pode editar nem commitar o arquivo.";
 export const REAL_MISSION_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA = Object.freeze([
   `Objetivo concluído conforme: ${REAL_MISSION_GOAL}`,

@@ -29,6 +29,7 @@ import {
   INACTIVE_GUIDED_PREVC_MCP_FENCE,
   type GuidedPrevcMcpFenceSnapshot,
 } from "./guided-prevc-mcp-fence";
+import { runInsidePtyStreamAgentTransport } from "./http-mcp-boundary";
 import { dispatchToolCall } from "./mcp-dispatch";
 import type { McpDispatchOptions } from "./mcp-dispatch-contract";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
@@ -136,6 +137,33 @@ function maestro(
     allowedTools,
     allowedSkills: null,
   });
+}
+
+function physicalMaestro(
+  allowedTools: string[] | null = null,
+): AgentGateContext {
+  const ctx = maestro(allowedTools);
+  bindTokenToSession(ctx.token, "session-maestro");
+  return ctx;
+}
+
+function ordinaryWorker(
+  allowedTools: string[] | null = null,
+): AgentGateContext {
+  resetGateForTests();
+  const ctx = mintToken({
+    label: "executor-codex",
+    role: "worker",
+    missionId: MISSION_ID,
+    agentName: "executor-codex",
+    providerId: "codex",
+    workerIncarnationId: "incarnation-executor-1",
+    scope,
+    allowedTools,
+    allowedSkills: null,
+  });
+  bindTokenToSession(ctx.token, "session-executor");
+  return ctx;
 }
 
 function draftReviewer(draftId = "draft-a"): AgentGateContext {
@@ -286,25 +314,192 @@ afterAll(() => {
 });
 
 describe("guided PREVC MCP pre-execution fence", () => {
-  it("blocks every non-allowlisted handler before contract and in each pre-execution stage", async () => {
+  it("keeps mission coordination and bounded observations available while PREVC prepares in parallel", async () => {
+    const workerCalls = [
+      [
+        "nexus_handoff_submit",
+        {
+          status: "success",
+          summary: "Entrega física concluída e pronta para consumo.",
+          artifacts: [],
+        },
+      ],
+      ["nexus_handoff_list", {}],
+      ["nexus_worker_heartbeat", {}],
+      ["nexus_task", { action: "list" }],
+      ["nexus_todo_manager", { action: "read_list" }],
+      ["nexus_clarify", {
+        question: "Qual alternativa atende ao objetivo?",
+        options: ["A", "B"],
+      }],
+      ["nexus_memory_recall", { query: "arquitetura da missão" }],
+      ["nexus_file_read", { path: "README.md" }],
+      ["nexus_code_map_query", { query: "mission scheduler" }],
+    ] as const;
+    const maestroCalls = [
+      ["nexus_task", { action: "list", missionId: MISSION_ID }],
+      ["nexus_handoff_list", { missionId: MISSION_ID }],
+      ["nexus_handoff_ack", { handoffId: "handoff-a" }],
+      ["nexus_pane_list", {}],
+      ["nexus_memory_recall", { query: "decisões arquiteturais" }],
+      ["nexus_browser_open", { url: "https://example.com/docs" }],
+      [
+        "nexus_browser_navigate",
+        { paneId: "pane-browser", url: "https://example.com/reference" },
+      ],
+    ] as const;
+
+    for (const stage of [
+      null,
+      "planning",
+      "review-primary",
+      "review-secondary",
+    ] as const) {
+      for (const [name, args] of workerCalls) {
+        const workerCtx = ordinaryWorker();
+        const invoke = () =>
+          call({
+            name,
+            args,
+            ctx: workerCtx,
+            snapshot: fence(stage),
+          });
+        const called =
+          name === "nexus_handoff_submit"
+            ? await runInsidePtyStreamAgentTransport(
+                workerCtx.sessionId!,
+                workerCtx,
+                invoke,
+              )
+            : await invoke();
+        expect(
+          called.result,
+          `${stage ?? "no-contract"}:${name}:${JSON.stringify(called.result)}`,
+        ).toMatchObject({ ok: true });
+        expect(called.handler).toHaveBeenCalledOnce();
+      }
+      for (const [name, args] of maestroCalls) {
+        const called = await call({
+          name,
+          args,
+          ctx: physicalMaestro(),
+          snapshot: fence(stage),
+        });
+        expect(
+          called.result,
+          `${stage ?? "no-contract"}:${name}:${JSON.stringify(called.result)}`,
+        ).toMatchObject({ ok: true });
+        expect(called.handler).toHaveBeenCalledOnce();
+      }
+    }
+  });
+
+  it("binds pre-execution coordination to the exact physical role and mission", () => {
+    const active = fence("planning");
+    const worker = ordinaryWorker();
+    const maestroCtx = physicalMaestro();
+
+    for (const [ctx, expected] of [
+      [{ ...worker, missionId: undefined }, /mission-bound bearer/i],
+      [{ ...worker, sessionId: undefined }, /current physical mission worker/i],
+      [
+        { ...worker, workerIncarnationId: undefined },
+        /current physical mission worker/i,
+      ],
+    ] as const) {
+      expect(() =>
+        assertGuidedPrevcMcpFence(
+          active,
+          "nexus_worker_heartbeat",
+          {},
+          ctx,
+        ),
+      ).toThrow(expected);
+    }
+
+    for (const [name, args] of [
+      ["nexus_handoff_list", { missionId: "mission-other" }],
+      ["nexus_task", { action: "list", missionId: "mission-other" }],
+      ["nexus_todo_manager", { action: "read_list", listId: "mission-other" }],
+    ] as const) {
+      expect(() =>
+        assertGuidedPrevcMcpFence(active, name, args, worker),
+      ).toThrow(/differs from bearer/i);
+    }
+
+    for (const [name, args] of [
+      ["nexus_task", { action: "create", title: "duplicate plan" }],
+      ["nexus_task", { action: "update", taskId: "task-a" }],
+      ["nexus_task", { action: "plan", tasks: [] }],
+      ["nexus_todo_manager", { action: "add_task", task: "duplicate" }],
+      ["nexus_todo_manager", { action: "mark_all_done" }],
+    ] as const) {
+      expect(() =>
+        assertGuidedPrevcMcpFence(active, name, args, worker),
+      ).toThrow(/mutation is unavailable/i);
+    }
+
+    expect(() =>
+      assertGuidedPrevcMcpFence(
+        active,
+        "nexus_handoff_ack",
+        { handoffId: "handoff-a" },
+        worker,
+      ),
+    ).toThrow(/physical mission Maestro/i);
+    expect(() =>
+      assertGuidedPrevcMcpFence(
+        active,
+        "nexus_worker_heartbeat",
+        {},
+        maestroCtx,
+      ),
+    ).toThrow(/physical mission worker/i);
+    expect(() =>
+      assertGuidedPrevcMcpFence(
+        active,
+        "nexus_handoff_submit",
+        {
+          status: "success",
+          summary: "reviewer must remain inside its exact authority",
+        },
+        automatedReviewer(REVIEW_ID),
+      ),
+    ).toThrow(/outside the exact internal reviewer profile/i);
+
+    for (const [ctx, expected] of [
+      [worker, /physical mission Maestro/i],
+      [{ ...maestroCtx, sessionId: undefined }, /physical mission Maestro/i],
+      [{ ...maestroCtx, missionId: undefined }, /mission-bound bearer/i],
+    ] as const) {
+      expect(() =>
+        assertGuidedPrevcMcpFence(
+          active,
+          "nexus_browser_open",
+          { url: "https://example.com" },
+          ctx,
+        ),
+      ).toThrow(expected);
+    }
+  });
+
+  it("blocks execution, external mutation, and PREVC transition handlers before execution", async () => {
     const denied = [
       ["nexus_preview_start", {}],
       ["nexus_catalog_overlay", {}],
       ["nexus_route_task", { task: "delegate" }],
       ["nexus_pane_spawn", {}],
-      [
-        "nexus_handoff_submit",
-        { status: "success", summary: "must not run", artifacts: [] },
-      ],
-      ["nexus_handoff_list", {}],
-      ["nexus_handoff_ack", { handoffId: "handoff-a" }],
-      ["nexus_agent_invoke", { agentRef: "executor", prompt: "delegate" }],
-      ["nexus_mission_spawn_pane", { missionId: MISSION_ID }],
-      ["nexus_task", { action: "list" }],
-      ["nexus_todo_manager", { action: "list" }],
-      ["nexus_clarify", { question: "mutating faux read" }],
-      ["nexus_memory_recall", { query: "mutating faux read" }],
       ["nexus_terminal_run", { command: "npm test" }],
+      ["nexus_bg_run", { command: "npm test" }],
+      ["nexus_file_write", { path: "src/index.ts", content: "changed" }],
+      ["nexus_git_push", {}],
+      ["nexus_browser_click", { paneId: "pane-browser", ref: "e1" }],
+      [
+        "nexus_browser_fill",
+        { paneId: "pane-browser", ref: "e2", text: "mutation" },
+      ],
+      ["nexus_merge_task", { missionId: MISSION_ID, taskId: "task-a" }],
+      ["nexus_context_commit", { message: "must not run" }],
     ] as const;
     for (const stage of [
       null,

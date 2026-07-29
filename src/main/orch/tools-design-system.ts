@@ -327,10 +327,11 @@ export interface DesignSystemToolOptions {
   /** Renderer IPC supplies a live-scope fence; MCP defaults to bearer identity. */
   readonly assertCurrentAuthority?: (ctx: AgentGateContext) => void;
   /**
-   * Injectable Dembrandt CLI runner for tests. Production uses the real
-   * npx dembrandt@pinned invocation inside extractDesignSystemFromUrl.
+   * Internal/test-only runner whose browser layer enforces URL policy on every
+   * redirect and subresource request. Production intentionally injects none
+   * until a real per-request route guard exists.
    */
-  readonly extractDesignSystem?: (request: {
+  readonly routeGuardedExtractDesignSystem?: (request: {
     readonly normalizedUrl: string;
     readonly paths: readonly string[];
     readonly darkMode: boolean;
@@ -339,7 +340,7 @@ export interface DesignSystemToolOptions {
     readonly workDir: string;
     readonly signal?: AbortSignal;
   }) => Promise<{ designMd: string }>;
-  /** Injectable URL policy for tests. */
+  /** Defense-in-depth URL assessment; never substitutes a request route guard. */
   readonly assessExtractUrl?: (
     raw: string,
   ) => Promise<import('../browser/url-policy').BrowserUrlDecision>;
@@ -457,10 +458,10 @@ function designSystemExtractTool(
   return {
     name: 'nexus_design_system_extract',
     description:
-      'Extract a live website design system via Dembrandt into a proposed ContextDraft. ' +
-      'Use autonomously on UI/landing missions when DESIGN.md is missing or the goal cites a ' +
-      'public visual reference URL. Never writes the final DESIGN.md directly — drafts require ' +
-      'independent review. Private-network URLs are blocked. Do not copy third-party logos.',
+      'Propose a ContextDraft from a live website through a per-request guarded Dembrandt runner. ' +
+      'Fails closed with NETWORK_GUARD_UNAVAILABLE while no redirect/subresource route guard is ' +
+      'installed. Use designmd.ai search/import or an existing DESIGN.md instead; never writes ' +
+      'the final DESIGN.md directly. Do not copy third-party logos.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -525,8 +526,11 @@ function designSystemExtractTool(
           mobile,
           wcag,
           signal: invocation?.signal,
-          ...(options.extractDesignSystem
-            ? { runner: options.extractDesignSystem }
+          ...(options.routeGuardedExtractDesignSystem
+            ? {
+                routeGuardedRunner:
+                  options.routeGuardedExtractDesignSystem,
+              }
             : {}),
           ...(options.assessExtractUrl
             ? { assessUrl: options.assessExtractUrl }

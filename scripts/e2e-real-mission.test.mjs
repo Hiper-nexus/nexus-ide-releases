@@ -28,6 +28,11 @@ import {
   stageCodexAuthentication,
   waitForChild,
 } from "./e2e-real-mission.mjs";
+import {
+  REAL_MISSION_GOAL,
+  realMissionAcceptanceCriteria,
+  realMissionExpectedTaskChain,
+} from "./e2e-real-mission-contract.mjs";
 import { makeValidRealMissionEvidence } from "./test-support/real-mission-evidence.mjs";
 import {
   assertAdvisorBinaries,
@@ -61,6 +66,36 @@ afterEach(() => {
 });
 
 describe("real mission packaged harness arguments", () => {
+  it("keeps admitted advisors, PREVC reviewers and the delivery chain in distinct lanes", () => {
+    const admitted = ["opencode", "claude", "glm"];
+    const criteria = realMissionAcceptanceCriteria("codex", admitted);
+    const advisorCriterion = criteria.find((criterion) =>
+      criterion.includes("guided-advisory"),
+    );
+    const prevcCriterion = criteria.find((criterion) =>
+      criterion.includes("reviewer PREVC"),
+    );
+    const chain = realMissionExpectedTaskChain(admitted);
+
+    expect(advisorCriterion).toContain("opencode, claude, glm");
+    expect(advisorCriterion).not.toMatch(/\b(?:grok|kimi|agy)\b/u);
+    expect(advisorCriterion).toContain("nexus_handoff_submit");
+    expect(prevcCriterion).toContain("nexus_merge_review_submit");
+    expect(prevcCriterion).not.toContain("nexus_handoff_submit");
+    expect(
+      chain
+        .filter((member) => member.kind === "advisory")
+        .map((member) => member.cli),
+    ).toEqual(admitted);
+    expect(
+      chain.filter((member) => member.kind === "review").map((member) => member.cli),
+    ).toEqual(["codex"]);
+    expect(REAL_MISSION_GOAL).not.toContain("terceiro handoff");
+    expect(REAL_MISSION_GOAL).toContain(
+      "cadeia de entrega executor → revisor → QA",
+    );
+  });
+
   it.runIf(process.platform === "darwin")(
     "zeroizes runtime attestation material when isolated userData setup fails",
     async () => {
@@ -597,6 +632,60 @@ describe("independent evidence verifier", () => {
     expect(assertRealMissionPassEvidence(validEvidence()).status).toBe("pass");
   });
 
+  it("accepts official advisor preflight skips while retaining the post-QA proof chain", () => {
+    const evidence = validEvidence({
+      skipAdvisorClis: ["grok", "kimi", "agy"],
+    });
+    const qaDispatch = evidence.dispatches.find(
+      (dispatch) => dispatch.plannerId === "guided-quality-gate",
+    );
+    const qaHandoff = evidence.handoffs.find(
+      (handoff) => handoff.id === qaDispatch?.handoffId,
+    );
+
+    expect(assertRealMissionPassEvidence(evidence).status).toBe("pass");
+    expect(assertRealMissionReleaseEvidence(evidence).status).toBe("pass");
+    expect(qaHandoff.physicalReceipt.issuedAt).toBeLessThan(
+      qaDispatch.integrationReceipt.completedAt,
+    );
+    expect(qaDispatch.integrationReceipt.completedAt).toBeLessThan(
+      evidence.completion.completedAt,
+    );
+  });
+
+  it("rejects forged skip activity, missing admitted handoff and missing post-QA receipts", () => {
+    const skipWithActivity = validEvidence({
+      skipAdvisorClis: ["grok"],
+    });
+    skipWithActivity.participation.find((row) => row.cli === "grok").spawnedAt =
+      4;
+    expect(() => assertRealMissionPassEvidence(skipWithActivity)).toThrow(
+      /incomplete/,
+    );
+
+    const admittedWithoutHandoff = validEvidence();
+    admittedWithoutHandoff.participation.find(
+      (row) => row.cli === "grok",
+    ).handoffAt = null;
+    expect(() => assertRealMissionPassEvidence(admittedWithoutHandoff)).toThrow(
+      /incomplete/,
+    );
+
+    const missingQaReceipt = validEvidence();
+    missingQaReceipt.dispatches.find(
+      (dispatch) => dispatch.plannerId === "guided-quality-gate",
+    ).integrationReceipt = null;
+    expect(() => assertRealMissionPassEvidence(missingQaReceipt)).toThrow(
+      /incomplete/,
+    );
+
+    const missingCompletionReceipt = validEvidence();
+    missingCompletionReceipt.completion.stepReceipts.pop();
+    expect(() =>
+      assertRealMissionPassEvidence(missingCompletionReceipt),
+    ).toThrow(/incomplete/);
+  });
+
   it("accepts the claude-orchestrator variant proof chain bound to release", () => {
     const variant = validEvidence({ orchestratorCli: "claude" });
     expect(assertRealMissionPassEvidence(variant).status).toBe("pass");
@@ -761,7 +850,9 @@ describe("independent evidence verifier", () => {
     );
 
     const syntheticReceipt = validEvidence();
-    syntheticReceipt.dispatches[2].integrationReceipt.evidenceIds = [];
+    syntheticReceipt.dispatches.find(
+      (dispatch) => dispatch.plannerId === "guided-quality-gate",
+    ).integrationReceipt.evidenceIds = [];
     expect(() => assertRealMissionPassEvidence(syntheticReceipt)).toThrow(
       /incomplete/,
     );
@@ -1171,6 +1262,13 @@ describe("real mission advisor authentication staging", () => {
   const keychainRun = (status) =>
     vi.fn().mockImplementation((bin, args = []) => {
       const joined = Array.isArray(args) ? args.join(" ") : "";
+      if (bin === "grok" && joined === "models") {
+        return {
+          status: 0,
+          stdout: "grok-4\ngrok-4-fast\n",
+          stderr: "",
+        };
+      }
       // Claude/Agy secret reads need a non-empty stdout for "usable" session.
       if (status === 0 && joined.includes("-w")) {
         if (joined.includes("Claude Code-credentials")) {
@@ -1197,7 +1295,15 @@ describe("real mission advisor authentication staging", () => {
     const root = makeTemp();
     const sourceHome = path.join(root, "real-home");
     const isolatedHome = path.join(root, "isolated-home");
-    writePrivate(path.join(sourceHome, ".grok", "auth.json"), '{"grok":1}\n');
+    const grokAuth =
+      JSON.stringify({
+        "https://auth.x.ai::test-client": {
+          key: "fresh-access",
+          refresh_token: "refresh",
+          expires_at: "2099-01-01T00:00:00.000Z",
+        },
+      }) + "\n";
+    writePrivate(path.join(sourceHome, ".grok", "auth.json"), grokAuth);
     // config.toml is not a secret; a lax source mode is tolerated.
     fs.writeFileSync(
       path.join(sourceHome, ".grok", "config.toml"),
@@ -1325,7 +1431,7 @@ describe("real mission advisor authentication staging", () => {
       expect(creds.mcpOAuth).toBeUndefined();
     }
     const stagedFiles = [
-      [".grok/auth.json", '{"grok":1}\n'],
+      [".grok/auth.json", grokAuth],
       [".grok/config.toml", 'model = "grok-4"\n'],
       [
         ".kimi-code/credentials/kimi-code.json",
@@ -1376,6 +1482,63 @@ describe("real mission advisor authentication staging", () => {
         directory,
       ).toBe(0o700);
     }
+  });
+
+  it("skips Grok when the copied profile fails its isolated auth preflight", () => {
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    const sourceAuth = path.join(sourceHome, ".grok", "auth.json");
+    writePrivate(
+      sourceAuth,
+      JSON.stringify({
+        access_token: "expired-access",
+        refresh_token: "rejected-refresh",
+      }) + "\n",
+    );
+    const onSkip = vi.fn();
+    const run = vi.fn((bin, args = []) => {
+      if (bin === "grok" && args.join(" ") === "models") {
+        return {
+          status: 0,
+          stdout: "You are not authenticated.\ngrok-4\n",
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: "" };
+    });
+
+    const statuses = stageAdvisorAuthentication(isolatedHome, {
+      sourceHome,
+      environment: {
+        PATH: "/usr/local/bin:/usr/bin:/bin",
+        LANG: "pt_BR.UTF-8",
+        GROK_API_KEY: "must-not-reach-the-isolated-preflight",
+      },
+      onSkip,
+      run,
+    });
+
+    expect(statuses.grok).toBe("skipped");
+    expect(onSkip).toHaveBeenCalledWith("grok");
+    expect(fs.existsSync(path.join(isolatedHome, ".grok"))).toBe(false);
+    expect(fs.readFileSync(sourceAuth, "utf8")).toContain("rejected-refresh");
+    expect(run).toHaveBeenCalledWith(
+      "grok",
+      ["models"],
+      expect.objectContaining({
+        encoding: "utf8",
+        shell: false,
+        timeout: 15_000,
+        env: expect.objectContaining({
+          HOME: path.resolve(isolatedHome),
+          USERPROFILE: path.resolve(isolatedHome),
+          GROK_HOME: path.join(path.resolve(isolatedHome), ".grok"),
+        }),
+      }),
+    );
+    const grokCall = run.mock.calls.find(([bin]) => bin === "grok");
+    expect(grokCall?.[2]?.env.GROK_API_KEY).toBeUndefined();
   });
 
   it("stages only the non-secret native Claude identity into the isolated HOME", () => {

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel } from '../../shared/types';
 
 const harness = vi.hoisted(() => ({
+  accountsList: vi.fn(async () => []),
+  quotaSnapshot: vi.fn(async () => null),
   setPanes: vi.fn(),
   bindPaneMission: vi.fn(),
   markPersistedAuthorityOnSpawn: vi.fn(),
@@ -111,8 +113,8 @@ describe('approved mission main-owned presentation', () => {
             defaultAccountId: '',
           })),
         },
-        accounts: { list: vi.fn(async () => []) },
-        quota: { snapshot: vi.fn(async () => null) },
+        accounts: { list: harness.accountsList },
+        quota: { snapshot: harness.quotaSnapshot },
         orch: {
           updateMission: vi.fn(),
           bootstrapMissionOrchestrator: vi.fn(async () => ({
@@ -145,7 +147,11 @@ describe('approved mission main-owned presentation', () => {
     });
   });
 
-  it('sends only missionId, mounts the sealed pane and adopts without restart', async () => {
+  it('returns starting as soon as Main accepts approval without waiting for bootstrap presentation', async () => {
+    const bootstrapNeverSettles = new Promise<never>(() => undefined);
+    vi.mocked(
+      window.nexus.orch.bootstrapMissionOrchestrator,
+    ).mockReturnValueOnce(bootstrapNeverSettles);
     const authorizeDispatch = vi.fn(async () => undefined);
     const result = await launchSquadMission(
       squad,
@@ -173,151 +179,33 @@ describe('approved mission main-owned presentation', () => {
 
     expect(result).toEqual({
       ok: true,
-      paneId: 'pane-main-orch',
       missionId: 'mission-approved',
-      recovering: true,
+      starting: true,
     });
     expect(authorizeDispatch).toHaveBeenCalledOnce();
-    expect(window.nexus.orch.bootstrapMissionOrchestrator).toHaveBeenCalledWith({
-      missionId: 'mission-approved',
-    });
-    expect(window.nexus.orch.bootstrapMissionOrchestrator).toHaveBeenCalledTimes(1);
+    // Main derives and seals the approved runtime itself. Renderer account and
+    // quota discovery is legacy-launch UX and must not delay the native
+    // approval sheet on an intent-first mission.
+    expect(harness.accountsList).not.toHaveBeenCalled();
+    expect(harness.quotaSnapshot).not.toHaveBeenCalled();
+    // approveMissionIntent already schedules the main-owned bootstrap. The
+    // renderer must not start a duplicate request or keep the wizard waiting
+    // for PTY presentation.
+    expect(
+      window.nexus.orch.bootstrapMissionOrchestrator,
+    ).not.toHaveBeenCalled();
     expect(harness.conflictingOrchestratorPanes).not.toHaveBeenCalled();
     expect(harness.killConflictingOrchestrators).not.toHaveBeenCalled();
     expect(window.nexus.orch.updateMission).not.toHaveBeenCalled();
     expect(window.nexus.orch.bindMissionOrchestrator).not.toHaveBeenCalled();
     expect(window.nexus.orch.submitMissionKickoff).not.toHaveBeenCalled();
-    expect(harness.markPersistedAuthorityOnSpawn).toHaveBeenCalledWith(
-      'pane-main-orch',
-    );
-    expect(harness.setPanes).toHaveBeenCalledWith([
-      expect.objectContaining<Partial<PaneModel>>({
-        id: 'pane-main-orch',
-        adapterId: 'codex',
-        model: 'gpt-5.6-sol',
-        accountId: 'account-main',
-        effort: 'high',
-        cwd: '/workspace/a',
-        missionId: 'mission-approved',
-        role: 'orchestrator',
-      }),
-    ]);
-    // A cold CLI under Seatbelt regularly needed more than 20s to report a
-    // session, and expiring here reported a live mission as failed.
-    expect(harness.waitForSession).toHaveBeenCalledWith(
-      'pane-main-orch',
-      75_000,
-    );
+    expect(harness.markPersistedAuthorityOnSpawn).not.toHaveBeenCalled();
+    expect(harness.setPanes).not.toHaveBeenCalled();
+    expect(harness.waitForSession).not.toHaveBeenCalled();
     expect(harness.toast).not.toHaveBeenCalled();
   });
 
-  it('closes the approval flow while Main retries a technical bootstrap failure', async () => {
-    vi.mocked(
-      window.nexus.orch.bootstrapMissionOrchestrator,
-    ).mockResolvedValueOnce({
-      ok: false,
-      missionId: 'mission-approved',
-      reason: 'spawn_failed',
-      error: 'CLI ainda não ficou pronta.',
-      cta: 'Recuperação automática',
-      retryScheduled: true,
-    });
-
-    const result = await launchSquadMission(
-      squad,
-      [
-        {
-          id: 'codex',
-          kind: 'cli-pty',
-          label: 'Codex',
-          icon: 'C',
-          models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
-          installed: true,
-          installCommand: 'npm i -g codex',
-          idleTimeoutMs: 800,
-          orchestratorCapable: true,
-          orchestrationEvidence: 'verified',
-        },
-      ],
-      {
-        existingMissionId: 'mission-approved',
-        goalPrompt: 'approved goal',
-        authorizeDispatch: vi.fn(async () => undefined),
-      },
-    );
-
-    expect(result).toEqual({
-      ok: true,
-      recovering: true,
-      missionId: 'mission-approved',
-    });
-    expect(harness.setPanes).not.toHaveBeenCalled();
-  });
-
-  it('keeps the approval flow open for a real operator decision', async () => {
-    vi.mocked(
-      window.nexus.orch.bootstrapMissionOrchestrator,
-    ).mockResolvedValueOnce({
-      ok: false,
-      missionId: 'mission-approved',
-      reason: 'preflight_failed',
-      error: 'O runtime mudou desde a aprovação.',
-      cta: 'Retomar missão',
-    });
-
-    const result = await launchSquadMission(
-      squad,
-      [
-        {
-          id: 'codex',
-          kind: 'cli-pty',
-          label: 'Codex',
-          icon: 'C',
-          models: { list: ['gpt-5.6-sol'], default: 'gpt-5.6-sol' },
-          installed: true,
-          installCommand: 'npm i -g codex',
-          idleTimeoutMs: 800,
-          orchestratorCapable: true,
-          orchestrationEvidence: 'verified',
-        },
-      ],
-      {
-        existingMissionId: 'mission-approved',
-        goalPrompt: 'approved goal',
-        authorizeDispatch: vi.fn(async () => undefined),
-      },
-    );
-
-    expect(result).toEqual({
-      ok: false,
-      error:
-        'O runtime mudou desde a aprovação. CTA: Retomar missão.',
-    });
-    expect(harness.setPanes).not.toHaveBeenCalled();
-  });
-
-  it('leaves exclusive replacement to the single main-owned approval', async () => {
-    vi.mocked(
-      window.nexus.orch.bootstrapMissionOrchestrator,
-    ).mockResolvedValueOnce({
-      ok: true,
-      missionId: 'mission-approved',
-      pane: {
-        paneId: 'pane-main-orch',
-        sessionId: 'pty-main-orch',
-        adapterId: 'codex',
-        model: 'gpt-5.6-sol',
-        accountId: 'account-main',
-        effort: 'high',
-        cwd: '/workspace/a',
-        title: 'Squad salvo · orq',
-        agentName: 'Maestro',
-        role: 'orchestrator',
-      },
-      kickoff: {
-        accepted: true,
-      },
-    });
+  it('leaves exclusive replacement and physical startup to the approved Main request', async () => {
     harness.conflictingOrchestratorPanes.mockReturnValue([
       {
         id: 'pane-old',
@@ -355,15 +243,17 @@ describe('approved mission main-owned presentation', () => {
 
     expect(result).toEqual({
       ok: true,
-      paneId: 'pane-main-orch',
       missionId: 'mission-approved',
+      starting: true,
     });
     expect(authorizeDispatch).toHaveBeenCalledOnce();
-    expect(window.nexus.orch.bootstrapMissionOrchestrator).toHaveBeenCalledOnce();
+    expect(
+      window.nexus.orch.bootstrapMissionOrchestrator,
+    ).not.toHaveBeenCalled();
     expect(window.nexus.orch.updateMission).not.toHaveBeenCalled();
     expect(harness.conflictingOrchestratorPanes).not.toHaveBeenCalled();
     expect(harness.killConflictingOrchestrators).not.toHaveBeenCalled();
-    expect(harness.setPanes).toHaveBeenCalled();
+    expect(harness.setPanes).not.toHaveBeenCalled();
   });
 
   it('mutates no prior mission when authorization of the incoming mission fails', async () => {

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const harness = vi.hoisted(() => ({
   close: vi.fn(),
   closeRuntime: vi.fn(),
+  pruneMissionBindings: vi.fn(),
   paneMissions: {} as Record<string, string>,
   panes: [] as Array<{ id: string; kind: string; missionId?: string }>,
 }));
@@ -18,7 +19,10 @@ vi.mock('../state/layout-store', () => ({
 }));
 vi.mock('../state/orch-store', () => ({
   useOrchStore: {
-    getState: () => ({ paneMissions: harness.paneMissions }),
+    getState: () => ({
+      paneMissions: harness.paneMissions,
+      pruneMissionBindings: harness.pruneMissionBindings,
+    }),
   },
 }));
 vi.mock('../lib/split-tree', () => ({
@@ -34,6 +38,9 @@ describe('closeMissionRuntimeAndPanes', () => {
       { id: 'pane-a', kind: 'cli-agent', missionId: 'mission-a' },
       { id: 'pane-b', kind: 'cli-agent', missionId: 'mission-b' },
     ];
+    harness.close.mockImplementation((paneId: string) => {
+      harness.panes = harness.panes.filter((pane) => pane.id !== paneId);
+    });
     harness.paneMissions = {};
     vi.stubGlobal('window', {
       nexus: { orch: { closeMissionRuntime: harness.closeRuntime } },
@@ -102,6 +109,32 @@ describe('closeMissionRuntimeAndPanes', () => {
     });
     expect(harness.close).toHaveBeenCalledOnce();
     expect(harness.close).toHaveBeenCalledWith('pane-a', 'orphan-sweep');
+    expect(harness.pruneMissionBindings).toHaveBeenCalledWith(
+      new Set(['pane-b']),
+    );
+  });
+
+  it('normalizes a legacy thrown mission-not-found into one idempotent local sweep', async () => {
+    harness.closeRuntime.mockRejectedValue(
+      new Error(
+        "Error invoking remote method 'orch:missions.closeRuntime': Error: mission not found",
+      ),
+    );
+
+    await expect(
+      closeMissionRuntimeAndPanes('mission-a', 'legacy-orphan-sweep'),
+    ).resolves.toEqual({
+      ok: true,
+      terminatedSessionIds: [],
+    });
+    expect(harness.close).toHaveBeenCalledOnce();
+    expect(harness.close).toHaveBeenCalledWith(
+      'pane-a',
+      'legacy-orphan-sweep',
+    );
+    expect(harness.pruneMissionBindings).toHaveBeenCalledWith(
+      new Set(['pane-b']),
+    );
   });
 
   it('sweeps orphan panes for an already-done mission with no closable runtime', async () => {

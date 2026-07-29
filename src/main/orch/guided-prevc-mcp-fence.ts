@@ -10,6 +10,7 @@ import {
   type AgentGateContext,
 } from "./gate";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import { effectPolicyForTool } from "./mcp-effect-policy";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 
 export interface GuidedPrevcMcpFenceSnapshot {
@@ -152,10 +153,44 @@ function assertMissionArgument(
   }
 }
 
+function assertOptionalMissionArgument(
+  args: Readonly<Record<string, unknown>>,
+  missionId: string,
+): void {
+  if (args.missionId !== undefined && args.missionId !== missionId) {
+    throw new Error(
+      "guided_prevc_mcp_fence: requested mission differs from bearer authority",
+    );
+  }
+}
+
+function assertPhysicalWorker(ctx: AgentGateContext): void {
+  if (
+    ctx.role !== "worker" ||
+    !ctx.missionId ||
+    !ctx.sessionId ||
+    !ctx.workerIncarnationId
+  ) {
+    throw new Error(
+      "guided_prevc_mcp_fence: lifecycle call requires the current physical mission worker",
+    );
+  }
+}
+
+function assertPhysicalMaestro(ctx: AgentGateContext): void {
+  if (ctx.role !== "orchestrator" || !ctx.missionId || !ctx.sessionId) {
+    throw new Error(
+      "guided_prevc_mcp_fence: lifecycle call requires the current physical mission Maestro",
+    );
+  }
+}
+
 /**
- * Exact pre-execution vocabulary. The fence narrows every MCP policy class,
- * including tools historically labelled read-only but which mutate local
- * mission state (task/todo/clarify/memory recall).
+ * PREVC is prepared in parallel and gates execution effects/promotion, not
+ * mission coordination. Ordinary calls still pass through the independent
+ * allowlist, role, read-only, intent, workflow and handler authorities in
+ * mcp-dispatch. This fence owns only the exact PREVC bootstrap/reviewer phase
+ * and a narrow pre-execution policy boundary.
  */
 export function assertGuidedPrevcMcpFence(
   snapshot: GuidedPrevcMcpFenceSnapshot,
@@ -232,14 +267,51 @@ export function assertGuidedPrevcMcpFence(
 
   if (!snapshot.required || !snapshot.active) return;
 
-  if (ctx.role !== "orchestrator" || ctx.missionId === undefined) {
+  if (!ctx.missionId) {
     throw new Error(
-      "guided_prevc_mcp_fence: pre-execution calls require the mission Maestro",
+      "guided_prevc_mcp_fence: pre-execution call requires a mission-bound bearer",
     );
   }
 
   switch (canonical) {
+    case "handoff_submit":
+    case "worker_heartbeat":
+      assertPhysicalWorker(ctx);
+      return;
+    case "handoff_list":
+      assertOptionalMissionArgument(args, ctx.missionId);
+      return;
+    case "handoff_ack":
+      assertPhysicalMaestro(ctx);
+      return;
+    case "browser_open":
+    case "browser_navigate":
+      assertPhysicalMaestro(ctx);
+      return;
+    case "task":
+      assertOptionalMissionArgument(args, ctx.missionId);
+      if (args.action === "list") return;
+      throw new Error(
+        "guided_prevc_mcp_fence: task mutation is unavailable before stage=execution",
+      );
+    case "todo_manager":
+      if (args.listId !== undefined && args.listId !== ctx.missionId) {
+        throw new Error(
+          "guided_prevc_mcp_fence: requested todo list differs from bearer mission",
+        );
+      }
+      if (args.action === "read_list") return;
+      throw new Error(
+        "guided_prevc_mcp_fence: todo mutation is unavailable before stage=execution",
+      );
+    case "memory_retain":
+      return;
     case "context_doctor":
+      if (ctx.role !== "orchestrator") {
+        throw new Error(
+          "guided_prevc_mcp_fence: Doctor requires the mission Maestro",
+        );
+      }
       if (snapshot.hasContract) {
         throw new Error(
           "guided_prevc_mcp_fence: Doctor authority ends when the contract freezes",
@@ -252,9 +324,19 @@ export function assertGuidedPrevcMcpFence(
       }
       return;
     case "mission_freeze_contract":
+      if (ctx.role !== "orchestrator") {
+        throw new Error(
+          "guided_prevc_mcp_fence: contract freeze requires the mission Maestro",
+        );
+      }
       assertMissionArgument(args, ctx.missionId);
       return;
     case "workflow_prepare_execution":
+      if (ctx.role !== "orchestrator") {
+        throw new Error(
+          "guided_prevc_mcp_fence: prepare_execution requires the mission Maestro",
+        );
+      }
       assertMissionArgument(args, ctx.missionId);
       if (!snapshot.hasContract) {
         throw new Error(
@@ -267,6 +349,11 @@ export function assertGuidedPrevcMcpFence(
       assertMissionArgument(args, ctx.missionId);
       return;
     case "mission_set_status":
+      if (ctx.role !== "orchestrator") {
+        throw new Error(
+          "guided_prevc_mcp_fence: status transition requires the mission Maestro",
+        );
+      }
       assertMissionArgument(args, ctx.missionId);
       if (args.status !== "blocked" && args.status !== "failed") {
         throw new Error(
@@ -274,9 +361,14 @@ export function assertGuidedPrevcMcpFence(
         );
       }
       return;
-    default:
+    default: {
+      const policy = effectPolicyForTool(canonical);
+      if (policy === "read-only") {
+        return;
+      }
       throw new Error(
         `guided_prevc_mcp_fence: ${toolName} is unavailable before stage=execution`,
       );
+    }
   }
 }

@@ -6,6 +6,7 @@ import {
   compileMissionContract,
   type WorkflowStage,
 } from "../context/contract-compiler";
+import type { RunAutomatedReviewInput } from "../context/cli-automated-reviewer";
 import type { ContextWorkflowService } from "../context/context-workflow-service";
 import { publishFinalValidationHandoff } from "./final-validation-handoff";
 import type { ProjectDomainStoreSuite } from "./project-domain-store-registry";
@@ -19,8 +20,11 @@ import {
 import type { WorktreeRecord } from "../runtime/worktree-contract";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
+  drivePrevcAutopilot,
   inspectGuidedPrevcPostMergeAuthority,
   runGuidedPrevcPostMergeBridge,
+  runPrevcCouncilReview,
+  shouldAdvanceAfterPreExecutionReview,
   type PrevcAutopilotCoordinatorDependencies,
 } from "./prevc-autopilot-coordinator";
 
@@ -72,10 +76,31 @@ function createWorld(
   options: {
     readonly sensorPasses?: boolean;
     readonly prematureComplete?: boolean;
+    readonly preExecutionGate?: ReturnType<
+      ContextWorkflowService["inspectCurrentPreExecutionReviewGate"]
+    >;
+    readonly preExecutionGateForPlan?: (binding: {
+      readonly intentVersion: number;
+      readonly planHash: string;
+    }) => ReturnType<
+      ContextWorkflowService["inspectCurrentPreExecutionReviewGate"]
+    >;
+    readonly bindingReviewGate?: ReturnType<
+      ContextWorkflowService["inspectCurrentBindingReviewGate"]
+    >;
     readonly review?: (
       assertCurrentAuthority: () => void,
       mutate: () => void,
     ) => Promise<void>;
+    readonly highRisk?: boolean;
+    readonly criticalRisk?: boolean;
+    readonly initialStage?: WorkflowStage;
+    readonly runReviewGate?: {
+      readonly ready: boolean;
+      readonly reason: "ready" | "review-quorum-missing" | "blocking-findings";
+      readonly blockingFindingCount: number;
+      readonly reportCount: number;
+    };
   } = {},
 ) {
   missionSequence += 1;
@@ -137,6 +162,11 @@ function createWorld(
       ],
       impactedDomains: ["delivery"],
       requestedSensors: ["unit"],
+      riskHints: options.criticalRisk
+        ? ["payment"]
+        : options.highRisk
+          ? ["auth"]
+          : [],
     },
     {
       invariantRefs: new Set(),
@@ -185,8 +215,11 @@ function createWorld(
           diffHash: EMPTY_DIFF,
         },
         route: contract.route,
-        stage: "execution" as WorkflowStage,
-        completedStages: ["planning" as WorkflowStage],
+        stage: options.initialStage ?? ("execution" as WorkflowStage),
+        completedStages:
+          options.initialStage === "review-primary"
+            ? ["planning" as WorkflowStage]
+            : ["planning" as WorkflowStage],
         reviewers: [],
         revision: 2,
       };
@@ -314,7 +347,7 @@ function createWorld(
   ];
   const handoffs: Handoff[] = [];
   const sensorCalls = vi.fn();
-  const reviewCalls = vi.fn();
+  const reviewCalls = vi.fn<(input: RunAutomatedReviewInput) => void>();
   const recordMilestones = vi.fn(
     (_missionId: string, sourceEvidenceIds: readonly string[]) => {
       const ids = milestoneIds();
@@ -323,22 +356,46 @@ function createWorld(
     },
   );
   const advance = vi.fn((_missionId: string, next: WorkflowStage) => {
-    if (workflow.stage === "execution" && next === "validation-primary") {
-      workflow = {
-        ...workflow,
-        binding: {
-          ...workflow.binding,
-          headSha: FINAL_SHA,
-          diffHash: FINAL_DIFF,
-        },
-        stage: next,
-        completedStages: [...workflow.completedStages, "execution"],
-        revision: workflow.revision + 1,
-      };
-      return workflow;
+    const currentStage = workflow.stage;
+    const currentIndex = workflow.route.indexOf(currentStage);
+    if (workflow.route[currentIndex + 1] !== next) {
+      throw new Error(`unexpected transition ${currentStage}->${next}`);
     }
-    throw new Error(`unexpected transition ${workflow.stage}->${next}`);
+    workflow = {
+      ...workflow,
+      binding:
+        currentStage === "execution"
+          ? {
+              ...workflow.binding,
+              headSha: FINAL_SHA,
+              diffHash: FINAL_DIFF,
+            }
+          : workflow.binding,
+      stage: next,
+      completedStages: [...workflow.completedStages, currentStage],
+      revision: workflow.revision + 1,
+    };
+    return workflow;
   });
+  const inspectCurrentPreExecutionReviewGate = vi.fn(
+    (
+      _missionId: string,
+      planBinding: {
+        readonly intentVersion: number;
+        readonly planHash: string;
+      },
+    ) =>
+      options.preExecutionGateForPlan?.(planBinding) ??
+      options.preExecutionGate ??
+      Object.freeze({
+        ready: false,
+        reason: "review-quorum-missing",
+        evidenceIds: Object.freeze([] as string[]),
+        reportCount: 0,
+        quorumReportCount: 0,
+        blockingFindingCount: 0,
+      }),
+  );
   const workflowService = {
     getMissionWorkflow: () => ({
       contract: { contract, author, frozenAt: 1 },
@@ -368,7 +425,9 @@ function createWorld(
     recordMergeReviewReport: vi.fn(),
     recordMilestoneValidationEvidence: recordMilestones,
     listCurrentPersistedEvidenceIds: () => [...currentEvidenceIds],
+    inspectCurrentPreExecutionReviewGate,
     inspectCurrentBindingReviewGate: () =>
+      options.bindingReviewGate ??
       Object.freeze({
         ready: false,
         reason: "review-quorum-missing",
@@ -473,7 +532,7 @@ function createWorld(
     reviewDependencies: () => ({
       runReview: async (input) => {
         input.assertCurrentAuthority?.();
-        reviewCalls();
+        reviewCalls(input);
         await options.review?.(
           input.assertCurrentAuthority ?? (() => {}),
           () => {
@@ -487,16 +546,17 @@ function createWorld(
           },
         );
         input.assertCurrentAuthority?.();
-        return {
+        const gate = options.runReviewGate ?? {
           ready: true,
-          gate: {
-            ready: true,
-            reason: "ready",
-            blockingFindingCount: 0,
-            reportCount: 1,
-          },
+          reason: "ready" as const,
+          blockingFindingCount: 0,
+          reportCount: 1,
+        };
+        return {
+          ready: gate.ready,
+          gate,
           reports: [],
-          evidenceIds: ["review:final"],
+          evidenceIds: gate.reportCount > 0 ? ["review:final"] : [],
         };
       },
     }),
@@ -509,6 +569,7 @@ function createWorld(
     dependencies,
     sensorCalls,
     reviewCalls,
+    inspectCurrentPreExecutionReviewGate,
     recordMilestones,
     publishFinalHandoff,
     requestDriverTick,
@@ -549,6 +610,291 @@ function createWorld(
     },
   };
 }
+
+describe("PREVC pre-execution council", () => {
+  it("defers repairable plan findings to candidate validation instead of trapping the sealed plan", () => {
+    expect(
+      shouldAdvanceAfterPreExecutionReview({
+        ready: false,
+        reason: "blocking-findings",
+      }),
+    ).toBe(true);
+    expect(
+      shouldAdvanceAfterPreExecutionReview({
+        ready: false,
+        reason: "review-quorum-missing",
+      }),
+    ).toBe(false);
+    expect(
+      shouldAdvanceAfterPreExecutionReview({
+        ready: true,
+        reason: "ready",
+      }),
+    ).toBe(true);
+  });
+
+  it("advances a HIGH pre-execution finding to execution as durable candidate guidance", async () => {
+    const world = createWorld({
+      highRisk: true,
+      initialStage: "review-primary",
+      preExecutionGate: Object.freeze({
+        ready: false,
+        reason: "blocking-findings",
+        evidenceIds: Object.freeze(["review:preexec-high"]),
+        reportCount: 1,
+        quorumReportCount: 1,
+        blockingFindingCount: 1,
+      }),
+    });
+
+    await expect(
+      drivePrevcAutopilot({
+        scope: world.scope,
+        missionId: world.missionId,
+        allowExecutionExit: false,
+        dependencies: world.dependencies,
+      }),
+    ).resolves.toMatchObject({
+      state: "execution",
+      transitions: ["review-primary->execution"],
+    });
+    expect(world.reviewCalls).not.toHaveBeenCalled();
+  });
+
+  it("waits when the pre-execution physical reviewer quorum is missing", async () => {
+    const world = createWorld({
+      highRisk: true,
+      initialStage: "review-primary",
+      runReviewGate: {
+        ready: false,
+        reason: "review-quorum-missing",
+        blockingFindingCount: 0,
+        reportCount: 0,
+      },
+    });
+
+    await expect(
+      drivePrevcAutopilot({
+        scope: world.scope,
+        missionId: world.missionId,
+        allowExecutionExit: false,
+        dependencies: world.dependencies,
+      }),
+    ).resolves.toMatchObject({
+      state: "review-primary",
+      transitions: [],
+      reason: "review-quorum-missing",
+    });
+    expect(world.reviewCalls).toHaveBeenCalledOnce();
+  });
+
+  it("does not reuse one blocked reviewer as the two-reviewer critical quorum", async () => {
+    const world = createWorld({
+      criticalRisk: true,
+      preExecutionGate: Object.freeze({
+        ready: false,
+        reason: "blocking-findings",
+        evidenceIds: Object.freeze(["review:first-critical"]),
+        reportCount: 1,
+        quorumReportCount: 1,
+        blockingFindingCount: 1,
+      }),
+    });
+
+    await expect(
+      runPrevcCouncilReview({
+        scope: world.scope,
+        missionId: world.missionId,
+        dependencies: world.dependencies,
+      }),
+    ).resolves.toMatchObject({ ready: true });
+    expect(world.reviewCalls).toHaveBeenCalledOnce();
+  });
+
+  it("gives the reviewer a bounded current sealed-plan and dispatch-ownership summary", async () => {
+    const world = createWorld({
+      bindingReviewGate: Object.freeze({
+        ready: false,
+        reason: "blocking-findings",
+        evidenceIds: Object.freeze(["review:legacy-baseline"]),
+        reportCount: 1,
+        quorumReportCount: 1,
+        blockingFindingCount: 1,
+      }),
+    });
+    world.dispatches = world.dispatches.map((entry) =>
+      entry.taskId === "task-isolated"
+        ? {
+            ...entry,
+            agentRef: "executor",
+            agentCategory: "executor",
+            ownership: {
+              files: Array.from(
+                { length: 100 },
+                (_, index) => `src/feature-${index}.ts`,
+              ),
+              symbols: ["executeFeature"],
+              domains: ["delivery"],
+            },
+          }
+        : entry,
+    );
+
+    await expect(
+      runPrevcCouncilReview({
+        scope: world.scope,
+        missionId: world.missionId,
+        dependencies: world.dependencies,
+      }),
+    ).resolves.toMatchObject({ ready: true });
+
+    expect(world.reviewCalls).toHaveBeenCalledOnce();
+    const input = world.reviewCalls.mock.calls[0]?.[0];
+    expect(input).toBeDefined();
+    expect(input?.reviewPurpose).toBe("pre-execution");
+    expect(input?.preExecutionPlanBinding).toEqual({
+      intentVersion: world.receipt.intentVersion,
+      planHash: world.receipt.planHash,
+    });
+    expect(input?.contextMarkdown).toContain(
+      "## Current sealed execution plan",
+    );
+    expect(input?.contextMarkdown).toContain("task-read-only");
+    expect(input?.contextMarkdown).toContain('detail="sealed"');
+    expect(input?.contextMarkdown).toContain("scout");
+    expect(input?.contextMarkdown).toContain("task-isolated");
+    expect(input?.contextMarkdown).toContain("executor");
+    expect(input?.contextMarkdown).toContain("executeFeature");
+    expect(input?.contextMarkdown).toContain("delivery");
+    expect(input?.contextMarkdown).toContain("ownership values omitted");
+    expect(input?.contextMarkdown.length).toBeLessThan(20_000);
+  });
+
+  it("lists detail for every task in a maximum-size sealed plan within an explicit bound", async () => {
+    const world = createWorld();
+    world.receipt = {
+      ...world.receipt,
+      tasks: Array.from({ length: 64 }, (_, index) => ({
+        plannerId: `planner-${index}`,
+        taskId: `task-${index}`,
+        title: `title-marker-${index} ${"t".repeat(1_024)}`,
+        detail: `detail-marker-${index} ${"d".repeat(65_536)}`,
+        agentRef: index % 2 === 0 ? "scout" : "executor",
+        agentCategory: index % 2 === 0 ? "scout" : "executor",
+      })),
+    };
+
+    await expect(
+      runPrevcCouncilReview({
+        scope: world.scope,
+        missionId: world.missionId,
+        dependencies: world.dependencies,
+      }),
+    ).resolves.toMatchObject({ ready: true });
+
+    const contextMarkdown = world.reviewCalls.mock.calls[0]?.[0].contextMarkdown;
+    expect(contextMarkdown).toBeDefined();
+    expect(contextMarkdown).toContain("Plan context limit: 48000 characters");
+    expect(contextMarkdown).toContain("Sealed task entries: 64/64");
+    for (let index = 0; index < 64; index += 1) {
+      expect(contextMarkdown).toContain(`task-${index}`);
+      expect(contextMarkdown).toContain(`detail-marker-${index}`);
+    }
+    expect(contextMarkdown).not.toContain("sealed task(s) omitted");
+    expect(contextMarkdown?.length).toBeLessThan(50_000);
+  });
+
+  it("reuses a current blocked pre-execution gate without spawning another review", async () => {
+    const world = createWorld({
+      preExecutionGate: Object.freeze({
+        ready: false,
+        reason: "blocking-findings",
+        evidenceIds: Object.freeze(["review:current-blocking"]),
+        reportCount: 1,
+        quorumReportCount: 1,
+        blockingFindingCount: 1,
+      }),
+    });
+
+    const result = await runPrevcCouncilReview({
+      scope: world.scope,
+      missionId: world.missionId,
+      dependencies: world.dependencies,
+    });
+
+    expect(result).toMatchObject({
+      ready: false,
+      gate: {
+        ready: false,
+        reason: "blocking-findings",
+        blockingFindingCount: 1,
+        reportCount: 1,
+      },
+      evidenceIds: ["review:current-blocking"],
+    });
+    expect(world.reviewCalls).not.toHaveBeenCalled();
+    expect(world.inspectCurrentPreExecutionReviewGate).toHaveBeenCalledWith(
+      world.missionId,
+      {
+        intentVersion: world.receipt.intentVersion,
+        planHash: world.receipt.planHash,
+      },
+    );
+  });
+
+  it("does not reuse a report from an older receipt under the same Git and contract binding", async () => {
+    const oldPlan = {
+      intentVersion: 3,
+      planHash: PLAN_HASH,
+    };
+    const world = createWorld({
+      preExecutionGateForPlan: (binding) =>
+        binding.intentVersion === oldPlan.intentVersion &&
+        binding.planHash === oldPlan.planHash
+          ? Object.freeze({
+              ready: true,
+              reason: "ready",
+              evidenceIds: Object.freeze(["review:old-plan"]),
+              reportCount: 1,
+              quorumReportCount: 1,
+              blockingFindingCount: 0,
+            })
+          : Object.freeze({
+              ready: false,
+              reason: "review-quorum-missing",
+              evidenceIds: Object.freeze([] as string[]),
+              reportCount: 0,
+              quorumReportCount: 0,
+              blockingFindingCount: 0,
+            }),
+    });
+    world.receipt = {
+      ...world.receipt,
+      planHash: "9".repeat(64),
+    };
+
+    await expect(
+      runPrevcCouncilReview({
+        scope: world.scope,
+        missionId: world.missionId,
+        dependencies: world.dependencies,
+      }),
+    ).resolves.toMatchObject({ ready: true });
+
+    expect(world.inspectCurrentPreExecutionReviewGate).toHaveBeenCalledWith(
+      world.missionId,
+      {
+        intentVersion: 3,
+        planHash: "9".repeat(64),
+      },
+    );
+    expect(world.reviewCalls).toHaveBeenCalledOnce();
+    expect(world.reviewCalls.mock.calls[0]?.[0].preExecutionPlanBinding).toEqual({
+      intentVersion: 3,
+      planHash: "9".repeat(64),
+    });
+  });
+});
 
 describe("production guided PREVC post-merge bridge", () => {
   it("accepts current completed dispatches, including read-only tasks without fake worktrees", async () => {

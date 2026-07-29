@@ -291,6 +291,25 @@ describe('nexus_design_system_import', () => {
 });
 
 describe('nexus_design_system_extract', () => {
+  it('fails closed by default while Dembrandt lacks a per-request route guard', async () => {
+    const extractTool = tool('nexus_design_system_extract', {
+      assertCurrentAuthority: () => {},
+    });
+
+    await expect(
+      extractTool.handler(
+        { url: 'https://linear.app' },
+        context('codex', 'session-no-network-guard'),
+      ),
+    ).rejects.toThrow(
+      /NETWORK_GUARD_UNAVAILABLE.*per-request.*redirect.*subresource/i,
+    );
+    expect(
+      fs.existsSync(path.join(root, '.context', 'nexus', 'evidence', 'dembrandt')),
+    ).toBe(false);
+    expect(getContextKnowledgeService(scope).list({ status: 'proposed' })).toEqual([]);
+  });
+
   it('proposes a ContextDraft from a live URL without writing the final file', async () => {
     const extractTool = tool('nexus_design_system_extract', {
       assertCurrentAuthority: () => {},
@@ -301,7 +320,7 @@ describe('nexus_design_system_extract', () => {
         addresses: ['1.2.3.4'],
         addressClasses: ['public'],
       }),
-      extractDesignSystem: async () => ({
+      routeGuardedExtractDesignSystem: async () => ({
         designMd: '---\nname: Linear\n---\n\n## Overview\nMinimal.\n',
       }),
     });
@@ -354,7 +373,7 @@ describe('nexus_design_system_extract', () => {
         addresses: ['1.2.3.4'],
         addressClasses: ['public'],
       }),
-      extractDesignSystem: () =>
+      routeGuardedExtractDesignSystem: () =>
         new Promise<{ designMd: string }>((resolve) => {
           resolveExtract = resolve;
         }),
@@ -394,7 +413,7 @@ describe('nexus_design_system_extract', () => {
         kind: 'private-network',
         reason: 'private-network access requires explicit confirmation',
       }),
-      extractDesignSystem: async () => {
+      routeGuardedExtractDesignSystem: async () => {
         throw new Error('runner must not run');
       },
     });

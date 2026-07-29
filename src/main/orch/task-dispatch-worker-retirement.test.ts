@@ -175,6 +175,37 @@ describe("task dispatch worker retirement", () => {
     expect(closeWorker).toHaveBeenCalledOnce();
   });
 
+  it("finishes the in-flight close, preserves the exact abort reason, and starts no sibling", async () => {
+    const terminalA = dispatch("a");
+    const terminalB = dispatch("b");
+    const byTask = new Map([
+      [terminalA.taskId, terminalA],
+      [terminalB.taskId, terminalB],
+    ]);
+    const controller = new AbortController();
+    const reason = new Error("orchestration coordinator stopped");
+    const closeWorker = vi.fn(async () => {
+      controller.abort(reason);
+      return true;
+    });
+    const coordinator = new TaskDispatchWorkerRetirementCoordinator();
+
+    await expect(
+      coordinator.retireMissionWorkers({
+        scope,
+        missionId,
+        dispatches: [terminalA, terminalB],
+        signal: controller.signal,
+        deps: {
+          getDispatch: (taskId) => byTask.get(taskId) ?? null,
+          closeWorker,
+        },
+      }),
+    ).rejects.toBe(reason);
+
+    expect(closeWorker).toHaveBeenCalledOnce();
+  });
+
   it("makes a successful retirement replay idempotent", async () => {
     const terminalA = dispatch("a");
     const coordinator = new TaskDispatchWorkerRetirementCoordinator();

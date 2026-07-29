@@ -33,7 +33,11 @@ import { waitOutBootPrompts } from './boot-prompt-hold';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
 import { assertSafePtyPrompt } from './pty-prompt-safety';
-import { isSessionInjectableIdle } from './agent-status';
+import {
+  getAgentTurnStartSequence,
+  isSessionInjectableIdle,
+  tapAgentTurnStart,
+} from './agent-status';
 import { listSquads } from './squad-store';
 import { resolveMissionPaneAuthoritySeal } from './mission-pane-authority';
 import {
@@ -73,6 +77,11 @@ const AGENT_BOOT_TIMEOUT_MS = 60_000;
  * blind to idle panes: stall needs busy, login-stuck needs a busy transition).
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
+const CLAUDE_FAMILY_TURN_PROOF_ADAPTERS = new Set([
+  'claude',
+  'glm',
+  'longcat',
+]);
 
 function agentBootExitError(sessionId: string): Error {
   const outputTail = sanitizeMissionOrchestratorExitOutput(
@@ -266,6 +275,8 @@ async function injectWithBusyProof(
   prompt: string,
   windowMs: number,
   invocation?: McpToolInvocation,
+  allowSilentBusyProof = false,
+  requireTurnStartProof = false,
 ): Promise<boolean> {
   // Never interleave a brief with boot or a turn already in progress. The
   // caller may retry only after an actual idle snapshot/edge.
@@ -275,14 +286,16 @@ async function injectWithBusyProof(
   let observedOutput = false;
   let submitted = false;
   let sessionExited = false;
+  let turnStartBaseline = getAgentTurnStartSequence(sessionId);
+  let turnStartObserved = false;
   let settle: ((accepted: boolean) => void) | null = null;
+  const hasAcceptanceProof = () =>
+    requireTurnStartProof
+      ? turnStartObserved
+      : observedBusy &&
+        (observedOutput || (allowSilentBusyProof && realMission));
   const maybeAccept = () => {
-    if (observedBusy && observedOutput) settle?.(true);
-    // Release gate: Codex can stay in silent reasoning for seconds after busy
-    // without PTY output; do not kill a live worker that already accepted work.
-    else if (observedBusy && realMission) {
-      settle?.(true);
-    }
+    if (hasAcceptanceProof()) settle?.(true);
   };
   const untapState = tapSessionState((changedSessionId, state) => {
     // Count busy even before submitted flips — paste can auto-start the turn.
@@ -291,14 +304,30 @@ async function injectWithBusyProof(
     if (submitted) maybeAccept();
   });
   const untapData = tapSessionData((changedSessionId, data) => {
-    if (changedSessionId !== sessionId || data.length === 0) return;
+    if (
+      changedSessionId !== sessionId ||
+      data.length === 0 ||
+      !submitted
+    ) return;
+    // A TUI commonly echoes/repaints the bracketed paste before Enter. That
+    // output proves only local editing, not that the provider accepted the
+    // turn. Count output only after the submit linearization point.
     observedOutput = true;
-    if (submitted) maybeAccept();
+    maybeAccept();
   });
   const untapExit = tapSessionExit((exitedSessionId) => {
     if (exitedSessionId !== sessionId) return;
     sessionExited = true;
     settle?.(false);
+  });
+  const untapTurnStart = tapAgentTurnStart((entry) => {
+    if (
+      entry.sessionId !== sessionId ||
+      !submitted ||
+      entry.sequence <= turnStartBaseline
+    ) return;
+    turnStartObserved = true;
+    maybeAccept();
   });
 
   try {
@@ -314,16 +343,22 @@ async function injectWithBusyProof(
     await submitEnter(
       sessionId,
       invocation,
-      () => { submitted = true; },
+      () => {
+        turnStartBaseline = getAgentTurnStartSequence(sessionId);
+        submitted = true;
+      },
       true,
     );
+    if (getAgentTurnStartSequence(sessionId) > turnStartBaseline) {
+      turnStartObserved = true;
+    }
     if (getSessionState(sessionId) === 'busy') observedBusy = true;
-    if (observedBusy && (observedOutput || realMission)) return true;
+    if (hasAcceptanceProof()) return true;
     if (sessionExited || getSessionState(sessionId) === null) return false;
     return await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => {
         settle = null;
-        resolve(Boolean(observedBusy && (observedOutput || realMission)));
+        resolve(hasAcceptanceProof());
       }, windowMs);
       settle = (accepted) => {
         clearTimeout(timer);
@@ -331,15 +366,14 @@ async function injectWithBusyProof(
         resolve(accepted);
       };
       // Immediate settle if we already have proof.
-      if (observedBusy && (observedOutput || realMission)) {
-        settle(true);
-      }
+      if (hasAcceptanceProof()) settle(true);
     });
   } finally {
     settle = null;
     untapState();
     untapData();
     untapExit();
+    untapTurnStart();
   }
 }
 
@@ -354,6 +388,7 @@ export async function deliverAgentPrompt(
   sessionId: string,
   prompt: string,
   invocation?: McpToolInvocation,
+  options: { readonly adapterId?: string } = {},
 ): Promise<boolean> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -367,6 +402,8 @@ export async function deliverAgentPrompt(
           prompt,
           PROMPT_ACCEPTANCE_WINDOW_MS,
           invocation,
+          options.adapterId === 'codex',
+          CLAUDE_FAMILY_TURN_PROOF_ADAPTERS.has(options.adapterId ?? ''),
         )
       ) {
         return true;
@@ -374,15 +411,6 @@ export async function deliverAgentPrompt(
     } catch (error) {
       lastError = error;
       // Fall through: real-mission may still keep a live session.
-    }
-  }
-  // Real-mission: Codex may accept the brief without a PTY busy edge the
-  // harness can observe (silent reasoning / delayed paint). Killing a live
-  // session here guarantees dispatches=1 handoffs=0. Prefer a living worker.
-  if (isCurrentProcessRealMissionE2E()) {
-    const state = getSessionState(sessionId);
-    if (state !== null && state !== 'exited') {
-      return false;
     }
   }
   if (lastError instanceof Error) throw lastError;
@@ -399,6 +427,11 @@ export interface SpawnToolOptions {
   cwd?: string;
   title?: string;
   missionId?: string;
+  /**
+   * Internal process-local pane. Main runs it headless so it never contends
+   * for renderer slots, mission composition, or durable workspace layout.
+   */
+  transient?: true;
   contextRevision?: string;
   /** Complete main-owned mission/workflow/squad revision; never renderer-authored. */
   authoritySeal?: MissionPaneAuthoritySeal;
@@ -616,7 +649,7 @@ export async function spawnPaneAndMaybePrompt(
   adapterCircuitBreakers.recordSuccess(options.adapterId);
   hooks.onPaneCreated?.(result.paneId, result.sessionId);
   // Remember the mission's composition so it can be reopened from history.
-  if (options.missionId) {
+  if (options.missionId && options.transient !== true) {
     assertMcpInvocationCurrent(hooks.invocation);
     getProjectDomainStores(options.scope).missionPanes.record({
       missionId: options.missionId,
@@ -640,21 +673,27 @@ export async function spawnPaneAndMaybePrompt(
     });
   }
   if (options.prompt) {
-    // Let the CLI finish booting before typing (first idle or timeout).
-    const boot = await waitForIdle(result.sessionId, AGENT_BOOT_TIMEOUT_MS);
-    const omitHandoff =
-      options.omitHandoffContract === true ||
-      options.role === 'orchestrator' ||
-      (Array.isArray(options.allowedTools) &&
-        options.allowedTools.includes('nexus_merge_review_submit') &&
-        !options.allowedTools.includes('nexus_handoff_submit'));
-    const prompt = omitHandoff
-      ? options.prompt
-      : withHandoffContract(options.prompt, adapter, {
-          category: options.agentCategory,
-          hints: [options.title, options.agentName],
-        });
     try {
+      // Let the CLI finish booting before typing (first idle or timeout).
+      // Cancellation belongs inside the cleanup boundary because a pane
+      // already exists at this point.
+      const boot = await waitForIdle(
+        result.sessionId,
+        AGENT_BOOT_TIMEOUT_MS,
+        hooks.invocation?.signal,
+      );
+      const omitHandoff =
+        options.omitHandoffContract === true ||
+        options.role === 'orchestrator' ||
+        (Array.isArray(options.allowedTools) &&
+          options.allowedTools.includes('nexus_merge_review_submit') &&
+          !options.allowedTools.includes('nexus_handoff_submit'));
+      const prompt = omitHandoff
+        ? options.prompt
+        : withHandoffContract(options.prompt, adapter, {
+            category: options.agentCategory,
+            hints: [options.title, options.agentName],
+          });
       if (boot === 'exited') {
         // The exact PTY exit may already have moved the durable dispatch to
         // blocked. Inspect that physical outcome before re-running the spawn
@@ -669,6 +708,7 @@ export async function spawnPaneAndMaybePrompt(
         result.sessionId,
         prompt,
         hooks.invocation,
+        { adapterId: adapter.id },
       );
       if (promptAccepted) {
         hooks.onPromptAccepted?.(result.paneId, result.sessionId, prompt);

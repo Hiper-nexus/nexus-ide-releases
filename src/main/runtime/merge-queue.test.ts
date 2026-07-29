@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { getEventListeners } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import {
   MergeCasError,
   MergeConflictError,
+  MergeOperationAbortedError,
   MergeQueue,
   MergeQueueBlockedError,
   MergeRetryRequiredError,
@@ -370,6 +372,157 @@ describe('MergeQueue', () => {
     expect(fs.readFileSync(path.join(root, 'b.txt'), 'utf8')).toBe('B\n');
   }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
 
+  it('cancels a queued merge immediately without claim, callback, listener leak, or serialization bypass', async () => {
+    await commitTask('mission-a', 'task-a', 'worker-a', 'a.txt', 'A\n');
+    await commitTask('mission-a', 'task-b', 'worker-b', 'b.txt', 'B\n');
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstCandidate = createSignal('abortedQueueFirstCandidate');
+    const secondValidate = vi.fn((context: MergeValidationContext) =>
+      approved(context),
+    );
+    const secondController = new AbortController();
+    const reason = new Error('scheduler stopped before queued merge');
+    const secondSettled = createSignal('queuedAbortSettled', 250);
+    const replacementController = new AbortController();
+    const replacementStarted = createSignal('replacementStarted');
+    let secondError: unknown;
+    let replacement: Promise<unknown> | null = null;
+    const first = queue.enqueue({
+      scope,
+      missionId: 'mission-a',
+      taskId: 'task-a',
+      async validate(context) {
+        if (context.phase === 'candidate') {
+          firstCandidate.notify();
+          await firstGate;
+        }
+        return approved(context);
+      },
+    });
+    const second = queue.enqueue({
+      scope,
+      missionId: 'mission-a',
+      taskId: 'task-b',
+      signal: secondController.signal,
+      validate: secondValidate,
+    });
+    void second.catch((error: unknown) => {
+      secondError = error;
+      secondSettled.notify();
+    });
+
+    try {
+      await firstCandidate.wait();
+      expect(getEventListeners(secondController.signal, 'abort')).toHaveLength(1);
+
+      secondController.abort(reason);
+      await secondSettled.wait();
+
+      expect(secondError).toBeInstanceOf(MergeOperationAbortedError);
+      expect((secondError as Error & { cause?: unknown }).cause).toBe(reason);
+      expect(getEventListeners(secondController.signal, 'abort')).toHaveLength(0);
+      expect(secondValidate).not.toHaveBeenCalled();
+      const waitingSnapshot = queue.snapshot(scope);
+      expect(waitingSnapshot.activeTaskKey).toBe(
+        waitingSnapshot.entries[0]?.taskKey,
+      );
+      expect(waitingSnapshot).toMatchObject({
+        blocked: null,
+        entries: [{
+          missionId: 'mission-a',
+          taskId: 'task-a',
+          status: 'candidate-validating',
+        }],
+      });
+
+      replacement = queue.enqueue({
+        scope,
+        missionId: 'mission-a',
+        taskId: 'task-b',
+        signal: replacementController.signal,
+        validate(context) {
+          if (context.phase === 'candidate') {
+            expect(
+              getEventListeners(replacementController.signal, 'abort'),
+            ).toHaveLength(0);
+            replacementStarted.notify();
+          }
+          return approved(context);
+        },
+      });
+      expect(
+        getEventListeners(replacementController.signal, 'abort'),
+      ).toHaveLength(1);
+      expect(replacementStarted.notified()).toBe(false);
+
+      releaseFirst();
+      await Promise.all([first, replacement]);
+
+      expect(replacementStarted.notified()).toBe(true);
+      expect(
+        getEventListeners(replacementController.signal, 'abort'),
+      ).toHaveLength(0);
+      expect(fs.readFileSync(path.join(root, 'a.txt'), 'utf8')).toBe('A\n');
+      expect(fs.readFileSync(path.join(root, 'b.txt'), 'utf8')).toBe('B\n');
+    } finally {
+      releaseFirst();
+      await Promise.allSettled([
+        first,
+        second,
+        ...(replacement ? [replacement] : []),
+      ]);
+    }
+  }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
+
+  it('rolls back an in-flight cancellation as a recoverable merge attempt', async () => {
+    await commitTask(
+      'mission-abort',
+      'task-abort',
+      'worker-abort',
+      'abort.txt',
+      'retry safely\n',
+    );
+    const originalHead = git(root, 'rev-parse', 'HEAD');
+    const controller = new AbortController();
+    const reason = new Error('reconciler stopped during merge');
+    const attempt = queue.enqueue({
+      scope,
+      missionId: 'mission-abort',
+      taskId: 'task-abort',
+      signal: controller.signal,
+      validate(context) {
+        if (context.phase === 'candidate') controller.abort(reason);
+        return approved(context);
+      },
+    });
+
+    await expect(attempt).rejects.toThrow(
+      /operation aborted.*reconciler stopped during merge/i,
+    );
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(originalHead);
+    expect(fs.existsSync(path.join(root, 'abort.txt'))).toBe(false);
+    expect(queue.snapshot(scope).blocked).toMatchObject({
+      disposition: 'retryable',
+    });
+
+    await expect(
+      queue.retryRecoverable({
+        scope,
+        missionId: 'mission-abort',
+        taskId: 'task-abort',
+        validate: approved,
+      }),
+    ).resolves.toMatchObject({
+      integratedSha: expect.any(String),
+    });
+    expect(fs.readFileSync(path.join(root, 'abort.txt'), 'utf8')).toBe(
+      'retry safely\n',
+    );
+  }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
+
   it('keeps merge serialization scoped so independent projects can validate concurrently', async () => {
     await commitTask('mission-a', 'task-a', 'worker-a', 'a.txt', 'A\n');
     const secondRoot = path.join(tempDir, 'repo-two');
@@ -571,6 +724,71 @@ describe('MergeQueue', () => {
     expect(queue.snapshot(scope)).toMatchObject({
       blocked: null,
       entries: [{ status: 'integrated', attempt: 2 }],
+    });
+  }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
+
+  it('keeps retry recovery pinned to the newly accepted physical handoff HEAD', async () => {
+    const assignment = await commitTask(
+      'mission-retry-pin',
+      'task-retry-pin',
+      'worker-retry-pin',
+      'retry-pin.txt',
+      'W\n',
+    );
+    const firstHandoffHead = git(
+      assignment.worktreePath,
+      'rev-parse',
+      'HEAD',
+    );
+    await expect(
+      queue.enqueue({
+        scope,
+        missionId: 'mission-retry-pin',
+        taskId: 'task-retry-pin',
+        expectedTaskHeadSha: firstHandoffHead,
+        validate: () => ({
+          sensorsPassed: false,
+          reviewPassed: true,
+          evidenceIds: ['rejected-W'],
+        }),
+      }),
+    ).rejects.toThrow(MergeValidationRejectedError);
+
+    write(assignment.worktreePath, 'retry-pin.txt', 'W2\n');
+    git(assignment.worktreePath, 'add', '.');
+    git(assignment.worktreePath, 'commit', '-m', 'repair after first handoff');
+    const secondHandoffHead = git(
+      assignment.worktreePath,
+      'rev-parse',
+      'HEAD',
+    );
+    const blockedBeforeStaleRetry = queue.snapshot(scope);
+    const staleValidate = vi.fn(approved);
+
+    await expect(
+      queue.retryRecoverable({
+        scope,
+        missionId: 'mission-retry-pin',
+        taskId: 'task-retry-pin',
+        expectedTaskHeadSha: firstHandoffHead,
+        validate: staleValidate,
+      }),
+    ).rejects.toThrow(/retry task HEAD.*physical handoff/i);
+
+    expect(staleValidate).not.toHaveBeenCalled();
+    expect(queue.snapshot(scope)).toEqual(blockedBeforeStaleRetry);
+
+    await expect(
+      queue.retryRecoverable({
+        scope,
+        missionId: 'mission-retry-pin',
+        taskId: 'task-retry-pin',
+        expectedTaskHeadSha: secondHandoffHead,
+        validate: approved,
+      }),
+    ).resolves.toMatchObject({
+      taskHeadSha: secondHandoffHead,
+      integratedSha: expect.any(String),
     });
   }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
 
@@ -1192,6 +1410,41 @@ describe('MergeQueue', () => {
 
     expect(git(root, 'rev-parse', 'HEAD')).toBe(originalHead);
     expect(fs.existsSync(path.join(root, 'task.txt'))).toBe(false);
+  });
+
+  it('rejects a task HEAD newer than the physical handoff before validation or Git integration effects', async () => {
+    const assignment = await commitTask(
+      'mission-handoff-pin',
+      'task-handoff-pin',
+      'worker-handoff-pin',
+      'pinned.txt',
+      'handoff W\n',
+    );
+    const handoffHeadSha = git(assignment.worktreePath, 'rev-parse', 'HEAD');
+    write(assignment.worktreePath, 'pinned.txt', 'late W2\n');
+    git(assignment.worktreePath, 'add', '.');
+    git(assignment.worktreePath, 'commit', '-m', 'late commit after handoff');
+    const validate = vi.fn(approved);
+    const integrationHeadSha = git(root, 'rev-parse', 'HEAD');
+
+    await expect(
+      queue.enqueue({
+        scope,
+        missionId: 'mission-handoff-pin',
+        taskId: 'task-handoff-pin',
+        expectedTaskHeadSha: handoffHeadSha,
+        validate,
+      }),
+    ).rejects.toThrow(/task HEAD.*physical handoff/i);
+
+    expect(validate).not.toHaveBeenCalled();
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(integrationHeadSha);
+    expect(
+      gitRunner.calls.some((call) => call.args[0] === 'merge-tree'),
+    ).toBe(false);
+    expect(
+      worktrees.get(scope, 'mission-handoff-pin', 'task-handoff-pin'),
+    ).not.toMatchObject({ status: 'queued' });
   });
 
   it('rolls back post-integration findings and preserves the worktree for repair', async () => {

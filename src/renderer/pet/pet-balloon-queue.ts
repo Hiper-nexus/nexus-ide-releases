@@ -61,6 +61,14 @@ export function balloonContentFor(
         text: event.title,
         cta: 'Ver no Ops Board',
       };
+    case 'mission-technical-failure':
+      return {
+        title: 'Falha técnica',
+        text: event.title.trim()
+          ? `${event.title.trim()} — a recuperação automática parou. Abra o diagnóstico para tentar novamente.`
+          : 'A recuperação automática parou. Abra o diagnóstico para tentar novamente.',
+        cta: 'Ver diagnóstico',
+      };
     case 'mission-blocked':
       return {
         title: 'Preciso de você',

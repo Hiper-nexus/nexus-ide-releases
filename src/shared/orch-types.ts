@@ -668,6 +668,8 @@ export interface OrchPaneSpawnRequest {
   cwd?: string;
   title?: string;
   missionId?: string;
+  /** Visible for this process only; never persist or restore after a crash. */
+  transient?: true;
   /** Agente do squad que este pane representa — exibido no badge do pane. */
   agentName?: string;
   role?: 'orchestrator' | 'worker';
@@ -686,6 +688,30 @@ export const orchPaneSpawnResultSchema = z.object({
   error: z.string().max(1024).optional(),
 });
 export type OrchPaneSpawnResult = z.infer<typeof orchPaneSpawnResultSchema>;
+
+/**
+ * Main → renderer presentation hint for one already-running mission PTY.
+ *
+ * This is not a spawn grant. The renderer may only mount the stable pane and
+ * ask the PTY boundary to adopt the exact session retained by Main.
+ */
+export interface MissionPanePresentationRequest {
+  missionId: string;
+  paneId: string;
+  sessionId: string;
+  role: 'orchestrator' | 'worker';
+  pane: Pick<
+    MissionPaneSpec,
+    | 'adapterId'
+    | 'model'
+    | 'accountId'
+    | 'effort'
+    | 'cwd'
+    | 'title'
+    | 'agentName'
+    | 'role'
+  >;
+}
 
 /** Main → renderer: restart one stable mission pane with a fresh context. */
 export interface MissionPaneRecoveryRequest {
@@ -732,17 +758,21 @@ export interface BrowserPaneOpenRequest {
 }
 
 /**
- * Main → renderer cleanup for one browser-open attempt. The renderer must only
- * close the pane when both identities still match; paneId alone is not an
- * authority token because another workspace/request may legitimately own it.
+ * Main → renderer cleanup for one browser-open or orchestration-spawn attempt.
+ * The renderer must only close the pane when both identities still match;
+ * paneId alone is not an authority token because another workspace/request may
+ * legitimately own it.
  */
-export interface BrowserPaneCleanupRequest {
+export interface PaneAttemptCleanupRequest {
   paneId: string;
   requestId: string;
 }
 
-/** Legacy/general closes remain pane-id strings; browser cleanup is sealed. */
-export type PaneCloseRequest = string | BrowserPaneCleanupRequest;
+/** Backward-compatible name retained for browser-open callers. */
+export type BrowserPaneCleanupRequest = PaneAttemptCleanupRequest;
+
+/** Legacy/general closes remain pane-id strings; attempt cleanup is sealed. */
+export type PaneCloseRequest = string | PaneAttemptCleanupRequest;
 
 export const browserPaneOpenResultSchema = z.object({
   requestId: z.string().min(1).max(128),
@@ -766,6 +796,13 @@ export const paneRegistryEntrySchema = z.object({
 });
 
 export const panesSyncSchema = z.array(paneRegistryEntrySchema).max(256);
+export const panesSyncEnvelopeSchema = z
+  .object({
+    /** One id per preload/document generation; never used as authority. */
+    generationId: z.string().min(1).max(128),
+    entries: panesSyncSchema,
+  })
+  .strict();
 
 /** Renderer-facing MCP runtime info (shown in the orchestration panel). */
 export interface McpRuntimeInfo {

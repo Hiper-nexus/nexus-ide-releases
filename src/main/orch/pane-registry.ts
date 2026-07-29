@@ -2,14 +2,15 @@ import type { WebContents } from "electron";
 import type {
   OrchPaneSpawnRequest,
   OrchPaneSpawnResult,
-  BrowserPaneCleanupRequest,
   BrowserPaneOpenRequest,
   BrowserPaneOpenResult,
   PaneRegistryEntry,
   MissionPaneRecoveryRequest,
   MissionPaneRecoveryResult,
+  MissionPanePresentationRequest,
   MissionPaneAuthoritySeal,
   MissionPaneSpec,
+  PaneAttemptCleanupRequest,
   PaneSnapshot,
 } from "../../shared/orch-types";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
@@ -44,10 +45,12 @@ import {
   hasMainOwnedPaneReference,
   hasMainOwnedPaneSession,
   listMainOwnedPaneSnapshots,
+  mainOwnedPaneValues,
   listVisibleMainOwnedPaneSnapshots,
   retainClaimedPendingSpawn as retainClaimedPendingSpawnRuntime,
   setMainOwnedPane,
   spawnMainOwnedMissionPane as spawnMainOwnedMissionPaneRuntime,
+  type MainOwnedPane,
   type MainOwnedPaneHooks,
   type PaneOrchMeta,
   type PaneSpawnOptions as MainOwnedPaneSpawnOptions,
@@ -74,6 +77,7 @@ import {
   resolveMissionPaneAuthoritySeal,
   sameMissionPaneAuthoritySeal,
 } from "./mission-pane-authority";
+import { isAutomatedReviewerCompositionPane } from "./mission-pane-store";
 
 /**
  * Main-process mirror of the renderer's pane grid plus per-session output ring
@@ -115,6 +119,7 @@ interface PendingSpawn {
   request: OrchPaneSpawnRequest;
   lastSentAt: number;
   attempts: number;
+  settled: boolean;
   abortCleanup?: () => void;
 }
 const pendingSpawns = new Map<string, PendingSpawn>();
@@ -135,14 +140,24 @@ interface ExpiredBrowserOpen {
 }
 const expiredBrowserOpens = new Map<string, ExpiredBrowserOpen>();
 
-function sendBrowserPaneCleanup(
+function sendAttemptPaneCleanup(
   owner: WebContents,
   requestId: string,
   paneId: string,
 ): void {
-  if (owner.isDestroyed() || owner.isCrashed()) return;
-  const cleanup: BrowserPaneCleanupRequest = { requestId, paneId };
-  owner.send(ORCH_CHANNELS.paneCloseRequest, cleanup);
+  try {
+    if (owner.isDestroyed() || owner.isCrashed()) return;
+    const cleanup: PaneAttemptCleanupRequest = { requestId, paneId };
+    owner.send(ORCH_CHANNELS.paneCloseRequest, cleanup);
+  } catch (error) {
+    // WebContents can die between the liveness check and send(). Cleanup is a
+    // renderer presentation hint; it must never strand the Main-owned
+    // settlement/physical teardown that already revoked this request.
+    console.warn(
+      `[pane-registry] renderer cleanup skipped for ${paneId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 function retainExpiredBrowserOpen(
@@ -162,7 +177,7 @@ function retainExpiredBrowserOpen(
   // Request-sealed and idempotent: catches a pane already inserted before the
   // timeout without deleting a homonymous pane owned by another request.
   // A second conditional close is sent when a late acknowledgement arrives.
-  sendBrowserPaneCleanup(pending.owner, requestId, pending.paneId);
+  sendAttemptPaneCleanup(pending.owner, requestId, pending.paneId);
 }
 
 interface PendingPaneRecovery {
@@ -272,6 +287,8 @@ export function registerOrchRenderer(wc: WebContents): void {
 
 export function unregisterOrchRenderer(wc: WebContents): void {
   if (orchRenderer === wc) orchRenderer = null;
+  paneSyncGenerationByOwner.delete(wc.id);
+  mirroredOwners.delete(wc.id);
   const removed = panes.filter((registered) => registered.owner === wc);
   const removedPaneIds = removed.map((registered) => registered.entry.paneId);
   for (const registered of removed) {
@@ -388,6 +405,8 @@ export function initPaneRegistry(): void {
  * represent "mirrored but currently zero panes".
  */
 const mirroredOwners = new Map<number, WebContents>();
+/** Last preload/document generation observed for each stable WebContents. */
+const paneSyncGenerationByOwner = new Map<number, string>();
 
 /**
  * True once any live renderer bound to this workspace scope has synced its
@@ -566,6 +585,8 @@ async function settlePendingSpawnFailure(
     readonly retainClaimed?: boolean;
   } = {},
 ): Promise<void> {
+  if (pending.settled) return;
+  pending.settled = true;
   clearTimeout(pending.timer);
   pending.abortCleanup?.();
   pending.abortCleanup = undefined;
@@ -581,6 +602,11 @@ async function settlePendingSpawnFailure(
       ? null
       : retainClaimedPendingSpawnHeadless(requestId, pending);
   if (retained) {
+    sendAttemptPaneCleanup(
+      pending.owner,
+      requestId,
+      pending.request.paneId,
+    );
     pending.resolve(retained);
     return;
   }
@@ -588,6 +614,11 @@ async function settlePendingSpawnFailure(
   if (pending.claimedSessionId) {
     const exited = await terminateRecoveryReplacement(
       pending.claimedSessionId,
+    );
+    sendAttemptPaneCleanup(
+      pending.owner,
+      requestId,
+      pending.request.paneId,
     );
     pending.resolve({
       requestId,
@@ -602,6 +633,11 @@ async function settlePendingSpawnFailure(
   const fallback = options.allowMainFallback
     ? fallbackPendingSpawnToMainRuntime(pending, mainOwnedPaneHooks)
     : null;
+  sendAttemptPaneCleanup(
+    pending.owner,
+    requestId,
+    pending.request.paneId,
+  );
   pending.resolve(
     fallback ?? {
       requestId,
@@ -697,9 +733,235 @@ onRendererWorkspaceScopeChange((scopeOwner, previous, next) => {
   if (owner) handleRendererWorkspaceScopeChange(owner, previous);
 });
 
+function beginRendererPaneGeneration(
+  owner: WebContents,
+  generationId: string | undefined,
+  accepted: readonly PaneRegistryEntry[],
+): void {
+  if (!generationId) return;
+  const previous = paneSyncGenerationByOwner.get(owner.id);
+  if (previous === generationId) return;
+  paneSyncGenerationByOwner.set(owner.id, generationId);
+
+  const scope = getRendererWorkspaceScope(owner);
+  if (!scope) return;
+  // A new preload means the previous document lost its terminal-host map even
+  // when Electron reused the same WebContents (Cmd+R/HMR). Preserve only
+  // mission sessions not already reattached by the incoming generation.
+  const alreadyAttached = new Set(
+    accepted
+      .filter((entry) => entry.sessionId !== null)
+      .map((entry) => entry.paneId),
+  );
+  for (const registered of panes) {
+    if (
+      registered.owner === owner &&
+      !alreadyAttached.has(registered.entry.paneId)
+    ) {
+      retainRenderedMissionPaneHeadless(registered, scope);
+    }
+  }
+}
+
+type MainOwnedPanePresentationResolution =
+  | {
+      readonly kind: "present";
+      readonly request: MissionPanePresentationRequest;
+    }
+  | {
+      readonly kind: "skip";
+    }
+  | {
+      readonly kind: "stale";
+      readonly reason: string;
+    };
+
+const staleMainOwnedPaneRetirements = new Map<string, Promise<void>>();
+
+function sameExactProjectScope(
+  left: Readonly<ProjectExecutionScope>,
+  right: Readonly<ProjectExecutionScope>,
+): boolean {
+  return left.version === right.version && sameProjectScope(left, right);
+}
+
+function stalePresentation(reason: string): MainOwnedPanePresentationResolution {
+  return { kind: "stale", reason };
+}
+
+function resolveMainOwnedPanePresentation(
+  ownerScope: ProjectExecutionScope,
+  pane: MainOwnedPane,
+): MainOwnedPanePresentationResolution {
+  const { entry, meta } = pane;
+  const sessionId = entry.sessionId;
+  const missionId = meta.missionId;
+  const role = meta.role;
+  if (meta.transient === true) return { kind: "skip" };
+  if (!meta.scope || !sameExactProjectScope(ownerScope, meta.scope)) {
+    return { kind: "skip" };
+  }
+  if (entry.kind !== "cli-agent") {
+    return stalePresentation("main-owned entry is not a CLI agent");
+  }
+  if (!sessionId) {
+    return stalePresentation("main-owned entry has no physical session");
+  }
+  if (getSessionState(sessionId) === null) {
+    return stalePresentation("main-owned physical session has exited");
+  }
+  if (!missionId || (role !== "orchestrator" && role !== "worker")) {
+    return stalePresentation("main-owned entry has no mission role authority");
+  }
+  const agent = getAgentSessionInfo(sessionId);
+  const executionScope = meta.executionScope ?? meta.scope;
+  if (
+    !agent ||
+    agent.sessionId !== sessionId ||
+    agent.paneId !== entry.paneId ||
+    agent.missionId !== missionId ||
+    agent.role !== role ||
+    agent.adapterId !== entry.adapterId ||
+    (!sameProjectScope(agent.scope, executionScope) &&
+      !sameProjectScope(agent.scope, meta.scope))
+  ) {
+    return stalePresentation("physical PTY identity diverges from pane runtime");
+  }
+
+  let spec: MissionPaneSpec | null | undefined;
+  let currentSeal: MissionPaneAuthoritySeal;
+  try {
+    const stores = getProjectDomainStores(meta.scope);
+    const mission = stores.missions.get(missionId);
+    spec = stores.missionPanes.findByPaneId(entry.paneId);
+    if (!mission || mission.id !== missionId) {
+      return stalePresentation("durable mission no longer exists");
+    }
+    if (
+      !spec ||
+      spec.missionId !== missionId ||
+      spec.paneId !== entry.paneId ||
+      spec.role !== role ||
+      spec.adapterId !== entry.adapterId ||
+      spec.workerIncarnationId !== meta.workerIncarnationId ||
+      !spec.scope ||
+      !sameExactProjectScope(meta.scope, spec.scope) ||
+      isAutomatedReviewerCompositionPane(spec)
+    ) {
+      return stalePresentation("durable mission pane spec is stale or missing");
+    }
+    currentSeal = resolveCurrentMissionSpawnAuthoritySeal(meta.scope, missionId);
+  } catch (error) {
+    return stalePresentation(
+      error instanceof Error
+        ? error.message
+        : "durable mission authority is unavailable",
+    );
+  }
+  if (
+    !sameMissionPaneAuthoritySeal(spec.authoritySeal, currentSeal) ||
+    !sameMissionPaneAuthoritySeal(meta.authoritySeal, currentSeal) ||
+    !sameMissionPaneAuthoritySeal(agent.authoritySeal, currentSeal)
+  ) {
+    return stalePresentation("mission pane authority seal is no longer current");
+  }
+  return {
+    kind: "present",
+    request: {
+      missionId,
+      paneId: entry.paneId,
+      sessionId,
+      role,
+      pane: {
+        adapterId: agent.adapterId,
+        ...(agent.requestedModel ?? entry.model
+          ? { model: agent.requestedModel ?? entry.model }
+          : {}),
+        ...(agent.accountId ? { accountId: agent.accountId } : {}),
+        ...(agent.effort ? { effort: agent.effort } : {}),
+        cwd: agent.cwd,
+        title: entry.title,
+        ...(agent.agentName ? { agentName: agent.agentName } : {}),
+        role,
+      },
+    },
+  };
+}
+
+function staleMainOwnedPaneRetirementKey(pane: MainOwnedPane): string {
+  return `${pane.entry.paneId}\u0000${pane.entry.sessionId ?? ""}`;
+}
+
+function retireStaleMainOwnedPane(
+  pane: MainOwnedPane,
+  reason: string,
+): void {
+  const key = staleMainOwnedPaneRetirementKey(pane);
+  if (staleMainOwnedPaneRetirements.has(key)) return;
+  const { paneId, sessionId } = pane.entry;
+  const retirement = (async () => {
+    try {
+      if (sessionId && getSessionState(sessionId) !== null) {
+        const exited = await orchTerminateSession(sessionId);
+        if (!exited) {
+          console.warn(
+            `[pane-registry] stale pane remains live pane=${paneId} ` +
+              `session=${sessionId}: ${reason}`,
+          );
+          return;
+        }
+      }
+      const current = getMainOwnedPane(paneId);
+      if (
+        current !== pane ||
+        current.entry.sessionId !== sessionId
+      ) {
+        return;
+      }
+      if (deleteMainOwnedPane(paneId)) {
+        mainOwnedPaneHooks.panesChanged();
+      }
+    } catch (error) {
+      console.warn(
+        `[pane-registry] stale pane retirement failed pane=${paneId} ` +
+          `session=${sessionId ?? "none"}:`,
+        error instanceof Error ? error.message : error,
+      );
+    } finally {
+      staleMainOwnedPaneRetirements.delete(key);
+    }
+  })();
+  staleMainOwnedPaneRetirements.set(key, retirement);
+}
+
+function requestMainOwnedPanePresentations(owner: WebContents): void {
+  const scope = getRendererWorkspaceScope(owner);
+  if (!scope || owner.isDestroyed() || owner.isCrashed()) return;
+  for (const pane of mainOwnedPaneValues()) {
+    const resolution = resolveMainOwnedPanePresentation(scope, pane);
+    if (resolution.kind === "skip") continue;
+    if (resolution.kind === "stale") {
+      retireStaleMainOwnedPane(pane, resolution.reason);
+      continue;
+    }
+    const { request } = resolution;
+    try {
+      owner.send(ORCH_CHANNELS.panePresentationRequest, request);
+    } catch (error) {
+      // Presentation is replayed by the next pane sync. The PTY remains
+      // Main-owned and must never be terminated because one document vanished.
+      console.warn(
+        `[pane-registry] presentation skipped for ${request.paneId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+}
+
 export function syncPanes(
   entries: PaneRegistryEntry[],
   owner: WebContents,
+  generationId?: string,
 ): void {
   panesVersion += 1;
   mirroredOwners.set(owner.id, owner);
@@ -713,6 +975,7 @@ export function syncPanes(
       (!entry.sessionId ||
         isSessionOwnedBy(owner, entry.sessionId)),
   );
+  beginRendererPaneGeneration(owner, generationId, accepted);
   for (const entry of accepted) {
     const detached = getMainOwnedPane(entry.paneId);
     if (
@@ -734,6 +997,7 @@ export function syncPanes(
       orchMetaByPane.delete(key);
     }
   }
+  requestMainOwnedPanePresentations(owner);
   // React/HMR may remount after main emitted the one-shot spawn event. Treat
   // pane sync as the renderer-ready heartbeat and replay unclaimed requests;
   // the renderer deduplicates them by orchRequestId.
@@ -1088,17 +1352,11 @@ export interface PendingRecoverySpawnMeta {
   readonly request: Readonly<MissionPaneRecoveryRequest>;
 }
 
-/**
- * Claim a pending spawn exactly once. The opaque request id is insufficient:
- * it must return through the same WebContents that received the main-process
- * spawn command, otherwise another renderer could replay/steal its authority.
- */
-export function claimPendingSpawnMeta(
-  requestId: string,
+function claimPendingSpawn(
+  pending: PendingSpawn,
   owner: WebContents,
 ): PendingSpawnMeta | null {
-  const pending = pendingSpawns.get(requestId);
-  if (!pending || pending.owner !== owner || pending.claimed) return null;
+  if (pending.owner !== owner || pending.claimed) return null;
   if (!pending.meta.scope) return null;
   try {
     requireLiveRendererWorkspaceScope(owner, pending.meta.scope);
@@ -1116,6 +1374,45 @@ export function claimPendingSpawnMeta(
       : { requestedCwd: pending.requestedCwd }),
     sealedRequest: Object.freeze({ ...pending.request }),
   };
+}
+
+/**
+ * Claim a pending spawn exactly once. The opaque request id is insufficient:
+ * it must return through the same WebContents that received the main-process
+ * spawn command, otherwise another renderer could replay/steal its authority.
+ */
+export function claimPendingSpawnMeta(
+  requestId: string,
+  owner: WebContents,
+): PendingSpawnMeta | null {
+  const pending = pendingSpawns.get(requestId);
+  return pending ? claimPendingSpawn(pending, owner) : null;
+}
+
+/**
+ * Recover the same one-shot grant when renderer presentation lost only its
+ * opaque request id during a React/layout remount. Pane id is not authority:
+ * Main requires one unique, still-unclaimed record for the exact owner and
+ * mission, then returns the original sealed request so every renderer field
+ * is canonicalized before any provider effect.
+ */
+export function claimPendingSpawnMetaByPane(
+  input: {
+    readonly paneId: string;
+    readonly missionId: string;
+  },
+  owner: WebContents,
+): PendingSpawnMeta | null {
+  const matches = [...pendingSpawns.values()].filter(
+    (pending) =>
+      pending.owner === owner &&
+      !pending.claimed &&
+      pending.request.paneId === input.paneId &&
+      pending.request.missionId === input.missionId &&
+      pending.meta.missionId === input.missionId,
+  );
+  if (matches.length !== 1) return null;
+  return claimPendingSpawn(matches[0], owner);
 }
 
 /** Bind the claimed orchestration request to the concrete PTY it created. */
@@ -1310,6 +1607,28 @@ export function requestPaneSpawn(
           : "mission pane authority is stale",
     });
   }
+  if (options.transient === true) {
+    if (
+      !options.missionId ||
+      (options.role !== "orchestrator" && options.role !== "worker")
+    ) {
+      return Promise.resolve({
+        requestId: "",
+        ok: false,
+        error: "transient pane requires main-owned mission authority",
+      });
+    }
+    // Internal verification lanes must not contend for renderer layout slots
+    // or enter crash recovery. Main still owns the physical PTY and registry
+    // proof, while the pane remains headless and process-local.
+    return Promise.resolve(
+      spawnMainOwnedMissionPane({
+        ...options,
+        missionId: options.missionId,
+        role: options.role,
+      }),
+    );
+  }
   const owner = rendererForMission(options.missionId, options.scope);
   if (!owner) {
     if (
@@ -1365,6 +1684,7 @@ export function requestPaneSpawn(
     cwd: requestedCwd,
     title: options.title,
     missionId: options.missionId,
+    transient: options.transient === true ? true : undefined,
     agentName: options.agentName,
     role: options.role,
     resume: false,
@@ -1390,6 +1710,7 @@ export function requestPaneSpawn(
       request,
       lastSentAt: Date.now(),
       attempts: 1,
+      settled: false,
       meta: {
         missionId: options.missionId,
         contextRevision: options.contextRevision,
@@ -1398,6 +1719,7 @@ export function requestPaneSpawn(
         allowedTools: options.allowedTools,
         allowedSkills: options.allowedSkills,
         role: options.role,
+        transient: options.transient === true ? true : undefined,
         scope: options.scope,
         executionScope: options.executionScope,
         readOnly: options.readOnly === true,
@@ -1518,6 +1840,7 @@ export function resolvePaneSpawn(
     return true;
   }
   clearTimeout(pending.timer);
+  pending.settled = true;
   pending.abortCleanup?.();
   pending.abortCleanup = undefined;
   pendingSpawns.delete(result.requestId);
@@ -1540,7 +1863,7 @@ export function resolveBrowserOpen(
     expiredBrowserOpens.delete(result.requestId);
     // Never trust a renderer-selected paneId on a late acknowledgement and
     // never treat our expected paneId alone as proof of ownership.
-    sendBrowserPaneCleanup(owner, result.requestId, expired.paneId);
+    sendAttemptPaneCleanup(owner, result.requestId, expired.paneId);
     return true;
   }
   if (pending.owner !== owner) return false;
@@ -1550,7 +1873,7 @@ export function resolveBrowserOpen(
   } catch {
     clearTimeout(pending.timer);
     pendingBrowserOpens.delete(result.requestId);
-    sendBrowserPaneCleanup(owner, result.requestId, pending.paneId);
+    sendAttemptPaneCleanup(owner, result.requestId, pending.paneId);
     pending.resolve({
       requestId: result.requestId,
       ok: false,
@@ -1561,7 +1884,7 @@ export function resolveBrowserOpen(
   clearTimeout(pending.timer);
   pendingBrowserOpens.delete(result.requestId);
   if (result.ok && result.paneId !== pending.paneId) {
-    sendBrowserPaneCleanup(owner, result.requestId, pending.paneId);
+    sendAttemptPaneCleanup(owner, result.requestId, pending.paneId);
     pending.resolve({
       requestId: result.requestId,
       ok: false,
@@ -1575,7 +1898,7 @@ export function resolveBrowserOpen(
     // The renderer may have inserted the pane before failing a later step.
     // Cleanup remains conditional on the request seal, so a pre-existing pane
     // with the same main-minted id is preserved.
-    sendBrowserPaneCleanup(owner, result.requestId, pending.paneId);
+    sendAttemptPaneCleanup(owner, result.requestId, pending.paneId);
   }
   pending.resolve(result);
   return true;

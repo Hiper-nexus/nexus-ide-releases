@@ -289,27 +289,59 @@ export class WorktreeRuntimeRegistry {
       return null;
     }
     const queue = runtime.mergeState.read(key);
-    const integratedTaskKeys = new Set(
+    const integratedEntries = new Map(
       queue.entries
         .filter(
           (entry) =>
             entry.missionId === missionId && entry.status === "integrated",
         )
-        .map((entry) => entry.taskKey),
+        .map((entry) => [entry.taskKey, entry] as const),
     );
+    const queueLessIntegrationHeads: string[] = [];
+    for (const record of records) {
+      const integratedEntry = integratedEntries.get(record.taskKey);
+      if (integratedEntry) {
+        if (
+          integratedEntry.taskHeadSha !== record.taskHeadSha ||
+          integratedEntry.integratedSha !== record.integratedSha
+        ) {
+          return null;
+        }
+        continue;
+      }
+      if (
+        record.taskHeadSha !== record.baseSha ||
+        record.integratedSha === undefined
+      ) {
+        return null;
+      }
+      try {
+        const prepared = runtime.worktrees.prepareDiscardedNoChangeValidation(
+          scope,
+          record.missionId,
+          record.taskId,
+        );
+        if (
+          !prepared ||
+          prepared.record.id !== record.id ||
+          prepared.taskHeadSha !== record.baseSha ||
+          prepared.changedFiles.length !== 0
+        ) {
+          return null;
+        }
+        queueLessIntegrationHeads.push(prepared.integrationHeadSha);
+      } catch {
+        return null;
+      }
+    }
+    const git = inspectGitBinding(scope, baseSha);
     if (
-      records.some(
-        (record) =>
-          !integratedTaskKeys.has(record.taskKey) &&
-          !(
-            record.taskHeadSha === record.baseSha &&
-            record.integratedSha === record.baseSha
-          ),
+      queueLessIntegrationHeads.some(
+        (integrationHeadSha) => integrationHeadSha !== git.headSha,
       )
     ) {
       return null;
     }
-    const git = inspectGitBinding(scope, baseSha);
     const worktreeId = `mission-worktrees:${createHash("sha256")
       .update(
         records

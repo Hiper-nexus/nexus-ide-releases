@@ -27,7 +27,9 @@ import {
   assertNoChangePhysicalGitAuthority,
   assertReadOnlyPhysicalGitAuthority,
 } from "./task-dispatch-physical-git-authority";
-import { assertPhysicalTaskHandoffAuthority } from "./task-dispatch-physical-handoff-authority";
+import {
+  assertPhysicalTaskHandoffAuthority,
+} from "./task-dispatch-physical-handoff-authority";
 import { assertSealedTaskDispatchPlanAuthority } from "./task-dispatch-sealed-plan-authority";
 import {
   claimTaskDispatch,
@@ -58,6 +60,11 @@ import {
   recordTaskDependencyPromptConsumption,
   type RecordTaskDependencyConsumptionInput,
 } from "./task-dependency-consumption-authority";
+import { TERMINAL_OPERATIONAL_FAILURE_MARKER } from "../../shared/mission-recovery-policy";
+import {
+  hasCurrentApprovedDispatchContract,
+  missionIntentContractSchema,
+} from "../../shared/mission-intent";
 export { taskIntegrationReceiptSchema };
 export type {
   ClaimedTaskDispatch,
@@ -69,6 +76,7 @@ export type {
 const TASK_DISPATCH_RETRY_BASE_DELAY_MS = 1_000;
 const TASK_DISPATCH_RETRY_MAX_DELAY_MS = 30_000;
 const TASK_DISPATCH_RESTART_LEASE_MAX_MS = 60 * 60_000;
+export const TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS = 3;
 
 export const TASK_DISPATCH_MISSING_RUNTIME_REASON =
   "[NEXUS_WORKER_RUNTIME_LOST] O processo exato do worker não está mais " +
@@ -92,6 +100,23 @@ function taskDispatchRetryDelay(attempt: number): number {
     TASK_DISPATCH_RETRY_MAX_DELAY_MS,
   );
 }
+
+function terminalWorkerRecoveryReason(reason: string): string {
+  return (
+    `${TERMINAL_OPERATIONAL_FAILURE_MARKER} O worker não entregou um handoff ` +
+    `após ${TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS} tentativas físicas. ` +
+    "Isso normalmente indica autenticação, configuração ou falha persistente " +
+    "da CLI. " +
+    `Corrija a sessão do provider e retome a missão. Última causa: ${reason}`
+  ).slice(0, 65_536);
+}
+
+export const LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE =
+  "Falha durante o bootstrap do worker: primary checkout must be clean";
+export const LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON =
+  terminalWorkerRecoveryReason(
+    LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
+  );
 
 export class TaskDispatchStore {
   readonly #binding: ScopedStoreBinding;
@@ -224,6 +249,71 @@ export class TaskDispatchStore {
     }
     this.#assertCurrentIntent(db, current);
     return this.#fromRow(current);
+  }
+
+  /**
+   * Resolve the exact Git commit captured by Main at the physical success
+   * handoff. This re-proves the dispatch, immutable MCP receipt and correlated
+   * audit intent from one synchronous SQLite authority boundary.
+   */
+  assertPhysicalHandoffTaskHead(input: {
+    readonly taskId: string;
+    readonly missionId: string;
+    readonly intentVersion: number;
+    readonly expectedStates: readonly TaskDispatchState[];
+  }): string {
+    const taskId = idSchema.parse(input.taskId);
+    const missionId = idSchema.parse(input.missionId);
+    const intentVersion = z.number().int().nonnegative().parse(
+      input.intentVersion,
+    );
+    const db = this.#binding.readDatabase();
+    const current = this.#getRow(db, taskId);
+    if (!current) throw new Error(`dispatch não encontrado: ${taskId}`);
+    if (
+      current.mission_id !== missionId ||
+      current.intent_version !== intentVersion ||
+      !input.expectedStates.includes(current.state)
+    ) {
+      throw new Error(
+        "autoridade física do dispatch divergiu antes de promover o HEAD do handoff",
+      );
+    }
+    this.#assertCurrentIntent(db, current);
+    if (
+      current.execution_mode !== "isolated_worktree" ||
+      !current.handoff_id ||
+      !current.session_id ||
+      !current.worker_incarnation_id ||
+      current.handoff_accepted_at === null
+    ) {
+      throw new Error(
+        "merge de worktree exige handoff físico aceito e identidade completa",
+      );
+    }
+    const physical = assertPhysicalTaskHandoffAuthority(
+      db,
+      this.#binding.coordinates,
+      {
+        missionId,
+        handoffId: current.handoff_id,
+        sessionId: current.session_id,
+        workerIncarnationId: current.worker_incarnation_id,
+        workerId: current.worker_id,
+        noLaterThan: current.handoff_accepted_at,
+        requireCorrelatedAuditIntent: true,
+        expectedStatus: "success",
+      },
+    );
+    if (
+      physical.issuedAt > current.handoff_accepted_at ||
+      !physical.worktreeHeadSha
+    ) {
+      throw new ScopedStoreCorruptionError(
+        "physical task handoff Git HEAD authority",
+      );
+    }
+    return physical.worktreeHeadSha;
   }
 
   /** Persist the main-owned merge intent before the external Git effect. */
@@ -1332,11 +1422,21 @@ export class TaskDispatchStore {
             "requeue de runtime ausente recusou dispatch com receipt",
           );
         }
-        const retryAt = now + taskDispatchRetryDelay(current.attempt);
+        const hasExhaustedAutomaticRecovery =
+          current.attempt >= TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS;
+        const nextState = hasExhaustedAutomaticRecovery
+          ? "blocked"
+          : "superseded";
+        const persistedReason = hasExhaustedAutomaticRecovery
+          ? terminalWorkerRecoveryReason(TASK_DISPATCH_MISSING_RUNTIME_REASON)
+          : TASK_DISPATCH_MISSING_RUNTIME_REASON;
+        const retryAt = hasExhaustedAutomaticRecovery
+          ? now
+          : now + taskDispatchRetryDelay(current.attempt);
         const updated = db
           .prepare(
             `UPDATE task_dispatch_queue
-                SET state = 'superseded', last_error = ?,
+                SET state = ?, last_error = ?,
                     revision = revision + 1, lease_expires_at = ?,
                     updated_at = ?
               WHERE task_id = ? AND revision = ?
@@ -1345,7 +1445,8 @@ export class TaskDispatchStore {
                 AND integration_receipt_json IS NULL AND completed_at IS NULL`,
           )
           .run(
-            TASK_DISPATCH_MISSING_RUNTIME_REASON,
+            nextState,
+            persistedReason,
             retryAt,
             now,
             taskId,
@@ -1356,13 +1457,25 @@ export class TaskDispatchStore {
         }
         const task = db
           .prepare(
-            `UPDATE tasks SET status = 'pending', updated_at = ?
+            `UPDATE tasks SET status = ?, updated_at = ?
              WHERE id = ? AND status = 'running'`,
           )
-          .run(now, taskId);
+          .run(
+            hasExhaustedAutomaticRecovery ? "failed" : "pending",
+            now,
+            taskId,
+          );
         if (task.changes !== 1) {
           throw new Error(
             "requeue de runtime ausente não encontrou task running",
+          );
+        }
+        if (hasExhaustedAutomaticRecovery) {
+          this.#blockMission(
+            db,
+            current.mission_id,
+            persistedReason,
+            now,
           );
         }
         return this.#getFromDatabase(db, taskId);
@@ -1467,6 +1580,8 @@ export class TaskDispatchStore {
                 SET state = 'running', session_id = ?,
                     last_heartbeat_at = ?, lease_expires_at = ?,
                     last_error = NULL, revision = revision + 1,
+                    attempt = attempt + CASE
+                      WHEN state = 'superseded' THEN 1 ELSE 0 END,
                     updated_at = ?
               WHERE task_id = ? AND mission_id = ? AND revision = ?
                 AND pane_id = ? AND session_id = ?
@@ -1550,17 +1665,28 @@ export class TaskDispatchStore {
         const dispatch = this.#getRow(db, current.task_id);
         if (!dispatch) return null;
         this.#assertCurrentIntent(db, dispatch);
-        const retryAt = now + taskDispatchRetryDelay(dispatch.attempt);
+        const hasExhaustedAutomaticRecovery =
+          dispatch.attempt >= TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS;
+        const nextState = hasExhaustedAutomaticRecovery
+          ? "blocked"
+          : "superseded";
+        const persistedReason = hasExhaustedAutomaticRecovery
+          ? terminalWorkerRecoveryReason(reason)
+          : reason;
+        const retryAt = hasExhaustedAutomaticRecovery
+          ? now
+          : now + taskDispatchRetryDelay(dispatch.attempt);
         const updated = db
           .prepare(
             `UPDATE task_dispatch_queue
-         SET state = 'superseded', last_error = ?, revision = revision + 1,
+         SET state = ?, last_error = ?, revision = revision + 1,
              lease_expires_at = ?, updated_at = ?
          WHERE task_id = ? AND revision = ? AND session_id = ?
            AND worker_incarnation_id = ? AND state = 'running'`,
           )
           .run(
-            reason,
+            nextState,
+            persistedReason,
             retryAt,
             now,
             current.task_id,
@@ -1570,10 +1696,25 @@ export class TaskDispatchStore {
           );
         if (updated.changes !== 1)
           throw new Error("session exit perdeu CAS do dispatch");
-        db.prepare(
-          `UPDATE tasks SET status = 'pending', updated_at = ?
+        const task = db.prepare(
+          `UPDATE tasks SET status = ?, updated_at = ?
            WHERE id = ? AND status = 'running'`,
-        ).run(now, current.task_id);
+        ).run(
+          hasExhaustedAutomaticRecovery ? "failed" : "pending",
+          now,
+          current.task_id,
+        );
+        if (task.changes !== 1) {
+          throw new Error("session exit perdeu CAS da task running");
+        }
+        if (hasExhaustedAutomaticRecovery) {
+          this.#blockMission(
+            db,
+            current.mission_id,
+            persistedReason,
+            now,
+          );
+        }
         return this.#getFromDatabase(db, current.task_id);
       })
       .immediate();
@@ -1763,7 +1904,9 @@ export class TaskDispatchStore {
         }
         if (
           current.state === "blocked" &&
-          current.last_error !== TASK_DISPATCH_SESSION_EXIT_REASON
+          current.last_error !== TASK_DISPATCH_SESSION_EXIT_REASON &&
+          current.last_error !==
+            terminalWorkerRecoveryReason(TASK_DISPATCH_SESSION_EXIT_REASON)
         ) {
           throw new Error(
             "retry técnico recusou um bloqueio que não prova exit físico",
@@ -1805,6 +1948,7 @@ export class TaskDispatchStore {
           current.state === "blocked" ? current.last_error : null,
           now,
         );
+        const retryAt = now + taskDispatchRetryDelay(current.attempt);
         const updated = db
           .prepare(
             `UPDATE task_dispatch_queue
@@ -1813,13 +1957,16 @@ export class TaskDispatchStore {
                     updated_at = ?
               WHERE task_id = ? AND mission_id = ?
                 AND lease_token_hash = ? AND worker_incarnation_id = ?
-                AND state IN ('claimed', 'routed', 'spawning', 'running', 'blocked')
+                AND state IN (
+                  'claimed', 'routed', 'spawning', 'running',
+                  'blocked', 'superseded'
+                )
                 AND handoff_id IS NULL AND handoff_accepted_at IS NULL
                 AND integration_receipt_json IS NULL AND completed_at IS NULL`,
           )
           .run(
             message,
-            now,
+            retryAt,
             now,
             taskId,
             missionId,
@@ -1832,16 +1979,328 @@ export class TaskDispatchStore {
         const task = db
           .prepare(
             `UPDATE tasks SET status = 'pending', updated_at = ?
-             WHERE id = ? AND mission_id = ? AND status IN ('running', 'failed')`,
+             WHERE id = ? AND mission_id = ?
+               AND status IN ('running', 'failed', 'pending')`,
           )
           .run(now, taskId, missionId);
         if (task.changes !== 1) {
-          throw new Error("retry técnico não encontrou task running/failed");
+          throw new Error(
+            "retry técnico não encontrou task running/failed/pending",
+          );
         }
         return this.#getFromDatabase(db, taskId);
       })
       .immediate();
     if (!record) throw new Error("dispatch desapareceu após retry técnico");
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
+   * One-time compatibility repair for the exact bootstrap defect fixed by the
+   * guided Git checkpoint. It deliberately does not reopen any other terminal
+   * worker, authentication failure or stale intent revision.
+   */
+  canRecoverLegacyGuidedDirtyCheckoutBootstrap(
+    rawTaskId: string,
+  ): boolean {
+    return (
+      this.recoverLegacyGuidedDirtyCheckoutBootstrap(rawTaskId, {
+        validateOnly: true,
+      }) !== null
+    );
+  }
+
+  recoverLegacyGuidedDirtyCheckoutBootstrap(
+    rawTaskId: string,
+    options: { readonly validateOnly?: boolean } = {},
+  ): TaskDispatchRecord | null {
+    const taskId = idSchema.parse(rawTaskId);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const outcome = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (!current) return null;
+        const mission = db
+          .prepare(
+            `SELECT status, intent_state, intent_version,
+                    intent_contract_json
+               FROM missions WHERE id = ?`,
+          )
+          .get(current.mission_id) as
+          | {
+              status: string;
+              intent_state: string;
+              intent_version: number;
+              intent_contract_json: string | null;
+            }
+          | undefined;
+        const task = db
+          .prepare(
+            `SELECT status FROM tasks WHERE id = ? AND mission_id = ?`,
+          )
+          .get(taskId, current.mission_id) as
+          | { status: string }
+          | undefined;
+        if (
+          !mission?.intent_contract_json ||
+          mission.intent_version !== current.intent_version
+        ) {
+          return null;
+        }
+        let contract;
+        try {
+          contract = missionIntentContractSchema.parse(
+            JSON.parse(mission.intent_contract_json),
+          );
+        } catch (error) {
+          throw new ScopedStoreCorruptionError(
+            "legacy dirty-checkout mission intent contract",
+            { cause: error },
+          );
+        }
+        if (
+          !hasCurrentApprovedDispatchContract({
+            intentVersion: mission.intent_version,
+            intentContract: contract,
+          })
+        ) {
+          return null;
+        }
+        const isRecovered =
+          current.state === "superseded" &&
+          current.attempt === TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS &&
+          current.last_error ===
+            LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE &&
+          mission.status === "running" &&
+          mission.intent_state === "executing" &&
+          task?.status === "pending";
+        if (isRecovered) {
+          return {
+            record: this.#getFromDatabase(db, taskId),
+            changed: false,
+          };
+        }
+        // One legacy mission may contain several workers that exhausted the
+        // same pre-pane checkout bug. The first exact recovery re-arms the
+        // mission; a sibling proof lets the remaining exact rows join that
+        // same recovery wave without reopening an unrelated user block.
+        const recoveredSibling =
+          mission.status === "running" &&
+          mission.intent_state === "executing"
+            ? (db
+                .prepare(
+                  `SELECT 1
+                     FROM task_dispatch_queue AS sibling
+                     JOIN tasks AS sibling_task
+                       ON sibling_task.id = sibling.task_id
+                      AND sibling_task.mission_id = sibling.mission_id
+                    WHERE sibling.mission_id = ?
+                      AND sibling.task_id <> ?
+                      AND sibling.state = 'superseded'
+                      AND sibling.attempt = ?
+                      AND sibling.last_error = ?
+                      AND sibling_task.status = 'pending'
+                      AND sibling.pane_id IS NULL
+                      AND sibling.session_id IS NULL
+                      AND sibling.handoff_id IS NULL
+                      AND sibling.handoff_accepted_at IS NULL
+                      AND sibling.integration_receipt_json IS NULL
+                      AND sibling.completed_at IS NULL
+                    LIMIT 1`,
+                )
+                .get(
+                  current.mission_id,
+                  taskId,
+                  TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+                  LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
+                ) !== undefined)
+            : false;
+        const isExactLegacyBlock =
+          current.state === "blocked" &&
+          current.attempt === TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS &&
+          current.last_error ===
+            LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON &&
+          current.pane_id === null &&
+          current.session_id === null &&
+          current.handoff_id === null &&
+          current.handoff_accepted_at === null &&
+          current.integration_receipt_json === null &&
+          current.completed_at === null &&
+          ((mission.status === "blocked" &&
+            mission.intent_state === "blocked_technical") ||
+            recoveredSibling) &&
+          task?.status === "failed";
+        if (!isExactLegacyBlock) return null;
+        if (options.validateOnly === true) {
+          return {
+            record: this.#getFromDatabase(db, taskId),
+            changed: false,
+          };
+        }
+
+        if (!recoveredSibling) {
+          resumeTaskDispatchMissionAfterTechnicalFailure(
+            db,
+            current.mission_id,
+            current.last_error,
+            now,
+          );
+        }
+        const taskUpdate = db
+          .prepare(
+            `UPDATE tasks SET status = 'pending', updated_at = ?
+             WHERE id = ? AND mission_id = ? AND status = 'failed'`,
+          )
+          .run(now, taskId, current.mission_id);
+        const dispatchUpdate = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET state = 'superseded', last_error = ?,
+                    lease_expires_at = ?, revision = revision + 1,
+                    updated_at = ?
+              WHERE task_id = ? AND mission_id = ? AND revision = ?
+                AND state = 'blocked' AND attempt = ?
+                AND last_error = ? AND pane_id IS NULL
+                AND session_id IS NULL AND handoff_id IS NULL
+                AND handoff_accepted_at IS NULL
+                AND integration_receipt_json IS NULL
+                AND completed_at IS NULL`,
+          )
+          .run(
+            LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
+            now + taskDispatchRetryDelay(current.attempt),
+            now,
+            taskId,
+            current.mission_id,
+            current.revision,
+            TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+            LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
+          );
+        if (taskUpdate.changes !== 1 || dispatchUpdate.changes !== 1) {
+          throw new Error(
+            "legacy dirty-checkout recovery perdeu CAS de task/dispatch",
+          );
+        }
+        return {
+          record: this.#getFromDatabase(db, taskId),
+          changed: true,
+        };
+      })
+      .immediate();
+    if (outcome?.changed) this.#binding.emitChange();
+    return outcome?.record ?? null;
+  }
+
+  /**
+   * The PTY exit tap can supersede a running bootstrap before its caller
+   * classifies the real cause. If that cause is terminal, atomically close the
+   * retry window using the original lease and exact physical incarnation.
+   */
+  failSupersededBootstrap(input: {
+    readonly taskId: string;
+    readonly missionId: string;
+    readonly leaseToken: string;
+    readonly workerIncarnationId: string;
+    readonly paneId: string;
+    readonly sessionId: string;
+    readonly error: string;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const missionId = idSchema.parse(input.missionId);
+    const workerIncarnationId = idSchema.parse(input.workerIncarnationId);
+    const paneId = idSchema.parse(input.paneId);
+    const sessionId = idSchema.parse(input.sessionId);
+    const message = input.error.trim().slice(0, 65_536);
+    if (!message) {
+      throw new Error("falha terminal de bootstrap exige causa registrada");
+    }
+    const hash = tokenHash(input.leaseToken);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (
+          !current ||
+          current.mission_id !== missionId ||
+          current.state !== "superseded" ||
+          current.lease_token_hash !== hash ||
+          current.worker_incarnation_id !== workerIncarnationId ||
+          current.pane_id !== paneId ||
+          current.session_id !== sessionId ||
+          current.last_error !== TASK_DISPATCH_SESSION_EXIT_REASON ||
+          current.handoff_id !== null ||
+          current.handoff_accepted_at !== null ||
+          current.integration_receipt_json !== null ||
+          current.completed_at !== null
+        ) {
+          throw new Error(
+            "falha terminal de bootstrap perdeu dispatch/lease/runtime exatos",
+          );
+        }
+        const mission = db
+          .prepare(`SELECT status, intent_version FROM missions WHERE id = ?`)
+          .get(missionId) as
+          | { status: string; intent_version: number }
+          | undefined;
+        const task = db
+          .prepare(`SELECT status FROM tasks WHERE id = ? AND mission_id = ?`)
+          .get(taskId, missionId) as { status: string } | undefined;
+        if (
+          mission?.status !== "running" ||
+          mission.intent_version !== current.intent_version ||
+          task?.status !== "pending"
+        ) {
+          throw new Error(
+            "falha terminal de bootstrap divergiu de task/mission atuais",
+          );
+        }
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET state = 'failed', last_error = ?,
+                    revision = revision + 1, lease_expires_at = ?,
+                    updated_at = ?
+              WHERE task_id = ? AND mission_id = ? AND state = 'superseded'
+                AND lease_token_hash = ? AND worker_incarnation_id = ?
+                AND pane_id = ? AND session_id = ?
+                AND last_error = ?
+                AND handoff_id IS NULL AND handoff_accepted_at IS NULL
+                AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(
+            message,
+            now,
+            now,
+            taskId,
+            missionId,
+            hash,
+            workerIncarnationId,
+            paneId,
+            sessionId,
+            TASK_DISPATCH_SESSION_EXIT_REASON,
+          );
+        if (updated.changes !== 1) {
+          throw new Error("falha terminal de bootstrap perdeu CAS do dispatch");
+        }
+        const failedTask = db
+          .prepare(
+            `UPDATE tasks SET status = 'failed', updated_at = ?
+             WHERE id = ? AND mission_id = ? AND status = 'pending'`,
+          )
+          .run(now, taskId, missionId);
+        if (failedTask.changes !== 1) {
+          throw new Error("falha terminal de bootstrap perdeu CAS da task");
+        }
+        this.#blockMission(db, missionId, message, now);
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) {
+      throw new Error("dispatch desapareceu após falha terminal de bootstrap");
+    }
     this.#binding.emitChange();
     return record;
   }

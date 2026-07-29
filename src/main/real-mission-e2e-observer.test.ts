@@ -14,6 +14,7 @@ const harness = vi.hoisted(() => ({
     | ((sessionId: string, state: "spawning" | "idle" | "busy" | "exited") => void)
     | null,
   agentInfos: new Map<string, unknown>(),
+  sessionStates: new Map<string, "spawning" | "idle" | "busy" | "exited">(),
   auditEntries: [] as unknown[],
   mission: null as unknown,
   dispatches: [] as unknown[],
@@ -29,6 +30,8 @@ vi.mock("electron", () => ({
 vi.mock("./pty/pty-manager", () => ({
   getAgentSessionInfo: (sessionId: string) =>
     harness.agentInfos.get(sessionId) ?? null,
+  getSessionState: (sessionId: string) =>
+    harness.sessionStates.get(sessionId) ?? null,
   listAgentSessions: () => [],
   tapSessionState: (
     callback: (sessionId: string, state: string) => void,
@@ -212,6 +215,7 @@ describe("real mission observer advisor participation", () => {
     harness.finishes = [];
     harness.stateTap = null;
     harness.agentInfos = new Map();
+    harness.sessionStates = new Map();
     harness.auditEntries = [];
     harness.mission = null;
     harness.dispatches = [];
@@ -341,6 +345,144 @@ describe("real mission observer advisor participation", () => {
     expect(typeof grok?.spawnedAt).toBe("number");
     // A sessão advisor nunca entra no conjunto PTY codex de quatro panes.
     expect(evidence.physicalPty.ids).not.toContain("session-grok");
+    observer.stop();
+  });
+
+  it("keeps a proven advisor retry and attributes evidence to the current session", () => {
+    harness.mission = { id: MISSION_ID, status: "running" };
+    harness.agentInfos.set("session-grok-1", {
+      sessionId: "session-grok-1",
+      missionId: MISSION_ID,
+      adapterId: "grok",
+      role: "worker",
+      agentName: "E2E Advisor Grok",
+      workerIncarnationId: "incarnation-grok-1",
+      readOnly: true,
+      nativeReadOnly: false,
+    });
+    harness.sessionStates.set("session-grok-1", "busy");
+    harness.dispatches = [
+      {
+        agentRef: "e2e-advisor-grok",
+        adapterId: "grok",
+        workerId: "E2E Advisor Grok",
+        workerIncarnationId: "incarnation-grok-1",
+        attempt: 1,
+        state: "running",
+        executionMode: "read_only",
+        agentCategory: "scout",
+        sessionId: "session-grok-1",
+      },
+    ];
+
+    const observer = createObserver();
+    observer.start();
+    harness.stateTap?.("session-grok-1", "busy");
+
+    harness.sessionStates.delete("session-grok-1");
+    harness.agentInfos.set("session-grok-2", {
+      sessionId: "session-grok-2",
+      missionId: MISSION_ID,
+      adapterId: "grok",
+      role: "worker",
+      agentName: "E2E Advisor Grok",
+      workerIncarnationId: "incarnation-grok-2",
+      readOnly: true,
+      nativeReadOnly: false,
+    });
+    harness.sessionStates.set("session-grok-2", "busy");
+    harness.dispatches = [
+      {
+        agentRef: "e2e-advisor-grok",
+        adapterId: "grok",
+        workerId: "E2E Advisor Grok",
+        workerIncarnationId: "incarnation-grok-2",
+        attempt: 2,
+        state: "spawning",
+        executionMode: "read_only",
+        agentCategory: "scout",
+        routeReservationId: "route-grok-2",
+        routeContract: { adapterId: "grok" },
+      },
+    ];
+
+    harness.stateTap?.("session-grok-2", "busy");
+    expect(harness.finishes).toEqual([]);
+
+    harness.dispatches = [
+      {
+        ...(harness.dispatches[0] as Record<string, unknown>),
+        state: "running",
+        sessionId: "session-grok-2",
+      },
+    ];
+    harness.auditEntries = [
+      {
+        session: "session-grok-2",
+        mission_id: MISSION_ID,
+        tool: "nexus_task_show",
+        timestamp: new Date(200).toISOString(),
+        result: "allow",
+      },
+    ];
+
+    harness.stateTap?.("session-grok-2", "busy");
+
+    expect(harness.finishes).toEqual([]);
+    const grok = observer
+      .evidence(Date.now(), "fail", "timeout")
+      .participation.find((row) => row.cli === "grok");
+    expect(grok?.firstNexusToolAt).toBe(200);
+    observer.stop();
+  });
+
+  it("rejects an advisor replacement while the prior physical session is live", () => {
+    harness.mission = { id: MISSION_ID, status: "running" };
+    harness.agentInfos.set("session-grok-1", {
+      sessionId: "session-grok-1",
+      missionId: MISSION_ID,
+      adapterId: "grok",
+      role: "worker",
+      agentName: "E2E Advisor Grok",
+      workerIncarnationId: "incarnation-grok-1",
+      readOnly: true,
+      nativeReadOnly: false,
+    });
+    harness.sessionStates.set("session-grok-1", "busy");
+    const observer = createObserver();
+    observer.start();
+    harness.stateTap?.("session-grok-1", "busy");
+
+    harness.agentInfos.set("session-grok-2", {
+      sessionId: "session-grok-2",
+      missionId: MISSION_ID,
+      adapterId: "grok",
+      role: "worker",
+      agentName: "E2E Advisor Grok",
+      workerIncarnationId: "incarnation-grok-2",
+      readOnly: true,
+      nativeReadOnly: false,
+    });
+    harness.sessionStates.set("session-grok-2", "busy");
+    harness.dispatches = [
+      {
+        agentRef: "e2e-advisor-grok",
+        adapterId: "grok",
+        workerId: "E2E Advisor Grok",
+        workerIncarnationId: "incarnation-grok-2",
+        attempt: 2,
+        state: "running",
+        executionMode: "read_only",
+        agentCategory: "scout",
+        routeReservationId: "route-grok-2",
+        routeContract: { adapterId: "grok" },
+        sessionId: "session-grok-2",
+      },
+    ];
+
+    harness.stateTap?.("session-grok-2", "busy");
+
+    expect(harness.finishes).toEqual(["invariant-failed"]);
     observer.stop();
   });
 

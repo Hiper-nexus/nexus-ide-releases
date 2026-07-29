@@ -22,6 +22,6 @@ export function isOperatorChoicePolicy(
 
 export function squadCliPolicyLabel(mode: SquadCliPolicyMode): string {
   return mode === 'operator-choice'
-    ? 'Autopiloto — qualquer CLI autenticada, web liberada'
+    ? 'Autopiloto — qualquer CLI autenticada, com acesso de rede'
     : 'Hardened — sandbox e CLIs qualificadas';
 }

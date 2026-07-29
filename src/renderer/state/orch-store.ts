@@ -78,34 +78,111 @@ export const useOrchStore = create<OrchState>((set, get) => ({
 
   hydrate: async (workspacePath) => {
     if (getActiveWorkspacePath() !== workspacePath) return;
-    const epoch = get().workspaceEpoch;
+    const epoch = get().workspaceEpoch + 1;
+    // Bind before the first IPC await. Broadcasts can arrive while the
+    // snapshot is in flight; the epoch and reference baselines below make the
+    // newer push win without accepting a previous workspace's payload.
+    set({
+      boundWorkspacePath: workspacePath,
+      workspaceEpoch: epoch,
+    });
+    const stateBeforeHydration = get();
+    const hydrationBaseline = {
+      missions: stateBeforeHydration.missions,
+      handoffs: stateBeforeHydration.handoffs,
+      todoLists: stateBeforeHydration.todoLists,
+      squads: stateBeforeHydration.squads,
+      mcpInfo: stateBeforeHydration.mcpInfo,
+    };
+
+    // Começa os auxiliares em paralelo, mas observa suas rejeições desde já.
+    // A lista de missões é a fronteira essencial: assim que chega, vincula o
+    // workspace para que broadcasts posteriores não sejam descartados.
+    const auxiliaryHydration = Promise.allSettled([
+      window.nexus.orch.listHandoffs(),
+      window.nexus.orch.getTodos(),
+      window.nexus.orch.listSquads(),
+      window.nexus.orch.getMcpInfo(),
+    ] as const);
+    let missions: Mission[];
     try {
-      const [missions, handoffs, todoLists, squads, mcpInfo] =
-        await Promise.all([
-          window.nexus.orch.listMissions(),
-          window.nexus.orch.listHandoffs(),
-          window.nexus.orch.getTodos(),
-          window.nexus.orch.listSquads(),
-          window.nexus.orch.getMcpInfo(),
-        ]);
-      if (getActiveWorkspacePath() !== workspacePath) return;
-      if (get().workspaceEpoch !== epoch) return;
-      set({
-        missions,
-        handoffs,
-        todoLists,
-        squads,
-        mcpInfo,
-        boundWorkspacePath: workspacePath,
-      });
+      missions = await window.nexus.orch.listMissions();
     } catch (err) {
       if (
         getActiveWorkspacePath() === workspacePath &&
         get().workspaceEpoch === epoch
       ) {
-        console.warn('[orch] failed to hydrate orchestration state:', err);
+        console.warn('[orch] failed to hydrate mission state:', err);
+      }
+      return;
+    }
+    if (getActiveWorkspacePath() !== workspacePath) return;
+    if (get().workspaceEpoch !== epoch) return;
+    if (get().missions === hydrationBaseline.missions) {
+      set({ missions });
+    }
+
+    const [handoffs, todoLists, squads, mcpInfo] = await auxiliaryHydration;
+    if (getActiveWorkspacePath() !== workspacePath) return;
+    if (get().workspaceEpoch !== epoch) return;
+
+    const auxiliaryPatch: Partial<
+      Pick<OrchState, 'handoffs' | 'todoLists' | 'squads' | 'mcpInfo'>
+    > = {};
+    const current = get();
+    if (
+      handoffs.status === 'fulfilled' &&
+      current.handoffs === hydrationBaseline.handoffs
+    ) {
+      auxiliaryPatch.handoffs = handoffs.value;
+    } else {
+      if (handoffs.status === 'rejected') {
+        console.warn(
+          '[orch] failed to hydrate auxiliary handoffs:',
+          handoffs.reason,
+        );
       }
     }
+    if (
+      todoLists.status === 'fulfilled' &&
+      current.todoLists === hydrationBaseline.todoLists
+    ) {
+      auxiliaryPatch.todoLists = todoLists.value;
+    } else {
+      if (todoLists.status === 'rejected') {
+        console.warn(
+          '[orch] failed to hydrate auxiliary todoLists:',
+          todoLists.reason,
+        );
+      }
+    }
+    if (
+      squads.status === 'fulfilled' &&
+      current.squads === hydrationBaseline.squads
+    ) {
+      auxiliaryPatch.squads = squads.value;
+    } else {
+      if (squads.status === 'rejected') {
+        console.warn(
+          '[orch] failed to hydrate auxiliary squads:',
+          squads.reason,
+        );
+      }
+    }
+    if (
+      mcpInfo.status === 'fulfilled' &&
+      current.mcpInfo === hydrationBaseline.mcpInfo
+    ) {
+      auxiliaryPatch.mcpInfo = mcpInfo.value;
+    } else {
+      if (mcpInfo.status === 'rejected') {
+        console.warn(
+          '[orch] failed to hydrate auxiliary mcpInfo:',
+          mcpInfo.reason,
+        );
+      }
+    }
+    if (Object.keys(auxiliaryPatch).length > 0) set(auxiliaryPatch);
   },
 
   resetProjectState: () =>

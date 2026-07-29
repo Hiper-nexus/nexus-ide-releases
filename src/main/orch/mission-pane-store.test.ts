@@ -103,6 +103,83 @@ describe('scoped mission pane store', () => {
       ]);
   });
 
+  it('garbage-collects legacy PREVC reviewer rows before restart listing', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({
+      title: 'Crash-safe review composition',
+    });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const orchestrator = panes.record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Maestro',
+      role: 'orchestrator',
+      paneId: 'pane-orchestrator',
+    });
+    const reviewerSuffix = 'a1b2c3d4e5f6';
+    const reviewer = panes.record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      title: `review-${mission.id}-1-${reviewerSuffix}`,
+      agentName: `reviewer-claude-1-${reviewerSuffix}`,
+      role: 'worker',
+      paneId: 'pane-prevc-reviewer',
+      readOnly: true,
+      executionScope: {
+        ...scope,
+        rootRealPath: '/tmp/nexus-prevc-review-crashed/checkout',
+      },
+      allowedTools: [
+        'nexus_git_diff',
+        'nexus_merge_review_submit',
+      ],
+    });
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionPaneStore(runtimeManager, scope);
+
+    expect(reopened.list(mission.id).map((pane) => pane.id)).toEqual([
+      orchestrator.id,
+    ]);
+    expect(reopened.findByPaneId(reviewer.paneId!)).toBeNull();
+    const rows = runtimeManager
+      .open(scope)
+      .db.prepare(
+        'SELECT id FROM mission_panes WHERE mission_id = ? ORDER BY id',
+      )
+      .all(mission.id) as Array<{ id: string }>;
+    expect(rows).toEqual([{ id: orchestrator.id }]);
+  });
+
+  it('does not garbage-collect a normal read-only mission reviewer', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({
+      title: 'Durable QA',
+    });
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    const qa = panes.record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      title: 'QA sênior',
+      agentName: 'reviewer-senior',
+      role: 'worker',
+      paneId: 'pane-durable-qa',
+      workerIncarnationId: 'worker-incarnation-qa',
+      readOnly: true,
+      allowedTools: [
+        'nexus_git_diff',
+        'nexus_merge_review_submit',
+      ],
+    });
+
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionPaneStore(runtimeManager, scope);
+
+    expect(reopened.list(mission.id).map((pane) => pane.id)).toEqual([qa.id]);
+  });
+
   it('keeps explicit unrestricted null distinct from an absent snapshot', () => {
     const runtimeManager = manager();
     const scope = testProjectScope();

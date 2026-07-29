@@ -4,7 +4,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { installRestoredAgentsGate } from './orch/restore-agents-gate';
 import './styles/global.css';
 
-// Hold restored mission agents until the user confirms — never silent auto-work.
+// Hold every restored CLI first; mission panes resume only after Main confirms
+// their exact persisted authority, while standalone agents follow user policy.
 installRestoredAgentsGate();
 
 // No StrictMode: its dev-time double-mount would spawn/kill PTYs twice per pane.

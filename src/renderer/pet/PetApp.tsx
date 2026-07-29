@@ -147,7 +147,9 @@ export function PetApp() {
     const offEvents = window.nexusPet.onEvent((event) => {
       setBalloons((state) => enqueueBalloon(state, event));
       const nextReaction: 'wave' | 'failed' | 'waiting' =
-        event.kind === 'mission-failed' || event.kind === 'agent-exited'
+        event.kind === 'mission-failed' ||
+        event.kind === 'mission-technical-failure' ||
+        event.kind === 'agent-exited'
           ? 'failed'
           : event.kind === 'mission-blocked' || event.kind === 'agent-waiting'
             ? 'waiting'

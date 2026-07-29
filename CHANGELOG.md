@@ -1,20 +1,58 @@
 # Changelog
 
-## 0.19.38 — Dembrandt autônomo em missões UI
+## 0.19.38 — Missões que seguem em frente
 
 Data: 2026-07-29
 
+### Liveness de missão e panes
+
+- **Aprovação sem espera artificial**: o clique de aprovação retorna assim que
+  o Main sela e persiste a missão. Descoberta de contas, quota, PREVC e
+  preparação dos agentes continuam em paralelo, sem manter o wizard em
+  “Preparando aprovação”.
+- **Autoridade Main-owned consistente**: spawn, recuperação e replay de panes
+  usam missão, spec, escopo, sessão, encarnação e selo atuais. Reload/HMR adota
+  a mesma PTY viva; uma encarnação antiga é encerrada sem apagar um replacement
+  homônimo.
+- **Sem panes fantasmas**: fechar ou remover missão só conclui depois do
+  teardown físico exato. Estado durável e histórico permanecem recuperáveis se
+  o processo não puder ser comprovadamente encerrado.
+- **Recuperação não para o relógio inteiro**: cada supervisor possui
+  single-flight e timeout próprios. Um reviewer ou scheduler lento por até 21
+  minutos não interrompe bootstrap, lifecycle, outbox nem os demais ciclos.
+- **Bootstrap resiliente**: falha transitória ao subir MCP/coordenador entra em
+  retry supervisionado; bind `EADDRINUSE` rejeita corretamente e listeners
+  antigos são descartados antes da nova tentativa.
+- **Checkout sujo deixa de ser beco sem saída**: o Main cria um checkpoint
+  assíncrono e idempotente da visão do operador antes do primeiro worktree.
+  Arquivos de credencial não rastreados são recusados; conteúdo explicitamente
+  staged continua sendo uma decisão consciente do operador.
+- **Legado volta a caminhar**: missões bloqueadas pelo erro exato
+  `primary checkout must be clean` são rearmadas em conjunto, sem duplicar a
+  causa no texto. Falha técnica vira retry; apenas decisão humana real usa
+  “Aguarda você”.
+- **Troca de workspace à prova de corrida**: respostas atrasadas de um
+  workspace não liberam nem removem panes do seguinte. Ao voltar de A → B → A,
+  a sessão Main-owned viva é apresentada de novo; consultas transitórias de
+  autoridade continuam em retry com backoff até uma resposta real, sem deixar
+  o pane preso em “Aguarda você”. Se o layout persistido não carregar, o Nexus
+  abre um shell seguro em vez de voltar para a tela inicial indefinidamente.
+
 ### Design system live
 
-- **Dembrandt embutido**: skill `dembrandt` materializada no spawn; grant
-  automático só no orquestrador em missões UI (workers usam o contrato
-  aplicado + Impeccable).
-- **`nexus_design_system_extract`**: extrai tokens de URL pública via Dembrandt
-  pinado, grava evidence (hash, sem body) e abre ContextDraft — nunca escreve
-  `DESIGN.md` final. Env allowlist, Chromium sandboxed, private-network
-  bloqueado pela URL policy do browser.
-- **Kickoffs**: playbook legado e intent-first mandam extract quando falta
-  contrato visual ou o goal cita referência/URL; depois Impeccable craft.
+- **Dembrandt embutido**: skill `dembrandt` e CLI manual pinada continuam
+  disponíveis; workers usam o contrato aplicado + Impeccable.
+- **`nexus_design_system_extract` fail-closed**: Dembrandt v0.25.1 não expõe
+  interceptação por request e pode seguir redirects/subresources. Por isso o
+  MCP retorna `NETWORK_GUARD_UNAVAILABLE` por padrão e só executa com runner
+  interno que imponha a policy em toda request. Preflight de URL não é tratado
+  como fronteira SSRF.
+- **Teardown físico**: timeout/abort encerra a árvore npx/Node/Chromium com
+  grupo POSIX (`TERM` → grace → `KILL`) ou `taskkill /T /F` sem shell no
+  Windows, e só então conclui a chamada.
+- **Fallback sem travar missão**: use `DESIGN.md` existente ou
+  `nexus_design_system_search/get/import`; a CLI raw permanece uma ação manual
+  explícita, não uma extração autônoma prometida pelo MCP.
 - **Reader unificado**: design mode lê `DESIGN.md` ou
   `.context/docs/design-system.md`, com truncamento `[truncated]` estável.
 

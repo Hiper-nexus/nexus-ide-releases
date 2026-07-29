@@ -53,7 +53,7 @@ const auditIntentPayloadSchema = z
 export interface PhysicalTaskHandoffAuthority {
   readonly receiptId: string;
   readonly toolCallId: string;
-  readonly source: "http-mcp" | "pty-stream" | "omp-rpc-stdio";
+  readonly source: "http-mcp" | "pty-stream";
   readonly authoritySha256: string;
   readonly worktreeHeadSha?: string;
   readonly issuedAt: number;
@@ -130,6 +130,11 @@ export function assertPhysicalTaskHandoffAuthority(
     throw new ScopedStoreCorruptionError(
       "task dispatch physical handoff receipt",
       { cause: error },
+    );
+  }
+  if (row.source === "omp-rpc-stdio") {
+    throw new Error(
+      "task handoff transport omp-rpc-stdio is retired and cannot authorize a dispatch",
     );
   }
   if (

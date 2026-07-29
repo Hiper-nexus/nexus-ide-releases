@@ -13,16 +13,16 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.19.37',
+  version: '0.19.38',
   date: '2026-07-29',
-  codename: 'Autopiloto sem becos sem saída',
+  codename: 'Missões que seguem em frente',
   summary:
-    'O Nexus inicia e recupera missões com qualquer CLI compatível do operador, usa memória e contexto automaticamente e reserva os gates de qualidade para a promoção final.',
+    'O Nexus mantém missões e panes vivos através de falhas técnicas, reloads e concorrência entre agentes, com inicialização mais rápida, recuperação automática e qualidade ligada ao código real.',
   highlights: [
     {
       title: 'Autopiloto multi-CLI de verdade',
       detail:
-        'No modo Autopiloto, qualquer CLI instalada, autenticada e capaz de entregar handoff pode executar, revisar ou validar. Rede, ferramentas web e autoaprovação do próprio provider ficam disponíveis durante toda a missão.',
+        'No modo Autopiloto, qualquer CLI instalada, autenticada e capaz de entregar handoff pode executar, revisar ou validar. Acesso de rede e autoaprovação do próprio provider ficam disponíveis durante toda a missão; busca/fetch nativos são usados quando a CLI oferece essa capacidade.',
     },
     {
       title: 'Maestro multi-CLI sem depender de MCP',
@@ -80,6 +80,11 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Recuperação visível, sem falso bloqueio',
       detail:
         'Rail, Ops Board e pet distinguem retry Main-owned de espera humana. Durante o backoff a missão aparece como Recuperando, não pode ser arrastada nem apagada, mas oferece Parar para interromper o retry preservando o histórico. Eventos tardios do wizard são drenados sem erro de handler.',
+    },
+    {
+      title: 'Pane vivo reaparece sem voltar para Home',
+      detail:
+        'Ao alternar workspace e voltar, o renderer reapresenta a sessão Main-owned exata em vez de descartá-la como replay antigo. Consultas transitórias de autoridade repetem com backoff até uma resposta real; apenas uma resposta negativa confirmada remove o pane.',
     },
     {
       title: 'Crash de worker não condena a missão',

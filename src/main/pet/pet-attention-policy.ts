@@ -71,7 +71,7 @@ export function admitPetEvent(
   immediate: AttentionDecision | null;
   /** Se true, o caller deve agendar flush em DIGEST_WINDOW_MS (se ainda não). */
   scheduleDigest: boolean;
-  /** Decisões liberadas pelo flush do digest (0..1). */
+  /** Decisões liberadas pelo flush do digest (uma humana e/ou uma técnica). */
   flushed: AttentionDecision[];
 } {
   const next: AttentionPolicyState = {
@@ -178,29 +178,62 @@ function flushDigestBuffer(
     return [toDecision(state, buffer[0]!, now, false)];
   }
 
+  const technical = buffer.filter(
+    (e) => e.kind === 'mission-technical-failure',
+  );
   const blocked = buffer.filter((e) => e.kind === 'mission-blocked');
   const waiting = buffer.filter((e) => e.kind === 'agent-waiting');
-  const parts: string[] = [];
+  const decisions: AttentionDecision[] = [];
+  const humanParts: string[] = [];
   if (blocked.length > 0) {
-    parts.push(
+    humanParts.push(
       blocked.length === 1
         ? blocked[0]!.title
         : `${blocked.length} missões travadas`,
     );
   }
   if (waiting.length > 0) {
-    parts.push(
+    humanParts.push(
       waiting.length === 1
         ? waiting[0]!.title
         : `${waiting.length} agentes pedem input`,
     );
   }
-  const digest: PetEvent = {
-    kind: blocked.length >= waiting.length ? 'mission-blocked' : 'agent-waiting',
-    title: parts.join(' · ') || `${buffer.length} itens precisam de você`,
-    at: now,
-  };
-  return [toDecision(state, digest, now, false)];
+  if (humanParts.length > 0) {
+    decisions.push(
+      toDecision(
+        state,
+        {
+          kind:
+            blocked.length >= waiting.length
+              ? 'mission-blocked'
+              : 'agent-waiting',
+          title: humanParts.join(' · '),
+          at: now,
+        },
+        now,
+        false,
+      ),
+    );
+  }
+  if (technical.length > 0) {
+    decisions.push(
+      toDecision(
+        state,
+        {
+          kind: 'mission-technical-failure',
+          title:
+            technical.length === 1
+              ? technical[0]!.title
+              : `${technical.length} missões com falha técnica`,
+          at: now,
+        },
+        now,
+        false,
+      ),
+    );
+  }
+  return decisions;
 }
 
 function toDecision(

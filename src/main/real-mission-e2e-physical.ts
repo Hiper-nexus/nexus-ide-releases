@@ -25,12 +25,30 @@ export type RealMissionPhysicalPtyIdentity =
   | `advisor:${string}`;
 export type RealMissionPhysicalPtyInspection =
   | { readonly kind: "unrelated" }
+  | { readonly kind: "deferred" }
   | { readonly kind: "violation" }
   | {
       readonly kind: "accepted";
       readonly identity: RealMissionPhysicalPtyIdentity;
       readonly agent: RealMissionPhysicalPtyAgent;
     };
+
+export type RealMissionPhysicalPtyReplacementDecision =
+  | "accept"
+  | "defer"
+  | "reject";
+
+export interface RealMissionPhysicalPtyReplacement {
+  readonly identity: RealMissionPhysicalPtyIdentity;
+  readonly priorSessionId: string;
+  readonly priorAgent: RealMissionPhysicalPtyAgent;
+  readonly nextSessionId: string;
+  readonly nextAgent: RealMissionPhysicalPtyAgent;
+}
+
+export type AuthorizeRealMissionPhysicalPtyReplacement = (
+  replacement: RealMissionPhysicalPtyReplacement,
+) => RealMissionPhysicalPtyReplacementDecision;
 
 /**
  * Uma CLI advisor esperada pelo harness (não-skipped): a sessão física dela é
@@ -121,16 +139,25 @@ function advisorPtyIdentity(
 }
 
 /**
- * Stateful exact-roster fence. A mission may bind one physical session to
- * each approved identity and no others, including sequential replacements.
+ * Stateful exact-roster fence. A mission may bind one current physical
+ * session to each approved identity and no others. Advisor retries are the
+ * only replaceable identity and require an external durable + physical proof;
+ * the default remains fail-closed.
  */
 export class ExactRealMissionPhysicalPtyGate {
   readonly #missionId: string;
   readonly #orchestratorCli: "codex" | "claude";
   readonly #expectedAdvisors: readonly RealMissionAdvisorPtyExpectation[];
+  readonly #authorizeReplacement:
+    | AuthorizeRealMissionPhysicalPtyReplacement
+    | undefined;
   readonly #sessionByIdentity = new Map<
     RealMissionPhysicalPtyIdentity,
     string
+  >();
+  readonly #agentByIdentity = new Map<
+    RealMissionPhysicalPtyIdentity,
+    RealMissionPhysicalPtyAgent
   >();
   readonly #identityBySession = new Map<
     string,
@@ -141,10 +168,12 @@ export class ExactRealMissionPhysicalPtyGate {
     missionId: string,
     expectedAdvisors: readonly RealMissionAdvisorPtyExpectation[] = [],
     orchestratorCli: "codex" | "claude" = "codex",
+    authorizeReplacement?: AuthorizeRealMissionPhysicalPtyReplacement,
   ) {
     this.#missionId = missionId;
     this.#expectedAdvisors = expectedAdvisors;
     this.#orchestratorCli = orchestratorCli;
+    this.#authorizeReplacement = authorizeReplacement;
   }
 
   get acceptedSessionCount(): number {
@@ -195,13 +224,37 @@ export class ExactRealMissionPhysicalPtyGate {
     }
     const priorSession = this.#sessionByIdentity.get(identity);
     const priorIdentity = this.#identityBySession.get(sessionId);
-    if (
-      (priorSession !== undefined && priorSession !== sessionId) ||
-      (priorIdentity !== undefined && priorIdentity !== identity)
-    ) {
+    if (priorIdentity !== undefined && priorIdentity !== identity) {
       return { kind: "violation" };
     }
+    if (priorSession !== undefined && priorSession !== sessionId) {
+      // An exit tap for the exact retired session may arrive after the new
+      // binding. It cannot regain authority or replace the current session.
+      if (priorIdentity === identity) return { kind: "unrelated" };
+      const priorAgent = this.#agentByIdentity.get(identity);
+      if (
+        !identity.startsWith("advisor:") ||
+        !priorAgent ||
+        !priorAgent.workerIncarnationId ||
+        !acceptedAgent.workerIncarnationId ||
+        priorAgent.workerIncarnationId ===
+          acceptedAgent.workerIncarnationId ||
+        !this.#authorizeReplacement
+      ) {
+        return { kind: "violation" };
+      }
+      const decision = this.#authorizeReplacement({
+        identity,
+        priorSessionId: priorSession,
+        priorAgent,
+        nextSessionId: sessionId,
+        nextAgent: acceptedAgent,
+      });
+      if (decision === "defer") return { kind: "deferred" };
+      if (decision !== "accept") return { kind: "violation" };
+    }
     this.#sessionByIdentity.set(identity, sessionId);
+    this.#agentByIdentity.set(identity, acceptedAgent);
     this.#identityBySession.set(sessionId, identity);
     return { kind: "accepted", identity, agent: acceptedAgent };
   }

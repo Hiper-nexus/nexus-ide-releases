@@ -18,6 +18,10 @@ import {
   type McpDispatchOptions,
 } from "./mcp-dispatch";
 import {
+  INACTIVE_GUIDED_PREVC_MCP_FENCE,
+  type GuidedPrevcMcpFenceSnapshot,
+} from "./guided-prevc-mcp-fence";
+import {
   bindTokenToSession,
   getContext,
   mintToken,
@@ -83,6 +87,8 @@ function approvedMission(): Mission {
 function dispatchOptions(
   resolveMission: () => Mission = approvedMission,
   resolveCommittedReplayCandidate?: CommittedPhysicalHandoffReplayCandidateResolver,
+  resolveGuidedPrevcMcpFence: () => GuidedPrevcMcpFenceSnapshot = () =>
+    INACTIVE_GUIDED_PREVC_MCP_FENCE,
 ): McpDispatchOptions {
   return {
     resolveMissionForIntentGate: () => ({
@@ -92,6 +98,7 @@ function dispatchOptions(
     }),
     resolveCommittedPhysicalHandoffReplayCandidate:
       resolveCommittedReplayCandidate,
+    resolveGuidedPrevcMcpFence: () => resolveGuidedPrevcMcpFence(),
   };
 }
 
@@ -132,6 +139,7 @@ describe("physical HTTP MCP handoff boundary", () => {
   let nextHandoffId = 0;
   let handlerCalls = 0;
   let currentMission: Mission;
+  let currentGuidedFence: GuidedPrevcMcpFenceSnapshot;
   let missions: ReturnType<typeof createScopedMissionStore>;
   let tasks: ReturnType<typeof createScopedTaskStore>;
   let dispatches: ReturnType<typeof createTaskDispatchStore>;
@@ -208,6 +216,7 @@ describe("physical HTTP MCP handoff boundary", () => {
         );
       };
     currentMission = approved;
+    currentGuidedFence = INACTIVE_GUIDED_PREVC_MCP_FENCE;
 
     resetGateForTests();
     ctx = mintToken({
@@ -447,6 +456,7 @@ describe("physical HTTP MCP handoff boundary", () => {
               dispatchOptions(
                 () => currentMission,
                 resolveCommittedReplayCandidate,
+                () => currentGuidedFence,
               ),
             ),
         );
@@ -744,6 +754,27 @@ describe("physical HTTP MCP handoff boundary", () => {
         )
         .run(receipt.handoff_id),
     ).toThrow(/immutable/i);
+  });
+
+  it("accepts a physical worker handoff over HTTP while guided PREVC prepares", async () => {
+    currentGuidedFence = Object.freeze({
+      required: true,
+      active: true,
+      hasContract: false,
+      stage: null,
+      risk: null,
+      contractHash: null,
+      workflowRevision: null,
+    });
+
+    const result = await post(
+      "Physical guided worker handoff remains live while PREVC prepares.",
+    );
+
+    expect(result).toMatchObject({ status: 200, body: { ok: true } });
+    expect(handlerCalls).toBe(1);
+    expect(countRows(manager, "handoffs")).toBe(1);
+    expect(countRows(manager, "handoff_mcp_receipts")).toBe(1);
   });
 
   it("returns one generic handoff after response loss without a dispatch row or second charge", async () => {

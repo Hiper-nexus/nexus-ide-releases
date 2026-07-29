@@ -527,6 +527,7 @@ vi.mock('./catalog', () => ({
 import {
   closeOrchestration,
   configureRendererMissionAuthority,
+  getOrchestrationStartHealth,
   initOrchestration,
   ASYNC_ENRICHMENT_TIMEOUT_MS,
   missionApproveIntentSchema,
@@ -540,6 +541,7 @@ import {
 } from './orchestration-coordinator';
 import { startMcpServer, stopMcpServer } from './mcp-server';
 import { disposeProjectDomainStoreRegistry } from './project-domain-store-registry';
+import { ORCHESTRATION_START_INITIAL_RETRY_MS } from './orchestration-start-supervisor';
 
 const SCOPE_A = Object.freeze({
   version: 1 as const,
@@ -2523,6 +2525,30 @@ describe('mission runtime close IPC authority', () => {
     return handler;
   }
 
+  it('reconciles an already-removed mission idempotently without opening a confirmation loop', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    harness.projectStores.forScope.mockReturnValue({
+      scope: SCOPE_A,
+      missions: {
+        get: () => null,
+        list: () => [],
+      },
+      missionPanes: { list: () => [] },
+    });
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: 'mission-already-removed' }),
+    ).resolves.toEqual({
+      ok: true,
+      terminatedSessionIds: [],
+    });
+    expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(harness.terminatePty).not.toHaveBeenCalled();
+  });
+
   it('closes an already-blocked physical runtime and preserves the mission row', async () => {
     const sender = owner();
     harness.scopes.set(sender.id, SCOPE_A);
@@ -3580,6 +3606,46 @@ describe('native operator attestation authority', () => {
 });
 
 describe('orchestration init/close epoch serialization', () => {
+  it('keeps a live start supervisor after a transient MCP failure', async () => {
+    vi.useFakeTimers();
+    vi.mocked(startMcpServer)
+      .mockRejectedValueOnce(new Error('temporary localhost bind failure'))
+      .mockResolvedValueOnce();
+
+    try {
+      const initialize = initOrchestration();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(startMcpServer).toHaveBeenCalledTimes(1);
+      expect(startOrchestrationCoordinator).not.toHaveBeenCalled();
+      expect(stopMcpServer).toHaveBeenCalledTimes(1);
+      expect(disposeProjectDomainStoreRegistry).not.toHaveBeenCalled();
+      expect(getOrchestrationStartHealth()).toMatchObject({
+        status: 'retry-wait',
+        retryScheduled: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(
+        ORCHESTRATION_START_INITIAL_RETRY_MS,
+      );
+      await initialize;
+
+      expect(startMcpServer).toHaveBeenCalledTimes(2);
+      expect(startOrchestrationCoordinator).toHaveBeenCalledTimes(1);
+      expect(getOrchestrationStartHealth()).toMatchObject({
+        status: 'ready',
+        retryScheduled: false,
+      });
+    } finally {
+      await closeOrchestration();
+      expect(getOrchestrationStartHealth()).toMatchObject({
+        status: 'idle',
+        retryScheduled: false,
+      });
+      vi.useRealTimers();
+    }
+  });
+
   it('does not resurrect the coordinator when close wins a pending MCP bind', async () => {
     let releaseMcp: (() => void) | undefined;
     vi.mocked(startMcpServer).mockImplementationOnce(

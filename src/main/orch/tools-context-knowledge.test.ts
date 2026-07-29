@@ -125,6 +125,61 @@ describe('native context knowledge MCP tools', () => {
     });
   });
 
+  it('publishes the exact merge-review finding contract to reviewer CLIs', () => {
+    const schema = tool('nexus_merge_review_submit').inputSchema;
+    expect(schema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['reviewSessionId', 'findings'],
+      properties: {
+        reviewSessionId: { type: 'string', format: 'uuid' },
+        findings: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+              'severity',
+              'category',
+              'file',
+              'evidence',
+              'recommendation',
+            ],
+            properties: {
+              severity: {
+                type: 'string',
+                enum: ['critical', 'high', 'medium', 'low'],
+              },
+              category: {
+                type: 'string',
+                enum: [
+                  'correctness',
+                  'business',
+                  'security',
+                  'data',
+                  'performance',
+                  'ux',
+                ],
+              },
+              file: { type: 'string' },
+              line: { type: 'integer', minimum: 1 },
+              criterionRefs: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+              invariantRefs: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+              evidence: { type: 'string' },
+              recommendation: { type: 'string' },
+            },
+          },
+        },
+      },
+    });
+  });
+
   it('accepts legacy description criteria and human artifact labels before workflow gates', async () => {
     const missionId = 'legacy-contract-mission';
     manager.open(scope).db.prepare(

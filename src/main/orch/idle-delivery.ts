@@ -25,6 +25,7 @@ import {
   isSessionInjectableIdle,
   tapAgentSemanticStatus,
 } from './agent-status';
+import { findCurrentSchedulerOwnedHandoffDispatch } from './mission-scheduler-authority';
 
 /**
  * Automatic handoff delivery: when a worker submits a
@@ -39,12 +40,15 @@ interface QueuedHandoff {
   authority: DeliveryAuthority;
 }
 
-interface DeliveryAuthority {
-  readonly owner: PaneRuntimeAuthority['owner'];
-  readonly paneId: string;
+interface DurableDeliveryAuthority {
   readonly sessionId: string;
   readonly missionId: string;
   readonly scope: ProjectExecutionScope;
+}
+
+interface DeliveryAuthority extends DurableDeliveryAuthority {
+  readonly owner: PaneRuntimeAuthority['owner'];
+  readonly paneId: string;
 }
 
 interface PendingEnter {
@@ -243,22 +247,45 @@ function isDiagnosticDriverHandoff(handoff: Handoff): boolean {
   );
 }
 
+function schedulerDeliveryAuthority(
+  handoff: Handoff,
+  scope: ProjectExecutionScope,
+): DurableDeliveryAuthority | null {
+  if (!handoff.missionId) return null;
+  try {
+    const stores = getProjectDomainStores(scope);
+    const mission = stores.missions.get(handoff.missionId);
+    if (!mission?.orchestratorSessionId) return null;
+    const dispatch = findCurrentSchedulerOwnedHandoffDispatch(
+      mission,
+      stores.missions.hasCurrentKickoffAcceptance(mission.id),
+      handoff,
+      stores.taskDispatches.list(mission.id),
+    );
+    if (!dispatch) return null;
+    return Object.freeze({
+      sessionId: mission.orchestratorSessionId,
+      missionId: mission.id,
+      scope: Object.freeze({ ...scope }),
+    });
+  } catch {
+    return null;
+  }
+}
+
 function durableDispatchOwnsHandoff(
-  authority: DeliveryAuthority,
+  authority: DurableDeliveryAuthority,
   handoffId: string,
 ): boolean {
-  // Guided/durable missions already accepted the handoff into the scheduler
-  // (handoff_ready → merging). Blocking the mission because the orchestrator
-  // PTY did not absorb an idle-delivery paste revokes merge authority
-  // (dispatch → superseded) and aborts a valid candidate mid-council.
   try {
-    const dispatch = getProjectDomainStores(authority.scope)
-      .taskDispatches.list(authority.missionId)
-      .find((row) => row.handoffId === handoffId);
+    const handoff = getProjectDomainStores(authority.scope).handoffs.get(
+      handoffId,
+    );
+    if (!handoff) return false;
+    const current = schedulerDeliveryAuthority(handoff, authority.scope);
     return (
-      dispatch?.state === 'handoff_ready' ||
-      dispatch?.state === 'merging' ||
-      dispatch?.state === 'completed'
+      current?.missionId === authority.missionId &&
+      current.sessionId === authority.sessionId
     );
   } catch {
     return false;
@@ -271,7 +298,7 @@ function durableDispatchOwnsHandoff(
  * + consumption receipts the verified completion / PREVC bridge require.
  */
 function settleDurableOwnedHandoffDelivery(
-  authority: DeliveryAuthority,
+  authority: DurableDeliveryAuthority,
   handoff: Handoff,
 ): boolean {
   const stores = getProjectDomainStores(authority.scope);
@@ -322,6 +349,33 @@ function settleDurableOwnedHandoffDelivery(
     );
     return false;
   }
+}
+
+/**
+ * Restart lane for the exact scheduler-owned crash window in which delivery
+ * acceptance committed but consumption did not. Durable mission, kickoff,
+ * intent, dispatch, physical session/incarnation and MCP provenance are all
+ * re-proved before the existing accepted-attempt CAS may consume the handoff.
+ */
+export function recoverAcceptedSchedulerHandoffDelivery(
+  handoff: Handoff,
+  scope: ProjectExecutionScope,
+): boolean {
+  let current: Handoff | null;
+  try {
+    current = getProjectDomainStores(scope).handoffs.get(handoff.id);
+  } catch {
+    return false;
+  }
+  if (
+    !current?.delivered ||
+    (current.deliveryState !== 'submitted' &&
+      current.deliveryState !== 'acknowledged')
+  ) return false;
+  const authority = schedulerDeliveryAuthority(current, scope);
+  return authority
+    ? settleDurableOwnedHandoffDelivery(authority, current)
+    : false;
 }
 
 function missionDispatchesAlreadyTerminal(
@@ -673,6 +727,13 @@ export function onHandoffSubmitted(
   // its own validated result. Never queue that message back into the same PTY.
   if (petCompletion) return petCompletion;
   if (isDiagnosticDriverHandoff(handoff)) return null;
+  const schedulerAuthority = schedulerDeliveryAuthority(handoff, scope);
+  if (
+    schedulerAuthority &&
+    settleDurableOwnedHandoffDelivery(schedulerAuthority, handoff)
+  ) {
+    return null;
+  }
   const authority = targetAuthority(handoff, scope);
   if (!authority) return null; // No trusted orchestrator — stays listed as pending.
   if (

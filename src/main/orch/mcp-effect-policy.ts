@@ -137,7 +137,11 @@ const WORKFLOW_AUTHORITY_TOOLS = new Set([
   'worktree_create',
 ]);
 
-const HANDOFF_AUTHORITY_TOOLS = new Set(['handoff_submit', 'handoff_ack']);
+const HANDOFF_AUTHORITY_TOOLS = new Set([
+  'handoff_submit',
+  'handoff_ack',
+  'worker_heartbeat',
+]);
 
 /**
  * Narrow Nexus metadata receipts that a read-only worker must still be able
@@ -190,7 +194,6 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'audio_generate',
   'browser_click',
   'browser_fill',
-  'browser_navigate',
   'editor_apply_patch',
   'editor_insert',
   'editor_replace_selection',

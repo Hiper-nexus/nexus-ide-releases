@@ -14,6 +14,7 @@ import {
   browserPaneOpenResultSchema,
   orchPaneSpawnResultSchema,
   missionPaneRecoveryResultSchema,
+  panesSyncEnvelopeSchema,
   panesSyncSchema,
   squadSchema,
   isEngineGeneratedSquadId,
@@ -104,6 +105,10 @@ import {
   startOrchestrationCoordinator,
   stopOrchestrationCoordinator,
 } from './orchestration-coordinator';
+import {
+  OrchestrationStartSupervisor,
+  type OrchestrationStartHealth,
+} from './orchestration-start-supervisor';
 import { stopAllPreviews } from "./preview-server";
 import { stopRemoteBridge } from "../remote/remote-bridge";
 import { buildRecipeOverlay } from "./recipe-overlay";
@@ -171,6 +176,7 @@ import {
   type SquadAuthoritySnapshot,
 } from './squad-authority-snapshot';
 import {
+  closeOrphanedMissionRuntime,
   closeMissionRuntimePreservingHistory,
   prepareMissionRuntimeTermination,
   settleMissionRuntimeDemotion,
@@ -218,6 +224,7 @@ let rendererMissionAuthority: RendererMissionAuthority | null = null;
 let projectDomainStores: ProjectDomainStoreRegistry | null = null;
 let orchestrationInitFlight: Promise<void> | null = null;
 let orchestrationCloseFlight: Promise<void> | null = null;
+let orchestrationStartSupervisor: OrchestrationStartSupervisor | null = null;
 let orchestrationLifecycleEpoch = 0;
 let orchestrationReady = false;
 let orchestrationClosing = false;
@@ -1649,6 +1656,18 @@ export function unregisterOrchListener(wc: WebContents): void {
   unregisterLoginStuckTarget(wc);
 }
 
+export function getOrchestrationStartHealth(): OrchestrationStartHealth {
+  return (
+    orchestrationStartSupervisor?.health ?? {
+      status: orchestrationReady ? 'ready' : 'idle',
+      attempts: 0,
+      retryScheduled: false,
+      nextRetryAt: null,
+      lastError: null,
+    }
+  );
+}
+
 /** Boot the whole orchestration domain (stores → registry → MCP server). */
 export async function initOrchestration(): Promise<void> {
   if (orchestrationReady) return;
@@ -1668,7 +1687,46 @@ export async function initOrchestration(): Promise<void> {
     initSquadStore(db);
     initPaneRegistry();
     initIdleDelivery();
-    await startMcpServer();
+    const startSupervisor =
+      orchestrationStartSupervisor ??
+      new OrchestrationStartSupervisor({
+        startMcpServer,
+        resetFailedMcpStart: stopMcpServer,
+        startCoordinator: () => {
+          if (
+            orchestrationClosing ||
+            epoch !== orchestrationLifecycleEpoch
+          ) {
+            throw new Error(
+              'orchestration startup epoch was invalidated before coordinator start',
+            );
+          }
+          startOrchestrationCoordinator();
+        },
+        reportRetry: (error, health) => {
+          if (health.attempts !== 1 && health.attempts % 12 !== 0) return;
+          console.warn(
+            '[nexus] orchestration MCP bootstrap failed; retry remains supervised:',
+            {
+              attempt: health.attempts,
+              nextRetryAt: health.nextRetryAt,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+        },
+      });
+    orchestrationStartSupervisor = startSupervisor;
+    try {
+      await startSupervisor.start();
+    } catch (error) {
+      if (
+        orchestrationClosing ||
+        epoch !== orchestrationLifecycleEpoch
+      ) {
+        return;
+      }
+      throw error;
+    }
     // closeOrchestration may have been requested while the localhost MCP bind
     // was pending. Never resurrect a coordinator into an invalidated epoch;
     // close owns the subsequent server/store teardown.
@@ -1678,9 +1736,6 @@ export async function initOrchestration(): Promise<void> {
     ) {
       return;
     }
-    // Workers need the embedded MCP endpoint/token before any boot
-    // reconciliation is allowed to dispatch a pane.
-    startOrchestrationCoordinator();
     // SEGURANÇA: a remote bridge NÃO sobe no boot — só sob demanda, via IPC
     // explícito do usuário (remote:bridge.start) ou pela tool MCP dedicada.
     disposeSquadBroadcast?.();
@@ -1704,17 +1759,19 @@ export async function closeOrchestration(): Promise<void> {
   orchestrationClosing = true;
   orchestrationLifecycleEpoch += 1;
   const pendingInit = orchestrationInitFlight;
+  const pendingStartSupervisor = orchestrationStartSupervisor;
+  const pendingInitSettlement = pendingInit?.then(
+    () => undefined,
+    () => undefined,
+  );
   const close = (async () => {
+    // Cancel a scheduled retry first. If a bind is already in flight, stop()
+    // drains that exact attempt before any MCP/store teardown can run.
+    await pendingStartSupervisor?.stop();
     // A pending startMcpServer owns mutable server state. Let it settle, but
     // the invalidated epoch check above guarantees it cannot start a new
     // coordinator after shutdown was requested.
-    if (pendingInit) {
-      try {
-        await pendingInit;
-      } catch {
-        // Teardown below still owns every partially initialized subsystem.
-      }
-    }
+    await pendingInitSettlement;
     // Wait for the current main-owned reconcile participant before tearing
     // down stores it may still be using. A rejected stop is deliberately
     // fail-closed: none of the teardown below is allowed to run.
@@ -1732,6 +1789,9 @@ export async function closeOrchestration(): Promise<void> {
     squadDesignDrafts.clear();
     orchestrationReady = false;
     orchestrationShutdownBlocked = false;
+    if (orchestrationStartSupervisor === pendingStartSupervisor) {
+      orchestrationStartSupervisor = null;
+    }
   })();
   orchestrationCloseFlight = close;
   try {
@@ -1778,10 +1838,20 @@ export function registerOrchIpc(): void {
   });
 
   ipcMain.on(ORCH_CHANNELS.panesSync, (event, raw) => {
-    const parsed = panesSyncSchema.safeParse(raw);
-    if (parsed.success) {
-      syncPanes(parsed.data, event.sender);
-      for (const pane of parsed.data) {
+    const envelope = panesSyncEnvelopeSchema.safeParse(raw);
+    const legacy = envelope.success ? null : panesSyncSchema.safeParse(raw);
+    const entries = envelope.success
+      ? envelope.data.entries
+      : legacy?.success
+        ? legacy.data
+        : null;
+    if (entries) {
+      syncPanes(
+        entries,
+        event.sender,
+        envelope.success ? envelope.data.generationId : undefined,
+      );
+      for (const pane of entries) {
         rendererMissionAuthority?.restorePersistedPaneAuthority(
           event.sender,
           pane.paneId,
@@ -1824,6 +1894,23 @@ export function registerOrchIpc(): void {
       raw,
     );
   });
+  ipcMain.handle(
+    ORCH_CHANNELS.missionPaneRestoreAuthority,
+    (event, raw) => {
+      const parsed = z
+        .object({
+          missionId: z.string().min(1).max(128),
+          paneId: z.string().min(1).max(128),
+        })
+        .safeParse(raw);
+      if (!parsed.success) return false;
+      return requireMissionAuthority().canRestoreMissionPaneForRenderer(
+        event.sender,
+        parsed.data.missionId,
+        parsed.data.paneId,
+      );
+    },
+  );
 
   // A missão nasce NO LANÇAMENTO (renderer), não à mercê de o LLM chamar
   // nexus_mission_create — sem isto, a missão nova não aparecia em lugar
@@ -2307,10 +2394,28 @@ export function registerOrchIpc(): void {
     }
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const suite = requireProjectStores(event.sender);
+    const missionId = parsed.data.missionId;
+    if (!suite.missions.get(missionId)) {
+      return withMissionLifecycleLock(scope, missionId, () => {
+        requireLiveRendererWorkspaceScope(event.sender, scope);
+        // A stale renderer leaf must remain closable after its durable mission
+        // row disappeared. Re-authorize under the lifecycle mutex so this
+        // idempotent cleanup cannot race a concurrent mission restoration.
+        if (suite.missions.get(missionId)) {
+          return {
+            ok: false,
+            terminatedSessionIds: [],
+            error:
+              'A missão reapareceu durante a reconciliação. Tente encerrar novamente.',
+          };
+        }
+        return closeOrphanedMissionRuntime({ scope, missionId });
+      });
+    }
     const candidate = prepareMissionRuntimeTermination({
       scope,
       suite,
-      missionId: parsed.data.missionId,
+      missionId,
       reason: 'operator-close',
     });
     const approved = await confirmMissionRuntimeClose(
@@ -2327,9 +2432,15 @@ export function registerOrchIpc(): void {
     }
     return withMissionLifecycleLock(
       scope,
-      parsed.data.missionId,
+      missionId,
       () => {
         requireLiveRendererWorkspaceScope(event.sender, scope);
+        if (!suite.missions.get(missionId)) {
+          // The operator already approved this exact mission before the row
+          // disappeared. Finish its scoped physical/visual cleanup rather than
+          // returning a permanent "mission not found" loop.
+          return closeOrphanedMissionRuntime({ scope, missionId });
+        }
         // O operador aprova ENCERRAR ESTA MISSÃO, não o inventário de sessões
         // mostrado no modal. Sob o mesmo lock de recovery/bootstrap, rederive
         // o inventário físico e grave blocked_user antes do primeiro await.
@@ -2337,7 +2448,7 @@ export function registerOrchIpc(): void {
         return closeMissionRuntimePreservingHistory({
           scope,
           suite,
-          missionId: parsed.data.missionId,
+          missionId,
         });
       },
     );

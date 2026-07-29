@@ -131,19 +131,17 @@ describe("Guided Planner v2", () => {
       ...decodeTaskScheduleDetail(row.detail).meta!,
     }));
 
-    // Fan-out consultivo: scouts advisor (read_only) → executor codex →
-    // revisor codex → reviewers advisor (read_only) → QA codex read_only.
+    // Fan-out consultivo: advisors read_only independentes + executor codex;
+    // depois a cadeia codex revisor → QA.
     const advisoryIds = [
+      "e2e-advisor-grok",
       "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
+      "e2e-advisor-claude",
       "e2e-advisor-glm",
     ];
-    const reviewIds = [
-      "e2e-reviewer",
-      "e2e-advisor-grok",
-      "e2e-advisor-claude",
-    ];
+    const reviewIds = ["e2e-reviewer"];
     expect(schedules).toEqual([
       ...advisoryIds.map((agentRef, index) =>
         expect.objectContaining({
@@ -187,7 +185,7 @@ describe("Guided Planner v2", () => {
           plannedTaskId(
             currentMission.id,
             3,
-            "guided-review-3-e2e-advisor-claude",
+            "guided-review-1-e2e-reviewer",
           ),
         ],
       }),
@@ -249,15 +247,16 @@ describe("Guided Planner v2", () => {
       ...decodeTaskScheduleDetail(row.detail).meta!,
     }));
 
-    // Variante claude: advisor claude reservada (orquestrador) — a cadeia
-    // termina a revisão independente no grok e nenhum worker é claude.
+    // Variante claude: advisor claude reservada (orquestrador) e todos os
+    // outros advisors permanecem no fan-out independente.
     const advisoryIds = [
+      "e2e-advisor-grok",
       "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
       "e2e-advisor-glm",
     ];
-    const reviewIds = ["e2e-reviewer", "e2e-advisor-grok"];
+    const reviewIds = ["e2e-reviewer"];
     expect(schedules).toEqual([
       ...advisoryIds.map((agentRef, index) =>
         expect.objectContaining({
@@ -301,7 +300,7 @@ describe("Guided Planner v2", () => {
           plannedTaskId(
             currentMission.id,
             3,
-            "guided-review-2-e2e-advisor-grok",
+            "guided-review-1-e2e-reviewer",
           ),
         ],
       }),

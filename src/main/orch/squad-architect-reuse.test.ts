@@ -344,6 +344,7 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
       "ponytail",
       "check-work",
       "bridgesecurity",
+      "dembrandt",
     ]);
     expect(executor?.allowedSkills).toEqual([
       "ponytail",

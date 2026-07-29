@@ -240,6 +240,22 @@ export const missionIntentContractSchema = z.object({
 });
 export type MissionIntentContract = z.infer<typeof missionIntentContractSchema>;
 
+/**
+ * Immutable approval authority carried across bootstrap and physical panes.
+ * Spend counters are a live execution ledger: sibling tools may advance them
+ * without changing the operator-approved goal, limits or capabilities.
+ */
+export function missionIntentAuthoritySnapshot(
+  contract: MissionIntentContract,
+): Omit<MissionIntentContract, 'spentSteps' | 'spentTokens'> {
+  const {
+    spentSteps: _spentSteps,
+    spentTokens: _spentTokens,
+    ...authority
+  } = contract;
+  return authority;
+}
+
 /** States where automatic recovery / stall supervisors must stay silent. */
 export const NON_SUPERVISABLE_INTENT_STATES: ReadonlySet<MissionIntentState> =
   new Set([

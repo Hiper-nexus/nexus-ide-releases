@@ -30,6 +30,7 @@ import {
 } from './pane-submit';
 import { WebglLeasePool } from './webgl-lease';
 import { resumeTerminalVisibilityBeforePaint } from './terminal-visibility-resume';
+import { shouldAutoPinPaneAccount } from './pane-account-authority';
 
 /**
  * Persistent terminal manager.
@@ -450,14 +451,12 @@ function startSpawn(
     try {
       const missionId =
         pane.missionId ?? useOrchStore.getState().paneMissions[pane.id];
-      const isMainOwnedMissionRecovery =
-        Boolean(missionId) && (resume || restorePersistedAuthority);
-      // A persisted mission account is part of the main-sealed pane spec.
-      // Auto-pinning here would let renderer-side account discovery drift the
-      // recovery request before it reaches the main trust boundary.
-      const accountId = isMainOwnedMissionRecovery
-        ? pane.accountId
-        : await ensurePaneAccountPin(pane);
+      // Account absence is also sealed authority. Renderer-side vault
+      // discovery is reserved for manual panes; every mission/orchestration
+      // spawn must preserve the exact account Main selected (including none).
+      const accountId = shouldAutoPinPaneAccount(pane, missionId)
+        ? await ensurePaneAccountPin(pane)
+        : pane.accountId;
       if (host.disposed || host.spawnGeneration !== generation) return null;
       const spawnKind = pane.kind === 'cli-agent' ? 'cli-agent' : 'shell';
       const res = await window.nexus.pty.spawn({
@@ -1175,6 +1174,14 @@ export function holdSpawnUntilApproved(paneId: string): void {
 
 export function isSpawnHeld(paneId: string): boolean {
   return heldSpawnPanes.has(paneId);
+}
+
+/** Forget every renderer-local spawn intent before pruning an orphan leaf. */
+export function discardPaneSpawnState(paneId: string): void {
+  heldSpawnPanes.delete(paneId);
+  resumeOnFirstSpawn.delete(paneId);
+  restoreAuthorityOnFirstSpawn.delete(paneId);
+  useSessionStateStore.getState().clearPaneState(paneId);
 }
 
 /**

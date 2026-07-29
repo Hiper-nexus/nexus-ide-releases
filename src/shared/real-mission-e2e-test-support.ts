@@ -67,7 +67,10 @@ export function validPassEvidence(
   const acceptanceCriteria =
     launchSurface === "product-wizard"
       ? REAL_MISSION_E2E_PRODUCT_WIZARD_ACCEPTANCE_CRITERIA
-      : realMissionE2EAcceptanceCriteria(orchestratorCli);
+      : realMissionE2EAcceptanceCriteria(
+          orchestratorCli,
+          presentAdvisorClis,
+        );
   const workflowRoute = [
     "planning",
     "execution",

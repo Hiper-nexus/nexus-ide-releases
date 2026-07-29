@@ -153,6 +153,52 @@ describe('preview tool workspace confinement', () => {
     expect(stubs.requestBrowserPane).toHaveBeenCalledWith(
       expect.objectContaining({ scope }),
     );
+    expect(stubs.loadBrowser).toHaveBeenCalledWith(
+      'browser-1',
+      'https://example.com',
+      expect.objectContaining({
+        scope,
+        privateAccessConfirmed: false,
+      }),
+    );
+  });
+
+  it('does not turn mission approval into silent localhost or private-network approval', async () => {
+    stubs.loadBrowser.mockRejectedValueOnce(
+      new Error('private-network navigation requires explicit user confirmation'),
+    );
+    const tool = buildBrowserTools().find((item) => item.name === 'nexus_browser_open')!;
+
+    await expect(
+      tool.handler({ url: 'http://127.0.0.1:43111/' }, context),
+    ).rejects.toThrow(/private-network/i);
+
+    expect(stubs.loadBrowser).toHaveBeenCalledWith(
+      'browser-1',
+      'http://127.0.0.1:43111/',
+      expect.objectContaining({ privateAccessConfirmed: false }),
+    );
+    expect(stubs.requestPaneClose).toHaveBeenCalledWith('browser-1');
+  });
+
+  it('navigates an owned pane without silently approving private targets', async () => {
+    const tool = buildBrowserTools().find(
+      (item) => item.name === 'nexus_browser_navigate',
+    )!;
+
+    await tool.handler(
+      { paneId: 'browser-1', url: 'https://example.com/docs' },
+      context,
+    );
+
+    expect(stubs.loadBrowser).toHaveBeenCalledWith(
+      'browser-1',
+      'https://example.com/docs',
+      expect.objectContaining({
+        scope,
+        privateAccessConfirmed: false,
+      }),
+    );
   });
 
   it('never opens a new pane for a common worker', async () => {

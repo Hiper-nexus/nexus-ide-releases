@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type SpawnOptions } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,16 +15,19 @@ import {
  * workspace root from this module.
  *
  * Security notes:
- * - URL policy blocks private/forbidden networks before spawn.
+ * - v0.25.1 follows redirects and subresources without exposing a per-request
+ *   route hook. URL assessment is defense in depth, not an SSRF boundary.
+ * - MCP extraction therefore requires an explicitly injected runner whose
+ *   browser layer enforces every request; the bundled CLI is manual-only.
  * - Child env is an allowlist (no process.env passthrough of secrets).
  * - Chromium runs with its default sandbox (no --no-sandbox).
- * - Playwright may still follow redirects after the initial DNS check; treat
- *   extracted content as untrusted until draft review.
+ * - Timeout/abort terminates the whole CLI/browser process tree before reject.
  */
 
 export const DEMBRANDT_PACKAGE = 'dembrandt@0.25.1';
 export const DEMBRANDT_TIMEOUT_MS = 120_000;
 export const DEMBRANDT_MAX_OUTPUT_BYTES = 2_000_000;
+export const DEMBRANDT_TERMINATION_GRACE_MS = 2_000;
 
 /** Env keys forwarded to the Dembrandt child (everything else is dropped). */
 const CHILD_ENV_ALLOWLIST = [
@@ -71,12 +74,16 @@ export interface DembrandtExtractInput {
   readonly mobile?: boolean;
   readonly wcag?: boolean;
   readonly signal?: AbortSignal;
-  /** Injectable for tests. Defaults to assessBrowserUrl without private net. */
+  /** Defense-in-depth URL assessment; not a redirect/subresource guard. */
   readonly assessUrl?: (
     raw: string,
   ) => Promise<BrowserUrlDecision>;
-  /** Injectable CLI runner for tests. */
-  readonly runner?: DembrandtCliRunner;
+  /**
+   * Explicitly injected guarded runner. Its browser implementation must
+   * enforce URL policy on every request, including redirects/subresources.
+   * The unguarded v0.25.1 CLI is intentionally never selected by default.
+   */
+  readonly routeGuardedRunner?: DembrandtCliRunner;
 }
 
 export interface DembrandtExtractResult {
@@ -98,6 +105,62 @@ export interface DembrandtCliRunRequest {
 export type DembrandtCliRunner = (
   request: DembrandtCliRunRequest,
 ) => Promise<{ designMd: string }>;
+
+interface DembrandtReadable {
+  on(event: 'data', listener: (chunk: Buffer) => void): unknown;
+  removeListener(event: 'data', listener: (chunk: Buffer) => void): unknown;
+}
+
+interface DembrandtChildProcess {
+  readonly pid?: number;
+  readonly stdout?: DembrandtReadable | null;
+  readonly stderr?: DembrandtReadable | null;
+  readonly exitCode: number | null;
+  kill(signal?: NodeJS.Signals): boolean;
+  once(event: 'close', listener: (code: number | null) => void): unknown;
+  once(event: 'error', listener: (error: Error) => void): unknown;
+  removeListener(event: 'close', listener: (code: number | null) => void): unknown;
+  removeListener(event: 'error', listener: (error: Error) => void): unknown;
+}
+
+interface DembrandtSpawnOptions {
+  readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly stdio: ['ignore', 'pipe', 'pipe'] | 'ignore';
+  readonly detached?: boolean;
+  readonly shell?: false;
+  readonly windowsHide?: boolean;
+}
+
+type DembrandtSpawnProcess = (
+  command: string,
+  args: string[],
+  options: DembrandtSpawnOptions,
+) => DembrandtChildProcess;
+
+interface DembrandtCliRunnerDependencies {
+  readonly platform: NodeJS.Platform;
+  readonly spawnProcess: DembrandtSpawnProcess;
+  readonly signalProcessGroup: (
+    processGroupId: number,
+    signal: NodeJS.Signals,
+  ) => void;
+  readonly terminateWindowsTree: (pid: number) => Promise<void>;
+  readonly timeoutMs?: number;
+  readonly terminationGraceMs?: number;
+}
+
+const spawnProcess: DembrandtSpawnProcess = (command, args, options) =>
+  spawn(command, args, options as SpawnOptions) as DembrandtChildProcess;
+
+const DEFAULT_RUNNER_DEPENDENCIES: DembrandtCliRunnerDependencies = {
+  platform: process.platform,
+  spawnProcess,
+  signalProcessGroup: (processGroupId, signal) => {
+    process.kill(processGroupId, signal);
+  },
+  terminateWindowsTree: (pid) => terminateWindowsProcessTree(pid),
+};
 
 function defaultAssessUrl(raw: string): Promise<BrowserUrlDecision> {
   return assessBrowserUrl(raw, { allowPrivateNetwork: false });
@@ -160,53 +223,243 @@ function findDesignMd(workDir: string): string | null {
   return null;
 }
 
-export async function defaultDembrandtCliRunner(
+function abortedError(): DembrandtExtractError {
+  return new DembrandtExtractError(
+    'ABORTED',
+    'dembrandt extraction aborted',
+  );
+}
+
+function isAlreadyGoneError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ESRCH'
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+async function terminateWindowsProcessTree(
+  pid: number,
+  spawnTaskkill: DembrandtSpawnProcess = spawnProcess,
+  systemRoot = process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows',
+): Promise<void> {
+  const taskkillPath = path.win32.join(
+    systemRoot,
+    'System32',
+    'taskkill.exe',
+  );
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const killer = spawnTaskkill(
+      taskkillPath,
+      ['/pid', String(pid), '/T', '/F'],
+      {
+        stdio: 'ignore',
+        shell: false,
+        windowsHide: true,
+      },
+    );
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      killer.removeListener('close', onClose);
+      killer.removeListener('error', onError);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onError = (error: Error): void => {
+      finish(
+        new DembrandtExtractError(
+          'TEARDOWN_FAILED',
+          `failed to launch Windows process-tree teardown: ${error.message}`,
+        ),
+      );
+    };
+    const onClose = (code: number | null): void => {
+      // taskkill returns 128 when the target already exited. In both cases
+      // there is no live tree left for that PID.
+      if (code === 0 || code === 128) {
+        finish();
+        return;
+      }
+      finish(
+        new DembrandtExtractError(
+          'TEARDOWN_FAILED',
+          `Windows process-tree teardown exited with code ${code ?? 'unknown'}`,
+        ),
+      );
+    };
+    killer.once('error', onError);
+    killer.once('close', onClose);
+  });
+}
+
+function signalPosixProcessGroup(
+  pid: number,
+  signal: NodeJS.Signals,
+  signalProcessGroup: DembrandtCliRunnerDependencies['signalProcessGroup'],
+): void {
+  try {
+    signalProcessGroup(-pid, signal);
+  } catch (error) {
+    if (!isAlreadyGoneError(error)) throw error;
+  }
+}
+
+async function terminateDembrandtProcessTree(
+  child: DembrandtChildProcess,
+  dependencies: DembrandtCliRunnerDependencies,
+): Promise<void> {
+  const pid = child.pid;
+  if (pid === undefined) {
+    throw new DembrandtExtractError(
+      'TEARDOWN_FAILED',
+      'dembrandt process-tree teardown cannot prove a process without a PID',
+    );
+  }
+
+  const graceMs =
+    dependencies.terminationGraceMs ?? DEMBRANDT_TERMINATION_GRACE_MS;
+  if (dependencies.platform === 'win32') {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // taskkill below is the authoritative Windows tree teardown.
+    }
+    await delay(graceMs);
+    await dependencies.terminateWindowsTree(pid);
+    return;
+  }
+
+  try {
+    signalPosixProcessGroup(
+      pid,
+      'SIGTERM',
+      dependencies.signalProcessGroup,
+    );
+  } catch {
+    // Escalation below is authoritative. A failed graceful signal must never
+    // skip the hard stop and leave Node/Chromium descendants running.
+  }
+  await delay(graceMs);
+  // Always escalate the original detached group even if npx already closed:
+  // Chromium/Node descendants may still be alive in that process group.
+  signalPosixProcessGroup(
+    pid,
+    'SIGKILL',
+    dependencies.signalProcessGroup,
+  );
+}
+
+async function runDembrandtCliRunner(
   request: DembrandtCliRunRequest,
+  dependencies: DembrandtCliRunnerDependencies = DEFAULT_RUNNER_DEPENDENCIES,
 ): Promise<{ designMd: string }> {
+  if (request.signal?.aborted) throw abortedError();
+
   const args = buildCliArgs(request);
   const env = buildDembrandtChildEnv();
 
   return await new Promise((resolve, reject) => {
-    const child = spawn('npx', args, {
-      cwd: request.workDir,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    let child: DembrandtChildProcess;
+    try {
+      child = dependencies.spawnProcess('npx', args, {
+        cwd: request.workDir,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: dependencies.platform !== 'win32',
+        shell: false,
+        windowsHide: dependencies.platform === 'win32',
+      });
+    } catch (error) {
+      reject(
+        new DembrandtExtractError(
+          'SPAWN_FAILED',
+          `failed to spawn dembrandt: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+      return;
+    }
 
     let stdout = '';
     let stderr = '';
     let totalBytes = 0;
     let settled = false;
+    let teardownStarted = false;
+    let closeObserved = false;
+    let resolveCloseProof: (() => void) | undefined;
+    const closeProof = new Promise<void>((closeResolve) => {
+      resolveCloseProof = closeResolve;
+    });
+    const timeoutMs = dependencies.timeoutMs ?? DEMBRANDT_TIMEOUT_MS;
+    let timer: NodeJS.Timeout | null = null;
 
-    const fail = (error: Error) => {
+    const removeOutputListeners = (): void => {
+      child.stdout?.removeListener('data', onStdout);
+      child.stderr?.removeListener('data', onStderr);
+    };
+    const cleanup = (): void => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      request.signal?.removeEventListener('abort', onAbort);
+      removeOutputListeners();
+      child.removeListener('close', onClose);
+      child.removeListener('error', onError);
+    };
+    const finishReject = (error: Error): void => {
       if (settled) return;
       settled = true;
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // ignore
-      }
+      cleanup();
       reject(error);
     };
-
-    const timer = setTimeout(() => {
-      fail(
-        new DembrandtExtractError(
-          'TIMEOUT',
-          `dembrandt timed out after ${DEMBRANDT_TIMEOUT_MS}ms`,
-        ),
-      );
-    }, DEMBRANDT_TIMEOUT_MS);
-
-    const onAbort = () => {
-      fail(new DembrandtExtractError('ABORTED', 'dembrandt extraction aborted'));
+    const finishResolve = (designMd: string): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({ designMd });
     };
-    request.signal?.addEventListener('abort', onAbort, { once: true });
+    const failAfterTeardown = (error: DembrandtExtractError): void => {
+      if (settled || teardownStarted) return;
+      teardownStarted = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+      request.signal?.removeEventListener('abort', onAbort);
+      removeOutputListeners();
+      void terminateDembrandtProcessTree(child, dependencies)
+        .then(async () => {
+          // Reap npx only after the entire detached group/taskkill operation
+          // completed. This keeps the temp cwd alive until physical teardown.
+          if (!closeObserved) await closeProof;
+          finishReject(error);
+        })
+        .catch(async (teardownError: unknown) => {
+          if (!closeObserved) await closeProof;
+          const detail =
+            teardownError instanceof Error
+              ? teardownError.message
+              : String(teardownError);
+          finishReject(
+            new DembrandtExtractError(
+              'TEARDOWN_FAILED',
+              `${error.message}; process-tree teardown failed: ${detail}`,
+            ),
+          );
+        });
+    };
+    const onAbort = (): void => failAfterTeardown(abortedError());
 
     const accumulate = (chunk: Buffer, target: 'out' | 'err') => {
       totalBytes += chunk.length;
       if (totalBytes > DEMBRANDT_MAX_OUTPUT_BYTES) {
-        fail(
+        failAfterTeardown(
           new DembrandtExtractError(
             'OUTPUT_TOO_LARGE',
             `dembrandt output exceeded ${DEMBRANDT_MAX_OUTPUT_BYTES} bytes`,
@@ -218,34 +471,39 @@ export async function defaultDembrandtCliRunner(
       if (target === 'out') stdout += text;
       else stderr += text;
     };
+    const onStdout = (chunk: Buffer): void => accumulate(chunk, 'out');
+    const onStderr = (chunk: Buffer): void => accumulate(chunk, 'err');
 
-    child.stdout?.on('data', (chunk: Buffer) => accumulate(chunk, 'out'));
-    child.stderr?.on('data', (chunk: Buffer) => accumulate(chunk, 'err'));
-
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      request.signal?.removeEventListener('abort', onAbort);
-      fail(
+    const onError = (error: Error): void => {
+      if (teardownStarted) return;
+      if (child.pid !== undefined) {
+        failAfterTeardown(
+          new DembrandtExtractError(
+            'SPAWN_FAILED',
+            `dembrandt process failed: ${error.message}`,
+          ),
+        );
+        return;
+      }
+      finishReject(
         new DembrandtExtractError(
           'SPAWN_FAILED',
           `failed to spawn dembrandt: ${error.message}. Ensure Node/npx are available; browser binary may need \`npx dembrandt@0.25.1 install-browser\`.`,
         ),
       );
-    });
+    };
 
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      request.signal?.removeEventListener('abort', onAbort);
-      if (settled) return;
-      settled = true;
-
+    const onClose = (code: number | null): void => {
+      closeObserved = true;
+      resolveCloseProof?.();
+      if (settled || teardownStarted) return;
       if (code !== 0) {
         const detail = (stderr || stdout).trim().slice(0, 800);
         const browserHint =
           /Executable doesn't exist|browser|chromium|playwright/i.test(detail)
             ? ' Run `npx dembrandt@0.25.1 install-browser` once, then retry.'
             : '';
-        reject(
+        finishReject(
           new DembrandtExtractError(
             'EXTRACTION_FAILED',
             `dembrandt exited with code ${code ?? 'unknown'}${detail ? `: ${detail}` : ''}.${browserHint}`,
@@ -256,7 +514,7 @@ export async function defaultDembrandtCliRunner(
 
       const designPath = findDesignMd(request.workDir);
       if (!designPath) {
-        reject(
+        finishReject(
           new DembrandtExtractError(
             'NO_DESIGN_MD',
             'dembrandt completed but DESIGN.md was not found under output/',
@@ -268,7 +526,7 @@ export async function defaultDembrandtCliRunner(
       try {
         designMd = fs.readFileSync(designPath, 'utf8');
       } catch (error) {
-        reject(
+        finishReject(
           new DembrandtExtractError(
             'READ_FAILED',
             `failed to read DESIGN.md: ${error instanceof Error ? error.message : String(error)}`,
@@ -277,7 +535,7 @@ export async function defaultDembrandtCliRunner(
         return;
       }
       if (!designMd.trim()) {
-        reject(
+        finishReject(
           new DembrandtExtractError(
             'EMPTY_DESIGN_MD',
             'dembrandt produced an empty DESIGN.md',
@@ -286,7 +544,7 @@ export async function defaultDembrandtCliRunner(
         return;
       }
       if (Buffer.byteLength(designMd, 'utf8') > DEMBRANDT_MAX_OUTPUT_BYTES) {
-        reject(
+        finishReject(
           new DembrandtExtractError(
             'OUTPUT_TOO_LARGE',
             `DESIGN.md exceeded ${DEMBRANDT_MAX_OUTPUT_BYTES} bytes`,
@@ -294,9 +552,37 @@ export async function defaultDembrandtCliRunner(
         );
         return;
       }
-      resolve({ designMd });
-    });
+      finishResolve(designMd);
+    };
+
+    child.stdout?.on('data', onStdout);
+    child.stderr?.on('data', onStderr);
+    child.once('error', onError);
+    child.once('close', onClose);
+
+    timer = setTimeout(() => {
+      failAfterTeardown(
+        new DembrandtExtractError(
+          'TIMEOUT',
+          `dembrandt timed out after ${timeoutMs}ms`,
+        ),
+      );
+    }, timeoutMs);
+    timer.unref?.();
+    request.signal?.addEventListener('abort', onAbort, { once: true });
+    if (request.signal?.aborted) onAbort();
   });
+}
+
+/**
+ * Manual CLI runner. It intentionally is not the default for MCP URL
+ * extraction because Dembrandt v0.25.1 cannot guard redirect/subresource
+ * requests. Kept for explicit operator/manual flows and future guarded use.
+ */
+export async function defaultDembrandtCliRunner(
+  request: DembrandtCliRunRequest,
+): Promise<{ designMd: string }> {
+  return runDembrandtCliRunner(request);
 }
 
 /**
@@ -305,6 +591,14 @@ export async function defaultDembrandtCliRunner(
 export async function extractDesignSystemFromUrl(
   input: DembrandtExtractInput,
 ): Promise<DembrandtExtractResult> {
+  if (!input.routeGuardedRunner) {
+    throw new DembrandtExtractError(
+      'NETWORK_GUARD_UNAVAILABLE',
+      'Dembrandt v0.25.1 has no per-request network guard for redirects and subresources; MCP extraction is disabled until a route-guarded runner is injected',
+    );
+  }
+  if (input.signal?.aborted) throw abortedError();
+
   const assess = input.assessUrl ?? defaultAssessUrl;
   const decision = await assess(input.url);
   if (!decision.allowed) {
@@ -341,8 +635,7 @@ export async function extractDesignSystemFromUrl(
 
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-dembrandt-'));
   try {
-    const runner = input.runner ?? defaultDembrandtCliRunner;
-    const { designMd } = await runner({
+    const { designMd } = await input.routeGuardedRunner({
       normalizedUrl: decision.normalizedUrl,
       paths: input.paths ?? [],
       darkMode: input.darkMode === true,
@@ -367,4 +660,6 @@ export const __test = {
   findDesignMd,
   buildDembrandtChildEnv,
   CHILD_ENV_ALLOWLIST,
+  runDembrandtCliRunner,
+  terminateWindowsProcessTree,
 };

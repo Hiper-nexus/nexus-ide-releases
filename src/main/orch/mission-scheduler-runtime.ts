@@ -27,6 +27,7 @@ import {
   EMPTY_SCHEDULER_TELEMETRY,
   effectiveConcurrencyCap,
 } from './mission-scheduler';
+import { throwIfMissionSchedulerAborted } from './mission-scheduler-abort';
 
 export const PARALLEL_SCHEDULER_FLAG_ID = 'orch.parallelScheduler' as const;
 
@@ -75,7 +76,10 @@ export interface SchedulerRuntimeDeps {
   /** Optional blast-radius expander (pure file set). */
   expandFiles?(files: readonly string[]): readonly string[];
   /** Create worktree + spawn worker pane for one task. */
-  dispatchTask(request: SchedulerDispatchRequest): Promise<void>;
+  dispatchTask(
+    request: SchedulerDispatchRequest,
+    signal?: AbortSignal,
+  ): Promise<void>;
   /**
    * Temporary admission failures (for example a maxWorkers slot claimed
    * between decision and durable claim) leave the task pending for a later
@@ -171,11 +175,13 @@ function resolveConfig(
 export async function runSchedulerTick(
   deps: SchedulerRuntimeDeps,
   state: SchedulerRuntimeState,
+  signal?: AbortSignal,
 ): Promise<{
   readonly decision: ScheduleDecision;
   readonly state: SchedulerRuntimeState;
   readonly dispatched: readonly string[];
 }> {
+  throwIfMissionSchedulerAborted(signal);
   const parallelEnabled = deps.isParallelSchedulerEnabled();
   const tasks = toScheduleTasks(deps.listTasks());
   const config = resolveConfig(deps, state, parallelEnabled);
@@ -199,16 +205,22 @@ export async function runSchedulerTick(
     const waveParallel = parallelEnabled && dispatchPlan.waveSize > 1;
 
     const dispatchOne = async (taskId: string): Promise<string | null> => {
+      throwIfMissionSchedulerAborted(signal);
       const task = taskMap.get(taskId);
       if (!task) return null;
       try {
-        await deps.dispatchTask({
-          taskId,
-          ownership: task.ownership,
-          dependsOn: task.dependsOn,
-        });
+        await deps.dispatchTask(
+          {
+            taskId,
+            ownership: task.ownership,
+            dependsOn: task.dependsOn,
+          },
+          signal,
+        );
+        throwIfMissionSchedulerAborted(signal);
         return taskId;
       } catch (error) {
+        throwIfMissionSchedulerAborted(signal);
         if (deps.isRetryableDispatchError?.(error)) {
           return null;
         }
@@ -225,6 +237,7 @@ export async function runSchedulerTick(
       const settled = await Promise.allSettled(
         decision.plan.taskIds.map((taskId) => dispatchOne(taskId)),
       );
+      throwIfMissionSchedulerAborted(signal);
       for (const result of settled) {
         if (result.status === 'fulfilled' && result.value) {
           dispatched.push(result.value);
@@ -233,6 +246,7 @@ export async function runSchedulerTick(
     } else {
       // Sequential / exclusive: stop the wave on first dispatch error.
       for (const taskId of decision.plan.taskIds) {
+        throwIfMissionSchedulerAborted(signal);
         const ok = await dispatchOne(taskId);
         if (ok) dispatched.push(ok);
         else break;
@@ -247,6 +261,7 @@ export async function runSchedulerTick(
     deps.onTelemetry?.(telemetry, decision.plan);
   }
 
+  throwIfMissionSchedulerAborted(signal);
   return {
     decision,
     state: nextState,

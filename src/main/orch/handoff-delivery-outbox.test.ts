@@ -29,6 +29,172 @@ afterEach(() => {
 });
 
 describe("durable handoff delivery outbox", () => {
+  it("recovers an accepted delivery after restart before consumption committed", () => {
+    const baseDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nexus-handoff-outbox-accepted-crash-"),
+    );
+    directories.push(baseDir);
+    const scope = testProjectScope();
+    const firstRuntime = runtime(baseDir);
+    const missions = createScopedMissionStore(firstRuntime, scope, {
+      idFactory: () => "mission-accepted-crash",
+    });
+    const handoffs = createScopedHandoffStore(firstRuntime, scope, {
+      idFactory: () => "handoff-accepted-crash",
+    });
+    missions.create({
+      title: "Accepted delivery crash",
+      orchestratorSessionId: "orchestrator-current",
+    });
+    const handoff = handoffs.submit({
+      missionId: "mission-accepted-crash",
+      sessionId: "worker-current",
+      status: "success",
+      summary: "Acceptance committed immediately before the main process died.",
+    });
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: "mission-accepted-crash",
+      orchestratorSessionId: "orchestrator-current",
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: handoff.id,
+      }),
+    ).toBe(true);
+    expect(handoffs.get(handoff.id)).toMatchObject({
+      delivered: true,
+      deliveryState: "submitted",
+    });
+
+    // Crash before markConsumedAfterAcceptedDelivery, then reopen the same DB.
+    firstRuntime.closeAll();
+    const restartedRuntime = runtime(baseDir);
+    const restartedHandoffs = createScopedHandoffStore(
+      restartedRuntime,
+      scope,
+    );
+    const deliver = vi.fn();
+    const recoverAccepted = vi.fn(
+      (candidate: Handoff) =>
+        restartedHandoffs.markConsumedAfterAcceptedDelivery(
+          candidate.id,
+          "mission-accepted-crash",
+          "orchestrator-current",
+        ),
+    );
+    const suites = [{ scope, handoffs: restartedHandoffs }];
+
+    expect(
+      reconcilePendingHandoffDeliveryOutbox({
+        suites,
+        deliver,
+        recoverAccepted,
+      }),
+    ).toEqual({ attempted: 1, failed: 0 });
+    expect(deliver).not.toHaveBeenCalled();
+    expect(recoverAccepted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: handoff.id,
+        deliveryState: "submitted",
+      }),
+      scope,
+    );
+    expect(restartedHandoffs.get(handoff.id)).toMatchObject({
+      delivered: true,
+      deliveryState: "consumed",
+    });
+
+    expect(
+      reconcilePendingHandoffDeliveryOutbox({
+        suites,
+        deliver,
+        recoverAccepted,
+      }),
+    ).toEqual({ attempted: 0, failed: 0 });
+    expect(recoverAccepted).toHaveBeenCalledOnce();
+  });
+
+  it("retries an accepted delivery requeued by orchestrator rebind", () => {
+    const baseDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nexus-handoff-outbox-rebind-"),
+    );
+    directories.push(baseDir);
+    const scope = testProjectScope();
+    const currentRuntime = runtime(baseDir);
+    const missions = createScopedMissionStore(currentRuntime, scope, {
+      idFactory: () => "mission-rebound",
+    });
+    const handoffs = createScopedHandoffStore(currentRuntime, scope, {
+      idFactory: () => "handoff-rebound",
+    });
+    missions.create({
+      title: "Rebound delivery",
+      orchestratorSessionId: "orchestrator-retired",
+    });
+    const handoff = handoffs.submit({
+      missionId: "mission-rebound",
+      sessionId: "worker-rebound",
+      status: "success",
+      summary: "The retired orchestrator already accepted this handoff.",
+    });
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: "mission-rebound",
+      orchestratorSessionId: "orchestrator-retired",
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: handoff.id,
+      }),
+    ).toBe(true);
+    expect(
+      handoffs.markConsumedAfterAcceptedDelivery(
+        handoff.id,
+        "mission-rebound",
+        "orchestrator-retired",
+      ),
+    ).toBe(true);
+
+    missions.rebindOrchestratorSession(
+      "mission-rebound",
+      "orchestrator-current",
+    );
+    expect(handoffs.get(handoff.id)).toMatchObject({
+      delivered: false,
+      deliveryState: "queued",
+    });
+    const deliver = vi.fn();
+
+    expect(
+      reconcilePendingHandoffDeliveryOutbox({
+        suites: [{ scope, handoffs }],
+        deliver,
+      }),
+    ).toEqual({ attempted: 1, failed: 0 });
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: handoff.id,
+        deliveryState: "queued",
+      }),
+      scope,
+    );
+  });
+
   it("isolates an unreadable project suite and still delivers healthy suites", () => {
     const scope = testProjectScope();
     const queued: Handoff = {
@@ -53,7 +219,7 @@ describe("durable handoff delivery outbox", () => {
           {
             scope,
             handoffs: {
-              list: () => {
+              listDeliveryOutboxCandidates: () => {
                 throw new Error("synthetic unreadable project runtime");
               },
             },
@@ -61,7 +227,7 @@ describe("durable handoff delivery outbox", () => {
           {
             scope,
             handoffs: {
-              list: () => [queued],
+              listDeliveryOutboxCandidates: () => [queued],
             },
           },
         ],

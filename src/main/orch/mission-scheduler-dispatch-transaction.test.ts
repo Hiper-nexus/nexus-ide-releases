@@ -192,6 +192,28 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
     ).toThrow(/squad changed after mission approval/i);
   });
 
+  it("keeps sealed intent authority stable while runtime spend is recorded", () => {
+    const fixture = schedulerAuthorityFixture();
+    const expected = captureMissionSchedulerPreProviderAuthority(fixture);
+    const withRuntimeLedger: Mission = {
+      ...fixture.mission,
+      intentContract: {
+        ...fixture.mission.intentContract!,
+        spentSteps: (fixture.mission.intentContract?.spentSteps ?? 0) + 1,
+        spentTokens: (fixture.mission.intentContract?.spentTokens ?? 0) + 200,
+      },
+    };
+
+    expect(() =>
+      assertMissionSchedulerPreProviderAuthority({
+        expected,
+        mission: withRuntimeLedger,
+        planned: fixture.planned,
+        squad: fixture.squad,
+      }),
+    ).not.toThrow();
+  });
+
   it("classifies capacity and transient provider bootstrap failures as retryable", () => {
     expect(
       isMissionSchedulerCapacityWait(
@@ -225,6 +247,7 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
     const store = {
       get: vi.fn(() => current),
       refineBootstrapSessionExitBlock,
+      failSupersededBootstrap: vi.fn(),
       fail,
     };
 
@@ -265,6 +288,7 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
         store: {
           get: () => current,
           refineBootstrapSessionExitBlock,
+          failSupersededBootstrap: vi.fn(),
           fail: vi.fn(),
         },
         missionId: "mission-bootstrap",
@@ -288,6 +312,45 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
     );
   });
 
+  it("terminalizes the exact superseded bootstrap when the catch proves a terminal cause", () => {
+    const current = blockedBootstrapSnapshot({ state: "superseded" });
+    const failSupersededBootstrap = vi.fn();
+    const fail = vi.fn();
+
+    expect(
+      persistMissionSchedulerDispatchFailure({
+        store: {
+          get: () => current,
+          refineBootstrapSessionExitBlock: vi.fn(),
+          failSupersededBootstrap,
+          fail,
+        },
+        missionId: "mission-bootstrap",
+        taskId: "task-bootstrap",
+        leaseToken: "lease-bootstrap",
+        paneId: current.paneId,
+        sessionId: current.sessionId,
+        workerIncarnationId: current.workerIncarnationId,
+        error: new Error(
+          "scheduler dispatch plan authority changed before provider effect",
+        ),
+      }),
+    ).toBe("failed");
+
+    expect(failSupersededBootstrap).toHaveBeenCalledWith({
+      taskId: "task-bootstrap",
+      missionId: "mission-bootstrap",
+      leaseToken: "lease-bootstrap",
+      paneId: current.paneId,
+      sessionId: current.sessionId,
+      workerIncarnationId: current.workerIncarnationId,
+      error:
+        `${MISSION_SCHEDULER_BOOTSTRAP_FAILURE_PREFIX} ` +
+        "scheduler dispatch plan authority changed before provider effect",
+    });
+    expect(fail).not.toHaveBeenCalled();
+  });
+
   it("keeps a generic post-bootstrap exit unchanged without catch-bound identity", () => {
     const current = blockedBootstrapSnapshot();
     const refineBootstrapSessionExitBlock = vi.fn();
@@ -298,6 +361,7 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
         store: {
           get: () => current,
           refineBootstrapSessionExitBlock,
+          failSupersededBootstrap: vi.fn(),
           fail,
         },
         missionId: "mission-execution",
@@ -337,6 +401,7 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
           store: {
             get: () => candidate.current,
             refineBootstrapSessionExitBlock,
+            failSupersededBootstrap: vi.fn(),
             fail,
           },
           missionId: "mission-bootstrap",
@@ -367,6 +432,7 @@ describe("mission scheduler dispatch bootstrap failure provenance", () => {
         store: {
           get: () => current,
           refineBootstrapSessionExitBlock,
+          failSupersededBootstrap: vi.fn(),
           fail,
         },
         missionId: "mission-bootstrap",

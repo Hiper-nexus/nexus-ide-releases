@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { MissionRisk } from './contract-compiler';
 import type { CandidateQualityAnalysis } from './candidate-quality-scanner';
 import {
+  CANDIDATE_REVIEW_EVALUATOR_VERSION,
   ReviewCouncil,
   type ReviewBinding,
   type ReviewReport,
@@ -34,6 +35,8 @@ export function createCandidateQualityReviewReport(input: {
     authorSessionId: input.author.sessionId,
     authorProvider: input.author.provider,
     binding: input.binding,
+    reviewPurpose: 'candidate',
+    evaluatorVersion: CANDIDATE_REVIEW_EVALUATOR_VERSION,
     findings: input.analysis.findings,
   });
 }

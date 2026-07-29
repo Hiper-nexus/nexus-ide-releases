@@ -63,6 +63,15 @@ describe('MCP effect policy', () => {
     expect(effectPolicyForTool('nexus_bg_run')).toBe('execution-effect');
   });
 
+  it('keeps public browser navigation mission-bound without treating research as code execution', () => {
+    expect(effectPolicyForTool('nexus_browser_open')).toBe('mission-effect');
+    expect(effectPolicyForTool('nexus_browser_navigate')).toBe('mission-effect');
+    expect(requiresHumanConfirmationForTool('nexus_browser_open')).toBe(true);
+    expect(requiresHumanConfirmationForTool('nexus_browser_navigate')).toBe(true);
+    expect(effectPolicyForTool('nexus_browser_click')).toBe('execution-effect');
+    expect(effectPolicyForTool('nexus_browser_fill')).toBe('execution-effect');
+  });
+
   it('classifies plan/bg/hunk observation tools as read-only or mission-control', () => {
     expect(effectPolicyForTool('nexus_plan_read')).toBe('read-only');
     expect(effectPolicyForTool('nexus_bg_list')).toBe('read-only');
@@ -87,7 +96,13 @@ describe('MCP effect policy', () => {
 
   it('gives handoff submission its own handler-enforced authority', () => {
     expect(effectPolicyForTool('nexus_handoff_submit')).toBe('handoff-authority');
+    expect(effectPolicyForTool('nexus_worker_heartbeat')).toBe(
+      'handoff-authority',
+    );
     expect(requiresHumanConfirmationForTool('nexus_handoff_submit')).toBe(false);
+    expect(requiresHumanConfirmationForTool('nexus_worker_heartbeat')).toBe(
+      false,
+    );
   });
 
   it('allows only the Nexus UI action through renderer-owned authority', () => {

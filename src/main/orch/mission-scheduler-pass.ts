@@ -1,11 +1,17 @@
+import { throwIfMissionSchedulerAborted } from "./mission-scheduler-abort";
+
 export interface MissionSchedulerLaunchPassOptions<TSnapshot, TResult> {
+  readonly signal?: AbortSignal;
   /** Converge terminal handoffs/merges into durable task state. */
-  readonly reconcile: () => Promise<void> | void;
+  readonly reconcile: (signal?: AbortSignal) => Promise<void> | void;
   /** Prove exact worker exit before freeing the scheduler slot. */
-  readonly retireWorkers: () => Promise<void> | void;
+  readonly retireWorkers: (signal?: AbortSignal) => Promise<void> | void;
   /** Read a new snapshot only after both durable boundaries above complete. */
-  readonly snapshot: () => TSnapshot;
-  readonly launchNext: (snapshot: TSnapshot) => Promise<TResult> | TResult;
+  readonly snapshot: (signal?: AbortSignal) => TSnapshot;
+  readonly launchNext: (
+    snapshot: TSnapshot,
+    signal?: AbortSignal,
+  ) => Promise<TResult> | TResult;
 }
 
 /**
@@ -16,7 +22,14 @@ export interface MissionSchedulerLaunchPassOptions<TSnapshot, TResult> {
 export async function runMissionSchedulerLaunchPass<TSnapshot, TResult>(
   options: MissionSchedulerLaunchPassOptions<TSnapshot, TResult>,
 ): Promise<TResult> {
-  await options.reconcile();
-  await options.retireWorkers();
-  return options.launchNext(options.snapshot());
+  throwIfMissionSchedulerAborted(options.signal);
+  await options.reconcile(options.signal);
+  throwIfMissionSchedulerAborted(options.signal);
+  await options.retireWorkers(options.signal);
+  throwIfMissionSchedulerAborted(options.signal);
+  const snapshot = options.snapshot(options.signal);
+  throwIfMissionSchedulerAborted(options.signal);
+  const result = await options.launchNext(snapshot, options.signal);
+  throwIfMissionSchedulerAborted(options.signal);
+  return result;
 }

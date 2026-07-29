@@ -1,6 +1,5 @@
 import http from "node:http";
 import fs from "node:fs";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { app, dialog } from "electron";
 import type { McpRuntimeInfo } from "../../shared/orch-types";
@@ -111,6 +110,10 @@ import {
 import {
   findActiveContextDraftReviewerId,
 } from "../context/cli-context-draft-reviewer";
+import {
+  listenOnLoopback,
+  ReplaceableEventTapScope,
+} from "./mcp-server-lifecycle";
 import { automatedReviewSessions } from "../context/automated-review-session";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import {
@@ -141,6 +144,7 @@ let registry: McpRegistry | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
 let disposeTerminationRevocation: (() => void) | null = null;
 let disposePtyMissionControl: (() => void) | null = null;
+const legacyParserTaps = new ReplaceableEventTapScope();
 
 async function showHttpMcpConfirmation(
   request: McpConfirmationRequest,
@@ -956,57 +960,61 @@ function installLegacyParser(
   // cobre marker dividido entre chunks) ou quando um bloco já está aberto.
   const rawTails = new Map<string, string>();
   const MARKER_HINT = "NEXUS_HANDOFF";
-  tapSessionData((sessionId, data) => {
-    let plain: string | null = null;
-    if (cliPromptAutoResponder.isPending(sessionId)) {
-      plain = stripAnsi(data);
-    }
-    const response =
-      plain !== null ? cliPromptAutoResponder.observe(sessionId, plain) : null;
-    if (response !== null) {
-      setTimeout(() => {
-        orchWriteSession(sessionId, response);
-      }, 50);
-    }
-    if (missionControl.hasChannel(sessionId)) {
-      plain ??= stripAnsi(data);
-      missionControl.feed(sessionId, plain);
-    }
-    const tail = rawTails.get(sessionId) ?? "";
-    const probe = tail + data;
-    rawTails.set(sessionId, probe.slice(-32));
-    const isCollecting = parser.isCollecting(sessionId);
-    if (!isCollecting && !probe.includes(MARKER_HINT)) {
-      return;
-    }
-    // When the marker crosses the PTY chunk boundary, the parser never saw
-    // `tail` because the cheap prefilter skipped that previous chunk.
-    parser.feed(
-      sessionId,
-      isCollecting ? (plain ?? stripAnsi(data)) : stripAnsi(probe),
-    );
-  });
-  tapSessionState((sessionId, state) => {
-    missionControl.observeSessionState(sessionId, state);
-  });
-  tapSessionExit((sessionId) => {
-    cliPromptAutoResponder.drop(sessionId);
-    parser.dropSession(sessionId);
-    dedupe.dropSession(sessionId);
-    rawTails.delete(sessionId);
-    missionControl.dropSession(sessionId);
-    // PTY died without a stop hook → semantic status resets to idle (kills
-    // the "busy preso" class the 5-minute hook watchdog merely bounds).
-    resetAgentStatusOnExit(sessionId);
-    const token = sessionTokens.get(sessionId);
-    if (token) {
-      sessionTokens.delete(sessionId);
-      cleanupAgyMcpConfig(token);
-      cleanupCliMcpSession(token);
-      cleanupSessionArtifacts(token);
-    }
-    clearMcpPermissionSession(sessionId);
-    releaseSession(sessionId);
+  legacyParserTaps.replace((track) => {
+    track(tapSessionData((sessionId, data) => {
+      let plain: string | null = null;
+      if (cliPromptAutoResponder.isPending(sessionId)) {
+        plain = stripAnsi(data);
+      }
+      const response =
+        plain !== null
+          ? cliPromptAutoResponder.observe(sessionId, plain)
+          : null;
+      if (response !== null) {
+        setTimeout(() => {
+          orchWriteSession(sessionId, response);
+        }, 50);
+      }
+      if (missionControl.hasChannel(sessionId)) {
+        plain ??= stripAnsi(data);
+        missionControl.feed(sessionId, plain);
+      }
+      const tail = rawTails.get(sessionId) ?? "";
+      const probe = tail + data;
+      rawTails.set(sessionId, probe.slice(-32));
+      const isCollecting = parser.isCollecting(sessionId);
+      if (!isCollecting && !probe.includes(MARKER_HINT)) {
+        return;
+      }
+      // When the marker crosses the PTY chunk boundary, the parser never saw
+      // `tail` because the cheap prefilter skipped that previous chunk.
+      parser.feed(
+        sessionId,
+        isCollecting ? (plain ?? stripAnsi(data)) : stripAnsi(probe),
+      );
+    }));
+    track(tapSessionState((sessionId, state) => {
+      missionControl.observeSessionState(sessionId, state);
+    }));
+    track(tapSessionExit((sessionId) => {
+      cliPromptAutoResponder.drop(sessionId);
+      parser.dropSession(sessionId);
+      dedupe.dropSession(sessionId);
+      rawTails.delete(sessionId);
+      missionControl.dropSession(sessionId);
+      // PTY died without a stop hook → semantic status resets to idle (kills
+      // the "busy preso" class the 5-minute hook watchdog merely bounds).
+      resetAgentStatusOnExit(sessionId);
+      const token = sessionTokens.get(sessionId);
+      if (token) {
+        sessionTokens.delete(sessionId);
+        cleanupAgyMcpConfig(token);
+        cleanupCliMcpSession(token);
+        cleanupSessionArtifacts(token);
+      }
+      clearMcpPermissionSession(sessionId);
+      releaseSession(sessionId);
+    }));
   });
 }
 
@@ -1040,7 +1048,7 @@ export function startMcpServer(): Promise<void> {
   installLegacyParser(missionControl);
   disposeTerminationRevocation?.();
   disposeTerminationRevocation = installMcpSessionTerminationRevocation();
-  server = http.createServer((req, res) => {
+  const candidate = http.createServer((req, res) => {
     void (async () => {
       const url = req.url ?? "";
       const ctx = bearerContext(req);
@@ -1072,18 +1080,33 @@ export function startMcpServer(): Promise<void> {
       }
     });
   });
+  server = candidate;
+  port = 0;
 
-  return new Promise((resolve) => {
-    server!.listen(0, "127.0.0.1", () => {
-      port = (server!.address() as AddressInfo).port;
+  return listenOnLoopback(candidate)
+    .then((boundPort) => {
+      if (server !== candidate) {
+        candidate.close();
+        throw new Error("embedded MCP server startup was superseded");
+      }
+      port = boundPort;
       console.log(`[orch] embedded MCP server on ${mcpUrl()}`);
-      resolve();
+    })
+    .catch((error: unknown) => {
+      if (candidate.listening) {
+        candidate.close();
+      }
+      if (server === candidate) {
+        server = null;
+        port = 0;
+      }
+      throw error;
     });
-  });
 }
 
 export function stopMcpServer(): void {
   setAgentSpawnHook(null);
+  legacyParserTaps.dispose();
   disposeTerminationRevocation?.();
   disposeTerminationRevocation = null;
   httpConfirmationScheduler.close();

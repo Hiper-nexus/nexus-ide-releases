@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   REAL_MISSION_E2E_ADVISORS,
+  REAL_MISSION_E2E_EXECUTOR_NAME,
   realMissionE2EAdvisorSkipClis,
   realMissionE2EAdvisorTier,
 } from "../shared/real-mission-e2e";
@@ -206,6 +207,7 @@ describe("real mission physical PTY gate with advisors", () => {
     sessionId: string,
     cli: string,
     agentName: string,
+    workerIncarnationId = `incarnation-${cli}`,
   ): PhysicalPtyAgent =>
     ({
       sessionId,
@@ -213,7 +215,7 @@ describe("real mission physical PTY gate with advisors", () => {
       adapterId: cli,
       role: "worker",
       agentName,
-      workerIncarnationId: `incarnation-${cli}`,
+      workerIncarnationId,
       readOnly: true,
       nativeReadOnly: false,
     }) as unknown as PhysicalPtyAgent;
@@ -242,6 +244,103 @@ describe("real mission physical PTY gate with advisors", () => {
         advisorAgent("session-grok-2", "grok", "E2E Advisor Grok"),
       ).kind,
     ).toBe("violation");
+  });
+
+  it("defers an advisor retry until its replacement is durably proven", () => {
+    let replacementDecision: "accept" | "defer" | "reject" = "defer";
+    const authorizeReplacement = vi.fn(() => replacementDecision);
+    const fence = new ExactRealMissionPhysicalPtyGate(
+      "mission-e2e",
+      realMissionAdvisorPtyExpectations(
+        expectedRealMissionAdvisors(["opencode"]),
+      ),
+      "codex",
+      authorizeReplacement,
+    );
+    const first = advisorAgent(
+      "session-grok-1",
+      "grok",
+      "E2E Advisor Grok",
+      "incarnation-grok-1",
+    );
+    const retry = advisorAgent(
+      "session-grok-2",
+      "grok",
+      "E2E Advisor Grok",
+      "incarnation-grok-2",
+    );
+
+    expect(fence.inspect(first.sessionId, first)).toMatchObject({
+      kind: "accepted",
+      identity: "advisor:grok",
+    });
+    expect(fence.inspect(retry.sessionId, retry)).toEqual({
+      kind: "deferred",
+    });
+    expect(fence.acceptedSessionCount).toBe(1);
+
+    replacementDecision = "accept";
+    expect(fence.inspect(retry.sessionId, retry)).toMatchObject({
+      kind: "accepted",
+      identity: "advisor:grok",
+    });
+    expect(fence.acceptedSessionCount).toBe(1);
+    expect(fence.inspect(first.sessionId, first)).toEqual({
+      kind: "unrelated",
+    });
+    expect(authorizeReplacement).toHaveBeenCalledTimes(2);
+  });
+
+  it("never replaces pipeline or same-incarnation sessions", () => {
+    const authorizeReplacement = vi.fn(() => "accept" as const);
+    const fence = new ExactRealMissionPhysicalPtyGate(
+      "mission-e2e",
+      realMissionAdvisorPtyExpectations(
+        expectedRealMissionAdvisors(["opencode"]),
+      ),
+      "codex",
+      authorizeReplacement,
+    );
+    const firstAdvisor = advisorAgent(
+      "session-grok-1",
+      "grok",
+      "E2E Advisor Grok",
+      "incarnation-grok",
+    );
+    const sameIncarnation = advisorAgent(
+      "session-grok-2",
+      "grok",
+      "E2E Advisor Grok",
+      "incarnation-grok",
+    );
+    const firstExecutor = {
+      ...advisorAgent(
+        "session-executor-1",
+        "codex",
+        REAL_MISSION_E2E_EXECUTOR_NAME,
+        "incarnation-executor-1",
+      ),
+      readOnly: false,
+    } as PhysicalPtyAgent;
+    const retryExecutor = {
+      ...firstExecutor,
+      sessionId: "session-executor-2",
+      workerIncarnationId: "incarnation-executor-2",
+    } as PhysicalPtyAgent;
+
+    expect(fence.inspect(firstAdvisor.sessionId, firstAdvisor).kind).toBe(
+      "accepted",
+    );
+    expect(
+      fence.inspect(sameIncarnation.sessionId, sameIncarnation).kind,
+    ).toBe("violation");
+    expect(fence.inspect(firstExecutor.sessionId, firstExecutor).kind).toBe(
+      "accepted",
+    );
+    expect(fence.inspect(retryExecutor.sessionId, retryExecutor).kind).toBe(
+      "violation",
+    );
+    expect(authorizeReplacement).not.toHaveBeenCalled();
   });
 
   it("rejects skipped or unknown advisor CLIs as roster violations", () => {

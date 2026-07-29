@@ -215,6 +215,182 @@ function runtimeTargets(input: {
   return result;
 }
 
+function orphanRuntimeInventory(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId: string;
+}): {
+  readonly targets: readonly RuntimeTarget[];
+  readonly paneIds: readonly string[];
+} {
+  const targets = new Map<string, RuntimeTarget>();
+  const paneIds = new Set<string>();
+  const add = (target: {
+    readonly sessionId: string;
+    readonly paneId?: string;
+    readonly missionId?: string;
+    readonly role: 'orchestrator' | 'worker' | 'user';
+    readonly workerIncarnationId?: string;
+    readonly scope: Readonly<ProjectExecutionScope>;
+  }): void => {
+    if (
+      target.missionId !== input.missionId ||
+      !sameScope(target.scope, input.scope)
+    ) {
+      return;
+    }
+    if (!target.paneId) {
+      throw new Error(
+        `orphan mission session ${target.sessionId} is live without a pane binding`,
+      );
+    }
+    const previous = targets.get(target.sessionId);
+    if (
+      previous &&
+      (previous.paneId !== target.paneId ||
+        previous.workerIncarnationId !== target.workerIncarnationId)
+    ) {
+      throw new Error('orphan mission runtime identity is ambiguous');
+    }
+    paneIds.add(target.paneId);
+    targets.set(target.sessionId, {
+      paneId: target.paneId,
+      sessionId: target.sessionId,
+      ...(target.workerIncarnationId
+        ? { workerIncarnationId: target.workerIncarnationId }
+        : {}),
+      orphaned: true,
+    });
+  };
+
+  // This complete main-owned PTY inventory is sufficient authority for
+  // mission+scope selection even after the durable mission row disappeared.
+  for (const agent of listAgentSessions()) add(agent);
+
+  // Preserve visual leaves even when their PTY already exited. A live legacy
+  // snapshot absent from the agent inventory is admitted only through its
+  // exact pane-runtime authority.
+  for (const snapshot of listPaneSnapshots()) {
+    if (
+      snapshot.missionId !== input.missionId ||
+      !sameScope(snapshot.scope, input.scope)
+    ) {
+      continue;
+    }
+    paneIds.add(snapshot.paneId);
+    if (
+      !snapshot.sessionId ||
+      targets.has(snapshot.sessionId) ||
+      getSessionState(snapshot.sessionId) === null
+    ) {
+      continue;
+    }
+    const authority = getPaneRuntimeAuthorityBySession(snapshot.sessionId);
+    if (
+      !authority ||
+      !authority.role ||
+      !authority.scope ||
+      authority.missionId !== input.missionId ||
+      authority.paneId !== snapshot.paneId ||
+      authority.role !== snapshot.role ||
+      authority.workerIncarnationId !== snapshot.workerIncarnationId ||
+      !sameScope(authority.scope, input.scope)
+    ) {
+      throw new Error(
+        `orphan mission session ${snapshot.sessionId} has no exact pane authority`,
+      );
+    }
+    add({
+      sessionId: snapshot.sessionId,
+      paneId: authority.paneId,
+      missionId: authority.missionId,
+      role: authority.role,
+      workerIncarnationId: authority.workerIncarnationId,
+      scope: authority.scope,
+    });
+  }
+
+  return {
+    targets: Object.freeze(
+      [...targets.values()].sort((left, right) =>
+        left.sessionId.localeCompare(right.sessionId),
+      ),
+    ),
+    paneIds: Object.freeze([...paneIds].sort()),
+  };
+}
+
+/**
+ * Reconciles panes whose durable mission row was already removed.
+ *
+ * Selection never falls back to paneId alone: only physical/snapshot
+ * authorities bound to the exact mission and project scope may be terminated.
+ * Once physical absence is proven, renderer collapse is best-effort because
+ * the invoking renderer also removes its exact mission leaves locally.
+ */
+export async function closeOrphanedMissionRuntime(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId: string;
+}): Promise<MissionRuntimeTerminationResult> {
+  const terminated = new Set<string>();
+  const paneIds = new Set<string>();
+  try {
+    for (let pass = 0; pass < 3; pass += 1) {
+      const inventory = orphanRuntimeInventory(input);
+      for (const paneId of inventory.paneIds) paneIds.add(paneId);
+      const pending = inventory.targets.filter(
+        (target) => getSessionState(target.sessionId) !== null,
+      );
+      if (pending.length === 0) break;
+      for (const target of pending) {
+        if (!(await orchTerminateSession(target.sessionId))) {
+          return {
+            ok: false,
+            terminatedSessionIds: [...terminated].sort(),
+            error:
+              `orphan mission session ${target.sessionId} did not produce ` +
+              'physical exit proof',
+          };
+        }
+        terminated.add(target.sessionId);
+      }
+    }
+    const remaining = orphanRuntimeInventory(input).targets.filter(
+      (target) => getSessionState(target.sessionId) !== null,
+    );
+    if (remaining.length > 0) {
+      return {
+        ok: false,
+        terminatedSessionIds: [...terminated].sort(),
+        error: 'late orphan mission runtime kept appearing during teardown',
+      };
+    }
+    for (const paneId of [...paneIds].sort()) {
+      const exactPaneStillExists = listPaneSnapshots().some(
+        (pane) =>
+          pane.paneId === paneId &&
+          pane.missionId === input.missionId &&
+          sameScope(pane.scope, input.scope),
+      );
+      if (!exactPaneStillExists) continue;
+      await requestMissionPaneClose({
+        paneId,
+        missionId: input.missionId,
+        scope: input.scope,
+      });
+    }
+    return {
+      ok: true,
+      terminatedSessionIds: [...terminated].sort(),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      terminatedSessionIds: [...terminated].sort(),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 function terminationFence(input: {
   readonly mission: Mission;
   readonly paneId?: string;

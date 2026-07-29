@@ -2,10 +2,13 @@ import { useEffect } from 'react';
 import type {
   MissionPaneRecoveryRequest,
   MissionPaneRecoveryResult,
+  MissionPanePresentationRequest,
   PaneRegistryEntry,
 } from '../../shared/orch-types';
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
+import { getActiveWorkspacePath } from '../state/active-workspace';
+import { useHomeStore } from '../state/home-store';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -57,9 +60,38 @@ function snapshotPanes(): PaneRegistryEntry[] {
   }));
 }
 
+function cleanupFailedOrchPane(
+  request: { readonly requestId: string; readonly paneId: string },
+  paneId: string | null,
+): void {
+  const pane = listPanes(useLayoutStore.getState().root).find((candidate) => {
+    if (candidate.kind !== 'cli-agent') return false;
+    if (paneId) {
+      return (
+        candidate.id === paneId &&
+        (candidate.orchRequestId === request.requestId ||
+          candidate.orchRequestId === undefined)
+      );
+    }
+    return candidate.orchRequestId === request.requestId;
+  });
+  if (pane) {
+    useLayoutStore.getState().close(pane.id, 'orch-spawn-failed');
+  }
+  // Explicit final mirror: layout subscriptions also publish changes, but the
+  // Main result must never overtake the cleanup snapshot.
+  window.nexus.orch.syncPanes(snapshotPanes());
+}
+
 const recoveryInFlight = new Set<string>();
 const recoveryResults = new Map<string, MissionPaneRecoveryResult>();
 const RECOVERY_HEALTH_TIMEOUT_MS = 75_000;
+const presentationInFlight = new Map<string, Promise<void>>();
+
+interface PresentationScope {
+  readonly workspacePath: string | null;
+  readonly workspaceEpoch: number;
+}
 
 function cacheRecoveryResult(result: MissionPaneRecoveryResult): void {
   recoveryResults.set(result.requestId, result);
@@ -89,6 +121,139 @@ function paneFromRecovery(req: MissionPaneRecoveryRequest): PaneModel {
     role: req.role,
     orchRequestId: req.requestId,
   };
+}
+
+function capturePresentationScope(): PresentationScope {
+  return {
+    workspacePath: getActiveWorkspacePath(),
+    workspaceEpoch: useOrchStore.getState().workspaceEpoch,
+  };
+}
+
+function isPresentationScopeCurrent(scope: PresentationScope): boolean {
+  return (
+    getActiveWorkspacePath() === scope.workspacePath &&
+    useOrchStore.getState().workspaceEpoch === scope.workspaceEpoch
+  );
+}
+
+function presentationKey(
+  req: MissionPanePresentationRequest,
+  scope: PresentationScope,
+): string {
+  return JSON.stringify([
+    scope.workspacePath,
+    scope.workspaceEpoch,
+    req.paneId,
+    req.sessionId,
+  ]);
+}
+
+function isExactHealthyPresentation(
+  req: MissionPanePresentationRequest,
+): boolean {
+  const pane = listPanes(useLayoutStore.getState().root).find(
+    (candidate) => candidate.id === req.paneId,
+  );
+  return (
+    pane?.kind === 'cli-agent' &&
+    pane.missionId === req.missionId &&
+    pane.role === req.role &&
+    getPaneSessionId(req.paneId) === req.sessionId &&
+    isPaneSessionHealthy(req.paneId, req.sessionId)
+  );
+}
+
+function paneFromPresentation(
+  req: MissionPanePresentationRequest,
+): PaneModel {
+  const base = createPane(
+    'cli-agent',
+    req.pane.cwd,
+    req.pane.adapterId,
+    req.pane.model,
+  );
+  return {
+    ...base,
+    id: req.paneId,
+    title: req.pane.title,
+    accountId: req.pane.accountId,
+    effort: req.pane.effort,
+    missionId: req.missionId,
+    agentName: req.pane.agentName,
+    role: req.role,
+  };
+}
+
+async function presentLiveMainOwnedPane(
+  req: MissionPanePresentationRequest,
+  scope: PresentationScope,
+): Promise<void> {
+  if (!isPresentationScopeCurrent(scope)) return;
+  const existing = listPanes(useLayoutStore.getState().root);
+  const current = existing.find((pane) => pane.id === req.paneId);
+  if (current && current.kind !== 'cli-agent') {
+    throw new Error('main-owned pane id collides with a non-agent pane');
+  }
+  if (
+    current &&
+    ((current.missionId && current.missionId !== req.missionId) ||
+      (current.role && current.role !== req.role))
+  ) {
+    throw new Error('main-owned pane presentation identity diverged');
+  }
+
+  // This flag asks the PTY boundary to adopt persisted Main authority. It
+  // never grants a fresh renderer-authored spawn.
+  markPersistedAuthorityOnSpawn(req.paneId);
+  useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
+  useHomeStore.getState().hide();
+  if (!current) {
+    useLayoutStore
+      .getState()
+      .setPanes([...existing, paneFromPresentation(req)]);
+  }
+
+  const sessionId = await waitForSession(
+    req.paneId,
+    RECOVERY_HEALTH_TIMEOUT_MS,
+  );
+  // Layout and terminal hosts are renderer-global. A late response from A
+  // must never inspect, close or otherwise mutate a homonymous pane in B.
+  if (!isPresentationScopeCurrent(scope)) return;
+  if (sessionId !== req.sessionId) {
+    throw new Error(
+      sessionId
+        ? 'main-owned pane adopted a different session'
+        : 'main-owned pane presentation did not attach in time',
+    );
+  }
+}
+
+function requestLiveMainOwnedPanePresentation(
+  req: MissionPanePresentationRequest,
+): void {
+  const scope = capturePresentationScope();
+  if (
+    !isPresentationScopeCurrent(scope) ||
+    isExactHealthyPresentation(req)
+  ) return;
+  const key = presentationKey(req, scope);
+  if (presentationInFlight.has(key)) return;
+  const flight = presentLiveMainOwnedPane(req, scope)
+    .catch((error) => {
+      if (!isPresentationScopeCurrent(scope)) return;
+      console.warn(
+        `[orch-bridge] main-owned presentation failed pane=${req.paneId}:`,
+        error,
+      );
+    })
+    .finally(() => {
+      if (presentationInFlight.get(key) === flight) {
+        presentationInFlight.delete(key);
+      }
+    });
+  presentationInFlight.set(key, flight);
 }
 
 async function recoverMissionPane(
@@ -193,6 +358,7 @@ export function useOrchBridge(): void {
     const un = [
       window.nexus.orch.onPaneSpawnRequest((req) => {
         void (async () => {
+          let paneId: string | null = null;
           try {
             const existing = listPanes(useLayoutStore.getState().root).find(
               (pane) => pane.orchRequestId === req.requestId,
@@ -202,7 +368,7 @@ export function useOrchBridge(): void {
                 `Spawn retry pane id mismatch: ${existing.id} != ${req.paneId}`,
               );
             }
-            const paneId = existing?.id ??
+            paneId = existing?.id ??
               useLayoutStore.getState().spawnOrchPane({
                 paneId: req.paneId,
                 adapterId: req.adapterId,
@@ -213,13 +379,14 @@ export function useOrchBridge(): void {
                 title: req.title,
                 orchRequestId: req.requestId,
                 missionId: req.missionId,
+                transient: req.transient,
                 agentName: req.agentName,
                 role: req.role ?? 'worker',
               });
             useOrchStore.getState().bindPaneMission(paneId, req.missionId);
             const sessionId = await waitForSession(paneId, 75_000);
-            window.nexus.orch.syncPanes(snapshotPanes());
             if (!sessionId) {
+              cleanupFailedOrchPane(req, paneId);
               window.nexus.orch.sendPaneSpawnResult({
                 requestId: req.requestId,
                 ok: false,
@@ -228,6 +395,7 @@ export function useOrchBridge(): void {
               });
               return;
             }
+            window.nexus.orch.syncPanes(snapshotPanes());
             window.nexus.orch.sendPaneSpawnResult({
               requestId: req.requestId,
               ok: true,
@@ -235,6 +403,7 @@ export function useOrchBridge(): void {
               sessionId,
             });
           } catch (err) {
+            cleanupFailedOrchPane(req, paneId);
             window.nexus.orch.sendPaneSpawnResult({
               requestId: req.requestId,
               ok: false,
@@ -296,10 +465,13 @@ export function useOrchBridge(): void {
           const pane = listPanes(useLayoutStore.getState().root).find(
             (candidate) => candidate.id === request.paneId,
           );
-          if (
-            pane?.kind !== 'browser' ||
-            pane.browserOpenRequestId !== request.requestId
-          ) {
+          const ownsBrowserAttempt =
+            pane?.kind === 'browser' &&
+            pane.browserOpenRequestId === request.requestId;
+          const ownsOrchAttempt =
+            pane?.kind === 'cli-agent' &&
+            pane.orchRequestId === request.requestId;
+          if (!ownsBrowserAttempt && !ownsOrchAttempt) {
             return;
           }
         }
@@ -362,6 +534,15 @@ export function useOrchBridge(): void {
         useOrchStore.getState().setSquads(squads),
       ),
     ];
+    const onPanePresentationRequest =
+      window.nexus.orch.onPanePresentationRequest;
+    if (onPanePresentationRequest) {
+      un.push(
+        onPanePresentationRequest((req) =>
+          requestLiveMainOwnedPanePresentation(req),
+        ),
+      );
+    }
 
     // Pane mirror, fully event-driven (no heartbeat): push on every layout
     // change AND when a pane's sessionId materializes after its async spawn —

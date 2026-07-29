@@ -20,12 +20,16 @@ interface MissionLike {
 
 function missionAttentionState(mission: MissionLike): string {
   if (mission.status === 'blocked') {
-    return hasAutomaticTechnicalRecovery({
+    const hasAutomaticRecovery = hasAutomaticTechnicalRecovery({
       ...mission,
       description: mission.description ?? '',
-    })
-      ? 'blocked:technical'
-      : 'blocked:user';
+    });
+    if (mission.intentState === 'blocked_technical') {
+      return hasAutomaticRecovery
+        ? 'blocked:technical:recovering'
+        : 'blocked:technical:exhausted';
+    }
+    return hasAutomaticRecovery ? 'blocked:technical:recovering' : 'blocked:user';
   }
   return mission.status;
 }
@@ -57,13 +61,22 @@ export class MissionTransitionTracker {
         events.push({ kind: 'mission-done', title: mission.title, at });
       } else if (mission.status === 'failed') {
         events.push({ kind: 'mission-failed', title: mission.title, at });
-      } else if (
-        mission.status === 'blocked' &&
-        !hasAutomaticTechnicalRecovery({
+      } else if (mission.status === 'blocked') {
+        const hasAutomaticRecovery = hasAutomaticTechnicalRecovery({
           ...mission,
           description: mission.description ?? '',
-        })
-      ) {
+        });
+        if (mission.intentState === 'blocked_technical') {
+          if (!hasAutomaticRecovery) {
+            events.push({
+              kind: 'mission-technical-failure',
+              title: mission.title,
+              at,
+            });
+          }
+          continue;
+        }
+        if (hasAutomaticRecovery) continue;
         // O aviso que mais importa: a missão parou esperando um humano.
         const handoffDeliveryFailed = mission.description?.includes(
           '<!-- nexus:handoff-delivery-failed:',

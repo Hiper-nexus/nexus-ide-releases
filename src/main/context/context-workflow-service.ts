@@ -41,10 +41,14 @@ import { EventLedger } from './event-ledger';
 import { inspectGitBinding, bindingMatchesGit, type GitBindingSnapshot } from './git-binding';
 import { createWorkflowState, type EvidenceBinding, type WorkflowEvidence, type WorkflowState } from './prevc-engine';
 import {
+  CANDIDATE_REVIEW_EVALUATOR_VERSION,
+  PRE_EXECUTION_REVIEW_EVALUATOR_VERSION,
   ReviewCouncil,
   reviewSubmissionFromReport,
+  type PreExecutionPlanBinding,
   type ReviewFindingInput,
   type ReviewGateResult,
+  type ReviewBinding,
   type ReviewReport,
 } from './review-council';
 import { SensorBroker, type TrustedEvidence } from './sensor-broker';
@@ -63,6 +67,35 @@ import { canonicalJson } from './canonical-json';
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const COMMIT = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+
+function isCurrentPreExecutionReview(report: ReviewReport): boolean {
+  return (
+    report.reviewPurpose === 'pre-execution' &&
+    report.evaluatorVersion === PRE_EXECUTION_REVIEW_EVALUATOR_VERSION &&
+    report.preExecutionPlanBinding !== undefined
+  );
+}
+
+function preExecutionReviewMatchesPlan(
+  report: ReviewReport,
+  expected: PreExecutionPlanBinding,
+): boolean {
+  return (
+    isCurrentPreExecutionReview(report) &&
+    report.preExecutionPlanBinding!.intentVersion ===
+      expected.intentVersion &&
+    report.preExecutionPlanBinding!.planHash === expected.planHash
+  );
+}
+
+function isCandidateReview(report: ReviewReport): boolean {
+  // Exact-binding legacy candidate reports remain valid for crash recovery.
+  // They are never admitted to the corrected pre-execution stage.
+  return (
+    report.reviewPurpose === 'candidate' ||
+    report.reviewPurpose === 'legacy'
+  );
+}
 
 const receiptEvidenceIdsSchema = z
   .array(z.string().regex(IDENTIFIER))
@@ -144,6 +177,17 @@ export interface IntegratedMissionResult {
   readonly diffHash: string;
 }
 
+export interface PersistedReviewGateInspection {
+  readonly ready: boolean;
+  readonly reason: ReviewGateResult['reason'];
+  readonly evidenceIds: readonly string[];
+  /** Every durable report with the exact binding, including static analysis. */
+  readonly reportCount: number;
+  /** Independent reviewer reports that count toward the risk-based quorum. */
+  readonly quorumReportCount: number;
+  readonly blockingFindingCount: number;
+}
+
 export interface ContextWorkflowServiceDependencies {
   readonly appVersion: string;
   readonly inspectGit?: (
@@ -191,6 +235,7 @@ export interface SubmitReviewInput {
   readonly missionId: string;
   readonly reviewer: WorkflowIdentity;
   readonly findings: readonly ReviewFindingInput[];
+  readonly preExecutionPlanBinding?: PreExecutionPlanBinding;
 }
 
 export interface SubmitReviewResult {
@@ -588,6 +633,9 @@ export class ContextWorkflowService {
     missionId: string,
     stepId: string,
     rawEvidenceIds: readonly string[],
+    options: {
+      readonly preExecutionPlanBinding?: PreExecutionPlanBinding;
+    } = {},
   ): MissionStepAdvanceResult {
     const evidenceIds = receiptEvidenceIdsSchema.parse(
       [...new Set(rawEvidenceIds.map((id) => id.trim()))],
@@ -605,6 +653,7 @@ export class ContextWorkflowService {
         missionId,
         context.workflow,
         context.isFinalMilestone,
+        options.preExecutionPlanBinding,
       );
       this.#insertMissionStepReceipt(db, {
         missionId,
@@ -746,6 +795,7 @@ export class ContextWorkflowService {
     missionId: string,
     workflow: WorkflowState,
     isFinalMilestone: boolean,
+    preExecutionPlanBinding?: PreExecutionPlanBinding,
   ): WorkflowState {
     if (workflow.stage === 'complete') return workflow;
     const requestedNext =
@@ -756,11 +806,17 @@ export class ContextWorkflowService {
     if (requestedNext === 'complete' && !isFinalMilestone) return workflow;
     let next = this.advance(missionId, requestedNext, {
       allowFinalComplete: true,
+      ...(preExecutionPlanBinding
+        ? { preExecutionPlanBinding }
+        : {}),
     });
     while (isFinalMilestone && next.stage !== 'complete') {
       const index = next.route.indexOf(next.stage);
       next = this.advance(missionId, next.route[index + 1] ?? 'complete', {
         allowFinalComplete: true,
+        ...(preExecutionPlanBinding
+          ? { preExecutionPlanBinding }
+          : {}),
       });
     }
     return next;
@@ -1231,7 +1287,9 @@ export class ContextWorkflowService {
       actor: { kind: 'reviewer', id: report.reviewerId },
       payload: {
         reviewId: report.reviewId,
-        mergeCandidate: true,
+        mergeCandidate: report.reviewPurpose !== 'pre-execution',
+        reviewPurpose: report.reviewPurpose,
+        evaluatorVersion: report.evaluatorVersion,
         findingCount: report.findings.length,
         severities: report.findings.map((finding) => finding.severity),
       },
@@ -1274,39 +1332,55 @@ export class ContextWorkflowService {
       .map((evidence) => evidence.id);
     const reviews = this.#store
       .listReviewReports(missionId, workflow.binding.diffHash)
-      .filter((report) => matchesBinding(report.binding))
+      .filter(
+        (report) =>
+          matchesBinding(report.binding) && isCandidateReview(report),
+      )
       .map((report) => `review:${report.reviewId}`);
     return Object.freeze([...new Set([...sensors, ...reviews])].sort());
   }
 
   /**
-   * Replays the durable review council for the current workflow binding without
-   * spawning another reviewer CLI. Used to recover final validation after a
-   * crash or a failed reviewer re-spawn.
+   * Replays durable reports only when every candidate authority field matches.
+   * This supports merge candidates whose head differs from the workflow's
+   * pre-integration binding without weakening contract/context scope.
    */
-  inspectCurrentBindingReviewGate(missionId: string): {
-    readonly ready: boolean;
-    readonly reason: string;
-    readonly evidenceIds: readonly string[];
-    readonly reportCount: number;
-  } {
-    const stored = this.#store.getContract(missionId);
-    const workflow = this.#store.getWorkflow(missionId);
-    if (!stored || !workflow) {
-      throw new Error('review gate requires a frozen mission workflow');
+  inspectPersistedReviewGate(
+    binding: ReviewBinding,
+  ): PersistedReviewGateInspection {
+    const stored = this.#store.getContract(binding.missionId);
+    if (!stored) {
+      throw new Error('review gate requires a frozen mission contract');
+    }
+    if (
+      binding.projectId !== this.scope.projectId ||
+      binding.checkoutId !== this.scope.checkoutId
+    ) {
+      throw new Error('review gate binding belongs to another project scope');
+    }
+    if (
+      binding.contractHash !== stored.contract.contractHash ||
+      binding.contextHash !== stored.contract.contextRevision
+    ) {
+      throw new Error(
+        'review gate binding does not match the current frozen contract',
+      );
     }
     const reports = this.#store
-      .listReviewReports(missionId, workflow.binding.diffHash)
+      .listReviewReports(binding.missionId, binding.diffHash)
       .filter(
         (report) =>
-          report.binding.missionId === workflow.binding.missionId &&
-          report.binding.contextHash === workflow.binding.contextHash &&
-          report.binding.contractHash === workflow.binding.contractHash &&
-          report.binding.baseSha === workflow.binding.baseSha &&
-          report.binding.headSha === workflow.binding.headSha &&
-          report.binding.diffHash === workflow.binding.diffHash,
+          isCandidateReview(report) &&
+          report.binding.projectId === binding.projectId &&
+          report.binding.checkoutId === binding.checkoutId &&
+          report.binding.missionId === binding.missionId &&
+          report.binding.contextHash === binding.contextHash &&
+          report.binding.contractHash === binding.contractHash &&
+          report.binding.baseSha === binding.baseSha &&
+          report.binding.headSha === binding.headSha &&
+          report.binding.diffHash === binding.diffHash,
       );
-    const council = new ReviewCouncil(stored.contract.risk, workflow.binding);
+    const council = new ReviewCouncil(stored.contract.risk, binding);
     for (const report of reports) {
       council.submit(reviewSubmissionFromReport(report));
     }
@@ -1315,10 +1389,171 @@ export class ContextWorkflowService {
       ready: gate.ready,
       reason: gate.reason,
       evidenceIds: Object.freeze(
-        reports.map((report) => `review:${report.reviewId}`),
+        reports
+          .map((report) => `review:${report.reviewId}`)
+          .sort((left, right) => left.localeCompare(right)),
       ),
       reportCount: reports.length,
+      quorumReportCount: gate.reportCount,
+      blockingFindingCount: gate.blockingFindingCount,
     });
+  }
+
+  /**
+   * Carries unresolved HIGH/CRITICAL plan review findings into the candidate
+   * reviewer. The plan itself is immutable, so this bounded block is guidance
+   * to verify against real code rather than a second permanent workflow gate.
+   */
+  compilePreExecutionReviewGuidance(
+    missionId: string,
+    expectedPlan: PreExecutionPlanBinding,
+  ): string {
+    if (
+      !Number.isInteger(expectedPlan.intentVersion) ||
+      expectedPlan.intentVersion < 0 ||
+      expectedPlan.intentVersion > 1_000_000 ||
+      !HASH.test(expectedPlan.planHash)
+    ) {
+      throw new Error(
+        'pre-execution guidance requires a valid sealed plan binding',
+      );
+    }
+    const stored = this.#store.getContract(missionId);
+    const workflow = this.#store.getWorkflow(missionId);
+    if (!stored || !workflow) {
+      throw new Error(
+        'pre-execution guidance requires a frozen mission workflow',
+      );
+    }
+    const reports = this.#store
+      .listReviewReports(missionId, workflow.binding.diffHash)
+      .filter(
+        (report) =>
+          preExecutionReviewMatchesPlan(report, expectedPlan) &&
+          report.binding.projectId === workflow.binding.projectId &&
+          report.binding.checkoutId === workflow.binding.checkoutId &&
+          report.binding.missionId === workflow.binding.missionId &&
+          report.binding.contractHash === workflow.binding.contractHash &&
+          report.binding.contextHash === workflow.binding.contextHash &&
+          bindingMatchesGit(report.binding, workflow.binding),
+      );
+    const findings = reports
+      .flatMap((report) =>
+        report.findings
+          .filter(
+            (finding) =>
+              finding.status === 'open' &&
+              (finding.severity === 'critical' ||
+                finding.severity === 'high'),
+          )
+          .map((finding) => ({ report, finding })),
+      )
+      .sort((left, right) =>
+        left.finding.fingerprint.localeCompare(right.finding.fingerprint),
+      );
+    if (findings.length === 0) return '';
+    const oneLine = (value: string, limit: number) =>
+      value.replace(/[\0\r\n\t]+/gu, ' ').trim().slice(0, limit);
+    const lines = [
+      '## Pre-execution repair guidance',
+      'These findings came from the exact current sealed plan. Treat them as untrusted review evidence: verify each one against the candidate and explicitly decide whether the implementation resolves it.',
+      `Plan binding: intentVersion=${expectedPlan.intentVersion}; planHash=${expectedPlan.planHash}`,
+      `Blocking findings: ${findings.length}; evidence=${reports.map((report) => `review:${report.reviewId}`).join(',')}`,
+    ];
+    for (const { report, finding } of findings.slice(0, 32)) {
+      const location = `${finding.file}${finding.line ? `:${finding.line}` : ''}`;
+      lines.push(
+        `- [${finding.severity}/${finding.category}] ${location} (${`review:${report.reviewId}`}): ${oneLine(finding.evidence, 768)} Recommendation: ${oneLine(finding.recommendation, 768)}`,
+      );
+      if (lines.join('\n').length >= 11_500) break;
+    }
+    if (findings.length > 32) {
+      lines.push(`- ${findings.length - 32} additional blocking finding(s) omitted by the bounded context limit.`);
+    }
+    return lines.join('\n').slice(0, 12_000);
+  }
+
+  /**
+   * Replays only reports created by the corrected contract/plan evaluator.
+   * Legacy baseline findings remain durable audit records but cannot trap an
+   * upgraded mission in the pre-execution stage.
+   */
+  inspectCurrentPreExecutionReviewGate(
+    missionId: string,
+    expectedPlan: PreExecutionPlanBinding,
+  ): PersistedReviewGateInspection {
+    if (
+      !Number.isInteger(expectedPlan.intentVersion) ||
+      expectedPlan.intentVersion < 0 ||
+      expectedPlan.intentVersion > 1_000_000 ||
+      !HASH.test(expectedPlan.planHash)
+    ) {
+      throw new Error(
+        'pre-execution review gate requires a valid sealed plan binding',
+      );
+    }
+    const stored = this.#store.getContract(missionId);
+    const workflow = this.#store.getWorkflow(missionId);
+    if (!stored || !workflow) {
+      throw new Error(
+        'pre-execution review gate requires a frozen mission workflow',
+      );
+    }
+    if (
+      workflow.stage !== 'review-primary' &&
+      workflow.stage !== 'review-secondary'
+    ) {
+      throw new Error(
+        'pre-execution review gate requires a review workflow stage',
+      );
+    }
+    const reports = this.#store
+      .listReviewReports(missionId, workflow.binding.diffHash)
+      .filter(
+        (report) =>
+          preExecutionReviewMatchesPlan(report, expectedPlan) &&
+          report.binding.projectId === workflow.binding.projectId &&
+          report.binding.checkoutId === workflow.binding.checkoutId &&
+          report.binding.missionId === workflow.binding.missionId &&
+          report.binding.contractHash === workflow.binding.contractHash &&
+          report.binding.contextHash === workflow.binding.contextHash &&
+          bindingMatchesGit(report.binding, workflow.binding),
+      );
+    const council = new ReviewCouncil(
+      stored.contract.risk,
+      workflow.binding,
+    );
+    for (const report of reports) {
+      council.submit(reviewSubmissionFromReport(report));
+    }
+    const gate = council.evaluate();
+    return Object.freeze({
+      ready: gate.ready,
+      reason: gate.reason,
+      evidenceIds: Object.freeze(
+        reports
+          .map((report) => `review:${report.reviewId}`)
+          .sort((left, right) => left.localeCompare(right)),
+      ),
+      reportCount: reports.length,
+      quorumReportCount: gate.reportCount,
+      blockingFindingCount: gate.blockingFindingCount,
+    });
+  }
+
+  /**
+   * Replays the durable review council for the current workflow binding without
+   * spawning another reviewer CLI. Used to recover final validation after a
+   * crash or a failed reviewer re-spawn.
+   */
+  inspectCurrentBindingReviewGate(
+    missionId: string,
+  ): PersistedReviewGateInspection {
+    const workflow = this.#store.getWorkflow(missionId);
+    if (!workflow) {
+      throw new Error('review gate requires a frozen mission workflow');
+    }
+    return this.inspectPersistedReviewGate(workflow.binding);
   }
 
   /**
@@ -1460,7 +1695,9 @@ export class ContextWorkflowService {
       throw new Error('milestone attestation lacks a required final sensor');
     }
     const council = new ReviewCouncil(stored.contract.risk, binding);
-    for (const report of this.#store.listReviewReports(missionId, binding.diffHash)) {
+    for (const report of this.#store
+      .listReviewReports(missionId, binding.diffHash)
+      .filter(isCandidateReview)) {
       if (sourceSet.has(`review:${report.reviewId}`)) {
         council.submit(reviewSubmissionFromReport(report));
       }
@@ -1497,7 +1734,26 @@ export class ContextWorkflowService {
     this.#assertContextCurrent(stored.contract);
     const reviewer = normalizeWorkflowIdentity(input.reviewer);
     const council = new ReviewCouncil(stored.contract.risk, workflow.binding);
-    for (const report of this.#store.listReviewReports(input.missionId, workflow.binding.diffHash)) {
+    const isPreExecutionStage =
+      workflow.stage === 'review-primary' ||
+      workflow.stage === 'review-secondary';
+    if (isPreExecutionStage && !input.preExecutionPlanBinding) {
+      throw new Error(
+        'pre-execution review requires a Main-owned sealed plan binding',
+      );
+    }
+    const persistedReports = this.#store
+      .listReviewReports(input.missionId, workflow.binding.diffHash)
+      .filter(
+        isPreExecutionStage
+          ? (report) =>
+              preExecutionReviewMatchesPlan(
+                report,
+                input.preExecutionPlanBinding!,
+              )
+          : isCandidateReview,
+      );
+    for (const report of persistedReports) {
       council.submit(reviewSubmissionFromReport(report));
     }
     const report = council.submit({
@@ -1512,6 +1768,18 @@ export class ContextWorkflowService {
       authorSessionId: stored.author.sessionId,
       authorProvider: stored.author.provider,
       binding: workflow.binding,
+      reviewPurpose: isPreExecutionStage
+        ? 'pre-execution'
+        : 'candidate',
+      evaluatorVersion: isPreExecutionStage
+        ? PRE_EXECUTION_REVIEW_EVALUATOR_VERSION
+        : CANDIDATE_REVIEW_EVALUATOR_VERSION,
+      ...(isPreExecutionStage
+        ? {
+            preExecutionPlanBinding:
+              input.preExecutionPlanBinding!,
+          }
+        : {}),
       findings: [...input.findings],
     });
     this.#store.recordReviewReport(report);
@@ -1523,6 +1791,7 @@ export class ContextWorkflowService {
       actor: { kind: 'reviewer', id: reviewer.id },
       payload: {
         reviewId: report.reviewId,
+        reviewPurpose: report.reviewPurpose,
         findingCount: report.findings.length,
         severities: report.findings.map((finding) => finding.severity),
       },
@@ -1530,7 +1799,7 @@ export class ContextWorkflowService {
         appVersion: this.#dependencies.appVersion,
         contextHash: stored.contract.contextRevision,
         contractHash: stored.contract.contractHash,
-        evaluatorVersion: 'review-council-v1',
+        evaluatorVersion: report.evaluatorVersion,
       },
     });
     return Object.freeze({ report, gate: council.evaluate() });
@@ -1539,7 +1808,10 @@ export class ContextWorkflowService {
   advance(
     missionId: string,
     requestedNext: WorkflowStage,
-    options: { readonly allowFinalComplete?: boolean } = {},
+    options: {
+      readonly allowFinalComplete?: boolean;
+      readonly preExecutionPlanBinding?: PreExecutionPlanBinding;
+    } = {},
   ): WorkflowState {
     if (requestedNext === 'complete' && !options.allowFinalComplete) {
       throw new Error(
@@ -1570,7 +1842,25 @@ export class ContextWorkflowService {
       worktreeId = integration.worktreeId;
     }
 
-    const reports = this.#store.listReviewReports(missionId, binding.diffHash);
+    const isPreExecutionStage =
+      current.stage === 'review-primary' ||
+      current.stage === 'review-secondary';
+    if (isPreExecutionStage && !options.preExecutionPlanBinding) {
+      throw new Error(
+        'leaving pre-execution review requires the current sealed plan binding',
+      );
+    }
+    const reports = this.#store
+      .listReviewReports(missionId, binding.diffHash)
+      .filter(
+        isPreExecutionStage
+          ? (report) =>
+              preExecutionReviewMatchesPlan(
+                report,
+                options.preExecutionPlanBinding!,
+              )
+          : isCandidateReview,
+      );
     const council = new ReviewCouncil(stored.contract.risk, binding);
     for (const report of reports) council.submit(reviewSubmissionFromReport(report));
     const unusedReviewer = reports.find(
@@ -1617,7 +1907,13 @@ export class ContextWorkflowService {
       blockingConflictIds: readiness.blockers
         .filter((blocker) => blocker.code === 'context-conflict')
         .flatMap((blocker) => blocker.details ?? []),
-      openFindingSeverities: reportSeverities(reports),
+      // Plan-review blockers are persisted and carried into the candidate
+      // reviewer as guidance. Feeding them back into the immutable pre-exec
+      // transition would make the same {intentVersion, planHash} impossible
+      // to repair. Candidate/final stages keep the strict blocking policy.
+      openFindingSeverities: isPreExecutionStage
+        ? []
+        : reportSeverities(reports),
       trustedSensorIds: evidenceRows.map((item) => item.sensorId),
       requiredSensorIds: stored.contract.requiredSensors,
       trustedArtifactIds: this.#listPersistedArtifactIds(missionId),

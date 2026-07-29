@@ -36,7 +36,14 @@ const scopeMocks = vi.hoisted(() => ({
 const storeMocks = vi.hoisted(() => ({
   missions: new Map<
     string,
-    { orchestratorSessionId?: string; status?: string; description?: string }
+    {
+      id?: string;
+      orchestratorSessionId?: string;
+      status?: string;
+      description?: string;
+      intentVersion?: number;
+      kickoffAccepted?: boolean;
+    }
   >(),
   missionUpdates: [] as Array<{
     scope: ProjectExecutionScope;
@@ -47,6 +54,12 @@ const storeMocks = vi.hoisted(() => ({
   taskDispatches: [] as Array<{
     handoffId: string;
     missionId: string;
+    intentVersion?: number;
+    revision?: number;
+    sessionId?: string;
+    workerIncarnationId?: string;
+    workerId?: string;
+    handoffAcceptedAt?: number;
     state: string;
   }>,
   delivered: [] as Array<{ scope: ProjectExecutionScope; id: string }>,
@@ -135,6 +148,9 @@ vi.mock('./project-domain-store-registry', () => ({
       get: (id: string) =>
         storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:${id}`) ??
         null,
+      hasCurrentKickoffAcceptance: (id: string) =>
+        storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:${id}`)
+          ?.kickoffAccepted === true,
       update: (id: string, patch: { status?: string; description?: string }) => {
         storeMocks.missionUpdates.push({ scope, id, patch });
         const key = `${scope.projectId}:${scope.checkoutId}:${id}`;
@@ -267,6 +283,60 @@ function handoff(overrides: Partial<Handoff> = {}): Handoff {
   };
 }
 
+function schedulerHandoff(overrides: Partial<Handoff> = {}): Handoff {
+  return handoff({
+    sessionId: 'worker-session',
+    workerIncarnationId: 'worker-incarnation',
+    fromAgent: 'worker-a',
+    authorityOrigin: 'agent',
+    mcpProvenance: {
+      receiptId: 'handoff-tool-call',
+      toolCallId: 'handoff-tool-call',
+      toolName: 'nexus_handoff_submit',
+      source: 'http-mcp',
+      missionId: 'mission-a',
+      sessionId: 'worker-session',
+      workerIncarnationId: 'worker-incarnation',
+      authoritySha256: 'a'.repeat(64),
+      issuedAt: 1,
+    },
+    createdAt: 2,
+    ...overrides,
+  });
+}
+
+function authorizeSchedulerOwnedHandoff(
+  scope: ProjectExecutionScope,
+  overrides: Partial<(typeof storeMocks.taskDispatches)[number]> = {},
+): Handoff {
+  const current = schedulerHandoff();
+  storeMocks.missions.set(
+    `${scope.projectId}:${scope.checkoutId}:mission-a`,
+    {
+      id: 'mission-a',
+      orchestratorSessionId: 'orchestrator-session',
+      status: 'running',
+      description: 'Objetivo original',
+      intentVersion: 7,
+      kickoffAccepted: true,
+    },
+  );
+  storeMocks.handoffs.set(current.id, current);
+  storeMocks.taskDispatches.push({
+    handoffId: current.id,
+    missionId: 'mission-a',
+    intentVersion: 7,
+    revision: 3,
+    sessionId: current.sessionId,
+    workerIncarnationId: current.workerIncarnationId,
+    workerId: current.fromAgent,
+    handoffAcceptedAt: 3,
+    state: 'merging',
+    ...overrides,
+  });
+  return current;
+}
+
 function authorizeTarget(
   scope: ProjectExecutionScope,
   owner: { id: number } = { id: 101 },
@@ -274,6 +344,7 @@ function authorizeTarget(
   storeMocks.missions.set(
     `${scope.projectId}:${scope.checkoutId}:mission-a`,
     {
+      id: 'mission-a',
       orchestratorSessionId: 'orchestrator-session',
       status: 'running',
       description: 'Objetivo original',
@@ -295,6 +366,7 @@ function authorizeMainOwnedTarget(scope: ProjectExecutionScope): void {
   storeMocks.missions.set(
     `${scope.projectId}:${scope.checkoutId}:mission-a`,
     {
+      id: 'mission-a',
       orchestratorSessionId: 'orchestrator-session',
       status: 'running',
       description: 'Objetivo original',
@@ -702,20 +774,14 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
-  it('assenta entrega durável sem PTY e não bloqueia a missão', async () => {
+  it('assenta entrega durável mesmo após o pane do Maestro morrer', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
-    authorizeTarget(scope);
-    storeMocks.handoffs.set('handoff-a', handoff());
-    storeMocks.taskDispatches.push({
-      handoffId: 'handoff-a',
-      missionId: 'mission-a',
-      state: 'merging',
-    });
+    const current = authorizeSchedulerOwnedHandoff(scope);
     ptyMocks.state = 'idle';
     delivery.initIdleDelivery();
 
-    delivery.onHandoffSubmitted(handoff(), scope);
+    delivery.onHandoffSubmitted(current, scope);
     await vi.advanceTimersByTimeAsync(25_000);
 
     expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
@@ -727,6 +793,135 @@ describe('idle delivery authority and lifecycle', () => {
       storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
         ?.status,
     ).toBe('running');
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('recupera após accepted persistir sem consumed e sem pane do Maestro', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const current = authorizeSchedulerOwnedHandoff(scope);
+    storeMocks.handoffs.set(current.id, {
+      ...current,
+      delivered: true,
+      deliveryState: 'submitted',
+    });
+    storeMocks.deliveryAttempts.set('attempt-accepted', {
+      id: 'attempt-accepted',
+      handoffId: current.id,
+      missionId: 'mission-a',
+      orchestratorSessionId: 'orchestrator-session',
+      attemptNo: 1,
+      state: 'accepted',
+    });
+
+    expect(
+      delivery.recoverAcceptedSchedulerHandoffDelivery(current, scope),
+    ).toBe(true);
+    expect(storeMocks.handoffs.get(current.id)).toMatchObject({
+      delivered: true,
+      deliveryState: 'consumed',
+    });
+    expect(storeMocks.consumed).toEqual([{ scope, id: current.id }]);
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'kickoff ausente',
+      mutate: (scope: ProjectExecutionScope) => {
+        const key = `${scope.projectId}:${scope.checkoutId}:mission-a`;
+        storeMocks.missions.set(key, {
+          ...storeMocks.missions.get(key),
+          kickoffAccepted: false,
+        });
+      },
+    },
+    {
+      name: 'intentVersion obsoleta',
+      mutate: () => {
+        storeMocks.taskDispatches[0]!.intentVersion = 6;
+      },
+    },
+    {
+      name: 'sessão física divergente',
+      mutate: () => {
+        storeMocks.taskDispatches[0]!.sessionId = 'worker-session-stale';
+      },
+    },
+  ])(
+    'não recupera accepted sem autoridade durável exata: $name',
+    async ({ mutate }) => {
+      const delivery = await import('./idle-delivery');
+      const scope = testProjectScope();
+      const current = authorizeSchedulerOwnedHandoff(scope);
+      storeMocks.handoffs.set(current.id, {
+        ...current,
+        delivered: true,
+        deliveryState: 'submitted',
+      });
+      mutate(scope);
+
+      expect(
+        delivery.recoverAcceptedSchedulerHandoffDelivery(current, scope),
+      ).toBe(false);
+      expect(storeMocks.handoffs.get(current.id)).toMatchObject({
+        delivered: true,
+        deliveryState: 'submitted',
+      });
+      expect(storeMocks.consumed).toEqual([]);
+      expect(ptyMocks.writes).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      name: 'kickoff ausente',
+      mutate: (scope: ProjectExecutionScope) => {
+        const key = `${scope.projectId}:${scope.checkoutId}:mission-a`;
+        storeMocks.missions.set(key, {
+          ...storeMocks.missions.get(key),
+          kickoffAccepted: false,
+        });
+      },
+    },
+    {
+      name: 'intentVersion obsoleta',
+      mutate: () => {
+        storeMocks.taskDispatches[0]!.intentVersion = 6;
+      },
+    },
+    {
+      name: 'sessão física divergente',
+      mutate: () => {
+        storeMocks.taskDispatches[0]!.sessionId = 'worker-session-stale';
+      },
+    },
+    {
+      name: 'incarnation física divergente',
+      mutate: () => {
+        storeMocks.taskDispatches[0]!.workerIncarnationId =
+          'worker-incarnation-stale';
+      },
+    },
+    {
+      name: 'estado ainda não aceito',
+      mutate: () => {
+        storeMocks.taskDispatches[0]!.state = 'running';
+      },
+    },
+  ])('não assenta sem autoridade exata: $name', async ({ mutate }) => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const current = authorizeSchedulerOwnedHandoff(scope);
+    mutate(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(current, scope);
+
+    expect(storeMocks.delivered).toEqual([]);
+    expect(storeMocks.consumed).toEqual([]);
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
     delivery.shutdownIdleDelivery();
   });
 

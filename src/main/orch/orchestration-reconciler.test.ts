@@ -144,6 +144,46 @@ describe('orchestration reconciler', () => {
     await reconciler.stop();
   });
 
+  it('keeps healthy cadences running while a 21-minute participant is still pending', async () => {
+    vi.useFakeTimers();
+    let releaseLong: (() => void) | undefined;
+    const long = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLong = resolve;
+        }),
+    );
+    const healthy = vi.fn(async () => undefined);
+    const reconciler = createOrchestrationReconciler([
+      {
+        id: 'mission-scheduler',
+        cadenceMs: 1_000,
+        timeoutMs: 21 * 60_000,
+        run: long,
+      },
+      {
+        id: 'mission-runtime-authority',
+        cadenceMs: 1_000,
+        run: healthy,
+      },
+    ]);
+
+    reconciler.start();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(long).toHaveBeenCalledOnce();
+    expect(healthy).toHaveBeenCalledTimes(6);
+
+    releaseLong?.();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(long).toHaveBeenCalledTimes(2);
+
+    releaseLong?.();
+    await Promise.resolve();
+    await reconciler.stop();
+  });
+
   it('times out one stuck participant without starving the cadence of the others', async () => {
     vi.useFakeTimers();
     const warn = vi.fn();
@@ -167,7 +207,7 @@ describe('orchestration reconciler', () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(stuck).toHaveBeenCalledOnce();
-    expect(healthy).toHaveBeenCalledOnce();
+    expect(healthy).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('stuck'),
       expect.objectContaining({ name: 'TimeoutError' }),
@@ -175,7 +215,7 @@ describe('orchestration reconciler', () => {
 
     await vi.advanceTimersByTimeAsync(1_000);
     expect(stuck).toHaveBeenCalledOnce();
-    expect(healthy).toHaveBeenCalledTimes(2);
+    expect(healthy).toHaveBeenCalledTimes(3);
 
     releaseStuck?.();
     await Promise.resolve();

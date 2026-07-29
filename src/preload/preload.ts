@@ -129,6 +129,7 @@ import type {
   PaneCloseRequest,
   Mission,
   MissionPatch,
+  MissionPanePresentationRequest,
   MissionPaneRecoveryRequest,
   MissionPaneRecoveryResult,
   OrchPaneSpawnRequest,
@@ -377,7 +378,15 @@ function addListener<T>(set: Set<T>, cb: T): () => void {
 }
 
 // Orchestration event fan-out (same pattern as voice above).
+// This identifies one renderer document lifecycle only; Main never treats it
+// as authorization. A fresh preload after Cmd+R/HMR receives a fresh id.
+const paneSyncGenerationId =
+  globalThis.crypto?.randomUUID?.() ??
+  `renderer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 const paneSpawnRequestListeners = new Set<(req: OrchPaneSpawnRequest) => void>();
+const panePresentationRequestListeners = new Set<
+  (req: MissionPanePresentationRequest) => void
+>();
 const paneRecoveryRequestListeners = new Set<
   (req: MissionPaneRecoveryRequest) => void
 >();
@@ -392,6 +401,11 @@ const paneLoginStuckListeners = new Set<(event: PaneLoginStuckEvent) => void>();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
   paneSpawnRequestListeners.forEach((cb) => cb(req)),
+);
+ipcRenderer.on(
+  ORCH_CHANNELS.panePresentationRequest,
+  (_e, req: MissionPanePresentationRequest) =>
+    panePresentationRequestListeners.forEach((cb) => cb(req)),
 );
 ipcRenderer.on(
   ORCH_CHANNELS.paneRecoveryRequest,
@@ -947,13 +961,19 @@ const api: NexusApi = {
     onLiveInterrupted: (cb) => addListener(liveInterruptedListeners, cb),
   },
   orch: {
-    syncPanes: (entries) => ipcRenderer.send(ORCH_CHANNELS.panesSync, entries),
+    syncPanes: (entries) =>
+      ipcRenderer.send(ORCH_CHANNELS.panesSync, {
+        generationId: paneSyncGenerationId,
+        entries,
+      }),
     sendPaneSpawnResult: (result) =>
       ipcRenderer.send(ORCH_CHANNELS.paneSpawnResult, result),
     sendPaneRecoveryResult: (result: MissionPaneRecoveryResult) =>
       ipcRenderer.send(ORCH_CHANNELS.paneRecoveryResult, result),
     onPaneRecoveryRequest: (cb) =>
       addListener(paneRecoveryRequestListeners, cb),
+    onPanePresentationRequest: (cb) =>
+      addListener(panePresentationRequestListeners, cb),
     onBrowserOpenRequest: (cb) =>
       addListener(browserOpenRequestListeners, cb),
     sendBrowserOpenResult: (result) =>
@@ -965,6 +985,11 @@ const api: NexusApi = {
     listMissions: () => ipcRenderer.invoke(ORCH_CHANNELS.missionsList),
     listMissionPanes: (missionId: string) =>
       ipcRenderer.invoke(ORCH_CHANNELS.missionPanesList, missionId),
+    canRestoreMissionPane: (input: {
+      missionId: string;
+      paneId: string;
+    }) =>
+      ipcRenderer.invoke(ORCH_CHANNELS.missionPaneRestoreAuthority, input),
     createMission: (input: {
       title: string;
       goal?: string;

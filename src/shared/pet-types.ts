@@ -327,6 +327,8 @@ export interface PetPickImageResult {
 export type PetEventKind =
   | 'mission-done'
   | 'mission-failed'
+  /** Recuperação automática de uma falha técnica foi esgotada. */
+  | 'mission-technical-failure'
   /** Missão travou aguardando decisão/ação humana — o aviso mais importante. */
   | 'mission-blocked'
   /** Um agente pediu permissão/input (hook waiting/blocked). */
@@ -344,14 +346,19 @@ export interface PetEvent {
   at: number;
 }
 
-/** Intervenção humana: atravessa o modo "dormindo" e pede ação no Ops Board. */
+/** Atenção operacional: atravessa o modo "dormindo" e abre o Ops Board. */
 export function isPetUrgentEvent(kind: PetEventKind): boolean {
-  return kind === 'mission-blocked' || kind === 'agent-waiting';
+  return (
+    kind === 'mission-blocked' ||
+    kind === 'mission-technical-failure' ||
+    kind === 'agent-waiting'
+  );
 }
 
 export function petOpenActionFor(kind: PetEventKind): PetOpenAction {
   if (
     kind === 'mission-blocked' ||
+    kind === 'mission-technical-failure' ||
     kind === 'agent-waiting' ||
     kind === 'mission-failed' ||
     kind === 'mission-done' ||

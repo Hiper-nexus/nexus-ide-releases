@@ -599,7 +599,9 @@ async function runPackagedRealMissionCore(
       // Multi-CLI: put operator-available advisor bins on the child PATH so
       // adapters resolve as installed and the product-wizard launch button
       // is not permanently disabled (see stageTrustedAdvisorLaunchers).
-      stageTrustedAdvisorLaunchers(userData, { environment });
+      const trustedAdvisorBinaries = stageTrustedAdvisorLaunchers(userData, {
+        environment,
+      });
       const isolatedEnvironment = realMissionEnvironment(
         environment,
         userData,
@@ -628,6 +630,9 @@ async function runPackagedRealMissionCore(
           sourceHome: realHome,
           environment,
           onSkip: onAdvisorSkip,
+          // Run refresh probes only through the exact binary that already
+          // passed the owner/mode/realpath checks above.
+          grokBinary: trustedAdvisorBinaries.grok ?? null,
         },
       );
       const advisorBinaryStatuses = assertAdvisorBinaries({

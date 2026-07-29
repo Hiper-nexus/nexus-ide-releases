@@ -266,6 +266,50 @@ describe("WorktreeManager", () => {
     },
   );
 
+  it("gives the scheduler one exact WorktreeManager start from a dirty operator view", async () => {
+    write("src/shared.ts", "export const base = 2;\n");
+    write("src/staged.ts", "staged version\n");
+    git(root, "add", "--", "src/staged.ts");
+    write("src/staged.ts", "operator working version\n");
+    write("src/untracked.ts", "operator untracked version\n");
+
+    const baseline = ensureGuidedGitBaseline(projectScope());
+    const worker = await manager.create({
+      scope: projectScope(),
+      missionId: "mission-guided-dirty-checkpoint",
+      taskId: "task-guided-dirty-checkpoint",
+      workerId: "guided-executor",
+      ownership: {
+        files: ["src"],
+        symbols: [],
+        domains: ["guided-implementation"],
+      },
+    });
+
+    expect(git(root, "status", "--porcelain=v1")).toBe("");
+    expect(worker.baseSha).toBe(baseline.headSha);
+    expect(git(worker.worktreePath, "rev-parse", "HEAD")).toBe(
+      baseline.headSha,
+    );
+    expect(
+      fs.readFileSync(path.join(worker.worktreePath, "src/shared.ts"), "utf8"),
+    ).toBe("export const base = 2;\n");
+    expect(
+      fs.readFileSync(path.join(worker.worktreePath, "src/staged.ts"), "utf8"),
+    ).toBe("operator working version\n");
+    expect(
+      fs.readFileSync(
+        path.join(worker.worktreePath, "src/untracked.ts"),
+        "utf8",
+      ),
+    ).toBe("operator untracked version\n");
+    expect(
+      gitRunner.calls.filter(
+        ({ args }) => args[0] === "worktree" && args[1] === "add",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("refuses to adopt untracked files into an unborn baseline", async () => {
     const greenfieldRoot = path.join(tempDir, "greenfield-user-files");
     fs.mkdirSync(greenfieldRoot);

@@ -148,8 +148,9 @@ const browserOpenTool: McpToolDef = {
     }
     const url = requireStr(args, 'url');
     const result = await requestBrowserPane({
-      // Main loads the confirmed URL only after the pane id exists so a
-      // private-network grant is scoped to this exact pane and host+port.
+      // Mission approval permits public research, but never doubles as
+      // localhost/private-network consent. Trusted Nexus previews and the
+      // native browser flow retain their own narrow confirmation paths.
       url: 'about:blank',
       title: str(args, 'title'),
       missionId: ctx.missionId,
@@ -164,7 +165,7 @@ const browserOpenTool: McpToolDef = {
       assertMcpInvocationCurrent(invocation);
       const state = await loadBrowser(result.paneId, url, {
         scope: ctx.scope,
-        privateAccessConfirmed: true,
+        privateAccessConfirmed: false,
         signal: invocation?.signal,
         assertCurrentAuthority: invocation?.assertCurrentAuthority,
       });
@@ -199,7 +200,7 @@ const browserNavigateTool: McpToolDef = {
     authorizePaneRef(ctx, paneId, 'write');
     return loadBrowser(paneId, requireStr(args, 'url'), {
       scope: ctx.scope,
-      privateAccessConfirmed: true,
+      privateAccessConfirmed: false,
       signal: invocation?.signal,
       assertCurrentAuthority: invocation?.assertCurrentAuthority,
     });

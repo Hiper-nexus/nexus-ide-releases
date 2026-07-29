@@ -1,12 +1,125 @@
-import type { Mission } from "../../shared/orch-types";
+import type { Handoff, Mission } from "../../shared/orch-types";
 import type { ScopedMissionStore } from "./mission-store";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import type {
+  TaskDispatchRecord,
+  TaskDispatchState,
+} from "./task-dispatch-codec";
+
+const SCHEDULER_PROGRESS_STATES = new Set<TaskDispatchState>([
+  "claimed",
+  "routed",
+  "spawning",
+  "running",
+  "handoff_ready",
+  "merging",
+  "completed",
+  "suspended",
+]);
+
+const SCHEDULER_HANDOFF_STATES = new Set<TaskDispatchState>([
+  "handoff_ready",
+  "merging",
+  "completed",
+]);
+
+type SchedulerProgressDispatch = Pick<
+  TaskDispatchRecord,
+  "missionId" | "intentVersion" | "state"
+>;
+
+type SchedulerHandoffDispatch = Pick<
+  TaskDispatchRecord,
+  | "missionId"
+  | "intentVersion"
+  | "revision"
+  | "state"
+  | "sessionId"
+  | "workerIncarnationId"
+  | "workerId"
+  | "handoffId"
+  | "handoffAcceptedAt"
+>;
 
 export function missionSchedulerHasKickoffAuthority(
   missions: Pick<ScopedMissionStore, "hasCurrentKickoffAcceptance">,
   missionId: string,
 ): boolean {
   return missions.hasCurrentKickoffAcceptance(missionId);
+}
+
+export function missionHasSchedulerProgress(
+  mission: Mission,
+  hasCurrentKickoffAcceptance: boolean,
+  dispatches: readonly SchedulerProgressDispatch[],
+): boolean {
+  if (
+    mission.status !== "running" ||
+    !mission.orchestratorSessionId ||
+    !hasCurrentKickoffAcceptance
+  ) {
+    return false;
+  }
+  const intentVersion = mission.intentVersion ?? 0;
+  return dispatches.some(
+    (dispatch) =>
+      dispatch.missionId === mission.id &&
+      dispatch.intentVersion === intentVersion &&
+      SCHEDULER_PROGRESS_STATES.has(dispatch.state),
+  );
+}
+
+export function findCurrentSchedulerOwnedHandoffDispatch(
+  mission: Mission,
+  hasCurrentKickoffAcceptance: boolean,
+  handoff: Handoff,
+  dispatches: readonly SchedulerHandoffDispatch[],
+): SchedulerHandoffDispatch | null {
+  if (
+    !missionHasSchedulerProgress(
+      mission,
+      hasCurrentKickoffAcceptance,
+      dispatches,
+    ) ||
+    handoff.missionId !== mission.id ||
+    handoff.status !== "success" ||
+    handoff.authorityOrigin !== "agent" ||
+    !handoff.sessionId ||
+    !handoff.workerIncarnationId ||
+    !handoff.fromAgent ||
+    !handoff.mcpProvenance
+  ) {
+    return null;
+  }
+  const provenance = handoff.mcpProvenance;
+  if (
+    provenance.receiptId !== provenance.toolCallId ||
+    provenance.toolName !== "nexus_handoff_submit" ||
+    (provenance.source !== "http-mcp" &&
+      provenance.source !== "pty-stream") ||
+    provenance.missionId !== mission.id ||
+    provenance.sessionId !== handoff.sessionId ||
+    provenance.workerIncarnationId !== handoff.workerIncarnationId ||
+    provenance.issuedAt > handoff.createdAt
+  ) {
+    return null;
+  }
+  const intentVersion = mission.intentVersion ?? 0;
+  const matches = dispatches.filter(
+    (dispatch) =>
+      dispatch.missionId === mission.id &&
+      dispatch.intentVersion === intentVersion &&
+      Number.isInteger(dispatch.revision) &&
+      dispatch.revision > 0 &&
+      SCHEDULER_HANDOFF_STATES.has(dispatch.state) &&
+      dispatch.handoffId === handoff.id &&
+      dispatch.sessionId === handoff.sessionId &&
+      dispatch.workerIncarnationId === handoff.workerIncarnationId &&
+      dispatch.workerId === handoff.fromAgent &&
+      dispatch.handoffAcceptedAt !== undefined &&
+      dispatch.handoffAcceptedAt >= handoff.createdAt,
+  );
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 export async function validateMissionMergeWithLifecycleFence<T>(input: {

@@ -89,9 +89,13 @@ function createRunningFixture() {
 function insertLegacyPhysicalReceipt(
   fixture: ReturnType<typeof createRunningFixture>,
   handoffId: string,
-  options: { readonly withAudit: boolean },
+  options: {
+    readonly withAudit: boolean;
+    readonly source?: "http-mcp" | "omp-rpc-stdio";
+  },
 ): void {
   const db = fixture.runtime.open(fixture.scope).db;
+  const source = options.source ?? "http-mcp";
   const handoff = db
     .prepare(`SELECT created_at FROM handoffs WHERE id = ?`)
     .get(handoffId) as { created_at: number };
@@ -109,7 +113,7 @@ function insertLegacyPhysicalReceipt(
         schema: "nexus.mcp-audit/v1",
         project_id: fixture.scope.projectId,
         checkout_id: fixture.scope.checkoutId,
-        source: "http-mcp",
+        source,
         invocation_id: receiptId,
       }),
       handoff.created_at,
@@ -120,12 +124,13 @@ function insertLegacyPhysicalReceipt(
        (receipt_id, handoff_id, tool_call_id, tool_name, source,
         mission_id, session_id, worker_incarnation_id,
         authority_sha256, worktree_head_sha, issued_at)
-     VALUES (?, ?, ?, 'nexus_handoff_submit', 'http-mcp',
+     VALUES (?, ?, ?, 'nexus_handoff_submit', ?,
              ?, 'session-physical-block', ?, ?, NULL, ?)`,
   ).run(
     receiptId,
     handoffId,
     receiptId,
+    source,
     fixture.mission.id,
     fixture.claim.workerIncarnationId,
     createHash("sha256").update(receiptId).digest("hex"),
@@ -195,6 +200,34 @@ describe("task dispatch physical handoff authority", () => {
     ).toThrow(/correlated physical audit intent/i);
     expect(fixture.dispatches.get(fixture.task.id)).toMatchObject({
       state: "running",
+    });
+  });
+
+  it("rejects retired OMP provenance even when its legacy audit is exact", () => {
+    const fixture = createRunningFixture();
+    const handoff = fixture.handoffs.submit({
+      missionId: fixture.mission.id,
+      sessionId: "session-physical-block",
+      workerIncarnationId: fixture.claim.workerIncarnationId,
+      fromAgent: "physical-worker",
+      status: "success",
+      summary: "Retired transports cannot authorize a current dispatch.",
+    });
+    insertLegacyPhysicalReceipt(fixture, handoff.id, {
+      withAudit: true,
+      source: "omp-rpc-stdio",
+    });
+
+    expect(() =>
+      fixture.dispatches.acceptHandoff({
+        sessionId: "session-physical-block",
+        workerIncarnationId: fixture.claim.workerIncarnationId,
+        handoffId: handoff.id,
+      }),
+    ).toThrow(/omp-rpc-stdio.*retired/i);
+    expect(fixture.dispatches.get(fixture.task.id)).toMatchObject({
+      state: "running",
+      handoffId: undefined,
     });
   });
 

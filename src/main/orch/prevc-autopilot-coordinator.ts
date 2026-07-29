@@ -1,10 +1,7 @@
-import { createHash } from "node:crypto";
-
 import type { Mission, Squad } from "../../shared/orch-types";
 import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { CliAutomatedReviewer } from "../context/cli-automated-reviewer";
-import { canonicalJson } from "../context/canonical-json";
 import type { ContextWorkflowService } from "../context/context-workflow-service";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { bindingMatchesGit, inspectGitBinding } from "../context/git-binding";
@@ -20,6 +17,7 @@ import {
   type WorktreeRecord,
 } from "../runtime/worktree-contract";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import { hashMissionIntentAuthority } from "./mission-pane-authority";
 import { requestMissionDriverTick } from "./mission-driver-runtime";
 import {
   getProjectDomainStores,
@@ -28,6 +26,7 @@ import {
 import { publishFinalValidationHandoff } from "./final-validation-handoff";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { getSquad } from "./squad-store";
+import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { snapshotTaskPlanRoster, type TaskPlanReceipt } from "./task-store";
 
 const ACTIVE_DISPATCH_STATES = new Set([
@@ -38,6 +37,220 @@ const ACTIVE_DISPATCH_STATES = new Set([
   "handoff_ready",
   "merging",
 ]);
+const PRE_EXECUTION_PLAN_CONTEXT_MAX_CHARACTERS = 48_000;
+const PRE_EXECUTION_PLAN_CONTEXT_MAX_TASKS = 64;
+const PRE_EXECUTION_PLAN_CONTEXT_MAX_OWNERSHIP_VALUES = 2;
+const PRE_EXECUTION_TASK_ID_MAX_CHARACTERS = 72;
+const PRE_EXECUTION_PLANNER_ID_MAX_CHARACTERS = 48;
+const PRE_EXECUTION_TITLE_MAX_CHARACTERS = 80;
+const PRE_EXECUTION_DETAIL_MAX_CHARACTERS = 160;
+const PRE_EXECUTION_AGENT_REF_MAX_CHARACTERS = 64;
+const PRE_EXECUTION_OWNERSHIP_VALUE_MAX_CHARACTERS = 56;
+
+function boundedPlanField(value: string, maxCharacters: number): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  const complete = JSON.stringify(compact);
+  if (complete.length <= maxCharacters) return complete;
+
+  let prefixLength = Math.min(compact.length, maxCharacters - 3);
+  while (prefixLength > 0) {
+    const candidate = JSON.stringify(`${compact.slice(0, prefixLength)}…`);
+    if (candidate.length <= maxCharacters) return candidate;
+    prefixLength -= 1;
+  }
+  return JSON.stringify("…");
+}
+
+function summarizeOwnershipValues(values: readonly string[]): string {
+  const visible = values
+    .slice(0, PRE_EXECUTION_PLAN_CONTEXT_MAX_OWNERSHIP_VALUES)
+    .map((value) =>
+      boundedPlanField(
+        value,
+        PRE_EXECUTION_OWNERSHIP_VALUE_MAX_CHARACTERS,
+      ),
+    )
+    .join(", ");
+  const omitted =
+    values.length - PRE_EXECUTION_PLAN_CONTEXT_MAX_OWNERSHIP_VALUES;
+  return (
+    `[${visible}]` +
+    (omitted > 0 ? ` (${omitted} ownership values omitted)` : "")
+  );
+}
+
+function latestDispatchesByTask(
+  receipt: TaskPlanReceipt,
+  dispatches: readonly TaskDispatchRecord[],
+): ReadonlyMap<string, TaskDispatchRecord> {
+  const taskIds = new Set(receipt.tasks.map((task) => task.taskId));
+  const latest = new Map<string, TaskDispatchRecord>();
+  for (const dispatch of dispatches) {
+    if (
+      dispatch.intentVersion !== receipt.intentVersion ||
+      !taskIds.has(dispatch.taskId)
+    ) {
+      continue;
+    }
+    const previous = latest.get(dispatch.taskId);
+    if (
+      !previous ||
+      dispatch.revision > previous.revision ||
+      (dispatch.revision === previous.revision &&
+        dispatch.attempt > previous.attempt)
+    ) {
+      latest.set(dispatch.taskId, dispatch);
+    }
+  }
+  return latest;
+}
+
+function sealedTaskReviewLine(
+  task: TaskPlanReceipt["tasks"][number],
+  ordinal: number,
+  taskCount: number,
+  dispatch: TaskDispatchRecord | undefined,
+): string {
+  return (
+    `- [${ordinal}/${taskCount}] ` +
+    `taskId=${boundedPlanField(
+      task.taskId,
+      PRE_EXECUTION_TASK_ID_MAX_CHARACTERS,
+    )}; ` +
+    `plannerId=${boundedPlanField(
+      task.plannerId,
+      PRE_EXECUTION_PLANNER_ID_MAX_CHARACTERS,
+    )}; ` +
+    `title=${boundedPlanField(
+      task.title,
+      PRE_EXECUTION_TITLE_MAX_CHARACTERS,
+    )}; ` +
+    `detail=${boundedPlanField(
+      task.detail,
+      PRE_EXECUTION_DETAIL_MAX_CHARACTERS,
+    )}; ` +
+    `agentRef=${boundedPlanField(
+      task.agentRef,
+      PRE_EXECUTION_AGENT_REF_MAX_CHARACTERS,
+    )}; ` +
+    `agentCategory=${task.agentCategory}; ` +
+    `dispatch=${dispatch ? `${dispatch.state}/${dispatch.executionMode}` : "not-created"}`
+  );
+}
+
+function dispatchOwnershipReviewLine(
+  task: TaskPlanReceipt["tasks"][number],
+  dispatch: TaskDispatchRecord,
+): string {
+  return (
+    `- taskId=${boundedPlanField(
+      task.taskId,
+      PRE_EXECUTION_TASK_ID_MAX_CHARACTERS,
+    )}; ` +
+    `state=${dispatch.state}; mode=${dispatch.executionMode}; ` +
+    `agentRef=${boundedPlanField(
+      dispatch.agentRef ?? task.agentRef,
+      PRE_EXECUTION_AGENT_REF_MAX_CHARACTERS,
+    )}; agentCategory=${dispatch.agentCategory ?? task.agentCategory}; ` +
+    "ownership " +
+    `files=${summarizeOwnershipValues(dispatch.ownership.files)}; ` +
+    `symbols=${summarizeOwnershipValues(dispatch.ownership.symbols)}; ` +
+    `domains=${summarizeOwnershipValues(dispatch.ownership.domains)}`
+  );
+}
+
+function appendBoundedOwnershipLines(
+  requiredLines: readonly string[],
+  ownershipLines: readonly string[],
+): string {
+  let markdown = requiredLines.join("\n");
+  if (markdown.length > PRE_EXECUTION_PLAN_CONTEXT_MAX_CHARACTERS) {
+    throw new Error(
+      "sealed task plan exceeds the bounded pre-execution review context",
+    );
+  }
+  const ownershipOmissionNotice = (count: number) =>
+    `- ${count} ownership summaries omitted by the ` +
+    `${PRE_EXECUTION_PLAN_CONTEXT_MAX_CHARACTERS}-character limit; ` +
+    "every sealed task remains listed above.";
+  if (
+    ownershipLines.length > 0 &&
+    `${markdown}\n${ownershipOmissionNotice(ownershipLines.length)}`.length >
+      PRE_EXECUTION_PLAN_CONTEXT_MAX_CHARACTERS
+  ) {
+    throw new Error(
+      "sealed task plan leaves no bounded room for ownership disclosure",
+    );
+  }
+  for (let index = 0; index < ownershipLines.length; index += 1) {
+    const line = ownershipLines[index]!;
+    const remaining = ownershipLines.length - index - 1;
+    const omissionNotice =
+      remaining > 0 ? ownershipOmissionNotice(remaining) : "";
+    const candidate = `${markdown}\n${line}`;
+    const reservedNoticeCharacters =
+      omissionNotice.length > 0 ? omissionNotice.length + 1 : 0;
+    if (
+      candidate.length + reservedNoticeCharacters >
+      PRE_EXECUTION_PLAN_CONTEXT_MAX_CHARACTERS
+    ) {
+      const omitted = ownershipLines.length - index;
+      markdown += `\n${ownershipOmissionNotice(omitted)}`;
+      break;
+    }
+    markdown = candidate;
+  }
+  return markdown;
+}
+
+function compilePreExecutionPlanContext(input: {
+  readonly receipt: TaskPlanReceipt;
+  readonly dispatches: readonly TaskDispatchRecord[];
+}): string {
+  if (input.receipt.tasks.length > PRE_EXECUTION_PLAN_CONTEXT_MAX_TASKS) {
+    throw new Error(
+      `sealed task plan exceeds ${PRE_EXECUTION_PLAN_CONTEXT_MAX_TASKS} tasks`,
+    );
+  }
+  const latestDispatches = latestDispatchesByTask(
+    input.receipt,
+    input.dispatches,
+  );
+  const dispatchLines = input.receipt.tasks.flatMap((task) => {
+    const dispatch = latestDispatches.get(task.taskId);
+    return dispatch ? [dispatchOwnershipReviewLine(task, dispatch)] : [];
+  });
+  const requiredLines = [
+    "## Current sealed execution plan",
+    "",
+    "This is the Main-owned plan authority for pre-execution review. " +
+      "It describes future work; it is not candidate or completion evidence.",
+    `Plan hash: ${input.receipt.planHash}`,
+    `Intent version: ${input.receipt.intentVersion}`,
+    `Task count: ${input.receipt.tasks.length}`,
+    `Plan context limit: ${PRE_EXECUTION_PLAN_CONTEXT_MAX_CHARACTERS} characters`,
+    `Sealed task entries: ${input.receipt.tasks.length}/${input.receipt.tasks.length}`,
+    "",
+    "### Sealed tasks",
+    ...input.receipt.tasks.map((task, index) =>
+      sealedTaskReviewLine(
+        task,
+        index + 1,
+        input.receipt.tasks.length,
+        latestDispatches.get(task.taskId),
+      ),
+    ),
+    "",
+    "### Current dispatch ownership",
+    ...(dispatchLines.length > 0
+      ? []
+      : [
+          "- No current dispatch row exists yet. Ownership allocation is future " +
+            "execution work and its absence is not a pre-execution finding.",
+        ]),
+  ];
+  return appendBoundedOwnershipLines(requiredLines, dispatchLines);
+}
 
 export interface PrevcAutopilotResult {
   readonly state: string;
@@ -156,10 +369,6 @@ async function withMissionOperation<T>(
       missionOperationTails.delete(key);
     }
   }
-}
-
-function sha256(value: unknown): string {
-  return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
 function sameOrderedStrings(
@@ -410,7 +619,7 @@ export function inspectGuidedPrevcPostMergeAuthority(
   }
   const seal: GuidedPostMergeAuthoritySeal = Object.freeze({
     intentVersion: contract.intentVersion,
-    intentContractHash: sha256(contract),
+    intentContractHash: hashMissionIntentAuthority(contract),
     planHash: receipt.planHash,
     rosterHash: receipt.rosterHash,
     squadId: receipt.squadId,
@@ -429,7 +638,8 @@ export function inspectGuidedPrevcPostMergeAuthority(
       !missionRequiresGuidedPrevc(currentMission) ||
       currentMission.intentVersion !== seal.intentVersion ||
       currentMission.intentContract.intentVersion !== seal.intentVersion ||
-      sha256(currentMission.intentContract) !== seal.intentContractHash ||
+      hashMissionIntentAuthority(currentMission.intentContract) !==
+        seal.intentContractHash ||
       !currentSuite.missions.hasCurrentKickoffAcceptance(missionId) ||
       !hasCurrentDispatchAuthority(currentMission, {
         taskCount: seal.taskIds.length,
@@ -519,6 +729,20 @@ function nextWorkflowStage(route: readonly string[], stage: string): string {
   return route[index + 1] ?? "complete";
 }
 
+/**
+ * A pre-execution review inspects the immutable plan, not a merge candidate.
+ * Once that plan is sealed there is no honest in-place mutation that can make
+ * a report bound to the same {intentVersion, planHash} disappear. Treat its
+ * HIGH/CRITICAL findings as durable repair guidance for candidate validation;
+ * only missing physical reviewer quorum still waits before execution.
+ */
+export function shouldAdvanceAfterPreExecutionReview(input: {
+  readonly ready: boolean;
+  readonly reason: string;
+}): boolean {
+  return input.ready || input.reason === "blocking-findings";
+}
+
 function resolveCodeAuthors(input: {
   readonly suite: ProjectDomainStoreSuite;
   readonly worktrees: readonly WorktreeRecord[];
@@ -565,6 +789,53 @@ async function runCouncilReviewUnlocked(input: {
   if (!mission.contract || !mission.workflow) {
     throw new Error("mission has no frozen workflow");
   }
+  const suite = input.dependencies.storesForScope(input.scope);
+  const approved = suite.missions.get(input.missionId);
+  const intentVersion = approved?.intentContract?.intentVersion;
+  const receipt =
+    intentVersion === undefined
+      ? null
+      : suite.tasks.getPlanReceipt(input.missionId, intentVersion);
+  if (!receipt) {
+    throw new Error(
+      "pre-execution review requires the current sealed task plan",
+    );
+  }
+  const preExecutionPlanBinding = Object.freeze({
+    intentVersion: receipt.intentVersion,
+    planHash: receipt.planHash,
+  });
+  const persisted = service.inspectCurrentPreExecutionReviewGate(
+    input.missionId,
+    preExecutionPlanBinding,
+  );
+  const requiredReviewerCount =
+    mission.contract.contract.risk === "critical" ? 2 : 1;
+  if (
+    persisted.ready ||
+    (persisted.reportCount > 0 &&
+      persisted.reason !== "review-quorum-missing" &&
+      persisted.quorumReportCount >= requiredReviewerCount)
+  ) {
+    return Object.freeze({
+      ready: persisted.ready,
+      gate: Object.freeze({
+        ready: persisted.ready,
+        reason: persisted.reason,
+        blockingFindingCount: persisted.blockingFindingCount,
+        reportCount: persisted.quorumReportCount,
+      }),
+      reports: Object.freeze([]),
+      evidenceIds: persisted.evidenceIds,
+    });
+  }
+  const contextMarkdown = [
+    service.compileMissionSnapshot(input.missionId).markdown.trimEnd(),
+    compilePreExecutionPlanContext({
+      receipt,
+      dispatches: suite.taskDispatches.list(input.missionId),
+    }),
+  ].join("\n\n");
   const reviewer = new CliAutomatedReviewer();
   const reviewInput = {
     scope: input.scope,
@@ -572,7 +843,10 @@ async function runCouncilReviewUnlocked(input: {
     contract: mission.contract.contract,
     binding: mission.workflow.binding,
     author: mission.contract.author,
-    contextMarkdown: service.compileMissionSnapshot(input.missionId).markdown,
+    reviewPurpose: "pre-execution" as const,
+    preExecutionPlanBinding,
+    designInspection: "deferred" as const,
+    contextMarkdown,
     persist: (
       report: Parameters<typeof service.recordMergeReviewReport>[0],
     ) => {
@@ -583,7 +857,7 @@ async function runCouncilReviewUnlocked(input: {
     assertCurrentAuthority: input.assertCurrentAuthority,
   };
   const override = input.dependencies.reviewDependencies({
-    suite: input.dependencies.storesForScope(input.scope),
+    suite,
     missionId: input.missionId,
     scope: input.scope,
   }).runReview;
@@ -679,6 +953,8 @@ async function runFinalValidationUnlocked(input: {
     binding: mission.workflow.binding,
     author: authors[0]!,
     additionalAuthors: authors.slice(1),
+    reviewPurpose: "candidate" as const,
+    designInspection: "required" as const,
     contextMarkdown: service.compileMissionSnapshot(input.missionId).markdown,
     persist: (
       report: Parameters<typeof service.recordMergeReviewReport>[0],
@@ -767,7 +1043,23 @@ async function drivePrevcAutopilotUnlocked(input: {
       assertRevisionAuthority();
       const next = workflowStageSchema.parse(nextWorkflowStage(route, stage));
       if (!canAutopilotAdvanceTo(next)) return null;
-      const advanced = service.advance(input.missionId, next);
+      const isLeavingPreExecutionReview =
+        stage === "review-primary" || stage === "review-secondary";
+      if (isLeavingPreExecutionReview && !receipt) {
+        throw new Error(
+          "pre-execution advance requires the current sealed task plan",
+        );
+      }
+      const advanced = service.advance(input.missionId, next, {
+        ...(isLeavingPreExecutionReview
+          ? {
+              preExecutionPlanBinding: {
+                intentVersion: receipt!.intentVersion,
+                planHash: receipt!.planHash,
+              },
+            }
+          : {}),
+      });
       expectedWorkflowRevision = advanced.revision;
       input.assertCurrentAuthority();
       transitions.push(`${stage}->${next}`);
@@ -878,7 +1170,7 @@ async function drivePrevcAutopilotUnlocked(input: {
         assertCurrentAuthority: assertRevisionAuthority,
       });
       assertRevisionAuthority();
-      if (!review.ready) {
+      if (!shouldAdvanceAfterPreExecutionReview(review.gate)) {
         return Object.freeze({
           state: stage,
           transitions,

@@ -9,6 +9,17 @@ const HASH_256 = /^[a-f0-9]{64}$/;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const STATIC_ANALYSIS_PROVIDER_PREFIX = 'nexus-static-analysis-';
 
+export const PRE_EXECUTION_REVIEW_EVALUATOR_VERSION =
+  'pre-execution-plan-v2';
+export const CANDIDATE_REVIEW_EVALUATOR_VERSION =
+  'candidate-implementation-v1';
+export type ReviewPurpose = 'pre-execution' | 'candidate' | 'legacy';
+
+export interface PreExecutionPlanBinding {
+  readonly intentVersion: number;
+  readonly planHash: string;
+}
+
 export interface ReviewBinding {
   readonly projectId: string;
   readonly checkoutId: string;
@@ -65,10 +76,25 @@ export interface ReviewSubmission {
   readonly authorProvider: string;
   readonly binding: ReviewBinding;
   readonly findings: readonly ReviewFindingInput[];
+  /** Missing only on reports persisted before review-purpose versioning. */
+  readonly reviewPurpose?: ReviewPurpose;
+  /** Missing only on reports persisted before evaluator versioning. */
+  readonly evaluatorVersion?: string;
+  /**
+   * Main-owned identity of the sealed task-plan receipt reviewed before
+   * execution. Missing on legacy reports and on candidate reviews.
+   */
+  readonly preExecutionPlanBinding?: PreExecutionPlanBinding;
 }
 
-export interface ReviewReport extends Omit<ReviewSubmission, 'findings'> {
+export interface ReviewReport
+  extends Omit<
+    ReviewSubmission,
+    'findings' | 'reviewPurpose' | 'evaluatorVersion'
+  > {
   readonly findings: readonly ReviewFinding[];
+  readonly reviewPurpose: ReviewPurpose;
+  readonly evaluatorVersion: string;
 }
 
 export interface ReviewGateResult {
@@ -76,8 +102,7 @@ export interface ReviewGateResult {
   readonly reason:
     | 'ready'
     | 'review-quorum-missing'
-    | 'blocking-findings'
-    | 'adjudication-required';
+    | 'blocking-findings';
   readonly blockingFindingCount: number;
   readonly reportCount: number;
 }
@@ -92,6 +117,13 @@ const bindingSchema = z
     baseSha: z.string().regex(COMMIT_HASH),
     headSha: z.string().regex(COMMIT_HASH),
     diffHash: z.string().regex(HASH_256),
+  })
+  .strict();
+
+const preExecutionPlanBindingSchema = z
+  .object({
+    intentVersion: z.number().int().nonnegative().max(1_000_000),
+    planHash: z.string().regex(HASH_256),
   })
   .strict();
 
@@ -138,6 +170,11 @@ const submissionSchema = z
     authorProvider: z.string().regex(IDENTIFIER),
     binding: bindingSchema,
     findings: z.array(findingInputSchema).max(4_096),
+    reviewPurpose: z
+      .enum(['pre-execution', 'candidate', 'legacy'])
+      .default('legacy'),
+    evaluatorVersion: z.string().regex(IDENTIFIER).default('legacy-v0'),
+    preExecutionPlanBinding: preExecutionPlanBindingSchema.optional(),
   })
   .strict();
 
@@ -177,6 +214,12 @@ function freezeBinding(binding: ReviewBinding): ReviewBinding {
   return Object.freeze({ ...binding });
 }
 
+function freezePreExecutionPlanBinding(
+  binding: PreExecutionPlanBinding | undefined,
+): PreExecutionPlanBinding | undefined {
+  return binding ? Object.freeze({ ...binding }) : undefined;
+}
+
 function fingerprintFinding(finding: ReviewFindingInput): string {
   return createHash('sha256')
     .update(
@@ -210,6 +253,9 @@ function cloneReport(report: ReviewReport, findings: readonly ReviewFinding[]): 
   return Object.freeze({
     ...report,
     binding: freezeBinding(report.binding),
+    preExecutionPlanBinding: freezePreExecutionPlanBinding(
+      report.preExecutionPlanBinding,
+    ),
     findings: Object.freeze(findings.map(cloneFinding)),
   });
 }
@@ -247,6 +293,11 @@ export function reviewSubmissionFromReport(report: ReviewReport): ReviewSubmissi
     authorSessionId: parsed.authorSessionId,
     authorProvider: parsed.authorProvider,
     binding: freezeBinding(parsed.binding),
+    reviewPurpose: parsed.reviewPurpose,
+    evaluatorVersion: parsed.evaluatorVersion,
+    preExecutionPlanBinding: freezePreExecutionPlanBinding(
+      parsed.preExecutionPlanBinding,
+    ),
     findings: Object.freeze(parsed.findings.map((finding) => Object.freeze({
       severity: finding.severity,
       category: finding.category,
@@ -466,30 +517,10 @@ export class ReviewCouncil {
         reportCount: quorumReports.length,
       });
     }
-    const reportFindingSets = quorumReports.map(
-      (report) => new Set(report.findings.map((finding) => finding.fingerprint)),
-    );
-    const quorumFindingFingerprints = new Set(
-      quorumReports.flatMap((report) =>
-        report.findings.map((finding) => finding.fingerprint)),
-    );
-    const hasNonBlockingDivergence =
-      quorumReports.length > 1 &&
-      findings.some(
-        (finding) =>
-          quorumFindingFingerprints.has(finding.fingerprint) &&
-          finding.status === 'open' &&
-          reportFindingSets.some((set) => set.has(finding.fingerprint)) &&
-          reportFindingSets.some((set) => !set.has(finding.fingerprint)),
-      );
-    if (hasNonBlockingDivergence) {
-      return Object.freeze({
-        ready: false,
-        reason: 'adjudication-required',
-        blockingFindingCount: 0,
-        reportCount: quorumReports.length,
-      });
-    }
+    // MEDIUM/LOW findings remain durable advisory evidence. Review retries and
+    // independent reviewers are aggregated by binding, but advisory
+    // disagreement has no durable adjudicator and must not become a terminal
+    // autopilot dead-end. Only open HIGH/CRITICAL findings block above.
     return Object.freeze({
       ready: true,
       reason: 'ready',

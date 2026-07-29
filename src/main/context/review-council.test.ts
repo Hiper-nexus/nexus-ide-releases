@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ReviewCouncil,
   issueAdministrativeRiskAcceptance,
+  parseReviewReport,
+  reviewSubmissionFromReport,
   type ReviewBinding,
 } from './review-council';
 
@@ -43,6 +45,39 @@ function review(overrides: Record<string, unknown> = {}) {
 }
 
 describe('ReviewCouncil', () => {
+  it('persists the exact pre-execution plan binding while keeping legacy reports readable', () => {
+    const council = new ReviewCouncil('high', binding);
+    const report = council.submit(
+      review({
+        reviewPurpose: 'pre-execution',
+        evaluatorVersion: 'pre-execution-plan-v2',
+        preExecutionPlanBinding: {
+          intentVersion: 7,
+          planHash: 'f'.repeat(64),
+        },
+        findings: [],
+      }) as ReturnType<typeof review>,
+    );
+
+    expect(report.preExecutionPlanBinding).toEqual({
+      intentVersion: 7,
+      planHash: 'f'.repeat(64),
+    });
+    expect(
+      reviewSubmissionFromReport(parseReviewReport(report))
+        .preExecutionPlanBinding,
+    ).toEqual(report.preExecutionPlanBinding);
+
+    const legacy = new ReviewCouncil('high', binding).submit(
+      review({
+        reviewPurpose: 'pre-execution',
+        evaluatorVersion: 'pre-execution-plan-v2',
+        findings: [],
+      }) as ReturnType<typeof review>,
+    );
+    expect(parseReviewReport(legacy).preExecutionPlanBinding).toBeUndefined();
+  });
+
   it('rejects author/session aliases and replay while allowing a shared provider', () => {
     const council = new ReviewCouncil('high', binding);
     expect(() =>
@@ -112,7 +147,7 @@ describe('ReviewCouncil', () => {
     expect(next.listReports()).toHaveLength(0);
   });
 
-  it('requires two independent reviewers and adjudication for critical divergence', () => {
+  it('requires two independent reviewers and keeps high/critical findings blocking', () => {
     const council = new ReviewCouncil('critical', binding);
     council.submit(
       review({
@@ -133,6 +168,60 @@ describe('ReviewCouncil', () => {
     expect(council.evaluate()).toMatchObject({
       ready: false,
       reason: 'blocking-findings',
+    });
+  });
+
+  it('treats medium/low reviewer divergence as advisory after critical quorum', () => {
+    const council = new ReviewCouncil('critical', binding);
+    council.submit(
+      review({
+        reviewId: 'review-a',
+        reviewerProvider: 'codex',
+        findings: [
+          {
+            severity: 'medium',
+            category: 'correctness',
+            file: 'src/auth/session.ts',
+            line: 42,
+            criterionRefs: [],
+            invariantRefs: [],
+            evidence: 'The helper could be split for readability.',
+            recommendation: 'Consider extracting the parsing branch.',
+          },
+        ],
+      }),
+    );
+    expect(council.evaluate()).toMatchObject({
+      ready: false,
+      reason: 'review-quorum-missing',
+      reportCount: 1,
+    });
+
+    council.submit(
+      review({
+        reviewId: 'review-b',
+        reviewerId: 'reviewer-b',
+        reviewerSessionId: 'session-review-b',
+        reviewerProvider: 'claude',
+        findings: [
+          {
+            severity: 'low',
+            category: 'ux',
+            file: 'src/auth/session.ts',
+            criterionRefs: [],
+            invariantRefs: [],
+            evidence: 'The fallback message could be more specific.',
+            recommendation: 'Consider naming the failed session state.',
+          },
+        ],
+      }),
+    );
+
+    expect(council.evaluate()).toMatchObject({
+      ready: true,
+      reason: 'ready',
+      blockingFindingCount: 0,
+      reportCount: 2,
     });
   });
 

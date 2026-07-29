@@ -1,15 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 const mocks = vi.hoisted(() => ({
   dataTap: null as null | ((sessionId: string, data: string) => void),
   stateTap: null as null | ((sessionId: string, state: string) => void),
-  exitTap: null as null | ((sessionId: string) => void),
+  exitTap: null as null | ((
+    sessionId: string,
+    authority?: {
+      role: string;
+      missionId?: string;
+      workerIncarnationId?: string;
+      scope: ProjectExecutionScope;
+    },
+  ) => void),
   heartbeat: vi.fn(),
   blockExpired: vi.fn(),
   requeueMissingRuntime: vi.fn(),
   blockSessionExit: vi.fn(),
   refineBootstrapSessionExitBlock: vi.fn(),
+  canRecoverLegacyGuidedDirtyCheckoutBootstrap: vi.fn(),
+  recoverLegacyGuidedDirtyCheckoutBootstrap: vi.fn(),
+  ensureGuidedGitBaselineForWorktreeAsync: vi.fn(async () => undefined),
   list: vi.fn(),
   getDispatch: vi.fn(),
   getContextBySession: vi.fn(),
@@ -17,7 +29,15 @@ const mocks = vi.hoisted(() => ({
   getExternalWorkerSessionInfo: vi.fn(),
   onScope: vi.fn(),
   onChange: vi.fn(),
-  closeWorker: vi.fn(async () => true),
+  closeWorker: vi.fn<(
+    input: {
+      paneId: string;
+      sessionId: string;
+      missionId: string;
+      workerIncarnationId: string;
+      scope: ProjectExecutionScope;
+    },
+  ) => Promise<boolean>>(async () => true),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -42,6 +62,10 @@ vi.mock('./gate', () => ({
 vi.mock('./external-worker-session-registry', () => ({
   getExternalWorkerSessionInfo: mocks.getExternalWorkerSessionInfo,
 }));
+vi.mock('../runtime/guided-greenfield-baseline', () => ({
+  ensureGuidedGitBaselineForWorktreeAsync:
+    mocks.ensureGuidedGitBaselineForWorktreeAsync,
+}));
 
 vi.mock('./project-domain-store-registry', () => ({
   requireProjectDomainStoreRegistry: () => ({
@@ -60,6 +84,10 @@ import {
   TASK_DISPATCH_ACTIVITY_THROTTLE_MS,
   TASK_DISPATCH_SESSION_EXIT_REASON,
 } from './task-dispatch-lifecycle';
+import {
+  LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
+  TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+} from './task-dispatch-store';
 
 const scope = testProjectScope();
 const suite = {
@@ -70,6 +98,10 @@ const suite = {
     requeueMissingRuntime: mocks.requeueMissingRuntime,
     blockSessionExit: mocks.blockSessionExit,
     refineBootstrapSessionExitBlock: mocks.refineBootstrapSessionExitBlock,
+    canRecoverLegacyGuidedDirtyCheckoutBootstrap:
+      mocks.canRecoverLegacyGuidedDirtyCheckoutBootstrap,
+    recoverLegacyGuidedDirtyCheckoutBootstrap:
+      mocks.recoverLegacyGuidedDirtyCheckoutBootstrap,
     list: mocks.list,
     get: mocks.getDispatch,
   },
@@ -93,6 +125,8 @@ describe('main-owned task dispatch lifecycle', () => {
     });
     mocks.heartbeat.mockReturnValue({ taskId: 'task-a', missionId: 'mission-a' });
     mocks.blockSessionExit.mockReturnValue({ taskId: 'task-a', state: 'blocked' });
+    mocks.closeWorker.mockResolvedValue(true);
+    mocks.canRecoverLegacyGuidedDirtyCheckoutBootstrap.mockReturnValue(true);
     mocks.list.mockReturnValue([]);
     mocks.getDispatch.mockReturnValue(null);
     mocks.getAgentSessionInfo.mockReturnValue(null);
@@ -184,11 +218,12 @@ describe('main-owned task dispatch lifecycle', () => {
     });
   });
 
-  it('adopts a live exact session after restart and requeues an expired unknown effect', async () => {
+  it('retires an exact live worker whose durable activity lease expired and requeues an unknown effect', async () => {
     mocks.list.mockReturnValue([
       {
         taskId: 'task-live', missionId: 'mission-a', revision: 3,
-        state: 'running', sessionId: 'session-live', leaseExpiresAt: 900,
+        state: 'running', paneId: 'pane-live',
+        sessionId: 'session-live', leaseExpiresAt: 900,
         workerIncarnationId: 'worker-incarnation-live',
       },
       {
@@ -204,15 +239,30 @@ describe('main-owned task dispatch lifecycle', () => {
           }
         : null,
     );
+    mocks.closeWorker.mockImplementationOnce(async (input) => {
+      mocks.exitTap?.(input.sessionId, {
+        role: 'worker',
+        missionId: input.missionId,
+        workerIncarnationId: input.workerIncarnationId,
+        scope,
+      });
+      return true;
+    });
 
     await reconcileTaskDispatchLifecycle(now);
 
-    expect(mocks.heartbeat).toHaveBeenCalledWith({
+    expect(mocks.heartbeat).not.toHaveBeenCalled();
+    expect(mocks.closeWorker).toHaveBeenCalledWith({
+      paneId: 'pane-live',
       sessionId: 'session-live',
       missionId: 'mission-a',
-      dispatchId: undefined,
       workerIncarnationId: 'worker-incarnation-live',
-      leaseMs: 10 * 60_000,
+      scope,
+    });
+    expect(mocks.blockSessionExit).toHaveBeenNthCalledWith(1, {
+      sessionId: 'session-live',
+      workerIncarnationId: 'worker-incarnation-live',
+      reason: 'O worker ficou sem atividade e sem heartbeat por 10 minutos (stalled).',
     });
     expect(mocks.requeueMissingRuntime).toHaveBeenCalledWith({
       taskId: 'task-unknown',
@@ -221,13 +271,14 @@ describe('main-owned task dispatch lifecycle', () => {
     expect(mocks.blockExpired).not.toHaveBeenCalled();
   });
 
-  it('adopts a live external session by the same durable identity', async () => {
+  it('keeps an expired external transport fenced without a physical close authority', async () => {
     mocks.list.mockReturnValue([{
       id: 'dispatch-external',
       taskId: 'task-external',
       missionId: 'mission-a',
       revision: 4,
       state: 'running',
+      paneId: 'pane-external',
       sessionId: 'external-session',
       leaseExpiresAt: 900,
       workerIncarnationId: 'worker-incarnation-external',
@@ -242,23 +293,56 @@ describe('main-owned task dispatch lifecycle', () => {
 
     await reconcileTaskDispatchLifecycle(now);
 
-    expect(mocks.heartbeat).toHaveBeenCalledWith({
-      sessionId: 'external-session',
-      missionId: 'mission-a',
-      dispatchId: 'dispatch-external',
-      workerIncarnationId: 'worker-incarnation-external',
-      leaseMs: 10 * 60_000,
-    });
+    expect(mocks.heartbeat).not.toHaveBeenCalled();
+    expect(mocks.closeWorker).not.toHaveBeenCalled();
+    expect(mocks.blockSessionExit).not.toHaveBeenCalled();
     expect(mocks.requeueMissingRuntime).not.toHaveBeenCalled();
   });
 
-  it('never requeues a physically live worker when heartbeat persistence fails', async () => {
+  it('recovers the exact PTY pane identity when a legacy running row omitted paneId', async () => {
+    mocks.list.mockReturnValue([{
+      id: 'dispatch-legacy',
+      taskId: 'task-legacy',
+      missionId: 'mission-a',
+      revision: 4,
+      state: 'running',
+      sessionId: 'session-legacy',
+      leaseExpiresAt: 900,
+      workerIncarnationId: 'worker-incarnation-legacy',
+    }]);
+    mocks.getAgentSessionInfo.mockReturnValue({
+      sessionId: 'session-legacy',
+      paneId: 'pane-legacy',
+      role: 'worker',
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-incarnation-legacy',
+      scope,
+    });
+
+    await reconcileTaskDispatchLifecycle(now);
+
+    expect(mocks.closeWorker).toHaveBeenCalledWith({
+      paneId: 'pane-legacy',
+      sessionId: 'session-legacy',
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-incarnation-legacy',
+      scope,
+    });
+    expect(mocks.blockSessionExit).toHaveBeenCalledWith({
+      sessionId: 'session-legacy',
+      workerIncarnationId: 'worker-incarnation-legacy',
+      reason: expect.stringMatching(/sem atividade|stalled/i),
+    });
+  });
+
+  it('keeps an expired worker fenced when physical retirement is not proven', async () => {
     mocks.list.mockReturnValue([{
       id: 'dispatch-live-db-error',
       taskId: 'task-live-db-error',
       missionId: 'mission-a',
       revision: 5,
       state: 'running',
+      paneId: 'pane-live-db-error',
       sessionId: 'session-live-db-error',
       leaseExpiresAt: 900,
       workerIncarnationId: 'worker-incarnation-live-db-error',
@@ -270,14 +354,40 @@ describe('main-owned task dispatch lifecycle', () => {
       workerIncarnationId: 'worker-incarnation-live-db-error',
       scope,
     });
-    mocks.heartbeat.mockImplementationOnce(() => {
-      throw new Error('database temporarily busy');
+    mocks.closeWorker.mockResolvedValueOnce(false);
+
+    await reconcileTaskDispatchLifecycle(now);
+
+    expect(mocks.heartbeat).not.toHaveBeenCalled();
+    expect(mocks.blockSessionExit).not.toHaveBeenCalled();
+    expect(mocks.requeueMissingRuntime).not.toHaveBeenCalled();
+  });
+
+  it('leaves an exact live worker alone while its activity lease is valid', async () => {
+    mocks.list.mockReturnValue([{
+      id: 'dispatch-live',
+      taskId: 'task-live',
+      missionId: 'mission-a',
+      revision: 5,
+      state: 'running',
+      paneId: 'pane-live',
+      sessionId: 'session-live',
+      leaseExpiresAt: now + 1,
+      workerIncarnationId: 'worker-incarnation-live',
+    }]);
+    mocks.getAgentSessionInfo.mockReturnValue({
+      sessionId: 'session-live',
+      role: 'worker',
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-incarnation-live',
+      scope,
     });
 
     await reconcileTaskDispatchLifecycle(now);
 
-    expect(mocks.heartbeat).toHaveBeenCalledOnce();
-    expect(mocks.requeueMissingRuntime).not.toHaveBeenCalled();
+    expect(mocks.heartbeat).not.toHaveBeenCalled();
+    expect(mocks.closeWorker).not.toHaveBeenCalled();
+    expect(mocks.blockSessionExit).not.toHaveBeenCalled();
   });
 
   it('does not adopt a live session from a previous worker incarnation', async () => {
@@ -328,6 +438,74 @@ describe('main-owned task dispatch lifecycle', () => {
       revision: 6,
     });
     expect(mocks.blockExpired).not.toHaveBeenCalled();
+  });
+
+  it('repairs the exact legacy dirty-checkout block after checkpointing the primary once', async () => {
+    mocks.list.mockReturnValue([
+      {
+        id: 'dispatch-legacy-dirty-checkout',
+        taskId: 'task-legacy-dirty-checkout',
+        missionId: 'mission-a',
+        revision: 9,
+        attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+        state: 'blocked',
+        lastError: LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
+        leaseExpiresAt: 900,
+      },
+      {
+        id: 'dispatch-auth-block',
+        taskId: 'task-auth-block',
+        missionId: 'mission-a',
+        revision: 4,
+        attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+        state: 'blocked',
+        lastError: 'authentication failed',
+        leaseExpiresAt: 900,
+      },
+    ]);
+
+    await reconcileTaskDispatchLifecycle(now);
+
+    expect(
+      mocks.ensureGuidedGitBaselineForWorktreeAsync,
+    ).toHaveBeenCalledOnce();
+    expect(
+      mocks.ensureGuidedGitBaselineForWorktreeAsync,
+    ).toHaveBeenCalledWith(scope);
+    expect(
+      mocks.recoverLegacyGuidedDirtyCheckoutBootstrap,
+    ).toHaveBeenCalledOnce();
+    expect(
+      mocks.recoverLegacyGuidedDirtyCheckoutBootstrap,
+    ).toHaveBeenCalledWith('task-legacy-dirty-checkout');
+  });
+
+  it('does not checkpoint a stale legacy row before store authority is proven', async () => {
+    mocks.list.mockReturnValue([
+      {
+        id: 'dispatch-stale-dirty-checkout',
+        taskId: 'task-stale-dirty-checkout',
+        missionId: 'mission-replanned',
+        revision: 9,
+        attempt: TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
+        state: 'blocked',
+        lastError: LEGACY_GUIDED_DIRTY_CHECKOUT_TERMINAL_REASON,
+        leaseExpiresAt: 900,
+      },
+    ]);
+    mocks.canRecoverLegacyGuidedDirtyCheckoutBootstrap.mockReturnValue(false);
+
+    await reconcileTaskDispatchLifecycle(now);
+
+    expect(
+      mocks.canRecoverLegacyGuidedDirtyCheckoutBootstrap,
+    ).toHaveBeenCalledWith('task-stale-dirty-checkout');
+    expect(
+      mocks.ensureGuidedGitBaselineForWorktreeAsync,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.recoverLegacyGuidedDirtyCheckoutBootstrap,
+    ).not.toHaveBeenCalled();
   });
 
   it('retires a terminal dispatch through its exact physical identity', async () => {
