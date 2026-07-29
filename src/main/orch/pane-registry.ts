@@ -111,6 +111,8 @@ function paneMetaKey(owner: WebContents, paneId: string): string {
 interface PendingSpawn {
   resolve: (result: OrchPaneSpawnResult) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** Main-only first turn; deliberately absent from the renderer request. */
+  initialPrompt?: string;
   meta: OrchMeta;
   requestedCwd?: string;
   owner: WebContents;
@@ -1343,6 +1345,8 @@ function canonicalMissionPaneSpawnOptions<T extends PaneSpawnOptions>(
 
 /** Pending gate context plus the exact main-authored process request. */
 export type PendingSpawnMeta = OrchMeta & {
+  /** Main-only first turn; never renderer-authored or included in snapshots. */
+  initialPrompt?: string;
   requestedCwd?: string;
   sealedRequest?: Readonly<OrchPaneSpawnRequest>;
 };
@@ -1366,6 +1370,9 @@ function claimPendingSpawn(
   pending.claimed = true;
   return {
     ...pending.meta,
+    ...(pending.initialPrompt === undefined
+      ? {}
+      : { initialPrompt: pending.initialPrompt }),
     authoritySeal: pending.meta.authoritySeal
       ? Object.freeze({ ...pending.meta.authoritySeal })
       : undefined,
@@ -1704,6 +1711,7 @@ export function requestPaneSpawn(
       resolve,
       timer,
       owner,
+      initialPrompt: options.initialPrompt,
       claimed: false,
       claimedSessionId: null,
       requestedCwd,

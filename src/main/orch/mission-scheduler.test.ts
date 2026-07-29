@@ -99,6 +99,46 @@ describe('mission-scheduler P0 pure core', () => {
     expect(decision.plan.waveSize).toBe(1);
   });
 
+  it('prioritizes guided implementation over advisory roots without reducing the wave', () => {
+    const advisory = task('guided-advisory-1', {
+      ownership: {
+        files: ['src/advisory.ts'],
+        symbols: [],
+        domains: ['guided-advisory'],
+      },
+    });
+    const execution = task('guided-execution', {
+      ownership: {
+        files: ['src/execution.ts'],
+        symbols: [],
+        domains: ['guided-implementation'],
+      },
+    });
+
+    const capOne = decideSchedule(
+      [advisory, execution],
+      [],
+      { configuredCap: 1, cores: 8, paneBudget: 8 },
+      NOW,
+    );
+    expect(capOne.plan.kind).toBe('dispatch');
+    if (capOne.plan.kind !== 'dispatch') return;
+    expect(capOne.plan.taskIds).toEqual(['guided-execution']);
+
+    const capTwo = decideSchedule(
+      [advisory, execution],
+      [],
+      { configuredCap: 2, cores: 8, paneBudget: 8 },
+      NOW,
+    );
+    expect(capTwo.plan.kind).toBe('dispatch');
+    if (capTwo.plan.kind !== 'dispatch') return;
+    expect(capTwo.plan.taskIds).toEqual([
+      'guided-execution',
+      'guided-advisory-1',
+    ]);
+  });
+
   it('blocks dependent until parent is done+merged (next wave)', () => {
     const tasks = [
       task('a'),

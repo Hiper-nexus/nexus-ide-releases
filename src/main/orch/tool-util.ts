@@ -78,6 +78,7 @@ const AGENT_BOOT_TIMEOUT_MS = 60_000;
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
 const RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS = 3_000;
+const MAX_AGY_INITIAL_PROMPT_BYTES = 64 * 1024;
 const CLAUDE_FAMILY_TURN_PROOF_ADAPTERS = new Set([
   'claude',
   'glm',
@@ -478,6 +479,8 @@ export async function deliverAgentPrompt(
 
 export interface SpawnToolOptions {
   adapterId: string;
+  /** Main-only provider-native first turn; never accepted from renderer IPC. */
+  initialPrompt?: string;
   /** Main-selected vault identity; never let the renderer choose for missions. */
   accountId?: string;
   model?: string;
@@ -673,12 +676,42 @@ export async function spawnPaneAndMaybePrompt(
       ),
     };
   }
+  const omitHandoff =
+    options.omitHandoffContract === true ||
+    options.role === 'orchestrator' ||
+    (Array.isArray(options.allowedTools) &&
+      options.allowedTools.includes('nexus_merge_review_submit') &&
+      !options.allowedTools.includes('nexus_handoff_submit'));
+  const finalPrompt = options.prompt
+    ? omitHandoff
+      ? options.prompt
+      : withHandoffContract(options.prompt, adapter, {
+          category: options.agentCategory,
+          hints: [options.title, options.agentName],
+        })
+    : undefined;
+  const shouldUseAgyInitialPrompt = Boolean(
+    adapter.id === 'agy' &&
+      options.missionId &&
+      options.role === 'worker' &&
+      finalPrompt,
+  );
+  let initialPrompt: string | undefined;
+  if (shouldUseAgyInitialPrompt && finalPrompt) {
+    initialPrompt = assertSafePtyPrompt(finalPrompt);
+    if (Buffer.byteLength(initialPrompt, 'utf8') > MAX_AGY_INITIAL_PROMPT_BYTES) {
+      throw new Error(
+        `AGY initial prompt exceeds ${MAX_AGY_INITIAL_PROMPT_BYTES} bytes`,
+      );
+    }
+  }
   // Agent CLIs can read and execute native tools. Pin every orchestrated spawn
   // to the active workspace before the renderer/PTY boundary; never inherit
   // pty-manager's user-shell fallback to HOME.
   const safeOptions: SpawnToolOptions = {
     ...options,
     model: effectiveModel,
+    ...(initialPrompt === undefined ? {} : { initialPrompt }),
     // The durable pane seal is the authoritative mission revision. Main-owned
     // scheduler spawns do not originate from an MCP AgentGateContext, so
     // carrying this value here prevents a writable worker from being silently
@@ -689,8 +722,14 @@ export async function spawnPaneAndMaybePrompt(
     cwd: resolveCwdForScope(options.executionScope ?? options.scope, options.cwd),
   };
   assertMcpInvocationCurrent(hooks.invocation);
+  const {
+    prompt: _prompt,
+    omitHandoffContract: _omitHandoffContract,
+    agentCategory: _agentCategory,
+    ...paneSpawnOptions
+  } = safeOptions;
   const result = await requestPaneSpawn({
-    ...safeOptions,
+    ...paneSpawnOptions,
     ...(hooks.invocation?.signal
       ? { abortSignal: hooks.invocation.signal }
       : {}),
@@ -731,53 +770,54 @@ export async function spawnPaneAndMaybePrompt(
       paneId: result.paneId,
     });
   }
-  if (options.prompt) {
+  if (finalPrompt) {
     try {
-      // Let the CLI finish booting before typing (first idle or timeout).
-      // Cancellation belongs inside the cleanup boundary because a pane
-      // already exists at this point.
-      const boot = await waitForIdle(
-        result.sessionId,
-        AGENT_BOOT_TIMEOUT_MS,
-        hooks.invocation?.signal,
-      );
-      const omitHandoff =
-        options.omitHandoffContract === true ||
-        options.role === 'orchestrator' ||
-        (Array.isArray(options.allowedTools) &&
-          options.allowedTools.includes('nexus_merge_review_submit') &&
-          !options.allowedTools.includes('nexus_handoff_submit'));
-      const prompt = omitHandoff
-        ? options.prompt
-        : withHandoffContract(options.prompt, adapter, {
-            category: options.agentCategory,
-            hints: [options.title, options.agentName],
-          });
-      if (boot === 'exited') {
-        // The exact PTY exit may already have moved the durable dispatch to
-        // blocked. Inspect that physical outcome before re-running the spawn
-        // authority fence; otherwise the generic blocked-state assertion
-        // replaces the provider's real bootstrap failure.
-        throw agentBootExitError(result.sessionId);
-      }
-      assertMcpInvocationCurrent(hooks.invocation);
-      // 'idle' or 'timeout' (slow boot): deliver and prove acceptance —
-      // a swallowed brief used to leave a zombie worker no watchdog can see.
-      const promptAccepted = await deliverAgentPrompt(
-        result.sessionId,
-        prompt,
-        hooks.invocation,
-        { adapterId: adapter.id },
-      );
-      if (promptAccepted) {
-        hooks.onPromptAccepted?.(result.paneId, result.sessionId, prompt);
-      } else if (hooks.onPromptAccepted || options.readOnly === true) {
-        // Read-only reviewers (merge-council) must not burn the full review
-        // timeout as silent zombies when the brief was swallowed. Callers that
-        // register onPromptAccepted already require the same proof.
-        throw new Error(
-          'agent prompt remained live without physical acceptance proof',
+      if (initialPrompt) {
+        assertMcpInvocationCurrent(hooks.invocation);
+        hooks.onPromptAccepted?.(
+          result.paneId,
+          result.sessionId,
+          initialPrompt,
         );
+      } else {
+        // Let the CLI finish booting before typing (first idle or timeout).
+        // Cancellation belongs inside the cleanup boundary because a pane
+        // already exists at this point.
+        const boot = await waitForIdle(
+          result.sessionId,
+          AGENT_BOOT_TIMEOUT_MS,
+          hooks.invocation?.signal,
+        );
+        if (boot === 'exited') {
+          // The exact PTY exit may already have moved the durable dispatch to
+          // blocked. Inspect that physical outcome before re-running the spawn
+          // authority fence; otherwise the generic blocked-state assertion
+          // replaces the provider's real bootstrap failure.
+          throw agentBootExitError(result.sessionId);
+        }
+        assertMcpInvocationCurrent(hooks.invocation);
+        // 'idle' or 'timeout' (slow boot): deliver and prove acceptance —
+        // a swallowed brief used to leave a zombie worker no watchdog can see.
+        const promptAccepted = await deliverAgentPrompt(
+          result.sessionId,
+          finalPrompt,
+          hooks.invocation,
+          { adapterId: adapter.id },
+        );
+        if (promptAccepted) {
+          hooks.onPromptAccepted?.(
+            result.paneId,
+            result.sessionId,
+            finalPrompt,
+          );
+        } else if (hooks.onPromptAccepted || options.readOnly === true) {
+          // Read-only reviewers (merge-council) must not burn the full review
+          // timeout as silent zombies when the brief was swallowed. Callers that
+          // register onPromptAccepted already require the same proof.
+          throw new Error(
+            'agent prompt remained live without physical acceptance proof',
+          );
+        }
       }
     } catch (error) {
       // Never leave a mute zombie pane occupying a mission worker slot. The

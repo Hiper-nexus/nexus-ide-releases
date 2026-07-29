@@ -15,12 +15,14 @@ import {
   taskDispatchRowSchema as rowSchema,
   taskDispatchTokenHash as tokenHash,
   taskIntegrationReceiptSchema,
+  taskProviderWaiverHitKindSchema,
   taskDispatchRecordFromRow,
   type ClaimedTaskDispatch,
   type TaskDispatchFencedMutation as FencedMutation,
   type TaskDispatchRecord,
   type TaskDispatchState,
   type TaskIntegrationReceipt,
+  type TaskProviderWaiverHitKind,
 } from "./task-dispatch-codec";
 import {
   assertIntegratedPhysicalGitAuthority,
@@ -31,6 +33,9 @@ import {
   assertPhysicalTaskHandoffAuthority,
 } from "./task-dispatch-physical-handoff-authority";
 import { assertSealedTaskDispatchPlanAuthority } from "./task-dispatch-sealed-plan-authority";
+import { sealedPlanTaskConsumers } from "./task-dispatch-sealed-plan-authority";
+import { decideProviderFailureTaskPolicy } from "./provider-failure-task-policy";
+import type { GuidedTaskKind } from "./guided-task-kind";
 import {
   claimTaskDispatch,
   type TaskDispatchClaimInput,
@@ -792,6 +797,168 @@ export class TaskDispatchStore {
       .immediate();
     if (!record)
       throw new Error("dispatch desapareceu após read-only complete");
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
+   * Read-only eligibility projection for the provider-failure waiver policy.
+   * Corruption still throws; an unprovable sealed authority returns null so the
+   * caller follows the limited retry/failover path instead of waiving.
+   */
+  readProviderFailureWaiverEligibility(rawTaskId: string): {
+    readonly dispatch: TaskDispatchRecord;
+    readonly guidedTaskKind: GuidedTaskKind | null;
+    readonly dependsOn: readonly string[];
+    readonly consumers: readonly string[];
+  } | null {
+    const taskId = idSchema.parse(rawTaskId);
+    const db = this.#binding.readDatabase();
+    const current = this.#getRow(db, taskId);
+    if (!current) return null;
+    let sealed: ReturnType<typeof assertSealedTaskDispatchPlanAuthority>;
+    try {
+      sealed = assertSealedTaskDispatchPlanAuthority(db, current);
+    } catch (error) {
+      if (error instanceof ScopedStoreCorruptionError) throw error;
+      return null;
+    }
+    const dispatch = this.#getFromDatabase(db, taskId);
+    if (!dispatch) return null;
+    return Object.freeze({
+      dispatch,
+      guidedTaskKind: sealed.schedule.guidedTaskKind,
+      dependsOn: sealed.schedule.dependsOn,
+      consumers: sealedPlanTaskConsumers(sealed, taskId),
+    });
+  }
+
+  /**
+   * Advisory provider-unavailable waiver — the single validated exception to
+   * the physical-handoff completion rule. Only a sealed Guided advisory root
+   * with no planned consumers may end here: the task closes `done` with an
+   * auditable `advisory_provider_unavailable` receipt CAS-bound to the exact
+   * mission/intent/revision and to the exact physical worker incarnation that
+   * detected the provider hit. NEVER a synthetic handoff: `handoff_id` stays
+   * NULL and no MCP receipt is minted. The transaction re-proves the whole
+   * sealed-plan eligibility so a caller cannot widen the exception.
+   */
+  completeSealedAdvisoryProviderWaiver(input: {
+    readonly taskId: string;
+    readonly revision: number;
+    readonly paneId: string;
+    readonly sessionId: string;
+    readonly workerIncarnationId: string;
+    readonly adapterId: string;
+    readonly hitKind: TaskProviderWaiverHitKind;
+    readonly causeSha256: string;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const revision = z.number().int().positive().parse(input.revision);
+    const paneId = idSchema.parse(input.paneId);
+    const sessionId = idSchema.parse(input.sessionId);
+    const workerIncarnationId = idSchema.parse(input.workerIncarnationId);
+    const adapterId = idSchema.parse(input.adapterId);
+    const hitKind = taskProviderWaiverHitKindSchema.parse(input.hitKind);
+    const causeSha256 = z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .parse(input.causeSha256);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (
+          !current ||
+          current.revision !== revision ||
+          current.pane_id !== paneId ||
+          current.session_id !== sessionId ||
+          current.worker_incarnation_id !== workerIncarnationId ||
+          current.adapter_id !== adapterId ||
+          current.handoff_id !== null ||
+          current.integration_receipt_json !== null ||
+          ![
+            "claimed",
+            "routed",
+            "spawning",
+            "running",
+            "suspended",
+          ].includes(current.state)
+        ) {
+          throw new Error(
+            "advisory provider waiver exige dispatch ativo exato, sem handoff e sem receipt",
+          );
+        }
+        this.#assertCurrentIntent(db, current);
+        const sealed = assertSealedTaskDispatchPlanAuthority(db, current);
+        if (sealed.task.status !== "running") {
+          throw new Error("advisory provider waiver exige a task running");
+        }
+        const decision = decideProviderFailureTaskPolicy({
+          guidedTaskKind: sealed.schedule.guidedTaskKind,
+          dependsOn: sealed.schedule.dependsOn,
+          consumers: sealedPlanTaskConsumers(sealed, taskId),
+          hitKind,
+        });
+        if (decision.decision !== "waive") {
+          throw new Error(
+            `advisory provider waiver negado: ${decision.reason}`,
+          );
+        }
+        const receipt: TaskIntegrationReceipt = {
+          kind: "advisory_provider_unavailable",
+          reference: `provider-unavailable:${hitKind}:${causeSha256}`,
+          completedAt: now,
+          waiver: {
+            missionId: current.mission_id,
+            intentVersion: current.intent_version,
+            taskId: current.task_id,
+            revision,
+            sessionId,
+            workerIncarnationId,
+            adapterId,
+            hitKind,
+            causeSha256,
+          },
+        };
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+         SET state = 'completed', revision = revision + 1,
+             integration_receipt_json = ?, completed_at = ?, updated_at = ?
+         WHERE task_id = ? AND revision = ?
+           AND integration_receipt_json IS NULL AND handoff_id IS NULL
+           AND session_id = ? AND worker_incarnation_id = ?
+           AND state IN ('claimed', 'routed', 'spawning', 'running', 'suspended')`,
+          )
+          .run(
+            JSON.stringify(receipt),
+            now,
+            now,
+            taskId,
+            revision,
+            sessionId,
+            workerIncarnationId,
+          );
+        if (updated.changes !== 1) {
+          throw new Error("advisory provider waiver perdeu CAS");
+        }
+        const taskUpdate = db
+          .prepare(
+            `UPDATE tasks SET status = 'done', updated_at = ?
+         WHERE id = ? AND status = 'running'`,
+          )
+          .run(now, taskId);
+        if (taskUpdate.changes !== 1) {
+          throw new Error("advisory provider waiver: task não estava running");
+        }
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) {
+      throw new Error("dispatch desapareceu após advisory provider waiver");
+    }
     this.#binding.emitChange();
     return record;
   }

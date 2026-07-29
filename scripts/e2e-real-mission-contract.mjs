@@ -17,9 +17,9 @@ export const REAL_MISSION_CTA =
 export const PRIVATE_FILE_MODE = 0o600;
 export const PRIVATE_DIRECTORY_MODE = 0o700;
 /**
- * Comma-separated advisor CLI ids whose credentials/binaries were unavailable
- * when the gate staged the isolated HOME. The child observer reads this env to
- * mark those advisors as `skipped: no-credential` instead of failing.
+ * Comma-separated advisor CLI ids explicitly skipped by the operator or whose
+ * credentials/binaries were unavailable while staging the isolated HOME. The
+ * child observer records those advisors as skipped instead of failing.
  */
 export const REAL_MISSION_ADVISOR_SKIP_ENV = "NEXUS_REAL_MISSION_ADVISOR_SKIP";
 export const REAL_MISSION_ADVISOR_SKIP_PATTERN =
@@ -54,6 +54,19 @@ export function mergeRealMissionAdvisorSkipEnv(
     }
   }
   return [...merged].sort().join(",");
+}
+
+/**
+ * A segunda variante física só é opcional quando o operador declarou Claude
+ * no skip estrito antes de iniciar o gate. Skips descobertos durante o staging
+ * de uma variante não chegam a esta decisão e, portanto, não afrouxam o gate.
+ */
+export function realMissionProductWizardOrchestrators(environment) {
+  const declared = environment?.[REAL_MISSION_ADVISOR_SKIP_ENV];
+  const normalized = mergeRealMissionAdvisorSkipEnv(declared, []);
+  return normalized.split(",").includes("claude")
+    ? ["codex"]
+    : ["codex", "claude"];
 }
 /**
  * Variante de orquestrador do harness: codex (default, ausente) ou claude.

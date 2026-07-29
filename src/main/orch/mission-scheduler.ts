@@ -252,6 +252,12 @@ function taskById(
   return map;
 }
 
+const GUIDED_IMPLEMENTATION_DOMAIN = 'guided-implementation';
+
+function readyTaskPriority(task: ScheduleTask): number {
+  return task.ownership.domains.includes(GUIDED_IMPLEMENTATION_DOMAIN) ? 0 : 1;
+}
+
 /**
  * Ready = pending and every dependsOn task exists, is done, and is merged.
  * Unknown dependency ids block the task (fail-closed).
@@ -267,7 +273,13 @@ export function computeReadySet(
       return dep !== undefined && dep.status === 'done' && dep.merged;
     });
   });
-  return Object.freeze([...ready].sort((a, b) => a.id.localeCompare(b.id)));
+  return Object.freeze(
+    [...ready].sort(
+      (a, b) =>
+        readyTaskPriority(a) - readyTaskPriority(b) ||
+        a.id.localeCompare(b.id),
+    ),
+  );
 }
 
 export interface DependencyValidationResult {

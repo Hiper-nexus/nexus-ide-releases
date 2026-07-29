@@ -27,6 +27,7 @@ import {
   REAL_MISSION_ORCHESTRATOR_ENV,
   REAL_MISSION_TIMEOUT_MS,
   canonicalJson,
+  realMissionProductWizardOrchestrators,
   record,
 } from "./e2e-real-mission-contract.mjs";
 import {
@@ -575,8 +576,9 @@ async function runPackagedRealMissionCore(
   /**
    * One physical packaged run of an orchestrator variant against the same
    * verified target, release binding and runtime attestation (same HMAC
-   * secret/challenge). The product release gate runs the mission twice —
-   * codex and claude orchestrators — each in its own isolated userData.
+   * secret/challenge). The product release gate normally runs both codex and
+   * claude, each in its own isolated userData. An explicit operator skip for a
+   * known Claude outage leaves the Codex run as the sole physical variant.
    */
   const runVariant = async (
     orchestratorCli,
@@ -818,9 +820,18 @@ async function runPackagedRealMissionCore(
       // The private diagnostic stays a single codex-orchestrator engine run.
       return { ...primary, target };
     }
-    // The sealed product release gate must also prove the Claude orchestrator
-    // variant against the same ZIP/commit/identity and the same HMAC
-    // attestation material.
+    const releaseOrchestrators =
+      realMissionProductWizardOrchestrators(environment);
+    if (!releaseOrchestrators.includes("claude")) {
+      return {
+        ...primary,
+        target,
+        skippedOrchestrators: ["claude"],
+      };
+    }
+    // Unless the operator explicitly declared the provider unavailable, the
+    // sealed release gate continues to prove the Claude orchestrator variant
+    // against the same ZIP/commit/identity and HMAC attestation material.
     const claudeOrchestrator = await runVariant(
       "claude",
       REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE,

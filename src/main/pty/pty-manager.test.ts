@@ -1109,12 +1109,15 @@ describe("AGY advisory native profile", () => {
       const baseAuthority = revisionBoundWorker(
         fs.realpathSync.native(worktree),
       );
+      const initialPrompt =
+        "Inspecione o projeto.\n\n### NEXUS_HANDOFF v1\n{\"status\":\"done\"}";
       const authority: BoundSpawnAuthority = {
         ...baseAuthority,
         context: {
           ...baseAuthority.context!,
           readOnly: true,
           nativeReadOnly: false,
+          initialPrompt,
         },
       };
       let sessionId: string | null = null;
@@ -1136,6 +1139,13 @@ describe("AGY advisory native profile", () => {
         const expectedHome = fs.realpathSync.native(nativeHome);
         expect(spec.file).toBe("/mock/bin/agy");
         expect(spec.args).toContain("--dangerously-skip-permissions");
+        expect(
+          spec.args.filter((arg) => arg === "--prompt-interactive"),
+        ).toHaveLength(1);
+        expect(
+          spec.args[spec.args.indexOf("--prompt-interactive") + 1],
+        ).toBe(initialPrompt);
+        expect(spec.args).not.toContain("--print");
         expect(spec.args).not.toContain("/usr/bin/sandbox-exec");
         expect(spec.env.HOME).toBe(expectedHome);
         expect(spec.env.USERPROFILE).toBe(expectedHome);
@@ -1148,6 +1158,48 @@ describe("AGY advisory native profile", () => {
       }
     },
   );
+
+  it("does not pass a worker initial prompt to an AGY orchestrator", async () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-agy-maestro-"));
+    const worktree = path.join(root, "worktree");
+    fs.mkdirSync(worktree);
+    const baseAuthority = revisionBoundWorker(
+      fs.realpathSync.native(worktree),
+    );
+    const authority: BoundSpawnAuthority = {
+      ...baseAuthority,
+      context: {
+        ...baseAuthority.context!,
+        role: "orchestrator",
+        initialPrompt: "must not reach argv",
+      },
+    };
+    const host = fakeHost();
+    setPtyHost(host.host);
+    let sessionId: string | null = null;
+
+    try {
+      ({ sessionId } = spawnMainOwnedAgentSession(
+        {
+          kind: "cli-agent",
+          paneId: "agy-orchestrator",
+          cols: 100,
+          rows: 30,
+        },
+        builtinCliPtyAdapter("agy"),
+        {},
+        authority,
+      ));
+
+      const spec = host.specFor(sessionId);
+      expect(spec.args).not.toContain("--prompt-interactive");
+      expect(spec.args).not.toContain("must not reach argv");
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("cli-agent spawn argv hardening", () => {

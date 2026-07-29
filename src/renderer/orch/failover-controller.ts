@@ -21,6 +21,14 @@ export function useFailoverController(): void {
     return window.nexus.accounts.onFailover((event) => {
       const push = useToastStore.getState().push;
       if (!event.switched) {
+        if (event.missionTaskWaived) {
+          push(
+            'info',
+            'Análise advisory dispensada',
+            `${event.reason}. A missão segue sem aguardar esta task opcional.`,
+          );
+          return;
+        }
         const copy = blockedFailoverToastCopy(event);
         push(
           'error',

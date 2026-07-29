@@ -450,8 +450,10 @@ describe("pending pane spawn authority", () => {
     registerOrchRenderer(owner);
     const scope = testProjectScope();
     bindScope(owner, scope);
+    const initialPrompt = "main-owned AGY brief";
     const resultPromise = requestPaneSpawn({
       adapterId: "codex",
+      initialPrompt,
       missionId: "mission-a",
       agentName: "worker-a",
       role: "worker",
@@ -462,9 +464,11 @@ describe("pending pane spawn authority", () => {
     });
     const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
 
+    expect(request).not.toHaveProperty("initialPrompt");
     expect(claimPendingSpawnMeta(request.requestId, attacker)).toBeNull();
     const claimed = claimPendingSpawnMeta(request.requestId, owner);
     expect(claimed).toMatchObject({
+      initialPrompt,
       missionId: "mission-a",
       agentName: "worker-a",
       role: "worker",

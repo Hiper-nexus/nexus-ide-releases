@@ -159,7 +159,6 @@ const PATTERNS: Pattern[] = [
     cooldownMs: 5 * HOUR,
     re: /(?:grok|xai).{0,40}(?:rate|usage)\s+limit\s+(?:reached|exceeded|hit)/i,
   },
-  { kind: 'rate-limit', cooldownMs: 15 * 60 * 1000, re: /overloaded(?:_error)?/i },
   // Auth expiry — switching accounts may recover. Error-shaped like 429/402:
   // a bare "401" must be framed (HTTP 401 / status: 401 / error: 401 / 401
   // Unauthorized) or carry authentication_error. A naked "401" — as in the

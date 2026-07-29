@@ -64,9 +64,8 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
   { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\b(?:model|server|service)\b[^\n]{0,30}\b(?:at|over|out of)\s+capacity\b/i },
   { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\bcapacity\s+(?:exhausted|exceeded|unavailable|constraints?)\b/i },
   { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\b(?:no|insufficient)\s+capacity\b/i },
-  // omp: includes("overloaded") — código Anthropic; carrega erro por si.
-  // (No Nexus o padrão legado de "overloaded" tem precedência; mantido aqui
-  // por fidelidade para uso isolado do vendor.)
+  // omp: includes("overloaded") — código Anthropic; carrega erro por si. No
+  // Nexus este branch preserva a semântica transitória e o backoff curto.
   { reason: 'MODEL_CAPACITY_EXHAUSTED', re: /\boverloaded(?:_error)?\b/i },
   // omp: includes("529")/includes("503") nus — inaceitável em PTY (números de
   // linha, portas). Mesmo shape de prefixo do 429 legado do Nexus, ou o

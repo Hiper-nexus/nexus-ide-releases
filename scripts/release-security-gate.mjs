@@ -493,6 +493,64 @@ function hashFile(filePath) {
   };
 }
 
+function hasExactClaudeOrchestratorSkip(skippedOrchestrators) {
+  return (
+    Array.isArray(skippedOrchestrators) &&
+    skippedOrchestrators.length === 1 &&
+    skippedOrchestrators[0] === 'claude'
+  );
+}
+
+export function buildFinalizedReleaseSecurityFields(options) {
+  const isClaudeSkipped = hasExactClaudeOrchestratorSkip(
+    options.skippedOrchestrators,
+  );
+  if (
+    options.skippedOrchestrators !== undefined &&
+    !isClaudeSkipped
+  ) {
+    throw new Error('invalid skipped release orchestrator declaration');
+  }
+  if (isClaudeSkipped) {
+    if (options.e2eEvidenceClaudeOrchestrator !== undefined) {
+      throw new Error(
+        'Claude orchestrator skip cannot include fabricated Claude evidence',
+      );
+    }
+    return {
+      verification: {
+        physicalProductWizard: true,
+        skippedOrchestrators: ['claude'],
+      },
+      releaseArtifacts: {
+        signingIdentity: options.signingIdentity,
+        dmg: options.dmg,
+        zip: options.zip,
+        e2eEvidence: options.e2eEvidence,
+      },
+    };
+  }
+  if (options.e2eEvidenceClaudeOrchestrator === undefined) {
+    throw new Error(
+      'Claude orchestrator evidence and runtime proof are required',
+    );
+  }
+  return {
+    verification: {
+      physicalProductWizard: true,
+      physicalClaudeOrchestrator: true,
+    },
+    releaseArtifacts: {
+      signingIdentity: options.signingIdentity,
+      dmg: options.dmg,
+      zip: options.zip,
+      e2eEvidence: options.e2eEvidence,
+      e2eEvidenceClaudeOrchestrator:
+        options.e2eEvidenceClaudeOrchestrator,
+    },
+  };
+}
+
 export function finalizeReleaseSecurityArtifacts(options) {
   const securityDir = path.resolve(options.securityDir);
   const manifestPath = path.join(securityDir, 'security-manifest.json');
@@ -565,84 +623,108 @@ export function finalizeReleaseSecurityArtifacts(options) {
     fs.copyFileSync(options.evidencePath, evidenceAssetPath);
   }
   const e2eEvidence = hashFile(evidenceAssetPath);
-  // The Claude-orchestrator variant evidence is bound to the same commit,
-  // version, identity and ZIP, and carries its own live runtime proof.
-  if (
-    typeof options.claudeOrchestratorEvidencePath !== 'string' ||
-    options.claudeOrchestratorRuntimeProof === undefined
-  ) {
-    throw new Error(
-      'claude orchestrator evidence and runtime proof are required',
-    );
-  }
-  const claudeEvidence = assertRealMissionReleaseEvidence(
-    parseJson(
-      fs.readFileSync(options.claudeOrchestratorEvidencePath, 'utf8'),
-      'evidência E2E orquestrador Claude',
-    ),
-  );
-  if (
-    claudeEvidence?.status !== 'pass' ||
-    claudeEvidence?.launchSurface !== 'product-wizard' ||
-    claudeEvidence?.wizardCoverage !== 'main-owned-product-sequence' ||
-    claudeEvidence?.release?.commitSha !== commitSha ||
-    claudeEvidence?.release?.appVersion !== options.version ||
-    claudeEvidence?.release?.artifact?.identity !==
-      options.expectedSigningIdentity ||
-    claudeEvidence?.release?.artifact?.sha256 !== zip.sha256
-  ) {
-    throw new Error(
-      'evidência E2E orquestrador Claude não pertence ao mesmo commit/versão/identidade/ZIP',
-    );
-  }
-  assertVerifiedRealMissionRuntimeProof(
-    options.claudeOrchestratorRuntimeProof,
-    {
-      evidence: claudeEvidence,
-      releaseBinding: {
-        appVersion: options.version,
-        commitSha,
-        artifact: {
-          sha256: options.expectedE2EArtifactSha256,
-          identity: options.expectedSigningIdentity,
-        },
-      },
-    },
-  );
   const claudeEvidenceAssetPath = path.join(
     securityDir,
     'real-mission-evidence-claude-orchestrator.json',
   );
+  const isClaudeSkipped = hasExactClaudeOrchestratorSkip(
+    options.skippedOrchestrators,
+  );
   if (
-    path.resolve(options.claudeOrchestratorEvidencePath) !==
-    claudeEvidenceAssetPath
+    options.skippedOrchestrators !== undefined &&
+    !isClaudeSkipped
   ) {
-    fs.copyFileSync(
-      options.claudeOrchestratorEvidencePath,
-      claudeEvidenceAssetPath,
-    );
+    throw new Error('invalid skipped release orchestrator declaration');
   }
-  const claudeOrchestratorEvidence = hashFile(claudeEvidenceAssetPath);
+  let claudeOrchestratorEvidence;
+  if (isClaudeSkipped) {
+    if (
+      options.claudeOrchestratorEvidencePath !== undefined ||
+      options.claudeOrchestratorRuntimeProof !== undefined ||
+      fs.existsSync(claudeEvidenceAssetPath)
+    ) {
+      throw new Error(
+        'explicit Claude orchestrator skip cannot reuse or fabricate Claude evidence',
+      );
+    }
+  } else {
+    // The Claude-orchestrator variant evidence is bound to the same commit,
+    // version, identity and ZIP, and carries its own live runtime proof.
+    if (
+      typeof options.claudeOrchestratorEvidencePath !== 'string' ||
+      options.claudeOrchestratorRuntimeProof === undefined
+    ) {
+      throw new Error(
+        'claude orchestrator evidence and runtime proof are required',
+      );
+    }
+    const claudeEvidence = assertRealMissionReleaseEvidence(
+      parseJson(
+        fs.readFileSync(options.claudeOrchestratorEvidencePath, 'utf8'),
+        'evidência E2E orquestrador Claude',
+      ),
+    );
+    if (
+      claudeEvidence?.status !== 'pass' ||
+      claudeEvidence?.launchSurface !== 'product-wizard' ||
+      claudeEvidence?.wizardCoverage !== 'main-owned-product-sequence' ||
+      claudeEvidence?.release?.commitSha !== commitSha ||
+      claudeEvidence?.release?.appVersion !== options.version ||
+      claudeEvidence?.release?.artifact?.identity !==
+        options.expectedSigningIdentity ||
+      claudeEvidence?.release?.artifact?.sha256 !== zip.sha256
+    ) {
+      throw new Error(
+        'evidência E2E orquestrador Claude não pertence ao mesmo commit/versão/identidade/ZIP',
+      );
+    }
+    assertVerifiedRealMissionRuntimeProof(
+      options.claudeOrchestratorRuntimeProof,
+      {
+        evidence: claudeEvidence,
+        releaseBinding: {
+          appVersion: options.version,
+          commitSha,
+          artifact: {
+            sha256: options.expectedE2EArtifactSha256,
+            identity: options.expectedSigningIdentity,
+          },
+        },
+      },
+    );
+    if (
+      path.resolve(options.claudeOrchestratorEvidencePath) !==
+      claudeEvidenceAssetPath
+    ) {
+      fs.copyFileSync(
+        options.claudeOrchestratorEvidencePath,
+        claudeEvidenceAssetPath,
+      );
+    }
+    claudeOrchestratorEvidence = {
+      name: path.basename(claudeEvidenceAssetPath),
+      ...hashFile(claudeEvidenceAssetPath),
+    };
+  }
+  const finalizedFields = buildFinalizedReleaseSecurityFields({
+    signingIdentity: evidence.release.artifact.identity,
+    dmg: { name: path.basename(options.dmgPath), ...dmg },
+    zip: { name: path.basename(options.zipPath), ...zip },
+    e2eEvidence: {
+      name: path.basename(evidenceAssetPath),
+      ...e2eEvidence,
+    },
+    ...(isClaudeSkipped
+      ? { skippedOrchestrators: ['claude'] }
+      : {
+          e2eEvidenceClaudeOrchestrator:
+            claudeOrchestratorEvidence,
+        }),
+  });
   const finalized = {
     ...manifest,
     finalizedAt: (options.now ?? (() => new Date()))().toISOString(),
-    verification: {
-      physicalProductWizard: true,
-      physicalClaudeOrchestrator: true,
-    },
-    releaseArtifacts: {
-      signingIdentity: evidence.release.artifact.identity,
-      dmg: { name: path.basename(options.dmgPath), ...dmg },
-      zip: { name: path.basename(options.zipPath), ...zip },
-      e2eEvidence: {
-        name: path.basename(evidenceAssetPath),
-        ...e2eEvidence,
-      },
-      e2eEvidenceClaudeOrchestrator: {
-        name: path.basename(claudeEvidenceAssetPath),
-        ...claudeOrchestratorEvidence,
-      },
-    },
+    ...finalizedFields,
   };
   writeJson(manifestPath, finalized);
   return finalized;

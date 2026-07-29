@@ -318,6 +318,15 @@ describe('detectLimit — classificador vendorado do oh-my-pi', () => {
     expect(hit!.cooldownMs).toBeLessThanOrEqual(75_000);
   });
 
+  it('trata o payload literal overloaded_error da Anthropic como transitório curto', () => {
+    const hit = detectLimit(
+      '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+    );
+    expect(hit?.kind).toBe('transient');
+    expect(hit!.cooldownMs).toBeGreaterThanOrEqual(45_000);
+    expect(hit!.cooldownMs).toBeLessThanOrEqual(75_000);
+  });
+
   it('erro interno de servidor → transient com cooldown de 20s do omp', () => {
     const hit = detectLimit(
       'Anthropic API request failed: 500 Internal Server Error',

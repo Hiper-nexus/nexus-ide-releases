@@ -418,6 +418,33 @@ describe('manual GitHub release publication', () => {
     }
   });
 
+  it('publishes an honestly sealed candidate without Claude evidence after an explicit skip', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-publish-skip-'));
+    try {
+      const fixture = createCandidateSecurityFixture(
+        root,
+        {},
+        { skipClaude: true },
+      );
+      const assets = resolveSecurityAssets(
+        fixture.securityDir,
+        fixture.receipt,
+      );
+
+      expect(
+        assets.some((asset) => asset.includes('claude-orchestrator')),
+      ).toBe(false);
+      expect(fixture.receipt.artifacts).not.toHaveProperty(
+        'e2eEvidenceClaudeOrchestrator',
+      );
+      expect(fixture.receipt.verification).not.toHaveProperty(
+        'physicalClaudeOrchestrator',
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a self-consistent rewritten security manifest not sealed by the gate', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-seal-test-'));
     try {
@@ -531,6 +558,40 @@ describe('manual GitHub release publication', () => {
           tagSignerFingerprint: null,
         },
       })).toThrow(/artifact digest/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('revalidates and materializes a durable candidate with Claude explicitly skipped', () => {
+    const root = createReusableCandidateFixture({ skipClaude: true });
+    try {
+      const commitSha = 'a'.repeat(40);
+      const candidate = loadReusableReleaseCandidate({
+        root,
+        environment: publishEnvironment(),
+        authority: releaseAuthority(),
+        repository: {
+          statusPorcelain: '?? out/\n?? release-artifacts/\n',
+          headSha: commitSha,
+          tagCommitSha: commitSha,
+          tagObjectSha: 'e'.repeat(40),
+          tagObjectType: 'tag',
+          tagSignerFingerprint: null,
+        },
+      });
+      const materialized = materializeReusableReleaseCandidate(
+        root,
+        candidate,
+      );
+
+      expect(
+        materialized.canonicalAssets.some((asset) =>
+          asset.name.includes('claude-orchestrator')),
+      ).toBe(false);
+      expect(candidate.receipt.verification).toMatchObject({
+        skippedOrchestrators: ['claude'],
+      });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1081,7 +1142,7 @@ function fakeGitHub({ states, fixture, events }) {
   };
 }
 
-function createReusableCandidateFixture() {
+function createReusableCandidateFixture({ skipClaude = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-reuse-test-'));
   fs.mkdirSync(path.join(root, 'server'), { recursive: true });
   fs.mkdirSync(path.join(root, 'src', 'shared'), { recursive: true });
@@ -1156,20 +1217,28 @@ function createReusableCandidateFixture() {
   );
   fs.writeFileSync(dmgPath, 'dmg');
   fs.writeFileSync(zipPath, 'zip');
-  createCandidateSecurityFixture(root, {
-    dmg: {
-      name: path.basename(dmgPath),
-      sha256: digest('dmg'),
+  createCandidateSecurityFixture(
+    root,
+    {
+      dmg: {
+        name: path.basename(dmgPath),
+        sha256: digest('dmg'),
+      },
+      zip: {
+        name: path.basename(zipPath),
+        sha256: digest('zip'),
+      },
     },
-    zip: {
-      name: path.basename(zipPath),
-      sha256: digest('zip'),
-    },
-  });
+    { skipClaude },
+  );
   return root;
 }
 
-function createCandidateSecurityFixture(root, artifactOverrides = {}) {
+function createCandidateSecurityFixture(
+  root,
+  artifactOverrides = {},
+  { skipClaude = false } = {},
+) {
   const securityDir = path.join(root, 'release-artifacts', 'security');
   fs.mkdirSync(securityDir, { recursive: true });
   if (!fs.existsSync(path.join(root, 'package-lock.json'))) {
@@ -1240,10 +1309,12 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
         : pane,
     ),
   });
-  fs.writeFileSync(
-    path.join(securityDir, 'real-mission-evidence-claude-orchestrator.json'),
-    claudeEvidence,
-  );
+  if (!skipClaude) {
+    fs.writeFileSync(
+      path.join(securityDir, 'real-mission-evidence-claude-orchestrator.json'),
+      claudeEvidence,
+    );
+  }
   const receipt = {
     schemaVersion: 4,
     verifiedAt: '2026-07-23T00:00:00.000Z',
@@ -1261,16 +1332,22 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
         name: 'real-mission-evidence.json',
         sha256: digest(evidence),
       },
-      e2eEvidenceClaudeOrchestrator: {
-        name: 'real-mission-evidence-claude-orchestrator.json',
-        sha256: digest(claudeEvidence),
-      },
+      ...(!skipClaude
+        ? {
+            e2eEvidenceClaudeOrchestrator: {
+              name: 'real-mission-evidence-claude-orchestrator.json',
+              sha256: digest(claudeEvidence),
+            },
+          }
+        : {}),
     },
     verification: {
       signedNotarized: true,
       realMissionE2E: true,
       physicalProductWizard: true,
-      physicalClaudeOrchestrator: true,
+      ...(!skipClaude
+        ? { physicalClaudeOrchestrator: true }
+        : { skippedOrchestrators: ['claude'] }),
       singleProductMission: true,
       sameCommitAndArtifacts: true,
       tagSignatureVerified: false,
@@ -1295,7 +1372,9 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
       files,
       verification: {
         physicalProductWizard: true,
-        physicalClaudeOrchestrator: true,
+        ...(!skipClaude
+          ? { physicalClaudeOrchestrator: true }
+          : { skippedOrchestrators: ['claude'] }),
       },
       releaseArtifacts: {
         signingIdentity:
@@ -1306,10 +1385,14 @@ function createCandidateSecurityFixture(root, artifactOverrides = {}) {
           ...receipt.artifacts.e2eEvidence,
           bytes: Buffer.byteLength(evidence),
         },
-        e2eEvidenceClaudeOrchestrator: {
-          ...receipt.artifacts.e2eEvidenceClaudeOrchestrator,
-          bytes: Buffer.byteLength(claudeEvidence),
-        },
+        ...(!skipClaude
+          ? {
+              e2eEvidenceClaudeOrchestrator: {
+                ...receipt.artifacts.e2eEvidenceClaudeOrchestrator,
+                bytes: Buffer.byteLength(claudeEvidence),
+              },
+            }
+          : {}),
       },
     };
   fs.writeFileSync(

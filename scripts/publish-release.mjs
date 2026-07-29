@@ -401,9 +401,20 @@ export function buildAtomicReleasePushArgs({
   ];
 }
 
+function hasExactClaudeOrchestratorSkip(skippedOrchestrators) {
+  return (
+    Array.isArray(skippedOrchestrators) &&
+    skippedOrchestrators.length === 1 &&
+    skippedOrchestrators[0] === 'claude'
+  );
+}
+
 export function resolveSecurityAssets(securityDir, receipt) {
   const manifestPath = path.join(securityDir, 'security-manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const receiptSkips = receipt?.verification?.skippedOrchestrators;
+  const manifestSkips = manifest?.verification?.skippedOrchestrators;
+  const isClaudeSkipped = hasExactClaudeOrchestratorSkip(receiptSkips);
   if (
     manifest?.schemaVersion !== 3 ||
     manifest?.commitSha !== receipt.commitSha ||
@@ -420,6 +431,15 @@ export function resolveSecurityAssets(securityDir, receipt) {
       receipt.artifacts.e2eEvidenceClaudeOrchestrator?.name ||
     manifest?.releaseArtifacts?.e2eEvidenceClaudeOrchestrator?.sha256 !==
       receipt.artifacts.e2eEvidenceClaudeOrchestrator?.sha256 ||
+    (receiptSkips !== undefined && !isClaudeSkipped) ||
+    JSON.stringify(receiptSkips) !== JSON.stringify(manifestSkips) ||
+    (isClaudeSkipped &&
+      (receipt?.verification?.claudeOrchestratorE2E !== undefined ||
+        receipt?.verification?.physicalClaudeOrchestrator !== undefined ||
+        manifest?.verification?.physicalClaudeOrchestrator !== undefined ||
+        receipt?.artifacts?.e2eEvidenceClaudeOrchestrator !== undefined ||
+        manifest?.releaseArtifacts?.e2eEvidenceClaudeOrchestrator !==
+          undefined)) ||
     !Array.isArray(manifest.files)
   ) {
     throw new Error('security manifest and candidate receipt are not coherent');
@@ -450,11 +470,11 @@ export function resolveSecurityAssets(securityDir, receipt) {
   }
   const claudeEvidenceName =
     receipt.artifacts.e2eEvidenceClaudeOrchestrator?.name;
-  if (
+  if (!isClaudeSkipped && (
     typeof claudeEvidenceName !== 'string' ||
-    path.basename(claudeEvidenceName) !== claudeEvidenceName ||
-    claudeEvidenceName === receipt.artifacts.e2eEvidence.name
-  ) {
+      path.basename(claudeEvidenceName) !== claudeEvidenceName ||
+      claudeEvidenceName === receipt.artifacts.e2eEvidence.name
+  )) {
     throw new Error(
       'candidate receipt is missing the sealed Claude orchestrator evidence asset',
     );
@@ -463,7 +483,7 @@ export function resolveSecurityAssets(securityDir, receipt) {
     ...manifestNames,
     'security-manifest.json',
     receipt.artifacts.e2eEvidence.name,
-    claudeEvidenceName,
+    ...(!isClaudeSkipped ? [claudeEvidenceName] : []),
   ];
   if (new Set(expectedSealedNames).size !== expectedSealedNames.length) {
     throw new Error('security manifest contains duplicate reserved assets');
@@ -506,16 +526,18 @@ export function resolveSecurityAssets(securityDir, receipt) {
   ) {
     throw new Error('candidate receipt E2E evidence seal is incoherent');
   }
-  const sealedClaudeEvidence = sealed.find(
-    (entry) => entry.name === claudeEvidenceName,
-  );
-  if (
-    sealedClaudeEvidence?.sha256 !==
-    receipt.artifacts.e2eEvidenceClaudeOrchestrator.sha256
-  ) {
-    throw new Error(
-      'candidate receipt Claude orchestrator E2E evidence seal is incoherent',
+  if (!isClaudeSkipped) {
+    const sealedClaudeEvidence = sealed.find(
+      (entry) => entry.name === claudeEvidenceName,
     );
+    if (
+      sealedClaudeEvidence?.sha256 !==
+      receipt.artifacts.e2eEvidenceClaudeOrchestrator.sha256
+    ) {
+      throw new Error(
+        'candidate receipt Claude orchestrator E2E evidence seal is incoherent',
+      );
+    }
   }
   const actual = fs
     .readdirSync(securityDir, { withFileTypes: true });
@@ -669,6 +691,11 @@ function assertCandidateReceiptShape(
     tagSignatureVerified,
   },
 ) {
+  const skippedOrchestrators =
+    receipt?.verification?.skippedOrchestrators;
+  const isClaudeSkipped = hasExactClaudeOrchestratorSkip(
+    skippedOrchestrators,
+  );
   const artifactNames = [
     receipt?.artifacts?.dmg?.name,
     receipt?.artifacts?.zip?.name,
@@ -708,6 +735,20 @@ function assertCandidateReceiptShape(
     receipt?.verification?.sameCommitAndArtifacts !== true ||
     receipt?.verification?.tagSignatureVerified !==
       receipt?.tagSignatureVerified ||
+    (skippedOrchestrators !== undefined && !isClaudeSkipped) ||
+    (isClaudeSkipped &&
+      (receipt?.verification?.claudeOrchestratorE2E !== undefined ||
+        receipt?.verification?.physicalClaudeOrchestrator !== undefined ||
+        receipt?.artifacts?.e2eEvidenceClaudeOrchestrator !== undefined)) ||
+    (!isClaudeSkipped &&
+      (typeof receipt?.artifacts?.e2eEvidenceClaudeOrchestrator?.name !==
+        'string' ||
+        path.basename(
+          receipt.artifacts.e2eEvidenceClaudeOrchestrator.name,
+        ) !== receipt.artifacts.e2eEvidenceClaudeOrchestrator.name ||
+        !/^[a-f0-9]{64}$/u.test(
+          receipt?.artifacts?.e2eEvidenceClaudeOrchestrator?.sha256 ?? '',
+        ))) ||
     !/^[a-f0-9]{64}$/u.test(receipt?.artifacts?.dmg?.sha256 ?? '') ||
     !/^[a-f0-9]{64}$/u.test(receipt?.artifacts?.zip?.sha256 ?? '') ||
     !/^[a-f0-9]{64}$/u.test(

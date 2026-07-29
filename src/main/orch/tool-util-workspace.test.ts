@@ -371,6 +371,45 @@ describe('agent pane workspace confinement', () => {
     );
   });
 
+  it('starts an AGY worker with the final brief in main-owned argv instead of typing into its booting TUI', async () => {
+    const onPromptAccepted = vi.fn();
+
+    await spawnPaneAndMaybePrompt(
+      {
+        adapterId: 'agy',
+        missionId: 'm1',
+        role: 'worker',
+        readOnly: true,
+        prompt: 'Mapeie os panes e entregue o parecer.',
+        scope,
+        executionScope: taskExecutionScope,
+      },
+      { onPromptAccepted },
+    );
+
+    const spawnCalls = stubs.requestPaneSpawn.mock.calls as unknown as Array<
+      [{ initialPrompt?: string }]
+    >;
+    const spawnOptions = spawnCalls.at(-1)?.[0];
+    expect(spawnOptions).toEqual(
+      expect.objectContaining({
+        adapterId: 'agy',
+        initialPrompt: expect.stringContaining(
+          'Mapeie os panes e entregue o parecer.',
+        ),
+      }),
+    );
+    expect(spawnOptions?.initialPrompt).toContain('marker');
+    expect(stubs.waitForIdle).not.toHaveBeenCalled();
+    expect(stubs.writeSession).not.toHaveBeenCalled();
+    expect(onPromptAccepted).toHaveBeenCalledOnce();
+    expect(onPromptAccepted).toHaveBeenCalledWith(
+      'pane-1',
+      'session-1',
+      spawnOptions?.initialPrompt,
+    );
+  });
+
   it('keeps probe infrastructure fail-closed only in explicit hardened mode', async () => {
     stubs.orchSettings.squadCliPolicy = 'governed';
 

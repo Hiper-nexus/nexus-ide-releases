@@ -8,11 +8,18 @@ import { testProjectScope } from './__tests__/scope-fixture';
 const ptyMocks = vi.hoisted(() => ({
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
   exitTaps: [] as Array<(sessionId: string) => void>,
+  agentSessions: new Map<string, unknown>(),
 }));
 
 const paneMocks = vi.hoisted(() => ({
   authorities: new Map<string, unknown>(),
   panes: new Map<string, unknown>(),
+  runtimeAuthorities: new Map<string, unknown>(),
+}));
+
+const waiverMocks = vi.hoisted(() => ({
+  outcome: 'retry' as 'waived' | 'retry',
+  calls: [] as Array<Record<string, unknown>>,
 }));
 
 const accountMocks = vi.hoisted(() => ({
@@ -50,6 +57,9 @@ vi.mock('../pty/pty-manager', () => ({
       if (index >= 0) ptyMocks.exitTaps.splice(index, 1);
     };
   }),
+  getAgentSessionInfo: vi.fn(
+    (sessionId: string) => ptyMocks.agentSessions.get(sessionId) ?? null,
+  ),
 }));
 
 vi.mock('./pane-registry', () => ({
@@ -57,8 +67,20 @@ vi.mock('./pane-registry', () => ({
   getOwnedPaneAuthzInfoBySession: vi.fn(
     (ref: string) => paneMocks.authorities.get(ref) ?? null,
   ),
+  getPaneRuntimeAuthorityBySession: vi.fn(
+    (ref: string) => paneMocks.runtimeAuthorities.get(ref) ?? null,
+  ),
   findPaneBySessionOwnedBy: vi.fn(
     (_owner: WebContents, ref: string) => paneMocks.panes.get(ref) ?? null,
+  ),
+}));
+
+vi.mock('./provider-failure-waiver', () => ({
+  handleMissionWorkerProviderNoRoute: vi.fn(
+    (input: Record<string, unknown>) => {
+      waiverMocks.calls.push(input);
+      return waiverMocks.outcome;
+    },
   ),
 }));
 
@@ -168,8 +190,12 @@ beforeEach(() => {
   vi.setSystemTime(100_000);
   ptyMocks.dataTaps.length = 0;
   ptyMocks.exitTaps.length = 0;
+  ptyMocks.agentSessions.clear();
   paneMocks.authorities.clear();
   paneMocks.panes.clear();
+  paneMocks.runtimeAuthorities.clear();
+  waiverMocks.outcome = 'retry';
+  waiverMocks.calls.length = 0;
   accountMocks.setCooldown.mockClear();
   accountMocks.next = {
     id: 'account-b',
@@ -797,6 +823,176 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     expect(owner.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
       expect.objectContaining({ switched: true, toAccountId: 'account-b' }),
+    );
+  });
+});
+
+describe('mission worker main-owned sem rota de failover', () => {
+  function armMainOwnedWorker(
+    id: number,
+    options: { workerIncarnationId?: string } = {},
+  ): Renderer {
+    const scope = testProjectScope();
+    const owner = renderer(id);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    const sessionId = `sess-main-${id}`;
+    paneMocks.runtimeAuthorities.set(sessionId, {
+      owner: null,
+      paneId: `pane-main-${id}`,
+      sessionId,
+      kind: 'cli-agent',
+      missionId: `m-main-${id}`,
+      workerIncarnationId: options.workerIncarnationId ?? `inc-main-${id}`,
+      scope,
+    });
+    ptyMocks.agentSessions.set(sessionId, {
+      sessionId,
+      paneId: `pane-main-${id}`,
+      adapterId: 'claude',
+      accountId: 'account-a',
+      missionId: `m-main-${id}`,
+      workerIncarnationId: options.workerIncarnationId ?? `inc-main-${id}`,
+      cwd: '/',
+      role: 'worker',
+    });
+    return owner;
+  }
+
+  function failoverSends(owner: Renderer): unknown[][] {
+    return owner.send.mock.calls.filter(
+      (c) => c[0] === ACCOUNT_CHANNELS.failover,
+    );
+  }
+
+  it('advisory dispensada: identidade exata à política, evento distinto e nenhum retry agendado', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const { pickAvailableForFailover } = await import(
+      '../persistence/account-store'
+    );
+    const owner = armMainOwnedWorker(901);
+    waiverMocks.outcome = 'waived';
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? { kind: 'rate-limit' as const, reason: 'rate limit', cooldownMs: 60_000 }
+        : null,
+    );
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: null,
+      probe: false,
+      nextUnblockAtMs: 130_000,
+    }));
+
+    ptyMocks.dataTaps[0]!('sess-main-901', 'LIMIT');
+
+    expect(waiverMocks.calls).toHaveLength(1);
+    expect(waiverMocks.calls[0]).toMatchObject({
+      missionId: 'm-main-901',
+      paneId: 'pane-main-901',
+      sessionId: 'sess-main-901',
+      workerIncarnationId: 'inc-main-901',
+      adapterId: 'claude',
+    });
+    const sends = failoverSends(owner);
+    expect(sends).toHaveLength(1);
+    expect(sends[0]![1]).toEqual(
+      expect.objectContaining({
+        paneId: 'pane-main-901',
+        switched: false,
+        missionTaskWaived: true,
+        missionId: 'm-main-901',
+      }),
+    );
+    expect(sends[0]![1]).not.toHaveProperty('scheduledRetryAtMs');
+
+    // Nenhum retry disparado depois do waiver — a task já está done.
+    vi.advanceTimersByTime(300_000);
+    expect(failoverSends(owner)).toHaveLength(1);
+  });
+
+  it('task requerida: sem waiver, espera-pela-irmã preservada', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const { pickAvailableForFailover } = await import(
+      '../persistence/account-store'
+    );
+    const owner = armMainOwnedWorker(902);
+    waiverMocks.outcome = 'retry';
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? { kind: 'rate-limit' as const, reason: 'rate limit', cooldownMs: 60_000 }
+        : null,
+    );
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: null,
+      probe: false,
+      nextUnblockAtMs: 130_000,
+    }));
+
+    ptyMocks.dataTaps[0]!('sess-main-902', 'LIMIT');
+
+    expect(waiverMocks.calls).toHaveLength(1);
+    // O encerramento da sessão presa pela identidade exata é responsabilidade
+    // do glue (mockado aqui; coberto em provider-failure-waiver.test.ts) —
+    // escolha documentada do requisito 10: nunca sucesso sintético.
+    const sends = failoverSends(owner);
+    expect(sends).toHaveLength(1);
+    expect(sends[0]![1]).toEqual(
+      expect.objectContaining({
+        paneId: 'pane-main-902',
+        switched: false,
+        nextUnblockAtMs: 130_000,
+        scheduledRetryAtMs: 131_000,
+      }),
+    );
+    expect(sends[0]![1]).not.toHaveProperty('missionTaskWaived');
+  });
+
+  it('mission worker sem encarnação não aciona a política de waiver', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const { pickAvailableForFailover } = await import(
+      '../persistence/account-store'
+    );
+    const owner = renderer(903);
+    renderers.push(owner);
+    const scope = testProjectScope();
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    paneMocks.runtimeAuthorities.set('sess-main-903', {
+      owner: null,
+      paneId: 'pane-main-903',
+      sessionId: 'sess-main-903',
+      kind: 'cli-agent',
+      missionId: 'm-main-903',
+      workerIncarnationId: undefined,
+      scope,
+    });
+    ptyMocks.agentSessions.set('sess-main-903', {
+      sessionId: 'sess-main-903',
+      paneId: 'pane-main-903',
+      adapterId: 'claude',
+      accountId: 'account-a',
+      missionId: 'm-main-903',
+      cwd: '/',
+      role: 'orchestrator',
+    });
+    vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? { kind: 'rate-limit' as const, reason: 'rate limit', cooldownMs: 60_000 }
+        : null,
+    );
+    vi.mocked(pickAvailableForFailover).mockImplementationOnce(() => ({
+      account: null,
+      probe: false,
+      nextUnblockAtMs: 130_000,
+    }));
+
+    ptyMocks.dataTaps[0]!('sess-main-903', 'LIMIT');
+
+    expect(waiverMocks.calls).toHaveLength(0);
+    expect(failoverSends(owner)).toHaveLength(1);
+    expect(failoverSends(owner)[0]![1]).toEqual(
+      expect.objectContaining({ switched: false }),
     );
   });
 });

@@ -259,6 +259,28 @@ export function assertSealedTaskDispatchPlanAuthority(
     );
   }
 
+  // Plan-wide, hash-bound dependency view. The current task reuses the fully
+  // validated schedule; siblings are decoded straight from the immutable
+  // planner receipt (null = undecodable → callers that must prove "no
+  // consumers" fail closed).
+  const planTaskDependencies = Object.freeze(
+    plan.tasks.map((candidate) => {
+      if (candidate.taskId === dispatch.task_id) {
+        return Object.freeze({
+          taskId: candidate.taskId,
+          dependsOn: Object.freeze([...schedule.dependsOn]) as
+            | readonly string[]
+            | null,
+        });
+      }
+      const meta = decodeTaskScheduleDetail(candidate.detail).meta;
+      return Object.freeze({
+        taskId: candidate.taskId,
+        dependsOn: meta ? Object.freeze([...meta.dependsOn]) : null,
+      });
+    }),
+  );
+
   return Object.freeze({
     entry: Object.freeze({ ...entry, plannerId }),
     schedule: Object.freeze({
@@ -275,5 +297,29 @@ export function assertSealedTaskDispatchPlanAuthority(
     routeConsumedAt: reservation.consumed_at,
     task: Object.freeze({ ...task }),
     planHash: rawPlan.plan_hash,
+    planTaskDependencies,
   });
+}
+
+/**
+ * Planned tasks whose sealed schedule consumes `taskId`. Fail-closed: a
+ * sibling whose dependency meta cannot be decoded from the hash-bound planner
+ * receipt is corruption, never an absent consumer.
+ */
+export function sealedPlanTaskConsumers(
+  sealed: Pick<
+    ReturnType<typeof assertSealedTaskDispatchPlanAuthority>,
+    "planTaskDependencies"
+  >,
+  taskId: string,
+): readonly string[] {
+  const consumers: string[] = [];
+  for (const entry of sealed.planTaskDependencies) {
+    if (entry.taskId === taskId) continue;
+    if (entry.dependsOn === null) {
+      throw new ScopedStoreCorruptionError("sealed plan dependency decode");
+    }
+    if (entry.dependsOn.includes(taskId)) consumers.push(entry.taskId);
+  }
+  return Object.freeze(consumers);
 }

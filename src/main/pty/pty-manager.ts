@@ -71,6 +71,7 @@ import {
 } from "./agy-native-profile";
 import { resolveMissionCliExecutionPolicy } from "./mission-cli-execution-policy";
 import { getOrchSettings } from "../persistence/settings-store";
+import { assertSafePtyPrompt } from "../orch/pty-prompt-safety";
 
 /**
  * Owns every live PTY session — one per pane, addressed by an opaque id. The
@@ -162,6 +163,7 @@ let allSessionsTerminationInProgress = false;
 let allSessionsTerminationSealed = false;
 let counter = 0;
 const MISSION_ORCHESTRATOR_GRANT_TTL_MS = 120_000;
+const MAX_AGY_INITIAL_PROMPT_BYTES = 64 * 1024;
 
 let ptyHost: PtyHost | null = null;
 let agentHookEndpointPath: string | null = null;
@@ -984,6 +986,38 @@ export function spawnAgentSession(
   }
   if (overrides.extraArgs && overrides.extraArgs.length > 0) {
     args.push(...overrides.extraArgs);
+  }
+  const agyInitialPrompt =
+    adapter.id === "agy" &&
+    authority.source === "pending" &&
+    authority.context?.role === "worker" &&
+    Boolean(authority.context.missionId?.trim()) &&
+    !req.resume
+      ? authority.context.initialPrompt
+      : undefined;
+  if (agyInitialPrompt !== undefined) {
+    const safeInitialPrompt = assertSafePtyPrompt(agyInitialPrompt);
+    if (
+      !safeInitialPrompt ||
+      Buffer.byteLength(safeInitialPrompt, "utf8") >
+        MAX_AGY_INITIAL_PROMPT_BYTES
+    ) {
+      throw new Error(
+        `AGY initial prompt must contain 1-${MAX_AGY_INITIAL_PROMPT_BYTES} bytes`,
+      );
+    }
+    if (
+      args.some(
+        (arg) =>
+          arg === "--prompt-interactive" ||
+          arg.startsWith("--prompt-interactive="),
+      )
+    ) {
+      throw new Error(
+        "AGY initial prompt conflicts with provider settings extraArgs",
+      );
+    }
+    args.push("--prompt-interactive", safeInitialPrompt);
   }
   const sessionId = makeSessionId();
   const env = agentEnv(adapter);

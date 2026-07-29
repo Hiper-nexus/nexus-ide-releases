@@ -5,7 +5,7 @@ import {
   type FailoverEvent,
 } from '../../shared/account-types';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { tapSessionData, tapSessionExit } from '../pty/pty-manager';
+import { tapSessionData, tapSessionExit, getAgentSessionInfo } from '../pty/pty-manager';
 import {
   getRendererWorkspaceScope,
   onRendererWorkspaceScopeChange,
@@ -14,6 +14,7 @@ import {
   stripAnsi,
   findPaneBySessionOwnedBy,
   getOwnedPaneAuthzInfoBySession,
+  getPaneRuntimeAuthorityBySession,
   type OwnedPaneAuthzInfo,
 } from './pane-registry';
 import { detectLimit, tierScopeFromModelId, type LimitHit } from './limit-detector';
@@ -38,6 +39,7 @@ import {
 } from '../quota/quota-service';
 import { quotaAvailabilityScore } from '../quota/quota-policy';
 import { requestMissionDriverTick } from './mission-driver-runtime';
+import { handleMissionWorkerProviderNoRoute } from './provider-failure-waiver';
 
 /**
  * Automatic account failover. Watches each pane's output for a limit signature
@@ -88,10 +90,12 @@ interface SessionWatch {
 }
 
 interface FailoverAuthority {
-  readonly owner: OwnedPaneAuthzInfo['owner'];
+  /** Null = pane físico main-owned/headless (mission worker sem renderer). */
+  readonly owner: OwnedPaneAuthzInfo['owner'] | null;
   readonly paneId: string;
   readonly sessionId: string;
   readonly missionId?: string;
+  readonly workerIncarnationId?: string;
   readonly scope: ProjectExecutionScope;
 }
 
@@ -104,7 +108,8 @@ let untapData: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
 let unsubscribeScopeChanges: (() => void) | null = null;
 
-function ownerKey(owner: WebContents): number {
+function ownerKey(owner: WebContents | null): number {
+  if (!owner) return 0;
   const existing = ownerKeys.get(owner);
   if (existing) return existing;
   const key = nextOwnerKey++;
@@ -127,9 +132,9 @@ function watchKey(authority: FailoverAuthority): string {
 
 function resolveAuthority(sessionId: string): FailoverAuthority | null {
   const pane = getOwnedPaneAuthzInfoBySession(sessionId);
-  const rendererScope = pane ? getRendererWorkspaceScope(pane.owner) : null;
+  if (!pane) return resolveMainOwnedAuthority(sessionId);
+  const rendererScope = getRendererWorkspaceScope(pane.owner);
   if (
-    !pane ||
     pane.sessionId !== sessionId ||
     pane.kind !== 'cli-agent' ||
     !pane.scope ||
@@ -144,7 +149,34 @@ function resolveAuthority(sessionId: string): FailoverAuthority | null {
     paneId: pane.paneId,
     sessionId,
     missionId: pane.missionId,
+    workerIncarnationId: pane.workerIncarnationId,
     scope: Object.freeze({ ...pane.scope }),
+  });
+}
+
+/**
+ * Mission workers (ex.: AGY) rodam headless/main-owned: não há renderer dono
+ * nem WebContents para bind de escopo. A autoridade vem do inventário físico
+ * main-owned — a decisão de waiver/retry nunca depende do renderer.
+ */
+function resolveMainOwnedAuthority(sessionId: string): FailoverAuthority | null {
+  const runtime = getPaneRuntimeAuthorityBySession(sessionId);
+  if (
+    !runtime ||
+    runtime.owner !== null ||
+    runtime.sessionId !== sessionId ||
+    runtime.kind !== 'cli-agent' ||
+    !runtime.scope
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    owner: null,
+    paneId: runtime.paneId,
+    sessionId,
+    missionId: runtime.missionId,
+    workerIncarnationId: runtime.workerIncarnationId,
+    scope: Object.freeze({ ...runtime.scope }),
   });
 }
 
@@ -155,6 +187,7 @@ function isCurrentAuthority(authority: FailoverAuthority): boolean {
       current.owner === authority.owner &&
       current.paneId === authority.paneId &&
       current.missionId === authority.missionId &&
+      current.workerIncarnationId === authority.workerIncarnationId &&
       sameProjectScope(current.scope, authority.scope),
   );
 }
@@ -226,12 +259,68 @@ function emitFailover(
 ): void {
   if (!isCurrentAuthority(authority)) return;
   broadcastToProject(
-    [authority.owner],
+    // Main-owned não tem renderer dono: notifica qualquer listener no escopo.
+    authority.owner ? [authority.owner] : listeners,
     authority.scope,
     ACCOUNT_CHANNELS.failover,
     event,
   );
   requestMissionDriverTick();
+}
+
+/** Detalhes do pane físico, seja ele renderer-owned ou main-owned/headless. */
+interface FailoverPaneDetails {
+  readonly paneId: string;
+  readonly adapterId: string;
+  readonly model?: string;
+  readonly accountId?: string;
+}
+
+function resolvePaneDetails(
+  authority: FailoverAuthority,
+): FailoverPaneDetails | null {
+  if (authority.owner) {
+    const pane = findPaneBySessionOwnedBy(
+      authority.owner,
+      authority.sessionId,
+    );
+    if (
+      !pane ||
+      pane.paneId !== authority.paneId ||
+      pane.sessionId !== authority.sessionId ||
+      pane.kind !== 'cli-agent' ||
+      !pane.adapterId
+    ) {
+      return null;
+    }
+    return {
+      paneId: pane.paneId,
+      adapterId: pane.adapterId,
+      model: pane.model,
+      accountId: pane.accountId,
+    };
+  }
+  // Main-owned: o inventário físico do pty-manager é a autoridade do processo;
+  // a identidade exata (pane/missão/encarnação) precisa convergir com o pane
+  // registry ou o hit é ignorado.
+  const info = getAgentSessionInfo(authority.sessionId);
+  if (
+    !info ||
+    info.paneId !== authority.paneId ||
+    !info.adapterId ||
+    (authority.missionId !== undefined &&
+      info.missionId !== authority.missionId) ||
+    (authority.workerIncarnationId !== undefined &&
+      info.workerIncarnationId !== authority.workerIncarnationId)
+  ) {
+    return null;
+  }
+  return {
+    paneId: authority.paneId,
+    adapterId: info.adapterId,
+    model: info.model,
+    accountId: info.accountId,
+  };
 }
 
 /** Latest fleet-snapshot entry for one account (undefined at boot race). */
@@ -379,6 +468,52 @@ function performSwitch(req: SwitchRequest): void {
   }
 
   if (!next) {
+    // Mission worker sem rota: a política Main-owned decide — advisory Guided
+    // raiz sem consumidores recebe waiver auditável (task done + sessão física
+    // exata fechada + slot liberado); qualquer outra task segue o retry
+    // limitado e a sessão problemática é encerrada pela identidade exata.
+    if (
+      attempt === 0 &&
+      authority.missionId &&
+      authority.workerIncarnationId
+    ) {
+      const outcome = handleMissionWorkerProviderNoRoute({
+        scope: authority.scope,
+        missionId: authority.missionId,
+        paneId,
+        sessionId: authority.sessionId,
+        workerIncarnationId: authority.workerIncarnationId,
+        adapterId,
+        hit,
+      });
+      if (outcome === 'waived') {
+        console.info(
+          '[failover]',
+          JSON.stringify({
+            paneId,
+            adapterId,
+            fromAccountId: fromAccountId ?? null,
+            toAccountId: null,
+            reason: hit.reason,
+            switched: false,
+            missionTaskWaived: true,
+            attempt,
+          }),
+        );
+        emitFailover(authority, {
+          paneId,
+          fromAccountLabel: fromLabel,
+          toAccountLabel: '',
+          reason: `${hit.reason} — advisory dispensada (provider indisponível)`,
+          kind: hit.kind,
+          switched: false,
+          fromAccountId,
+          missionId: authority.missionId,
+          missionTaskWaived: true,
+        });
+        return;
+      }
+    }
     // Espera-pela-irmã (política do omp): retry automático em
     // min(fim do cooldown da própria conta, menor blockedUntil das irmãs)+1s
     // em vez de desistir ou esperar a janela multi-hora do provedor.
@@ -512,14 +647,8 @@ function fireScheduledRetry(
   attempt: number,
 ): void {
   if (!isCurrentAuthority(authority)) return;
-  const pane = findPaneBySessionOwnedBy(authority.owner, authority.sessionId);
-  if (
-    !pane ||
-    pane.paneId !== authority.paneId ||
-    pane.sessionId !== authority.sessionId ||
-    pane.kind !== 'cli-agent' ||
-    !pane.adapterId
-  ) {
+  const pane = resolvePaneDetails(authority);
+  if (!pane) {
     return;
   }
   const now = Date.now();
@@ -549,14 +678,8 @@ function fireScheduledRetry(
 function handleChunk(sessionId: string, data: string, now: number): void {
   const authority = resolveAuthority(sessionId);
   if (!authority) return;
-  const pane = findPaneBySessionOwnedBy(authority.owner, sessionId);
-  if (
-    !pane ||
-    pane.paneId !== authority.paneId ||
-    pane.sessionId !== sessionId ||
-    pane.kind !== 'cli-agent' ||
-    !pane.adapterId
-  ) {
+  const pane = resolvePaneDetails(authority);
+  if (!pane) {
     return;
   }
 
@@ -698,7 +821,9 @@ export function shutdownFailover(): void {
  */
 export function requestSessionRecovery(sessionId: string, reason: string): boolean {
   const authority = resolveAuthority(sessionId);
-  if (!authority) return false;
+  // Native resume is a renderer-owned mechanism; main-owned/headless mission
+  // workers recover through the scheduler's session-exit path instead.
+  if (!authority || !authority.owner) return false;
   const pane = findPaneBySessionOwnedBy(authority.owner, sessionId);
   if (!pane || pane.paneId !== authority.paneId || pane.kind !== 'cli-agent' || !pane.adapterId) {
     return false;

@@ -285,6 +285,7 @@ import {
   shutdownGamificationService,
 } from "./gamification/gamification-service";
 import { requireProjectDomainStoreRegistry } from "./orch/project-domain-store-registry";
+import { configureProviderFailureWaiver } from "./orch/provider-failure-waiver";
 import {
   configureCronRuntime,
   disposeCronRuntime,
@@ -418,6 +419,7 @@ function bootstrap(): void {
   configureAuditLogRuntime(projectRuntimeManager);
   configurePtyProjectRuntimeManager(projectRuntimeManager);
   configureRendererMissionAuthority(projectRuntimeManager);
+  configureProviderFailureWaiver({ runtimeManager: projectRuntimeManager });
   const worktreeRuntime = configureWorktreeRuntimeRegistry(projectRuntimeManager);
   configureMissionScheduler({ listScopes: knownCronScopes });
   configureContextWorkflowRegistry(projectRuntimeManager, {

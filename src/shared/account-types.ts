@@ -98,6 +98,12 @@ export interface FailoverEvent {
   /** Epoch ms do retry automático agendado pelo main (espera-pela-irmã). */
   scheduledRetryAtMs?: number;
   /**
+   * True quando uma task advisory Guided foi dispensada pelo Main (receipt
+   * `advisory_provider_unavailable`): a missão segue sem esta análise opcional
+   * e o pane físico será fechado — a UI não deve mostrar um dead-end.
+   */
+  missionTaskWaived?: boolean;
+  /**
    * True quando a troca é uma SONDAGEM last-resort: a conta destino ainda
    * está em cooldown, mas a janela de probe venceu e não havia alternativa.
    */

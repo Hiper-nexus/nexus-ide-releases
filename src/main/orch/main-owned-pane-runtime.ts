@@ -65,6 +65,12 @@ export interface PaneOrchMeta {
 export interface PaneSpawnOptions {
   adapterId: string;
   model?: string;
+  /**
+   * Main-authored first turn passed directly to providers whose booting TUI
+   * cannot reliably accept pasted input. It is never sent to the renderer or
+   * retained in pane snapshots.
+   */
+  initialPrompt?: string;
   /** Exact main-selected vault account for this pane. */
   accountId?: string;
   /** Per-spawn reasoning effort (task-router decision). */
@@ -97,6 +103,7 @@ export interface MainOwnedPane {
 export interface PendingMainOwnedSpawn {
   claimed: boolean;
   claimedSessionId: string | null;
+  initialPrompt?: string;
   meta: PaneOrchMeta;
   requestedCwd?: string;
   request: OrchPaneSpawnRequest;
@@ -224,6 +231,7 @@ export function fallbackPendingSpawnToMain(
     {
       adapterId: pending.request.adapterId,
       model: pending.request.model,
+      initialPrompt: pending.initialPrompt,
       accountId: pending.request.accountId,
       effort: pending.request.effort,
       cwd: pending.requestedCwd,
@@ -514,9 +522,15 @@ export function spawnMainOwnedMissionPane(
     nativeReadOnly,
     authoritySeal: options.authoritySeal,
   });
+  const spawnContext = Object.freeze({
+    ...context,
+    ...(options.initialPrompt === undefined
+      ? {}
+      : { initialPrompt: options.initialPrompt }),
+  });
   const authority: BoundSpawnAuthority = Object.freeze({
     source: "pending",
-    context,
+    context: spawnContext,
     scope: executionScope,
     coordinationScope: options.scope,
     cwd,

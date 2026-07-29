@@ -100,6 +100,37 @@ export const taskQualityReceiptProofSchema = z
       .max(1),
   })
   .strict();
+/**
+ * Provider hit kinds elegíveis ao waiver advisory (rate-limit/auth/transient).
+ * `quota` nunca dispensa uma task: a janela longa de uso exige a espera-pela-irmã
+ * ou intervenção do usuário, nunca uma conclusão sintética.
+ */
+export const taskProviderWaiverHitKindSchema = z.enum([
+  "quota",
+  "rate-limit",
+  "auth",
+  "transient",
+]);
+/**
+ * CAS binding de um waiver `advisory_provider_unavailable`: a exceção só vale
+ * para a missão/intent/revisão exata e para a encarnação física exata do worker
+ * que detectou o hit — um recibo forjado ou reaproveitado não casa com a linha.
+ */
+export const taskProviderWaiverBindingSchema = z
+  .object({
+    missionId: taskDispatchIdSchema,
+    intentVersion: z.number().int().nonnegative(),
+    taskId: taskDispatchIdSchema,
+    /** Revisão do dispatch no instante do waiver (pré-incremento do CAS). */
+    revision: z.number().int().positive(),
+    sessionId: taskDispatchIdSchema,
+    workerIncarnationId: taskDispatchIdSchema,
+    adapterId: taskDispatchIdSchema,
+    hitKind: taskProviderWaiverHitKindSchema,
+    /** sha256 do texto da causa detectada pelo limit-detector. */
+    causeSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
 export const taskIntegrationReceiptSchema = z
   .object({
     kind: z.enum([
@@ -108,6 +139,7 @@ export const taskIntegrationReceiptSchema = z
       "isolated_advisory_validated",
       "same_checkout_validated",
       "read_only_validated",
+      "advisory_provider_unavailable",
     ]),
     reference: z.string().min(1).max(2_048),
     completedAt: z.number().int().nonnegative(),
@@ -119,6 +151,11 @@ export const taskIntegrationReceiptSchema = z
      * mission completion.
      */
     qualityProof: taskQualityReceiptProofSchema.optional(),
+    /**
+     * Identity binding of the provider-unavailable waiver. Never a handoff:
+     * the task ends without output exactly because the provider stayed down.
+     */
+    waiver: taskProviderWaiverBindingSchema.optional(),
   })
   .strict()
   .superRefine((receipt, context) => {
@@ -134,10 +171,37 @@ export const taskIntegrationReceiptSchema = z
           "quality proof is exclusive to integrated or final no-change receipts",
       });
     }
+    if (
+      receipt.kind === "advisory_provider_unavailable" &&
+      !receipt.waiver
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["waiver"],
+        message: "provider-unavailable waiver requires its exact CAS binding",
+      });
+    }
+    if (
+      receipt.kind !== "advisory_provider_unavailable" &&
+      receipt.waiver
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["waiver"],
+        message:
+          "waiver binding is exclusive to advisory_provider_unavailable receipts",
+      });
+    }
   });
 
 export type TaskIntegrationReceipt = z.infer<
   typeof taskIntegrationReceiptSchema
+>;
+export type TaskProviderWaiverBinding = z.infer<
+  typeof taskProviderWaiverBindingSchema
+>;
+export type TaskProviderWaiverHitKind = z.infer<
+  typeof taskProviderWaiverHitKindSchema
 >;
 export type TaskQualityReceiptProof = z.infer<
   typeof taskQualityReceiptProofSchema

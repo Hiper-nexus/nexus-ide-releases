@@ -24,6 +24,8 @@ import {
   assertReadOnlyPhysicalGitAuthority,
 } from "./task-dispatch-physical-git-authority";
 import { assertSealedTaskDispatchPlanAuthority } from "./task-dispatch-sealed-plan-authority";
+import { sealedPlanTaskConsumers } from "./task-dispatch-sealed-plan-authority";
+import { decideProviderFailureTaskPolicy } from "./provider-failure-task-policy";
 import { assertTaskQualityReceiptAuthority } from "./task-dispatch-quality-receipt-authority";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
 import {
@@ -76,6 +78,13 @@ function boundedFanoutLearnings(
  * One physical authority proof serves both completion owners. Guided PREVC
  * uses the read-only mode and leaves the mission running; legacy completion
  * performs its CAS in the same SQLite transaction as the proof.
+ *
+ * Single validated exception: a sealed Guided advisory root whose provider
+ * stayed unavailable (receipt kind `advisory_provider_unavailable`) is
+ * admitted without a physical handoff, after its exact CAS binding and the
+ * advisory-root-no-consumers eligibility are re-proven against the sealed
+ * plan. Both completion owners share this verifier, so the exception cannot
+ * diverge between the Guided driver and legacy completion.
  */
 function verifyCompletedTaskPlanAuthority(
   binding: ScopedStoreBinding,
@@ -346,11 +355,36 @@ function verifyCompletedTaskPlanAuthority(
         row.worker_id !== rosterAgent.agentName ||
         row.state !== "completed" ||
         !row.integration_receipt_json ||
-        !row.handoff_id ||
         !row.session_id ||
         !row.worker_incarnation_id ||
-        row.handoff_accepted_at === null ||
         row.completed_at === null
+      ) {
+        return false;
+      }
+      let receipt: z.infer<typeof taskIntegrationReceiptSchema>;
+      try {
+        receipt = taskIntegrationReceiptSchema.parse(
+          JSON.parse(row.integration_receipt_json),
+        );
+      } catch (error) {
+        throw new ScopedStoreCorruptionError(
+          "mission completion integration receipt",
+          { cause: error },
+        );
+      }
+      // The advisory provider-unavailable waiver is the ONLY validated
+      // exception to the physical-handoff chain: admitted without handoff_id /
+      // handoff_accepted_at, but still bound to the exact session/incarnation
+      // and re-proven against the sealed plan below. Every other completed row
+      // keeps the strict physical-handoff requirements.
+      const waiver =
+        receipt.kind === "advisory_provider_unavailable"
+          ? receipt.waiver!
+          : null;
+      if (
+        waiver
+          ? row.handoff_id !== null || row.handoff_accepted_at !== null
+          : !row.handoff_id || row.handoff_accepted_at === null
       ) {
         return false;
       }
@@ -374,49 +408,83 @@ function verifyCompletedTaskPlanAuthority(
       ) {
         teamReadOnlyFanoutDispatches += 1;
       }
-      let physical;
-      try {
-        physical = assertPhysicalTaskHandoffAuthority(db, binding.coordinates, {
-          missionId,
-          handoffId: row.handoff_id,
-          sessionId: row.session_id,
-          workerIncarnationId: row.worker_incarnation_id,
-          workerId: row.worker_id,
-          noLaterThan: row.handoff_accepted_at,
-          requireCorrelatedAuditIntent: true,
-          expectedStatus: "success",
+      let physical: ReturnType<
+        typeof assertPhysicalTaskHandoffAuthority
+      > | null = null;
+      if (!waiver) {
+        try {
+          physical = assertPhysicalTaskHandoffAuthority(
+            db,
+            binding.coordinates,
+            {
+              missionId,
+              handoffId: row.handoff_id!,
+              sessionId: row.session_id,
+              workerIncarnationId: row.worker_incarnation_id,
+              workerId: row.worker_id,
+              noLaterThan: row.handoff_accepted_at!,
+              requireCorrelatedAuditIntent: true,
+              expectedStatus: "success",
+            },
+          );
+        } catch (error) {
+          if (error instanceof ScopedStoreCorruptionError) throw error;
+          return false;
+        }
+        if (
+          physicalReceiptIds.has(physical.receiptId) ||
+          physicalToolCallIds.has(physical.toolCallId)
+        ) {
+          throw new ScopedStoreCorruptionError(
+            "mission completion physical handoff identity",
+          );
+        }
+        physicalReceiptIds.add(physical.receiptId);
+        physicalToolCallIds.add(physical.toolCallId);
+      } else {
+        // A persisted waiver must re-bind to its own row byte-for-byte and the
+        // sealed plan must still prove advisory-root-no-consumers eligibility:
+        // a forged or transplanted receipt dies here, not at the store.
+        if (
+          waiver.missionId !== missionId ||
+          waiver.intentVersion !== intentVersion ||
+          waiver.taskId !== row.task_id ||
+          waiver.revision !== row.revision - 1 ||
+          waiver.sessionId !== row.session_id ||
+          waiver.workerIncarnationId !== row.worker_incarnation_id ||
+          waiver.adapterId !== row.adapter_id
+        ) {
+          return false;
+        }
+        let waiverConsumers: readonly string[];
+        try {
+          waiverConsumers = sealedPlanTaskConsumers(sealed, row.task_id);
+        } catch (error) {
+          if (error instanceof ScopedStoreCorruptionError) throw error;
+          return false;
+        }
+        const eligibility = decideProviderFailureTaskPolicy({
+          guidedTaskKind: sealed.schedule.guidedTaskKind,
+          dependsOn: sealed.schedule.dependsOn,
+          consumers: waiverConsumers,
+          hitKind: waiver.hitKind,
         });
-      } catch (error) {
-        if (error instanceof ScopedStoreCorruptionError) throw error;
+        if (eligibility.decision !== "waive") {
+          return false;
+        }
+      }
+      if (
+        row.completed_at > now ||
+        receipt.completedAt !== row.completed_at
+      ) {
         return false;
       }
       if (
-        physicalReceiptIds.has(physical.receiptId) ||
-        physicalToolCallIds.has(physical.toolCallId)
-      ) {
-        throw new ScopedStoreCorruptionError(
-          "mission completion physical handoff identity",
-        );
-      }
-      physicalReceiptIds.add(physical.receiptId);
-      physicalToolCallIds.add(physical.toolCallId);
-      let receipt: z.infer<typeof taskIntegrationReceiptSchema>;
-      try {
-        receipt = taskIntegrationReceiptSchema.parse(
-          JSON.parse(row.integration_receipt_json),
-        );
-      } catch (error) {
-        throw new ScopedStoreCorruptionError(
-          "mission completion integration receipt",
-          { cause: error },
-        );
-      }
-      if (
-        sealed.routeConsumedAt > row.handoff_accepted_at ||
-        physical.issuedAt > row.handoff_accepted_at ||
-        row.handoff_accepted_at > row.completed_at ||
-        row.completed_at > now ||
-        receipt.completedAt !== row.completed_at
+        waiver
+          ? sealed.routeConsumedAt > row.completed_at
+          : sealed.routeConsumedAt > row.handoff_accepted_at! ||
+            physical!.issuedAt > row.handoff_accepted_at! ||
+            row.handoff_accepted_at! > row.completed_at
       ) {
         return false;
       }
@@ -436,116 +504,129 @@ function verifyCompletedTaskPlanAuthority(
         (receipt.kind === "isolated_advisory_validated" &&
           sealed.schedule.guidedTaskKind === "isolated-advisory" &&
           (receipt.evidenceIds?.length ?? 0) > 0 &&
-          advisoryMatch?.[2] === EMPTY_GIT_DIFF_SHA256);
+          advisoryMatch?.[2] === EMPTY_GIT_DIFF_SHA256) ||
+        (receipt.kind === "advisory_provider_unavailable" &&
+          (sealed.schedule.guidedTaskKind === "advisory" ||
+            sealed.schedule.guidedTaskKind === "isolated-advisory"));
       if (
         (row.execution_mode === "isolated_worktree" &&
           !isolatedReceiptIsValid) ||
         (row.execution_mode === "read_only" &&
-          receipt.kind !== "read_only_validated") ||
+          receipt.kind !== "read_only_validated" &&
+          receipt.kind !== "advisory_provider_unavailable") ||
         row.execution_mode === "same_checkout"
       ) {
         return false;
       }
-      try {
-        if (receipt.kind === "worktree_integrated") {
-          assertIntegratedPhysicalGitAuthority({
-            rootRealPath: binding.scope.rootRealPath,
-            workerHeadSha: physical.worktreeHeadSha,
-            integratedHeadSha: receipt.reference,
-            checkoutMayHaveAdvanced: true,
-          });
-          assertTaskQualityReceiptAuthority({
-            db,
-            coordinates: binding.coordinates,
-            rootRealPath: binding.scope.rootRealPath,
-            missionId,
-            physicalHeadSha: physical.worktreeHeadSha!,
-            receipt,
-            requireEmbeddedProof: true,
-          });
-        } else if (
-          receipt.kind === "worktree_validated_no_change" &&
-          noChangeMatch
-        ) {
-          assertNoChangePhysicalGitAuthority({
-            rootRealPath: binding.scope.rootRealPath,
-            workerHeadSha: physical.worktreeHeadSha,
-            expectedHeadSha: noChangeMatch[1]!,
-            checkoutMayHaveAdvanced: true,
-          });
-          assertTaskQualityReceiptAuthority({
-            db,
-            coordinates: binding.coordinates,
-            rootRealPath: binding.scope.rootRealPath,
-            missionId,
-            physicalHeadSha: physical.worktreeHeadSha!,
-            receipt,
-            requireEmbeddedProof: true,
-          });
-        } else if (
-          receipt.kind === "isolated_advisory_validated" &&
-          advisoryMatch
-        ) {
-          assertNoChangePhysicalGitAuthority({
-            rootRealPath: binding.scope.rootRealPath,
-            workerHeadSha: physical.worktreeHeadSha,
-            expectedHeadSha: advisoryMatch[1]!,
-            checkoutMayHaveAdvanced: true,
-          });
-        } else if (receipt.kind === "read_only_validated") {
-          assertReadOnlyPhysicalGitAuthority({
-            rootRealPath: binding.scope.rootRealPath,
-            workerHeadSha: physical.worktreeHeadSha,
-          });
-        }
-      } catch {
-        return false;
-      }
-      expectedDependencyConsumptions += sealed.schedule.dependsOn.length;
-      for (const dependencyTaskId of sealed.schedule.dependsOn) {
-        const dependencyDispatch = dispatchByTask.get(dependencyTaskId);
-        const consumption = dependencyConsumptionByEdge.get(
-          `${entry.taskId}\0${dependencyTaskId}`,
-        );
-        if (
-          !dependencyDispatch ||
-          dependencyDispatch.state !== "completed" ||
-          !dependencyDispatch.handoff_id ||
-          dependencyDispatch.completed_at === null ||
-          !row.session_id ||
-          !row.worker_incarnation_id ||
-          row.handoff_accepted_at === null ||
-          !consumption ||
-          consumption.mission_id !== missionId ||
-          consumption.handoff_id !== dependencyDispatch.handoff_id ||
-          consumption.consumer_session_id !== row.session_id ||
-          consumption.consumer_worker_incarnation_id !==
-            row.worker_incarnation_id ||
-          consumption.consumed_at < dependencyDispatch.completed_at ||
-          consumption.consumed_at > physical.issuedAt ||
-          !/^[a-f0-9]{64}$/.test(consumption.prompt_sha256)
-        ) {
+      if (!waiver) {
+        // Physical Git ancestry only exists for the handoff-based kinds; the
+        // waiver carries no worktree claim by construction.
+        if (!physical) return false;
+        const physicalHandoff = physical;
+        try {
+          if (receipt.kind === "worktree_integrated") {
+            assertIntegratedPhysicalGitAuthority({
+              rootRealPath: binding.scope.rootRealPath,
+              workerHeadSha: physicalHandoff.worktreeHeadSha,
+              integratedHeadSha: receipt.reference,
+              checkoutMayHaveAdvanced: true,
+            });
+            assertTaskQualityReceiptAuthority({
+              db,
+              coordinates: binding.coordinates,
+              rootRealPath: binding.scope.rootRealPath,
+              missionId,
+              physicalHeadSha: physicalHandoff.worktreeHeadSha!,
+              receipt,
+              requireEmbeddedProof: true,
+            });
+          } else if (
+            receipt.kind === "worktree_validated_no_change" &&
+            noChangeMatch
+          ) {
+            assertNoChangePhysicalGitAuthority({
+              rootRealPath: binding.scope.rootRealPath,
+              workerHeadSha: physicalHandoff.worktreeHeadSha,
+              expectedHeadSha: noChangeMatch[1]!,
+              checkoutMayHaveAdvanced: true,
+            });
+            assertTaskQualityReceiptAuthority({
+              db,
+              coordinates: binding.coordinates,
+              rootRealPath: binding.scope.rootRealPath,
+              missionId,
+              physicalHeadSha: physicalHandoff.worktreeHeadSha!,
+              receipt,
+              requireEmbeddedProof: true,
+            });
+          } else if (
+            receipt.kind === "isolated_advisory_validated" &&
+            advisoryMatch
+          ) {
+            assertNoChangePhysicalGitAuthority({
+              rootRealPath: binding.scope.rootRealPath,
+              workerHeadSha: physicalHandoff.worktreeHeadSha,
+              expectedHeadSha: advisoryMatch[1]!,
+              checkoutMayHaveAdvanced: true,
+            });
+          } else if (receipt.kind === "read_only_validated") {
+            assertReadOnlyPhysicalGitAuthority({
+              rootRealPath: binding.scope.rootRealPath,
+              workerHeadSha: physicalHandoff.worktreeHeadSha,
+            });
+          }
+        } catch {
           return false;
         }
-        const dependencyHandoff = db
-          .prepare(
-            `SELECT summary FROM handoffs
+      }
+      if (!waiver) {
+        if (!physical) return false;
+        const physicalHandoff = physical;
+        expectedDependencyConsumptions += sealed.schedule.dependsOn.length;
+        for (const dependencyTaskId of sealed.schedule.dependsOn) {
+          const dependencyDispatch = dispatchByTask.get(dependencyTaskId);
+          const consumption = dependencyConsumptionByEdge.get(
+            `${entry.taskId}\0${dependencyTaskId}`,
+          );
+          if (
+            !dependencyDispatch ||
+            dependencyDispatch.state !== "completed" ||
+            !dependencyDispatch.handoff_id ||
+            dependencyDispatch.completed_at === null ||
+            !row.session_id ||
+            !row.worker_incarnation_id ||
+            row.handoff_accepted_at === null ||
+            !consumption ||
+            consumption.mission_id !== missionId ||
+            consumption.handoff_id !== dependencyDispatch.handoff_id ||
+            consumption.consumer_session_id !== row.session_id ||
+            consumption.consumer_worker_incarnation_id !==
+              row.worker_incarnation_id ||
+            consumption.consumed_at < dependencyDispatch.completed_at ||
+            consumption.consumed_at > physicalHandoff.issuedAt ||
+            !/^[a-f0-9]{64}$/.test(consumption.prompt_sha256)
+          ) {
+            return false;
+          }
+          const dependencyHandoff = db
+            .prepare(
+              `SELECT summary FROM handoffs
                WHERE id = ? AND mission_id = ?`,
-          )
-          .get(dependencyDispatch.handoff_id, missionId) as
-          { summary: string } | undefined;
-        if (
-          !dependencyHandoff ||
-          createHash("sha256")
-            .update(dependencyHandoff.summary.trim())
-            .digest("hex") !== consumption.handoff_summary_sha256
-        ) {
-          return false;
+            )
+            .get(dependencyDispatch.handoff_id, missionId) as
+            { summary: string } | undefined;
+          if (
+            !dependencyHandoff ||
+            createHash("sha256")
+              .update(dependencyHandoff.summary.trim())
+              .digest("hex") !== consumption.handoff_summary_sha256
+          ) {
+            return false;
+          }
         }
-      }
-      const delivery = db
-        .prepare(
-          `SELECT h.status, h.session_id, h.worker_incarnation_id,
+        const delivery = db
+          .prepare(
+            `SELECT h.status, h.session_id, h.worker_incarnation_id,
                   h.delivered, h.delivery_state, h.consumed_at,
                   h.consumed_by_session, h.consumed_delivery_attempt_id,
                   (
@@ -570,57 +651,58 @@ function verifyCompletedTaskPlanAuthority(
                     LIMIT 1
                   ) AS accepted_at
            FROM handoffs AS h WHERE h.id = ? AND h.mission_id = ?`,
-        )
-        .get(
-          mission.orch_session_id,
-          mission.orch_session_id,
-          row.handoff_id,
-          missionId,
-        ) as
-        | {
-            status: string;
-            session_id: string | null;
-            worker_incarnation_id: string | null;
-            delivered: number;
-            delivery_state: string;
-            consumed_at: number | null;
-            consumed_by_session: string | null;
-            consumed_delivery_attempt_id: string | null;
-            accepted_attempt_id: string | null;
-            accepted_at: number | null;
-          }
-        | undefined;
-      const hasExactConsumption =
-        delivery?.delivery_state === "consumed" &&
-        delivery.consumed_at !== null &&
-        delivery.consumed_by_session === mission.orch_session_id &&
-        delivery.consumed_delivery_attempt_id ===
-          delivery.accepted_attempt_id;
-      const isAwaitingExplicitConsumption =
-        (delivery?.delivery_state === "submitted" ||
-          delivery?.delivery_state === "acknowledged") &&
-        delivery.consumed_at === null &&
-        delivery.consumed_by_session === null &&
-        delivery.consumed_delivery_attempt_id === null;
-      if (
-        !delivery ||
-        delivery.status !== "success" ||
-        delivery.session_id !== row.session_id ||
-        delivery.worker_incarnation_id !== row.worker_incarnation_id ||
-        delivery.delivered !== 1 ||
-        !delivery.accepted_attempt_id ||
-        delivery.accepted_at === null ||
-        (!hasExactConsumption && !isAwaitingExplicitConsumption)
-      ) {
-        return false;
+          )
+          .get(
+            mission.orch_session_id,
+            mission.orch_session_id,
+            row.handoff_id,
+            missionId,
+          ) as
+          | {
+              status: string;
+              session_id: string | null;
+              worker_incarnation_id: string | null;
+              delivered: number;
+              delivery_state: string;
+              consumed_at: number | null;
+              consumed_by_session: string | null;
+              consumed_delivery_attempt_id: string | null;
+              accepted_attempt_id: string | null;
+              accepted_at: number | null;
+            }
+          | undefined;
+        const hasExactConsumption =
+          delivery?.delivery_state === "consumed" &&
+          delivery.consumed_at !== null &&
+          delivery.consumed_by_session === mission.orch_session_id &&
+          delivery.consumed_delivery_attempt_id ===
+            delivery.accepted_attempt_id;
+        const isAwaitingExplicitConsumption =
+          (delivery?.delivery_state === "submitted" ||
+            delivery?.delivery_state === "acknowledged") &&
+          delivery.consumed_at === null &&
+          delivery.consumed_by_session === null &&
+          delivery.consumed_delivery_attempt_id === null;
+        if (
+          !delivery ||
+          delivery.status !== "success" ||
+          delivery.session_id !== row.session_id ||
+          delivery.worker_incarnation_id !== row.worker_incarnation_id ||
+          delivery.delivered !== 1 ||
+          !delivery.accepted_attempt_id ||
+          delivery.accepted_at === null ||
+          (!hasExactConsumption && !isAwaitingExplicitConsumption)
+        ) {
+          return false;
+        }
+        completedDeliveries.push({
+          handoffId: row.handoff_id!,
+          deliveryAttemptId: delivery.accepted_attempt_id,
+          acceptedAt: delivery.accepted_at,
+          consumedAt: delivery.consumed_at,
+          hasExactConsumption,
+        });
       }
-      completedDeliveries.push({
-        handoffId: row.handoff_id,
-        deliveryAttemptId: delivery.accepted_attempt_id,
-        acceptedAt: delivery.accepted_at,
-        consumedAt: delivery.consumed_at,
-        hasExactConsumption,
-      });
     }
     if (
       teamReadOnlyFanoutDispatches > 0 &&

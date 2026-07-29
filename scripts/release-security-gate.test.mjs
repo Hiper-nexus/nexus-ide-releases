@@ -8,6 +8,7 @@ import {
   assertReleaseSecurityManifest,
   buildReleaseSecurityArtifacts,
   buildReleaseSecurityArtifactsWithPinnedNpm,
+  buildFinalizedReleaseSecurityFields,
   finalizeReleaseSecurityArtifacts,
 } from './release-security-gate.mjs';
 import { makeValidRealMissionEvidence } from './test-support/real-mission-evidence.mjs';
@@ -42,6 +43,50 @@ afterEach(() => {
 });
 
 describe('manual release security artifacts', () => {
+  it('records an explicit Claude outage without claiming or fabricating Claude evidence', () => {
+    const common = {
+      signingIdentity:
+        'Developer ID Application: Cleofas Pereira rocha (35P5XL3JN6)',
+      dmg: { name: 'NexusIDE.dmg', bytes: 3, sha256: 'a'.repeat(64) },
+      zip: { name: 'NexusIDE.zip', bytes: 3, sha256: 'b'.repeat(64) },
+      e2eEvidence: {
+        name: 'real-mission-evidence.json',
+        bytes: 10,
+        sha256: 'c'.repeat(64),
+      },
+    };
+
+    expect(() =>
+      buildFinalizedReleaseSecurityFields(common),
+    ).toThrow(/claude orchestrator evidence/i);
+
+    const skipped = buildFinalizedReleaseSecurityFields({
+      ...common,
+      skippedOrchestrators: ['claude'],
+    });
+    expect(skipped.verification).toEqual({
+      physicalProductWizard: true,
+      skippedOrchestrators: ['claude'],
+    });
+    expect(skipped.verification).not.toHaveProperty(
+      'physicalClaudeOrchestrator',
+    );
+    expect(skipped.releaseArtifacts).not.toHaveProperty(
+      'e2eEvidenceClaudeOrchestrator',
+    );
+    expect(() =>
+      buildFinalizedReleaseSecurityFields({
+        ...common,
+        skippedOrchestrators: ['claude'],
+        e2eEvidenceClaudeOrchestrator: {
+          name: 'real-mission-evidence-claude-orchestrator.json',
+          bytes: 10,
+          sha256: 'd'.repeat(64),
+        },
+      }),
+    ).toThrow(/fabricated Claude evidence/i);
+  });
+
   it('requires the exact repository-authorized Node patch', () => {
     expect(() =>
       buildReleaseSecurityArtifactsWithPinnedNpm({

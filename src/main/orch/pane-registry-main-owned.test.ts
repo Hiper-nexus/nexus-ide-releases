@@ -270,9 +270,11 @@ describe("main-owned mission pane spawn", () => {
   });
 
   it("creates the physical worker and registry authority without a renderer", async () => {
+    const initialPrompt = "main-owned native first turn";
     const result = await requestPaneSpawn({
       adapterId: "codex",
       model: "gpt-5.6-sol",
+      initialPrompt,
       cwd: executionScope.rootRealPath,
       missionId: "mission-headless",
       agentName: "Worker Headless",
@@ -298,11 +300,15 @@ describe("main-owned mission pane spawn", () => {
     });
     expect(pty.authority).toMatchObject({
       context: expect.objectContaining({
+        initialPrompt,
         contextRevision: missionAuthority.seal.contextRevision,
         authoritySeal: missionAuthority.seal,
       }),
     });
-    expect(listPaneSnapshots()).toContainEqual(
+    const snapshot = listPaneSnapshots().find(
+      (candidate) => candidate.paneId === pty.paneId,
+    );
+    expect(snapshot).toEqual(
       expect.objectContaining({
         paneId: pty.paneId,
         sessionId: "pty-headless-1",
@@ -311,6 +317,7 @@ describe("main-owned mission pane spawn", () => {
         scope,
       }),
     );
+    expect(snapshot).not.toHaveProperty("initialPrompt");
     expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toMatchObject({
       owner: null,
       paneId: pty.paneId,

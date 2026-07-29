@@ -17,6 +17,7 @@ import {
   assertRealMissionReleaseEvidence,
   mergeRealMissionAdvisorSkipEnv,
   parseRealMissionArgs,
+  realMissionProductWizardOrchestrators,
   realMissionArgs,
   realMissionEnvironment,
   resolveTrustedCodexBinary,
@@ -2254,6 +2255,24 @@ describe("real mission advisor authentication staging", () => {
     expect(
       mergeRealMissionAdvisorSkipEnv("agy;rm -rf /", ["kimi"]),
     ).toBe("kimi");
+  });
+
+  it("removes only the Claude release variant when the operator explicitly skips Claude", () => {
+    expect(
+      realMissionProductWizardOrchestrators({
+        [REAL_MISSION_ADVISOR_SKIP_ENV]: "agy,claude,kimi",
+      }),
+    ).toEqual(["codex"]);
+    expect(
+      realMissionProductWizardOrchestrators({
+        [REAL_MISSION_ADVISOR_SKIP_ENV]: "agy,kimi",
+      }),
+    ).toEqual(["codex", "claude"]);
+    expect(
+      realMissionProductWizardOrchestrators({
+        [REAL_MISSION_ADVISOR_SKIP_ENV]: "claude;opencode",
+      }),
+    ).toEqual(["codex", "claude"]);
   });
 
   it("preserves only a strict codex|claude orchestrator variant in the child environment", () => {

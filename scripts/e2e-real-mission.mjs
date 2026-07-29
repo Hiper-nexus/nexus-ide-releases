@@ -15,6 +15,7 @@ export {
   REAL_MISSION_ADVISOR_SKIP_ENV,
   REAL_MISSION_ORCHESTRATOR_ENV,
   mergeRealMissionAdvisorSkipEnv,
+  realMissionProductWizardOrchestrators,
 } from "./e2e-real-mission-contract.mjs";
 export {
   assertAdvisorBinaries,

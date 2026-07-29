@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   assertRealMissionReleaseEvidence,
   assertVerifiedRealMissionRuntimeProof,
+  realMissionProductWizardOrchestrators,
   runPackagedRealMissionProductWizard,
 } from './e2e-real-mission.mjs';
 import {
@@ -369,6 +370,12 @@ async function runReleaseCandidateGateCore(
     productionAuthority === RELEASE_CANDIDATE_PRODUCTION_AUTHORITY;
   const root = path.resolve(options.root ?? process.cwd());
   const environment = options.environment ?? process.env;
+  const skippedOrchestrators =
+    realMissionProductWizardOrchestrators(environment).includes('claude')
+      ? []
+      : ['claude'];
+  const isClaudeOrchestratorSkipped =
+    skippedOrchestrators.includes('claude');
   const runChecked = options.runChecked ?? defaultRunChecked;
   const runUiE2E = authoritative
     ? runPackagedRealMissionProductWizard
@@ -561,22 +568,37 @@ async function runReleaseCandidateGateCore(
         releaseBinding,
       });
       runtimeProof = uiRun.runtimeProof;
-      assertVerifiedRealMissionRuntimeProof(
-        uiRun?.claudeOrchestrator?.runtimeProof,
-        {
-          evidence: uiRun?.claudeOrchestrator?.evidence,
-          releaseBinding,
-        },
-      );
-      claudeOrchestratorRuntimeProof =
-        uiRun.claudeOrchestrator.runtimeProof;
+      if (isClaudeOrchestratorSkipped) {
+        if (
+          JSON.stringify(uiRun?.skippedOrchestrators) !==
+          JSON.stringify(skippedOrchestrators)
+        ) {
+          throw new Error(
+            'physical product-wizard run did not attest the explicit Claude orchestrator skip',
+          );
+        }
+      } else {
+        assertVerifiedRealMissionRuntimeProof(
+          uiRun?.claudeOrchestrator?.runtimeProof,
+          {
+            evidence: uiRun?.claudeOrchestrator?.evidence,
+            releaseBinding,
+          },
+        );
+        claudeOrchestratorRuntimeProof =
+          uiRun.claudeOrchestrator.runtimeProof;
+      }
     }
     assertBoundProductWizardEvidence();
-    assertBoundClaudeOrchestratorEvidence();
+    if (!isClaudeOrchestratorSkipped) {
+      assertBoundClaudeOrchestratorEvidence();
+    }
     },
   );
   const productWizardEvidence = assertBoundProductWizardEvidence();
-  assertBoundClaudeOrchestratorEvidence();
+  if (!isClaudeOrchestratorSkipped) {
+    assertBoundClaudeOrchestratorEvidence();
+  }
   assertCandidateArtifactSeal(artifactSeal);
 
   if (authoritative) {
@@ -586,8 +608,12 @@ async function runReleaseCandidateGateCore(
       dmgPath: artifacts.dmg,
       zipPath: artifacts.zip,
       evidencePath,
-      claudeOrchestratorEvidencePath,
-      claudeOrchestratorRuntimeProof,
+      ...(isClaudeOrchestratorSkipped
+        ? { skippedOrchestrators }
+        : {
+            claudeOrchestratorEvidencePath,
+            claudeOrchestratorRuntimeProof,
+          }),
       commitSha: state.commitSha,
       version,
       tagObjectSha: state.tagObjectSha,
@@ -624,17 +650,23 @@ async function runReleaseCandidateGateCore(
         name: path.basename(evidencePath),
         sha256: sha256File(evidencePath),
       },
-      e2eEvidenceClaudeOrchestrator: {
-        name: path.basename(claudeOrchestratorEvidencePath),
-        sha256: sha256File(claudeOrchestratorEvidencePath),
-      },
+      ...(!isClaudeOrchestratorSkipped
+        ? {
+            e2eEvidenceClaudeOrchestrator: {
+              name: path.basename(claudeOrchestratorEvidencePath),
+              sha256: sha256File(claudeOrchestratorEvidencePath),
+            },
+          }
+        : {}),
     },
     securityAssets,
     verification: {
       signedNotarized: true,
       realMissionE2E: true,
       physicalProductWizard: authoritative,
-      claudeOrchestratorE2E: true,
+      ...(!isClaudeOrchestratorSkipped
+        ? { claudeOrchestratorE2E: true }
+        : { skippedOrchestrators }),
       singleProductMission:
         productWizardEvidence.missionInventory.exactSingleProductMission,
       sameCommitAndArtifacts: true,

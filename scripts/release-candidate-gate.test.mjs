@@ -513,4 +513,70 @@ describe('manual release candidate gate', () => {
     ).rejects.toThrow(/claude-orchestrator|ENOENT/i);
     expect(runUiE2E).toHaveBeenCalledOnce();
   });
+
+  it('accepts one physical Codex variant when Claude is explicitly skipped', async () => {
+    const root = tempRoot();
+    const dmg = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.dmg');
+    const zip = path.join(root, 'out', 'make', 'nested', 'NexusIDE-arm64.zip');
+    const app = path.join(
+      root,
+      'out',
+      'NexusIDE-darwin-arm64',
+      'NexusIDE.app',
+    );
+    fs.writeFileSync(dmg, 'dmg');
+    fs.writeFileSync(zip, 'zip');
+    const evidence = makeValidRealMissionEvidence();
+    const runUiE2E = vi.fn(async (_app, options) => {
+      fs.writeFileSync(options.evidencePath, JSON.stringify(evidence));
+      return {
+        evidence,
+        evidencePath: options.evidencePath,
+        skippedOrchestrators: ['claude'],
+      };
+    });
+
+    const result = await runReleaseCandidateGateTestCore({
+      root,
+      environment: {
+        NEXUS_MAC_PUBLISH_RELEASE: '1',
+        NEXUS_REAL_MISSION_ADVISOR_SKIP: 'claude',
+        APPLE_TEAM_ID: '35P5XL3JN6',
+        APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+      },
+      generatedAfterMs: Date.now() - 1_000,
+      authority: RELEASE_AUTHORITY,
+      repository: {
+        statusPorcelain: '',
+        headSha: 'a'.repeat(40),
+        tagCommitSha: 'a'.repeat(40),
+        ...TAG_AUTHORITY,
+      },
+      buildSecurityArtifacts: buildTestSecurityArtifacts,
+      runChecked: vi.fn(() => ({ stdout: '', stderr: '' })),
+      runUiE2E,
+      extractE2EApp: async (_zipPath, _expectedSha256, callback) =>
+        callback(app),
+    });
+
+    expect(result.receipt.artifacts).not.toHaveProperty(
+      'e2eEvidenceClaudeOrchestrator',
+    );
+    expect(result.receipt.verification).toMatchObject({
+      skippedOrchestrators: ['claude'],
+    });
+    expect(result.receipt.verification).not.toHaveProperty(
+      'claudeOrchestratorE2E',
+    );
+    expect(
+      fs.existsSync(
+        path.join(
+          root,
+          'release-artifacts',
+          'security',
+          'real-mission-evidence-claude-orchestrator.json',
+        ),
+      ),
+    ).toBe(false);
+  });
 });

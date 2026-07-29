@@ -8,7 +8,7 @@ import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { compileIntentContract, hasCurrentDispatchAuthority } from '../../shared/mission-intent';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionStore } from './mission-store';
-import { createScopedTaskStore } from './task-store';
+import { createScopedTaskStore, plannedTaskId } from './task-store';
 import {
   createTaskDispatchStore,
   LEGACY_GUIDED_DIRTY_CHECKOUT_BOOTSTRAP_CAUSE,
@@ -4870,5 +4870,428 @@ describe('durable task dispatcher authority', () => {
     ).toThrow(/autoridade lifecycle|intent=awaiting_approval/i);
     expect(dispatches.get(task.id)).toBeNull();
     expect(tasks.list(mission.id)[0]).toMatchObject({ status: 'pending' });
+  });
+});
+
+/**
+ * Guided advisory worker still `running` (bindSpawn done, no handoff) when the
+ * provider stays unavailable. `executor: true` swaps the sealed roster/plan to
+ * a non-guided implementation task; `withConsumer: true` adds a sealed planned
+ * task that consumes the advisory output.
+ */
+let waiverFixtureSequence = 0;
+function advisoryWaiverFixture(
+  options: {
+    executor?: boolean;
+    withConsumer?: boolean;
+  } = {},
+) {
+  const suffix = `waiver-${++waiverFixtureSequence}`;
+  const paneId = `pane-advisory-${suffix}`;
+  const sessionId = `session-advisory-${suffix}`;
+  const runtime = manager();
+  const scope = testProjectScope({ rootRealPath: process.cwd() });
+  const missions = createScopedMissionStore(runtime, scope);
+  const tasks = createScopedTaskStore(runtime, scope);
+  const dispatches = createTaskDispatchStore(runtime, scope);
+  const executor = options.executor === true;
+  const agentCategory = executor ? ('executor' as const) : ('architect' as const);
+  const executionMode = executor
+    ? ('isolated_worktree' as const)
+    : ('read_only' as const);
+  const ownership = {
+    files: ['src'],
+    symbols: [],
+    domains: executor ? [] : ['guided-advisory', 'sequential-only'],
+  };
+  const contract = approvedIntentContract({
+    goal: 'Mapear riscos antes da execução principal',
+    intentVersion: 4,
+  });
+  const mission = missions.create({
+    title: 'Advisory sem provider',
+    squadId: 'agentic-guided-squad',
+    intentVersion: 4,
+    intentState: 'executing',
+    intentContract: contract,
+    orchestratorSessionId: 'orchestrator-guided-advisor',
+  });
+  missions.setStatus(mission.id, 'running');
+  const advisoryPlannerId = 'guided-advisory-1-advisor';
+  const advisoryTaskId = plannedTaskId(mission.id, 4, advisoryPlannerId);
+  const [task] = tasks.createPlanAtomically({
+    missionId: mission.id,
+    intentVersion: 4,
+    squad: {
+      id: 'agentic-guided-squad',
+      agents: [
+        {
+          id: 'advisor',
+          agentName: 'Advisor independente',
+          category: agentCategory,
+          cli: 'codex',
+          model: 'gpt-5.6-sol',
+          effort: 'high',
+        },
+        ...(options.withConsumer
+          ? [
+              {
+                id: 'consumer',
+                agentName: 'Consumer Worker',
+                category: 'executor' as const,
+                cli: 'codex',
+                model: 'gpt-5.6-sol',
+                effort: 'high' as const,
+              },
+            ]
+          : []),
+      ],
+    },
+    rows: [
+      {
+        plannerId: advisoryPlannerId,
+        title: 'Mapear riscos',
+        detail: encodeTaskScheduleDetail('Inspecione sem editar.', {
+          dependsOn: [],
+          ownership,
+          merged: false,
+          agentRef: 'advisor',
+          agentCategory,
+          executionMode,
+        }),
+        agentRef: 'advisor',
+        agentCategory,
+      },
+      ...(options.withConsumer
+        ? [
+            {
+              plannerId: 'consumer-task',
+              title: 'Consumir mapeamento',
+              detail: encodeTaskScheduleDetail('Aplique o mapeamento.', {
+                dependsOn: [advisoryTaskId],
+                ownership: {
+                  files: ['src/consumer.ts'],
+                  symbols: [],
+                  domains: [] as string[],
+                },
+                merged: false,
+                agentRef: 'consumer',
+                agentCategory: 'executor' as const,
+                executionMode: 'isolated_worktree' as const,
+              }),
+              agentRef: 'consumer',
+              agentCategory: 'executor' as const,
+            },
+          ]
+        : []),
+    ],
+  });
+  const planReceipt = tasks.getPlanReceipt(mission.id, 4)!;
+  const route = missions.reserveRouteDecision(mission.id, task!.title, {
+    tier: 'hard',
+    adapterId: 'codex',
+    model: 'gpt-5.6-sol',
+    effort: 'high',
+    reason: 'rota selada para advisory',
+    alternatives: [],
+  });
+  const claim = dispatches.claim({
+    missionId: mission.id,
+    taskId: task!.id,
+    intentVersion: 4,
+    workerId: 'Advisor independente',
+    leaseOwner: 'main',
+    leaseMs: 30_000,
+    ownership,
+    executionMode,
+    agentRef: 'advisor',
+    agentCategory,
+    rosterHash: planReceipt.rosterHash,
+    routeContract: {
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+    },
+  });
+  const routed = dispatches.attachRoute({
+    taskId: task!.id,
+    revision: claim.revision,
+    leaseToken: claim.leaseToken,
+    routeReservationId: route.id,
+    adapterId: 'codex',
+    model: 'gpt-5.6-sol',
+    effort: 'high',
+  });
+  missions.consumeRouteReservation(
+    {
+      reservationId: route.id,
+      missionId: mission.id,
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+    },
+    `dispatch:${claim.id}`,
+  );
+  dispatches.bindSpawn({
+    taskId: task!.id,
+    revision: routed.revision,
+    leaseToken: claim.leaseToken,
+    workerIncarnationId: claim.workerIncarnationId,
+    paneId,
+    sessionId,
+  });
+  const running = dispatches.get(task!.id)!;
+  return {
+    runtime,
+    scope,
+    missions,
+    tasks,
+    dispatches,
+    mission,
+    task: task!,
+    claim,
+    running,
+    paneId,
+    sessionId,
+  };
+}
+
+function waiverCauseSha256(reason: string): string {
+  return createHash('sha256').update(reason).digest('hex');
+}
+
+function waiverInputFor(
+  fixture: ReturnType<typeof advisoryWaiverFixture>,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    taskId: fixture.task.id,
+    revision: fixture.running.revision,
+    paneId: fixture.paneId,
+    sessionId: fixture.sessionId,
+    workerIncarnationId: fixture.claim.workerIncarnationId,
+    adapterId: 'codex',
+    hitKind: 'rate-limit' as const,
+    causeSha256: waiverCauseSha256('rate limit'),
+    ...overrides,
+  };
+}
+
+describe('advisory provider-unavailable waiver', () => {
+  it('waives a sealed root advisory without consumers: task done, dispatch completed, no synthetic handoff', () => {
+    const fixture = advisoryWaiverFixture();
+    const eligibility = fixture.dispatches.readProviderFailureWaiverEligibility(
+      fixture.task.id,
+    );
+    expect(eligibility).toMatchObject({
+      guidedTaskKind: 'advisory',
+      dependsOn: [],
+      consumers: [],
+    });
+
+    const completed = fixture.dispatches.completeSealedAdvisoryProviderWaiver(
+      waiverInputFor(fixture),
+    );
+    expect(completed.revision).toBe(fixture.running.revision + 1);
+    expect(completed).toMatchObject({
+      state: 'completed',
+      handoffId: undefined,
+      handoffAcceptedAt: undefined,
+      integrationReceipt: {
+        kind: 'advisory_provider_unavailable',
+        waiver: {
+          missionId: fixture.mission.id,
+          intentVersion: 4,
+          taskId: fixture.task.id,
+          revision: fixture.running.revision,
+          sessionId: fixture.sessionId,
+          workerIncarnationId: fixture.claim.workerIncarnationId,
+          adapterId: 'codex',
+          hitKind: 'rate-limit',
+          causeSha256: waiverCauseSha256('rate limit'),
+        },
+      },
+    });
+    expect(
+      fixture.tasks.list(fixture.mission.id)[0],
+    ).toMatchObject({ status: 'done' });
+
+    // O waiver é admitido pela prova guiada (única exceção validada); a
+    // conclusão física da missão segue com o driver Guided PREVC, então o
+    // caminho legacy corretamente se abstém.
+    expect(
+      fixture.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(true);
+    expect(
+      fixture.dispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(false);
+    expect(
+      createScopedMissionStore(fixture.runtime, fixture.scope).get(
+        fixture.mission.id,
+      ),
+    ).toMatchObject({ status: 'running', intentState: 'executing' });
+  });
+
+  it('never waives executor/non-guided tasks and keeps the dispatch running', () => {
+    const fixture = advisoryWaiverFixture({ executor: true });
+    expect(
+      fixture.dispatches.readProviderFailureWaiverEligibility(fixture.task.id)
+        ?.guidedTaskKind,
+    ).toBeNull();
+    expect(() =>
+      fixture.dispatches.completeSealedAdvisoryProviderWaiver(
+        waiverInputFor(fixture),
+      ),
+    ).toThrow(/waiver negado|nunca é elegível/i);
+    expect(fixture.dispatches.get(fixture.task.id)).toMatchObject({
+      state: 'running',
+      integrationReceipt: undefined,
+    });
+    expect(
+      fixture.tasks.list(fixture.mission.id)[0],
+    ).toMatchObject({ status: 'running' });
+  });
+
+  it('never waives an advisory with dependent consumers in the sealed plan', () => {
+    const fixture = advisoryWaiverFixture({ withConsumer: true });
+    expect(
+      fixture.dispatches.readProviderFailureWaiverEligibility(fixture.task.id)
+        ?.consumers,
+    ).toHaveLength(1);
+    expect(() =>
+      fixture.dispatches.completeSealedAdvisoryProviderWaiver(
+        waiverInputFor(fixture),
+      ),
+    ).toThrow(/waiver negado|consumidores/i);
+    expect(fixture.dispatches.get(fixture.task.id)?.state).toBe('running');
+  });
+
+  it('rejects quota hits, wrong physical identity and CAS replays', () => {
+    const quota = advisoryWaiverFixture();
+    expect(() =>
+      quota.dispatches.completeSealedAdvisoryProviderWaiver(
+        waiverInputFor(quota, { hitKind: 'quota' }),
+      ),
+    ).toThrow(/waiver negado|janela longa/i);
+
+    const wrongSession = advisoryWaiverFixture();
+    expect(() =>
+      wrongSession.dispatches.completeSealedAdvisoryProviderWaiver(
+        waiverInputFor(wrongSession, { sessionId: 'session-impostor' }),
+      ),
+    ).toThrow(/dispatch ativo exato/i);
+    expect(() =>
+      wrongSession.dispatches.completeSealedAdvisoryProviderWaiver(
+        waiverInputFor(wrongSession, {
+          workerIncarnationId: 'incarnation-impostor',
+        }),
+      ),
+    ).toThrow(/dispatch ativo exato/i);
+
+    const replay = advisoryWaiverFixture();
+    replay.dispatches.completeSealedAdvisoryProviderWaiver(
+      waiverInputFor(replay),
+    );
+    expect(() =>
+      replay.dispatches.completeSealedAdvisoryProviderWaiver(
+        waiverInputFor(replay),
+      ),
+    ).toThrow(/dispatch ativo exato|CAS/i);
+    expect(
+      replay.dispatches.get(replay.task.id)?.integrationReceipt?.kind,
+    ).toBe('advisory_provider_unavailable');
+  });
+
+  it('rejects a forged waiver binding at mission completion authority', () => {
+    const fixture = advisoryWaiverFixture();
+    fixture.dispatches.completeSealedAdvisoryProviderWaiver(
+      waiverInputFor(fixture),
+    );
+    const db = fixture.runtime.open(fixture.scope).db;
+    const stored = db
+      .prepare(
+        `SELECT integration_receipt_json FROM task_dispatch_queue
+         WHERE task_id = ?`,
+      )
+      .get(fixture.task.id) as { integration_receipt_json: string };
+    const forged = JSON.parse(stored.integration_receipt_json) as {
+      waiver: { sessionId: string };
+    };
+    forged.waiver.sessionId = 'session-forged';
+    db.prepare(
+      `UPDATE task_dispatch_queue SET integration_receipt_json = ?
+       WHERE task_id = ?`,
+    ).run(JSON.stringify(forged), fixture.task.id);
+
+    expect(
+      fixture.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects an ineligible waiver (quota) and a handoff-bound waiver row', () => {
+    const ineligible = advisoryWaiverFixture();
+    ineligible.dispatches.completeSealedAdvisoryProviderWaiver(
+      waiverInputFor(ineligible),
+    );
+    const db = ineligible.runtime.open(ineligible.scope).db;
+    const stored = db
+      .prepare(
+        `SELECT integration_receipt_json FROM task_dispatch_queue
+         WHERE task_id = ?`,
+      )
+      .get(ineligible.task.id) as { integration_receipt_json: string };
+    const tampered = JSON.parse(stored.integration_receipt_json) as {
+      waiver: { hitKind: string };
+    };
+    tampered.waiver.hitKind = 'quota';
+    db.prepare(
+      `UPDATE task_dispatch_queue SET integration_receipt_json = ?
+       WHERE task_id = ?`,
+    ).run(JSON.stringify(tampered), ineligible.task.id);
+    expect(
+      ineligible.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: ineligible.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(false);
+
+    const handoffBound = advisoryWaiverFixture();
+    handoffBound.dispatches.completeSealedAdvisoryProviderWaiver(
+      waiverInputFor(handoffBound),
+    );
+    // A receipt forjada com handoff físico precisa de uma linha real (FK).
+    const forgedHandoff = createScopedHandoffStore(
+      handoffBound.runtime,
+      handoffBound.scope,
+    ).submit({
+      missionId: handoffBound.mission.id,
+      sessionId: handoffBound.sessionId,
+      workerIncarnationId: handoffBound.claim.workerIncarnationId,
+      fromAgent: 'Advisor independente',
+      status: 'success',
+      summary: 'Handoff forjado para adulterar a linha do waiver.',
+    });
+    handoffBound.runtime
+      .open(handoffBound.scope)
+      .db.prepare(
+        `UPDATE task_dispatch_queue SET handoff_id = ?
+         WHERE task_id = ?`,
+      )
+      .run(forgedHandoff.id, handoffBound.task.id);
+    expect(
+      handoffBound.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: handoffBound.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(false);
   });
 });
