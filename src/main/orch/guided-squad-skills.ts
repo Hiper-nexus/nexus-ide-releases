@@ -12,6 +12,7 @@ export const NEXUS_GUIDED_SKILL_ORDER = [
   'bridgesecurity',
   'bridgeward',
   'impeccable',
+  'dembrandt',
   'archify',
   'bmad-templates',
   'nexus-visual-media',
@@ -32,13 +33,14 @@ const BUNDLED_GUIDED_SKILLS = [
   'bridgesecurity',
   'bridgeward',
   'impeccable',
+  'dembrandt',
   'archify',
   'bmad-templates',
   'nexus-visual-media',
 ] as const;
 
 const UI_MISSION_RE =
-  /\b(ui|ux|frontend|front-end|interface|design system|dashboard|landing|website|site|web app|aplicativo|mobile|desktop|electron|react|vue|svelte|acessibilidade|accessibility)\b/i;
+  /\b(ui|ux|frontend|front-end|interface|design system|dashboard|landing|website|web app|aplicativo|acessibilidade|accessibility|brand site|mockup|inspirad\w*|parecido com|figma)\b/i;
 const UI_ROLE_RE =
   /\b(ui|ux|frontend|front-end|interface|design|visual|a11y|accessibility|acessibilidade)\b/i;
 const SECURITY_RE =
@@ -146,6 +148,12 @@ function policyForAgent(input: {
       break;
   }
 
+  if (agent.category === 'orchestrator' && uiMission) {
+    // Only the orchestrator may call nexus_design_system_extract (workers are
+    // fenced). Grant dembrandt solely here so executors/reviewers do not try
+    // and fail the extract tool.
+    requested.add('dembrandt');
+  }
   if (
     agent.category === 'reviewer' &&
     (uiMission || uiRole)

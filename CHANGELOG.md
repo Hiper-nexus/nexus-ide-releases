@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.19.38 — Dembrandt autônomo em missões UI
+
+Data: 2026-07-29
+
+### Design system live
+
+- **Dembrandt embutido**: skill `dembrandt` materializada no spawn; grant
+  automático só no orquestrador em missões UI (workers usam o contrato
+  aplicado + Impeccable).
+- **`nexus_design_system_extract`**: extrai tokens de URL pública via Dembrandt
+  pinado, grava evidence (hash, sem body) e abre ContextDraft — nunca escreve
+  `DESIGN.md` final. Env allowlist, Chromium sandboxed, private-network
+  bloqueado pela URL policy do browser.
+- **Kickoffs**: playbook legado e intent-first mandam extract quando falta
+  contrato visual ou o goal cita referência/URL; depois Impeccable craft.
+- **Reader unificado**: design mode lê `DESIGN.md` ou
+  `.context/docs/design-system.md`, com truncamento `[truncated]` estável.
+
 ## 0.19.37 — Autopiloto sem becos sem saída
 
 Data: 2026-07-29
@@ -42,7 +60,9 @@ Data: 2026-07-29
 
 - **Qualquer CLI compatível pode trabalhar**: no modo Autopiloto, CLIs
   instaladas, autenticadas e capazes de entregar handoff podem executar,
-  revisar e validar com rede, ferramentas web e autoaprovação do provider.
+  revisar e validar com acesso de rede e autoaprovação do provider. Busca e
+  fetch nativos são usados quando a CLI oferece essa capacidade; pesquisa
+  visual portátil fica disponível ao Maestro pelo browser Nexus.
 - **Hardened continua opcional**: o padrão mantém worktree por task, identidade
   por sessão e merge validado pelo Main. Confinamento de provider/kernel e
   verificações rigorosas permanecem disponíveis no modo Hardened.

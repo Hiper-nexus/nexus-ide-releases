@@ -28,6 +28,11 @@ const SKILLS = [
     constName: 'BMAD_TEMPLATES_MANIFEST',
     outFile: 'bmad-templates-manifest.ts',
   },
+  {
+    dir: 'dembrandt',
+    constName: 'DEMBRANDT_MANIFEST',
+    outFile: 'dembrandt-manifest.ts',
+  },
 ];
 
 function walk(dir) {

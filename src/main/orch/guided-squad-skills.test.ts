@@ -73,7 +73,7 @@ describe('guided squad deterministic skill policy', () => {
 
     expect(squad.agents.map((agent) => [agent.id, agent.allowedSkills])).toEqual(
       [
-        ['orch', ['ponytail', 'check-work', 'bridgesecurity']],
+        ['orch', ['ponytail', 'check-work', 'bridgesecurity', 'dembrandt']],
         [
           'frontend',
           ['ponytail', 'bridgesecurity', 'impeccable'],
@@ -112,16 +112,42 @@ describe('guided squad deterministic skill policy', () => {
   it('filters known policy grants against the installed/bundled inventory', () => {
     const squad = applyGuidedSquadSkillPolicy(policySquad(), {
       objective: 'Implementar uma interface web',
-      availableSkillNames: ['impeccable', 'not-a-nexus-skill'],
+      availableSkillNames: ['impeccable', 'dembrandt', 'not-a-nexus-skill'],
     });
 
     expect(squad.agents.find((agent) => agent.id === 'frontend')?.allowedSkills)
       .toEqual(['impeccable']);
     expect(squad.agents.find((agent) => agent.id === 'qa')?.allowedSkills)
       .toEqual(['impeccable']);
+    expect(squad.agents.find((agent) => agent.id === 'orch')?.allowedSkills)
+      .toEqual(['dembrandt']);
     expect(
       squad.agents.flatMap((agent) => agent.allowedSkills ?? []),
     ).not.toContain('not-a-nexus-skill');
+  });
+
+  it('grants dembrandt only to the orchestrator on landing/reference missions', () => {
+    const squad = applyGuidedSquadSkillPolicy(policySquad(), {
+      objective: 'Criar landing page inspirada em https://stripe.com',
+      availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+    });
+
+    expect(squad.agents.find((agent) => agent.id === 'orch')?.allowedSkills)
+      .toEqual(['ponytail', 'check-work', 'dembrandt']);
+    expect(squad.agents.find((agent) => agent.id === 'frontend')?.allowedSkills)
+      .toEqual(['ponytail', 'impeccable']);
+    expect(squad.agents.find((agent) => agent.id === 'qa')?.allowedSkills)
+      .toEqual(['check-work', 'impeccable']);
+  });
+
+  it('does not treat bare desktop/electron/react goals as UI missions for dembrandt', () => {
+    const squad = applyGuidedSquadSkillPolicy(policySquad(), {
+      objective: 'Rebuild electron packaging and fix mobile clients deploy',
+      availableSkillNames: NEXUS_GUIDED_SKILL_ORDER,
+    });
+    expect(
+      squad.agents.flatMap((agent) => agent.allowedSkills ?? []),
+    ).not.toContain('dembrandt');
   });
 
   it('grants visual generation only to the requested handoff-capable visual owner, independent of CLI brand', () => {
@@ -176,7 +202,10 @@ describe('guided squad deterministic skill policy', () => {
       squad.agents.find((agent) => agent.id === 'visual-grok')?.allowedSkills,
     ).toEqual(['ponytail', 'impeccable']);
     expect(squad.agents.find((agent) => agent.id === 'qa')?.allowedSkills)
-      .toEqual(['check-work', 'impeccable']);
+      .toEqual(['check-work']);
+    expect(
+      squad.agents.find((agent) => agent.id === 'orch')?.allowedSkills,
+    ).not.toContain('dembrandt');
     expect(
       squad.agents
         .filter((agent) => !['orch', 'visual'].includes(agent.id))

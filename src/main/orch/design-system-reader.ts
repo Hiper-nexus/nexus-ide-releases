@@ -12,14 +12,21 @@ import { join } from 'node:path';
  * drop any site's DESIGN.md into the project root and the design-mode agent
  * prompt automatically picks it up as trusted design-system context.
  *
- * Returns null when the file is absent or unreadable — design mode degrades
- * gracefully to page-derived context only.
+ * Also reads `.context/docs/design-system.md` (Dembrandt extract / designmd.ai
+ * import apply target) when the root DESIGN.md is absent.
+ *
+ * Returns null when no usable file exists — design mode degrades gracefully
+ * to page-derived context only.
  */
 export const MAX_DESIGN_SYSTEM_CHARS = 10_000;
 
-export function readWorkspaceDesignSystem(rootDir?: string): string | null {
-  if (!rootDir) return null;
-  const filePath = join(rootDir, 'DESIGN.md');
+const DESIGN_SYSTEM_CANDIDATES = [
+  'DESIGN.md',
+  '.context/docs/design-system.md',
+] as const;
+
+function readCandidate(rootDir: string, relativePath: string): string | null {
+  const filePath = join(rootDir, relativePath);
   let stat;
   try {
     stat = statSync(filePath);
@@ -37,6 +44,15 @@ export function readWorkspaceDesignSystem(rootDir?: string): string | null {
   if (content.length <= MAX_DESIGN_SYSTEM_CHARS) return content;
   return (
     content.slice(0, MAX_DESIGN_SYSTEM_CHARS) +
-    `\n\n(DESIGN.md truncated at ${MAX_DESIGN_SYSTEM_CHARS} chars)`
+    '\n\n[truncated]'
   );
+}
+
+export function readWorkspaceDesignSystem(rootDir?: string): string | null {
+  if (!rootDir) return null;
+  for (const relativePath of DESIGN_SYSTEM_CANDIDATES) {
+    const content = readCandidate(rootDir, relativePath);
+    if (content) return content;
+  }
+  return null;
 }

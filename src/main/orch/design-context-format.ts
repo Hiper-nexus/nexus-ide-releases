@@ -56,9 +56,13 @@ const UNSAFE_CONTROL_CHAR_RE =
 /** Reda\u00E7\u00E3o + scrub de controle + teto \u2014 compartilhado com o formatter de
  * anota\u00E7\u00F5es (design-annotation-format.ts). */
 export function safePageText(value: string, maxChars: number): string {
-  return redactVisibleSecrets(value)
-    .replace(UNSAFE_CONTROL_CHAR_RE, '\uFFFD')
-    .slice(0, maxChars);
+  const cleaned = redactVisibleSecrets(value)
+    .replace(UNSAFE_CONTROL_CHAR_RE, '\uFFFD');
+  if (cleaned.length <= maxChars) return cleaned;
+  // Preserve a stable marker so DESIGN.md truncation survives the prompt fence.
+  const marker = '\n\n[truncated]';
+  if (maxChars <= marker.length) return cleaned.slice(0, maxChars);
+  return cleaned.slice(0, maxChars - marker.length) + marker;
 }
 
 /** Poda de valores de formulário ANTES da redação/teto — defesa em

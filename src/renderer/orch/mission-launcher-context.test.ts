@@ -38,6 +38,7 @@ describe('mission kickoff context/PREVC contract', () => {
     expect(prompt).toContain('blast radius');
     expect(prompt).toContain('plano inteiro em UMA chamada');
     expect(prompt).toContain('DESIGN.md');
+    expect(prompt).toContain('nexus_design_system_extract');
     expect(prompt).toContain('nexus_design_system_search/get/import');
     expect(prompt).toContain('Orientação estrutural do repositório');
     expect(prompt).toContain('nexus_context_doctor');

@@ -46,7 +46,9 @@ describe('kickoff worker authority', () => {
     // isMissionWorkerWriteEligibleCli already accepted any adapter here.
     const text = prompt(true);
     expect(text).toMatch(/Use EXATAMENTE o roster aprovado/);
-    expect(text).toMatch(/worktree isolado.*web liberada/i);
+    expect(text).toMatch(/worktree isolado.*acesso de rede/i);
+    expect(text).toMatch(/busca\/fetch nativos/i);
+    expect(text).toMatch(/browser Nexus/i);
     expect(text).toMatch(/blocked somente para autenticação, decisão humana/i);
     expect(text).not.toMatch(/somente o Codex builtin/);
     expect(text).not.toMatch(/Roster legado com Kimi, Grok/);
@@ -86,6 +88,7 @@ describe('kickoff worker authority', () => {
     expect(text).toMatch(/PREVC paralelo/i);
     expect(text).toMatch(/Comece a execução/i);
     expect(text).toMatch(/não bloqueia worker/i);
+    expect(text).toMatch(/nexus_design_system_extract/);
     expect(text).not.toMatch(
       /nexus_context_doctor|nexus_mission_freeze_contract|nexus_workflow_prepare_execution/i,
     );

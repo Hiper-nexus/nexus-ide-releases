@@ -290,6 +290,124 @@ describe('nexus_design_system_import', () => {
   });
 });
 
+describe('nexus_design_system_extract', () => {
+  it('proposes a ContextDraft from a live URL without writing the final file', async () => {
+    const extractTool = tool('nexus_design_system_extract', {
+      assertCurrentAuthority: () => {},
+      assessExtractUrl: async () => ({
+        allowed: true,
+        normalizedUrl: 'https://linear.app/',
+        targetKey: 'https://linear.app/',
+        addresses: ['1.2.3.4'],
+        addressClasses: ['public'],
+      }),
+      extractDesignSystem: async () => ({
+        designMd: '---\nname: Linear\n---\n\n## Overview\nMinimal.\n',
+      }),
+    });
+
+    const result = (await extractTool.handler(
+      { url: 'https://linear.app' },
+      context('codex', 'session-extract'),
+    )) as {
+      draftId: string;
+      targetPath: string;
+      status: string;
+      evidencePath: string;
+      normalizedUrl: string;
+    };
+
+    expect(result.status).toBe('proposed');
+    expect(result.targetPath).toBe('.context/docs/design-system.md');
+    expect(result.normalizedUrl).toBe('https://linear.app/');
+    expect(result.evidencePath).toContain('.context/nexus/evidence/dembrandt/');
+    expect(fs.existsSync(path.join(root, result.evidencePath))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'DESIGN.md'))).toBe(false);
+    expect(fs.existsSync(path.join(root, '.context', 'docs', 'design-system.md'))).toBe(false);
+
+    const evidence = JSON.parse(
+      fs.readFileSync(path.join(root, result.evidencePath), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(evidence.source).toBe('dembrandt');
+    expect(evidence.content).toBeUndefined();
+    expect(typeof evidence.contentHash).toBe('string');
+    expect(evidence.contentBytes).toBeGreaterThan(0);
+
+    const drafts = getContextKnowledgeService(scope).list({ status: 'proposed' });
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]?.content).toContain('extracted by Dembrandt');
+    expect(drafts[0]?.content).toContain('UNTRUSTED until independently reviewed');
+    expect(drafts[0]?.content).toContain('## Overview');
+  });
+
+  it('writes no evidence or draft when workspace authority changes during extract', async () => {
+    let live = true;
+    let resolveExtract: ((value: { designMd: string }) => void) | undefined;
+    const extractTool = tool('nexus_design_system_extract', {
+      assertCurrentAuthority: () => {
+        if (!live) throw new Error('renderer workspace authority changed');
+      },
+      assessExtractUrl: async () => ({
+        allowed: true,
+        normalizedUrl: 'https://linear.app/',
+        targetKey: 'https://linear.app/',
+        addresses: ['1.2.3.4'],
+        addressClasses: ['public'],
+      }),
+      extractDesignSystem: () =>
+        new Promise<{ designMd: string }>((resolve) => {
+          resolveExtract = resolve;
+        }),
+    });
+
+    const pending = extractTool.handler(
+      { url: 'https://linear.app' },
+      context('codex', 'session-revoked-extract'),
+    );
+    await vi.waitFor(() => {
+      expect(resolveExtract).toBeTypeOf('function');
+    });
+    live = false;
+    resolveExtract!({ designMd: '---\nname: Linear\n---\n' });
+
+    await expect(pending).rejects.toThrow(/workspace authority changed/i);
+    expect(
+      fs.existsSync(path.join(root, '.context', 'nexus', 'evidence', 'dembrandt')),
+    ).toBe(false);
+    expect(getContextKnowledgeService(scope).list({ status: 'proposed' })).toEqual([]);
+  });
+
+  it('rejects extract by workers', async () => {
+    await expect(
+      tool('nexus_design_system_extract').handler(
+        { url: 'https://linear.app' },
+        context('codex', 'worker-session', 'worker'),
+      ),
+    ).rejects.toThrow(/workers cannot propose/);
+  });
+
+  it('surfaces private-network blocks from URL policy', async () => {
+    const extractTool = tool('nexus_design_system_extract', {
+      assertCurrentAuthority: () => {},
+      assessExtractUrl: async () => ({
+        allowed: false,
+        kind: 'private-network',
+        reason: 'private-network access requires explicit confirmation',
+      }),
+      extractDesignSystem: async () => {
+        throw new Error('runner must not run');
+      },
+    });
+
+    await expect(
+      extractTool.handler(
+        { url: 'http://192.168.0.10' },
+        context('codex', 'session-private'),
+      ),
+    ).rejects.toThrow(/URL_BLOCKED|private-network/i);
+  });
+});
+
 describe('nexus_design_system_publish', () => {
   it('publishes the canonical DESIGN.md with overrides', async () => {
     stubs.publishKit.mockResolvedValue({ ...kitDetail(), url: 'https://designmd.ai/published/clean' });

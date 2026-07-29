@@ -15,6 +15,10 @@ import {
   DesignMdAuthError,
   DesignMdLicenseError,
 } from '../design/designmd-api-client';
+import {
+  DembrandtExtractError,
+  extractDesignSystemFromUrl,
+} from '../design/dembrandt-extractor';
 import { requireStr, str, strArray, num } from './tool-util';
 import {
   ensureWorkspaceDirectory,
@@ -33,6 +37,7 @@ import {
  */
 
 const EVIDENCE_DIR = '.context/nexus/evidence/designmd-ai';
+const DEMBRANDT_EVIDENCE_DIR = '.context/nexus/evidence/dembrandt';
 const DEFAULT_TARGET_PATH = '.context/docs/design-system.md';
 const SORT_OPTIONS = new Set(['popular', 'recent', 'likes', 'downloads']);
 
@@ -143,6 +148,27 @@ function prefixedDesignMdContent(
   ].join('\n');
 }
 
+function sanitizeHtmlCommentValue(value: string): string {
+  return value.replace(/-->/g, '').replace(/[\r\n]+/g, ' ').trim().slice(0, 512);
+}
+
+function prefixedDembrandtDesignMdContent(
+  meta: { sourceUrl: string; normalizedUrl: string },
+  content: string,
+): string {
+  const source = sanitizeHtmlCommentValue(meta.normalizedUrl);
+  const requested = sanitizeHtmlCommentValue(meta.sourceUrl);
+  return [
+    '<!-- DESIGN.md extracted by Dembrandt from a live URL -->',
+    `<!-- source: ${source} -->`,
+    `<!-- requested: ${requested} -->`,
+    '<!-- UNTRUSTED until independently reviewed and applied. Do not copy logos or trademarks. -->',
+    '<!-- This file is a PROPOSED context draft. Do not apply without review. -->',
+    '',
+    content,
+  ].join('\n');
+}
+
 function writeEvidence(
   ctx: AgentGateContext,
   identifierValue: string,
@@ -157,6 +183,47 @@ function writeEvidence(
     source: 'designmd.ai',
     importedAt: new Date().toISOString(),
     ...kit,
+  };
+  const json = `${JSON.stringify(evidence, null, 2)}\n`;
+  assertCurrentAuthority();
+  writeWorkspaceTextFile(ctx.scope, relativePath, json);
+  assertCurrentAuthority();
+  return {
+    type: 'connector',
+    locator: relativePath,
+    sourceHash: sha256(json),
+  };
+}
+
+function writeDembrandtEvidence(
+  ctx: AgentGateContext,
+  meta: {
+    sourceUrl: string;
+    normalizedUrl: string;
+    content: string;
+    darkMode: boolean;
+    mobile: boolean;
+    wcag: boolean;
+    paths: readonly string[];
+  },
+  assertCurrentAuthority: () => void,
+): ContextAttestationSource {
+  const relativePath = `${DEMBRANDT_EVIDENCE_DIR}/${sanitizeIdentifier(meta.normalizedUrl)}.json`;
+  assertCurrentAuthority();
+  ensureWorkspaceDirectory(ctx.scope, DEMBRANDT_EVIDENCE_DIR);
+  const contentHash = sha256(meta.content);
+  const evidence = {
+    schemaVersion: 1,
+    source: 'dembrandt',
+    extractedAt: new Date().toISOString(),
+    sourceUrl: sanitizeHtmlCommentValue(meta.sourceUrl),
+    normalizedUrl: sanitizeHtmlCommentValue(meta.normalizedUrl),
+    darkMode: meta.darkMode,
+    mobile: meta.mobile,
+    wcag: meta.wcag,
+    paths: [...meta.paths],
+    contentBytes: Buffer.byteLength(meta.content, 'utf8'),
+    contentHash,
   };
   const json = `${JSON.stringify(evidence, null, 2)}\n`;
   assertCurrentAuthority();
@@ -259,6 +326,23 @@ const designSystemGetTool: McpToolDef = {
 export interface DesignSystemToolOptions {
   /** Renderer IPC supplies a live-scope fence; MCP defaults to bearer identity. */
   readonly assertCurrentAuthority?: (ctx: AgentGateContext) => void;
+  /**
+   * Injectable Dembrandt CLI runner for tests. Production uses the real
+   * npx dembrandt@pinned invocation inside extractDesignSystemFromUrl.
+   */
+  readonly extractDesignSystem?: (request: {
+    readonly normalizedUrl: string;
+    readonly paths: readonly string[];
+    readonly darkMode: boolean;
+    readonly mobile: boolean;
+    readonly wcag: boolean;
+    readonly workDir: string;
+    readonly signal?: AbortSignal;
+  }) => Promise<{ designMd: string }>;
+  /** Injectable URL policy for tests. */
+  readonly assessExtractUrl?: (
+    raw: string,
+  ) => Promise<import('../browser/url-policy').BrowserUrlDecision>;
 }
 
 function assertDesignSystemAuthority(
@@ -367,6 +451,142 @@ function designSystemImportTool(
   };
 }
 
+function designSystemExtractTool(
+  options: DesignSystemToolOptions,
+): McpToolDef {
+  return {
+    name: 'nexus_design_system_extract',
+    description:
+      'Extract a live website design system via Dembrandt into a proposed ContextDraft. ' +
+      'Use autonomously on UI/landing missions when DESIGN.md is missing or the goal cites a ' +
+      'public visual reference URL. Never writes the final DESIGN.md directly — drafts require ' +
+      'independent review. Private-network URLs are blocked. Do not copy third-party logos.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'Public http(s) URL (or host) to extract design tokens from',
+        },
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional extra paths to merge (e.g. /pricing, /docs)',
+        },
+        darkMode: {
+          type: 'boolean',
+          description: 'Extract dark-mode variant colors when available',
+        },
+        mobile: {
+          type: 'boolean',
+          description: 'Use mobile viewport (390x844) for extraction',
+        },
+        wcag: {
+          type: 'boolean',
+          description: 'Include WCAG contrast analysis in the Dembrandt run',
+        },
+        targetPath: {
+          type: 'string',
+          description:
+            'Workspace-relative authority path (default: .context/docs/design-system.md)',
+        },
+        missionId: {
+          type: 'string',
+          description: 'Mission binding; defaults to the caller mission',
+        },
+      },
+      required: ['url'],
+    },
+    handler: async (args, ctx, invocation) => {
+      const assertCurrentAuthority = (): void => {
+        assertMcpInvocationCurrent(invocation);
+        assertDesignSystemAuthority(ctx, options);
+      };
+      assertCurrentAuthority();
+      if (ctx.role === 'worker') {
+        throw new Error('workers cannot propose context authority drafts');
+      }
+      const url = requireStr(args, 'url');
+      const paths = strArray(args, 'paths');
+      const darkMode = args.darkMode === true;
+      const mobile = args.mobile === true;
+      const wcag = args.wcag === true;
+      const targetPath = str(args, 'targetPath') ?? DEFAULT_TARGET_PATH;
+      const requestedMissionId = str(args, 'missionId');
+      const missionId = requestedMissionId ?? ctx.missionId;
+      if (missionId) assertMission(ctx, missionId);
+
+      let extracted;
+      try {
+        extracted = await extractDesignSystemFromUrl({
+          url,
+          paths,
+          darkMode,
+          mobile,
+          wcag,
+          signal: invocation?.signal,
+          ...(options.extractDesignSystem
+            ? { runner: options.extractDesignSystem }
+            : {}),
+          ...(options.assessExtractUrl
+            ? { assessUrl: options.assessExtractUrl }
+            : {}),
+        });
+      } catch (error) {
+        if (error instanceof DembrandtExtractError) {
+          throw new Error(`dembrandt extract failed (${error.code}): ${error.message}`);
+        }
+        throw error;
+      }
+      assertCurrentAuthority();
+
+      const source = writeDembrandtEvidence(
+        ctx,
+        {
+          sourceUrl: extracted.sourceUrl,
+          normalizedUrl: extracted.normalizedUrl,
+          content: extracted.designMd,
+          darkMode,
+          mobile,
+          wcag,
+          paths,
+        },
+        assertCurrentAuthority,
+      );
+
+      const content = prefixedDembrandtDesignMdContent(
+        {
+          sourceUrl: extracted.sourceUrl,
+          normalizedUrl: extracted.normalizedUrl,
+        },
+        extracted.designMd,
+      );
+
+      assertCurrentAuthority();
+      const draft = getContextKnowledgeService(ctx.scope).propose(
+        {
+          missionId,
+          targetPath,
+          content,
+          expectedTargetHash: expectedTargetHash(ctx, targetPath),
+          sources: [source],
+        },
+        missionIdentity(ctx),
+      );
+      assertCurrentAuthority();
+
+      return {
+        draftId: draft.id,
+        targetPath: draft.targetPath,
+        status: draft.status,
+        evidencePath: source.locator,
+        sourceUrl: extracted.sourceUrl,
+        normalizedUrl: extracted.normalizedUrl,
+      };
+    },
+  };
+}
+
 const designSystemPublishTool: McpToolDef = {
   name: 'nexus_design_system_publish',
   description:
@@ -439,9 +659,10 @@ export function buildDesignSystemTools(
     designSystemSearchTool,
     designSystemGetTool,
     designSystemImportTool(options),
+    designSystemExtractTool(options),
     designSystemPublishTool,
   ];
 }
 
 // Re-export error classes so the toolset and tests can distinguish them.
-export { DesignMdApiError, DesignMdAuthError, DesignMdLicenseError };
+export { DesignMdApiError, DesignMdAuthError, DesignMdLicenseError, DembrandtExtractError };
