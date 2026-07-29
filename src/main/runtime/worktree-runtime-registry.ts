@@ -22,6 +22,7 @@ import {
   SqliteMergeQueueStateStore,
   SqliteWorktreeStateStore,
 } from "./sqlite-workflow-state-stores";
+import { ScopedStoreBinding } from "../orch/scoped-store";
 import { inspectGitBinding } from "../context/git-binding";
 import type { IntegratedMissionResult } from "../context/context-workflow-service";
 
@@ -98,6 +99,35 @@ export class WorktreeRuntimeRegistry {
     // single-instance boundary. Any pre-existing `reserved` row belongs to an
     // interrupted prior process and must converge before scheduler dispatch.
     worktrees.reconcileInterruptedReservations(immutableScope);
+    // A record left behind by a deleted mission keeps claiming ownership, and
+    // the overlap check then blocks every new mission with "worktree ownership
+    // overlaps active task <id>" — naming a task that no longer exists, so the
+    // operator cannot inspect or clear it. Reconcile only converges `reserved`
+    // rows and never saw these. Drop records whose task row is gone; no Git
+    // path, ref or worktree is touched.
+    try {
+      const liveTaskIds = new Set(
+        (
+          new ScopedStoreBinding(this.#manager, immutableScope)
+            .readDatabase()
+            .prepare('SELECT id FROM tasks')
+            .all() as ReadonlyArray<{ id: string }>
+        ).map((row) => row.id),
+      );
+      const purged = worktrees.purgeRecordsWithoutTask(
+        immutableScope,
+        liveTaskIds,
+      );
+      if (purged.length > 0) {
+        console.warn(
+          `[worktree-runtime] dropped ${purged.length} worktree record(s) ` +
+            'whose task no longer exists; no Git path or ref was removed',
+        );
+      }
+    } catch (error) {
+      // Never block runtime startup on an opportunistic cleanup.
+      console.warn('[worktree-runtime] orphan record sweep skipped', error);
+    }
     queue.reconcile(immutableScope);
     const value = Object.freeze({
       scope: immutableScope,

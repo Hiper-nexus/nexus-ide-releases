@@ -154,6 +154,36 @@ export class WorktreeManager {
     );
   }
 
+  /**
+   * Drops records whose task row no longer exists.
+   *
+   * Ownership overlap is checked against every non-terminal record, so a
+   * record left behind by a deleted mission keeps claiming files forever and
+   * blocks the next mission with "worktree ownership overlaps active task
+   * &lt;id&gt;" — pointing at a task that cannot be inspected because it is gone.
+   * `reconcileInterruptedReservations` only converges `reserved` rows and
+   * never noticed these.
+   *
+   * Only the record is removed; no Git path, ref or worktree is touched, and a
+   * record whose task still exists is never considered.
+   */
+  purgeRecordsWithoutTask(
+    scope: ProjectExecutionScope,
+    liveTaskIds: ReadonlySet<string>,
+  ): readonly WorktreeRecord[] {
+    const scopeKey = this.scopeKey(scope);
+    return this.#mutate(scopeKey, (records) => {
+      const orphans = records.filter(
+        (record) => !liveTaskIds.has(record.taskId),
+      );
+      if (orphans.length === 0) return { records, result: [] };
+      return {
+        records: records.filter((record) => liveTaskIds.has(record.taskId)),
+        result: orphans,
+      };
+    });
+  }
+
   create(input: CreateWorktreeInput): WorktreeRecord {
     const repository = this.#repositorySnapshot(input.scope, true);
     const missionId = assertIdentifier(input.missionId, "missionId");
