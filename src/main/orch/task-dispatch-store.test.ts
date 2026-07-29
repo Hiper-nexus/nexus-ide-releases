@@ -16,6 +16,7 @@ import {
   TASK_DISPATCH_MAX_SESSION_EXIT_ATTEMPTS,
   TASK_DISPATCH_QUALITY_REPAIR_MARKER,
 } from './task-dispatch-store';
+import { assertTaskQualityReceiptAuthority } from './task-dispatch-quality-receipt-authority';
 import { EMPTY_GIT_DIFF_SHA256 } from './task-dispatch-codec';
 import {
   TASK_DISPATCH_BLOCK_MARKER,
@@ -391,6 +392,7 @@ function seedIntegratedQualityAuthority(input: {
   readonly missionId: string;
   readonly headSha: string;
   readonly label: string;
+  readonly goal?: string;
 }): readonly string[] {
   const qualityContract = compileMissionContract(
     {
@@ -401,7 +403,7 @@ function seedIntegratedQualityAuthority(input: {
       contextRevision: createHash('sha256')
         .update(`context:${input.label}`)
         .digest('hex'),
-      goal: `Validar integração ${input.label}`,
+      goal: input.goal ?? `Validar integração ${input.label}`,
       acceptanceCriteria: [
         {
           id: 'quality-green',
@@ -426,9 +428,16 @@ function seedIntegratedQualityAuthority(input: {
     diffHash: EMPTY_GIT_DIFF_SHA256,
   };
   const store = createContextWorkflowStore(input.runtime, input.scope);
+  const initialWorkflow = createWorkflowState(qualityContract.risk, binding);
+  const executionIndex = initialWorkflow.route.indexOf('execution');
   store.freeze(
     qualityContract,
-    createWorkflowState(qualityContract.risk, binding),
+    {
+      ...initialWorkflow,
+      stage: 'execution',
+      completedStages: initialWorkflow.route.slice(0, executionIndex),
+      revision: executionIndex + 1,
+    },
     {
       id: `author-${input.label}`,
       sessionId: `session-author-${input.label}`,
@@ -599,6 +608,7 @@ function verifiedPlanFixture(
     squadId?: string;
     goal?: string;
     mixedTopology?: boolean;
+    qualityGoal?: string;
   } = {},
 ) {
   const runtime = manager();
@@ -797,6 +807,7 @@ function verifiedPlanFixture(
       missionId: mission.id,
       headSha: integratedHeadSha,
       label,
+      goal: options.qualityGoal,
     });
     dispatches.completeByCoordinator({
       taskId: input.task.id,
@@ -2768,6 +2779,116 @@ describe('durable task dispatcher authority', () => {
       status: 'running',
       intentState: 'executing',
     });
+  });
+
+  it('keeps guided physical authority after PREVC advances past the quality receipt revision', () => {
+    const fixture = verifiedPlanFixture('guided-prevc-revision-advance', {
+      squadId: 'agentic-guided-prevc-revision-advance',
+      qualityGoal: 'Validar autenticação e permissões da integração',
+    });
+    const db = fixture.runtime.open(fixture.scope).db;
+    const row = db
+      .prepare(
+        `SELECT revision, workflow_json
+           FROM workflow_states
+          WHERE mission_id = ?`,
+      )
+      .get(fixture.mission.id) as {
+      revision: number;
+      workflow_json: string;
+    };
+    const workflow = JSON.parse(row.workflow_json) as {
+      risk: string;
+      revision: number;
+      route: string[];
+      stage: string;
+      completedStages: string[];
+    };
+    const advanced = {
+      ...workflow,
+      revision: row.revision + 1,
+      stage: 'validation-primary',
+      completedStages: [...workflow.completedStages, 'execution'],
+    };
+    db.prepare(
+      `UPDATE workflow_states
+          SET revision = ?, stage = ?, workflow_json = ?, updated_at = ?
+        WHERE mission_id = ? AND revision = ?`,
+    ).run(
+      advanced.revision,
+      advanced.stage,
+      JSON.stringify(advanced),
+      Date.now(),
+      fixture.mission.id,
+      row.revision,
+    );
+
+    expect(
+      fixture.dispatches.get(fixture.task.id)?.integrationReceipt?.qualityProof,
+    ).toMatchObject({ workflowRevision: row.revision });
+    expect(workflow.risk).toBe('high');
+    expect(row.revision).toBe(workflow.route.indexOf('execution') + 1);
+    const receipt = fixture.dispatches.get(
+      fixture.task.id,
+    )!.integrationReceipt!;
+    expect(() =>
+      assertTaskQualityReceiptAuthority({
+        db,
+        coordinates: fixture.scope,
+        rootRealPath: fixture.scope.rootRealPath,
+        missionId: fixture.mission.id,
+        physicalHeadSha: repositoryHead(),
+        receipt,
+      }),
+    ).toThrow('task quality receipt requires current PREVC execution authority');
+    expect(
+      fixture.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: fixture.mission.id,
+        intentVersion: 7,
+      }),
+    ).toBe(true);
+
+    db.prepare(
+      `UPDATE task_dispatch_queue
+          SET integration_receipt_json = ?
+        WHERE task_id = ?`,
+    ).run(
+      JSON.stringify({
+        ...receipt,
+        qualityProof: {
+          ...receipt.qualityProof!,
+          workflowRevision: row.revision - 1,
+        },
+      }),
+      fixture.task.id,
+    );
+    expect(
+      fixture.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: fixture.mission.id,
+        intentVersion: 7,
+      }),
+    ).toBe(false);
+
+    db.prepare(
+      `UPDATE task_dispatch_queue
+          SET integration_receipt_json = ?
+        WHERE task_id = ?`,
+    ).run(
+      JSON.stringify({
+        ...receipt,
+        qualityProof: {
+          ...receipt.qualityProof!,
+          workflowRevision: advanced.revision + 1,
+        },
+      }),
+      fixture.task.id,
+    );
+    expect(
+      fixture.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: fixture.mission.id,
+        intentVersion: 7,
+      }),
+    ).toBe(false);
   });
 
   it('rejects an integrated replay whose canonical quality proof was tampered', () => {

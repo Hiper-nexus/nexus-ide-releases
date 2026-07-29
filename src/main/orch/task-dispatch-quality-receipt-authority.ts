@@ -287,6 +287,24 @@ export function assertTaskQualityReceiptAuthority(input: {
   ) {
     throw new ScopedStoreCorruptionError("quality receipt workflow binding");
   }
+  const executionWorkflowRevision = workflow.route.indexOf("execution") + 1;
+  if (
+    executionWorkflowRevision < 1 ||
+    workflow.revision < executionWorkflowRevision
+  ) {
+    throw new Error(
+      "task quality receipt requires PREVC execution authority",
+    );
+  }
+  if (
+    !input.requireEmbeddedProof &&
+    (workflow.stage !== "execution" ||
+      workflow.revision !== executionWorkflowRevision)
+  ) {
+    throw new Error(
+      "task quality receipt requires current PREVC execution authority",
+    );
+  }
 
   const sensors: TrustedEvidence[] = [];
   const reports: ReviewReport[] = [];
@@ -365,7 +383,11 @@ export function assertTaskQualityReceiptAuthority(input: {
     headSha: candidate.headSha,
     integrationHeadSha: integratedHeadSha,
     diffHash: candidate.diffHash,
-    workflowRevision: workflow.revision,
+    // The proof is issued for the deterministic execution revision. PREVC may
+    // legitimately advance to validation before this immutable receipt is
+    // replayed; deriving the revision from the verified route accepts that
+    // transition without trusting a historical value supplied by the receipt.
+    workflowRevision: executionWorkflowRevision,
     sensorEvidenceIds: sensors.map((sensor) => sensor.id).sort(),
     reviewEvidenceIds: reports
       .map((report) => `review:${report.reviewId}`)
