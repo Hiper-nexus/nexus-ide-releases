@@ -1,6 +1,11 @@
 import type { AccountInfo } from '../../shared/account-types';
 import type { AdapterInfo } from '../../shared/types';
-import { orchestrationEvidenceOf } from '../../shared/adapter-types';
+import {
+  adapterCapabilityMatrixOf,
+  orchestrationEvidenceOf,
+} from '../../shared/adapter-types';
+import type { SquadCliPolicy } from '../../shared/settings-types';
+import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { defaultSquadModelForAdapter } from '../../shared/squad-model-defaults';
 
 /** A declared route is compatibility metadata, not proof of orchestration. */
@@ -29,23 +34,39 @@ export function isVerifiedOrchestratorAdapter(adapter: AdapterInfo): boolean {
 export function automaticOrchestratorAdapterId(
   adapters: readonly (AdapterInfo & { enabled?: boolean })[],
   configuredAdapterId: string,
+  squadCliPolicy: SquadCliPolicy = 'governed',
+  authenticatedAdapterIds?: ReadonlySet<string>,
 ): string | null {
+  const operatorChoice = isOperatorChoicePolicy(squadCliPolicy);
+  const isEligible = (
+    adapter: AdapterInfo & { enabled?: boolean },
+  ): boolean => {
+    if (
+      adapter.enabled === false ||
+      !adapter.installed ||
+      (authenticatedAdapterIds &&
+        !authenticatedAdapterIds.has(adapter.id))
+    ) {
+      return false;
+    }
+    if (!operatorChoice) return isVerifiedOrchestratorAdapter(adapter);
+    const capabilities = adapterCapabilityMatrixOf(adapter);
+    return (
+      adapter.kind === 'cli-pty' &&
+      adapter.missionControlCapable === true &&
+      capabilities.launchable &&
+      capabilities.promptInjectable &&
+      capabilities.statusObservable
+    );
+  };
   const configured = adapters.find(
     (adapter) => adapter.id === configuredAdapterId,
   );
-  if (
-    configured &&
-    configured.enabled !== false &&
-    isVerifiedOrchestratorAdapter(configured)
-  ) {
+  if (configured && isEligible(configured)) {
     return configured.id;
   }
   return (
-    adapters.find(
-      (adapter) =>
-        adapter.enabled !== false &&
-        isVerifiedOrchestratorAdapter(adapter),
-    )?.id ?? null
+    adapters.find((adapter) => isEligible(adapter))?.id ?? null
   );
 }
 

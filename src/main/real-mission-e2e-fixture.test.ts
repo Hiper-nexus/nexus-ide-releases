@@ -129,12 +129,6 @@ describe("main-owned real mission squad fixture", () => {
         allowedTools: [],
       }),
       expect.objectContaining({
-        id: "e2e-advisor-omp",
-        category: "scout",
-        cli: "omp",
-        allowedTools: [],
-      }),
-      expect.objectContaining({
         id: "e2e-advisor-claude",
         category: "reviewer",
         cli: "claude",

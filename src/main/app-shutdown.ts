@@ -11,22 +11,9 @@ export interface OrchestrationPtyShutdownDeps
   readonly reconcileOrchestratorExits: () => boolean;
 }
 
-export interface PhysicalSessionShutdownResult {
-  readonly ok: boolean;
-  readonly attemptedSessionIds: readonly string[];
-  readonly terminatedSessionIds: readonly string[];
-  readonly failedSessionIds: readonly string[];
-}
-
 export interface OrchestrationRuntimeShutdownDeps
   extends OrchestrationPtyShutdownDeps {
-  readonly terminateAllOmpSessions: () => Promise<PhysicalSessionShutdownResult>;
   readonly closeOrchestration: () => Promise<void>;
-}
-
-export interface OrchestrationRuntimeShutdownResult {
-  readonly pty: TerminateAllSessionsResult;
-  readonly omp: PhysicalSessionShutdownResult;
 }
 
 export class PhysicalPtyShutdownError extends Error {
@@ -40,19 +27,8 @@ export class PhysicalPtyShutdownError extends Error {
   }
 }
 
-export class PhysicalOmpShutdownError extends Error {
-  readonly result: PhysicalSessionShutdownResult;
-
-  constructor(result: PhysicalSessionShutdownResult) {
-    const failed = result.failedSessionIds.join(", ") || "inventário divergente";
-    super(`OMP process-tree exit was not proven for: ${failed}`);
-    this.name = "PhysicalOmpShutdownError";
-    this.result = result;
-  }
-}
-
 function hasExactPhysicalInventoryProof(
-  result: PhysicalSessionShutdownResult,
+  result: TerminateAllSessionsResult,
 ): boolean {
   const attempted = new Set(result.attemptedSessionIds);
   const terminated = new Set(result.terminatedSessionIds);
@@ -105,26 +81,17 @@ export async function shutdownOrchestrationPtyRuntimeWithProof(
 }
 
 /**
- * Full process-bearing orchestration shutdown. OMP termination can publish
- * external-session lifecycle into project stores, so those stores and the PTY
- * exit observer remain alive until both PTY and OMP inventories are proven.
- * Any rejection leaves the same state installed, allowing the native retry to
- * run reconciliation again instead of reading a disposed registry.
+ * Full process-bearing orchestration shutdown. Project stores and the PTY exit
+ * observer remain alive until the physical inventory and durable lifecycle
+ * reconciliation are proven. Any rejection leaves the same state installed,
+ * allowing the native retry to reconcile against the live registry.
  */
 export async function shutdownOrchestrationRuntimesWithProof(
   deps: OrchestrationRuntimeShutdownDeps,
-): Promise<OrchestrationRuntimeShutdownResult> {
+): Promise<TerminateAllSessionsResult> {
   const pty = await shutdownOrchestrationPtyRuntimeWithProof(deps);
-  const omp = await deps.terminateAllOmpSessions();
-  if (
-    !omp.ok ||
-    omp.failedSessionIds.length > 0 ||
-    !hasExactPhysicalInventoryProof(omp)
-  ) {
-    throw new PhysicalOmpShutdownError(omp);
-  }
   await deps.closeOrchestration();
-  return Object.freeze({ pty, omp });
+  return pty;
 }
 
 export interface ShutdownFailureNotice {

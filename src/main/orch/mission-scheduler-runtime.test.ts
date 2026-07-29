@@ -24,6 +24,7 @@ import {
   featureFlagDefinitionSchema,
 } from '../../shared/feature-flags';
 import { PARALLEL_SCHEDULER_FLAG_ID } from './mission-scheduler-runtime';
+import { isMissionSchedulerRetryableDispatchError } from './mission-scheduler-dispatch-transaction';
 
 const NOW = 1_700_000_000_000;
 
@@ -53,6 +54,9 @@ function makeDeps(opts: {
   config?: ScheduleConfig;
   changedFiles?: Record<string, readonly string[]>;
   mergeThrows?: Record<string, Error>;
+  dispatchThrows?: Record<string, Error>;
+  dispatchDelayMs?: Record<string, number>;
+  isRetryableDispatchError?: (error: unknown) => boolean;
 }): {
   deps: SchedulerRuntimeDeps;
   dispatched: string[];
@@ -75,6 +79,12 @@ function makeDeps(opts: {
       opts.config ?? { configuredCap: 4, cores: 8, paneBudget: 8 },
     now: () => NOW,
     dispatchTask: async (req) => {
+      const delay = opts.dispatchDelayMs?.[req.taskId] ?? 0;
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      const err = opts.dispatchThrows?.[req.taskId];
+      if (err) throw err;
       dispatched.push(req.taskId);
       const t = tasks.find((x) => x.id === req.taskId);
       if (t) {
@@ -86,6 +96,9 @@ function makeDeps(opts: {
         });
       }
     },
+    ...(opts.isRetryableDispatchError
+      ? { isRetryableDispatchError: opts.isRetryableDispatchError }
+      : {}),
     getChangedFiles: async (taskId) =>
       opts.changedFiles?.[taskId] ?? [`src/${taskId}.ts`],
     mergeTask: async (taskId) => {
@@ -150,6 +163,90 @@ describe('mission-scheduler-runtime P2 flag + driver', () => {
     expect(dispatched).toEqual(['a', 'b', 'c']);
     expect(result.state.telemetry.waves).toBe(1);
     expect(result.state.telemetry.maxWaveSize).toBe(3);
+  });
+
+  it('parallel wave keeps siblings and retries a transient spawn failure', async () => {
+    const tasks = [baseTask('a'), baseTask('b'), baseTask('c')];
+    const { deps, dispatched, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: { b: new Error('spawn denied') },
+      dispatchDelayMs: { a: 20, c: 20 },
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+    });
+    const state = createSchedulerRuntimeState({
+      adaptiveCap: { ...DEFAULT_ADAPTIVE_CAP, currentCap: 3 },
+    });
+    const result = await runSchedulerTick(deps, state);
+    expect(result.decision.plan.kind).toBe('dispatch');
+    if (result.decision.plan.kind !== 'dispatch') return;
+    expect(result.decision.plan.waveSize).toBe(3);
+    expect(dispatched.sort()).toEqual(['a', 'c']);
+    expect(failed).toEqual([]);
+    expect([...result.dispatched].sort()).toEqual(['a', 'c']);
+  });
+
+  it('marks proven dispatch corruption terminal', async () => {
+    const tasks = [baseTask('a')];
+    const corruption = new Error('dispatch store is corrupt');
+    corruption.name = 'ScopedStoreCorruptionError';
+    const { deps, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: { a: corruption },
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+    });
+
+    await runSchedulerTick(deps, createSchedulerRuntimeState());
+
+    expect(failed).toEqual([{ id: 'a', reason: corruption.message }]);
+  });
+
+  it('keeps a task pending when worker capacity changed after scheduling', async () => {
+    const tasks = [baseTask('a')];
+    const capacity = new Error('capacity_wait: maxWorkers=1 is occupied');
+    const { deps, dispatched, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows: { a: capacity },
+      isRetryableDispatchError: (error) => error === capacity,
+    });
+
+    const result = await runSchedulerTick(
+      deps,
+      createSchedulerRuntimeState(),
+    );
+
+    expect(result.dispatched).toEqual([]);
+    expect(dispatched).toEqual([]);
+    expect(failed).toEqual([]);
+    expect(tasks[0]?.status).toBe('pending');
+  });
+
+  it('automatically dispatches on the next tick after a transient spawn clears', async () => {
+    const tasks = [baseTask('a')];
+    const dispatchThrows: Record<string, Error> = {
+      a: new Error('provider process exited during boot'),
+    };
+    const { deps, dispatched, failed } = makeDeps({
+      enabled: true,
+      tasks,
+      dispatchThrows,
+      isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
+    });
+    const first = await runSchedulerTick(
+      deps,
+      createSchedulerRuntimeState(),
+    );
+    expect(first.dispatched).toEqual([]);
+    expect(failed).toEqual([]);
+
+    delete dispatchThrows.a;
+    const second = await runSchedulerTick(deps, first.state);
+
+    expect(second.dispatched).toEqual(['a']);
+    expect(dispatched).toEqual(['a']);
+    expect(failed).toEqual([]);
   });
 
   it('dependent task waits for next wave after merge', async () => {

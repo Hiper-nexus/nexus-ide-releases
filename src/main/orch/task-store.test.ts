@@ -41,8 +41,8 @@ const squad: Squad = {
       id: 'test-worker',
       agentName: 'Test Worker',
       category: 'reviewer',
-      cli: 'omp',
-      model: 'zai/glm-5',
+      cli: 'grok',
+      model: 'grok-4.5',
       allowedTools: ['nexus_file_read'],
       allowedSkills: ['review'],
     },
@@ -230,7 +230,7 @@ describe('scoped task store', () => {
       expect.objectContaining({
         plannerId: 'test',
         agentRef: 'test-worker',
-        agent: expect.objectContaining({ cli: 'omp' }),
+        agent: expect.objectContaining({ cli: 'grok' }),
         task: expect.objectContaining({ id: first[1]!.id }),
       }),
     ]);

@@ -2,25 +2,24 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHmac, randomUUID } from "node:crypto";
 import { IncomingMessage } from "node:http";
 import { promiseHooks } from "node:v8";
-import { isCurrentGateContext, type AgentGateContext } from "./gate";
+import {
+  getContextBySession,
+  isCurrentGateContext,
+  type AgentGateContext,
+} from "./gate";
 
-export type AgentTransportProvenanceSource = "http-mcp" | "omp-rpc-stdio";
+export type AgentTransportProvenanceSource = "http-mcp" | "pty-stream";
 
 /**
- * Opaque, one-shot proof minted while an authenticated CLI call is physically
- * inside either the localhost HTTP MCP transport or OMP's validated stdio RPC
- * transport. It intentionally has no serializable fields.
+ * Opaque, one-shot proof minted while an authenticated CLI handoff is inside
+ * the localhost HTTP MCP or Main-observed PTY-stream boundary. It
+ * intentionally has no serializable fields.
  */
 export interface AgentTransportPhysicalReceipt {
   readonly __opaqueAgentTransportPhysicalReceipt: never;
 }
 
-/** Opaque inbound OMP host-tool frame, minted by the stdio parser. */
-export interface OmpRpcPhysicalHostCall {
-  readonly __opaqueOmpRpcPhysicalHostCall: never;
-}
-
-interface HttpMcpTransportBinding {
+interface AgentTransportBinding {
   live: boolean;
   readonly source: AgentTransportProvenanceSource;
   readonly requestId: string;
@@ -68,17 +67,9 @@ export interface AgentTransportPhysicalReceiptExpectation {
   readonly rawPayloadSha256?: string;
 }
 
-interface PendingOmpRpcHostCall {
-  readonly sessionId: string;
-  readonly childPid: number;
-  readonly callId: string;
-  readonly toolName: string;
-}
-
-const activeAgentTransports = new AsyncLocalStorage<HttpMcpTransportBinding>();
+const activeAgentTransports = new AsyncLocalStorage<AgentTransportBinding>();
 const enteredHttpRequests = new WeakSet<IncomingMessage>();
 const pendingReceipts = new WeakMap<object, PendingReceipt>();
-const pendingOmpRpcHostCalls = new WeakMap<object, PendingOmpRpcHostCall>();
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (
@@ -94,7 +85,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
  * operations revoke it when the returned promise settles.
  */
 function runWithLiveTransport<T>(
-  binding: HttpMcpTransportBinding,
+  binding: AgentTransportBinding,
   operation: () => T,
 ): T {
   const observedPromises = new WeakSet<Promise<unknown>>();
@@ -160,7 +151,7 @@ function sameOptional(
 }
 
 function authoritySeed(
-  binding: HttpMcpTransportBinding,
+  binding: AgentTransportBinding,
   toolCallId: string,
 ): Buffer {
   return createHmac("sha256", binding.token)
@@ -239,7 +230,7 @@ export function runInsideHttpMcpTransport<T>(
     );
   }
   enteredHttpRequests.add(request);
-  const binding: HttpMcpTransportBinding = {
+  const binding: AgentTransportBinding = {
     live: true,
     source: "http-mcp",
     requestId: randomUUID(),
@@ -255,76 +246,47 @@ export function runInsideHttpMcpTransport<T>(
 }
 
 /**
- * Stdio parser seam. Production ownership is restricted mechanically to
- * omp-rpc-service.ts, after zod validated an inbound host_tool_call frame.
+ * Provider-independent physical boundary for one parsed PTY agent action.
+ *
+ * The session id comes from the PTY manager's data tap, never from terminal
+ * text. Main then requires that exact live session to still own a mission
+ * worker (with its incarnation) or the current Maestro bearer. This lets CLIs
+ * without a usable MCP configuration channel invoke governed Nexus actions
+ * and complete work without writing to the user's provider config.
  */
-export function mintOmpRpcPhysicalHostCall(input: {
-  readonly sessionId: string;
-  readonly childPid: number | undefined;
-  readonly callId: string;
-  readonly toolName: string;
-}): OmpRpcPhysicalHostCall {
-  if (
-    !input.sessionId ||
-    !Number.isSafeInteger(input.childPid) ||
-    (input.childPid ?? 0) <= 0 ||
-    !input.callId ||
-    !input.toolName
-  ) {
-    throw new Error(
-      "handoff_provenance: physical OMP RPC child identity is required",
-    );
-  }
-  const receipt = Object.freeze({}) as OmpRpcPhysicalHostCall;
-  pendingOmpRpcHostCalls.set(receipt as object, {
-    sessionId: input.sessionId,
-    childPid: input.childPid!,
-    callId: input.callId,
-    toolName: input.toolName,
-  });
-  return receipt;
-}
-
-/**
- * OMP host seam. Consumes the exact parsed child frame and keeps the physical
- * stdio call active across the asynchronous central dispatcher invocation.
- */
-export function runInsideOmpRpcHostCall<T>(
-  receipt: OmpRpcPhysicalHostCall,
+export function runInsidePtyStreamAgentTransport<T>(
+  sessionId: string,
   ctx: AgentGateContext,
-  expectedToolName: string,
   operation: () => T,
 ): T {
-  const opaque =
-    typeof receipt === "object" && receipt !== null
-      ? (receipt as object)
-      : null;
-  const pending = opaque ? pendingOmpRpcHostCalls.get(opaque) : undefined;
   if (
-    !opaque ||
-    !pending ||
-    pending.sessionId !== ctx.sessionId ||
-    pending.toolName !== expectedToolName ||
-    ctx.providerId !== "omp" ||
-    !isCurrentGateContext(ctx) ||
-    activeAgentTransports.getStore() !== undefined
+    !sessionId ||
+    (ctx.role !== "worker" && ctx.role !== "orchestrator") ||
+    ctx.sessionId !== sessionId ||
+    !ctx.missionId ||
+    (ctx.role === "worker" && !ctx.workerIncarnationId) ||
+    (ctx.role === "orchestrator" && ctx.workerIncarnationId !== undefined) ||
+    getContextBySession(sessionId) !== ctx ||
+    !isCurrentGateContext(ctx)
   ) {
     throw new Error(
-      "handoff_provenance: current physical OMP RPC host call is required",
+      "handoff_provenance: current physical PTY mission session is required",
     );
   }
-  pendingOmpRpcHostCalls.delete(opaque);
-  const binding: HttpMcpTransportBinding = {
+  if (activeAgentTransports.getStore() !== undefined) {
+    throw new Error(
+      "handoff_provenance: PTY stream boundary cannot be nested",
+    );
+  }
+  const binding: AgentTransportBinding = {
     live: true,
-    source: "omp-rpc-stdio",
-    requestId:
-      `omp:${pending.childPid}:${pending.sessionId}:${pending.callId}:` +
-      randomUUID(),
+    source: "pty-stream",
+    requestId: randomUUID(),
     token: ctx.token,
     projectId: ctx.scope.projectId,
     checkoutId: ctx.scope.checkoutId,
     missionId: ctx.missionId,
-    sessionId: ctx.sessionId,
+    sessionId,
     workerIncarnationId: ctx.workerIncarnationId,
     issuedInvocationIds: new Set(),
   };
@@ -332,8 +294,8 @@ export function runInsideOmpRpcHostCall<T>(
 }
 
 /**
- * Dispatcher seam. A direct in-process dispatch is insufficient: minting also
- * requires one of the two active, physically authenticated CLI transports.
+ * Dispatcher/PTY ingest seam. A direct store call is insufficient: minting
+ * also requires the active, physically authenticated CLI transport.
  */
 export function mintAgentTransportPhysicalReceipt(input: {
   readonly ctx: AgentGateContext;

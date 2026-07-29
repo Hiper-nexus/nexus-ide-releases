@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { ipcMain } from 'electron';
 import type { WebContents } from 'electron';
+import type { AdapterInfo } from '../../shared/adapter-types';
 import { handleTrusted } from '../security/trusted-ipc';
 import {
   DEFAULT_AUDIO_SETTINGS,
@@ -34,6 +35,7 @@ import {
 } from './shell-catalog';
 import { setRuntimeOutputDeviceId } from '../voice/audio-output-runtime';
 import { writeJsonFileAtomic } from './atomic-json-file';
+import { planRetiredOrchestratorSettingsMigration } from './settings-retired-adapter-migration';
 
 /**
  * Terminal settings store: ~/.nexus/settings.json (same user-dir convention
@@ -146,6 +148,32 @@ export function getTerminalSettings(): TerminalSettings {
 }
 
 export function getOrchSettings(): OrchSettings {
+  return orchSettings;
+}
+
+/**
+ * One-way boot migration for defaults that reference a provider removed from
+ * the live catalog. The complete settings snapshot is replaced atomically
+ * before the in-memory value changes, so a failed disk write keeps the prior
+ * state intact and visible instead of creating a split-brain launch default.
+ */
+export function migrateRetiredOrchestratorSettings(input: {
+  readonly adapters: readonly AdapterInfo[];
+  readonly enabledAdapterIds: ReadonlySet<string>;
+}): OrchSettings {
+  const migration = planRetiredOrchestratorSettingsMigration({
+    settings: orchSettings,
+    adapters: input.adapters,
+    enabledAdapterIds: input.enabledAdapterIds,
+  });
+  if (!migration.changed) return orchSettings;
+  persist(snapshot({ orch: migration.settings }));
+  orchSettings = migration.settings;
+  console.info(
+    `[settings] migrated retired orchestrator default ` +
+      `${migration.previousAdapterId} -> ${migration.fallbackAdapterId}` +
+      (migration.fallbackInstalled ? '' : ' (install/login required)'),
+  );
   return orchSettings;
 }
 

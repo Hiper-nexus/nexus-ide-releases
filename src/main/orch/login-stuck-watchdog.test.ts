@@ -199,8 +199,8 @@ describe('createLoginStuckWatchdog', () => {
 
   it('never emits twice for the same stuck episode', () => {
     const { watchdog, rig } = makeFactoryRig();
-    watchdog.trackSession('s1', 'p1', 'omp');
-    rig.tails.set('s1', 'waiting on auth-broker…');
+    watchdog.trackSession('s1', 'p1', 'agy');
+    rig.tails.set('s1', 'Sign in with Google');
     for (let t = 5_000; t <= 120_000; t += 5_000) {
       rig.setNow(t);
       watchdog.tick();

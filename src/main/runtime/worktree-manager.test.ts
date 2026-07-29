@@ -140,7 +140,7 @@ describe("WorktreeManager", () => {
     ["git init without HEAD", true, "committed-unborn"],
   ] as const)(
     "creates and proves a real worktree from a %s",
-    (_label, initializeGit, expectedKind) => {
+    async (_label, initializeGit, expectedKind) => {
       const greenfieldRoot = path.join(
         tempDir,
         initializeGit ? "greenfield-unborn" : "greenfield-empty",
@@ -165,11 +165,11 @@ describe("WorktreeManager", () => {
         stateStore: new MemoryWorktreeStateStore(),
         now: () => 1_700_000_000_000,
       });
-      const advisory = greenfieldManager.create({
+      const advisory = await greenfieldManager.create({
         scope: greenfieldScope,
         missionId: `mission-${expectedKind}`,
-        taskId: "guided-advisory-omp",
-        workerId: "Advisor OMP",
+        taskId: "guided-advisory-opencode",
+        workerId: "Advisor OpenCode",
         ownership: {
           files: ["src"],
           symbols: [],
@@ -191,17 +191,17 @@ describe("WorktreeManager", () => {
       const advisoryProof = greenfieldManager.prepareNoChangeValidation(
         greenfieldScope,
         `mission-${expectedKind}`,
-        "guided-advisory-omp",
+        "guided-advisory-opencode",
       )!;
       greenfieldManager.markValidatedNoChange(
         greenfieldScope,
         `mission-${expectedKind}`,
-        "guided-advisory-omp",
+        "guided-advisory-opencode",
         advisoryProof.taskHeadSha,
         advisoryProof.integrationHeadSha,
       );
 
-      const execution = greenfieldManager.create({
+      const execution = await greenfieldManager.create({
         scope: greenfieldScope,
         missionId: `mission-${expectedKind}`,
         taskId: "guided-execution",
@@ -221,7 +221,7 @@ describe("WorktreeManager", () => {
         dependsOn: [
           {
             missionId: `mission-${expectedKind}`,
-            taskId: "guided-advisory-omp",
+            taskId: "guided-advisory-opencode",
           },
         ],
       });
@@ -231,7 +231,7 @@ describe("WorktreeManager", () => {
         dependencies: [
           worktreeTaskKey(
             `mission-${expectedKind}`,
-            "guided-advisory-omp",
+            "guided-advisory-opencode",
           ),
         ],
       });
@@ -266,7 +266,7 @@ describe("WorktreeManager", () => {
     },
   );
 
-  it("refuses to adopt untracked files into an unborn baseline", () => {
+  it("refuses to adopt untracked files into an unborn baseline", async () => {
     const greenfieldRoot = path.join(tempDir, "greenfield-user-files");
     fs.mkdirSync(greenfieldRoot);
     git(greenfieldRoot, "init", "--quiet");
@@ -284,9 +284,8 @@ describe("WorktreeManager", () => {
     ).toBe("do not commit me\n");
   });
 
-  it("never delegates versioned context authority to executor worktrees", () => {
-    expect(() =>
-      manager.create({
+  it("never delegates versioned context authority to executor worktrees", async () => {
+    await expect(manager.create({
         scope: projectScope(),
         missionId: "mission-context",
         taskId: "task-context",
@@ -297,20 +296,20 @@ describe("WorktreeManager", () => {
           domains: [],
         },
       }),
-    ).toThrow(/context authority/i);
+    ).rejects.toThrow(/context authority/i);
   });
 
-  it("freezes the canonical base SHA and gives every task a distinct hashed worktree", () => {
+  it("freezes the canonical base SHA and gives every task a distinct hashed worktree", async () => {
     const initialHead = git(root, "rev-parse", "HEAD");
     const hostileMission = "mission/../../$(touch PWNED)";
-    const first = manager.create({
+    const first = await manager.create({
       scope: projectScope(),
       missionId: hostileMission,
       taskId: "task; touch PWNED-2",
       workerId: "worker-a",
       ownership: { files: ["src/a.ts"], symbols: ["A"], domains: ["billing"] },
     });
-    const second = manager.create({
+    const second = await manager.create({
       scope: projectScope(),
       missionId: hostileMission,
       taskId: "task-b",
@@ -337,57 +336,54 @@ describe("WorktreeManager", () => {
     ).toBe(false);
   });
 
-  it("rejects a dirty primary checkout before reserving a task", () => {
+  it("rejects a dirty primary checkout before reserving a task", async () => {
     write("dirty.txt", "not committed\n");
 
-    expect(() =>
-      manager.create({
+    await expect(manager.create({
         scope: projectScope(),
         missionId: "mission-a",
         taskId: "task-a",
         workerId: "worker-a",
         ownership: { files: ["dirty.txt"], symbols: [], domains: [] },
       }),
-    ).toThrow(/clean/i);
+    ).rejects.toThrow(/clean/i);
     expect(stateStore.read(manager.scopeKey(projectScope())).records).toEqual(
       [],
     );
   });
 
-  it("requires the scope root to be the canonical Git top-level", () => {
+  it("requires the scope root to be the canonical Git top-level", async () => {
     const nested = path.join(root, "src");
 
-    expect(() =>
-      manager.create({
+    await expect(manager.create({
         scope: projectScope(fs.realpathSync(nested)),
         missionId: "mission-a",
         taskId: "task-a",
         workerId: "worker-a",
         ownership: { files: ["src/a.ts"], symbols: [], domains: [] },
       }),
-    ).toThrow(/Git top-level|canonical/i);
+    ).rejects.toThrow(/Git top-level|canonical/i);
   });
 
-  it("rejects a lexically non-canonical scope even when it resolves to the repository", () => {
+  it("rejects a lexically non-canonical scope even when it resolves to the repository", async () => {
     const canonicalRoot = fs.realpathSync(root);
     const nonCanonical = `${canonicalRoot}${path.sep}src${path.sep}..`;
     expect(nonCanonical).not.toBe(canonicalRoot);
     expect(fs.realpathSync(nonCanonical)).toBe(canonicalRoot);
 
-    expect(() =>
-      manager.create({
+    await expect(manager.create({
         scope: projectScope(nonCanonical),
         missionId: "mission-a",
         taskId: "task-a",
         workerId: "worker-a",
         ownership: { files: ["src/a.ts"], symbols: [], domains: [] },
       }),
-    ).toThrow(/canonical/i);
+    ).rejects.toThrow(/canonical/i);
   });
 
   it.skipIf(process.platform === "win32")(
     "disables repository hooks while materializing a worker worktree",
-    () => {
+    async () => {
       const marker = path.join(tempDir, "hook-executed");
       const hook = path.join(root, ".git", "hooks", "post-checkout");
       fs.writeFileSync(
@@ -397,7 +393,7 @@ describe("WorktreeManager", () => {
       );
       fs.chmodSync(hook, 0o700);
 
-      manager.create({
+      await manager.create({
         scope: projectScope(),
         missionId: "mission-hook",
         taskId: "task-hook",
@@ -409,44 +405,42 @@ describe("WorktreeManager", () => {
     },
   );
 
-  it("rejects repository-local filters or merge drivers that could execute commands", () => {
+  it("rejects repository-local filters or merge drivers that could execute commands", async () => {
     git(root, "config", "filter.evil.smudge", 'sh -c "touch escaped"');
 
-    expect(() =>
-      manager.create({
+    await expect(manager.create({
         scope: projectScope(),
         missionId: "mission-filter",
         taskId: "task-filter",
         workerId: "worker-filter",
         ownership: { files: ["filter-safe.txt"], symbols: [], domains: [] },
       }),
-    ).toThrow(/executable Git config/i);
+    ).rejects.toThrow(/executable Git config/i);
     expect(fs.existsSync(path.join(root, "escaped"))).toBe(false);
   });
 
-  it("never assigns the same mission task worktree to another worker", () => {
+  it("never assigns the same mission task worktree to another worker", async () => {
     const input = {
       scope: projectScope(),
       missionId: "mission-a",
       taskId: "task-a",
       ownership: { files: ["src/a.ts"], symbols: [], domains: [] },
     } as const;
-    manager.create({ ...input, workerId: "worker-a" });
+    await manager.create({ ...input, workerId: "worker-a" });
 
-    expect(() => manager.create({ ...input, workerId: "worker-b" })).toThrow(
+    await expect(manager.create({ ...input, workerId: "worker-b" })).rejects.toThrow(
       WorktreeWorkerConflictError,
     );
-    expect(() =>
-      manager.create({
+    await expect(manager.create({
         ...input,
         workerId: "worker-a",
         ownership: { files: ["src/redefined.ts"], symbols: [], domains: [] },
       }),
-    ).toThrow(/immutable/i);
+    ).rejects.toThrow(/immutable/i);
   });
 
-  it("blocks overlapping ownership unless the existing task is an explicit dependency", () => {
-    manager.create({
+  it("blocks overlapping ownership unless the existing task is an explicit dependency", async () => {
+    await manager.create({
       scope: projectScope(),
       missionId: "mission-a",
       taskId: "task-a",
@@ -458,8 +452,7 @@ describe("WorktreeManager", () => {
       },
     });
 
-    expect(() =>
-      manager.create({
+    await expect(manager.create({
         scope: projectScope(),
         missionId: "mission-a",
         taskId: "task-b",
@@ -470,9 +463,9 @@ describe("WorktreeManager", () => {
           domains: ["catalog"],
         },
       }),
-    ).toThrow(OwnershipOverlapError);
+    ).rejects.toThrow(OwnershipOverlapError);
 
-    const dependent = manager.create({
+    const dependent = await manager.create({
       scope: projectScope(),
       missionId: "mission-a",
       taskId: "task-dependent",
@@ -487,7 +480,7 @@ describe("WorktreeManager", () => {
     expect(dependent.dependencies).toHaveLength(1);
   });
 
-  it("creates the QA worktree after a completed read-only reviewer without inventing a Git dependency", () => {
+  it("creates the QA worktree after a completed read-only reviewer without inventing a Git dependency", async () => {
     const logicalDependencies = ["guided-independent-review"];
     const worktreeDependencies =
       selectMissionSchedulerWorktreeDependencies({
@@ -511,7 +504,7 @@ describe("WorktreeManager", () => {
       });
 
     expect(worktreeDependencies).toEqual([]);
-    const qa = manager.create({
+    const qa = await manager.create({
       scope: projectScope(),
       missionId: "mission-guided",
       taskId: "guided-quality-gate",
@@ -532,8 +525,8 @@ describe("WorktreeManager", () => {
     });
   });
 
-  it("blocks a directory claim from running with a nested file claim", () => {
-    manager.create({
+  it("blocks a directory claim from running with a nested file claim", async () => {
+    await manager.create({
       scope: projectScope(),
       missionId: "mission-directory-overlap",
       taskId: "task-directory",
@@ -545,8 +538,7 @@ describe("WorktreeManager", () => {
       },
     });
 
-    expect(() =>
-      manager.create({
+    await expect(manager.create({
         scope: projectScope(),
         missionId: "mission-directory-overlap",
         taskId: "task-nested-file",
@@ -557,11 +549,11 @@ describe("WorktreeManager", () => {
           domains: [],
         },
       }),
-    ).toThrow(OwnershipOverlapError);
+    ).rejects.toThrow(OwnershipOverlapError);
   });
 
-  it("rejects committed files outside the declared ownership before integration", () => {
-    const assignment = manager.create({
+  it("rejects committed files outside the declared ownership before integration", async () => {
+    const assignment = await manager.create({
       scope: projectScope(),
       missionId: "mission-a",
       taskId: "task-a",
@@ -581,8 +573,8 @@ describe("WorktreeManager", () => {
     ).toThrow(OwnershipViolationError);
   });
 
-  it("receipts an unchanged validation worktree without weakening ordinary empty merges", () => {
-    const assignment = manager.create({
+  it("receipts an unchanged validation worktree without weakening ordinary empty merges", async () => {
+    const assignment = await manager.create({
       scope: projectScope(),
       missionId: "mission-guided",
       taskId: "guided-quality-gate",
@@ -645,12 +637,62 @@ describe("WorktreeManager", () => {
     ).toEqual(completed);
   });
 
-  it("never reclassifies an isolated advisory commit as no-change", () => {
-    const assignment = manager.create({
+  it("discards a clean reviewer worktree even after Main advances", async () => {
+    const assignment = await manager.create({
+      scope: projectScope(),
+      missionId: "mission-review",
+      taskId: "review-read-only",
+      workerId: "reviewer",
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ["review"],
+      },
+    });
+    write("src/main-advance.ts", "export const advanced = true;\n");
+    git(root, "add", "src/main-advance.ts");
+    git(root, "commit", "-m", "test: advance main");
+    const advancedHead = git(root, "rev-parse", "HEAD");
+
+    expect(() =>
+      manager.prepareNoChangeValidation(
+        projectScope(),
+        "mission-review",
+        "review-read-only",
+      ),
+    ).toThrow(/primary checkout changed/i);
+
+    const prepared = manager.prepareDiscardedNoChangeValidation(
+      projectScope(),
+      "mission-review",
+      "review-read-only",
+    );
+    expect(prepared).toMatchObject({
+      taskHeadSha: assignment.baseSha,
+      integrationHeadSha: advancedHead,
+      changedFiles: [],
+    });
+    expect(
+      manager.markDiscardedNoChange(
+        projectScope(),
+        "mission-review",
+        "review-read-only",
+        prepared!.taskHeadSha,
+        prepared!.integrationHeadSha,
+      ),
+    ).toMatchObject({
+      status: "integrated",
+      taskHeadSha: assignment.baseSha,
+      integratedSha: advancedHead,
+    });
+  });
+
+  it("never reclassifies an isolated advisory commit as no-change", async () => {
+    const assignment = await manager.create({
       scope: projectScope(),
       missionId: "mission-guided-advisory-mutation",
-      taskId: "guided-advisory-omp",
-      workerId: "Advisor OMP",
+      taskId: "guided-advisory-opencode",
+      workerId: "Advisor OpenCode",
       ownership: {
         files: ["src"],
         symbols: [],
@@ -674,21 +716,21 @@ describe("WorktreeManager", () => {
       manager.prepareNoChangeValidation(
         projectScope(),
         "mission-guided-advisory-mutation",
-        "guided-advisory-omp",
+        "guided-advisory-opencode",
       ),
     ).toBeNull();
     const unchanged = manager.get(
       projectScope(),
       "mission-guided-advisory-mutation",
-      "guided-advisory-omp",
+      "guided-advisory-opencode",
     );
     expect(unchanged).toMatchObject({ status: "ready" });
     expect(unchanged?.taskHeadSha).toBeUndefined();
     expect(unchanged?.integratedSha).toBeUndefined();
   });
 
-  it("rejects an empty commit as fabricated no-change evidence", () => {
-    const assignment = manager.create({
+  it("rejects an empty commit as fabricated no-change evidence", async () => {
+    const assignment = await manager.create({
       scope: projectScope(),
       missionId: "mission-guided-empty-commit",
       taskId: "guided-quality-gate",
@@ -710,8 +752,8 @@ describe("WorktreeManager", () => {
     ).toThrow(/empty commit/i);
   });
 
-  it("rejects dirty or untracked QA worktree state as no-change evidence", () => {
-    const assignment = manager.create({
+  it("rejects dirty or untracked QA worktree state as no-change evidence", async () => {
+    const assignment = await manager.create({
       scope: projectScope(),
       missionId: "mission-guided-dirty",
       taskId: "guided-quality-gate",
@@ -745,8 +787,8 @@ describe("WorktreeManager", () => {
     expect(unchanged?.integratedSha).toBeUndefined();
   });
 
-  it("fails closed when persisted state redirects a task to another path", () => {
-    const assignment = manager.create({
+  it("fails closed when persisted state redirects a task to another path", async () => {
+    const assignment = await manager.create({
       scope: projectScope(),
       missionId: "mission-state",
       taskId: "task-state",

@@ -1,26 +1,21 @@
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   GitCommandError,
   ProcessGitRunner,
-  assertSafeLocalGitConfig,
   type GitRunner,
 } from "./git-command";
 import {
   ACTIVE_WORKTREE_STATUSES as ACTIVE_STATUSES,
   OwnershipOverlapError,
-  OwnershipViolationError,
   WorktreeStateConflictError,
   WorktreeWorkerConflictError,
   assertIdentifier,
   assertSha,
   cloneWorktreeRecord as cloneRecord,
   digest,
-  fileOwnershipClaimsOverlap,
   hasOwnershipOverlap as hasOverlap,
-  normalizeFileOwnership,
   normalizeOwnership,
   ownershipOverlap as overlap,
   sameValues,
@@ -37,14 +32,27 @@ import {
 } from "./worktree-contract";
 import { validateWorktreeStateSnapshot } from "./worktree-state";
 import { materializeGitWorktree } from "./worktree-cow";
+import {
+  assertRepositoryUnchanged,
+  assertTaskWorktree,
+  readRepositorySnapshot,
+  reconcileInterruptedReservation,
+} from "./worktree-manager-git";
+import {
+  markDiscardedNoChange as markDiscardedNoChangeFn,
+  markValidatedNoChange as markValidatedNoChangeFn,
+  prepareIntegrationInternal,
+  prepareDiscardedNoChangeValidation as prepareDiscardedNoChangeValidationFn,
+  prepareNoChangeValidation as prepareNoChangeValidationFn,
+  type IntegrationHost,
+} from "./worktree-manager-integration";
 
 export * from "./git-command";
 export * from "./worktree-contract";
 export { cowWorktreeAvailable, materializeGitWorktree } from "./worktree-cow";
+export { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "./worktree-manager-markers";
 
 const MAX_CAS_ATTEMPTS = 16;
-export const INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER =
-  "[NEXUS_INTERRUPTED_WORKTREE_RESERVATION]";
 
 function assertExecutorOwnershipIsNotAuthority(files: readonly string[]): void {
   const protectedFile = files.find((file) => {
@@ -61,8 +69,6 @@ function assertExecutorOwnershipIsNotAuthority(files: readonly string[]): void {
     );
   }
 }
-
-type RepositorySnapshot = IntegrationCheckoutInspection;
 
 function isInside(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
@@ -88,13 +94,6 @@ function ensureDirectory(directory: string, parent?: string): string {
   return real;
 }
 
-function gitOutput(
-  runner: GitRunner,
-  cwd: string,
-  args: readonly string[],
-): string {
-  return runner.run(cwd, args).stdout.trim();
-}
 
 export class WorktreeManager {
   readonly runtimeRoot: string;
@@ -149,7 +148,20 @@ export class WorktreeManager {
       .map((record) => record.taskKey);
     return Object.freeze(
       taskKeys.map((taskKey) =>
-        this.#reconcileInterruptedReservation(scope, scopeKey, taskKey),
+        reconcileInterruptedReservation(
+          {
+            git: this.#git,
+            worktreesRoot: this.worktreesRoot,
+            snapshot: (key) => this.#snapshot(key),
+            compareAndSwap: (key, rev, records) =>
+              this.#stateStore.compareAndSwap(key, rev, records),
+            failureMessage: (error) => this.#failureMessage(error),
+            timestamp: () => this.#timestamp(),
+          },
+          scope,
+          scopeKey,
+          taskKey,
+        ),
       ),
     );
   }
@@ -184,8 +196,8 @@ export class WorktreeManager {
     });
   }
 
-  create(input: CreateWorktreeInput): WorktreeRecord {
-    const repository = this.#repositorySnapshot(input.scope, true);
+  async create(input: CreateWorktreeInput): Promise<WorktreeRecord> {
+    const repository = readRepositorySnapshot(this.#git, input.scope, true);
     const missionId = assertIdentifier(input.missionId, "missionId");
     const taskId = assertIdentifier(input.taskId, "taskId");
     const workerId = assertIdentifier(input.workerId, "workerId");
@@ -319,12 +331,12 @@ export class WorktreeManager {
     });
 
     if (!reservation.isNew) {
-      this.#assertWorktree(reservation.record);
+      assertTaskWorktree(this.#git, reservation.record);
       return cloneRecord(reservation.record);
     }
 
     try {
-      this.#assertRepositoryUnchanged(repository, true);
+      assertRepositoryUnchanged(this.#git, repository, true);
       if (fs.existsSync(worktreePath)) {
         throw new Error("derived worktree path already exists");
       }
@@ -344,27 +356,32 @@ export class WorktreeManager {
         );
       }
       // CoW-aware materialization (APFS clonefile path when enabled; else git).
-      materializeGitWorktree({
+      await materializeGitWorktree({
         repositoryRoot: repository.rootRealPath,
         worktreePath,
         branchRef,
         headSha: repository.headSha,
         git: this.#git,
       });
-      this.#assertWorktree(candidate);
-      this.#assertRepositoryUnchanged(repository, true);
+      assertTaskWorktree(this.#git, candidate);
+      assertRepositoryUnchanged(this.#git, repository, true);
       return this.#transition(scopeKey, taskKey, (record) => ({
         ...record,
         status: "ready",
         updatedAt: this.#timestamp(),
       }));
     } catch (error) {
-      this.#transition(scopeKey, taskKey, (record) => ({
-        ...record,
-        status: "failed",
-        failureReason: this.#failureMessage(error),
-        updatedAt: this.#timestamp(),
-      }));
+      try {
+        this.#transition(scopeKey, taskKey, (record) => ({
+          ...record,
+          status: "failed",
+          failureReason: this.#failureMessage(error),
+          updatedAt: this.#timestamp(),
+        }));
+      } catch {
+        // Prefer the materialize/create failure; transition races must not
+        // mask the original cause for callers.
+      }
       throw error;
     }
   }
@@ -424,86 +441,22 @@ export class WorktreeManager {
     missionId: string,
     taskId: string,
   ): PreparedWorktreeNoChangeValidation | null {
-    const record = this.get(scope, missionId, taskId);
-    const isFresh = record?.status === "ready";
-    const isAlreadyValidated =
-      record?.status === "integrated" &&
-      record.taskHeadSha === record.baseSha &&
-      record.integratedSha === record.baseSha;
-    if (!record || (!isFresh && !isAlreadyValidated)) {
-      throw new WorktreeStateConflictError(
-        "task worktree is not ready for no-change validation",
-      );
-    }
-    const records = this.#snapshot(record.scopeKey).records;
-    for (const dependency of record.dependencies) {
-      const dependencyRecord = records.find(
-        (candidate) => candidate.taskKey === dependency,
-      );
-      if (dependencyRecord?.status !== "integrated") {
-        throw new WorktreeStateConflictError(
-          `task dependency is not integrated: ${dependency}`,
-        );
-      }
-    }
-    const taskHeadSha = this.#assertWorktree(record);
-    const ancestor = this.#git.run(
-      record.worktreePath,
-      ["merge-base", "--is-ancestor", record.baseSha, taskHeadSha],
-      { allowFailure: true },
-    );
-    if (ancestor.status !== 0) {
-      throw new WorktreeStateConflictError(
-        "task HEAD no longer descends from its frozen base SHA",
-      );
-    }
-    const changedFiles = this.#git
-      .run(record.worktreePath, [
-        "diff",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--name-only",
-        "-z",
-        "--diff-filter=ACDMRTUXB",
-        record.baseSha,
-        taskHeadSha,
-      ])
-      .stdout.split("\0")
-      .filter(Boolean);
-    if (changedFiles.length > 0) return null;
-    if (taskHeadSha !== record.baseSha) {
-      throw new WorktreeStateConflictError(
-        "validation-only task created an empty commit instead of preserving HEAD",
-      );
-    }
-    const integration = this.integrationSnapshot(record);
-    if (integration.headSha !== record.baseSha) {
-      throw new WorktreeStateConflictError(
-        "primary checkout changed after validation worktree creation",
-      );
-    }
-    const diff = this.#git.run(record.worktreePath, [
-      "diff",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--binary",
-      "--full-index",
-      record.baseSha,
-      taskHeadSha,
-    ]).stdout;
-    return Object.freeze({
-      record,
-      taskHeadSha,
-      integrationHeadSha: integration.headSha,
-      changedFiles: Object.freeze([]) as readonly [],
-      diffHash: createHash("sha256").update(diff).digest("hex"),
-    });
+    return prepareNoChangeValidationFn(this.#integrationHost(), scope, missionId, taskId);
   }
 
-  /**
-   * Durable no-change terminal marker. Re-proves Git immediately before the
-   * CAS; normal executor work still cannot reach integration without a diff.
-   */
+  prepareDiscardedNoChangeValidation(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+  ): PreparedWorktreeNoChangeValidation | null {
+    return prepareDiscardedNoChangeValidationFn(
+      this.#integrationHost(),
+      scope,
+      missionId,
+      taskId,
+    );
+  }
+
   markValidatedNoChange(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -511,45 +464,31 @@ export class WorktreeManager {
     expectedTaskHeadSha: string,
     expectedIntegrationHeadSha: string,
   ): WorktreeRecord {
-    const prepared = this.prepareNoChangeValidation(scope, missionId, taskId);
-    if (
-      !prepared ||
-      prepared.taskHeadSha !==
-        assertSha(expectedTaskHeadSha, "expected task HEAD") ||
-      prepared.integrationHeadSha !==
-        assertSha(expectedIntegrationHeadSha, "expected integration HEAD")
-    ) {
-      throw new WorktreeStateConflictError(
-        "no-change validation Git identity changed before finalization",
-      );
-    }
-    const taskKey = worktreeTaskKey(missionId, taskId);
-    return this.#transition(this.scopeKey(scope), taskKey, (record) => {
-      if (
-        record.status === "integrated" &&
-        record.taskHeadSha === prepared.taskHeadSha &&
-        record.integratedSha === prepared.integrationHeadSha
-      ) {
-        return record;
-      }
-      if (
-        record.status !== "ready" ||
-        record.baseSha !== prepared.taskHeadSha ||
-        prepared.taskHeadSha !== prepared.integrationHeadSha
-      ) {
-        throw new WorktreeStateConflictError(
-          "worktree state changed before no-change finalization",
-        );
-      }
-      return {
-        ...record,
-        status: "integrated",
-        taskHeadSha: prepared.taskHeadSha,
-        integratedSha: prepared.integrationHeadSha,
-        failureReason: undefined,
-        updatedAt: this.#timestamp(),
-      };
-    });
+    return markValidatedNoChangeFn(
+      this.#integrationHost(),
+      scope,
+      missionId,
+      taskId,
+      expectedTaskHeadSha,
+      expectedIntegrationHeadSha,
+    );
+  }
+
+  markDiscardedNoChange(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+    expectedTaskHeadSha: string,
+    expectedIntegrationHeadSha: string,
+  ): WorktreeRecord {
+    return markDiscardedNoChangeFn(
+      this.#integrationHost(),
+      scope,
+      missionId,
+      taskId,
+      expectedTaskHeadSha,
+      expectedIntegrationHeadSha,
+    );
   }
 
   #prepareIntegration(
@@ -558,78 +497,28 @@ export class WorktreeManager {
     taskId: string,
     allowTerminalRecovery: boolean,
   ): PreparedWorktreeIntegration {
-    const record = this.get(scope, missionId, taskId);
-    const isOrdinarilyReady =
-      record?.status === "ready" || record?.status === "queued";
-    const isRecoverable =
-      allowTerminalRecovery &&
-      (record?.status === "failed" || record?.status === "integrated");
-    if (!record || (!isOrdinarilyReady && !isRecoverable)) {
-      throw new WorktreeStateConflictError("task worktree is not ready");
-    }
-    const records = this.#snapshot(record.scopeKey).records;
-    for (const dependency of record.dependencies) {
-      const dependencyRecord = records.find(
-        (candidate) => candidate.taskKey === dependency,
-      );
-      if (dependencyRecord?.status !== "integrated") {
-        throw new WorktreeStateConflictError(
-          `task dependency is not integrated: ${dependency}`,
-        );
-      }
-    }
-    const taskHeadSha = this.#assertWorktree(record);
-    const ancestor = this.#git.run(
-      record.worktreePath,
-      ["merge-base", "--is-ancestor", record.baseSha, taskHeadSha],
-      { allowFailure: true },
+    return prepareIntegrationInternal(
+      this.#integrationHost(),
+      scope,
+      missionId,
+      taskId,
+      allowTerminalRecovery,
     );
-    if (ancestor.status !== 0) {
-      throw new WorktreeStateConflictError(
-        "task HEAD no longer descends from its frozen base SHA",
-      );
-    }
-    const changedFiles = Object.freeze(
-      this.#git
-        .run(record.worktreePath, [
-          "diff",
-          "--no-ext-diff",
-          "--no-textconv",
-          "--name-only",
-          "-z",
-          "--diff-filter=ACDMRTUXB",
-          record.baseSha,
-          taskHeadSha,
-        ])
-        .stdout.split("\0")
-        .filter(Boolean)
-        .map(normalizeFileOwnership),
-    );
-    if (changedFiles.length === 0) {
-      throw new WorktreeStateConflictError("task has no committed changes");
-    }
-    const undeclared = changedFiles.filter(
-      (file) =>
-        !record.ownership.files.some((claim) =>
-          fileOwnershipClaimsOverlap(claim, file),
-        ),
-    );
-    if (undeclared.length > 0) throw new OwnershipViolationError(undeclared);
-    const diff = this.#git.run(record.worktreePath, [
-      "diff",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--binary",
-      "--full-index",
-      record.baseSha,
-      taskHeadSha,
-    ]).stdout;
-    return Object.freeze({
-      record,
-      taskHeadSha,
-      changedFiles,
-      diffHash: createHash("sha256").update(diff).digest("hex"),
-    });
+  }
+
+  #integrationHost(): IntegrationHost {
+    return {
+      git: this.#git,
+      get: (scope, missionId, taskId) => this.get(scope, missionId, taskId),
+      snapshot: (scopeKey) => this.#snapshot(scopeKey),
+      transition: (scopeKey, taskKey, update) =>
+        this.#transition(scopeKey, taskKey, update),
+      timestamp: () => this.#timestamp(),
+      scopeKey: (scope) => this.scopeKey(scope),
+      integrationSnapshot: (record) => this.integrationSnapshot(record),
+      prepareRecoveryIntegration: (scope, missionId, taskId) =>
+        this.prepareRecoveryIntegration(scope, missionId, taskId),
+    };
   }
 
   reopenFailedForRetry(
@@ -706,7 +595,8 @@ export class WorktreeManager {
   }
 
   inspectIntegration(record: WorktreeRecord): IntegrationCheckoutInspection {
-    const snapshot = this.#repositorySnapshot(
+    const snapshot = readRepositorySnapshot(
+      this.#git,
       {
         projectId: record.projectId,
         checkoutId: record.checkoutId,
@@ -776,6 +666,50 @@ export class WorktreeManager {
     });
   }
 
+  /**
+   * Mirrors an exact main-checkout CAS rollback in durable worktree state.
+   * The task branch remains intact and queued so a technical retry or a repair
+   * commit can be validated again; no integrated receipt survives the rollback.
+   */
+  restoreQueuedAfterIntegrationRollback(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+    expectedTaskHeadSha: string,
+    rolledBackCandidateSha: string,
+  ): WorktreeRecord {
+    const taskKey = worktreeTaskKey(missionId, taskId);
+    const taskHeadSha = assertSha(expectedTaskHeadSha, "task head SHA");
+    const candidateSha = assertSha(
+      rolledBackCandidateSha,
+      "rolled back candidate SHA",
+    );
+    return this.#transition(this.scopeKey(scope), taskKey, (record) => {
+      const { integratedSha: currentIntegratedSha, ...withoutIntegration } =
+        record;
+      const isQueued =
+        record.status === "queued" &&
+        record.taskHeadSha === taskHeadSha &&
+        currentIntegratedSha === undefined;
+      const isIntegrated =
+        record.status === "integrated" &&
+        record.taskHeadSha === taskHeadSha &&
+        currentIntegratedSha === candidateSha;
+      if (!isQueued && !isIntegrated) {
+        throw new WorktreeStateConflictError(
+          "worktree state diverged from the rolled-back integration",
+        );
+      }
+      return {
+        ...withoutIntegration,
+        status: "queued",
+        taskHeadSha,
+        failureReason: undefined,
+        updatedAt: this.#timestamp(),
+      };
+    });
+  }
+
   markFailed(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -802,227 +736,6 @@ export class WorktreeManager {
     });
   }
 
-  #repositorySnapshot(
-    scope: Pick<
-      ProjectExecutionScope,
-      "projectId" | "checkoutId" | "rootRealPath"
-    >,
-    requireClean: boolean,
-  ): RepositorySnapshot {
-    const expectedRoot = path.resolve(scope.rootRealPath);
-    const rootRealPath = fs.realpathSync(expectedRoot);
-    if (
-      scope.rootRealPath !== expectedRoot ||
-      rootRealPath !== expectedRoot ||
-      !fs.statSync(rootRealPath).isDirectory()
-    ) {
-      throw new Error("scope root is not canonical");
-    }
-    const topLevel = fs.realpathSync(
-      gitOutput(this.#git, rootRealPath, ["rev-parse", "--show-toplevel"]),
-    );
-    if (topLevel !== rootRealPath) {
-      throw new Error("scope root must equal the canonical Git top-level");
-    }
-    this.#assertSafeRepositoryConfig(rootRealPath);
-    let integrationRef: string;
-    try {
-      integrationRef = gitOutput(this.#git, rootRealPath, [
-        "symbolic-ref",
-        "--quiet",
-        "HEAD",
-      ]);
-    } catch (error) {
-      throw new Error("primary checkout must be on an integration branch", {
-        cause: error,
-      });
-    }
-    if (!integrationRef.startsWith("refs/heads/")) {
-      throw new Error("primary checkout has an invalid integration ref");
-    }
-    const headSha = assertSha(
-      gitOutput(this.#git, rootRealPath, [
-        "rev-parse",
-        "--verify",
-        "HEAD^{commit}",
-      ]),
-      "integration HEAD",
-    );
-    const clean =
-      this.#git.run(rootRealPath, [
-        "status",
-        "--porcelain=v1",
-        "-z",
-        "--untracked-files=all",
-      ]).stdout.length === 0;
-    if (requireClean && !clean) {
-      throw new Error("primary checkout must be clean");
-    }
-    return Object.freeze({ rootRealPath, integrationRef, headSha, clean });
-  }
-
-  #assertRepositoryUnchanged(
-    expected: RepositorySnapshot,
-    requireClean: boolean,
-  ): void {
-    const current = this.#repositorySnapshot(
-      {
-        projectId: "",
-        checkoutId: "",
-        rootRealPath: expected.rootRealPath,
-      } as ProjectExecutionScope,
-      requireClean,
-    );
-    if (
-      current.integrationRef !== expected.integrationRef ||
-      current.headSha !== expected.headSha
-    ) {
-      throw new WorktreeStateConflictError(
-        "primary checkout changed after base SHA was frozen",
-      );
-    }
-  }
-
-  #assertWorktree(record: WorktreeRecord): string {
-    const real = fs.realpathSync(record.worktreePath);
-    if (real !== record.worktreePath || !fs.statSync(real).isDirectory()) {
-      throw new WorktreeStateConflictError("task worktree path changed");
-    }
-    const topLevel = fs.realpathSync(
-      gitOutput(this.#git, real, ["rev-parse", "--show-toplevel"]),
-    );
-    if (topLevel !== real) {
-      throw new WorktreeStateConflictError("task worktree Git root changed");
-    }
-    const branchRef = gitOutput(this.#git, real, [
-      "symbolic-ref",
-      "--quiet",
-      "HEAD",
-    ]);
-    if (branchRef !== record.branchRef) {
-      throw new WorktreeStateConflictError("task worktree branch changed");
-    }
-    const repositoryCommonDirectory = fs.realpathSync(
-      gitOutput(this.#git, record.rootRealPath, [
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-      ]),
-    );
-    const worktreeCommonDirectory = fs.realpathSync(
-      gitOutput(this.#git, real, [
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-      ]),
-    );
-    if (worktreeCommonDirectory !== repositoryCommonDirectory) {
-      throw new WorktreeStateConflictError(
-        "task worktree is not linked to the frozen repository",
-      );
-    }
-    this.#assertSafeRepositoryConfig(real);
-    const status = this.#git.run(real, [
-      "status",
-      "--porcelain=v1",
-      "-z",
-      "--untracked-files=all",
-    ]).stdout;
-    if (status.length > 0) {
-      throw new WorktreeStateConflictError("task worktree must be clean");
-    }
-    return assertSha(
-      gitOutput(this.#git, real, ["rev-parse", "--verify", "HEAD^{commit}"]),
-      "task HEAD",
-    );
-  }
-
-  #reconcileInterruptedReservation(
-    scope: ProjectExecutionScope,
-    scopeKey: string,
-    taskKey: string,
-  ): WorktreeRecord {
-    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
-      const snapshot = this.#snapshot(scopeKey);
-      const index = snapshot.records.findIndex(
-        (record) => record.taskKey === taskKey,
-      );
-      if (index < 0) {
-        throw new WorktreeStateConflictError(
-          "reserved worktree state record disappeared",
-        );
-      }
-      const current = snapshot.records[index];
-      if (current.status !== "reserved") return cloneRecord(current);
-
-      let next: WorktreeRecord;
-      try {
-        if (
-          current.projectId !== scope.projectId ||
-          current.checkoutId !== scope.checkoutId ||
-          current.rootRealPath !== scope.rootRealPath
-        ) {
-          throw new WorktreeStateConflictError(
-            "reserved worktree does not belong to the requested scope",
-          );
-        }
-        const repository = this.#repositorySnapshot(scope, true);
-        if (
-          repository.integrationRef !== current.integrationRef ||
-          repository.headSha !== current.baseSha
-        ) {
-          throw new WorktreeStateConflictError(
-            "primary checkout changed after the reserved base was frozen",
-          );
-        }
-        const taskHeadSha = this.#assertWorktree(current);
-        if (taskHeadSha !== current.baseSha) {
-          throw new WorktreeStateConflictError(
-            "reserved worktree HEAD diverged from its frozen base",
-          );
-        }
-        next = cloneRecord({
-          ...current,
-          status: "ready",
-          failureReason: undefined,
-          updatedAt: this.#timestamp(),
-        });
-      } catch (error) {
-        next = cloneRecord({
-          ...current,
-          status: "failed",
-          failureReason: this.#failureMessage(
-            `${INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER} ` +
-              `reserved worktree reconciliation failed closed: ` +
-              this.#failureMessage(error),
-          ),
-          updatedAt: this.#timestamp(),
-        });
-      }
-
-      const records = snapshot.records.map((record, candidateIndex) =>
-        candidateIndex === index ? next : record,
-      );
-      const validated = validateWorktreeStateSnapshot(
-        { revision: snapshot.revision, records },
-        { scopeKey, worktreesRoot: this.worktreesRoot },
-      ).records;
-      if (
-        this.#stateStore.compareAndSwap(scopeKey, snapshot.revision, validated)
-      ) {
-        return next;
-      }
-      // Another process won the durable CAS. Re-read and re-prove every Git
-      // identity rather than applying a decision computed from stale state.
-    }
-    throw new WorktreeStateConflictError(
-      "reserved worktree reconciliation CAS could not converge",
-    );
-  }
-
-  #assertSafeRepositoryConfig(rootRealPath: string): void {
-    assertSafeLocalGitConfig(this.#git, rootRealPath);
-  }
 
   #snapshot(scopeKey: string): WorktreeStateSnapshot {
     try {
@@ -1047,6 +760,9 @@ export class WorktreeManager {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
       const snapshot = this.#snapshot(scopeKey);
       const next = update(snapshot.records);
+      if (next.records === snapshot.records) {
+        return next.result;
+      }
       let records: readonly WorktreeRecord[];
       try {
         records = validateWorktreeStateSnapshot(

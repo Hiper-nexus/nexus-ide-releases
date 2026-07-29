@@ -12,12 +12,6 @@ import type {
 } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
-  getOmpRpcSessionAuthority,
-  isOmpRpcSession,
-  listOmpRpcSessions,
-  terminateOmpRpcSession,
-} from '../adapters/omp-rpc-ipc';
-import {
   getSessionState,
   listAgentSessions,
   orchTerminateSession,
@@ -66,7 +60,6 @@ interface RuntimeTarget {
   readonly sessionId: string;
   readonly spec?: MissionPaneSpec;
   readonly workerIncarnationId?: string;
-  readonly transport: 'pty' | 'omp';
   readonly orphaned: boolean;
 }
 
@@ -100,7 +93,6 @@ function runtimeTargets(input: {
     readonly role: 'orchestrator' | 'worker' | 'user';
     readonly workerIncarnationId?: string;
     readonly scope: Readonly<ProjectExecutionScope>;
-    readonly transport: 'pty' | 'omp';
   }): void => {
     if (
       physical.missionId !== input.mission.id ||
@@ -138,8 +130,7 @@ function runtimeTargets(input: {
     const previous = targets.get(physical.sessionId);
     if (
       previous &&
-      (previous.paneId !== physical.paneId ||
-        previous.transport !== physical.transport)
+      previous.paneId !== physical.paneId
     ) {
       throw new Error('physical mission session identity is ambiguous');
     }
@@ -150,7 +141,6 @@ function runtimeTargets(input: {
       ...(physical.workerIncarnationId
         ? { workerIncarnationId: physical.workerIncarnationId }
         : {}),
-      transport: physical.transport,
       orphaned: matching.length !== 1 || !exactAuthority,
     });
   };
@@ -165,21 +155,6 @@ function runtimeTargets(input: {
       role: agent.role,
       workerIncarnationId: agent.workerIncarnationId,
       scope: agent.scope,
-      transport: 'pty',
-    });
-  }
-  for (const session of listOmpRpcSessions()) {
-    if (session.kind !== 'mission' || session.state === 'exited') continue;
-    const authority = getOmpRpcSessionAuthority(session.sessionId);
-    if (!authority) continue;
-    addPhysical({
-      sessionId: authority.sessionId,
-      paneId: authority.paneId,
-      missionId: authority.missionId,
-      role: authority.role,
-      workerIncarnationId: authority.workerIncarnationId,
-      scope: authority.scope,
-      transport: 'omp',
     });
   }
 
@@ -201,8 +176,7 @@ function runtimeTargets(input: {
   }
   for (const sessionId of snapshotSessionIds) {
     if (targets.has(sessionId)) continue;
-    const physicalLive =
-      getSessionState(sessionId) !== null || isOmpRpcSession(sessionId);
+    const physicalLive = getSessionState(sessionId) !== null;
     // A durable pointer to an already-dead process closes cleanly: there is
     // no runtime left to prove anything about.
     if (!physicalLive) continue;
@@ -223,7 +197,6 @@ function runtimeTargets(input: {
       role: authority.role,
       workerIncarnationId: authority.workerIncarnationId,
       scope: authority.scope,
-      transport: isOmpRpcSession(sessionId) ? 'omp' : 'pty',
     });
   }
 
@@ -258,7 +231,6 @@ function terminationFence(input: {
           paneId: target.paneId,
           sessionId: target.sessionId,
           workerIncarnationId: target.workerIncarnationId ?? null,
-          transport: target.transport,
           orphaned: target.orphaned,
         })),
       }),
@@ -351,10 +323,7 @@ export async function terminateMissionRuntime(input: {
     if (pending.length === 0) break;
     for (const target of pending) {
       panesToCollapse.add(target.paneId);
-      const exited =
-        target.transport === 'omp'
-          ? await terminateOmpRpcSession(target.sessionId)
-          : await orchTerminateSession(target.sessionId);
+      const exited = await orchTerminateSession(target.sessionId);
       if (!exited) {
         return {
           ok: false,

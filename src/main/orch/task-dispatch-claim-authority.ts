@@ -26,11 +26,13 @@ import {
   taskDispatchWorkerCategorySchema,
   type ClaimedTaskDispatch,
   type TaskDispatchRouteContract,
-  type TaskDispatchState,
   type TaskDispatchWorkerCategory,
 } from "./task-dispatch-codec";
 import { assertTaskDispatchMissionLifecycleAuthority } from "./task-dispatch-handoff-authority";
-import { getTaskDispatchFromDatabase } from "./task-dispatch-persistence";
+import {
+  getTaskDispatchFromDatabase,
+  getTaskDispatchRow,
+} from "./task-dispatch-persistence";
 
 export interface TaskDispatchClaimInput {
   readonly missionId: string;
@@ -219,11 +221,14 @@ export function claimTaskDispatch(
           throw new Error("dispatch workerId diverge do agentName selado");
         }
         if (sealedAgent.cli === "claude") {
-          // Claude advisor (read_only) só é admissível quando o orquestrador
-          // do roster selado NÃO é Claude — um único processo Claude por missão.
+          // One Claude process per mission. Autopilot may use it as a writer
+          // when the orchestrator is another CLI; Hardened keeps read_only.
+          const operatorChoice = isOperatorChoicePolicy(
+            getOrchSettings().squadCliPolicy,
+          );
           if (
             sealedOrchestratorCli === "claude" ||
-            executionMode !== "read_only"
+            (!operatorChoice && executionMode !== "read_only")
           ) {
             throw new Error("reserveClaude proíbe Claude OAuth como worker");
           }
@@ -303,12 +308,27 @@ export function claimTaskDispatch(
           );
         }
       }
-      const existing = db
-        .prepare(`SELECT state FROM task_dispatch_queue WHERE task_id = ?`)
-        .get(taskId) as { state: TaskDispatchState } | undefined;
-      if (existing) {
+      const existing = getTaskDispatchRow(db, taskId);
+      if (existing && existing.state !== "superseded") {
         throw new Error(
           `task ${taskId} já foi reservada por dispatch ativo (${existing.state})`,
+        );
+      }
+      if (
+        existing &&
+        (existing.handoff_id !== null ||
+          existing.handoff_accepted_at !== null ||
+          existing.integration_receipt_json !== null ||
+          existing.completed_at !== null)
+      ) {
+        throw new ScopedStoreCorruptionError(
+          "superseded dispatch contains a completion receipt",
+        );
+      }
+      if (existing && existing.lease_expires_at > now) {
+        throw new Error(
+          `capacity_wait: retry técnico de ${taskId} aguarda até ` +
+            `${existing.lease_expires_at}`,
         );
       }
       const activeRows = db
@@ -358,34 +378,81 @@ export function claimTaskDispatch(
       if (taskUpdate.changes !== 1) {
         throw new Error(`claim concorrente perdeu a task ${taskId}`);
       }
-      db.prepare(
-        `INSERT INTO task_dispatch_queue (
-           id, task_id, mission_id, intent_version, revision, attempt, state,
-           lease_token_hash, lease_owner, lease_expires_at, worker_id,
-           worker_incarnation_id,
-           ownership_json, execution_mode, agent_ref, agent_category,
-           roster_hash, route_contract_json,
-           created_at, updated_at
-         ) VALUES (?, ?, ?, ?, 1, 1, 'claimed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        dispatchId,
-        taskId,
-        missionId,
-        intentVersion,
-        taskDispatchTokenHash(leaseToken),
-        leaseOwner,
-        now + leaseMs,
-        workerId,
-        workerIncarnationId,
-        JSON.stringify(ownership),
-        executionMode,
-        agentRef ?? null,
-        agentCategory ?? null,
-        rosterHash ?? null,
-        routeContract ? JSON.stringify(routeContract) : null,
-        now,
-        now,
-      );
+      const leaseTokenHash = taskDispatchTokenHash(leaseToken);
+      const routeContractJson = routeContract
+        ? JSON.stringify(routeContract)
+        : null;
+      if (existing) {
+        const retried = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET id = ?, mission_id = ?, intent_version = ?,
+                    revision = revision + 1, attempt = attempt + 1,
+                    state = 'claimed', lease_token_hash = ?, lease_owner = ?,
+                    lease_expires_at = ?, route_reservation_id = NULL,
+                    adapter_id = NULL, model = NULL, effort = NULL,
+                    worker_id = ?, worker_incarnation_id = ?,
+                    ownership_json = ?, execution_mode = ?,
+                    agent_ref = ?, agent_category = ?, roster_hash = ?,
+                    route_contract_json = ?, pane_id = NULL, session_id = NULL,
+                    handoff_id = NULL, handoff_accepted_at = NULL,
+                    integration_receipt_json = NULL, completed_at = NULL,
+                    last_heartbeat_at = NULL, last_error = NULL, updated_at = ?
+              WHERE task_id = ? AND state = 'superseded'
+                AND handoff_id IS NULL AND handoff_accepted_at IS NULL
+                AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(
+            dispatchId,
+            missionId,
+            intentVersion,
+            leaseTokenHash,
+            leaseOwner,
+            now + leaseMs,
+            workerId,
+            workerIncarnationId,
+            JSON.stringify(ownership),
+            executionMode,
+            agentRef ?? null,
+            agentCategory ?? null,
+            rosterHash ?? null,
+            routeContractJson,
+            now,
+            taskId,
+          );
+        if (retried.changes !== 1) {
+          throw new Error(`retry concorrente perdeu a task ${taskId}`);
+        }
+      } else {
+        db.prepare(
+          `INSERT INTO task_dispatch_queue (
+             id, task_id, mission_id, intent_version, revision, attempt, state,
+             lease_token_hash, lease_owner, lease_expires_at, worker_id,
+             worker_incarnation_id,
+             ownership_json, execution_mode, agent_ref, agent_category,
+             roster_hash, route_contract_json,
+             created_at, updated_at
+           ) VALUES (?, ?, ?, ?, 1, 1, 'claimed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          dispatchId,
+          taskId,
+          missionId,
+          intentVersion,
+          leaseTokenHash,
+          leaseOwner,
+          now + leaseMs,
+          workerId,
+          workerIncarnationId,
+          JSON.stringify(ownership),
+          executionMode,
+          agentRef ?? null,
+          agentCategory ?? null,
+          rosterHash ?? null,
+          routeContractJson,
+          now,
+          now,
+        );
+      }
       return getTaskDispatchFromDatabase(db, taskId, binding.coordinates);
     })
     .immediate();

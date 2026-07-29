@@ -4,12 +4,10 @@ import type { ProjectExecutionScope } from '../../shared/types';
 
 const runtime = vi.hoisted(() => ({
   pty: [] as Array<Record<string, unknown>>,
-  omp: [] as Array<Record<string, unknown>>,
   snapshots: [] as Array<Record<string, unknown>>,
   /** Live PTYs absent from every authority inventory (unattributable). */
   unattributed: [] as string[],
   terminatePty: vi.fn(async (_sessionId: string) => true),
-  terminateOmp: vi.fn(async (_sessionId: string) => true),
   closeMissionPane: vi.fn(
     async (_request: {
       paneId: string;
@@ -37,36 +35,9 @@ vi.mock('../pty/pty-manager', () => ({
   },
 }));
 
-vi.mock('../adapters/omp-rpc-ipc', () => ({
-  getOmpRpcSessionAuthority: (sessionId: string) =>
-    runtime.omp.find((entry) => entry.sessionId === sessionId) ?? null,
-  isOmpRpcSession: (sessionId: string) =>
-    runtime.omp.some((entry) => entry.sessionId === sessionId),
-  listOmpRpcSessions: () =>
-    runtime.omp.map((entry) => ({
-      sessionId: entry.sessionId,
-      paneId: entry.paneId,
-      kind: 'mission',
-      missionId: entry.missionId,
-      state: 'idle',
-      snapshot: {},
-    })),
-  terminateOmpRpcSession: async (sessionId: string) => {
-    const result = await runtime.terminateOmp(sessionId);
-    if (result) {
-      runtime.omp = runtime.omp.filter(
-        (entry) => entry.sessionId !== sessionId,
-      );
-    }
-    return result;
-  },
-}));
-
 vi.mock('./pane-registry', () => ({
   getPaneRuntimeAuthorityBySession: (sessionId: string) =>
-    [...runtime.pty, ...runtime.omp].find(
-      (entry) => entry.sessionId === sessionId,
-    ) ?? null,
+    runtime.pty.find((entry) => entry.sessionId === sessionId) ?? null,
   listPaneSnapshots: () => [...runtime.snapshots],
   requestMissionPaneClose: runtime.closeMissionPane,
 }));
@@ -202,11 +173,9 @@ function closeSuite(
 
 beforeEach(() => {
   runtime.pty = [];
-  runtime.omp = [];
   runtime.snapshots = [];
   runtime.unattributed = [];
   runtime.terminatePty.mockReset().mockResolvedValue(true);
-  runtime.terminateOmp.mockReset().mockResolvedValue(true);
   runtime.closeMissionPane.mockReset().mockResolvedValue(true);
 });
 
@@ -265,21 +234,6 @@ describe('mission runtime physical inventory termination', () => {
     });
     expect(runtime.pty).toHaveLength(1);
     expect(runtime.closeMissionPane).not.toHaveBeenCalled();
-  });
-
-  it('finds and terminates a detached mission OMP session', async () => {
-    runtime.omp = [physical('omp-hidden', 'pane-omp', 'inc-omp')];
-    const stores = suite([pane('pane-omp', 'inc-omp')]);
-
-    await expect(
-      terminateMissionRuntime({
-        scope,
-        suite: stores,
-        missionId: mission.id,
-        reason: 'authority-revoked',
-      }),
-    ).resolves.toMatchObject({ ok: true, terminatedSessionIds: ['omp-hidden'] });
-    expect(runtime.terminateOmp).toHaveBeenCalledWith('omp-hidden');
   });
 
   it('kills a mission-bound physical orphan whose incarnation has no exact persisted spec', async () => {

@@ -11,6 +11,7 @@ import {
 } from '../../shared/pet-studio';
 import {
   buildCanonicalMissionKickoffPrompt,
+  bindPtyMissionControlToKickoff,
   missionKickoffFailureMarker,
   missionKickoffFailureReasonFromDescription,
   rendererMissionKickoffRequestSchema,
@@ -92,6 +93,52 @@ afterEach(() => {
 });
 
 describe('main-owned mission kickoff acceptance', () => {
+  it('binds PTY mission control only to the exact approved Autopilot runtime', () => {
+    const ensureChannel = vi.fn(() => 'channel-a');
+    const instructionsForSession = vi.fn(
+      () => '### NEXUS_ACTION v1 channel-a',
+    );
+    const control = { ensureChannel, instructionsForSession };
+    const contract = {
+      ...compileIntentContract({
+        goal: 'Executar a missão pelo Maestro escolhido',
+        intentVersion: 1,
+      }),
+      orchestratorRuntime: {
+        adapterId: 'agy',
+        readOnly: false as const,
+        nativeReadOnly: false,
+      },
+    };
+
+    expect(
+      bindPtyMissionControlToKickoff(
+        { intentContract: contract },
+        'session-a',
+        'prompt base',
+        control,
+      ),
+    ).toContain('### NEXUS_ACTION v1 channel-a');
+    expect(ensureChannel).toHaveBeenCalledWith('session-a');
+
+    expect(
+      bindPtyMissionControlToKickoff(
+        {
+          intentContract: {
+            ...contract,
+            orchestratorRuntime: {
+              ...contract.orchestratorRuntime,
+              nativeReadOnly: true,
+            },
+          },
+        },
+        'session-hardened',
+        'prompt hardened',
+        null,
+      ),
+    ).toBe('prompt hardened');
+  });
+
   it('persists only a closed kickoff failure reason marker for diagnostics', () => {
     const marker = missionKickoffFailureMarker('boot_timeout');
     expect(marker).toBe('<!-- nexus:kickoff-failure:boot_timeout -->');

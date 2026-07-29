@@ -69,12 +69,12 @@ export interface McpToolInvocation {
     readonly toolCallId: string;
     readonly toolName: string;
     readonly source:
-      "http-mcp" | "omp-rpc-stdio" | "ipc-renderer" | "jarvis-voice";
+      "http-mcp" | "pty-stream" | "ipc-renderer" | "jarvis-voice";
     readonly issuedAt: number;
   };
   /**
-   * Opaque one-shot capability minted only inside the authenticated localhost
-   * HTTP transport. It cannot be reconstructed from ids, hashes or JSON.
+   * Opaque one-shot capability minted only inside an authenticated physical
+   * agent transport (localhost HTTP MCP or Main-observed PTY stream).
    */
   readonly agentTransportPhysicalReceipt?: AgentTransportPhysicalReceipt;
   /**

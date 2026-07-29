@@ -59,6 +59,17 @@ const ADAPTERS: AdapterInfo[] = Array.from({ length: 7 }, (_, index) => ({
   orchestratorCapable: index < 2,
   orchestrationEvidence: index < 2 ? "verified" : "unsupported",
   autonomousWorkspaceWriteCapable: index === 1,
+  taskHandoffCapable: true,
+  missionControlCapable: true,
+  capabilities: {
+    launchable: true,
+    promptInjectable: true,
+    statusObservable: true,
+    resumable: true,
+    autonomousReadOnly: index === 1,
+    governedWriter: index === 1,
+    verifiedMaestro: index < 2,
+  },
 }));
 
 const PROVIDERS: ProviderSettingsInfo[] = ADAPTERS.map((adapter) => ({
@@ -137,12 +148,13 @@ function setNexusApi(
         }),
         onChanged: vi.fn(() => () => {}),
       },
+      settings: {
+        orchGet: vi.fn(async () => ({
+          squadCliPolicy: "operator-choice",
+        })),
+      },
       orch: {
         removeMission: vi.fn(async () => ({ removed: true })),
-      },
-      ompRpc: {
-        listSessions: vi.fn(async () => []),
-        onEvent: vi.fn(() => () => {}),
       },
     },
   });
@@ -193,12 +205,13 @@ function setReactiveNexusApi(
           };
         }),
       },
+      settings: {
+        orchGet: vi.fn(async () => ({
+          squadCliPolicy: "operator-choice",
+        })),
+      },
       orch: {
         removeMission: vi.fn(async () => ({ removed: true })),
-      },
-      ompRpc: {
-        listSessions: vi.fn(async () => []),
-        onEvent: vi.fn(() => () => {}),
       },
     },
   });
@@ -289,7 +302,7 @@ describe("operational Home and Launch surfaces", () => {
     expect(host.textContent).toContain("Continuar nexus-ide");
     expect(host.textContent).toContain("7 CLIs detectadas");
     expect(host.textContent).toContain(
-      "Rota de missão autenticada e verificada",
+      "Rota de missão autenticada e pronta",
     );
     expect(host.textContent).toContain("MCP online · 71 ferramentas");
 
@@ -364,7 +377,7 @@ describe("operational Home and Launch surfaces", () => {
     });
 
     expect(host.textContent).toContain(
-      "Rota de missão autenticada e verificada",
+      "Rota de missão autenticada e pronta",
     );
     expect(inventory.adapterList).toHaveBeenCalledTimes(2);
     expect(inventory.providerList).toHaveBeenCalledTimes(2);
@@ -396,7 +409,7 @@ describe("operational Home and Launch surfaces", () => {
     });
 
     expect(host.textContent).toContain(
-      "Rota de missão autenticada e verificada",
+      "Rota de missão autenticada e pronta",
     );
     expect(inventory.accountList).toHaveBeenCalledTimes(2);
 
@@ -424,8 +437,8 @@ describe("operational Home and Launch surfaces", () => {
 
     expect(host.textContent).toContain("Pronto para planejar");
     expect(host.textContent).toContain("7 CLIs detectadas");
-    expect(host.textContent).toContain("2 Maestros autenticados e verificados");
-    expect(host.textContent).toContain("1 worker com escrita confinada");
+    expect(host.textContent).toContain("7 CLIs autenticadas com handoff");
+    expect(host.textContent).toContain("7 workers com handoff");
     expect(host.textContent).toContain("MCP online · 71 ferramentas");
     expect(host.textContent).toContain("Próxima ação");
     expect(host.textContent).toContain("O que você quer criar?");
@@ -585,7 +598,7 @@ describe("operational Home and Launch surfaces", () => {
     expect(host.textContent).toContain("Conclua a rota de execução");
     expect(host.textContent).toContain("7 CLIs detectadas");
     expect(host.textContent).toContain(
-      "Nenhum Maestro autenticado e verificado",
+      "Nenhuma CLI autenticada com handoff",
     );
     const configure = [...host.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("Configurar execução"),

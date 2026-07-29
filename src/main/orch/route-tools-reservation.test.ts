@@ -13,12 +13,16 @@ import { testProjectScope } from './__tests__/scope-fixture';
 
 const mocks = vi.hoisted(() => ({
   listProviderSettings: vi.fn(),
+  isProviderEnabled: vi.fn(() => true),
+  providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(() => true),
   routableWorkerCliIds: new Set<string>(['codex']),
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
   listProviderSettings: mocks.listProviderSettings,
+  isProviderEnabled: mocks.isProviderEnabled,
+  providerReadiness: mocks.providerReadiness,
 }));
 vi.mock('../persistence/account-store', async () => {
   const actual = await vi.importActual<typeof import('../persistence/account-store')>(
@@ -144,7 +148,7 @@ describe('nexus_route_task RouteReservation durável', () => {
     });
   });
 
-  it('filtra Kimi antes da reserva e falha com correção acionável sem Codex', async () => {
+  it('falha com correção acionável quando nenhuma CLI do roster está disponível', async () => {
     const routeTool = buildDomainTools().find(
       (candidate) => candidate.name === 'nexus_route_task',
     )!;
@@ -159,7 +163,7 @@ describe('nexus_route_task RouteReservation durável', () => {
           context(),
         ),
       ).rejects.toThrow(
-        /governed_worker_route_unavailable.*Codex builtin.*Kimi.*Terminal.*Nenhuma RouteReservation/is,
+        /mission_worker_route_unavailable.*nenhuma CLI do roster.*Providers.*Nenhuma RouteReservation/is,
       );
     } finally {
       mocks.routableWorkerCliIds.add('codex');

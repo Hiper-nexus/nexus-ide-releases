@@ -17,6 +17,7 @@ import {
   describeLocalReleaseAssets,
   assertPublishPhysicalCandidate,
   loadReusableReleaseCandidate,
+  materializeReusableReleaseCandidate,
   publishManualRelease,
   publishManualReleaseTestCore,
   resolveSecurityAssets,
@@ -490,6 +491,16 @@ describe('manual GitHub release publication', () => {
       });
       expect(candidate.receipt.tag).toBe('v1.2.3');
       expect(path.basename(candidate.artifacts.dmg)).toBe('NexusIDE-arm64.dmg');
+      const materialized = materializeReusableReleaseCandidate(root, candidate);
+      expect(materialized.publicAssets.map((asset) => asset.name)).toEqual([
+        'NexusIDE-arm64.dmg',
+        'NexusIDE-arm64.zip',
+      ]);
+      expect(() =>
+        materializeReusableReleaseCandidate(root, {
+          ...candidate,
+        }),
+      ).toThrow(/durable candidate authority/i);
       expect(() => loadReusableReleaseCandidate({
         root,
         environment: publishEnvironment(),
@@ -504,6 +515,9 @@ describe('manual GitHub release publication', () => {
         },
       })).toThrow(/receipt/i);
       fs.appendFileSync(candidate.artifacts.zip, 'changed');
+      expect(() =>
+        materializeReusableReleaseCandidate(root, candidate),
+      ).toThrow(/durable candidate bytes changed/i);
       expect(() => loadReusableReleaseCandidate({
         root,
         environment: publishEnvironment(),
@@ -1069,6 +1083,9 @@ function fakeGitHub({ states, fixture, events }) {
 
 function createReusableCandidateFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-reuse-test-'));
+  fs.mkdirSync(path.join(root, 'server'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'src', 'shared'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'build'), { recursive: true });
   fs.mkdirSync(path.join(root, 'out', 'make', 'darwin', 'arm64'), {
     recursive: true,
   });
@@ -1085,8 +1102,41 @@ function createReusableCandidateFixture() {
     }),
   );
   fs.writeFileSync(
+    path.join(root, 'server', 'package.json'),
+    JSON.stringify({ name: '@nexus/server', version: '1.2.3' }),
+  );
+  fs.writeFileSync(
     path.join(root, 'package-lock.json'),
-    JSON.stringify({ lockfileVersion: 3 }),
+    JSON.stringify({
+      version: '1.2.3',
+      lockfileVersion: 3,
+      packages: {
+        '': { version: '1.2.3' },
+        server: { version: '1.2.3' },
+      },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(root, 'src', 'shared', 'release-notes.ts'),
+    "export const CURRENT_RELEASE = { version: '1.2.3' };\n",
+  );
+  fs.writeFileSync(
+    path.join(root, 'CHANGELOG.md'),
+    '# Changelog\n\n## 1.2.3 — Test release\n',
+  );
+  fs.writeFileSync(
+    path.join(root, 'build', 'release-tag-signers.json'),
+    JSON.stringify({ schemaVersion: 1, fingerprints: [] }),
+  );
+  fs.writeFileSync(
+    path.join(root, 'build', 'release-npm-integrity.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      packages: {
+        '12.0.0':
+          'sha512-qzvPQfNSY7louiM6rv7dL0hi5esBGLn1lLwxbdyL5XOIssWzoYMwn8xqvWhYcZL6onTkenYSxrtKxsFrFbUFyw==',
+      },
+    }),
   );
   const dmgPath = path.join(
     root,

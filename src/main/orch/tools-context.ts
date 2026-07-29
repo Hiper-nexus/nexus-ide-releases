@@ -45,6 +45,7 @@ import {
   runPrevcCouncilReview,
   runPrevcFinalValidation,
 } from './prevc-autopilot-coordinator';
+import { ensurePrevcMergeReady } from './prevc-merge-preparation';
 
 // Doctor is an idempotent project operation, not a fan-out primitive. Several
 // model retries used to launch independent reviewers for the same drafts.
@@ -1082,7 +1083,7 @@ const worktreeCreateTool: McpToolDef = {
       // ownership expansion is advisory
     }
     assertCurrentAuthority();
-    const created = requireWorktreeRuntimeRegistry().create({
+    const created = await requireWorktreeRuntimeRegistry().create({
       scope: ctx.scope,
       missionId: input.missionId,
       taskId: input.taskId,
@@ -1171,6 +1172,11 @@ const mergeTaskTool: McpToolDef = {
       assertMcpInvocationCurrent(invocation);
       assertManualAuthority();
     };
+    await ensurePrevcMergeReady(ctx.scope, input.missionId, {
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+      assertCurrentAuthority,
+    });
+    assertCurrentAuthority();
     const service = getContextWorkflowService(ctx.scope);
     service.assertMutationAllowed(input.missionId, 'nexus_merge_task', {});
     const validator = new MergeValidationCoordinator(service);
@@ -1261,6 +1267,11 @@ const mergeRetryTool: McpToolDef = {
       assertMcpInvocationCurrent(invocation);
       assertManualAuthority();
     };
+    await ensurePrevcMergeReady(ctx.scope, input.missionId, {
+      ...(invocation?.signal ? { signal: invocation.signal } : {}),
+      assertCurrentAuthority,
+    });
+    assertCurrentAuthority();
     const service = getContextWorkflowService(ctx.scope);
     // Retry owns a narrower gate than ordinary workflow mutation: the durable
     // queue CAS below proves the exact blocked task/attempt. This must remain

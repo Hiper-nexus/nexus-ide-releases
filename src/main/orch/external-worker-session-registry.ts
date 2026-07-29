@@ -2,7 +2,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 
 /**
  * Main-owned liveness for worker transports that are not backed by a PTY
- * (currently OMP rpc-ui). Durable dispatch rows keep the opaque sessionId;
+ * from non-PTY transports. Durable dispatch rows keep the opaque sessionId;
  * this registry only proves that the exact process incarnation is still live
  * in the current main process. It is intentionally empty after restart.
  */

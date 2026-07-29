@@ -110,9 +110,7 @@ assinada concluir as duas varreduras de ausência. Se o helper sofrer
 `SIGKILL`, crash ou qualquer término não normal antes disso, o resultado público
 fica em `159` e falha fechado.
 
-O mesmo contrato — sem o inventário PPID genérico — é usado pelo OMP RPC,
-apesar de esse transporte usar pipes em vez de PTY. Injeções de processo em
-testes continuam explicitamente no caminho genérico.
+Injeções de processo em testes continuam explicitamente no caminho genérico.
 
 ## Inventário operacional
 

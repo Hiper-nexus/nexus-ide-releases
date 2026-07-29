@@ -75,25 +75,6 @@ const kimiAdapter = {
   },
 };
 
-const ompAdapter = {
-  ...claudeAdapter,
-  id: 'omp',
-  label: 'Oh My Pi',
-  bin: 'omp',
-  install: { command: 'brew install can1357/tap/omp' },
-  auth: { method: 'oauth', loginHint: 'omp auth-broker login' },
-  env: { passthrough: [] },
-  models: {
-    flag: '--model',
-    list: [
-      'anthropic/claude-sonnet-4-6',
-      'openai-codex/gpt-5.5',
-      'zai/glm-5',
-    ],
-    default: 'anthropic/claude-sonnet-4-6',
-  },
-};
-
 const opencodeAdapter = {
   ...kimiAdapter,
   id: 'opencode',
@@ -119,6 +100,24 @@ const opencodeAdapter = {
   },
 };
 
+const credentiallessAdapter = {
+  ...kimiAdapter,
+  id: 'local-agent',
+  label: 'Local Agent',
+  bin: 'local-agent',
+  auth: {
+    method: 'none',
+  },
+  env: {
+    passthrough: ['LOCAL_AGENT_OPTION'],
+  },
+  models: {
+    flag: '--model',
+    list: ['local/default'],
+    default: 'local/default',
+  },
+};
+
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [], getFocusedWindow: () => null },
   dialog: { showMessageBox: vi.fn() },
@@ -131,10 +130,10 @@ vi.mock('../adapters/adapter-registry', () => ({
       ? claudeAdapter
       : id === 'kimi'
         ? kimiAdapter
-        : id === 'omp'
-          ? ompAdapter
-          : id === 'opencode'
-            ? opencodeAdapter
+        : id === 'opencode'
+          ? opencodeAdapter
+          : id === 'local-agent'
+            ? credentiallessAdapter
           : null,
   isBinResolvable: () => true,
   getAdapterResolvedBin: (id: string) =>
@@ -142,27 +141,27 @@ vi.mock('../adapters/adapter-registry', () => ({
       ? '/usr/local/bin/claude'
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
-      : id === 'omp'
-        ? '/usr/local/bin/omp'
-        : id === 'opencode'
-          ? '/opt/homebrew/bin/opencode'
+      : id === 'opencode'
+        ? '/opt/homebrew/bin/opencode'
+        : id === 'local-agent'
+          ? '/usr/local/bin/local-agent'
         : null,
   resolveAdapterBinary: (id: string) =>
     id === 'claude'
       ? '/usr/local/bin/claude'
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
-      : id === 'omp'
-        ? '/usr/local/bin/omp'
-        : id === 'opencode'
-          ? '/opt/homebrew/bin/opencode'
+      : id === 'opencode'
+        ? '/opt/homebrew/bin/opencode'
+        : id === 'local-agent'
+          ? '/usr/local/bin/local-agent'
         : null,
   rescanAdapterBinaries: vi.fn(() => []),
   listAdapters: () => [
     claudeAdapter,
     kimiAdapter,
-    ompAdapter,
     opencodeAdapter,
+    credentiallessAdapter,
   ],
   notifyAdaptersChanged: vi.fn(),
   primaryKeyEnvVar: (adapter: { auth: { envVarFallback?: string } }) =>
@@ -236,7 +235,6 @@ vi.mock('./account-store', () => ({
 import {
   listProviderSettings,
   prepareProviderSpawn,
-  providerAuthStrategy,
   providerReadiness,
 } from './provider-config-store';
 
@@ -258,78 +256,6 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.activeClaudeAuthEnv.mockReturnValue({
       CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
     });
-  });
-
-  it('blocks login-needed OMP before any pane or RPC worker can start', () => {
-    spawnDeps.subscriptionAuthed.mockReturnValue(false);
-    spawnDeps.runtimeKey.mockReturnValue(null);
-    spawnDeps.resolveAuthStrategy.mockReturnValue({
-      strategy: 'login-needed',
-      injectKey: false,
-      suppressKeyEnv: false,
-    });
-
-    expect(providerAuthStrategy('omp')).toBe('login-needed');
-    expect(providerReadiness('omp')).toMatchObject({ ready: false });
-    expect(prepareProviderSpawn('omp')).toMatchObject({ ok: false });
-  });
-
-  it('scopes OMP readiness to the exact selected provider/model', () => {
-    spawnDeps.subscriptionAuthed.mockImplementation(
-      (_adapterId: string, model?: string) =>
-        model === 'openai-codex/gpt-5.5',
-    );
-    spawnDeps.resolveAuthStrategy.mockImplementation(
-      ({ subscriptionAuthed, hasStoredKey }) => ({
-        strategy: subscriptionAuthed
-          ? 'subscription'
-          : hasStoredKey
-            ? 'api-key'
-            : 'login-needed',
-        injectKey: !subscriptionAuthed && hasStoredKey,
-        suppressKeyEnv: subscriptionAuthed,
-      }),
-    );
-
-    expect(
-      providerReadiness('omp', 'openai-codex/gpt-5.5'),
-    ).toMatchObject({ ready: true });
-    expect(
-      providerReadiness('omp', 'anthropic/claude-sonnet-4-6'),
-    ).toMatchObject({ ready: false });
-    expect(spawnDeps.subscriptionAuthed).toHaveBeenCalledWith(
-      'omp',
-      'openai-codex/gpt-5.5',
-    );
-  });
-
-  it('injects only the selected OMP provider key family', () => {
-    spawnDeps.subscriptionAuthed.mockReturnValue(false);
-    spawnDeps.launcherKey.mockImplementation((providerId: string) =>
-      providerId === 'glm' ? 'selected-provider-key' : null,
-    );
-    spawnDeps.resolveAuthStrategy.mockReturnValue({
-      strategy: 'api-key',
-      injectKey: true,
-      suppressKeyEnv: false,
-    });
-
-    const result = prepareProviderSpawn('omp', { model: 'zai/glm-5' });
-
-    expect(result).toMatchObject({
-      ok: true,
-      overrides: {
-        keyEnv: {
-          ZAI_API_KEY: 'selected-provider-key',
-        },
-      },
-    });
-    if (!result.ok) throw new Error('expected an OMP spawn');
-    expect(result.overrides.keyEnv).not.toHaveProperty('ANTHROPIC_API_KEY');
-    expect(result.overrides.keyEnv).not.toHaveProperty('OPENAI_API_KEY');
-    expect(result.overrides.keyEnv).not.toHaveProperty('OPENROUTER_API_KEY');
-    expect(spawnDeps.launcherKey).toHaveBeenCalledWith('glm');
-    expect(spawnDeps.launcherKey).not.toHaveBeenCalledWith('anthropic');
   });
 
   it('allows credentialless OpenCode only for an exact pinned first-party free model', () => {
@@ -363,6 +289,42 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
         suppressEnv: [],
       },
     });
+  });
+
+  it('spawns auth.method none without login, key injection or env suppression', () => {
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.resolveAuthStrategy.mockImplementation((input) =>
+      input.authMethod === 'none'
+        ? {
+            strategy: 'credentialless',
+            injectKey: false,
+            suppressKeyEnv: false,
+          }
+        : {
+            strategy: 'login-needed',
+            injectKey: false,
+            suppressKeyEnv: false,
+          },
+    );
+
+    expect(providerReadiness('local-agent')).toEqual({
+      ready: true,
+      reason: 'ready',
+    });
+    expect(prepareProviderSpawn('local-agent')).toEqual({
+      ok: true,
+      overrides: {
+        binPath: '/usr/local/bin/local-agent',
+        defaultModel: null,
+        extraArgs: [],
+        keyEnv: {},
+        suppressEnv: [],
+      },
+    });
+    expect(spawnDeps.resolveAuthStrategy).toHaveBeenCalledWith(
+      expect.objectContaining({ authMethod: 'none' }),
+    );
   });
 
   it('builds provider snapshots exclusively from the non-blocking auth status path', () => {

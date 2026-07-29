@@ -32,6 +32,9 @@ import { createMissionPaneAuthoritySeal } from './mission-pane-authority';
 import { NEXUS_STORY_IMPLEMENTATION_SQUAD_ID } from '../../shared/builtin-squad-ids';
 import { selectPhysicalPlanHandoff } from './plan-promotion-authority';
 import type { TaskDispatchRecord } from './task-dispatch-store';
+import { TERMINAL_OPERATIONAL_FAILURE_MARKER } from '../runtime/operational-failure-policy';
+import { RETIRED_ROSTER_ROUTE_MARKER } from '../../shared/retired-adapter-policy';
+import { RetiredRosterRouteError } from '../../shared/retired-adapter-policy';
 
 const scope = Object.freeze({
   version: 1 as const,
@@ -178,6 +181,24 @@ function harness(): Harness {
       };
       return value.mission;
     },
+    clearOrchestratorSessionIfMatches: (
+      _scope,
+      missionId,
+      expectedSessionId,
+    ) => {
+      if (
+        missionId !== value.mission.id ||
+        value.mission.orchestratorSessionId !== expectedSessionId
+      ) {
+        return null;
+      }
+      value.mission = {
+        ...value.mission,
+        orchestratorSessionId: undefined,
+        updatedAt: Date.now(),
+      };
+      return value.mission;
+    },
     hasCurrentKickoffAcceptance: () => value.kickoffAccepted,
     hasPendingKickoffFlight: () => value.kickoffFlightPending,
     listMissionPanes: () => [],
@@ -302,6 +323,10 @@ function harness(): Harness {
       return result;
     },
     emitDispatched: vi.fn(),
+    prepareOpportunisticPrevc: vi.fn(async () => ({
+      prepared: true,
+      ready: true,
+    })),
     validateAttachmentPaths: (paths) => (paths ? [...paths] : undefined),
     snapshotAttachmentPaths: (paths) =>
       paths?.map((attachmentPath) =>
@@ -353,14 +378,8 @@ describe('initial main-owned orchestrator bootstrap', () => {
     h.deps.ensureMissionPlan = vi.fn(() => {
       order.push('plan');
     });
-    h.deps.ensureMissionPrevc = vi.fn(() => {
+    h.deps.prepareOpportunisticPrevc = vi.fn(() => {
       order.push('prevc');
-      return {
-        required: false,
-        frozen: false,
-        stage: null,
-        readyForWorkerDispatch: false,
-      };
     });
     const originalSpawn = h.deps.spawnMainOwnedPane;
     h.deps.spawnMainOwnedPane = (input) => {
@@ -373,7 +392,8 @@ describe('initial main-owned orchestrator bootstrap', () => {
     ).bootstrap(scope, h.mission.id);
 
     expect(result).toMatchObject({ ok: true });
-    expect(order).toEqual(['baseline', 'plan', 'prevc', 'provider']);
+    expect(order).toEqual(['baseline', 'plan', 'provider']);
+    expect(h.deps.prepareOpportunisticPrevc).not.toHaveBeenCalled();
   });
 
   it('blocks durably before any provider effect when the main-owned plan preflight fails', async () => {
@@ -401,52 +421,62 @@ describe('initial main-owned orchestrator bootstrap', () => {
     });
   });
 
-  it('does not spawn the orchestrator when the main-owned guided PREVC freeze fails', async () => {
+  it('starts the orchestrator when opportunistic PREVC preparation throws synchronously', async () => {
     const h = harness();
     h.deps.ensureMissionPlan = vi.fn();
-    h.deps.ensureMissionPrevc = vi.fn(() => {
-      throw new Error('guided_prevc_required: context not ready');
+    h.deps.prepareOpportunisticPrevc = vi.fn(() => {
+      throw new Error('context bootstrap temporarily unavailable');
     });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const service = new MissionOrchestratorBootstrapService(h.deps);
 
     const result = await service.bootstrap(scope, h.mission.id);
 
-    expect(result).toMatchObject({
-      ok: false,
-      reason: 'preflight_failed',
-      error: expect.stringMatching(/PREVC.*context not ready/i),
-    });
+    expect(result).toMatchObject({ ok: true, missionId: h.mission.id });
     expect(h.deps.ensureMissionPlan).toHaveBeenCalledOnce();
-    expect(h.deps.ensureMissionPrevc).toHaveBeenCalledOnce();
-    expect(h.spawned).toEqual([]);
-    expect(h.recorded).toEqual([]);
-    expect(h.kickoffPrompts).toEqual([]);
+    expect(h.deps.prepareOpportunisticPrevc).toHaveBeenCalledOnce();
+    expect(h.spawned).toHaveLength(1);
+    expect(h.recorded).toHaveLength(1);
+    expect(h.kickoffPrompts).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/PREVC context preparation deferred/),
+      expect.objectContaining({
+        message: 'context bootstrap temporarily unavailable',
+      }),
+    );
   });
 
-  it('refuses every provider when Main has not physically frozen guided PREVC', async () => {
+  it('starts PREVC preparation before provider launch without awaiting it', async () => {
     const h = harness();
-    h.deps.ensureMissionPlan = vi.fn();
-    h.deps.ensureMissionPrevc = vi.fn(() => ({
-      required: true,
-      frozen: false,
-      stage: null,
-      readyForWorkerDispatch: false,
-    }));
+    const order: string[] = [];
+    let finishPreparation!: () => void;
+    h.deps.ensureMissionPlan = vi.fn(() => {
+      order.push('plan');
+    });
+    h.deps.prepareOpportunisticPrevc = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          order.push('prevc');
+          finishPreparation = resolve;
+        }),
+    );
+    const originalSpawn = h.deps.spawnMainOwnedPane;
+    h.deps.spawnMainOwnedPane = (input) => {
+      order.push('provider');
+      return originalSpawn(input);
+    };
     const service = new MissionOrchestratorBootstrapService(h.deps);
 
     const result = await service.bootstrap(scope, h.mission.id);
 
-    expect(result).toMatchObject({
-      ok: false,
-      missionId: h.mission.id,
-      reason: 'preflight_failed',
-      error: expect.stringMatching(
-        /PREVC.*freeze_incomplete.*mission_contracts.*scheduler/i,
-      ),
-    });
-    expect(h.spawned).toEqual([]);
-    expect(h.recorded).toEqual([]);
-    expect(h.kickoffPrompts).toEqual([]);
+    expect(result).toMatchObject({ ok: true, missionId: h.mission.id });
+    expect(order).toEqual(['plan', 'prevc', 'provider']);
+    expect(h.kickoffPrompts[0]).toMatch(/PREVC paralelo/i);
+    expect(h.kickoffPrompts[0]).not.toMatch(
+      /nexus_context_doctor|nexus_mission_freeze_contract/i,
+    );
+    finishPreparation();
+    await Promise.resolve();
   });
 
   it('revalidates the plan after the Retomar missão rearm instead of escaping through bootstrap', async () => {
@@ -754,6 +784,11 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(prompt).toContain(promotedPlan.summarySha256);
     expect(prompt).toContain(promotedPlan.artifactsSha256);
     expect(prompt).toMatch(/não repita discovery, entrevista, PRD/i);
+    expect(prompt).toMatch(/PREVC paralelo/i);
+    expect(prompt).toMatch(/Comece a execução/i);
+    expect(prompt).not.toMatch(
+      /nexus_context_doctor|nexus_mission_freeze_contract|nexus_workflow_prepare_execution/i,
+    );
   });
 
   it('validates the sealed requested model instead of the provider-normalized model', async () => {
@@ -845,6 +880,184 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.mission.orchestratorSessionId).toBe('pty-main-orch');
   });
 
+  it('auto-recovers a technical block without restarting an already recovered revision', async () => {
+    const value = harness();
+    const blocked: Mission = {
+      ...value.mission,
+      status: 'blocked',
+      // Exact field shape observed in production: the status was blocked while
+      // the prior dispatch intent remained persisted.
+      intentState: 'dispatched',
+    };
+    const bootstrap = vi.fn();
+    const resumeBlocked = vi.fn(async () => ({
+      ok: true as const,
+      missionId: blocked.id,
+      pane: {
+        paneId: 'pane-recovered',
+        sessionId: 'session-recovered',
+        adapterId: 'codex',
+        cwd: scope.rootRealPath,
+        title: 'Recovered',
+        agentName: 'Maestro',
+        role: 'orchestrator' as const,
+      },
+      kickoff: { accepted: true as const },
+    }));
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => [blocked],
+      bootstrap,
+      resumeBlocked,
+    });
+
+    await recovery.reconcile();
+    await recovery.reconcile();
+
+    expect(resumeBlocked).toHaveBeenCalledOnce();
+    expect(resumeBlocked).toHaveBeenCalledWith(scope, blocked.id);
+    expect(bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('recovers a later technical loss in the same approved revision', async () => {
+    const value = harness();
+    let candidate: Mission | null = {
+      ...value.mission,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      updatedAt: 10,
+    };
+    const resumeBlocked = vi.fn(async () => ({
+      ok: true as const,
+      missionId: value.mission.id,
+      pane: {
+        paneId: 'pane-recovered',
+        sessionId: 'session-recovered',
+        adapterId: 'codex',
+        cwd: scope.rootRealPath,
+        title: 'Recovered',
+        agentName: 'Maestro',
+        role: 'orchestrator' as const,
+      },
+      kickoff: { accepted: true as const },
+    }));
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => candidate ? [candidate] : [],
+      bootstrap: vi.fn(),
+      resumeBlocked,
+    });
+
+    await recovery.reconcile();
+    candidate = null;
+    await recovery.reconcile();
+    candidate = {
+      ...value.mission,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      // A fresh durable transition is a new incident even when the approved
+      // intentVersion did not change.
+      updatedAt: 20,
+    };
+    await recovery.reconcile();
+
+    expect(resumeBlocked).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a transient technical block with bounded backoff', async () => {
+    const value = harness();
+    let blocked: Mission = {
+      ...value.mission,
+      status: 'blocked',
+      intentState: 'dispatched',
+      updatedAt: 10,
+    };
+    let now = 1_000;
+    const resumeBlocked = vi.fn(async () => {
+      blocked = { ...blocked, updatedAt: blocked.updatedAt + 1 };
+      return {
+        ok: false as const,
+        missionId: blocked.id,
+        reason: 'provider_exited' as const,
+        error: 'provider exited during boot',
+        cta: 'retry',
+      };
+    });
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => [blocked],
+      bootstrap: vi.fn(),
+      resumeBlocked,
+      now: () => now,
+      warn: vi.fn(),
+    });
+
+    await recovery.reconcile();
+    await recovery.reconcile();
+    expect(resumeBlocked).toHaveBeenCalledOnce();
+
+    now += 5_000;
+    await recovery.reconcile();
+    expect(resumeBlocked).toHaveBeenCalledTimes(2);
+
+    // Attempt 2 owns a 10-second delay even though its own resume/failure pair
+    // rewrote mission.updatedAt. That write is not a new technical incident.
+    now += 5_000;
+    await recovery.reconcile();
+    expect(resumeBlocked).toHaveBeenCalledTimes(2);
+
+    now += 5_000;
+    await recovery.reconcile();
+    expect(resumeBlocked).toHaveBeenCalledTimes(3);
+  });
+
+  it('never auto-resumes a block that is waiting for the operator', async () => {
+    const value = harness();
+    const blocked: Mission = {
+      ...value.mission,
+      status: 'blocked',
+      intentState: 'blocked_user',
+    };
+    const bootstrap = vi.fn();
+    const resumeBlocked = vi.fn();
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => [blocked],
+      bootstrap,
+      resumeBlocked,
+    });
+
+    await recovery.reconcile();
+
+    expect(resumeBlocked).not.toHaveBeenCalled();
+    expect(bootstrap).not.toHaveBeenCalled();
+  });
+
+  it('never auto-resumes a proven terminal authority block', async () => {
+    const value = harness();
+    const blocked: Mission = {
+      ...value.mission,
+      status: 'blocked',
+      intentState: 'blocked_technical',
+      description:
+        `${value.mission.description}\n\n${TERMINAL_OPERATIONAL_FAILURE_MARKER} ` +
+        'merge CAS diverged',
+    };
+    const bootstrap = vi.fn();
+    const resumeBlocked = vi.fn();
+    const recovery = new MissionOrchestratorBootstrapRecovery({
+      listScopes: () => [scope],
+      listBootstrapCandidates: () => [blocked],
+      bootstrap,
+      resumeBlocked,
+    });
+
+    await recovery.reconcile();
+
+    expect(resumeBlocked).not.toHaveBeenCalled();
+    expect(bootstrap).not.toHaveBeenCalled();
+  });
+
   it('reconciles only missing or torn durable bindings, not a complete legacy pane', () => {
     expect(
       needsMissionOrchestratorBootstrapRecovery(
@@ -904,19 +1117,86 @@ describe('initial main-owned orchestrator bootstrap', () => {
       orchestratorSessionId: 'pty-main-orch',
     };
     unproven.deps.listMissionPanes = () => [livePane(unproven.mission.id)];
+    const staleAgent = unproven.deps.getAgentSessionInfo('pty-main-orch');
+    const staleAuthority = unproven.deps.getRuntimeAuthority('pty-main-orch');
+    if (!staleAgent || !staleAuthority) throw new Error('invalid harness');
+    unproven.deps.getAgentSessionInfo = (sessionId) =>
+      sessionId === 'pty-main-orch'
+        ? staleAgent
+        : sessionId === 'pty-main-orch-fresh'
+          ? {
+              ...staleAgent,
+              sessionId,
+              paneId: 'pane-main-orch-fresh',
+            }
+          : null;
+    unproven.deps.getRuntimeAuthority = (sessionId) =>
+      sessionId === 'pty-main-orch'
+        ? staleAuthority
+        : sessionId === 'pty-main-orch-fresh'
+          ? {
+              ...staleAuthority,
+              sessionId,
+              paneId: 'pane-main-orch-fresh',
+            }
+          : null;
+    unproven.deps.spawnMainOwnedPane = (input) => {
+      unproven.spawned.push(input as unknown as Record<string, unknown>);
+      return {
+        requestId: 'bootstrap-fresh',
+        ok: true,
+        paneId: 'pane-main-orch-fresh',
+        sessionId: 'pty-main-orch-fresh',
+      };
+    };
     const unprovenService = new MissionOrchestratorBootstrapService(
       unproven.deps,
     );
     await expect(
       unprovenService.bootstrap(scope, unproven.mission.id),
     ).resolves.toMatchObject({
+      ok: true,
+      pane: {
+        paneId: 'pane-main-orch-fresh',
+        sessionId: 'pty-main-orch-fresh',
+      },
+      kickoff: { accepted: true },
+    });
+    expect(unproven.closedPanes).toEqual(['pane-main-orch']);
+    expect(unproven.removedPaneRows).toEqual(['mpane-live']);
+    expect(unproven.spawned).toHaveLength(1);
+    expect(unproven.deps.prepareOpportunisticPrevc).toHaveBeenCalledOnce();
+    expect(unproven.mission).toMatchObject({
+      status: 'running',
+      orchestratorSessionId: 'pty-main-orch-fresh',
+    });
+
+    const raced = harness();
+    raced.mission = {
+      ...raced.mission,
+      orchestratorSessionId: 'pty-main-orch',
+    };
+    raced.deps.listMissionPanes = () => [livePane(raced.mission.id)];
+    raced.deps.clearOrchestratorSessionIfMatches = () => {
+      raced.mission = {
+        ...raced.mission,
+        orchestratorSessionId: 'pty-concurrent-rebind',
+        updatedAt: raced.mission.updatedAt + 1,
+      };
+      return null;
+    };
+    await expect(
+      new MissionOrchestratorBootstrapService(raced.deps).bootstrap(
+        scope,
+        raced.mission.id,
+      ),
+    ).resolves.toMatchObject({
       ok: false,
       reason: 'materialization_failed',
-      error: expect.stringMatching(/recibo durável.*idle→busy/i),
-      cta: 'Retomar missão',
     });
-    expect(unproven.spawned).toEqual([]);
-    expect(unproven.mission.status).toBe('blocked');
+    expect(raced.closedPanes).toEqual(['pane-main-orch']);
+    expect(raced.spawned).toEqual([]);
+    expect(raced.mission.orchestratorSessionId).toBe('pty-concurrent-rebind');
 
     const proven = harness();
     proven.mission = {
@@ -1053,10 +1333,33 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(value.spawned).toEqual([]);
   });
 
+  it('marks a retired orchestrator seal terminal so automatic recovery cannot loop it', async () => {
+    const value = harness();
+    value.deps.resolveRuntime = () => {
+      throw new RetiredRosterRouteError('omp', 'legacy-maestro');
+    };
+    const service = new MissionOrchestratorBootstrapService(value.deps);
+
+    await expect(service.bootstrap(scope, value.mission.id)).resolves.toMatchObject({
+      ok: false,
+      reason: 'preflight_failed',
+      error: expect.stringContaining(RETIRED_ROSTER_ROUTE_MARKER),
+    });
+    expect(value.spawned).toEqual([]);
+    expect(value.mission).toMatchObject({
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    expect(value.mission.description).toContain(
+      TERMINAL_OPERATIONAL_FAILURE_MARKER,
+    );
+    expect(value.mission.description).toContain(RETIRED_ROSTER_ROUTE_MARKER);
+  });
+
   it('fails closed when the provider cannot confine native orchestrator writes', async () => {
     const value = harness();
     value.deps.resolveRuntime = () => ({
-      adapterId: 'omp',
+      adapterId: 'opencode',
       readOnly: false,
       nativeReadOnly: false,
     });
@@ -1956,6 +2259,75 @@ describe('dead task graph reapproval', () => {
     expect(h.publishedExpected).toEqual([]);
     expect(h.mission.status).toBe('blocked');
   });
+
+  it('routes a retired sealed provider to one teardown plus native reapproval even without a dispatch row', async () => {
+    const h = deadGraphHarness();
+    h.dispatches = [];
+    h.panes = h.panes.filter((pane) => pane.role === 'orchestrator');
+    h.runtimePanes = h.runtimePanes.filter(
+      (pane) => pane.role === 'orchestrator',
+    );
+    h.sessionStates.delete('session-worker-v2');
+    h.mission = {
+      ...h.mission,
+      description:
+        `${h.mission.description}\n\n${TERMINAL_OPERATIONAL_FAILURE_MARKER} ` +
+        `${RETIRED_ROSTER_ROUTE_MARKER} O provider do seal foi aposentado; ` +
+        'revise o squad e replaneje.',
+    };
+
+    const result = await prepareDeadGraphReapprovalForScope(
+      scope,
+      h.mission.id,
+      h.deps,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'review_required',
+      intentVersion: 3,
+      cta: 'Revisar e aprovar',
+    });
+    expect(h.revoked).toEqual(['session-orch-v2']);
+    expect(h.closed).toEqual([
+      expect.objectContaining({
+        paneId: 'pane-orch-v2',
+        sessionId: 'session-orch-v2',
+        role: 'orchestrator',
+      }),
+    ]);
+    expect(h.publishedExpected).toHaveLength(1);
+  });
+
+  it('does not tear down a live current-revision dispatch merely because a retired-route marker is present', async () => {
+    const h = deadGraphHarness();
+    h.dispatches = h.dispatches.map((dispatch) => ({
+      ...dispatch,
+      state: 'running',
+    }));
+    h.mission = {
+      ...h.mission,
+      description:
+        `${h.mission.description}\n\n${TERMINAL_OPERATIONAL_FAILURE_MARKER} ` +
+        `${RETIRED_ROSTER_ROUTE_MARKER} revisão necessária.`,
+    };
+
+    const result = await prepareDeadGraphReapprovalForScope(
+      scope,
+      h.mission.id,
+      h.deps,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'not_authorized',
+      error: expect.stringMatching(/dispatch.*não terminal/i),
+    });
+    expect(h.revoked).toEqual([]);
+    expect(h.closed).toEqual([]);
+    expect(h.removed).toEqual([]);
+    expect(h.publishedExpected).toEqual([]);
+  });
 });
 
 describe('blockedBootstrapResumePatch', () => {
@@ -2001,6 +2373,24 @@ describe('blockedBootstrapResumePatch', () => {
         status: 'running',
         intentState: 'executing',
         description: 'Fechar bootstrap main-owned',
+      },
+    });
+  });
+
+  it('repairs a persisted blocked/dispatched pair instead of requiring reapproval', () => {
+    const blocked: Mission = {
+      ...approvedMission(),
+      status: 'blocked',
+      intentState: 'dispatched',
+      description: 'Falha técnica transitória durante o início.',
+    };
+
+    expect(blockedBootstrapResumePatch(blocked)).toMatchObject({
+      ok: true,
+      patch: {
+        status: 'running',
+        intentState: 'executing',
+        description: 'Falha técnica transitória durante o início.',
       },
     });
   });

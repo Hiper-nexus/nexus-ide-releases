@@ -12,7 +12,6 @@ import { useLayoutStore } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
 import { useSettingsStore } from '../state/settings-store';
 import { useOrchStore } from '../state/orch-store';
-import { useOmpRpcStore } from '../state/omp-rpc-store';
 import { useMemoryStore } from '../state/memory-store';
 import { useConfigInventoryStore } from '../state/config-inventory-store';
 import { useFilesStore } from '../state/files-store';
@@ -189,7 +188,6 @@ export function AgentNotifications() {
   );
   const orchPanel = useOrchStore((s) => s.panelOpen);
   const boardOpen = useOrchStore((s) => s.boardOpen);
-  const ompPanel = useOmpRpcStore((s) => s.panelOpen);
   const memoryPanel = useMemoryStore((s) => s.panelOpen);
   const configInv = useConfigInventoryStore((s) => s.open);
   const filesOpen = useFilesStore((s) => s.open);
@@ -197,7 +195,6 @@ export function AgentNotifications() {
     anyDrawerOpen ||
     orchPanel ||
     boardOpen ||
-    ompPanel ||
     memoryPanel ||
     configInv ||
     filesOpen;

@@ -10,6 +10,7 @@ import type {
 import { searchQuerySchema } from '../../shared/search-mixer-types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { listMemoryNotes } from '../memory/nexus-memory';
+import { getWorkspaceMemoryStore } from '../memory/workspace-memory';
 import {
   isInsidePath,
 } from '../orch/workspace-path';
@@ -39,8 +40,12 @@ function createMissionsProvider(): SearchSourceProvider {
     // Memory notes tagged kind=mission (not live mission store).
     source: 'missions',
     async search(query, signal) {
-      if (signal.aborted || !query.projectRoot) return [];
-      const notes = listMemoryNotes(query.projectRoot).filter(
+      if (signal.aborted || !query.workspaceId) return [];
+      const store = getWorkspaceMemoryStore({
+        projectId: query.workspaceId,
+      });
+      store.ensureProjections();
+      const notes = listMemoryNotes(store.projectionRoot).filter(
         (n) => n.kind === 'mission',
       );
       const q = query.text.toLowerCase();
@@ -59,7 +64,7 @@ function createMissionsProvider(): SearchSourceProvider {
             subtitle: 'memory:mission',
             score: 0.85,
             snippet: n.body.slice(0, 160),
-            path: n.path,
+            meta: { memoryId: n.id },
           }),
         );
     },

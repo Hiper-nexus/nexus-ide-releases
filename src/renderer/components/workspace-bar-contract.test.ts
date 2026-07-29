@@ -52,6 +52,8 @@ describe('workspace bar discoverability contract', () => {
     expect(source).toContain('Verificando providers');
     expect(source).toContain('Não foi possível carregar os providers');
     expect(source).toContain('setAdaptersError');
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?workspace-bar__pulse-dot--busy/);
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?fleet-chip__seg--working/,
+    );
   });
 });

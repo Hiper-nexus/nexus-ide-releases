@@ -32,7 +32,7 @@ afterEach(() => {
 
 describe('requiresAdvisoryProcessSandbox', () => {
   it('claims the advisory CLIs that have no native read-only boundary', () => {
-    for (const id of ['kimi', 'agy', 'opencode', 'omp', 'claude']) {
+    for (const id of ['kimi', 'agy', 'opencode', 'longcat', 'claude']) {
       expect(requiresAdvisoryProcessSandbox(id, true)).toBe(true);
     }
   });
@@ -79,7 +79,7 @@ describe('resolveAdvisoryProcessSandbox', () => {
 
     expect(
       resolveAdvisoryProcessSandbox({
-        adapterId: 'omp',
+        adapterId: 'longcat',
         readOnlyLane: true,
         privateHome: home,
         privateTmp: outsideTmp,
@@ -91,7 +91,7 @@ describe('resolveAdvisoryProcessSandbox', () => {
     // the profile for nothing.
     expect(
       resolveAdvisoryProcessSandbox({
-        adapterId: 'omp',
+        adapterId: 'longcat',
         readOnlyLane: true,
         privateHome: home,
         privateTmp: nestedTmp,

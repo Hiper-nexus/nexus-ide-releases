@@ -8,7 +8,7 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 const MAX_DEPTH = 16;
 const SKIP_DIRECTORIES = new Set([
-  '.git', '.nexus', 'node_modules', 'vendor', 'dist', 'build', 'coverage',
+  '.git', '.nexus', '.nexus-memory', 'node_modules', 'vendor', 'dist', 'build', 'coverage',
   '.next', '.turbo', 'target', '__pycache__', '.venv', 'venv',
 ]);
 const SOURCE_EXTENSIONS = new Set([

@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Mission } from '../../shared/orch-types';
-import type { OmpRpcSessionSummary } from '../../shared/omp-rpc-types';
 import { useOrchStore } from '../state/orch-store';
 import { useMissionWizardStore } from '../state/mission-wizard-store';
 import { useSessionStateStore } from '../state/session-state-store';
-import { useOmpRpcStore } from '../state/omp-rpc-store';
 import { livePaneIdsForMission } from '../orch/mission-reopen';
 import { useHomeStore } from '../state/home-store';
 import { confirmAndReopenMission } from '../orch/confirm-reopen-mission';
@@ -15,11 +13,6 @@ import {
   railStatusDisplay,
   statusLabel,
 } from '../lib/mission-rail-groups';
-import {
-  missionIdsWithOmpWorkers,
-  ompRailMetaFragment,
-  summarizeOmpMissionActivity,
-} from '../lib/omp-mission-activity';
 import {
   loadArchivedMissionIds,
   loadCollapsedSections,
@@ -85,7 +78,6 @@ export function MissionRail() {
   const openAgentic = useMissionWizardStore((s) => s.openForAgentic);
   const openBoard = useOrchStore((s) => s.openBoard);
   const paneStates = useSessionStateStore((s) => s.paneStates);
-  const openOmpPanel = useOmpRpcStore((s) => s.openPanel);
   const planMetricsLabel = usePlanLaneMetricsStore((s) => {
     if (s.planDispatched + s.planPromoted + s.planHandoffReady === 0) {
       return null;
@@ -113,7 +105,6 @@ export function MissionRail() {
   const [collapsed, setCollapsed] = useState<RailSectionId[]>(() =>
     loadCollapsedSections(),
   );
-  const [ompSessions, setOmpSessions] = useState<OmpRpcSessionSummary[]>([]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -124,29 +115,6 @@ export function MissionRail() {
 
   useEffect(() => {
     usePlanLaneMetricsStore.getState().hydrate();
-  }, []);
-
-  // Omp rpc-ui mission workers are not layout panes — poll + debounced events.
-  useEffect(() => {
-    let cancelled = false;
-    let debounce: number | null = null;
-    const refresh = () => {
-      void window.nexus.ompRpc.listSessions().then((rows) => {
-        if (!cancelled) setOmpSessions(rows);
-      });
-    };
-    refresh();
-    const stop = window.nexus.ompRpc.onEvent(() => {
-      if (debounce != null) window.clearTimeout(debounce);
-      debounce = window.setTimeout(refresh, 250);
-    });
-    const interval = window.setInterval(refresh, 5_000);
-    return () => {
-      cancelled = true;
-      stop();
-      if (debounce != null) window.clearTimeout(debounce);
-      window.clearInterval(interval);
-    };
   }, []);
 
   // Pins e lista só deste path — ao trocar workspace, recarrega pins locais.
@@ -215,20 +183,15 @@ export function MissionRail() {
     if (!liveIds.has(match[1]!)) setNote(null);
   }, [layoutRoot, note]);
 
-  const ompLiveMissionIds = useMemo(
-    () => missionIdsWithOmpWorkers(ompSessions),
-    [ompSessions],
-  );
   const openMissionIds = useMemo(() => {
     const ids = new Set<string>();
     for (const mid of new Set(Object.values(paneMissions))) {
       if (livePaneIdsForMission(mid).length > 0) ids.add(mid);
     }
-    for (const mid of ompLiveMissionIds) ids.add(mid);
     return ids;
     // layoutRoot: reavaliar quando o grid muda (spawn/close/split).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneMissions, layoutRoot, ompLiveMissionIds]);
+  }, [paneMissions, layoutRoot]);
 
   const panesByMission = useMemo(() => {
     const grouped = new Map<string, ReturnType<typeof listPanes>>();
@@ -450,7 +413,7 @@ export function MissionRail() {
       return `Retomar · ${started}${laneBit}${handBit}${budgetBit}${routeBit}`;
     }
 
-    if (liveInGrid || ompLiveMissionIds.has(mission.id)) {
+    if (liveInGrid) {
       const paneIds = Object.entries(paneMissions)
         .filter(([, missionId]) => missionId === mission.id)
         .map(([paneId]) => paneId);
@@ -469,8 +432,6 @@ export function MissionRail() {
       const endedCount = ids.filter(
         (paneId) => paneStates.get(paneId) === 'exited',
       ).length;
-      const omp = summarizeOmpMissionActivity(ompSessions, mission.id);
-      const ompBit = ompRailMetaFragment(omp);
       // FALE HUMANO no rail: "pane" é encanamento; a pessoa acompanha AGENTES
       // e há quanto tempo a missão roda.
       const elapsed = humanElapsed(
@@ -478,25 +439,16 @@ export function MissionRail() {
         Date.now(),
       );
       const elapsedBit = elapsed ? ` · ${elapsed}` : '';
-      const ompSuffix = ompBit ? ` · ${ompBit}` : '';
-      if (busyCount > 0 || omp.working > 0) {
-        const agents = busyCount + omp.working;
-        return `${agents} agente${agents === 1 ? '' : 's'} trabalhando${elapsedBit}${ompSuffix}${handBit}${budgetBit}${routeBit}`;
+      if (busyCount > 0) {
+        return `${busyCount} agente${busyCount === 1 ? '' : 's'} trabalhando${elapsedBit}${handBit}${budgetBit}${routeBit}`;
       }
-      if (spawningCount > 0 || omp.starting > 0) {
-        const agents = spawningCount + omp.starting;
-        return `${agents} agente${agents === 1 ? '' : 's'} iniciando${elapsedBit}${ompSuffix}${handBit}${budgetBit}${routeBit}`;
+      if (spawningCount > 0) {
+        return `${spawningCount} agente${spawningCount === 1 ? '' : 's'} iniciando${elapsedBit}${handBit}${budgetBit}${routeBit}`;
       }
-      if (activeIds.length > 0 || omp.idle > 0) {
-        const agents = activeIds.length + omp.idle;
-        return `${agents} agente${agents === 1 ? '' : 's'} no grid${elapsedBit}${ompSuffix}${handBit}${budgetBit}${routeBit}`;
+      if (activeIds.length > 0) {
+        return `${activeIds.length} agente${activeIds.length === 1 ? '' : 's'} no grid${elapsedBit}${handBit}${budgetBit}${routeBit}`;
       }
-      if (
-        endedCount > 0 &&
-        omp.working === 0 &&
-        omp.starting === 0 &&
-        omp.idle === 0
-      ) {
+      if (endedCount > 0) {
         const latestStatus = latestHandoffByMission.get(mission.id)?.status;
         const report =
           latestStatus === 'blocked' || latestStatus === 'stalled'
@@ -505,9 +457,6 @@ export function MissionRail() {
               ? ' · falha reportada'
               : '';
         return `${endedCount} agente${endedCount === 1 ? '' : 's'} encerrado${endedCount === 1 ? '' : 's'}${report}${handBit}${budgetBit}${routeBit}`;
-      }
-      if (ompBit) {
-        return `${ompBit}${elapsedBit}${handBit}${budgetBit}${routeBit}`;
       }
     }
 
@@ -529,15 +478,6 @@ export function MissionRail() {
   function selectMission(m: Mission) {
     setBusy(m.id);
     setNote(null);
-    // Mission-only omp rpc workers have no PTY pane — open the OMP drawer so
-    // the operator can see / approve without a dead reopen.
-    const ompOnly =
-      ompLiveMissionIds.has(m.id) && livePaneIdsForMission(m.id).length === 0;
-    if (ompOnly) {
-      openOmpPanel();
-      setBusy(null);
-      return;
-    }
     // Already on screen: bring it to the front. Clicking a mission whose pane
     // was alive fell straight into reopen, which neither focused the pane nor
     // dismissed the home screen — so the mission "did not open" and the
@@ -827,10 +767,6 @@ export function MissionRail() {
                         const missionPanes = panesByMission.get(m.id) ?? [];
                         const pinned = pinnedIds.includes(m.id);
                         const lane = m.intentContract?.lane ?? null;
-                        const ompActivity = summarizeOmpMissionActivity(
-                          ompSessions,
-                          m.id,
-                        );
                         const hasActivePaneRuntime = missionPanes.some(
                           (pane) => {
                             const state = paneStates.get(pane.id);
@@ -842,17 +778,9 @@ export function MissionRail() {
                             );
                           },
                         );
-                        const hasObservedRuntime =
-                          missionPanes.length > 0 ||
-                          ompActivity.working > 0 ||
-                          ompActivity.starting > 0 ||
-                          ompActivity.idle > 0 ||
-                          ompActivity.down > 0;
+                        const hasObservedRuntime = missionPanes.length > 0;
                         const hasActiveRuntime =
                           hasActivePaneRuntime ||
-                          ompActivity.working > 0 ||
-                          ompActivity.starting > 0 ||
-                          ompActivity.idle > 0 ||
                           (!hasObservedRuntime &&
                             Boolean(m.orchestratorSessionId));
                         const statusUi = railStatusDisplay(

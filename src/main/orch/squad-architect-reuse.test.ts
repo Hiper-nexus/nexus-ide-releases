@@ -6,6 +6,7 @@ const listAdapterInfosMock = vi.fn();
 const listProviderSettingsMock = vi.fn();
 const hasAvailableAccountMock = vi.fn();
 const listInstalledCatalogItemsMock = vi.fn();
+const getOrchSettingsMock = vi.fn();
 
 vi.mock("./squad-store", () => ({
   listSquads: (...args: unknown[]) => listSquadsMock(...args),
@@ -31,7 +32,7 @@ vi.mock("../runtime/doctor-diagnostic-engine", () => ({
   diagnoseWithDoctorGrok: vi.fn(),
 }));
 vi.mock("../persistence/settings-store", () => ({
-  getOrchSettings: vi.fn(() => ({})),
+  getOrchSettings: (...args: unknown[]) => getOrchSettingsMock(...args),
 }));
 
 import { chatViaBrainChain } from "../voice/jarvis-brain";
@@ -51,10 +52,23 @@ function adapterInfo(id: string, verifiedOrchestrator = true) {
     // A declared MCP handoff is independent from verified Maestro evidence,
     // but does not qualify Kimi/OpenCode for autonomous guided workspace writes.
     orchestratorCapable: true,
+    taskHandoffCapable: true,
+    // Main-owned PTY action/result control is available to every physically
+    // launchable, prompt-injectable and observable CLI in Autopilot.
+    missionControlCapable: true,
     orchestrationEvidence: verifiedOrchestrator
       ? "verified"
       : "experimental",
     autonomousWorkspaceWriteCapable: id === "codex",
+    capabilities: {
+      launchable: true,
+      promptInjectable: true,
+      statusObservable: true,
+      resumable: true,
+      autonomousReadOnly: id === "codex",
+      governedWriter: id === "codex",
+      verifiedMaestro: verifiedOrchestrator,
+    },
     models: { default: `${id}-default`, list: [`${id}-default`] },
   };
 }
@@ -132,6 +146,7 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     listProviderSettingsMock.mockReset();
     hasAvailableAccountMock.mockReset();
     listInstalledCatalogItemsMock.mockReset();
+    getOrchSettingsMock.mockReset();
     chatViaBrainChainMock.mockReset();
     listAdapterInfosMock.mockReturnValue([
       adapterInfo("claude"),
@@ -144,6 +159,13 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
       providerInfo("codex"),
     ]);
     hasAvailableAccountMock.mockReturnValue(true);
+    getOrchSettingsMock.mockReturnValue({
+      defaultAdapterId: "claude",
+      doctorAdapterId: "auto",
+      doctorModel: "",
+      doctorEffort: "auto",
+      squadCliPolicy: "governed",
+    });
     listInstalledCatalogItemsMock.mockReturnValue(
       ["check-work", "imagegen", "hatch-pet"].map((name) => ({
         kind: "skill",
@@ -375,6 +397,57 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     ).not.toEqual(expect.arrayContaining(["imagegen", "hatch-pet"]));
   });
 
+  it("usa Kimi como Maestro e executor comum no operator-choice sem exigir Codex", async () => {
+    getOrchSettingsMock.mockReturnValue({
+      defaultAdapterId: "kimi",
+      doctorAdapterId: "auto",
+      doctorModel: "",
+      doctorEffort: "auto",
+      squadCliPolicy: "operator-choice",
+    });
+    listAdapterInfosMock.mockReturnValue([adapterInfo("kimi", false)]);
+    listProviderSettingsMock.mockReturnValue([providerInfo("kimi")]);
+    listSquadsMock.mockReturnValue([]);
+
+    const result = await designSquadFromIntent(
+      "implementar e validar uma API",
+      "/tmp/ws",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(
+      result.squad?.agents.every((agent) => agent.cli === "kimi"),
+    ).toBe(true);
+  });
+
+  it("concede a rota visual Nexus ao executor Kimi no operator-choice", async () => {
+    getOrchSettingsMock.mockReturnValue({
+      defaultAdapterId: "kimi",
+      doctorAdapterId: "auto",
+      doctorModel: "",
+      doctorEffort: "auto",
+      squadCliPolicy: "operator-choice",
+    });
+    listAdapterInfosMock.mockReturnValue([adapterInfo("kimi", false)]);
+    listProviderSettingsMock.mockReturnValue([providerInfo("kimi")]);
+    listSquadsMock.mockReturnValue([]);
+
+    const result = await designSquadFromIntent(
+      "criar desktop pet v2 em spritesheet com avatar animado",
+      "/tmp/ws",
+    );
+    const visualExecutor = result.squad?.agents.find(
+      (agent) => agent.category === "executor",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(visualExecutor).toMatchObject({
+      cli: "kimi",
+      allowedSkills: expect.arrayContaining(["nexus-visual-media"]),
+      allowedTools: ["nexus_media_providers", "nexus_image_generate"],
+    });
+  });
+
   it("não coloca uma CLI legacy sem handoff físico no fallback guiado", async () => {
     listAdapterInfosMock.mockReturnValue([
       adapterInfo("claude"),
@@ -417,7 +490,7 @@ describe("designSquadFromIntent — Agêntico desenha do zero por padrão", () =
     expect(result).toMatchObject({
       ok: false,
       error: expect.stringMatching(
-        /nenhuma CLI de worker.*Claude.*Maestro.*guided automático.*Codex.*escrita autônoma confinada.*Kimi.*OMP.*painéis.*terminais.*manuais\/experimentais/i,
+        /nenhuma CLI de worker.*Claude.*Maestro.*guided automático.*Codex.*escrita autônoma confinada.*Kimi.*painéis.*terminais.*manuais\/experimentais/i,
       ),
     });
     expect(normalizeEphemeralSquadCandidateMock).not.toHaveBeenCalled();

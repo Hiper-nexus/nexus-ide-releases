@@ -9,12 +9,11 @@ import {
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
+import { countAdapterUses } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
-import { getOrchSettings } from '../persistence/settings-store';
 import { hasAvailableAccount } from '../persistence/account-store';
 import { authReadyModelsForProvider } from '../adapters/model-auth-readiness';
-import { buildOmpRouteContext } from './omp-roster-policy';
 import { missionStatusSchema } from '../../shared/orch-types';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
@@ -919,7 +918,7 @@ const routeTaskTool: McpToolDef = {
     'into nexus_pane_spawn. Call it for every delegation and trust the ' +
     'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook. ' +
     'Inside a running mission, candidates are restricted to release-qualified ' +
-    'governed workers (Codex in this release). Kimi and OMP remain available ' +
+    'governed workers (Codex in this release). Other CLIs remain available ' +
     'for direct/manual Terminal use, never through a mission RouteReservation.',
   inputSchema: {
     type: 'object',
@@ -947,7 +946,7 @@ const routeTaskTool: McpToolDef = {
       preferAdapters: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Optional soft prefer list (e.g. ["omp"]) after table rank',
+        description: 'Optional adapter preference list applied after table rank',
       },
     },
     required: ['task'],
@@ -986,11 +985,9 @@ const routeTaskTool: McpToolDef = {
     );
     if (missionId && providers.length === 0) {
       throw new Error(
-        'governed_worker_route_unavailable: nenhuma rota autônoma qualificada ' +
-        'pode executar esta missão. Nesta release, workers de escrita e leitura ' +
-        'exigem o Codex builtin instalado, habilitado e autenticado. Kimi e OMP ' +
-        'continuam disponíveis no Terminal/manual; prepare o Codex em ' +
-        'Configurações › Providers. Nenhuma RouteReservation foi criada.',
+        'mission_worker_route_unavailable: nenhuma CLI do roster está instalada, ' +
+        'habilitada, autenticada e pronta para handoff. Confira Providers e tente ' +
+        'novamente; nenhuma RouteReservation foi criada.',
       );
     }
     // Quota-aware auto-exclude: an adapter whose Nexus-managed accounts are
@@ -1020,14 +1017,13 @@ const routeTaskTool: McpToolDef = {
     let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));
     let quotaFallbackNote = '';
     if (quotaExcluded.length > 0 && !adapters.some((a) => a.installed)) {
-      // Fail-safe (same pattern as applyOmpParticipation): the auto-exclude
+      // Fail-safe: the auto-exclude
       // emptied the routable pool → revert to the caller-provided list. A
       // spawn on a cooling account surfaces the real cooldown error; no route
       // at all would hide it.
       adapters = buildAdapters(excluded);
       quotaFallbackNote = `; quota auto-exclude reverted, all candidates cooling: ${quotaExcluded.join(',')}`;
     }
-    const settings = getOrchSettings();
     let missionAdapterIds: string[] | undefined;
     if (missionId) {
       try {
@@ -1040,28 +1036,45 @@ const routeTaskTool: McpToolDef = {
       }
     }
     const preferAdapters = strArray(args, 'preferAdapters');
-    // reserveClaude=true: workers nunca no binário claude OAuth — evita
-    // corromper o keychain compartilhado com o orquestrador.
+    const missionUseCounts = missionAdapterIds?.length
+      ? countAdapterUses(missionAdapterIds)
+      : undefined;
+    // Claude shares one OAuth credential state. Another CLI may route one
+    // Claude worker in autopilot, but once any Claude pane belongs to this
+    // mission a second concurrent Claude route is physically unavailable.
+    const reserveClaude = Boolean(
+      missionId &&
+        (ctx.providerId === 'claude' ||
+          missionAdapterIds?.includes('claude')),
+    );
+    if (reserveClaude) {
+      adapters = adapters.map((adapter) =>
+        adapter.id === 'claude'
+          ? { ...adapter, installed: false }
+          : adapter,
+      );
+    }
     let decision = routeTask(
       task,
       adapters,
       undefined,
       tier,
-      true,
+      reserveClaude,
       undefined,
-      buildOmpRouteContext({
-        ompParticipation: settings.ompParticipation,
-        missionAdapterIds,
+      {
+        missionUsedAdapters: missionAdapterIds?.length
+          ? new Set(missionAdapterIds)
+          : undefined,
+        missionUseCounts,
         preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
-      }),
+      },
     );
     if (!decision) {
       if (missionId) {
         throw new Error(
-          'governed_worker_route_unavailable: o Codex qualificado não está ' +
-          'disponível para esta delegação (confira autenticação, cota e exclusões). ' +
-          'Ajuste Configurações › Providers e tente novamente. Nenhuma ' +
-          'RouteReservation foi criada.',
+          'mission_worker_route_unavailable: nenhuma CLI elegível está disponível ' +
+          'agora (confira autenticação, cota, cooldown, exclusões e a reserva de ' +
+          'uma única sessão Claude). Nenhuma RouteReservation foi criada.',
         );
       }
       throw new Error('no installed adapters to route to');

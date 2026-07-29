@@ -467,18 +467,16 @@ export function modelInfoForAdapter(
 // Por ora a função fica pronta no main; expor via IPC é entrega futura.
 // ---------------------------------------------------------------------------
 
-/** Metadado rico resolvido + provider omp de onde o match veio. */
+/** Metadado rico resolvido + provider do catálogo de origem. */
 export interface RichModelMetadata extends RichModelEntry {
-  /** Provider do catálogo omp que forneceu o metadado (ex.: 'anthropic', 'xai'). */
-  ompProvider: string;
+  /** Provider do catálogo que forneceu o metadado (ex.: 'anthropic', 'xai'). */
+  catalogProvider: string;
 }
 
 /**
- * Adapter Nexus → providers omp candidatos, em ordem de preferência.
- * `omp` não aparece aqui: seus ids carregam o prefixo `provider/` e são
- * resolvidos direto pelo prefixo (ex.: `zai/glm-5` → provider `zai`).
+ * Adapter Nexus → providers de catálogo candidatos, em ordem de preferência.
  */
-const OMP_PROVIDERS_BY_ADAPTER: Record<string, readonly string[]> = {
+const CATALOG_PROVIDERS_BY_ADAPTER: Record<string, readonly string[]> = {
   claude: ['anthropic'],
   codex: ['openai-codex', 'openai'],
   glm: ['zai', 'zhipu-coding-plan'],
@@ -489,8 +487,8 @@ const OMP_PROVIDERS_BY_ADAPTER: Record<string, readonly string[]> = {
   agy: ['google-gemini-cli', 'google', 'anthropic'],
 };
 
-function toRichMetadata(ompProvider: string, entry: RichModelEntry): RichModelMetadata {
-  return { ...entry, ompProvider };
+function toRichMetadata(catalogProvider: string, entry: RichModelEntry): RichModelMetadata {
+  return { ...entry, catalogProvider };
 }
 
 /**
@@ -508,8 +506,7 @@ export function getRichModelMetadata(
   const trimmed = modelId.trim();
   if (trimmed.length === 0) return null;
 
-  // 1. Prefixo `provider/` explícito (adapter omp e ids tipo
-  //    `kimi-code/kimi-for-coding`): resolve direto no provider indicado.
+  // 1. Prefixo `provider/` explícito: resolve direto no provider indicado.
   const slash = trimmed.indexOf('/');
   if (slash > 0) {
     const prefix = trimmed.slice(0, slash);
@@ -522,7 +519,7 @@ export function getRichModelMetadata(
   // 2. Cadeia de providers do adapter, com o id como veio e como "bare"
   //    (sem namespace) quando o prefixo não é um provider do recorte.
   const bare = bareModelId(trimmed);
-  for (const providerId of OMP_PROVIDERS_BY_ADAPTER[adapterId] ?? []) {
+  for (const providerId of CATALOG_PROVIDERS_BY_ADAPTER[adapterId] ?? []) {
     const entry =
       findRichModelInProvider(providerId, trimmed) ??
       (bare !== trimmed ? findRichModelInProvider(providerId, bare) : null);

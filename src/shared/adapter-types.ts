@@ -5,10 +5,9 @@ import { z } from 'zod';
  * These are shared between main (validates JSON files) and renderer (receives
  * the trimmed AdapterInfo over IPC).
  *
- * Three adapter kinds:
+ * Two adapter kinds:
  *  - cli-pty  : spawns a real PTY (interactive TUI agents — Claude, aider …)
  *  - api-provider : HTTP client (future chat pane — GLM, fugu …)
- *  - cli-rpc  : hosted NDJSON RPC session (no PTY — omp --mode rpc-ui panes)
  */
 
 const installSchema = z.object({
@@ -85,7 +84,7 @@ const quirksSchema = z
     mcpAutoload: z.boolean().default(false),
     /** Per-session Nexus MCP integration. `none` keeps the CLI worker-only. */
     nexusMcp: z
-      .enum(['none', 'autoload', 'codex', 'agy', 'opencode', 'kimi', 'grok', 'omp'])
+      .enum(['none', 'autoload', 'codex', 'agy', 'opencode', 'kimi', 'grok'])
       .default('none'),
   })
   .superRefine((quirks, ctx) => {
@@ -185,40 +184,13 @@ export const apiProviderAdapterSchema = z.object({
   quirks: z.record(z.string(), z.unknown()).default({}),
 });
 
-/**
- * cli-rpc: an agent CLI hosted over a structured RPC channel (NDJSON pipes),
- * never a PTY. Carries only the common discovery fields — every PTY-only
- * concern (spawn argv, prompt injection, stateParsing idle timeouts, quirks)
- * is deliberately absent: lifecycle is derived from protocol events
- * (agent_start/agent_end), install/detect mirror the sibling cli-pty adapter.
- * The actual spawn is routed in main (pty-ipc → omp-rpc hosted session).
- */
-export const cliRpcAdapterSchema = z.object({
-  kind: z.literal('cli-rpc'),
-  id: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9-]+$/, 'id must be lowercase alphanumeric with hyphens'),
-  label: z.string().min(1).max(128),
-  version: z.string().min(1),
-  icon: z.string().max(8).default('🔌'),
-  bin: z.string().min(1),
-  detect: z.string().min(1),
-  install: installSchema,
-  auth: authSchema,
-  models: modelsConfigSchema,
-});
-
 export const adapterSchema = z.discriminatedUnion('kind', [
   cliPtyAdapterSchema,
   apiProviderAdapterSchema,
-  cliRpcAdapterSchema,
 ]);
 
 export type CliPtyAdapter = z.infer<typeof cliPtyAdapterSchema>;
 export type ApiProviderAdapter = z.infer<typeof apiProviderAdapterSchema>;
-export type CliRpcAdapter = z.infer<typeof cliRpcAdapterSchema>;
 export type Adapter = z.infer<typeof adapterSchema>;
 
 type NexusMcpQuirks = {
@@ -235,11 +207,9 @@ export function hasNexusMcpCapability(quirks: NexusMcpQuirks): boolean {
   if (quirks.mcpAutoload === true) return true;
   return (
     quirks.nexusMcp === 'codex' ||
-    quirks.nexusMcp === 'agy' ||
     quirks.nexusMcp === 'opencode' ||
     quirks.nexusMcp === 'kimi' ||
-    quirks.nexusMcp === 'grok' ||
-    quirks.nexusMcp === 'omp'
+    quirks.nexusMcp === 'grok'
   );
 }
 
@@ -330,7 +300,7 @@ export function resolvePlaceholders(
  */
 export interface AdapterInfo {
   id: string;
-  kind: 'cli-pty' | 'api-provider' | 'cli-rpc';
+  kind: 'cli-pty' | 'api-provider';
   label: string;
   icon: string;
   models: { list: string[]; default: string; info?: ModelInfoMap };
@@ -349,6 +319,21 @@ export interface AdapterInfo {
    * orchestrationEvidence before presenting it as verified.
    */
   orchestratorCapable: boolean;
+  /**
+   * Main can observe a terminal completion block and bind it to the exact
+   * mission worker session. Unlike orchestratorCapable, this does not imply
+   * that arbitrary Nexus review/context tools are available to the CLI.
+   */
+  taskHandoffCapable?: boolean;
+  /**
+   * Main owns a bidirectional PTY action/result channel for this CLI. The
+   * channel can invoke the governed Nexus tool dispatcher and return a final
+   * physical handoff without relying on provider MCP configuration.
+   *
+   * This is deliberately separate from taskHandoffCapable: a CLI may remain a
+   * worker/reviewer even when it cannot safely coordinate a whole mission.
+   */
+  missionControlCapable?: boolean;
   /**
    * Main-owned release qualification for autonomous writes in a task
    * worktree. Optional for rolling compatibility; absence always means false.
@@ -431,7 +416,7 @@ export function adapterCapabilityMatrixOf(
       explicit?.launchable === true ||
       (explicit === undefined &&
         adapter.installed &&
-        (adapter.kind === 'cli-pty' || adapter.kind === 'cli-rpc')),
+        adapter.kind === 'cli-pty'),
     promptInjectable:
       explicit?.promptInjectable === true ||
       (explicit === undefined &&

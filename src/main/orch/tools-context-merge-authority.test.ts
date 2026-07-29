@@ -45,6 +45,17 @@ vi.mock('../context/context-workflow-registry', () => ({
   })),
 }));
 
+vi.mock('./prevc-merge-preparation', () => ({
+  ensurePrevcMergeReady: vi.fn(async (
+    _scope: unknown,
+    _missionId: string,
+    options?: { assertCurrentAuthority?: () => void },
+  ) => {
+    options?.assertCurrentAuthority?.();
+    return { stage: 'execution', frozenNow: false, refrozen: false };
+  }),
+}));
+
 vi.mock('../context/merge-validation-coordinator', () => ({
   MergeValidationCoordinator: class {
     validate = mocks.validate;

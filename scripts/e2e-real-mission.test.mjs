@@ -604,14 +604,16 @@ describe("independent evidence verifier", () => {
 
     // Orquestrador claude sem a advisor reservada: rejeitado.
     const unreserved = validEvidence({ orchestratorCli: "claude" });
-    unreserved.participation[5].skipped = "no-credential";
+    unreserved.participation.find((row) => row.cli === "claude").skipped =
+      "no-credential";
     expect(() => assertRealMissionPassEvidence(unreserved)).toThrow(
       /incomplete/,
     );
 
     // Orquestrador codex carregando a marca orchestrator-reserved: rejeitado.
     const forgedMark = validEvidence({ skipAdvisorClis: ["claude"] });
-    forgedMark.participation[5].skipped = "orchestrator-reserved";
+    forgedMark.participation.find((row) => row.cli === "claude").skipped =
+      "orchestrator-reserved";
     expect(() => assertRealMissionPassEvidence(forgedMark)).toThrow(
       /incomplete/,
     );
@@ -729,7 +731,7 @@ describe("independent evidence verifier", () => {
     );
   });
 
-  it("rejects a missing/parallel QA wave or synthetic no-change receipt", () => {
+  it("rejects a missing QA, serialized root or synthetic no-change receipt", () => {
     const missingQa = validEvidence();
     missingQa.panes.pop();
     missingQa.dispatches.pop();
@@ -738,9 +740,23 @@ describe("independent evidence verifier", () => {
       /incomplete/,
     );
 
-    const parallelQa = validEvidence();
-    parallelQa.dispatches[1].dependsOn = [];
-    expect(() => assertRealMissionPassEvidence(parallelQa)).toThrow(
+    const serializedRoot = validEvidence();
+    const executor = serializedRoot.dispatches.find(
+      (dispatch) => dispatch.plannerId === "guided-execution",
+    );
+    const advisory = serializedRoot.dispatches.find((dispatch) =>
+      dispatch.plannerId.startsWith("guided-advisory-"),
+    );
+    executor.dependsOn = [advisory.taskId];
+    expect(() => assertRealMissionPassEvidence(serializedRoot)).toThrow(
+      /incomplete/,
+    );
+
+    const detachedQa = validEvidence();
+    detachedQa.dispatches.find(
+      (dispatch) => dispatch.plannerId === "guided-quality-gate",
+    ).dependsOn = [];
+    expect(() => assertRealMissionPassEvidence(detachedQa)).toThrow(
       /incomplete/,
     );
 
@@ -1208,26 +1224,6 @@ describe("real mission advisor authentication staging", () => {
       'default_model = "kimi-code/k3"\n',
       { mode: 0o644 },
     );
-    {
-      const Database = require("better-sqlite3");
-      const dbPath = path.join(sourceHome, ".omp", "agent", "agent.db");
-      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-      const db = new Database(dbPath);
-      db.exec(
-        `CREATE TABLE auth_credentials (
-           provider TEXT,
-           disabled_cause TEXT
-         );
-         INSERT INTO auth_credentials(provider, disabled_cause)
-         VALUES ('anthropic', NULL);`,
-      );
-      db.close();
-      fs.chmodSync(dbPath, 0o600);
-    }
-    writePrivate(
-      path.join(sourceHome, ".omp", "agent", "agent.db-wal"),
-      "wal",
-    );
     // agy: sessão viva = oauth_creds utilizável e/ou conta active + secret.
     // Instalação antigravity sozinha não conta (evita "login new" no wizard).
     writePrivate(
@@ -1290,7 +1286,6 @@ describe("real mission advisor authentication staging", () => {
     expect(statuses).toEqual({
       grok: "staged",
       kimi: "staged",
-      omp: "staged",
       agy: "staged",
       opencode: "staged",
       claude: process.platform === "darwin" ? "staged" : "skipped",
@@ -1345,7 +1340,6 @@ describe("real mission advisor authentication staging", () => {
       ],
       [".kimi-code/device_id", "device-uuid-test\n"],
       [".kimi-code/config.toml", 'default_model = "kimi-code/k3"\n'],
-      [".omp/agent/agent.db-wal", "wal"],
       [
         ".gemini/google_accounts.json",
         JSON.stringify({ active: "operator@example.com", old: [] }) + "\n",
@@ -1364,9 +1358,6 @@ describe("real mission advisor authentication staging", () => {
         "glm=00000000000000000000000000000000.testsecretvalue\n",
       ],
     ];
-    expect(fs.existsSync(path.join(isolatedHome, ".omp/agent/agent.db"))).toBe(
-      true,
-    );
     for (const [relative, content] of stagedFiles) {
       const staged = path.join(isolatedHome, relative);
       expect(fs.readFileSync(staged, "utf8"), relative).toBe(content);
@@ -1376,7 +1367,6 @@ describe("real mission advisor authentication staging", () => {
       ".grok",
       ".kimi-code",
       ".kimi-code/credentials",
-      ".omp/agent",
       ".gemini",
       ".local/share/opencode",
       ".local/share/ai-launcher",
@@ -1505,7 +1495,6 @@ describe("real mission advisor authentication staging", () => {
     expect(statuses).toEqual({
       grok: "skipped",
       kimi: "skipped",
-      omp: "skipped",
       agy: "skipped",
       opencode: "credentialless",
       claude: "skipped",
@@ -1518,7 +1507,6 @@ describe("real mission advisor authentication staging", () => {
       "glm",
       "grok",
       "kimi",
-      "omp",
     ]);
     expect(fs.existsSync(path.join(isolatedHome, ".grok"))).toBe(false);
     expect(fs.existsSync(path.join(isolatedHome, ".kimi-code"))).toBe(false);
@@ -1720,9 +1708,7 @@ describe("real mission advisor authentication staging", () => {
   it("marks only missing or broken advisor binaries as skips", () => {
     const onSkip = vi.fn();
     const resolveCommand = (command) =>
-      command === "kimi" || command === "omp"
-        ? ""
-        : `/usr/local/bin/${command}`;
+      command === "kimi" ? "" : `/usr/local/bin/${command}`;
     const run = vi.fn((binary) =>
       binary.endsWith("/agy")
         ? { status: 1, stdout: "", stderr: "boom" }
@@ -1746,12 +1732,10 @@ describe("real mission advisor authentication staging", () => {
       version: "claude 1.2.3",
     });
     expect(statuses.kimi).toEqual({ available: false });
-    expect(statuses.omp).toEqual({ available: false });
     expect(statuses.agy).toEqual({ available: false });
     expect(onSkip.mock.calls.map(([cli]) => cli).sort()).toEqual([
       "agy",
       "kimi",
-      "omp",
     ]);
     expect(run).toHaveBeenCalledWith(
       "/usr/local/bin/grok",
@@ -1798,8 +1782,8 @@ describe("real mission advisor authentication staging", () => {
 
   it("merges operator advisor skips with staging auto-skips instead of replacing", () => {
     expect(
-      mergeRealMissionAdvisorSkipEnv("agy,opencode,claude", ["omp", "agy"]),
-    ).toBe("agy,claude,omp,opencode");
+      mergeRealMissionAdvisorSkipEnv("agy,opencode,claude", ["kimi", "agy"]),
+    ).toBe("agy,claude,kimi,opencode");
     expect(mergeRealMissionAdvisorSkipEnv("kimi", [])).toBe("kimi");
     expect(mergeRealMissionAdvisorSkipEnv(undefined, ["grok"])).toBe("grok");
     expect(mergeRealMissionAdvisorSkipEnv("", [])).toBe("");

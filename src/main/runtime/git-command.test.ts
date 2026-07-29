@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   assertSafeLocalGitConfig,
+  assertSafeLocalGitConfigAsync,
+  AsyncProcessGitRunner,
   isExecutableGitConfigEntry,
   type GitRunner,
 } from './git-command';
@@ -87,5 +89,34 @@ describe('assertSafeLocalGitConfig', () => {
     expect(() =>
       assertSafeLocalGitConfig(runnerWith(''), '/repo'),
     ).not.toThrow();
+  });
+
+  it('supports asynchronous main-process inspection with the same policy', async () => {
+    const run = vi.fn(async () => ({
+      status: 0,
+      stdout: 'core.fsmonitor true\ncore.hookspath .githooks\n',
+      stderr: '',
+    }));
+
+    await expect(
+      assertSafeLocalGitConfigAsync({ run }, '/repo'),
+    ).rejects.toThrow(/core\.hookspath/);
+  });
+});
+
+describe('AsyncProcessGitRunner', () => {
+  it('runs Git without occupying the caller event-loop turn', async () => {
+    const pending = new AsyncProcessGitRunner().run(process.cwd(), [
+      'rev-parse',
+      '--is-inside-work-tree',
+    ]);
+
+    await expect(
+      new Promise<string>((resolve) => setImmediate(() => resolve('free'))),
+    ).resolves.toBe('free');
+    await expect(pending).resolves.toMatchObject({
+      status: 0,
+      stdout: expect.stringMatching(/true/i),
+    });
   });
 });

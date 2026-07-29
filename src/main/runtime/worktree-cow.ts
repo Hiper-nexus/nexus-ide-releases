@@ -5,9 +5,10 @@
  * 2. On macOS APFS (when NEXUS_COW_WORKTREE≠0), clonefile bulky dirs
  *    (node_modules, etc.) from the main checkout into the new worktree
  *
- * Pure helpers + injectable runners for tests.
+ * Pure helpers + injectable runners for tests. CoW copy is async so the
+ * Electron main process is not blocked on `cp -cR`.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { GitRunner } from './git-command';
@@ -36,20 +37,86 @@ export interface MaterializeWorktreeResult {
 /** Default bulky trees that git worktree does not share but CoW can. */
 export const DEFAULT_COW_DIRS = ['node_modules'] as const;
 
+export type ClonefileExecSync = typeof spawnSync;
+export type ClonefileExecAsync = (
+  command: string,
+  args: readonly string[],
+  options: { readonly encoding: 'utf8'; readonly timeout: number },
+) => Promise<{ readonly status: number | null }>;
+
 function branchNameFromRef(branchRef: string): string {
   return branchRef.startsWith('refs/heads/')
     ? branchRef.slice('refs/heads/'.length)
     : branchRef;
 }
 
+async function defaultClonefileExecAsync(
+  command: string,
+  args: readonly string[],
+  options: { readonly encoding: 'utf8'; readonly timeout: number },
+): Promise<{ readonly status: number | null }> {
+  return await new Promise((resolve) => {
+    const child = spawn(command, [...args], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGKILL');
+      resolve({ status: null });
+    }, options.timeout);
+    child.on('error', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ status: null });
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ status: code });
+    });
+  });
+}
+
 /**
  * macOS APFS clonefile via `cp -c` (copy-on-write when filesystem supports it).
- * Returns false if unsupported or failed.
+ * Async — does not block the Electron main event loop.
  */
-export function tryClonefileCopy(
+export async function tryClonefileCopy(
   source: string,
   dest: string,
-  exec: typeof spawnSync = spawnSync,
+  exec: ClonefileExecAsync = defaultClonefileExecAsync,
+): Promise<boolean> {
+  if (process.platform !== 'darwin') return false;
+  if (!fs.existsSync(source)) return false;
+  if (fs.existsSync(dest)) return false;
+  const parent = path.dirname(dest);
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const result = await exec('cp', ['-cR', source, dest], {
+    encoding: 'utf8',
+    timeout: 120_000,
+  });
+  if (result.status !== 0 || !fs.existsSync(dest)) {
+    try {
+      fs.rmSync(dest, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Sync clonefile for unit tests that inject spawnSync. Prefer tryClonefileCopy.
+ */
+export function tryClonefileCopySync(
+  source: string,
+  dest: string,
+  exec: ClonefileExecSync = spawnSync,
 ): boolean {
   if (process.platform !== 'darwin') return false;
   if (!fs.existsSync(source)) return false;
@@ -76,11 +143,32 @@ export function tryClonefileCopy(
  * from the main repository working tree (e.g. node_modules) so workers start
  * warm without a full npm install.
  */
-export function cowCopyHeavyDirs(
+export async function cowCopyHeavyDirs(
   repositoryRoot: string,
   worktreePath: string,
   dirs: readonly string[] = DEFAULT_COW_DIRS,
-  exec: typeof spawnSync = spawnSync,
+  exec: ClonefileExecAsync = defaultClonefileExecAsync,
+): Promise<string[]> {
+  if (!cowWorktreeAvailable()) return [];
+  const copied: string[] = [];
+  for (const rel of dirs) {
+    if (!rel || rel.includes('..') || path.isAbsolute(rel)) continue;
+    const src = path.join(repositoryRoot, rel);
+    const dest = path.join(worktreePath, rel);
+    if (!fs.existsSync(src) || fs.existsSync(dest)) continue;
+    if (await tryClonefileCopy(src, dest, exec)) {
+      copied.push(rel.replaceAll('\\', '/'));
+    }
+  }
+  return copied;
+}
+
+/** Sync variant for tests that disable CoW or inject sync runners. */
+export function cowCopyHeavyDirsSync(
+  repositoryRoot: string,
+  worktreePath: string,
+  dirs: readonly string[] = DEFAULT_COW_DIRS,
+  exec: ClonefileExecSync = spawnSync,
 ): string[] {
   if (!cowWorktreeAvailable()) return [];
   const copied: string[] = [];
@@ -89,7 +177,9 @@ export function cowCopyHeavyDirs(
     const src = path.join(repositoryRoot, rel);
     const dest = path.join(worktreePath, rel);
     if (!fs.existsSync(src) || fs.existsSync(dest)) continue;
-    if (tryClonefileCopy(src, dest, exec)) copied.push(rel.replaceAll('\\', '/'));
+    if (tryClonefileCopySync(src, dest, exec)) {
+      copied.push(rel.replaceAll('\\', '/'));
+    }
   }
   return copied;
 }
@@ -97,9 +187,9 @@ export function cowCopyHeavyDirs(
 /**
  * Materialize a linked git worktree, then optionally CoW heavy content.
  */
-export function materializeGitWorktree(
+export async function materializeGitWorktree(
   input: MaterializeWorktreeInput,
-): MaterializeWorktreeResult {
+): Promise<MaterializeWorktreeResult> {
   const branch = branchNameFromRef(input.branchRef);
   if (fs.existsSync(input.worktreePath)) {
     throw new Error('derived worktree path already exists');
@@ -122,7 +212,7 @@ export function materializeGitWorktree(
   }
 
   const cowDirs = input.cowDirs ?? DEFAULT_COW_DIRS;
-  const cowCopied = cowCopyHeavyDirs(
+  const cowCopied = await cowCopyHeavyDirs(
     input.repositoryRoot,
     input.worktreePath,
     cowDirs,

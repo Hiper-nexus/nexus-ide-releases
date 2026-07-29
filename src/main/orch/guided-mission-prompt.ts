@@ -28,7 +28,7 @@ export function assertGuidedSealedTaskDetailBudget(
 export function guidedAdvisoryExecutionMode(
   agent: SquadAgent,
 ): "read_only" | "isolated_worktree" {
-  // Advisory MCP-only CLIs (kimi/agy/opencode/omp, claude quando o orquestrador
+  // Advisory MCP-only CLIs (kimi/agy/opencode, claude quando o orquestrador
   // não é Claude) também executam fan-out consultivo em read_only — nunca como
   // writers isolados, papel que continua codex-only.
   return supportsMechanicallyReadOnlyCli(agent.cli) ||

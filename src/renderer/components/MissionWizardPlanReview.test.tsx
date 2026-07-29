@@ -89,7 +89,7 @@ describe('MissionWizardPlanReview', () => {
         model: {
           richMetadata: vi.fn(async () => ({
             id: 'gpt-worker',
-            ompProvider: 'fixture',
+            catalogProvider: 'fixture',
             cost: { input: 1, output: 8 },
           })),
         },

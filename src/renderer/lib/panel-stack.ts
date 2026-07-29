@@ -2,13 +2,11 @@ import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
 /**
  * Pilha de empilhamento dos painéis flutuantes do workspace (Arquivos, Painel,
- * Equipe, OMP, Memória, Configs, Diff).
+ * Equipe, Memória, Configs, Diff).
  *
- * Cada painel tinha um z-index FIXO por CSS (omp/orch 30-31, ops-board 34):
- * abrir um painel de tier menor com um maior já na frente fazia o novo nascer
- * invisível atrás dele (caso de campo 18/07: item do menu de ferramentas
- * "abre escondido atrás"). Janela flutuante é pilha: o último aberto ou
- * clicado vem para a frente.
+ * Cada painel tinha um z-index FIXO por CSS: abrir um painel de tier menor com
+ * um maior já na frente fazia o novo nascer invisível atrás dele. Janela
+ * flutuante é pilha: o último aberto ou clicado vem para a frente.
  *
  * A faixa BASE_Z..BASE_Z+n vive acima dos tiers estáticos dos painéis (≤34)
  * e abaixo de --z-soft-overlay (45), --z-app-chrome (55) e dos modais hard

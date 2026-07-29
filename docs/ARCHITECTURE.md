@@ -259,7 +259,7 @@ Main hospeda MCP server (@modelcontextprotocol/sdk); cada CLI-agente conecta via
 
 `nexus_handoff_submit` é uma fronteira física, não um status declarativo. O
 main consome uma capability one-shot emitida pelo transporte HTTP MCP ou pelo
-stdio OMP-RPC e grava, na mesma transação do handoff, missão, sessão,
+PTY-stream e grava, na mesma transação do handoff, missão, sessão,
 incarnação, source, tool-call id e fingerprint de autoridade. Aceitar um task,
 alimentar dependências e concluir a missão revalidam esse receipt e seu
 `audit intent` correlacionado; cada resultado precisa ainda ser entregue e
@@ -326,7 +326,7 @@ O NexusIDE controla handoffs por **3 hooks `.mjs` gerados por sessão+pane**: Po
 
 ### E.4 Skill-gate (enforcement duplo)
 
-Ao spawnar worker Claude-like, o Nexus injeta hook PreToolUse e um `$HOME` efêmero. Codex, AGY, OpenCode, Kimi, Grok e OMP governados também usam overlays privados por sessão: preservam somente a continuidade mínima de auth/sessão, recebem o MCP Nexus e materializam apenas as skills nomeadas na allowlist. Configurações executáveis do perfil real — plugins, hooks, comandos, agentes, skills e MCPs externos — não atravessam a fronteira; panes diretos continuam com o perfil completo do usuário. **Defesa em profundidade:** o MCP server ainda recusa server-side qualquer chamada fora da allowlist do bearer; o isolamento do perfil não substitui a autoridade main-owned.
+Ao spawnar worker Claude-like, o Nexus injeta hook PreToolUse e um `$HOME` efêmero. Codex, AGY, OpenCode, Kimi e Grok governados também usam overlays privados por sessão: preservam somente a continuidade mínima de auth/sessão, recebem o MCP Nexus e materializam apenas as skills nomeadas na allowlist. Configurações executáveis do perfil real — plugins, hooks, comandos, agentes, skills e MCPs externos — não atravessam a fronteira; panes diretos continuam com o perfil completo do usuário. **Defesa em profundidade:** o MCP server ainda recusa server-side qualquer chamada fora da allowlist do bearer; o isolamento do perfil não substitui a autoridade main-owned.
 
 No fluxo agêntico, o Squad Architect não aceita `allowedSkills` ou
 `allowedTools` do JSON do modelo. O main deriva uma projeção determinística por

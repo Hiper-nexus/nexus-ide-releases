@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
-import { ompModelAuthRoute } from './model-auth-readiness';
 import {
   claudeCredentialBlobIsUsable,
   readActiveClaudeCredential,
@@ -17,7 +16,11 @@ import {
  * so when the subscription is active we also SUPPRESS inherited key env vars.
  */
 
-export type AuthStrategy = 'subscription' | 'api-key' | 'login-needed';
+export type AuthStrategy =
+  | 'credentialless'
+  | 'subscription'
+  | 'api-key'
+  | 'login-needed';
 
 export interface AuthDecision {
   strategy: AuthStrategy;
@@ -33,6 +36,15 @@ export function resolveAuthStrategy(input: {
   hasStoredKey: boolean;
   subscriptionAuthed: boolean;
 }): AuthDecision {
+  // A credentialless adapter is complete by definition. It must neither be
+  // sent to a login screen nor inherit the subscription suppression list.
+  if (input.authMethod === 'none') {
+    return {
+      strategy: 'credentialless',
+      injectKey: false,
+      suppressKeyEnv: false,
+    };
+  }
   // A live CLI-managed login session ALWAYS wins, regardless of the adapter's
   // declared auth.method. Every CLI here (claude/codex/grok/agy/kimi…)
   // logs in on its own — codex via ChatGPT, grok via ~/.grok/auth.json, etc. —
@@ -83,8 +95,8 @@ export interface ClaudeAuthRefreshResult {
 }
 
 function subscriptionCacheKey(adapterId: string, model?: string): string {
-  return adapterId === 'omp' || adapterId === 'omp-rpc'
-    ? `${adapterId}\u0000${model?.trim() ?? ''}`
+  return model?.trim()
+    ? `${adapterId}\u0000${model.trim()}`
     : adapterId;
 }
 
@@ -431,85 +443,10 @@ function kimiHasUsableCredentials(home: string): boolean {
   return candidates.some((file) => kimiCredentialsFileIsUsable(file));
 }
 
-/**
- * OMP owns its credential vault in a local SQLite database. Read only exact
- * provider presence metadata — never credential payloads — so Nexus can
- * distinguish a usable broker route from an interactive-login dead end.
- *
- * The provider aliases are release-pinned by model-auth-readiness.ts. Unknown
- * model providers and older/newer DB layouts report unauthenticated until
- * reviewed.
- */
-function ompHasEnabledCredentialForProviders(
-  home: string,
-  providerIds: readonly string[],
-): boolean {
-  if (providerIds.length === 0) return false;
-  const databasePath = path.join(home, '.omp', 'agent', 'agent.db');
-  if (!existsAt(home, '.omp', 'agent', 'agent.db')) return false;
-  type ReadonlyDatabase = {
-    pragma(source: string, options?: { simple?: boolean }): unknown;
-    prepare(source: string): { get(...params: string[]): unknown };
-    close(): void;
-  };
-  let database: ReadonlyDatabase | null = null;
-  try {
-    const Database = require('better-sqlite3') as new (
-      file: string,
-      options: { readonly: boolean; fileMustExist: boolean },
-    ) => ReadonlyDatabase;
-    database = new Database(databasePath, {
-      readonly: true,
-      fileMustExist: true,
-    });
-    database.pragma('query_only = ON');
-    if (database.pragma('query_only', { simple: true }) !== 1) {
-      return false;
-    }
-    const placeholders = providerIds.map(() => '?').join(', ');
-    const row = database
-      .prepare(
-        `SELECT 1 AS ready
-           FROM auth_credentials
-          WHERE provider IN (${placeholders})
-            AND (disabled_cause IS NULL OR disabled_cause = '')
-          LIMIT 1`,
-      )
-      .get(...providerIds) as { ready?: unknown } | undefined;
-    return row?.ready === 1;
-  } catch {
-    return false;
-  } finally {
-    try {
-      database?.close();
-    } catch {
-      // Read-only detection never owns recovery or mutation.
-    }
-  }
-}
-
-/**
- * Exact OMP broker readiness for one provider/model reference. A credential
- * for Anthropic is not evidence that OpenAI Codex, xAI or any other route can
- * start. Local release-pinned providers are credentialless by definition.
- */
-export function isOmpVaultAuthReadyForModel(
-  model: string | null | undefined,
-  home = os.homedir(),
-): boolean {
-  const route = ompModelAuthRoute(model);
-  if (!route) return false;
-  if (route.credentialless) return true;
-  return ompHasEnabledCredentialForProviders(
-    home,
-    route.brokerProviderIds,
-  );
-}
-
 export function detectSubscriptionAuth(
   adapterId: string,
   home = os.homedir(),
-  model?: string,
+  _model?: string,
   options: SubscriptionAuthDetectionOptions = {},
 ): boolean {
   const exists = (...segments: string[]) => existsAt(home, ...segments);
@@ -583,9 +520,6 @@ export function detectSubscriptionAuth(
         exists('.local', 'share', 'opencode', 'auth.json') ||
         exists('Library', 'Application Support', 'opencode', 'auth.json')
       );
-    case 'omp':
-    case 'omp-rpc':
-      return isOmpVaultAuthReadyForModel(model, home);
     case 'aider':
       // Aider has no native OAuth/subscription session; it consumes provider
       // API keys. Treating its config directory as login would suppress every

@@ -163,7 +163,7 @@ function assertGuidedPrevcTaskDetailsV2(
   }
 }
 
-function exactApprovedContract(
+export function frozenWorkflowMatchesApprovedIntent(
   mission: Mission,
   workflow: ReturnType<GuidedPrevcWorkflowPort["getMissionWorkflow"]>,
 ): boolean {
@@ -183,7 +183,10 @@ function exactApprovedContract(
   );
 }
 
-function mainOwnedDraft(mission: Mission): MissionContractDraft {
+/** Exact PREVC draft derived only from the operator-approved intent. */
+export function mainOwnedMissionContractDraft(
+  mission: Mission,
+): MissionContractDraft {
   const approved = mission.intentContract;
   if (!approved) {
     throw new Error(
@@ -270,7 +273,7 @@ export function ensureGuidedMissionPrevc(
     if (
       !current.contract ||
       !current.workflow ||
-      !exactApprovedContract(mission, current)
+      !frozenWorkflowMatchesApprovedIntent(mission, current)
     ) {
       throw new Error(
         "guided_prevc_contract_stale: o workflow congelado não corresponde à intenção aprovada",
@@ -286,7 +289,7 @@ export function ensureGuidedMissionPrevc(
       );
     }
     try {
-      service.freezeContract(mainOwnedDraft(mission), {
+      service.freezeContract(mainOwnedMissionContractDraft(mission), {
         id: "nexus-guided-preflight",
         sessionId: `main:${missionId}`,
         provider: "nexus-main",

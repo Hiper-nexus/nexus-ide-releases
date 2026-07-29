@@ -88,10 +88,6 @@ import {
   buildKimiApiKeyRuntimeEnv,
 } from '../adapters/kimi-runtime-env';
 import {
-  buildOmpSelectedProviderKeyEnv,
-  hasOmpSelectedProviderKey,
-} from '../adapters/omp-provider-keys';
-import {
   isCredentiallessOpenCodeModel,
   isProviderAuthReadyForModel,
 } from '../adapters/model-auth-readiness';
@@ -115,6 +111,7 @@ import {
 const CONFIG_FILE = path.join(os.homedir(), '.nexus', 'providers.json');
 
 let configs = new Map<string, ProviderConfig>();
+let isProviderConfigInitialized = false;
 const listeners = new Set<WebContents>();
 
 function defaultPermissionModeFor(adapterId: string): string {
@@ -169,7 +166,18 @@ function load(): void {
     if (decoded.migrated) persist();
   } catch {
     // No config yet — every adapter defaults to enabled.
+  } finally {
+    isProviderConfigInitialized = true;
   }
+}
+
+/**
+ * Load persisted provider enablement before orchestration consumes settings.
+ * Idempotent so bootstrap may initialize the non-IPC store early while the
+ * ordinary IPC registration remains the owner of channel wiring.
+ */
+export function initializeProviderConfigStore(): void {
+  if (!isProviderConfigInitialized) load();
 }
 
 function persist(): void {
@@ -291,7 +299,7 @@ function nativeKeyEnv(
 
 function authDecision(
   adapterId: string,
-  selectedModel?: string,
+  _selectedModel?: string,
   options: {
     statusSnapshot?: boolean;
     /** Authority-critical spawn checks must not trust the 60s UI cache. */
@@ -301,28 +309,14 @@ function authDecision(
   const adapter = getAdapter(adapterId);
   const authMethod =
     adapter?.kind === 'cli-pty' ? adapter.auth.method : 'api_key';
-  const effectiveModel = effectiveProviderModel(adapterId, selectedModel);
-  const ompAdapter = adapterId === 'omp' || adapterId === 'omp-rpc';
   return resolveAuthStrategy({
     authMethod,
-    hasStoredKey: ompAdapter
-      ? hasOmpSelectedProviderKey(effectiveModel)
-      : hasRuntimeKey(adapterId),
+    hasStoredKey: hasRuntimeKey(adapterId),
     subscriptionAuthed: options.authoritative
-      ? detectSubscriptionAuth(
-          adapterId,
-          os.homedir(),
-          ompAdapter ? effectiveModel : undefined,
-        )
+      ? detectSubscriptionAuth(adapterId, os.homedir())
       : options.statusSnapshot
-        ? hasSubscriptionAuthForStatus(
-            adapterId,
-            ompAdapter ? effectiveModel : undefined,
-          )
-        : hasSubscriptionAuth(
-            adapterId,
-            ompAdapter ? effectiveModel : undefined,
-          ),
+        ? hasSubscriptionAuthForStatus(adapterId)
+        : hasSubscriptionAuth(adapterId),
   });
 }
 
@@ -336,7 +330,7 @@ export function providerAuthStrategy(
 /**
  * Uncached readiness for the final autonomous spawn boundary. Renderer/status
  * snapshots deliberately use the short cache; process creation must observe
- * the OMP vault as it exists now.
+ * the credential source as it exists now.
  */
 export function providerAuthStrategyAuthoritative(
   adapterId: string,
@@ -393,13 +387,8 @@ function resolveApiKey(adapterId: string, upstream?: string): string | null {
 /** Exported for the pre-spawn credential probe (pty/pre-spawn-probe.ts). */
 export function hasRuntimeKey(
   adapterId: string,
-  selectedModel?: string,
+  _selectedModel?: string,
 ): boolean {
-  if (adapterId === 'omp' || adapterId === 'omp-rpc') {
-    return hasOmpSelectedProviderKey(
-      effectiveProviderModel(adapterId, selectedModel),
-    );
-  }
   // Provider readiness is queried during boot. Do not decrypt the vault here:
   // on macOS that crosses into SecItemCopyMatching and can block Electron's
   // main thread while the Keychain session is locked or stale. Presence in
@@ -450,7 +439,7 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
     };
   }
 
-  if (adapter.kind === 'cli-pty' || adapter.kind === 'cli-rpc') {
+  if (adapter.kind === 'cli-pty') {
     const effectiveBin = cfg.binPath || adapter.bin;
     if (!isBinResolvable(effectiveBin)) {
       return {
@@ -477,8 +466,6 @@ export function providerReadiness(
   const decision = authDecision(adapterId, selectedModel);
   if (decision.strategy === 'login-needed') {
     const credentiallessReady =
-      adapterId !== 'omp' &&
-      adapterId !== 'omp-rpc' &&
       isProviderAuthReadyForModel(
         { adapterId, authStrategy: decision.strategy },
         effectiveModel,
@@ -509,8 +496,8 @@ type PreparedAccount = Extract<
 >;
 
 /**
- * `isolatedHome`: o pane vai rodar num HOME efêmero (gate de orquestrador /
- * allowedTools / allowedSkills). Isso muda a decisão de credencial do Claude:
+ * `isolatedHome`: a política de execução decidiu por um HOME isolado
+ * (Hardened ou Claude-family de terceiro). Isso muda a credencial do Claude:
  * no HOME real o CLI usa e RENOVA sozinho a linhagem nativa (Keychain /
  * .credentials.json) e um token de env só atrapalha — é snapshot estático que
  * expira em horas e tem precedência sobre o login. No HOME efêmero o CLI não
@@ -704,15 +691,11 @@ function buildProviderSpawnOverrides(
   // `getKey()` may synchronously cross the macOS Keychain boundary. Keep that
   // effect behind the exact API-key decision so a healthy native subscription
   // can never stall the Electron main thread on an irrelevant vault prompt.
-  const key = decision.injectKey && adapterId !== 'omp'
+  const key = decision.injectKey
     ? resolveApiKey(adapterId, cfg.upstream)
     : null;
   const keyEnv =
-    decision.injectKey && adapterId === 'omp'
-      ? buildOmpSelectedProviderKeyEnv(
-          effectiveProviderModel(adapterId, perSpawn.model),
-        )
-      : decision.injectKey && adapter && key
+    decision.injectKey && adapter && key
       ? nativeKeyEnv(adapterId, key, perSpawn.model)
       : decision.strategy === 'subscription' && adapterId === 'claude'
         ? nativeClaudeSubscriptionEnv(perSpawn.isolatedHome === true)
@@ -786,7 +769,6 @@ function toInfo(
   const adapter = getAdapter(adapterId);
   if (!adapter) return null;
   const cfg = configFor(adapterId);
-  // cli-rpc shares the CLI binary surface with cli-pty (same `bin`, no endpoint).
   // Prefer the absolute path from discovery so UI and spawn agree.
   // Cache first; live-resolve only on miss so listing N providers does not
   // re-walk PATH when the registry is already warm.
@@ -824,9 +806,6 @@ function toInfo(
     const strategy = authDecision(adapterId, model, {
       statusSnapshot: options.nonBlockingAuth === true,
     }).strategy;
-    if (adapterId === 'omp' || adapterId === 'omp-rpc') {
-      return strategy !== 'login-needed';
-    }
     return isProviderAuthReadyForModel(
       { adapterId, authStrategy: strategy },
       model,
@@ -1037,7 +1016,7 @@ const PROVISION_OFFER_MARKER = 'provisioning-offer.json';
  * App GUI pode ter PATH incompleto (fold de login capturado no boot; brew
  * instalado depois; máquina onde o fold falhou) — o instalador não pode
  * declarar "sem Homebrew" com o brew instalado no lugar padrão (caso de
- * campo: omp/opencode "não instalou nenhuma").
+ * campo: opencode "não instalou nenhuma").
  */
 const RUNNER_FALLBACK_DIRS = [
   '/opt/homebrew/bin',
@@ -1179,7 +1158,7 @@ export async function maybeOfferFirstRunProvisioning(
 }
 
 export function registerProviderIpc(): void {
-  load();
+  initializeProviderConfigStore();
 
   handleTrusted(PROVIDER_CHANNELS.installCli, async (_e, raw) => {
     const parsed = z
@@ -1233,7 +1212,7 @@ export function registerProviderIpc(): void {
       };
     }
     // Re-fold PATH + re-probe absolute bins so the new CLI is spawnable now.
-    rescanAdapterBinaries();
+    await rescanAdapterBinaries();
     broadcast();
     return { ok: true };
   });

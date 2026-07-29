@@ -19,7 +19,7 @@ export interface ScoreBreakdown {
   quality: number;
   cost: number;
   diversity: number;
-  omp: number;
+  preference: number;
   circuit: number;
   total: number;
 }
@@ -68,7 +68,6 @@ export function scoreRouteCandidate(
   input: Omit<MultiScoreInput, 'ranked'>,
 ): ScoreBreakdown {
   const { c } = entry;
-  const participation = input.context?.ompParticipation ?? 'prefer';
   // Table position stays primary so cold ladder order is stable; multi-score
   // nudges diversity/circuit without inventing a second router.
   const table = Math.max(0, 60 - index * 4);
@@ -99,23 +98,16 @@ export function scoreRouteCandidate(
   // Author-diversity attenuation (x-algorithm Author Diversity Scorer).
   const diversity = -times * 18;
 
-  let omp = 0;
-  // Soft boost only — heavy omp prefer is already applied in applyOmpParticipation.
-  if (c.adapterId === 'omp') {
-    if (participation === 'prefer') omp = 6;
-    else if (participation === 'diversity') omp = 2;
-    else if (participation === 'fallback') omp = -4;
-    else if (participation === 'off') omp = -100;
-  }
+  let preference = 0;
   if (input.context?.preferAdapters?.includes(c.adapterId)) {
-    omp += 4;
+    preference += 4;
   }
 
   const open = isCircuitOpen(c.adapterId, input.circuitOpen);
   const circuit = open ? -10_000 : 0;
 
-  const total = table + quality + cost + diversity + omp + circuit;
-  return { table, quality, cost, diversity, omp, circuit, total };
+  const total = table + quality + cost + diversity + preference + circuit;
+  return { table, quality, cost, diversity, preference, circuit, total };
 }
 
 /**
@@ -152,7 +144,9 @@ export function multiScoreRerank(input: MultiScoreInput): {
   if (head && head.score.diversity < 0) {
     noteParts.push(` diversity×${Math.abs(head.score.diversity / 18)}`);
   }
-  if (head && head.score.omp > 0) noteParts.push(' omp-boost');
+  if (head && head.score.preference > 0) {
+    noteParts.push(' preference-boost');
+  }
   if (anyClosed && filtered.length < scored.length) {
     noteParts.push(' circuit-open skipped');
   }

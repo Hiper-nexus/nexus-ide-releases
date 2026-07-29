@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('workspace dependency bridge', () => {
-  it('discovers the Codex Desktop runtime and returns its exact Python', () => {
+  it('discovers the Codex Desktop runtime and returns its exact Python', async () => {
     const home = sandbox();
     const root = join(
       home,
@@ -52,7 +52,7 @@ describe('workspace dependency bridge', () => {
     executable(join(root, 'bin', 'fallback', 'git'));
     executable(join(root, 'bin', 'fallback', 'pnpm'));
 
-    const result = resolveWorkspaceDependencies({
+    const result = await resolveWorkspaceDependencies({
       home,
       env: {},
       verifyPython: (candidate) => candidate === python,
@@ -72,13 +72,13 @@ describe('workspace dependency bridge', () => {
     );
   });
 
-  it('falls back to a PATH Python only when Pillow is usable', () => {
+  it('falls back to a PATH Python only when Pillow is usable', async () => {
     const home = sandbox();
     const bin = join(home, 'bin');
     const python = join(bin, 'python3');
     executable(python);
 
-    const result = resolveWorkspaceDependencies({
+    const result = await resolveWorkspaceDependencies({
       home,
       env: { PATH: [bin, '/missing'].join(delimiter) },
       verifyPython: (candidate) => candidate === python,
@@ -87,15 +87,40 @@ describe('workspace dependency bridge', () => {
     expect(result).toEqual({ source: 'system-python', python });
   });
 
-  it('fails clearly when neither bundled nor Pillow-capable Python exists', () => {
+  it('fails clearly when neither bundled nor Pillow-capable Python exists', async () => {
     const home = sandbox();
-    expect(() =>
+    await expect(
       resolveWorkspaceDependencies({
         home,
         env: { PATH: '' },
         verifyPython: () => false,
       }),
-    ).toThrow(/runtime de dependências.*não foi encontrado/i);
+    ).rejects.toThrow(/runtime de dependências.*não foi encontrado/i);
+  });
+
+  it('awaits the Pillow probe without blocking another main-loop task', async () => {
+    const home = sandbox();
+    const python = join(home, 'python3');
+    executable(python);
+    let releaseProbe: ((value: boolean) => void) | undefined;
+    const probe = new Promise<boolean>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const pending = resolveWorkspaceDependencies({
+      home,
+      env: { NEXUS_WORKSPACE_PYTHON: python, PATH: '' },
+      verifyPython: () => probe,
+    });
+    const loopTurn = await new Promise<string>((resolve) =>
+      setImmediate(() => resolve('free')),
+    );
+
+    expect(loopTurn).toBe('free');
+    releaseProbe?.(true);
+    await expect(pending).resolves.toEqual({
+      source: 'system-python',
+      python,
+    });
   });
 
   it('publishes the Desktop-compatible tool name to MCP agents', async () => {

@@ -10,17 +10,11 @@ import {
   hasNativeFileAuth,
   isFileAuthAdapter,
 } from '../adapters/managed-credentials';
-import { resolveOmpBin } from '../adapters/omp-rpc-service';
 import {
   claudeOauthEmail,
   type AuthStrategy,
 } from '../adapters/subscription-auth';
-import {
-  isCredentiallessOpenCodeModel,
-  ompModelAuthRoute,
-  type OmpModelAuthProvider,
-} from '../adapters/model-auth-readiness';
-import { buildOmpSelectedProviderKeyEnv } from '../adapters/omp-provider-keys';
+import { isCredentiallessOpenCodeModel } from '../adapters/model-auth-readiness';
 import { listAccounts } from '../persistence/account-store';
 import {
   hasRuntimeKey,
@@ -41,9 +35,10 @@ import {
  *    (missing blob / expired cooldown / no API credential) and stays in
  *    charge. The probe only judges adapters with NO managed accounts.
  *  - What it cannot prove it does not judge: no configured probe for an
- *    adapter → pass. A probe internal failure passes only for a direct user
- *    terminal; governed/autonomous spawns fail closed. Runtime-broken
- *    credentials that still LOOK present are the login-stuck watchdog's job
+ *    adapter → pass. A probe internal failure blocks only an explicit
+ *    Hardened spawn; direct terminals and the default autopilot let the CLI
+ *    use its own live HOME/auth path. Runtime-broken credentials that still
+ *    LOOK present are the login-stuck watchdog's job
  *    (orch/login-stuck-watchdog.ts), not this module's.
  */
 
@@ -96,145 +91,18 @@ export interface PreSpawnProbeDeps {
     adapterId: string,
     model?: string,
   ): AuthStrategy;
-  buildOmpProviderKeyEnv(model: string): Record<string, string>;
-  resolveOmpBin(): Promise<{ binPath: string }>;
 }
 
 export interface PreSpawnProbeOptions {
   /** Exact model selected for this spawn; absent means the adapter default. */
   readonly model?: string;
   /**
-   * Governed/autonomous spawns cannot treat an unavailable readiness proof as
-   * permission. Direct user terminals may retain the legacy unjudged fallback.
+   * Explicit Hardened spawns cannot treat an unavailable readiness proof as
+   * permission. Autopilot/direct terminals retain the unjudged fallback.
    */
   readonly failClosed?: boolean;
   /** Test seam; production callers must leave this unset. */
   readonly deps?: PreSpawnProbeDeps;
-}
-
-export interface OmpRpcSpawnPreflight {
-  readonly modelRef: string;
-  readonly model: Readonly<{ provider: string; modelId: string }>;
-  readonly binPath: string;
-  /** Empty for broker/local auth; exactly one provider family for API-key auth. */
-  readonly keyEnv: Readonly<Record<string, string>>;
-  /** Secret-free identity used to fence live model changes. */
-  readonly credentialScope: OmpCredentialScope;
-}
-
-export interface OmpCredentialScope {
-  readonly modelProvider: OmpModelAuthProvider;
-  readonly source: 'broker' | 'launcher' | 'credentialless';
-  readonly authorityProviderId: string;
-  readonly envNames: readonly string[];
-}
-
-export function parseExactOmpModelRef(
-  model: string | null | undefined,
-): Readonly<{ provider: string; modelId: string }> {
-  if (typeof model !== 'string') {
-    throw new Error('modelo OMP ausente');
-  }
-  const trimmed = model.trim();
-  const slash = trimmed.indexOf('/');
-  if (slash <= 0 || slash === trimmed.length - 1) {
-    throw new Error(
-      `modelo omp malformado: "${trimmed}" (formato esperado: provider/modelId)`,
-    );
-  }
-  return Object.freeze({
-    provider: trimmed.slice(0, slash),
-    modelId: trimmed.slice(slash + 1),
-  });
-}
-
-/**
- * Exact, main-owned RPC preflight. Callers must run this before minting a gate
- * token or constructing OmpRpcSession. The returned model is always explicit:
- * an omitted renderer/scheduler value resolves to the release-pinned adapter
- * default instead of trusting an unknown mutable OMP local default.
- */
-export async function preflightOmpRpcSpawn(
-  selectedModel?: string,
-  options: Readonly<{ deps?: PreSpawnProbeDeps }> = {},
-): Promise<OmpRpcSpawnPreflight> {
-  const deps = options.deps ?? defaultDeps;
-  const adapter = deps.getAdapter('omp');
-  if (!adapter) throw new Error('unknown adapter: omp');
-  const modelRef =
-    selectedModel?.trim() || adapter.models?.default?.trim();
-  const model = parseExactOmpModelRef(modelRef);
-  const route = ompModelAuthRoute(modelRef);
-  if (!route) {
-    throw new PreSpawnProbeError({
-      code: 'missing-credential',
-      adapterId: 'omp',
-      hint: 'o provider do modelo não pertence à tabela OMP 17.0.4 revisada',
-    });
-  }
-  const authorityDeps: PreSpawnProbeDeps =
-    deps.authoritativeAuthStrategy === undefined
-      ? deps
-      : {
-          ...deps,
-          authStrategy: deps.authoritativeAuthStrategy,
-        };
-  await assertPreSpawnProbe('omp', {
-    model: modelRef,
-    failClosed: true,
-    deps: authorityDeps,
-  });
-  const resolved = await authorityDeps.resolveOmpBin();
-  if (
-    !resolved ||
-    typeof resolved.binPath !== 'string' ||
-    resolved.binPath.trim().length === 0
-  ) {
-    throw new Error('OMP binary preflight returned no executable path');
-  }
-  // Re-read without the UI cache after the binary/version probe. This is the
-  // final authority decision before the caller can construct the process.
-  const strategy = authorityDeps.authStrategy('omp', modelRef);
-  if (strategy === 'login-needed') {
-    throw new PreSpawnProbeError({
-      code: 'missing-credential',
-      adapterId: 'omp',
-      hint: hintFor(
-        adapter,
-        'conecte o provider escolhido em Contas do OMP · RPC',
-      ),
-    });
-  }
-  const keyEnv =
-    strategy === 'api-key'
-      ? authorityDeps.buildOmpProviderKeyEnv(modelRef!)
-      : {};
-  if (strategy === 'api-key' && Object.keys(keyEnv).length === 0) {
-    throw new PreSpawnProbeError({
-      code: 'key-missing',
-      adapterId: 'omp',
-      hint: 'configure a API key do provider escolhido antes de iniciar',
-    });
-  }
-  return Object.freeze({
-    modelRef: modelRef!,
-    model,
-    binPath: resolved.binPath,
-    keyEnv: Object.freeze({ ...keyEnv }),
-    credentialScope: Object.freeze({
-      modelProvider: route.modelProvider,
-      source: route.credentialless
-        ? 'credentialless'
-        : strategy === 'api-key'
-          ? 'launcher'
-          : 'broker',
-      authorityProviderId:
-        strategy === 'api-key'
-          ? (route.launcherProviderId ?? route.modelProvider)
-          : route.modelProvider,
-      envNames: Object.freeze([...route.envNames]),
-    }),
-  });
 }
 
 /**
@@ -270,9 +138,6 @@ const defaultDeps: PreSpawnProbeDeps = {
     providerAuthStrategy(adapterId, model),
   authoritativeAuthStrategy: (adapterId, model) =>
     providerAuthStrategyAuthoritative(adapterId, model),
-  buildOmpProviderKeyEnv: (model) =>
-    buildOmpSelectedProviderKeyEnv(model),
-  resolveOmpBin: () => resolveOmpBin(),
 };
 
 function hintFor(adapter: ProbeAdapterView, fallback: string): string {
@@ -310,9 +175,8 @@ async function probe(
   const managedAccountAvailable = deps.listAccounts(adapterId).length > 0;
 
   // This is the last spawn barrier, so a readiness regression after squad
-  // selection must fail closed. In particular, an OMP broker that has fallen
-  // back to `login-needed` may not open an interactive login pane inside a
-  // guided mission. A stale Nexus account row is not proof of broker auth.
+  // selection must fail closed. A stale Nexus account row is not proof of
+  // current provider authentication.
   if (
     deps.authStrategy(adapterId, effectiveModel) === 'login-needed' &&
     !credentiallessOpenCode
@@ -325,27 +189,6 @@ async function probe(
         'faça login no CLI ou adicione a conta em Configurações › Contas',
       ),
     };
-  }
-
-  // Once OMP auth is currently ready, resolve its pinned binary. A version-pin
-  // mismatch is reported by the RPC spawn path; only a PATH miss belongs here.
-  if (adapterId === 'omp') {
-    try {
-      await deps.resolveOmpBin();
-      return null;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      // Let the outer policy decide what an unclassified broker failure means:
-      // direct terminals retain the unjudged fallback, while governed spawns
-      // turn it into `probe-unavailable`. Swallowing it here would bypass the
-      // caller's fail-closed contract.
-      if (!/não encontrado no PATH|not found/i.test(message)) throw err;
-      return {
-        code: 'binary-missing',
-        adapterId,
-        hint: 'instale o omp com `brew install can1357/tap/omp` e tente de novo',
-      };
-    }
   }
 
   // A Nexus-managed account means the pinned-account path will validate the

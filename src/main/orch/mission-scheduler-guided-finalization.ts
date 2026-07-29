@@ -3,6 +3,7 @@ import type {
   MergeValidationContext,
   MergeValidationDecision,
 } from "../runtime/merge-queue";
+import { MergeValidationRejectedError } from "../runtime/merge-queue";
 import type { PreparedWorktreeNoChangeValidation } from "../runtime/worktree-contract";
 import {
   EMPTY_GIT_DIFF_SHA256,
@@ -13,6 +14,7 @@ import {
   parseGuidedTaskKind,
 } from "./guided-task-kind";
 import { validateMissionMergeWithLifecycleFence } from "./mission-scheduler-authority";
+import { MissionSchedulerDispatchAuthorityError } from "./mission-scheduler-dispatch-transaction";
 
 const EVIDENCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const GIT_SHA = /^[a-f0-9]{40,64}$/;
@@ -101,7 +103,7 @@ export interface GuidedIsolatedAdvisoryDeps {
  *
  * This path is deliberately disjoint from MergeQueue. The disposable
  * worktree must still be the exact clean integration HEAD and the exact
- * physical MCP/OMP worker handoff must bind that HEAD in the store. A commit,
+ * physical MCP worker handoff must bind that HEAD in the store. A commit,
  * dirty file or drift is a terminal contract violation, never a candidate to
  * integrate.
  */
@@ -121,13 +123,13 @@ export function finalizeGuidedIsolatedAdvisory(
     input.dispatch.projectId !== input.scope.projectId ||
     input.dispatch.checkoutId !== input.scope.checkoutId
   ) {
-    throw new Error(
+    throw new MissionSchedulerDispatchAuthorityError(
       "guided isolated advisory diverged from the authorized task identity",
     );
   }
   const prepared = deps.prepare();
   if (!prepared) {
-    throw new Error(
+    throw new MissionSchedulerDispatchAuthorityError(
       "guided isolated advisory produced committed changes; its disposable worktree is never integrated",
     );
   }
@@ -156,7 +158,7 @@ export function finalizeGuidedIsolatedAdvisory(
     !SHA256.test(prepared.diffHash) ||
     prepared.diffHash !== EMPTY_GIT_DIFF_SHA256
   ) {
-    throw new Error(
+    throw new MissionSchedulerDispatchAuthorityError(
       "guided isolated advisory preparation diverged from the authorized task identity",
     );
   }
@@ -165,7 +167,7 @@ export function finalizeGuidedIsolatedAdvisory(
     dispatch = deps.beginMerge(dispatch.revision);
   }
   if (dispatch.state !== "merging") {
-    throw new Error(
+    throw new MissionSchedulerDispatchAuthorityError(
       "guided isolated advisory requires handoff_ready or merging dispatch",
     );
   }
@@ -185,7 +187,7 @@ export function finalizeGuidedIsolatedAdvisory(
       current.agentRef !== input.dispatch.agentRef ||
       !isGuidedIsolatedAdvisory(current)
     ) {
-      throw new Error(
+      throw new MissionSchedulerDispatchAuthorityError(
         "guided isolated advisory lifecycle authority was revoked",
       );
     }
@@ -313,9 +315,7 @@ export async function finalizeGuidedNoChangeQualityGate(
     evidenceIds.length > 256 ||
     evidenceIds.some((id) => !EVIDENCE_ID.test(id))
   ) {
-    throw new Error(
-      "guided no-change validation requires green sensors, independent review and bounded evidence",
-    );
+    throw new MergeValidationRejectedError("candidate", evidenceIds);
   }
   assertCurrentAuthority();
   deps.markValidated(prepared);

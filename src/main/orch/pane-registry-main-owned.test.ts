@@ -51,18 +51,14 @@ const pty = vi.hoisted(() => ({
     return { sessionId: "pty-headless-1" };
   }),
 }));
-const omp = vi.hoisted(() => ({
-  isSession: vi.fn((sessionId: string) => sessionId === "omp-mission-1"),
-  detach: vi.fn(() => true),
-  list: vi.fn((): unknown[] => []),
-  owned: vi.fn(() => false),
-  terminate: vi.fn(async () => true),
-}));
 const provider = vi.hoisted(() => ({
   prepare: vi.fn(() => ({
     ok: true as const,
     overrides: { binPath: "/mock/bin/codex" },
   })),
+}));
+const orchSettings = vi.hoisted(() => ({
+  squadCliPolicy: "operator-choice" as "operator-choice" | "governed",
 }));
 const binaryTrust = vi.hoisted(() => ({
   rejectedBinPath: null as string | null,
@@ -104,19 +100,11 @@ vi.mock("../pty/pty-manager", () => ({
   ),
   isSessionOwnedBy: vi.fn(
     (_owner: WebContents, sessionId: string) =>
-      sessionId === "omp-mission-1" || pty.live.has(sessionId),
+      pty.live.has(sessionId),
   ),
   tapSessionData: vi.fn(() => () => {}),
   tapSessionExit: vi.fn(() => () => {}),
   tapSessionState: vi.fn(() => () => {}),
-}));
-
-vi.mock("../adapters/omp-rpc-ipc", () => ({
-  detachOmpRpcMissionPane: omp.detach,
-  isOmpRpcPaneOwnedBy: omp.owned,
-  isOmpRpcSession: omp.isSession,
-  listOmpRpcSessions: omp.list,
-  terminateOmpRpcSession: omp.terminate,
 }));
 
 vi.mock("../adapters/adapter-registry", () => ({
@@ -153,7 +141,10 @@ vi.mock("../adapters/adapter-registry", () => ({
           bin: id,
           install: { command: `install ${id}` },
           spawn: { interactive: [id], extraArgs: [] },
-          quirks: { mcpAutoload: false, nexusMcp: id },
+          quirks: {
+            mcpAutoload: id === "claude",
+            nexusMcp: id === "claude" ? "autoload" : id,
+          },
           env: { passthrough: [], ephemeralHome: false },
           control: {},
         },
@@ -165,6 +156,10 @@ vi.mock("../adapters/adapter-registry", () => ({
 
 vi.mock("../persistence/provider-config-store", () => ({
   prepareProviderSpawn: provider.prepare,
+}));
+
+vi.mock("../persistence/settings-store", () => ({
+  getOrchSettings: () => orchSettings,
 }));
 
 vi.mock("../pty/trusted-native-cli-binary", () => ({
@@ -237,6 +232,7 @@ describe("main-owned mission pane spawn", () => {
     });
     binaryTrust.rejectedBinPath = null;
     missionAuthority.currentSeal = missionAuthority.seal;
+    orchSettings.squadCliPolicy = "operator-choice";
   });
 
   it("creates the physical worker and registry authority without a renderer", async () => {
@@ -292,6 +288,27 @@ describe("main-owned mission pane spawn", () => {
     await expect(requestPaneClose(pty.paneId)).resolves.toBe(true);
     expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1");
     expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toBeNull();
+  });
+
+  it("prepares native Claude against the real HOME in operator-choice", async () => {
+    const result = await requestPaneSpawn({
+      adapterId: "claude",
+      missionId: "mission-headless",
+      agentName: "Maestro",
+      role: "orchestrator",
+      allowedTools: [],
+      allowedSkills: [],
+      scope,
+      executionScope: scope,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(provider.prepare).toHaveBeenCalledWith(
+      "claude",
+      expect.objectContaining({ isolatedHome: false }),
+    );
+
+    await expect(requestPaneClose(result.paneId!)).resolves.toBe(true);
   });
 
   it("retires only the exact worker incarnation and makes replay inert", async () => {
@@ -513,7 +530,7 @@ describe("main-owned mission pane spawn", () => {
     clearRendererWorkspaceScope(duplicateB);
   });
 
-  it("keeps stale, cross-scope, main-owned and OMP identities fail-closed", async () => {
+  it("keeps stale, cross-scope and main-owned identities fail-closed", async () => {
     const foreignScope = testProjectScope({
       projectId: "project-foreign",
       checkoutId: "checkout-foreign",
@@ -614,17 +631,6 @@ describe("main-owned mission pane spawn", () => {
     ).resolves.toBe(false);
     expect(pty.terminate).not.toHaveBeenCalled();
 
-    await expect(
-      requestMissionWorkerPaneRetirement({
-        paneId: "pane-omp-natural-exit",
-        sessionId: "omp-mission-1",
-        missionId: "mission-headless",
-        workerIncarnationId: "worker-incarnation-omp",
-        scope,
-      }),
-    ).resolves.toBe(false);
-    expect(omp.terminate).not.toHaveBeenCalled();
-
     await expect(requestPaneClose(mainOwned.paneId!)).resolves.toBe(true);
   });
 
@@ -647,9 +653,41 @@ describe("main-owned mission pane spawn", () => {
     expect(pty.spawn).not.toHaveBeenCalled();
   });
 
-  it("rejects OMP as a revision-bound writable worker before provider preparation", async () => {
+  it("spawns any live CLI in an autopilot worktree without native confinement", async () => {
+    provider.prepare.mockReturnValueOnce({
+      ok: true,
+      overrides: { binPath: "/mock/bin/kimi" },
+    });
+
     const result = await requestPaneSpawn({
-      adapterId: "omp",
+      adapterId: "kimi",
+      missionId: "mission-headless",
+      role: "worker",
+      scope,
+      executionScope,
+    });
+
+    expect(result).toMatchObject({ ok: true, sessionId: "pty-headless-1" });
+    expect(pty.spawn).toHaveBeenCalledOnce();
+    expect(pty.spawn.mock.calls[0]?.[2]).toMatchObject({
+      binPath: "/mock/bin/kimi",
+    });
+    expect(pty.authority).toMatchObject({
+      scope: executionScope,
+      coordinationScope: scope,
+      context: expect.objectContaining({
+        nativeReadOnly: false,
+        executionScope,
+      }),
+    });
+    await expect(requestPaneClose(result.paneId!)).resolves.toBe(true);
+  });
+
+  it("keeps native workspace confinement mandatory in Hardened mode", async () => {
+    orchSettings.squadCliPolicy = "governed";
+
+    const result = await requestPaneSpawn({
+      adapterId: "kimi",
       missionId: "mission-headless",
       role: "worker",
       scope,
@@ -658,13 +696,14 @@ describe("main-owned mission pane spawn", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      error: expect.stringMatching(/workspace-write authority/i),
+      error: expect.stringMatching(/trusted workspace-write authority/i),
     });
     expect(provider.prepare).not.toHaveBeenCalled();
     expect(pty.spawn).not.toHaveBeenCalled();
   });
 
   it("rejects a provider executable override before the PTY spawn", async () => {
+    orchSettings.squadCliPolicy = "governed";
     binaryTrust.rejectedBinPath = "/mock/bin/codex-override";
     provider.prepare.mockReturnValueOnce({
       ok: true,
@@ -1002,9 +1041,10 @@ describe("main-owned mission pane spawn", () => {
     clearRendererWorkspaceScope(owner);
   });
 
-  it("keeps an OMP mission pane visible until physical child exit is proven", async () => {
+  it("keeps a PTY mission pane visible until physical child exit is proven", async () => {
     let proveExit: ((value: boolean) => void) | undefined;
-    omp.terminate.mockImplementationOnce(
+    pty.live.add("pty-mission-1");
+    pty.terminate.mockImplementationOnce(
       () =>
         new Promise<boolean>((resolve) => {
           proveExit = resolve;
@@ -1021,30 +1061,30 @@ describe("main-owned mission pane spawn", () => {
     syncPanes(
       [
         {
-          paneId: "pane-omp-mission",
-          sessionId: "omp-mission-1",
-          title: "OMP worker",
+          paneId: "pane-pty-mission",
+          sessionId: "pty-mission-1",
+          title: "AGY worker",
           kind: "cli-agent",
-          adapterId: "omp",
+          adapterId: "agy",
           state: "busy",
         },
       ],
       owner,
     );
 
-    const closing = requestPaneClose("pane-omp-mission");
+    const closing = requestPaneClose("pane-pty-mission");
     await Promise.resolve();
-    expect(omp.terminate).toHaveBeenCalledWith("omp-mission-1");
+    expect(pty.terminate).toHaveBeenCalledWith("pty-mission-1");
     expect(owner.send).not.toHaveBeenCalledWith(
       expect.anything(),
-      "pane-omp-mission",
+      "pane-pty-mission",
     );
 
     proveExit?.(true);
     await expect(closing).resolves.toBe(true);
     expect(owner.send).toHaveBeenCalledWith(
       expect.anything(),
-      "pane-omp-mission",
+      "pane-pty-mission",
     );
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);

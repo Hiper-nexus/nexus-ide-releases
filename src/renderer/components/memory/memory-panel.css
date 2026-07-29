@@ -1,5 +1,5 @@
 /* Painel de memória agentic por workspace (entrega C2).
-   Mesma gramática dos drawers direitos (orch-panel / omp-panel): denso em
+   Mesma gramática dos drawers direitos: denso em
    sinal, calmo em ruído, acento (neon) só no que está VIVO — o banco local do
    workspace e a importância das memórias. Importado direto pelo MemoryPanel.tsx
    (Vite empacota o CSS do componente); tokens vêm do base.css global. */

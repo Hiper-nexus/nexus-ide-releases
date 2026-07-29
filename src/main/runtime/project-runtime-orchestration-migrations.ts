@@ -248,6 +248,73 @@ CREATE UNIQUE INDEX idx_handoff_mcp_receipts_logical_operation
 `;
 
 /**
+ * AGY 1.1 and other CLIs without a physically usable private MCP config finish
+ * through a Main-observed PTY marker. Preserve the historical table name for
+ * compatibility, but widen its immutable transport source to `pty-stream`.
+ * Rebuilding is required because SQLite cannot alter a CHECK constraint.
+ */
+const HANDOFF_PTY_STREAM_PROVENANCE_SCHEMA = `
+DROP TRIGGER IF EXISTS handoff_mcp_receipt_immutable;
+
+ALTER TABLE handoff_mcp_receipts
+  RENAME TO handoff_physical_receipts_v24;
+
+CREATE TABLE handoff_mcp_receipts (
+  receipt_id             TEXT PRIMARY KEY,
+  handoff_id             TEXT NOT NULL UNIQUE,
+  tool_call_id           TEXT NOT NULL UNIQUE,
+  tool_name              TEXT NOT NULL CHECK (tool_name = 'nexus_handoff_submit'),
+  source                 TEXT NOT NULL CHECK (
+    source IN ('http-mcp', 'pty-stream', 'omp-rpc-stdio')
+  ),
+  mission_id             TEXT NOT NULL,
+  session_id             TEXT NOT NULL,
+  worker_incarnation_id  TEXT,
+  authority_sha256       TEXT NOT NULL CHECK (length(authority_sha256) = 64),
+  worktree_head_sha      TEXT CHECK (
+    worktree_head_sha IS NULL OR length(worktree_head_sha) IN (40, 64)
+  ),
+  issued_at              INTEGER NOT NULL CHECK (issued_at >= 0),
+  raw_payload_sha256     TEXT CHECK (
+    raw_payload_sha256 IS NULL OR length(raw_payload_sha256) = 64
+  ),
+  logical_operation_key  TEXT CHECK (
+    logical_operation_key IS NULL OR length(logical_operation_key) = 64
+  ),
+  FOREIGN KEY (handoff_id) REFERENCES handoffs(id) ON DELETE CASCADE,
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+INSERT INTO handoff_mcp_receipts (
+  receipt_id, handoff_id, tool_call_id, tool_name, source,
+  mission_id, session_id, worker_incarnation_id, authority_sha256,
+  worktree_head_sha, issued_at, raw_payload_sha256, logical_operation_key
+)
+SELECT
+  receipt_id, handoff_id, tool_call_id, tool_name, source,
+  mission_id, session_id, worker_incarnation_id, authority_sha256,
+  worktree_head_sha, issued_at, raw_payload_sha256, logical_operation_key
+FROM handoff_physical_receipts_v24;
+
+DROP TABLE handoff_physical_receipts_v24;
+
+CREATE INDEX idx_handoff_mcp_receipts_worker
+  ON handoff_mcp_receipts(
+    mission_id, session_id, worker_incarnation_id, issued_at
+  );
+
+CREATE UNIQUE INDEX idx_handoff_mcp_receipts_logical_operation
+  ON handoff_mcp_receipts(logical_operation_key)
+  WHERE logical_operation_key IS NOT NULL;
+
+CREATE TRIGGER handoff_mcp_receipt_immutable
+BEFORE UPDATE ON handoff_mcp_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'handoff physical receipt is immutable');
+END;
+`;
+
+/**
  * Consumption is stronger than transport delivery:
  *
  * - a terminal/orchestrator ACK is bound to the exact accepted delivery
@@ -400,5 +467,11 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
       schemaVersion: 24,
       appVersion: '0.19.31',
       sql: HANDOFF_IDEMPOTENCY_IDENTITY_SCHEMA,
+    },
+    {
+      id: '025-handoff-pty-stream-provenance',
+      schemaVersion: 25,
+      appVersion: '0.19.37',
+      sql: HANDOFF_PTY_STREAM_PROVENANCE_SCHEMA,
     },
   ];

@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { scheduleProjectOrientationAfterMerge } from '../context/orientation/orientation-service';
+import { retainTrustedMemoryBestEffort } from '../memory/trusted-memory';
+import { classifyOperationalFailure } from './operational-failure-policy';
+import { rollbackIntegrationCheckout } from './merge-integration-rollback';
 import {
   GitCommandError,
   ProcessGitRunner,
@@ -17,6 +21,7 @@ import {
   MergeAuthorityRevokedError,
   MergeCasError,
   MergeConflictError,
+  MergeQueueBlockedError,
   MergeQueueStateError,
   MergeValidationRejectedError,
   type EnqueueMergeInput,
@@ -112,6 +117,23 @@ function errorName(error: unknown): string {
   }
 }
 
+function retainApprovedMerge(
+  input: EnqueueMergeInput,
+  result: MergeQueueResult,
+): void {
+  retainTrustedMemoryBestEffort(input.scope, {
+    type: 'approved-merge',
+    summary:
+      `Task ${input.taskId} was integrated after candidate and ` +
+      'post-integration validation approval.',
+    missionId: input.missionId,
+    reference: result.integratedSha,
+    ...(result.evidenceIds.length > 0
+      ? { evidenceIds: result.evidenceIds.slice(0, 32) }
+      : {}),
+  });
+}
+
 export class MergeQueue {
   readonly runtimeRoot: string;
   readonly candidatesRoot: string;
@@ -152,11 +174,35 @@ export class MergeQueue {
     return this.#schedule(input.scope, () => this.#retry(input));
   }
 
+  /**
+   * Main-owned retry lane. Technical failures reuse the exact durable block
+   * revision automatically; quality rejection waits for a changed task commit.
+   * Terminal blocks remain available only to explicit recovery tooling.
+   */
+  retryRecoverable(input: EnqueueMergeInput): Promise<MergeQueueResult> {
+    return this.#schedule(input.scope, () => this.#retryRecoverable(input));
+  }
+
   snapshot(scope: ProjectExecutionScope): MergeQueueStateSnapshot {
     return this.#state.snapshot(this.#worktrees.scopeKey(scope));
   }
 
   reconcile(scope: ProjectExecutionScope): MergeQueueReconciliationResult {
+    return this.#recovery.reconcile(scope);
+  }
+
+  /**
+   * Same-process recovery for an attempt whose durable state became
+   * temporarily unreadable after Git was integrated. Never interrupts a local
+   * operation still owned by this queue instance.
+   */
+  reconcileIfIdle(
+    scope: ProjectExecutionScope,
+  ): MergeQueueReconciliationResult {
+    const scopeKey = this.#worktrees.scopeKey(scope);
+    if (this.#tails.has(scopeKey)) {
+      return Object.freeze({ action: 'none' });
+    }
     return this.#recovery.reconcile(scope);
   }
 
@@ -202,12 +248,30 @@ export class MergeQueue {
       );
       this.#assertCurrentAuthority(input);
       if (resume) {
-        this.#worktrees.reopenFailedForRetry(
+        const retryRecord = this.#worktrees.get(
           input.scope,
           input.missionId,
           input.taskId,
-          resume.expectedTaskHeadSha,
         );
+        if (retryRecord?.status === 'failed') {
+          this.#worktrees.reopenFailedForRetry(
+            input.scope,
+            input.missionId,
+            input.taskId,
+            resume.expectedTaskHeadSha,
+          );
+        } else {
+          const retryPrepared = this.#worktrees.prepareRecoveryIntegration(
+            input.scope,
+            input.missionId,
+            input.taskId,
+          );
+          if (retryPrepared.taskHeadSha !== resume.expectedTaskHeadSha) {
+            throw new MergeCasError(
+              'task HEAD changed before recoverable merge retry',
+            );
+          }
+        }
       }
       prepared = this.#worktrees.prepareIntegration(
         input.scope,
@@ -417,13 +481,6 @@ export class MergeQueue {
         diffHash: candidate.diffHash,
         evidenceIds,
       });
-      const finalization = input.finalize?.(result);
-      if (
-        finalization &&
-        typeof (finalization as PromiseLike<void>).then === 'function'
-      ) {
-        await finalization;
-      }
       this.#assertCurrentAuthority(input);
       this.#state.complete(
         claimed,
@@ -431,23 +488,45 @@ export class MergeQueue {
         evidenceIds,
         this.#timestamp(),
       );
+      const finalization = input.finalize?.(result);
+      if (
+        finalization &&
+        typeof (finalization as PromiseLike<void>).then === 'function'
+      ) {
+        await finalization;
+      }
+      retainApprovedMerge(input, result);
+      scheduleProjectOrientationAfterMerge(input.scope, {
+        integrationBaseSha: integration.headSha,
+        integratedSha: candidate.candidateSha,
+        changedFiles: prepared.changedFiles,
+      });
       return result;
     } catch (caught) {
       let error = caught;
       let integrationRolledBack = false;
+      const ownsAttempt = claimed
+        ? this.#ownsRollbackAuthority(claimed)
+        : false;
       if (
-        error instanceof MergeAuthorityRevokedError &&
         integrationApplied &&
         prepared &&
         candidate &&
-        integrationBaseSha
+        integrationBaseSha &&
+        ownsAttempt
       ) {
         try {
-          this.#rollbackRevokedIntegration(
-            prepared.record,
+          rollbackIntegrationCheckout({
+            scope: input.scope,
+            missionId: input.missionId,
+            taskId: input.taskId,
+            taskHeadSha: prepared.taskHeadSha,
             integrationBaseSha,
-            candidate.candidateSha,
-          );
+            candidateSha: candidate.candidateSha,
+            record: prepared.record,
+            git: this.#git,
+            worktrees: this.#worktrees,
+          });
           integrationApplied = false;
           integrationRolledBack = true;
         } catch (rollbackError) {
@@ -470,21 +549,25 @@ export class MergeQueue {
           // Never force-remove a candidate whose identity or cleanliness changed.
         }
       }
-      if (claimed) {
-        try {
-          this.#worktrees.markFailed(
-            input.scope,
-            input.missionId,
-            input.taskId,
-            errorMessage(error),
-            integrationApplied ? candidate?.candidateSha : undefined,
-          );
-        } catch {
-          // Queue persistence below remains the fail-closed authority.
+      if (claimed && ownsAttempt) {
+        const disposition = classifyOperationalFailure(error);
+        if (disposition === 'terminal') {
+          try {
+            this.#worktrees.markFailed(
+              input.scope,
+              input.missionId,
+              input.taskId,
+              errorMessage(error),
+              integrationApplied ? candidate?.candidateSha : undefined,
+            );
+          } catch {
+            // Queue persistence below remains the fail-closed authority.
+          }
         }
         this.#blockAttempt(
           claimed,
           error,
+          disposition,
           integrationApplied ? candidate?.candidateSha : undefined,
           integrationRolledBack,
         );
@@ -504,7 +587,33 @@ export class MergeQueue {
         acknowledgementEvidenceIds: attempt.acknowledgementEvidenceIds,
       });
     }
-    return this.#recovery.resumePostIntegration(input, attempt);
+    const result = await this.#recovery.resumePostIntegration(input, attempt);
+    retainApprovedMerge(input, result);
+    scheduleProjectOrientationAfterMerge(input.scope, {
+      integrationBaseSha: result.integrationBaseSha,
+      integratedSha: result.integratedSha,
+      changedFiles: attempt.prepared.changedFiles,
+    });
+    return result;
+  }
+
+  async #retryRecoverable(
+    input: EnqueueMergeInput,
+  ): Promise<MergeQueueResult> {
+    const snapshot = this.snapshot(input.scope);
+    const disposition = snapshot.blocked?.disposition ?? 'terminal';
+    if (!snapshot.blocked || disposition === 'terminal') {
+      if (snapshot.blocked) throw new MergeQueueBlockedError(snapshot.blocked);
+      throw new MergeQueueStateError('merge queue has no recoverable block');
+    }
+    return this.#retry({
+      ...input,
+      expectedStateRevision: snapshot.revision,
+      acknowledgement:
+        disposition === 'retryable'
+          ? { revisionId: `automatic-retry:${snapshot.revision}` }
+          : {},
+    });
   }
 
   #buildCandidate(
@@ -743,84 +852,21 @@ export class MergeQueue {
     }
   }
 
-  #rollbackRevokedIntegration(
-    record: WorktreeRecord,
-    integrationBaseSha: string,
-    candidateSha: string,
-  ): void {
-    this.#assertIntegrationCas(
-      record,
-      candidateSha,
-      'cannot roll back a revoked merge because integration HEAD changed',
+  #ownsRollbackAuthority(claimed: MergeQueueClaim): boolean {
+    const snapshot = this.#state.snapshot(claimed.scopeKey);
+    const current = snapshot.entries.find(
+      (entry) => entry.id === claimed.entry.id,
     );
-    const refRollback = this.#git.run(
-      record.rootRealPath,
-      [
-        'update-ref',
-        '-m',
-        `Nexus revoke ${record.taskKey}`,
-        record.integrationRef,
-        integrationBaseSha,
-        candidateSha,
-      ],
-      { allowFailure: true },
-    );
-    if (refRollback.status !== 0) {
-      throw new MergeCasError(
-        'revoked merge rollback compare-and-swap failed',
-        {
-          cause: new GitCommandError(
-            'git update-ref rollback compare-and-swap failed',
-            [
-              'update-ref',
-              record.integrationRef,
-              integrationBaseSha,
-              candidateSha,
-            ],
-            refRollback,
-          ),
-        },
-      );
-    }
-    const materialize = this.#git.run(
-      record.rootRealPath,
-      [
-        'read-tree',
-        '-u',
-        '-m',
-        candidateSha,
-        integrationBaseSha,
-      ],
-      { allowFailure: true },
-    );
-    if (materialize.status !== 0) {
-      throw new MergeCasError(
-        'revoked merge ref rolled back but checkout rematerialization failed',
-        {
-          cause: new GitCommandError(
-            'git read-tree rollback materialization failed',
-            [
-              'read-tree',
-              '-u',
-              '-m',
-              candidateSha,
-              integrationBaseSha,
-            ],
-            materialize,
-          ),
-        },
-      );
-    }
-    this.#assertIntegrationCas(
-      record,
-      integrationBaseSha,
-      'revoked merge checkout did not return to the exact integration base',
+    return (
+      current?.attempt === claimed.entry.attempt &&
+      snapshot.activeTaskKey === claimed.entry.taskKey
     );
   }
 
   #blockAttempt(
     claimed: MergeQueueClaim,
     error: unknown,
+    disposition: ReturnType<typeof classifyOperationalFailure>,
     integratedSha?: string,
     integrationRolledBack = false,
   ): void {
@@ -828,6 +874,7 @@ export class MergeQueue {
       errorName: errorName(error),
       reason: errorMessage(error),
       now: this.#timestamp(),
+      disposition,
       integratedSha,
       integrationRolledBack,
       rejectedEvidenceIds:

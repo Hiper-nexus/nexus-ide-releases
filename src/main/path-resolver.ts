@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 /**
  * Single source of truth for CLI PATH + binary resolution.
@@ -21,6 +21,18 @@ import { execFileSync } from 'node:child_process';
 const START = '__NEXUS_PATH_START__';
 const END = '__NEXUS_PATH_END__';
 const RESOLVE_TIMEOUT_MS = 4000;
+
+interface LoginShellExecOptions {
+  readonly encoding: 'utf8';
+  readonly timeout: number;
+  readonly env: NodeJS.ProcessEnv;
+}
+
+export type LoginShellPathExecutor = (
+  file: string,
+  args: readonly string[],
+  options: LoginShellExecOptions,
+) => Promise<string>;
 
 export interface CliBinaryResolution {
   /** Absolute path to an executable file. */
@@ -97,24 +109,45 @@ function existingDirs(dirs: readonly string[]): string[] {
   });
 }
 
-/** Ask the user's login+interactive shell for its PATH. Empty string on failure. */
-export function probeLoginShellPath(
-  exec: typeof execFileSync = execFileSync,
+function executeLoginShellForOutput(
+  file: string,
+  args: readonly string[],
+  options: LoginShellExecOptions,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(file, [...args], options, (error, stdout) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+/**
+ * Ask the user's login+interactive shell for its PATH.
+ *
+ * The shell is deliberately asynchronous: login profiles can invoke package
+ * managers or network-backed helpers and must never freeze Electron's main
+ * event loop for the full probe timeout.
+ */
+export async function probeLoginShellPath(
+  exec: LoginShellPathExecutor = executeLoginShellForOutput,
   home = realUserHome(),
-): string {
+): Promise<string> {
   if (process.platform === 'win32') return process.env.PATH ?? '';
   const shell = process.env.SHELL || '/bin/zsh';
   try {
     // Force the real account home so isolated $HOME (E2E/smoke) still sources
     // the operator's .zprofile/.zshrc where nvm/homebrew PATH exports live.
     // -l login, -i interactive. Sentinel-wrapped against banner/prompt noise.
-    const out = exec(
+    const out = await exec(
       shell,
       ['-lic', `printf '%s%s%s' '${START}' "$PATH" '${END}'`],
       {
         encoding: 'utf8',
         timeout: RESOLVE_TIMEOUT_MS,
-        stdio: ['ignore', 'pipe', 'ignore'],
         env: {
           ...process.env,
           HOME: home,
@@ -134,8 +167,9 @@ export function probeLoginShellPath(
  * Build the effective PATH used for discovery and spawn.
  * Order: current process PATH → login shell → curated fallbacks.
  *
- * When `loginPath` is omitted, the login shell is probed. Callers that already
- * hold a memoised PATH should pass it explicitly to avoid repeated shell spawns.
+ * This function is intentionally pure and synchronous. The asynchronous login
+ * shell probe belongs in `resolveEffectivePath`; callers that do not await it
+ * still receive the current process PATH plus safe local fallbacks.
  */
 export function buildEffectivePath(options: {
   processPath?: string;
@@ -144,10 +178,7 @@ export function buildEffectivePath(options: {
 } = {}): string {
   const home = options.home ?? realUserHome();
   const processPath = options.processPath ?? process.env.PATH ?? '';
-  const loginPath =
-    options.loginPath !== undefined
-      ? options.loginPath
-      : probeLoginShellPath(execFileSync, home);
+  const loginPath = options.loginPath ?? '';
   const parts = new Set<string>();
   for (const dir of processPath.split(path.delimiter)) {
     if (dir) parts.add(dir);
@@ -161,6 +192,21 @@ export function buildEffectivePath(options: {
   return [...parts].join(path.delimiter);
 }
 
+export async function resolveEffectivePath(options: {
+  processPath?: string;
+  loginPath?: string;
+  home?: string;
+} = {}): Promise<string> {
+  const home = options.home ?? realUserHome();
+  const loginPath =
+    options.loginPath ?? (await probeLoginShellPath(undefined, home));
+  return buildEffectivePath({
+    ...options,
+    home,
+    loginPath,
+  });
+}
+
 let folded = false;
 let memoizedEffectivePath: string | null = null;
 
@@ -169,9 +215,9 @@ let memoizedEffectivePath: string | null = null;
  * Idempotent; safe to call once during bootstrap BEFORE the adapter registry
  * probes for installed CLIs.
  */
-export function resolveUserPath(): void {
+export async function resolveUserPath(): Promise<void> {
   if (folded) return;
-  const effective = buildEffectivePath();
+  const effective = await resolveEffectivePath();
   process.env.PATH = effective;
   memoizedEffectivePath = effective;
   folded = true;
@@ -181,10 +227,10 @@ export function resolveUserPath(): void {
  * Re-fold PATH live (post `brew install`, external CLI installer, etc.).
  * Called by "Reexaminar CLIs" so discovery and spawn see newly installed tools.
  */
-export function refreshUserPath(): string {
+export async function refreshUserPath(): Promise<string> {
   // Clear memo so buildEffectivePath re-probes the login shell.
   memoizedEffectivePath = null;
-  const effective = buildEffectivePath();
+  const effective = await resolveEffectivePath();
   process.env.PATH = effective;
   memoizedEffectivePath = effective;
   folded = true;
@@ -197,7 +243,10 @@ export function refreshUserPath(): string {
  */
 export function getEffectivePath(): string {
   if (memoizedEffectivePath !== null) return memoizedEffectivePath;
-  const effective = buildEffectivePath();
+  // Bootstrap awaits the login-shell probe before adapter discovery. This
+  // fallback is process-only by design so an early caller can never reintroduce
+  // a blocking subprocess on the Electron main thread.
+  const effective = buildEffectivePath({ loginPath: '' });
   memoizedEffectivePath = effective;
   return effective;
 }
@@ -317,8 +366,7 @@ export function resolveCliBinary(
       ? buildEffectivePath({
           processPath,
           home: options.home,
-          // Avoid nested login probes when caller already set processPath for tests.
-          loginPath: options.processPath !== undefined ? '' : undefined,
+          loginPath: '',
         })
       : getEffectivePath());
 

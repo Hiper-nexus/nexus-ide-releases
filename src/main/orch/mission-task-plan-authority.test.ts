@@ -30,6 +30,7 @@ function adapterInfo(
     installCommand: "",
     idleTimeoutMs: 800,
     orchestratorCapable: codex,
+    taskHandoffCapable: true,
     autonomousWorkspaceWriteCapable: codex,
     orchestrationEvidence: codex ? "verified" : "unsupported",
     capabilities: {
@@ -83,16 +84,22 @@ const squad: Squad = {
       cli: "claude",
     },
     {
-      id: "omp-scout",
-      agentName: "OMP Scout",
+      id: "opencode-scout",
+      agentName: "OpenCode Scout",
       category: "scout",
-      cli: "omp",
+      cli: "opencode",
     },
     {
       id: "glm-scout",
       agentName: "GLM Scout",
       category: "scout",
       cli: "glm",
+    },
+    {
+      id: "custom-reviewer",
+      agentName: "Custom Reviewer",
+      category: "reviewer",
+      cli: "custom-cli",
     },
   ],
 };
@@ -121,6 +128,7 @@ function harness(
     worktrees?: readonly unknown[];
     liveSquad?: Squad;
     adapterOverrides?: Readonly<Record<string, AdapterInfo>>;
+    squadCliPolicy?: "governed" | "operator-choice";
   } = {},
 ) {
   const createPlanAtomically = vi.fn(
@@ -178,6 +186,7 @@ function harness(
         options.adapterOverrides?.[adapterId] ?? adapterInfo(adapterId),
     ),
     listMissionWorktrees: vi.fn(() => options.worktrees ?? []),
+    squadCliPolicy: () => options.squadCliPolicy ?? "operator-choice",
   };
   return { suite, deps, createPlanAtomically };
 }
@@ -407,15 +416,6 @@ describe("mission task plan authority", () => {
       { ...validTask, ownership: { files: [] } },
       /isolated_worktree requires explicit ownership\.files/,
     ],
-    [
-      {
-        ...validTask,
-        agentRef: "omp-scout",
-        category: "scout",
-        executionMode: "isolated_worktree",
-      },
-      /governed writer/,
-    ],
   ])(
     "rejects an invalid roster/execution row without persisting it",
     (task, error) => {
@@ -431,6 +431,88 @@ describe("mission task plan authority", () => {
       expect(createPlanAtomically).not.toHaveBeenCalled();
     },
   );
+
+  it("keeps non-qualified writers behind the explicit Hardened policy", () => {
+    const { suite, deps, createPlanAtomically } = harness({
+      squadCliPolicy: "governed",
+    });
+    expect(() =>
+      planMissionTasks(
+        {
+          missionId: "mission-a",
+          tasks: [
+            {
+              ...validTask,
+              agentRef: "glm-scout",
+              category: "scout",
+              executionMode: "isolated_worktree",
+            },
+          ],
+        },
+        orchestratorContext(),
+        suite,
+        deps,
+      ),
+    ).toThrow(/governed writer/);
+    expect(createPlanAtomically).not.toHaveBeenCalled();
+  });
+
+  it("allows a broad greenfield envelope in Autopilot but keeps Hardened partitioned", () => {
+    const greenfieldTask = {
+      ...validTask,
+      ownership: {
+        ...validTask.ownership,
+        files: Array.from(
+          { length: 24 },
+          (_, index) => `greenfield-root-${index}/entry.ts`,
+        ),
+      },
+    };
+    const autopilot = harness({ squadCliPolicy: "operator-choice" });
+    expect(() =>
+      planMissionTasks(
+        { missionId: "mission-a", tasks: [greenfieldTask] },
+        orchestratorContext(),
+        autopilot.suite,
+        autopilot.deps,
+      ),
+    ).not.toThrow();
+    expect(autopilot.createPlanAtomically).toHaveBeenCalledOnce();
+
+    const hardened = harness({ squadCliPolicy: "governed" });
+    expect(() =>
+      planMissionTasks(
+        { missionId: "mission-a", tasks: [greenfieldTask] },
+        orchestratorContext(),
+        hardened.suite,
+        hardened.deps,
+      ),
+    ).toThrow(/ownership\.files looks repo-wide/i);
+    expect(hardened.createPlanAtomically).not.toHaveBeenCalled();
+  });
+
+  it("lets an authenticated autopilot CLI own its isolated worktree", () => {
+    const { suite, deps, createPlanAtomically } = harness();
+    expect(() =>
+      planMissionTasks(
+        {
+          missionId: "mission-a",
+          tasks: [
+            {
+              ...validTask,
+              agentRef: "glm-scout",
+              category: "scout",
+              executionMode: "isolated_worktree",
+            },
+          ],
+        },
+        orchestratorContext(),
+        suite,
+        deps,
+      ),
+    ).not.toThrow();
+    expect(createPlanAtomically).toHaveBeenCalledOnce();
+  });
 
   it("admits a read_only advisor on a CLI with no native confinement", () => {
     // The boundary for these CLIs is the Nexus kernel sandbox, applied at
@@ -506,7 +588,7 @@ describe("mission task plan authority", () => {
           tasks: [
             {
               ...validTask,
-              agentRef: "omp-scout",
+              agentRef: "opencode-scout",
               category: "scout",
               executionMode: "read_only",
               ownership: {
@@ -523,6 +605,36 @@ describe("mission task plan authority", () => {
       ),
     ).not.toThrow();
     expect(createPlanAtomically).toHaveBeenCalledOnce();
+  });
+
+  it("accepts a custom handoff reviewer in operator-choice and keeps Hardened confined", () => {
+    const task = {
+      ...validTask,
+      agentRef: "custom-reviewer",
+      category: "reviewer" as const,
+      executionMode: "read_only" as const,
+    };
+    const open = harness({ squadCliPolicy: "operator-choice" });
+    expect(() =>
+      planMissionTasks(
+        { missionId: "mission-a", tasks: [task] },
+        orchestratorContext(),
+        open.suite,
+        open.deps,
+      ),
+    ).not.toThrow();
+    expect(open.createPlanAtomically).toHaveBeenCalledOnce();
+
+    const hardened = harness({ squadCliPolicy: "governed" });
+    expect(() =>
+      planMissionTasks(
+        { missionId: "mission-a", tasks: [task] },
+        orchestratorContext(),
+        hardened.suite,
+        hardened.deps,
+      ),
+    ).toThrow(/mechanically confined|release-enabled/i);
+    expect(hardened.createPlanAtomically).not.toHaveBeenCalled();
   });
 
   it("keeps reserveClaude when the squad orchestrator is Claude", () => {
@@ -564,6 +676,7 @@ describe("mission task plan authority", () => {
     });
     const options = {
       adapterOverrides: { codex: readOnlyCodex },
+      squadCliPolicy: "governed" as const,
     } as const;
 
     const accepted = harness(options);

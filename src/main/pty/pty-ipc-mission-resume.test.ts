@@ -17,6 +17,7 @@ const ipcDeps = vi.hoisted(() => {
 
 const ptyDeps = vi.hoisted(() => ({
   adoptMainOwnedAgentSession: vi.fn((): unknown => null),
+  getSessionState: vi.fn((_sessionId: string): unknown => null),
   listAgentSessionsForPane: vi.fn((): unknown[] => []),
   spawnAgentSession: vi.fn(() => ({ sessionId: "pty-created" })),
   spawnSession: vi.fn(() => ({ sessionId: "shell-created" })),
@@ -27,17 +28,9 @@ const ptyDeps = vi.hoisted(() => ({
   writeSession: vi.fn(() => true),
 }));
 
-const ompDeps = vi.hoisted(() => ({
-  spawnOmpRpcPane: vi.fn(
-    async (input?: { assertAuthority?: () => void }) => {
-      input?.assertAuthority?.();
-      return {
-        ok: true as const,
-        sessionId: "omp-created",
-      };
-    },
-  ),
-  listOmpRpcSessions: vi.fn((): unknown[] => []),
+const dispatchDeps = vi.hoisted(() => ({
+  list: vi.fn((): unknown[] => []),
+  rebindRestartedWorker: vi.fn(),
 }));
 
 const authorityDeps = vi.hoisted(() => {
@@ -77,7 +70,11 @@ const authorityDeps = vi.hoisted(() => {
 });
 
 const settingsDeps = vi.hoisted(() => ({
-  getOrchSettings: vi.fn(() => ({ intentFirstMissionRuntimeV1: true })),
+  getOrchSettings: vi.fn(() => ({
+    intentFirstMissionRuntimeV1: true,
+    squadCliPolicy:
+      "operator-choice" as "operator-choice" | "governed",
+  })),
 }));
 
 const workflowDeps = vi.hoisted(() => ({
@@ -105,6 +102,7 @@ vi.mock("electron", () => ({
 
 vi.mock("./pty-manager", () => ({
   adoptMainOwnedAgentSession: ptyDeps.adoptMainOwnedAgentSession,
+  getSessionState: ptyDeps.getSessionState,
   listAgentSessionsForPane: ptyDeps.listAgentSessionsForPane,
   killSession: ptyDeps.killSession,
   orchKillSession: ptyDeps.orchKillSession,
@@ -116,20 +114,17 @@ vi.mock("./pty-manager", () => ({
   writeSession: ptyDeps.writeSession,
 }));
 
-vi.mock("./pty-host-client", () => ({
-  createRealPtyHost: () => ({ kind: "test-host" }),
+vi.mock("../orch/project-domain-store-registry", () => ({
+  getProjectDomainStores: () => ({
+    taskDispatches: {
+      list: dispatchDeps.list,
+      rebindRestartedWorker: dispatchDeps.rebindRestartedWorker,
+    },
+  }),
 }));
 
-vi.mock("../adapters/omp-rpc-ipc", () => ({
-  acknowledgeOmpRpcPaneOutput: vi.fn(),
-  isOmpRpcPaneOwnedBy: vi.fn(() => false),
-  canRendererControlOmpRpcPane: vi.fn(() => false),
-  killOmpRpcPane: vi.fn(),
-  listOmpRpcSessions: ompDeps.listOmpRpcSessions,
-  recoverOmpRpcPaneOutput: vi.fn(() => []),
-  spawnOmpRpcPane: ompDeps.spawnOmpRpcPane,
-  terminateOmpRpcSession: vi.fn(async () => true),
-  writeOmpRpcPaneInput: vi.fn(() => false),
+vi.mock("./pty-host-client", () => ({
+  createRealPtyHost: () => ({ kind: "test-host" }),
 }));
 
 vi.mock("../persistence/renderer-workspace-scope", () => ({
@@ -201,13 +196,6 @@ vi.mock("../adapters/adapter-registry", () => ({
             },
           },
         }
-      : id === "omp"
-        ? {
-            id: "omp",
-            kind: "cli-rpc",
-            label: "Oh My Pi",
-            install: { command: "npm install -g @oh-my-pi/omp" },
-          }
       : null,
   isAdapterInstalled: () => true,
   getAdapterResolvedBin: () => "/usr/local/bin/claude",
@@ -357,84 +345,101 @@ describe("registerPtyIpc account fail-fast", () => {
     authorityDeps.listSquads.mockReturnValue([TEST_SQUAD]);
     settingsDeps.getOrchSettings.mockReturnValue({
       intentFirstMissionRuntimeV1: true,
+      squadCliPolicy: "operator-choice",
     });
     ptyDeps.writeSession.mockReturnValue(true);
     ptyDeps.adoptMainOwnedAgentSession.mockReturnValue(null);
-    ompDeps.spawnOmpRpcPane.mockImplementation(
-      async (input?: { assertAuthority?: () => void }) => {
-        input?.assertAuthority?.();
-        return { ok: true as const, sessionId: "omp-created" };
-      },
+    ptyDeps.getSessionState.mockImplementation((sessionId: string) =>
+      sessionId === "pty-created" ? "idle" : null,
     );
+    dispatchDeps.list.mockReturnValue([]);
+    dispatchDeps.rebindRestartedWorker.mockReturnValue({
+      state: "running",
+      sessionId: "pty-created",
+    });
     configurePtyProjectRuntimeManager({} as never);
     registerPtyIpc();
   });
-  it("uses the exact main-persisted provider request for mission resume", () => {
-    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
-      ok: true,
-      overrides: {},
-    });
-    const persisted = {
-      id: "mpane-a",
-      missionId: "mission-a",
-      adapterId: "claude",
-      model: "claude-opus-4-1",
-      accountId: "account-main",
-      effort: "high",
-      title: "Orchestrator",
-      role: "orchestrator" as const,
-      paneId: "pane-a",
-      cwd: "/workspace/a/trusted-cwd",
-      scope: authorityDeps.scope,
-      authoritySeal: authoritySealFor(),
-      createdAt: 1,
-    };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
-    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
-    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
-    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
-
-    const result = handler?.(
-      { sender: { id: 7 } },
-      {
-        kind: "cli-agent",
+  it.each([
+    { mode: "operator-choice" as const, isolatedHome: false },
+    { mode: "governed" as const, isolatedHome: true },
+  ])(
+    "uses the exact main-persisted provider request for mission resume in $mode",
+    ({ mode, isolatedHome }) => {
+      settingsDeps.getOrchSettings.mockReturnValue({
+        intentFirstMissionRuntimeV1: true,
+        squadCliPolicy: mode,
+      });
+      providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+        ok: true,
+        overrides: {},
+      });
+      const persisted = {
+        id: "mpane-a",
+        missionId: "mission-a",
         adapterId: "claude",
-        model: persisted.model,
-        accountId: persisted.accountId,
-        effort: persisted.effort,
-        missionId: persisted.missionId,
+        model: "claude-opus-4-1",
+        accountId: "account-main",
+        effort: "high",
+        title: "Orchestrator",
+        role: "orchestrator" as const,
         paneId: "pane-a",
-        resume: true,
-        resumeLatestOnly: false,
-        restorePersistedAuthority: false,
-        cwd: persisted.cwd,
-        cols: 100,
-        rows: 30,
-      },
-    );
+        cwd: "/workspace/a/trusted-cwd",
+        scope: authorityDeps.scope,
+        authoritySeal: authoritySealFor(),
+        createdAt: 1,
+      };
+      authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+      authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+      authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
+      const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
-    expect(authorityDeps.resolveCwdForScope).toHaveBeenCalledWith(
-      authorityDeps.scope,
-      persisted.cwd,
-    );
-    expect(authorityDeps.requireRendererWorkspaceScope).toHaveBeenCalledWith({
-      id: 7,
-    });
-    expect(authorityDeps.attachOrchMeta).toHaveBeenCalledWith(
-      { id: 7 },
-      "pane-a",
-      expect.objectContaining({ missionId: "mission-a", role: "orchestrator" }),
-    );
-    expect(providerDeps.prepareProviderSpawn).toHaveBeenCalledWith("claude", {
-      effort: persisted.effort,
-      accountId: persisted.accountId,
-      model: persisted.model,
-      // Orquestrador é gated ⇒ HOME efêmero ⇒ a credencial do Claude precisa
-      // viajar por env (o CLI não alcança o Keychain de lá).
-      isolatedHome: true,
-    });
-  });
+      const result = handler?.(
+        { sender: { id: 7 } },
+        {
+          kind: "cli-agent",
+          adapterId: "claude",
+          model: persisted.model,
+          accountId: persisted.accountId,
+          effort: persisted.effort,
+          missionId: persisted.missionId,
+          paneId: "pane-a",
+          resume: true,
+          resumeLatestOnly: false,
+          restorePersistedAuthority: false,
+          cwd: persisted.cwd,
+          cols: 100,
+          rows: 30,
+        },
+      );
+
+      expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+      expect(authorityDeps.resolveCwdForScope).toHaveBeenCalledWith(
+        authorityDeps.scope,
+        persisted.cwd,
+      );
+      expect(authorityDeps.requireRendererWorkspaceScope).toHaveBeenCalledWith({
+        id: 7,
+      });
+      expect(authorityDeps.attachOrchMeta).toHaveBeenCalledWith(
+        { id: 7 },
+        "pane-a",
+        expect.objectContaining({
+          missionId: "mission-a",
+          role: "orchestrator",
+        }),
+      );
+      expect(providerDeps.prepareProviderSpawn).toHaveBeenCalledWith(
+        "claude",
+        {
+          effort: persisted.effort,
+          accountId: persisted.accountId,
+          model: persisted.model,
+          isolatedHome,
+        },
+      );
+    },
+  );
 
   it.each([
     {
@@ -519,7 +524,7 @@ describe("registerPtyIpc account fail-fast", () => {
   );
 
   it.each([
-    ["provider", { adapterId: "omp" }],
+    ["provider", { adapterId: "opencode" }],
     ["model", { model: "renderer-model" }],
     ["account", { accountId: "renderer-account" }],
     ["effort", { effort: "low" }],
@@ -575,7 +580,6 @@ describe("registerPtyIpc account fail-fast", () => {
       });
       expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
       expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
-      expect(ompDeps.spawnOmpRpcPane).not.toHaveBeenCalled();
     },
   );
 
@@ -620,7 +624,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("does not reuse a persisted incarnation when its exact process cannot be adopted", () => {
+  it("recreates a persisted worker only from its exact current dispatch authority", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
     const persisted = {
       id: "mpane-worker-fenced",
@@ -639,11 +643,82 @@ describe("registerPtyIpc account fail-fast", () => {
     authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
+    dispatchDeps.list.mockReturnValueOnce([
+      {
+        id: "dispatch-worker-fenced",
+        taskId: "task-worker-fenced",
+        missionId: persisted.missionId,
+        revision: 4,
+        state: "running",
+        paneId: persisted.paneId,
+        sessionId: "pty-dead",
+        workerIncarnationId: persisted.workerIncarnationId,
+      },
+    ]);
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
     const sender = { id: 7 };
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender },
+      {
+        kind: "cli-agent",
+        adapterId: "claude",
+        missionId: persisted.missionId,
+        paneId: persisted.paneId,
+        resume: true,
+        resumeLatestOnly: false,
+        restorePersistedAuthority: false,
+        cwd: persisted.cwd,
+        cols: 100,
+        rows: 30,
+      },
+    );
+
+    expect(result).toEqual({ ok: true, sessionId: "pty-created" });
+    expect(ptyDeps.adoptMainOwnedAgentSession).toHaveBeenCalledWith(
+      sender,
+      expect.objectContaining({
+        paneId: persisted.paneId,
+        workerIncarnationId: persisted.workerIncarnationId,
+      }),
+    );
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledOnce();
+    expect(dispatchDeps.rebindRestartedWorker).toHaveBeenCalledWith({
+      missionId: persisted.missionId,
+      paneId: persisted.paneId,
+      expectedSessionId: "pty-dead",
+      replacementSessionId: "pty-created",
+      workerIncarnationId: persisted.workerIncarnationId,
+      leaseMs: 10 * 60_000,
+    });
+  });
+
+  it("refuses a persisted worker when no exact restartable dispatch exists", async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: {},
+    });
+    const persisted = {
+      id: "mpane-worker-unbound",
+      missionId: "mission-a",
+      adapterId: "claude",
+      title: "Worker unbound",
+      agentName: "Worker A",
+      workerIncarnationId: "worker-incarnation-a",
+      role: "worker" as const,
+      paneId: "pane-worker-unbound",
+      cwd: "/workspace/a/trusted-cwd",
+      scope: authorityDeps.scope,
+      authoritySeal: authoritySealFor(),
+      createdAt: 1,
+    };
+    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
+    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+
+    const result = await handler?.(
+      { sender: { id: 7 } },
       {
         kind: "cli-agent",
         adapterId: "claude",
@@ -660,62 +735,10 @@ describe("registerPtyIpc account fail-fast", () => {
 
     expect(result).toEqual({
       ok: false,
-      error: expect.stringMatching(/incarnation|encarnação|processo exato/i),
+      error: expect.stringMatching(/dispatch.*exato|exact.*dispatch/i),
     });
-    expect(ptyDeps.adoptMainOwnedAgentSession).toHaveBeenCalledWith(
-      sender,
-      expect.objectContaining({
-        paneId: persisted.paneId,
-        workerIncarnationId: persisted.workerIncarnationId,
-      }),
-    );
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
-  });
-
-  it("rejects a fresh persisted RPC worker without an active recovery grant", async () => {
-    const persisted = {
-      id: "mpane-worker-rpc",
-      missionId: "mission-a",
-      adapterId: "omp",
-      title: "Worker RPC",
-      agentName: "Worker OMP",
-      workerIncarnationId: "worker-incarnation-omp",
-      role: "worker" as const,
-      paneId: "pane-worker-rpc",
-      cwd: "/workspace/a/trusted-cwd",
-      scope: authorityDeps.scope,
-      authoritySeal: authoritySealFor(),
-      createdAt: 1,
-    };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
-    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
-    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
-    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
-
-    const result = await handler?.(
-      { sender: { id: 7 } },
-      {
-        kind: "cli-agent",
-        adapterId: "omp",
-        missionId: persisted.missionId,
-        paneId: persisted.paneId,
-        resume: false,
-        resumeLatestOnly: false,
-        restorePersistedAuthority: true,
-        cwd: persisted.cwd,
-        cols: 100,
-        rows: 30,
-      },
-    );
-
-    // A proven-dead pane clears the MODE fence without a grant, but a fresh
-    // process for a fenced WORKER incarnation stays impossible: physical
-    // identity is never reused outside the scheduler's own dispatch chain.
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringMatching(/incarnation|encarnação|processo exato/i),
-    });
-    expect(ompDeps.spawnOmpRpcPane).not.toHaveBeenCalled();
+    expect(dispatchDeps.rebindRestartedWorker).not.toHaveBeenCalled();
   });
 
   it("respawns a proven-dead persisted orchestrator fresh without a grant", () => {
@@ -1001,203 +1024,6 @@ describe("registerPtyIpc account fail-fast", () => {
       persisted.paneId,
     );
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
-  });
-
-  it("refuses to recreate a persisted writable RPC worker without native confinement", async () => {
-    const persisted = {
-      id: "mpane-orch-rpc-recovery",
-      missionId: "mission-a",
-      adapterId: "omp",
-      model: "openai/gpt-5.6",
-      accountId: "omp-account",
-      effort: "high",
-      title: "Worker RPC",
-      agentName: "Executor OMP",
-      role: "worker" as const,
-      paneId: "pane-orch-rpc-recovery",
-      cwd: "/workspace/a/trusted-cwd",
-      scope: authorityDeps.scope,
-      allowedTools: ["nexus_file_read"],
-      allowedSkills: [],
-      readOnly: false,
-      nativeReadOnly: false,
-      authoritySeal: authoritySealFor(),
-      createdAt: 1,
-    };
-    const requestId = "panerecovery-main";
-    authorityDeps.claimPendingRecoverySpawnMeta.mockReturnValueOnce({
-      scope: authorityDeps.scope,
-      request: {
-        requestId,
-        missionId: persisted.missionId,
-        paneId: persisted.paneId,
-        role: persisted.role,
-        pane: {
-          adapterId: persisted.adapterId,
-          model: persisted.model,
-          accountId: persisted.accountId,
-          effort: persisted.effort,
-          cwd: persisted.cwd,
-          title: persisted.title,
-          agentName: persisted.agentName,
-          role: persisted.role,
-        },
-        recap: "Continue.",
-      },
-    });
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
-    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
-    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
-    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
-    const sender = { id: 7 };
-
-    const result = await handler?.(
-      { sender },
-      {
-        kind: "cli-agent",
-        adapterId: persisted.adapterId,
-        model: persisted.model,
-        accountId: persisted.accountId,
-        effort: persisted.effort,
-        orchRequestId: requestId,
-        missionId: persisted.missionId,
-        paneId: persisted.paneId,
-        cwd: persisted.cwd,
-        resume: false,
-        resumeLatestOnly: false,
-        restorePersistedAuthority: true,
-        cols: 100,
-        rows: 30,
-      },
-    );
-
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringMatching(/cannot enforce workspace-write authority/i),
-    });
-    expect(ompDeps.spawnOmpRpcPane).not.toHaveBeenCalled();
-    expect(
-      authorityDeps.bindPendingRecoverySpawnSession,
-    ).not.toHaveBeenCalled();
-  });
-
-  it("fails closed on a legacy live OMP writable worker before replacement", async () => {
-    const persisted = {
-      id: "mpane-orch-rpc-duplicate",
-      missionId: "mission-a",
-      adapterId: "omp",
-      model: "openai/gpt-5.6",
-      title: "Worker RPC",
-      role: "worker" as const,
-      paneId: "pane-orch-rpc-duplicate",
-      cwd: "/workspace/a/trusted-cwd",
-      scope: authorityDeps.scope,
-      readOnly: false,
-      nativeReadOnly: false,
-      authoritySeal: authoritySealFor(),
-      createdAt: 1,
-    };
-    const requestId = "panerecovery-duplicate";
-    authorityDeps.claimPendingRecoverySpawnMeta.mockReturnValueOnce({
-      scope: authorityDeps.scope,
-      request: {
-        requestId,
-        missionId: persisted.missionId,
-        paneId: persisted.paneId,
-        role: persisted.role,
-        pane: {
-          adapterId: persisted.adapterId,
-          model: persisted.model,
-          cwd: persisted.cwd,
-          title: persisted.title,
-          role: persisted.role,
-        },
-        recap: "Continue.",
-      },
-    });
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
-    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
-    authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
-    ompDeps.listOmpRpcSessions.mockReturnValueOnce([
-      {
-        sessionId: "omp-existing",
-        paneId: persisted.paneId,
-        kind: "mission",
-        missionId: persisted.missionId,
-        state: "busy",
-        snapshot: { state: "busy" },
-      },
-    ]);
-    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
-
-    const result = await handler?.(
-      { sender: { id: 7 } },
-      {
-        kind: "cli-agent",
-        adapterId: persisted.adapterId,
-        model: persisted.model,
-        orchRequestId: requestId,
-        missionId: persisted.missionId,
-        paneId: persisted.paneId,
-        cwd: persisted.cwd,
-        resume: false,
-        resumeLatestOnly: false,
-        restorePersistedAuthority: true,
-        cols: 100,
-        rows: 30,
-      },
-    );
-
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringMatching(/cannot enforce workspace-write authority/i),
-    });
-    expect(ompDeps.spawnOmpRpcPane).not.toHaveBeenCalled();
-    expect(
-      authorityDeps.bindPendingRecoverySpawnSession,
-    ).not.toHaveBeenCalled();
-  });
-
-  it("does not turn an RPC mission resume into a fresh provider process", async () => {
-    const persisted = {
-      id: "mpane-orch-rpc",
-      missionId: "mission-a",
-      adapterId: "omp",
-      model: "omp-main",
-      title: "Orchestrator RPC",
-      role: "orchestrator" as const,
-      paneId: "pane-orch-rpc",
-      cwd: "/workspace/a/trusted-cwd",
-      scope: authorityDeps.scope,
-      authoritySeal: authoritySealFor(),
-      createdAt: 1,
-    };
-    authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce(persisted);
-    authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
-    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
-
-    const result = await handler?.(
-      { sender: { id: 7 } },
-      {
-        kind: "cli-agent",
-        adapterId: persisted.adapterId,
-        model: persisted.model,
-        missionId: persisted.missionId,
-        paneId: persisted.paneId,
-        cwd: persisted.cwd,
-        resume: true,
-        resumeLatestOnly: false,
-        restorePersistedAuthority: false,
-        cols: 100,
-        rows: 30,
-      },
-    );
-
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringMatching(/exact main-owned provider session/i),
-    });
-    expect(ompDeps.spawnOmpRpcPane).not.toHaveBeenCalled();
   });
 
   it("adopts the exact live main-owned pane instead of spawning a duplicate provider process", () => {

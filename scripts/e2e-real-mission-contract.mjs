@@ -3,10 +3,10 @@ import { createHash } from "node:crypto";
 export const REAL_MISSION_FLAG = "--nexus-real-mission-e2e";
 export const REAL_MISSION_PRODUCT_WIZARD_FLAG =
   "--nexus-real-mission-product-wizard-e2e";
-// A cadeia multi-CLI v9 é linear (planner → 5 scouts advisor → executor →
-// revisor codex → 2 reviewers advisor → QA): 10 PTYs físicos sequenciais com
-// modelos reais. 16 min bastavam para o pipeline codex de 4 panes; a suíte
-// multi-CLI precisa de folga para boot + turno + handoff de cada advisor.
+// O DAG multi-CLI v9 abre 4 scouts advisor e o executor como raízes do primeiro
+// fan-out; depois encadeia revisor Codex → 2 reviewers advisor → QA. São 9 PTYs
+// físicos de worker no roster completo (mais o orquestrador), com até cinco
+// tarefas elegíveis em paralelo antes da cadeia de revisão.
 export const REAL_MISSION_TIMEOUT_MS = 32 * 60_000;
 export const REAL_MISSION_EVIDENCE_FILE = "real-mission-evidence.json";
 export const REAL_MISSION_EVIDENCE_SCHEMA_VERSION = 9;
@@ -68,7 +68,7 @@ export const REAL_MISSION_CLAUDE_ORCHESTRATOR_EVIDENCE_FILE =
  * evidência registra. Advisors entram somente em tarefas read_only do fan-out
  * consultivo; o pipeline executor → revisor → QA continua codex-only.
  * Tier: grok/claude = mechanically-confined (Seatbelt/argv governado nativo);
- * kimi/agy/opencode/omp/glm = advisory-unconfined (MCP + Seatbelt Nexus).
+ * kimi/agy/opencode/glm = advisory-unconfined (MCP + Seatbelt Nexus).
  * GLM reuses the Claude Code binary with z.ai ANTHROPIC_* env (API key).
  */
 export const REAL_MISSION_ADVISORS = Object.freeze([
@@ -101,13 +101,6 @@ export const REAL_MISSION_ADVISORS = Object.freeze([
     tier: "advisory-unconfined",
   }),
   Object.freeze({
-    id: "e2e-advisor-omp",
-    name: "E2E Advisor OMP",
-    cli: "omp",
-    category: "scout",
-    tier: "advisory-unconfined",
-  }),
-  Object.freeze({
     id: "e2e-advisor-claude",
     name: "E2E Advisor Claude",
     cli: "claude",
@@ -124,9 +117,9 @@ export const REAL_MISSION_ADVISORS = Object.freeze([
 ]);
 
 /**
- * Cadeia linear exata selada pelo Guided Planner para o conjunto de advisors
- * presentes (não-skipped): scouts advisor → executor codex → revisor codex →
- * reviewers advisor → QA codex. Cada membro depende exatamente do anterior.
+ * DAG exato selado pelo Guided Planner para advisors presentes (não-skipped):
+ * scouts e executor são raízes; o primeiro reviewer depende do executor, cada
+ * reviewer seguinte depende do anterior e o QA depende do último reviewer.
  */
 export function realMissionExpectedTaskChain(presentAdvisorClis) {
   const present = new Set(presentAdvisorClis);
@@ -140,8 +133,7 @@ export function realMissionExpectedTaskChain(presentAdvisorClis) {
     { id: "e2e-reviewer", name: "E2E Revisor", cli: "codex" },
     ...reviewAdvisors,
   ];
-  return [
-    ...scouts.map((advisor, index) => ({
+  const advisoryMembers = scouts.map((advisor, index) => ({
       agentRef: advisor.id,
       agentName: advisor.name,
       cli: advisor.cli,
@@ -149,17 +141,19 @@ export function realMissionExpectedTaskChain(presentAdvisorClis) {
       plannerId: `guided-advisory-${index + 1}-${advisor.id}`,
       executionMode: "read_only",
       kind: "advisory",
-    })),
-    {
-      agentRef: "e2e-executor",
-      agentName: "E2E Executor",
-      cli: "codex",
-      agentCategory: "executor",
-      plannerId: "guided-execution",
-      executionMode: "isolated_worktree",
-      kind: "execution",
-    },
-    ...reviewers.map((reviewer, index) => ({
+      dependsOnPlannerIds: [],
+    }));
+  const executionMember = {
+    agentRef: "e2e-executor",
+    agentName: "E2E Executor",
+    cli: "codex",
+    agentCategory: "executor",
+    plannerId: "guided-execution",
+    executionMode: "isolated_worktree",
+    kind: "execution",
+    dependsOnPlannerIds: [],
+  };
+  const reviewMembers = reviewers.map((reviewer, index) => ({
       agentRef: reviewer.id,
       agentName: reviewer.name,
       cli: reviewer.cli,
@@ -167,7 +161,18 @@ export function realMissionExpectedTaskChain(presentAdvisorClis) {
       plannerId: `guided-review-${index + 1}-${reviewer.id}`,
       executionMode: "read_only",
       kind: "review",
-    })),
+      dependsOnPlannerIds: [
+        index === 0
+          ? executionMember.plannerId
+          : `guided-review-${index}-${reviewers[index - 1].id}`,
+      ],
+    }));
+  const qualityDependency =
+    reviewMembers.at(-1)?.plannerId ?? executionMember.plannerId;
+  return [
+    ...advisoryMembers,
+    executionMember,
+    ...reviewMembers,
     {
       agentRef: "e2e-qa",
       agentName: "E2E QA",
@@ -176,6 +181,7 @@ export function realMissionExpectedTaskChain(presentAdvisorClis) {
       plannerId: "guided-quality-gate",
       executionMode: "read_only",
       kind: "quality-gate",
+      dependsOnPlannerIds: [qualityDependency],
     },
   ];
 }
@@ -251,7 +257,7 @@ export const REAL_MISSION_ACCEPTANCE_CRITERIA = Object.freeze([
   "O motor Nexus emite worktree_validated_no_change para o revisor antes de liberar a tarefa dependente de QA.",
   "O QA Codex abre um terceiro PTY físico, consome o handoff do revisor e valida o HEAD integrado; o QA não deve editar, alterar ou escrever arquivos e chama nexus_handoff_submit sem mudança artificial.",
   "O motor Nexus emite o receipt final worktree_validated_no_change e marca a missão done sem atalho manual.",
-  "Cada CLI advisor credenciada (grok, kimi, agy, opencode, omp, claude, glm) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
+  "Cada CLI advisor credenciada (grok, kimi, agy, opencode, claude, glm) abre PTY físico, chama ao menos uma tool nexus_* e submete nexus_handoff_submit; a evidência registra o tier de confinamento de cada uma.",
 ]);
 export const REAL_MISSION_CLAUDE_ORCHESTRATOR_CRITERION =
   "A variante orquestrador Claude executa o ciclo completo (kickoff→dispatch→handoffs→integração→done) com o pipeline codex e advisors não-Claude, sem segundo processo Claude.";

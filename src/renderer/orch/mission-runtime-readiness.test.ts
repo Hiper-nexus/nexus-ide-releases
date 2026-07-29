@@ -24,6 +24,8 @@ function adapter(
     orchestrationEvidence:
       id === "claude" || id === "codex" ? "verified" : "unsupported",
     autonomousWorkspaceWriteCapable: id === "codex",
+    taskHandoffCapable: id === "claude" || id === "codex",
+    missionControlCapable: id === "claude" || id === "codex",
     ...overrides,
   };
 }
@@ -95,11 +97,12 @@ describe("mission runtime readiness", () => {
         orchestrationEvidence: "experimental",
       }),
     ];
-    const ready = missionRuntimeReadiness(adapters, [
-      provider("claude"),
-      provider("codex"),
-      provider("kimi"),
-    ]);
+    const ready = missionRuntimeReadiness(
+      adapters,
+      [provider("claude"), provider("codex"), provider("kimi")],
+      [],
+      "governed",
+    );
 
     expect(ready.detectedAdapters.map((item) => item.id)).toEqual([
       "claude",
@@ -174,6 +177,7 @@ describe("mission runtime readiness", () => {
         [codex],
         [snapshot],
         [account("codex-work", "codex")],
+        "governed",
       ).hasOperationalRoute,
     ).toBe(true);
     expect(
@@ -205,6 +209,81 @@ describe("mission runtime readiness", () => {
         "claude-opus-5",
         [account("claude-work", "claude")],
       ),
+    ).toBe(false);
+  });
+
+  it("accepts authenticated Kimi/custom handoff routes in operator-choice", () => {
+    const kimi = adapter("kimi", {
+      orchestratorCapable: false,
+      orchestrationEvidence: "unsupported",
+      autonomousWorkspaceWriteCapable: false,
+      taskHandoffCapable: true,
+      missionControlCapable: true,
+    });
+    const custom = adapter("custom-cli", {
+      orchestratorCapable: false,
+      orchestrationEvidence: "unsupported",
+      autonomousWorkspaceWriteCapable: false,
+      taskHandoffCapable: true,
+      missionControlCapable: true,
+    });
+
+    const ready = missionRuntimeReadiness(
+      [kimi, custom],
+      [provider("kimi"), provider("custom-cli")],
+      [],
+      "operator-choice",
+    );
+
+    expect(ready.verifiedMaestros.map((item) => item.id)).toEqual([
+      "kimi",
+      "custom-cli",
+    ]);
+    expect(ready.qualifiedWorkers.map((item) => item.id)).toEqual([
+      "kimi",
+      "custom-cli",
+    ]);
+    expect(ready.hasOperationalRoute).toBe(true);
+  });
+
+  it("keeps a worker-only CLI eligible as worker but never as Maestro", () => {
+    const workerOnly = adapter("worker-only", {
+      orchestratorCapable: false,
+      orchestrationEvidence: "unsupported",
+      autonomousWorkspaceWriteCapable: false,
+      taskHandoffCapable: true,
+      missionControlCapable: false,
+    });
+
+    const ready = missionRuntimeReadiness(
+      [workerOnly],
+      [provider("worker-only")],
+      [],
+      "operator-choice",
+    );
+
+    expect(ready.verifiedMaestros).toEqual([]);
+    expect(ready.qualifiedWorkers.map((item) => item.id)).toEqual([
+      "worker-only",
+    ]);
+    expect(ready.hasOperationalRoute).toBe(false);
+  });
+
+  it("retains verified Maestro and governed-writer requirements in Hardened", () => {
+    const kimi = adapter("kimi", {
+      orchestratorCapable: false,
+      orchestrationEvidence: "unsupported",
+      autonomousWorkspaceWriteCapable: false,
+      taskHandoffCapable: true,
+    });
+
+    expect(
+      missionRuntimeReadiness(
+        [kimi],
+        [provider("kimi")],
+        [],
+        "governed",
+      ).hasOperationalRoute,
     ).toBe(false);
   });
 });

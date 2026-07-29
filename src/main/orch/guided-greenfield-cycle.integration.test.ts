@@ -274,6 +274,7 @@ describe("guided physically empty workspace cycle", () => {
       getSquad: (squadId) => (squadId === squad.id ? squad : null),
       getAdapterInfo: (adapterId) => adapterInfo(adapterId),
       listMissionWorktrees: () => [],
+      squadCliPolicy: () => "operator-choice",
       listLiveAdapters: () => [
         {
           id: "codex",
@@ -371,7 +372,7 @@ describe("guided physically empty workspace cycle", () => {
     ).toBe(
       fs.readFileSync(path.join(root, GUIDED_GREENFIELD_BRIEF_PATH), "utf8"),
     );
-    const mutationProbe = worktreeRegistry.create({
+    const mutationProbe = await worktreeRegistry.create({
       scope,
       missionId: "mission-product-mutation-probe",
       taskId: "task-product-mutation-probe",

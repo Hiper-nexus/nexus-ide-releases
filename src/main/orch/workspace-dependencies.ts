@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,54 +19,73 @@ export interface WorkspaceDependencies {
 export interface WorkspaceDependencyOptions {
   home?: string;
   env?: NodeJS.ProcessEnv;
-  verifyPython?: (python: string) => boolean;
+  verifyPython?: (python: string) => boolean | Promise<boolean>;
 }
 
 const PYTHON_VERIFY_TIMEOUT_MS = 5_000;
 
-function isExecutable(file: string): boolean {
+async function isExecutable(file: string): Promise<boolean> {
   try {
-    fs.accessSync(
+    await fs.promises.access(
       file,
       process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK,
     );
-    return fs.statSync(file).isFile();
+    return (await fs.promises.stat(file)).isFile();
   } catch {
     return false;
   }
 }
 
-function optionalExecutable(file: string): string | undefined {
-  return isExecutable(file) ? file : undefined;
+async function optionalExecutable(file: string): Promise<string | undefined> {
+  return (await isExecutable(file)) ? file : undefined;
 }
 
-function optionalDirectory(dir: string): string | undefined {
+async function optionalDirectory(dir: string): Promise<string | undefined> {
   try {
-    return fs.statSync(dir).isDirectory() ? dir : undefined;
+    return (await fs.promises.stat(dir)).isDirectory() ? dir : undefined;
   } catch {
     return undefined;
   }
 }
 
-function hasPillow(python: string): boolean {
-  const result = spawnSync(
-    python,
-    ['-c', 'from PIL import Image; print(Image.__version__)'],
-    { stdio: 'ignore', timeout: PYTHON_VERIFY_TIMEOUT_MS },
-  );
-  return result.status === 0 && !result.error;
+function hasPillow(python: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const child = spawn(
+      python,
+      ['-c', 'from PIL import Image; print(Image.__version__)'],
+      { stdio: 'ignore', shell: false },
+    );
+    const finish = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+    timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish(false);
+    }, PYTHON_VERIFY_TIMEOUT_MS);
+    timer.unref?.();
+    child.once('error', () => finish(false));
+    child.once('exit', (code) => finish(code === 0));
+  });
 }
 
 function unique(values: Array<string | undefined>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
-function codexRuntimeRoots(home: string, env: NodeJS.ProcessEnv): string[] {
+async function codexRuntimeRoots(
+  home: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string[]> {
   const runtimeHome = path.join(home, '.cache', 'codex-runtimes');
   let discovered: string[] = [];
   try {
-    discovered = fs
-      .readdirSync(runtimeHome, { withFileTypes: true })
+    discovered = (await fs.promises
+      .readdir(runtimeHome, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory())
       .map((entry) => path.join(runtimeHome, entry.name, 'dependencies'));
   } catch {
@@ -79,33 +98,47 @@ function codexRuntimeRoots(home: string, env: NodeJS.ProcessEnv): string[] {
   ]).map((candidate) => path.resolve(candidate));
 }
 
-function bundledDependencies(
+async function bundledDependencies(
   root: string,
-  verifyPython: (python: string) => boolean,
-): WorkspaceDependencies | null {
-  const python = optionalExecutable(
+  verifyPython: (python: string) => boolean | Promise<boolean>,
+): Promise<WorkspaceDependencies | null> {
+  const python = await optionalExecutable(
     path.join(root, 'python', 'bin', process.platform === 'win32' ? 'python.exe' : 'python3'),
   );
-  if (!python || !verifyPython(python)) return null;
+  if (!python || !(await verifyPython(python))) return null;
 
-  const fallbackBin = optionalDirectory(path.join(root, 'bin', 'fallback'));
-  const overrideBin = optionalDirectory(path.join(root, 'bin', 'override'));
-  const nodePackages = optionalDirectory(path.join(root, 'node', 'node_modules'));
+  const [
+    fallbackBin,
+    overrideBin,
+    nodePackages,
+    git,
+    node,
+    pnpm,
+    pythonPackages,
+  ] = await Promise.all([
+    optionalDirectory(path.join(root, 'bin', 'fallback')),
+    optionalDirectory(path.join(root, 'bin', 'override')),
+    optionalDirectory(path.join(root, 'node', 'node_modules')),
+    optionalExecutable(
+      path.join(root, 'bin', 'fallback', process.platform === 'win32' ? 'git.exe' : 'git'),
+    ),
+    optionalExecutable(
+      path.join(root, 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node'),
+    ),
+    optionalExecutable(
+      path.join(root, 'bin', 'fallback', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'),
+    ),
+    optionalDirectory(path.join(root, 'python')),
+  ]);
   return {
     source: 'codex-runtime',
     root,
-    git: optionalExecutable(
-      path.join(root, 'bin', 'fallback', process.platform === 'win32' ? 'git.exe' : 'git'),
-    ),
-    node: optionalExecutable(
-      path.join(root, 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node'),
-    ),
+    git,
+    node,
     nodePackages,
-    pnpm: optionalExecutable(
-      path.join(root, 'bin', 'fallback', process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'),
-    ),
+    pnpm,
     python,
-    pythonPackages: optionalDirectory(path.join(root, 'python')),
+    pythonPackages,
     overrideBin,
     fallbackBin,
   };
@@ -132,19 +165,19 @@ function pythonCandidates(env: NodeJS.ProcessEnv): string[] {
  * document/media skills. Nexus panes are independent CLI processes, so this
  * bridge makes that implicit Desktop dependency explicit and testable.
  */
-export function resolveWorkspaceDependencies(
+export async function resolveWorkspaceDependencies(
   options: WorkspaceDependencyOptions = {},
-): WorkspaceDependencies {
+): Promise<WorkspaceDependencies> {
   const home = path.resolve(options.home ?? os.homedir());
   const env = options.env ?? process.env;
   const verifyPython = options.verifyPython ?? hasPillow;
 
-  for (const root of codexRuntimeRoots(home, env)) {
-    const dependencies = bundledDependencies(root, verifyPython);
+  for (const root of await codexRuntimeRoots(home, env)) {
+    const dependencies = await bundledDependencies(root, verifyPython);
     if (dependencies) return dependencies;
   }
   for (const python of pythonCandidates(env)) {
-    if (isExecutable(python) && verifyPython(python)) {
+    if ((await isExecutable(python)) && (await verifyPython(python))) {
       return { source: 'system-python', python };
     }
   }

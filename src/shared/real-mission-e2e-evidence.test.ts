@@ -40,7 +40,7 @@ describe("real mission E2E PASS graph", () => {
     );
   });
 
-  it("requires all three sequential production-guided worker waves", () => {
+  it("requires the exact fan-out roots and sequential review chain", () => {
     const missingQa = validPassEvidence();
     (missingQa.dispatches as unknown[]).pop();
     (missingQa.handoffs as unknown[]).pop();
@@ -49,10 +49,32 @@ describe("real mission E2E PASS graph", () => {
       /real-mission invariants/,
     );
 
-    const parallelQa = validPassEvidence();
-    const dispatches = parallelQa.dispatches as Array<Record<string, unknown>>;
-    dispatches[1]!.dependsOn = [];
-    expect(() => parseRealMissionE2EEvidence(parallelQa)).toThrow(
+    const serializedRoot = validPassEvidence();
+    const serializedDispatches = serializedRoot.dispatches as Array<
+      Record<string, unknown>
+    >;
+    const executor = serializedDispatches.find(
+      (dispatch) => dispatch.plannerId === "guided-execution",
+    )!;
+    const advisory = serializedDispatches.find(
+      (dispatch) =>
+        typeof dispatch.plannerId === "string" &&
+        dispatch.plannerId.startsWith("guided-advisory-"),
+    )!;
+    executor.dependsOn = [advisory.taskId];
+    expect(() => parseRealMissionE2EEvidence(serializedRoot)).toThrow(
+      /real-mission invariants/,
+    );
+
+    const detachedReview = validPassEvidence();
+    const detachedDispatches = detachedReview.dispatches as Array<
+      Record<string, unknown>
+    >;
+    detachedDispatches.find(
+      (dispatch) =>
+        dispatch.plannerId === "guided-review-1-e2e-reviewer",
+    )!.dependsOn = [];
+    expect(() => parseRealMissionE2EEvidence(detachedReview)).toThrow(
       /real-mission invariants/,
     );
   });
@@ -289,7 +311,7 @@ describe("real mission E2E v9 advisor participation", () => {
     expect(() =>
       parseRealMissionE2EEvidence(
         validPassEvidence("private-runner", {
-          skipAdvisorClis: ["kimi", "omp"],
+          skipAdvisorClis: ["kimi", "opencode"],
         }),
       ),
     ).not.toThrow();
@@ -301,7 +323,6 @@ describe("real mission E2E v9 advisor participation", () => {
         "kimi",
         "agy",
         "opencode",
-        "omp",
         "claude",
         "glm",
       ],
@@ -386,11 +407,11 @@ describe("real mission E2E v9 claude orchestrator variant", () => {
     );
 
     expect(parsed.status).toBe("pass");
-    // Sem advisor claude: 5 scouts + executor + revisor + grok + QA.
-    expect(parsed.plan?.tasks).toHaveLength(9);
-    expect(parsed.dispatches).toHaveLength(9);
-    expect(parsed.handoffs).toHaveLength(9);
-    expect(parsed.dependencyConsumptions).toHaveLength(8);
+    // Sem advisor Claude: 4 scouts + executor + revisor + grok + QA.
+    expect(parsed.plan?.tasks).toHaveLength(8);
+    expect(parsed.dispatches).toHaveLength(8);
+    expect(parsed.handoffs).toHaveLength(8);
+    expect(parsed.dependencyConsumptions).toHaveLength(3);
     expect(
       parsed.participation.find((row) => row.cli === "claude")?.skipped,
     ).toBe("orchestrator-reserved");
@@ -405,8 +426,9 @@ describe("real mission E2E v9 claude orchestrator variant", () => {
     const evidence = validPassEvidence("private-runner", {
       orchestratorCli: "claude",
     });
-    (evidence.participation as Array<Record<string, unknown>>)[5]!.skipped =
-      "no-credential";
+    (evidence.participation as Array<Record<string, unknown>>).find(
+      (row) => row.cli === "claude",
+    )!.skipped = "no-credential";
     expect(() => parseRealMissionE2EEvidence(evidence)).toThrow(
       /real-mission invariants/,
     );
@@ -416,8 +438,9 @@ describe("real mission E2E v9 claude orchestrator variant", () => {
     const evidence = validPassEvidence("private-runner", {
       skipAdvisorClis: ["claude"],
     });
-    (evidence.participation as Array<Record<string, unknown>>)[5]!.skipped =
-      "orchestrator-reserved";
+    (evidence.participation as Array<Record<string, unknown>>).find(
+      (row) => row.cli === "claude",
+    )!.skipped = "orchestrator-reserved";
     expect(() => parseRealMissionE2EEvidence(evidence)).toThrow(
       /real-mission invariants/,
     );

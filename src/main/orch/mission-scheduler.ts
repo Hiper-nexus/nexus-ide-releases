@@ -9,19 +9,38 @@
  * and neither touches reserved glue files. Sequential is the degenerate case.
  */
 
+export type {
+  OwnershipEnforcementResult,
+  PlannedScheduleTask,
+  PlannerTaskInput,
+  ScheduleOwnership,
+} from './mission-scheduler-ownership';
+export {
+  RESERVED_GLUE_PATTERNS,
+  emitPlannedTasksWithContract,
+  enforceOwnershipOnDiff,
+  expandOwnershipTable,
+  expandScheduleOwnership,
+  independentSubsetTaskIds,
+  isReservedGlueFile,
+  normalizeSchedulePath,
+  ownershipDeclaresParallelSurface,
+  ownershipTouchesReservedGlue,
+  ownershipsIntersect,
+  requiresExclusiveSlot,
+  toWorktreeOwnership,
+} from './mission-scheduler-ownership';
+
 import {
-  type WorktreeOwnership,
-} from '../runtime/worktree-contract';
+  expandScheduleOwnership,
+  ownershipsIntersect,
+  requiresExclusiveSlot,
+  type ScheduleOwnership,
+} from './mission-scheduler-ownership';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export type ScheduleTaskStatus = 'pending' | 'running' | 'done' | 'failed';
-
-export interface ScheduleOwnership {
-  readonly files: readonly string[];
-  readonly symbols: readonly string[];
-  readonly domains: readonly string[];
-}
 
 export interface ScheduleTask {
   readonly id: string;
@@ -88,146 +107,6 @@ export interface ScheduleDecision {
   readonly at: number;
 }
 
-// ── Reserved glue (never parallel) ──────────────────────────────────────────
-
-/**
- * Paths / path prefixes that must never be owned by a parallel wave member.
- * Tasks that need these run only when effective cap is forced sequential
- * (cap=1 or alone with no other admitted peers — but still blocked if another
- * worker is running, via the normal overlap path when declared).
- */
-export const RESERVED_GLUE_PATTERNS: readonly RegExp[] = Object.freeze([
-  /^package-lock\.json$/i,
-  /^npm-shrinkwrap\.json$/i,
-  /^yarn\.lock$/i,
-  /^pnpm-lock\.yaml$/i,
-  /^bun\.lockb?$/i,
-  /^Cargo\.lock$/i,
-  /^Gemfile\.lock$/i,
-  /^poetry\.lock$/i,
-  /^composer\.lock$/i,
-  /^go\.sum$/i,
-  /(^|\/)index\.ts$/i,
-  /(^|\/)index\.tsx$/i,
-  /(^|\/)index\.js$/i,
-  /(^|\/)index\.mjs$/i,
-  /(^|\/)index\.cjs$/i,
-  /(^|\/)__init__\.py$/i,
-  /(^|\/)migrations?\//i,
-  /^\.nexus(\/|$)/i,
-  /^\.context(\/|$)/i,
-  /^\.nexus-memory(\/|$)/i,
-]);
-
-export function normalizeSchedulePath(file: string): string {
-  return file.replaceAll('\\', '/').replace(/^\.\//, '');
-}
-
-export function isReservedGlueFile(file: string): boolean {
-  const normalized = normalizeSchedulePath(file);
-  return RESERVED_GLUE_PATTERNS.some((re) => re.test(normalized));
-}
-
-export function ownershipTouchesReservedGlue(
-  ownership: ScheduleOwnership,
-): boolean {
-  return ownership.files.some(isReservedGlueFile);
-}
-
-/**
- * Tasks that must never share a wave: reserved glue, empty ownership
- * (cannot prove disjointness), or explicit sequential-only domain.
- */
-export function requiresExclusiveSlot(ownership: ScheduleOwnership): boolean {
-  if (ownershipTouchesReservedGlue(ownership)) return true;
-  if (ownership.domains.some((d) => d.toLowerCase() === 'sequential-only')) {
-    return true;
-  }
-  const claims =
-    ownership.files.length + ownership.symbols.length + ownership.domains.length;
-  return claims === 0;
-}
-
-// ── Ownership intersection (P1) ─────────────────────────────────────────────
-
-export function toWorktreeOwnership(
-  ownership: ScheduleOwnership,
-): WorktreeOwnership {
-  return Object.freeze({
-    files: Object.freeze([...ownership.files.map(normalizeSchedulePath)]),
-    symbols: Object.freeze([...ownership.symbols]),
-    domains: Object.freeze(
-      ownership.domains.map((d) => d.toLocaleLowerCase('en-US')),
-    ),
-  });
-}
-
-export function ownershipsIntersect(
-  left: ScheduleOwnership,
-  right: ScheduleOwnership,
-): boolean {
-  const leftFiles = left.files.map(normalizeSchedulePath);
-  const rightFiles = right.files.map(normalizeSchedulePath);
-  const fileOverlap = leftFiles.some((leftFile) =>
-    rightFiles.some((rightFile) => fileClaimsOverlap(leftFile, rightFile)),
-  );
-  const exactOverlap = (a: readonly string[], b: readonly string[]) => {
-    const rightValues = new Set(b);
-    return a.some((value) => rightValues.has(value));
-  };
-  return (
-    fileOverlap ||
-    exactOverlap(left.symbols, right.symbols) ||
-    exactOverlap(left.domains, right.domains)
-  );
-}
-
-function fileClaimsOverlap(left: string, right: string): boolean {
-  const normalizedLeft = left.replace(/\/+$/, '');
-  const normalizedRight = right.replace(/\/+$/, '');
-  if (normalizedLeft === normalizedRight) return true;
-  return (
-    (isDirectoryClaim(normalizedLeft) &&
-      normalizedRight.startsWith(`${normalizedLeft}/`)) ||
-    (isDirectoryClaim(normalizedRight) &&
-      normalizedLeft.startsWith(`${normalizedRight}/`))
-  );
-}
-
-function isDirectoryClaim(file: string): boolean {
-  const basename = file.split('/').pop() ?? file;
-  return file.endsWith('/') || !basename.includes('.');
-}
-
-/**
- * Expand ownership with a pure file-set expander (blast-radius adapter).
- * When expander is omitted, ownership is used as-is.
- */
-export function expandScheduleOwnership(
-  ownership: ScheduleOwnership,
-  expandFiles?: (files: readonly string[]) => readonly string[],
-): ScheduleOwnership {
-  if (!expandFiles || ownership.files.length === 0) {
-    return Object.freeze({
-      files: Object.freeze(ownership.files.map(normalizeSchedulePath)),
-      symbols: Object.freeze([...ownership.symbols]),
-      domains: Object.freeze([...ownership.domains]),
-    });
-  }
-  const expanded = expandFiles(ownership.files.map(normalizeSchedulePath));
-  const files = [
-    ...new Set([
-      ...ownership.files.map(normalizeSchedulePath),
-      ...expanded.map(normalizeSchedulePath),
-    ]),
-  ].sort((a, b) => a.localeCompare(b));
-  return Object.freeze({
-    files: Object.freeze(files),
-    symbols: Object.freeze([...ownership.symbols]),
-    domains: Object.freeze([...ownership.domains]),
-  });
-}
-
 // ── Concurrency ─────────────────────────────────────────────────────────────
 
 export function effectiveConcurrencyCap(config: ScheduleConfig): number {
@@ -287,7 +166,6 @@ export function decideAdaptiveCap(
           : state.violationCount,
     });
   }
-  // wave
   const wavesObserved = state.wavesObserved + 1;
   const waveSize = event.waveSize ?? 0;
   const consecutiveCleanWaves =
@@ -389,9 +267,7 @@ export function computeReadySet(
       return dep !== undefined && dep.status === 'done' && dep.merged;
     });
   });
-  return Object.freeze(
-    [...ready].sort((a, b) => a.id.localeCompare(b.id)),
-  );
+  return Object.freeze([...ready].sort((a, b) => a.id.localeCompare(b.id)));
 }
 
 export interface DependencyValidationResult {
@@ -450,7 +326,9 @@ export function validateScheduleDependencies(
 
   for (const task of tasks) visit(task.id);
 
-  const invalidTaskIds = Object.freeze([...invalid].sort((a, b) => a.localeCompare(b)));
+  const invalidTaskIds = Object.freeze(
+    [...invalid].sort((a, b) => a.localeCompare(b)),
+  );
   return {
     valid: invalidTaskIds.length === 0,
     invalidTaskIds,
@@ -459,17 +337,6 @@ export function validateScheduleDependencies(
         ? 'dependency graph valid'
         : `invalid dependency graph: ${[...reasons].sort().join('; ')}`,
   };
-}
-
-function expandAll(
-  tasks: readonly ScheduleTask[],
-  expandFiles?: (files: readonly string[]) => readonly string[],
-): ReadonlyMap<string, ScheduleOwnership> {
-  const map = new Map<string, ScheduleOwnership>();
-  for (const task of tasks) {
-    map.set(task.id, expandScheduleOwnership(task.ownership, expandFiles));
-  }
-  return map;
 }
 
 /**
@@ -500,7 +367,6 @@ export function selectDisjointWave(
   const expandedRunning = running.map((w) =>
     expandScheduleOwnership(w.ownership, expandFiles),
   );
-  // Exclusive worker already on the machine → no fan-out this tick at all.
   const exclusiveRunning = expandedRunning.some((o) =>
     requiresExclusiveSlot(o),
   );
@@ -523,8 +389,6 @@ export function selectDisjointWave(
     const ownership = expandScheduleOwnership(task.ownership, expandFiles);
     const exclusive = requiresExclusiveSlot(ownership);
 
-    // Exclusive tasks (glue / sequential-only / empty ownership) only run alone:
-    // no running workers and empty wave so far.
     if (exclusive) {
       if (running.length > 0 || admitted.length > 0) {
         deferred.push(task);
@@ -535,7 +399,6 @@ export function selectDisjointWave(
       continue;
     }
 
-    // Non-exclusive never joins a wave that already has an exclusive task.
     if (admittedOwnership.some((o) => requiresExclusiveSlot(o))) {
       deferred.push(task);
       continue;
@@ -641,7 +504,6 @@ export function decideSchedule(
     };
   }
 
-  // Slots already occupied by running workers reduce available fan-out.
   const runningSlots = activeWorkers.length;
   const openSlots = Math.max(0, effectiveCap - runningSlots);
   const ready = computeReadySet(tasks);
@@ -687,7 +549,6 @@ export function decideSchedule(
     };
   }
 
-  // Force sequential when flag-off path uses cap=1; otherwise greedy disjoint.
   const { admitted, deferred } = selectDisjointWave(
     ready,
     activeWorkers,
@@ -728,165 +589,4 @@ export function decideSchedule(
     deferredIds: Object.freeze(deferred.map((t) => t.id)),
     at: now,
   };
-}
-
-// ── Fail-closed ownership check (P3 pure) ───────────────────────────────────
-
-export interface OwnershipEnforcementResult {
-  readonly ok: boolean;
-  readonly undeclaredFiles: readonly string[];
-  readonly reason: string;
-}
-
-/**
- * Every changed path must fall within expanded ownership files.
- * Paths may match exact ownership entries or be under an owned directory prefix.
- */
-export function enforceOwnershipOnDiff(
-  changedFiles: readonly string[],
-  ownership: ScheduleOwnership,
-  expandFiles?: (files: readonly string[]) => readonly string[],
-): OwnershipEnforcementResult {
-  const expanded = expandScheduleOwnership(ownership, expandFiles);
-  const owned = new Set(expanded.files.map(normalizeSchedulePath));
-  const undeclared: string[] = [];
-  for (const raw of changedFiles) {
-    const file = normalizeSchedulePath(raw);
-    if (owned.has(file)) continue;
-    // Directory ownership only when claim ends with '/' or has no file extension
-    // in the final segment (e.g. "src/foo" or "src/foo/"). Avoid treating
-    // "src/foo.ts" as a directory prefix of "src/foo.ts.bak".
-    const underDir = [...owned].some((claim) => {
-      if (claim.endsWith('/')) {
-        return file.startsWith(claim) || file === claim.slice(0, -1);
-      }
-      const base = claim.split('/').pop() ?? claim;
-      const looksLikeFile = base.includes('.');
-      if (looksLikeFile) return false;
-      return file === claim || file.startsWith(`${claim}/`);
-    });
-    if (underDir) continue;
-    undeclared.push(file);
-  }
-  if (undeclared.length > 0) {
-    return {
-      ok: false,
-      undeclaredFiles: Object.freeze(undeclared.sort()),
-      reason: `out-of-scope changes: ${undeclared.join(', ')}`,
-    };
-  }
-  return {
-    ok: true,
-    undeclaredFiles: Object.freeze([]),
-    reason: 'within ownership',
-  };
-}
-
-// ── Planner contract (P3) ───────────────────────────────────────────────────
-
-export interface PlannerTaskInput {
-  readonly id: string;
-  readonly title: string;
-  readonly detail?: string;
-  readonly ownership?: ScheduleOwnership;
-  readonly dependsOn?: readonly string[];
-}
-
-export interface PlannedScheduleTask {
-  readonly id: string;
-  readonly title: string;
-  readonly detail: string;
-  readonly dependsOn: readonly string[];
-  readonly ownership: ScheduleOwnership;
-  /** True when ownership was confidently declared (eligible for parallel). */
-  readonly parallelEligible: boolean;
-}
-
-/**
- * Ensure every planned task carries dependsOn + ownership.
- * When disjoint ownership cannot be declared, emit a sequential chain
- * (each task depends on the previous) with empty ownership files so the
- * scheduler will not fan out (empty ownership cannot prove disjointness —
- * we mark parallelEligible false and attach a sentinel sequential-only domain).
- */
-export function emitPlannedTasksWithContract(
-  inputs: readonly PlannerTaskInput[],
-): readonly PlannedScheduleTask[] {
-  if (inputs.length === 0) return Object.freeze([]);
-
-  const allHaveFiles = inputs.every(
-    (t) => (t.ownership?.files.length ?? 0) > 0,
-  );
-
-  if (!allHaveFiles) {
-    // Safe sequential chain.
-    return Object.freeze(
-      inputs.map((input, index) => {
-        const prev = index > 0 ? inputs[index - 1]!.id : undefined;
-        const dependsOn =
-          input.dependsOn && input.dependsOn.length > 0
-            ? input.dependsOn
-            : prev
-              ? Object.freeze([prev])
-              : Object.freeze([]);
-        const ownership: ScheduleOwnership = input.ownership ?? {
-          files: Object.freeze([]),
-          symbols: Object.freeze([]),
-          domains: Object.freeze(['sequential-only']),
-        };
-        return Object.freeze({
-          id: input.id,
-          title: input.title,
-          detail: input.detail ?? '',
-          dependsOn: Object.freeze([...dependsOn]),
-          ownership: Object.freeze({
-            files: Object.freeze([...(ownership.files ?? [])]),
-            symbols: Object.freeze([...(ownership.symbols ?? [])]),
-            domains: Object.freeze([...(ownership.domains ?? [])]),
-          }),
-          parallelEligible: false,
-        });
-      }),
-    );
-  }
-
-  return Object.freeze(
-    inputs.map((input) => {
-      const ownership = input.ownership!;
-      const parallelEligible =
-        ownership.files.length > 0 && !ownershipTouchesReservedGlue(ownership);
-      return Object.freeze({
-        id: input.id,
-        title: input.title,
-        detail: input.detail ?? '',
-        dependsOn: Object.freeze([...(input.dependsOn ?? [])]),
-        ownership: Object.freeze({
-          files: Object.freeze(ownership.files.map(normalizeSchedulePath)),
-          symbols: Object.freeze([...(ownership.symbols ?? [])]),
-          domains: Object.freeze([...(ownership.domains ?? [])]),
-        }),
-        parallelEligible,
-      });
-    }),
-  );
-}
-
-/**
- * Tasks eligible for parallel fan-out under flag-on policy (P3):
- * parallelEligible, non-empty ownership, no reserved glue.
- */
-export function independentSubsetTaskIds(
-  planned: readonly PlannedScheduleTask[],
-): readonly string[] {
-  return Object.freeze(
-    planned.filter((t) => t.parallelEligible).map((t) => t.id),
-  );
-}
-
-// Keep expand map helper available for tests that need full expansion table.
-export function expandOwnershipTable(
-  tasks: readonly ScheduleTask[],
-  expandFiles?: (files: readonly string[]) => readonly string[],
-): ReadonlyMap<string, ScheduleOwnership> {
-  return expandAll(tasks, expandFiles);
 }

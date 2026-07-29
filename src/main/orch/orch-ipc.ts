@@ -68,7 +68,6 @@ import {
   syncPanes,
   unregisterOrchRenderer,
 } from "./pane-registry";
-import { listOmpRpcSessions } from '../adapters/omp-rpc-ipc';
 import {
   getOwnedAgentSessionInfo,
   listAgentSessions,
@@ -1396,16 +1395,6 @@ function assertSquadsNotExecuting(
       `squad_in_use: inventário físico do pane ${pane.paneId} ainda está ${pane.state}`,
     );
   }
-  const omp = listOmpRpcSessions().find(
-    (session) =>
-      Boolean(session.missionId && missionIds.has(session.missionId)) &&
-      session.state !== 'exited',
-  );
-  if (omp) {
-    throw new Error(
-      `squad_in_use: inventário físico OMP ${omp.sessionId} ainda está ${omp.state}`,
-    );
-  }
 }
 
 function assertSquadNotExecuting(owner: WebContents, squadId: string): void {
@@ -2360,18 +2349,29 @@ export function registerOrchIpc(): void {
       parsed.data.missionId,
     );
     if (!candidate) return { removed: false };
+    let terminationError: string | null = null;
     try {
-      await terminateMissionRuntime({
+      const termination = await terminateMissionRuntime({
         scope,
         suite,
         missionId: candidate.missionId,
         reason: "operator-close",
         collapsePanes: true,
       });
+      if (!termination.ok) {
+        terminationError =
+          termination.error ??
+          "o runtime não forneceu prova física de saída";
+      }
     } catch (error) {
-      console.warn(
-        `[orch] mission remove: runtime teardown partial mission=${candidate.missionId}`,
-        error,
+      terminationError =
+        error instanceof Error ? error.message : String(error);
+    }
+    if (terminationError) {
+      throw new Error(
+        "Remoção recusada. O histórico foi preservado junto com a missão, " +
+          "tasks e receipts porque o teardown não comprovou a saída física: " +
+          terminationError,
       );
     }
     requireLiveRendererWorkspaceScope(event.sender, scope);

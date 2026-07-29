@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,6 +35,14 @@ export interface GitRunner {
     args: readonly string[],
     options?: GitRunOptions,
   ): GitResult;
+}
+
+export interface AsyncGitRunner {
+  run(
+    cwd: string,
+    args: readonly string[],
+    options?: GitRunOptions,
+  ): Promise<GitResult>;
 }
 
 export interface PrivateGitIndex {
@@ -107,48 +115,13 @@ export class ProcessGitRunner implements GitRunner {
       throw new GitCommandError('Git argv contains a NUL byte', args);
     }
 
-    const env: NodeJS.ProcessEnv = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (/^(?:GIT_|LD_|DYLD_)/.test(key)) continue;
-      env[key] = value;
-    }
-    for (const [key, value] of Object.entries(options.env ?? {})) {
-      if (!ALLOWED_GIT_ENV_OVERRIDES.has(key) || value === undefined) {
-        throw new GitCommandError(`unsafe Git environment override: ${key}`, args);
-      }
-      env[key] = value;
-    }
-    if (options.privateIndexFile) {
-      env.GIT_INDEX_FILE = assertPrivateIndexPath(options.privateIndexFile);
-    }
-    env.GIT_CONFIG_NOSYSTEM = '1';
-    env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null';
-    env.GIT_TERMINAL_PROMPT = '0';
-    env.GIT_PAGER = 'cat';
-    env.GIT_EDITOR = 'true';
-    env.GIT_MERGE_AUTOEDIT = 'no';
-    env.GIT_ALLOW_PROTOCOL = 'https:ssh:git:http';
-    env.LC_ALL = 'C';
-
-    const disabledHooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null';
+    const env = safeGitEnvironment(args, options);
     const result = spawnSync(
       'git',
       [
         '-C',
         cwd,
-        '-c',
-        `core.hooksPath=${disabledHooksPath}`,
-        '-c',
-        'core.fsmonitor=false',
-        '-c',
-        'commit.gpgSign=false',
-        '-c',
-        'tag.gpgSign=false',
-        '-c',
-        'protocol.ext.allow=never',
-        '-c',
-        'protocol.file.allow=never',
-        ...args,
+        ...safeGitArgv(args),
       ],
       {
         encoding: 'utf8',
@@ -178,6 +151,132 @@ export class ProcessGitRunner implements GitRunner {
       );
     }
     return value;
+  }
+}
+
+function safeGitEnvironment(
+  args: readonly string[],
+  options: GitRunOptions,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (/^(?:GIT_|LD_|DYLD_)/.test(key)) continue;
+    env[key] = value;
+  }
+  for (const [key, value] of Object.entries(options.env ?? {})) {
+    if (!ALLOWED_GIT_ENV_OVERRIDES.has(key) || value === undefined) {
+      throw new GitCommandError(`unsafe Git environment override: ${key}`, args);
+    }
+    env[key] = value;
+  }
+  if (options.privateIndexFile) {
+    env.GIT_INDEX_FILE = assertPrivateIndexPath(options.privateIndexFile);
+  }
+  env.GIT_CONFIG_NOSYSTEM = '1';
+  env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  env.GIT_TERMINAL_PROMPT = '0';
+  env.GIT_PAGER = 'cat';
+  env.GIT_EDITOR = 'true';
+  env.GIT_MERGE_AUTOEDIT = 'no';
+  env.GIT_ALLOW_PROTOCOL = 'https:ssh:git:http';
+  env.LC_ALL = 'C';
+  return env;
+}
+
+function safeGitArgv(args: readonly string[]): string[] {
+  const disabledHooksPath = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  return [
+    '-c',
+    `core.hooksPath=${disabledHooksPath}`,
+    '-c',
+    'core.fsmonitor=false',
+    '-c',
+    'commit.gpgSign=false',
+    '-c',
+    'tag.gpgSign=false',
+    '-c',
+    'protocol.ext.allow=never',
+    '-c',
+    'protocol.file.allow=never',
+    ...args,
+  ];
+}
+
+/**
+ * Main-process Git runner for IPC/diagnostic paths. It preserves the exact
+ * security envelope of ProcessGitRunner while allowing Electron to continue
+ * servicing renderer and PTY events during slow repository probes.
+ */
+export class AsyncProcessGitRunner implements AsyncGitRunner {
+  run(
+    cwd: string,
+    args: readonly string[],
+    options: GitRunOptions = {},
+  ): Promise<GitResult> {
+    if (cwd.includes('\0') || args.some((arg) => arg.includes('\0'))) {
+      return Promise.reject(
+        new GitCommandError('Git argv contains a NUL byte', args),
+      );
+    }
+    let env: NodeJS.ProcessEnv;
+    try {
+      env = safeGitEnvironment(args, options);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      execFile(
+        'git',
+        ['-C', cwd, ...safeGitArgv(args)],
+        {
+          encoding: 'utf8',
+          env,
+          maxBuffer: MAX_GIT_OUTPUT_BYTES,
+          timeout: options.timeoutMs ?? 30_000,
+          killSignal: 'SIGKILL',
+          windowsHide: true,
+        },
+        (error, stdout, stderr) => {
+          const errorCode = (
+            error as (Error & { readonly code?: string | number }) | null
+          )?.code;
+          const status =
+            typeof errorCode === 'number'
+              ? errorCode
+              : error
+                ? null
+                : 0;
+          const result = {
+            status: status ?? 1,
+            stdout: stdout ?? '',
+            stderr: stderr ?? '',
+          };
+          if (status === null) {
+            reject(
+              new GitCommandError(
+                'Git process could not complete',
+                args,
+                result,
+                error,
+              ),
+            );
+            return;
+          }
+          if (status !== 0 && !options.allowFailure) {
+            reject(
+              new GitCommandError(
+                `Git command failed with exit ${status}`,
+                args,
+                result,
+                error,
+              ),
+            );
+            return;
+          }
+          resolve(result);
+        },
+      );
+    });
   }
 }
 
@@ -252,6 +351,38 @@ export function assertSafeLocalGitConfig(
     // `git config --local` fora de um repo sai 128 — reportar isso como
     // "inspection failed" mandava o agente caçar um bug inexistente quando o
     // cwd (ex.: raiz de workspace multi-projeto) simplesmente não é um repo.
+    if (/not a git repository|--local can only be used inside/i.test(config.stderr)) {
+      throw new Error(`not a git repository: ${cwd}`);
+    }
+    throw new GitCommandError(
+      'Git executable-config inspection failed',
+      args,
+      config,
+    );
+  }
+}
+
+export async function assertSafeLocalGitConfigAsync(
+  runner: AsyncGitRunner,
+  cwd: string,
+): Promise<void> {
+  const args = [
+    'config',
+    '--local',
+    '--get-regexp',
+    EXECUTABLE_GIT_CONFIG_PATTERN,
+  ] as const;
+  const config = await runner.run(cwd, args, { allowFailure: true });
+  if (config.status === 0 && config.stdout.trim().length > 0) {
+    const offenders = executableGitConfigEntries(config.stdout);
+    if (offenders.length > 0) {
+      throw new Error(
+        'repository contains executable Git config (hooks, filters, diff, ' +
+          `merge, or fsmonitor): ${[...new Set(offenders)].sort().join(', ')}`,
+      );
+    }
+  }
+  if (config.status !== 0 && config.status !== 1) {
     if (/not a git repository|--local can only be used inside/i.test(config.stderr)) {
       throw new Error(`not a git repository: ${cwd}`);
     }

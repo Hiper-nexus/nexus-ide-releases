@@ -2,7 +2,10 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { buildTerminalTools } from '../tools-terminal';
+import {
+  buildTerminalTools,
+  resolveTerminalSandboxProfile,
+} from '../tools-terminal';
 import { testProjectScope } from './scope-fixture';
 import { processSandboxRuntimeAvailable } from '../../runtime/process-sandbox-capability';
 
@@ -17,6 +20,17 @@ describe('tools-terminal', () => {
 
   afterAll(() => {
     fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('defaults foreground commands to web in Autopilot and keeps Hardened strict', () => {
+    expect(resolveTerminalSandboxProfile('', 'operator-choice')).toBe(
+      'workspace-net',
+    );
+    expect(resolveTerminalSandboxProfile('', 'governed')).toBeUndefined();
+    expect(
+      resolveTerminalSandboxProfile('workspace-only', 'operator-choice'),
+    ).toBe('workspace-only');
+    expect(resolveTerminalSandboxProfile('yolo', 'governed')).toBe('yolo');
   });
 
   itSandboxed('nexus_terminal_run executes a simple command', async () => {

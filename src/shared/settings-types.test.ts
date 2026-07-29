@@ -93,28 +93,12 @@ describe('orchSettingsSchema', () => {
     expect(DEFAULT_ORCH_SETTINGS.missionDriverActiveMode).toBe(true);
     // Known boot dialogs are handled by default, with an explicit persisted kill switch.
     expect(DEFAULT_ORCH_SETTINGS.cliPromptAutoResponderEnabled).toBe(true);
-    // Zero-friction vibe-coder defaults: prefer omp, auto transport, auto-spawn.
-    expect(DEFAULT_ORCH_SETTINGS.ompParticipation).toBe('prefer');
-    expect(DEFAULT_ORCH_SETTINGS.ompRpcAutoStart).toBe(true);
-    expect(DEFAULT_ORCH_SETTINGS.ompMissionTransport).toBe('auto');
-    expect(DEFAULT_ORCH_SETTINGS.ompAutoSpawn).toBe(true);
   });
 
   it('persists an explicit CLI prompt autoresponder kill switch', () => {
     expect(
       orchSettingsSchema.parse({ cliPromptAutoResponderEnabled: false })
         .cliPromptAutoResponderEnabled,
-    ).toBe(false);
-  });
-
-  it('accepts omp participation modes', () => {
-    for (const mode of ['off', 'fallback', 'diversity', 'prefer'] as const) {
-      expect(
-        orchSettingsSchema.safeParse({ ompParticipation: mode }).success,
-      ).toBe(true);
-    }
-    expect(
-      orchSettingsSchema.safeParse({ ompParticipation: 'always' }).success,
     ).toBe(false);
   });
 

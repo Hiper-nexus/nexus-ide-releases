@@ -34,8 +34,6 @@ describe("buildSquadRuntimeCliPolicy", () => {
         provider("disabled", { enabled: false }),
         provider("missing", { installed: false }),
         provider("login", { authStrategy: "login-needed" }),
-        provider("omp", { authStrategy: "login-needed" }),
-        provider("omp-rpc", { authStrategy: "login-needed" }),
         provider("cooldown"),
         provider("shell"),
       ],
@@ -47,7 +45,7 @@ describe("buildSquadRuntimeCliPolicy", () => {
     expect(accountAvailable).not.toHaveBeenCalledWith("disabled");
     expect(accountAvailable).not.toHaveBeenCalledWith("missing");
     expect(accountAvailable).not.toHaveBeenCalledWith("login");
-    expect(accountAvailable).not.toHaveBeenCalledWith("omp");
+    expect(accountAvailable).not.toHaveBeenCalledWith("login");
   });
 
   it("keeps direct legacy CLIs routable but excludes them from guided workers", () => {
@@ -60,11 +58,6 @@ describe("buildSquadRuntimeCliPolicy", () => {
         provider("opencode"),
         provider("grok"),
         provider("agy"),
-        provider("omp", {
-          defaultModel: "anthropic/claude-sonnet-4-6",
-          models: ["anthropic/claude-sonnet-4-6"],
-          authReadyModels: ["anthropic/claude-sonnet-4-6"],
-        }),
       ],
       () => true,
     );
@@ -72,7 +65,7 @@ describe("buildSquadRuntimeCliPolicy", () => {
     expect(policy.routableCliIds.has("aider")).toBe(true);
     expect(policy.routableWorkerCliIds.has("aider")).toBe(false);
     expect([...policy.routableWorkerCliIds]).toEqual(["codex"]);
-    for (const directOnly of ["kimi", "opencode", "grok", "agy", "omp"]) {
+    for (const directOnly of ["kimi", "opencode", "grok", "agy"]) {
       expect(policy.routableCliIds.has(directOnly)).toBe(true);
       expect(policy.routableWorkerCliIds.has(directOnly)).toBe(false);
     }
@@ -247,83 +240,6 @@ describe("buildSquadRuntimeCliPolicy", () => {
     expect(policy.credentiallessDefaultModelByCliId).toEqual({});
   });
 
-  it("rejects login-needed OMP even when a Nexus account row appears available", () => {
-    const policy = buildSquadRuntimeCliPolicy(
-      [
-        provider("omp", {
-          authStrategy: "login-needed",
-          defaultModel: "anthropic/claude-sonnet",
-        }),
-      ],
-      () => true,
-    );
-    expect([...policy.routableCliIds]).toEqual([]);
-    expect([...policy.routableWorkerCliIds]).toEqual([]);
-    expect([...policy.credentiallessOnlyCliIds]).toEqual([]);
-  });
-
-  it("keeps OMP readiness scoped to the exact authenticated provider/model", () => {
-    const policy = buildSquadRuntimeCliPolicy(
-      [
-        provider("omp", {
-          defaultModel: "anthropic/claude-sonnet-4-6",
-          models: [
-            "anthropic/claude-sonnet-4-6",
-            "openai-codex/gpt-5.5",
-            "xai-oauth/grok-4.5",
-          ],
-          authReadyModels: ["openai-codex/gpt-5.5"],
-        }),
-      ],
-      () => true,
-    );
-
-    expect([...policy.routableCliIds]).toEqual(["omp"]);
-    expect(policy.authReadyModelsByCliId.omp).toEqual([
-      "openai-codex/gpt-5.5",
-    ]);
-    expect(
-      assessStandardSquadReadiness(
-        [
-          { category: "orchestrator", cli: "omp", model: "openai-codex/gpt-5.5" },
-          { category: "executor", cli: "omp", model: "openai-codex/gpt-5.5" },
-          { category: "reviewer", cli: "omp", model: "openai-codex/gpt-5.5" },
-        ],
-        policy,
-        new Set(["omp"]),
-      ),
-    ).toMatchObject({ ok: false, code: "executor-unavailable" });
-    expect(
-      assessStandardSquadReadiness(
-        [
-          { category: "orchestrator", cli: "omp", model: "openai-codex/gpt-5.5" },
-          { category: "executor", cli: "omp", model: "anthropic/claude-sonnet-4-6" },
-          { category: "reviewer", cli: "omp", model: "openai-codex/gpt-5.5" },
-        ],
-        policy,
-        new Set(["omp"]),
-      ),
-    ).toMatchObject({
-      ok: false,
-      code: "executor-unavailable",
-    });
-    // Omitting the model cannot silently use an unauthenticated default.
-    expect(
-      assessStandardSquadReadiness(
-        [
-          { category: "orchestrator", cli: "omp", model: "openai-codex/gpt-5.5" },
-          { category: "executor", cli: "omp" },
-          { category: "reviewer", cli: "omp", model: "openai-codex/gpt-5.5" },
-        ],
-        policy,
-        new Set(["omp"]),
-      ),
-    ).toMatchObject({
-      ok: false,
-      code: "executor-unavailable",
-    });
-  });
-
   it("admits an explicitly selected free model without trusting an external default", () => {
     const policy = buildSquadRuntimeCliPolicy(
       [
@@ -467,7 +383,7 @@ describe("assessStandardSquadReadiness", () => {
     ).toMatchObject({ ok: false, code: "executor-unavailable" });
   });
 
-  it("rejects every guided worker without physical MCP/OMP handoff", () => {
+  it("rejects every guided worker without physical MCP or PTY-stream handoff", () => {
     const legacyPolicy = buildSquadRuntimeCliPolicy(
       [
         provider("claude"),
@@ -531,6 +447,39 @@ describe("assessStandardSquadReadiness", () => {
         ],
         policy,
         verified,
+      ),
+    ).toMatchObject({ ok: false, code: "claude-worker" });
+  });
+
+  it("lets the single Claude session execute when another CLI is Maestro in autopilot", () => {
+    const autopilot = buildSquadRuntimeCliPolicy(
+      [provider("claude"), provider("codex"), provider("kimi")],
+      () => true,
+      true,
+    );
+
+    expect(
+      assessStandardSquadReadiness(
+        [
+          { category: "orchestrator", cli: "codex" },
+          { category: "executor", cli: "claude" },
+          { category: "reviewer", cli: "kimi" },
+        ],
+        autopilot,
+        verified,
+        true,
+      ),
+    ).toEqual({ ok: true });
+    expect(
+      assessStandardSquadReadiness(
+        [
+          { category: "orchestrator", cli: "codex" },
+          { category: "executor", cli: "claude" },
+          { category: "reviewer", cli: "claude" },
+        ],
+        autopilot,
+        verified,
+        true,
       ),
     ).toMatchObject({ ok: false, code: "claude-worker" });
   });

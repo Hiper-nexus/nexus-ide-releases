@@ -106,8 +106,15 @@ class MemoryWorktreeStateStore implements WorktreeStateStore {
 
 class MemoryMergeQueueStateStore implements MergeQueueStateStore {
   readonly #states = new Map<string, MergeQueueStateSnapshot>();
+  #integratedWriteFailuresRemaining = 0;
+  #readFailuresAfterIntegratedWrites = 0;
+  #readFailuresRemaining = 0;
 
   read(scopeKey: string): MergeQueueStateSnapshot {
+    if (this.#readFailuresRemaining > 0) {
+      this.#readFailuresRemaining -= 1;
+      throw new Error('simulated merge queue read outage');
+    }
     return (
       this.#states.get(scopeKey) ?? {
         revision: 0,
@@ -124,6 +131,18 @@ class MemoryMergeQueueStateStore implements MergeQueueStateStore {
     expectedRevision: number,
     state: Omit<MergeQueueStateSnapshot, 'revision'>,
   ): boolean {
+    if (
+      this.#integratedWriteFailuresRemaining > 0 &&
+      state.entries.some((entry) => entry.status === 'integrated')
+    ) {
+      this.#integratedWriteFailuresRemaining -= 1;
+      if (this.#integratedWriteFailuresRemaining === 0) {
+        this.#readFailuresRemaining =
+          this.#readFailuresAfterIntegratedWrites;
+        this.#readFailuresAfterIntegratedWrites = 0;
+      }
+      return false;
+    }
     const current = this.read(scopeKey);
     if (current.revision !== expectedRevision) return false;
     this.#states.set(scopeKey, {
@@ -135,6 +154,18 @@ class MemoryMergeQueueStateStore implements MergeQueueStateStore {
 
   overwrite(scopeKey: string, state: MergeQueueStateSnapshot): void {
     this.#states.set(scopeKey, structuredClone(state));
+  }
+
+  failIntegratedWrites(count = 16): void {
+    this.#integratedWriteFailuresRemaining = count;
+  }
+
+  failIntegratedWritesThenReads(
+    writeCount = 16,
+    readCount = 1,
+  ): void {
+    this.#integratedWriteFailuresRemaining = writeCount;
+    this.#readFailuresAfterIntegratedWrites = readCount;
   }
 }
 
@@ -171,15 +202,15 @@ function write(cwd: string, relativePath: string, content: string): void {
   fs.writeFileSync(file, content, 'utf8');
 }
 
-function commitTask(
+async function commitTask(
   missionId: string,
   taskId: string,
   workerId: string,
   relativePath: string,
   content: string,
   dependsOn: Array<{ missionId: string; taskId: string }> = [],
-): WorktreeRecord {
-  const record = worktrees.create({
+): Promise<WorktreeRecord> {
+  const record = await worktrees.create({
     scope,
     missionId,
     taskId,
@@ -250,7 +281,7 @@ afterEach(() => {
 
 describe('MergeQueue', () => {
   it('validates a detached candidate before an exact fast-forward and revalidates after', async () => {
-    commitTask(
+    await commitTask(
       'mission-a',
       'task-a',
       'worker-a',
@@ -295,8 +326,8 @@ describe('MergeQueue', () => {
   });
 
   it('serializes concurrent requests so the second candidate includes the first', async () => {
-    commitTask('mission-a', 'task-a', 'worker-a', 'a.txt', 'A\n');
-    commitTask('mission-a', 'task-b', 'worker-b', 'b.txt', 'B\n');
+    await commitTask('mission-a', 'task-a', 'worker-a', 'a.txt', 'A\n');
+    await commitTask('mission-a', 'task-b', 'worker-b', 'b.txt', 'B\n');
     let releaseFirst: (() => void) | undefined;
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -340,7 +371,7 @@ describe('MergeQueue', () => {
   }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
 
   it('keeps merge serialization scoped so independent projects can validate concurrently', async () => {
-    commitTask('mission-a', 'task-a', 'worker-a', 'a.txt', 'A\n');
+    await commitTask('mission-a', 'task-a', 'worker-a', 'a.txt', 'A\n');
     const secondRoot = path.join(tempDir, 'repo-two');
     fs.mkdirSync(secondRoot, { recursive: true });
     git(secondRoot, 'init', '-b', 'main');
@@ -355,7 +386,7 @@ describe('MergeQueue', () => {
       checkoutId: 'checkout-merge-test-two',
       rootRealPath: fs.realpathSync(secondRoot),
     };
-    const secondTask = worktrees.create({
+    const secondTask = await worktrees.create({
       scope: secondScope,
       missionId: 'mission-b',
       taskId: 'task-b',
@@ -411,8 +442,8 @@ describe('MergeQueue', () => {
   }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
 
   it('leaves the branch unchanged and blocks the queue when validation rejects', async () => {
-    commitTask('mission-a', 'task-a', 'worker-a', 'a.txt', 'A\n');
-    commitTask('mission-a', 'task-b', 'worker-b', 'b.txt', 'B\n');
+    await commitTask('mission-a', 'task-a', 'worker-a', 'a.txt', 'A\n');
+    await commitTask('mission-a', 'task-b', 'worker-b', 'b.txt', 'B\n');
     const originalHead = git(root, 'rev-parse', 'HEAD');
 
     await expect(
@@ -441,7 +472,7 @@ describe('MergeQueue', () => {
   });
 
   it('retries a validation failure only with a new commit, revision, or evidence', async () => {
-    commitTask('mission-retry', 'task-retry', 'worker-retry', 'retry.txt', 'v1\n');
+    await commitTask('mission-retry', 'task-retry', 'worker-retry', 'retry.txt', 'v1\n');
     await expect(
       queue.enqueue({
         scope,
@@ -504,8 +535,8 @@ describe('MergeQueue', () => {
     ]);
   });
 
-  it('accepts a retry without acknowledgement evidence after the task commit changes', async () => {
-    const assignment = commitTask(
+  it('lets the scheduler integrate a corrective worker commit from a repair block', async () => {
+    const assignment = await commitTask(
       'mission-commit-retry',
       'task-commit-retry',
       'worker-commit-retry',
@@ -527,23 +558,26 @@ describe('MergeQueue', () => {
     write(assignment.worktreePath, 'commit-retry.txt', 'v2\n');
     git(assignment.worktreePath, 'add', '.');
     git(assignment.worktreePath, 'commit', '-m', 'fix validation');
-    const blocked = queue.snapshot(scope);
-
-    const result = await queue.retry({
+    const result = await queue.retryRecoverable({
       scope,
       missionId: 'mission-commit-retry',
       taskId: 'task-commit-retry',
-      expectedStateRevision: blocked.revision,
-      acknowledgement: {},
       validate: approved,
     });
     expect(result.integratedSha).toBe(git(root, 'rev-parse', 'HEAD'));
+    expect(fs.readFileSync(path.join(root, 'commit-retry.txt'), 'utf8')).toBe(
+      'v2\n',
+    );
+    expect(queue.snapshot(scope)).toMatchObject({
+      blocked: null,
+      entries: [{ status: 'integrated', attempt: 2 }],
+    });
   }, GIT_INTEGRATION_TEST_TIMEOUT_MS);
 
   it.each(['candidate-validating', 'integrating'] as const)(
-    'reconciles an interrupted %s attempt into a durable fail-closed block',
-    (status) => {
-      commitTask(
+    'reconciles an interrupted %s attempt into an automatically retryable block',
+    async (status) => {
+      await commitTask(
         `mission-restart-${status}`,
         `task-restart-${status}`,
         `worker-restart-${status}`,
@@ -601,15 +635,29 @@ describe('MergeQueue', () => {
       });
       const recovered = restarted.snapshot(scope);
       expect(recovered.activeTaskKey).toBeNull();
-      expect(recovered.blocked?.taskKey).toBe(prepared.record.taskKey);
+      expect(recovered.blocked).toMatchObject({
+        taskKey: prepared.record.taskKey,
+        disposition: 'retryable',
+      });
       expect(recovered.entries[0]?.status).toBe('blocked');
       expect(recovered.events.at(-1)?.type).toBe('restart-reconciled');
       expect(git(root, 'rev-parse', 'HEAD')).toBe(prepared.record.baseSha);
+      await restarted.retryRecoverable({
+        scope,
+        missionId: prepared.record.missionId,
+        taskId: prepared.record.taskId,
+        validate: approved,
+      });
+      expect(restarted.snapshot(scope)).toMatchObject({
+        activeTaskKey: null,
+        blocked: null,
+        entries: [{ status: 'integrated', attempt: 2 }],
+      });
     },
   );
 
   it('records an exact integrated ref without trusting an interrupted dirty checkout', async () => {
-    commitTask(
+    await commitTask(
       'mission-ref-restart',
       'task-ref-restart',
       'worker-ref-restart',
@@ -663,6 +711,7 @@ describe('MergeQueue', () => {
       integrationState: 'candidate-integrated',
     });
     const blocked = restarted.snapshot(scope);
+    expect(blocked.blocked?.disposition).toBe('retryable');
     expect(blocked.entries[0]?.integratedSha).toBe(prepared.taskHeadSha);
     await expect(restarted.retry({
       scope,
@@ -676,7 +725,7 @@ describe('MergeQueue', () => {
   });
 
   it('reconciles post-validation after restart and only finalizes after new evidence', async () => {
-    commitTask(
+    await commitTask(
       'mission-post-restart',
       'task-post-restart',
       'worker-post-restart',
@@ -720,15 +769,14 @@ describe('MergeQueue', () => {
       integrationState: 'candidate-integrated',
     });
     const blocked = restarted.snapshot(scope);
+    expect(blocked.blocked?.disposition).toBe('retryable');
     const updateRefsBeforeRetry = gitRunner.calls.filter(
       (call) => call.args[0] === 'update-ref',
     ).length;
-    const recovered = await restarted.retry({
+    const recovered = await restarted.retryRecoverable({
       scope,
       missionId: 'mission-post-restart',
       taskId: 'task-post-restart',
-      expectedStateRevision: blocked.revision,
-      acknowledgement: { revisionId: 'post-review-revision-2' },
       validate: approved,
     });
     releasePost?.();
@@ -754,7 +802,7 @@ describe('MergeQueue', () => {
   });
 
   it('does not acknowledge a retry after mission authority was revoked', async () => {
-    commitTask(
+    await commitTask(
       'mission-retry-revoked-before-ack',
       'task-retry-revoked-before-ack',
       'worker-retry-revoked-before-ack',
@@ -796,8 +844,8 @@ describe('MergeQueue', () => {
     );
   });
 
-  it('blocks an integrated retry when authority is revoked during recovery validation', async () => {
-    commitTask(
+  it('rolls back a retried candidate when authority is revoked during validation', async () => {
+    await commitTask(
       'mission-retry-revoked-during-validation',
       'task-retry-revoked-during-validation',
       'worker-retry-revoked-during-validation',
@@ -837,9 +885,10 @@ describe('MergeQueue', () => {
         if (!authorized) throw new Error('mission lifecycle authority revoked');
       },
       async validate(context) {
-        expect(context.phase).toBe('post-integration');
-        validationStarted.notify();
-        await resumeValidation.wait();
+        if (context.phase === 'post-integration') {
+          validationStarted.notify();
+          await resumeValidation.wait();
+        }
         return approved(context);
       },
       finalize,
@@ -853,17 +902,20 @@ describe('MergeQueue', () => {
     expect(finalize).not.toHaveBeenCalled();
     expect(queue.snapshot(scope)).toMatchObject({
       activeTaskKey: null,
-      blocked: { errorName: 'MergeAuthorityRevokedError' },
+      blocked: {
+        errorName: 'MergeAuthorityRevokedError',
+        disposition: 'terminal',
+      },
       entries: [{
         status: 'blocked',
         attempt: 2,
-        integratedSha: expect.any(String),
+        integratedSha: undefined,
       }],
     });
   });
 
-  it('keeps an integrated candidate blocked until durable mission finalization succeeds', async () => {
-    commitTask(
+  it('keeps the durable integration when finalizer fails so its receipt can be replayed', async () => {
+    await commitTask(
       'mission-finalizer-retry',
       'task-finalizer-retry',
       'worker-finalizer-retry',
@@ -882,45 +934,128 @@ describe('MergeQueue', () => {
       finalize: failedFinalizer,
     })).rejects.toThrow('simulated crash during mission finalization');
 
-    const blocked = queue.snapshot(scope);
+    const integrated = queue.snapshot(scope);
     expect(failedFinalizer).toHaveBeenCalledOnce();
-    expect(blocked).toMatchObject({
+    expect(fs.readFileSync(path.join(root, 'finalizer-retry.txt'), 'utf8')).toBe(
+      'integrated but not finalized\n',
+    );
+    expect(integrated).toMatchObject({
       activeTaskKey: null,
-      blocked: { errorName: 'Error' },
-      entries: [{ status: 'blocked', integratedSha: expect.any(String) }],
+      blocked: null,
+      entries: [{
+        status: 'integrated',
+        integratedSha: git(root, 'rev-parse', 'HEAD'),
+      }],
+    });
+  });
+
+  it('never finalizes externally when the durable integrated transition fails and replays safely', async () => {
+    await commitTask(
+      'mission-complete-cas-retry',
+      'task-complete-cas-retry',
+      'worker-complete-cas-retry',
+      'complete-cas-retry.txt',
+      'persist before receipt\n',
+    );
+    const originalHead = git(root, 'rev-parse', 'HEAD');
+    queueState.failIntegratedWrites();
+    const forbiddenFinalizer = vi.fn(async () => {});
+
+    await expect(queue.enqueue({
+      scope,
+      missionId: 'mission-complete-cas-retry',
+      taskId: 'task-complete-cas-retry',
+      validate: approved,
+      finalize: forbiddenFinalizer,
+    })).rejects.toThrow(/persistence CAS could not converge/i);
+
+    expect(forbiddenFinalizer).not.toHaveBeenCalled();
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(originalHead);
+    expect(fs.existsSync(path.join(root, 'complete-cas-retry.txt'))).toBe(false);
+    expect(queue.snapshot(scope)).toMatchObject({
+      activeTaskKey: null,
+      blocked: {
+        errorName: 'MergeQueuePersistenceError',
+        disposition: 'retryable',
+      },
+      entries: [{ status: 'blocked', integratedSha: undefined }],
     });
 
-    const restarted = new MergeQueue({
-      runtimeRoot,
-      stateStore: queueState,
-      worktreeManager: worktrees,
-      gitRunner,
-    });
     const recoveredFinalizer = vi.fn(async () => {});
-    const validationAfterFinalization = vi.fn(() => {
-      throw new Error('finalization recovery must not rerun execution validation');
-    });
-    await restarted.retry({
+    const result = await queue.retryRecoverable({
       scope,
-      missionId: 'mission-finalizer-retry',
-      taskId: 'task-finalizer-retry',
-      expectedStateRevision: blocked.revision,
-      acknowledgement: {},
-      validate: validationAfterFinalization,
+      missionId: 'mission-complete-cas-retry',
+      taskId: 'task-complete-cas-retry',
+      validate: approved,
       finalize: recoveredFinalizer,
     });
 
-    expect(validationAfterFinalization).not.toHaveBeenCalled();
     expect(recoveredFinalizer).toHaveBeenCalledOnce();
-    expect(restarted.snapshot(scope)).toMatchObject({
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(result.integratedSha);
+    expect(queue.snapshot(scope)).toMatchObject({
       activeTaskKey: null,
       blocked: null,
       entries: [{ status: 'integrated', attempt: 2 }],
     });
   });
 
-  it('reconciles a process crash during finalization without rerunning execution validation', async () => {
-    commitTask(
+  it('recovers an unreadable completion state in the same process without stranding the active queue', async () => {
+    await commitTask(
+      'mission-complete-read-outage',
+      'task-complete-read-outage',
+      'worker-complete-read-outage',
+      'complete-read-outage.txt',
+      'recover without restart\n',
+    );
+    queueState.failIntegratedWritesThenReads();
+    const forbiddenFinalizer = vi.fn(async () => {});
+
+    await expect(queue.enqueue({
+      scope,
+      missionId: 'mission-complete-read-outage',
+      taskId: 'task-complete-read-outage',
+      validate: approved,
+      finalize: forbiddenFinalizer,
+    })).rejects.toThrow(/persistence read failed/i);
+
+    expect(forbiddenFinalizer).not.toHaveBeenCalled();
+    expect(fs.readFileSync(
+      path.join(root, 'complete-read-outage.txt'),
+      'utf8',
+    )).toBe('recover without restart\n');
+    expect(queue.snapshot(scope)).toMatchObject({
+      activeTaskKey: expect.any(String),
+      blocked: null,
+      entries: [{ status: 'finalizing', integratedSha: expect.any(String) }],
+    });
+
+    await Promise.resolve();
+    expect(queue.reconcileIfIdle(scope)).toMatchObject({
+      action: 'blocked-interrupted',
+      fromStatus: 'finalizing',
+      integrationState: 'candidate-integrated',
+    });
+    const recoveredFinalizer = vi.fn(async () => {});
+    await queue.retryRecoverable({
+      scope,
+      missionId: 'mission-complete-read-outage',
+      taskId: 'task-complete-read-outage',
+      validate: () => {
+        throw new Error('finalization recovery must not rerun validation');
+      },
+      finalize: recoveredFinalizer,
+    });
+
+    expect(recoveredFinalizer).toHaveBeenCalledOnce();
+    expect(queue.snapshot(scope)).toMatchObject({
+      activeTaskKey: null,
+      blocked: null,
+      entries: [{ status: 'integrated', attempt: 2 }],
+    });
+  });
+
+  it('durably integrates before an in-flight finalizer can be interrupted', async () => {
+    await commitTask(
       'mission-finalizer-crash',
       'task-finalizer-crash',
       'worker-finalizer-crash',
@@ -939,10 +1074,9 @@ describe('MergeQueue', () => {
         await releaseInterruptedProcess.wait();
       },
     });
-    const interruptedResult = interrupted.catch((error: unknown) => error);
     await finalizerStarted.wait();
     expect(queue.snapshot(scope).entries[0]).toMatchObject({
-      status: 'finalizing',
+      status: 'integrated',
       integratedSha: expect.any(String),
       evidenceIds: expect.arrayContaining([
         expect.stringContaining('evidence-candidate-'),
@@ -956,46 +1090,26 @@ describe('MergeQueue', () => {
       worktreeManager: worktrees,
       gitRunner,
     });
-    expect(restarted.reconcile(scope)).toMatchObject({
-      action: 'blocked-interrupted',
-      fromStatus: 'finalizing',
-      integrationState: 'candidate-integrated',
-    });
-    const blocked = restarted.snapshot(scope);
-    const validationAfterCrash = vi.fn(() => {
-      throw new Error('execution validation is invalid after PREVC advanced');
-    });
-    const recoveredFinalizer = vi.fn(async () => {});
-    await restarted.retry({
-      scope,
-      missionId: 'mission-finalizer-crash',
-      taskId: 'task-finalizer-crash',
-      expectedStateRevision: blocked.revision,
-      acknowledgement: {},
-      validate: validationAfterCrash,
-      finalize: recoveredFinalizer,
-    });
+    expect(restarted.reconcile(scope)).toEqual({ action: 'none' });
 
     releaseInterruptedProcess.notify();
-    await interruptedResult;
-    expect(validationAfterCrash).not.toHaveBeenCalled();
-    expect(recoveredFinalizer).toHaveBeenCalledOnce();
+    await interrupted;
     expect(restarted.snapshot(scope)).toMatchObject({
       activeTaskKey: null,
       blocked: null,
-      entries: [{ status: 'integrated', attempt: 2 }],
+      entries: [{ status: 'integrated', attempt: 1 }],
     });
   });
 
   it('blocks on a real merge conflict even when overlap had an explicit dependency', async () => {
-    const first = commitTask(
+    const first = await commitTask(
       'mission-a',
       'task-a',
       'worker-a',
       'shared.txt',
       'first\n',
     );
-    commitTask(
+    await commitTask(
       'mission-a',
       'task-b',
       'worker-b',
@@ -1025,7 +1139,7 @@ describe('MergeQueue', () => {
   });
 
   it('uses compare-and-swap semantics when integration HEAD moves during validation', async () => {
-    commitTask('mission-a', 'task-a', 'worker-a', 'task.txt', 'task\n');
+    await commitTask('mission-a', 'task-a', 'worker-a', 'task.txt', 'task\n');
 
     await expect(
       queue.enqueue({
@@ -1051,7 +1165,7 @@ describe('MergeQueue', () => {
   });
 
   it('invalidates approval when the worker branch changes after candidate validation', async () => {
-    const assignment = commitTask(
+    const assignment = await commitTask(
       'mission-a',
       'task-a',
       'worker-a',
@@ -1080,8 +1194,9 @@ describe('MergeQueue', () => {
     expect(fs.existsSync(path.join(root, 'task.txt'))).toBe(false);
   });
 
-  it('blocks without rollback when post-integration sensors reject the exact candidate', async () => {
-    commitTask('mission-a', 'task-a', 'worker-a', 'post.txt', 'integrated\n');
+  it('rolls back post-integration findings and preserves the worktree for repair', async () => {
+    await commitTask('mission-a', 'task-a', 'worker-a', 'post.txt', 'integrated\n');
+    const originalHead = git(root, 'rev-parse', 'HEAD');
 
     await expect(
       queue.enqueue({
@@ -1101,17 +1216,57 @@ describe('MergeQueue', () => {
       }),
     ).rejects.toThrow(MergeValidationRejectedError);
 
-    expect(fs.readFileSync(path.join(root, 'post.txt'), 'utf8')).toBe(
-      'integrated\n',
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(originalHead);
+    expect(fs.existsSync(path.join(root, 'post.txt'))).toBe(false);
+    expect(queueState.read(worktrees.scopeKey(scope)).blocked).toMatchObject({
+      disposition: 'repair',
+    });
+    const repairedWorktree = worktrees.get(scope, 'mission-a', 'task-a');
+    expect(repairedWorktree).toMatchObject({ status: 'queued' });
+    expect(repairedWorktree).not.toHaveProperty('integratedSha');
+  });
+
+  it('rolls back a technical post-integration failure and retries without a wizard', async () => {
+    await commitTask(
+      'mission-technical',
+      'task-technical',
+      'worker-technical',
+      'technical.txt',
+      'retry me\n',
     );
-    expect(queueState.read(worktrees.scopeKey(scope)).blocked).not.toBeNull();
-    expect(
-      worktrees.get(scope, 'mission-a', 'task-a'),
-    ).toMatchObject({ status: 'failed', integratedSha: git(root, 'rev-parse', 'HEAD') });
+    const originalHead = git(root, 'rev-parse', 'HEAD');
+    await expect(
+      queue.enqueue({
+        scope,
+        missionId: 'mission-technical',
+        taskId: 'task-technical',
+        validate: (context) => {
+          if (context.phase === 'post-integration') {
+            throw new Error('reviewer timed out');
+          }
+          return approved(context);
+        },
+      }),
+    ).rejects.toThrow('reviewer timed out');
+
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(originalHead);
+    expect(queue.snapshot(scope).blocked).toMatchObject({
+      disposition: 'retryable',
+    });
+    const result = await queue.retryRecoverable({
+      scope,
+      missionId: 'mission-technical',
+      taskId: 'task-technical',
+      validate: approved,
+    });
+    expect(result.integratedSha).toBe(git(root, 'rev-parse', 'HEAD'));
+    expect(fs.readFileSync(path.join(root, 'technical.txt'), 'utf8')).toBe(
+      'retry me\n',
+    );
   });
 
   it('rolls back the exact candidate when mission authority is revoked during post-integration validation', async () => {
-    commitTask(
+    await commitTask(
       'mission-revoked',
       'task-revoked',
       'worker-revoked',
@@ -1169,7 +1324,7 @@ describe('MergeQueue', () => {
     expect(failedWorktree).not.toHaveProperty('integratedSha');
   });
 
-  it('requires injected durable queue state instead of an implicit memory fallback', () => {
+  it('requires injected durable queue state instead of an implicit memory fallback', async () => {
     expect(() =>
       new MergeQueue({
         runtimeRoot,
@@ -1180,7 +1335,7 @@ describe('MergeQueue', () => {
   });
 
   it('fails closed when durable queue state is structurally inconsistent', async () => {
-    commitTask('mission-state', 'task-state', 'worker-state', 'state.txt', 'state\n');
+    await commitTask('mission-state', 'task-state', 'worker-state', 'state.txt', 'state\n');
     const originalHead = git(root, 'rev-parse', 'HEAD');
     const scopeKey = worktrees.scopeKey(scope);
     queueState.overwrite(scopeKey, {

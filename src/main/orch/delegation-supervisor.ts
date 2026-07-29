@@ -135,8 +135,9 @@ function recoverySummary(missionId: string, stage: 1 | 2): string {
   }
   // Stage 2 is audit-only (no PTY inject) — summary stays durable for UI/board.
   return (
-    `Missão ${missionId} bloqueada automaticamente: ainda sem tasks/workers após ` +
-    `uma recuperação. [${key}]`
+    `Missão ${missionId} continua em recuperação automática: ainda sem ` +
+    `tasks/workers após uma tentativa, mas a execução permanece ativa para ` +
+    `o Mission Driver retomar ou rerotear. [${key}]`
   );
 }
 
@@ -186,11 +187,11 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
 
     if (mission.status === 'pending') suite.missions.setStatus(mission.id, 'running');
 
-    // Stage 2: stop nagging the orchestrator PTY. Mark blocked for the UI and
-    // keep an audit handoff without idle-delivery injection (agents treated
-    // untrusted stage-2 dumps as suspicious spam mid-conversation).
+    // Stage 2: stop nagging the orchestrator PTY and leave an audit handoff
+    // without idle-delivery injection. The mission deliberately remains
+    // running: Mission Driver/failover owns context restart and reroute, while
+    // `blocked` is reserved for operator/auth/destructive decisions.
     if (stage === 2) {
-      suite.missions.setStatus(mission.id, 'blocked');
       // Audit-only handoff: mark submitted immediately so redeliverPendingHandoffs
       // after restart cannot re-inject a stage-2 recovery into the PTY.
       const stage2Handoff = suite.handoffs.submit({
@@ -210,11 +211,11 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
           workerPaneCount: panes.filter((pane) => pane.role === 'worker').length,
         }),
         intentVersion: mission.intentVersion,
-        reason: 'delegation_supervisor_stage_2_blocked',
+        reason: 'delegation_supervisor_stage_2_recovery_active',
         meta: { stage: 2, deliveredToPty: false, deliveryState: 'submitted' },
       });
       console.warn(
-        `[delegation-supervisor] stage 2 — mission ${mission.id} blocked (no PTY inject, marked submitted)`,
+        `[delegation-supervisor] stage 2 — mission ${mission.id} remains running for Mission Driver recovery`,
       );
       continue;
     }

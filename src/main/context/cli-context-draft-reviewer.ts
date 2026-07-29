@@ -6,10 +6,6 @@ import {
   type ProjectExecutionScope,
 } from '../../shared/types';
 import {
-  getAdapter,
-  isBuiltinAdapter,
-} from '../adapters/adapter-registry';
-import {
   listPaneSnapshots,
   requestPaneClose,
   requestPaneSpawn,
@@ -27,11 +23,6 @@ import {
   type McpToolInvocation,
 } from '../orch/mcp-protocol';
 import { resolveCwdForScope } from '../orch/workspace-path';
-import { listProviderSettings } from '../persistence/provider-config-store';
-import {
-  supportsEnforceableReadOnlyNativeAuthority,
-  supportsEnforceableWorkspaceWriteNativeAuthority,
-} from '../pty/autonomous-cli-policy';
 import { sameProjectScope } from '../orch/project-scoped-broadcast';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
 import { getContextKnowledgeService } from './context-workflow-registry';
@@ -40,6 +31,10 @@ import {
   CONTEXT_DRAFT_REVIEW_SKILLS,
   CONTEXT_DRAFT_REVIEW_TOOLS,
 } from '../orch/prevc-reviewer-profile';
+import {
+  isIndependentCliReviewAdapterAllowed,
+  listIndependentCliReviewCandidates,
+} from './cli-independent-review-policy';
 
 export {
   CONTEXT_DRAFT_REVIEW_TOOLS,
@@ -254,50 +249,23 @@ function parseReviewerAdapterId(
   return adapterId.length > 0 ? adapterId : null;
 }
 
-/**
- * Select one installed release-qualified Codex reviewer. Independence is a
- * fresh main-owned agent/session identity, not the executable provider label;
- * a legacy Claude/Kimi/OMP route is never substituted just to satisfy quorum.
- */
+/** Select one live physical review route under the current product policy. */
 export function selectIndependentContextReviewerRoute(
   authorProvider: string,
 ): ContextDraftReviewerRoute | null {
-  void authorProvider;
-  const eligible = listProviderSettings().filter((provider) => {
-    if (
-      provider.adapterId !== 'codex' ||
-      !provider.enabled ||
-      !provider.installed ||
-      provider.authStrategy === 'login-needed' ||
-      provider.kind !== 'cli-pty'
-    ) {
-      return false;
-    }
-    const adapter = getAdapter(provider.adapterId);
-    if (
-      adapter?.kind !== 'cli-pty' ||
-      adapter.id !== 'codex'
-    ) {
-      return false;
-    }
-    if (!isBuiltinAdapter(adapter.id)) {
-      return false;
-    }
-    return (
-      supportsEnforceableWorkspaceWriteNativeAuthority(adapter) &&
-      supportsEnforceableReadOnlyNativeAuthority(adapter)
-    );
+  const eligible = listIndependentCliReviewCandidates({
+    reserveClaude: authorProvider === 'claude',
   });
   const decision = routeTask(
     'Independent source-bound context draft review',
-    eligible.map((provider) => ({
-      id: provider.adapterId,
+    eligible.map((candidate) => ({
+      id: candidate.adapterId,
       installed: true,
-      models: provider.models,
+      models: [...candidate.models],
     })),
     undefined,
     'hard',
-    true,
+    false,
   );
   if (!decision) return null;
   return Object.freeze({
@@ -698,13 +666,10 @@ export class CliContextDraftReviewer {
     if (!adapterId) {
       return closeStale();
     }
-    const adapter = getAdapter(adapterId);
     if (
-      adapter?.kind !== 'cli-pty' ||
-      adapter.id !== 'codex' ||
-      !isBuiltinAdapter(adapter.id) ||
-      !supportsEnforceableWorkspaceWriteNativeAuthority(adapter) ||
-      !supportsEnforceableReadOnlyNativeAuthority(adapter)
+      !isIndependentCliReviewAdapterAllowed(adapterId, {
+        reserveClaude: initial.author.provider === 'claude',
+      })
     ) {
       return closeStale();
     }

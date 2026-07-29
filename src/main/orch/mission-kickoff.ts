@@ -35,6 +35,10 @@ import {
 } from './agent-status';
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
+import {
+  getPtyStreamMissionControl,
+  type PtyStreamMissionControl,
+} from './pty-stream-mission-control';
 
 const BOOT_IDLE_WINDOW_MS = 15_000;
 /**
@@ -563,6 +567,34 @@ export function buildCanonicalMissionKickoffPrompt(
   });
 }
 
+/**
+ * Bind the fallback only to the exact Autopilot runtime approved for this
+ * mission. Hardened remains MCP + native confinement and never receives a
+ * terminal action marker.
+ */
+export function bindPtyMissionControlToKickoff(
+  mission: Pick<Mission, 'intentContract'>,
+  sessionId: string,
+  prompt: string,
+  control: Pick<
+    PtyStreamMissionControl,
+    'ensureChannel' | 'instructionsForSession'
+  > | null = getPtyStreamMissionControl(),
+): string {
+  if (
+    mission.intentContract?.orchestratorRuntime?.nativeReadOnly !== false
+  ) {
+    return prompt;
+  }
+  if (!control) {
+    throw new Error(
+      'pty_mission_control_unavailable: canal Main-owned do Autopiloto ainda não iniciou; retome a missão',
+    );
+  }
+  control.ensureChannel(sessionId);
+  return `${prompt}\n\n${control.instructionsForSession(sessionId)}`;
+}
+
 function sameScope(
   left: Readonly<ProjectExecutionScope>,
   right: Readonly<ProjectExecutionScope>,
@@ -651,7 +683,11 @@ export function submitMissionKickoffFromRenderer(
   }
   const input = {
     ...request,
-    prompt: buildCanonicalMissionKickoffPrompt(initial.mission, squad),
+    prompt: bindPtyMissionControlToKickoff(
+      initial.mission,
+      request.sessionId,
+      buildCanonicalMissionKickoffPrompt(initial.mission, squad),
+    ),
   };
   assertSafePtyPrompt(input.prompt);
   return submitMissionKickoffWithAuthority(scope, input, initial, owner);
@@ -666,9 +702,18 @@ export function submitMissionKickoffFromMain(
   scope: Readonly<ProjectExecutionScope>,
   raw: unknown,
 ): Promise<MissionKickoffResult> {
-  const input = missionKickoffRequestSchema.parse(raw);
+  const parsed = missionKickoffRequestSchema.parse(raw);
+  assertSafePtyPrompt(parsed.prompt);
+  const initial = requireKickoffAuthority(scope, parsed);
+  const input = {
+    ...parsed,
+    prompt: bindPtyMissionControlToKickoff(
+      initial.mission,
+      parsed.sessionId,
+      parsed.prompt,
+    ),
+  };
   assertSafePtyPrompt(input.prompt);
-  const initial = requireKickoffAuthority(scope, input);
   return submitMissionKickoffWithAuthority(scope, input, initial);
 }
 

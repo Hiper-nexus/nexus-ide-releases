@@ -423,7 +423,7 @@ export async function dispatchToolCall(
   const startMs = Date.now();
   const sessionId = normalizeDispatchSessionId(source, ctx);
   const physicalAgentTransport =
-    source === "http-mcp" || source === "omp-rpc-stdio";
+    source === "http-mcp" || source === "pty-stream";
   const hasCurrentBearerAuthority = () =>
     (!physicalAgentTransport || isCurrentGateContext(ctx)) &&
     (options.assertCurrentCaller?.() ?? true);

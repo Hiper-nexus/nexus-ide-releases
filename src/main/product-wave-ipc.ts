@@ -19,11 +19,12 @@ import {
 } from './autonomy/autonomy-profiles';
 import {
   listMemoryNotes,
-  rememberMarkdown,
   searchMemory,
   backlinks,
   wikilinkCompletions,
 } from './memory/nexus-memory';
+import { getWorkspaceMemoryStore } from './memory/workspace-memory';
+import { retainTrustedMemory } from './memory/trusted-memory';
 import {
   scanSkillsDirectory,
   skillsLockSchema,
@@ -68,6 +69,17 @@ export { PRODUCT_WAVE_CHANNELS };
 
 function workspaceRoot(sender: Electron.WebContents): string {
   return requireScopedRoot(sender).root;
+}
+
+function canonicalMemoryView(sender: Electron.WebContents) {
+  requireFlag(
+    FEATURE_FLAG_IDS.workspaceMemory,
+    'feature.memory.workspaceMemory',
+  );
+  const { scope } = requireScopedRoot(sender);
+  const store = getWorkspaceMemoryStore(scope);
+  store.ensureProjections();
+  return { scope, root: store.projectionRoot, store };
 }
 
 /** Missing is a valid new document; every other read failure is fail-closed. */
@@ -260,41 +272,68 @@ export function registerProductWaveIpc(): void {
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryList, (event) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const root = workspaceRoot(event.sender);
+    const { root } = canonicalMemoryView(event.sender);
     return listMemoryNotes(root);
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryRemember, (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const root = workspaceRoot(event.sender);
+    const { scope, root, store } = canonicalMemoryView(event.sender);
     const input = z
       .object({
-        title: z.string().min(1).max(256),
+        title: z.string().trim().min(1).max(256),
         body: z.string().max(64_000),
         kind: z.enum(['decision', 'mission', 'agent', 'note']).optional(),
         missionId: z.string().max(128).optional(),
       })
+      .strict()
       .parse(raw);
-    return rememberMarkdown(root, input);
+    const kind = input.kind ?? 'note';
+    const retained =
+      kind === 'decision'
+        ? retainTrustedMemory(scope, {
+            type: 'operator-decision',
+            title: input.title,
+            summary: input.body || input.title,
+            ...(input.missionId ? { missionId: input.missionId } : {}),
+          })
+        : store.retain({
+            content: `# ${input.title}\n\n${input.body || input.title}`,
+            kind: kind === 'mission' ? 'fact' : 'note',
+            importance: kind === 'mission' ? 4 : 3,
+            source:
+              kind === 'mission'
+                ? `operator:mission:${input.missionId ?? 'manual'}`
+                : kind === 'agent'
+                  ? 'operator:agent:manual'
+                  : 'operator:note',
+          });
+    const note = listMemoryNotes(root).find(
+      (candidate) => candidate.id === retained.id,
+    );
+    if (!note) {
+      throw new Error('canonical memory projection unavailable');
+    }
+    return note;
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memorySearch, (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const root = workspaceRoot(event.sender);
+    const { root } = canonicalMemoryView(event.sender);
     const { query } = z.object({ query: z.string().max(512) }).parse(raw);
     return searchMemory(root, query);
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryBacklinks, (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const root = workspaceRoot(event.sender);
+    const { root } = canonicalMemoryView(event.sender);
     const { title } = z.object({ title: z.string().min(1).max(256) }).parse(raw);
     return backlinks(root, title);
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryComplete, (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const root = workspaceRoot(event.sender);
+    const { root } = canonicalMemoryView(event.sender);
     const { prefix } = z.object({ prefix: z.string().max(128) }).parse(raw);
     return wikilinkCompletions(root, prefix);
   });
@@ -477,7 +516,7 @@ export function registerProductWaveIpc(): void {
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.searchQuery, async (event, raw) => {
     requireFlag(FEATURE_FLAG_IDS.searchMixer, 'feature.search.mixer');
     // Single SearchMixer path (same as search-mixer:search) — always bind root.
-    const root = workspaceRoot(event.sender);
+    const { scope, root } = requireScopedRoot(event.sender);
     const input = z
       .object({
         text: z.string().max(512),
@@ -488,6 +527,7 @@ export function registerProductWaveIpc(): void {
       text: input.text,
       limit: input.limit ?? 30,
       projectRoot: root,
+      workspaceId: scope.projectId,
     });
   });
 

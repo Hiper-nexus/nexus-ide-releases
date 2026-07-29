@@ -67,7 +67,8 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toContain('QA sênior (reviewer');
     // A seção virou "Como conduzir": sequência numerada em vez de lista de proibições.
     expect(prompt).toContain('Como conduzir');
-    expect(prompt).toContain('nexus_mission_freeze_contract');
+    expect(prompt).toMatch(/PREVC paralelo/i);
+    expect(prompt).toMatch(/n[aã]o pare a miss[aã]o para rodar Doctor\/freeze/i);
     expect(prompt).toContain('nexus_task plan');
     expect(prompt).toContain('agentRef');
     expect(prompt).toContain('executionMode');
@@ -76,20 +77,15 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toMatch(/merge manual .* s[aã]o do main/i);
     expect(prompt).not.toContain('nexus_merge_task');
     expect(prompt).toContain('PREVC');
-    // PREVC degrada, nunca bloqueia: freeze é best-effort em segundo plano.
-    expect(prompt).toContain('Como conduzir');
-    // PREVC oportunista continua degradando em vez de bloquear.
-    expect(prompt).toMatch(/PREVC oportunista/i);
-    expect(prompt).toMatch(/siga e tente depois — nunca pare por isso/i);
-    expect(prompt).toMatch(/status=done quando houver receipts: com contrato congelado, PREVC completo/);
-    expect(prompt).toMatch(/sem ele, nota durável \(≥ 40 caracteres em note=…\) \+ worker registrado/);
+    // PREVC trabalha em paralelo e só barra a promoção final.
+    expect(prompt).toMatch(/garantias completas somente na promoção final/i);
+    expect(prompt).toMatch(/status=done somente após o main produzir PREVC completo/i);
     // Escalonamento novo: bloquear exige causa E tentativa registrada.
     expect(prompt).toMatch(/status=blocked exige a causa E o que você já tentou/);
     expect(prompt).toMatch(/status=failed quando a execução começou e terminou em erro/);
     expect(prompt).toMatch(/revis[aã]o independente/i);
     expect(prompt).toMatch(/mem[oó]ria dur[aá]vel/i);
-    // Doctor sob demanda passou a ser passo numerado no fluxo não-congelado.
-    expect(prompt).toMatch(/nexus_mission_freeze_contract/i);
+    expect(prompt).not.toContain('nexus_mission_freeze_contract');
   });
   it('keeps short-mission kickoffs lean: no goal restated as criterion, plan proportional', () => {
     const goal = 'Corrigir o botão de salvar no formulário de perfil';
@@ -109,7 +105,7 @@ describe('intent-first kickoff packing', () => {
     expect(prompt).toMatch(/proporcional ao objetivo/i);
   });
 
-  it('makes the Main-frozen guided PREVC stage a hard pre-dispatch gate', () => {
+  it('keeps a prepared guided PREVC contract as a promotion gate without blocking workers', () => {
     const prompt = buildIntentDispatchKickoffPrompt({
       squad,
       missionId: 'mission-guided-prevc',
@@ -120,12 +116,12 @@ describe('intent-first kickoff packing', () => {
       guidedPrevcRequired: true,
     });
 
-    expect(prompt).toContain('já congelou o contrato exato');
-    expect(prompt).toContain('nexus_workflow_prepare_execution');
-    expect(prompt).toContain('stage=execution');
-    expect(prompt).toMatch(/n[aã]o inicie worker fora do contrato/i);
-    expect(prompt).not.toMatch(/PREVC é best-effort/i);
-    expect(prompt).not.toMatch(/Sem contrato congelado, exige nota durável/i);
+    expect(prompt).toMatch(/PREVC já congelado/i);
+    expect(prompt).toMatch(/sem bloquear o início dos workers/i);
+    expect(prompt).toMatch(/continue a execução/i);
+    expect(prompt).toMatch(/antes de promover/i);
+    expect(prompt).not.toContain('nexus_workflow_prepare_execution');
+    expect(prompt).not.toMatch(/n[aã]o inicie worker/i);
   });
 
   it('keeps user-provided criteria verbatim', () => {
@@ -459,6 +455,106 @@ describe('intent-first arming dependencies', () => {
       missionId: 'mission-experimental',
     });
     expect(armMission).toHaveBeenCalledOnce();
+  });
+
+  it('arms a Kimi/custom PTY handoff Maestro in operator-choice without an MCP evidence gate', async () => {
+    const armMission = vi.fn(async () => ({ id: 'mission-kimi' }));
+    vi.stubGlobal('window', {
+      nexus: {
+        settings: {
+          orchGet: vi.fn(async () => ({
+            intentFirstMissionRuntimeV1: true,
+            squadCliPolicy: 'operator-choice',
+          })),
+        },
+        orch: { armMission },
+      },
+    });
+    const kimiSquad: Squad = {
+      ...squad,
+      agents: squad.agents.map((agent) =>
+        agent.category === 'orchestrator'
+          ? { ...agent, cli: 'kimi', model: 'kimi-k2.5' }
+          : agent,
+      ),
+    };
+
+    await expect(
+      launchSquadMission(kimiSquad, [
+        {
+          ...verifiedClaudeAdapter,
+          id: 'kimi',
+          label: 'Kimi',
+          orchestratorCapable: false,
+          orchestrationEvidence: 'unsupported',
+          taskHandoffCapable: true,
+          missionControlCapable: true,
+          capabilities: {
+            launchable: true,
+            promptInjectable: true,
+            statusObservable: true,
+            resumable: true,
+            autonomousReadOnly: false,
+            governedWriter: false,
+            verifiedMaestro: false,
+          },
+        },
+      ]),
+    ).resolves.toMatchObject({
+      ok: true,
+      armed: true,
+      missionId: 'mission-kimi',
+    });
+    expect(armMission).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the MCP evidence gate for a Kimi/custom Maestro in Hardened', async () => {
+    const armMission = vi.fn();
+    vi.stubGlobal('window', {
+      nexus: {
+        settings: {
+          orchGet: vi.fn(async () => ({
+            intentFirstMissionRuntimeV1: true,
+            squadCliPolicy: 'governed',
+          })),
+        },
+        orch: { armMission },
+      },
+    });
+    const kimiSquad: Squad = {
+      ...squad,
+      agents: squad.agents.map((agent) =>
+        agent.category === 'orchestrator'
+          ? { ...agent, cli: 'kimi', model: 'kimi-k2.5' }
+          : agent,
+      ),
+    };
+
+    await expect(
+      launchSquadMission(kimiSquad, [
+        {
+          ...verifiedClaudeAdapter,
+          id: 'kimi',
+          label: 'Kimi',
+          orchestratorCapable: false,
+          orchestrationEvidence: 'unsupported',
+          taskHandoffCapable: true,
+          capabilities: {
+            launchable: true,
+            promptInjectable: true,
+            statusObservable: true,
+            resumable: true,
+            autonomousReadOnly: false,
+            governedWriter: false,
+            verifiedMaestro: false,
+          },
+        },
+      ]),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/rota Nexus MCP/i),
+    });
+    expect(armMission).not.toHaveBeenCalled();
   });
 
   it('preflights the provider before authorizing dispatch', async () => {

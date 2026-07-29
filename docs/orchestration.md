@@ -68,32 +68,27 @@ Squads (timeline ao vivo, trilha de auditoria de handoffs, milestones do
 `nexus_todo_manager`, export/import de squads). A tarefa em andamento aparece
 como chip na barra.
 
-## Oh My Pi (omp) — cidadão de primeira classe
+## Runtime multi-CLI
 
-O adapter `omp` (Oh My Pi) entra na frota de três formas:
+As CLIs instaladas entram na frota pelo mesmo caminho observável:
 
-| Superfície | Comportamento |
-|---|---|
-| **Router** (`nexus_route_task` + scheduler) | `orch.ompParticipation`: `off` \| `fallback` \| `diversity` \| `prefer` (**default**). Prefer coloca omp primeiro (exceto security/critical). |
-| **Roster sticky** | Agente com `cli: omp` **permanece** omp no spawn mesmo se o Maestro passar outro `adapterId`. |
-| **Auto-spawn** | `orch.ompAutoSpawn` (**default true**): no primeiro worker **não-omp** de uma missão, o sistema spawna sozinho um “Oh My Pi · auto” (yolo auditado, sem UI). |
-| **Transporte** | `orch.ompMissionTransport` `auto` (default): tenta rpc-ui e cai para PTY. |
+- o roster aprovado fixa a CLI de cada agente; não há companion invisível nem
+  auto-spawn fora do plano;
+- workers são processos PTY main-owned, ligados à missão, pane, sessão,
+  worktree e incarnation exatos;
+- o router considera instalação, autenticação, modelo e capacidade de handoff;
+- escrita acontece no worktree da task, enquanto promoção ao branch de
+  integração permanece main-owned;
+- resultados chegam por HTTP MCP ou PTY-stream e só avançam a missão quando o
+  receipt físico corresponde à identidade selada.
 
-### RPC panel vs PTY
-
-- **Painel OMP · RPC** (barra): sessão manual/auto-start, badge ambient, toast de aprovação, host tools curadas com gate real.
-- **Mission worker rpc-ui**: `paneId` sintético `omp-rpc:<uuid>`, contado no FleetChip e no MissionRail; clique em missão só-omp abre o drawer OMP.
-- **PTY**: caminho com o conjunto completo de tools Nexus via inject MCP — preferível quando o worker precisa do toolset inteiro.
-
-### Settings (Orquestrador agêntico)
-
-- Participação na frota
-- Auto-iniciar OMP RPC ao abrir o painel
-- Transporte omp em missões
-
-### Host tools do rpc-ui (gate, não bypass)
-
-`nexus_pane_list`, `nexus_mission_get/list`, `nexus_workflow_get`, `nexus_handoff_list/submit`, `nexus_route_task`, `nexus_file_read/search/write`, `nexus_git_status/diff/log/add/commit`.
+No modo Autopiloto, um adapter PTY com launch, prompt injection e observação de
+estado também pode atuar como Maestro sem suporte MCP nativo. O terminal emite
+`### NEXUS_ACTION v1 <nonce>` seguido de uma ação estruturada; o Main valida
+sessão, missão, papel, contrato e revisão atuais antes de encaminhar a chamada
+ao mesmo dispatcher auditado. O resultado deduplicado volta ao terminal como
+`[NEXUS_RESULT]`. O modo Hardened não habilita esse canal e mantém a fronteira
+MCP/native.
 
 ## Route pipeline (x-algorithm patterns)
 
@@ -102,7 +97,7 @@ Task routing follows a candidate-pipeline mental model:
 1. **Source** — adapters installed (hot-cached ~5s, Thunder-lite)
 2. **Hydrate** — models + catalog quality
 3. **Filter** — capability table + blocked models
-4. **Score** — multi-axis (table rank, quality, cost, mission diversity, omp prefer, circuit)
+4. **Score** — multi-axis (table rank, quality, cost, mission diversity, circuit)
 5. **Select** — top-1 + alternatives; `reserveClaude` for workers
 6. **Side effects** — `nexus_route_log`, circuit success/failure on spawn
 

@@ -203,7 +203,7 @@ describe('delegation supervisor policy', () => {
     ).toBe(0);
   });
 
-  it('retries once and never loops', () => {
+  it('records two bounded recoveries without turning the technical stall into a block', () => {
     const dispatchAt = dispatchedEmpty.intentContract!.dispatchedAt!;
     const first = recovery(
       dispatchAt + DELEGATION_SLA_MS,
@@ -233,9 +233,15 @@ describe('delegation supervisor policy', () => {
         atRetry + DELEGATION_RETRY_MS * 10,
       ),
     ).toBe(0);
+    expect(
+      isDelegationSupervisable({
+        ...progress,
+        recoveries: [first, second],
+      }),
+    ).toBe(true);
   });
 
-  it('does not supervise a mission already blocked after stage-2', () => {
+  it('does not reinterpret an operator-blocked mission as a technical recovery', () => {
     expect(
       isDelegationSupervisable({
         mission: { ...dispatchedEmpty, status: 'blocked' },

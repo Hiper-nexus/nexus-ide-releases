@@ -78,7 +78,7 @@
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "mcpAutoload": false,
-    "nexusMcp": "agy"
+    "nexusMcp": "none"
   },
   "control": {
     "permission": {

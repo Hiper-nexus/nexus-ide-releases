@@ -1,8 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  configureWorkspaceMemory,
+  disposeWorkspaceMemoryStores,
+  getWorkspaceMemoryStore,
   MAX_MEMORY_CONTENT_BYTES,
   resolveWorkspaceMemoryPaths,
   WorkspaceMemoryStore,
@@ -11,12 +15,18 @@ import {
 const dirs: string[] = [];
 const stores: WorkspaceMemoryStore[] = [];
 
-function makeStore(now?: () => number): WorkspaceMemoryStore {
+function makeStore(
+  now?: () => number,
+  options: { readonly projectionRoot?: string } = {},
+): WorkspaceMemoryStore {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-'));
   dirs.push(root);
   const store = new WorkspaceMemoryStore({
     workspaceDbPath: path.join(root, 'workspace', 'memory.sqlite3'),
     globalDbPath: path.join(root, 'memory-global.sqlite3'),
+    ...(options.projectionRoot
+      ? { projectionRoot: options.projectionRoot }
+      : {}),
     ...(now ? { now } : {}),
   });
   stores.push(store);
@@ -24,6 +34,7 @@ function makeStore(now?: () => number): WorkspaceMemoryStore {
 }
 
 afterEach(() => {
+  disposeWorkspaceMemoryStores();
   for (const store of stores.splice(0)) {
     try {
       store.close();
@@ -121,6 +132,142 @@ describe('workspace memory engine (FTS5)', () => {
     expect(store.forget(id)).toBe(false);
   });
 
+  it('projeta a fonte SQLite em Markdown determinístico e remove ao esquecer', () => {
+    const projectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'nexus-wm-projection-'),
+    );
+    dirs.push(projectRoot);
+    const store = makeStore(undefined, { projectionRoot: projectRoot });
+
+    const retained = store.retain({
+      content: '# Regra de arquitetura\n\nNão duplicar serviços de domínio.',
+      kind: 'decision',
+      importance: 5,
+      source: 'operator:decision',
+    });
+    const projectionPath = path.join(
+      projectRoot,
+      '.nexus-memory',
+      `${retained.id}.md`,
+    );
+
+    expect(fs.readFileSync(projectionPath, 'utf8')).toMatch(
+      /canonical: sqlite-fts5/,
+    );
+    expect(fs.readFileSync(projectionPath, 'utf8')).toContain(
+      'Não duplicar serviços de domínio.',
+    );
+
+    // A projeção nunca vira segunda autoridade: uma nova sincronização
+    // sobrescreve edição manual com o conteúdo canônico do SQLite.
+    fs.writeFileSync(projectionPath, '# conteúdo adulterado');
+    store.syncProjections();
+    expect(fs.readFileSync(projectionPath, 'utf8')).not.toContain(
+      'conteúdo adulterado',
+    );
+
+    expect(store.forget(retained.id)).toBe(true);
+    expect(fs.existsSync(projectionPath)).toBe(false);
+  });
+
+  it('não projeta memórias globais em um workspace específico', () => {
+    const projectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'nexus-wm-global-projection-'),
+    );
+    dirs.push(projectRoot);
+    const store = makeStore(undefined, { projectionRoot: projectRoot });
+    const retained = store.retain({
+      content: 'Preferência global do operador',
+      kind: 'preference',
+      scope: 'global',
+    });
+
+    expect(
+      fs.existsSync(
+        path.join(projectRoot, '.nexus-memory', `${retained.id}.md`),
+      ),
+    ).toBe(false);
+  });
+
+  it('projeta por padrão fora do checkout e só exporta para ele explicitamente', () => {
+    const baseDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'nexus-wm-runtime-base-'),
+    );
+    const projectRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'nexus-wm-clean-checkout-'),
+    );
+    dirs.push(baseDir, projectRoot);
+    execFileSync('git', ['init', '-q'], { cwd: projectRoot });
+    configureWorkspaceMemory({ baseDir });
+    const scope = {
+      version: 1 as const,
+      installationId: 'installation-a',
+      projectId: 'project-clean-checkout',
+      checkoutId: 'checkout-a',
+      rootRealPath: projectRoot,
+      identitySource: 'manifest' as const,
+    };
+
+    const store = getWorkspaceMemoryStore(scope);
+    const retained = store.retain({
+      content: '# Decisão\n\nUsar uma única camada de domínio.',
+      kind: 'decision',
+      source: 'trusted:operator-decision',
+    });
+
+    expect(fs.existsSync(path.join(projectRoot, '.nexus-memory'))).toBe(false);
+    expect(
+      execFileSync('git', ['status', '--porcelain'], {
+        cwd: projectRoot,
+        encoding: 'utf8',
+      }),
+    ).toBe('');
+    expect(store.projectionRoot).toContain(path.join(baseDir, 'projections'));
+    expect(
+      fs.existsSync(
+        path.join(
+          store.projectionRoot,
+          '.nexus-memory',
+          `${retained.id}.md`,
+        ),
+      ),
+    ).toBe(true);
+
+    const exported = store.exportProjectionsToWorkspace(projectRoot);
+    expect(exported).toBe(
+      path.join(fs.realpathSync(projectRoot), '.nexus-memory'),
+    );
+    expect(
+      fs.existsSync(path.join(exported, `${retained.id}.md`)),
+    ).toBe(true);
+    expect(
+      execFileSync('git', ['status', '--porcelain'], {
+        cwd: projectRoot,
+        encoding: 'utf8',
+      }),
+    ).toContain('?? .nexus-memory/');
+
+    const retainedAfterExport = store.retain({
+      content: 'Novo fato automático depois do snapshot explícito.',
+      kind: 'fact',
+      source: 'trusted:accepted-handoff',
+    });
+    expect(
+      fs.existsSync(
+        path.join(exported, `${retainedAfterExport.id}.md`),
+      ),
+    ).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(
+          store.projectionRoot,
+          '.nexus-memory',
+          `${retainedAfterExport.id}.md`,
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it('retain com supersedes substitui a memória antiga no recall', () => {
     const store = makeStore();
     const old = store.retain({ content: 'staging database lives on host alpha' });
@@ -131,6 +278,100 @@ describe('workspace memory engine (FTS5)', () => {
     const hits = store.recall({ query: 'staging database host' });
     expect(hits.length).toBe(1);
     expect(hits[0].content).toContain('bravo');
+  });
+
+  it('agent-authored só supersede memória ativa da mesma origem e escopo', () => {
+    const store = makeStore();
+    const trusted = store.retain({
+      content: 'PREVC must stay enabled before final promotion',
+      source: 'trusted:architecture-rule',
+      kind: 'decision',
+    });
+    const owned = store.retainAgentAuthored(
+      { content: 'worker hypothesis alpha' },
+      { source: `agent-authored:mission:${'a'.repeat(64)}` },
+    );
+
+    expect(() =>
+      store.retainAgentAuthored(
+        {
+          content: 'poisoned replacement for trusted authority',
+          supersedes: trusted.id,
+        },
+        { source: `agent-authored:mission:${'a'.repeat(64)}` },
+      ),
+    ).toThrow(/same agent authority and scope/);
+    expect(() =>
+      store.retainAgentAuthored(
+        {
+          content: 'foreign worker replacement',
+          supersedes: owned.id,
+        },
+        { source: `agent-authored:mission:${'b'.repeat(64)}` },
+      ),
+    ).toThrow(/same agent authority and scope/);
+    expect(() =>
+      store.retainAgentAuthored(
+        {
+          content: 'cross-scope replacement',
+          scope: 'global',
+          supersedes: owned.id,
+        },
+        { source: `agent-authored:mission:${'a'.repeat(64)}` },
+      ),
+    ).toThrow(/same agent authority and scope/);
+
+    store.retainAgentAuthored(
+      {
+        content: 'worker hypothesis corrected',
+        supersedes: owned.id,
+      },
+      { source: `agent-authored:mission:${'a'.repeat(64)}` },
+    );
+
+    expect(store.recall({ query: 'PREVC final promotion' })).toHaveLength(1);
+    const agentHits = store.recall({ query: 'worker hypothesis' });
+    expect(agentHits).toHaveLength(1);
+    expect(agentHits[0].content).toContain('corrected');
+  });
+
+  it('agent-authored forget cannot tombstone trusted or foreign provenance', () => {
+    const store = makeStore();
+    const sourceA = `agent-authored:pane:${'a'.repeat(64)}`;
+    const sourceB = `agent-authored:pane:${'b'.repeat(64)}`;
+    const trusted = store.retain({
+      content: 'trusted release decision',
+      source: 'trusted:operator-decision',
+    });
+    const owned = store.retainAgentAuthored(
+      { content: 'temporary worker note' },
+      { source: sourceA },
+    );
+
+    expect(
+      store.forgetAgentAuthored({
+        id: trusted.id,
+        scope: 'workspace',
+        source: sourceA,
+      }),
+    ).toBe(false);
+    expect(
+      store.forgetAgentAuthored({
+        id: owned.id,
+        scope: 'workspace',
+        source: sourceB,
+      }),
+    ).toBe(false);
+    expect(
+      store.forgetAgentAuthored({
+        id: owned.id,
+        scope: 'workspace',
+        source: sourceA,
+      }),
+    ).toBe(true);
+
+    expect(store.recall({ query: 'trusted release decision' })).toHaveLength(1);
+    expect(store.recall({ query: 'temporary worker note' })).toEqual([]);
   });
 
   it('escopa workspace vs global: recall consulta workspace primeiro e completa com global', () => {
@@ -202,5 +443,8 @@ describe('workspace memory engine (FTS5)', () => {
     expect(paths.workspaceDbPath).not.toContain('proj-a');
     expect(paths.workspaceDbPath).not.toBe(other.workspaceDbPath);
     expect(paths.globalDbPath).toBe(other.globalDbPath);
+    expect(paths.projectionRoot).not.toContain('proj-a');
+    expect(paths.projectionRoot).not.toBe(other.projectionRoot);
+    expect(paths.projectionRoot).toContain(path.join('base', 'projections'));
   });
 });

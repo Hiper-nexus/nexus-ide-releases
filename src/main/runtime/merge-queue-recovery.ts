@@ -15,6 +15,8 @@ import {
   type RetryMergeInput,
 } from './merge-queue-contract';
 import { cloneMergeQueueEntry as cloneEntry } from './merge-queue-state';
+import { rollbackIntegrationCheckout } from './merge-integration-rollback';
+import { classifyOperationalFailure } from './operational-failure-policy';
 import {
   type MergeQueueClaim,
   MergeQueueStateController,
@@ -71,6 +73,23 @@ function errorName(error: unknown): string {
   );
 }
 
+function interruptedMergeDisposition(
+  status: MergeQueueEntry['status'],
+  integrationState: MergeQueueIntegrationState,
+): 'retryable' | 'terminal' {
+  if (integrationState === 'unknown') return 'terminal';
+  if (status === 'candidate-validating') {
+    return integrationState === 'not-integrated' ? 'retryable' : 'terminal';
+  }
+  if (status === 'integrating') return 'retryable';
+  if (status === 'post-validating' || status === 'finalizing') {
+    return integrationState === 'candidate-integrated'
+      ? 'retryable'
+      : 'terminal';
+  }
+  return 'terminal';
+}
+
 export class MergeQueueRecovery {
   readonly #candidatesRoot: string;
   readonly #state: MergeQueueStateController;
@@ -104,6 +123,10 @@ export class MergeQueueRecovery {
       throw new MergeQueueStateError('active merge queue entry disappeared');
     }
     const integrationState = this.#integrationState(scope, entry);
+    const disposition = interruptedMergeDisposition(
+      entry.status,
+      integrationState,
+    );
     const now = this.#timestamp();
     const reason = boundedText(
       `merge attempt ${entry.attempt} was interrupted during ${entry.status}; ` +
@@ -116,6 +139,7 @@ export class MergeQueueRecovery {
       errorName: 'MergeInterruptedError',
       reason,
       blockedAt: now,
+      disposition,
     });
     this.#state.mutate(scopeKey, (state, nextRevision) => {
       const current = state.entries.find(
@@ -166,18 +190,20 @@ export class MergeQueueRecovery {
         ),
       };
     });
-    try {
-      this.#worktrees.markFailed(
-        scope,
-        entry.missionId,
-        entry.taskId,
-        reason,
-        integrationState === 'candidate-integrated'
-          ? entry.candidateSha
-          : undefined,
-      );
-    } catch {
-      // The durable queue block remains authoritative across store boundaries.
+    if (disposition === 'terminal') {
+      try {
+        this.#worktrees.markFailed(
+          scope,
+          entry.missionId,
+          entry.taskId,
+          reason,
+          integrationState === 'candidate-integrated'
+            ? entry.candidateSha
+            : undefined,
+        );
+      } catch {
+        // The durable queue block remains authoritative across store boundaries.
+      }
     }
     this.#cleanupCandidate(scope, scopeKey, entry);
     return Object.freeze({
@@ -389,6 +415,12 @@ export class MergeQueueRecovery {
         evidenceIds,
       });
       this.#assertCurrentAuthority(input);
+      this.#state.complete(
+        attempt.claimed,
+        candidateSha,
+        evidenceIds,
+        this.#timestamp(),
+      );
       const finalization = input.finalize?.(result);
       if (
         finalization &&
@@ -396,36 +428,55 @@ export class MergeQueueRecovery {
       ) {
         await finalization;
       }
-      this.#assertCurrentAuthority(input);
-      this.#state.complete(
-        attempt.claimed,
-        candidateSha,
-        evidenceIds,
-        this.#timestamp(),
-      );
       return result;
-    } catch (error) {
-      try {
-        this.#worktrees.markFailed(
-          input.scope,
-          input.missionId,
-          input.taskId,
-          errorMessage(error),
-          candidateSha,
-        );
-      } catch {
-        // Queue persistence below remains the fail-closed authority.
+    } catch (caught) {
+      let error = caught;
+      let integrationRolledBack = false;
+      const ownsAttempt = this.#ownsRollbackAuthority(attempt.claimed);
+      if (ownsAttempt) {
+        try {
+          rollbackIntegrationCheckout({
+            scope: input.scope,
+            missionId: input.missionId,
+            taskId: input.taskId,
+            taskHeadSha,
+            integrationBaseSha,
+            candidateSha,
+            record: attempt.prepared.record,
+            git: this.#git,
+            worktrees: this.#worktrees,
+          });
+          integrationRolledBack = true;
+        } catch (rollbackError) {
+          error = rollbackError;
+        }
+        const disposition = classifyOperationalFailure(error);
+        if (disposition === 'terminal') {
+          try {
+            this.#worktrees.markFailed(
+              input.scope,
+              input.missionId,
+              input.taskId,
+              errorMessage(error),
+              integrationRolledBack ? undefined : candidateSha,
+            );
+          } catch {
+            // Queue persistence below remains the fail-closed authority.
+          }
+        }
+        this.#state.block(attempt.claimed, {
+          errorName: errorName(error),
+          reason: errorMessage(error),
+          now: this.#timestamp(),
+          disposition,
+          integratedSha: integrationRolledBack ? undefined : candidateSha,
+          integrationRolledBack,
+          rejectedEvidenceIds:
+            error instanceof MergeValidationRejectedError
+              ? error.evidenceIds
+              : [],
+        });
       }
-      this.#state.block(attempt.claimed, {
-        errorName: errorName(error),
-        reason: errorMessage(error),
-        now: this.#timestamp(),
-        integratedSha: candidateSha,
-        rejectedEvidenceIds:
-          error instanceof MergeValidationRejectedError
-            ? error.evidenceIds
-            : [],
-      });
       throw error;
     }
   }
@@ -437,6 +488,17 @@ export class MergeQueueRecovery {
     } catch (error) {
       throw new MergeAuthorityRevokedError(error);
     }
+  }
+
+  #ownsRollbackAuthority(claimed: MergeQueueClaim): boolean {
+    const snapshot = this.#state.snapshot(claimed.scopeKey);
+    const current = snapshot.entries.find(
+      (entry) => entry.id === claimed.entry.id,
+    );
+    return (
+      current?.attempt === claimed.entry.attempt &&
+      snapshot.activeTaskKey === claimed.entry.taskKey
+    );
   }
 
   #acknowledgement(input: RetryMergeInput): {

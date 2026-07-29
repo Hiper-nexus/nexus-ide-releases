@@ -6,7 +6,7 @@ import { supportsAdvisoryParticipationCli } from '../../shared/mission-advisory'
  * Kernel-enforced read-only confinement for advisory CLIs.
  *
  * Codex and Grok ship a read-only profile their own binary enforces, so the
- * scheduler can trust them mechanically. Kimi, Agy, OpenCode, OMP and Claude do
+ * scheduler can trust them mechanically. Kimi, Agy, OpenCode and Claude do
  * not: asking them to stay read-only is a prompt-level promise, which is not a
  * boundary. Nexus therefore stops relying on the provider and applies ITS OWN
  * macOS Seatbelt profile around the process — the same one that already confines

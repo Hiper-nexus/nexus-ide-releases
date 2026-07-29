@@ -10,18 +10,18 @@ const RESTORE_OPTIONS: {
 }[] = [
   {
     value: 'ask',
-    label: 'Perguntar (recomendado)',
-    hint: 'Pausa agentes e pede confirmação — igual em Mac, Linux e Windows.',
+    label: 'Perguntar para agentes avulsos',
+    hint: 'Missões retomam sozinhas; só terminais de agente abertos fora delas pedem confirmação.',
   },
   {
     value: 'pause',
-    label: 'Sempre pausar',
-    hint: 'Nunca reinicia sozinho; você retoma no rail de missões.',
+    label: 'Pausar agentes avulsos',
+    hint: 'Mantém terminais independentes parados, sem interromper o autopiloto de missões.',
   },
   {
     value: 'resume',
-    label: 'Retomar automaticamente',
-    hint: 'Comportamento antigo: agentes voltam a trabalhar sem diálogo.',
+    label: 'Retomar tudo automaticamente',
+    hint: 'Agentes avulsos também voltam a trabalhar sem diálogo.',
   },
 ];
 
@@ -147,9 +147,9 @@ export function MissionDriverSettings() {
         </span>
       </div>
       <p className="settings-section-desc" style={{ marginBottom: 12 }}>
-        Ao abrir o app ou um workspace com missões salvas, o Nexus usa a mesma
-        regra em <strong>macOS, Linux e Windows</strong> — sem auto-trabalho
-        silencioso por padrão.
+        Missões em andamento retomam automaticamente pela autoridade persistida
+        do Main em <strong>macOS, Linux e Windows</strong>. Esta preferência
+        controla somente agentes avulsos.
       </p>
       <div className="settings-toggle-list" role="radiogroup" aria-label="Política de retoma">
         {RESTORE_OPTIONS.map((opt) => (

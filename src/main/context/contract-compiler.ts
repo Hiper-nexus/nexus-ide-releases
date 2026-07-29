@@ -200,9 +200,9 @@ export class ContractCompilationError extends Error {
 
 const RISK_ORDER: readonly MissionRisk[] = ['low', 'medium', 'high', 'critical'];
 const CRITICAL_SIGNAL =
-  /\b(payment|payments|billing|charge|refund|tenant[- ]?isolation|\brls\b|secret|credential|license|updater?|policy engine)\b/i;
+  /\b(payment|payments|pagamentos?|billing|charges?|cobrancas?|faturamento|refunds?|reembolsos?|estornos?|tenant[- ]?isolation|isolamento (?:de )?(?:tenant|inquilino)|rls|secrets?|segredos?|credentials?|credencia(?:l|is)|licenses?|licencas?|updaters?|atualizador(?:es)?|policy engine|motor de politica)\b/i;
 const HIGH_SIGNAL =
-  /\b(auth|oauth|session|permission|authorization|migration|schema|database|concurr|race|\bipc\b|network|webhook|queue|delete|remov|security|encryption|sandbox)\b/i;
+  /\b(auth|autenticacao|oauth|sessions?|sessoes?|permissions?|permissoes?|authorization|autorizacao|migrations?|migracoes?|schemas?|esquemas?|databases?|bancos? de dados|concurr\w*|concorrencia|races?|condicao de corrida|ipc|networks?|redes?|webhooks?|queues?|filas?|delet\w*|exclu\w*|apag\w*|remov\w*|security|seguranca|encryption|criptografia|sandbox)\b/i;
 const UI_SIGNAL =
   /\b(landing|website|frontend|interface|\bui\b|\bux\b|design|responsive|accessibility|acessibilidade|page|página|pagina|dashboard|mobile|desktop)\b/i;
 
@@ -248,7 +248,11 @@ export function classifyMissionRisk(input: {
     ...input.riskHints,
     ...input.impactedDomains,
     ...input.acceptanceCriteria.map((criterion) => criterion.statement),
-  ].join('\n');
+  ]
+    .join('\n')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
   let risk: MissionRisk = 'medium';
   if (input.impactedDomains.length === 0 && input.acceptanceCriteria.length === 1) {
     risk = 'low';
@@ -357,31 +361,28 @@ export function compileMissionContract(
       `blocking context conflict: ${sortedUnique(context.blockingConflictIds).join(', ')}`,
     );
   }
-  // An unregistered reference is missing context, not a reason to refuse the
-  // mission. The compiler proposing these is a model: it invents plausible
-  // invariant/sensor ids, and a single invented one used to kill the whole
-  // mission before any provider ran. Dropping it degrades the context pack —
-  // the mission still runs, just without that fact — which is the behaviour
-  // the reviewer stage is there to catch.
+  // Explicit requirements are contract authority. An unregistered reference
+  // is allowed to enter the contract so execution can continue, but remains
+  // unresolved and therefore cannot produce a false-green final promotion.
   const invariantRefs = sortedUnique([
     ...proposal.businessInvariantRefs,
     ...proposal.acceptanceCriteria.flatMap((criterion) => criterion.invariantRefs),
-  ]).filter((ref) => context.invariantRefs.has(ref));
+  ]);
   const uiCorpus = [
     proposal.goal,
     ...proposal.impactedDomains,
     ...proposal.acceptanceCriteria.map((criterion) => criterion.statement),
   ].join('\n');
-  // `design-system` is auto-injected for any UI-ish goal. Requiring it to be
-  // registered meant every UI mission in a project without that sensor died at
-  // compile time — an auto-added requirement the operator never asked for and
-  // could not see. Unknown sensors are dropped for the same reason as
-  // invariants above.
+  // `design-system` is only an advisory compiler suggestion, so it is injected
+  // when available. Unlike explicit requested sensors, an unavailable
+  // suggestion must not manufacture a blocking requirement.
   const requiredSensors = sortedUnique([
     ...proposal.requestedSensors,
     ...proposal.acceptanceCriteria.flatMap((criterion) => criterion.requiredSensorIds),
-    ...(UI_SIGNAL.test(uiCorpus) ? ['design-system'] : []),
-  ]).filter((sensorId) => context.availableSensorIds.has(sensorId));
+    ...(UI_SIGNAL.test(uiCorpus) && context.availableSensorIds.has('design-system')
+      ? ['design-system']
+      : []),
+  ]);
   if (issues.length > 0) throw new ContractCompilationError(issues);
 
   const acceptanceCriteria = [...proposal.acceptanceCriteria]

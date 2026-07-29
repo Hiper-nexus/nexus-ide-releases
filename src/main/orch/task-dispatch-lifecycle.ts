@@ -201,30 +201,31 @@ export function prepareTaskDispatchLifecycle(
 }
 
 /**
- * Boot/tick recovery. Exact live sessions are adopted by renewing their lease;
- * every expired ambiguous effect is blocked with one CTA and is never respawned.
+ * Boot/tick recovery. Exact live sessions are adopted by renewing their lease.
+ * A missing bound runtime or an expired ambiguous pre-bind effect returns to
+ * the scheduler with bounded backoff; neither condition blocks the mission.
  */
 export async function reconcileTaskDispatchLifecycle(
   at = now(),
 ): Promise<void> {
   for (const suite of suites.values()) {
     const active = suite.taskDispatches.list().filter((dispatch) =>
-      ['claimed', 'routed', 'spawning', 'running'].includes(dispatch.state) &&
-      dispatch.leaseExpiresAt < at,
+      ['claimed', 'routed', 'spawning', 'running'].includes(dispatch.state),
     );
     for (const dispatch of active) {
       const live = dispatch.sessionId
         ? getAgentSessionInfo(dispatch.sessionId) ??
           getExternalWorkerSessionInfo(dispatch.sessionId)
         : null;
-      if (
+      const hasExactLiveRuntime =
         live &&
         live.role === 'worker' &&
         live.missionId === dispatch.missionId &&
         Boolean(dispatch.workerIncarnationId) &&
         live.workerIncarnationId === dispatch.workerIncarnationId &&
-        sameCoordinates(live.scope, suite.scope)
-      ) {
+        sameCoordinates(live.scope, suite.scope);
+      if (hasExactLiveRuntime) {
+        if (dispatch.leaseExpiresAt >= at) continue;
         try {
           suite.taskDispatches.heartbeat({
             sessionId: dispatch.sessionId!,
@@ -238,17 +239,27 @@ export async function reconcileTaskDispatchLifecycle(
         } catch (error) {
           console.warn('[task-dispatch-lifecycle] live adoption failed:', error);
         }
+        // Physical liveness is stronger than an expired durable lease. A
+        // transient SQLite failure must never convert a known-live worker into
+        // a retryable row and allow a duplicate process.
+        continue;
       }
+      const hasMissingBoundRuntime =
+        dispatch.state === 'running' &&
+        Boolean(dispatch.sessionId) &&
+        !hasExactLiveRuntime;
+      const hasExpiredAmbiguousEffect = dispatch.leaseExpiresAt < at;
+      if (!hasMissingBoundRuntime && !hasExpiredAmbiguousEffect) continue;
       try {
-        suite.taskDispatches.blockExpired({
+        suite.taskDispatches.requeueMissingRuntime({
           taskId: dispatch.taskId,
           revision: dispatch.revision,
-          reason:
-            'O Nexus reiniciou ou perdeu o worker antes de provar qual pane ' +
-            'recebeu esta tarefa. Nenhum worker substituto foi criado.',
         });
       } catch (error) {
-        console.warn('[task-dispatch-lifecycle] expired dispatch reconcile failed:', error);
+        console.warn(
+          '[task-dispatch-lifecycle] missing runtime reconcile failed:',
+          error,
+        );
       }
     }
     await retireTerminalWorkers(suite);

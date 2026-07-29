@@ -107,7 +107,14 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
     write(root, '.gemini/cache/generated.ts', 'export const noise = 1;\n');
     write(root, '.overclock-app/panes.json', '{}\n');
     write(root, '.worktrees/old/package.json', '{"name":"old"}\n');
+    write(root, 'worktrees/old/package.json', '{"name":"old"}\n');
     write(root, '.vite/cache/generated.js', 'module.exports = {};\n');
+    write(root, 'node_modules/pkg/generated.ts', 'export const noise = 1;\n');
+    write(root, 'packages/demo/node_modules/pkg/generated.ts', 'export const noise = 1;\n');
+    write(root, 'dist/generated.ts', 'export const noise = 1;\n');
+    write(root, 'packages/demo/dist/generated.ts', 'export const noise = 1;\n');
+    write(root, 'build/generated.ts', 'export const noise = 1;\n');
+    write(root, 'out/generated.ts', 'export const noise = 1;\n');
     write(root, 'graphify-out/generated.ts', 'export const noise = 1;\n');
     write(root, 'release-assets/generated.js', 'module.exports = {};\n');
 
@@ -122,7 +129,12 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
       '.gemini/',
       '.overclock-app/',
       '.worktrees/',
+      'worktrees/',
       '.vite/',
+      'node_modules/',
+      'dist/',
+      'build/',
+      'out/',
       'graphify-out/',
       'release-assets/',
     ]) {
@@ -131,6 +143,10 @@ describe('orientation import graph + blast radius + bootstrap (P1–P4)', () => 
         `${excluded} leaked into orientation`,
       ).toBe(false);
     }
+    expect(
+      walk.files.some((file) =>
+        /(?:^|\/)(?:node_modules|dist|build|out)\//.test(file.relativePath)),
+    ).toBe(false);
     const graph = buildOrientationImportGraph(scope, walk, DEFAULT_ORIENTATION_LIMITS);
     expect(graph.graph.edgeCount).toBeGreaterThanOrEqual(2);
     expect(graph.graph.mode).toBe('imports');

@@ -9,7 +9,10 @@ import { compileIntentContract, hasCurrentDispatchAuthority } from '../../shared
 import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionStore } from './mission-store';
 import { createScopedTaskStore } from './task-store';
-import { createTaskDispatchStore } from './task-dispatch-store';
+import {
+  createTaskDispatchStore,
+  TASK_DISPATCH_QUALITY_REPAIR_MARKER,
+} from './task-dispatch-store';
 import { EMPTY_GIT_DIFF_SHA256 } from './task-dispatch-codec';
 import {
   TASK_DISPATCH_BLOCK_MARKER,
@@ -17,6 +20,10 @@ import {
 } from './task-dispatch-persistence';
 import { createScopedHandoffStore } from './handoff-store';
 import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
+import { compileMissionContract } from '../context/contract-compiler';
+import { createContextWorkflowStore } from '../context/context-workflow-store';
+import { createWorkflowState } from '../context/prevc-engine';
+import { ReviewCouncil } from '../context/review-council';
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -56,7 +63,7 @@ function insertPhysicalHandoffAuthority(input: {
   readonly handoffId: string;
   readonly sessionId: string;
   readonly workerIncarnationId: string;
-  readonly source?: 'http-mcp' | 'omp-rpc-stdio';
+  readonly source?: 'http-mcp' | 'pty-stream';
   readonly worktreeHeadSha?: string;
   readonly receiptId?: string;
 }): string {
@@ -107,6 +114,72 @@ function insertPhysicalHandoffAuthority(input: {
     handoff.created_at,
   );
   return receiptId;
+}
+
+function seedIntegratedQualityAuthority(input: {
+  readonly runtime: ProjectRuntimeManager;
+  readonly scope: ReturnType<typeof testProjectScope>;
+  readonly missionId: string;
+  readonly headSha: string;
+  readonly label: string;
+}): readonly string[] {
+  const qualityContract = compileMissionContract(
+    {
+      schemaVersion: 1,
+      scope: input.scope,
+      missionId: input.missionId,
+      baseCommit: input.headSha,
+      contextRevision: createHash('sha256')
+        .update(`context:${input.label}`)
+        .digest('hex'),
+      goal: `Validar integração ${input.label}`,
+      acceptanceCriteria: [
+        {
+          id: 'quality-green',
+          statement: 'A revisão independente aprovou o candidato integrado.',
+        },
+      ],
+    },
+    {
+      invariantRefs: new Set(),
+      availableSensorIds: new Set(),
+      blockingConflictIds: [],
+    },
+  );
+  const binding = {
+    projectId: input.scope.projectId,
+    checkoutId: input.scope.checkoutId,
+    missionId: input.missionId,
+    contractHash: qualityContract.contractHash,
+    contextHash: qualityContract.contextRevision,
+    baseSha: input.headSha,
+    headSha: input.headSha,
+    diffHash: EMPTY_GIT_DIFF_SHA256,
+  };
+  const store = createContextWorkflowStore(input.runtime, input.scope);
+  store.freeze(
+    qualityContract,
+    createWorkflowState(qualityContract.risk, binding),
+    {
+      id: `author-${input.label}`,
+      sessionId: `session-author-${input.label}`,
+      provider: 'codex',
+    },
+  );
+  const reviewId = `integrated-${input.label}`;
+  const review = new ReviewCouncil(qualityContract.risk, binding).submit({
+    reviewId,
+    reviewerId: `reviewer-${input.label}`,
+    reviewerSessionId: `session-reviewer-${input.label}`,
+    reviewerProvider: 'codex',
+    authorId: `author-${input.label}`,
+    authorSessionId: `session-author-${input.label}`,
+    authorProvider: 'codex',
+    binding,
+    findings: [],
+  });
+  store.recordMergeReviewReport(review);
+  return Object.freeze([`review:${reviewId}`]);
 }
 
 function mergingDispatchFixture() {
@@ -391,14 +464,22 @@ function verifiedPlanFixture(
     workerIncarnationId: claim.workerIncarnationId,
     handoffId: handoff.id,
   });
+  const integratedHeadSha = repositoryHead();
+  const qualityEvidenceIds = seedIntegratedQualityAuthority({
+    runtime,
+    scope,
+    missionId: mission.id,
+    headSha: integratedHeadSha,
+    label,
+  });
   dispatches.completeByCoordinator({
     taskId: task!.id,
     revision: ready.revision,
     receipt: {
       kind: 'worktree_integrated',
-      reference: repositoryHead(),
+      reference: integratedHeadSha,
       completedAt: Date.now(),
-      evidenceIds: ['evidence-golden'],
+      evidenceIds: [...qualityEvidenceIds],
     },
   });
   const attempt = handoffs.reserveDeliveryAttempt({
@@ -463,6 +544,84 @@ function guidedNoChangeDispatchFixture(
     intentContract: contract,
   });
   missions.setStatus(mission.id, 'running');
+  const qualityHeadSha = repositoryHead();
+  const qualityDiffHash = EMPTY_GIT_DIFF_SHA256;
+  const qualityContract = compileMissionContract(
+    {
+      schemaVersion: 1,
+      scope,
+      missionId: mission.id,
+      baseCommit: qualityHeadSha,
+      contextRevision: 'c'.repeat(64),
+      goal: 'Validar entrega local',
+      acceptanceCriteria: [
+        {
+          id: 'quality-green',
+          statement: 'O typecheck e a revisão independente permanecem verdes.',
+          requiredSensorIds: ['typecheck'],
+        },
+      ],
+    },
+    {
+      invariantRefs: new Set(),
+      availableSensorIds: new Set(['typecheck']),
+      blockingConflictIds: [],
+    },
+  );
+  const qualityBinding = {
+    projectId: scope.projectId,
+    checkoutId: scope.checkoutId,
+    missionId: mission.id,
+    contractHash: qualityContract.contractHash,
+    contextHash: qualityContract.contextRevision,
+    baseSha: qualityHeadSha,
+    headSha: qualityHeadSha,
+    diffHash: qualityDiffHash,
+  };
+  const qualityStore = createContextWorkflowStore(runtime, scope);
+  qualityStore.freeze(
+    qualityContract,
+    createWorkflowState(qualityContract.risk, qualityBinding),
+    {
+      id: 'author-implementation',
+      sessionId: 'session-author-implementation',
+      provider: 'codex',
+    },
+  );
+  qualityStore.recordMergeSensorEvidence({
+    id: 'sensor:typecheck',
+    producer: 'nexus',
+    projectId: scope.projectId,
+    checkoutId: scope.checkoutId,
+    missionId: mission.id,
+    sensorId: 'typecheck',
+    baseSha: qualityBinding.baseSha,
+    headSha: qualityBinding.headSha,
+    diffHash: qualityBinding.diffHash,
+    contextHash: qualityBinding.contextHash,
+    contractHash: qualityBinding.contractHash,
+    sensorConfigHash: 'f'.repeat(64),
+    command: ['npm', 'run', 'typecheck'],
+    exitCode: 0,
+    stdoutHash: '1'.repeat(64),
+    stderrHash: '2'.repeat(64),
+    timedOut: false,
+    truncated: false,
+    startedAt: '2026-07-28T12:00:00.000Z',
+    finishedAt: '2026-07-28T12:00:01.000Z',
+  });
+  const review = new ReviewCouncil(qualityContract.risk, qualityBinding).submit({
+    reviewId: 'independent',
+    reviewerId: 'reviewer-independent',
+    reviewerSessionId: 'session-reviewer-independent',
+    reviewerProvider: 'codex',
+    authorId: 'author-implementation',
+    authorSessionId: 'session-author-implementation',
+    authorProvider: 'codex',
+    binding: qualityBinding,
+    findings: [],
+  });
+  qualityStore.recordMergeReviewReport(review);
   const [task] = tasks.createPlanAtomically({
     missionId: mission.id,
     intentVersion: 3,
@@ -710,7 +869,7 @@ function readOnlyPhysicalHandoffFixture(
     handoffId: handoff.id,
     sessionId: 'session-guided-advisor',
     workerIncarnationId: claim.workerIncarnationId,
-    source: options.executionMode === 'isolated_worktree' ? 'omp-rpc-stdio' : 'http-mcp',
+    source: options.executionMode === 'isolated_worktree' ? 'pty-stream' : 'http-mcp',
     worktreeHeadSha: options.worktreeHeadSha ?? repositoryHead(),
     receiptId: `${
       options.executionMode === 'isolated_worktree'
@@ -746,7 +905,7 @@ afterEach(() => {
 });
 
 describe('durable task dispatcher authority', () => {
-  it('completes a guided read-only identity only from its exact physical MCP/OMP handoff', () => {
+  it('completes a guided read-only identity only from its exact physical handoff', () => {
     const missing = readOnlyPhysicalHandoffFixture();
 
     missing.runtime
@@ -898,7 +1057,7 @@ describe('durable task dispatcher authority', () => {
   it('accepts the no-change receipt only for the sealed guided reviewer with evidence', () => {
     const { dispatches, task, ready } = guidedNoChangeDispatchFixture();
     const headSha = repositoryHead();
-    const diffHash = 'e'.repeat(64);
+    const diffHash = EMPTY_GIT_DIFF_SHA256;
 
     const completed = dispatches.completeByCoordinator({
       taskId: task.id,
@@ -917,7 +1076,45 @@ describe('durable task dispatcher authority', () => {
         kind: 'worktree_validated_no_change',
         reference: `no-change:${headSha}:${diffHash}`,
         evidenceIds: ['sensor:typecheck', 'review:independent'],
+        qualityProof: {
+          projectId: expect.any(String),
+          checkoutId: expect.any(String),
+          missionId: expect.any(String),
+          contractHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          contextHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+          baseSha: headSha,
+          workerHeadSha: headSha,
+          headSha,
+          integrationHeadSha: headSha,
+          diffHash,
+          workflowRevision: 1,
+          sensorEvidenceIds: ['sensor:typecheck'],
+          reviewEvidenceIds: ['review:independent'],
+          reviewerIds: ['reviewer-independent'],
+          advisories: [],
+        },
       },
+    });
+  });
+
+  it('rejects a QA receipt whose sensor/review labels have no bound PREVC evidence', () => {
+    const { dispatches, task, ready } = guidedNoChangeDispatchFixture();
+
+    expect(() =>
+      dispatches.completeByCoordinator({
+        taskId: task.id,
+        revision: ready.revision,
+        receipt: {
+          kind: 'worktree_validated_no_change',
+          reference: `no-change:${repositoryHead()}:${'e'.repeat(64)}`,
+          completedAt: Date.now(),
+          evidenceIds: ['sensor:invented', 'review:invented'],
+        },
+      }),
+    ).toThrow(/quality|sensor|review|evidence|evidência/i);
+    expect(dispatches.get(task.id)).toMatchObject({
+      state: 'handoff_ready',
+      integrationReceipt: undefined,
     });
   });
 
@@ -932,7 +1129,7 @@ describe('durable task dispatcher authority', () => {
       revision: ready.revision,
       receipt: {
         kind: 'worktree_validated_no_change',
-        reference: `no-change:${repositoryHead()}:${'e'.repeat(64)}`,
+        reference: `no-change:${repositoryHead()}:${EMPTY_GIT_DIFF_SHA256}`,
         completedAt: Date.now(),
         evidenceIds: ['sensor:typecheck', 'review:independent'],
       },
@@ -1075,6 +1272,55 @@ describe('durable task dispatcher authority', () => {
     expect(blockedMission.status).toBe('blocked');
     expect(blockedMission.description.match(/NEXUS_TASK_DISPATCH_BLOCKED/g)).toHaveLength(1);
     expect(blockedMission.description.match(/Clique em “Retomar missão”/g)).toHaveLength(1);
+  });
+
+  it('requeues a quality-rejected merge only after the exact worker exit is proven', () => {
+    const { missions, tasks, dispatches, mission, task, merging } =
+      mergingDispatchFixture();
+
+    const blocked = dispatches.blockQualityRepairByCoordinator({
+      taskId: task.id,
+      revision: merging.revision,
+      reason: 'candidate review failed: review:finding-1',
+    });
+
+    expect(blocked).toMatchObject({
+      state: 'blocked',
+      sessionId: 'session-merge-terminal',
+      workerIncarnationId: expect.any(String),
+      integrationReceipt: undefined,
+      lastError: expect.stringContaining(TASK_DISPATCH_QUALITY_REPAIR_MARKER),
+    });
+    expect(tasks.list(mission.id)[0]?.status).toBe('running');
+    expect(missions.get(mission.id)?.status).toBe('running');
+
+    expect(() =>
+      dispatches.requeueQualityRepairAfterWorkerExit({
+        taskId: task.id,
+        revision: blocked.revision,
+        sessionId: 'wrong-session',
+        workerIncarnationId: blocked.workerIncarnationId!,
+      }),
+    ).toThrow(/worker.*exato|identidade.*exata/i);
+
+    const queued = dispatches.requeueQualityRepairAfterWorkerExit({
+      taskId: task.id,
+      revision: blocked.revision,
+      sessionId: blocked.sessionId!,
+      workerIncarnationId: blocked.workerIncarnationId!,
+    });
+
+    expect(queued).toMatchObject({
+      state: 'superseded',
+      integrationReceipt: undefined,
+      lastError: expect.stringContaining(TASK_DISPATCH_QUALITY_REPAIR_MARKER),
+    });
+    expect(queued.paneId).toBeUndefined();
+    expect(queued.sessionId).toBeUndefined();
+    expect(queued.workerIncarnationId).toBeUndefined();
+    expect(queued.handoffId).toBeUndefined();
+    expect(tasks.list(mission.id)[0]?.status).toBe('pending');
+    expect(missions.get(mission.id)?.status).toBe('running');
   });
 
   it('projects an interrupted merge after restart idempotently without minting a receipt', () => {
@@ -1617,14 +1863,22 @@ describe('durable task dispatcher authority', () => {
       workerIncarnationId: claim.workerIncarnationId,
       handoffId: handoff.id,
     });
+    const integratedHeadSha = repositoryHead();
+    const qualityEvidenceIds = seedIntegratedQualityAuthority({
+      runtime,
+      scope,
+      missionId: mission.id,
+      headSha: integratedHeadSha,
+      label: 'unfrozen-golden-path',
+    });
     dispatches.completeByCoordinator({
       taskId: task!.id,
       revision: ready.revision,
       receipt: {
         kind: 'worktree_integrated',
-        reference: repositoryHead(),
+        reference: integratedHeadSha,
         completedAt: Date.now(),
-        evidenceIds: ['evidence-golden'],
+        evidenceIds: [...qualityEvidenceIds],
       },
     });
 
@@ -1705,11 +1959,17 @@ describe('durable task dispatcher authority', () => {
         'orchestrator-golden-rebound',
       ),
     ).toBe(true);
-    expect(restartedDispatches.get(task!.id)?.integrationReceipt).toEqual({
+    expect(restartedDispatches.get(task!.id)?.integrationReceipt).toMatchObject({
       kind: 'worktree_integrated',
       reference: repositoryHead(),
       completedAt: expect.any(Number),
-      evidenceIds: ['evidence-golden'],
+      evidenceIds: [expect.stringMatching(/^review:/)],
+      qualityProof: {
+        workerHeadSha: repositoryHead(),
+        headSha: repositoryHead(),
+        integrationHeadSha: repositoryHead(),
+        diffHash: EMPTY_GIT_DIFF_SHA256,
+      },
     });
     restartedMissions.update(mission.id, {
       status: 'running',
@@ -1768,11 +2028,21 @@ describe('durable task dispatcher authority', () => {
     ).toBe(false);
   });
 
-  it('fails closed when a guided verified plan has no PREVC rows', () => {
+  it('fails closed when a guided verified plan loses its PREVC quality rows', () => {
     const fixture = verifiedPlanFixture('guided-prevc-rows-missing', {
       domains: [],
       squadId: 'agentic-guided-prevc-rows-missing',
     });
+    const db = fixture.runtime.open(fixture.scope).db;
+    db.prepare(`DELETE FROM review_reports WHERE mission_id = ?`).run(
+      fixture.mission.id,
+    );
+    db.prepare(`DELETE FROM workflow_states WHERE mission_id = ?`).run(
+      fixture.mission.id,
+    );
+    db.prepare(`DELETE FROM mission_contracts WHERE mission_id = ?`).run(
+      fixture.mission.id,
+    );
 
     expect(
       fixture.dispatches.completeMissionFromVerifiedPlan({
@@ -1822,6 +2092,52 @@ describe('durable task dispatcher authority', () => {
     });
   });
 
+  it('rejects an integrated replay whose canonical quality proof was tampered', () => {
+    const fixture = verifiedPlanFixture('guided-quality-proof-tamper', {
+      squadId: 'agentic-guided-quality-proof-tamper',
+    });
+    const dispatch = fixture.dispatches.get(fixture.task.id)!;
+    expect(dispatch.integrationReceipt).toMatchObject({
+      kind: 'worktree_integrated',
+      reference: repositoryHead(),
+      qualityProof: {
+        workerHeadSha: repositoryHead(),
+        headSha: repositoryHead(),
+        integrationHeadSha: repositoryHead(),
+        diffHash: EMPTY_GIT_DIFF_SHA256,
+        reviewEvidenceIds: [
+          'review:integrated-guided-quality-proof-tamper',
+        ],
+      },
+    });
+    const tamperedReceipt = {
+      ...dispatch.integrationReceipt!,
+      qualityProof: {
+        ...dispatch.integrationReceipt!.qualityProof!,
+        diffHash: '0'.repeat(64),
+      },
+    };
+    fixture.runtime
+      .open(fixture.scope)
+      .db.prepare(
+        `UPDATE task_dispatch_queue
+            SET integration_receipt_json = ?
+          WHERE task_id = ?`,
+      )
+      .run(JSON.stringify(tamperedReceipt), fixture.task.id);
+
+    expect(
+      fixture.dispatches.hasVerifiedGuidedPlanAuthority({
+        missionId: fixture.mission.id,
+        intentVersion: 7,
+      }),
+    ).toBe(false);
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+  });
+
   it('rejects a guided completed replay after its physical MCP receipt is tampered', () => {
     const fixture = verifiedPlanFixture('guided-physical-tamper', {
       squadId: 'agentic-guided-physical-tamper',
@@ -1849,6 +2165,12 @@ describe('durable task dispatcher authority', () => {
       squadId: 'agentic-guided-frozen-before-prevc',
     });
     const db = fixture.runtime.open(fixture.scope).db;
+    db.prepare(`DELETE FROM workflow_states WHERE mission_id = ?`).run(
+      fixture.mission.id,
+    );
+    db.prepare(`DELETE FROM mission_contracts WHERE mission_id = ?`).run(
+      fixture.mission.id,
+    );
     db.prepare(
       `INSERT INTO mission_contracts
          (mission_id, revision, contract_hash, context_revision, contract_json,
@@ -1879,6 +2201,12 @@ describe('durable task dispatcher authority', () => {
       squadId: 'agentic-guided-complete-workflow',
     });
     const db = fixture.runtime.open(fixture.scope).db;
+    db.prepare(`DELETE FROM workflow_states WHERE mission_id = ?`).run(
+      fixture.mission.id,
+    );
+    db.prepare(`DELETE FROM mission_contracts WHERE mission_id = ?`).run(
+      fixture.mission.id,
+    );
     db.prepare(
       `INSERT INTO mission_contracts
          (mission_id, revision, contract_hash, context_revision, contract_json,
@@ -1960,12 +2288,6 @@ describe('durable task dispatcher authority', () => {
   it('refuses task-plan completion once PREVC step receipts exist (no bypass)', () => {
     const fixture = verifiedPlanFixture('prevc-owned');
     const db = fixture.runtime.open(fixture.scope).db;
-    db.prepare(
-      `INSERT INTO mission_contracts
-         (mission_id, revision, contract_hash, context_revision, contract_json,
-          author_id, author_session_id, author_provider, frozen_at)
-       VALUES (?, 1, ?, ?, '{}', 'author', 'session-author', 'codex', 1)`,
-    ).run(fixture.mission.id, 'd'.repeat(64), 's'.repeat(64));
     db.prepare(
       `INSERT INTO mission_step_receipts
          (mission_id, step_id, from_stage, to_stage,
@@ -2365,7 +2687,7 @@ describe('durable task dispatcher authority', () => {
     ).toHaveLength(1);
   });
 
-  it('blocks immediately when the exact running worker exits without handoff', () => {
+  it('requeues the exact exited worker with durable backoff and no mission block', () => {
     const runtime = manager();
     const scope = testProjectScope();
     let id = 0;
@@ -2433,12 +2755,16 @@ describe('durable task dispatcher authority', () => {
       reason: TASK_DISPATCH_SESSION_EXIT_REASON,
     });
     expect(blocked).toMatchObject({
-      state: 'blocked',
+      state: 'superseded',
       sessionId: 'session-exit',
       lastError: TASK_DISPATCH_SESSION_EXIT_REASON,
     });
-    expect(missions.get(mission.id)?.status).toBe('blocked');
-    expect(tasks.list(mission.id)[0]?.status).toBe('failed');
+    expect(blocked!.leaseExpiresAt).toBeGreaterThan(blocked!.updatedAt);
+    expect(missions.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'dispatched',
+    });
+    expect(tasks.list(mission.id)[0]?.status).toBe('pending');
     expect(
       dispatches.blockSessionExit({
         sessionId: 'session-exit',
@@ -2446,82 +2772,216 @@ describe('durable task dispatcher authority', () => {
         reason: 'evento duplicado',
       }),
     ).toBeNull();
-
-    const db = runtime.open(scope).db;
-    const receiptsBefore = db
-      .prepare(
-        `SELECT handoff_id, handoff_accepted_at, integration_receipt_json, completed_at
-         FROM task_dispatch_queue WHERE task_id = ?`,
-      )
-      .get(task.id);
-
     expect(() =>
-      dispatches.refineBootstrapSessionExitBlock({
-        taskId: task.id,
+      dispatches.claim({
         missionId: mission.id,
-        revision: blocked!.revision,
-        leaseToken: 'lease-token-substituted',
-        paneId: 'pane-exit',
-        sessionId: 'session-exit',
-        workerIncarnationId: claim.workerIncarnationId,
-        error: 'Falha durante o bootstrap do worker: provider recusou o modelo.',
+        taskId: task.id,
+        intentVersion: 1,
+        workerId: 'worker-exit',
+        leaseOwner: 'main',
+        leaseMs: 30_000,
       }),
-    ).toThrow(/task\/session\/incarnation\/lease/i);
-    expect(dispatches.get(task.id)?.lastError).toBe(
-      TASK_DISPATCH_SESSION_EXIT_REASON,
-    );
+    ).toThrow(/capacity_wait.*retry técnico/i);
+  });
 
-    const refined = dispatches.refineBootstrapSessionExitBlock({
+  it('requeues a missing runtime and atomically rebinds the same persisted worker', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let now = 1_000;
+    let id = 0;
+    const missions = createScopedMissionStore(runtime, scope, {
+      now: () => now,
+    });
+    const tasks = createScopedTaskStore(runtime, scope, { now: () => now });
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      now: () => now,
+      idFactory: (prefix) => `${prefix}-${++id}`,
+    });
+    const mission = missions.create({
+      title: 'Retomar worker após restart',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: approvedIntentContract({
+        goal: 'Preservar contexto do worker após restart',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const task = tasks.create({
+      missionId: mission.id,
+      title: 'Continuar implementação',
+    });
+    const route = missions.reserveRouteDecision(mission.id, task.title, {
+      tier: 'medium',
+      adapterId: 'codex',
+      reason: 'rota persistida',
+      alternatives: [],
+    });
+    const claim = dispatches.claim({
+      missionId: mission.id,
+      taskId: task.id,
+      intentVersion: 1,
+      workerId: 'worker-restart',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+    });
+    const routed = dispatches.attachRoute({
+      taskId: task.id,
+      revision: claim.revision,
+      leaseToken: claim.leaseToken,
+      routeReservationId: route.id,
+      adapterId: 'codex',
+    });
+    const running = dispatches.bindSpawn({
+      taskId: task.id,
+      revision: routed.revision,
+      leaseToken: claim.leaseToken,
+      paneId: 'pane-persisted',
+      sessionId: 'session-dead',
+      workerIncarnationId: claim.workerIncarnationId,
+    });
+
+    now = 2_000;
+    const queued = dispatches.requeueMissingRuntime({
+      taskId: task.id,
+      revision: running.revision,
+    });
+    expect(queued).toMatchObject({
+      state: 'superseded',
+      paneId: 'pane-persisted',
+      sessionId: 'session-dead',
+      workerIncarnationId: claim.workerIncarnationId,
+    });
+    expect(tasks.list(mission.id)[0]?.status).toBe('pending');
+    expect(missions.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+
+    now = 2_100;
+    const rebound = dispatches.rebindRestartedWorker({
+      missionId: mission.id,
+      paneId: 'pane-persisted',
+      expectedSessionId: 'session-dead',
+      replacementSessionId: 'session-restarted',
+      workerIncarnationId: claim.workerIncarnationId,
+      leaseMs: 30_000,
+    });
+    expect(rebound).toMatchObject({
+      state: 'running',
+      taskId: task.id,
+      paneId: 'pane-persisted',
+      sessionId: 'session-restarted',
+      workerIncarnationId: claim.workerIncarnationId,
+      leaseExpiresAt: 32_100,
+      lastHeartbeatAt: 2_100,
+    });
+    expect(tasks.list(mission.id)[0]?.status).toBe('running');
+    expect(() =>
+      dispatches.rebindRestartedWorker({
+        missionId: mission.id,
+        paneId: 'pane-persisted',
+        expectedSessionId: 'session-dead',
+        replacementSessionId: 'session-forged',
+        workerIncarnationId: claim.workerIncarnationId,
+        leaseMs: 30_000,
+      }),
+    ).toThrow(/dispatch|sess[aã]o|CAS/i);
+  });
+
+  it('requeues an exact exited bootstrap attempt without blocking the mission', () => {
+    const runtime = manager();
+    const scope = testProjectScope();
+    let id = 0;
+    let now = 10_000;
+    const missions = createScopedMissionStore(runtime, scope);
+    const tasks = createScopedTaskStore(runtime, scope);
+    const dispatches = createTaskDispatchStore(runtime, scope, {
+      idFactory: (prefix) => `${prefix}-${++id}`,
+      now: () => now,
+    });
+    const mission = missions.create({
+      title: 'Retry automático de bootstrap',
+      intentVersion: 1,
+      intentState: 'executing',
+      intentContract: approvedIntentContract({
+        goal: 'Tentar outro worker após exit técnico',
+        intentVersion: 1,
+      }),
+    });
+    missions.setStatus(mission.id, 'running');
+    const task = tasks.create({ missionId: mission.id, title: 'Worker' });
+    const route = missions.reserveRouteDecision(mission.id, task.title, {
+      tier: 'medium',
+      adapterId: 'codex',
+      reason: 'rota do primeiro bootstrap',
+      alternatives: [],
+    });
+    const first = dispatches.claim({
+      missionId: mission.id,
+      taskId: task.id,
+      intentVersion: 1,
+      workerId: 'worker-retry',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+    });
+    const routed = dispatches.attachRoute({
+      taskId: task.id,
+      revision: first.revision,
+      leaseToken: first.leaseToken,
+      routeReservationId: route.id,
+      adapterId: 'codex',
+    });
+    dispatches.bindSpawn({
+      taskId: task.id,
+      revision: routed.revision,
+      leaseToken: first.leaseToken,
+      paneId: 'pane-retry',
+      sessionId: 'session-retry',
+      workerIncarnationId: first.workerIncarnationId,
+    });
+    dispatches.blockSessionExit({
+      sessionId: 'session-retry',
+      workerIncarnationId: first.workerIncarnationId,
+      reason: TASK_DISPATCH_SESSION_EXIT_REASON,
+    });
+
+    const superseded = dispatches.requeueTechnicalBootstrapFailure({
       taskId: task.id,
       missionId: mission.id,
-      revision: blocked!.revision,
-      leaseToken: claim.leaseToken,
-      paneId: 'pane-exit',
-      sessionId: 'session-exit',
-      workerIncarnationId: claim.workerIncarnationId,
-      error: 'Falha durante o bootstrap do worker: provider recusou o modelo.',
+      leaseToken: first.leaseToken,
+      workerIncarnationId: first.workerIncarnationId,
+      paneId: 'pane-retry',
+      sessionId: 'session-retry',
+      error: 'provider exited during bootstrap',
     });
-    expect(refined).toMatchObject({
-      state: 'blocked',
-      revision: blocked!.revision + 1,
-      paneId: 'pane-exit',
-      sessionId: 'session-exit',
-      workerIncarnationId: claim.workerIncarnationId,
-      lastError:
-        'Falha durante o bootstrap do worker: provider recusou o modelo.',
-    });
-    expect(
-      missions.get(mission.id)?.description,
-    ).toContain('provider recusou o modelo');
-    expect(missions.get(mission.id)?.description).toContain(
-      `Texto legítimo do operador que cita ${TASK_DISPATCH_BLOCK_MARKER}`,
-    );
-    expect(missions.get(mission.id)?.description).not.toContain(
-      TASK_DISPATCH_SESSION_EXIT_REASON,
-    );
-    const receiptsAfter = db
-      .prepare(
-        `SELECT handoff_id, handoff_accepted_at, integration_receipt_json, completed_at
-         FROM task_dispatch_queue WHERE task_id = ?`,
-      )
-      .get(task.id);
-    expect(receiptsAfter).toEqual(receiptsBefore);
 
-    expect(() =>
-      dispatches.refineBootstrapSessionExitBlock({
-        taskId: task.id,
-        missionId: mission.id,
-        revision: refined.revision,
-        leaseToken: claim.leaseToken,
-        paneId: 'pane-exit',
-        sessionId: 'session-substituted',
-        workerIncarnationId: claim.workerIncarnationId,
-        error: 'segunda causa não autorizada',
-      }),
-    ).toThrow(/task\/session\/incarnation\/lease/i);
-    expect(dispatches.get(task.id)?.lastError).toBe(
-      'Falha durante o bootstrap do worker: provider recusou o modelo.',
+    expect(superseded).toMatchObject({
+      state: 'superseded',
+      attempt: 1,
+      lastError: TASK_DISPATCH_SESSION_EXIT_REASON,
+    });
+    expect(tasks.list(mission.id)[0]?.status).toBe('pending');
+    expect(missions.get(mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+    expect(missions.get(mission.id)?.description).not.toContain(
+      TASK_DISPATCH_BLOCK_MARKER,
     );
+
+    now = superseded.leaseExpiresAt;
+    const second = dispatches.claim({
+      missionId: mission.id,
+      taskId: task.id,
+      intentVersion: 1,
+      workerId: 'worker-retry',
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+    });
+    expect(second).toMatchObject({ state: 'claimed', attempt: 2 });
+    expect(second.workerIncarnationId).not.toBe(first.workerIncarnationId);
+    expect(tasks.list(mission.id)[0]?.status).toBe('running');
   });
 
   it('supersedes a running dispatch when intent changes and rejects late worker effects', () => {

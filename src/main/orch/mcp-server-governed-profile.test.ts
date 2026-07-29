@@ -14,6 +14,17 @@ vi.mock('electron', () => ({
   dialog: { showMessageBox: vi.fn() },
 }));
 
+const homePolicyDeps = vi.hoisted(() => ({
+  getOrchSettings: vi.fn(() => ({
+    squadCliPolicy:
+      'operator-choice' as 'operator-choice' | 'governed',
+  })),
+}));
+
+vi.mock('../persistence/settings-store', () => ({
+  getOrchSettings: homePolicyDeps.getOrchSettings,
+}));
+
 import {
   hasApprovedMissionProjectTrust,
   prepareAgentSpawnDecoration,
@@ -40,8 +51,7 @@ function adapter(
     | 'agy'
     | 'opencode'
     | 'kimi'
-    | 'grok'
-    | 'omp',
+    | 'grok',
 ): CliPtyAdapter {
   const claudeFamily = id === 'claude' || id === 'glm';
   return {
@@ -188,6 +198,9 @@ function petAuthority(
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  homePolicyDeps.getOrchSettings.mockReturnValue({
+    squadCliPolicy: 'operator-choice',
+  });
   resetGateForTests();
   for (const root of roots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -196,6 +209,9 @@ afterEach(() => {
 
 describe('mcp-server governed CLI profile wiring', () => {
   it('projects Claude trust only from an exact sealed mission authority', () => {
+    homePolicyDeps.getOrchSettings.mockReturnValue({
+      squadCliPolicy: 'governed',
+    });
     const root = tempRoot();
     const home = path.join(root, 'home');
     const workspace = path.join(root, 'workspace');
@@ -249,6 +265,45 @@ describe('mcp-server governed CLI profile wiring', () => {
     decoration.onSpawnFailed?.();
   });
 
+  it('preserves native Claude HOME and session authority in operator-choice', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+    const nativeProfile = JSON.stringify({
+      oauthAccount: { emailAddress: 'operator@example.com' },
+    });
+    write(path.join(home, '.claude.json'), nativeProfile);
+
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      sealedMissionAuthority(cwd),
+      undefined,
+    );
+    if (!decoration) throw new Error('expected native Claude decoration');
+
+    expect(decoration.env.HOME).toBeUndefined();
+    expect(decoration.extraArgs).toContain('--mcp-config');
+    expect(decoration.extraArgs).toContain('--settings');
+    expect(decoration.extraArgs).not.toContain('--strict-mcp-config');
+    expect(
+      getContext(decoration.env.NEXUS_MCP_TOKEN),
+    ).toMatchObject({
+      missionId: 'mission-wiring',
+      role: 'orchestrator',
+      providerId: 'claude',
+    });
+    expect(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')).toBe(
+      nativeProfile,
+    );
+
+    decoration.onSpawnFailed?.();
+  });
+
   it('projects the same exact trust into a sealed GLM worker overlay', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
@@ -278,6 +333,42 @@ describe('mcp-server governed CLI profile wiring', () => {
         hasCompletedProjectOnboarding: true,
       },
     });
+
+    decoration.onSpawnFailed?.();
+  });
+
+  it('isolates a dynamically routed Claude-family endpoint in operator-choice', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+    write(
+      path.join(home, '.claude.json'),
+      JSON.stringify({
+        oauthAccount: { emailAddress: 'operator@example.com' },
+      }),
+    );
+
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      sealedMissionAuthority(cwd, { role: 'worker' }),
+      {
+        ANTHROPIC_BASE_URL: 'https://proxy.example/anthropic',
+      },
+    );
+    if (!decoration) throw new Error('expected routed Claude decoration');
+
+    expect(decoration.env.HOME).toBeTruthy();
+    expect(decoration.env.HOME).not.toBe(home);
+    const overlay = JSON.parse(
+      fs.readFileSync(path.join(decoration.env.HOME, '.claude.json'), 'utf8'),
+    ) as { oauthAccount?: unknown };
+    expect(overlay.oauthAccount).toBeUndefined();
+    expect(decoration.extraArgs).toContain('--strict-mcp-config');
 
     decoration.onSpawnFailed?.();
   });
@@ -354,7 +445,37 @@ describe('mcp-server governed CLI profile wiring', () => {
     }
   });
 
-  it('marks an unrestricted mission Codex worker without PREVC as governed', () => {
+  it('leaves an operator-choice Codex worker outside the Hardened boundary', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const cwd = path.join(root, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('codex'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true, true),
+      undefined,
+    );
+    expect(decoration).not.toBeNull();
+    if (!decoration) throw new Error('expected Codex spawn decoration');
+
+    expect(getContext(decoration.env.NEXUS_MCP_TOKEN)).toMatchObject({
+      role: 'worker',
+      missionId: 'mission-wiring',
+      providerId: 'codex',
+    });
+    expect(
+      getContext(decoration.env.NEXUS_MCP_TOKEN)?.governedNativeProvider,
+    ).toBeUndefined();
+    decoration.onSpawnFailed?.();
+  });
+
+  it('marks an unrestricted mission Codex worker as governed in Hardened mode', () => {
+    homePolicyDeps.getOrchSettings.mockReturnValue({
+      squadCliPolicy: 'governed',
+    });
     const root = tempRoot();
     const home = path.join(root, 'home');
     const cwd = path.join(root, 'workspace');
@@ -482,13 +603,6 @@ describe('mcp-server governed CLI profile wiring', () => {
         '\n[plugins]\nenabled = ["external-grok-plugin"]\n',
     );
     write(
-      path.join(home, '.omp', 'agent', 'mcp.json'),
-      JSON.stringify({
-        plugins: ['external-omp-plugin'],
-        mcpServers: { external: { command: 'external-omp-mcp' } },
-      }),
-    );
-    write(
       path.join(cwd, '.grok', 'skills', 'project-only', 'SKILL.md'),
       '# project only',
     );
@@ -504,7 +618,6 @@ describe('mcp-server governed CLI profile wiring', () => {
       'opencode',
       'kimi',
       'grok',
-      'omp',
     ] as const) {
       const preparedEnv: Readonly<Record<string, string>> | undefined =
         id === 'agy'
@@ -528,7 +641,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(codex.extraArgs.join(' ')).toContain('mcp_servers.nexus_');
     expect(
       getContext(codex.env.NEXUS_MCP_TOKEN)?.governedNativeProvider,
-    ).toBe('codex');
+    ).toBeUndefined();
     expect(fs.existsSync(path.join(home, '.codex', 'skills', 'allowed'))).toBe(
       false,
     );
@@ -537,24 +650,9 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(
       getContext(agy.env.NEXUS_MCP_TOKEN)?.governedNativeProvider,
     ).toBeUndefined();
-    expect(agy.env.HOME).not.toBe(home);
-    expect(
-      fs.readFileSync(
-        path.join(agy.env.HOME, '.gemini', 'config', 'mcp_config.json'),
-        'utf8',
-      ),
-    ).not.toContain('external-agy');
-    expect(
-      fs.existsSync(
-        path.join(
-          agy.env.GEMINI_CLI_HOME,
-          'config',
-          'skills',
-          'allowed',
-          'SKILL.md',
-        ),
-      ),
-    ).toBe(true);
+    expect(agy.env.HOME).toBeUndefined();
+    expect(agy.env.GEMINI_CLI_HOME).toBeUndefined();
+    expect(agy.extraArgs.join(' ')).not.toContain('mcp_config');
 
     const opencode = decorations.get('opencode')!;
     expect(opencode.extraArgs).toContain('--pure');
@@ -581,15 +679,6 @@ describe('mcp-server governed CLI profile wiring', () => {
       fs.readFileSync(path.join(grok.env.GROK_HOME, 'config.toml'), 'utf8'),
     ).toContain(path.join(cwd, '.grok', 'skills'));
 
-    const omp = decorations.get('omp')!;
-    expect(omp.env.HOME).not.toBe(home);
-    expect(
-      fs.readFileSync(
-        path.join(omp.env.HOME, '.omp', 'agent', 'mcp.json'),
-        'utf8',
-      ),
-    ).not.toContain('external-omp');
-
     // The real provider profiles remain untouched; allowlisted skills exist
     // only in each private runtime.
     for (const providerSkillRoot of [
@@ -598,7 +687,6 @@ describe('mcp-server governed CLI profile wiring', () => {
       path.join(home, '.config', 'opencode', 'skills'),
       path.join(home, '.kimi-code', 'skills'),
       path.join(home, '.grok', 'skills'),
-      path.join(home, '.omp', 'agent', 'skills'),
     ]) {
       expect(fs.existsSync(path.join(providerSkillRoot, 'allowed'))).toBe(
         false,
@@ -608,6 +696,56 @@ describe('mcp-server governed CLI profile wiring', () => {
     for (const decoration of decorations.values()) {
       decoration?.onSpawnFailed?.();
     }
+  });
+
+  it('uses PTY stream for AGY without projecting or leasing its real MCP profile', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const cwd = path.join(root, 'workspace');
+    const nativeConfig = path.join(
+      home,
+      '.gemini',
+      'antigravity-cli',
+      'mcp_config.json',
+    );
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    write(
+      nativeConfig,
+      JSON.stringify({
+        mcpServers: { existing: { command: 'existing-server' } },
+      }),
+    );
+    const originalBytes = fs.readFileSync(nativeConfig);
+    const base = authority(cwd, true);
+    const readOnlyAuthority: BoundSpawnAuthority = {
+      ...base,
+      context: {
+        ...base.context!,
+        readOnly: true,
+        nativeReadOnly: true,
+      },
+    };
+
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('agy'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      readOnlyAuthority,
+      { GEMINI_CLI_HOME: path.join(home, '.gemini') },
+    );
+    if (!decoration) throw new Error('expected AGY reviewer decoration');
+
+    expect(decoration.env.HOME).toBeUndefined();
+    expect(decoration.env.GEMINI_CLI_HOME).toBeUndefined();
+    expect(decoration.processHome).toBeUndefined();
+    expect(decoration.sandboxDir).toBeUndefined();
+    expect(decoration.providerStateReadPaths).toBeUndefined();
+    expect(decoration.providerStateWritePaths).toBeUndefined();
+    expect(fs.readFileSync(nativeConfig).equals(originalBytes)).toBe(true);
+    expect(decoration.extraArgs.join(' ')).not.toContain('mcp_config');
+
+    decoration.onSpawnFailed?.();
+    expect(fs.readFileSync(nativeConfig).equals(originalBytes)).toBe(true);
   });
 
   it('preserves the full real profile for a direct pane', () => {

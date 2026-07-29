@@ -1,12 +1,13 @@
 import type { AdapterInfo } from "../../shared/types";
 import type { SquadAgent } from "../../shared/orch-types";
 import { defaultSquadModelForAdapter } from "../../shared/squad-model-defaults";
+import type { SquadCliPolicy } from "../../shared/settings-types";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 
 const LEGACY_ORCHESTRATOR_CLI = "claude";
 
 const WORKER_CLI_ORDER = [
   "codex",
-  "omp",
   "agy",
   "grok",
   "kimi",
@@ -18,7 +19,10 @@ const WORKER_CLI_ORDER = [
 
 type RosterAdapter = Pick<
   AdapterInfo,
-  "id" | "installed" | "autonomousWorkspaceWriteCapable"
+  | "id"
+  | "installed"
+  | "autonomousWorkspaceWriteCapable"
+  | "taskHandoffCapable"
 > & {
   enabled?: boolean;
   capabilities?: {
@@ -42,13 +46,19 @@ function sortWorkerCliIds(ids: string[]): string[] {
   });
 }
 
-export function workerCliPool(adapters: RosterAdapter[]): string[] {
+export function workerCliPool(
+  adapters: RosterAdapter[],
+  squadCliPolicy: SquadCliPolicy = "governed",
+): string[] {
+  const operatorChoice = isOperatorChoicePolicy(squadCliPolicy);
   const candidates = adapters.filter(
     (adapter) =>
-      adapter.id !== LEGACY_ORCHESTRATOR_CLI &&
       adapter.enabled !== false &&
       adapter.installed &&
-      adapter.autonomousWorkspaceWriteCapable === true,
+      (operatorChoice
+        ? adapter.taskHandoffCapable === true
+        : adapter.id !== LEGACY_ORCHESTRATOR_CLI &&
+          adapter.autonomousWorkspaceWriteCapable === true),
   );
   return sortWorkerCliIds(unique(candidates.map((adapter) => adapter.id)));
 }
@@ -69,10 +79,11 @@ function adapterInstalledEnabled(
 }
 
 export interface BalanceSquadRosterCliOptions {
+  readonly squadCliPolicy?: SquadCliPolicy;
   /**
    * Release-gate / sealed fixture: never rewrite any CLI (orchestrator,
    * executor or advisor). Only fill missing model defaults. Silent rebalancing
-   * broke product-wizard E2E binding (`observer-invalid`) when omp/grok were
+   * broke product-wizard E2E binding (`observer-invalid`) when advisory CLIs were
    * momentarily undetected in the packaged gate.
    */
   readonly preserveExactCliAssignments?: boolean;
@@ -94,7 +105,13 @@ export function balanceSquadRosterCli(
   orchestratorAdapterId = LEGACY_ORCHESTRATOR_CLI,
   options?: BalanceSquadRosterCliOptions,
 ): SquadAgent[] {
-  const pool = workerCliPool(adapters);
+  const operatorChoice = isOperatorChoicePolicy(
+    options?.squadCliPolicy ?? "governed",
+  );
+  const pool = workerCliPool(
+    adapters,
+    options?.squadCliPolicy ?? "governed",
+  );
   const rosterOrchestratorCli = agents.find(
     (agent) => agent.category === "orchestrator",
   )?.cli;
@@ -126,7 +143,7 @@ export function balanceSquadRosterCli(
     }
 
     // Sealed reviewer/scout assignment — including mechanical read-only (grok)
-    // and advisory MCP lane (kimi/omp/agy…). Do not rewrite when detection is
+    // and advisory MCP lane (kimi/agy…). Do not rewrite when detection is
     // late/false; the wizard surfaces auth/install blocks instead.
     if (
       (agent.category === "reviewer" || agent.category === "scout") &&
@@ -141,11 +158,13 @@ export function balanceSquadRosterCli(
 
     const keepWorker =
       adapterInstalledEnabled(adapters, agent.cli) &&
-      agent.cli !== LEGACY_ORCHESTRATOR_CLI &&
       adapters.some(
         (adapter) =>
           adapter.id === agent.cli &&
-          adapter.autonomousWorkspaceWriteCapable === true,
+          (operatorChoice
+            ? adapter.taskHandoffCapable === true
+            : agent.cli !== LEGACY_ORCHESTRATOR_CLI &&
+              adapter.autonomousWorkspaceWriteCapable === true),
       );
     if (keepWorker) {
       return {

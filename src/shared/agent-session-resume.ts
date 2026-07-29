@@ -190,7 +190,6 @@ export function extractAgentProviderSession(
     case 'amp':
     case 'cursor':
     case 'pi':
-    case 'omp':
     case 'command-code':
     case 'copilot':
     case 'hermes':

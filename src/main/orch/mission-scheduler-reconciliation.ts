@@ -6,6 +6,7 @@ import {
 import { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "../runtime/worktree-manager";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import type { TaskDispatchStore } from "./task-dispatch-store";
+import { terminalOperationalFailureReason } from "../runtime/operational-failure-policy";
 
 type WorktreeCreationFailureDispatchAuthority = Pick<
   TaskDispatchStore,
@@ -90,7 +91,7 @@ function terminalMergeFailureReason(reason: string): string {
     reason.trim().slice(0, 60_000) ||
     "o coordenador não obteve prova válida da integração";
   return (
-    `Falha terminal de merge: ${detail} ` +
+    `${terminalOperationalFailureReason(`Falha terminal de merge: ${detail}`)} ` +
     "A integração não foi aceita e exige revisão explícita."
   ).slice(0, 65_536);
 }
@@ -142,6 +143,9 @@ export function reconcileTerminalMergeFailureForScope(
   const reconciliation = deps.registry.reconcile(scope);
   if (reconciliation.action === "none") return false;
   const snapshot = deps.registry.mergeSnapshot(scope);
+  if ((snapshot.blocked?.disposition ?? "terminal") !== "terminal") {
+    return false;
+  }
   const blockedTaskKey = reconciliation.taskKey ?? snapshot.blocked?.taskKey;
   if (!blockedTaskKey) return false;
   const entry = snapshot.entries.find(

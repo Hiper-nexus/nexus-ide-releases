@@ -12,8 +12,8 @@ import {
  * Cross-platform gate for restored agents.
  *
  * Same Electron renderer path on macOS, Linux and Windows — no platform
- * branches. Mission panes never use generic auto-resume: their authority must
- * be rearmed/resumed through the main-owned mission flow from the rail.
+ * branches. Mission panes resume automatically through their persisted
+ * main-owned authority; only standalone agents follow the operator preference.
  */
 
 export type AgentRestorePolicy = OrchSettings['agentRestorePolicy'];
@@ -86,9 +86,15 @@ export async function gateRestoredAgents(
   // Always hold first so a fast attach cannot race before policy resolves.
   for (const pane of agents) holdSpawnUntilApproved(pane.id);
 
-  // A mission pane is a presentation of main-owned physical authority. Generic
-  // restore cannot decide whether to adopt, rearm, or create a fresh context;
-  // keep it paused until the operator explicitly resumes the mission in rail.
+  // Mission panes already carry a main-sealed process envelope. Resuming with
+  // that persisted identity lets Main adopt a live PTY or create a fresh
+  // provider continuation after an app restart. A stale/blocked seal is routed
+  // by the PTY path to the main-owned mission recovery lane — never to a
+  // renderer-authored process. This keeps autopilot moving without weakening
+  // session, worktree or merge authority.
+  const missionIds = agents.filter(isMissionAgent).map((pane) => pane.id);
+  releaseHeldSpawns(missionIds, { resume: true });
+
   const restorable = agents.filter((pane) => !isMissionAgent(pane));
   if (restorable.length === 0) return;
   const ids = restorable.map((pane) => pane.id);
@@ -127,9 +133,10 @@ export async function gateRestoredAgents(
         `(${labels}${more}).\n\n` +
         'Se retomar agora, eles podem continuar a trabalhar sozinhos — ' +
         'comandos, edições e tools — sem pedir de novo a cada passo.\n\n' +
-        'Isso vale em qualquer SO (macOS, Linux, Windows): o Nexus não ' +
-        'reinicia missão sozinho sem sua confirmação.\n\n' +
-        'Cancelar deixa tudo em pausa; retome no rail quando quiser.',
+        'Isso vale em qualquer SO (macOS, Linux, Windows). Missões do ' +
+        'autopiloto retomam pela autoridade persistida; esta escolha afeta ' +
+        'somente agentes avulsos.\n\n' +
+        'Cancelar deixa os agentes avulsos em pausa.',
       confirmLabel: 'Retomar agentes',
       cancelLabel: 'Deixar em pausa',
       danger: true,

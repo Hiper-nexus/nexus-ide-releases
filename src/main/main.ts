@@ -119,19 +119,11 @@ import { registerVoiceIpc, closeVoiceIpc } from "./voice/voice-ipc";
 import { registerVisionIpc } from "./vision/ipc-bridge";
 import {
   initAdapterRegistry,
+  listAdapterInfos,
   registerAdapterListener,
   unregisterAdapterListener,
   closeAdapterRegistry,
 } from "./adapters/adapter-registry";
-import {
-  registerOmpRpcIpc,
-  disposeAllOmpRpcSessions,
-} from "./adapters/omp-rpc-ipc";
-import { resolveOmpBin } from "./adapters/omp-rpc-service";
-import {
-  registerOmpAuthIpc,
-  disposeAllOmpAuthFlows,
-} from "./adapters/omp-auth-ipc";
 import {
   initOrchestration,
   registerOrchIpc,
@@ -202,6 +194,7 @@ import {
   shutdownQuotaService,
 } from "./quota/quota-service";
 import {
+  initializeProviderConfigStore,
   listProviderSettings,
   maybeOfferFirstRunProvisioning,
 } from "./persistence/provider-config-store";
@@ -222,6 +215,7 @@ import {
 import { closeDb } from "./persistence/db";
 import {
   getOrchSettings,
+  migrateRetiredOrchestratorSettings,
   registerSettingsIpc,
   registerSettingsListener,
   unregisterSettingsListener,
@@ -375,9 +369,6 @@ if (process.platform === "win32") {
 }
 
 function bootstrap(): void {
-  // MUST run before the adapter registry probes for installed CLIs: a
-  // Finder/dmg launch has a minimal PATH that hides claude/codex/kimi/grok.
-  resolveUserPath();
   // Persisted overrides live under userData; must be configured before the
   // first getFeatureFlagRegistry() call anywhere in bootstrap.
   configureFeatureFlagRegistry({
@@ -396,6 +387,27 @@ function bootstrap(): void {
   // of the persisted missionDriverActiveMode value.
   registerSettingsIpc();
   initAdapterRegistry();
+  initializeProviderConfigStore();
+  try {
+    migrateRetiredOrchestratorSettings({
+      adapters: listAdapterInfos(),
+      enabledAdapterIds: new Set(
+        listProviderSettings({ nonBlockingAuth: true })
+          .filter((provider) => provider.enabled)
+          .map((provider) => provider.adapterId),
+      ),
+    });
+  } catch (error) {
+    // A read-only/broken ~/.nexus must not turn an optional upgrade migration
+    // into another app-start failure. persist() is atomic and updates memory
+    // only after rename, so continuing retains one coherent old snapshot; the
+    // provider picker remains available for an explicit repair.
+    console.warn(
+      "[settings] retired provider migration deferred; Nexus will continue. " +
+        "Escolha um provider atual em Configurações › Providers.",
+      error,
+    );
+  }
   projectRuntimeManager = new ProjectRuntimeManager({
     baseDir: path.join(app.getPath("userData"), "project-runtime"),
     appVersion: app.getVersion(),
@@ -567,20 +579,6 @@ function bootstrap(): void {
   }
   registerOnboardingIpc();
   registerPipeIpc(); // also calls initPanePipes()
-  // Sessões omp --mode rpc-ui como agentes de primeira classe (sem PTY).
-  registerOmpRpcIpc();
-  // Warm `omp --version` + path probe so the first panel/mission start is not
-  // the cold PATH/semver handshake (fail closed later if missing).
-  if (!isAutomatedReleaseTest()) {
-    void resolveOmpBin().catch((err) => {
-      console.warn(
-        "[omp-rpc] warm resolve falhou (omp ausente ou versão RPC incompatível):",
-        err instanceof Error ? err.message : err,
-      );
-    });
-  }
-  // Login OAuth de assinaturas do omp (auth-broker) dirigido pelo painel.
-  registerOmpAuthIpc();
   registerRemoteIpc();
   registerIntegrationsIpc();
   traceBootstrap('after remaining IPC registration');
@@ -687,6 +685,11 @@ if (!wireDeepLinks()) {
     // is ready. Do not move it into bootstrap(): synchronous adapter, settings,
     // database, or keychain setup can otherwise classify the process as a
     // background UIElement before macOS has a window/Dock item to display.
+    // Finder/dmg launches inherit a minimal PATH. Resolve the login-shell PATH
+    // asynchronously after the native window is visible, then initialize the
+    // adapter registry with the completed value. Slow shell profiles no longer
+    // freeze Electron's main event loop.
+    await resolveUserPath();
     bootstrap();
 
     // Bootstrap can create auxiliary native windows after the main window is
@@ -868,8 +871,8 @@ function shutdown(): Promise<void> {
   shutdownPromise = (async () => {
     stopMacOSDockWatchdog();
     // Quiesce periodic orchestration before physical teardown, but retain its
-    // exact exit observer and stores until PTY + OMP proofs and reconciliation
-    // are complete. A failed OMP proof must leave the next retry operational.
+    // exact exit observer and stores until PTY proof and reconciliation are
+    // complete. A failed proof must leave the next retry operational.
     await stopCronLoop();
     await closeAllDesignWritebacks();
     await shutdownOrchestrationRuntimesWithProof({
@@ -880,10 +883,8 @@ function shutdown(): Promise<void> {
         terminateAllSessions(APP_SHUTDOWN_PTY_TERMINATION),
       shutdownPtyHost,
       reconcileOrchestratorExits: reconcileMissionOrchestratorExits,
-      terminateAllOmpSessions: disposeAllOmpRpcSessions,
       closeOrchestration,
     });
-    disposeAllOmpAuthFlows();
     stopRemoteBridge();
     configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});

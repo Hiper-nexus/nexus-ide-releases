@@ -1,7 +1,7 @@
 {
   "name": "nexus-ide",
   "productName": "NexusIDE",
-  "version": "0.19.36",
+  "version": "0.19.37",
   "description": "Terminal IDE multi-agente: grid de panes de terminal com PTYs reais, base para adapters de CLIs de IA e orquestração de squads.",
   "main": ".vite/build/main.js",
   "author": "NexusIDE",
@@ -20,8 +20,6 @@
     "prestart:forge": "node scripts/patch-node-pty-darwin.mjs && npm run build:darwin-pty-supervisor",
     "package": "electron-forge package",
     "smoke:package": "node scripts/smoke-packaged-app.mjs",
-    "presmoke:omp-rpc": "node scripts/patch-node-pty-darwin.mjs && npm run build:darwin-pty-supervisor",
-    "smoke:omp-rpc": "node --import tsx scripts/smoke-omp-rpc.mjs",
     "e2e:real-mission": "node scripts/release-candidate-gate.mjs",
     "release:security": "node scripts/release-security-gate.mjs",
     "release:candidate": "node scripts/release-candidate-gate.mjs",

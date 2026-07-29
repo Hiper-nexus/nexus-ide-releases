@@ -23,8 +23,8 @@ export interface SquadRuntimeProviderSnapshot {
    */
   readonly adapterLoaded: boolean;
   /**
-   * True only when this adapter has a Nexus MCP/OMP path able to return the
-   * physical handoff receipts required by the guided scheduler.
+   * True only when this adapter has a physical MCP or PTY-stream path able to
+   * return the handoff receipts required by the guided scheduler.
    */
   readonly guidedHandoffCapable: boolean;
   /**
@@ -41,12 +41,12 @@ export interface SquadRuntimeProviderSnapshot {
 
 export interface SquadRuntimeCliPolicy {
   readonly routableCliIds: ReadonlySet<string>;
-  /** Routable AND able to return a physical Nexus MCP/OMP handoff receipt. */
+  /** Routable AND able to return a physical Nexus handoff receipt. */
   readonly handoffCapableCliIds: ReadonlySet<string>;
   readonly routableWorkerCliIds: ReadonlySet<string>;
   readonly credentiallessOnlyCliIds: ReadonlySet<string>;
   readonly credentiallessDefaultModelByCliId: Readonly<Record<string, string>>;
-  /** Exact auth-ready catalog for multi-provider CLIs such as OMP. */
+  /** Exact auth-ready catalog when a provider reports model-scoped auth. */
   readonly authReadyModelsByCliId: Readonly<
     Record<string, readonly string[]>
   >;
@@ -67,9 +67,9 @@ export interface SquadRuntimeAgentLike {
  * Capability metadata remains necessary, but it is not sufficient on its own:
  * the physical task planner/dispatcher only implements provider-native
  * confined read/write for the builtin Codex path. Under `operator-choice`
- * (see orch.squadCliPolicy) any handoff-capable CLI may write — confined by
- * the Nexus kernel Seatbelt instead of a brand allowlist. Manual panes and
- * direct routing remain available either way.
+ * (see orch.squadCliPolicy) any handoff-capable CLI may write inside its
+ * isolated worktree; only the Main-owned validated merge promotes the result.
+ * Manual panes and direct routing remain available either way.
  */
 const RELEASE_QUALIFIED_MISSION_WORKER_CLIS = new Set(["codex"]);
 
@@ -81,8 +81,8 @@ export function isReleaseQualifiedMissionWorkerCli(
 
 /**
  * Whether a CLI may act as an autonomous mission writer right now.
- * `operatorChoice` opens the lane to any non-empty adapter id; the physical
- * spawn path still fails closed without a constructible Seatbelt boundary.
+ * `operatorChoice` opens the lane to any non-empty adapter id; dispatch still
+ * requires an isolated worktree and a session-bound route.
  */
 export function isMissionWorkerWriteEligibleCli(
   adapterId: string,
@@ -117,9 +117,7 @@ export function squadRuntimeCliPolicyFromRoutableIds(
     // pre-vetted route set. Production inventory must use
     // buildSquadRuntimeCliPolicy with explicit adapter capabilities.
     handoffCapableCliIds: new Set(routableCliIds),
-    routableWorkerCliIds: new Set(
-      [...routableCliIds].filter((adapterId) => adapterId !== "claude"),
-    ),
+    routableWorkerCliIds: new Set(routableCliIds),
     credentiallessOnlyCliIds: new Set<string>(),
     credentiallessDefaultModelByCliId: Object.freeze({}),
     authReadyModelsByCliId: Object.freeze({}),
@@ -179,14 +177,14 @@ export function squadRuntimeModelsForCli(
 
 /**
  * Build the exact route inventory used for autonomous squad construction.
- * Claude can coordinate, but its OAuth session remains globally reserved and
- * therefore never enters the worker subset.
+ * Operator-choice includes Claude in the worker pool; roster/claim authority
+ * still prevents a Claude worker from running beside a Claude orchestrator.
  */
 export function buildSquadRuntimeCliPolicy(
   providers: readonly SquadRuntimeProviderSnapshot[],
   hasAvailableAccount: (adapterId: string) => boolean,
   /**
-   * When true, any handoff-capable non-Claude CLI may be a mission worker.
+   * When true, any handoff-capable CLI may be a mission worker.
    * Default false keeps the release-qualified Codex writer lane.
    */
   operatorChoice = false,
@@ -199,9 +197,6 @@ export function buildSquadRuntimeCliPolicy(
   for (const provider of providers) {
     if (
       provider.adapterId === "shell" ||
-      // `omp-rpc` is the presentation twin of the canonical `omp` worker.
-      // Keeping both would schedule the same broker twice under two ids.
-      provider.adapterId === "omp-rpc" ||
       !provider.enabled ||
       !provider.installed ||
       !provider.adapterLoaded
@@ -228,10 +223,7 @@ export function buildSquadRuntimeCliPolicy(
       continue;
     }
     routableCliIds.add(provider.adapterId);
-    if (
-      provider.adapterId === "omp" ||
-      provider.adapterId === "omp-rpc"
-    ) {
+    if (Array.isArray(provider.authReadyModels)) {
       authReadyModelsByCliId[provider.adapterId] =
         Object.freeze([...authReadyModels]);
       if (
@@ -262,7 +254,7 @@ export function buildSquadRuntimeCliPolicy(
   return Object.freeze({
     routableCliIds,
     // A mission participant of ANY tier must be able to return a physical
-    // Nexus MCP/OMP handoff receipt; without that route it can talk but never
+    // Nexus handoff receipt; without that route it can talk but never
     // prove it did anything, so it is not a participant at all. Advisors need
     // exactly this and nothing more — no autonomous write.
     handoffCapableCliIds: new Set(
@@ -279,11 +271,7 @@ export function buildSquadRuntimeCliPolicy(
         );
         if (!provider?.guidedHandoffCapable) return false;
         if (operatorChoice) {
-          return (
-            adapterId !== "claude" &&
-            adapterId !== "shell" &&
-            adapterId !== "omp-rpc"
-          );
+          return adapterId !== "shell";
         }
         // Governed: Codex-class writers only (release-qualified + write capable).
         if (!isReleaseQualifiedMissionWorkerCli(adapterId)) return false;
@@ -315,8 +303,8 @@ const READ_ONLY_PARTICIPATION_CATEGORIES: ReadonlySet<unknown> = new Set([
 
 /**
  * Advisory participation lane: a reviewer/scout on a CLI that can hold a
- * read_only lane joins the mission through the Nexus MCP read-only authority
- * (or its own mechanical confinement) and therefore never needs autonomous
+ * read_only lane joins the mission through Nexus read-only authority (or its
+ * own mechanical confinement) and therefore never needs autonomous
  * workspace write. It still must be routable as an adapter — advisory is a
  * narrower authority, not an exemption from having an active route.
  */
@@ -383,24 +371,24 @@ export function assessStandardSquadReadiness(
     });
   }
 
-  // reserveClaude keeps exactly one Claude OAuth session per mission. A Claude
-  // advisor confined to a read-only lane is admissible when the Maestro is NOT
-  // Claude — the sealed task plan already applies that same rule (see
-  // mission-task-plan-authority).
+  // reserveClaude keeps exactly one Claude OAuth session per mission. In
+  // autopilot that one process may be a writer or reviewer when the Maestro is
+  // NOT Claude. Two Claude roster workers would still contend for the same
+  // credential state, so reject that roster before dispatch.
   const claudeNonOrchestrators = agents.filter(
     (agent) => agent.category !== "orchestrator" && agent.cli === "claude",
   );
   if (
     claudeNonOrchestrators.length > 0 &&
-    (orchestratorCli === "claude" ||
-      claudeNonOrchestrators.some(
-        (agent) => !READ_ONLY_PARTICIPATION_CATEGORIES.has(agent.category),
-      ))
+    (orchestratorCli === "claude" || claudeNonOrchestrators.length > 1)
   ) {
     return Object.freeze({
       ok: false,
       code: "claude-worker",
-      detail: "Claude permanece reservado ao Maestro e não pode ser worker",
+      detail:
+        orchestratorCli === "claude"
+          ? "Claude já está em uso pelo Maestro desta missão"
+          : "o squad pode usar no máximo um worker Claude por missão",
     });
   }
 
@@ -413,7 +401,7 @@ export function assessStandardSquadReadiness(
     return Object.freeze({
       ok: false,
       code: "executor-unavailable",
-      detail: "o squad precisa de um executor não-Claude com rota ativa",
+      detail: "o squad precisa de um executor com rota ativa",
     });
   }
 
@@ -426,7 +414,7 @@ export function assessStandardSquadReadiness(
     return Object.freeze({
       ok: false,
       code: "reviewer-unavailable",
-      detail: "o squad precisa de um QA/reviewer não-Claude com rota ativa",
+      detail: "o squad precisa de um QA/reviewer com rota ativa",
     });
   }
 

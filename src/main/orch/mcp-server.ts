@@ -4,11 +4,14 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { app, dialog } from "electron";
 import type { McpRuntimeInfo } from "../../shared/orch-types";
+import { hasCurrentApprovedDispatchContract } from "../../shared/mission-intent";
 import {
+  getSessionState,
   orchWriteSession,
   setAgentSpawnHook,
   tapSessionData,
   tapSessionExit,
+  tapSessionState,
   type AgentSpawnDecoration,
   type AgentSpawnHook,
 } from "../pty/pty-manager";
@@ -32,11 +35,18 @@ import {
   type JsonRpcResponse,
   type McpRegistry,
 } from "./mcp-protocol";
-import { runInsideHttpMcpTransport } from "./http-mcp-boundary";
+import {
+  runInsideHttpMcpTransport,
+  runInsidePtyStreamAgentTransport,
+} from "./http-mcp-boundary";
+import {
+  dispatchToolCall,
+  type ToolDispatchResult,
+} from "./mcp-dispatch";
 import type {
   McpConfirmationHandler,
   McpConfirmationRequest,
-} from "./mcp-dispatch";
+} from "./mcp-dispatch-contract";
 import { McpConfirmationScheduler } from "./mcp-confirmation-scheduler";
 import { isHookMcpToolAllowedForReadOnlyContext } from "./mcp-effect-policy";
 import { clearSession as clearMcpPermissionSession } from "../jarvis/permissions";
@@ -53,7 +63,11 @@ import {
   LegacyHandoffParser,
 } from "./legacy-handoff";
 import { getProjectDomainStores } from "./project-domain-store-registry";
-import { onHandoffSubmitted } from "./idle-delivery";
+import { submitPtyStreamHandoff } from "./pty-stream-handoff";
+import {
+  installPtyStreamMissionControl,
+  PtyStreamMissionControl,
+} from "./pty-stream-mission-control";
 import { cliPromptAutoResponder } from "./cli-prompt-autoresponder";
 import {
   cleanupSessionArtifacts,
@@ -63,25 +77,19 @@ import {
   writeMcpConfigFile,
 } from "./hooks-gen";
 import { handleHookStatusHttp } from "./hook-status-endpoint";
-import { resetAgentStatusOnExit } from "./agent-status";
+import {
+  isSessionInjectableIdle,
+  resetAgentStatusOnExit,
+} from "./agent-status";
 import { installMcpSessionTerminationRevocation } from "./mcp-session-revocation";
 import { codexStatusHookArgs } from "./hook-status-config";
 import { codexHookTrustBypassArgs } from "./codex-cli-version";
 import {
   cleanupAgyMcpConfig,
-  cleanupOmpMcpConfig,
-  prepareOmpMcpConfig,
   codexMcpArgs,
-  prepareAgyMcpConfig,
   purgeStaleAgyMcpConfigs,
   supportsMcpInjection,
 } from "./cli-mcp-inject";
-import {
-  acquireAgyNativeMcpLease,
-  releaseAgyNativeMcpLease,
-  recoverStaleAgyNativeLeases,
-  type AgyNativeMcpLease,
-} from "./agy-native-mcp-lease";
 import {
   cleanupCliMcpSession,
   prepareGrokMcpSession,
@@ -93,6 +101,8 @@ import { ensureSkillsForCli } from "./skill-mirror";
 import {
   isPetStudioNativeWorkspaceAuthority,
 } from "../pty/autonomous-cli-policy";
+import { getOrchSettings } from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import {
   isThirdPartyClaudeFamily,
   requiresSpawnGate,
@@ -130,6 +140,7 @@ let port = 0;
 let registry: McpRegistry | null = null;
 const sessionTokens = new Map<string, string>(); // sessionId → token
 let disposeTerminationRevocation: (() => void) | null = null;
+let disposePtyMissionControl: (() => void) | null = null;
 
 async function showHttpMcpConfirmation(
   request: McpConfirmationRequest,
@@ -580,7 +591,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       adapter.id === "codex" &&
       meta?.role === "worker" &&
       Boolean(meta.missionId?.trim()) &&
-      meta.readOnly !== true
+      meta.readOnly !== true &&
+      !isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
         ? "codex"
         : undefined;
     const petStudioMediaAuthority = isPetStudioNativeWorkspaceAuthority({
@@ -649,7 +661,6 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     const extraArgs: string[] = [];
     let ephemeralHomeDir: string | null = null;
     let skillsPrepared = false;
-    let nativeAgyLease: AgyNativeMcpLease | null = null;
     // Real provider home (~/.kimi-code, ~/.grok) the governed overlay symlinks
     // session/auth state into. The advisory sandbox grants it read+write.
     let advisoryProviderStateHome: string | undefined;
@@ -657,15 +668,30 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // pelo adapter base, então o bloqueio vale para panes diretos e
     // orquestrados sem duplicar flags aqui.
     const mcpConfig = buildMcpConfig(ctx.token);
+    const thirdPartyClaudeFamily = isThirdPartyClaudeFamily(
+      adapter,
+      preparedEnv,
+    );
+    const homeMode =
+      adapter.quirks.mcpAutoload &&
+      isOperatorChoicePolicy(getOrchSettings().squadCliPolicy) &&
+      petStudioMediaAuthority !== true
+        ? "operator-choice"
+        : "hardened";
 
     try {
-      if (shouldUseEphemeralHome(adapter, gated)) {
+      if (
+        shouldUseEphemeralHome(adapter, gated, {
+          mode: homeMode,
+          effectiveEnv: preparedEnv,
+        })
+      ) {
         // Só o Claude NATIVO carrega a identidade OAuth da assinatura para o
         // overlay; GLM/LongCat (base URL de terceiro) jamais podem recebê-la.
         const approvedMissionProjectTrust =
           hasApprovedMissionProjectTrust(authority);
         const home = prepareEphemeralHome(ctx.token, mcpConfig, {
-          carryNativeClaudeAuth: !isThirdPartyClaudeFamily(adapter),
+          carryNativeClaudeAuth: !thirdPartyClaudeFamily,
           cwd: authority.cwd,
           approvedMissionProjectTrust,
         });
@@ -703,7 +729,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           home.mcpConfigPath,
           "--strict-mcp-config",
         );
-      } else if (isThirdPartyClaudeFamily(adapter)) {
+      } else if (thirdPartyClaudeFamily) {
         // GLM/LongCat run the `claude` binary against a third-party endpoint via
         // an injected token. Sharing the native ~/.claude lets the binary
         // rewrite the subscription's OAuth session → the native Claude
@@ -768,27 +794,6 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           // sources (it writes them). Version-gated (>= 0.134): unknown flag
           // on older codex would break the spawn; unresolved version omits.
           extraArgs.push(...codexHookTrustBypassArgs(adapter.bin));
-        } else if (flavor === "agy") {
-          if (gated && meta?.readOnly === true) {
-            // AGY 1.1 resolves auth AND mcp_config.json from the native path
-            // (~/.gemini/antigravity-cli/) regardless of $HOME/GEMINI_CLI_HOME
-            // — physically verified. The overlay approach breaks it: config is
-            // invisible, auth identity is missed. Native-profile mode keeps the
-            // real HOME, leases the shared MCP config transactionally (lock +
-            // journal + byte-exact restore), and hands the sandbox a separate
-            // private runtime with exact provider-state grants.
-            nativeAgyLease = acquireAgyNativeMcpLease(mcpUrl(), ctx.token, {
-              geminiHome: preparedEnv?.GEMINI_CLI_HOME,
-            });
-          } else {
-            // Direct panes keep the historical overlay: full profile mirrored
-            // by symlinks, private mcp_config.json with this session's bearer.
-            const agyConfig = prepareAgyMcpConfig(mcpUrl(), ctx.token, {
-              geminiHome: preparedEnv?.GEMINI_CLI_HOME,
-            });
-            env.HOME = agyConfig.homeDir;
-            env.GEMINI_CLI_HOME = agyConfig.geminiHomeDir;
-          }
         } else if (flavor === "opencode") {
           const prepared = prepareOpenCodeMcpSession(mcpUrl(), ctx.token);
           Object.assign(env, prepared.env);
@@ -809,11 +814,6 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
           advisoryProviderStateHome = prepared.providerStateHome;
-        } else if (flavor === "omp") {
-          // omp resolve `~/.omp/agent/mcp.json` via HOME; overlay privado por
-          // sessão preserva login/sessões por symlink e isola o bearer.
-          const ompConfig = prepareOmpMcpConfig(mcpUrl(), ctx.token);
-          env.HOME = ompConfig.homeDir;
         }
       }
       if (!skillsPrepared) {
@@ -826,8 +826,6 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     } catch (err) {
       releaseSessionByToken(ctx.token);
       cleanupAgyMcpConfig(ctx.token);
-      releaseAgyNativeMcpLease(ctx.token);
-      cleanupOmpMcpConfig(ctx.token);
       cleanupCliMcpSession(ctx.token);
       cleanupSessionArtifacts(ctx.token);
       throw new Error(
@@ -839,27 +837,15 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     const decoration: AgentSpawnDecoration = {
       env,
       extraArgs,
-      // Native-profile AGY (advisory): HOME stays real, the sandbox gets a
-      // private runtime, and the kernel grants only the provider-state paths.
-      // Write covers the whole ~/.gemini root: auth refresh rotates
-      // oauth_creds.json/state.json there, outside antigravity-cli/. The
-      // Keychain read grant is added by the pty advisory path (native home).
-      ...(nativeAgyLease
+      ...(advisoryProviderStateHome
         ? {
-            processHome: nativeAgyLease.realHome,
-            sandboxDir: nativeAgyLease.runtimeDir,
-            providerStateReadPaths: [nativeAgyLease.geminiDir],
-            providerStateWritePaths: [nativeAgyLease.geminiDir],
+            // Overlay providers (Kimi/Grok): keep the minted runtime as HOME
+            // (pty-manager path), but grant the real provider home so the
+            // overlay's session/auth symlinks resolve read+write.
+            providerStateReadPaths: [advisoryProviderStateHome],
+            providerStateWritePaths: [advisoryProviderStateHome],
           }
-        : advisoryProviderStateHome
-          ? {
-              // Overlay providers (Kimi/Grok): keep the minted runtime as HOME
-              // (pty-manager path), but grant the real provider home so the
-              // overlay's session/auth symlinks resolve read+write.
-              providerStateReadPaths: [advisoryProviderStateHome],
-              providerStateWritePaths: [advisoryProviderStateHome],
-            }
-          : {}),
+        : {}),
       onSpawned: (sessionId) => {
         bindTokenToSession(ctx.token, sessionId);
         sessionTokens.set(sessionId, ctx.token);
@@ -870,8 +856,6 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         // registry and remove any token-bearing files we wrote.
         releaseSessionByToken(ctx.token);
         cleanupAgyMcpConfig(ctx.token);
-        releaseAgyNativeMcpLease(ctx.token);
-        cleanupOmpMcpConfig(ctx.token);
         cleanupCliMcpSession(ctx.token);
         cleanupSessionArtifacts(ctx.token);
       },
@@ -885,40 +869,87 @@ function installSpawnHook(): void {
 }
 
 /** Legacy `### NEXUS_HANDOFF v1` stream fallback (ARCHITECTURE §E.3). */
-function installLegacyParser(): void {
+function currentPtyMaestroContext(
+  sessionId: string,
+): AgentGateContext | null {
+  const ctx = getContextBySession(sessionId);
+  if (
+    !ctx ||
+    ctx.role !== "orchestrator" ||
+    ctx.sessionId !== sessionId ||
+    !ctx.missionId ||
+    !isCurrentGateContext(ctx)
+  ) {
+    return null;
+  }
+  try {
+    const mission = getProjectDomainStores(ctx.scope).missions.get(ctx.missionId);
+    if (
+      !mission ||
+      mission.orchestratorSessionId !== sessionId ||
+      !hasCurrentApprovedDispatchContract(mission) ||
+      mission.intentContract?.orchestratorRuntime?.nativeReadOnly !== false
+    ) {
+      return null;
+    }
+    return ctx;
+  } catch {
+    return null;
+  }
+}
+
+function createPtyMissionControl(): PtyStreamMissionControl {
+  return new PtyStreamMissionControl({
+    isAuthorized: (sessionId) =>
+      currentPtyMaestroContext(sessionId) !== null,
+    isInjectableIdle: (sessionId) =>
+      getSessionState(sessionId) === "idle" &&
+      isSessionInjectableIdle(sessionId),
+    write: orchWriteSession,
+    invoke: async (sessionId, request): Promise<ToolDispatchResult> => {
+      const ctx = currentPtyMaestroContext(sessionId);
+      if (!ctx || !registry) {
+        throw new Error(
+          "Canal Nexus revogado: retome a missão para restaurar o Maestro atual.",
+        );
+      }
+      return await runInsidePtyStreamAgentTransport(sessionId, ctx, () =>
+        dispatchToolCall(
+          "pty-stream",
+          registry!,
+          request.tool,
+          request.args,
+          ctx,
+          { confirm: confirmHttpMcpTool },
+        ),
+      );
+    },
+  });
+}
+
+/** Legacy handoff + provider-independent Maestro control stream parsers. */
+function installLegacyParser(
+  missionControl: PtyStreamMissionControl,
+): void {
   const dedupe = new LegacyHandoffDedupe();
   const parser = new LegacyHandoffParser((sessionId, payload) => {
-    // O eco/repaint do kickoff contém o bloco-EXEMPLO do contrato — sem esta
-    // régua (a mesma da tool MCP), o template "<resumo objetivo do que fez>"
-    // virava handoff real em loop no orquestrador.
     if (isPlaceholderSummary(payload.summary)) {
       console.log(
-        `[handoff] bloco legacy com summary placeholder ignorado (${sessionId})`,
+        `[handoff] bloco PTY com summary placeholder ignorado (${sessionId})`,
       );
       return;
     }
     // Repaint do TUI re-emite o MESMO bloco — uma entrega só por conteúdo.
     if (dedupe.isDuplicate(sessionId, payload)) return;
-    const ctx = getContextBySession(sessionId);
-    if (!ctx) {
+    void submitPtyStreamHandoff(sessionId, payload).catch((error) => {
+      // A transient Git/store failure must remain retryable on the next real
+      // terminal emission. Repaints are still suppressed while ingest runs.
+      dedupe.forget(sessionId, payload);
       console.warn(
-        `[handoff] legacy handoff without scoped session ignored (${sessionId})`,
+        `[handoff] PTY stream handoff rejected (${sessionId}):`,
+        error,
       );
-      return;
-    }
-    const handoff = getProjectDomainStores(ctx.scope).handoffs.submit({
-      status: payload.status,
-      summary: payload.summary,
-      artifacts: payload.artifacts,
-      missionId: ctx.missionId,
-      sessionId,
-      workerIncarnationId: ctx.workerIncarnationId,
-      fromAgent: ctx.agentName ?? ctx.label ?? "legacy",
     });
-    if (handoff.evidenceTrust === "nexus-trusted") {
-      ctx.handoffSubmitted = true;
-    }
-    onHandoffSubmitted(handoff, ctx.scope);
   });
   // Prefiltro: stripAnsi + parse custam ~104ms/10k chunks e rodavam em TODO
   // output de PTY. Só paga quando o chunk pode conter o marker (tail cru curto
@@ -937,19 +968,33 @@ function installLegacyParser(): void {
         orchWriteSession(sessionId, response);
       }, 50);
     }
+    if (missionControl.hasChannel(sessionId)) {
+      plain ??= stripAnsi(data);
+      missionControl.feed(sessionId, plain);
+    }
     const tail = rawTails.get(sessionId) ?? "";
     const probe = tail + data;
     rawTails.set(sessionId, probe.slice(-32));
-    if (!parser.isCollecting(sessionId) && !probe.includes(MARKER_HINT)) {
+    const isCollecting = parser.isCollecting(sessionId);
+    if (!isCollecting && !probe.includes(MARKER_HINT)) {
       return;
     }
-    parser.feed(sessionId, plain ?? stripAnsi(data));
+    // When the marker crosses the PTY chunk boundary, the parser never saw
+    // `tail` because the cheap prefilter skipped that previous chunk.
+    parser.feed(
+      sessionId,
+      isCollecting ? (plain ?? stripAnsi(data)) : stripAnsi(probe),
+    );
+  });
+  tapSessionState((sessionId, state) => {
+    missionControl.observeSessionState(sessionId, state);
   });
   tapSessionExit((sessionId) => {
     cliPromptAutoResponder.drop(sessionId);
     parser.dropSession(sessionId);
     dedupe.dropSession(sessionId);
     rawTails.delete(sessionId);
+    missionControl.dropSession(sessionId);
     // PTY died without a stop hook → semantic status resets to idle (kills
     // the "busy preso" class the 5-minute hook watchdog merely bounds).
     resetAgentStatusOnExit(sessionId);
@@ -957,8 +1002,6 @@ function installLegacyParser(): void {
     if (token) {
       sessionTokens.delete(sessionId);
       cleanupAgyMcpConfig(token);
-      releaseAgyNativeMcpLease(token);
-      cleanupOmpMcpConfig(token);
       cleanupCliMcpSession(token);
       cleanupSessionArtifacts(token);
     }
@@ -972,20 +1015,6 @@ export function startMcpServer(): Promise<void> {
   httpConfirmationScheduler = new McpConfirmationScheduler(
     showHttpMcpConfirmation,
   );
-  // Crash recovery: a previous Nexus that died mid-lease may have left the
-  // shared AGY config with an injected nexus entry. Restore it before any
-  // new session acquires the profile.
-  const staleNative = recoverStaleAgyNativeLeases();
-  if (staleNative.recovered > 0) {
-    console.log(
-      `[orch] restored ${staleNative.recovered} stale AGY native MCP lease(s)`,
-    );
-  }
-  if (staleNative.failed > 0) {
-    console.warn(
-      `[orch] ${staleNative.failed} AGY native lease(s) could not be restored`,
-    );
-  }
   const staleAgy = purgeStaleAgyMcpConfigs();
   const staleCli = purgeStaleCliMcpSessions();
   const removedArtifacts = staleAgy.removed + staleCli.removed;
@@ -1005,7 +1034,10 @@ export function startMcpServer(): Promise<void> {
     serverVersion: app.getVersion(),
   };
   installSpawnHook();
-  installLegacyParser();
+  const missionControl = createPtyMissionControl();
+  disposePtyMissionControl?.();
+  disposePtyMissionControl = installPtyStreamMissionControl(missionControl);
+  installLegacyParser(missionControl);
   disposeTerminationRevocation?.();
   disposeTerminationRevocation = installMcpSessionTerminationRevocation();
   server = http.createServer((req, res) => {
@@ -1056,10 +1088,10 @@ export function stopMcpServer(): void {
   disposeTerminationRevocation = null;
   httpConfirmationScheduler.close();
   cliPromptAutoResponder.clear();
+  disposePtyMissionControl?.();
+  disposePtyMissionControl = null;
   for (const token of sessionTokens.values()) {
     cleanupAgyMcpConfig(token);
-    releaseAgyNativeMcpLease(token);
-    cleanupOmpMcpConfig(token);
     cleanupCliMcpSession(token);
     cleanupSessionArtifacts(token);
     releaseSessionByToken(token);

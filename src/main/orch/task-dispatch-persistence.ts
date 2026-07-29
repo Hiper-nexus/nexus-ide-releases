@@ -25,6 +25,61 @@ function taskDispatchMissionBlock(detail: string): string {
 }
 
 /**
+ * Removes only the exact technical block appended for this dispatch attempt.
+ * A different block, an operator block, or lifecycle drift remains terminal:
+ * callers may never reopen a mission merely because a provider retry is due.
+ */
+export function resumeTaskDispatchMissionAfterTechnicalFailure(
+  db: TaskDispatchDatabase,
+  missionId: string,
+  detail: string | null,
+  now: number,
+): void {
+  const row = db
+    .prepare(
+      `SELECT status, intent_state, description FROM missions WHERE id = ?`,
+    )
+    .get(missionId) as
+    | { status: string; intent_state: string | null; description: string }
+    | undefined;
+  if (!row) {
+    throw new Error(`missão não encontrada para retry técnico: ${missionId}`);
+  }
+  if (row.status === "running") return;
+  if (
+    row.status !== "blocked" ||
+    row.intent_state !== "blocked_technical" ||
+    !detail
+  ) {
+    throw new Error(
+      "retry técnico não possui autoridade para reabrir esta missão",
+    );
+  }
+  const suffix = taskDispatchMissionBlock(detail);
+  if (!row.description.endsWith(suffix)) {
+    throw new Error(
+      "retry técnico não corresponde ao bloco canônico atual da missão",
+    );
+  }
+  const prefix = row.description.slice(0, -suffix.length);
+  const description = prefix.endsWith("\n\n")
+    ? prefix.slice(0, -2)
+    : prefix;
+  const updated = db
+    .prepare(
+      `UPDATE missions
+          SET status = 'running', intent_state = 'executing',
+              description = ?, updated_at = ?
+        WHERE id = ? AND status = 'blocked'
+          AND intent_state = 'blocked_technical' AND description = ?`,
+    )
+    .run(description, now, missionId, row.description);
+  if (updated.changes !== 1) {
+    throw new Error("retry técnico perdeu CAS ao reabrir a missão");
+  }
+}
+
+/**
  * Extract the last durable worker-block detail from a mission description.
  * Used by the release-gate evidence so FAIL reports the exact fence, not null.
  */

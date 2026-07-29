@@ -140,7 +140,7 @@ export class WorktreeRuntimeRegistry {
     return value;
   }
 
-  create(input: CreateWorktreeInput): WorktreeRecord {
+  create(input: CreateWorktreeInput): Promise<WorktreeRecord> {
     return this.forScope(input.scope).worktrees.create(input);
   }
 
@@ -192,6 +192,18 @@ export class WorktreeRuntimeRegistry {
     );
   }
 
+  prepareDiscardedNoChangeValidation(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+  ): PreparedWorktreeNoChangeValidation | null {
+    return this.forScope(scope).worktrees.prepareDiscardedNoChangeValidation(
+      scope,
+      missionId,
+      taskId,
+    );
+  }
+
   markValidatedNoChange(
     scope: ProjectExecutionScope,
     missionId: string,
@@ -200,6 +212,22 @@ export class WorktreeRuntimeRegistry {
     expectedIntegrationHeadSha: string,
   ): WorktreeRecord {
     return this.forScope(scope).worktrees.markValidatedNoChange(
+      scope,
+      missionId,
+      taskId,
+      expectedTaskHeadSha,
+      expectedIntegrationHeadSha,
+    );
+  }
+
+  markDiscardedNoChange(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+    expectedTaskHeadSha: string,
+    expectedIntegrationHeadSha: string,
+  ): WorktreeRecord {
+    return this.forScope(scope).worktrees.markDiscardedNoChange(
       scope,
       missionId,
       taskId,
@@ -226,12 +254,22 @@ export class WorktreeRuntimeRegistry {
     return this.forScope(input.scope).queue.retry(input);
   }
 
+  retryRecoverable(input: EnqueueMergeInput): Promise<MergeQueueResult> {
+    return this.forScope(input.scope).queue.retryRecoverable(input);
+  }
+
   mergeSnapshot(scope: ProjectExecutionScope): MergeQueueStateSnapshot {
     return this.forScope(scope).queue.snapshot(scope);
   }
 
   reconcile(scope: ProjectExecutionScope): MergeQueueReconciliationResult {
     return this.forScope(scope).queue.reconcile(scope);
+  }
+
+  reconcileMergeIfIdle(
+    scope: ProjectExecutionScope,
+  ): MergeQueueReconciliationResult {
+    return this.forScope(scope).queue.reconcileIfIdle(scope);
   }
 
   resolveIntegratedMission(

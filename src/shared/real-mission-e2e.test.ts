@@ -202,12 +202,6 @@ describe("real mission E2E closed receipts", () => {
           allowedTools: [],
         },
         {
-          id: "e2e-advisor-omp",
-          category: "scout",
-          cli: "omp",
-          allowedTools: [],
-        },
-        {
           id: "e2e-advisor-claude",
           category: "reviewer",
           cli: "claude",
@@ -223,7 +217,7 @@ describe("real mission E2E closed receipts", () => {
     });
     // Advisors sem credencial (env NEXUS_REAL_MISSION_ADVISOR_SKIP) ficam
     // fora do roster; o pipeline codex nunca muda.
-    const skipped = createRealMissionE2ESquadFixture(["grok", "omp"]);
+    const skipped = createRealMissionE2ESquadFixture(["grok"]);
     expect(skipped.agents.map((agent) => agent.id)).toEqual([
       REAL_MISSION_E2E_ORCHESTRATOR_ID,
       REAL_MISSION_E2E_EXECUTOR_ID,
@@ -335,7 +329,6 @@ describe("real mission E2E claude orchestrator variant", () => {
       "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
-      "e2e-advisor-omp",
       "e2e-advisor-glm",
     ]);
     // O pipeline executor → revisor → QA continua codex nas duas variantes.
@@ -348,15 +341,14 @@ describe("real mission E2E claude orchestrator variant", () => {
     ).toBe(true);
   });
 
-  it("derives the expected task chain without the reserved claude advisor", () => {
-    const presentClis = ["grok", "kimi", "agy", "opencode", "omp", "glm"];
+  it("derives the exact fan-out and review DAG without the reserved claude advisor", () => {
+    const presentClis = ["grok", "kimi", "agy", "opencode", "glm"];
     const chain = realMissionE2EExpectedTaskChain(presentClis);
 
     expect(chain.map((member) => member.agentRef)).toEqual([
       "e2e-advisor-kimi",
       "e2e-advisor-agy",
       "e2e-advisor-opencode",
-      "e2e-advisor-omp",
       "e2e-advisor-glm",
       "e2e-executor",
       "e2e-reviewer",
@@ -367,12 +359,21 @@ describe("real mission E2E claude orchestrator variant", () => {
       "guided-advisory-1-e2e-advisor-kimi",
       "guided-advisory-2-e2e-advisor-agy",
       "guided-advisory-3-e2e-advisor-opencode",
-      "guided-advisory-4-e2e-advisor-omp",
-      "guided-advisory-5-e2e-advisor-glm",
+      "guided-advisory-4-e2e-advisor-glm",
       "guided-execution",
       "guided-review-1-e2e-reviewer",
       "guided-review-2-e2e-advisor-grok",
       "guided-quality-gate",
+    ]);
+    expect(chain.map((member) => member.dependsOnPlannerIds)).toEqual([
+      [],
+      [],
+      [],
+      [],
+      [],
+      ["guided-execution"],
+      ["guided-review-1-e2e-reviewer"],
+      ["guided-review-2-e2e-advisor-grok"],
     ]);
     // Nenhum worker claude OAuth em nenhuma posição da cadeia (glm ≠ claude).
     expect(chain.every((member) => member.cli !== "claude")).toBe(true);

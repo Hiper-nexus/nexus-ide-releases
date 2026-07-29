@@ -18,6 +18,10 @@ import { useProductFlags } from "../lib/use-product-flags";
 import { formatShortcut } from "../lib/platform";
 import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
 import { missionRuntimeReadiness } from "../orch/mission-runtime-readiness";
+import {
+  DEFAULT_ORCH_SETTINGS,
+  type SquadCliPolicy,
+} from "../../shared/settings-types";
 
 /**
  * Launch / onboarding screen — the first surface when no workspace is open:
@@ -49,6 +53,9 @@ export function LaunchScreen() {
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [providers, setProviders] = useState<ProviderSettingsInfo[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
+  const [squadCliPolicy, setSquadCliPolicy] = useState<SquadCliPolicy>(
+    DEFAULT_ORCH_SETTINGS.squadCliPolicy,
+  );
   const [adaptersLoaded, setAdaptersLoaded] = useState(false);
   const [readinessError, setReadinessError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,8 +68,14 @@ export function LaunchScreen() {
   });
 
   const readiness = useMemo(
-    () => missionRuntimeReadiness(adapters, providers, accounts),
-    [accounts, adapters, providers],
+    () =>
+      missionRuntimeReadiness(
+        adapters,
+        providers,
+        accounts,
+        squadCliPolicy,
+      ),
+    [accounts, adapters, providers, squadCliPolicy],
   );
   const mostRecent = recents[0] ?? null;
 
@@ -77,12 +90,15 @@ export function LaunchScreen() {
         window.nexus.adapters.list(),
         window.nexus.providers.list(),
         window.nexus.accounts.list(),
+        window.nexus.settings?.orchGet?.().catch(() => DEFAULT_ORCH_SETTINGS) ??
+          Promise.resolve(DEFAULT_ORCH_SETTINGS),
       ])
-        .then(([nextAdapters, nextProviders, nextAccounts]) => {
+        .then(([nextAdapters, nextProviders, nextAccounts, orchSettings]) => {
           if (cancelled || revision !== requestRevision) return;
           setAdapters(nextAdapters);
           setProviders(nextProviders);
           setAccounts(nextAccounts);
+          setSquadCliPolicy(orchSettings.squadCliPolicy);
         })
         .catch(() => {
           if (cancelled || revision !== requestRevision) return;
@@ -309,7 +325,9 @@ export function LaunchScreen() {
             <span className={readiness.hasOperationalRoute ? "is-live" : ""}>
               <i aria-hidden="true" />
               {readiness.hasOperationalRoute
-                ? "Rota de missão autenticada e verificada"
+                ? squadCliPolicy === "operator-choice"
+                  ? "Rota de missão autenticada e pronta"
+                  : "Rota de missão autenticada e verificada"
                 : adaptersLoaded
                   ? "Rota de missão requer configuração"
                   : "Verificando rota de missão"}

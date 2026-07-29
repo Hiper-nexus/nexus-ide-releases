@@ -31,7 +31,7 @@ import { applyGuidedSquadSkillPolicy } from "./guided-squad-skills";
  */
 
 const MAX_FILE_CHARS = 4_000;
-const ARCHITECT_PROMPT = `Você é um arquiteto de squads de agentes de IA no
+const ARCHITECT_PROMPT_BASE = `Você é um arquiteto de squads de agentes de IA no
 NexusIDE. Com base no PERFIL DO PROJETO abaixo, desenhe o squad ideal.
 
 Responda APENAS com JSON neste formato:
@@ -54,7 +54,7 @@ Regras:
   app/os testes de verdade e tentar quebrar as entregas — não só ler código.
 - Inclua um reviewer de Segurança sempre que o projeto tocar auth,
   pagamentos, APIs expostas, rede ou dados de usuário.
-- Inclua um UX/UI Designer (category reviewer, em uma CLI de worker não-Claude)
+- Inclua um UX/UI Designer (category reviewer, em uma CLI de worker elegível)
   sempre que o
   projeto tiver interface (web, mobile, desktop): ele critica hierarquia,
   acessibilidade, estados vazios e polish das entregas de UI, com mandato
@@ -62,24 +62,19 @@ Regras:
   glassmorphism, card grids idênticos) e usar a skill impeccable quando
   disponível.
 - NÃO inclua o orquestrador na lista (ele é adicionado automaticamente).
-- Claude é reservado globalmente ao Maestro: nunca atribua Claude a executor,
-  reviewer, scout ou architect.
-- A lista de CLIs instaladas não é uma lista de workers guided. Atribua
-  executor, reviewer, scout e architect SOMENTE a linhas marcadas
-  "worker guided: qualificado" no perfil runtime. Painel, terminal, handoff ou
-  rota experimental não substituem confinamento autônomo. Se houver uma única
-  CLI qualificada, todos os workers podem e devem usar essa CLI.
+- Atribua executor, reviewer, scout e architect SOMENTE a linhas marcadas
+  "worker guided: qualificado" no perfil runtime. Se houver uma única CLI
+  qualificada, todos os workers podem e devem usar essa CLI.
 - Use somente CLI/modelo/effort declarados no perfil runtime; não invente nem
   use catálogos memorizados. Prefira effort econômico em trabalho mecânico e o
   maior effort realmente disponível em revisão/arquitetura crítica.
 - Quando a missão exigir GERAR ou EDITAR imagem, spritesheet, avatar ou desktop
-  pet, escolha um executor Codex governado. O main concede a ele a skill
+  pet, escolha um executor worker guided. O main concede a ele a skill
   nexus-visual-media e exatamente as tools nexus_media_providers e
   nexus_image_generate. Não prometa imagegen/hatch-pet, geração nativa da CLI
   ou API key ambiente: esses caminhos não pertencem à autoridade da missão.
-  Claude pode implementar/revisar código e contrato visual, mas NÃO deve ser
-  escalado como gerador de imagem. Nunca atribua geração visual a uma CLI sem
-  a ferramenta de mídia Nexus explicitamente declarada no arsenal.
+  Nunca atribua geração visual a um agente sem a ferramenta de mídia Nexus
+  explicitamente declarada no arsenal.
 - Desktop pet v2 NÃO é uma imagem única: é um pipeline 8x11 com 9 estados de
   animação (idle, running-right, running-left, waving, jumping, failed,
   waiting, running, review), 16 direções de olhar e até 13 trabalhos visuais.
@@ -91,6 +86,24 @@ Regras:
   os comandos reais de build/test/lint do projeto (extraia dos manifests,
   ex.: scripts do package.json, Makefile, rake, go test ./...) — são os
   gates que o orquestrador vai cobrar em cada handoff.`;
+
+function architectPrompt(operatorChoice: boolean): string {
+  const policy = operatorChoice
+    ? `POLÍTICA AUTOPILOTO:
+- Use qualquer linha "worker guided: qualificado": ela já representa CLI
+  instalada, autenticada e capaz de devolver handoff pelo Nexus.
+- Preserve as CLIs escolhidas pelo operador; não substitua uma marca por Codex.
+- Pode haver no máximo UM processo Claude na missão inteira. Se Claude for o
+  Maestro, não o atribua a worker; se outro CLI for Maestro, atribua Claude a
+  no máximo um worker.`
+    : `POLÍTICA HARDENED:
+- Claude é reservado ao Maestro: nunca o atribua a executor, reviewer, scout
+  ou architect.
+- A lista instalada não basta. Use somente workers marcados "worker guided:
+  qualificado". Painel, terminal, handoff ou
+  rota experimental não substituem confinamento autônomo.`;
+  return `${ARCHITECT_PROMPT_BASE}\n\n${policy}`;
+}
 
 const ARCHITECT_JSON_SCHEMA = {
   type: "object",
@@ -190,10 +203,11 @@ function assertSquadDesignAuthority(options: SquadDesignOptions): void {
   throw new Error("squad design authority was revoked");
 }
 
-const NO_VERIFIED_MAESTRO_ERROR =
-  "Nenhum Maestro com orquestração verificada está pronto. " +
-  "Instale, ative ou autentique Claude Code ou Codex e confira Configurações › Providers. " +
-  "Integrações experimentais só podem ser escolhidas manualmente na revisão.";
+function noMaestroError(operatorChoice: boolean): string {
+  return operatorChoice
+    ? "Nenhuma CLI autenticada com lançamento, prompt, observação de status e handoff está pronta para atuar como Maestro. Confira Configurações › Providers."
+    : "Nenhum Maestro com orquestração verificada está pronto. Instale, ative ou autentique Claude Code ou Codex e confira Configurações › Providers. Integrações experimentais só podem ser escolhidas manualmente na revisão.";
+}
 
 function deterministicSquadFallback(
   workspacePath: string,
@@ -204,7 +218,9 @@ function deterministicSquadFallback(
 ): ArchitectResult {
   assertSquadDesignAuthority(options);
   const inventory = liveSquadRuntimeInventory();
-  const { adapters, workerAdapters, verifiedOrchestrators } = inventory;
+  const { adapters, workerAdapters, orchestratorAdapters } = inventory;
+  const settings = getOrchSettings();
+  const operatorChoice = isOperatorChoicePolicy(settings.squadCliPolicy);
   if (adapters.length === 0) {
     return {
       ok: false,
@@ -213,19 +229,29 @@ function deterministicSquadFallback(
         "Confira instalação, provider habilitado, autenticação e contas disponíveis.",
     };
   }
-  if (verifiedOrchestrators.length === 0) {
-    return { ok: false, error: `${reason}; ${NO_VERIFIED_MAESTRO_ERROR}` };
+  if (orchestratorAdapters.length === 0) {
+    return { ok: false, error: `${reason}; ${noMaestroError(operatorChoice)}` };
   }
-  if (workerAdapters.length === 0) {
+  const orchestrator =
+    orchestratorAdapters.find(
+      (adapter) => adapter.id === settings.defaultAdapterId,
+    ) ?? orchestratorAdapters[0]!;
+  const eligibleWorkerAdapters = workerAdapters.filter(
+    (adapter) => !(adapter.id === "claude" && orchestrator.id === "claude"),
+  );
+  if (eligibleWorkerAdapters.length === 0) {
     return {
       ok: false,
       error:
         `${reason}; nenhuma CLI de worker está pronta. ` +
-        "Claude permanece reservado ao Maestro. Nesta versão, o guided automático exige Codex autenticado com escrita autônoma confinada. " +
-        "Kimi, OpenCode, Grok, AGY e OMP continuam disponíveis somente em painéis, terminais ou fluxos manuais/experimentais conforme a capability declarada.",
+        (operatorChoice
+          ? "Autopiloto requer ao menos uma rota autenticada com handoff; a única sessão Claude não pode ser duplicada."
+          : "Claude permanece reservado ao Maestro. Nesta versão, o guided automático exige Codex autenticado com escrita autônoma confinada. Kimi, OpenCode, Grok e AGY continuam disponíveis somente em painéis, terminais ou fluxos manuais/experimentais conforme a capability declarada."),
     };
   }
-  const pick = (index: number) => workerAdapters[index % workerAdapters.length];
+  const pick = (index: number) =>
+    eligibleWorkerAdapters[index % eligibleWorkerAdapters.length]!;
+  let hasClaudeWorker = false;
   const worker = (
     id: string,
     agentName: string,
@@ -233,9 +259,16 @@ function deterministicSquadFallback(
     index: number,
     preferredAdapterId?: string,
   ) => {
-    const adapter =
-      workerAdapters.find((item) => item.id === preferredAdapterId) ??
-      pick(index);
+    const preferred = eligibleWorkerAdapters.find(
+      (item) => item.id === preferredAdapterId,
+    );
+    let adapter = preferred ?? pick(index);
+    if (adapter.id === "claude" && hasClaudeWorker) {
+      adapter =
+        eligibleWorkerAdapters.find((item) => item.id !== "claude") ??
+        adapter;
+    }
+    if (adapter.id === "claude") hasClaudeWorker = true;
     return {
       id,
       agentName,
@@ -255,18 +288,8 @@ function deterministicSquadFallback(
       objective,
     );
   const visualExecutor = imageGeneration
-    ? workerAdapters.some((adapter) => adapter.id === "codex")
-      ? "codex"
-      : undefined
+    ? eligibleWorkerAdapters[0]?.id
     : undefined;
-  if (imageGeneration && !visualExecutor) {
-    return {
-      ok: false,
-      error:
-        `${reason}; a geração visual governada exige o worker Codex qualificado. ` +
-        "Instale, ative ou autentique Codex e configure um provider em Configurações › Mídia.",
-    };
-  }
   const agents = [
     worker(
       "executor",
@@ -279,11 +302,6 @@ function deterministicSquadFallback(
     worker("reviewer", "Revisor sênior", "reviewer", 2),
     ...(visual ? [worker("ux", "UX e validação visual", "reviewer", 3)] : []),
   ];
-  const preferredOrchestratorId = getOrchSettings().defaultAdapterId;
-  const orchestrator =
-    verifiedOrchestrators.find(
-      (adapter) => adapter.id === preferredOrchestratorId,
-    ) ?? verifiedOrchestrators[0];
   const candidate = {
     id: `agentic-fallback-${Date.now()}`,
     name: visual ? "Execução + QA Visual" : "Execução + QA",
@@ -298,7 +316,7 @@ function deterministicSquadFallback(
         ? "A entrega visual exige QA da imagem/interface, estados completos e comparação com a referência anexada."
         : "",
       imageGeneration
-        ? `A geração do asset visual deve ser liderada por ${visualExecutor} com a skill nexus-visual-media e somente as tools Nexus autorizadas. Para pet v2, trate como pipeline 8x11: base canônica, 9 linhas de animação, 16 direções, até 13 jobs visuais, QA incremental, contact sheet e motion preview. Nunca use imagegen/hatch-pet, API key ambiente ou geração nativa fora do workspace governado. Nunca misture células avulsas de geradores diferentes. Claude pode implementar/revisar, mas não gerar o asset.`
+        ? `A geração do asset visual deve ser liderada por ${visualExecutor} com a skill nexus-visual-media e somente as tools Nexus autorizadas. Para pet v2, trate como pipeline 8x11: base canônica, 9 linhas de animação, 16 direções, até 13 jobs visuais, QA incremental, contact sheet e motion preview. Nunca use imagegen/hatch-pet, API key ambiente ou geração nativa fora da autoridade da missão. Nunca misture células avulsas de geradores diferentes.`
         : "",
     ]
       .filter(Boolean)
@@ -318,7 +336,7 @@ function deterministicSquadFallback(
     candidate.agents,
     inventory.policy,
     inventory.verifiedOrchestratorCliIds,
-    isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
+    operatorChoice,
   );
   if (!readiness.ok) {
     return {
@@ -419,9 +437,11 @@ async function designSquad(opts: {
   const { workspacePath, intent, options } = opts;
   assertSquadDesignAuthority(options);
   const inventory = liveSquadRuntimeInventory();
-  const { adapters, workerAdapters, verifiedOrchestrators } = inventory;
-  if (verifiedOrchestrators.length === 0) {
-    return { ok: false, error: NO_VERIFIED_MAESTRO_ERROR };
+  const { adapters, workerAdapters, orchestratorAdapters } = inventory;
+  const settings = getOrchSettings();
+  const operatorChoice = isOperatorChoicePolicy(settings.squadCliPolicy);
+  if (orchestratorAdapters.length === 0) {
+    return { ok: false, error: noMaestroError(operatorChoice) };
   }
   const guidedWorkerIds = new Set(workerAdapters.map((adapter) => adapter.id));
   const runtimeCatalog = adapters
@@ -449,10 +469,11 @@ async function designSquad(opts: {
     (enriched ? `${enriched}\n\n` : "") +
     profileWorkspace(workspacePath);
   const doctor = getOrchSettings();
+  const systemPrompt = architectPrompt(operatorChoice);
   const viaAutoChain = () =>
     chatViaBrainChain(
       [
-        { role: "system", content: ARCHITECT_PROMPT },
+        { role: "system", content: systemPrompt },
         { role: "user", content: `PERFIL DO PROJETO:\n\n${profile}` },
       ],
       2_000,
@@ -466,7 +487,7 @@ async function designSquad(opts: {
     try {
       raw = await diagnoseWithDoctorGrok({
         cwd: workspacePath,
-        system: ARCHITECT_PROMPT,
+        system: systemPrompt,
         user: `PERFIL DO PROJETO:\n\n${profile}`,
         jsonSchema: ARCHITECT_JSON_SCHEMA,
         model: doctor.doctorModel || undefined,
@@ -527,11 +548,10 @@ async function designSquad(opts: {
   }
 
   const workspaceName = path.basename(workspacePath);
-  const preferredOrchestratorId = getOrchSettings().defaultAdapterId;
   const orchestrator =
-    verifiedOrchestrators.find(
-      (adapter) => adapter.id === preferredOrchestratorId,
-    ) ?? verifiedOrchestrators[0];
+    orchestratorAdapters.find(
+      (adapter) => adapter.id === settings.defaultAdapterId,
+    ) ?? orchestratorAdapters[0]!;
   // Intent mode ganha id próprio (por nome gerado) — dois squads agênticos no
   // mesmo workspace não podem colidir no id `custom-<workspace>`.
   const idBase = intent
@@ -562,7 +582,7 @@ async function designSquad(opts: {
     candidate.agents,
     inventory.policy,
     inventory.verifiedOrchestratorCliIds,
-    isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
+    operatorChoice,
   );
   if (!readiness.ok) {
     return deterministicSquadFallback(

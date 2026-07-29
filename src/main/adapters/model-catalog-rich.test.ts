@@ -53,33 +53,28 @@ describe('recorte vendorado (models-rich.json)', () => {
 });
 
 describe('getRichModelMetadata — um modelo real por adapter', () => {
-  it('claude/omp: resolve o seletor exato e metadados do Claude Opus 5', () => {
-    const direct = getRichModelMetadata('claude', 'claude-opus-5');
-    const broker = getRichModelMetadata('omp', 'anthropic/claude-opus-5');
-
-    for (const meta of [direct, broker]) {
-      expect(meta).toMatchObject({
-        id: 'claude-opus-5',
-        name: 'Claude Opus 5',
-        ompProvider: 'anthropic',
-        cost: {
-          input: 5,
-          output: 25,
-          cacheRead: 0.5,
-          cacheWrite: 6.25,
-        },
-        contextWindow: 1_000_000,
-        maxTokens: 128_000,
-        reasoning: true,
-        input: ['text', 'image'],
-      });
-    }
+  it('claude: resolve o seletor exato e metadados do Claude Opus 5', () => {
+    expect(getRichModelMetadata('claude', 'claude-opus-5')).toMatchObject({
+      id: 'claude-opus-5',
+      name: 'Claude Opus 5',
+      catalogProvider: 'anthropic',
+      cost: {
+        input: 5,
+        output: 25,
+        cacheRead: 0.5,
+        cacheWrite: 6.25,
+      },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      input: ['text', 'image'],
+    });
   });
 
   it('claude: resolve preço e janela de claude-sonnet-4-5', () => {
     const meta = getRichModelMetadata('claude', 'claude-sonnet-4-5');
     expect(meta).not.toBeNull();
-    expect(meta?.ompProvider).toBe('anthropic');
+    expect(meta?.catalogProvider).toBe('anthropic');
     expect(meta?.cost?.input).toBe(3);
     expect(meta?.cost?.output).toBe(15);
     expect(meta?.contextWindow).toBe(1_000_000);
@@ -89,7 +84,7 @@ describe('getRichModelMetadata — um modelo real por adapter', () => {
   it('codex: resolve preço e janela de gpt-5.5', () => {
     const meta = getRichModelMetadata('codex', 'gpt-5.5');
     expect(meta).not.toBeNull();
-    expect(meta?.ompProvider).toBe('openai-codex');
+    expect(meta?.catalogProvider).toBe('openai-codex');
     expect(meta?.cost?.input).toBe(5);
     expect(meta?.contextWindow).toBe(272_000);
   });
@@ -97,7 +92,7 @@ describe('getRichModelMetadata — um modelo real por adapter', () => {
   it('glm: resolve custo e janela de glm-4.6 via zai', () => {
     const meta = getRichModelMetadata('glm', 'glm-4.6');
     expect(meta).not.toBeNull();
-    expect(meta?.ompProvider).toBe('zai');
+    expect(meta?.catalogProvider).toBe('zai');
     expect(meta?.cost).toBeDefined();
     expect(meta?.contextWindow).toBe(204_800);
   });
@@ -105,7 +100,7 @@ describe('getRichModelMetadata — um modelo real por adapter', () => {
   it('kimi: resolve id com prefixo kimi-code/kimi-for-coding', () => {
     const meta = getRichModelMetadata('kimi', 'kimi-code/kimi-for-coding');
     expect(meta).not.toBeNull();
-    expect(meta?.ompProvider).toBe('kimi-code');
+    expect(meta?.catalogProvider).toBe('kimi-code');
     expect(meta?.cost).toBeDefined();
     expect(meta?.contextWindow).toBe(262_144);
   });
@@ -113,25 +108,18 @@ describe('getRichModelMetadata — um modelo real por adapter', () => {
   it('kimi: cai para o provider moonshot quando o id é bare', () => {
     const meta = getRichModelMetadata('kimi', 'kimi-k2.6');
     expect(meta).not.toBeNull();
-    expect(meta?.ompProvider).toBe('moonshot');
+    expect(meta?.catalogProvider).toBe('moonshot');
     expect(meta?.contextWindow).toBeGreaterThan(0);
   });
 
   it('grok: resolve preço e janela de grok-4.5', () => {
     const meta = getRichModelMetadata('grok', 'grok-4.5');
     expect(meta).not.toBeNull();
-    expect(meta?.ompProvider).toBe('xai');
+    expect(meta?.catalogProvider).toBe('xai');
     expect(meta?.cost?.input).toBe(2);
     expect(meta?.contextWindow).toBe(500_000);
   });
 
-  it('omp: resolve pelo prefixo provider/ do id (deepseek)', () => {
-    const meta = getRichModelMetadata('omp', 'deepseek/deepseek-v4-pro');
-    expect(meta).not.toBeNull();
-    expect(meta?.ompProvider).toBe('deepseek');
-    expect(meta?.cost?.input).toBeCloseTo(0.435);
-    expect(meta?.contextWindow).toBe(1_000_000);
-  });
 });
 
 describe('getRichModelMetadata — fuzzy leve', () => {
@@ -151,7 +139,7 @@ describe('getRichModelMetadata — fuzzy leve', () => {
   it('remove sufixo -thinking do agy e resolve no fallback anthropic', () => {
     const meta = getRichModelMetadata('agy', 'claude-opus-4-6-thinking');
     expect(meta).not.toBeNull();
-    expect(meta?.ompProvider).toBe('anthropic');
+    expect(meta?.catalogProvider).toBe('anthropic');
     expect(meta?.id).toBe('claude-opus-4-6');
   });
 
@@ -171,8 +159,8 @@ describe('getRichModelMetadata — desconhecidos', () => {
     expect(getRichModelMetadata('longcat', 'LongCat-2.0')).toBeNull();
   });
 
-  it('retorna null para prefixo de provider desconhecido no omp', () => {
-    expect(getRichModelMetadata('omp', 'unknown-provider/foo')).toBeNull();
+  it('retorna null para prefixo de provider desconhecido', () => {
+    expect(getRichModelMetadata('agy', 'unknown-provider/foo')).toBeNull();
   });
 
   it('retorna null para modelId vazio ou ausente', () => {
@@ -181,7 +169,7 @@ describe('getRichModelMetadata — desconhecidos', () => {
   });
 });
 
-describe('identity (derivado do omp)', () => {
+describe('identity do catálogo vendorado', () => {
   it('classifica claude em família/kind/versão', () => {
     expect(classifyModelId('claude-sonnet-4-5')).toEqual({
       family: 'anthropic',

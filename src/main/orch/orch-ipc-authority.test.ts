@@ -22,7 +22,6 @@ const harness = vi.hoisted(() => {
   const windows = new Map<number, { isDestroyed(): boolean }>();
   const squads: any[] = [];
   const paneSnapshots: any[] = [];
-  const ompSessions: any[] = [];
   const agentSessions: any[] = [];
   const scopeChangeListeners = new Set<
     (
@@ -37,7 +36,6 @@ const harness = vi.hoisted(() => {
     windows,
     squads,
     paneSnapshots,
-    ompSessions,
     agentSessions,
     /** Teclado do operador: posse de sessão, missões e o que chegou ao PTY. */
     operatorInput: {
@@ -341,12 +339,6 @@ vi.mock('./pane-registry', () => ({
   syncPanes: vi.fn(),
   unregisterOrchRenderer: vi.fn(),
 }));
-vi.mock('../adapters/omp-rpc-ipc', () => ({
-  getOmpRpcSessionAuthority: vi.fn(() => null),
-  isOmpRpcSession: vi.fn(() => false),
-  listOmpRpcSessions: vi.fn(() => [...harness.ompSessions]),
-  terminateOmpRpcSession: vi.fn(async () => true),
-}));
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) =>
     harness.agentSessions.some((entry) => entry.sessionId === sessionId)
@@ -646,7 +638,6 @@ beforeEach(() => {
   harness.windows.clear();
   harness.squads.splice(0);
   harness.paneSnapshots.splice(0);
-  harness.ompSessions.splice(0);
   harness.agentSessions.splice(0);
   harness.scopeChangeListeners.clear();
   harness.operatorInput.ownedSessions.clear();
@@ -2294,6 +2285,26 @@ describe('mission removal IPC authority', () => {
     const sender = owner();
     harness.scopes.set(sender.id, SCOPE_A);
     harness.windows.set(sender.id, { isDestroyed: () => false });
+    harness.projectStores.forScope.mockReturnValueOnce({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === 'mission-draft'
+            ? {
+                id: 'mission-draft',
+                title: 'Rascunho seguro',
+                description: 'Sem runtime físico.',
+                status: 'draft',
+                milestones: [],
+                learnings: '',
+                createdAt: 1,
+                updatedAt: 2,
+              }
+            : null,
+        list: () => [],
+      },
+      missionPanes: { list: () => [] },
+    });
     const handler = configureAndGetHandler();
 
     await expect(
@@ -2316,6 +2327,120 @@ describe('mission removal IPC authority', () => {
     await expect(
       handler({ sender }, { missionId: 'mission-gone' }),
     ).resolves.toEqual({ removed: false });
+    expect(harness.removeMission).not.toHaveBeenCalled();
+  });
+
+  it('preserva missão e histórico quando não há prova física de saída', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const mission = {
+      id: 'mission-draft',
+      title: 'Missão ainda viva',
+      description: 'Tasks e receipts devem permanecer.',
+      status: 'running' as const,
+      orchestratorSessionId: 'pty-still-alive',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    harness.agentSessions.push({
+      sessionId: 'pty-still-alive',
+      paneId: 'pane-still-alive',
+      adapterId: 'codex',
+      cwd: SCOPE_A.rootRealPath,
+      missionId: mission.id,
+      role: 'orchestrator',
+      scope: SCOPE_A,
+    });
+    harness.projectStores.forScope.mockReturnValueOnce({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === mission.id ? mission : null,
+        list: () => [mission],
+      },
+      missionPanes: {
+        list: () => [
+          {
+            id: 'mission-pane-still-alive',
+            missionId: mission.id,
+            paneId: 'pane-still-alive',
+            adapterId: 'codex',
+            title: 'Orquestrador',
+            agentName: 'Maestro',
+            role: 'orchestrator',
+            scope: SCOPE_A,
+            createdAt: 1,
+          },
+        ],
+      },
+    });
+    harness.terminatePty.mockResolvedValueOnce(false);
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: mission.id }),
+    ).rejects.toThrow(/histórico.*preservado.*saída física/i);
+    expect(harness.removeMission).not.toHaveBeenCalled();
+  });
+
+  it('preserva missão e histórico quando o teardown lança erro', async () => {
+    const sender = owner();
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.windows.set(sender.id, { isDestroyed: () => false });
+    const mission = {
+      id: 'mission-draft',
+      title: 'Missão com teardown indisponível',
+      description: 'Histórico deve permanecer.',
+      status: 'running' as const,
+      orchestratorSessionId: 'pty-error',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    harness.agentSessions.push({
+      sessionId: 'pty-error',
+      paneId: 'pane-error',
+      adapterId: 'codex',
+      cwd: SCOPE_A.rootRealPath,
+      missionId: mission.id,
+      role: 'orchestrator',
+      scope: SCOPE_A,
+    });
+    harness.projectStores.forScope.mockReturnValueOnce({
+      scope: SCOPE_A,
+      missions: {
+        get: (missionId: string) =>
+          missionId === mission.id ? mission : null,
+        list: () => [mission],
+      },
+      missionPanes: {
+        list: () => [
+          {
+            id: 'mission-pane-error',
+            missionId: mission.id,
+            paneId: 'pane-error',
+            adapterId: 'codex',
+            title: 'Orquestrador',
+            agentName: 'Maestro',
+            role: 'orchestrator',
+            scope: SCOPE_A,
+            createdAt: 1,
+          },
+        ],
+      },
+    });
+    harness.terminatePty.mockRejectedValueOnce(
+      new Error('supervisor unavailable'),
+    );
+    const handler = configureAndGetHandler();
+
+    await expect(
+      handler({ sender }, { missionId: mission.id }),
+    ).rejects.toThrow(/histórico.*preservado.*supervisor unavailable/i);
     expect(harness.removeMission).not.toHaveBeenCalled();
   });
 });
@@ -2950,7 +3075,7 @@ describe('saved squad mutation authority', () => {
     expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
   });
 
-  it('bloqueia inventário físico/OMP ainda vivo ligado ao squad', async () => {
+  it('bloqueia inventário PTY ainda vivo ligado à missão do squad', async () => {
     const { handler, sender } = setup(ORCH_CHANNELS.squadSave);
     harness.projectStores.listSuites.mockReturnValue([
       {
@@ -2966,14 +3091,23 @@ describe('saved squad mutation authority', () => {
         },
       },
     ]);
-    harness.ompSessions.push({
+    harness.agentSessions.push({
+      sessionId: 'pty-mission-bound',
+      paneId: 'pane-mission-bound',
       missionId: 'mission-physical',
-      state: 'idle',
+      role: 'worker',
+      adapterId: 'agy',
+      cwd: SCOPE_A.rootRealPath,
+      scope: SCOPE_A,
+      source: 'guided',
+      readOnly: false,
+      allowedTools: [],
+      allowedSkills: [],
     });
 
     await expect(handler({ sender }, SAVED_SQUAD)).resolves.toMatchObject({
       ok: false,
-      error: expect.stringMatching(/squad_in_use.*OMP|physical/i),
+      error: expect.stringMatching(/squad_in_use.*PTY|physical/i),
     });
     expect(harness.dialog.showMessageBox).not.toHaveBeenCalled();
   });

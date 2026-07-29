@@ -31,6 +31,24 @@ describe('ripgrep search fallback', () => {
     expect(hits.some((hit) => hit.meta?.via === 'grep')).toBe(true);
   });
 
+  it('excludes explicit workspace memory exports from rg and grep indexers', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-search-memory-'));
+    roots.push(root);
+    const memoryRoot = path.join(root, '.nexus-memory');
+    fs.mkdirSync(memoryRoot);
+    fs.writeFileSync(
+      path.join(memoryRoot, 'mem-projection.md'),
+      'projection-only-needle',
+    );
+
+    const hits = await searchWithRipgrep(
+      { text: 'projection-only-needle', projectRoot: root, limit: 10 },
+      { rgPath: path.join(root, 'missing-rg'), allowedRoots: [root] },
+    );
+
+    expect(hits).toEqual([]);
+  });
+
   it('terminates the child search promptly when its generation is cancelled', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-search-'));
     roots.push(root);

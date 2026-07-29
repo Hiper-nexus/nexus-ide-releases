@@ -10,11 +10,13 @@ import {
   inspectConfiguredNexusReadiness,
   inspectNexusReadiness,
   inspectSandboxCapability,
+  inspectSandboxCapabilityAsync,
   runtimeHealthProbeFromManager,
   type ContextDoctorSnapshot,
   type IndependentProviderSnapshot,
   type MultiPcBackendStatus,
 } from './nexus-doctor';
+import { inspectNexusReadinessAsync } from './nexus-doctor-async';
 import type { ProjectRuntimeHealth } from './project-runtime-manager';
 
 const roots: string[] = [];
@@ -237,19 +239,47 @@ describe('inspectSandboxCapability', () => {
       () => true,
     )).toEqual([]);
   });
+
+  it('awaits the Windows OCI probe without blocking another main-loop task', async () => {
+    const runtime = 'C:\\Program Files\\Docker\\docker.exe';
+    let releaseProbe: ((value: boolean) => void) | undefined;
+    const pendingProbe = new Promise<boolean>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const pending = inspectSandboxCapabilityAsync(
+      'win32',
+      async (candidate) => candidate === runtime,
+      {
+        NEXUS_SANDBOX_CONTAINER_RUNTIME: runtime,
+        NEXUS_SANDBOX_CONTAINER_IMAGE:
+          `registry.example/nexus@sha256:${'a'.repeat(64)}`,
+      },
+      async () => pendingProbe,
+    );
+
+    await expect(
+      new Promise<string>((resolve) => setImmediate(() => resolve('free'))),
+    ).resolves.toBe('free');
+    releaseProbe?.(true);
+    await expect(pending).resolves.toEqual([]);
+  });
 });
 
 describe('inspectNexusReadiness', () => {
-  it('exposes only the main-process configured Doctor to native tools', () => {
+  it('exposes only the main-process configured Doctor to native tools', async () => {
     const root = makeRoot();
     configureNexusDoctor((requestedScope) => inspectNexusReadiness({
       ...baseOptions(root),
       scope: requestedScope,
     }));
 
-    expect(inspectConfiguredNexusReadiness(scope(root)).ready).toBe(true);
+    await expect(
+      inspectConfiguredNexusReadiness(scope(root)),
+    ).resolves.toMatchObject({ ready: true });
     disposeNexusDoctor();
-    expect(() => inspectConfiguredNexusReadiness(scope(root))).toThrow(/not initialized/i);
+    await expect(
+      inspectConfiguredNexusReadiness(scope(root)),
+    ).rejects.toThrow(/not initialized/i);
   });
 
   it('is ready when all probes pass and returns structured remediation empty', () => {
@@ -264,6 +294,29 @@ describe('inspectNexusReadiness', () => {
     expect(report.checkedAt).toBe(1_700_000_000_000);
     expect(report.checks).toHaveLength(9);
     expect(report.checks.every((check) => check.ok)).toBe(true);
+  });
+
+  it('uses the asynchronous Git/FS/sandbox path for configured diagnostics', async () => {
+    const root = makeRoot();
+    const syncGit = {
+      run: () => {
+        throw new Error('sync Git must not run');
+      },
+    };
+    const asyncGitSource = gitOk();
+    const report = await inspectNexusReadinessAsync({
+      ...baseOptions(root),
+      git: syncGit,
+      asyncGit: {
+        run: async (cwd, args, options) => {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          return asyncGitSource.run(cwd, args, options);
+        },
+      },
+    });
+
+    expect(report.ready).toBe(true);
+    expect(report.checks).toHaveLength(9);
   });
 
   it('reports concrete blockers with remediation for git, manifest, sensors and providers', () => {

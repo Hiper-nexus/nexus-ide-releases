@@ -72,7 +72,7 @@ function parseSpecList(
 
 function modelLabel(adapterId: string, model: string): string {
   if (
-    (adapterId === "claude" || adapterId === "omp") &&
+    adapterId === "claude" &&
     (model === "claude-opus-5" || model === "anthropic/claude-opus-5")
   ) {
     return `Claude Opus 5 · ${model}`;
@@ -91,14 +91,14 @@ function workerCapabilityLabel(
     readonly selectable: boolean;
   },
 ): string {
-  // Operator-choice: brand is not the jail. NEVER reuse governedWriter /
+  // Autopilot: brand is not the gate. NEVER reuse governedWriter /
   // autonomousReadOnly / advisory labels ("escrita confinada", "leitura
   // supervisionada", "somente manual") — those are the release ladder, not
-  // the free-choice truth. Auth is the only soft gate; Seatbelt is the jail.
+  // the default truth. Authentication and a live adapter route are enough.
   if (options.operatorChoice) {
     if (!options.authenticated) return "login necessário";
     if (!capabilities.launchable || !options.selectable) return "indisponível";
-    return "pronta · Seatbelt";
+    return "pronta · web";
   }
   if (capabilities.governedWriter) return "escrita confinada";
   if (capabilities.autonomousReadOnly) return "leitura supervisionada";
@@ -170,6 +170,7 @@ export function MissionWizardReview({
         capabilities.launchable &&
         capabilities.promptInjectable &&
         capabilities.statusObservable &&
+        (!operatorChoice || adapter.missionControlCapable === true) &&
         (operatorChoice || capabilities.verifiedMaestro) &&
         providers.find((provider) => provider.adapterId === adapter.id)
           ?.enabled !== false &&
@@ -214,10 +215,12 @@ export function MissionWizardReview({
       isAdvisorRole &&
       supportsAdvisoryParticipationCli(adapter.id) &&
       (adapter.id !== "claude" || orchestratorAgent?.cli !== "claude");
-    // Operator-choice: any installed + authenticated cli-pty may take any
-    // worker role (Seatbelt is the jail). Governed keeps the release ladder.
+    // Autopilot: any installed + authenticated cli-pty may take any worker
+    // role. Governed keeps the hardened release ladder.
     const roleQualified = operatorChoice
-      ? adapter.installed && capabilities.launchable
+      ? adapter.installed &&
+        capabilities.launchable &&
+        adapter.taskHandoffCapable === true
       : isAdvisorRole
         ? Boolean(
             capabilities.governedWriter ||
@@ -232,10 +235,7 @@ export function MissionWizardReview({
         capabilities.statusObservable;
     return Boolean(
       (adapter.id !== "claude" ||
-        advisoryLane ||
-        (operatorChoice &&
-          isAdvisorRole &&
-          orchestratorAgent?.cli !== "claude")) &&
+        orchestratorAgent?.cli !== "claude") &&
         adapter.kind === "cli-pty" &&
         adapter.installed &&
         routeReady &&
@@ -304,7 +304,7 @@ export function MissionWizardReview({
             : `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} automaticamente nesta release.`;
         }
         if (operatorChoice) {
-          return `${label} precisa estar instalada, autenticada e pronta para lançar o worker ${unqualifiedWorker.agentName}. O Seatbelt do Nexus confina a escrita — não a marca da CLI.`;
+          return `${label} precisa estar instalada, autenticada e pronta para lançar o worker ${unqualifiedWorker.agentName}. No autopiloto, a tarefa usa worktree isolado, web liberada e merge validado pelo Nexus.`;
         }
         if (
           capabilities.launchable &&
@@ -455,7 +455,7 @@ export function MissionWizardReview({
           </div>
           <p className="wizard__hint-sm">
             {operatorChoice
-              ? "Escolha livre: qualquer CLI autenticada pode ser Maestro, executor ou reviewer. O Nexus confina o processo no Seatbelt — a marca da CLI não é a trava. Salvar a configuração não inicia agentes."
+              ? "Autopiloto: qualquer CLI autenticada pode ser Maestro, executor ou reviewer. Cada tarefa usa worktree isolado, web liberada e merge validado pelo Nexus. Salvar a configuração não inicia agentes."
               : "O Maestro automático usa somente provider com gate verificado. Executores e arquitetos exigem escrita confinada; reviewers e scouts também podem usar uma CLI com leitura autônoma confinada. CLIs sem essas qualificações continuam visíveis como uso manual no Terminal. Salvar a configuração não inicia agentes."}
           </p>
           <p className="wizard__hint-sm">
@@ -512,7 +512,7 @@ export function MissionWizardReview({
                               <option key={adapter.id} value={adapter.id}>
                                 {adapter.label} ·{" "}
                                 {operatorChoice
-                                  ? "pronta · Seatbelt"
+                                  ? "pronta · web"
                                   : "verificado"}
                               </option>
                             ))}

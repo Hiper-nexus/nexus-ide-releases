@@ -647,47 +647,6 @@ body {
   color: var(--text);
 }
 
-/* Ambient pulse for OMP RPC (and future non-pane agents). */
-.workspace-bar__pulse-dot {
-  margin-left: auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background: var(--text-dim);
-}
-.workspace-bar__pulse-dot--idle {
-  background: var(--text-dim);
-}
-.workspace-bar__pulse-dot--busy {
-  background: var(--accent, #3dd6c6);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, #3dd6c6) 60%, transparent);
-  animation: workspace-bar-pulse 1.4s ease-out infinite;
-}
-.workspace-bar__pulse-dot--needs {
-  background: #e6a23c;
-}
-.workspace-bar__pulse-dot--error {
-  background: #e25555;
-}
-@keyframes workspace-bar-pulse {
-  0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, #3dd6c6) 55%, transparent);
-  }
-  70% {
-    box-shadow: 0 0 0 6px transparent;
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .workspace-bar__pulse-dot--busy {
-    animation: none;
-  }
-}
-
 .workspace-bar__menu-sep {
   height: 1px;
   margin: 4px 6px;

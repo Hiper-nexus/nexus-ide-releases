@@ -235,7 +235,7 @@ describe('secureAutonomousCliArgs', () => {
     expect(
       supportsEnforceableReadOnlyNativeAuthority(
         adapter({
-          id: 'omp',
+          id: 'opencode',
           control: {
             permission: {
               safe: [],
@@ -274,7 +274,7 @@ describe('secureAutonomousCliArgs', () => {
     expect(supportsEnforceableWorkspaceWriteNativeAuthority(codex)).toBe(
       true,
     );
-    for (const id of ['kimi', 'opencode', 'omp', 'agy', 'grok']) {
+    for (const id of ['kimi', 'opencode', 'agy', 'grok']) {
       const candidate = parsed.find(
         (item): item is CliPtyAdapter =>
           item.kind === 'cli-pty' && item.id === id,

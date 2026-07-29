@@ -23,14 +23,8 @@ import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import { resolveRoutableModel } from './task-router';
 import { getProjectDomainStores } from './project-domain-store-registry';
-import { getOrchSettings } from '../persistence/settings-store';
 import { resolveCwdForScope } from './workspace-path';
 import { withHandoffContract } from './worker-handoff-contract';
-import {
-  isSafeOmpMissionPreflightFailure,
-  spawnMissionOmpRpcWorker,
-  terminateOmpRpcSession,
-} from '../adapters/omp-rpc-ipc';
 import {
   assertReleaseQualifiedMissionWorkerSpawn,
   isRevisionBoundWritableWorkerAdapterAllowed,
@@ -49,6 +43,12 @@ import {
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
 import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
 import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
+import {
+  autoRecallPhaseForAgent,
+  withAutoRecalledWorkspaceMemory,
+} from '../memory/workspace-memory-context';
+import { getOrchSettings } from '../persistence/settings-store';
+import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -420,11 +420,6 @@ export interface SpawnToolOptions {
    * is not in allowedTools.
    */
   omitHandoffContract?: boolean;
-  /**
-   * Internal: skip the zero-friction omp companion auto-spawn (used when this
-   * spawn IS the companion, to prevent recursion).
-   */
-  suppressOmpAutoSpawn?: boolean;
 }
 
 /**
@@ -502,18 +497,11 @@ export async function spawnPaneAndMaybePrompt(
   hooks: SpawnPaneHooks = {},
 ): Promise<{ paneId: string; sessionId: string }> {
   assertMcpInvocationCurrent(hooks.invocation);
-  // The cli-rpc adapter IS the omp rpc transport: normalize to `omp` BEFORE
-  // resolving anything else so the rest of the path (models, handoff
-  // contract, transport branch) only ever sees the cli-pty omp adapter.
-  // Grid-form RPC panes spawn via the renderer IPC route (pty-ipc), not here.
-  if (options.adapterId === 'omp-rpc') {
-    options = { ...options, adapterId: 'omp' };
-  }
   const resolvedAdapter = getAdapter(options.adapterId);
   if (!resolvedAdapter) throw new Error(`unknown adapter: ${options.adapterId}`);
   if (resolvedAdapter.kind !== 'cli-pty') {
-    // spawnPaneAndMaybePrompt only ever spawns terminal panes; api-provider
-    // adapters have no pane representation and cli-rpc was normalized above.
+    // spawnPaneAndMaybePrompt only ever spawns terminal panes; API providers
+    // have no pane representation.
     throw new Error(`adapter ${options.adapterId} is not spawnable as a pane`);
   }
   const adapter = resolvedAdapter;
@@ -572,12 +560,27 @@ export async function spawnPaneAndMaybePrompt(
   // Pre-spawn credential probe (Overclock F-256 harvest): judge the exact
   // effective model before a pane exists. This matters for OpenCode: its
   // pinned first-party free models need no credential, while external models
-  // on the same installed CLI remain fail-closed.
+  // on the same installed CLI still return a typed credential error. Probe
+  // infrastructure itself is fail-closed only in explicit Hardened mode:
+  // autopilot and direct terminals must not stall because an optional local
+  // readiness reader failed while the CLI can authenticate from its own HOME.
   await assertPreSpawnProbe(options.adapterId, {
     model: effectiveModel,
-    failClosed: true,
+    failClosed: !isOperatorChoicePolicy(
+      getOrchSettings().squadCliPolicy,
+    ),
   });
   assertMcpInvocationCurrent(hooks.invocation);
+  if (options.missionId && options.prompt) {
+    options = {
+      ...options,
+      prompt: withAutoRecalledWorkspaceMemory(
+        options.scope,
+        options.prompt,
+        autoRecallPhaseForAgent(options),
+      ),
+    };
+  }
   // Agent CLIs can read and execute native tools. Pin every orchestrated spawn
   // to the active workspace before the renderer/PTY boundary; never inherit
   // pty-manager's user-shell fallback to HOME.
@@ -593,98 +596,6 @@ export async function spawnPaneAndMaybePrompt(
     executionScope: options.executionScope ?? options.scope,
     cwd: resolveCwdForScope(options.executionScope ?? options.scope, options.cwd),
   };
-  // Oh My Pi dual transport: rpc-ui for deterministic lifecycle, PTY for full
-  // MCP inject. `auto` prefers rpc and falls back to PTY on failure.
-  // Read-only advisory OMP must stay on PTY: the Nexus Seatbelt profile wraps
-  // the process (advisory-process-sandbox). rpc-ui has no PTY to confine, and
-  // omp-rpc is explicitly non-advisory in mission-advisory.
-  if (
-    options.adapterId === 'omp' &&
-    options.role !== 'orchestrator' &&
-    options.readOnly !== true
-  ) {
-    const transport = getOrchSettings().ompMissionTransport;
-    if (transport === 'rpc' || transport === 'auto') {
-      try {
-        assertMcpInvocationCurrent(hooks.invocation);
-        const prompt = options.prompt
-          ? withHandoffContract(options.prompt, adapter, {
-              category: options.agentCategory,
-              hints: [options.title, options.agentName],
-            })
-          : undefined;
-        const rpc = await spawnMissionOmpRpcWorker({
-          scope: options.scope,
-          executionScope: {
-            ...(safeOptions.executionScope ?? options.scope),
-          },
-          missionId: options.missionId,
-          model: effectiveModel,
-          title: options.title,
-          agentName: options.agentName,
-          workerIncarnationId: options.workerIncarnationId,
-          prompt,
-          // Unattended mission path: audited yolo (safe hangs without UI attach).
-          approvalPolicy: 'yolo',
-          allowedTools: options.allowedTools,
-          signal: hooks.invocation?.signal,
-          assertCurrentAuthority:
-            hooks.invocation?.assertCurrentAuthority,
-          onSessionReady: (paneId, sessionId) => {
-            // Bind the dispatch before the first OMP prompt can emit
-            // agent_start and a same-turn handoff.
-            hooks.onPaneCreated?.(paneId, sessionId);
-          },
-          onAccepted: (paneId, sessionId) => {
-            if (prompt) {
-              hooks.onPromptAccepted?.(paneId, sessionId, prompt);
-            }
-            // Persist composition only after agent_start. A rejected prompt
-            // must not leave a dead pane identity that blocks safe recovery.
-            if (options.missionId) {
-              getProjectDomainStores(options.scope).missionPanes.record({
-                missionId: options.missionId,
-                adapterId: options.adapterId,
-                model: effectiveModel,
-                accountId: options.accountId,
-                effort: options.effort,
-                cwd: safeOptions.cwd,
-                executionScope: safeOptions.executionScope,
-                title: options.title,
-                agentName: options.agentName,
-                workerIncarnationId: options.workerIncarnationId,
-                role: options.role ?? 'worker',
-                allowedTools: options.allowedTools,
-                allowedSkills: options.allowedSkills,
-                readOnly: options.readOnly,
-                authoritySeal,
-                paneId,
-              });
-            }
-          },
-        });
-        try {
-          assertMcpInvocationCurrent(hooks.invocation);
-        } catch (error) {
-          await terminateOmpRpcSession(rpc.sessionId);
-          throw error;
-        }
-        // rpc path already is omp — no companion needed.
-        adapterCircuitBreakers.recordSuccess(options.adapterId);
-        return rpc;
-      } catch (err) {
-        adapterCircuitBreakers.recordFailure(options.adapterId);
-        if (transport === 'rpc' || !isSafeOmpMissionPreflightFailure(err)) {
-          throw err;
-        }
-        console.warn(
-          '[spawn] preflight omp rpc-ui falhou; caindo para PTY:',
-          err instanceof Error ? err.message : err,
-        );
-      }
-    }
-  }
-
   assertMcpInvocationCurrent(hooks.invocation);
   const result = await requestPaneSpawn({
     ...safeOptions,

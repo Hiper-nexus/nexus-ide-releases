@@ -5,7 +5,8 @@ import {
   type WorkspaceDependencies,
 } from './workspace-dependencies';
 
-type DependencyResolver = () => WorkspaceDependencies;
+type DependencyResolver = () =>
+  WorkspaceDependencies | Promise<WorkspaceDependencies>;
 
 /** Compatibility bridge for Codex skills launched outside Codex Desktop. */
 export function buildWorkspaceDependencyTools(
@@ -23,7 +24,8 @@ export function buildWorkspaceDependencyTools(
         properties: {},
         additionalProperties: false,
       },
-      handler: async () => formatWorkspaceDependencies(resolve()),
+      handler: async () =>
+        formatWorkspaceDependencies(await resolve()),
     },
   ];
 }

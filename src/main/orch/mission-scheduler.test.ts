@@ -421,6 +421,23 @@ describe('mission-scheduler P1 ownership + reserved glue', () => {
     expect(decision.deferredIds).toHaveLength(1);
   });
 
+  it('guided kind domains do not intersect for wave admission', () => {
+    expect(
+      ownershipsIntersect(
+        {
+          files: ['src/a.ts'],
+          symbols: [],
+          domains: ['guided-implementation'],
+        },
+        {
+          files: ['src/b.ts'],
+          symbols: [],
+          domains: ['guided-advisory'],
+        },
+      ),
+    ).toBe(false);
+  });
+
   it('ownershipTouchesReservedGlue is true for any glue file in set', () => {
     expect(
       ownershipTouchesReservedGlue({
@@ -482,6 +499,45 @@ describe('mission-scheduler P3 enforcement + planner contract', () => {
     ]);
     expect(parallel.every((t) => t.parallelEligible)).toBe(true);
     expect(independentSubsetTaskIds(parallel)).toEqual(['p1', 'p2']);
+  });
+
+  it('preserves explicit empty dependsOn per task (glue sibling does not chain tips)', () => {
+    const planned = emitPlannedTasksWithContract([
+      {
+        id: 'tip-a',
+        title: 'Tip A',
+        ownership: {
+          files: [],
+          symbols: [],
+          domains: ['guided-isolated-advisory'],
+        },
+        dependsOn: [],
+      },
+      {
+        id: 'tip-b',
+        title: 'Tip B',
+        ownership: {
+          files: [],
+          symbols: [],
+          domains: ['guided-isolated-advisory'],
+        },
+        dependsOn: [],
+      },
+      {
+        id: 'impl',
+        title: 'Impl',
+        ownership: {
+          files: ['src/index.ts'],
+          symbols: [],
+          domains: ['guided-implementation'],
+        },
+        dependsOn: [],
+      },
+    ]);
+    expect(planned.map((t) => t.dependsOn)).toEqual([[], [], []]);
+    expect(planned[0]!.parallelEligible).toBe(true);
+    expect(planned[1]!.parallelEligible).toBe(true);
+    expect(planned[2]!.parallelEligible).toBe(false);
   });
 });
 

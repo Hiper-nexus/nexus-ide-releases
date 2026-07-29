@@ -12,7 +12,6 @@ import {
 } from './pane-registry';
 import { orchWriteSession } from '../pty/pty-manager';
 import {
-  isAdapterInstalled,
   listAdapterInfos,
 } from '../adapters/adapter-registry';
 import { findAgentInSquad } from './squad-store';
@@ -47,8 +46,6 @@ import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getOrchSettings } from '../persistence/settings-store';
-import { hasAvailableAccount } from '../persistence/account-store';
-import { resolveStickyOmpAdapter } from './omp-roster-policy';
 
 /** The 11 pane tools of the embedded MCP server (tool group 1). */
 
@@ -257,38 +254,25 @@ const paneSpawn: McpToolDef = {
       if (ctx.role === 'worker' && role === 'orchestrator') {
         throw new Error('not authorized: workers cannot create orchestrators');
       }
-      // Cost routing still wins for non-omp agents. For roster cli=omp with
-      // ompParticipation ≠ off, stick to omp so "Generalist (omp)" is not a lie
-      // when Maestro blindly forwards a non-omp route_task pick.
       const requestedAdapterId = str(args, 'adapterId');
       const requestedModel = str(args, 'model');
       const requestedEffort = str(args, 'effort');
-      const sticky = resolveStickyOmpAdapter({
-        rosterCli: agent.cli,
-        requestedAdapterId,
-        requestedModel,
-        rosterModel: agent.model,
-        rosterEffort: agent.effort,
-        requestedEffort,
-        ompInstalled: isAdapterInstalled('omp'),
-        ompAvailable: hasAvailableAccount('omp'),
-        ompParticipation: getOrchSettings().ompParticipation,
-        defaultOmpModel: defaultModelForAdapter('omp'),
-      });
+      const selectedAdapterId = requestedAdapterId ?? agent.cli;
+      const selectedModel = requestedModel ?? agent.model;
+      const selectedEffort = requestedEffort ?? agent.effort;
       const noRouteOverride =
         requestedAdapterId === undefined &&
         requestedModel === undefined &&
         requestedEffort === undefined;
       rosterRouteAuthorized =
         noRouteOverride ||
-        sticky.sticky ||
-        (sticky.adapterId === agent.cli &&
-          sticky.model === agent.model &&
-          sticky.effort === agent.effort);
+        (selectedAdapterId === agent.cli &&
+          selectedModel === agent.model &&
+          selectedEffort === agent.effort);
       options = {
-        adapterId: sticky.adapterId,
-        model: sticky.model,
-        effort: sticky.effort,
+        adapterId: selectedAdapterId,
+        model: selectedModel,
+        effort: selectedEffort,
         cwd: str(args, 'cwd'),
         title: str(args, 'title') ?? agent.agentName,
         missionId: requestedMissionId,

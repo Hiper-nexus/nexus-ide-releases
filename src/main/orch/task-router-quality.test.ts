@@ -23,7 +23,6 @@ function adapters(...installed: string[]): AdapterAvailability[] {
     'kimi',
     'glm',
     'longcat',
-    'omp',
   ];
   return all.map((id) => ({ id, installed: installed.includes(id) }));
 }

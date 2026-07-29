@@ -75,19 +75,24 @@ export interface AutonomousCliPolicyOptions {
    */
   readonly trustedCodexExternalProcessSandbox?: boolean;
   /**
-   * Advisory-unconfined mission participant (kimi/agy/opencode/omp read_only
+   * Advisory-unconfined mission participant (kimi/agy/opencode read_only
    * worker): MCP read-only + outer kernel write deny is the authority boundary.
    * Provider auto-approve (yolo) is KEPT so the agent never stalls on interactive
    * TUIs; native confinement flags the CLI cannot enforce are still not invented.
    */
   readonly advisoryUnconfinedParticipation?: boolean;
   /**
-   * Operator-choice writable worker: the CLI has no provider-native
-   * workspace-write profile. Nexus applies its own Seatbelt with a writable
-   * execution root; argv keeps provider auto-approve and never invents Codex
-   * sandbox flags.
+   * Operator-choice writable worker. The process is already rooted in its
+   * dedicated task worktree and only Main may integrate it; argv keeps the
+   * provider's auto-approve mode and does not add a nested sandbox.
    */
   readonly operatorChoiceWorkspaceWrite?: boolean;
+  /**
+   * Default autopilot mission participant. Keep the provider's real
+   * auto-approve mode for every role so an approval TUI cannot park the
+   * mission. Per-session Nexus authority and the Main-owned merge still apply.
+   */
+  readonly operatorChoiceParticipation?: boolean;
 }
 
 function sameCanonicalCapabilityList(
@@ -311,7 +316,7 @@ export function supportsEnforceableReadOnlyNativeAuthority(
  * Keep this deliberately narrower than "has a flag containing sandbox".
  * Codex 0.145.0 exposes a real filesystem sandbox with a workspace-write
  * profile and a separate never-ask policy. Other installed CLIs either expose
- * no read/write boundary (Kimi/OpenCode/OMP), only terminal restrictions
+ * no read/write boundary (Kimi/OpenCode), only terminal restrictions
  * (AGY), or have not passed the Nexus physical escape probe for their named
  * profile (Grok). Direct user panes remain available for all of them.
  *
@@ -679,14 +684,14 @@ export function secureAutonomousCliArgs(
 
   if (
     options.advisoryUnconfinedParticipation ||
-    options.operatorChoiceWorkspaceWrite
+    options.operatorChoiceWorkspaceWrite ||
+    options.operatorChoiceParticipation
   ) {
-    // Advisory (read_only) or operator-choice writer: MCP + outer kernel
-    // Seatbelt is the authority boundary. Do not invent native confinement
-    // flags the CLI cannot enforce — but DO keep provider auto-approve so the
-    // agent never stalls on interactive "Approve once" TUIs (ls/read/etc).
-    // Stripping YOLO here was the release-gate regression that left Kimi
-    // waiting for a human on every shell tool.
+    // Default autopilot and hardened advisory lanes both keep provider
+    // auto-approve so the agent never stalls on an "Approve once" TUI.
+    // Filesystem authority is compiled by the caller: isolated worktree +
+    // Main-owned merge in operator-choice, kernel/provider confinement in the
+    // opt-in governed mode.
     let advisorArgs = [...currentArgs];
     for (const sequence of permissionSequences(adapter)) {
       advisorArgs = removeSequence(advisorArgs, sequence);

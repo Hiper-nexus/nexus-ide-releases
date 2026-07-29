@@ -5,6 +5,7 @@ import {
   type MergeQueueEventType,
   type MergeQueueIntegrationState,
   type MergeQueueEntryStatus,
+  type MergeFailureDisposition,
   type MergeQueueStateSnapshot,
 } from './merge-queue-contract';
 import { DIGEST_PATTERN, SHA_PATTERN, worktreeTaskKey } from './worktree-contract';
@@ -35,6 +36,11 @@ const INTEGRATION_STATES = new Set<MergeQueueIntegrationState>([
   'not-integrated',
   'candidate-integrated',
   'unknown',
+]);
+const FAILURE_DISPOSITIONS = new Set<MergeFailureDisposition>([
+  'retryable',
+  'repair',
+  'terminal',
 ]);
 const EVENT_ID_PATTERN = /^merge-event-[a-f0-9]{64}$/;
 
@@ -247,7 +253,12 @@ function validateBlock(
 ): MergeQueueBlock | null {
   if (value === null) return null;
   if (!value || typeof value !== 'object') invalidState('invalid merge queue block');
-  const block = value as MergeQueueBlock;
+  const stored = value as MergeQueueBlock;
+  const block: MergeQueueBlock = {
+    ...stored,
+    // Persisted states from before the taxonomy were fail-closed blocks.
+    disposition: stored.disposition ?? 'terminal',
+  };
   const entry = entries.find((candidate) => candidate.taskKey === block.taskKey);
   if (
     typeof block.taskKey !== 'string' ||
@@ -257,6 +268,7 @@ function validateBlock(
     block.reason.length > 2_048 ||
     block.reason.includes('\0') ||
     !isTimestamp(block.blockedAt) ||
+    !FAILURE_DISPOSITIONS.has(block.disposition!) ||
     entry?.status !== 'blocked' ||
     entry.failureReason !== block.reason
   ) {

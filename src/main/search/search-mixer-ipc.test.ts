@@ -63,6 +63,7 @@ describe('search-mixer-ipc scope binding', () => {
       {
         text: 'secret',
         projectRoot: '/evil/foreign/path',
+        workspaceId: 'attacker-project',
         limit: 10,
       },
     );
@@ -72,9 +73,14 @@ describe('search-mixer-ipc scope binding', () => {
       expect.objectContaining({
         text: 'secret',
         projectRoot: '/workspace/real',
+        workspaceId: 'p',
       }),
     );
-    const arg = runQuery.mock.calls[0]?.[0] as { projectRoot: string };
+    const arg = runQuery.mock.calls[0]?.[0] as {
+      projectRoot: string;
+      workspaceId: string;
+    };
     expect(arg.projectRoot).not.toBe('/evil/foreign/path');
+    expect(arg.workspaceId).not.toBe('attacker-project');
   });
 });

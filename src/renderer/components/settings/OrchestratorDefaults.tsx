@@ -12,10 +12,6 @@ type OrchestratorDefaultsValue = Pick<
   | "defaultAdapterId"
   | "defaultModel"
   | "defaultAccountId"
-  | "ompParticipation"
-  | "ompRpcAutoStart"
-  | "ompMissionTransport"
-  | "ompAutoSpawn"
   | "squadCliPolicy"
 >;
 
@@ -23,45 +19,27 @@ const INITIAL_DEFAULTS: OrchestratorDefaultsValue = {
   defaultAdapterId: "claude",
   defaultModel: "",
   defaultAccountId: "",
-  ompParticipation: "prefer",
-  ompRpcAutoStart: true,
-  ompMissionTransport: "auto",
-  ompAutoSpawn: true,
   squadCliPolicy: "operator-choice",
 };
 
 const SQUAD_CLI_POLICY_LABELS: Record<OrchSettings["squadCliPolicy"], string> =
   {
-    "operator-choice": "Escolha livre — qualquer CLI autenticada (padrão)",
-    governed: "Governado — só CLIs qualificadas nesta release",
+    "operator-choice": "Autopiloto — qualquer CLI autenticada + web (padrão)",
+    governed: "Hardened — sandbox e CLIs qualificadas",
   };
-
-const OMP_PARTICIPATION_LABELS: Record<
-  OrchSettings["ompParticipation"],
-  string
-> = {
-  off: "Desligado — só spawn manual",
-  fallback: "Fallback — companion fora do guided",
-  diversity: "Diversidade — companion fora do guided",
-  prefer: "Preferir — companion fora do guided quando elegível",
-};
 
 function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
   return {
     defaultAdapterId: settings.defaultAdapterId || "claude",
     defaultModel: settings.defaultModel,
     defaultAccountId: settings.defaultAccountId,
-    ompParticipation: settings.ompParticipation ?? "prefer",
-    ompRpcAutoStart: settings.ompRpcAutoStart !== false,
-    ompMissionTransport: settings.ompMissionTransport ?? "auto",
-    ompAutoSpawn: settings.ompAutoSpawn !== false,
     squadCliPolicy: settings.squadCliPolicy ?? "operator-choice",
   };
 }
 
 function modelLabel(adapterId: string, model: string): string {
   if (
-    (adapterId === "claude" || adapterId === "omp") &&
+    adapterId === "claude" &&
     (model === "claude-opus-5" || model === "anthropic/claude-opus-5")
   ) {
     return `Claude Opus 5 · ${model}`;
@@ -386,98 +364,10 @@ export function OrchestratorDefaults() {
         </label>
       </div>
       <p className="settings-field__note">
-        Padrão: escolha livre — monta o squad com qualquer CLI autenticada e
-        manda codar. O Nexus ainda confina o processo no Seatbelt (macOS).
-        Governado é o modo estreito da release (Codex writer / Maestro
-        verificado) se você quiser.
-      </p>
-
-      <div className="settings-orchestrator__grid settings-orchestrator__grid--omp">
-        <label className="settings-field">
-          Oh My Pi (omp) na frota
-          <select
-            className="settings-input"
-            aria-label="Participação do Oh My Pi no roteamento"
-            value={defaults.ompParticipation}
-            disabled={disabled}
-            onChange={(event) =>
-              void save({
-                ompParticipation: event.target
-                  .value as OrchSettings["ompParticipation"],
-              })
-            }
-          >
-            {(
-              Object.keys(OMP_PARTICIPATION_LABELS) as Array<
-                OrchSettings["ompParticipation"]
-              >
-            ).map((mode) => (
-              <option key={mode} value={mode}>
-                {OMP_PARTICIPATION_LABELS[mode]}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="settings-field">
-          Auto-iniciar OMP RPC
-          <select
-            className="settings-input"
-            aria-label="Auto-iniciar OMP RPC ao abrir o painel"
-            value={defaults.ompRpcAutoStart ? "on" : "off"}
-            disabled={disabled}
-            onChange={(event) =>
-              void save({ ompRpcAutoStart: event.target.value === "on" })
-            }
-          >
-            <option value="on">Sim — inicia ao abrir o painel</option>
-            <option value="off">Não — botão manual</option>
-          </select>
-        </label>
-
-        <label className="settings-field">
-          Transporte omp em missões
-          <select
-            className="settings-input"
-            aria-label="Transporte Oh My Pi em missões"
-            value={defaults.ompMissionTransport}
-            disabled={disabled}
-            onChange={(event) =>
-              void save({
-                ompMissionTransport: event.target
-                  .value as OrchSettings["ompMissionTransport"],
-              })
-            }
-          >
-            <option value="auto">Auto — rpc-ui com fallback PTY</option>
-            <option value="rpc">RPC só — omp --mode rpc-ui</option>
-            <option value="pty">PTY — terminal com MCP completo</option>
-          </select>
-        </label>
-
-        <label className="settings-field">
-          Auto-spawn Oh My Pi
-          <select
-            className="settings-input"
-            aria-label="Auto-spawn Oh My Pi em missões"
-            value={defaults.ompAutoSpawn ? "on" : "off"}
-            disabled={disabled}
-            onChange={(event) =>
-              void save({ ompAutoSpawn: event.target.value === "on" })
-            }
-          >
-            <option value="on">
-              Sim — companion fora do guided, quando elegível
-            </option>
-            <option value="off">Não — só via router/roster</option>
-          </select>
-        </label>
-      </div>
-      <p className="settings-field__note">
-        Estas opções controlam o painel e rotas legadas ou manuais. O OMP não
-        entra no guided automático nesta versão: não é Maestro verificado nem
-        worker/advisor com confinamento mecânico. O handoff RPC físico, sozinho,
-        não concede essa capability.
+        Padrão: autopiloto — monta o squad com qualquer CLI autenticada, mantém
+        autoaprovação e web liberadas, trabalha em worktree isolado e só o
+        Nexus faz o merge validado. Hardened adiciona sandbox de processo e a
+        lista estreita de CLIs qualificadas.
       </p>
     </div>
   );

@@ -46,9 +46,10 @@ describe('kickoff worker authority', () => {
     // isMissionWorkerWriteEligibleCli already accepted any adapter here.
     const text = prompt(true);
     expect(text).toMatch(/Use EXATAMENTE o roster aprovado/);
-    expect(text).toMatch(/Seatbelt do kernel Nexus, não uma lista de marcas/);
+    expect(text).toMatch(/worktree isolado.*web liberada/i);
+    expect(text).toMatch(/blocked somente para autenticação, decisão humana/i);
     expect(text).not.toMatch(/somente o Codex builtin/);
-    expect(text).not.toMatch(/Roster legado com Kimi, OMP, Grok/);
+    expect(text).not.toMatch(/Roster legado com Kimi, Grok/);
   });
 
   it('keeps the Codex-only wording when the policy is governed', () => {
@@ -67,5 +68,26 @@ describe('kickoff worker authority', () => {
       maxWorkers: 2,
     });
     expect(text).toMatch(/somente o Codex builtin/);
+  });
+
+  it('starts guided workers while Main prepares PREVC for final promotion', () => {
+    const text = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-guided',
+      goal: 'Entregar a correção guiada',
+      acceptanceCriteria: ['Candidate validado antes do merge'],
+      risk: 'medium',
+      maxWorkers: 2,
+      guidedPrevcRequired: true,
+      guidedPrevcFrozen: false,
+      operatorChoice: true,
+    });
+
+    expect(text).toMatch(/PREVC paralelo/i);
+    expect(text).toMatch(/Comece a execução/i);
+    expect(text).toMatch(/não bloqueia worker/i);
+    expect(text).not.toMatch(
+      /nexus_context_doctor|nexus_mission_freeze_contract|nexus_workflow_prepare_execution/i,
+    );
   });
 });

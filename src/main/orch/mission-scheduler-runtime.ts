@@ -44,7 +44,6 @@ export interface SchedulerDispatchRequest {
   readonly taskId: string;
   readonly ownership: ScheduleOwnership;
   readonly dependsOn: readonly string[];
-  readonly sequentialOnly: boolean;
 }
 
 export type SchedulerMergeOutcome =
@@ -77,6 +76,12 @@ export interface SchedulerRuntimeDeps {
   expandFiles?(files: readonly string[]): readonly string[];
   /** Create worktree + spawn worker pane for one task. */
   dispatchTask(request: SchedulerDispatchRequest): Promise<void>;
+  /**
+   * Temporary admission failures (for example a maxWorkers slot claimed
+   * between decision and durable claim) leave the task pending for a later
+   * scheduler tick instead of fabricating a terminal task failure.
+   */
+  isRetryableDispatchError?(error: unknown): boolean;
   /**
    * Prepare merge: return changed files for ownership enforcement, then
    * caller invokes mergeTask after enforcement passes.
@@ -187,29 +192,50 @@ export async function runSchedulerTick(
   const dispatched: string[] = [];
 
   if (decision.plan.kind === 'dispatch') {
+    // Capture the narrowed variant: inside the async closure below TypeScript
+    // can no longer prove `decision.plan` is still the dispatch member.
+    const dispatchPlan = decision.plan;
     const taskMap = new Map(deps.listTasks().map((t) => [t.id, t]));
-    // Partial dispatch failure must not leave siblings marked dispatched without
-    // a real spawn — fail closed: stop the wave on first dispatch error.
-    for (const taskId of decision.plan.taskIds) {
+    const waveParallel = parallelEnabled && dispatchPlan.waveSize > 1;
+
+    const dispatchOne = async (taskId: string): Promise<string | null> => {
       const task = taskMap.get(taskId);
-      if (!task) continue;
-      const sequentialOnly =
-        !parallelEnabled ||
-        task.parallelEligible === false ||
-        decision.plan.waveSize <= 1;
+      if (!task) return null;
       try {
         await deps.dispatchTask({
           taskId,
           ownership: task.ownership,
           dependsOn: task.dependsOn,
-          sequentialOnly,
         });
-        dispatched.push(taskId);
+        return taskId;
       } catch (error) {
+        if (deps.isRetryableDispatchError?.(error)) {
+          return null;
+        }
         const reason =
           error instanceof Error ? error.message : 'dispatch failed';
         await deps.markFailed(taskId, reason);
-        break;
+        return null;
+      }
+    };
+
+    if (waveParallel) {
+      // Parallel wave: siblings dispatch concurrently. A failure marks that
+      // task failed without rolling back siblings that already claimed.
+      const settled = await Promise.allSettled(
+        decision.plan.taskIds.map((taskId) => dispatchOne(taskId)),
+      );
+      for (const result of settled) {
+        if (result.status === 'fulfilled' && result.value) {
+          dispatched.push(result.value);
+        }
+      }
+    } else {
+      // Sequential / exclusive: stop the wave on first dispatch error.
+      for (const taskId of decision.plan.taskIds) {
+        const ok = await dispatchOne(taskId);
+        if (ok) dispatched.push(ok);
+        else break;
       }
     }
     const telemetry = recordScheduleTelemetry(nextState.telemetry, decision.plan);

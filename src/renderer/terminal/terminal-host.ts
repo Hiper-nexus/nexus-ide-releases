@@ -372,9 +372,10 @@ export function getScrollbackExcerpt(paneId: string, max = 2_400): string {
  * O beco circular documentado no bootstrap: missão bloqueada → seal nulo →
  * spawn persistido recusado → pane morto → nova tentativa de spawn. A saída
  * sancionada é a retomada main-owned (re-arma para running e revalida tudo),
- * então a primeira recusa roteia para ela. Uma única vez por missão: se a
- * retomada também não sustentar a missão, repetir automaticamente viraria o
- * mesmo loop com outro nome — as tentativas seguintes ficam com o operador.
+ * então a primeira recusa roteia para ela. Uma única vez por missão neste
+ * renderer: se a retomada também não sustentar a missão, o coordenador
+ * main-owned assume os retries técnicos com backoff; o renderer não cria um
+ * segundo loop concorrente.
  */
 const missionAutoResumeSpent = new Set<string>();
 
@@ -489,6 +490,32 @@ function startSpawn(
         return null;
       }
       if (!res.ok) {
+        const isPersistedMissionAuthorityRefresh =
+          Boolean(missionId) &&
+          /persisted mission pane authority/i.test(res.error);
+        if (isPersistedMissionAuthorityRefresh) {
+          // A persisted pane is only presentation; Main owns the mission. Do
+          // not dump an internal seal/CAS diagnostic into the user's terminal
+          // and then leave a red dead end. The blocked path is re-armed by
+          // Main; a revision that already advanced simply retires this stale
+          // presentation while the current coordinator continues.
+          console.warn(
+            `[mission-restore] stale pane ${pane.id} was not restarted:`,
+            res.error,
+          );
+          host.term.writeln(
+            '\r\n\x1b[36m[nexus] contexto antigo detectado — sincronizando a missão pela autoridade principal…\x1b[0m',
+          );
+          void routeBlockedMissionToResume(host, missionId!).then((resumed) => {
+            if (!resumed && !host.disposed) {
+              host.term.writeln(
+                '\r\n\x1b[33m[nexus] pane antigo aposentado; a revisão atual continua pelo coordenador da missão.\x1b[0m',
+              );
+            }
+          });
+          useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+          return null;
+        }
         host.term.writeln(
           `\r\n\x1b[31m[nexus] failed to start: ${res.error}\x1b[0m`,
         );
@@ -501,14 +528,6 @@ function startSpawn(
           host.term.writeln(
             '\r\n\x1b[33m[nexus] token de spawn expirado limpo — use Reiniciar de novo.\x1b[0m',
           );
-        }
-        // Seal nulo por missão bloqueada: repetir o spawn persistido é o beco
-        // circular. A retomada main-owned é quem re-arma e cria processo novo.
-        if (
-          missionId &&
-          /persisted mission pane authority/i.test(res.error)
-        ) {
-          void routeBlockedMissionToResume(host, missionId);
         }
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         return null;
@@ -1172,6 +1191,11 @@ export function releaseHeldSpawns(
     // re-release after a coalesced prompt.
     heldSpawnPanes.delete(paneId);
     if (opts.resume) {
+      const host = hosts.get(paneId);
+      // Layout restore is intentionally observed from both the store and App.
+      // Never leave a latent resume flag behind when the first observer already
+      // adopted or started this pane.
+      if (host?.spawnStarted || host?.sessionId) continue;
       resumeOnFirstSpawn.add(paneId);
       kickHeldSpawnIfReady(paneId);
     } else {
@@ -1213,8 +1237,9 @@ export function markPersistedAuthorityOnSpawn(paneId: string): void {
   kickHeldSpawnIfReady(paneId);
 }
 
-// Default: do NOT auto-resume restored agents. The restore-agents-gate module
-// installs a handler that holds spawn and asks the user first.
+// Conservative fallback until restore-agents-gate installs the product policy.
+// The installed handler auto-resumes main-owned mission panes and asks only for
+// standalone agents.
 setRestoredPanesHandler((panes) => {
   for (const pane of panes) {
     if (pane.kind === 'cli-agent') holdSpawnUntilApproved(pane.id);

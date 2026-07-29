@@ -24,8 +24,8 @@ export async function validateMissionMergeWithLifecycleFence<T>(input: {
 
 /**
  * Await non-mutating provider/account preparation without carrying a stale
- * PREVC proof across the asynchronous boundary. Callers may start durable
- * scheduler effects only after this function resolves.
+ * intent/plan/squad proof across the asynchronous boundary. Callers may start
+ * durable scheduler effects only after this function resolves.
  */
 export async function awaitMissionSchedulerAuthorityFence<T>(input: {
   readonly assertCurrentAuthority: () => void;

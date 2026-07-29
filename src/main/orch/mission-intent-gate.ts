@@ -125,6 +125,24 @@ export function assertMissionIntentAllowsTool(
     ctx.mission.status === 'running' &&
     hasCurrentApprovedDispatchContract(ctx.mission);
 
+  // The Maestro executes infra directly only in the explicit ops lane. This
+  // exception is needed by both MCP and PTY mission control; standard code
+  // work continues through isolated workers and Main-owned integration.
+  if (
+    canonical === 'terminal_run' &&
+    ctx.role === 'orchestrator' &&
+    contract?.lane !== 'ops'
+  ) {
+    return deny(
+      'tool_denied',
+      'tool_denied: o Maestro só executa terminal_run diretamente na lane ops',
+      ctx,
+      intentState,
+      intentVersion,
+      toolName,
+    );
+  }
+
   if (policy === 'read-only' || policy === 'mission-control') {
     return { ok: true, intentState, intentVersion };
   }

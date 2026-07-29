@@ -259,27 +259,21 @@ describe('macOS activate lifecycle', () => {
     );
   });
 
-  it('proves every PTY and OMP tree before declaring quit complete', () => {
+  it('proves every PTY tree before declaring quit complete', () => {
     const source = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf-8');
     const shutdownStart = source.indexOf('function shutdown(): Promise<void>');
     const physicalFence = source.indexOf(
       'await shutdownOrchestrationRuntimesWithProof({',
       shutdownStart,
     );
-    const ompFence = source.indexOf(
-      'terminateAllOmpSessions: disposeAllOmpRpcSessions,',
-      physicalFence,
-    );
     const completion = source.indexOf(
       'shutdownComplete = true;',
-      ompFence,
+      physicalFence,
     );
 
     expect(shutdownStart).toBeGreaterThanOrEqual(0);
     expect(physicalFence).toBeGreaterThan(shutdownStart);
-    expect(ompFence).toBeGreaterThan(physicalFence);
-    expect(completion).toBeGreaterThan(ompFence);
-    expect(source).not.toMatch(/^\s*disposeAllOmpRpcSessions\(\);/m);
+    expect(completion).toBeGreaterThan(physicalFence);
     expect(source).not.toContain('killAllSessions();');
     expect(source).not.toContain('app.exit(');
   });

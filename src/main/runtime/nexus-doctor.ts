@@ -13,6 +13,7 @@ import {
 } from '../persistence/project-git-lineage';
 import {
   assertSafeLocalGitConfig,
+  type AsyncGitRunner,
   ProcessGitRunner,
   type GitRunner,
 } from './git-command';
@@ -22,6 +23,7 @@ import {
   inspectIndependentProviders,
   inspectMultiPcBackend,
   inspectSandboxCapability,
+  inspectSandboxCapabilityAsync,
 } from './nexus-doctor-capability-checks';
 import { inspectSensors } from './nexus-doctor-sensor-check';
 import {
@@ -31,7 +33,7 @@ import {
   doctorPathExists as exists,
 } from './nexus-doctor-support';
 
-export { inspectSandboxCapability };
+export { inspectSandboxCapability, inspectSandboxCapabilityAsync };
 
 /**
  * Distribution / environment Doctor for Nexus runtime readiness.
@@ -103,7 +105,7 @@ export interface IndependentProviderSnapshot {
   readonly adapterId: string;
   readonly enabled: boolean;
   readonly installed: boolean;
-  readonly kind: 'cli-pty' | 'cli-rpc' | 'api-provider';
+  readonly kind: 'cli-pty' | 'api-provider';
   /** When present, login-needed providers do not count toward independent quorum. */
   readonly authStrategy?: 'subscription' | 'api-key' | 'login-needed' | string;
   /** True only when Nexus can enforce a read-only reviewer for this adapter. */
@@ -129,6 +131,7 @@ export interface NexusDoctorOptions {
   readonly platform?: NodeJS.Platform;
   readonly now?: () => number;
   readonly git?: GitRunner;
+  readonly asyncGit?: AsyncGitRunner;
   readonly runtime?: RuntimeHealthProbe | null;
   readonly inspectContext?: (scope: ProjectExecutionScope) => ContextDoctorSnapshot;
   readonly listProviders?: () => readonly IndependentProviderSnapshot[];
@@ -375,7 +378,7 @@ function inspectProjectManifest(
   return findings;
 }
 
-function inspectSqliteRuntime(
+export function inspectSqliteRuntime(
   scope: ProjectExecutionScope,
   runtime: RuntimeHealthProbe | null | undefined,
 ): NexusDoctorFinding[] {
@@ -554,7 +557,7 @@ function inspectFilesystemPermissions(
   return findings;
 }
 
-function collectRemediation(
+export function collectRemediation(
   blockers: readonly NexusDoctorFinding[],
   warnings: readonly NexusDoctorFinding[],
 ): readonly string[] {
@@ -716,7 +719,7 @@ export function runtimeHealthProbeFromManager(manager: {
 
 export type ConfiguredNexusDoctor = (
   scope: ProjectExecutionScope,
-) => NexusDoctorReport;
+) => NexusDoctorReport | Promise<NexusDoctorReport>;
 
 let configuredDoctor: ConfiguredNexusDoctor | null = null;
 
@@ -726,11 +729,11 @@ export function configureNexusDoctor(
   configuredDoctor = inspector;
 }
 
-export function inspectConfiguredNexusReadiness(
+export async function inspectConfiguredNexusReadiness(
   scope: ProjectExecutionScope,
-): NexusDoctorReport {
+): Promise<NexusDoctorReport> {
   if (!configuredDoctor) throw new Error('Nexus Doctor is not initialized');
-  return configuredDoctor(scope);
+  return await configuredDoctor(scope);
 }
 
 export function disposeNexusDoctor(): void {

@@ -26,14 +26,14 @@ describe('CircuitBreakerRegistry', () => {
       { failureThreshold: 2, windowMs: 60_000, openMs: 1_000 },
       () => now,
     );
-    b.recordFailure('omp');
-    b.recordFailure('omp');
-    expect(b.state('omp')).toBe('open');
+    b.recordFailure('grok');
+    b.recordFailure('grok');
+    expect(b.state('grok')).toBe('open');
     now += 1_001;
-    expect(b.state('omp')).toBe('half-open');
-    expect(b.allowsTraffic('omp')).toBe(true);
-    b.recordSuccess('omp');
-    expect(b.state('omp')).toBe('closed');
+    expect(b.state('grok')).toBe('half-open');
+    expect(b.allowsTraffic('grok')).toBe(true);
+    b.recordSuccess('grok');
+    expect(b.state('grok')).toBe('closed');
   });
 
   it('half-open failure re-opens', () => {

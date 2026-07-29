@@ -34,14 +34,14 @@ describe('hunk-tracker', () => {
     const hunks = parseUnifiedDiff(SAMPLE);
     const attributed = attributeHunks(hunks, [
       {
-        agentId: 'omp-auto',
-        adapterId: 'omp',
+        agentId: 'grok-reviewer',
+        adapterId: 'grok',
         paths: ['src/a.ts'],
         at: 100,
       },
     ], { userTouchedPaths: new Set(['src/b.ts']) });
     expect(attributed[0]?.source).toBe('agent');
-    expect(attributed[0]?.agentId).toBe('omp-auto');
+    expect(attributed[0]?.agentId).toBe('grok-reviewer');
     expect(attributed[1]?.source).toBe('user');
     expect(summarizeAttribution(attributed).agent).toBe(1);
     expect(summarizeAttribution(attributed).user).toBe(1);

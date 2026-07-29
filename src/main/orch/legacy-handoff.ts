@@ -96,6 +96,13 @@ export class LegacyHandoffDedupe {
     return false;
   }
 
+  /** Release a reservation after a transient Main-owned ingest failure. */
+  forget(sessionId: string, payload: LegacyHandoffPayload): void {
+    this.seen.delete(
+      `${sessionId}\n${payload.status}\n${payload.summary}`,
+    );
+  }
+
   dropSession(sessionId: string): void {
     const prefix = `${sessionId}\n`;
     for (const key of this.seen.keys()) {

@@ -16,7 +16,6 @@
  * - codex:    npm @openai/codex (pacote oficial OpenAI)
  * - gemini:   npm @google/gemini-cli (pacote oficial Google)
  * - opencode: brew opencode / npm opencode-ai
- * - omp:      brew can1357/tap/omp (tap oficial oh-my-pi)
  * - kimi:     brew kimi-code / npm @moonshot-ai/kimi-code (platform.kimi.ai)
  * - grok:     npm @xai-official/grok (pacote oficial xAI)
  * - agy:      script oficial https://antigravity.google/cli/install.sh
@@ -112,12 +111,6 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     darwin: [brewRecipe('opencode'), npmRecipe('opencode-ai')],
     linux: [npmRecipe('opencode-ai')],
     win32: [npmRecipe('opencode-ai')],
-  },
-  omp: {
-    // Fallback: instalador oficial do README do oh-my-pi (omp.sh/install) —
-    // caso de campo: máquina sem Homebrew não conseguia instalar o omp.
-    darwin: [brewRecipe('can1357/tap/omp'), scriptRecipe('https://omp.sh/install')],
-    linux: [scriptRecipe('https://omp.sh/install')],
   },
   kimi: {
     darwin: [brewRecipe('kimi-code'), npmRecipe('@moonshot-ai/kimi-code')],

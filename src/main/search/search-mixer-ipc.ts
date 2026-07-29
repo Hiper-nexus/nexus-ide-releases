@@ -10,7 +10,7 @@ import { requireScopedRoot } from '../security/scoped-workspace-fs';
 export function registerSearchMixerIpc(): void {
   ipcMain.handle(SEARCH_MIXER_CHANNELS.search, async (event, raw) => {
     try {
-      const { root } = requireScopedRoot(event.sender);
+      const { root, scope } = requireScopedRoot(event.sender);
       const client =
         raw && typeof raw === 'object'
           ? (raw as Record<string, unknown>)
@@ -19,6 +19,7 @@ export function registerSearchMixerIpc(): void {
       return await runSearchMixerQuery({
         ...client,
         projectRoot: root,
+        workspaceId: scope.projectId,
       });
     } catch (err) {
       return {

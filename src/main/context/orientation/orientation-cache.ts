@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ProjectExecutionScope } from '../../../shared/types';
@@ -118,4 +118,26 @@ export function writeOrientationCache(
   const payload = `${JSON.stringify(toOrientationJson(map), null, 2)}\n`;
   fs.writeFileSync(tmp, payload, { mode: 0o600 });
   fs.renameSync(tmp, target);
+}
+
+export async function writeOrientationCacheAsync(
+  cacheRoot: string,
+  scope: Pick<ProjectExecutionScope, 'projectId' | 'checkoutId'>,
+  map: ProjectOrientationMap,
+): Promise<void> {
+  const dir = orientationCacheDirectory(cacheRoot, scope);
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  const target = orientationCurrentPath(cacheRoot, scope);
+  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+  const payload = `${JSON.stringify(toOrientationJson(map), null, 2)}\n`;
+  try {
+    await fs.promises.writeFile(temporary, payload, {
+      mode: 0o600,
+      flag: 'wx',
+    });
+    await fs.promises.rename(temporary, target);
+  } catch (error) {
+    await fs.promises.rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }

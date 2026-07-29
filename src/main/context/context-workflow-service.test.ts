@@ -252,7 +252,7 @@ afterEach(() => {
 
 describe('native context workflow service', () => {
   it('does not turn a Doctor warning or stale npm defaults into contract authority', () => {
-    const { root, service } = fixture();
+    const { root, scope, manager, service } = fixture();
     fs.writeFileSync(
       path.join(root, 'package.json'),
       JSON.stringify({ name: 'greenfield-without-scripts' }),
@@ -301,12 +301,17 @@ describe('native context workflow service', () => {
         requiredArtifactIds: [],
       }],
     };
-    expect(() =>
-      service.freezeContract(
-        { ...draft, requestedSensors: ['typecheck'] },
-        { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
-      ),
-    ).toThrow(/unknown sensor: typecheck/i);
+    createScopedMissionStore(manager, scope, { idFactory: () => 'mission-b' })
+      .create({ title: 'Explicit unresolved sensor' });
+    const explicit = service.freezeContract(
+      {
+        ...draft,
+        missionId: 'mission-b',
+        requestedSensors: ['typecheck'],
+      },
+      { id: 'author-a', sessionId: 'author-session', provider: 'codex' },
+    );
+    expect(explicit.contract.requiredSensors).toEqual(['typecheck']);
 
     const frozen = service.freezeContract(
       draft,

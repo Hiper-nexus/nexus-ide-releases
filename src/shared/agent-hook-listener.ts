@@ -2043,7 +2043,6 @@ function isNewTurnEvent(source: AgentHookSource, eventName: unknown): boolean {
     case 'cursor':
       return eventName === 'beforeSubmitPrompt' || eventName === 'sessionStart'
     case 'pi':
-    case 'omp':
       return eventName === 'before_agent_start'
     case 'droid':
       return eventName === 'UserPromptSubmit'
@@ -2142,7 +2141,6 @@ function extractToolFields(
     case 'cursor':
       return extractCursorToolFields(eventName, hookPayload)
     case 'pi':
-    case 'omp':
       return extractPiToolFields(eventName, hookPayload)
     case 'droid':
       return extractDroidToolFields(eventName, hookPayload)
@@ -2857,7 +2855,7 @@ function normalizeCopilotEvent(
 
 function normalizePiCompatibleEvent(
   state: HookListenerState,
-  agentType: 'pi' | 'omp',
+  agentType: 'pi',
   eventName: unknown,
   promptText: string,
   paneKey: string,
@@ -3270,16 +3268,6 @@ export function normalizeHookPayload(
         hookPayloadRecord
       )
       break
-    case 'omp':
-      payload = normalizePiCompatibleEvent(
-        state,
-        'omp',
-        eventName,
-        promptText,
-        paneKey,
-        hookPayloadRecord
-      )
-      break
     case 'droid':
       payload = normalizeDroidEvent(state, eventName, promptText, paneKey, hookPayloadRecord)
       break
@@ -3367,7 +3355,6 @@ export const HOOK_SOURCE_BY_PATHNAME: Readonly<Record<string, AgentHookSource>> 
   '/hook/mimo-code': 'mimo-code',
   '/hook/cursor': 'cursor',
   '/hook/pi': 'pi',
-  '/hook/omp': 'omp',
   '/hook/droid': 'droid',
   '/hook/command-code': 'command-code',
   '/hook/grok': 'grok',

@@ -25,6 +25,8 @@ import {
   snapshotTaskPlanRoster,
   type PlannedTaskRecord,
 } from "./task-store";
+import { getOrchSettings } from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 
 export type GuidedWorkerAgent = SquadAgent & {
   readonly category: "executor" | "reviewer" | "scout" | "architect";
@@ -240,86 +242,135 @@ export function assertRosterCompleteGuidedV2Receipt(
       );
     }
     assertClosedAcyclicPlanDependencies(dependencyGraph);
-    const roots = dependencyGraph.filter(
-      (entry) => entry.dependsOn.length === 0,
-    );
-    if (
-      roots.length !== 1 ||
-      !implementationTaskId ||
-      !qualityGateTaskId ||
-      dependentCounts.has(qualityGateTaskId) ||
-      [...dependentCounts.values()].some((count) => count !== 1) ||
-      dependencyGraph.reduce(
-        (count, entry) => count + entry.dependsOn.length,
-        0,
-      ) !==
-        dependencyGraph.length - 1
-    ) {
+    if (!implementationTaskId || !qualityGateTaskId) {
       legacyGuidedReceipt(
-        "o receipt não preserva o encadeamento sequencial v2",
+        "o receipt não contém executor e quality gate canônicos",
       );
     }
 
-    const orderedSchedules: Array<
-      Readonly<{
-        entry: PlannedTaskRecord;
-        kind: GuidedTaskKind;
-        category: GuidedWorkerAgent["category"];
-      }>
-    > = [];
-    let cursor: string | undefined = roots[0]!.id;
-    while (cursor) {
-      const schedule = schedules.get(cursor);
-      if (!schedule) {
-        legacyGuidedReceipt(
-          `a tarefa ${cursor} não possui schedule Guided recuperável`,
-        );
-      }
-      orderedSchedules.push(schedule);
-      cursor = dependentByTaskId.get(cursor);
-    }
-    if (orderedSchedules.length !== planned.length) {
-      legacyGuidedReceipt(
-        "o receipt não forma uma única cadeia Guided completa",
-      );
-    }
+    type ScheduleRow = Readonly<{
+      entry: PlannedTaskRecord;
+      kind: GuidedTaskKind;
+      category: GuidedWorkerAgent["category"];
+    }>;
 
-    const implementationIndex = orderedSchedules.findIndex(
-      (schedule) => schedule.kind === "implementation",
-    );
-    const qualityGateIndex = orderedSchedules.findIndex(
-      (schedule) => schedule.kind === "quality-gate",
-    );
-    const stages = orderedSchedules.map((schedule) =>
-      recoveredGuidedStage(schedule.kind, schedule.category),
-    );
-    if (
-      implementationIndex < 0 ||
-      qualityGateIndex !== orderedSchedules.length - 1 ||
-      stages
-        .slice(0, implementationIndex)
-        .some((stage) => stage !== "advisory") ||
-      stages[implementationIndex] !== "implementation" ||
-      stages
-        .slice(implementationIndex + 1, qualityGateIndex)
-        .some((stage) => stage !== "independent-review") ||
-      stages[qualityGateIndex] !== "quality-gate"
-    ) {
-      legacyGuidedReceipt(
-        "o receipt não preserva advisory → implementation → independent-review → quality-gate",
-      );
-    }
-
-    const implementation = schedules.get(implementationTaskId)?.entry;
-    const qualityGate = schedules.get(qualityGateTaskId)?.entry;
-    if (!implementation || !qualityGate) {
+    const implementationSchedule = schedules.get(implementationTaskId);
+    const qualityGateSchedule = schedules.get(qualityGateTaskId);
+    if (!implementationSchedule || !qualityGateSchedule) {
       legacyGuidedReceipt(
         "o receipt não permite recuperar executor e quality gate canônicos",
       );
     }
+
+    const implementationNode = dependencyGraph.find(
+      (entry) => entry.id === implementationTaskId,
+    );
+    const qualityGateNode = dependencyGraph.find(
+      (entry) => entry.id === qualityGateTaskId,
+    );
+    if (
+      !implementationNode ||
+      implementationNode.dependsOn.length !== 0 ||
+      !qualityGateNode ||
+      qualityGateNode.dependsOn.length !== 1 ||
+      dependentCounts.has(qualityGateTaskId)
+    ) {
+      legacyGuidedReceipt(
+        "o receipt não preserva implementation raiz e quality-gate folha",
+      );
+    }
+
+    const advisoryRoots: ScheduleRow[] = [];
+    let reviewCount = 0;
+    for (const entry of dependencyGraph) {
+      const schedule = schedules.get(entry.id);
+      if (!schedule) {
+        legacyGuidedReceipt(
+          `a tarefa ${entry.id} não possui schedule Guided recuperável`,
+        );
+      }
+      const stage = recoveredGuidedStage(schedule.kind, schedule.category);
+      if (stage === "advisory") {
+        if (entry.dependsOn.length !== 0 || dependentCounts.has(entry.id)) {
+          legacyGuidedReceipt(
+            `advisory ${entry.id} deve ser raiz tip-only sem dependentes`,
+          );
+        }
+        advisoryRoots.push(schedule);
+      } else if (stage === "independent-review") {
+        if (entry.dependsOn.length !== 1) {
+          legacyGuidedReceipt(
+            `revisão ${entry.id} exige exatamente uma dependência`,
+          );
+        }
+        reviewCount += 1;
+      } else if (stage !== "implementation" && stage !== "quality-gate") {
+        legacyGuidedReceipt(`estágio Guided desconhecido em ${entry.id}`);
+      }
+    }
+
+    const deliveryOrdered: ScheduleRow[] = [implementationSchedule];
+    // `cursor` is narrowed to string inside the loop: the map lookup below is
+    // what advances it, so the guard has to prove non-undefined first.
+    let cursor: string = implementationTaskId;
+    const seen = new Set<string>([implementationTaskId]);
+    while (dependentByTaskId.has(cursor)) {
+      const nextId: string = dependentByTaskId.get(cursor)!;
+      if (seen.has(nextId)) {
+        legacyGuidedReceipt("ciclo na cadeia de delivery Guided");
+      }
+      seen.add(nextId);
+      const next = schedules.get(nextId);
+      if (!next) {
+        legacyGuidedReceipt(
+          `a tarefa ${nextId} não possui schedule Guided recuperável`,
+        );
+      }
+      deliveryOrdered.push(next);
+      cursor = nextId;
+      if (nextId === qualityGateTaskId) break;
+    }
+    if (
+      deliveryOrdered[deliveryOrdered.length - 1]?.entry.taskId !==
+      qualityGateTaskId
+    ) {
+      legacyGuidedReceipt(
+        "a cadeia de delivery não termina no quality-gate",
+      );
+    }
+    const deliveryStages = deliveryOrdered.map((schedule) =>
+      recoveredGuidedStage(schedule.kind, schedule.category),
+    );
+    if (
+      deliveryStages[0] !== "implementation" ||
+      deliveryStages[deliveryStages.length - 1] !== "quality-gate" ||
+      deliveryStages
+        .slice(1, -1)
+        .some((stage) => stage !== "independent-review")
+    ) {
+      legacyGuidedReceipt(
+        "o receipt não preserva implementation → independent-review* → quality-gate",
+      );
+    }
+    if (
+      advisoryRoots.length + deliveryOrdered.length !== planned.length ||
+      reviewCount !== deliveryStages.length - 2
+    ) {
+      legacyGuidedReceipt(
+        "o receipt não forma o grafo Guided paralelo completo",
+      );
+    }
+
+    const orderedSchedules = [
+      ...advisoryRoots.sort((left, right) =>
+        left.entry.taskId.localeCompare(right.entry.taskId),
+      ),
+      ...deliveryOrdered,
+    ];
+
     return Object.freeze({
-      implementation,
-      qualityGate,
+      implementation: implementationSchedule.entry,
+      qualityGate: qualityGateSchedule.entry,
       ordered: Object.freeze(
         orderedSchedules.map((schedule) => schedule.entry),
       ),
@@ -347,11 +398,30 @@ function generalistRank(agent: SquadAgent): number {
     : 1;
 }
 
-function orderedExecutorCandidates(squad: Squad): readonly SquadAgent[] {
+function canUseClaudeWorker(
+  squad: Squad,
+  operatorChoice = isOperatorChoicePolicy(
+    getOrchSettings().squadCliPolicy,
+  ),
+): boolean {
+  return (
+    operatorChoice &&
+    squad.agents.find((agent) => agent.category === "orchestrator")?.cli !==
+      "claude"
+  );
+}
+
+function orderedExecutorCandidates(
+  squad: Squad,
+  operatorChoice?: boolean,
+): readonly SquadAgent[] {
+  const claudeWorkerAvailable = canUseClaudeWorker(squad, operatorChoice);
   return squad.agents
     .map((agent, index) => ({ agent, index }))
     .filter(
-      ({ agent }) => agent.category === "executor" && agent.cli !== "claude",
+      ({ agent }) =>
+        agent.category === "executor" &&
+        (agent.cli !== "claude" || claudeWorkerAvailable),
     )
     .sort(
       (left, right) =>
@@ -380,13 +450,15 @@ function qualityGateRank(agent: SquadAgent): number {
 function orderedQualityGateCandidates(
   squad: Squad,
   executor: SquadAgent,
+  operatorChoice?: boolean,
 ): readonly SquadAgent[] {
+  const claudeWorkerAvailable = canUseClaudeWorker(squad, operatorChoice);
   return squad.agents
     .map((agent, index) => ({ agent, index }))
     .filter(
       ({ agent }) =>
         agent.category === "reviewer" &&
-        agent.cli !== "claude" &&
+        (agent.cli !== "claude" || claudeWorkerAvailable) &&
         agent.id !== executor.id,
     )
     .sort(
@@ -437,11 +509,14 @@ export function assertExactRosterRoutes(input: {
   }
 }
 
-export function choosePrimaryExecutor(squad: Squad): SquadAgent {
-  const candidates = orderedExecutorCandidates(squad);
+export function choosePrimaryExecutor(
+  squad: Squad,
+  operatorChoice?: boolean,
+): SquadAgent {
+  const candidates = orderedExecutorCandidates(squad, operatorChoice);
   if (candidates.length === 0) {
     throw new Error(
-      "guided_plan_executor_missing: o squad aprovado precisa de um executor não-Claude",
+      "guided_plan_executor_missing: o squad aprovado precisa de um executor disponível",
     );
   }
   return candidates[0]!;
@@ -450,11 +525,16 @@ export function choosePrimaryExecutor(squad: Squad): SquadAgent {
 export function chooseCorrectiveQualityGate(
   squad: Squad,
   executor: SquadAgent,
+  operatorChoice?: boolean,
 ): SquadAgent {
-  const candidates = orderedQualityGateCandidates(squad, executor);
+  const candidates = orderedQualityGateCandidates(
+    squad,
+    executor,
+    operatorChoice,
+  );
   if (candidates.length === 0) {
     throw new Error(
-      "guided_plan_reviewer_missing: o squad aprovado precisa de um QA/reviewer não-Claude independente do executor",
+      "guided_plan_reviewer_missing: o squad aprovado precisa de um QA/reviewer independente do executor",
     );
   }
   return candidates[0]!;

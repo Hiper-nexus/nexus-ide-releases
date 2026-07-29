@@ -1,10 +1,10 @@
 /**
  * Dual-mode squad CLI policy.
  *
- * `operator-choice` (default): vibe-coder mode — any installed + authenticated
- * + handoff-capable CLI for Maestro/executor/reviewer. Nexus still confines
- * processes with its own kernel Seatbelt (macOS); the jail is the sandbox,
- * not an allowlist of brand names.
+ * `operator-choice` (default): vibe-coder autopilot — any installed +
+ * authenticated + handoff-capable CLI for Maestro/executor/reviewer. The
+ * practical boundary is the task worktree, per-session Nexus authority and a
+ * Main-owned validated merge. Provider auto-approve and network stay enabled.
  *
  * `governed`: release-qualified ladder — Codex for autonomous workspace write,
  * verified Maestro for coordination, advisory Seatbelt for everyone else on
@@ -22,6 +22,6 @@ export function isOperatorChoicePolicy(
 
 export function squadCliPolicyLabel(mode: SquadCliPolicyMode): string {
   return mode === 'operator-choice'
-    ? 'Escolha livre — qualquer CLI autenticada'
-    : 'Governado — só CLIs qualificadas nesta release';
+    ? 'Autopiloto — qualquer CLI autenticada, web liberada'
+    : 'Hardened — sandbox e CLIs qualificadas';
 }

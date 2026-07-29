@@ -55,7 +55,7 @@ describe('built-in squads (invariantes gerais)', () => {
         ).toBe('codex');
       }
       expect(squad.orchestratorInstructions).not.toMatch(
-        /adapterId\s*=\s*(?:omp|kimi|grok|agy|opencode|claude)|cli\s*=\s*(?:omp|kimi|grok|agy|opencode)|slots?\s+omp|\(omp\)/i,
+        /adapterId\s*=\s*(?:kimi|grok|agy|opencode|claude)|cli\s*=\s*(?:kimi|grok|agy|opencode)/i,
       );
     }
   });
@@ -95,7 +95,7 @@ describe('built-in squads (invariantes gerais)', () => {
       delivery?.agents.some(
         (agent) =>
           agent.category !== 'orchestrator' &&
-          ['claude', 'omp', 'grok', 'kimi', 'agy', 'opencode'].includes(
+          ['claude', 'grok', 'kimi', 'agy', 'opencode'].includes(
             agent.cli,
           ),
       ),

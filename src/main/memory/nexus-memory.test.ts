@@ -1,17 +1,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
-import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   backlinks,
   extractWikilinks,
   listMemoryNotes,
-  rememberMarkdown,
+  removeCanonicalMemoryProjection,
   resolveMemoryRoot,
   searchMemory,
+  syncCanonicalMemoryProjections,
   wikilinkCompletions,
+  writeCanonicalMemoryProjection,
 } from './nexus-memory';
 
 const dirs: string[] = [];
@@ -20,41 +20,32 @@ afterEach(() => {
 });
 
 describe('nexus memory', () => {
-  it('creates distinct notes even when timestamps collide', () => {
-    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.nexusMemory, true);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-collision-'));
-    dirs.push(root);
-    const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
-
-    const first = rememberMarkdown(root, { title: 'Same', body: 'first' });
-    const second = rememberMarkdown(root, { title: 'Same', body: 'second' });
-
-    expect(first.path).not.toBe(second.path);
-    expect(fs.readFileSync(first.path, 'utf8')).toContain('first');
-    expect(fs.readFileSync(second.path, 'utf8')).toContain('second');
-    now.mockRestore();
-  });
-
-  it('does not follow a pre-planted timestamp note symlink', () => {
-    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.nexusMemory, true);
+  it('does not follow a pre-planted canonical note symlink', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-create-link-'));
     dirs.push(root);
-    const timestamp = 1_700_000_000_000;
-    const now = vi.spyOn(Date, 'now').mockReturnValue(timestamp);
     const memoryRoot = path.join(root, '.nexus-memory');
     const outside = path.join(root, 'outside.txt');
     fs.mkdirSync(memoryRoot);
     fs.writeFileSync(outside, 'DO NOT REPLACE');
+    const id = 'mem-11111111-1111-4111-8111-111111111111';
     fs.symlinkSync(
       outside,
-      path.join(memoryRoot, `same-${timestamp.toString(36)}.md`),
+      path.join(memoryRoot, `${id}.md`),
     );
 
-    const note = rememberMarkdown(root, { title: 'Same', body: 'safe' });
+    const note = writeCanonicalMemoryProjection(root, {
+      id,
+      content: '# Same\n\nsafe',
+      kind: 'note',
+      scope: 'workspace',
+      importance: 3,
+      source: null,
+      createdAt: 1,
+      updatedAt: 1,
+    });
 
     expect(fs.readFileSync(outside, 'utf8')).toBe('DO NOT REPLACE');
     expect(fs.readFileSync(note.path, 'utf8')).toContain('safe');
-    now.mockRestore();
   });
 
   it('rejects memory dirname that escapes project (startsWith trap)', () => {
@@ -93,8 +84,7 @@ describe('nexus memory', () => {
     expect(listMemoryNotes(root)).toEqual([]);
   });
 
-  it('writes markdown, resolves wikilinks, searches, backlinks', () => {
-    getFeatureFlagRegistry().setOverride(FEATURE_FLAG_IDS.nexusMemory, true);
+  it('projects canonical markdown, resolves wikilinks, searches, backlinks', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-'));
     dirs.push(root);
 
@@ -103,19 +93,28 @@ describe('nexus memory', () => {
       'Foo',
     ]);
 
-    const note = rememberMarkdown(root, {
-      title: 'Decision Auth',
-      body: 'We chose JWT. Related [[Mission Alpha]].',
+    const note = writeCanonicalMemoryProjection(root, {
+      id: 'mem-decision-auth',
+      content: '# Decision Auth\n\nWe chose JWT. Related [[Mission Alpha]].',
       kind: 'decision',
-      missionId: 'm1',
+      scope: 'workspace',
+      importance: 5,
+      source: 'operator:mission:m1',
+      createdAt: 1,
+      updatedAt: 2,
     });
     expect(fs.existsSync(note.path)).toBe(true);
     expect(note.wikilinks).toContain('Mission Alpha');
 
-    rememberMarkdown(root, {
-      title: 'Mission Alpha',
-      body: 'Depends on [[Decision Auth]].',
-      kind: 'mission',
+    writeCanonicalMemoryProjection(root, {
+      id: 'mem-mission-alpha',
+      content: '# Mission Alpha\n\nDepends on [[Decision Auth]].',
+      kind: 'fact',
+      scope: 'workspace',
+      importance: 4,
+      source: 'mission:m1',
+      createdAt: 3,
+      updatedAt: 4,
     });
 
     expect(searchMemory(root, 'JWT').length).toBeGreaterThan(0);
@@ -129,5 +128,46 @@ describe('nexus memory', () => {
     expect(listed.find((n) => n.title === 'Mission Alpha')?.kind).toBe('mission');
     expect(listed.find((n) => n.title === 'Decision Auth')?.kind).toBe('decision');
     expect(listed.filter((n) => n.kind === 'mission')).toHaveLength(1);
+  });
+
+  it('sync rewrites canonical projections and removes only stale generated files', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mem-sync-'));
+    dirs.push(root);
+    const memoryRoot = path.join(root, '.nexus-memory');
+    fs.mkdirSync(memoryRoot);
+    const legacyPath = path.join(memoryRoot, 'human-note.md');
+    fs.writeFileSync(legacyPath, '# Human note\n\nDo not delete.');
+
+    writeCanonicalMemoryProjection(root, {
+      id: 'mem-stale',
+      content: '# Stale\n\nOld canonical content.',
+      kind: 'note',
+      scope: 'workspace',
+      importance: 1,
+      source: null,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    syncCanonicalMemoryProjections(root, [
+      {
+        id: 'mem-current',
+        content: '# Current\n\nSQLite wins.',
+        kind: 'decision',
+        scope: 'workspace',
+        importance: 5,
+        source: 'operator:decision',
+        createdAt: 2,
+        updatedAt: 3,
+      },
+    ]);
+
+    expect(fs.existsSync(path.join(memoryRoot, 'mem-stale.md'))).toBe(false);
+    expect(fs.readFileSync(legacyPath, 'utf8')).toContain('Do not delete');
+    expect(listMemoryNotes(root).map((note) => note.id)).toEqual([
+      'mem-current',
+    ]);
+    expect(removeCanonicalMemoryProjection(root, 'mem-current')).toBe(true);
+    expect(removeCanonicalMemoryProjection(root, 'mem-current')).toBe(false);
   });
 });

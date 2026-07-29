@@ -7,7 +7,7 @@
  * oh-my-pi (src/vendor/omp/catalog). Este arquivo só declara o SHAPE que
  * cruza o IPC read-only `model:richMetadata` — sem lógica, sem segredos.
  *
- * O shape espelha RichModelEntry + ompProvider (RichModelMetadata do main),
+ * O shape espelha RichModelEntry + catalogProvider (RichModelMetadata do main),
  * de modo que o retorno do handler é estruturalmente atribuível a
  * RichModelMetadataView sem conversão.
  */
@@ -34,6 +34,6 @@ export interface RichModelMetadataView {
   reasoning?: boolean;
   /** Modalidades de entrada aceitas (ex.: 'text', 'image'). */
   input?: string[];
-  /** Provider do catálogo omp que forneceu o metadado (ex.: 'anthropic', 'xai'). */
-  ompProvider: string;
+  /** Provider do catálogo que forneceu o metadado (ex.: 'anthropic', 'xai'). */
+  catalogProvider: string;
 }

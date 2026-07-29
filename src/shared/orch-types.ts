@@ -404,17 +404,17 @@ export interface HandoffEvidenceBinding {
 }
 
 /**
- * Main-persisted receipt for the exact physical `nexus_handoff_submit`
- * invocation that created a handoff. Ordinary main-process store calls and
- * the legacy PTY parser never receive this provenance. HTTP MCP and OMP's
- * validated stdio host-tool protocol are distinct, explicit origins.
+ * Main-persisted receipt for the exact physical handoff operation that
+ * created a handoff. HTTP MCP calls and Main-observed PTY stream blocks share
+ * the same one-shot authority; ordinary store calls never receive it. The
+ * retired stdio value remains readable only for migration.
  */
 export interface HandoffMcpProvenance {
   /** Correlates the durable row with the MCP dispatch/audit invocation. */
   readonly receiptId: string;
   readonly toolCallId: string;
   readonly toolName: 'nexus_handoff_submit';
-  readonly source: 'http-mcp' | 'omp-rpc-stdio';
+  readonly source: 'http-mcp' | 'pty-stream' | 'omp-rpc-stdio';
   readonly missionId: string;
   readonly sessionId: string;
   readonly workerIncarnationId?: string;
@@ -439,7 +439,7 @@ export interface Handoff {
   fromAgent?: string;
   /** Main-owned provenance. Renderer/MCP payloads cannot select this value. */
   readonly authorityOrigin?: 'agent' | 'operator-confirmed';
-  /** Present only when the HTTP MCP tool boundary emitted the durable row. */
+  /** Present only when a physical agent transport emitted the durable row. */
   readonly mcpProvenance?: HandoffMcpProvenance;
   /** Reporter-supplied metadata. `success` never completes a mission. */
   status: HandoffStatus;

@@ -72,9 +72,8 @@ export function parseGuidedTaskKind(
   if (guidedDomains.length !== 1) {
     invalidGuidedTask(input, "a tarefa deve possuir um único domínio Guided");
   }
-  if (!input.domains.includes("sequential-only")) {
-    invalidGuidedTask(input, "o domínio Guided exige sequential-only");
-  }
+  // sequential-only is an optional exclusivity fence (glue / empty / isolated
+  // advisory), not a required marker on every Guided kind.
   if (!input.agentCategory || !input.executionMode) {
     invalidGuidedTask(
       input,

@@ -231,7 +231,7 @@ const REVIEW_P0P3_ORCH_INSTRUCTIONS =
   'no modo uncommitted) nos arquivos designados;\n' +
   '(c) o bloco "Instruções do reviewer" abaixo, INTEIRO e sem alterações.\n' +
   'Todos os reviewers deste roster são identidades independentes executadas ' +
-  'no Codex builtin governado. Kimi, OMP, Grok, AGY e outras CLIs continuam ' +
+  'no Codex builtin governado. Kimi, Grok, AGY e outras CLIs continuam ' +
   'disponíveis no Terminal/manual, mas não substituem workers desta missão.\n' +
   'Aguarde com nexus_pane_wait_many e colete os handoffs com nexus_handoff_list.\n' +
   '\n' +
@@ -258,7 +258,7 @@ const OUTCOME_PACK_COMMON =
   'Transforme o contrato de resultado em tarefas com donos, dependências e ' +
   'critérios de aceite antes de spawnar. Use apenas agentes do roster; nesta ' +
   'release, cada worker governado usa o Codex builtin e mantém escrita em um ' +
-  'único worktree por tarefa. Kimi, OMP, Grok, AGY e outras CLIs permanecem ' +
+  'único worktree por tarefa. Kimi, Grok, AGY e outras CLIs permanecem ' +
   'disponíveis apenas no Terminal/manual. ' +
   'Cada worker entrega um handoff com arquivos alterados e provas executadas. ' +
   'O implementador nunca aprova o próprio trabalho: QA e Reviewer verificam ' +
@@ -742,7 +742,7 @@ const RAW_SQUADS: Squad[] = [
       'lane for plan). Entrega riscos, arquivos e verificação.\n' +
       '3. **Coder** — implementa no worktree; handoff com evidência real.\n' +
       'Spawne via nexus_pane_spawn com o agentName do roster; o roster Codex ' +
-      'é sticky. Não substitua automaticamente esses workers por Kimi/OMP: ' +
+      'é sticky. Não substitua automaticamente esses workers por outra CLI: ' +
       'essas CLIs são rotas manuais nesta release.',
     agents: [
       {

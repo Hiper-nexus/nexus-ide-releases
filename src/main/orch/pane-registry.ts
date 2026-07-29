@@ -53,13 +53,6 @@ import {
   type PaneSpawnOptions as MainOwnedPaneSpawnOptions,
 } from "./main-owned-pane-runtime";
 import {
-  detachOmpRpcMissionPane,
-  isOmpRpcSession,
-  isOmpRpcPaneOwnedBy,
-  listOmpRpcSessions,
-  terminateOmpRpcSession,
-} from "../adapters/omp-rpc-ipc";
-import {
   paneSessionStateForEntry,
   recordPaneSessionData,
   recordPaneSessionExit,
@@ -197,9 +190,7 @@ function resolvePaneRecoveryOnce(
 async function terminateRecoveryReplacement(
   sessionId: string,
 ): Promise<boolean> {
-  return isOmpRpcSession(sessionId)
-    ? terminateOmpRpcSession(sessionId)
-    : orchTerminateSession(sessionId);
+  return orchTerminateSession(sessionId);
 }
 
 async function settlePaneRecoveryFailure(
@@ -218,7 +209,7 @@ async function settlePaneRecoveryFailure(
   // A renderer-authored result is never termination authority. Only the
   // physical session id bound synchronously by the main spawn path may be
   // revoked here; otherwise a compromised renderer could name and kill an
-  // unrelated PTY/OMP session (confused deputy).
+  // unrelated PTY session (confused deputy).
   const sessionId = pending.replacementSessionId;
   let finalError = error;
   if (sessionId) {
@@ -506,14 +497,12 @@ function retainRenderedMissionPaneHeadless(
       return true;
     }
   }
-  const detached = isOmpRpcSession(sessionId)
-    ? detachOmpRpcMissionPane(owner, sessionId)
-    : Boolean(
-        agent?.missionId === meta.missionId &&
-          agent.role === meta.role &&
-          sameProjectScope(agent.scope, previousScope) &&
-          detachOwnedMissionAgentSession(owner, sessionId),
-      );
+  const detached = Boolean(
+    agent?.missionId === meta.missionId &&
+      agent.role === meta.role &&
+      sameProjectScope(agent.scope, previousScope) &&
+      detachOwnedMissionAgentSession(owner, sessionId),
+  );
   if (!detached) {
     void terminateRecoveryReplacement(sessionId);
     return true;
@@ -533,8 +522,8 @@ function retainRenderedMissionPaneHeadless(
 
 /**
  * Preserve a claimed mission spawn only after renderer presentation authority
- * has been revoked. PTY and OMP transports use separate physical inventories;
- * both must agree with the main-authored pending request before transfer.
+ * has been revoked. The PTY inventory must agree with the main-authored
+ * pending request before transfer.
  */
 function retainClaimedPendingSpawnHeadless(
   requestId: string,
@@ -565,49 +554,7 @@ function retainClaimedPendingSpawnHeadless(
     if (retained.paneId) deleteMainOwnedPane(retained.paneId);
     return null;
   }
-
-  const ompMatches = listOmpRpcSessions().filter(
-    (session) =>
-      session.sessionId === sessionId &&
-      session.paneId === pending.request.paneId &&
-      session.kind === "mission" &&
-      session.missionId === pending.meta.missionId &&
-      session.state !== "exited",
-  );
-  if (
-    ompMatches.length !== 1 ||
-    !detachOmpRpcMissionPane(pending.owner, sessionId)
-  ) {
-    return null;
-  }
-  attachSessionScope(sessionId, pending.meta.scope);
-  setMainOwnedPane(pending.request.paneId, {
-    entry: {
-      paneId: pending.request.paneId,
-      sessionId,
-      title:
-        pending.request.title ??
-        pending.meta.agentName ??
-        pending.request.adapterId,
-      kind: "cli-agent",
-      adapterId: pending.request.adapterId,
-      model: pending.request.model,
-      accountId: pending.request.accountId,
-      state: "unknown",
-    },
-    meta: {
-      ...pending.meta,
-      scope: pending.meta.scope,
-      executionScope: pending.meta.executionScope ?? pending.meta.scope,
-    },
-  });
-  mainOwnedPaneHooks.panesChanged();
-  return {
-    requestId,
-    ok: true,
-    paneId: pending.request.paneId,
-    sessionId,
-  };
+  return null;
 }
 
 async function settlePendingSpawnFailure(
@@ -764,8 +711,7 @@ export function syncPanes(
     (entry) =>
       paneIdCounts.get(entry.paneId) === 1 &&
       (!entry.sessionId ||
-        isSessionOwnedBy(owner, entry.sessionId) ||
-        isOmpRpcPaneOwnedBy(entry.sessionId, owner)),
+        isSessionOwnedBy(owner, entry.sessionId)),
   );
   for (const entry of accepted) {
     const detached = getMainOwnedPane(entry.paneId);
@@ -1727,11 +1673,9 @@ export async function requestMissionPaneRecovery(options: {
   const sessionToTerminate =
     options.expectedSessionId ?? currentSessionId;
   if (sessionToTerminate) {
-    const exited = isOmpRpcSession(sessionToTerminate)
-      ? await terminateOmpRpcSession(sessionToTerminate)
-      : getSessionState(sessionToTerminate) === null
-        ? true
-        : await orchTerminateSession(sessionToTerminate);
+    const exited = getSessionState(sessionToTerminate) === null
+      ? true
+      : await orchTerminateSession(sessionToTerminate);
     if (!exited) {
       return {
         requestId: "",
@@ -1752,14 +1696,7 @@ export async function requestMissionPaneRecovery(options: {
       error: "mission pane renderer scope changed during termination",
     };
   }
-  if (
-    listAgentSessionsForPane(options.paneId).length > 0 ||
-    listOmpRpcSessions().some(
-      (session) =>
-        session.paneId === options.paneId &&
-        session.state !== "exited",
-    )
-  ) {
+  if (listAgentSessionsForPane(options.paneId).length > 0) {
     return {
       requestId: "",
       ok: false,
@@ -1962,9 +1899,7 @@ export async function requestMissionPaneClose(
     }
     const sessionId = detached.entry.sessionId;
     if (sessionId) {
-      const exited = isOmpRpcSession(sessionId)
-        ? await terminateOmpRpcSession(sessionId)
-        : await orchTerminateSession(sessionId);
+      const exited = await orchTerminateSession(sessionId);
       if (!exited) return false;
     }
     const current = getMainOwnedPane(expected.paneId);
@@ -2001,9 +1936,7 @@ export async function requestMissionPaneClose(
   }
   const sessionId = target.entry.sessionId;
   if (sessionId) {
-    const exited = isOmpRpcSession(sessionId)
-      ? await terminateOmpRpcSession(sessionId)
-      : await orchTerminateSession(sessionId);
+    const exited = await orchTerminateSession(sessionId);
     if (!exited) return false;
   }
   try {
@@ -2066,12 +1999,9 @@ export async function requestMissionWorkerPaneRetirement(
   // A naturally exited PTY disappears from the physical inventory before the
   // renderer collapses its stable visual leaf. Only that exact, sessionless
   // leaf may be retired here. A replacement session, duplicate renderer
-  // reference, main-owned envelope, OMP runtime, or authority mismatch stays
+  // reference, main-owned envelope, or authority mismatch stays
   // fail-closed.
-  if (
-    getSessionState(expected.sessionId) !== null ||
-    isOmpRpcSession(expected.sessionId)
-  ) {
+  if (getSessionState(expected.sessionId) !== null) {
     return false;
   }
   const renderedReferences = panes.filter(
@@ -2133,7 +2063,6 @@ export async function requestMissionWorkerPaneRetirement(
       scope: expected.scope,
     }) ||
     getSessionState(expected.sessionId) !== null ||
-    isOmpRpcSession(expected.sessionId) ||
     findMainOwnedPaneAuthz(expected.paneId).length > 0 ||
     findMainOwnedPaneAuthz(expected.sessionId).length > 0
   ) {
@@ -2164,9 +2093,7 @@ export async function requestPaneClose(paneId: string): Promise<boolean> {
   if (detached) {
     const sessionId = detached.entry.sessionId;
     if (sessionId) {
-      const exited = isOmpRpcSession(sessionId)
-        ? await terminateOmpRpcSession(sessionId)
-        : await orchTerminateSession(sessionId);
+      const exited = await orchTerminateSession(sessionId);
       if (!exited) return false;
     }
     const currentDetached = getMainOwnedPane(paneId);
@@ -2198,9 +2125,7 @@ export async function requestPaneClose(paneId: string): Promise<boolean> {
     }
   }
   if (sessionId) {
-    const exited = isOmpRpcSession(sessionId)
-      ? await terminateOmpRpcSession(sessionId)
-      : await orchTerminateSession(sessionId);
+    const exited = await orchTerminateSession(sessionId);
     if (!exited) return false;
   }
   if (expectedScope) {

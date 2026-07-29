@@ -1,69 +1,19 @@
-import { useEffect, useState } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
-import { useOmpRpcStore } from '../state/omp-rpc-store';
 import { listPanes } from '../lib/split-tree';
 import { FLEET_SEG_LABEL } from '../../shared/pane-session-view';
-import type { OmpRpcSessionSummary } from '../../shared/omp-rpc-types';
 
 /**
  * Rollup da frota: "3 trabalhando · 2 prontos · 1 encerrado" num relance.
  * Clique foca quem precisa de atenção — encerrado primeiro, depois ocupado.
- * Conta panes PTY + sessões omp rpc-ui (painel e mission workers).
+ * A fonte única são os panes ativos no layout.
  */
-
-function ompCountsAsWorking(summary: OmpRpcSessionSummary): boolean {
-  return (
-    summary.state === 'busy' ||
-    summary.state === 'spawning' ||
-    summary.snapshot.isStreaming
-  );
-}
 
 export function FleetChip() {
   // Use displayStates so "1 trab · 3 ok" does not thrash on short busy↔idle gaps.
   const paneStates = useSessionStateStore((s) => s.displayStates);
   const root = useLayoutStore((s) => s.root);
   const focus = useLayoutStore((s) => s.focus);
-  const ompPanelBusy = useOmpRpcStore(
-    (s) =>
-      s.starting ||
-      s.snapshot?.state === 'busy' ||
-      s.snapshot?.state === 'spawning' ||
-      s.snapshot?.isStreaming === true,
-  );
-  const ompPanelReady = useOmpRpcStore(
-    (s) => Boolean(s.sessionId) && s.snapshot?.state === 'idle',
-  );
-  const openOmp = useOmpRpcStore((s) => s.openPanel);
-  const [ompMissionSessions, setOmpMissionSessions] = useState<
-    OmpRpcSessionSummary[]
-  >([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | null = null;
-    const refresh = () => {
-      void window.nexus.ompRpc.listSessions().then((rows) => {
-        if (!cancelled) {
-          setOmpMissionSessions(rows.filter((row) => row.kind === 'mission'));
-        }
-      });
-    };
-    refresh();
-    // Debounce event storms (tool deltas) so we don't hammer listSessions.
-    const stop = window.nexus.ompRpc.onEvent(() => {
-      if (timer != null) window.clearTimeout(timer);
-      timer = window.setTimeout(refresh, 250);
-    });
-    const interval = window.setInterval(refresh, 5_000);
-    return () => {
-      cancelled = true;
-      stop();
-      if (timer != null) window.clearTimeout(timer);
-      window.clearInterval(interval);
-    };
-  }, []);
 
   let working = 0;
   let ready = 0;
@@ -71,7 +21,6 @@ export function FleetChip() {
   let down = 0;
   let firstDown: string | null = null;
   let firstWorking: string | null = null;
-  let openOmpOnClick = false;
   for (const pane of listPanes(root)) {
     const st = paneStates.get(pane.id);
     if (!st) continue;
@@ -84,24 +33,6 @@ export function FleetChip() {
     } else if (st === 'hibernated') {
       sleeping += 1;
     } else {
-      ready += 1;
-    }
-  }
-  // Panel session (single) when not already a mission worker row.
-  if (ompPanelBusy) {
-    working += 1;
-    openOmpOnClick = true;
-  } else if (ompPanelReady) {
-    ready += 1;
-  }
-  for (const row of ompMissionSessions) {
-    if (ompCountsAsWorking(row)) {
-      working += 1;
-      openOmpOnClick = true;
-    } else if (row.state === 'exited') {
-      down += 1;
-      openOmpOnClick = true;
-    } else if (row.state === 'idle' || row.state === 'ready') {
       ready += 1;
     }
   }
@@ -121,11 +52,10 @@ export function FleetChip() {
     <button
       type="button"
       className="fleet-chip"
-      title={`Frota: ${label}${target || openOmpOnClick ? ' — clique para focar quem precisa de atenção' : ''}`}
+      title={`Frota: ${label}${target ? ' — clique para focar quem precisa de atenção' : ''}`}
       aria-label={`Frota: ${label}`}
       onClick={() => {
         if (target) focus(target);
-        else if (openOmpOnClick) openOmp();
       }}
     >
       {working > 0 && (

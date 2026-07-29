@@ -186,15 +186,6 @@ describe("OrchestratorDefaults", () => {
     ]);
     expect(host.textContent).toContain("Codex · pronto");
     expect(host.textContent).not.toContain("MCP conectado");
-    expect(host.textContent).toContain(
-      "Preferir — companion fora do guided quando elegível",
-    );
-    expect(host.textContent).toContain(
-      "O OMP não entra no guided automático nesta versão",
-    );
-    expect(host.textContent).toContain(
-      "O handoff RPC físico, sozinho, não concede essa capability",
-    );
 
     await act(async () => {
       providerSelect!.value = "claude";

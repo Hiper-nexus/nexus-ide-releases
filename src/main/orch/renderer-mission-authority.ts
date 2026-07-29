@@ -25,6 +25,7 @@ import {
   GUIDED_PLAN_BLOCK_CTA,
   GUIDED_PLAN_BLOCK_MARKER,
 } from "../../shared/guided-mission-plan";
+import { hasRetiredRosterRouteMarker } from "../../shared/retired-adapter-policy";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
 import {
   NEXUS_PLAN_SQUAD_ID,
@@ -78,6 +79,7 @@ import type {
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { emitMissionIntentEvent } from "./mission-intent-events";
 import { getOrchSettings } from "../persistence/settings-store";
+import { terminalOperationalFailureReason } from "../runtime/operational-failure-policy";
 import { tryGetProjectOrientationService } from "../context/orientation/orientation-service";
 import {
   snapshotDroppedAttachmentPaths,
@@ -1363,10 +1365,13 @@ export class RendererMissionAuthority {
       const detail = (error instanceof Error ? error.message : String(error))
         .trim()
         .slice(0, 2_048);
+      const durableDetail = hasRetiredRosterRouteMarker(error)
+        ? terminalOperationalFailureReason(detail)
+        : detail;
       const note =
         `${GUIDED_PLAN_BLOCK_MARKER}\n` +
         `## Execução não iniciada\nO Nexus não conseguiu selar uma tarefa ` +
-        `segura antes de abrir qualquer CLI. ${detail || "Preflight sem detalhe."} ` +
+        `segura antes de abrir qualquer CLI. ${durableDetail || "Preflight sem detalhe."} ` +
         `CTA: ${GUIDED_PLAN_BLOCK_CTA}.`;
       const description = current.description.includes(GUIDED_PLAN_BLOCK_MARKER)
         ? current.description

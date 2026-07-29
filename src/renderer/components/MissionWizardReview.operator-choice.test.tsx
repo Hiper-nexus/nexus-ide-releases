@@ -58,6 +58,7 @@ const codex: AdapterInfo = {
   models: { list: ["gpt-5.4"], default: "gpt-5.4" },
   installed: true,
   orchestratorCapable: true,
+  taskHandoffCapable: true,
   orchestrationEvidence: "verified",
   autonomousWorkspaceWriteCapable: true,
   capabilities: {
@@ -207,15 +208,15 @@ function renderWorkerDropdown(input: {
 }
 
 describe("MissionWizardReview operator-choice", () => {
-  it("nunca mostra labels governed (escrita/leitura/manual) sob escolha livre", () => {
+  it("nunca mostra labels hardened sob autopiloto", () => {
     const view = renderWorkerDropdown({
       adapters: [codex, kimi, grok],
       providers: [provider(codex), provider(kimi), provider(grok)],
     });
     const texts = view.options().map((option) => option.text);
-    expect(texts).toContain("Codex · pronta · Seatbelt");
-    expect(texts).toContain("Grok · pronta · Seatbelt");
-    expect(texts).toContain("Kimi · pronta · Seatbelt");
+    expect(texts).toContain("Codex · pronta · web");
+    expect(texts).toContain("Grok · pronta · web");
+    expect(texts).toContain("Kimi · pronta · web");
     for (const text of texts) {
       expect(text).not.toMatch(
         /escrita confinada|leitura supervisionada|somente manual/,
@@ -224,7 +225,7 @@ describe("MissionWizardReview operator-choice", () => {
     view.cleanup();
   });
 
-  it("libera Kimi autenticada como executor com label Seatbelt", () => {
+  it("libera Kimi autenticada como executor com web", () => {
     const view = renderWorkerDropdown({
       adapters: [codex, kimi],
       providers: [provider(codex), provider(kimi)],
@@ -232,7 +233,7 @@ describe("MissionWizardReview operator-choice", () => {
     const kimiOption = view
       .options()
       .find((option) => option.text.includes("Kimi"));
-    expect(kimiOption?.text).toBe("Kimi · pronta · Seatbelt");
+    expect(kimiOption?.text).toBe("Kimi · pronta · web");
     expect(kimiOption?.disabled).toBe(false);
     view.cleanup();
   });

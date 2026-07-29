@@ -33,6 +33,8 @@ function adapter(patch: Partial<AdapterInfo> = {}): AdapterInfo {
     installed: true,
     orchestratorCapable: true,
     orchestrationEvidence: 'verified',
+    taskHandoffCapable: true,
+    missionControlCapable: true,
     installCommand: '',
     idleTimeoutMs: 800,
     ...patch,
@@ -74,6 +76,76 @@ describe('orchestrator route evidence', () => {
     ).toBe('codex');
     expect(
       automaticOrchestratorAdapterId([kimi], 'kimi'),
+    ).toBeNull();
+  });
+
+  it('preserva o Maestro Kimi/custom autenticado no autopiloto livre', () => {
+    const kimi = adapter({
+      id: 'kimi',
+      orchestratorCapable: false,
+      orchestrationEvidence: 'unsupported',
+      taskHandoffCapable: true,
+      missionControlCapable: true,
+      capabilities: {
+        launchable: true,
+        promptInjectable: true,
+        statusObservable: true,
+        resumable: true,
+        autonomousReadOnly: false,
+        governedWriter: false,
+        verifiedMaestro: false,
+      },
+    });
+    const custom = adapter({
+      id: 'custom-cli',
+      orchestratorCapable: false,
+      orchestrationEvidence: 'unsupported',
+      taskHandoffCapable: true,
+      missionControlCapable: true,
+      capabilities: {
+        launchable: true,
+        promptInjectable: true,
+        statusObservable: true,
+        resumable: true,
+        autonomousReadOnly: false,
+        governedWriter: false,
+        verifiedMaestro: false,
+      },
+    });
+
+    expect(
+      automaticOrchestratorAdapterId(
+        [custom, kimi],
+        'kimi',
+        'operator-choice',
+      ),
+    ).toBe('kimi');
+  });
+
+  it('does not promote a worker-only PTY route to Maestro', () => {
+    const workerOnly = adapter({
+      id: 'worker-only',
+      orchestratorCapable: false,
+      orchestrationEvidence: 'unsupported',
+      taskHandoffCapable: true,
+      missionControlCapable: false,
+      capabilities: {
+        launchable: true,
+        promptInjectable: true,
+        statusObservable: true,
+        resumable: false,
+        autonomousReadOnly: false,
+        governedWriter: false,
+        verifiedMaestro: false,
+      },
+    });
+
+    expect(
+      automaticOrchestratorAdapterId(
+        [workerOnly],
+        'worker-only',
+        'operator-choice',
+      ),
     ).toBeNull();
   });
 });

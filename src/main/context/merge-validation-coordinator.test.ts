@@ -239,4 +239,154 @@ describe('merge validation coordinator', () => {
       expect.objectContaining({ assertCurrentAuthority }),
     );
   });
+
+  it('persists exact-diff static findings and blocks before spawning a reviewer', async () => {
+    const recordMergeReviewReport = vi.fn();
+    const runReview = vi.fn();
+    const contract = {
+      contract: {
+        missionId: 'mission-a',
+        contractHash: 'c'.repeat(64),
+        contextRevision: 'd'.repeat(64),
+        requiredSensors: [],
+        risk: 'high',
+      },
+    };
+    const service = {
+      scope: { projectId: 'project-a', checkoutId: 'checkout-a' },
+      getMissionWorkflow: () => ({
+        contract,
+        workflow: { stage: 'execution' },
+      }),
+      recordMergeReviewReport,
+      compileMissionSnapshot: () => ({ markdown: '# Context' }),
+    } as never;
+    const coordinator = new MergeValidationCoordinator(service, {
+      runReview,
+      resolveAuthor: () => ({
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      }),
+      runCandidateQuality: async () => ({
+        version: 'candidate-quality-v1',
+        complete: true,
+        analysisHash: 'f'.repeat(64),
+        findings: [
+          {
+            severity: 'high',
+            category: 'correctness',
+            file: 'src/a.ts',
+            line: 3,
+            criterionRefs: [],
+            invariantRefs: ['reachable-production-code'],
+            evidence: 'New statement is unreachable.',
+            recommendation: 'Remove it.',
+          },
+        ],
+        inspectedFiles: 1,
+        inspectedBytes: 100,
+        incompleteReasons: [],
+        reviewerMarkdown: '## Candidate preflight',
+      }),
+    });
+
+    await expect(
+      coordinator.validate(validationContext()),
+    ).resolves.toMatchObject({
+      sensorsPassed: true,
+      reviewPassed: false,
+      evidenceIds: [expect.stringMatching(/^review:candidate-quality-/u)],
+    });
+    expect(runReview).not.toHaveBeenCalled();
+    expect(recordMergeReviewReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reviewerProvider: 'nexus-static-analysis-v1',
+        binding: expect.objectContaining({
+          headSha: 'b'.repeat(40),
+          diffHash: 'e'.repeat(64),
+        }),
+        findings: [
+          expect.objectContaining({ severity: 'high', status: 'open' }),
+        ],
+      }),
+    );
+  });
+
+  it('feeds advisory quality evidence to the independent reviewer without blocking', async () => {
+    const recordMergeReviewReport = vi.fn();
+    const runReview = vi.fn(async (input: RunAutomatedReviewInput) => {
+      expect(input.contextMarkdown).toContain('bounded blast radius');
+      return {
+        ready: true,
+        gate: {
+          ready: true,
+          reason: 'ready' as const,
+          blockingFindingCount: 0,
+          reportCount: 1,
+        },
+        reports: [],
+        evidenceIds: ['review:physical-review'],
+      };
+    });
+    const contract = {
+      contract: {
+        missionId: 'mission-a',
+        contractHash: 'c'.repeat(64),
+        contextRevision: 'd'.repeat(64),
+        requiredSensors: [],
+        risk: 'medium',
+      },
+    };
+    const service = {
+      scope: { projectId: 'project-a', checkoutId: 'checkout-a' },
+      getMissionWorkflow: () => ({
+        contract,
+        workflow: { stage: 'execution' },
+      }),
+      recordMergeReviewReport,
+      compileMissionSnapshot: () => ({ markdown: '# Context' }),
+    } as never;
+    const coordinator = new MergeValidationCoordinator(service, {
+      runReview,
+      resolveAuthor: () => ({
+        id: 'author',
+        sessionId: 'author-session',
+        provider: 'codex',
+      }),
+      runCandidateQuality: async () => ({
+        version: 'candidate-quality-v1',
+        complete: true,
+        analysisHash: 'f'.repeat(64),
+        findings: [
+          {
+            severity: 'medium',
+            category: 'correctness',
+            file: 'src/a.ts',
+            criterionRefs: [],
+            invariantRefs: ['blast-radius-reviewed'],
+            evidence: 'Bounded blast radius has four untouched importers.',
+            recommendation: 'Add an integration test.',
+          },
+        ],
+        inspectedFiles: 8,
+        inspectedBytes: 1_000,
+        incompleteReasons: [],
+        reviewerMarkdown: 'bounded blast radius',
+      }),
+    });
+
+    const result = await coordinator.validate(validationContext());
+    expect(result).toMatchObject({
+      sensorsPassed: true,
+      reviewPassed: true,
+    });
+    expect(result.evidenceIds).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^review:candidate-quality-/u),
+        'review:physical-review',
+      ]),
+    );
+    expect(runReview).toHaveBeenCalledOnce();
+  });
 });

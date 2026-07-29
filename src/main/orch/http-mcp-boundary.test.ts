@@ -9,19 +9,17 @@ import {
 } from "./gate";
 import {
   consumeAgentTransportPhysicalReceipt,
-  inspectCurrentAgentTransportPhysicalReceipt,
   mintAgentTransportPhysicalReceipt,
-  mintOmpRpcPhysicalHostCall,
-  runInsideOmpRpcHostCall,
+  runInsidePtyStreamAgentTransport,
 } from "./http-mcp-boundary";
 import { testProjectScope } from "./__tests__/scope-fixture";
 
 function context(): AgentGateContext {
   resetGateForTests();
   const ctx = mintToken({
-    label: "omp physical worker",
+    label: "physical worker",
     role: "worker",
-    providerId: "omp",
+    providerId: "codex",
     missionId: "mission-a",
     workerIncarnationId: "incarnation-a",
     scope: testProjectScope(),
@@ -31,13 +29,18 @@ function context(): AgentGateContext {
   return ctx;
 }
 
-function captureError(operation: () => unknown): string | undefined {
-  try {
-    operation();
-    return undefined;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
+function orchestratorContext(): AgentGateContext {
+  resetGateForTests();
+  const ctx = mintToken({
+    label: "physical Maestro",
+    role: "orchestrator",
+    providerId: "agy",
+    missionId: "mission-a",
+    scope: testProjectScope(),
+    allowedTools: null,
+  });
+  bindTokenToSession(ctx.token, "session-maestro");
+  return ctx;
 }
 
 function productionTypeScriptFiles(directory: string): string[] {
@@ -71,185 +74,67 @@ describe("physical agent transport boundary", () => {
     ).toThrow(/physical agent transport boundary/i);
   });
 
-  it("rejects a mismatched scope, then consumes an OMP receipt exactly once", () => {
+  it("mints a one-shot receipt only for the exact current PTY worker session", () => {
     const ctx = context();
-    const hostCall = mintOmpRpcPhysicalHostCall({
-      sessionId: ctx.sessionId!,
-      childPid: 4242,
-      callId: "omp-call-a",
-      toolName: "nexus_handoff_submit",
-    });
-
-    runInsideOmpRpcHostCall(hostCall, ctx, "nexus_handoff_submit", () => {
-      const receipt = mintAgentTransportPhysicalReceipt({
-        ctx,
-        toolCallId: "tool-call-a",
-        toolName: "nexus_handoff_submit",
-      });
-      expect(() =>
-        consumeAgentTransportPhysicalReceipt(receipt, {
-          projectId: ctx.scope.projectId,
-          checkoutId: ctx.scope.checkoutId,
-          missionId: "mission-other",
-          sessionId: ctx.sessionId!,
-          workerIncarnationId: ctx.workerIncarnationId,
-        }),
-      ).toThrow(/out-of-scope/i);
-
-      const expectation = {
-        projectId: ctx.scope.projectId,
-        checkoutId: ctx.scope.checkoutId,
-        missionId: ctx.missionId!,
-        sessionId: ctx.sessionId!,
-        workerIncarnationId: ctx.workerIncarnationId,
-      };
-      const inspected = inspectCurrentAgentTransportPhysicalReceipt(
-        receipt,
-        expectation,
-      );
-      const consumed = consumeAgentTransportPhysicalReceipt(receipt, {
-        ...expectation,
-      });
-      expect(consumed).toEqual(inspected);
-      expect(consumed).toMatchObject({
-        source: "omp-rpc-stdio",
-        toolCallId: "tool-call-a",
-        toolName: "nexus_handoff_submit",
-        missionId: "mission-a",
-        sessionId: "session-a",
-        workerIncarnationId: "incarnation-a",
-        authoritySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-      });
-      expect(() =>
-        consumeAgentTransportPhysicalReceipt(receipt, {
+    const consumed = runInsidePtyStreamAgentTransport(
+      "session-a",
+      ctx,
+      () => {
+        const receipt = mintAgentTransportPhysicalReceipt({
+          ctx,
+          toolCallId: "pty-call-a",
+          toolName: "nexus_handoff_submit",
+        });
+        return consumeAgentTransportPhysicalReceipt(receipt, {
           projectId: ctx.scope.projectId,
           checkoutId: ctx.scope.checkoutId,
           missionId: ctx.missionId!,
-          sessionId: ctx.sessionId!,
+          sessionId: "session-a",
           workerIncarnationId: ctx.workerIncarnationId,
-        }),
-      ).toThrow(/invalid, stale/i);
-    });
+          rawPayloadSha256: "a".repeat(64),
+        });
+      },
+    );
 
+    expect(consumed).toMatchObject({
+      source: "pty-stream",
+      toolCallId: "pty-call-a",
+      missionId: "mission-a",
+      sessionId: "session-a",
+      workerIncarnationId: "incarnation-a",
+    });
     expect(() =>
-      runInsideOmpRpcHostCall(
-        hostCall,
-        ctx,
-        "nexus_handoff_submit",
-        () => undefined,
-      ),
-    ).toThrow(/physical OMP RPC host call/i);
+      runInsidePtyStreamAgentTransport("session-spoofed", ctx, () => null),
+    ).toThrow(/current physical PTY mission session/i);
   });
 
-  it("revokes detached OMP async resources after the synchronous host boundary returns", async () => {
-    const ctx = context();
-    const hostCall = mintOmpRpcPhysicalHostCall({
-      sessionId: ctx.sessionId!,
-      childPid: 4242,
-      callId: "omp-call-detached",
-      toolName: "nexus_handoff_submit",
-    });
-    let releaseDetached!: () => void;
-    const detachedGate = new Promise<void>((resolve) => {
-      releaseDetached = resolve;
-    });
-    let detachedAttempt!: Promise<{
-      mintError: string | undefined;
-      consumeError: string | undefined;
-    }>;
+  it("admits the exact current PTY Maestro to the physical transport boundary", () => {
+    const ctx = orchestratorContext();
 
-    runInsideOmpRpcHostCall(
-      hostCall,
+    const consumed = runInsidePtyStreamAgentTransport(
+      "session-maestro",
       ctx,
-      "nexus_handoff_submit",
       () => {
         const receipt = mintAgentTransportPhysicalReceipt({
           ctx,
-          toolCallId: "tool-call-before-omp-return",
+          toolCallId: "pty-maestro-handoff",
           toolName: "nexus_handoff_submit",
         });
-        // Register while ALS is active, but release only after the physical
-        // host boundary has returned. The callback retains stale ALS state.
-        detachedAttempt = detachedGate.then(() => ({
-          mintError: captureError(() =>
-            mintAgentTransportPhysicalReceipt({
-              ctx,
-              toolCallId: "tool-call-after-omp-return",
-              toolName: "nexus_handoff_submit",
-            }),
-          ),
-          consumeError: captureError(() =>
-            consumeAgentTransportPhysicalReceipt(receipt, {
-              projectId: ctx.scope.projectId,
-              checkoutId: ctx.scope.checkoutId,
-              missionId: ctx.missionId!,
-              sessionId: ctx.sessionId!,
-              workerIncarnationId: ctx.workerIncarnationId,
-            }),
-          ),
-        }));
+        return consumeAgentTransportPhysicalReceipt(receipt, {
+          projectId: ctx.scope.projectId,
+          checkoutId: ctx.scope.checkoutId,
+          missionId: ctx.missionId!,
+          sessionId: "session-maestro",
+        });
       },
     );
 
-    releaseDetached();
-    await expect(detachedAttempt).resolves.toEqual({
-      mintError: expect.stringMatching(/physical agent transport boundary/i),
-      consumeError: expect.stringMatching(/invalid, stale or out-of-scope/i),
-    });
-  });
-
-  it("revokes OMP authority before reactions of the settled operation promise", async () => {
-    const ctx = context();
-    const hostCall = mintOmpRpcPhysicalHostCall({
-      sessionId: ctx.sessionId!,
-      childPid: 4242,
-      callId: "omp-call-settlement-reaction",
-      toolName: "nexus_handoff_submit",
-    });
-    let reactionAttempt!: Promise<{
-      mintError: string | undefined;
-      consumeError: string | undefined;
-    }>;
-
-    const operation = runInsideOmpRpcHostCall(
-      hostCall,
-      ctx,
-      "nexus_handoff_submit",
-      () => {
-        const receipt = mintAgentTransportPhysicalReceipt({
-          ctx,
-          toolCallId: "tool-call-before-omp-settle",
-          toolName: "nexus_handoff_submit",
-        });
-        const settledResult = Promise.resolve("logical-result");
-        // This reaction is registered before runWithLiveTransport can attach
-        // its fallback `.finally`. It must still observe revoked authority.
-        reactionAttempt = settledResult.then(() => ({
-          mintError: captureError(() =>
-            mintAgentTransportPhysicalReceipt({
-              ctx,
-              toolCallId: "tool-call-in-omp-settlement-reaction",
-              toolName: "nexus_handoff_submit",
-            }),
-          ),
-          consumeError: captureError(() =>
-            consumeAgentTransportPhysicalReceipt(receipt, {
-              projectId: ctx.scope.projectId,
-              checkoutId: ctx.scope.checkoutId,
-              missionId: ctx.missionId!,
-              sessionId: ctx.sessionId!,
-              workerIncarnationId: ctx.workerIncarnationId,
-            }),
-          ),
-        }));
-        return settledResult;
-      },
-    );
-
-    await expect(operation).resolves.toBe("logical-result");
-    await expect(reactionAttempt).resolves.toEqual({
-      mintError: expect.stringMatching(/physical agent transport boundary/i),
-      consumeError: expect.stringMatching(/invalid, stale or out-of-scope/i),
+    expect(consumed).toMatchObject({
+      source: "pty-stream",
+      toolCallId: "pty-maestro-handoff",
+      missionId: "mission-a",
+      sessionId: "session-maestro",
+      workerIncarnationId: undefined,
     });
   });
 
@@ -270,8 +155,13 @@ describe("physical agent transport boundary", () => {
     expect(importers("runInsideHttpMcpTransport")).toEqual([
       "orch/mcp-server.ts",
     ]);
+    expect(importers("runInsidePtyStreamAgentTransport")).toEqual([
+      "orch/mcp-server.ts",
+      "orch/pty-stream-handoff.ts",
+    ]);
     expect(importers("mintAgentTransportPhysicalReceipt")).toEqual([
       "orch/mcp-dispatch.ts",
+      "orch/pty-stream-handoff.ts",
     ]);
     expect(importers("consumeAgentTransportPhysicalReceipt")).toEqual([
       "orch/handoff-store.ts",
@@ -279,11 +169,5 @@ describe("physical agent transport boundary", () => {
     expect(
       importers("inspectCurrentAgentTransportPhysicalReceipt"),
     ).toEqual(["orch/handoff-store.ts"]);
-    expect(importers("mintOmpRpcPhysicalHostCall")).toEqual([
-      "adapters/omp-rpc-service.ts",
-    ]);
-    expect(importers("runInsideOmpRpcHostCall")).toEqual([
-      "adapters/omp-rpc-ipc.ts",
-    ]);
   });
 });

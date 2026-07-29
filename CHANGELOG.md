@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.19.37 — Autopiloto sem becos sem saída
+
+Data: 2026-07-29
+
+### Missões que caminham
+
+- **Falha técnica vira retry**: spawn, bootstrap, capacidade temporária e
+  recuperação depois de reiniciar o app voltam para uma fila durável com
+  backoff. `blocked` fica reservado para autenticação, decisão humana,
+  ambiguidade real ou ação sensível.
+- **Autoridade antiga é reconciliada**: panes persistidos em estados
+  incompatíveis deixam de produzir `stale persisted mission pane authority`.
+  Missões são retomadas pelo Main, independentemente da preferência usada para
+  terminais avulsos.
+- **Objetivo natural recebe ownership**: quando o pedido não cita um caminho
+  literal, o Nexus usa um inventário limitado do projeto para construir o selo.
+  O erro `Nenhum caminho explícito pôde ser selado` deixa de impedir o kickoff.
+- **Transações recuperáveis**: falhas após o claim revertem a transição exata,
+  preservam o worktree e reprogramam a task. Candidate, integração,
+  pós-validação e finalização também sobrevivem a restart.
+- **Worker interrompido volta à fila**: quando o runtime físico realmente
+  desaparece, o dispatch retorna a `pending` com backoff e o substituto só
+  assume após rebind exato de missão, pane, sessão e encarnação. Falha de
+  heartbeat ou persistência nunca duplica um worker ainda vivo.
+
+### Autopiloto multi-CLI
+
+- **Qualquer CLI compatível pode trabalhar**: no modo Autopiloto, CLIs
+  instaladas, autenticadas e capazes de entregar handoff podem executar,
+  revisar e validar com rede, ferramentas web e autoaprovação do provider.
+- **Hardened continua opcional**: o padrão mantém worktree por task, identidade
+  por sessão e merge validado pelo Main. Confinamento de provider/kernel e
+  verificações rigorosas permanecem disponíveis no modo Hardened.
+- **Auth respeita o provider**: Claude nativo reutiliza HOME e Keychain reais no
+  Autopiloto; providers por token continuam isolados e adapters com
+  `auth.method: none` não recebem manipulação artificial de credenciais.
+- **Handoff físico independente de marca**: workers e revisores usam o mesmo
+  protocolo durável no PTY, inclusive CLIs personalizadas pelo operador.
+- **Canal Maestro bidirecional pelo PTY**: CLIs PTY compatíveis coordenam plano,
+  operações e conclusão pelo dispatcher Main-owned, sem depender do MCP do
+  provider. A autorização fica vinculada à sessão, missão, papel e contrato;
+  chamadas são deduplicadas e o resultado retorna ao mesmo terminal.
+
+### Contexto e qualidade sênior
+
+- **PREVC em paralelo**: memória, orientação e contrato não seguram o primeiro
+  worker. O gate protege a promoção e o merge do candidate.
+- **Memória unificada**: SQLite FTS5 é a fonte canônica, Markdown é a projeção
+  legível e fatos confiáveis entram em recall automático limitado antes de
+  planejar, executar e revisar.
+- **Mapa estrutural incremental**: símbolos, dependências e blast radius são
+  atualizados pelos arquivos alterados, ignorando worktrees, builds e
+  `node_modules`.
+- **Receipts de qualidade reais**: diff, Git físico, contrato, sensores e
+  revisão independente alimentam a decisão. O candidate procura código morto,
+  duplicação, APIs semelhantes, violações de fronteira e lacunas de teste.
+
+### Segurança sem atrito acidental
+
+- **OMP removido do produto**: runtime RPC, adapters, configurações e interface
+  foram eliminados; algoritmos vendor permanecem apenas com sua provenance.
+- **Lease AGY removido**: o Nexus não altera mais a configuração MCP real do
+  usuário, evitando bearer órfão, symlink destruído e conflito entre instâncias.
+- **Teardown antes de apagar**: missão, tasks e receipts só são removidos após
+  comprovação de encerramento físico; falha preserva todo o histórico.
+- **Gates honestos**: risco em português recebe a severidade correta,
+  requisitos explícitos desconhecidos continuam pendentes e
+  `.dev-user-data/**` não contamina testes ou indexadores.
+
 ## 0.19.36 — Bootstrap multi-CLI sem corrida
 
 Data: 2026-07-28

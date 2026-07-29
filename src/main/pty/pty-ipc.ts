@@ -14,6 +14,7 @@ import {
   spawnSession,
   spawnAgentSession,
   adoptMainOwnedAgentSession,
+  getSessionState,
   listAgentSessionsForPane,
   writeSession,
   resizeSession,
@@ -31,21 +32,7 @@ import {
   resolveAdapterBinary,
 } from "../adapters/adapter-registry";
 import { revalidateExecutable } from "../path-resolver";
-import type {
-  CliPtyAdapter,
-  CliRpcAdapter,
-} from "../../shared/adapter-types";
-import {
-  acknowledgeOmpRpcPaneOutput,
-  canRendererControlOmpRpcPane,
-  isOmpRpcPaneOwnedBy,
-  killOmpRpcPane,
-  listOmpRpcSessions,
-  recoverOmpRpcPaneOutput,
-  spawnOmpRpcPane,
-  terminateOmpRpcSession,
-  writeOmpRpcPaneInput,
-} from "../adapters/omp-rpc-ipc";
+import type { CliPtyAdapter } from "../../shared/adapter-types";
 import { prepareProviderSpawn } from "../persistence/provider-config-store";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import { trackManagedSession } from "../adapters/managed-credentials";
@@ -68,15 +55,32 @@ import {
   requiresSpawnGate,
   shouldUseEphemeralHome,
 } from "../orch/spawn-home-policy";
-import { getTerminalSettings } from "../persistence/settings-store";
+import {
+  getOrchSettings,
+  getTerminalSettings,
+} from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import {
   listAvailableShells,
   resolveConfiguredShell,
 } from "../persistence/shell-catalog";
 import { getCommandBlockTracker } from "../terminal/command-block-tracker";
 import { registerCommandBlockScope } from "../terminal/command-block-scope-registry";
+import { getProjectDomainStores } from "../orch/project-domain-store-registry";
+import {
+  TASK_DISPATCH_MISSING_RUNTIME_REASON,
+  type TaskDispatchRecord,
+  type TaskDispatchStore,
+} from "../orch/task-dispatch-store";
+import { TASK_DISPATCH_SESSION_EXIT_REASON } from "../orch/task-dispatch-persistence";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
+const RESTARTED_WORKER_LEASE_MS = 10 * 60_000;
+
+interface PersistedWorkerRestart {
+  readonly dispatch: TaskDispatchRecord;
+  readonly store: TaskDispatchStore;
+}
 
 export function configurePtyProjectRuntimeManager(
   runtimeManager: ProjectRuntimeManager,
@@ -90,11 +94,7 @@ function assertNoLivePhysicalPaneProcess(
   const paneId = spawn.persistedPane?.paneId;
   if (
     paneId &&
-    (listAgentSessionsForPane(paneId).length > 0 ||
-      listOmpRpcSessions().some(
-        (session) =>
-          session.paneId === paneId && session.state !== "exited",
-      ))
+    listAgentSessionsForPane(paneId).length > 0
   ) {
     throw new Error(
       "live physical mission process still owns this pane; " +
@@ -103,107 +103,66 @@ function assertNoLivePhysicalPaneProcess(
   }
 }
 
-async function spawnCliRpcAgentPane(
-  sender: WebContents,
-  adapter: CliRpcAdapter,
+function resolvePersistedWorkerRestart(
   spawn: ResolvedMainOwnedAgentSpawn,
+): PersistedWorkerRestart | null {
+  const pane = spawn.persistedPane;
+  if (pane?.role !== "worker") return null;
+  if (!pane.paneId || !pane.workerIncarnationId) {
+    throw new Error(
+      "persisted worker is missing pane/incarnation restart authority",
+    );
+  }
+  const scope = spawn.authority.coordinationScope ?? pane.scope;
+  const store = getProjectDomainStores(scope).taskDispatches;
+  const matches = store.list(pane.missionId).filter((dispatch) => {
+    const isRestartable =
+      dispatch.state === "running" ||
+      (dispatch.state === "superseded" &&
+        (dispatch.lastError === TASK_DISPATCH_MISSING_RUNTIME_REASON ||
+          dispatch.lastError === TASK_DISPATCH_SESSION_EXIT_REASON));
+    return (
+      isRestartable &&
+      dispatch.paneId === pane.paneId &&
+      dispatch.workerIncarnationId === pane.workerIncarnationId
+    );
+  });
+  if (matches.length !== 1 || !matches[0]!.sessionId) {
+    throw new Error(
+      "nenhum dispatch exato e atual autoriza reiniciar este worker persistido",
+    );
+  }
+  const dispatch = matches[0]!;
+  if (getSessionState(dispatch.sessionId!) !== null) {
+    throw new Error(
+      "o processo exato do dispatch ainda está ativo; replacement negado",
+    );
+  }
+  return { dispatch, store };
+}
+
+async function terminateRejectedWorkerRestart(
+  sessionId: string,
+  error: unknown,
 ): Promise<SpawnResult> {
+  const detail =
+    error instanceof Error ? error.message : "worker rebind failed";
   try {
-    const {
-      request,
-      authority,
-      pending,
-      recovery,
-      persistedPane,
-    } = spawn;
-    if (persistedPane && request.resume) {
-      throw new Error(
-        "exact main-owned provider session is unavailable for RPC mission resume",
-      );
-    }
-    if (
-      persistedPane?.role === "worker" &&
-      persistedPane.workerIncarnationId
-    ) {
-      throw new Error(
-        "worker_incarnation_lost: o processo exato desta encarnação não pode " +
-          "ser adotado; o Nexus não reutiliza uma identidade física em outro worker",
-      );
-    }
-    if (
-      authority.context?.role === "worker" &&
-      authority.context.contextRevision &&
-      authority.context.readOnly !== true
-    ) {
-      throw new Error(
-        `adapter ${adapter.id} RPC cannot enforce workspace-write authority ` +
-          "for a revision-bound writable worker",
-      );
-    }
-    if (
-      requiresReadOnlyNativeAuthority({
-        source: authority.source,
-        adapterId: adapter.id,
-        role: authority.context?.role,
-        missionId: authority.context?.missionId,
-        squadId: authority.context?.squadId,
-        agentName: authority.context?.agentName,
-        allowedTools: authority.context?.allowedTools,
-        allowedSkills: authority.context?.allowedSkills,
-        contextRevision: authority.context?.contextRevision,
-        authoritySeal: authority.context?.authoritySeal,
-        readOnly: authority.context?.readOnly,
-        nativeReadOnly: authority.context?.nativeReadOnly,
-      })
-    ) {
-      throw new Error(
-        `adapter ${adapter.id} RPC cannot enforce native read-only authority`,
-      );
-    }
-    if (!isAdapterInstalled(adapter.id)) {
-      throw new Error(
-        `${adapter.label} not found. Install: ${adapter.install.command}`,
-      );
-    }
-    assertNoLivePhysicalPaneProcess(spawn);
-    const spawned = await spawnOmpRpcPane({
-      owner: sender,
-      scope: authority.scope,
-      workspaceRoot: authority.cwd,
-      paneId: request.paneId,
-      title: persistedPane?.title ?? authority.context?.agentName,
-      agentName: authority.context?.agentName,
-      model: request.model,
-      missionId:
-        authority.context?.missionId ?? request.missionId,
-      workerIncarnationId: authority.context?.workerIncarnationId,
-      allowedTools: authority.context?.allowedTools,
-      assertAuthority: () =>
-        assertMainOwnedAgentSpawnGrantActive({
-          owner: sender,
-          requestId: request.orchRequestId,
-          pending,
-          recovery,
-        }),
-    });
-    if (!spawned.ok) throw new Error(spawned.error);
-    const { sessionId } = spawned;
-    const settlement = settleSpawnedMainOwnedAgentSession({
-      backend: "RPC",
-      owner: sender,
-      requestId: request.orchRequestId,
-      sessionId,
-      authority,
-      pending,
-      recovery,
-      persistedPane,
-      terminate: () => terminateOmpRpcSession(sessionId),
-    });
-    if (settlement) return settlement;
-    return { ok: true, sessionId };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "failed to spawn agent";
-    return { ok: false, error: message };
+    const exited = await orchTerminateSession(sessionId);
+    return {
+      ok: false,
+      error: exited
+        ? `worker restart could not bind its exact dispatch: ${detail}`
+        : `worker restart could not bind its exact dispatch: ${detail}; ` +
+          "physical exit was not proven",
+    };
+  } catch {
+    return {
+      ok: false,
+      error:
+        `worker restart could not bind its exact dispatch: ${detail}; ` +
+        "physical exit was not proven",
+    };
   }
 }
 
@@ -237,20 +196,25 @@ function spawnCliPtyAgentPane(
       recovery,
       persistedPane,
     } = spawn;
-    const nativeReadOnly = requiresReadOnlyNativeAuthority({
-      source: authority.source,
-      adapterId: adapter.id,
-      role: authority.context?.role,
-      missionId: authority.context?.missionId,
-      squadId: authority.context?.squadId,
-      agentName: authority.context?.agentName,
-      allowedTools: authority.context?.allowedTools,
-      allowedSkills: authority.context?.allowedSkills,
-      contextRevision: authority.context?.contextRevision,
-      authoritySeal: authority.context?.authoritySeal,
-      readOnly: authority.context?.readOnly,
-      nativeReadOnly: authority.context?.nativeReadOnly,
-    });
+    const operatorChoice = isOperatorChoicePolicy(
+      getOrchSettings().squadCliPolicy,
+    );
+    const nativeReadOnly =
+      !operatorChoice &&
+      requiresReadOnlyNativeAuthority({
+        source: authority.source,
+        adapterId: adapter.id,
+        role: authority.context?.role,
+        missionId: authority.context?.missionId,
+        squadId: authority.context?.squadId,
+        agentName: authority.context?.agentName,
+        allowedTools: authority.context?.allowedTools,
+        allowedSkills: authority.context?.allowedSkills,
+        contextRevision: authority.context?.contextRevision,
+        authoritySeal: authority.context?.authoritySeal,
+        readOnly: authority.context?.readOnly,
+        nativeReadOnly: authority.context?.nativeReadOnly,
+      });
     if (
       nativeReadOnly &&
       !supportsEnforceableReadOnlyNativeAuthority(adapter)
@@ -268,6 +232,13 @@ function spawnCliPtyAgentPane(
       isolatedHome: shouldUseEphemeralHome(
         adapter,
         requiresSpawnGate(authority.context),
+        {
+          mode:
+            adapter.quirks.mcpAutoload &&
+            operatorChoice
+              ? "operator-choice"
+              : "hardened",
+        },
       ),
     });
     if (!preparation.ok) {
@@ -367,15 +338,7 @@ function spawnCliPtyAgentPane(
     }
 
     assertNoLivePhysicalPaneProcess(spawn);
-    if (
-      persistedPane?.role === "worker" &&
-      persistedPane.workerIncarnationId
-    ) {
-      throw new Error(
-        "worker_incarnation_lost: o processo exato desta encarnação não " +
-          "está vivo; o Nexus não cria outro PTY com o mesmo nonce",
-      );
-    }
+    const workerRestart = resolvePersistedWorkerRestart(spawn);
     assertMainOwnedAgentSpawnGrantActive({
       owner: sender,
       requestId: request.orchRequestId,
@@ -389,6 +352,25 @@ function spawnCliPtyAgentPane(
       overrides,
       authority,
     );
+    if (workerRestart) {
+      try {
+        if (getSessionState(sessionId) === null) {
+          throw new Error(
+            "replacement PTY exited before durable worker rebind",
+          );
+        }
+        workerRestart.store.rebindRestartedWorker({
+          missionId: persistedPane!.missionId,
+          paneId: persistedPane!.paneId!,
+          expectedSessionId: workerRestart.dispatch.sessionId!,
+          replacementSessionId: sessionId,
+          workerIncarnationId: persistedPane!.workerIncarnationId!,
+          leaseMs: RESTARTED_WORKER_LEASE_MS,
+        });
+      } catch (error) {
+        return terminateRejectedWorkerRestart(sessionId, error);
+      }
+    }
     if (request.accountId && isFileAuthAdapter(adapter.id)) {
       trackManagedSession(sessionId, adapter.id, request.accountId);
     }
@@ -432,9 +414,7 @@ export function registerPtyIpc(): void {
   // loads in the main process — docs/ARCHITECTURE.md §B.2).
   setPtyHost(createRealPtyHost());
 
-  // Sync for every legacy path (the account/PTY tests assert plain objects);
-  // the cli-rpc branch returns a Promise, which ipcMain.handle awaits either
-  // way — and the renderer's invoke always receives a promise regardless.
+  // Sync for every legacy path; the renderer's invoke still receives a promise.
   ipcMain.handle(PTY_CHANNELS.spawn, (event, raw): SpawnResult | Promise<SpawnResult> => {
     const parsed = spawnRequestSchema.safeParse(raw);
     if (!parsed.success) {
@@ -462,9 +442,6 @@ export function registerPtyIpc(): void {
           envelope,
           projectRuntimeManager,
         );
-        if (adapter.kind === "cli-rpc") {
-          return spawnCliRpcAgentPane(event.sender, adapter, spawn);
-        }
         if (adapter.kind !== "cli-pty") {
           return {
             ok: false,
@@ -512,12 +489,6 @@ export function registerPtyIpc(): void {
   ipcMain.on(PTY_CHANNELS.write, (event, raw) => {
     const parsed = writeSchema.safeParse(raw);
     if (parsed.success) {
-      if (isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender)) {
-        if (canRendererControlOmpRpcPane(parsed.data.sessionId, event.sender)) {
-          writeOmpRpcPaneInput(parsed.data.sessionId, parsed.data.data);
-        }
-        return;
-      }
       writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
     }
   });
@@ -525,12 +496,6 @@ export function registerPtyIpc(): void {
   ipcMain.handle(PTY_CHANNELS.writeConfirmed, (event, raw): boolean => {
     const parsed = writeSchema.safeParse(raw);
     if (!parsed.success) return false;
-    if (isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender)) {
-      return (
-        canRendererControlOmpRpcPane(parsed.data.sessionId, event.sender) &&
-        writeOmpRpcPaneInput(parsed.data.sessionId, parsed.data.data)
-      );
-    }
     return writeSession(event.sender, parsed.data.sessionId, parsed.data.data);
   });
 
@@ -549,12 +514,6 @@ export function registerPtyIpc(): void {
   ipcMain.on(PTY_CHANNELS.kill, (event, raw) => {
     const parsed = killSchema.safeParse(raw);
     if (parsed.success) {
-      if (isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender)) {
-        if (canRendererControlOmpRpcPane(parsed.data.sessionId, event.sender)) {
-          killOmpRpcPane(parsed.data.sessionId);
-        }
-        return;
-      }
       killSession(event.sender, parsed.data.sessionId);
     }
   });
@@ -562,7 +521,6 @@ export function registerPtyIpc(): void {
   ipcMain.on(PTY_CHANNELS.acknowledge, (event, raw) => {
     const parsed = ptyAcknowledgeSchema.safeParse(raw);
     if (parsed.success) {
-      if (acknowledgeOmpRpcPaneOutput(parsed.data.sessionId)) return;
       acknowledgeSessionOutput(
         event.sender,
         parsed.data.sessionId,
@@ -574,12 +532,6 @@ export function registerPtyIpc(): void {
   ipcMain.handle(PTY_CHANNELS.recover, (event, raw) => {
     const parsed = ptyRecoverSchema.safeParse(raw);
     if (!parsed.success) return [];
-    if (isOmpRpcPaneOwnedBy(parsed.data.sessionId, event.sender)) {
-      return recoverOmpRpcPaneOutput(
-        parsed.data.sessionId,
-        parsed.data.afterSequence,
-      );
-    }
     return recoverSessionOutput(
       event.sender,
       parsed.data.sessionId,

@@ -121,8 +121,6 @@ import type {
   MediaUsageTotals,
 } from './media-types';
 import type { NotesApi } from './note-types';
-import type { OmpRpcApi } from './omp-rpc-types';
-import type { OmpAuthApi } from './omp-auth-types';
 import type { MemoryBridge } from './memory-ui-types';
 import type { RichModelMetadataView } from './model-metadata-types';
 import type {
@@ -1002,10 +1000,6 @@ export interface NexusApi {
     ): Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   };
   notes: NotesApi;
-  /** Sessões oh-my-pi via RPC nativo (omp --mode rpc-ui, sem PTY). */
-  ompRpc: OmpRpcApi;
-  /** Login OAuth de assinaturas do omp (auth-broker) dirigido pelo painel. */
-  ompAuth: OmpAuthApi;
   pipes: PipeApi;
   /** Fase 5 — Jarvis Vision: screen capture + AX tree + OCR */
   vision: VisionApi;

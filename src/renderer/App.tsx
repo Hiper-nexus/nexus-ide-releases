@@ -10,7 +10,6 @@ import { CanvasView } from './components/CanvasView';
 import { VoiceHud } from './components/VoiceHud';
 import { VoiceSettings } from './components/VoiceSettings';
 import { OrchestrationPanel } from './components/OrchestrationPanel';
-import { OmpRpcPanel } from './components/omp/OmpRpcPanel';
 import { MemoryPanel } from './components/memory/MemoryPanel';
 import { ConfigInventoryPanel } from './components/discovery/ConfigInventoryPanel';
 import { MissionRail } from './components/MissionRail';
@@ -237,8 +236,8 @@ export function App() {
       // Show the (non-modal) Home deck whenever what loaded is just a single
       // bare shell — a fresh folder AND a trivially-restored one look the same
       // to the user (an empty prompt), so both get the deck. A real mission
-      // layout (agents, splits) restores the grid but does NOT auto-run agents
-      // without confirmation (see restore-agents-gate).
+      // layout (agents, splits) restores the grid and continues main-owned
+      // mission panes automatically (see restore-agents-gate).
       const panes = listPanes(useLayoutStore.getState().root);
       // Gate is also installed on layout restore; call again so App-path
       // restores that skipped the handler still pause agents.
@@ -522,7 +521,6 @@ export function App() {
         {viewKind === 'canvas' ? <CanvasView /> : <PaneGrid />}
         <HomeDeck />
         <OrchestrationPanel />
-        <OmpRpcPanel />
         <MemoryPanel />
         <ConfigInventoryPanel />
         <ContextualPanel

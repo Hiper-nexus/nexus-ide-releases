@@ -22,6 +22,7 @@ import {
   assertReadOnlyPhysicalGitAuthority,
 } from "./task-dispatch-physical-git-authority";
 import { assertSealedTaskDispatchPlanAuthority } from "./task-dispatch-sealed-plan-authority";
+import { assertTaskQualityReceiptAuthority } from "./task-dispatch-quality-receipt-authority";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
 
 export interface CompleteMissionFromVerifiedPlanInput {
@@ -357,6 +358,15 @@ function verifyCompletedTaskPlanAuthority(
             integratedHeadSha: receipt.reference,
             checkoutMayHaveAdvanced: true,
           });
+          assertTaskQualityReceiptAuthority({
+            db,
+            coordinates: binding.coordinates,
+            rootRealPath: binding.scope.rootRealPath,
+            missionId,
+            physicalHeadSha: physical.worktreeHeadSha!,
+            receipt,
+            requireEmbeddedProof: true,
+          });
         } else if (
           receipt.kind === "worktree_validated_no_change" &&
           noChangeMatch
@@ -366,6 +376,15 @@ function verifyCompletedTaskPlanAuthority(
             workerHeadSha: physical.worktreeHeadSha,
             expectedHeadSha: noChangeMatch[1]!,
             checkoutMayHaveAdvanced: true,
+          });
+          assertTaskQualityReceiptAuthority({
+            db,
+            coordinates: binding.coordinates,
+            rootRealPath: binding.scope.rootRealPath,
+            missionId,
+            physicalHeadSha: physical.worktreeHeadSha!,
+            receipt,
+            requireEmbeddedProof: true,
           });
         } else if (
           receipt.kind === "isolated_advisory_validated" &&

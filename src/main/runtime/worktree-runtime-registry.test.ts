@@ -46,6 +46,23 @@ function fixture() {
   return { root, scope, manager };
 }
 
+async function createTrackedWorktree(
+  registry: WorktreeRuntimeRegistry,
+  manager: ProjectRuntimeManager,
+  input: Parameters<WorktreeRuntimeRegistry["create"]>[0],
+) {
+  const now = Date.now();
+  manager
+    .open(input.scope)
+    .db.prepare(
+      `INSERT INTO tasks
+         (id, mission_id, title, detail, status, created_at, updated_at)
+       VALUES (?, NULL, ?, '', 'pending', ?, ?)`,
+    )
+    .run(input.taskId, input.taskId, now, now);
+  return registry.create(input);
+}
+
 afterEach(() => {
   for (const manager of managers.splice(0)) manager.closeAll();
   for (const root of roots.splice(0))
@@ -53,11 +70,11 @@ afterEach(() => {
 });
 
 describe("project worktree runtime registry", () => {
-  it("resolves a physically validated no-change QA task without inventing a merge entry", () => {
+  it("resolves a physically validated no-change QA task without inventing a merge entry", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     const baseSha = git(root, "rev-parse", "HEAD");
-    const record = registry.create({
+    const record = await createTrackedWorktree(registry, manager, {
       scope,
       missionId: "mission-guided-no-change",
       taskId: "guided-quality-gate",
@@ -109,7 +126,7 @@ describe("project worktree runtime registry", () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
     const baseSha = git(root, "rev-parse", "HEAD");
-    const record = registry.create({
+    const record = await createTrackedWorktree(registry, manager, {
       scope,
       missionId: "mission-a",
       taskId: "task-a",
@@ -154,10 +171,10 @@ describe("project worktree runtime registry", () => {
     ).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it("automatically reconciles an interrupted active merge after reopening", () => {
+  it("automatically reconciles an interrupted active merge after reopening", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
-    const record = registry.create({
+    const record = await createTrackedWorktree(registry, manager, {
       scope,
       missionId: "mission-restart",
       taskId: "task-restart",
@@ -210,20 +227,23 @@ describe("project worktree runtime registry", () => {
 
     expect(recovered.mergeState.read(key)).toMatchObject({
       activeTaskKey: null,
-      blocked: { taskKey: record.taskKey },
+      blocked: {
+        taskKey: record.taskKey,
+        disposition: "retryable",
+      },
     });
     expect(recovered.mergeState.read(key).events.at(-1)?.type).toBe(
       "restart-reconciled",
     );
     expect(
       recovered.worktrees.get(scope, record.missionId, record.taskId)?.status,
-    ).toBe("failed");
+    ).toBe("queued");
   });
 
-  it("recovers an exact materialized reserved worktree after process restart", () => {
+  it("recovers an exact materialized reserved worktree after process restart", async () => {
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
-    const record = registry.create({
+    const record = await createTrackedWorktree(registry, manager, {
       scope,
       missionId: "mission-reserved-ready",
       taskId: "task-reserved-ready",
@@ -255,10 +275,10 @@ describe("project worktree runtime registry", () => {
     });
   });
 
-  it("fails an ambiguous reserved worktree after restart without deleting it and stays idempotent", () => {
+  it("fails an ambiguous reserved worktree after restart without deleting it and stays idempotent", async () => {
     const { scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
-    const record = registry.create({
+    const record = await createTrackedWorktree(registry, manager, {
       scope,
       missionId: "mission-reserved-ambiguous",
       taskId: "task-reserved-ambiguous",
@@ -309,10 +329,10 @@ describe("project worktree runtime registry", () => {
     );
   });
 
-  it("fails a reservation interrupted before materialization without recreating artifacts", () => {
+  it("fails a reservation interrupted before materialization without recreating artifacts", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
-    const record = registry.create({
+    const record = await createTrackedWorktree(registry, manager, {
       scope,
       missionId: "mission-reserved-empty",
       taskId: "task-reserved-empty",
@@ -348,10 +368,10 @@ describe("project worktree runtime registry", () => {
     ).toThrow();
   });
 
-  it("never promotes a reserved worktree after the integration base advances", () => {
+  it("never promotes a reserved worktree after the integration base advances", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);
-    const record = registry.create({
+    const record = await createTrackedWorktree(registry, manager, {
       scope,
       missionId: "mission-reserved-stale-base",
       taskId: "task-reserved-stale-base",
@@ -386,10 +406,10 @@ describe("project worktree runtime registry", () => {
     expect(git(record.worktreePath, "rev-parse", "HEAD")).toBe(record.baseSha);
   });
 
-  it("quarantines a copied runtime binding before startup reconciliation", () => {
+  it("quarantines a copied runtime binding before startup reconciliation", async () => {
     const { scope, manager } = fixture();
     const original = new WorktreeRuntimeRegistry(manager);
-    const record = original.create({
+    const record = await createTrackedWorktree(original, manager, {
       scope,
       missionId: "mission-copied-runtime",
       taskId: "task-copied-runtime",

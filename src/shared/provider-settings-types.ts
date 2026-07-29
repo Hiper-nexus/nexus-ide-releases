@@ -50,7 +50,7 @@ export interface ProviderSettingsInfo {
   adapterId: string;
   label: string;
   icon: string;
-  kind: 'cli-pty' | 'cli-rpc' | 'api-provider';
+  kind: 'cli-pty' | 'api-provider';
   enabled: boolean;
   installed: boolean;
   /** True quando há receita de instalação 1-clique para esta plataforma. */
@@ -61,8 +61,6 @@ export interface ProviderSettingsInfo {
   models: string[];
   /**
    * Exact model ids whose provider-specific auth is ready in this snapshot.
-   * Especially important for OMP: one broker credential never authorizes its
-   * entire multi-provider catalog.
    */
   authReadyModels?: string[];
   modelInfo?: ModelInfoMap;
@@ -82,7 +80,11 @@ export interface ProviderSettingsInfo {
    * subscription = signed-in OAuth/plan session; api-key = keychain fallback;
    * login-needed = neither present, the CLI will prompt.
    */
-  authStrategy: 'subscription' | 'api-key' | 'login-needed';
+  authStrategy:
+    | 'credentialless'
+    | 'subscription'
+    | 'api-key'
+    | 'login-needed';
   /** Active upstream routing (ai-launcher port). */
   upstream: string;
   /** Whether this adapter is Claude-compatible and can be routed. */

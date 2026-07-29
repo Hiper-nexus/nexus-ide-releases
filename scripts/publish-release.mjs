@@ -22,6 +22,7 @@ export const PUBLIC_RELEASE_REPO = 'cleofasvolarehost/nexus-ide-releases';
 const MANUAL_RELEASE_PRODUCTION_AUTHORITY = Symbol(
   'manual-release-production-authority',
 );
+const REUSABLE_RELEASE_CANDIDATES = new WeakMap();
 
 export function githubRepositoryTarget(repo) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repo ?? '')) {
@@ -845,7 +846,7 @@ export function loadReusableReleaseCandidate(options = {}) {
     throw new Error('reusable release artifact digest does not match receipt');
   }
   resolveSecurityAssets(securityDir, receipt);
-  return {
+  const candidate = {
     receipt,
     receiptPath,
     artifacts,
@@ -854,11 +855,69 @@ export function loadReusableReleaseCandidate(options = {}) {
       receipt.artifacts.e2eEvidence.name,
     ),
   };
+  REUSABLE_RELEASE_CANDIDATES.set(candidate, Object.freeze({
+    root,
+    receiptSha256: createHash('sha256')
+      .update(JSON.stringify(receipt))
+      .digest('hex'),
+    receiptPath,
+    evidencePath: candidate.evidencePath,
+    artifacts: Object.freeze({
+      dmg: Object.freeze({
+        path: artifacts.dmg,
+        sha256: receipt.artifacts.dmg.sha256,
+      }),
+      zip: Object.freeze({
+        path: artifacts.zip,
+        sha256: receipt.artifacts.zip.sha256,
+      }),
+    }),
+  }));
+  return candidate;
 }
 
-export function materializeReleaseCandidate(root, candidate) {
-  assertAuthoritativeReleaseCandidate(candidate);
-  const securityDir = path.join(root, 'release-artifacts', 'security');
+function assertReusableReleaseCandidate(root, candidate) {
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error('reusable release requires durable candidate authority');
+  }
+  const seal = REUSABLE_RELEASE_CANDIDATES.get(candidate);
+  const resolvedRoot = path.resolve(root);
+  if (
+    !seal ||
+    seal.root !== resolvedRoot ||
+    seal.receiptPath !== candidate.receiptPath ||
+    seal.evidencePath !== candidate.evidencePath ||
+    seal.artifacts.dmg.path !== candidate.artifacts?.dmg ||
+    seal.artifacts.zip.path !== candidate.artifacts?.zip ||
+    seal.receiptSha256 !== createHash('sha256')
+      .update(JSON.stringify(candidate.receipt))
+      .digest('hex')
+  ) {
+    throw new Error('reusable release requires durable candidate authority');
+  }
+  for (const [kind, expected] of Object.entries(seal.artifacts)) {
+    const stat = fs.lstatSync(expected.path);
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      fileSha256(expected.path) !== expected.sha256 ||
+      candidate.receipt?.artifacts?.[kind]?.sha256 !== expected.sha256
+    ) {
+      throw new Error('reusable durable candidate bytes changed');
+    }
+  }
+  const securityDir = path.join(resolvedRoot, 'release-artifacts', 'security');
+  resolveSecurityAssets(securityDir, candidate.receipt);
+  return candidate;
+}
+
+function materializeCandidateAssets(root, candidate) {
+  const resolvedRoot = path.resolve(root);
+  const securityDir = path.join(
+    resolvedRoot,
+    'release-artifacts',
+    'security',
+  );
   const authority = readAndAssertReleaseAuthority(root);
   assertCandidateReceiptShape(candidate?.receipt, {
     version: authority.version,
@@ -895,6 +954,16 @@ export function materializeReleaseCandidate(root, candidate) {
     canonicalAssets: describeLocalReleaseAssets(canonicalAssetPaths),
     publicAssets: describeLocalReleaseAssets(publicAssetPaths),
   };
+}
+
+export function materializeReleaseCandidate(root, candidate) {
+  assertAuthoritativeReleaseCandidate(candidate);
+  return materializeCandidateAssets(root, candidate);
+}
+
+export function materializeReusableReleaseCandidate(root, candidate) {
+  assertReusableReleaseCandidate(root, candidate);
+  return materializeCandidateAssets(root, candidate);
 }
 
 export function classifyGitHubReleaseResult(result, { repo, tag }) {
@@ -1145,8 +1214,11 @@ async function publishManualReleaseCore(
   const reusableLoader = authoritative
     ? loadReusableReleaseCandidate
     : options.loadReusableCandidate;
-  const materialize = authoritative
+  const materializeFresh = authoritative
     ? materializeReleaseCandidate
+    : options.materializeCandidate;
+  const materializeReusable = authoritative
+    ? materializeReusableReleaseCandidate
     : options.materializeCandidate;
   const repositoryPublisher = authoritative
     ? createRepositoryPublisher(root, canonicalRepo)
@@ -1158,7 +1230,8 @@ async function publishManualReleaseCore(
     !github ||
     typeof gate !== 'function' ||
     typeof reusableLoader !== 'function' ||
-    typeof materialize !== 'function' ||
+    typeof materializeFresh !== 'function' ||
+    typeof materializeReusable !== 'function' ||
     !repositoryPublisher ||
     typeof stage !== 'function'
   ) {
@@ -1172,23 +1245,28 @@ async function publishManualReleaseCore(
   assertCanonicalPublicationOrder(canonical, mirror);
 
   const reusePublishedCandidate = canonical.kind === 'published';
-  const candidate = authoritative
-    ? await gate({ root, environment })
-    : reusePublishedCandidate
-      ? await reusableLoader({ root, environment })
-      : await gate({ root, environment });
+  const candidate = reusePublishedCandidate
+    ? await reusableLoader({ root, environment })
+    : await gate({ root, environment });
   if (
     candidate?.receipt?.version !== version ||
     candidate?.receipt?.tag !== tag
   ) {
     throw new Error('release candidate does not match the requested version');
   }
-  if (authoritative) {
+  if (authoritative && !reusePublishedCandidate) {
     assertPublishPhysicalCandidate(candidate);
+  } else if (authoritative) {
+    assertReusableReleaseCandidate(root, candidate);
+    assertPublishPhysicalCandidateCore(candidate, false);
   } else {
     assertPublishPhysicalCandidateCore(candidate, false);
   }
-  const materialized = await materialize(root, candidate);
+  const materialized = await (
+    reusePublishedCandidate
+      ? materializeReusable
+      : materializeFresh
+  )(root, candidate);
   const stagedCandidate = await stage(materialized);
   const release = stagedCandidate.release;
   try {

@@ -8,13 +8,13 @@ import { secureAutonomousCliArgs } from '../pty/autonomous-cli-policy';
 import {
   configureNexusDoctor,
   disposeNexusDoctor,
-  inspectNexusReadiness,
   type ContextDoctorSnapshot,
   type IndependentProviderSnapshot,
   type MultiPcBackendStatus,
   type NexusDoctorOptions,
   type NexusDoctorReport,
 } from './nexus-doctor';
+import { inspectNexusReadinessAsync } from './nexus-doctor-async';
 import type { ProjectRuntimeManager } from './project-runtime-manager';
 
 export interface NexusDoctorRuntimeConfiguration {
@@ -24,7 +24,9 @@ export interface NexusDoctorRuntimeConfiguration {
 }
 
 interface NexusDoctorBootstrapDependencies {
-  readonly inspectReadiness: (options: NexusDoctorOptions) => NexusDoctorReport;
+  readonly inspectReadiness: (
+    options: NexusDoctorOptions,
+  ) => NexusDoctorReport | Promise<NexusDoctorReport>;
   readonly inspectContext: (scope: ProjectExecutionScope) => ContextDoctorSnapshot;
   readonly listProviderSettings: () => readonly ProviderSettingsInfo[];
   readonly getAdapter: (adapterId: string) => Adapter | null;
@@ -36,7 +38,7 @@ interface NexusDoctorBootstrapDependencies {
 }
 
 const DEFAULT_DEPENDENCIES: NexusDoctorBootstrapDependencies = {
-  inspectReadiness: inspectNexusReadiness,
+  inspectReadiness: inspectNexusReadinessAsync,
   inspectContext: (scope) => getContextWorkflowService(scope).inspectReadiness(),
   listProviderSettings,
   getAdapter,

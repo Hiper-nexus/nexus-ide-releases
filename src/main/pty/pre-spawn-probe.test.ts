@@ -1,9 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   PreSpawnProbeError,
   assertPreSpawnProbe,
-  parseExactOmpModelRef,
-  preflightOmpRpcSpawn,
   probePreSpawn,
   type PreSpawnProbeDeps,
   type ProbeAdapterView,
@@ -29,15 +27,6 @@ const glmAdapter: ProbeAdapterView = {
   auth: { method: 'api_key' },
 };
 
-const ompAdapter: ProbeAdapterView = {
-  kind: 'cli-pty',
-  auth: {
-    method: 'oauth',
-    loginHint:
-      'Use Contas in the OMP · RPC panel or run `omp auth-broker login` to connect any supported provider.',
-  },
-};
-
 const opencodeAdapter: ProbeAdapterView = {
   kind: 'cli-pty',
   auth: {
@@ -57,8 +46,6 @@ function makeDeps(overrides: Partial<PreSpawnProbeDeps> = {}): PreSpawnProbeDeps
     claudeOauthEmail: () => null,
     hasNativeFileAuth: () => false,
     authStrategy: () => 'subscription',
-    buildOmpProviderKeyEnv: () => ({}),
-    resolveOmpBin: async () => ({ binPath: '/usr/local/bin/omp', version: '0.1.0' }),
     ...overrides,
   };
 }
@@ -240,234 +227,6 @@ describe('probePreSpawn — credentialless OpenCode', () => {
   });
 });
 
-describe('probePreSpawn — omp', () => {
-  const withOmp = (overrides: Partial<PreSpawnProbeDeps> = {}) =>
-    makeDeps({
-      getAdapter: () => ompAdapter,
-      authStrategy: () => 'login-needed',
-      ...overrides,
-    });
-
-  it('blocks an OMP broker that would open interactive provider login', async () => {
-    const resolveOmpBin = vi.fn(async () => ({
-      binPath: '/usr/local/bin/omp',
-      version: '17.0.4',
-    }));
-    expect(await runProbe('omp', withOmp({ resolveOmpBin }))).toEqual({
-      code: 'missing-credential',
-      adapterId: 'omp',
-      hint: ompAdapter.auth!.loginHint,
-    });
-    expect(resolveOmpBin).not.toHaveBeenCalled();
-  });
-
-  it('does not treat a stale Nexus OMP account row as broker authentication', async () => {
-    expect(
-      await runProbe(
-        'omp',
-        withOmp({ listAccounts: () => [{ id: 'stale-omp' }] }),
-      ),
-    ).toEqual({
-      code: 'missing-credential',
-      adapterId: 'omp',
-      hint: ompAdapter.auth!.loginHint,
-    });
-  });
-
-  it('passes when OMP auth and binary are both ready', async () => {
-    const seenModels: Array<string | undefined> = [];
-    expect(
-      await runProbe(
-        'omp',
-        withOmp({
-          authStrategy: (_adapterId, model) => {
-            seenModels.push(model);
-            return model === 'anthropic/claude-sonnet-4-6'
-              ? 'subscription'
-              : 'login-needed';
-          },
-        }),
-        'anthropic/claude-sonnet-4-6',
-      ),
-    ).toBeNull();
-    expect(seenModels).toEqual(['anthropic/claude-sonnet-4-6']);
-  });
-
-  it('maps a PATH miss to binary-missing with the brew hint', async () => {
-    const deps = withOmp({
-      authStrategy: () => 'subscription',
-      resolveOmpBin: async () => {
-        throw new Error(
-          'binário "omp" não encontrado no PATH — instale com brew install can1357/tap/omp',
-        );
-      },
-    });
-    const failure = await runProbe('omp', deps);
-    expect(failure?.code).toBe('binary-missing');
-    expect(failure?.adapterId).toBe('omp');
-    expect(failure?.hint).toContain('brew install can1357/tap/omp');
-  });
-
-  it('leaves version-pin failures to the rpc path for a direct user terminal', async () => {
-    const deps = withOmp({
-      authStrategy: () => 'subscription',
-      resolveOmpBin: async () => {
-        throw new Error('versão do omp incompatível: encontrado 9.9.9');
-      },
-    });
-    expect(await runProbe('omp', deps)).toBeNull();
-  });
-
-  it('blocks an unclassified OMP broker failure for a governed spawn', async () => {
-    const deps = withOmp({
-      authStrategy: () => 'subscription',
-      resolveOmpBin: async () => {
-        throw new Error('versão do omp incompatível: encontrado 9.9.9');
-      },
-    });
-    await expect(
-      assertPreSpawnProbe('omp', { deps, failClosed: true }),
-    ).rejects.toMatchObject({
-      code: 'probe-unavailable',
-      adapterId: 'omp',
-    });
-  });
-});
-
-describe('preflightOmpRpcSpawn', () => {
-  it('bypasses cached auth and rechecks the authoritative source after the binary probe', async () => {
-    const order: string[] = [];
-    const cachedAuth = vi.fn(() => 'login-needed' as const);
-    const authoritativeAuth = vi.fn(() => {
-      order.push('authoritative-auth');
-      return 'subscription' as const;
-    });
-    const deps = makeDeps({
-      getAdapter: () => ({
-        ...ompAdapter,
-        models: { default: 'anthropic/claude-sonnet-4-6' },
-      }),
-      authStrategy: cachedAuth,
-      authoritativeAuthStrategy: authoritativeAuth,
-      resolveOmpBin: async () => {
-        order.push('binary');
-        return { binPath: '/usr/local/bin/omp' };
-      },
-    });
-
-    await expect(
-      preflightOmpRpcSpawn('anthropic/claude-sonnet-4-6', { deps }),
-    ).resolves.toMatchObject({
-      modelRef: 'anthropic/claude-sonnet-4-6',
-    });
-    expect(cachedAuth).not.toHaveBeenCalled();
-    expect(authoritativeAuth).toHaveBeenCalledTimes(2);
-    expect(order.at(-1)).toBe('authoritative-auth');
-  });
-
-  it('resolves an omitted model to the exact adapter default', async () => {
-    const order: string[] = [];
-    const deps = makeDeps({
-      getAdapter: () => ({
-        ...ompAdapter,
-        models: { default: 'anthropic/claude-sonnet-4-6' },
-      }),
-      authStrategy: (_adapterId, model) => {
-        order.push(`auth:${model}`);
-        return 'subscription';
-      },
-      resolveOmpBin: async () => {
-        order.push('binary');
-        return { binPath: '/usr/local/bin/omp' };
-      },
-    });
-    await expect(preflightOmpRpcSpawn(undefined, { deps })).resolves.toEqual({
-      modelRef: 'anthropic/claude-sonnet-4-6',
-      model: {
-        provider: 'anthropic',
-        modelId: 'claude-sonnet-4-6',
-      },
-      binPath: '/usr/local/bin/omp',
-      keyEnv: {},
-      credentialScope: {
-        modelProvider: 'anthropic',
-        source: 'broker',
-        authorityProviderId: 'anthropic',
-        envNames: ['ANTHROPIC_API_KEY'],
-      },
-    });
-    expect(order[0]).toBe('auth:anthropic/claude-sonnet-4-6');
-  });
-
-  it('fails before binary resolution when the selected provider is not authenticated', async () => {
-    const resolveOmpBin = vi.fn(async () => ({
-      binPath: '/usr/local/bin/omp',
-    }));
-    const deps = makeDeps({
-      getAdapter: () => ({
-        ...ompAdapter,
-        models: { default: 'anthropic/claude-sonnet-4-6' },
-      }),
-      authStrategy: (_adapterId, model) =>
-        model === 'openai-codex/gpt-5.5'
-          ? 'login-needed'
-          : 'subscription',
-      resolveOmpBin,
-    });
-    await expect(
-      preflightOmpRpcSpawn('openai-codex/gpt-5.5', { deps }),
-    ).rejects.toMatchObject({
-      code: 'missing-credential',
-      adapterId: 'omp',
-    });
-    expect(resolveOmpBin).not.toHaveBeenCalled();
-  });
-
-  it('returns only the selected API-key env and fails if it disappears', async () => {
-    const deps = makeDeps({
-      getAdapter: () => ({
-        ...ompAdapter,
-        models: { default: 'zai/glm-5' },
-      }),
-      authStrategy: () => 'api-key',
-      buildOmpProviderKeyEnv: (model): Record<string, string> => {
-        if (model !== 'zai/glm-5') return {};
-        return {
-          ZAI_API_KEY: 'selected-secret',
-        };
-      },
-    });
-    const result = await preflightOmpRpcSpawn('zai/glm-5', { deps });
-    expect(result.keyEnv).toEqual({
-      ZAI_API_KEY: 'selected-secret',
-    });
-    expect(result.keyEnv).not.toHaveProperty('OPENROUTER_API_KEY');
-
-    await expect(
-      preflightOmpRpcSpawn('zai/glm-5', {
-        deps: {
-          ...deps,
-          buildOmpProviderKeyEnv: () => ({}),
-        },
-      }),
-    ).rejects.toMatchObject({
-      code: 'key-missing',
-      adapterId: 'omp',
-    });
-  });
-
-  it('rejects malformed or absent model refs fail-closed', async () => {
-    expect(() => parseExactOmpModelRef('anthropic')).toThrow(
-      /provider\/modelId/,
-    );
-    await expect(
-      preflightOmpRpcSpawn(undefined, {
-        deps: makeDeps({ getAdapter: () => ompAdapter }),
-      }),
-    ).rejects.toThrow(/modelo OMP ausente/i);
-  });
-});
-
 describe('probePreSpawn — api-key adapters', () => {
   it('glm fails key-missing when no key is stored', async () => {
     const failure = await runProbe(
@@ -521,13 +280,13 @@ describe('probePreSpawn — pass-through rules', () => {
       authStrategy: () => {
         throw new Error('readiness store unavailable');
       },
-      getAdapter: () => ompAdapter,
+      getAdapter: () => claudeAdapter,
     });
     await expect(
-      assertPreSpawnProbe('omp', { deps, failClosed: true }),
+      assertPreSpawnProbe('claude', { deps, failClosed: true }),
     ).rejects.toMatchObject({
       code: 'probe-unavailable',
-      adapterId: 'omp',
+      adapterId: 'claude',
       hint: expect.stringMatching(/comprovar.*prontidão/i),
     });
   });

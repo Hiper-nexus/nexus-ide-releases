@@ -102,10 +102,12 @@ export const missionIntentBudgetsSchema = z.object({
 /**
  * Exact main-owned runtime approved for the initial orchestrator.
  *
- * `readOnly=false` keeps the audited Nexus MCP delegation surface available;
- * `nativeReadOnly=true` independently denies provider-native repo mutations.
- * Both bits are explicit so a persisted contract cannot silently inherit a
- * later settings default.
+ * `readOnly=false` keeps the Main-owned mission authority available.
+ * `nativeReadOnly` records the exact product policy approved with the mission:
+ * true in Hardened mode, false in Autopilot where the task worktree,
+ * per-session bearer and Main-owned validated merge are the promotion
+ * boundary. Both bits are explicit so a persisted contract cannot silently
+ * inherit a later settings default.
  */
 export const missionOrchestratorRuntimeSnapshotSchema = z
   .object({
@@ -114,7 +116,7 @@ export const missionOrchestratorRuntimeSnapshotSchema = z
     accountId: z.string().min(1).max(128).optional(),
     effort: z.string().min(1).max(64).optional(),
     readOnly: z.literal(false),
-    nativeReadOnly: z.literal(true),
+    nativeReadOnly: z.boolean(),
   })
   .strict();
 export type MissionOrchestratorRuntimeSnapshot = z.infer<
@@ -155,7 +157,7 @@ export const promotedPlanSnapshotSchema = z
       .object({
         receiptId: z.string().min(1).max(256),
         toolCallId: z.string().min(1).max(256),
-        source: z.enum(['http-mcp', 'omp-rpc-stdio']),
+        source: z.enum(['http-mcp', 'pty-stream', 'omp-rpc-stdio']),
         authoritySha256: z.string().regex(/^[a-f0-9]{64}$/),
         worktreeHeadSha: z
           .string()

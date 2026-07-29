@@ -230,6 +230,31 @@ export function normalizeOwnership(
   return Object.freeze({ files, symbols, domains });
 }
 
+/**
+ * Kind/fence labels carried on ownership.domains for scheduler identity — they
+ * are not mutual-exclusion claims. File/symbol disjointness decides overlap.
+ */
+export const OWNERSHIP_NON_CLAIM_DOMAINS = Object.freeze(
+  new Set([
+    "guided-advisory",
+    "guided-independent-review",
+    "guided-isolated-advisory",
+    "guided-implementation",
+    "guided-quality-gate",
+    "sequential-only",
+  ]),
+);
+
+export function claimOwnershipDomains(
+  domains: readonly string[],
+): readonly string[] {
+  return Object.freeze(
+    domains
+      .map((domain) => domain.toLocaleLowerCase("en-US"))
+      .filter((domain) => !OWNERSHIP_NON_CLAIM_DOMAINS.has(domain)),
+  );
+}
+
 export function ownershipOverlap(
   left: WorktreeOwnership,
   right: WorktreeOwnership,
@@ -253,7 +278,12 @@ export function ownershipOverlap(
   return Object.freeze({
     files: Object.freeze([...new Set(overlappingFiles)].sort()),
     symbols: Object.freeze(intersection(left.symbols, right.symbols)),
-    domains: Object.freeze(intersection(left.domains, right.domains)),
+    domains: Object.freeze(
+      intersection(
+        claimOwnershipDomains(left.domains),
+        claimOwnershipDomains(right.domains),
+      ),
+    ),
   });
 }
 

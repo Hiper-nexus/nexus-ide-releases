@@ -232,6 +232,12 @@ describe('mission intent gate', () => {
       assertMissionIntentAllowsTool('nexus_terminal_run', { mission: ops }).ok,
     ).toBe(true);
     expect(
+      assertMissionIntentAllowsTool('nexus_terminal_run', {
+        mission: ops,
+        role: 'orchestrator',
+      }).ok,
+    ).toBe(true);
+    expect(
       assertMissionIntentAllowsTool('nexus_bg_run', { mission: ops }).ok,
     ).toBe(true);
     expect(
@@ -270,6 +276,19 @@ describe('mission intent gate', () => {
         expect(result.code).toBe('tool_denied');
         expect(result.error).toMatch(/lane ops não altera código do repo/i);
       }
+    }
+  });
+
+  it('keeps direct Maestro shell execution scoped to the ops lane', () => {
+    const result = assertMissionIntentAllowsTool('nexus_terminal_run', {
+      mission: dispatched,
+      role: 'orchestrator',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('tool_denied');
+      expect(result.error).toMatch(/só executa terminal_run.*lane ops/i);
     }
   });
 

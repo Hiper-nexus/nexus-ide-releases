@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import type {
   IndependentProviderSnapshot,
   MultiPcBackendStatus,
@@ -15,6 +15,34 @@ function defaultExecutableProbe(candidate: string): boolean {
   } catch {
     return false;
   }
+}
+
+async function defaultExecutableProbeAsync(candidate: string): Promise<boolean> {
+  try {
+    await fs.promises.access(candidate, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function defaultWindowsRuntimeProbeAsync(
+  runtime: string,
+  image: string,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      runtime,
+      ['image', 'inspect', image],
+      {
+        timeout: 10_000,
+        killSignal: 'SIGKILL',
+        windowsHide: true,
+        maxBuffer: 64 * 1024,
+      },
+      (error) => resolve(!error),
+    );
+  });
 }
 
 /** Windows remains fail-closed until Nexus ships an enforceable provider. */
@@ -59,6 +87,77 @@ export function inspectSandboxCapability(
     const image = env.NEXUS_SANDBOX_CONTAINER_IMAGE?.trim();
     const pinned = Boolean(image && /^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/i.test(image));
     if (runtime && image && pinned && executableProbe(runtime) && windowsRuntimeProbe(runtime, image)) return [];
+    return [doctorFinding(
+      'sandbox',
+      'blocker',
+      'sandbox-unavailable-windows',
+      'Sandbox OCI segura não está configurada no Windows.',
+      'Configure NEXUS_SANDBOX_CONTAINER_RUNTIME com Docker/Podman e NEXUS_SANDBOX_CONTAINER_IMAGE com uma imagem fixada por @sha256:digest.',
+    )];
+  }
+  return [doctorFinding(
+    'sandbox',
+    'blocker',
+    'sandbox-unavailable-platform',
+    `Provedor de sandbox seguro indisponível em ${platform}.`,
+    'Use darwin (Seatbelt) ou linux (Bubblewrap) para execução confinada de sensores/tools.',
+  )];
+}
+
+export async function inspectSandboxCapabilityAsync(
+  platform: NodeJS.Platform,
+  executableProbe: (
+    candidate: string,
+  ) => boolean | Promise<boolean> = defaultExecutableProbeAsync,
+  env: NodeJS.ProcessEnv = process.env,
+  windowsRuntimeProbe: (
+    runtime: string,
+    image: string,
+  ) => boolean | Promise<boolean> = defaultWindowsRuntimeProbeAsync,
+): Promise<NexusDoctorFinding[]> {
+  if (platform === 'darwin') {
+    return (await executableProbe('/usr/bin/sandbox-exec'))
+      ? []
+      : [doctorFinding(
+          'sandbox',
+          'blocker',
+          'seatbelt-unavailable',
+          'sandbox-exec (Seatbelt) não está disponível ou não é executável neste macOS.',
+          'Use um macOS com /usr/bin/sandbox-exec executável ou reinstale as ferramentas de sistema.',
+        )];
+  }
+  if (platform === 'linux') {
+    const available = await Promise.all(
+      ['/usr/bin/bwrap', '/bin/bwrap'].map((candidate) =>
+        executableProbe(candidate),
+      ),
+    );
+    return available.some(Boolean)
+      ? []
+      : [doctorFinding(
+          'sandbox',
+          'blocker',
+          'bubblewrap-unavailable',
+          'Bubblewrap (bwrap) não está instalado ou não é executável; sandbox Linux fail-closed.',
+          'Instale bubblewrap e garanta que /usr/bin/bwrap seja executável.',
+        )];
+  }
+  if (platform === 'win32') {
+    const runtime = env.NEXUS_SANDBOX_CONTAINER_RUNTIME?.trim();
+    const image = env.NEXUS_SANDBOX_CONTAINER_IMAGE?.trim();
+    const pinned = Boolean(
+      image &&
+        /^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/iu.test(image),
+    );
+    if (
+      runtime &&
+      image &&
+      pinned &&
+      (await executableProbe(runtime)) &&
+      (await windowsRuntimeProbe(runtime, image))
+    ) {
+      return [];
+    }
     return [doctorFinding(
       'sandbox',
       'blocker',

@@ -32,6 +32,13 @@ export interface SensorCheckDependencies {
   readonly contextSensorIds?: readonly string[];
 }
 
+export interface AsyncSensorCheckDependencies {
+  readonly exists: (candidate: string) => Promise<boolean>;
+  readonly readFile: (candidate: string, encoding: BufferEncoding) => Promise<string>;
+  readonly requiredSensorIds: readonly string[];
+  readonly contextSensorIds?: readonly string[];
+}
+
 function invalidShape(details: readonly string[]): NexusDoctorFinding {
   return doctorFinding(
     'sensors',
@@ -126,6 +133,55 @@ export function inspectSensors(
   try {
     const shape = sensorConfigShapeSchema.safeParse(
       JSON.parse(dependencies.readFile(sensorPath, 'utf8')),
+    );
+    if (!shape.success) {
+      return [invalidShape(shape.error.issues.map((issue) => issue.message))];
+    }
+    const parsed = parseSensorIds(shape.data.sensors);
+    const findings = parsed.errors.length === 0
+      ? []
+      : [doctorFinding(
+          'sensors',
+          'blocker',
+          'invalid-sensor-definition',
+          'Uma ou mais definições de sensor não são confináveis.',
+          'Corrija command, timeoutMs e network:false em todos os sensores.',
+          parsed.errors,
+        )];
+    return [
+      ...findings,
+      ...missingRequiredSensors(parsed.ids, dependencies.requiredSensorIds),
+      ...sensorDrift(parsed.ids, dependencies.contextSensorIds),
+    ];
+  } catch (error) {
+    return [doctorFinding(
+      'sensors',
+      'blocker',
+      'sensors-unreadable',
+      'Não foi possível ler/validar .context/config/sensors.json.',
+      'Corrija JSON e permissões de .context/config/sensors.json.',
+      [doctorErrorMessage(error)],
+    )];
+  }
+}
+
+export async function inspectSensorsAsync(
+  scope: ProjectExecutionScope,
+  dependencies: AsyncSensorCheckDependencies,
+): Promise<NexusDoctorFinding[]> {
+  const sensorPath = path.join(scope.rootRealPath, SENSORS_RELATIVE_PATH);
+  if (!(await dependencies.exists(sensorPath))) {
+    return [doctorFinding(
+      'sensors',
+      'blocker',
+      'missing-sensors-config',
+      'Configuração declarativa de sensores ausente.',
+      'Crie .context/config/sensors.json com typecheck e unit (network:false, timeout limitado).',
+    )];
+  }
+  try {
+    const shape = sensorConfigShapeSchema.safeParse(
+      JSON.parse(await dependencies.readFile(sensorPath, 'utf8')),
     );
     if (!shape.success) {
       return [invalidShape(shape.error.issues.map((issue) => issue.message))];

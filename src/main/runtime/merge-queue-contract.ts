@@ -35,6 +35,11 @@ export type MergeQueueIntegrationState =
   | 'candidate-integrated'
   | 'unknown';
 
+export type MergeFailureDisposition =
+  | 'retryable'
+  | 'repair'
+  | 'terminal';
+
 export type MergeQueueEventType =
   | 'blocked'
   | 'retry-acknowledged'
@@ -64,6 +69,12 @@ export interface MergeQueueBlock {
   readonly errorName: string;
   readonly reason: string;
   readonly blockedAt: number;
+  /**
+   * Recovery authority, persisted with the block. Legacy blocks default to
+   * terminal during decoding; new technical/quality blocks are never inferred
+   * from mutable prose.
+   */
+  readonly disposition?: MergeFailureDisposition;
 }
 
 export interface MergeQueueStateSnapshot {
@@ -128,9 +139,9 @@ export interface EnqueueMergeInput {
     context: MergeValidationContext,
   ) => Promise<MergeValidationDecision> | MergeValidationDecision;
   /**
-   * Completes the mission/task bookkeeping while the durable queue attempt is
-   * still active. A rejection leaves the integrated candidate blocked and
-   * recoverable through the exact-CAS retry path.
+   * Completes mission/task bookkeeping after the queue has durably committed
+   * the approved integration. A failure here must never roll Git back: callers
+   * can replay their receipt from the persisted `integrated` queue entry.
    */
   readonly finalize?: (
     result: MergeQueueResult,
@@ -253,5 +264,16 @@ export class MergeQueueStateError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'MergeQueueStateError';
+  }
+}
+
+/** Durable state storage was temporarily unavailable or CAS-contended. */
+export class MergeQueuePersistenceError extends Error {
+  constructor(message: string, options: { cause?: unknown } = {}) {
+    super(
+      message,
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = 'MergeQueuePersistenceError';
   }
 }

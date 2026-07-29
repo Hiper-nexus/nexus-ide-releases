@@ -42,22 +42,6 @@ const squadMocks = vi.hoisted(() => {
         model: 'gpt-5.6-sol',
         effort: 'high',
       },
-      {
-        id: 'legacy-kimi',
-        agentName: 'Legacy Kimi',
-        category: 'executor',
-        cli: 'kimi',
-        model: 'kimi-k2.5',
-        effort: 'high',
-      },
-      {
-        id: 'legacy-omp',
-        agentName: 'Legacy OMP',
-        category: 'executor',
-        cli: 'omp',
-        model: 'kimi-k2.5',
-        effort: 'high',
-      },
     ],
   };
   return {
@@ -189,17 +173,6 @@ describe('RouteReservation enforced no nexus_pane_spawn (RC3)', () => {
     expect(message).not.toContain('orchestrator_session_stale');
     expect(message).not.toContain('route_reservation_required');
   });
-
-  it.each(['Legacy Kimi', 'Legacy OMP'])(
-    'recusa roster sticky legado %s antes de reservation, slot ou worktree',
-    async (agentName) => {
-      const message = await spawnError({ agentName });
-
-      expect(message).toContain('governed_worker_spawn_unsupported');
-      expect(message).toMatch(/codex/i);
-      expect(message).not.toContain('context workflow service');
-    },
-  );
 
   it('mantém o bloqueio de worker tentando virar orquestrador', async () => {
     let message = '';

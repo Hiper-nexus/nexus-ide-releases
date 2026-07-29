@@ -7,6 +7,7 @@ import {
 import { listAdapterInfos } from "../adapters/adapter-registry";
 import { hasAvailableAccount } from "../persistence/account-store";
 import { listProviderSettings } from "../persistence/provider-config-store";
+import { getOrchSettings } from "../persistence/settings-store";
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import {
   assertExactRosterRoutes,
@@ -20,8 +21,8 @@ import {
   type GuidedPlanTaskDetailInput,
 } from "./guided-mission-plan-authority";
 import {
-  addApprovedIntentOwnershipClaims,
   listRepositoryOwnershipClaims,
+  resolveGuidedMutationOwnership,
 } from "./guided-mission-ownership";
 import {
   buildGuidedMissionTaskDetail,
@@ -59,7 +60,9 @@ export {
   approvedIntentOwnershipClaims,
   GUIDED_GREENFIELD_OWNERSHIP,
   listRepositoryOwnershipClaims,
+  ownershipLooksRepoWide,
   repositoryOwnershipClaimsFromGitTree,
+  resolveGuidedMutationOwnership,
 } from "./guided-mission-ownership";
 export {
   buildGuidedMissionTaskDetail,
@@ -164,6 +167,7 @@ const DEFAULT_DEPS: GuidedMissionPlannerDeps = Object.freeze({
     listAdapterInfos().find((adapter) => adapter.id === adapterId) ?? null,
   listMissionWorktrees: (scope: ProjectExecutionScope, missionId: string) =>
     requireWorktreeRuntimeRegistry().listMission(scope, missionId),
+  squadCliPolicy: () => getOrchSettings().squadCliPolicy,
   listLiveAdapters: productionLiveAdapters,
   listRepositoryOwnership: listRepositoryOwnershipClaims,
   assertStandardSquadReadiness: assertLiveGuidedSquadReadiness,
@@ -172,16 +176,16 @@ const DEFAULT_DEPS: GuidedMissionPlannerDeps = Object.freeze({
 /**
  * Deterministic Guided Planner v2 for the beginner path.
  *
- * It seals a roster-complete, sequential delivery graph after approval and
- * before orchestrator bootstrap: non-mutating discovery/advisory identities,
- * exactly one mutation-owning executor, independent non-mutating reviewers,
- * then one corrective QA gate. Every approved non-orchestrator identity
- * receives a task. The live roster is revalidated before sealing, so only
- * identities backed by a mechanically qualified guided runtime enter this
- * graph. Read-only identities use native confinement; mutation owners use
- * disposable isolated worktrees. Worker materialization remains
- * scheduler-owned and cannot occur until the real kickoff acceptance receipt
- * exists.
+ * It seals a roster-complete delivery graph after approval and before
+ * orchestrator bootstrap: non-mutating discovery/advisory identities (parallel
+ * when read_only), exactly one mutation-owning executor with intent-scoped
+ * ownership, independent reviewers after implementation, then one corrective
+ * QA gate. Mutation ownership is a bounded, explicit projection of the
+ * repository inventory plus any new paths named by the approved intent. This
+ * lets ordinary goals such as "corrija este fluxo" start without requiring the
+ * operator to guess filenames, while still excluding Git/Nexus authority
+ * paths and root wildcards. Worker materialization remains scheduler-owned and
+ * cannot occur until the real kickoff acceptance receipt exists.
  */
 export function ensureGuidedMissionPlan(
   suite: Pick<ProjectDomainStoreSuite, "missions" | "tasks">,
@@ -243,8 +247,14 @@ export function ensureGuidedMissionPlan(
       "guided_plan_roster_too_large: o plano suporta no máximo 64 workers aprovados",
     );
   }
-  const worker = choosePrimaryExecutor(squad);
-  const qualityGate = chooseCorrectiveQualityGate(squad, worker);
+  const operatorChoice =
+    deps.squadCliPolicy() === "operator-choice";
+  const worker = choosePrimaryExecutor(squad, operatorChoice);
+  const qualityGate = chooseCorrectiveQualityGate(
+    squad,
+    worker,
+    operatorChoice,
+  );
   const qualityGateReadOnly =
     approvedIntentRequiresReadOnlyQualityGate(mission);
   const advisoryAgents = rosterWorkers.filter(
@@ -266,17 +276,27 @@ export function ensureGuidedMissionPlan(
       (agent) => agent.category === "orchestrator",
     )?.cli,
   });
-  const ownershipFiles = addApprovedIntentOwnershipClaims(
-    deps.listRepositoryOwnership(suite.tasks.scope),
+  const intentOwnership = resolveGuidedMutationOwnership(
     mission.intentContract,
   );
+  // A filename-aware goal keeps the narrow intent surface. Natural goals do
+  // not force a vibe coder to guess the repository layout: Main derives a
+  // bounded, path-by-path inventory for the isolated worktree instead.
+  const ownershipFiles =
+    intentOwnership.length > 0
+      ? intentOwnership
+      : resolveGuidedMutationOwnership(
+          mission.intentContract,
+          deps.listRepositoryOwnership(suite.tasks.scope),
+        );
   if (ownershipFiles.length === 0) {
     throw new Error(
-      "guided_plan_ownership_missing: nenhum caminho explícito pôde ser selado",
+      "guided_plan_ownership_missing: o inventário seguro do projeto está vazio",
     );
   }
   const advisoryTasks = advisoryAgents.map((agent, index) => {
     const executionMode = guidedAdvisoryExecutionMode(agent);
+    const isolated = executionMode === "isolated_worktree";
     return {
       id: guidedFanoutPlannerId("advisory", agent, index),
       title: `Mapear com ${agent.agentName}: ${mission.title}`.slice(0, 1_024),
@@ -285,29 +305,20 @@ export function ensureGuidedMissionPlan(
       category: agent.category,
       executionMode,
       ownership: {
-        files: [...ownershipFiles],
+        // read_only advisors: empty files + kind domain → parallel-safe.
+        // isolated advisors share mutation surface but take exclusive slot.
+        files: isolated ? [...ownershipFiles] : [],
         symbols: [],
-        domains: [
-          executionMode === "read_only"
-            ? GUIDED_TASK_DOMAINS.advisory
-            : GUIDED_ISOLATED_ADVISORY_DOMAIN,
-          "sequential-only",
-        ],
+        domains: isolated
+          ? [GUIDED_ISOLATED_ADVISORY_DOMAIN, "sequential-only"]
+          : [GUIDED_TASK_DOMAINS.advisory],
       },
-      dependsOn:
-        index > 0
-          ? [
-              guidedFanoutPlannerId(
-                "advisory",
-                advisoryAgents[index - 1]!,
-                index - 1,
-              ),
-            ]
-          : [],
+      dependsOn: [],
     };
   });
   const independentReviewTasks = independentReviewers.map((agent, index) => {
     const executionMode = guidedAdvisoryExecutionMode(agent);
+    const isolated = executionMode === "isolated_worktree";
     return {
       id: guidedFanoutPlannerId("review", agent, index),
       title: `Revisar com ${agent.agentName}: ${mission.title}`.slice(0, 1_024),
@@ -318,14 +329,11 @@ export function ensureGuidedMissionPlan(
       category: "reviewer" as const,
       executionMode,
       ownership: {
-        files: [...ownershipFiles],
+        files: isolated ? [...ownershipFiles] : [],
         symbols: [],
-        domains: [
-          executionMode === "read_only"
-            ? GUIDED_TASK_DOMAINS.independentReview
-            : GUIDED_ISOLATED_ADVISORY_DOMAIN,
-          "sequential-only",
-        ],
+        domains: isolated
+          ? [GUIDED_ISOLATED_ADVISORY_DOMAIN, "sequential-only"]
+          : [GUIDED_TASK_DOMAINS.independentReview],
       },
       dependsOn:
         index > 0
@@ -339,10 +347,7 @@ export function ensureGuidedMissionPlan(
           : [GUIDED_MISSION_PLANNER_TASK_ID],
     };
   });
-  const primaryDependencies =
-    advisoryTasks.length > 0
-      ? [advisoryTasks[advisoryTasks.length - 1]!.id]
-      : [];
+  // Implementation does not wait on advisories — tip/discovery is parallel.
   const qualityGateDependencies =
     independentReviewTasks.length > 0
       ? [independentReviewTasks[independentReviewTasks.length - 1]!.id]
@@ -359,9 +364,9 @@ export function ensureGuidedMissionPlan(
       ownership: {
         files: [...ownershipFiles],
         symbols: [],
-        domains: [GUIDED_TASK_DOMAINS.implementation, "sequential-only"],
+        domains: [GUIDED_TASK_DOMAINS.implementation],
       },
-      dependsOn: primaryDependencies,
+      dependsOn: [],
     },
     ...independentReviewTasks,
     {
@@ -376,8 +381,10 @@ export function ensureGuidedMissionPlan(
         ? "read_only"
         : "isolated_worktree",
       ownership: {
-        files: [...ownershipFiles],
+        files: qualityGateReadOnly ? [] : [...ownershipFiles],
         symbols: [],
+        // Gate is exclusive even when read_only/empty so unfinished tip
+        // advisories cannot share a wave with the final QA pass.
         domains: [GUIDED_TASK_DOMAINS.qualityGate, "sequential-only"],
       },
       dependsOn: qualityGateDependencies,

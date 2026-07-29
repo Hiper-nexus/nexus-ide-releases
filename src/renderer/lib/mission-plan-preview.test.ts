@@ -58,7 +58,7 @@ function metadata(
 ): RichModelMetadataView {
   return {
     id,
-    ompProvider: 'fixture',
+    catalogProvider: 'fixture',
     cost: { input, output },
   };
 }

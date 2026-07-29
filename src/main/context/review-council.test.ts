@@ -136,6 +136,63 @@ describe('ReviewCouncil', () => {
     });
   });
 
+  it('lets static analysis block without allowing it to satisfy reviewer quorum', () => {
+    const advisoryCouncil = new ReviewCouncil('high', binding);
+    advisoryCouncil.submit(
+      review({
+        reviewId: 'static-advisory',
+        reviewerId: 'nexus-static-a',
+        reviewerSessionId: 'nexus-static-session-a',
+        reviewerProvider: 'nexus-static-analysis-v1',
+        findings: [
+          {
+            severity: 'medium',
+            category: 'correctness',
+            file: 'src/api.ts',
+            criterionRefs: [],
+            invariantRefs: ['single-source-of-truth'],
+            evidence: 'Similar exported API was detected.',
+            recommendation: 'Verify whether both APIs are required.',
+          },
+        ],
+      }),
+    );
+    expect(advisoryCouncil.evaluate()).toMatchObject({
+      ready: false,
+      reason: 'review-quorum-missing',
+      reportCount: 0,
+    });
+    advisoryCouncil.submit(
+      review({
+        reviewId: 'physical-review',
+        reviewerId: 'reviewer-physical',
+        reviewerSessionId: 'session-review-physical',
+        findings: [],
+      }),
+    );
+    expect(advisoryCouncil.evaluate()).toMatchObject({
+      ready: true,
+      reason: 'ready',
+      reportCount: 1,
+    });
+
+    const blockerCouncil = new ReviewCouncil('high', binding);
+    blockerCouncil.submit(
+      review({
+        reviewId: 'static-blocker',
+        reviewerId: 'nexus-static-b',
+        reviewerSessionId: 'nexus-static-session-b',
+        reviewerProvider: 'nexus-static-analysis-v1',
+      }),
+    );
+    expect(blockerCouncil.evaluate()).toMatchObject({
+      ready: false,
+      reason: 'blocking-findings',
+      blockingFindingCount: 1,
+      reportCount: 0,
+    });
+  });
+
   it('accepts risk only through a non-serializable administrative capability', () => {
     const council = new ReviewCouncil('high', binding);
     const report = council.submit(review());

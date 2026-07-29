@@ -35,13 +35,4 @@ describe('Settings visual invariants', () => {
     expect(rule('.settings-field')).toContain('font-size: var(--text-sm)');
     expect(rule('.settings-btn')).toContain('font-size: var(--text-sm)');
   });
-
-  it('gives the long Oh My Pi controls two readable columns', () => {
-    expect(
-      rule('.settings-orchestrator__grid.settings-orchestrator__grid--omp'),
-    ).toContain('grid-template-columns: repeat(2, minmax(240px, 1fr))');
-    expect(settingsCss).toMatch(
-      /@media \(max-width: 720px\)[\s\S]*?\.settings-orchestrator__grid\.settings-orchestrator__grid--omp\s*\{\s*grid-template-columns:\s*1fr/,
-    );
-  });
 });

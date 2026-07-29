@@ -12,6 +12,8 @@ import {
   mergeAdapters,
   broadcastToListeners,
   orchestrationEvidenceForAdapter,
+  missionControlCapabilityForAdapter,
+  taskHandoffCapabilityForAdapter,
 } from './adapter-registry';
 
 // ── Minimal valid cli-pty adapter for reuse across tests ────────────────────
@@ -193,12 +195,12 @@ describe('builtin adapters', () => {
     for (const raw of BUILTIN_ADAPTERS) {
       expect(kinds.has((raw as { kind?: string }).kind ?? '')).toBe(true);
     }
-    // Only omp-rpc is hosted over RPC pipes today; everything else is a PTY CLI.
+    // Every bundled CLI currently runs through the observable PTY boundary.
     const byKind = BUILTIN_ADAPTERS.map((raw) => (raw as { kind?: string }).kind);
-    expect(byKind.filter((kind) => kind === 'cli-rpc')).toEqual(['cli-rpc']);
+    expect(byKind.filter((kind) => kind === 'cli-rpc')).toEqual([]);
   });
 
-  it('declares Nexus MCP capability once, leaving only Aider worker-only', () => {
+  it('declares only physically usable Nexus MCP routes', () => {
     const integration = (id: string) =>
       (BUILTIN_ADAPTERS.find(
         (adapter) => (adapter as { id?: string }).id === id,
@@ -209,7 +211,9 @@ describe('builtin adapters', () => {
     expect(integration('glm')).toBe('autoload');
     expect(integration('longcat')).toBe('autoload');
     expect(integration('codex')).toBe('codex');
-    expect(integration('agy')).toBe('agy');
+    // AGY 1.1 ignores private MCP profile projections. Mission workers use
+    // the Main-owned PTY-stream handoff instead of advertising fake MCP.
+    expect(integration('agy')).toBe('none');
     expect(integration('opencode')).toBe('opencode');
     expect(integration('kimi')).toBe('kimi');
     expect(integration('grok')).toBe('grok');
@@ -335,22 +339,14 @@ describe('builtin adapters', () => {
       .toBe(true);
   });
 
-  it('ships the official Claude Opus 5 id in Claude and the verified OMP catalog', () => {
+  it('ships the official Claude Opus 5 id in Claude', () => {
     const claude = BUILTIN_ADAPTERS.find(
       (adapter) => (adapter as { id?: string }).id === 'claude',
     ) as { models?: { list?: string[]; default?: string } } | undefined;
-    const omp = BUILTIN_ADAPTERS.find(
-      (adapter) => (adapter as { id?: string }).id === 'omp',
-    ) as { models?: { list?: string[] } } | undefined;
-    const ompRpc = BUILTIN_ADAPTERS.find(
-      (adapter) => (adapter as { id?: string }).id === 'omp-rpc',
-    ) as { models?: { list?: string[] } } | undefined;
 
     expect(claude?.models?.list?.[0]).toBe('claude-opus-5');
     expect(claude?.models?.list).toContain('claude-opus-5');
     expect(claude?.models?.default).toBe('claude-sonnet-5');
-    expect(omp?.models?.list).toContain('anthropic/claude-opus-5');
-    expect(ompRpc?.models?.list).toContain('anthropic/claude-opus-5');
   });
 
   it('uses the xAI CLI official API-key variable for Grok', () => {
@@ -434,9 +430,6 @@ describe('builtin adapters', () => {
     // experimental; a promoção a verified exige o gate físico de coordenação.
     expect(orchestrationEvidenceForAdapter(parsed('grok'), 'builtin')).toBe(
       'experimental',
-    );
-    expect(orchestrationEvidenceForAdapter(parsed('omp'), 'builtin')).toBe(
-      'unsupported',
     );
     expect(orchestrationEvidenceForAdapter(parsed('opencode'), 'builtin')).toBe(
       'unsupported',
@@ -523,6 +516,45 @@ describe('builtin adapters', () => {
       governedWriter: false,
       verifiedMaestro: false,
     });
+  });
+
+  it('admits custom launchable CLIs to the Main-owned PTY handoff lane', () => {
+    const parsed = cliPtyAdapterSchema.parse(MINIMAL_CLI_PTY);
+
+    expect(taskHandoffCapabilityForAdapter(parsed, 'user')).toBe(true);
+    expect(missionControlCapabilityForAdapter(parsed, 'user')).toBe(true);
+    expect(
+      taskHandoffCapabilityForAdapter(
+        {
+          ...parsed,
+          spawn: {
+            ...parsed.spawn,
+            headless: ['test-cli'],
+          },
+          promptInjection: {
+            ...parsed.promptInjection,
+            method: 'arg',
+          },
+        },
+        'user',
+      ),
+    ).toBe(false);
+    expect(
+      missionControlCapabilityForAdapter(
+        {
+          ...parsed,
+          spawn: {
+            ...parsed.spawn,
+            headless: ['test-cli'],
+          },
+          promptInjection: {
+            ...parsed.promptInjection,
+            method: 'arg',
+          },
+        },
+        'user',
+      ),
+    ).toBe(false);
   });
 
   it.each([

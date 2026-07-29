@@ -4,11 +4,15 @@ import { testProjectScope } from './__tests__/scope-fixture';
 
 const mocks = vi.hoisted(() => ({
   listProviderSettings: vi.fn(),
+  isProviderEnabled: vi.fn(() => true),
+  providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(),
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
   listProviderSettings: mocks.listProviderSettings,
+  isProviderEnabled: mocks.isProviderEnabled,
+  providerReadiness: mocks.providerReadiness,
 }));
 
 // Real store underneath (untouched exports stay intact); only the spawn-gate
@@ -49,6 +53,10 @@ beforeEach(() => {
   clearRouteProvenance();
   clearRouteLog();
   mocks.listProviderSettings.mockReset();
+  mocks.isProviderEnabled.mockReset();
+  mocks.isProviderEnabled.mockReturnValue(true);
+  mocks.providerReadiness.mockReset();
+  mocks.providerReadiness.mockReturnValue({ ready: true, reason: 'ready' });
   mocks.hasAvailableAccount.mockReset();
   mocks.hasAvailableAccount.mockReturnValue(true);
 });

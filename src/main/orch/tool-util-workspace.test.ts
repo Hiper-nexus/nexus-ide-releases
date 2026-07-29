@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const stubs = vi.hoisted(() => ({
   resolveCwdForScope: vi.fn<(_scope: unknown, value?: string) => string>(),
@@ -37,14 +37,11 @@ const stubs = vi.hoisted(() => ({
     squadRevisionHash: 'squad-revision-hash',
   })),
   injectable: true,
-  ompRpcSpawn: vi.fn(),
   orchSettings: {
     leanCode: false,
     seniorMode: false,
     designPro: false,
-    ompMissionTransport: 'pty',
-    ompParticipation: 'off',
-    ompAutoSpawn: false,
+    squadCliPolicy: 'operator-choice',
   },
 }));
 
@@ -130,16 +127,6 @@ vi.mock('../adapters/adapter-registry', () => ({
   isBuiltinAdapter: vi.fn((id: string) => id === 'codex'),
   isAdapterInstalled: vi.fn(() => false),
 }));
-vi.mock('../adapters/omp-rpc-ipc', () => ({
-  spawnMissionOmpRpcWorker: stubs.ompRpcSpawn,
-  terminateOmpRpcSession: vi.fn(async () => true),
-  isSafeOmpMissionPreflightFailure: (error: unknown) =>
-    Boolean(
-      error &&
-        typeof error === 'object' &&
-        (error as { sideEffectStarted?: unknown }).sideEffectStarted === false,
-    ),
-}));
 // Keep the spawn path independent of the host's real credential state.
 vi.mock('../pty/pre-spawn-probe', () => ({
   assertPreSpawnProbe: stubs.preSpawnProbe,
@@ -215,7 +202,7 @@ describe('agent pane workspace confinement', () => {
 
     expect(stubs.preSpawnProbe).toHaveBeenCalledWith('codex', {
       model: 'provider/model',
-      failClosed: true,
+      failClosed: false,
     });
   });
 
@@ -268,51 +255,43 @@ describe('agent pane workspace confinement', () => {
     expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
   });
 
-  it('rejects revision-bound writable OMP at the release boundary before RPC, credential probe or PTY', async () => {
-    await expect(
-      spawnPaneAndMaybePrompt({
-        adapterId: 'omp',
+  it.each(['claude', 'kimi', 'grok'])(
+    'allows authenticated %s reviewers in an autopilot task worktree',
+    async (adapterId) => {
+      await spawnPaneAndMaybePrompt({
+        adapterId,
         missionId: 'm1',
         role: 'worker',
+        readOnly: true,
         scope,
         executionScope: taskExecutionScope,
-      }),
-    ).rejects.toThrow(/governed_worker_spawn_unsupported/i);
+      });
 
-    expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
-    expect(stubs.preSpawnProbe).not.toHaveBeenCalled();
-    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
-  });
-
-  it.each(['claude', 'kimi', 'omp', 'grok'])(
-    'rejects legacy %s mission workers even when read-only bypassed the old contextRevision gate',
-    async (adapterId) => {
-      await expect(
-        spawnPaneAndMaybePrompt({
+      expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
+        expect.objectContaining({
           adapterId,
-          missionId: 'm1',
-          role: 'worker',
+          executionScope: taskExecutionScope,
           readOnly: true,
-          scope,
-          executionScope: scope,
         }),
-      ).rejects.toThrow(/governed_worker_spawn_unsupported.*codex/i);
+      );
     },
   );
 
-  it('treats an unlabelled mission pane as a worker instead of a role bypass', async () => {
-    await expect(
-      spawnPaneAndMaybePrompt({
-        adapterId: 'omp',
-        missionId: 'm1',
-        readOnly: true,
-        scope,
-      }),
-    ).rejects.toThrow(/governed_worker_spawn_unsupported/i);
+  it('keeps an unlabelled autopilot mission participant inside its task worktree', async () => {
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'kimi',
+      missionId: 'm1',
+      readOnly: true,
+      scope,
+      executionScope: taskExecutionScope,
+    });
 
-    expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
-    expect(stubs.preSpawnProbe).not.toHaveBeenCalled();
-    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
+    expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapterId: 'kimi',
+        executionScope: taskExecutionScope,
+      }),
+    );
   });
 
   it('preserves a non-mission manual Kimi Terminal pane', async () => {
@@ -324,7 +303,7 @@ describe('agent pane workspace confinement', () => {
 
     expect(stubs.preSpawnProbe).toHaveBeenCalledWith('kimi', {
       model: undefined,
-      failClosed: true,
+      failClosed: false,
     });
     expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
       expect.objectContaining({ adapterId: 'kimi' }),
@@ -341,7 +320,7 @@ describe('agent pane workspace confinement', () => {
 
     expect(stubs.preSpawnProbe).toHaveBeenCalledWith('claude', {
       model: undefined,
-      failClosed: true,
+      failClosed: false,
     });
     expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -350,6 +329,26 @@ describe('agent pane workspace confinement', () => {
         role: 'orchestrator',
       }),
     );
+  });
+
+  it('keeps probe infrastructure fail-closed only in explicit hardened mode', async () => {
+    stubs.orchSettings.squadCliPolicy = 'governed';
+
+    try {
+      await spawnPaneAndMaybePrompt({
+        adapterId: 'claude',
+        missionId: 'm1',
+        role: 'orchestrator',
+        scope,
+      });
+    } finally {
+      stubs.orchSettings.squadCliPolicy = 'operator-choice';
+    }
+
+    expect(stubs.preSpawnProbe).toHaveBeenCalledWith('claude', {
+      model: undefined,
+      failClosed: true,
+    });
   });
 
   it('rejects a stale caller contextRevision before any pane process exists', async () => {
@@ -502,23 +501,6 @@ describe('agent pane workspace confinement', () => {
     expect(onPaneCreated).toHaveBeenCalledWith('pane-1', 'session-1');
   });
 
-  it('does not schedule an OMP auto-companion for a revision-bound writable worker', async () => {
-    stubs.orchSettings.ompAutoSpawn = true;
-    try {
-      await spawnPaneAndMaybePrompt({
-        adapterId: 'codex',
-        missionId: 'm1',
-        role: 'worker',
-        scope,
-        executionScope: taskExecutionScope,
-      });
-
-      expect(stubs.requestPaneSpawn).toHaveBeenCalledOnce();
-      expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
-    } finally {
-      stubs.orchSettings.ompAutoSpawn = false;
-    }
-  });
 });
 
 describe('worker handoff capability contract', () => {
@@ -575,173 +557,6 @@ describe('worker handoff capability contract', () => {
     const pasted = writes.join('\n');
     expect(pasted).toContain('nexus_merge_review_submit');
     expect(pasted).not.toContain('nexus_handoff_submit');
-  });
-});
-
-describe('omp rpc spawn transaction', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    stubs.resolveCwdForScope.mockReturnValue('/workspace');
-    stubs.orchSettings.ompMissionTransport = 'auto';
-    stubs.ompRpcSpawn.mockReset();
-  });
-  afterEach(() => {
-    stubs.orchSettings.ompMissionTransport = 'pty';
-  });
-
-  it('propagates the trusted worktree execution scope to rpc-ui', async () => {
-    const executionScope = {
-      ...scope,
-      rootRealPath: '/workspace/task-worktree',
-    };
-    stubs.resolveCwdForScope.mockReturnValue(
-      '/workspace/task-worktree/src',
-    );
-    stubs.ompRpcSpawn.mockResolvedValueOnce({
-      paneId: 'omp-rpc:pane-1',
-      sessionId: 'omp-session-1',
-    });
-
-    await spawnPaneAndMaybePrompt({
-      adapterId: 'omp',
-      role: 'worker',
-      prompt: 'execute',
-      scope,
-      executionScope,
-    });
-
-    expect(stubs.ompRpcSpawn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope,
-        executionScope,
-      }),
-    );
-    expect(stubs.ompRpcSpawn.mock.calls[0]?.[0]).not.toHaveProperty(
-      'workspaceRoot',
-    );
-  });
-
-  it('exposes the exact wrapped prompt only after OMP proves acceptance', async () => {
-    const onPaneCreated = vi.fn();
-    const onPromptAccepted = vi.fn();
-    stubs.ompRpcSpawn.mockImplementationOnce(
-      async (input: {
-        prompt?: string;
-        onSessionReady?: (paneId: string, sessionId: string) => void;
-        onAccepted?: (paneId: string, sessionId: string) => void;
-      }) => {
-        input.onSessionReady?.('omp-rpc:pane-accepted', 'omp-session-accepted');
-        expect(onPromptAccepted).not.toHaveBeenCalled();
-        input.onAccepted?.('omp-rpc:pane-accepted', 'omp-session-accepted');
-        return {
-          paneId: 'omp-rpc:pane-accepted',
-          sessionId: 'omp-session-accepted',
-        };
-      },
-    );
-
-    await spawnPaneAndMaybePrompt(
-      {
-        adapterId: 'omp',
-        role: 'worker',
-        prompt: 'Use o resultado advisory confirmado.',
-        scope,
-      },
-      { onPaneCreated, onPromptAccepted },
-    );
-
-    expect(onPaneCreated).toHaveBeenCalledWith(
-      'omp-rpc:pane-accepted',
-      'omp-session-accepted',
-    );
-    expect(onPromptAccepted).toHaveBeenCalledOnce();
-    expect(onPromptAccepted).toHaveBeenCalledWith(
-      'omp-rpc:pane-accepted',
-      'omp-session-accepted',
-      expect.stringContaining('Use o resultado advisory confirmado.'),
-    );
-    expect(onPromptAccepted.mock.calls[0]?.[2]).toContain('marker');
-  });
-
-  it('routes read-only advisory OMP through PTY Seatbelt, never rpc-ui', async () => {
-    const { isBuiltinAdapter } = await import('../adapters/adapter-registry');
-    vi.mocked(isBuiltinAdapter).mockImplementation(
-      (id: string) => id === 'codex' || id === 'omp',
-    );
-
-    for (const transport of ['auto', 'rpc', 'pty'] as const) {
-      stubs.orchSettings.ompMissionTransport = transport;
-      stubs.ompRpcSpawn.mockClear();
-      stubs.requestPaneSpawn.mockClear();
-      stubs.requestPaneSpawn.mockResolvedValueOnce({
-        ok: true,
-        paneId: `pane-omp-ro-${transport}`,
-        sessionId: `session-omp-ro-${transport}`,
-      });
-
-      await expect(
-        spawnPaneAndMaybePrompt({
-          adapterId: 'omp',
-          missionId: 'm1',
-          role: 'worker',
-          readOnly: true,
-          scope,
-        }),
-      ).resolves.toEqual({
-        paneId: `pane-omp-ro-${transport}`,
-        sessionId: `session-omp-ro-${transport}`,
-      });
-
-      expect(stubs.ompRpcSpawn).not.toHaveBeenCalled();
-      expect(stubs.requestPaneSpawn).toHaveBeenCalledOnce();
-      expect(stubs.requestPaneSpawn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          adapterId: 'omp',
-          readOnly: true,
-          missionId: 'm1',
-        }),
-      );
-    }
-
-    vi.mocked(isBuiltinAdapter).mockImplementation((id: string) => id === 'codex');
-  });
-
-  it('não persiste pane nem abre fallback PTY após uma morte pós-spawn ambígua', async () => {
-    const onPaneCreated = vi.fn();
-    const ambiguousFailure = Object.assign(
-      new Error('omp encerrou durante o aceite'),
-      { sideEffectStarted: true },
-    );
-    stubs.ompRpcSpawn.mockImplementationOnce(
-      async (input: {
-        onSessionReady?: (paneId: string, sessionId: string) => void;
-      }) => {
-        // O bind da dispatch já ocorreu; só o onAccepted poderia persistir a
-        // composição. A falha depois desse ponto jamais pode abrir outro PTY.
-        input.onSessionReady?.('omp-rpc:pane-1', 'omp-session-1');
-        throw ambiguousFailure;
-      },
-    );
-
-    await expect(
-      spawnPaneAndMaybePrompt(
-        {
-          adapterId: 'omp',
-          role: 'worker',
-          prompt: 'execute',
-          scope,
-        },
-        { onPaneCreated },
-      ),
-    ).rejects.toBe(ambiguousFailure);
-
-    expect(onPaneCreated).toHaveBeenCalledWith(
-      'omp-rpc:pane-1',
-      'omp-session-1',
-    );
-    expect(stubs.ompRpcSpawn).toHaveBeenCalledOnce();
-    expect(stubs.missionPanesRecord).not.toHaveBeenCalled();
-    expect(stubs.requestPaneSpawn).not.toHaveBeenCalled();
   });
 });
 

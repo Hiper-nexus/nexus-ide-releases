@@ -310,7 +310,7 @@ export const durableHandoffSetSchema = z
  */
 export const advisorParticipationProofSchema = z
   .object({
-    cli: z.enum(["grok", "kimi", "agy", "opencode", "omp", "claude", "glm"]),
+    cli: z.enum(["grok", "kimi", "agy", "opencode", "claude", "glm"]),
     tier: z.enum(["mechanically-confined", "advisory-unconfined"]),
     skipped: z.enum(["no-credential", "orchestrator-reserved"]).nullable(),
     spawnedAt: timestampSchema.nullable(),

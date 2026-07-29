@@ -53,6 +53,23 @@ describe('governed workspace control boundary', () => {
     ).toThrow(/outside the inherited Codex process sandbox/i);
   });
 
+  it.each([
+    'nexus_terminal_run',
+    'nexus_bg_run',
+    'nexus_git_commit',
+  ])('allows operator-choice workers to use main-owned %s', (tool) => {
+    expect(() =>
+      assertGovernedWorkspaceControlBoundary(
+        {
+          role: 'worker',
+          missionId: 'mission-operator-choice',
+          readOnly: false,
+        },
+        tool,
+      ),
+    ).not.toThrow();
+  });
+
   it('preserves direct-user and read-only observation flows', () => {
     expect(() =>
       assertGovernedWorkspaceControlBoundary(

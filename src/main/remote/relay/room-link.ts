@@ -73,7 +73,7 @@ export function normalizeRelayOrigin(
     return { error: 'invalid relay URL' };
   }
   if (FORBIDDEN_RELAY_HOSTNAMES.has(url.hostname.toLowerCase())) {
-    return { error: 'public omp relay is not allowed for Nexus traffic' };
+    return { error: 'this public relay is not allowed for Nexus traffic' };
   }
   let scheme: string;
   switch (url.protocol) {

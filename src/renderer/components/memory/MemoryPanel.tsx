@@ -15,7 +15,7 @@ import './memory-panel.css';
 
 /**
  * Painel de memória agentic por workspace (entrega C2). Drawer à direita, na
- * mesma gramática do orch-panel / omp-panel: denso em sinal, calmo em ruído,
+ * mesma gramática dos drawers operacionais: denso em sinal, calmo em ruído,
  * neon (acento) só no que está VIVO. Mostra os stats do banco, uma busca
  * debounced (recall FTS5) e o estado vazio/desligado com prontidão.
  *

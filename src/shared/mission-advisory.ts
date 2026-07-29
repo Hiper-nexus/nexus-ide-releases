@@ -10,12 +10,6 @@
  * the mission orchestrator is not Claude (reserveClaude).
  */
 /**
- * Transports that cannot hold an advisory PTY lane at all. `omp-rpc` speaks
- * RPC, not a terminal, so there is no process for the kernel sandbox to wrap.
- */
-const NON_PTY_TRANSPORT_CLIS = new Set(['omp-rpc']);
-
-/**
  * Advisory participation is DERIVED, never enumerated.
  *
  * The confinement that makes an advisor safe belongs to Nexus (the kernel
@@ -33,7 +27,7 @@ const NON_PTY_TRANSPORT_CLIS = new Set(['omp-rpc']);
  */
 export function supportsAdvisoryParticipationCli(adapterId: string): boolean {
   const id = adapterId.trim();
-  if (!id || NON_PTY_TRANSPORT_CLIS.has(id)) return false;
+  if (!id) return false;
   return !supportsMechanicallyReadOnlyCli(id);
 }
 

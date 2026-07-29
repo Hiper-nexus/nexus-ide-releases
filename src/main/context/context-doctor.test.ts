@@ -164,6 +164,107 @@ describe('Context Doctor', () => {
       .toEqual(['npm', 'test']);
   });
 
+  it('scaffolds senior quality gates only for explicit project scripts', () => {
+    const { root, scope } = fixture();
+    write(root, 'package.json', {
+      scripts: {
+        typecheck: 'tsc --noEmit',
+        test: 'vitest run',
+        'dead-code': 'knip',
+        duplication: 'jscpd src',
+        'api-similarity': 'node scripts/check-similar-apis.mjs',
+        coverage: 'vitest run --coverage',
+      },
+    });
+
+    ensureContextScaffold(scope);
+
+    const sensors = readSensors(root);
+    expect(sensors.map((sensor) => sensor.id)).toEqual([
+      'typecheck',
+      'unit',
+      'dead-code',
+      'duplication',
+      'api-similarity',
+      'coverage',
+      'design-system',
+    ]);
+    expect(recommendedProjectSensorIds(scope, sensors)).toEqual([
+      'typecheck',
+      'unit',
+      'dead-code',
+      'duplication',
+      'api-similarity',
+      'coverage',
+    ]);
+  });
+
+  it('keeps unavailable senior quality gates advisory instead of inventing commands', () => {
+    const { root, scope } = fixture();
+    write(root, 'package.json', {
+      scripts: {
+        typecheck: 'tsc --noEmit',
+        test: 'vitest run',
+      },
+    });
+    ensureContextScaffold(scope);
+
+    const report = inspectContextReadiness(scope, { knownSymbols: new Set() });
+
+    expect(readSensors(root).map((sensor) => sensor.id)).not.toEqual(
+      expect.arrayContaining([
+        'dead-code',
+        'duplication',
+        'api-similarity',
+        'coverage',
+      ]),
+    );
+    expect(report.blockers).not.toContainEqual(
+      expect.objectContaining({ code: 'missing-quality-sensors' }),
+    );
+    expect(report.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'missing-quality-sensors',
+        details: [
+          'dead-code',
+          'duplication',
+          'api-similarity',
+          'coverage',
+        ],
+      }),
+    );
+  });
+
+  it('warns when an explicit quality script is not represented by a sensor', () => {
+    const { root, scope } = fixture();
+    write(root, 'package.json', {
+      scripts: {
+        typecheck: 'tsc --noEmit',
+        test: 'vitest run',
+        coverage: 'vitest run --coverage',
+      },
+    });
+    ensureContextScaffold(scope);
+    const configPath = path.join(root, '.context/config/sensors.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+      sensors: SensorDefinition[];
+    };
+    write(root, '.context/config/sensors.json', {
+      schemaVersion: 1,
+      sensors: config.sensors.filter((sensor) => sensor.id !== 'coverage'),
+    });
+
+    const report = inspectContextReadiness(scope, { knownSymbols: new Set() });
+
+    expect(report.ready).toBe(false);
+    expect(report.warnings).toContainEqual(
+      expect.objectContaining({
+        code: 'missing-quality-sensors',
+        details: ['coverage'],
+      }),
+    );
+  });
+
   it.each([
     {
       label: 'pnpm lockfile',

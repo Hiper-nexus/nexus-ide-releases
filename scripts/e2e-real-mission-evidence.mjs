@@ -328,9 +328,9 @@ export function assertRealMissionPassEvidence(raw) {
     "ptyChunkSha256",
   ]);
   const expectedSha = sha256(REAL_MISSION_EXPECTED_CONTENT);
-  // A cadeia selada é linear e derivada do roster advisor presente (não-
-  // skipped): scouts advisor → executor codex → revisor codex → reviewers
-  // advisor → QA codex. Cada membro depende e consome o handoff do anterior.
+  // O DAG selado deriva do roster advisor presente: scouts e executor são
+  // raízes do fan-out; a cadeia de reviewers parte do executor e termina no
+  // QA. Advisors skipped ficam fora do grafo.
   const participation = Array.isArray(evidence?.participation)
     ? evidence.participation
     : [];
@@ -355,6 +355,27 @@ export function assertRealMissionPassEvidence(raw) {
   const chainReceipts = chainDispatches.map((dispatch) =>
     record(dispatch?.integrationReceipt),
   );
+  const chainIndexByPlannerId = new Map(
+    chain.map((member, index) => [member.plannerId, index]),
+  );
+  const expectedDependencyTaskIds = (member) => {
+    const ids = member.dependsOnPlannerIds.map((plannerId) => {
+      const dependencyIndex = chainIndexByPlannerId.get(plannerId);
+      return dependencyIndex === undefined
+        ? undefined
+        : chainPlans[dependencyIndex]?.taskId;
+    });
+    return ids.every((taskId) => typeof taskId === "string") ? ids : null;
+  };
+  const exactDependencies = (actual, member) => {
+    const expected = expectedDependencyTaskIds(member);
+    return (
+      expected !== null &&
+      Array.isArray(actual) &&
+      actual.length === expected.length &&
+      actual.every((taskId, index) => taskId === expected[index])
+    );
+  };
   const chainHandoffs = chainDispatches.map((dispatch) =>
     handoffs.find((handoff) => handoff?.id === dispatch?.handoffId),
   );
@@ -859,16 +880,11 @@ export function assertRealMissionPassEvidence(raw) {
     planTasks.length === chain.length &&
     chain.every((member, index) => {
       const task = record(chainPlans[index]);
-      const previous = index > 0 ? record(chainPlans[index - 1]) : null;
       return (
         task !== null &&
         task.agentCategory === member.agentCategory &&
         task.executionMode === member.executionMode &&
-        Array.isArray(task.dependsOn) &&
-        (index === 0
-          ? task.dependsOn.length === 0
-          : task.dependsOn.length === 1 &&
-            task.dependsOn[0] === previous?.taskId)
+        exactDependencies(task.dependsOn, member)
       );
     });
   const chainDispatchIsExact =
@@ -876,17 +892,12 @@ export function assertRealMissionPassEvidence(raw) {
     chain.every((member, index) => {
       const dispatch = chainDispatches[index];
       const receipt = chainReceipts[index];
-      const previous = index > 0 ? chainDispatches[index - 1] : undefined;
       return (
         dispatchIsPhysical(dispatch) &&
         dispatch.taskId === chainPlans[index]?.taskId &&
         dispatch.agentCategory === member.agentCategory &&
         dispatch.executionMode === member.executionMode &&
-        Array.isArray(dispatch.dependsOn) &&
-        (index === 0
-          ? dispatch.dependsOn.length === 0
-          : dispatch.dependsOn.length === 1 &&
-            dispatch.dependsOn[0] === previous?.taskId) &&
+        exactDependencies(dispatch.dependsOn, member) &&
         (member.kind === "execution"
           ? receipt?.kind === "worktree_integrated" &&
             GIT_SHA_PATTERN.test(receipt.reference ?? "") &&
@@ -958,50 +969,65 @@ export function assertRealMissionPassEvidence(raw) {
       noChangeHead === repository?.finalHeadSha
     );
   });
+  const dependencyEdges = chain.flatMap((member, consumerIndex) =>
+    member.dependsOnPlannerIds.map((plannerId) => ({
+      consumerIndex,
+      dependencyIndex: chainIndexByPlannerId.get(plannerId) ?? -1,
+    })),
+  );
   const chainConsumptionIsExact =
-    dependencyConsumptions.length === chain.length - 1 &&
+    dependencyConsumptions.length === dependencyEdges.length &&
     dependencyConsumptions.every(dependencyConsumptionHasExactKeys) &&
-    chain.every((_, index) => {
-      if (index === 0) return true;
-      const dispatch = chainDispatches[index];
-      const previousDispatch = chainDispatches[index - 1];
-      const previousHandoff = record(chainHandoffs[index - 1]);
+    dependencyEdges.every(({ consumerIndex, dependencyIndex }) => {
+      if (dependencyIndex < 0) return false;
+      const dispatch = chainDispatches[consumerIndex];
+      const dependencyDispatch = chainDispatches[dependencyIndex];
+      const dependencyHandoff = record(chainHandoffs[dependencyIndex]);
       const receipt = record(
         dependencyConsumptions.find(
-          (candidate) => candidate?.consumerTaskId === dispatch?.taskId,
+          (candidate) =>
+            candidate?.consumerTaskId === dispatch?.taskId &&
+            candidate?.dependencyTaskId === dependencyDispatch?.taskId,
         ),
       );
       return (
         receipt !== null &&
         receipt.missionId === mission?.id &&
-        receipt.dependencyTaskId === previousDispatch?.taskId &&
-        receipt.handoffId === previousHandoff?.id &&
+        receipt.dependencyTaskId === dependencyDispatch?.taskId &&
+        receipt.handoffId === dependencyHandoff?.id &&
         receipt.consumerSessionId === dispatch?.sessionId &&
         receipt.consumerWorkerIncarnationId ===
           dispatch?.workerIncarnationId &&
         SHA256_PATTERN.test(receipt.promptSha256 ?? "") &&
-        receipt.handoffSummarySha256 === previousHandoff?.summarySha256 &&
+        receipt.handoffSummarySha256 === dependencyHandoff?.summarySha256 &&
         Number.isInteger(receipt.consumedAt) &&
-        previousDispatch?.completedAt <= receipt.consumedAt &&
+        dependencyDispatch?.completedAt <= receipt.consumedAt &&
         receipt.consumedAt <= dispatch?.handoffAcceptedAt &&
         receipt.consumedAt <=
-          record(chainHandoffs[index]?.auditIntent)?.occurredAt
+          record(chainHandoffs[consumerIndex]?.auditIntent)?.occurredAt
       );
     });
   const chainTimingIsExact =
-    chain.every((_, index) => {
+    chain.every((member, index) => {
       const receipt = chainReceipts[index];
       const dispatch = chainDispatches[index];
       const physical = record(chainHandoffs[index]?.physicalReceipt);
-      const previousReceipt = index > 0 ? chainReceipts[index - 1] : null;
+      const dependencies = member.dependsOnPlannerIds.map((plannerId) => {
+        const dependencyIndex = chainIndexByPlannerId.get(plannerId);
+        return dependencyIndex === undefined
+          ? null
+          : chainReceipts[dependencyIndex];
+      });
       return (
         receipt !== null &&
         receipt.completedAt === dispatch?.completedAt &&
         physical?.issuedAt <= receipt.completedAt &&
-        (index === 0 ||
-          (previousReceipt !== null &&
-            previousReceipt.completedAt <= dispatch?.routeConsumedAt &&
-            previousReceipt.completedAt <= physical?.issuedAt))
+        dependencies.every(
+          (dependencyReceipt) =>
+            dependencyReceipt !== null &&
+            dependencyReceipt.completedAt <= dispatch?.routeConsumedAt &&
+            dependencyReceipt.completedAt <= physical?.issuedAt,
+        )
       );
     }) &&
     chainHandoffs.every(

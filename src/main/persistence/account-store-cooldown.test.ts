@@ -348,8 +348,8 @@ describe('restauração automática ao expirar', () => {
 
 describe('hasAvailableAccount (gate de spawn quota-aware)', () => {
   it('adapter sem contas Nexus reporta disponível (auth de terceiro não é nossa)', () => {
-    // omp autogerencia auth em ~/.omp: zero contas gerenciadas ≠ indisponível.
-    expect(hasAvailableAccount('omp')).toBe(true);
+    // CLIs externas autogerenciam auth: zero contas gerenciadas ≠ indisponível.
+    expect(hasAvailableAccount('grok')).toBe(true);
     expect(hasAvailableAccount('claude')).toBe(true);
   });
 

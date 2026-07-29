@@ -98,61 +98,6 @@ com o mecanismo acima, não um caso isolado.
 
 ---
 
-## 2. [BUG REAL, causa raiz confirmada] "omp instala mas UI continua mostrando não instalado"
-
-**Sintoma**: usuário clica "Instalar omp automaticamente", o diálogo nativo confirma
-`brew install can1357/tap/omp`, a instalação roda e termina, mas o painel OMP·RPC
-continua mostrando `binário "omp" não encontrado no PATH`.
-
-**Causa raiz:**
-- `resolveOmpBin()` em `src/main/adapters/omp-rpc-service.ts:199-246` faz **um único**
-  `which omp` (linha ~207) contra `process.env.PATH` do processo, sem fallback.
-- Todo o resto dos adapters (claude/codex/gemini/kimi/grok/opencode/agy) usa
-  `isBinInstalled()` em `src/main/adapters/adapter-registry.ts:142-167`, que **tem
-  fallback resiliente**: se o `which` rápido falhar, ele **re-resolve o PATH do shell de
-  login ao vivo** (`resolveLoginShellPath()`) e tenta de novo com esse PATH atualizado.
-- `path-resolver.ts` (`resolveUserPath()`) roda **uma vez, no bootstrap** do app, e é
-  idempotente (`if (resolved) return;`, linha 75). Se o `brew install` acabou de colocar
-  `omp` num diretório que não estava no PATH resolvido no boot (ex.: primeira instalação
-  do Homebrew nesta máquina, ou tap novo), o `resolveOmpBin` do omp fica preso no PATH
-  velho, enquanto o resto dos adapters teria pego o caminho novo pelo fallback de
-  `isBinInstalled`.
-
-**Fix recomendado (não implementado):**
-Fazer `resolveOmpBin` reusar a mesma lógica de `isBinInstalled`/`resolveRunnerPath`
-(re-resolver login-shell PATH ao vivo quando o `which` rápido falha), em vez de um
-`which` único e sem retry.
-
-**Arquivos envolvidos:**
-- `src/main/adapters/omp-rpc-service.ts:199-246` (`resolveOmpBin`)
-- `src/main/adapters/adapter-registry.ts:142-167` (`isBinInstalled`, padrão a copiar)
-- `src/main/persistence/provider-config-store.ts:806-817` (`resolveRunnerPath`, outro
-  padrão equivalente já usado no fluxo de instalação)
-- `src/main/path-resolver.ts` (contexto: por que o PATH do boot pode ficar stale)
-
----
-
-## 3. [RESOLVIDO] "Close Window" da página OAuth não fecha a aba
-
-**Sintoma**: após login OAuth (ex.: `omp auth-broker login`), a página abre no
-navegador padrão do sistema com "Authentication Successful" + botão "Close Window";
-clicar não fecha a aba.
-
-**Achado original**: a página é renderizada pelo subprocesso externo
-(`omp auth-broker login`), não pelo Nexus; todo browser bloqueia `window.close()`
-numa aba que não foi aberta via `window.open()` de script.
-
-**Fix (implementado)**: o fluxo não depende mais do navegador do sistema. Ao
-receber `awaiting-auth`, o main abre uma **janela in-app endurecida**
-(`src/main/adapters/omp-auth-window.ts`: sessão efêmera, sandbox, sem popups,
-navegação https/loopback-only) que **fecha sozinha** quando o fluxo termina
-(`done` com delay de 1,5 s para a página de sucesso ser perceptível; `error`/
-cancel imediato). O botão do painel virou "Reabrir janela de autorização"
-(com fallback para o navegador do sistema se a janela falhar). Testes:
-`omp-auth-window.test.ts` + `omp-auth-ipc.test.ts`.
-
----
-
 ## 4. [NÃO É BUG] Aba "Skills" mostrando "Nenhuma skill nos caminhos do catálogo"
 
 **Achado**: `skillsDirs()` em `src/main/product-wave-ipc.ts:121-127` é **propositalmente
@@ -228,7 +173,6 @@ mostrar o e-mail).
 | # | Item | Severidade | Esforço estimado |
 |---|------|-----------|-------------------|
 | 1 | Perda de login com 2 contas (refresh token stale) | **Alta** — reincidente, quebra fluxo de trabalho | Médio (sincronizar vault no momento da troca de conta nativa) |
-| 2 | `omp` instala mas mostra "não instalado" | Média | Baixo (reusar `isBinInstalled`) |
 | 5 | Badge do sino cortando ícone | Baixa (cosmético) | Trivial (CSS) |
 | 7 | E-mail ausente no painel de cotas | Baixa (cosmético/UX) | Trivial |
 | 6 | Toolbar do pane cortando botões | Desconhecida — precisa repro | Investigar antes de estimar |
@@ -241,7 +185,6 @@ mostrar o e-mail).
 | # | Item | Status | Onde |
 |---|------|--------|------|
 | 1 | Perda de login 2 contas | ✅ CORRIGIDO | commit `fb41d33` — `syncClaudeBlobFromKeychainIfNative` (read-back Keychain→vault antes de qualquer uso), `activateAccount` sincroniza a conta que sai antes de sobrescrever, conta nativa pinada spawna sem token env |
-| 2 | omp "não instalado" | ✅ CORRIGIDO | commit `fb41d33` — `resolveOmpBin` re-resolve login-shell PATH ao vivo (mesmo fallback de `isBinInstalled`) |
 | 5 | Badge do sino | ✅ CORRIGIDO | commit `fb41d33` — `top:0; right:-5px` (top negativo era recortado pelo overflow da zona de status) |
 | 7 | E-mail no painel de cotas | ✅ CORRIGIDO | commit `fb41d33` — `EntryCard` recebe e exibe `email` |
 | 6 | Toolbar cortando botões | ✅ CORRIGIDO | Repro em harness Playwright (CSS real + DOM real, 12 larguras 300-760px): `.toolbar__meta` (flex-grow) esmagava `.toolbar__actions` e o `overflow:hidden` cortava botões AO MEIO em todas as densidades ("Reiniciar" vazando 44px em 520px); chips rígidos (state/custo/devserver) cortados pela metade em 460-700px, faixa onde nenhuma container query acertava. Fix: actions vira `flex:0 0 auto` (density JS já poda conteúdo), meta ganha wrap+linha única clipada (`row-gap:160px; max-height:26px` — chip que não cabe some INTEIRO), threshold de `icons` sobe 520→580. Pós-fix: 12/12 larguras sem corte parcial. |

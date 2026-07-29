@@ -42,20 +42,22 @@ describe('intent-first kickoff vs monstro playbook', () => {
       acceptanceCriteria: ['Form salva'],
       risk: 'normal',
       maxWorkers: 2,
+      operatorChoice: true,
     });
     expect(prompt).toContain('Corrigir o formulário de login');
     expect(prompt).toContain('Missão autorizada');
     expect(prompt).toContain('You are the orchestrator.');
     expect(prompt).toContain('Worker (executor');
-    expect(prompt).toMatch(
-      /workers mission-bound.*somente o Codex builtin/i,
+    expect(prompt).toMatch(/Use EXATAMENTE o roster aprovado/i);
+    expect(prompt).toMatch(/worktree isolado.*web liberada/i);
+    expect(prompt).toMatch(/Falha técnica.*retentada/i);
+    expect(prompt).not.toMatch(/somente o Codex builtin/i);
+    expect(prompt).not.toMatch(/Diversidade de motores/i);
+    // PREVC runs in parallel and becomes authoritative at promotion; it is not
+    // an agent-owned preflight that can strand a freshly approved mission.
+    expect(prompt).not.toMatch(
+      /nexus_context_doctor|nexus_mission_freeze_contract/i,
     );
-    expect(prompt).toMatch(/Kimi, OMP, Grok, AGY, OpenCode ou Claude.*falha fechado/i);
-    expect(prompt).toMatch(/Terminal\/manual/i);
-    expect(prompt).not.toMatch(/slots?\s+omp|Diversidade de motores/i);
-    // Doctor is on-demand, not forced pre-goal bootstrap.
-    // O protocolo PREVC agora vive na sequência numerada de "Como conduzir".
-    expect(prompt).toMatch(/nexus_mission_freeze_contract/i);
     expect(prompt).not.toMatch(/Pipeline obrigatório/i);
   });
 

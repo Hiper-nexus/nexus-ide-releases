@@ -5,21 +5,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   canUseNexusMcp,
   cleanupAgyMcpConfig,
-  cleanupOmpMcpConfig,
   codexMcpArgs,
   geminiMcpFragment,
   mergeGeminiSettings,
-  mergeOmpMcpConfig,
-  ompMcpFragment,
   prepareAgyMcpConfig,
-  prepareOmpMcpConfig,
   purgeStaleAgyMcpConfigs,
   supportsMcpInjection,
 } from "./cli-mcp-inject";
 
 const tempDirs: string[] = [];
 const preparedTokens: string[] = [];
-const preparedOmpTokens: string[] = [];
 
 function makeTempDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-agy-mcp-test-"));
@@ -38,7 +33,6 @@ function mode(file: string): number {
 
 afterEach(() => {
   for (const token of preparedTokens.splice(0)) cleanupAgyMcpConfig(token);
-  for (const token of preparedOmpTokens.splice(0)) cleanupOmpMcpConfig(token);
   for (const dir of tempDirs.splice(0))
     fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -52,8 +46,7 @@ describe("supportsMcpInjection", () => {
       | "agy"
       | "opencode"
       | "kimi"
-      | "grok"
-      | "omp",
+      | "grok",
     mcpAutoload = nexusMcp === "autoload",
   ) => ({
     quirks: {
@@ -66,16 +59,15 @@ describe("supportsMcpInjection", () => {
 
   it("deriva capability da metadata declarativa, sem lista paralela por id", () => {
     expect(supportsMcpInjection(adapter("codex"))).toBe("codex");
-    expect(supportsMcpInjection(adapter("agy"))).toBe("agy");
+    expect(supportsMcpInjection(adapter("agy"))).toBe(null);
     expect(supportsMcpInjection(adapter("opencode"))).toBe("opencode");
     expect(supportsMcpInjection(adapter("kimi"))).toBe("kimi");
     expect(supportsMcpInjection(adapter("grok"))).toBe("grok");
-    expect(supportsMcpInjection(adapter("omp"))).toBe("omp");
     expect(supportsMcpInjection(adapter("autoload"))).toBe(null);
     expect(supportsMcpInjection(adapter("none"))).toBe(null);
     expect(canUseNexusMcp(adapter("autoload"))).toBe(true);
     expect(canUseNexusMcp(adapter("opencode"))).toBe(true);
-    expect(canUseNexusMcp(adapter("omp"))).toBe(true);
+    expect(canUseNexusMcp(adapter("agy"))).toBe(false);
     expect(canUseNexusMcp(adapter("none"))).toBe(false);
   });
 
@@ -391,193 +383,6 @@ describe("prepareAgyMcpConfig", () => {
     expect(
       fs.existsSync(
         path.join(result.geminiHomeDir, "config", "skills", "blocked"),
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("prepareOmpMcpConfig", () => {
-  it("gera fragment http com bearer e merge preservando servers do usuário", () => {
-    const frag = ompMcpFragment("http://127.0.0.1:4321/mcp", "tok-omp");
-    expect(frag.mcpServers.nexus).toEqual({
-      type: "http",
-      url: "http://127.0.0.1:4321/mcp",
-      headers: { Authorization: "Bearer tok-omp" },
-    });
-    const merged = mergeOmpMcpConfig(
-      {
-        mcpServers: { user: { type: "stdio", command: "x" } },
-        disabledServers: ["y"],
-      },
-      frag,
-    ) as {
-      mcpServers: Record<string, unknown>;
-      disabledServers: string[];
-    };
-    expect(merged.mcpServers.user).toEqual({ type: "stdio", command: "x" });
-    expect(merged.disabledServers).toEqual(["y"]);
-    expect(merged.mcpServers.nexus).toEqual(frag.mcpServers.nexus);
-  });
-
-  it("preserva login/sessões por symlink e isola o bearer no mcp.json privado", () => {
-    const root = makeTempDir();
-    const realHome = path.join(root, "real-home");
-    const artifacts = path.join(root, "omp-artifacts");
-    const agentDb = path.join(realHome, ".omp", "agent", "agent.db");
-    fs.mkdirSync(path.dirname(agentDb), { recursive: true });
-    fs.writeFileSync(agentDb, "sqlite-login-blob");
-    writeJson(path.join(realHome, ".omp", "agent", "mcp.json"), {
-      mcpServers: { userServer: { type: "stdio", command: "keep" } },
-    });
-    fs.writeFileSync(path.join(realHome, ".gitconfig"), "[user]");
-    const token = "token-omp-private";
-    preparedOmpTokens.push(token);
-
-    const result = prepareOmpMcpConfig("http://127.0.0.1:4321/mcp", token, {
-      home: realHome,
-      artifactRoot: artifacts,
-    });
-
-    // Login e home continuam visíveis através do overlay.
-    expect(
-      fs.realpathSync(path.join(result.homeDir, ".omp", "agent", "agent.db")),
-    ).toBe(fs.realpathSync(agentDb));
-    expect(fs.realpathSync(path.join(result.homeDir, ".gitconfig"))).toBe(
-      fs.realpathSync(path.join(realHome, ".gitconfig")),
-    );
-    // sessions/blobs reais criados e linkados — escrita do pane persiste.
-    for (const dir of ["sessions", "blobs"]) {
-      expect(
-        fs.realpathSync(path.join(result.homeDir, ".omp", "agent", dir)),
-      ).toBe(fs.realpathSync(path.join(realHome, ".omp", "agent", dir)));
-    }
-    // mcp.json privado: 0600, com merge do server do usuário + nexus.
-    expect(mode(result.configPath)).toBe(0o600);
-    const config = JSON.parse(fs.readFileSync(result.configPath, "utf8")) as {
-      mcpServers: Record<
-        string,
-        { url?: string; headers?: Record<string, string> }
-      >;
-    };
-    expect(config.mcpServers.userServer).toEqual({
-      type: "stdio",
-      command: "keep",
-    });
-    expect(config.mcpServers.nexus).toEqual({
-      type: "http",
-      url: "http://127.0.0.1:4321/mcp",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    // O mcp.json REAL do usuário nunca ganha o bearer.
-    const realRaw = fs.readFileSync(
-      path.join(realHome, ".omp", "agent", "mcp.json"),
-      "utf8",
-    );
-    expect(realRaw).not.toContain(token);
-  });
-
-  it("isola tokens concorrentes e sync-back devolve arquivos novos sem o mcp.json", () => {
-    const root = makeTempDir();
-    const realHome = path.join(root, "real-home");
-    const artifacts = path.join(root, "omp-artifacts");
-    fs.mkdirSync(realHome, { recursive: true });
-    const first = "token-omp-first";
-    const second = "token-omp-second";
-    preparedOmpTokens.push(first, second);
-
-    const a = prepareOmpMcpConfig("http://127.0.0.1:4001/mcp", first, {
-      home: realHome,
-      artifactRoot: artifacts,
-    });
-    const b = prepareOmpMcpConfig("http://127.0.0.1:4002/mcp", second, {
-      home: realHome,
-      artifactRoot: artifacts,
-    });
-    expect(a.homeDir).not.toBe(b.homeDir);
-    expect(fs.readFileSync(a.configPath, "utf8")).not.toContain(second);
-    expect(fs.readFileSync(b.configPath, "utf8")).not.toContain(first);
-
-    // Primeiro uso: omp cria agent.db direto no overlay (não existia real).
-    fs.writeFileSync(
-      path.join(a.homeDir, ".omp", "agent", "agent.db"),
-      "fresh-login",
-    );
-    cleanupOmpMcpConfig(first);
-    expect(fs.existsSync(a.homeDir)).toBe(false);
-    expect(fs.existsSync(b.homeDir)).toBe(true);
-    // Sync-back preservou o login novo no perfil real, sem levar o mcp.json.
-    expect(
-      fs.readFileSync(path.join(realHome, ".omp", "agent", "agent.db"), "utf8"),
-    ).toBe("fresh-login");
-    const realMcp = path.join(realHome, ".omp", "agent", "mcp.json");
-    if (fs.existsSync(realMcp)) {
-      expect(fs.readFileSync(realMcp, "utf8")).not.toContain(first);
-    }
-
-    cleanupOmpMcpConfig(second);
-    expect(fs.existsSync(b.homeDir)).toBe(false);
-  });
-
-  it("mantém apenas Nexus e skills explicitamente concedidas no HOME governado", () => {
-    const root = makeTempDir();
-    const realHome = path.join(root, "real-home");
-    const artifacts = path.join(root, "omp-artifacts");
-    writeJson(path.join(realHome, ".omp", "agent", "mcp.json"), {
-      mcpServers: { external: { type: "stdio", command: "external-mcp" } },
-      plugins: ["external-plugin"],
-    });
-    fs.mkdirSync(path.join(realHome, ".omp", "agent", "plugins", "external"), {
-      recursive: true,
-    });
-    fs.mkdirSync(path.join(realHome, ".omp", "agent", "skills", "allowed"), {
-      recursive: true,
-    });
-    fs.writeFileSync(
-      path.join(realHome, ".omp", "agent", "skills", "allowed", "SKILL.md"),
-      "# allowed",
-    );
-    fs.mkdirSync(path.join(realHome, ".omp", "agent", "skills", "blocked"), {
-      recursive: true,
-    });
-    fs.writeFileSync(
-      path.join(realHome, ".omp", "agent", "skills", "blocked", "SKILL.md"),
-      "# blocked",
-    );
-    const token = "omp-governed-token";
-    preparedOmpTokens.push(token);
-
-    const result = prepareOmpMcpConfig("http://127.0.0.1:4321/mcp", token, {
-      home: realHome,
-      artifactRoot: artifacts,
-      governed: true,
-      allowedSkills: ["allowed"],
-    });
-    const raw = fs.readFileSync(result.configPath, "utf8");
-    const config = JSON.parse(raw) as {
-      mcpServers: Record<string, unknown>;
-    };
-
-    expect(Object.keys(config.mcpServers)).toEqual(["nexus"]);
-    expect(raw).not.toContain("external-mcp");
-    expect(raw).not.toContain("external-plugin");
-    expect(
-      fs.existsSync(path.join(result.homeDir, ".omp", "agent", "plugins")),
-    ).toBe(false);
-    expect(
-      fs.existsSync(
-        path.join(
-          result.homeDir,
-          ".omp",
-          "agent",
-          "skills",
-          "allowed",
-          "SKILL.md",
-        ),
-      ),
-    ).toBe(true);
-    expect(
-      fs.existsSync(
-        path.join(result.homeDir, ".omp", "agent", "skills", "blocked"),
       ),
     ).toBe(false);
   });

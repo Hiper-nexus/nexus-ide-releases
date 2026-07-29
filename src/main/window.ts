@@ -327,7 +327,7 @@ export function createMainWindow(): BrowserWindow | null {
         sealRuntimeAdmission: sealRuntimeProcessAdmissionForShutdown,
         // app.quit enters Main's fail-closed before-quit lane. It does not
         // destroy this WebContents until orchestration and every physical
-        // PTY/OMP tree have settled.
+        // PTY tree has settled.
         quitApp: () => app.quit(),
       });
     };

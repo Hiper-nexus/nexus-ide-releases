@@ -6,21 +6,29 @@ import type { OrientationSnapshot } from '../../../shared/orientation-types';
 import { canonicalJson } from '../canonical-json';
 import { inspectContextReadiness } from '../context-doctor';
 import {
-  ProcessGitRunner,
+  AsyncProcessGitRunner,
+  type AsyncGitRunner,
   type GitRunner,
 } from '../../runtime/worktree-manager';
 import {
   readOrientationCache,
-  writeOrientationCache,
+  writeOrientationCacheAsync,
 } from './orientation-cache';
-import { enrichWithGraphify } from './graphify-enricher';
-import { buildOrientationInventory } from './orientation-inventory';
-import {
-  buildOrientationImportGraph,
-  mergeHubs,
-} from './orientation-import-graph';
+import { buildOrientationInventoryAsync } from './orientation-inventory';
+import { mergeHubs } from './orientation-import-graph';
 import { renderOrientationMarkdown } from './orientation-markdown';
-import { buildOrientationSymbols } from './orientation-symbols';
+import {
+  writeOrientationStructuralIndexAsync,
+} from './orientation-structural-index-cache';
+import {
+  buildImportGraphFromStructuralIndexAsync,
+  buildOrientationStructuralIndexAsync,
+  buildSymbolsFromStructuralIndexAsync,
+  orientationWalkFromStructuralIndexAsync,
+  structuralIndexFingerprintAsync,
+  updateOrientationStructuralIndexAsync,
+  type OrientationStructuralIndex,
+} from './orientation-structural-index';
 import {
   DEFAULT_ORIENTATION_LIMITS,
   REQUIRED_CONTEXT_DOCS,
@@ -29,34 +37,73 @@ import {
   type OrientationLimits,
   type ProjectOrientationMap,
 } from './orientation-types';
-import { walkOrientationTree } from './orientation-walker';
+import {
+  walkOrientationTreeAsync,
+  type OrientationWalkResult,
+} from './orientation-walker';
+import {
+  orientationAbortError,
+  throwIfOrientationAborted,
+  yieldOrientationWork,
+} from './orientation-cooperative';
+
+export type OrientationTreeWalker = (
+  scope: ProjectExecutionScope,
+  limits: OrientationLimits,
+  signal?: AbortSignal,
+) => Promise<OrientationWalkResult>;
 
 export interface ProjectOrientationServiceOptions {
   readonly cacheRoot: string;
   readonly limits?: Partial<OrientationLimits>;
+  /** Legacy synchronous test adapter. Production uses asyncGitRunner/default. */
   readonly gitRunner?: GitRunner;
+  readonly asyncGitRunner?: AsyncGitRunner;
+  readonly treeWalker?: OrientationTreeWalker;
   readonly now?: () => number;
   /** When false, skip context doctor (tests / pure inventory). Default true. */
   readonly includeContextSummary?: boolean;
+}
+
+export interface OrientationMergeRefresh {
+  readonly integrationBaseSha: string;
+  readonly integratedSha: string;
+  readonly changedFiles: readonly string[];
 }
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function fileExists(root: string, relative: string): boolean {
+async function fileExists(root: string, relative: string): Promise<boolean> {
   try {
     const absolute = path.join(root, relative);
-    const stat = fs.lstatSync(absolute);
-    return stat.isFile() && !stat.isSymbolicLink();
+    const stat = await fs.promises.lstat(absolute);
+    if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    return path.normalize(await fs.promises.realpath(absolute)) ===
+      path.normalize(absolute);
   } catch {
     return false;
   }
 }
 
-function resolveHeadSha(root: string, git: GitRunner): string | null {
+async function directoryExists(absolute: string): Promise<boolean> {
   try {
-    const result = git.run(
+    const stat = await fs.promises.lstat(absolute);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+    return path.normalize(await fs.promises.realpath(absolute)) ===
+      path.normalize(absolute);
+  } catch {
+    return false;
+  }
+}
+
+async function resolveHeadSha(
+  root: string,
+  git: AsyncGitRunner,
+): Promise<string | null> {
+  try {
+    const result = await git.run(
       root,
       ['rev-parse', '--verify', 'HEAD^{commit}'],
       { allowFailure: true, timeoutMs: 5_000 },
@@ -69,18 +116,17 @@ function resolveHeadSha(root: string, git: GitRunner): string | null {
   }
 }
 
+function validSha(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  return /^[a-f0-9]{40,64}$/.test(normalized) ? normalized : null;
+}
+
 function scopeKey(scope: ProjectExecutionScope): string {
   return `${scope.projectId}\0${scope.checkoutId}`;
 }
 
-function orientationAbortError(): Error {
-  const error = new Error('orientation build aborted');
-  error.name = 'AbortError';
-  return error;
-}
-
 function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw orientationAbortError();
+  throwIfOrientationAborted(signal);
 }
 
 function isAbortError(error: unknown): boolean {
@@ -97,35 +143,37 @@ function awaitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<
   });
 }
 
-function yieldToEventLoop(signal?: AbortSignal): Promise<void> {
-  throwIfAborted(signal);
-  return new Promise((resolve, reject) => {
-    const immediate = setImmediate(() => {
-      signal?.removeEventListener('abort', abort);
-      resolve();
-    });
-    const abort = () => {
-      clearImmediate(immediate);
-      reject(orientationAbortError());
-    };
-    signal?.addEventListener('abort', abort, { once: true });
-  });
+function asyncAdapter(git: GitRunner): AsyncGitRunner {
+  const run: AsyncGitRunner['run'] = async (cwd, args, options) =>
+    git.run(cwd, args, options);
+  return Object.freeze({ run });
 }
 
 export class ProjectOrientationService {
   readonly #cacheRoot: string;
   readonly #limits: OrientationLimits;
-  readonly #git: GitRunner;
+  readonly #git: AsyncGitRunner;
+  readonly #treeWalker: OrientationTreeWalker;
   readonly #now: () => number;
   readonly #includeContextSummary: boolean;
   readonly #memory = new Map<string, ProjectOrientationMap>();
+  readonly #structuralIndexes = new Map<string, OrientationStructuralIndex>();
   readonly #inflight = new Map<string, Promise<ProjectOrientationMap>>();
+  readonly #incrementalTails = new Map<string, Promise<void>>();
 
   constructor(options: ProjectOrientationServiceOptions) {
     if (!options.cacheRoot.trim()) throw new Error('orientation cacheRoot is required');
+    if (options.gitRunner && options.asyncGitRunner) {
+      throw new Error('configure only one orientation Git runner');
+    }
     this.#cacheRoot = options.cacheRoot;
     this.#limits = Object.freeze({ ...DEFAULT_ORIENTATION_LIMITS, ...options.limits });
-    this.#git = options.gitRunner ?? new ProcessGitRunner();
+    this.#git =
+      options.asyncGitRunner ??
+      (options.gitRunner
+        ? asyncAdapter(options.gitRunner)
+        : new AsyncProcessGitRunner());
+    this.#treeWalker = options.treeWalker ?? walkOrientationTreeAsync;
     this.#now = options.now ?? Date.now;
     this.#includeContextSummary = options.includeContextSummary !== false;
   }
@@ -151,7 +199,7 @@ export class ProjectOrientationService {
     if (!options.force) {
       const existing = this.get(scope);
       if (existing && (existing.status === 'ready' || existing.status === 'partial')) {
-        const head = resolveHeadSha(scope.rootRealPath, this.#git);
+        const head = await resolveHeadSha(scope.rootRealPath, this.#git);
         if (head === existing.headSha || (head === null && existing.headSha === null)) {
           return existing;
         }
@@ -202,11 +250,11 @@ export class ProjectOrientationService {
     }
 
     const buildPromise = this.#build(scope, options.signal)
-      .then((map) => {
+      .then(async (map) => {
         throwIfAborted(options.signal);
         this.#memory.set(key, map);
         try {
-          writeOrientationCache(this.#cacheRoot, scope, map);
+          await writeOrientationCacheAsync(this.#cacheRoot, scope, map);
         } catch (error) {
           console.warn('[orientation] cache write failed:', error);
         }
@@ -237,6 +285,29 @@ export class ProjectOrientationService {
     return this.ensure(scope, { reason: 'refresh', force: true, signal });
   }
 
+  async refreshAfterMerge(
+    scope: ProjectExecutionScope,
+    refresh: OrientationMergeRefresh,
+    signal?: AbortSignal,
+  ): Promise<ProjectOrientationMap> {
+    throwIfAborted(signal);
+    const key = scopeKey(scope);
+    const previous = this.#incrementalTails.get(key) ?? Promise.resolve();
+    const operation = previous.then(() =>
+      this.#refreshAfterMergeNow(scope, refresh, signal));
+    const tail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#incrementalTails.set(key, tail);
+    void tail.then(() => {
+      if (this.#incrementalTails.get(key) === tail) {
+        this.#incrementalTails.delete(key);
+      }
+    });
+    return operation;
+  }
+
   toSnapshot(map: ProjectOrientationMap): OrientationSnapshot {
     return Object.freeze({
       schemaVersion: 1 as const,
@@ -261,214 +332,396 @@ export class ProjectOrientationService {
     const started = this.#now();
     try {
       throwIfAborted(signal);
-      const root = fs.realpathSync(scope.rootRealPath);
+      const root = await fs.promises.realpath(scope.rootRealPath);
       if (root !== scope.rootRealPath) throw new Error('project root identity changed');
 
-      const walk = walkOrientationTree(scope, this.#limits);
-      await yieldToEventLoop(signal);
-      const inventory = buildOrientationInventory(scope, walk);
+      const headPromise = resolveHeadSha(root, this.#git);
+      const walk = await this.#treeWalker(scope, this.#limits, signal);
+      const headSha = await headPromise;
+      const index = await buildOrientationStructuralIndexAsync(
+        scope,
+        walk,
+        this.#limits,
+        headSha,
+        signal,
+      );
+      const map = await this.#assembleMap(scope, index, started, signal);
       throwIfAborted(signal);
-      const symbolSummary = buildOrientationSymbols(scope, walk, this.#limits);
-      await yieldToEventLoop(signal);
-      const importGraph = buildOrientationImportGraph(scope, walk, this.#limits);
-      const mergedHubs = mergeHubs(
+      this.#structuralIndexes.set(scopeKey(scope), index);
+      try {
+        await writeOrientationStructuralIndexAsync(
+          this.#cacheRoot,
+          scope,
+          index,
+          signal,
+        );
+      } catch (error) {
+        console.warn('[orientation] structural index write failed:', error);
+      }
+      return map;
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      return this.#failedMap(scope, started, error);
+    }
+  }
+
+  async #refreshAfterMergeNow(
+    scope: ProjectExecutionScope,
+    refresh: OrientationMergeRefresh,
+    signal?: AbortSignal,
+  ): Promise<ProjectOrientationMap> {
+    const key = scopeKey(scope);
+    const inflight = this.#inflight.get(key);
+    if (inflight) {
+      try {
+        await awaitWithSignal(inflight, signal);
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+      }
+    }
+    throwIfAborted(signal);
+
+    const existing = this.get(scope);
+    let index = this.#structuralIndexes.get(key) ?? null;
+    if (
+      !existing ||
+      existing.status !== 'ready' ||
+      !index ||
+      index.truncated ||
+      index.headSha !== existing.headSha
+    ) {
+      return this.refresh(scope, signal);
+    }
+
+    const started = this.#now();
+    const fallbackPaths = Object.freeze([...refresh.changedFiles]);
+    const requestedHead = validSha(refresh.integratedSha)
+      ? refresh.integratedSha
+      : null;
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        throwIfAborted(signal);
+        const targetHead =
+          (await resolveHeadSha(scope.rootRealPath, this.#git)) ?? requestedHead;
+        const changedPaths = await this.#changedPathsForUpdate(
+          scope,
+          index,
+          targetHead,
+          refresh,
+          fallbackPaths,
+        );
+        if (!changedPaths) return this.refresh(scope, signal);
+        index = await updateOrientationStructuralIndexAsync(
+          scope,
+          index,
+          changedPaths,
+          this.#limits,
+          targetHead,
+          signal,
+        );
+        const map = await this.#assembleMap(scope, index, started, signal);
+        const latestHead = await resolveHeadSha(scope.rootRealPath, this.#git);
+        if (!latestHead || latestHead === targetHead) {
+          await this.#publishIncremental(scope, index, map, signal);
+          return map;
+        }
+      }
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      console.warn(
+        '[orientation] incremental refresh failed; rebuilding full map:',
+        error,
+      );
+    }
+    return this.refresh(scope, signal);
+  }
+
+  async #changedPathsForUpdate(
+    scope: ProjectExecutionScope,
+    index: OrientationStructuralIndex,
+    targetHead: string | null,
+    refresh: OrientationMergeRefresh,
+    fallbackPaths: readonly string[],
+  ): Promise<readonly string[] | null> {
+    if (index.headSha === targetHead) return Object.freeze([]);
+    if (index.headSha && targetHead) {
+      const exact = await this.#changedFilesBetween(
+        scope.rootRealPath,
+        index.headSha,
+        targetHead,
+      );
+      if (exact) return exact;
+    }
+    if (
+      index.headSha === validSha(refresh.integrationBaseSha) &&
+      targetHead === validSha(refresh.integratedSha)
+    ) {
+      return fallbackPaths;
+    }
+    return null;
+  }
+
+  async #changedFilesBetween(
+    root: string,
+    fromSha: string,
+    toSha: string,
+  ): Promise<readonly string[] | null> {
+    try {
+      const result = await this.#git.run(
+        root,
+        [
+          'diff',
+          '--name-only',
+          '-z',
+          '--no-renames',
+          fromSha,
+          toSha,
+          '--',
+        ],
+        { allowFailure: true, timeoutMs: 10_000 },
+      );
+      if (result.status !== 0) return null;
+      return Object.freeze(
+        result.stdout
+          .split('\0')
+          .filter((relativePath) => relativePath.length > 0),
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  async #publishIncremental(
+    scope: ProjectExecutionScope,
+    index: OrientationStructuralIndex,
+    map: ProjectOrientationMap,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const key = scopeKey(scope);
+    this.#structuralIndexes.set(key, index);
+    this.#memory.set(key, map);
+    try {
+      await writeOrientationStructuralIndexAsync(
+        this.#cacheRoot,
+        scope,
+        index,
+        signal,
+      );
+    } catch (error) {
+      console.warn('[orientation] structural index write failed:', error);
+    }
+    try {
+      await writeOrientationCacheAsync(this.#cacheRoot, scope, map);
+    } catch (error) {
+      console.warn('[orientation] cache write failed:', error);
+    }
+  }
+
+  async #assembleMap(
+    scope: ProjectExecutionScope,
+    index: OrientationStructuralIndex,
+    started: number,
+    signal?: AbortSignal,
+  ): Promise<ProjectOrientationMap> {
+    throwIfAborted(signal);
+    const root = await fs.promises.realpath(scope.rootRealPath);
+    if (root !== scope.rootRealPath) throw new Error('project root identity changed');
+
+    const walk = await orientationWalkFromStructuralIndexAsync(index, signal);
+    const [inventory, symbolSummary, importGraph] = await Promise.all([
+      buildOrientationInventoryAsync(scope, walk, signal),
+      buildSymbolsFromStructuralIndexAsync(index, this.#limits, signal),
+      buildImportGraphFromStructuralIndexAsync(index, this.#limits, signal),
+    ]);
+    const symbols = Object.freeze({
+      ...symbolSummary,
+      hubs: mergeHubs(
         symbolSummary.hubs,
         importGraph.hubsByFanIn,
         this.#limits.maxHubs,
-      );
-      const symbols = Object.freeze({
-        ...symbolSummary,
-        hubs: mergedHubs,
-      });
+      ),
+    });
+    const graph = importGraph.graph;
+    await yieldOrientationWork(signal);
 
-      let graph = importGraph.graph;
-      let graphWarning: string | undefined;
+    const rootDocStates = await Promise.all(
+      ROOT_DOCS.map(async (relative) =>
+        [relative, await fileExists(root, relative)] as const),
+    );
+    const contextDocStates = await Promise.all(
+      REQUIRED_CONTEXT_DOCS.map(async (relative) =>
+        [relative, await fileExists(root, relative)] as const),
+    );
+    const rootDocs = rootDocStates
+      .filter(([, exists]) => exists)
+      .map(([relative]) => relative);
+    const contextDocsPresent = contextDocStates
+      .filter(([, exists]) => exists)
+      .map(([relative]) => relative);
+    const contextDocsMissing = contextDocStates
+      .filter(([, exists]) => !exists)
+      .map(([relative]) => relative);
+    const hasContextScaffold =
+      (await fileExists(root, '.context/config/policy.json')) ||
+      await directoryExists(path.join(root, '.context'));
+
+    let contextSummary: ProjectOrientationMap['contextSummary'] = Object.freeze({
+      ready: false,
+      blockerCodes: Object.freeze([] as string[]),
+      warningCodes: Object.freeze([] as string[]),
+    });
+    if (this.#includeContextSummary) {
       try {
-        const enriched = enrichWithGraphify(scope, { graph, symbols });
-        if (enriched) {
-          graph = Object.freeze({
-            ...enriched.graph,
-            adjacency: graph.adjacency,
-            reverse: graph.reverse,
-          });
-          graphWarning = enriched.warning;
-        }
+        await yieldOrientationWork(signal);
+        const report = inspectContextReadiness(scope, {
+          knownSymbols: symbols.symbols,
+        });
+        contextSummary = Object.freeze({
+          ready: report.ready,
+          contextRevision: report.contextRevision,
+          blockerCodes: Object.freeze(
+            report.blockers.map((item) => item.code as string),
+          ),
+          warningCodes: Object.freeze(
+            report.warnings.map((item) => item.code as string),
+          ),
+        });
       } catch {
-        // Graphify is optional; never fail the base map.
-      }
-      if (graphWarning) {
-        graph = Object.freeze({ ...graph, warning: graphWarning });
-      }
-      await yieldToEventLoop(signal);
-
-      const headSha = resolveHeadSha(root, this.#git);
-      const treeFingerprint = sha256(walk.treeFingerprintParts.join('\n'));
-
-      const rootDocs = ROOT_DOCS.filter((relative) => fileExists(root, relative));
-      const contextDocsPresent = REQUIRED_CONTEXT_DOCS.filter((relative) =>
-        fileExists(root, relative),
-      );
-      const contextDocsMissing = REQUIRED_CONTEXT_DOCS.filter(
-        (relative) => !fileExists(root, relative),
-      );
-      const hasContextScaffold =
-        fileExists(root, '.context/config/policy.json') ||
-        fs.existsSync(path.join(root, '.context'));
-
-      let contextSummary: ProjectOrientationMap['contextSummary'] = Object.freeze({
-        ready: false,
-        blockerCodes: Object.freeze([] as string[]),
-        warningCodes: Object.freeze([] as string[]),
-      });
-
-      if (this.#includeContextSummary) {
-        try {
-          const report = inspectContextReadiness(scope, {
-            knownSymbols: symbols.symbols,
-          });
-          contextSummary = Object.freeze({
-            ready: report.ready,
-            contextRevision: report.contextRevision,
-            blockerCodes: Object.freeze(
-              report.blockers.map((item) => item.code as string),
-            ),
-            warningCodes: Object.freeze(
-              report.warnings.map((item) => item.code as string),
-            ),
-          });
-        } catch {
-          contextSummary = Object.freeze({
-            ready: false,
-            blockerCodes: Object.freeze(['invalid-context']),
-            warningCodes: Object.freeze([] as string[]),
-          });
-        }
-      }
-      throwIfAborted(signal);
-
-      const status = walk.truncated ? 'partial' : 'ready';
-      const duration = Math.max(0, this.#now() - started);
-      const errors: string[] = [];
-      if (walk.truncated) errors.push('inventory truncated by file/byte/depth limits');
-      if (graphWarning) errors.push(graphWarning);
-      const base = {
-        schemaVersion: 1 as const,
-        projectId: scope.projectId,
-        checkoutId: scope.checkoutId,
-        headSha,
-        treeFingerprint,
-        builtAt: new Date(this.#now()).toISOString(),
-        buildDurationMs: duration,
-        status: status as 'ready' | 'partial',
-        error: errors.length > 0 ? errors.join('; ') : undefined,
-        limits: this.#limits,
-        inventory,
-        symbols,
-        graph,
-        docs: Object.freeze({
-          rootDocs: Object.freeze([...rootDocs]),
-          contextDocsPresent: Object.freeze([...contextDocsPresent]),
-          contextDocsMissing: Object.freeze([...contextDocsMissing]),
-          hasContextScaffold,
-        }),
-        contextSummary,
-      };
-
-      const orientationMarkdown = renderOrientationMarkdown(base, this.#limits.markdownMaxChars);
-      throwIfAborted(signal);
-      const mapHash = sha256(
-        canonicalJson({
-          projectId: base.projectId,
-          checkoutId: base.checkoutId,
-          headSha: base.headSha,
-          treeFingerprint: base.treeFingerprint,
-          inventory: base.inventory,
-          symbols: {
-            filesScanned: base.symbols.filesScanned,
-            symbolCount: base.symbols.symbolCount,
-            hubs: base.symbols.hubs,
-            coverage: base.symbols.coverage,
-          },
-          graph: {
-            mode: base.graph.mode,
-            nodeCount: base.graph.nodeCount,
-            edgeCount: base.graph.edgeCount,
-            sampleEdges: base.graph.sampleEdges,
-            enricher: base.graph.enricher,
-          },
-          docs: base.docs,
-          contextSummary: base.contextSummary,
-          status: base.status,
-        }),
-      );
-
-      return Object.freeze({
-        ...base,
-        orientationMarkdown,
-        mapHash,
-      });
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      const failedBase = {
-        schemaVersion: 1 as const,
-        projectId: scope.projectId,
-        checkoutId: scope.checkoutId,
-        headSha: null,
-        treeFingerprint: sha256('failed'),
-        builtAt: new Date(this.#now()).toISOString(),
-        buildDurationMs: Math.max(0, this.#now() - started),
-        status: 'failed' as const,
-        error: message.slice(0, 4_096),
-        limits: this.#limits,
-        inventory: Object.freeze({
-          languages: Object.freeze([]),
-          topDirs: Object.freeze([]),
-          entrypoints: Object.freeze([]),
-          manifests: Object.freeze([]),
-          scripts: Object.freeze({}),
-          packageManagers: Object.freeze([]),
-          fileCount: 0,
-          sourceFileCount: 0,
-          bytesScanned: 0,
-          projectName: null,
-        }),
-        symbols: Object.freeze({
-          filesScanned: 0,
-          symbolCount: 0,
-          hubs: Object.freeze([]),
-          coverage: Object.freeze([]),
-          symbols: new Set<string>(),
-        }),
-        graph: Object.freeze({
-          mode: 'none' as const,
-          nodeCount: 0,
-          edgeCount: 0,
-          sampleEdges: Object.freeze([] as const),
-          enricher: 'none' as const,
-        }),
-        docs: Object.freeze({
-          rootDocs: Object.freeze([]),
-          contextDocsPresent: Object.freeze([]),
-          contextDocsMissing: Object.freeze([...REQUIRED_CONTEXT_DOCS]),
-          hasContextScaffold: false,
-        }),
-        contextSummary: Object.freeze({
+        contextSummary = Object.freeze({
           ready: false,
           blockerCodes: Object.freeze(['invalid-context']),
           warningCodes: Object.freeze([] as string[]),
-        }),
-      };
-      const orientationMarkdown = renderOrientationMarkdown(
-        failedBase,
-        this.#limits.markdownMaxChars,
-      );
-      return Object.freeze({
-        ...failedBase,
-        orientationMarkdown,
-        mapHash: sha256(canonicalJson({ status: 'failed', error: message })),
-      });
+        });
+      }
     }
+    throwIfAborted(signal);
+
+    const status = index.truncated ? 'partial' : 'ready';
+    const treeFingerprint = await structuralIndexFingerprintAsync(
+      index,
+      signal,
+    );
+    const base = {
+      schemaVersion: 1 as const,
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+      headSha: index.headSha,
+      treeFingerprint,
+      builtAt: new Date(this.#now()).toISOString(),
+      buildDurationMs: Math.max(0, this.#now() - started),
+      status: status as 'ready' | 'partial',
+      error: index.truncated
+        ? 'inventory truncated by file/byte/depth limits'
+        : undefined,
+      limits: this.#limits,
+      inventory,
+      symbols,
+      graph,
+      docs: Object.freeze({
+        rootDocs: Object.freeze([...rootDocs]),
+        contextDocsPresent: Object.freeze([...contextDocsPresent]),
+        contextDocsMissing: Object.freeze([...contextDocsMissing]),
+        hasContextScaffold,
+      }),
+      contextSummary,
+    };
+    const orientationMarkdown = renderOrientationMarkdown(
+      base,
+      this.#limits.markdownMaxChars,
+    );
+    throwIfAborted(signal);
+    const mapHash = sha256(
+      canonicalJson({
+        projectId: base.projectId,
+        checkoutId: base.checkoutId,
+        headSha: base.headSha,
+        treeFingerprint: base.treeFingerprint,
+        inventory: base.inventory,
+        symbols: {
+          filesScanned: base.symbols.filesScanned,
+          symbolCount: base.symbols.symbolCount,
+          hubs: base.symbols.hubs,
+          coverage: base.symbols.coverage,
+        },
+        graph: {
+          mode: base.graph.mode,
+          nodeCount: base.graph.nodeCount,
+          edgeCount: base.graph.edgeCount,
+          sampleEdges: base.graph.sampleEdges,
+          enricher: base.graph.enricher,
+        },
+        docs: base.docs,
+        contextSummary: base.contextSummary,
+        status: base.status,
+      }),
+    );
+    return Object.freeze({ ...base, orientationMarkdown, mapHash });
+  }
+
+  #failedMap(
+    scope: ProjectExecutionScope,
+    started: number,
+    error: unknown,
+  ): ProjectOrientationMap {
+    const message = error instanceof Error ? error.message : String(error);
+    const failedBase = {
+      schemaVersion: 1 as const,
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+      headSha: null,
+      treeFingerprint: sha256('failed'),
+      builtAt: new Date(this.#now()).toISOString(),
+      buildDurationMs: Math.max(0, this.#now() - started),
+      status: 'failed' as const,
+      error: message.slice(0, 4_096),
+      limits: this.#limits,
+      inventory: Object.freeze({
+        languages: Object.freeze([]),
+        topDirs: Object.freeze([]),
+        entrypoints: Object.freeze([]),
+        manifests: Object.freeze([]),
+        scripts: Object.freeze({}),
+        packageManagers: Object.freeze([]),
+        fileCount: 0,
+        sourceFileCount: 0,
+        bytesScanned: 0,
+        projectName: null,
+      }),
+      symbols: Object.freeze({
+        filesScanned: 0,
+        symbolCount: 0,
+        hubs: Object.freeze([]),
+        coverage: Object.freeze([]),
+        symbols: new Set<string>(),
+      }),
+      graph: Object.freeze({
+        mode: 'none' as const,
+        nodeCount: 0,
+        edgeCount: 0,
+        sampleEdges: Object.freeze([] as const),
+        enricher: 'none' as const,
+      }),
+      docs: Object.freeze({
+        rootDocs: Object.freeze([]),
+        contextDocsPresent: Object.freeze([]),
+        contextDocsMissing: Object.freeze([...REQUIRED_CONTEXT_DOCS]),
+        hasContextScaffold: false,
+      }),
+      contextSummary: Object.freeze({
+        ready: false,
+        blockerCodes: Object.freeze(['invalid-context']),
+        warningCodes: Object.freeze([] as string[]),
+      }),
+    };
+    const orientationMarkdown = renderOrientationMarkdown(
+      failedBase,
+      this.#limits.markdownMaxChars,
+    );
+    return Object.freeze({
+      ...failedBase,
+      orientationMarkdown,
+      mapHash: sha256(canonicalJson({ status: 'failed', error: message })),
+    });
   }
 
   #buildingStub(scope: ProjectExecutionScope): ProjectOrientationMap {
@@ -567,6 +820,31 @@ export function getProjectOrientationService(): ProjectOrientationService {
 
 export function tryGetProjectOrientationService(): ProjectOrientationService | null {
   return defaultService;
+}
+
+/**
+ * Fire-and-forget post-merge hook. Structural orientation is advisory and
+ * must never extend or fail the durable merge transaction.
+ */
+export function scheduleProjectOrientationAfterMerge(
+  scope: ProjectExecutionScope,
+  refresh: OrientationMergeRefresh,
+): void {
+  const scheduledScope = Object.freeze({ ...scope });
+  const scheduledRefresh = Object.freeze({
+    ...refresh,
+    changedFiles: Object.freeze([...refresh.changedFiles]),
+  });
+  const immediate = setImmediate(() => {
+    const service = tryGetProjectOrientationService();
+    if (!service) return;
+    void service
+      .refreshAfterMerge(scheduledScope, scheduledRefresh)
+      .catch((error) => {
+        console.warn('[orientation] post-merge refresh failed:', error);
+      });
+  });
+  immediate.unref();
 }
 
 /** Test helper: drop the process-wide singleton. */

@@ -51,7 +51,7 @@ function proposal() {
     acceptanceCriteria: [
       {
         id: 'ac-login',
-        statement: 'Credenciais válidas criam uma sessão',
+        statement: 'Login válido cria uma sessão',
         requiredSensorIds: ['unit'],
       },
     ],
@@ -102,21 +102,21 @@ describe('compileMissionContract', () => {
     );
   });
 
-  it('drops unresolved invariants and sensors instead of refusing the mission', () => {
-    // The proposing model invents plausible ids. One invented ref used to kill
-    // the whole mission before any provider ran; now the context pack is just
-    // that fact poorer, which is what the reviewer stage exists to catch.
+  it('keeps explicit unresolved requirements pending instead of producing false green', () => {
+    // Explicit acceptance requirements are contract authority. If Nexus cannot
+    // resolve one yet, it must stay visible and prevent final promotion rather
+    // than silently weakening the contract.
     const withoutInvariants = compileMissionContract(proposal(), {
       ...context,
       invariantRefs: new Set(),
     });
-    expect(withoutInvariants.businessInvariantRefs).toEqual([]);
+    expect(withoutInvariants.businessInvariantRefs).toEqual(['inv-session']);
 
     const withoutSensors = compileMissionContract(proposal(), {
       ...context,
       availableSensorIds: new Set(),
     });
-    expect(withoutSensors.requiredSensors).toEqual([]);
+    expect(withoutSensors.requiredSensors).toEqual(['unit']);
   });
 
   it('still fails closed on a blocking context conflict', () => {
@@ -145,6 +145,24 @@ describe('compileMissionContract', () => {
     expect(contract.risk).toBe('critical');
     expect(contract.route).toContain('review-secondary');
     expect(contract.route).toContain('validation-secondary');
+  });
+
+  it('classifies Portuguese authentication and permission work as high risk', () => {
+    const input = proposal();
+    input.goal = 'Corrigir autenticação e permissões sem invalidar a sessão';
+    input.riskHints = [];
+    input.impactedDomains = [];
+
+    expect(compileMissionContract(input, context).risk).toBe('high');
+  });
+
+  it('classifies Portuguese payment and billing work as critical risk', () => {
+    const input = proposal();
+    input.goal = 'Implementar pagamento, cobrança e reembolso';
+    input.riskHints = [];
+    input.impactedDomains = [];
+
+    expect(compileMissionContract(input, context).risk).toBe('critical');
   });
 
   it('automatically makes design-system consistency executable for UI missions', () => {

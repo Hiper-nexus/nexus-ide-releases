@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { SquadAgent } from "../../shared/orch-types";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
+import { compileMissionContract } from "../context/contract-compiler";
+import { createContextWorkflowStore } from "../context/context-workflow-store";
+import { createWorkflowState } from "../context/prevc-engine";
+import { ReviewCouncil } from "../context/review-council";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { createScopedHandoffStore } from "./handoff-store";
 import { applyDriveAction } from "./mission-driver-apply";
@@ -21,6 +25,7 @@ import {
   decodeTaskScheduleDetail,
   encodeTaskScheduleDetail,
 } from "./mission-scheduler-meta";
+import { EMPTY_GIT_DIFF_SHA256 } from "./task-dispatch-codec";
 import { createTaskDispatchStore } from "./task-dispatch-store";
 import { createScopedTaskStore, plannedTaskId } from "./task-store";
 
@@ -116,6 +121,50 @@ describe("guided result consumption chain", () => {
       orchestratorSessionId,
     });
     missions.setStatus(mission.id, "running");
+    const qualityHeadSha = repositoryHead();
+    const qualityContract = compileMissionContract(
+      {
+        schemaVersion: 1,
+        scope,
+        missionId: mission.id,
+        baseCommit: qualityHeadSha,
+        contextRevision: createHash("sha256")
+          .update("guided-result-consumption-context")
+          .digest("hex"),
+        goal: "Validar cada candidato integrado do fluxo guiado",
+        acceptanceCriteria: [
+          {
+            id: "independent-review",
+            statement: "Cada candidato integrado recebe revisão independente.",
+          },
+        ],
+      },
+      {
+        invariantRefs: new Set(),
+        availableSensorIds: new Set(),
+        blockingConflictIds: [],
+      },
+    );
+    const qualityBinding = {
+      projectId: scope.projectId,
+      checkoutId: scope.checkoutId,
+      missionId: mission.id,
+      contractHash: qualityContract.contractHash,
+      contextHash: qualityContract.contextRevision,
+      baseSha: qualityHeadSha,
+      headSha: qualityHeadSha,
+      diffHash: EMPTY_GIT_DIFF_SHA256,
+    };
+    const qualityStore = createContextWorkflowStore(runtime, scope);
+    qualityStore.freeze(
+      qualityContract,
+      createWorkflowState(qualityContract.risk, qualityBinding),
+      {
+        id: "author-guided-result",
+        sessionId: "session-author-guided-result",
+        provider: "codex",
+      },
+    );
     const advisoryTaskId = plannedTaskId(
       mission.id,
       intentVersion,
@@ -358,6 +407,22 @@ describe("guided result consumption chain", () => {
           revision: ready.revision,
         });
       } else {
+        const reviewId = `quality-${physicalReceipt}`;
+        const review = new ReviewCouncil(
+          qualityContract.risk,
+          qualityBinding,
+        ).submit({
+          reviewId,
+          reviewerId: `independent-${started.agent.id}`,
+          reviewerSessionId: `session-independent-${started.agent.id}`,
+          reviewerProvider: "codex",
+          authorId: `author-${started.agent.id}`,
+          authorSessionId: started.sessionId,
+          authorProvider: "codex",
+          binding: qualityBinding,
+          findings: [],
+        });
+        qualityStore.recordMergeReviewReport(review);
         dispatches.completeByCoordinator({
           taskId: started.task.id,
           revision: ready.revision,
@@ -365,7 +430,7 @@ describe("guided result consumption chain", () => {
             kind: "worktree_integrated",
             reference: repositoryHead(),
             completedAt: Date.now(),
-            evidenceIds: [receiptId],
+            evidenceIds: [`review:${reviewId}`],
           },
         });
       }

@@ -21,6 +21,7 @@ import {
 import { parseReviewReport } from "../context/review-council";
 import { parseTrustedEvidence } from "../context/sensor-broker";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
+import { retainAcceptedHandoffMemoryBestEffort } from "../memory/trusted-memory";
 import {
   encodeJsonArray,
   parseJsonArray,
@@ -102,7 +103,7 @@ const mcpAuditIntentPayloadSchema = z
   .object({
     project_id: identifierSchema,
     checkout_id: identifierSchema,
-    source: z.enum(["http-mcp", "omp-rpc-stdio"]),
+    source: z.enum(["http-mcp", "pty-stream", "omp-rpc-stdio"]),
     invocation_id: identifierSchema,
   })
   .passthrough();
@@ -113,7 +114,7 @@ const mcpReceiptRowSchema = z
     handoff_id: identifierSchema,
     tool_call_id: identifierSchema,
     tool_name: z.literal("nexus_handoff_submit"),
-    source: z.enum(["http-mcp", "omp-rpc-stdio"]),
+    source: z.enum(["http-mcp", "pty-stream", "omp-rpc-stdio"]),
     mission_id: identifierSchema,
     session_id: identifierSchema,
     worker_incarnation_id: identifierSchema.nullable(),
@@ -733,6 +734,30 @@ export class ScopedHandoffStore {
     if (!committed.replayed) {
       this.#binding.emitChange();
       if (committed.taskDispatch) this.#emitDispatchChange();
+      if (
+        committed.handoff.status === "success" &&
+        committed.taskDispatch?.handoffId === committed.handoff.id &&
+        committed.taskDispatch.handoffAcceptedAt !== undefined
+      ) {
+        retainAcceptedHandoffMemoryBestEffort(this.#binding.scope, {
+          handoffId: committed.handoff.id,
+          missionId: committed.taskDispatch.missionId,
+          taskId: committed.taskDispatch.taskId,
+          dispatchId: committed.taskDispatch.id,
+          status: committed.handoff.status,
+          acceptedAt: committed.taskDispatch.handoffAcceptedAt,
+          ...(committed.handoff.evidenceTrust === "nexus-trusted" &&
+          committed.handoff.evidenceBinding
+            ? {
+                evidenceIds: committed.handoff.evidenceIds.slice(0, 32),
+                evidenceBinding: committed.handoff.evidenceBinding,
+              }
+            : {}),
+          ...(committed.handoff.mcpProvenance
+            ? { mcpReceiptId: committed.handoff.mcpProvenance.receiptId }
+            : {}),
+        });
+      }
     }
     return {
       handoff: cloneHandoff(committed.handoff),
@@ -794,7 +819,7 @@ export class ScopedHandoffStore {
     input: z.infer<typeof submitHandoffInputSchema>,
     artifactsJson: string,
     evidenceIdsJson: string,
-    replaySource: "http-mcp" | "omp-rpc-stdio",
+    replaySource: "http-mcp" | "pty-stream" | "omp-rpc-stdio",
     replayWorktreeHeadSha: string | undefined,
     replayRawPayloadSha256: string,
     logicalOperationKey: string,
@@ -932,7 +957,7 @@ export class ScopedHandoffStore {
   #assertCorrelatedMcpAuditIntent(
     db: Database.Database,
     receipt: {
-      readonly source: "http-mcp" | "omp-rpc-stdio";
+      readonly source: "http-mcp" | "pty-stream" | "omp-rpc-stdio";
       readonly toolCallId: string;
       readonly missionId: string;
       readonly sessionId: string;

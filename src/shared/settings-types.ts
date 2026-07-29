@@ -122,11 +122,12 @@ export const orchSettingsSchema = z.object({
    */
   cliPromptAutoResponderEnabled: z.boolean().default(true),
   /**
-   * When a saved layout with mission agents is restored (app start, workspace
-   * open, any OS — macOS / Linux / Windows, same code path):
-   * - `ask` (default, safe): hold agents and confirm before they run
-   * - `pause`: never auto-start; user must retomar no rail
-   * - `resume`: legacy silent auto-resume (power users only)
+   * Restore preference for standalone agent panes. Main-owned mission panes
+   * always resume their persisted authority automatically on app/workspace
+   * restore; technical recovery remains Main-owned and retryable.
+   * - `ask` (default): confirm before standalone agents run
+   * - `pause`: keep standalone agents paused
+   * - `resume`: silently resume standalone agents too
    */
   agentRestorePolicy: z.enum(['ask', 'pause', 'resume']).default('ask'),
   /** CLI provider used by the next squad orchestrator. */
@@ -149,40 +150,10 @@ export const orchSettingsSchema = z.object({
    */
   intentFirstMissionRuntimeV1: z.boolean().default(true),
   /**
-   * How Oh My Pi (omp) participates in auto-routing and squad roster sticky:
-   * - `off`: never force; only explicit manual spawn
-   * - `fallback`: late ladder only (legacy)
-   * - `diversity`: multi-CLI share — omp second when unused
-   * - `prefer` (default): omp first among eligible workers (vibe-coder zero-friction)
-   *
-   * When not `off`/`fallback`, the system also auto-spawns one omp companion
-   * worker on the first non-omp mission spawn (no human / Maestro required).
-   */
-  ompParticipation: z
-    .enum(['off', 'fallback', 'diversity', 'prefer'])
-    .default('prefer'),
-  /**
-   * When true, opening the OMP RPC panel starts a session automatically if
-   * none is active (install/auth failures still surface as startError).
-   */
-  ompRpcAutoStart: z.boolean().default(true),
-  /**
-   * How mission/orchestrator spawns of adapter `omp` are hosted:
-   * - `pty`: terminal pane with full Nexus MCP inject
-   * - `rpc`: `omp --mode rpc-ui` pipes + host tools
-   * - `auto` (default): try rpc first, fall back to pty on bin/protocol failure
-   */
-  ompMissionTransport: z.enum(['pty', 'rpc', 'auto']).default('auto'),
-  /**
-   * Auto-spawn one Oh My Pi worker on missions without human action.
-   * Default true for vibe-coder zero friction; disable only for pure routing demos.
-   */
-  ompAutoSpawn: z.boolean().default(true),
-  /**
    * Who may act as Maestro / autonomous writer inside a Squad mission:
    * - `operator-choice` (default): vibe-coder mode — any installed +
-   *   authenticated + handoff-capable CLI. Nexus still confines writers with
-   *   Seatbelt; the jail is the sandbox, not a brand allowlist.
+   *   authenticated + handoff-capable CLI. Tasks use an isolated worktree,
+   *   per-session bearer and Main-owned merge; auto-approve and web stay on.
    * - `governed`: release-qualified ladder (Codex writers, verified Maestro).
    *   Opt-in for operators who want the narrow release gate.
    */
@@ -192,8 +163,6 @@ export const orchSettingsSchema = z.object({
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});
-export type OmpParticipation = OrchSettings['ompParticipation'];
-export type OmpMissionTransport = OrchSettings['ompMissionTransport'];
 export type SquadCliPolicy = OrchSettings['squadCliPolicy'];
 
 /**

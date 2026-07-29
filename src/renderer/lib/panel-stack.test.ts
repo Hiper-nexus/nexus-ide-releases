@@ -12,18 +12,17 @@ afterEach(() => {
 
 describe('panel-stack', () => {
   it('último painel aberto fica no topo da pilha', () => {
-    // Caso de campo 18/07: ops-board (z fixo 34) aberto; abrir OMP (z fixo 30)
-    // pelo menu deixava o novo painel invisível atrás.
+    // Um painel aberto pelo menu precisa nascer acima do painel já visível.
     raisePanel('ops-board');
-    raisePanel('omp-rpc');
-    expect(panelZFor('omp-rpc')!).toBeGreaterThan(panelZFor('ops-board')!);
+    raisePanel('memory');
+    expect(panelZFor('memory')!).toBeGreaterThan(panelZFor('ops-board')!);
   });
 
   it('clicar num painel de trás o traz para a frente', () => {
     raisePanel('ops-board');
-    raisePanel('omp-rpc');
+    raisePanel('memory');
     raisePanel('ops-board');
-    expect(panelZFor('ops-board')!).toBeGreaterThan(panelZFor('omp-rpc')!);
+    expect(panelZFor('ops-board')!).toBeGreaterThan(panelZFor('memory')!);
   });
 
   it('fechar remove da pilha e compacta os índices', () => {

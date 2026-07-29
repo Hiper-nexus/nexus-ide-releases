@@ -94,7 +94,6 @@ describe('shared agent-hook-listener', () => {
     expect(resolveHookSource('/hook/grok')).toBe('grok')
     expect(resolveHookSource('/hook/hermes')).toBe('hermes')
     expect(resolveHookSource('/hook/pi')).toBe('pi')
-    expect(resolveHookSource('/hook/omp')).toBe('omp')
     expect(resolveHookSource('/hook/command-code')).toBe('command-code')
     expect(resolveHookSource('/hook/mimo-code')).toBe('mimo-code')
     expect(resolveHookSource('/hook/unknown')).toBeNull()
@@ -364,55 +363,6 @@ describe('shared agent-hook-listener', () => {
     )
     expect(event?.payload.state).toBe('waiting')
     expect(event?.payload.interactivePrompt).toBe(JSON.stringify(properties))
-  })
-
-  it('normalizes OMP Pi-compatible hooks with OMP attribution', () => {
-    const event = normalizeHookPayload(
-      state,
-      'omp',
-      {
-        paneKey: PANE_KEY,
-        tabId: 'tab-1',
-        worktreeId: 'wt',
-        env: 'production',
-        version: '1',
-        payload: {
-          hook_event_name: 'before_agent_start',
-          prompt: 'wire omp status'
-        }
-      },
-      'production'
-    )
-    expect(event?.payload).toMatchObject({
-      state: 'working',
-      prompt: 'wire omp status',
-      agentType: 'omp'
-    })
-
-    const tool = normalizeHookPayload(
-      state,
-      'omp',
-      {
-        paneKey: PANE_KEY,
-        tabId: 'tab-1',
-        worktreeId: 'wt',
-        env: 'production',
-        version: '1',
-        payload: {
-          hook_event_name: 'tool_call',
-          tool_name: 'bash',
-          tool_input: { command: 'pnpm test' }
-        }
-      },
-      'production'
-    )
-    expect(tool?.payload).toMatchObject({
-      state: 'working',
-      prompt: 'wire omp status',
-      agentType: 'omp',
-      toolName: 'bash',
-      toolInput: 'pnpm test'
-    })
   })
 
   it('normalizes Command Code hooks and reads turn text from the transcript', () => {

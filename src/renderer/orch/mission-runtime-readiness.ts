@@ -2,6 +2,8 @@ import type { AccountInfo } from "../../shared/account-types";
 import type { ProviderSettingsInfo } from "../../shared/provider-settings-types";
 import type { AdapterInfo } from "../../shared/types";
 import { orchestrationEvidenceOf } from "../../shared/adapter-types";
+import type { SquadCliPolicy } from "../../shared/settings-types";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 
 export interface MissionRuntimeReadiness {
   readonly detectedAdapters: readonly AdapterInfo[];
@@ -83,22 +85,26 @@ export function missionRuntimeReadiness(
   adapters: readonly AdapterInfo[],
   providers: readonly ProviderSettingsInfo[],
   accounts: readonly AccountInfo[] = [],
+  squadCliPolicy: SquadCliPolicy = "operator-choice",
 ): MissionRuntimeReadiness {
   const detectedAdapters = adapters.filter((adapter) => adapter.installed);
   const authenticatedAdapters = detectedAdapters.filter((adapter) =>
     isAdapterModelAuthenticated(adapter, providers, undefined, accounts),
   );
-  const verifiedMaestros = authenticatedAdapters.filter(
-    (adapter) =>
-      adapter.kind === "cli-pty" &&
-      adapter.orchestratorCapable &&
-      orchestrationEvidenceOf(adapter) === "verified",
+  const operatorChoice = isOperatorChoicePolicy(squadCliPolicy);
+  const verifiedMaestros = authenticatedAdapters.filter((adapter) =>
+    operatorChoice
+      ? adapter.kind === "cli-pty" && adapter.missionControlCapable === true
+      : adapter.kind === "cli-pty" &&
+        adapter.orchestratorCapable &&
+        orchestrationEvidenceOf(adapter) === "verified",
   );
-  const qualifiedWorkers = authenticatedAdapters.filter(
-    (adapter) =>
-      adapter.id !== "claude" &&
-      adapter.kind === "cli-pty" &&
-      adapter.autonomousWorkspaceWriteCapable === true,
+  const qualifiedWorkers = authenticatedAdapters.filter((adapter) =>
+    operatorChoice
+      ? adapter.kind === "cli-pty" && adapter.taskHandoffCapable === true
+      : adapter.id !== "claude" &&
+        adapter.kind === "cli-pty" &&
+        adapter.autonomousWorkspaceWriteCapable === true,
   );
   return Object.freeze({
     detectedAdapters: Object.freeze(detectedAdapters),

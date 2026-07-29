@@ -77,6 +77,29 @@ export const sealedRosterDispatchSchema = z
     agents: z.array(squadAgentSchema).min(1).max(128),
   })
   .strict();
+export const taskQualityReceiptProofSchema = z
+  .object({
+    projectId: taskDispatchIdSchema,
+    checkoutId: taskDispatchIdSchema,
+    missionId: taskDispatchIdSchema,
+    contractHash: z.string().regex(/^[a-f0-9]{64}$/),
+    contextHash: z.string().regex(/^[a-f0-9]{64}$/),
+    baseSha: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+    workerHeadSha: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+    headSha: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+    integrationHeadSha: z
+      .string()
+      .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/),
+    diffHash: z.string().regex(/^[a-f0-9]{64}$/),
+    workflowRevision: z.number().int().positive(),
+    sensorEvidenceIds: z.array(taskDispatchIdSchema).max(256),
+    reviewEvidenceIds: z.array(taskDispatchIdSchema).min(1).max(256),
+    reviewerIds: z.array(taskDispatchIdSchema).min(1).max(16),
+    advisories: z
+      .array(z.literal("no-required-project-sensors"))
+      .max(1),
+  })
+  .strict();
 export const taskIntegrationReceiptSchema = z
   .object({
     kind: z.enum([
@@ -89,11 +112,35 @@ export const taskIntegrationReceiptSchema = z
     reference: z.string().min(1).max(2_048),
     completedAt: z.number().int().nonnegative(),
     evidenceIds: z.array(taskDispatchIdSchema).max(256).optional(),
+    /**
+     * Main-derived proof for a promoted worktree candidate. Callers omit it:
+     * TaskDispatchStore derives it from durable PREVC and physical Git rows.
+     * A persisted integrated/final-QA receipt without it cannot authorize
+     * mission completion.
+     */
+    qualityProof: taskQualityReceiptProofSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((receipt, context) => {
+    if (
+      receipt.qualityProof &&
+      receipt.kind !== "worktree_integrated" &&
+      receipt.kind !== "worktree_validated_no_change"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["qualityProof"],
+        message:
+          "quality proof is exclusive to integrated or final no-change receipts",
+      });
+    }
+  });
 
 export type TaskIntegrationReceipt = z.infer<
   typeof taskIntegrationReceiptSchema
+>;
+export type TaskQualityReceiptProof = z.infer<
+  typeof taskQualityReceiptProofSchema
 >;
 export type TaskDispatchState = z.infer<typeof taskDispatchStateSchema>;
 export type TaskDispatchExecutionMode = z.infer<

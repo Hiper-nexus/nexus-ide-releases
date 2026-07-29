@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AdapterInfo } from '../../shared/adapter-types';
 import {
+  RETIRED_ROSTER_ROUTE_MARKER,
+  RetiredRosterRouteError,
+} from '../../shared/retired-adapter-policy';
+import {
   assertClosedAcyclicPlanDependencies,
   assertSealedTaskSchedule,
   resolveSealedWorkerRoute,
@@ -18,7 +22,7 @@ function adapter(
   return {
     id,
     installed,
-    kind: id === 'omp' ? 'cli-rpc' : 'cli-pty',
+    kind: 'cli-pty',
     label: id,
     icon: id,
     models: { list: models, default: defaultModel },
@@ -35,13 +39,11 @@ describe('sealed scheduler roster contract', () => {
     expect(supportsMechanicallyReadOnlyCli('grok')).toBe(true);
     expect(supportsMechanicallyReadOnlyCli('glm')).toBe(false);
     expect(supportsMechanicallyReadOnlyCli('longcat')).toBe(false);
-    expect(supportsMechanicallyReadOnlyCli('omp')).toBe(false);
     expect(supportsMechanicallyReadOnlyCli('agy')).toBe(false);
   });
   it('advertises the advisory lane separately from native confinement', () => {
     expect(supportsAdvisoryParticipationCli('claude')).toBe(true);
     expect(supportsAdvisoryParticipationCli('kimi')).toBe(true);
-    expect(supportsAdvisoryParticipationCli('omp')).toBe(true);
     expect(supportsAdvisoryParticipationCli('opencode')).toBe(true);
     expect(supportsAdvisoryParticipationCli('agy')).toBe(true);
     expect(supportsAdvisoryParticipationCli('glm')).toBe(true);
@@ -49,8 +51,6 @@ describe('sealed scheduler roster contract', () => {
     // codex/grok confine themselves; wrapping them would nest Seatbelt.
     expect(supportsAdvisoryParticipationCli('codex')).toBe(false);
     expect(supportsAdvisoryParticipationCli('grok')).toBe(false);
-    // omp-rpc has no terminal for the kernel sandbox to wrap.
-    expect(supportsAdvisoryParticipationCli('omp-rpc')).toBe(false);
   });
 
   it('admits a CLI that does not exist in this build yet', () => {
@@ -63,7 +63,6 @@ describe('sealed scheduler roster contract', () => {
     expect(supportsMechanicallyWorkspaceWriteCli('codex')).toBe(true);
     for (const adapterId of [
       'kimi',
-      'omp',
       'opencode',
       'agy',
       'grok',
@@ -129,6 +128,38 @@ describe('sealed scheduler roster contract', () => {
       adapters: [adapter('agy', true, ['gemini-3.6-flash-low'], 'gemini-3.6-flash-low')],
     })).toThrow(/modelo.*não existe/i);
   });
+
+  it.each(['omp', 'omp-rpc'])(
+    'turns a persisted %s seal into an actionable retirement error without resurrecting a same-id plugin',
+    (retiredId) => {
+      expect(() =>
+        resolveSealedWorkerRoute({
+          taskText: 'Revisar o patch',
+          rosterHash: 'c'.repeat(64),
+          agent: {
+            id: 'legacy-reviewer',
+            agentName: 'Legacy Reviewer',
+            category: 'reviewer',
+            cli: retiredId,
+          },
+          adapters: [adapter(retiredId, true, ['legacy-model'], 'legacy-model')],
+        }),
+      ).toThrowError(RetiredRosterRouteError);
+      expect(() =>
+        resolveSealedWorkerRoute({
+          taskText: 'Revisar o patch',
+          rosterHash: 'c'.repeat(64),
+          agent: {
+            id: 'legacy-reviewer',
+            agentName: 'Legacy Reviewer',
+            category: 'reviewer',
+            cli: retiredId,
+          },
+          adapters: [adapter(retiredId, true, ['legacy-model'], 'legacy-model')],
+        }),
+      ).toThrow(new RegExp(`${RETIRED_ROSTER_ROUTE_MARKER}.*revis`, 'iu'));
+    },
+  );
 
   it('preserves reserveClaude for every non-orchestrator roster worker', () => {
     expect(() => resolveSealedWorkerRoute({

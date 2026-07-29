@@ -106,9 +106,16 @@ function policyForAgent(input: {
   agent: SquadAgent;
   missionSignal: string;
   executorCount: number;
+  visualOwnerId: string | null;
   available: ReadonlySet<string>;
 }): Pick<SquadAgent, 'allowedSkills' | 'allowedTools'> {
-  const { agent, missionSignal, executorCount, available } = input;
+  const {
+    agent,
+    missionSignal,
+    executorCount,
+    visualOwnerId,
+    available,
+  } = input;
   const roleSignal = normalizeSignal(`${agent.id} ${agent.agentName}`);
   const requested = new Set<string>();
   const uiMission = isGuidedUiMissionObjective(missionSignal);
@@ -155,12 +162,10 @@ function policyForAgent(input: {
   if (securityWork) requested.add('bridgesecurity');
 
   const visualMission = VISUAL_ASSET_RE.test(missionSignal);
-  const visualRole = VISUAL_ROLE_RE.test(roleSignal);
   const visualGenerationOwner =
     agent.category === 'executor' &&
-    agent.cli === 'codex' &&
     visualMission &&
-    (visualRole || executorCount === 1);
+    agent.id === visualOwnerId;
   if (visualGenerationOwner) {
     requested.add('nexus-visual-media');
   }
@@ -192,6 +197,18 @@ export function applyGuidedSquadSkillPolicy(
   const executorCount = squad.agents.filter(
     (agent) => agent.category === 'executor',
   ).length;
+  const executors = squad.agents.filter(
+    (agent) => agent.category === 'executor',
+  );
+  const visualOwnerId = VISUAL_ASSET_RE.test(missionSignal)
+    ? (
+        executors.find((agent) =>
+          VISUAL_ROLE_RE.test(
+            normalizeSignal(`${agent.id} ${agent.agentName}`),
+          ),
+        ) ?? (executors.length === 1 ? executors[0] : undefined)
+      )?.id ?? null
+    : null;
 
   return {
     ...squad,
@@ -200,6 +217,7 @@ export function applyGuidedSquadSkillPolicy(
         agent,
         missionSignal,
         executorCount,
+        visualOwnerId,
         available,
       });
       return {

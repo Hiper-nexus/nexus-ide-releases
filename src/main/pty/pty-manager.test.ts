@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebContents } from "electron";
 import { parse } from "smol-toml";
 import { BUILTIN_ADAPTERS } from "../../adapters/builtin";
@@ -47,7 +47,6 @@ const adapterTrust = vi.hoisted(() => ({
     "codex",
     "kimi",
     "opencode",
-    "omp",
     "agy",
     "grok",
     "glm",
@@ -162,6 +161,7 @@ import {
   setAgentSpawnHook,
   setResumeSessionLookup,
   setSessionDictationHook,
+  setSquadCliPolicyLookupForTests,
   spawnAgentSession,
   spawnMainOwnedAgentSession,
   spawnSession,
@@ -189,6 +189,16 @@ import {
 } from "../orch/gate";
 import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
+
+beforeEach(() => {
+  // Most legacy hardening cases exercise the explicit hardened mode. Tests for
+  // the default autopilot opt into operator-choice locally.
+  setSquadCliPolicyLookupForTests(() => "governed");
+});
+
+afterEach(() => {
+  setSquadCliPolicyLookupForTests(null);
+});
 
 function trustedSpawn(
   cwd = fs.realpathSync(process.cwd()),
@@ -1065,82 +1075,6 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
-  it("adds OMP native extension/skill confinement only to governed final argv", () => {
-    const h = fakeHost();
-    setPtyHost(h.host);
-    setAgentSpawnHook((_adapter, _request, authority) => {
-      const meta = authority.context;
-      const ctx = mintToken({
-        label: "test",
-        role: meta?.role ?? "user",
-        missionId: meta?.missionId,
-        contextRevision: meta?.contextRevision,
-        workerIncarnationId: meta?.workerIncarnationId,
-        scope: authority.coordinationScope ?? authority.scope,
-        executionScope: authority.scope,
-        allowedTools: meta?.allowedTools ?? null,
-        allowedSkills: meta?.allowedSkills ?? null,
-      });
-      return {
-        env: { NEXUS_MCP_TOKEN: ctx.token },
-        extraArgs: [],
-      };
-    });
-    const adapter = {
-      ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
-      id: "omp",
-      bin: "omp",
-    };
-    const owner = fakeWc();
-    const governedAuthority = missionGrant();
-    const noSkillAuthority: BoundSpawnAuthority = {
-      ...governedAuthority,
-      context: {
-        ...governedAuthority.context!,
-        allowedSkills: null,
-      },
-    };
-
-    try {
-      const governed = spawnAgentSession(
-        owner,
-        { kind: "cli-agent", cols: 80, rows: 24 },
-        adapter,
-        {},
-        noSkillAuthority,
-      );
-      expect(h.specFor(governed.sessionId).args).toEqual(
-        expect.arrayContaining([
-          "--no-extensions",
-          "--no-rules",
-          "--tools=read,bash,edit,ast_grep,ast_edit,ask,debug,eval,github,glob,grep,lsp,inspect_image,browser,checkpoint,rewind,hub,todo,web_search,write,memory_edit,retain,recall,reflect,learn,manage_skill,yield,goal",
-          "--no-skills",
-        ]),
-      );
-
-      const direct = spawnAgentSession(
-        owner,
-        { kind: "cli-agent", cols: 80, rows: 24 },
-        adapter,
-        {},
-        trustedSpawn(),
-      );
-      expect(h.specFor(direct.sessionId).args).not.toContain("--no-extensions");
-      expect(h.specFor(direct.sessionId).args).not.toContain("--no-skills");
-      expect(
-        h
-          .specFor(direct.sessionId)
-          .args.some((arg) => arg.startsWith("--tools=")),
-      ).toBe(false);
-
-      killSession(owner, governed.sessionId);
-      killSession(owner, direct.sessionId);
-    } finally {
-      setAgentSpawnHook(null);
-      resetGateForTests();
-    }
-  });
-
   it("denies a second exclusive-auth orchestrator even when the first is detached", () => {
     const h = fakeHost();
     setPtyHost(h.host);
@@ -1739,7 +1673,7 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
-  it.each(["kimi", "opencode", "omp"])(
+  it.each(["kimi", "opencode"])(
     "refuses an isolated autonomous %s worker before a process is spawned",
     (adapterId) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-sandbox-"));
@@ -1784,6 +1718,107 @@ describe("cli-agent spawn argv hardening", () => {
       }
     },
   );
+
+  it.each([
+    ["kimi", "--auto"],
+    ["agy", "--dangerously-skip-permissions"],
+    ["codex", "--dangerously-bypass-approvals-and-sandbox"],
+  ])(
+    "runs an isolated autopilot %s worker without an outer sandbox and keeps web/auto approval",
+    (adapterId, expectedApprovalArg) => {
+      setSquadCliPolicyLookupForTests(() => "operator-choice");
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-auto-"));
+      const worktree = path.join(root, "worker");
+      fs.mkdirSync(worktree);
+      try {
+        const coordination = trustedSpawn(fs.realpathSync(root)).scope;
+        const execution = trustedSpawn(fs.realpathSync(worktree)).scope;
+        const authority: BoundSpawnAuthority = {
+          source: "pending",
+          cwd: execution.rootRealPath,
+          scope: execution,
+          coordinationScope: coordination,
+          context: {
+            missionId: "mission-autopilot",
+            contextRevision: "revision-autopilot",
+            role: "worker",
+            workerIncarnationId: `worker-${adapterId}`,
+            allowedTools: [],
+            allowedSkills: null,
+            scope: coordination,
+            executionScope: execution,
+          },
+        };
+        const adapter =
+          adapterId === "codex"
+            ? makeCodexAdapter()
+            : builtinCliPtyAdapter(adapterId);
+        const h = fakeHost();
+        setPtyHost(h.host);
+
+        const spawned = spawnAgentSession(
+          fakeWc(),
+          { kind: "cli-agent", cols: 80, rows: 24 },
+          adapter,
+          {},
+          authority,
+        );
+        const spec = h.specFor(spawned.sessionId);
+        expect(spec.file).toBe(`/mock/bin/${adapter.bin}`);
+        expect(spec.args).toContain(expectedApprovalArg);
+        expect(spec.args).not.toContain("/usr/bin/sandbox-exec");
+        if (adapterId === "codex") {
+          expect(spec.args).toContain("--search");
+          expect(spec.env.CODEX_HOME).toBeUndefined();
+        }
+        orchKillSession(spawned.sessionId);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("refuses an autopilot read-only worker in the real checkout", () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-review-"));
+    try {
+      const coordination = trustedSpawn(fs.realpathSync(root)).scope;
+      const adapter = builtinCliPtyAdapter("kimi");
+      const h = fakeHost();
+      const spawn = vi.spyOn(h.host, "spawn");
+      setPtyHost(h.host);
+
+      expect(() =>
+        spawnAgentSession(
+          fakeWc(),
+          { kind: "cli-agent", cols: 80, rows: 24 },
+          adapter,
+          {},
+          {
+            source: "pending",
+            cwd: coordination.rootRealPath,
+            scope: coordination,
+            coordinationScope: coordination,
+            context: {
+              missionId: "mission-review",
+              contextRevision: "revision-review",
+              role: "worker",
+              workerIncarnationId: "worker-review",
+              readOnly: true,
+              nativeReadOnly: true,
+              allowedTools: [],
+              allowedSkills: null,
+              scope: coordination,
+              executionScope: coordination,
+            },
+          },
+        ),
+      ).toThrow(/physically distinct execution worktree/i);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("pins an isolated Codex worker to workspace-write even when settings request bypass", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-sandbox-"));

@@ -5,6 +5,7 @@ import type { Squad } from "../../shared/orch-types";
 const listAdapterInfosMock = vi.fn();
 const listProviderSettingsMock = vi.fn();
 const hasAvailableAccountMock = vi.fn();
+const getOrchSettingsMock = vi.fn();
 
 vi.mock("../adapters/adapter-registry", () => ({
   listAdapterInfos: (...args: unknown[]) => listAdapterInfosMock(...args),
@@ -17,6 +18,9 @@ vi.mock("../persistence/account-store", () => ({
   hasAvailableAccount: (...args: unknown[]) =>
     hasAvailableAccountMock(...args),
 }));
+vi.mock("../persistence/settings-store", () => ({
+  getOrchSettings: (...args: unknown[]) => getOrchSettingsMock(...args),
+}));
 
 import {
   assertLiveGuidedSquadReadiness,
@@ -27,6 +31,8 @@ function adapter(
   id: string,
   options: {
     nexusMcp?: boolean;
+    taskHandoff?: boolean;
+    missionControl?: boolean;
     evidence?: "verified" | "experimental" | "unsupported";
     workspaceWrite?: boolean;
   } = {},
@@ -43,10 +49,23 @@ function adapter(
     installCommand: "",
     idleTimeoutMs: 800,
     orchestratorCapable: nexusMcp,
+    taskHandoffCapable: options.taskHandoff ?? true,
+    missionControlCapable: options.missionControl ?? true,
     autonomousWorkspaceWriteCapable:
       options.workspaceWrite ?? id === "codex",
     orchestrationEvidence:
       options.evidence ?? (nexusMcp ? "experimental" : "unsupported"),
+    capabilities: {
+      launchable: true,
+      promptInjectable: true,
+      statusObservable: true,
+      resumable: true,
+      autonomousReadOnly: false,
+      governedWriter: options.workspaceWrite ?? id === "codex",
+      verifiedMaestro:
+        (options.evidence ?? (nexusMcp ? "experimental" : "unsupported")) ===
+        "verified",
+    },
   };
 }
 
@@ -122,6 +141,7 @@ describe("live squad runtime inventory", () => {
     listAdapterInfosMock.mockReset();
     listProviderSettingsMock.mockReset();
     hasAvailableAccountMock.mockReset();
+    getOrchSettingsMock.mockReset();
     listAdapterInfosMock.mockReturnValue([
       adapter("claude", { evidence: "verified" }),
       adapter("codex", { evidence: "verified" }),
@@ -135,6 +155,9 @@ describe("live squad runtime inventory", () => {
       provider("removed-plugin"),
     ]);
     hasAvailableAccountMock.mockReturnValue(true);
+    getOrchSettingsMock.mockReturnValue({
+      squadCliPolicy: "operator-choice",
+    });
   });
 
   it("separates direct CLI routes from guided receipt-capable workers", () => {
@@ -145,17 +168,53 @@ describe("live squad runtime inventory", () => {
       "codex",
       "aider",
     ]);
-    expect([...inventory.policy.routableWorkerCliIds]).toEqual(["codex"]);
-    expect(inventory.workerAdapters.map((item) => item.id)).toEqual(["codex"]);
+    expect([...inventory.policy.routableWorkerCliIds]).toEqual([
+      "claude",
+      "codex",
+      "aider",
+    ]);
+    expect(inventory.workerAdapters.map((item) => item.id)).toEqual([
+      "claude",
+      "codex",
+      "aider",
+    ]);
+    expect(inventory.orchestratorAdapters.map((item) => item.id)).toEqual([
+      "claude",
+      "codex",
+      "aider",
+    ]);
   });
 
-  it("rejects Aider at the standard boundary and retains MCP workers", () => {
-    expect(() => assertLiveGuidedSquadReadiness(squad("aider"))).toThrow(
-      /squad_runtime_unavailable:executor-unavailable/i,
-    );
+  it("admits a PTY-stream worker without pretending it has MCP", () => {
+    expect(() =>
+      assertLiveGuidedSquadReadiness(squad("aider")),
+    ).not.toThrow();
     expect(() =>
       assertLiveGuidedSquadReadiness(squad("codex")),
     ).not.toThrow();
+  });
+
+  it("keeps a one-way handoff CLI in the worker pool but out of Maestro choices", () => {
+    listAdapterInfosMock.mockReturnValue([
+      adapter("claude", { evidence: "verified" }),
+      adapter("worker-only", {
+        nexusMcp: false,
+        taskHandoff: true,
+        missionControl: false,
+      }),
+    ]);
+    listProviderSettingsMock.mockReturnValue([
+      provider("claude"),
+      provider("worker-only"),
+    ]);
+
+    const inventory = liveSquadRuntimeInventory();
+    expect(inventory.workerAdapters.map((item) => item.id)).toContain(
+      "worker-only",
+    );
+    expect(inventory.orchestratorAdapters.map((item) => item.id)).not.toContain(
+      "worker-only",
+    );
   });
 
   it("does not trust a user adapter merely because it overrides id=codex", () => {
@@ -164,6 +223,7 @@ describe("live squad runtime inventory", () => {
       adapter("codex", {
         evidence: "experimental",
         workspaceWrite: false,
+        taskHandoff: false,
       }),
     ]);
     listProviderSettingsMock.mockReturnValue([
@@ -179,38 +239,4 @@ describe("live squad runtime inventory", () => {
     );
   });
 
-  it("projects exact auth-ready OMP models for direct use but excludes it from guided workers", () => {
-    listAdapterInfosMock.mockReturnValue([
-      adapter("claude", { evidence: "verified" }),
-      {
-        ...adapter("omp", { evidence: "verified" }),
-        models: {
-          list: [
-            "anthropic/claude-sonnet-4-6",
-            "openai-codex/gpt-5.5",
-          ],
-          default: "anthropic/claude-sonnet-4-6",
-        },
-      },
-    ]);
-    listProviderSettingsMock.mockReturnValue([
-      provider("claude"),
-      provider("omp", {
-        defaultModel: "anthropic/claude-sonnet-4-6",
-        models: [
-          "anthropic/claude-sonnet-4-6",
-          "openai-codex/gpt-5.5",
-        ],
-        authReadyModels: ["openai-codex/gpt-5.5"],
-      }),
-    ]);
-
-    const inventory = liveSquadRuntimeInventory();
-    const omp = inventory.adapters.find((item) => item.id === "omp");
-    expect(omp?.models.list).toEqual(["openai-codex/gpt-5.5"]);
-    expect(omp?.models.default).toBe("openai-codex/gpt-5.5");
-    expect(inventory.workerAdapters.some((item) => item.id === "omp")).toBe(
-      false,
-    );
-  });
 });

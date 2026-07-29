@@ -80,6 +80,8 @@ export async function searchWithRipgrep(
       '-g',
       '!.git',
       '-g',
+      '!.nexus-memory/**',
+      '-g',
       '!out',
       '-g',
       '!.vite',
@@ -173,7 +175,19 @@ async function searchWithGrep(
   return new Promise((resolve) => {
     const child = spawn(
       'grep',
-      ['-R', '-n', '-I', '--exclude-dir=node_modules', '--exclude-dir=.git', '-m', '30', '--', needle, root],
+      [
+        '-R',
+        '-n',
+        '-I',
+        '--exclude-dir=node_modules',
+        '--exclude-dir=.git',
+        '--exclude-dir=.nexus-memory',
+        '-m',
+        '30',
+        '--',
+        needle,
+        root,
+      ],
       { stdio: ['ignore', 'pipe', 'ignore'] },
     );
     let stdout = '';

@@ -7,6 +7,7 @@ import {
   buildEffectivePath,
   commonCliBinDirs,
   lookupInPath,
+  probeLoginShellPath,
   revalidateExecutable,
   resolveCliBinary,
   resolveSpawnBinary,
@@ -137,6 +138,15 @@ describe('path-resolver CLI binary resolution', () => {
     expect(parts).toContain('/usr/bin');
     expect(parts).toContain('/custom/login/bin');
     expect(parts).toContain(kimiDir);
+  });
+
+  it('probes the login shell asynchronously without blocking the main process', async () => {
+    const value = await probeLoginShellPath(
+      async () => '__NEXUS_PATH_START__/custom/async/bin__NEXUS_PATH_END__',
+      tmp,
+    );
+
+    expect(value).toBe('/custom/async/bin');
   });
 
   it('absolute path resolution accepts ~/ expansion', () => {

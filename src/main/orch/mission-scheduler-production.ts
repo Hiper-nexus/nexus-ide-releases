@@ -1,5 +1,6 @@
 import type { ProjectExecutionScope } from "../../shared/types";
 import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
+import type { MissionIntentContract } from "../../shared/mission-intent";
 import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { MergeValidationCoordinator } from "../context/merge-validation-coordinator";
@@ -24,14 +25,20 @@ import {
   MISSION_SCHEDULER_CONCURRENCY_LIMITS,
   runBoundedMissionSchedulerPass,
 } from "./mission-scheduler-concurrency";
-import { assertGuidedPrevcExecutionReady } from "./guided-mission-prevc";
-import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
 import { runGuidedPrevcPostMergeBridge } from "./prevc-autopilot-coordinator";
+import {
+  classifyPrevcMergeFailure,
+  ensurePrevcMergeReady,
+} from "./prevc-merge-preparation";
 import {
   missionSchedulerHasKickoffAuthority,
   reconcileMissionCompletionAfterSchedulerTick,
 } from "./mission-scheduler-authority";
-import { dispatchMissionSchedulerTask } from "./mission-scheduler-dispatch-transaction";
+import {
+  dispatchMissionSchedulerTask,
+  isMissionSchedulerRetryableDispatchError,
+  MissionSchedulerDispatchAuthorityError,
+} from "./mission-scheduler-dispatch-transaction";
 import {
   finalizeGuidedIsolatedAdvisory,
   finalizeGuidedNoChangeQualityGate,
@@ -46,6 +53,15 @@ import {
 } from "./mission-scheduler-reconciliation";
 import { runMissionSchedulerLaunchPass } from "./mission-scheduler-pass";
 import { createMissionSchedulerTickLifecycle } from "./mission-scheduler-tick-lifecycle";
+import {
+  classifyOperationalFailure,
+  terminalOperationalFailureReason,
+} from "../runtime/operational-failure-policy";
+import type {
+  MergeQueueEntry,
+  MergeQueueStateSnapshot,
+} from "../runtime/merge-queue-contract";
+import { taskDispatchQualityRepairReason } from "./task-dispatch-store";
 
 export {
   awaitMissionSchedulerAuthorityFence,
@@ -59,6 +75,7 @@ export {
 } from "./mission-scheduler-dependency-context";
 export {
   assertMissionSchedulerPreProviderAuthority,
+  captureMissionSchedulerPreProviderAuthority,
   missionAccountQuotaScores,
   missionSchedulerLiveRosterAdapter,
   missionSchedulerRouteRequiresAccount,
@@ -79,7 +96,197 @@ export {
   reconcileInterruptedWorktreeReservationFailuresForScope,
   reconcileTerminalMergeFailureForScope,
 } from "./mission-scheduler-reconciliation";
+
+/** The scheduler and the atomic claim must enforce the same approved ceiling. */
+export function missionSchedulerConfiguredWorkerCap(
+  contract: Pick<MissionIntentContract, "budgets">,
+): number {
+  return contract.budgets.maxWorkers;
+}
+
+/**
+ * A finalizer may touch Git, SQLite and the filesystem after a valid handoff.
+ * Those operational failures keep the dispatch in its current retryable state;
+ * only a classified authority/conflict boundary may condemn the mission.
+ */
+export function projectTerminalFinalizationFailure(
+  input: {
+    readonly missionId: string;
+    readonly taskId: string;
+    readonly error: unknown;
+  },
+  dispatches: Parameters<typeof projectTerminalMergeFailure>[1],
+): boolean {
+  if (classifyOperationalFailure(input.error) !== "terminal") return false;
+  return projectTerminalMergeFailure(
+    {
+      missionId: input.missionId,
+      taskId: input.taskId,
+      reason:
+        input.error instanceof Error
+          ? input.error.message
+          : String(input.error),
+    },
+    dispatches,
+  );
+}
 export { buildMissionSchedulerTaskPrompt } from "./mission-scheduler-task-prompt";
+
+/**
+ * A restart during post-validation/finalization leaves Git integrated but the
+ * durable task receipt unfinished. This exact retryable block is executable
+ * work for Main, not a terminal state and not a reason to wait for a new
+ * worker handoff.
+ */
+export function recoverableIntegratedMergeEntry(
+  snapshot: MergeQueueStateSnapshot,
+  missionId: string,
+  taskId: string,
+): MergeQueueEntry | null {
+  if (
+    !snapshot.blocked ||
+    (snapshot.blocked.disposition ?? "terminal") === "terminal"
+  ) {
+    return null;
+  }
+  const entry = snapshot.entries.find(
+    (candidate) =>
+      candidate.taskKey === snapshot.blocked?.taskKey &&
+      candidate.missionId === missionId &&
+      candidate.taskId === taskId &&
+      candidate.status === "blocked" &&
+      Boolean(candidate.integratedSha),
+  );
+  return entry ?? null;
+}
+
+interface QualityRepairDispatchSnapshot {
+  readonly taskId: string;
+  readonly revision: number;
+  readonly state: string;
+  readonly sessionId?: string;
+  readonly workerIncarnationId?: string;
+  readonly lastError?: string;
+}
+
+interface QualityRepairDispatchStore {
+  get(taskId: string): QualityRepairDispatchSnapshot | null;
+  blockQualityRepairByCoordinator(input: {
+    readonly taskId: string;
+    readonly revision: number;
+    readonly reason: string;
+  }): unknown;
+  requeueQualityRepairAfterWorkerExit(input: {
+    readonly taskId: string;
+    readonly revision: number;
+    readonly sessionId: string;
+    readonly workerIncarnationId: string;
+  }): unknown;
+}
+
+function qualityRepairFailureDetail(error: unknown): string {
+  const message =
+    error instanceof Error ? error.message : String(error);
+  const evidenceIds =
+    error &&
+    typeof error === "object" &&
+    "evidenceIds" in error &&
+    Array.isArray(error.evidenceIds)
+      ? error.evidenceIds
+          .filter((value): value is string => typeof value === "string")
+          .slice(0, 32)
+      : [];
+  return evidenceIds.length > 0
+    ? `${message}; evidence=${evidenceIds.join(",")}`.slice(0, 65_536)
+    : message.slice(0, 65_536);
+}
+
+export function projectQualityRepairFailure(
+  input: {
+    readonly taskId: string;
+    readonly error: unknown;
+  },
+  dispatches: QualityRepairDispatchStore,
+): boolean {
+  if (classifyOperationalFailure(input.error) !== "repair") return false;
+  const current = dispatches.get(input.taskId);
+  if (!current) return false;
+  if (taskDispatchQualityRepairReason(current)) return true;
+  if (!["handoff_ready", "merging"].includes(current.state)) return false;
+  dispatches.blockQualityRepairByCoordinator({
+    taskId: input.taskId,
+    revision: current.revision,
+    reason: qualityRepairFailureDetail(input.error),
+  });
+  return true;
+}
+
+export function projectUnchangedQueueRepair(
+  input: {
+    readonly taskId: string;
+    readonly error: unknown;
+    readonly snapshot: MergeQueueStateSnapshot;
+  },
+  dispatches: QualityRepairDispatchStore,
+): boolean {
+  if (
+    !(input.error instanceof Error) ||
+    input.error.name !== "MergeRetryRequiredError" ||
+    input.snapshot.blocked?.disposition !== "repair" ||
+    !input.snapshot.entries.some(
+      (entry) =>
+        entry.taskKey === input.snapshot.blocked?.taskKey &&
+        entry.taskId === input.taskId,
+    )
+  ) {
+    return false;
+  }
+  const current = dispatches.get(input.taskId);
+  if (!current) return false;
+  if (taskDispatchQualityRepairReason(current)) return true;
+  if (!["handoff_ready", "merging"].includes(current.state)) return false;
+  dispatches.blockQualityRepairByCoordinator({
+    taskId: input.taskId,
+    revision: current.revision,
+    reason: input.snapshot.blocked.reason,
+  });
+  return true;
+}
+
+export function requeueRetiredQualityRepairs(input: {
+  readonly dispatches: readonly QualityRepairDispatchSnapshot[];
+  readonly retiredTaskIds: readonly string[];
+  readonly alreadyRetiredTaskIds: readonly string[];
+  readonly store: Pick<
+    QualityRepairDispatchStore,
+    "requeueQualityRepairAfterWorkerExit"
+  >;
+}): readonly string[] {
+  const provenExited = new Set([
+    ...input.retiredTaskIds,
+    ...input.alreadyRetiredTaskIds,
+  ]);
+  const requeued: string[] = [];
+  for (const dispatch of input.dispatches) {
+    if (
+      !provenExited.has(dispatch.taskId) ||
+      dispatch.state !== "blocked" ||
+      !taskDispatchQualityRepairReason(dispatch) ||
+      !dispatch.sessionId ||
+      !dispatch.workerIncarnationId
+    ) {
+      continue;
+    }
+    input.store.requeueQualityRepairAfterWorkerExit({
+      taskId: dispatch.taskId,
+      revision: dispatch.revision,
+      sessionId: dispatch.sessionId,
+      workerIncarnationId: dispatch.workerIncarnationId,
+    });
+    requeued.push(dispatch.taskId);
+  }
+  return Object.freeze(requeued);
+}
 
 interface MissionSchedulerOptions {
   readonly listScopes: () => readonly ProjectExecutionScope[];
@@ -201,7 +408,7 @@ async function mergeCompletedTask(
     merging.add(key);
     try {
       if (worktree.status !== "ready" && !noChangeMarker) {
-        throw new Error(
+        throw new MissionSchedulerDispatchAuthorityError(
           `guided isolated advisory cannot finalize from worktree status ${worktree.status}`,
         );
       }
@@ -241,16 +448,18 @@ async function mergeCompletedTask(
         },
       );
     } catch (error) {
-      projectTerminalMergeFailure(
+      const terminal = projectTerminalFinalizationFailure(
         {
           missionId,
           taskId,
-          reason: error instanceof Error ? error.message : String(error),
+          error,
         },
         domainStores.taskDispatches,
       );
       console.warn(
-        `[mission-scheduler] isolated advisory blocked for ${missionId}/${taskId}:`,
+        `[mission-scheduler] isolated advisory ${
+          terminal ? "blocked" : "finalization deferred"
+        } for ${missionId}/${taskId}:`,
         error,
       );
     } finally {
@@ -266,6 +475,39 @@ async function mergeCompletedTask(
   ) {
     merging.add(key);
     try {
+      const assertPreparationAuthority = () => {
+        getProjectDomainStores(scope).taskDispatches.assertLifecycleAuthority({
+          taskId,
+          missionId,
+          intentVersion: mergeIntentVersion,
+          expectedStates: ["handoff_ready", "merging"],
+        });
+      };
+      try {
+        await ensurePrevcMergeReady(scope, missionId, {
+          assertCurrentAuthority: assertPreparationAuthority,
+        });
+        assertPreparationAuthority();
+      } catch (error) {
+        // The no-change QA path bypasses MergeQueue, but it is still a final
+        // promotion. Capacity stays retryable; corrupt/stale authority is
+        // projected once instead of leaving the mission in an infinite loop.
+        if (classifyPrevcMergeFailure(error) === "terminal") {
+          projectTerminalMergeFailure(
+            {
+              missionId,
+              taskId,
+              reason: error instanceof Error ? error.message : String(error),
+            },
+            domainStores.taskDispatches,
+          );
+        }
+        console.warn(
+          `[mission-scheduler] PREVC no-change promotion pending for ${missionId}/${taskId}:`,
+          error,
+        );
+        return;
+      }
       const registry = requireWorktreeRuntimeRegistry();
       const service = getContextWorkflowService(scope);
       const validator = new MergeValidationCoordinator(service);
@@ -308,14 +550,16 @@ async function mergeCompletedTask(
       );
       if (handled) return;
     } catch (error) {
-      projectTerminalMergeFailure(
-        {
-          missionId,
-          taskId,
-          reason: error instanceof Error ? error.message : String(error),
-        },
-        domainStores.taskDispatches,
-      );
+      if (classifyOperationalFailure(error) === "terminal") {
+        projectTerminalMergeFailure(
+          {
+            missionId,
+            taskId,
+            reason: error instanceof Error ? error.message : String(error),
+          },
+          domainStores.taskDispatches,
+        );
+      }
       console.warn(
         `[mission-scheduler] no-change validation deferred for ${missionId}/${taskId}:`,
         error,
@@ -325,9 +569,15 @@ async function mergeCompletedTask(
       merging.delete(key);
     }
   }
-  if (worktree.status === "integrated") {
-    const mergeEntry = requireWorktreeRuntimeRegistry()
-      .mergeSnapshot(scope)
+  const registry = requireWorktreeRuntimeRegistry();
+  registry.reconcileMergeIfIdle(scope);
+  const queueSnapshot = registry.mergeSnapshot(scope);
+  const recoverableIntegratedEntry =
+    worktree.status === "integrated"
+      ? recoverableIntegratedMergeEntry(queueSnapshot, missionId, taskId)
+      : null;
+  if (worktree.status === "integrated" && !recoverableIntegratedEntry) {
+    const mergeEntry = queueSnapshot
       .entries.find(
         (entry) =>
           entry.missionId === missionId &&
@@ -367,12 +617,49 @@ async function mergeCompletedTask(
     );
     return;
   }
-  if (worktree.status !== "ready" && worktree.status !== "queued") {
+  if (
+    worktree.status !== "ready" &&
+    worktree.status !== "queued" &&
+    !recoverableIntegratedEntry
+  ) {
     mergeSkip(`worktree status=${worktree.status}`);
     return;
   }
   merging.add(key);
   try {
+    const assertPreparationAuthority = () => {
+      getProjectDomainStores(scope).taskDispatches.assertLifecycleAuthority({
+        taskId,
+        missionId,
+        intentVersion: mergeIntentVersion,
+        expectedStates: ["handoff_ready", "merging"],
+      });
+    };
+    try {
+      await ensurePrevcMergeReady(scope, missionId, {
+        assertCurrentAuthority: assertPreparationAuthority,
+      });
+      assertPreparationAuthority();
+    } catch (error) {
+      // PREVC preparation is deliberately opportunistic while workers run and
+      // mandatory only at promotion. Capacity remains a retryable wait, while
+      // durable authority/configuration failures receive an actionable state.
+      if (classifyPrevcMergeFailure(error) === "terminal") {
+        projectTerminalMergeFailure(
+          {
+            missionId,
+            taskId,
+            reason: error instanceof Error ? error.message : String(error),
+          },
+          domainStores.taskDispatches,
+        );
+      }
+      console.warn(
+        `[mission-scheduler] PREVC promotion preparation pending for ${missionId}/${taskId}:`,
+        error,
+      );
+      return;
+    }
     if (dispatch.state === "handoff_ready") {
       dispatch = domainStores.taskDispatches.beginMerge({
         taskId,
@@ -405,7 +692,20 @@ async function mergeCompletedTask(
     assertCurrentMergeAuthority();
     const service = getContextWorkflowService(scope);
     const validator = new MergeValidationCoordinator(service);
-    await requireWorktreeRuntimeRegistry().enqueue({
+    const blockedEntry = queueSnapshot.blocked
+      ? queueSnapshot.entries.find(
+          (entry) =>
+            entry.taskKey === queueSnapshot.blocked?.taskKey &&
+            entry.missionId === missionId &&
+            entry.taskId === taskId,
+        )
+      : undefined;
+    const enqueue =
+      blockedEntry &&
+      (queueSnapshot.blocked?.disposition ?? "terminal") !== "terminal"
+        ? registry.retryRecoverable.bind(registry)
+        : registry.enqueue.bind(registry);
+    await enqueue({
       scope,
       missionId,
       taskId,
@@ -434,14 +734,29 @@ async function mergeCompletedTask(
       },
     });
   } catch (error) {
-    projectTerminalMergeFailure(
-      {
-        missionId,
-        taskId,
-        reason: error instanceof Error ? error.message : String(error),
-      },
+    let repairProjected = projectQualityRepairFailure(
+      { taskId, error },
       getProjectDomainStores(scope).taskDispatches,
     );
+    if (!repairProjected) {
+      repairProjected = projectUnchangedQueueRepair(
+        { taskId, error, snapshot: queueSnapshot },
+        getProjectDomainStores(scope).taskDispatches,
+      );
+    }
+    if (
+      !repairProjected &&
+      classifyOperationalFailure(error) === "terminal"
+    ) {
+      projectTerminalMergeFailure(
+        {
+          missionId,
+          taskId,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+        getProjectDomainStores(scope).taskDispatches,
+      );
+    }
     console.warn(
       `[mission-scheduler] merge deferred for ${missionId}/${taskId}:`,
       error,
@@ -456,10 +771,11 @@ async function retireMissionTaskWorkers(
   missionId: string,
 ): Promise<void> {
   const stores = getProjectDomainStores(scope);
-  await productionTaskDispatchWorkerRetirement.retireMissionWorkers({
+  const dispatches = stores.taskDispatches.list(missionId);
+  const retired = await productionTaskDispatchWorkerRetirement.retireMissionWorkers({
     scope,
     missionId,
-    dispatches: stores.taskDispatches.list(missionId),
+    dispatches,
     deps: {
       getDispatch: (taskId) => stores.taskDispatches.get(taskId),
       closeWorker: ({
@@ -477,6 +793,12 @@ async function retireMissionTaskWorkers(
           scope: workerScope,
         }),
     },
+  });
+  requeueRetiredQualityRepairs({
+    dispatches,
+    retiredTaskIds: retired.retiredTaskIds,
+    alreadyRetiredTaskIds: retired.alreadyRetiredTaskIds,
+    store: stores.taskDispatches,
   });
 }
 
@@ -502,38 +824,6 @@ async function tickMission(
     return;
   }
   const mission = stores.missions.get(missionId);
-  const initialSchedulerTasks = schedulerTasks(scope, missionId);
-  const hasOutstandingGuidedTask =
-    Boolean(mission && missionRequiresGuidedPrevc(mission)) &&
-    initialSchedulerTasks.some((task) => !task.merged);
-  if (hasOutstandingGuidedTask) {
-    const approved = mission?.intentContract;
-    try {
-      assertGuidedPrevcExecutionReady({
-        required: true,
-        missionId,
-        approvedGoal: approved?.goal,
-        approvedAcceptanceCriteria: approved?.acceptanceCriteria,
-        workflow:
-          getContextWorkflowService(scope).getMissionWorkflow(missionId),
-      });
-      getContextWorkflowService(scope).assertMutationAllowed(
-        missionId,
-        "nexus_mission_spawn_pane",
-        {},
-      );
-    } catch (error) {
-      // The orchestrator may be completing independent PREVC review. Returning
-      // here is deliberate: no dispatch claim, worktree or worker PTY exists
-      // until the immutable workflow reaches execution.
-      console.warn(
-        `[mission-scheduler] tick skip ${missionId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return;
-    }
-  }
   const key = missionKey(scope, missionId);
   const state = states.get(key) ?? createSchedulerRuntimeState();
   const result = await runMissionSchedulerLaunchPass({
@@ -559,18 +849,50 @@ async function tickMission(
           dispatch.state === "handoff_ready"
         ) {
           try {
+            const registry = requireWorktreeRuntimeRegistry();
+            const disposable = registry.get(
+              scope,
+              missionId,
+              dispatch.taskId,
+            );
+            if (disposable) {
+              const prepared = registry.prepareDiscardedNoChangeValidation(
+                scope,
+                missionId,
+                dispatch.taskId,
+              );
+              if (!prepared) {
+                throw new MissionSchedulerDispatchAuthorityError(
+                  "o reviewer alterou ou commitou arquivos no worktree descartável",
+                );
+              }
+              registry.markDiscardedNoChange(
+                scope,
+                missionId,
+                dispatch.taskId,
+                prepared.taskHeadSha,
+                prepared.integrationHeadSha,
+              );
+            }
             stores.taskDispatches.completeReadOnlyFromTrustedHandoff({
               taskId: dispatch.taskId,
               revision: dispatch.revision,
             });
           } catch (error) {
-            stores.taskDispatches.blockUnvalidatedByCoordinator({
-              taskId: dispatch.taskId,
-              revision: dispatch.revision,
-              reason:
-                "Handoff read-only não possui evidência Nexus confiável e atual. " +
-                (error instanceof Error ? error.message : String(error)),
-            });
+            const terminal = projectTerminalFinalizationFailure(
+              {
+                missionId,
+                taskId: dispatch.taskId,
+                error,
+              },
+              stores.taskDispatches,
+            );
+            console.warn(
+              `[mission-scheduler] read-only ${
+                terminal ? "blocked" : "finalization deferred"
+              } for ${missionId}/${dispatch.taskId}:`,
+              error,
+            );
           }
           continue;
         }
@@ -602,13 +924,16 @@ async function tickMission(
           listTasks: () => currentSchedulerTasks,
           listActiveWorkers: () => activeWorkers(scope, missionId),
           scheduleConfig: () => ({
-            configuredCap: 4,
+            configuredCap: mission?.intentContract
+              ? missionSchedulerConfiguredWorkerCap(mission.intentContract)
+              : 0,
             cores: 8,
             paneBudget: 8,
           }),
           now: () => configured?.now?.() ?? Date.now(),
           dispatchTask: (request) =>
             dispatchMissionSchedulerTask(scope, missionId, request),
+          isRetryableDispatchError: isMissionSchedulerRetryableDispatchError,
           getChangedFiles: async () => [],
           mergeTask: async () => undefined,
           markMerged: async () => undefined,
@@ -617,11 +942,15 @@ async function tickMission(
             const intentVersion =
               currentMission?.intentContract?.intentVersion;
             if (intentVersion === undefined) return;
+            const durableReason =
+              classifyOperationalFailure(new Error(reason)) === "terminal"
+                ? terminalOperationalFailureReason(reason)
+                : reason;
             stores.taskDispatches.blockBeforeClaim({
               missionId,
               taskId,
               intentVersion,
-              reason,
+              reason: durableReason,
             });
           },
           reRunSequentially: async () => undefined,

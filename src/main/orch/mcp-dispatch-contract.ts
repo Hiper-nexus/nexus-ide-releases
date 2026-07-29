@@ -6,7 +6,14 @@ import type {
   GuidedPrevcMcpFenceResolver,
 } from './guided-prevc-mcp-fence';
 
-export type McpDispatchSource = AuditSource;
+/**
+ * Sources allowed to execute a live tool dispatch. PTY stream is a current
+ * Main-observed transport; legacy OMP stdio remains audit-read compatibility.
+ */
+export type McpDispatchSource = Exclude<
+  AuditSource,
+  'omp-rpc-stdio'
+>;
 
 export function normalizeDispatchSessionId(
   source: McpDispatchSource,

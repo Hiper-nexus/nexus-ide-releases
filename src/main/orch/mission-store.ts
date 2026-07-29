@@ -18,6 +18,7 @@ import {
   type MissionStatus,
 } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { hasRetiredRosterRouteMarker } from '../../shared/retired-adapter-policy';
 import {
   hasCurrentDispatchAuthority,
   missionBlockKindSchema,
@@ -578,6 +579,29 @@ export class ScopedMissionStore {
   }
 
   /**
+   * Clears only the exact retired physical session. A concurrent rebind wins
+   * the SQL CAS and can never be erased by a late teardown completion.
+   */
+  clearOrchestratorSessionIfMatches(
+    rawId: string,
+    rawExpectedSessionId: string,
+  ): ScopedMission | null {
+    const id = entityIdSchema.parse(rawId);
+    const expectedSessionId = sessionIdSchema.parse(rawExpectedSessionId);
+    const result = this.#binding
+      .writeDatabase()
+      .prepare(
+        `UPDATE missions
+         SET orch_session_id = NULL, updated_at = ?
+         WHERE id = ? AND orch_session_id = ?`,
+      )
+      .run(this.#binding.now(), id, expectedSessionId);
+    if (result.changes !== 1) return null;
+    this.#binding.emitChange();
+    return this.get(id);
+  }
+
+  /**
    * Rebind a live orchestrator and recover completion-critical deliveries in
    * the same SQLite transaction. Accepted attempts remain immutable audit
    * evidence; only the handoff's delivery projection is queued for the new
@@ -944,7 +968,8 @@ export class ScopedMissionStore {
    * history and are intentionally left untouched. The caller must first prove
    * physical pane/session teardown and remove the durable pane composition;
    * this transaction then CASes the exact blocked mission snapshot, requires a
-   * terminal dispatch from that same revision, and advances exactly once.
+   * terminal dispatch from that same revision, or the explicit retired-route
+   * marker produced before a claim could exist, and advances exactly once.
    */
   publishDeadGraphReapprovalRevision(
     rawId: string,
@@ -1032,7 +1057,10 @@ export class ScopedMissionStore {
              LIMIT 1`,
           )
           .get(id, expectedVersion);
-        if (!invalidatedDispatch) {
+        const retiredRouteInvalidated = hasRetiredRosterRouteMarker(
+          current.description,
+        );
+        if (!invalidatedDispatch && !retiredRouteInvalidated) {
           throw new Error(
             'dead graph reapproval requires an invalidated current dispatch',
           );

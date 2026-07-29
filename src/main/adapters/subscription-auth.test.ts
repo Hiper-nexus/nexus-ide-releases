@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   agyKeychainBlobIsUsable,
@@ -45,6 +44,20 @@ afterEach(() => {
  */
 
 describe('resolveAuthStrategy', () => {
+  it('treats auth.method none as credentialless without injecting or suppressing env', () => {
+    expect(
+      resolveAuthStrategy({
+        authMethod: 'none',
+        hasStoredKey: false,
+        subscriptionAuthed: false,
+      }),
+    ).toEqual({
+      strategy: 'credentialless',
+      injectKey: false,
+      suppressKeyEnv: false,
+    });
+  });
+
   it('subscription session wins even when a key is stored (and suppresses key env)', () => {
     const decision = resolveAuthStrategy({
       authMethod: 'oauth',
@@ -462,144 +475,6 @@ describe('detectSubscriptionAuth', () => {
       }),
     );
     expect(detectSubscriptionAuth('kimi', home)).toBe(true);
-  });
-
-  it('detects OMP only from exact provider/model vault metadata', () => {
-    const home = tempHome();
-    const databasePath = path.join(home, '.omp', 'agent', 'agent.db');
-    fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-    const database = new Database(databasePath);
-    try {
-      database.exec(`
-        CREATE TABLE auth_credentials (
-          id INTEGER PRIMARY KEY,
-          provider TEXT NOT NULL,
-          credential_type TEXT NOT NULL,
-          data TEXT NOT NULL,
-          disabled_cause TEXT
-        )
-      `);
-      database
-        .prepare(
-          `INSERT INTO auth_credentials
-             (id, provider, credential_type, data, disabled_cause)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(1, 'anthropic', 'oauth', 'secret-must-not-be-read', 'disabled');
-      expect(
-        detectSubscriptionAuth(
-          'omp',
-          home,
-          'anthropic/claude-sonnet-4-6',
-        ),
-      ).toBe(false);
-      database
-        .prepare(
-          `INSERT INTO auth_credentials
-             (id, provider, credential_type, data, disabled_cause)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(2, 'openai-codex', 'oauth', 'another-secret', null);
-      expect(
-        detectSubscriptionAuth('omp', home, 'openai-codex/gpt-5.5'),
-      ).toBe(true);
-      expect(
-        detectSubscriptionAuth('omp-rpc', home, 'openai-codex/gpt-5.5'),
-      ).toBe(true);
-      // A valid Codex credential is not blanket readiness for Anthropic/xAI.
-      expect(
-        detectSubscriptionAuth(
-          'omp',
-          home,
-          'anthropic/claude-sonnet-4-6',
-        ),
-      ).toBe(false);
-      expect(
-        detectSubscriptionAuth('omp', home, 'xai/grok-4.5'),
-      ).toBe(false);
-      database
-        .prepare(
-          `INSERT INTO auth_credentials
-             (id, provider, credential_type, data, disabled_cause)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(3, 'xai-oauth', 'oauth', 'synthetic-row-data', null);
-      expect(
-        detectSubscriptionAuth('omp', home, 'xai-oauth/grok-4.5'),
-      ).toBe(true);
-      // The distinct API-key selector is not authorized by xai-oauth.
-      expect(
-        detectSubscriptionAuth('omp', home, 'xai/grok-4.5'),
-      ).toBe(false);
-      // Missing/malformed model cannot fall back to "any vault row".
-      expect(detectSubscriptionAuth('omp', home)).toBe(false);
-      expect(detectSubscriptionAuth('omp', home, 'malformed')).toBe(false);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('fails closed when an OMP database has an unknown schema', () => {
-    const home = tempHome();
-    touch(home, '.omp', 'agent', 'agent.db');
-    expect(
-      detectSubscriptionAuth(
-        'omp',
-        home,
-        'anthropic/claude-sonnet-4-6',
-      ),
-    ).toBe(false);
-  });
-
-  it('honors only release-pinned broker aliases', () => {
-    const home = tempHome();
-    const databasePath = path.join(home, '.omp', 'agent', 'agent.db');
-    fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-    const database = new Database(databasePath);
-    try {
-      database.exec(`
-        CREATE TABLE auth_credentials (
-          id INTEGER PRIMARY KEY,
-          provider TEXT NOT NULL,
-          credential_type TEXT NOT NULL,
-          data TEXT NOT NULL,
-          disabled_cause TEXT
-        )
-      `);
-      database
-        .prepare(
-          `INSERT INTO auth_credentials
-             (provider, credential_type, data, disabled_cause)
-           VALUES (?, ?, ?, ?)`,
-        )
-        .run(
-          'openai-codex-device',
-          'oauth',
-          'secret-must-not-be-read',
-          null,
-        );
-      expect(
-        detectSubscriptionAuth('omp', home, 'openai-codex/gpt-5.5'),
-      ).toBe(true);
-      expect(
-        detectSubscriptionAuth('omp', home, 'openai/gpt-5.5'),
-      ).toBe(false);
-      expect(
-        detectSubscriptionAuth('omp', home, 'future/gpt-5.5'),
-      ).toBe(false);
-    } finally {
-      database.close();
-    }
-  });
-
-  it('treats only release-pinned local OMP providers as credentialless', () => {
-    const home = tempHome();
-    expect(
-      detectSubscriptionAuth('omp', home, 'ollama/qwen2.5-coder'),
-    ).toBe(true);
-    expect(
-      detectSubscriptionAuth('omp', home, 'future-local/model'),
-    ).toBe(false);
   });
 
   it('detects a managed AGY account via usable oauth_creds under GEMINI_CLI_HOME', () => {

@@ -5,7 +5,10 @@ import {
   isMissionRuntimeSquadId,
 } from "../../shared/orch-types";
 import type { Squad, SquadAgent } from "../../shared/orch-types";
-import { DEFAULT_ORCH_SETTINGS } from "../../shared/settings-types";
+import {
+  DEFAULT_ORCH_SETTINGS,
+  type SquadCliPolicy,
+} from "../../shared/settings-types";
 import {
   missionTitleFromGoal,
   retargetSquadInstructions,
@@ -40,6 +43,7 @@ import {
 import { applySquadEdit } from "../../shared/squad-edit";
 import { balanceSquadRosterCli } from "../orch/squad-roster";
 import { automaticOrchestratorAdapterId } from "../orch/orchestrator-runtime";
+import { isAdapterModelAuthenticated } from "../orch/mission-runtime-readiness";
 import { CloseButton } from "./CloseButton";
 import { MissionWizardReview } from "./MissionWizardReview";
 import { MissionWizardPlanReview } from "./MissionWizardPlanReview";
@@ -205,6 +209,9 @@ export function MissionWizard() {
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [configuredOrchestratorAdapterId, setConfiguredOrchestratorAdapterId] =
     useState(DEFAULT_ORCH_SETTINGS.defaultAdapterId);
+  const [squadCliPolicy, setSquadCliPolicy] = useState<SquadCliPolicy>(
+    DEFAULT_ORCH_SETTINGS.squadCliPolicy,
+  );
   const [step, setStep] = useState<Step>("mode");
   const stepRef = useRef<Step>("mode");
   stepRef.current = step;
@@ -379,6 +386,7 @@ export function MissionWizard() {
           setConfiguredOrchestratorAdapterId(
             settings.defaultAdapterId || DEFAULT_ORCH_SETTINGS.defaultAdapterId,
           );
+          setSquadCliPolicy(settings.squadCliPolicy);
         }
       })
       .catch((cause) => {
@@ -768,12 +776,35 @@ export function MissionWizard() {
     [adapters, providers],
   );
   const verifiedAutomaticOrchestratorId = useMemo(
-    () =>
+    () => {
+      const authenticatedAdapterIds = new Set(
+        rosterAdapters
+          .filter((adapter) =>
+            isAdapterModelAuthenticated(
+              adapter,
+              providers,
+              undefined,
+              accounts,
+            ),
+          )
+          .map((adapter) => adapter.id),
+      );
+      return (
       automaticOrchestratorAdapterId(
         rosterAdapters,
         configuredOrchestratorAdapterId,
-      ) ?? "",
-    [rosterAdapters, configuredOrchestratorAdapterId],
+        squadCliPolicy,
+        authenticatedAdapterIds,
+      ) ?? ""
+      );
+    },
+    [
+      accounts,
+      configuredOrchestratorAdapterId,
+      providers,
+      rosterAdapters,
+      squadCliPolicy,
+    ],
   );
 
   // Derived: which worker (if any) has allowedTools == null (the guard condition).
@@ -802,7 +833,8 @@ export function MissionWizard() {
       setRosterSaved(false);
       return;
     }
-    if (rosterSquadRef.current === sq.id) {
+    const rosterPolicyKey = `${sq.id}\u0000${squadCliPolicy}`;
+    if (rosterSquadRef.current === rosterPolicyKey) {
       // Adapters/settings load independently when the wizard opens. Fill an
       // initially empty Maestro once verified evidence arrives, without
       // rebalancing workers or discarding later operator edits.
@@ -824,19 +856,27 @@ export function MissionWizard() {
       }
       return;
     }
-    rosterSquadRef.current = sq.id;
+    rosterSquadRef.current = rosterPolicyKey;
     setRoster(
       balanceSquadRosterCli(
         sq.agents,
         rosterAdapters,
         verifiedAutomaticOrchestratorId,
-        sq.id === REAL_MISSION_E2E_SQUAD_ID
-          ? { preserveExactCliAssignments: true }
-          : undefined,
+        {
+          squadCliPolicy,
+          preserveExactCliAssignments:
+            sq.id === REAL_MISSION_E2E_SQUAD_ID,
+        },
       ),
     );
     setRosterSaved(false);
-  }, [squadId, selectedSquad, rosterAdapters, verifiedAutomaticOrchestratorId]);
+  }, [
+    squadId,
+    selectedSquad,
+    rosterAdapters,
+    verifiedAutomaticOrchestratorId,
+    squadCliPolicy,
+  ]);
 
   // Preflight: when the REVISAR step opens, immediately highlight the first
   // agent that will block launch so the user sees the issue before clicking.
@@ -1681,6 +1721,7 @@ export function MissionWizard() {
           ? renderMissionCompact(compact)
           : null,
         lane: contract.lane ?? "standard",
+        operatorChoice: squadCliPolicy === "operator-choice",
       }),
       buildMissionAttachmentsContext(attachments),
     ]
@@ -2132,6 +2173,7 @@ export function MissionWizard() {
               adapters={adapters}
               providers={providers}
               accounts={accounts}
+              squadCliPolicy={squadCliPolicy}
               guided={
                 mode === "agentic" || selectedSquad.id === NEXUS_PLAN_SQUAD_ID
               }

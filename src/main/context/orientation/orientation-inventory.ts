@@ -7,6 +7,10 @@ import type {
   OrientationLanguageStat,
 } from './orientation-types';
 import type { OrientationWalkResult, WalkedFile } from './orientation-walker';
+import {
+  throwIfOrientationAborted,
+  yieldOrientationWork,
+} from './orientation-cooperative';
 
 const MANIFEST_NAMES = new Set([
   'package.json',
@@ -50,6 +54,24 @@ const SCRIPT_PRIORITY = [
   'start',
   'check',
 ];
+const MAX_PACKAGE_JSON_BYTES = 2 * 1024 * 1024;
+
+interface PackageSummary {
+  readonly name: string | null;
+  readonly scripts: Record<string, string>;
+  readonly main?: string;
+  readonly bin?: unknown;
+}
+
+interface InventoryAccumulator {
+  readonly langMap: Map<string, { files: number; bytes: number }>;
+  readonly dirMap: Map<string, { files: number; bytes: number }>;
+  readonly pathSet: Set<string>;
+  readonly basenames: Set<string>;
+  readonly manifests: string[];
+  sourceFileCount: number;
+  bytesScanned: number;
+}
 
 function topLevelDir(relativePath: string): string {
   const parts = relativePath.split('/');
@@ -58,21 +80,42 @@ function topLevelDir(relativePath: string): string {
 
 function readPackageJson(
   scope: ProjectExecutionScope,
-): { name: string | null; scripts: Record<string, string>; main?: string; bin?: unknown } | null {
+): PackageSummary | null {
   const absolute = path.join(scope.rootRealPath, 'package.json');
   try {
     const stat = fs.lstatSync(absolute);
-    if (stat.isSymbolicLink() || !stat.isFile()) return null;
-    const raw = JSON.parse(fs.readFileSync(absolute, 'utf8')) as {
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      stat.size > MAX_PACKAGE_JSON_BYTES
+    ) return null;
+    return parsePackageJson(fs.readFileSync(absolute, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function parsePackageJson(content: string): PackageSummary | null {
+  try {
+    const raw = JSON.parse(content) as {
       name?: unknown;
       scripts?: unknown;
       main?: unknown;
       bin?: unknown;
     };
     const scripts: Record<string, string> = {};
-    if (raw.scripts && typeof raw.scripts === 'object' && !Array.isArray(raw.scripts)) {
+    if (
+      raw.scripts &&
+      typeof raw.scripts === 'object' &&
+      !Array.isArray(raw.scripts)
+    ) {
       for (const [key, value] of Object.entries(raw.scripts)) {
-        if (typeof value === 'string' && value.length > 0 && value.length <= 512) {
+        if (
+          typeof value === 'string' &&
+          value.length > 0 &&
+          value.length <= 512
+        ) {
           scripts[key] = value;
         }
       }
@@ -83,6 +126,28 @@ function readPackageJson(
       main: typeof raw.main === 'string' ? raw.main : undefined,
       bin: raw.bin,
     };
+  } catch {
+    return null;
+  }
+}
+
+async function readPackageJsonAsync(
+  scope: ProjectExecutionScope,
+): Promise<PackageSummary | null> {
+  const absolute = path.join(scope.rootRealPath, 'package.json');
+  try {
+    const stat = await fs.promises.lstat(absolute);
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      stat.size > MAX_PACKAGE_JSON_BYTES
+    ) {
+      return null;
+    }
+    const real = await fs.promises.realpath(absolute);
+    if (path.normalize(real) !== path.normalize(absolute)) return null;
+    return parsePackageJson(await fs.promises.readFile(absolute, 'utf8'));
   } catch {
     return null;
   }
@@ -104,8 +169,7 @@ function pickScripts(all: Record<string, string>): Record<string, string> {
   return picked;
 }
 
-function detectPackageManagers(files: readonly WalkedFile[]): string[] {
-  const basenames = new Set(files.map((file) => path.posix.basename(file.relativePath)));
+function detectPackageManagers(basenames: ReadonlySet<string>): string[] {
   const managers: string[] = [];
   if (basenames.has('pnpm-lock.yaml') || basenames.has('pnpm-workspace.yaml')) {
     managers.push('pnpm');
@@ -127,70 +191,126 @@ function detectPackageManagers(files: readonly WalkedFile[]): string[] {
   return managers;
 }
 
+function emptyAccumulator(): InventoryAccumulator {
+  return {
+    langMap: new Map(),
+    dirMap: new Map(),
+    pathSet: new Set(),
+    basenames: new Set(),
+    manifests: [],
+    sourceFileCount: 0,
+    bytesScanned: 0,
+  };
+}
+
+function accumulateFile(
+  accumulator: InventoryAccumulator,
+  file: WalkedFile,
+): void {
+  accumulator.bytesScanned += file.size;
+  accumulator.pathSet.add(file.relativePath);
+  const basename = path.posix.basename(file.relativePath);
+  accumulator.basenames.add(basename);
+  if (MANIFEST_NAMES.has(basename)) {
+    accumulator.manifests.push(file.relativePath);
+  }
+  if (file.isSource) {
+    accumulator.sourceFileCount += 1;
+    if (file.language) {
+      const current = accumulator.langMap.get(file.language) ?? {
+        files: 0,
+        bytes: 0,
+      };
+      current.files += 1;
+      current.bytes += file.size;
+      accumulator.langMap.set(file.language, current);
+    }
+  }
+  const dir = topLevelDir(file.relativePath);
+  const dirStat = accumulator.dirMap.get(dir) ?? { files: 0, bytes: 0 };
+  dirStat.files += 1;
+  dirStat.bytes += file.size;
+  accumulator.dirMap.set(dir, dirStat);
+}
+
+function finishInventory(
+  walk: OrientationWalkResult,
+  accumulator: InventoryAccumulator,
+  pkg: PackageSummary | null,
+): OrientationInventory {
+  const languages: OrientationLanguageStat[] = [
+    ...accumulator.langMap.entries(),
+  ]
+    .map(([id, stat]) =>
+      Object.freeze({ id, files: stat.files, bytes: stat.bytes }))
+    .sort(
+      (left, right) =>
+        right.files - left.files || left.id.localeCompare(right.id),
+    );
+  const topDirs: OrientationDirStat[] = [...accumulator.dirMap.entries()]
+    .map(([dirPath, stat]) =>
+      Object.freeze({
+        path: dirPath,
+        files: stat.files,
+        bytes: stat.bytes,
+      }))
+    .sort(
+      (left, right) =>
+        right.files - left.files || left.path.localeCompare(right.path),
+    )
+    .slice(0, 12);
+  const entrypoints = new Set<string>();
+  for (const candidate of ENTRYPOINT_CANDIDATES) {
+    if (accumulator.pathSet.has(candidate)) entrypoints.add(candidate);
+  }
+  if (pkg?.main) {
+    const normalized = pkg.main.replace(/^\.\//, '');
+    if (accumulator.pathSet.has(normalized)) entrypoints.add(normalized);
+  }
+  return Object.freeze({
+    languages: Object.freeze(languages),
+    topDirs: Object.freeze(topDirs),
+    entrypoints: Object.freeze(
+      [...entrypoints].sort((left, right) => left.localeCompare(right)),
+    ),
+    // Both walkers feed files in stable path order.
+    manifests: Object.freeze([...accumulator.manifests]),
+    scripts: Object.freeze(pkg ? pickScripts(pkg.scripts) : {}),
+    packageManagers: Object.freeze(
+      detectPackageManagers(accumulator.basenames),
+    ),
+    fileCount: walk.files.length,
+    sourceFileCount: accumulator.sourceFileCount,
+    bytesScanned: accumulator.bytesScanned,
+    projectName: pkg?.name ?? null,
+  });
+}
+
 export function buildOrientationInventory(
   scope: ProjectExecutionScope,
   walk: OrientationWalkResult,
 ): OrientationInventory {
-  const langMap = new Map<string, { files: number; bytes: number }>();
-  const dirMap = new Map<string, { files: number; bytes: number }>();
-  let sourceFileCount = 0;
-  let bytesScanned = 0;
-
+  const accumulator = emptyAccumulator();
   for (const file of walk.files) {
-    bytesScanned += file.size;
-    if (file.isSource) {
-      sourceFileCount += 1;
-      if (file.language) {
-        const current = langMap.get(file.language) ?? { files: 0, bytes: 0 };
-        current.files += 1;
-        current.bytes += file.size;
-        langMap.set(file.language, current);
-      }
+    accumulateFile(accumulator, file);
+  }
+  return finishInventory(walk, accumulator, readPackageJson(scope));
+}
+
+export async function buildOrientationInventoryAsync(
+  scope: ProjectExecutionScope,
+  walk: OrientationWalkResult,
+  signal?: AbortSignal,
+): Promise<OrientationInventory> {
+  throwIfOrientationAborted(signal);
+  const accumulator = emptyAccumulator();
+  for (let fileIndex = 0; fileIndex < walk.files.length; fileIndex += 1) {
+    accumulateFile(accumulator, walk.files[fileIndex]);
+    if (fileIndex > 0 && fileIndex % 512 === 0) {
+      await yieldOrientationWork(signal);
     }
-    const dir = topLevelDir(file.relativePath);
-    const dirStat = dirMap.get(dir) ?? { files: 0, bytes: 0 };
-    dirStat.files += 1;
-    dirStat.bytes += file.size;
-    dirMap.set(dir, dirStat);
   }
-
-  const languages: OrientationLanguageStat[] = [...langMap.entries()]
-    .map(([id, stat]) => Object.freeze({ id, files: stat.files, bytes: stat.bytes }))
-    .sort((left, right) => right.files - left.files || left.id.localeCompare(right.id));
-
-  const topDirs: OrientationDirStat[] = [...dirMap.entries()]
-    .map(([dirPath, stat]) =>
-      Object.freeze({ path: dirPath, files: stat.files, bytes: stat.bytes }),
-    )
-    .sort((left, right) => right.files - left.files || left.path.localeCompare(right.path))
-    .slice(0, 12);
-
-  const pathSet = new Set(walk.files.map((file) => file.relativePath));
-  const manifests = walk.files
-    .filter((file) => MANIFEST_NAMES.has(path.posix.basename(file.relativePath)))
-    .map((file) => file.relativePath)
-    .sort((left, right) => left.localeCompare(right));
-
-  const pkg = readPackageJson(scope);
-  const entrypoints = new Set<string>();
-  for (const candidate of ENTRYPOINT_CANDIDATES) {
-    if (pathSet.has(candidate)) entrypoints.add(candidate);
-  }
-  if (pkg?.main) {
-    const normalized = pkg.main.replace(/^\.\//, '');
-    if (pathSet.has(normalized)) entrypoints.add(normalized);
-  }
-
-  return Object.freeze({
-    languages: Object.freeze(languages),
-    topDirs: Object.freeze(topDirs),
-    entrypoints: Object.freeze([...entrypoints].sort((a, b) => a.localeCompare(b))),
-    manifests: Object.freeze(manifests),
-    scripts: Object.freeze(pkg ? pickScripts(pkg.scripts) : {}),
-    packageManagers: Object.freeze(detectPackageManagers(walk.files)),
-    fileCount: walk.files.length,
-    sourceFileCount,
-    bytesScanned,
-    projectName: pkg?.name ?? null,
-  });
+  const pkg = await readPackageJsonAsync(scope);
+  throwIfOrientationAborted(signal);
+  return finishInventory(walk, accumulator, pkg);
 }

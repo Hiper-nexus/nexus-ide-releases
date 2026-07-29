@@ -6,12 +6,14 @@ function adapter(
   installed = true,
   enabled = true,
   autonomousWorkspaceWriteCapable = id === "codex",
+  taskHandoffCapable = true,
 ) {
   return {
     id,
     installed,
     enabled,
     autonomousWorkspaceWriteCapable,
+    taskHandoffCapable,
   };
 }
 
@@ -66,6 +68,19 @@ describe("workerCliPool", () => {
         adapter("agy", true, true, false),
       ]),
     ).toEqual([]);
+  });
+
+  it("uses every handoff-capable CLI in operator-choice without requiring a governed writer brand", () => {
+    expect(
+      workerCliPool(
+        [
+          adapter("kimi", true, true, false, true),
+          adapter("custom-cli", true, true, false, true),
+          adapter("codex", true, true, true, false),
+        ],
+        "operator-choice",
+      ),
+    ).toEqual(["kimi", "custom-cli"]);
   });
 });
 
@@ -134,11 +149,11 @@ describe("balanceSquadRosterCli", () => {
 
   it("preserves sealed advisor CLIs even when detection is false", () => {
     // Root cause of product-wizard observer-invalid with heavy advisor skips:
-    // omp/grok momentarily undetected → silent rewrite → binding null.
+    // advisory CLIs momentarily undetected → silent rewrite → binding null.
     const balanced = balanceSquadRosterCli(
       [
         agent("orch", "orchestrator", "codex"),
-        agent("e2e-advisor-omp", "scout", "omp"),
+        agent("e2e-advisor-kimi", "scout", "kimi"),
         agent("e2e-advisor-grok", "reviewer", "grok"),
         agent("e2e-executor", "executor", "codex"),
       ],
@@ -147,7 +162,7 @@ describe("balanceSquadRosterCli", () => {
 
     expect(balanced.map((item) => item.cli)).toEqual([
       "codex",
-      "omp",
+      "kimi",
       "grok",
       "codex",
     ]);
@@ -157,7 +172,7 @@ describe("balanceSquadRosterCli", () => {
     const balanced = balanceSquadRosterCli(
       [
         agent("orch", "orchestrator", "codex"),
-        agent("e2e-advisor-omp", "scout", "omp"),
+        agent("e2e-advisor-kimi", "scout", "kimi"),
         agent("e2e-executor", "executor", "claude"),
       ],
       [adapter("codex")],
@@ -167,7 +182,7 @@ describe("balanceSquadRosterCli", () => {
 
     expect(balanced.map((item) => item.cli)).toEqual([
       "codex",
-      "omp",
+      "kimi",
       "claude",
     ]);
   });
@@ -229,5 +244,25 @@ describe("balanceSquadRosterCli", () => {
 
     expect(balanced.cli).toBe("claude");
     expect(balanced.model).toBe("claude-sonnet-5");
+  });
+
+  it("preserves a Kimi executor selected by the operator", () => {
+    const balanced = balanceSquadRosterCli(
+      [
+        agent("maestro", "orchestrator", "custom-cli"),
+        agent("executor", "executor", "kimi"),
+      ],
+      [
+        adapter("custom-cli", true, true, false, true),
+        adapter("kimi", true, true, false, true),
+      ],
+      "custom-cli",
+      { squadCliPolicy: "operator-choice" },
+    );
+
+    expect(balanced.map((item) => item.cli)).toEqual([
+      "custom-cli",
+      "kimi",
+    ]);
   });
 });

@@ -1,19 +1,37 @@
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
-import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { resolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
-import { redactCommandLine } from '../terminal/command-redaction';
 import { writeFileAtomic } from '../util/atomic-write';
 
 /**
- * Local-first Markdown memory under `.nexus-memory/` (clean-room).
- * Readable on disk; optional SQLite index later via project runtime.
+ * Human-readable projection of the canonical SQLite/FTS5 memory.
+ *
+ * Files under `.nexus-memory/` are deliberately generated views, never an
+ * ingestion source. A sync rewrites local edits from SQLite and only removes
+ * stale files carrying our canonical marker; unrelated human Markdown is
+ * preserved but ignored by the memory APIs.
  */
 
 export const DEFAULT_MEMORY_DIR = '.nexus-memory';
+export const CANONICAL_MEMORY_PROJECTION = 'sqlite-fts5';
+
+const canonicalProjectionInputSchema = z
+  .object({
+    id: z.string().regex(/^mem-[A-Za-z0-9._:-]{1,123}$/),
+    content: z.string().min(1).max(64_000),
+    kind: z.enum(['fact', 'decision', 'preference', 'note']),
+    scope: z.literal('workspace'),
+    importance: z.number().int().min(1).max(5),
+    source: z.string().max(256).nullable(),
+    createdAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type CanonicalMemoryProjectionInput = z.infer<
+  typeof canonicalProjectionInputSchema
+>;
 
 export const memoryNoteSchema = z
   .object({
@@ -61,46 +79,100 @@ export function resolveMemoryRoot(
   }
 }
 
-export function rememberMarkdown(
+function projectionKind(
+  input: CanonicalMemoryProjectionInput,
+): MemoryNote['kind'] {
+  if (input.kind === 'decision') return 'decision';
+  if (/(?:^|:)mission:/.test(input.source ?? '')) return 'mission';
+  if (/(?:^|:)(?:agent|pane):/.test(input.source ?? '')) return 'agent';
+  return 'note';
+}
+
+function projectionMissionId(source: string | null): string | undefined {
+  if (!source) return undefined;
+  const match = /(?:^|:)mission:(.+)$/.exec(source);
+  return match?.[1]?.slice(0, 128);
+}
+
+function projectionTitle(content: string, id: string): string {
+  const firstLine = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  const title = firstLine?.replace(/^#{1,6}\s*/, '').trim();
+  return (title || `Memory ${id}`).slice(0, 256);
+}
+
+function yamlString(value: string | null): string {
+  return JSON.stringify(value ?? '');
+}
+
+function canonicalProjectionPath(root: string, id: string): string {
+  const parsedId = canonicalProjectionInputSchema.shape.id.parse(id);
+  return path.join(root, `${parsedId}.md`);
+}
+
+function projectionMarkdown(
+  input: CanonicalMemoryProjectionInput,
+  kind: MemoryNote['kind'],
+  missionId: string | undefined,
+  title: string,
+): string {
+  return [
+    '---',
+    `id: ${input.id}`,
+    `canonical: ${CANONICAL_MEMORY_PROJECTION}`,
+    'generated: true',
+    `kind: ${kind}`,
+    `memoryKind: ${input.kind}`,
+    `scope: ${input.scope}`,
+    `importance: ${input.importance}`,
+    `source: ${yamlString(input.source)}`,
+    `missionId: ${yamlString(missionId ?? null)}`,
+    `createdAt: ${input.createdAt}`,
+    `updatedAt: ${input.updatedAt}`,
+    '---',
+    '',
+    '<!-- Generated from Nexus SQLite memory. Local edits are overwritten. -->',
+    '',
+    `# ${title}`,
+    '',
+    input.content.replace(/^#{1,6}\s+[^\r\n]+\r?\n+/, ''),
+    '',
+  ].join('\n');
+}
+
+export function writeCanonicalMemoryProjection(
   projectRoot: string,
-  input: {
-    title: string;
-    body: string;
-    kind?: MemoryNote['kind'];
-    missionId?: string;
-  },
+  rawInput: CanonicalMemoryProjectionInput,
   dirname = DEFAULT_MEMORY_DIR,
 ): MemoryNote {
-  if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.nexusMemory)) {
-    throw new Error('feature.memory.nexusMemory is disabled');
-  }
+  const input = canonicalProjectionInputSchema.parse(rawInput);
   const root = resolveMemoryRoot(projectRoot, dirname);
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  const slug = input.title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 64) || 'note';
-  const id = `${slug}-${Date.now().toString(36)}-${randomUUID()}`;
-  const filePath = path.join(root, `${id}.md`);
-  // Redact secret-like tokens but never denylist entire memory notes.
-  const scrubbed = redactCommandLine(input.body, {
-    denylist: [],
-    maxLength: 64_000,
-  }).command;
-  const body = scrubbed.slice(0, 64_000);
-  const wikilinks = extractWikilinks(body);
-  const md = `---\nid: ${id}\nkind: ${input.kind ?? 'note'}\nmissionId: ${input.missionId ?? ''}\n---\n\n# ${input.title}\n\n${body}\n`;
-  writeFileAtomic(filePath, md);
+  const filePath = canonicalProjectionPath(root, input.id);
+  const kind = projectionKind(input);
+  const missionId = projectionMissionId(input.source);
+  const title = projectionTitle(input.content, input.id);
+  const markdown = projectionMarkdown(input, kind, missionId, title);
+  let isCurrent = false;
+  try {
+    isCurrent =
+      fs.lstatSync(filePath).isFile() &&
+      fs.readFileSync(filePath, 'utf8') === markdown;
+  } catch {
+    // Missing/unreadable/stale projection is repaired by the atomic write.
+  }
+  if (!isCurrent) writeFileAtomic(filePath, markdown);
   return memoryNoteSchema.parse({
-    id,
-    title: input.title,
-    kind: input.kind ?? 'note',
-    body,
-    wikilinks,
-    missionId: input.missionId,
+    id: input.id,
+    title,
+    kind,
+    body: input.content,
+    wikilinks: extractWikilinks(input.content),
+    missionId,
     path: filePath,
-    updatedAt: Date.now(),
+    updatedAt: input.updatedAt,
   });
 }
 
@@ -110,6 +182,7 @@ function parseFrontmatter(raw: string): {
   kind: MemoryNote['kind'];
   missionId?: string;
   idFromFm?: string;
+  canonical?: string;
 } {
   const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
   if (!fm) return { kind: 'note' };
@@ -119,13 +192,77 @@ function parseFrontmatter(raw: string): {
     kindRaw && MEMORY_KINDS.has(kindRaw)
       ? (kindRaw as MemoryNote['kind'])
       : 'note';
-  const missionId = /^missionId:\s*(.+)$/m.exec(block)?.[1]?.trim() || undefined;
+  const missionRaw =
+    /^missionId:\s*(.+)$/m.exec(block)?.[1]?.trim() || undefined;
+  const missionId =
+    missionRaw && missionRaw !== '""'
+      ? missionRaw.replace(/^"|"$/g, '')
+      : undefined;
   const idFromFm = /^id:\s*(\S+)/m.exec(block)?.[1]?.trim();
+  const canonical = /^canonical:\s*(\S+)/m.exec(block)?.[1]?.trim();
   return {
     kind,
     missionId: missionId || undefined,
     idFromFm,
+    canonical,
   };
+}
+
+function isCanonicalProjection(raw: string, expectedId?: string): boolean {
+  const frontmatter = parseFrontmatter(raw);
+  return (
+    frontmatter.canonical === CANONICAL_MEMORY_PROJECTION &&
+    (!expectedId || frontmatter.idFromFm === expectedId)
+  );
+}
+
+export function removeCanonicalMemoryProjection(
+  projectRoot: string,
+  id: string,
+  dirname = DEFAULT_MEMORY_DIR,
+): boolean {
+  const root = resolveMemoryRoot(projectRoot, dirname);
+  const filePath = canonicalProjectionPath(root, id);
+  if (!fs.existsSync(filePath)) return false;
+  const stat = fs.lstatSync(filePath);
+  if (!stat.isFile()) return false;
+  const raw = fs.readFileSync(filePath, 'utf8');
+  if (!isCanonicalProjection(raw, id)) return false;
+  fs.unlinkSync(filePath);
+  return true;
+}
+
+export function syncCanonicalMemoryProjections(
+  projectRoot: string,
+  rawInputs: readonly CanonicalMemoryProjectionInput[],
+  dirname = DEFAULT_MEMORY_DIR,
+): void {
+  const inputs = rawInputs.map((input) =>
+    canonicalProjectionInputSchema.parse(input),
+  );
+  const activeIds = new Set(inputs.map((input) => input.id));
+  const root = resolveMemoryRoot(projectRoot, dirname);
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+
+  for (const input of inputs) {
+    writeCanonicalMemoryProjection(projectRoot, input, dirname);
+  }
+
+  for (const name of fs.readdirSync(root)) {
+    if (!name.endsWith('.md')) continue;
+    const filePath = path.join(root, name);
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isFile()) continue;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const frontmatter = parseFrontmatter(raw);
+    if (
+      frontmatter.canonical === CANONICAL_MEMORY_PROJECTION &&
+      frontmatter.idFromFm &&
+      !activeIds.has(frontmatter.idFromFm)
+    ) {
+      fs.unlinkSync(filePath);
+    }
+  }
 }
 
 export function listMemoryNotes(
@@ -143,6 +280,7 @@ export function listMemoryNotes(
       if (!stat.isFile()) continue;
       const raw = fs.readFileSync(filePath, 'utf8');
       const fm = parseFrontmatter(raw);
+      if (fm.canonical !== CANONICAL_MEMORY_PROJECTION) continue;
       const title =
         /^#\s+(.+)$/m.exec(raw)?.[1]?.trim() ?? name.replace(/\.md$/, '');
       const id = fm.idFromFm ?? name.replace(/\.md$/, '');

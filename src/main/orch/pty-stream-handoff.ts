@@ -1,0 +1,317 @@
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import {
+  canSubmitMissionHandoff,
+  hasCurrentApprovedDispatchContract,
+  MAX_PROMOTED_PLAN_SUMMARY_BYTES,
+  MAX_PROMOTED_PLAN_SUMMARY_CHARS,
+  resolveEffectiveIntentState,
+} from "../../shared/mission-intent";
+import { handoffStatusSchema } from "../../shared/orch-types";
+import {
+  auditError,
+  auditIntent,
+  auditSuccess,
+  type AuditContext,
+} from "../jarvis/audit-log";
+import {
+  getContextBySession,
+  markHandoffSubmitted,
+  type AgentGateContext,
+} from "./gate";
+import { handoffRawPayloadSha256 } from "./handoff-payload-identity";
+import {
+  mintAgentTransportPhysicalReceipt,
+  runInsidePtyStreamAgentTransport,
+} from "./http-mcp-boundary";
+import { onHandoffSubmitted } from "./idle-delivery";
+import { committedPhysicalWorkerHead } from "./physical-handoff-git";
+import {
+  getProjectDomainStores,
+  type ProjectDomainStoreSuite,
+} from "./project-domain-store-registry";
+import { compactText } from "./session-compaction";
+import type { TaskDispatchRecord } from "./task-dispatch-codec";
+
+const ptyStreamHandoffPayloadSchema = z
+  .object({
+    status: handoffStatusSchema,
+    summary: z.string().min(1).max(65_536),
+    artifacts: z.array(z.unknown()).max(4_096),
+  })
+  .strict();
+
+export type PtyStreamHandoffPayload = z.infer<
+  typeof ptyStreamHandoffPayloadSchema
+>;
+
+export interface PtyStreamHandoffResult {
+  readonly handoffId: string;
+  readonly taskDispatchState: string;
+  readonly replayed: boolean;
+}
+
+interface PreparedPtyHandoff {
+  readonly sessionId: string;
+  readonly ctx: AgentGateContext;
+  readonly suite: ProjectDomainStoreSuite;
+  readonly missionId: string;
+  readonly dispatch: TaskDispatchRecord;
+  readonly payload: PtyStreamHandoffPayload;
+  readonly rawArgs: PtyStreamHandoffPayload;
+  readonly rawPayloadSha256: string;
+  readonly summary: string;
+  readonly worktreeHeadSha: string;
+  readonly invocationId: string;
+  readonly startedAt: number;
+  readonly auditContext: AuditContext;
+}
+
+function requireCurrentPtyWorkerContext(sessionId: string): AgentGateContext {
+  const ctx = getContextBySession(sessionId);
+  if (
+    !ctx ||
+    ctx.role !== "worker" ||
+    ctx.sessionId !== sessionId ||
+    !ctx.missionId ||
+    !ctx.workerIncarnationId
+  ) {
+    throw new Error(
+      "handoff_provenance: PTY stream is not bound to a current mission worker",
+    );
+  }
+  return ctx;
+}
+
+function summarizeForPersistence(
+  rawSummary: string,
+  isPlanHandoff: boolean,
+): string {
+  const summary = rawSummary.trim();
+  if (summary.length < 20 || /^<.*>$/u.test(summary)) {
+    throw new Error(
+      "summary inválido: descreva de verdade o que foi feito (mínimo 20 caracteres, sem placeholder)",
+    );
+  }
+  if (
+    isPlanHandoff &&
+    (summary.length > MAX_PROMOTED_PLAN_SUMMARY_CHARS ||
+      Buffer.byteLength(summary, "utf8") > MAX_PROMOTED_PLAN_SUMMARY_BYTES)
+  ) {
+    throw new Error(
+      "summary inválido: PRD/plano excede o limite físico de 32 KiB",
+    );
+  }
+  return isPlanHandoff
+    ? summary
+    : compactText(summary, { maxChars: 4_000 }).text;
+}
+
+function requireBoundDispatch(
+  suite: ProjectDomainStoreSuite,
+  missionId: string,
+  sessionId: string,
+  workerIncarnationId: string,
+): TaskDispatchRecord {
+  const exactDispatches = suite.taskDispatches
+    .list(missionId)
+    .filter(
+      (dispatch) =>
+        dispatch.sessionId === sessionId &&
+        dispatch.workerIncarnationId === workerIncarnationId,
+    );
+  if (exactDispatches.length !== 1) {
+    throw new Error(
+      "worker incarnation obsoleta: PTY stream não pertence ao dispatch físico atual",
+    );
+  }
+  return exactDispatches[0]!;
+}
+
+function assertCurrentHandoffOrigin(
+  ctx: AgentGateContext,
+  suite: ProjectDomainStoreSuite,
+  mission: NonNullable<ReturnType<ProjectDomainStoreSuite["missions"]["get"]>>,
+  dispatch: TaskDispatchRecord,
+  sessionId: string,
+): void {
+  const intentState = resolveEffectiveIntentState({
+    mission,
+    taskCount: suite.tasks.list(mission.id).length,
+    workerPaneCount: suite.missionPanes
+      .list(mission.id)
+      .filter((pane) => pane.role === "worker").length,
+  });
+  const origin = canSubmitMissionHandoff({
+    role: ctx.role,
+    missionId: ctx.missionId,
+    sessionId,
+    intentState,
+  });
+  const terminalReplay =
+    (mission.status === "blocked" || mission.status === "done") &&
+    dispatch.handoffId !== undefined;
+  if (!origin.ok && !terminalReplay) throw new Error(origin.error);
+}
+
+async function preparePtyHandoff(
+  rawSessionId: string,
+  rawPayload: PtyStreamHandoffPayload,
+): Promise<PreparedPtyHandoff> {
+  const sessionId = z.string().min(1).max(256).parse(rawSessionId);
+  const payload = ptyStreamHandoffPayloadSchema.parse(rawPayload);
+  const ctx = requireCurrentPtyWorkerContext(sessionId);
+  const suite = getProjectDomainStores(ctx.scope);
+  const mission = suite.missions.get(ctx.missionId!);
+  if (!mission || !hasCurrentApprovedDispatchContract(mission)) {
+    throw new Error("handoff_origin: current approved mission unavailable");
+  }
+  const dispatch = requireBoundDispatch(
+    suite,
+    mission.id,
+    sessionId,
+    ctx.workerIncarnationId!,
+  );
+  assertCurrentHandoffOrigin(ctx, suite, mission, dispatch, sessionId);
+  const rawArgs = Object.freeze({ ...payload });
+  const worktreeHeadSha = await committedPhysicalWorkerHead(ctx, true);
+  if (!worktreeHeadSha) {
+    throw new Error("handoff_provenance: physical worker HEAD is required");
+  }
+  return Object.freeze({
+    sessionId,
+    ctx,
+    suite,
+    missionId: mission.id,
+    dispatch,
+    payload,
+    rawArgs,
+    rawPayloadSha256: handoffRawPayloadSha256(rawArgs),
+    summary: summarizeForPersistence(
+      payload.summary,
+      mission.intentContract?.lane === "plan",
+    ),
+    worktreeHeadSha,
+    invocationId: `pty-handoff-${randomUUID()}`,
+    startedAt: Date.now(),
+    auditContext: {
+      scope: ctx.scope,
+      missionId: mission.id,
+      contextRevision: ctx.contextRevision,
+    },
+  });
+}
+
+function commitPhysicalPtyHandoff(
+  prepared: PreparedPtyHandoff,
+  physicalReceipt: ReturnType<typeof mintAgentTransportPhysicalReceipt>,
+) {
+  const { ctx, dispatch, missionId, payload, sessionId, suite } = prepared;
+  return suite.handoffs.submitFromPhysicalAgentBoundaryAndTransitionDispatch(
+    {
+      status: payload.status,
+      summary: prepared.summary,
+      artifacts: payload.artifacts,
+      missionId,
+      sessionId,
+      workerIncarnationId: ctx.workerIncarnationId,
+      fromAgent: dispatch.workerId,
+    },
+    physicalReceipt,
+    {
+      worktreeHeadSha: prepared.worktreeHeadSha,
+      rawPayloadSha256: prepared.rawPayloadSha256,
+    },
+    {
+      sessionId,
+      workerIncarnationId: ctx.workerIncarnationId!,
+      detail: `${payload.status}: ${prepared.summary}`,
+    },
+  );
+}
+
+async function persistPtyHandoff(
+  prepared: PreparedPtyHandoff,
+): Promise<PtyStreamHandoffResult> {
+  const { auditContext, ctx, invocationId, rawArgs, sessionId } = prepared;
+  return runInsidePtyStreamAgentTransport(sessionId, ctx, async () => {
+    auditIntent(
+      auditContext,
+      sessionId,
+      "nexus_handoff_submit",
+      rawArgs,
+      0,
+      false,
+      "pty-stream",
+      invocationId,
+    );
+    const receipt = mintAgentTransportPhysicalReceipt({
+      ctx,
+      toolCallId: invocationId,
+      toolName: "nexus_handoff_submit",
+    });
+    const committed = commitPhysicalPtyHandoff(prepared, receipt);
+    auditSuccess(
+      auditContext,
+      sessionId,
+      "nexus_handoff_submit",
+      rawArgs,
+      Date.now() - prepared.startedAt,
+      false,
+      "pty-stream",
+      invocationId,
+    );
+    if (committed.handoff.evidenceTrust === "nexus-trusted") {
+      markHandoffSubmitted(ctx);
+    }
+    if (!committed.replayed || committed.handoff.deliveryState === "queued") {
+      onHandoffSubmitted(committed.handoff, ctx.scope);
+    }
+    return Object.freeze({
+      handoffId: committed.handoff.id,
+      taskDispatchState: committed.taskDispatch.state,
+      replayed: committed.replayed,
+    });
+  });
+}
+
+function auditPtyHandoffFailure(
+  prepared: PreparedPtyHandoff,
+  error: unknown,
+): void {
+  try {
+    auditError(
+      prepared.auditContext,
+      prepared.sessionId,
+      "nexus_handoff_submit",
+      prepared.rawArgs,
+      Date.now() - prepared.startedAt,
+      error instanceof Error ? error.message : String(error),
+      false,
+      "pty-stream",
+      prepared.invocationId,
+    );
+  } catch (auditFailure) {
+    console.warn("[handoff] PTY stream audit failure:", auditFailure);
+  }
+}
+
+/**
+ * Promote one Main-observed terminal block into the same durable handoff +
+ * receipt + task-dispatch transaction used by HTTP MCP.
+ *
+ * No mission/session/incarnation identifier is accepted from terminal text:
+ * every identity comes from the PTY data tap and its current gate context.
+ */
+export async function submitPtyStreamHandoff(
+  rawSessionId: string,
+  rawPayload: PtyStreamHandoffPayload,
+): Promise<PtyStreamHandoffResult> {
+  const prepared = await preparePtyHandoff(rawSessionId, rawPayload);
+  try {
+    return await persistPtyHandoff(prepared);
+  } catch (error) {
+    auditPtyHandoffFailure(prepared, error);
+    throw error;
+  }
+}

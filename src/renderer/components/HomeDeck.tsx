@@ -21,6 +21,10 @@ import {
   homeWarmingBeat,
 } from "../../shared/endorphin";
 import { missionRuntimeReadiness } from "../orch/mission-runtime-readiness";
+import {
+  DEFAULT_ORCH_SETTINGS,
+  type SquadCliPolicy,
+} from "../../shared/settings-types";
 
 /**
  * Home deck — the ops-deck empty state rendered over the pane area when a
@@ -56,6 +60,9 @@ export function HomeDeck() {
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [providers, setProviders] = useState<ProviderSettingsInfo[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
+  const [squadCliPolicy, setSquadCliPolicy] = useState<SquadCliPolicy>(
+    DEFAULT_ORCH_SETTINGS.squadCliPolicy,
+  );
   const [adaptersLoaded, setAdaptersLoaded] = useState(false);
   const [adaptersError, setAdaptersError] = useState<string | null>(null);
   const [adapterLoadAttempt, setAdapterLoadAttempt] = useState(0);
@@ -72,12 +79,15 @@ export function HomeDeck() {
         window.nexus.adapters.list(),
         window.nexus.providers.list(),
         window.nexus.accounts.list(),
+        window.nexus.settings?.orchGet?.().catch(() => DEFAULT_ORCH_SETTINGS) ??
+          Promise.resolve(DEFAULT_ORCH_SETTINGS),
       ])
-        .then(([nextAdapters, nextProviders, nextAccounts]) => {
+        .then(([nextAdapters, nextProviders, nextAccounts, orchSettings]) => {
           if (cancelled || revision !== requestRevision) return;
           setAdapters(nextAdapters);
           setProviders(nextProviders);
           setAccounts(nextAccounts);
+          setSquadCliPolicy(orchSettings.squadCliPolicy);
         })
         .catch((cause) => {
           if (cancelled || revision !== requestRevision) return;
@@ -140,8 +150,14 @@ export function HomeDeck() {
   }, [visible, hide]);
 
   const readiness = useMemo(
-    () => missionRuntimeReadiness(adapters, providers, accounts),
-    [accounts, adapters, providers],
+    () =>
+      missionRuntimeReadiness(
+        adapters,
+        providers,
+        accounts,
+        squadCliPolicy,
+      ),
+    [accounts, adapters, providers, squadCliPolicy],
   );
   // Seus squads (custom) primeiro — os originais re-semeiam sozinhos, então
   // nunca podem empurrar um squad seu para fora da lista.
@@ -268,7 +284,9 @@ export function HomeDeck() {
                     (needsCli
                       ? "Escolha uma conta compatível para começar."
                       : needsExecutionSetup
-                        ? "Habilite e autentique um Maestro verificado e um worker com escrita autônoma confinada."
+                        ? squadCliPolicy === "operator-choice"
+                          ? "Habilite e autentique uma CLI com handoff para o Nexus conduzir a missão."
+                          : "Habilite e autentique um Maestro verificado e um worker com escrita autônoma confinada."
                         : "Descreva o resultado. O Nexus transforma a ideia em plano, equipe, implementação e verificação."))}
             </p>
           </div>
@@ -336,16 +354,24 @@ export function HomeDeck() {
             >
               <i className="home-deck__dot" aria-hidden="true" />
               {readiness.verifiedMaestros.length > 0
-                ? `${readiness.verifiedMaestros.length} Maestro${readiness.verifiedMaestros.length === 1 ? "" : "s"} autenticado${readiness.verifiedMaestros.length === 1 ? "" : "s"} e verificado${readiness.verifiedMaestros.length === 1 ? "" : "s"}`
-                : "Nenhum Maestro autenticado e verificado"}
+                ? squadCliPolicy === "operator-choice"
+                  ? `${readiness.verifiedMaestros.length} CLI${readiness.verifiedMaestros.length === 1 ? "" : "s"} autenticada${readiness.verifiedMaestros.length === 1 ? "" : "s"} com handoff`
+                  : `${readiness.verifiedMaestros.length} Maestro${readiness.verifiedMaestros.length === 1 ? "" : "s"} autenticado${readiness.verifiedMaestros.length === 1 ? "" : "s"} e verificado${readiness.verifiedMaestros.length === 1 ? "" : "s"}`
+                : squadCliPolicy === "operator-choice"
+                  ? "Nenhuma CLI autenticada com handoff"
+                  : "Nenhum Maestro autenticado e verificado"}
             </span>
             <span
               className={`home-deck__stat ${readiness.qualifiedWorkers.length > 0 ? "home-deck__stat--live" : ""}`}
             >
               <i className="home-deck__dot" aria-hidden="true" />
               {readiness.qualifiedWorkers.length > 0
-                ? `${readiness.qualifiedWorkers.length} worker${readiness.qualifiedWorkers.length === 1 ? "" : "s"} com escrita confinada`
-                : "Nenhum worker autenticado com escrita confinada"}
+                ? squadCliPolicy === "operator-choice"
+                  ? `${readiness.qualifiedWorkers.length} worker${readiness.qualifiedWorkers.length === 1 ? "" : "s"} com handoff`
+                  : `${readiness.qualifiedWorkers.length} worker${readiness.qualifiedWorkers.length === 1 ? "" : "s"} com escrita confinada`
+                : squadCliPolicy === "operator-choice"
+                  ? "Nenhum worker autenticado com handoff"
+                  : "Nenhum worker autenticado com escrita confinada"}
             </span>
             <span
               className={`home-deck__stat ${mcpInfo?.running ? "home-deck__stat--live" : ""}`}

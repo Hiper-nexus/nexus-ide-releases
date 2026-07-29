@@ -22,6 +22,13 @@ import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { redactCommandLine } from '../terminal/command-redaction';
+import {
+  removeCanonicalMemoryProjection,
+  resolveMemoryRoot,
+  syncCanonicalMemoryProjections,
+  writeCanonicalMemoryProjection,
+  type CanonicalMemoryProjectionInput,
+} from './nexus-memory';
 
 export const MAX_MEMORY_CONTENT_BYTES = 8_192;
 
@@ -50,6 +57,19 @@ export interface RetainInput {
   readonly supersedes?: string;
 }
 
+export interface AgentAuthoredMemoryAuthority {
+  /**
+   * Main-derived opaque authority. Agent-controlled MCP arguments can never
+   * select this value.
+   */
+  readonly source: string;
+}
+
+export interface ForgetAgentAuthoredInput extends AgentAuthoredMemoryAuthority {
+  readonly id: string;
+  readonly scope: MemoryScope;
+}
+
 export interface RetainResult {
   readonly id: string;
   readonly scope: MemoryScope;
@@ -65,6 +85,8 @@ export interface RecallInput {
   readonly kind?: MemoryKind;
   /** Default true: completa as vagas restantes com o banco global. */
   readonly includeGlobal?: boolean;
+  /** Internal safety filter used by automatic prompt recall. */
+  readonly trustedOnly?: boolean;
 }
 
 export interface MemoryRecallHit {
@@ -96,6 +118,8 @@ export interface WorkspaceMemoryStats {
 export interface WorkspaceMemoryStoreOptions {
   readonly workspaceDbPath: string;
   readonly globalDbPath: string;
+  /** Nexus-owned root receiving the generated `.nexus-memory/*.md` view. */
+  readonly projectionRoot?: string;
   readonly now?: () => number;
 }
 
@@ -110,12 +134,35 @@ const retainInputSchema = z
   })
   .strict();
 
+const agentAuthoredRetainInputSchema = retainInputSchema.omit({
+  source: true,
+});
+
+const agentAuthoredSourceSchema = z
+  .string()
+  .regex(/^agent-authored:(?:mission|pane):[a-f0-9]{64}$/);
+
+const agentAuthoredAuthoritySchema = z
+  .object({
+    source: agentAuthoredSourceSchema,
+  })
+  .strict();
+
+const forgetAgentAuthoredInputSchema = z
+  .object({
+    id: z.string().min(1).max(128),
+    scope: z.enum(MEMORY_SCOPES),
+    source: agentAuthoredSourceSchema,
+  })
+  .strict();
+
 const recallInputSchema = z
   .object({
     query: z.string().min(1).max(1_024),
     limit: z.number().int().min(1).max(32).default(8),
     kind: z.enum(MEMORY_KINDS).optional(),
     includeGlobal: z.boolean().default(true),
+    trustedOnly: z.boolean().default(false),
   })
   .strict();
 
@@ -130,6 +177,17 @@ const memoryRowSchema = z.object({
   updated_at: z.number().int().nonnegative(),
   recall_count: z.number().int().nonnegative(),
   rank: z.number(),
+});
+
+const projectionMemoryRowSchema = z.object({
+  id: z.string().min(1),
+  content: z.string(),
+  kind: z.enum(MEMORY_KINDS),
+  scope: z.literal('workspace'),
+  importance: z.number().int().min(1).max(5),
+  source: z.string().nullable(),
+  created_at: z.number().int().nonnegative(),
+  updated_at: z.number().int().nonnegative(),
 });
 
 // Schema derivado do beam do mnemopi, reduzido ao essencial FTS-only.
@@ -246,6 +304,22 @@ function ensureDatabaseDirectory(dbPath: string): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: DIRECTORY_MODE });
 }
 
+function redactMemoryContent(content: string): {
+  readonly content: string;
+  readonly redacted: boolean;
+} {
+  let redacted = false;
+  const lines = content.replaceAll('\r\n', '\n').split('\n').map((line) => {
+    const result = redactCommandLine(line, {
+      denylist: [],
+      maxLength: MAX_MEMORY_CONTENT_BYTES,
+    });
+    redacted ||= result.redacted;
+    return result.command;
+  });
+  return { content: lines.join('\n'), redacted };
+}
+
 /**
  * Memória agentic durável de um workspace: banco SQLite do workspace + banco
  * global do usuário, ambos com o mesmo schema. Compartilhada por todas as
@@ -255,6 +329,8 @@ export class WorkspaceMemoryStore {
   readonly #workspaceDb: Database.Database;
   readonly #globalDb: Database.Database;
   readonly #now: () => number;
+  readonly #projectionRoots = new Set<string>();
+  readonly #unsyncedProjectionRoots = new Set<string>();
   #closed = false;
 
   constructor(options: WorkspaceMemoryStoreOptions) {
@@ -269,6 +345,9 @@ export class WorkspaceMemoryStore {
     } catch (error) {
       this.#workspaceDb.close();
       throw error;
+    }
+    if (options.projectionRoot) {
+      this.#registerProjectionRootBestEffort(options.projectionRoot);
     }
   }
 
@@ -300,6 +379,157 @@ export class WorkspaceMemoryStore {
   }
 
   /**
+   * Registers the Nexus-owned generated view for this projectId. Runtime
+   * resolution never supplies a project checkout here; workspace export is a
+   * one-shot operation handled separately.
+   */
+  #registerProjectionRoot(projectRoot: string): void {
+    this.#assertOpen();
+    if (!path.isAbsolute(projectRoot)) {
+      throw new Error('memory projection root must be absolute');
+    }
+    const resolved = fs.realpathSync(projectRoot);
+    if (!fs.statSync(resolved).isDirectory()) {
+      throw new Error('memory projection root must be a directory');
+    }
+    if (this.#projectionRoots.has(resolved)) return;
+    this.#projectionRoots.add(resolved);
+    this.#unsyncedProjectionRoots.add(resolved);
+  }
+
+  #registerProjectionRootBestEffort(projectRoot: string): void {
+    try {
+      this.#registerProjectionRoot(projectRoot);
+    } catch (error) {
+      console.warn(
+        `[memory] could not register generated projection for ${path.basename(projectRoot)}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  get projectionRoot(): string {
+    const root = this.#projectionRoots.values().next().value as
+      | string
+      | undefined;
+    if (!root) throw new Error('workspace memory projection root unavailable');
+    return root;
+  }
+
+  /** Repairs all registered generated views from the SQLite authority. */
+  syncProjections(): void {
+    this.#assertOpen();
+    for (const root of this.#projectionRoots) {
+      if (this.#syncProjectionRootBestEffort(root)) {
+        this.#unsyncedProjectionRoots.delete(root);
+      }
+    }
+  }
+
+  /** First-use sync; subsequent read paths are O(1) until a new root appears. */
+  ensureProjections(): void {
+    this.#assertOpen();
+    for (const root of [...this.#unsyncedProjectionRoots]) {
+      if (this.#syncProjectionRootBestEffort(root)) {
+        this.#unsyncedProjectionRoots.delete(root);
+      }
+    }
+  }
+
+  /**
+   * Explicit export only. The workspace is not registered as a live target,
+   * so later retention continues writing exclusively to Nexus userData.
+   */
+  exportProjectionsToWorkspace(projectRoot: string): string {
+    this.#assertOpen();
+    syncCanonicalMemoryProjections(
+      projectRoot,
+      this.#activeProjectionRecords(),
+    );
+    return resolveMemoryRoot(projectRoot);
+  }
+
+  #activeProjectionRecords(): CanonicalMemoryProjectionInput[] {
+    return this.#workspaceDb
+      .prepare(
+        `SELECT id, content, kind, scope, importance, source,
+                created_at, updated_at
+         FROM memories
+         WHERE scope = 'workspace' AND superseded_by IS NULL
+         ORDER BY created_at, id`,
+      )
+      .all()
+      .map((raw) => this.#toProjectionInput(raw));
+  }
+
+  #toProjectionInput(raw: unknown): CanonicalMemoryProjectionInput {
+    const row = projectionMemoryRowSchema.parse(raw);
+    return {
+      id: row.id,
+      content: row.content,
+      kind: row.kind,
+      scope: row.scope,
+      importance: row.importance,
+      source: row.source,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  #projectionRecord(id: string): CanonicalMemoryProjectionInput | null {
+    const raw = this.#workspaceDb
+      .prepare(
+        `SELECT id, content, kind, scope, importance, source,
+                created_at, updated_at
+         FROM memories
+         WHERE id = ? AND scope = 'workspace' AND superseded_by IS NULL`,
+      )
+      .get(id);
+    return raw ? this.#toProjectionInput(raw) : null;
+  }
+
+  #syncProjectionRootBestEffort(root: string): boolean {
+    try {
+      syncCanonicalMemoryProjections(root, this.#activeProjectionRecords());
+      return true;
+    } catch (error) {
+      console.warn(
+        `[memory] could not sync generated projection for ${path.basename(root)}:`,
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
+  #writeProjectionBestEffort(id: string): void {
+    try {
+      const record = this.#projectionRecord(id);
+      if (!record) return;
+      for (const root of this.#projectionRoots) {
+        writeCanonicalMemoryProjection(root, record);
+      }
+    } catch (error) {
+      console.warn(
+        `[memory] could not update generated projection ${id}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  #removeProjectionBestEffort(id: string): void {
+    for (const root of this.#projectionRoots) {
+      try {
+        removeCanonicalMemoryProjection(root, id);
+      } catch (error) {
+        console.warn(
+          `[memory] could not remove generated projection ${id}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+  }
+
+  /**
    * Persiste (ou renova) uma memória. Conteúdo passa por redação de segredos
    * (mesmo helper do histórico de terminal) antes de tocar o disco; retain de
    * conteúdo idêntico (hash normalizado) só renova updated_at.
@@ -314,11 +544,8 @@ export class WorkspaceMemoryStore {
     }
     // Redação fail-safe: nunca descarta a memória inteira (denylist vazia),
     // apenas mascara tokens com cara de segredo — padrão do nexus-memory.
-    const scrubbed = redactCommandLine(input.content, {
-      denylist: [],
-      maxLength: MAX_MEMORY_CONTENT_BYTES,
-    });
-    const content = scrubbed.command.trim();
+    const scrubbed = redactMemoryContent(input.content);
+    const content = scrubbed.content.trim();
     if (content.length === 0) {
       throw new Error('memory content is empty after sanitization');
     }
@@ -326,7 +553,10 @@ export class WorkspaceMemoryStore {
     const db = this.#dbFor(input.scope);
     const now = this.#now();
 
-    const result = db.transaction((): RetainResult => {
+    const transactionResult = db.transaction((): {
+      readonly result: RetainResult;
+      readonly superseded: boolean;
+    } => {
       const existing = db
         .prepare(
           'SELECT id FROM memories WHERE content_hash = ? AND superseded_by IS NULL',
@@ -361,17 +591,90 @@ export class WorkspaceMemoryStore {
         );
         deduped = false;
       }
-      if (input.supersedes && input.supersedes !== id) {
-        this.#markSuperseded(input.supersedes, id, now);
-      }
+      const superseded =
+        Boolean(input.supersedes) &&
+        input.supersedes !== id &&
+        this.#markSupersededInScope(
+          input.scope,
+          input.supersedes!,
+          id,
+          now,
+        );
       return Object.freeze({
-        id,
-        scope: input.scope,
-        deduped,
-        redacted: scrubbed.redacted,
+        result: Object.freeze({
+          id,
+          scope: input.scope,
+          deduped,
+          redacted: scrubbed.redacted,
+        }),
+        superseded,
       });
     })();
+    const result = transactionResult.result;
+    if (result.scope === 'workspace') {
+      this.#writeProjectionBestEffort(result.id);
+    }
+    if (
+      transactionResult.superseded &&
+      input.scope === 'workspace' &&
+      input.supersedes
+    ) {
+      this.#removeProjectionBestEffort(input.supersedes);
+    }
     return result;
+  }
+
+  /**
+   * Agent-facing retention boundary. A worker may only replace an active
+   * candidate authored by the same Main-derived physical authority in the
+   * same memory bank. Trusted and foreign-origin rows remain immutable.
+   */
+  retainAgentAuthored(
+    rawInput: Omit<RetainInput, 'source'>,
+    rawAuthority: AgentAuthoredMemoryAuthority,
+  ): RetainResult {
+    this.#assertOpen();
+    const input = agentAuthoredRetainInputSchema.parse(rawInput);
+    const authority = agentAuthoredAuthoritySchema.parse(rawAuthority);
+    if (input.supersedes) {
+      const db = this.#dbFor(input.scope);
+      const target = this.#activeMemoryIdentity(db, input.supersedes);
+      if (
+        !target ||
+        target.scope !== input.scope ||
+        target.source !== authority.source
+      ) {
+        throw new Error(
+          'memory supersedes requires the same agent authority and scope',
+        );
+      }
+
+      // Prevent a same-authority target from being replaced by a deduplicated
+      // row owned by trusted/foreign provenance.
+      const scrubbed = redactMemoryContent(input.content);
+      const replacement = db
+        .prepare(
+          `SELECT id, source, scope
+           FROM memories
+           WHERE content_hash = ? AND superseded_by IS NULL`,
+        )
+        .get(contentHash(scrubbed.content.trim())) as
+        | { id: string; source: string | null; scope: MemoryScope }
+        | undefined;
+      if (
+        replacement &&
+        replacement.id !== target.id &&
+        replacement.source !== authority.source
+      ) {
+        throw new Error(
+          'memory replacement requires the same agent authority and scope',
+        );
+      }
+    }
+    return this.retain({
+      ...input,
+      source: authority.source,
+    });
   }
 
   /**
@@ -390,6 +693,7 @@ export class WorkspaceMemoryStore {
       match,
       input.kind,
       input.limit,
+      input.trustedOnly,
     );
     if (input.includeGlobal && hits.length < input.limit) {
       hits.push(
@@ -398,6 +702,7 @@ export class WorkspaceMemoryStore {
           match,
           input.kind,
           input.limit - hits.length,
+          input.trustedOnly,
         ),
       );
     }
@@ -409,9 +714,13 @@ export class WorkspaceMemoryStore {
     match: string,
     kind: MemoryKind | undefined,
     limit: number,
+    trustedOnly: boolean,
   ): MemoryRecallHit[] {
     const now = this.#now();
     const kindFilter = kind ? 'AND m.kind = ?' : '';
+    const trustedFilter = trustedOnly
+      ? "AND m.source LIKE 'trusted:%'"
+      : '';
     const params: Array<string | number> = kind
       ? [match, kind, RECALL_CANDIDATE_POOL]
       : [match, RECALL_CANDIDATE_POOL];
@@ -425,6 +734,7 @@ export class WorkspaceMemoryStore {
          WHERE memories_fts MATCH ?
            AND m.superseded_by IS NULL
            ${kindFilter}
+           ${trustedFilter}
          ORDER BY rank
          LIMIT ?`,
       )
@@ -472,17 +782,87 @@ export class WorkspaceMemoryStore {
   forget(rawId: string): boolean {
     this.#assertOpen();
     const id = z.string().min(1).max(128).parse(rawId);
-    return this.#markSuperseded(id, FORGOTTEN_SENTINEL, this.#now());
+    const forgotten = this.#markSuperseded(
+      id,
+      FORGOTTEN_SENTINEL,
+      this.#now(),
+    );
+    if (forgotten) this.#removeProjectionBestEffort(id);
+    return forgotten;
+  }
+
+  /**
+   * Narrow future-proof boundary for any agent-facing forget operation.
+   * Operator IPC continues to use forget(), while MCP code must use this
+   * provenance-checked variant.
+   */
+  forgetAgentAuthored(rawInput: ForgetAgentAuthoredInput): boolean {
+    this.#assertOpen();
+    const input = forgetAgentAuthoredInputSchema.parse(rawInput);
+    const db = this.#dbFor(input.scope);
+    const result = db
+      .prepare(
+        `UPDATE memories
+         SET superseded_by = ?, updated_at = ?
+         WHERE id = ? AND scope = ? AND source = ?
+           AND source LIKE 'agent-authored:%'
+           AND superseded_by IS NULL`,
+      )
+      .run(
+        FORGOTTEN_SENTINEL,
+        this.#now(),
+        input.id,
+        input.scope,
+        input.source,
+      );
+    const forgotten = result.changes > 0;
+    if (forgotten && input.scope === 'workspace') {
+      this.#removeProjectionBestEffort(input.id);
+    }
+    return forgotten;
+  }
+
+  #activeMemoryIdentity(
+    db: Database.Database,
+    id: string,
+  ): {
+    readonly id: string;
+    readonly source: string | null;
+    readonly scope: MemoryScope;
+  } | null {
+    const row = db
+      .prepare(
+        `SELECT id, source, scope
+         FROM memories
+         WHERE id = ? AND superseded_by IS NULL`,
+      )
+      .get(id) as
+      | { id: string; source: string | null; scope: MemoryScope }
+      | undefined;
+    return row ?? null;
+  }
+
+  #markSupersededInScope(
+    scope: MemoryScope,
+    id: string,
+    supersededBy: string,
+    now: number,
+  ): boolean {
+    const result = this.#dbFor(scope)
+      .prepare(
+        `UPDATE memories
+         SET superseded_by = ?, updated_at = ?
+         WHERE id = ? AND scope = ? AND superseded_by IS NULL`,
+      )
+      .run(supersededBy, now, id, scope);
+    return result.changes > 0;
   }
 
   #markSuperseded(id: string, supersededBy: string, now: number): boolean {
-    for (const db of [this.#workspaceDb, this.#globalDb]) {
-      const result = db
-        .prepare(
-          'UPDATE memories SET superseded_by = ?, updated_at = ? WHERE id = ? AND superseded_by IS NULL',
-        )
-        .run(supersededBy, now, id);
-      if (result.changes > 0) return true;
+    for (const scope of MEMORY_SCOPES) {
+      if (this.#markSupersededInScope(scope, id, supersededBy, now)) {
+        return true;
+      }
     }
     return false;
   }
@@ -545,6 +925,7 @@ export class WorkspaceMemoryStore {
 export interface WorkspaceMemoryPaths {
   readonly workspaceDbPath: string;
   readonly globalDbPath: string;
+  readonly projectionRoot: string;
 }
 
 function digestPathComponent(domain: string, value: string): string {
@@ -572,6 +953,11 @@ export function resolveWorkspaceMemoryPaths(
       'memory.sqlite3',
     ),
     globalDbPath: path.join(path.resolve(baseDir), 'memory-global.sqlite3'),
+    projectionRoot: path.join(
+      path.resolve(baseDir),
+      'projections',
+      `workspace-${workspaceKey}`,
+    ),
   });
 }
 
@@ -612,12 +998,17 @@ function defaultRuntimeOptions(): WorkspaceMemoryRuntimeOptions {
 
 /** Store por workspace (cache por projectId), criando sob demanda. */
 export function getWorkspaceMemoryStore(
-  scope: Pick<ProjectExecutionScope, 'projectId'>,
+  scope: Pick<ProjectExecutionScope, 'projectId'> &
+    Partial<Omit<ProjectExecutionScope, 'projectId'>>,
 ): WorkspaceMemoryStore {
   const cached = storesByProject.get(scope.projectId);
   if (cached) return cached;
   runtimeOptions ??= defaultRuntimeOptions();
   const paths = resolveWorkspaceMemoryPaths(runtimeOptions.baseDir, scope);
+  fs.mkdirSync(paths.projectionRoot, {
+    recursive: true,
+    mode: DIRECTORY_MODE,
+  });
   const store = new WorkspaceMemoryStore({
     ...paths,
     ...(runtimeOptions.now ? { now: runtimeOptions.now } : {}),

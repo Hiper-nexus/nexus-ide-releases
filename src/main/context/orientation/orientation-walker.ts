@@ -8,6 +8,10 @@ import {
   SOURCE_EXTENSIONS,
   type OrientationLimits,
 } from './orientation-types';
+import {
+  throwIfOrientationAborted,
+  yieldOrientationChunk,
+} from './orientation-cooperative';
 
 export interface WalkedFile {
   readonly relativePath: string;
@@ -121,6 +125,111 @@ export function walkOrientationTree(
   }
 
   visit('', 0);
+  return Object.freeze({
+    files: Object.freeze(files),
+    truncated,
+    treeFingerprintParts: Object.freeze(fingerprintParts),
+  });
+}
+
+/**
+ * Production walker. Filesystem operations and traversal chunks yield back to
+ * Electron instead of monopolizing the main process on large repositories.
+ * The synchronous walker remains available for deterministic pure callers and
+ * compatibility tests, but ProjectOrientationService uses this variant.
+ */
+export async function walkOrientationTreeAsync(
+  scope: ProjectExecutionScope,
+  limits: OrientationLimits,
+  signal?: AbortSignal,
+): Promise<OrientationWalkResult> {
+  throwIfOrientationAborted(signal);
+  const root = await fs.promises.realpath(scope.rootRealPath);
+  if (root !== scope.rootRealPath) {
+    throw new Error('project root identity changed');
+  }
+  const files: WalkedFile[] = [];
+  const fingerprintParts: string[] = [];
+  let truncated = false;
+  let totalBytes = 0;
+  let visited = 0;
+
+  async function visit(relative: string, depth: number): Promise<void> {
+    if (truncated) return;
+    throwIfOrientationAborted(signal);
+    if (depth > limits.maxDepth) {
+      truncated = true;
+      return;
+    }
+    visited += 1;
+    await yieldOrientationChunk(visited, signal);
+
+    const absolute = path.join(root, relative);
+    let stat: fs.Stats;
+    try {
+      stat = await fs.promises.lstat(absolute);
+    } catch {
+      return;
+    }
+    if (stat.isSymbolicLink()) return;
+    if (stat.isDirectory()) {
+      let real: string;
+      try {
+        real = await fs.promises.realpath(absolute);
+      } catch {
+        return;
+      }
+      if (!isInside(root, real)) return;
+      let entries: fs.Dirent[];
+      try {
+        entries = await fs.promises.readdir(real, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      entries.sort((left, right) => left.name.localeCompare(right.name));
+      for (const entry of entries) {
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory() && SKIP_DIRECTORIES.has(entry.name)) continue;
+        const child = relative ? path.join(relative, entry.name) : entry.name;
+        await visit(child, depth + 1);
+        if (truncated) return;
+      }
+      return;
+    }
+    if (!stat.isFile()) return;
+    const base = path.basename(relative);
+    if (SECRET_BASENAME_PATTERN.test(base)) {
+      fingerprintParts.push(`${relative}\0secret\0${stat.size}`);
+      return;
+    }
+    const ext = path.extname(base).toLowerCase();
+    const isSource = SOURCE_EXTENSIONS.has(ext);
+    const size = stat.size;
+    if (size > limits.maxFileBytes) {
+      fingerprintParts.push(`${relative}\0skip-size\0${size}`);
+      return;
+    }
+    totalBytes += size;
+    if (files.length >= limits.maxFiles || totalBytes > limits.maxTotalBytes) {
+      truncated = true;
+      return;
+    }
+    const posixPath = relative.split(path.sep).join('/');
+    files.push(
+      Object.freeze({
+        relativePath: posixPath,
+        ext,
+        language: LANGUAGE_BY_EXT[ext] ?? null,
+        size,
+        isSource,
+        isSecretName: false,
+      }),
+    );
+    fingerprintParts.push(`${posixPath}\0${size}\0${stat.mtimeMs}`);
+  }
+
+  await visit('', 0);
+  throwIfOrientationAborted(signal);
   return Object.freeze({
     files: Object.freeze(files),
     truncated,

@@ -18,17 +18,17 @@ describe('worktree-cow', () => {
     else process.env.NEXUS_COW_WORKTREE = prev;
   });
 
-  it('tryClonefileCopy returns false on non-darwin without running cp', () => {
+  it('tryClonefileCopy returns false on non-darwin without running cp', async () => {
     if (process.platform === 'darwin') {
       expect(typeof tryClonefileCopy).toBe('function');
       return;
     }
-    expect(tryClonefileCopy('/tmp/a', '/tmp/b')).toBe(false);
+    expect(await tryClonefileCopy('/tmp/a', '/tmp/b')).toBe(false);
   });
 
-  it('materializeGitWorktree uses git worktree add then reports method', () => {
+  it('materializeGitWorktree uses git worktree add then reports method', async () => {
     const run = vi.fn().mockReturnValue({ status: 0, stdout: '', stderr: '' });
-    const result = materializeGitWorktree({
+    const result = await materializeGitWorktree({
       repositoryRoot: '/repo',
       worktreePath: `/tmp/nexus-cow-test-${Date.now()}-missing`,
       branchRef: 'refs/heads/nexus/task-1',
@@ -48,11 +48,24 @@ describe('worktree-cow', () => {
     expect(result.cowCopied).toEqual([]);
   });
 
-  it('cowCopyHeavyDirs returns empty when CoW disabled', () => {
+  it('cowCopyHeavyDirs returns empty when CoW disabled', async () => {
     const prev = process.env.NEXUS_COW_WORKTREE;
     process.env.NEXUS_COW_WORKTREE = '0';
-    expect(cowCopyHeavyDirs('/a', '/b')).toEqual([]);
+    expect(await cowCopyHeavyDirs('/a', '/b')).toEqual([]);
     if (prev === undefined) delete process.env.NEXUS_COW_WORKTREE;
     else process.env.NEXUS_COW_WORKTREE = prev;
+  });
+
+  it('tryClonefileCopy accepts an async exec injectable', async () => {
+    if (process.platform !== 'darwin') return;
+    const exec = vi.fn(async () => ({ status: 1 }));
+    expect(
+      await tryClonefileCopy(
+        '/tmp/nexus-cow-missing-src',
+        '/tmp/nexus-cow-missing-dest',
+        exec,
+      ),
+    ).toBe(false);
+    expect(exec).not.toHaveBeenCalled();
   });
 });

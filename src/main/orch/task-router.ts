@@ -14,7 +14,6 @@ import {
   modelRoutingRank,
   type ModelCatalog,
 } from '../adapters/model-catalog';
-import type { OmpParticipation } from '../../shared/settings-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { multiScoreRerank } from './route-pipeline';
 
@@ -29,7 +28,7 @@ export interface RouteCandidate {
 export type RoutingTable = Record<TaskTier, RouteCandidate[]>;
 
 /**
- * Optional routing context: omp participation + mission diversity.
+ * Optional routing context for mission diversity and operator preferences.
  * Pure — call sites inject orch settings and mission pane history.
  */
 export interface RouteContext {
@@ -37,13 +36,8 @@ export interface RouteContext {
   missionUsedAdapters?: ReadonlySet<string>;
   /** How many times each adapter appears in the mission (diversity attenuation). */
   missionUseCounts?: ReadonlyMap<string, number>;
-  /** Soft prefer list (e.g. ['omp']) applied after table rank. */
+  /** Soft prefer list applied after table rank. */
   preferAdapters?: readonly string[];
-  /**
-   * How Oh My Pi participates. Default `prefer` for zero-friction vibe-coder.
-   * Call sites should pass getOrchSettings().ompParticipation.
-   */
-  ompParticipation?: OmpParticipation;
   /**
    * When true (default if mission has history or any circuit open), re-rank
    * with multi-score (x-algorithm pattern). False preserves pure table order.
@@ -70,9 +64,6 @@ export type RankedRouteEntry = {
  * (Meituan, 1M ctx, agentic) follows the same pattern (longcat.json) and sits
  * right behind GLM on medium/hard — comparable price, extra diversity.
  *
- * Oh My Pi (omp) sits early on medium/hard (not last): it aggregates providers
- * already logged into omp and is a first-class diversity citizen. Runtime
- * `ompParticipation` can demote/exclude it without editing this table.
  */
 export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   trivial: [
@@ -85,14 +76,11 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'grok', model: 'grok-4-fast', effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.6-flash-low', effort: 'low' },
-    { adapterId: 'omp', model: 'zai/glm-5', effort: 'low' },
     { adapterId: 'codex', model: 'gpt-5.4-mini', effort: 'low' },
     { adapterId: 'claude', model: 'claude-sonnet-4-6', effort: 'low' },
   ],
   medium: [
     { adapterId: 'glm', model: 'glm-5.2', effort: 'medium' },
-    // omp early: real diversity when installed, not silent last-resort.
-    { adapterId: 'omp', model: 'zai/glm-5', effort: 'medium' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'medium' },
@@ -105,7 +93,6 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'claude', model: 'claude-opus-5', effort: 'high' },
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
     { adapterId: 'glm', model: 'glm-5.2', effort: 'high' },
-    { adapterId: 'omp', model: 'xai-oauth/grok-4.5', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
@@ -125,8 +112,6 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // do tier hard escolhia gemini-3.1-pro-high quando ambos instalados).
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'xhigh' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'xhigh' },
-    // omp last on critical — security floor keeps claude/codex first.
-    { adapterId: 'omp', model: 'xai-oauth/grok-4.5', effort: 'xhigh' },
   ],
 };
 
@@ -365,117 +350,6 @@ function evaluatedCandidates(
 }
 
 /**
- * True when keyword classification found NO signal of any dimension: neither
- * the frontend/security regexes nor any classifyTask bucket (critical, hard,
- * easy, trivial) matched. An opaque brief we cannot prove is routine.
- */
-function classificationUncertain(taskText: string): boolean {
-  if (
-    FRONTEND_DIMENSION_RE.test(taskText) ||
-    SECURITY_DIMENSION_RE.test(taskText)
-  ) {
-    return false;
-  }
-  return classifyTask(taskText).signals.length === 0;
-}
-
-/**
- * Security/critical floor: do not force omp ahead of claude/codex when those
- * are available. Diversity still keeps omp in the ladder later.
- *
- * Fail-closed on uncertainty: when keyword classification finds no signal of
- * ANY dimension (an opaque brief), the floor stays ON — omp is not promoted
- * ahead of claude/codex. Only a task positively classified in a non-security
- * dimension releases the floor. Cost tiers and other dimensions are untouched.
- */
-function securityFloorActive(taskText: string, tier: TaskTier): boolean {
-  if (qualityDimension(taskText, tier) === 'security' || tier === 'critical') {
-    return true;
-  }
-  return classificationUncertain(taskText);
-}
-
-/**
- * Reorder ranked candidates for omp participation + mission diversity.
- * Pure and unit-tested — never invents candidates that aren't already ranked.
- */
-export function applyOmpParticipation(
-  ranked: RankedRouteEntry[],
-  taskText: string,
-  tier: TaskTier,
-  context: RouteContext = {},
-): { ranked: RankedRouteEntry[]; note: string } {
-  const participation = context.ompParticipation ?? 'diversity';
-  if (ranked.length === 0) return { ranked, note: '' };
-
-  if (participation === 'off') {
-    const filtered = ranked.filter((entry) => entry.c.adapterId !== 'omp');
-    if (filtered.length === ranked.length) return { ranked, note: '' };
-    return {
-      ranked: filtered.length > 0 ? filtered : ranked,
-      note: filtered.length > 0 ? '; ompParticipation=off' : '',
-    };
-  }
-
-  const ompEntries = ranked.filter((entry) => entry.c.adapterId === 'omp');
-  if (ompEntries.length === 0) return { ranked, note: '' };
-
-  const withoutOmp = ranked.filter((entry) => entry.c.adapterId !== 'omp');
-
-  // Legacy ladder: omp is last among eligible candidates (table now places it
-  // early for diversity; fallback re-demotes so settings still match the label).
-  if (participation === 'fallback') {
-    if (withoutOmp.length === 0) return { ranked, note: '' };
-    return {
-      ranked: [...withoutOmp, ...ompEntries],
-      note: '; ompParticipation=fallback',
-    };
-  }
-
-  const used = context.missionUsedAdapters;
-  const ompAlreadyUsed = used?.has('omp') === true;
-  const preferList = context.preferAdapters ?? [];
-  const softPreferOmp = preferList.includes('omp');
-  const floor = securityFloorActive(taskText, tier);
-
-  if (participation === 'prefer' && !floor) {
-    return {
-      ranked: [...ompEntries, ...withoutOmp],
-      note: '; ompParticipation=prefer',
-    };
-  }
-
-  // diversity: always keep omp as #2 when eligible (even on the first pick),
-  // so vibe-coder missions get real multi-CLI without waiting for history.
-  if (!floor && !ompAlreadyUsed && participation === 'diversity') {
-    if (withoutOmp.length === 0) {
-      return { ranked: ompEntries, note: '; omp diversity (only eligible)' };
-    }
-    const head = withoutOmp[0];
-    const tail = withoutOmp.slice(1);
-    return {
-      ranked: [head, ...ompEntries, ...tail],
-      note: '; omp diversity boost (#2)',
-    };
-  }
-
-  if (softPreferOmp && !floor && !ompAlreadyUsed) {
-    // Soft prefer from MCP preferAdapters without global prefer mode.
-    if (withoutOmp.length === 0) {
-      return { ranked: ompEntries, note: '; preferAdapters includes omp' };
-    }
-    const head = withoutOmp[0];
-    const tail = withoutOmp.slice(1);
-    return {
-      ranked: [head, ...ompEntries, ...tail],
-      note: '; preferAdapters includes omp',
-    };
-  }
-
-  return { ranked, note: '' };
-}
-
-/**
  * Pick the first installed candidate of the task's tier (candidates are
  * ordered cheapest-first). When nothing of the tier is installed, walk the
  * cheaper tiers down then the stronger ones up; last resort is the first
@@ -571,9 +445,6 @@ export function routeTask(
     }
   }
 
-  const ompApplied = applyOmpParticipation(ranked, taskText, tier, context);
-  ranked = ompApplied.ranked;
-
   // x-algorithm multi-score: activate when mission has history, circuit open,
   // or caller opts in — preserves pure table order on cold first pick.
   const anyCircuitOpen = ranked.some((r) =>
@@ -628,7 +499,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort: pick.effort,
-      reason: `${tier}${borrowed}; ${why}${costNote}${evaluationNote}${riskNote}${ompApplied.note}${multiScoreNote}`,
+      reason: `${tier}${borrowed}; ${why}${costNote}${evaluationNote}${riskNote}${multiScoreNote}`,
       alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
     };
   }

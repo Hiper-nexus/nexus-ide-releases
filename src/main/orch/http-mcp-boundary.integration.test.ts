@@ -29,9 +29,8 @@ import { handoffRawPayloadSha256 } from "./handoff-payload-identity";
 import {
   consumeAgentTransportPhysicalReceipt,
   mintAgentTransportPhysicalReceipt,
-  mintOmpRpcPhysicalHostCall,
   runInsideHttpMcpTransport,
-  runInsideOmpRpcHostCall,
+  runInsidePtyStreamAgentTransport,
 } from "./http-mcp-boundary";
 import { createScopedMissionStore } from "./mission-store";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
@@ -214,7 +213,7 @@ describe("physical HTTP MCP handoff boundary", () => {
     ctx = mintToken({
       label: "physical worker",
       role: "worker",
-      providerId: "omp",
+      providerId: "grok",
       missionId: MISSION_ID,
       contextRevision: CONTEXT_REVISION,
       workerIncarnationId: INCARNATION_ID,
@@ -488,7 +487,7 @@ describe("physical HTTP MCP handoff boundary", () => {
     });
     const route = missions.reserveRouteDecision(MISSION_ID, task.title, {
       tier: "hard",
-      adapterId: "omp",
+      adapterId: "grok",
       reason: "physical HTTP integration route",
       alternatives: [],
     });
@@ -505,7 +504,7 @@ describe("physical HTTP MCP handoff boundary", () => {
       revision: claim.revision,
       leaseToken: claim.leaseToken,
       routeReservationId: route.id,
-      adapterId: "omp",
+      adapterId: "grok",
     });
     dispatches.bindSpawn({
       taskId: task.id,
@@ -552,7 +551,7 @@ describe("physical HTTP MCP handoff boundary", () => {
     };
   }
 
-  it("keeps transport minting imports confined to their three production owners", () => {
+  it("keeps transport minting imports confined to production owners", () => {
     const directory = __dirname;
     const importers = fs
       .readdirSync(directory)
@@ -573,6 +572,7 @@ describe("physical HTTP MCP handoff boundary", () => {
       "mcp-dispatch.ts",
       "mcp-protocol.ts",
       "mcp-server.ts",
+      "pty-stream-handoff.ts",
     ]);
   });
 
@@ -610,6 +610,46 @@ describe("physical HTTP MCP handoff boundary", () => {
     expect(result.effectMayHaveCommitted).toBeUndefined();
     expect(handlerCalls).toBe(0);
     expect(countRows(manager, "handoff_mcp_receipts")).toBe(0);
+  });
+
+  it("dispatches a handoff through the authenticated PTY-stream source", async () => {
+    const result = await runInsidePtyStreamAgentTransport(
+      SESSION_ID,
+      ctx,
+      () =>
+        dispatchToolCall(
+          "pty-stream",
+          registry,
+          "nexus_handoff_submit",
+          {
+            status: "success",
+            summary:
+              "Physical PTY-stream dispatch completed with durable provenance.",
+          },
+          ctx,
+          dispatchOptions(() => currentMission),
+        ),
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(handlerCalls).toBe(1);
+    expect(
+      manager
+        .open(testProjectScope())
+        .db.prepare(
+          "SELECT source FROM handoff_mcp_receipts LIMIT 1",
+        )
+        .get(),
+    ).toEqual({ source: "pty-stream" });
+    expect(
+      readAuditLog(
+        { scope: testProjectScope(), missionId: MISSION_ID },
+        20,
+      ).filter((entry) => entry.source === "pty-stream"),
+    ).toEqual([
+      expect.objectContaining({ result: "intent" }),
+      expect.objectContaining({ result: "ok" }),
+    ]);
   });
 
   it("revokes detached HTTP async resources after the request operation settles", async () => {
@@ -1157,56 +1197,4 @@ describe("physical HTTP MCP handoff boundary", () => {
     expect(countRows(manager, "handoff_mcp_receipts")).toBe(0);
   });
 
-  it("persists OMP stdio as a distinct one-shot physical origin", async () => {
-    const hostCall = mintOmpRpcPhysicalHostCall({
-      sessionId: SESSION_ID,
-      childPid: 4242,
-      callId: "omp-host-call-1",
-      toolName: "nexus_handoff_submit",
-    });
-    const result = await runInsideOmpRpcHostCall(
-      hostCall,
-      ctx,
-      "nexus_handoff_submit",
-      () =>
-        dispatchToolCall(
-          "omp-rpc-stdio",
-          registry,
-          "nexus_handoff_submit",
-          {
-            status: "success",
-            summary:
-              "Physical OMP stdio worker handoff completed successfully.",
-          },
-          ctx,
-          dispatchOptions(),
-        ),
-    );
-
-    expect(result).toMatchObject({ ok: true });
-    const receipt = manager
-      .open(testProjectScope())
-      .db.prepare(
-        `SELECT source, tool_call_id
-         FROM handoff_mcp_receipts`,
-      )
-      .get() as { source: string; tool_call_id: string };
-    expect(receipt.source).toBe("omp-rpc-stdio");
-    expect(
-      readAuditLog({ scope: testProjectScope(), missionId: MISSION_ID }).map(
-        (entry) => [entry.source, entry.result, entry.invocation_id],
-      ),
-    ).toEqual([
-      ["omp-rpc-stdio", "intent", receipt.tool_call_id],
-      ["omp-rpc-stdio", "ok", receipt.tool_call_id],
-    ]);
-    expect(() =>
-      runInsideOmpRpcHostCall(
-        hostCall,
-        ctx,
-        "nexus_handoff_submit",
-        () => undefined,
-      ),
-    ).toThrow(/physical OMP RPC host call/i);
-  });
 });

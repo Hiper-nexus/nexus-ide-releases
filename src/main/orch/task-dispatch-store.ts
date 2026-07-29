@@ -45,6 +45,7 @@ import {
   getTaskDispatchFromDatabase,
   getTaskDispatchRow,
   refineTaskDispatchMissionBlock,
+  resumeTaskDispatchMissionAfterTechnicalFailure,
   TASK_DISPATCH_SESSION_EXIT_REASON,
 } from "./task-dispatch-persistence";
 import {
@@ -52,15 +53,11 @@ import {
   hasVerifiedGuidedTaskPlanAuthority,
   type CompleteMissionFromVerifiedPlanInput,
 } from "./task-dispatch-mission-completion-authority";
+import { assertTaskQualityReceiptAuthority } from "./task-dispatch-quality-receipt-authority";
 import {
   recordTaskDependencyPromptConsumption,
   type RecordTaskDependencyConsumptionInput,
 } from "./task-dependency-consumption-authority";
-import {
-  supportsAdvisoryParticipationCli,
-  supportsMechanicallyReadOnlyCli,
-} from "./mission-scheduler-plan";
-
 export { taskIntegrationReceiptSchema };
 export type {
   ClaimedTaskDispatch,
@@ -68,6 +65,33 @@ export type {
   TaskDispatchState,
   TaskIntegrationReceipt,
 };
+
+const TASK_DISPATCH_RETRY_BASE_DELAY_MS = 1_000;
+const TASK_DISPATCH_RETRY_MAX_DELAY_MS = 30_000;
+const TASK_DISPATCH_RESTART_LEASE_MAX_MS = 60 * 60_000;
+
+export const TASK_DISPATCH_MISSING_RUNTIME_REASON =
+  "[NEXUS_WORKER_RUNTIME_LOST] O processo exato do worker não está mais " +
+  "ativo; o Nexus preservou a tarefa, o worktree e o contexto para retomada.";
+export const TASK_DISPATCH_QUALITY_REPAIR_MARKER =
+  "[NEXUS_QUALITY_REPAIR]";
+
+export function taskDispatchQualityRepairReason(
+  dispatch: Pick<TaskDispatchRecord, "lastError"> | null | undefined,
+): string | undefined {
+  const value = dispatch?.lastError;
+  if (!value?.startsWith(TASK_DISPATCH_QUALITY_REPAIR_MARKER)) return undefined;
+  const detail = value.slice(TASK_DISPATCH_QUALITY_REPAIR_MARKER.length).trim();
+  return detail || "a validação do candidato solicitou uma correção";
+}
+
+function taskDispatchRetryDelay(attempt: number): number {
+  const exponent = Math.min(Math.max(attempt - 1, 0), 5);
+  return Math.min(
+    TASK_DISPATCH_RETRY_BASE_DELAY_MS * 2 ** exponent,
+    TASK_DISPATCH_RETRY_MAX_DELAY_MS,
+  );
+}
 
 export class TaskDispatchStore {
   readonly #binding: ScopedStoreBinding;
@@ -317,6 +341,7 @@ export class TaskDispatchStore {
             rootRealPath: this.#binding.scope.rootRealPath,
             workerHeadSha: physical.worktreeHeadSha,
             integratedHeadSha: receipt.reference,
+            checkoutMayHaveAdvanced: true,
           });
         } else {
           assertNoChangePhysicalGitAuthority({
@@ -325,6 +350,20 @@ export class TaskDispatchStore {
             expectedHeadSha: noChangeMatch![1]!,
           });
         }
+        const storedReceipt: TaskIntegrationReceipt =
+          receipt.kind === "worktree_integrated" || noChangeQualityGate
+            ? {
+                ...receipt,
+                qualityProof: assertTaskQualityReceiptAuthority({
+                  db,
+                  coordinates: this.#binding.coordinates,
+                  rootRealPath: this.#binding.scope.rootRealPath,
+                  missionId: current.mission_id,
+                  physicalHeadSha: physical.worktreeHeadSha!,
+                  receipt,
+                }),
+              }
+            : receipt;
         const result = db
           .prepare(
             `UPDATE task_dispatch_queue
@@ -334,8 +373,8 @@ export class TaskDispatchStore {
            AND handoff_id IS NOT NULL AND state IN ('handoff_ready', 'merging')`,
           )
           .run(
-            JSON.stringify(receipt),
-            receipt.completedAt,
+            JSON.stringify(storedReceipt),
+            storedReceipt.completedAt,
             now,
             taskId,
             revision,
@@ -368,7 +407,7 @@ export class TaskDispatchStore {
    *
    * The caller supplies the independently re-proved Git identity, but cannot
    * mint its completion receipt: this transaction binds that identity to the
-   * immutable MCP/OMP handoff receipt of the exact physical worker session.
+   * immutable MCP handoff receipt of the exact physical worker session.
    * The scheduler must have already proved the disposable worktree clean and
    * unchanged and marked it as validation-only; it is never a merge candidate.
    */
@@ -490,7 +529,7 @@ export class TaskDispatchStore {
 
   /**
    * Read-only completion is derived inside the store from either current PREVC
-   * evidence or the immutable physical MCP/OMP receipt of the exact worker
+   * evidence or the immutable physical MCP receipt of the exact worker
    * handoff. Callers cannot mint a `read_only_validated` receipt themselves.
    */
   completeReadOnlyFromTrustedHandoff(input: {
@@ -518,13 +557,9 @@ export class TaskDispatchStore {
         }
         this.#assertCurrentIntent(db, current);
         const sealed = assertSealedTaskDispatchPlanAuthority(db, current);
-        if (
-          (!supportsMechanicallyReadOnlyCli(sealed.route.adapterId) &&
-            !supportsAdvisoryParticipationCli(sealed.route.adapterId)) ||
-          sealed.schedule.executionMode !== "read_only"
-        ) {
+        if (sealed.schedule.executionMode !== "read_only") {
           throw new Error(
-            "read-only completion requires the sealed mechanically confined or advisory CLI",
+            "read-only completion requires the exact sealed read-only schedule",
           );
         }
         const physical = assertPhysicalTaskHandoffAuthority(
@@ -826,6 +861,167 @@ export class TaskDispatchStore {
     return record;
   }
 
+  /**
+   * A quality rejection needs another coding attempt, not a terminal mission
+   * block. Preserve the exact worker identity until Main proves its process has
+   * exited; only then may the task return to the scheduler.
+   */
+  blockQualityRepairByCoordinator(input: {
+    readonly taskId: string;
+    readonly revision: number;
+    readonly reason: string;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const revision = z.number().int().positive().parse(input.revision);
+    const detail = input.reason.trim();
+    if (!detail) throw new Error("reparo de qualidade exige causa registrada");
+    const reason =
+      `${TASK_DISPATCH_QUALITY_REPAIR_MARKER} ${detail}`.slice(0, 65_536);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (!current) throw new Error(`dispatch não encontrado: ${taskId}`);
+        if (
+          current.state === "blocked" &&
+          current.last_error?.startsWith(TASK_DISPATCH_QUALITY_REPAIR_MARKER)
+        ) {
+          return this.#getFromDatabase(db, taskId);
+        }
+        this.#assertCurrentIntent(db, current);
+        if (
+          !["handoff_ready", "merging"].includes(current.state) ||
+          current.revision !== revision ||
+          !current.handoff_id ||
+          !current.session_id ||
+          !current.worker_incarnation_id ||
+          current.integration_receipt_json !== null ||
+          current.completed_at !== null
+        ) {
+          throw new Error(
+            "quality repair perdeu CAS, handoff ou worker exato do merge",
+          );
+        }
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET state = 'blocked', last_error = ?,
+                    revision = revision + 1, updated_at = ?
+              WHERE task_id = ? AND revision = ?
+                AND state IN ('handoff_ready', 'merging')
+                AND handoff_id IS NOT NULL AND session_id IS NOT NULL
+                AND worker_incarnation_id IS NOT NULL
+                AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(reason, now, taskId, revision);
+        if (updated.changes !== 1) {
+          throw new Error("quality repair perdeu CAS do dispatch");
+        }
+        const task = db
+          .prepare(
+            `SELECT status FROM tasks WHERE id = ? AND mission_id = ?`,
+          )
+          .get(taskId, current.mission_id) as
+          | { status: string }
+          | undefined;
+        if (task?.status !== "running") {
+          throw new Error("quality repair exige task running");
+        }
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) {
+      throw new Error("dispatch desapareceu após bloquear quality repair");
+    }
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
+   * Called only after the Main-owned retirement coordinator proves the exact
+   * pane/session/incarnation exited. The previous handoff is archived in the
+   * handoff store; clearing it here allows a fresh dispatch generation to own
+   * the preserved worktree and produce a corrective commit.
+   */
+  requeueQualityRepairAfterWorkerExit(input: {
+    readonly taskId: string;
+    readonly revision: number;
+    readonly sessionId: string;
+    readonly workerIncarnationId: string;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const revision = z.number().int().positive().parse(input.revision);
+    const sessionId = idSchema.parse(input.sessionId);
+    const workerIncarnationId = idSchema.parse(input.workerIncarnationId);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (!current) throw new Error(`dispatch não encontrado: ${taskId}`);
+        this.#assertCurrentIntent(db, current);
+        if (
+          current.state !== "blocked" ||
+          current.revision !== revision ||
+          current.session_id !== sessionId ||
+          current.worker_incarnation_id !== workerIncarnationId ||
+          !current.handoff_id ||
+          !current.last_error?.startsWith(
+            TASK_DISPATCH_QUALITY_REPAIR_MARKER,
+          ) ||
+          current.integration_receipt_json !== null ||
+          current.completed_at !== null
+        ) {
+          throw new Error(
+            "quality repair perdeu a identidade exata do worker encerrado",
+          );
+        }
+        const retryAt = now + taskDispatchRetryDelay(current.attempt);
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET state = 'superseded', revision = revision + 1,
+                    lease_expires_at = ?, route_reservation_id = NULL,
+                    pane_id = NULL, session_id = NULL,
+                    worker_incarnation_id = NULL, handoff_id = NULL,
+                    handoff_accepted_at = NULL, last_heartbeat_at = NULL,
+                    updated_at = ?
+              WHERE task_id = ? AND revision = ? AND state = 'blocked'
+                AND session_id = ? AND worker_incarnation_id = ?
+                AND handoff_id IS NOT NULL
+                AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(
+            retryAt,
+            now,
+            taskId,
+            revision,
+            sessionId,
+            workerIncarnationId,
+          );
+        if (updated.changes !== 1) {
+          throw new Error("quality repair perdeu CAS do dispatch");
+        }
+        const task = db
+          .prepare(
+            `UPDATE tasks SET status = 'pending', updated_at = ?
+             WHERE id = ? AND mission_id = ? AND status = 'running'`,
+          )
+          .run(now, taskId, current.mission_id);
+        if (task.changes !== 1) {
+          throw new Error("quality repair não encontrou task running");
+        }
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) {
+      throw new Error("dispatch desapareceu após requeue de quality repair");
+    }
+    this.#binding.emitChange();
+    return record;
+  }
+
   /** Legacy same-checkout has no attributable diff/baseline: fail closed. */
   blockUnvalidatedByCoordinator(input: {
     readonly taskId: string;
@@ -1090,7 +1286,236 @@ export class TaskDispatchStore {
     return record;
   }
 
-  /** Exact PTY exit before a handoff is terminally uncertain and blocks. */
+  /**
+   * Recover a provably missing physical runtime without turning a technical
+   * interruption into a terminal mission block. Physical absence is observed
+   * by the main-owned lifecycle; this transaction fences the exact durable
+   * dispatch and preserves its pane/worktree identity for a short resume race.
+   */
+  requeueMissingRuntime(input: {
+    readonly taskId: string;
+    readonly revision: number;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const revision = z.number().int().positive().parse(input.revision);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (!current) throw new Error(`dispatch não encontrado: ${taskId}`);
+        this.#assertCurrentIntent(db, current);
+        const isActive = ["claimed", "routed", "spawning", "running"].includes(
+          current.state,
+        );
+        const hasBoundRuntime =
+          current.state === "running" &&
+          current.pane_id !== null &&
+          current.session_id !== null &&
+          current.worker_incarnation_id !== null;
+        if (
+          !isActive ||
+          current.revision !== revision ||
+          (!hasBoundRuntime && current.lease_expires_at >= now)
+        ) {
+          throw new Error(
+            "requeue de runtime ausente perdeu CAS ou dispatch ainda é ambíguo",
+          );
+        }
+        if (
+          current.handoff_id !== null ||
+          current.handoff_accepted_at !== null ||
+          current.integration_receipt_json !== null ||
+          current.completed_at !== null
+        ) {
+          throw new Error(
+            "requeue de runtime ausente recusou dispatch com receipt",
+          );
+        }
+        const retryAt = now + taskDispatchRetryDelay(current.attempt);
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET state = 'superseded', last_error = ?,
+                    revision = revision + 1, lease_expires_at = ?,
+                    updated_at = ?
+              WHERE task_id = ? AND revision = ?
+                AND state IN ('claimed', 'routed', 'spawning', 'running')
+                AND handoff_id IS NULL AND handoff_accepted_at IS NULL
+                AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(
+            TASK_DISPATCH_MISSING_RUNTIME_REASON,
+            retryAt,
+            now,
+            taskId,
+            revision,
+          );
+        if (updated.changes !== 1) {
+          throw new Error("requeue de runtime ausente perdeu CAS do dispatch");
+        }
+        const task = db
+          .prepare(
+            `UPDATE tasks SET status = 'pending', updated_at = ?
+             WHERE id = ? AND status = 'running'`,
+          )
+          .run(now, taskId);
+        if (task.changes !== 1) {
+          throw new Error(
+            "requeue de runtime ausente não encontrou task running",
+          );
+        }
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) {
+      throw new Error("dispatch desapareceu após requeue de runtime ausente");
+    }
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
+   * Rebind a replacement PTY to the same persisted logical worker after main
+   * proved the old process absent. This is intentionally narrower than claim:
+   * mission, pane, old session and incarnation must all still match, and no
+   * handoff/receipt may exist. A scheduler claim racing this path wins by CAS.
+   */
+  rebindRestartedWorker(input: {
+    readonly missionId: string;
+    readonly paneId: string;
+    readonly expectedSessionId: string;
+    readonly replacementSessionId: string;
+    readonly workerIncarnationId: string;
+    readonly leaseMs: number;
+  }): TaskDispatchRecord {
+    const missionId = idSchema.parse(input.missionId);
+    const paneId = idSchema.parse(input.paneId);
+    const expectedSessionId = idSchema.parse(input.expectedSessionId);
+    const replacementSessionId = idSchema.parse(input.replacementSessionId);
+    const workerIncarnationId = idSchema.parse(input.workerIncarnationId);
+    const leaseMs = z
+      .number()
+      .int()
+      .positive()
+      .max(TASK_DISPATCH_RESTART_LEASE_MAX_MS)
+      .parse(input.leaseMs);
+    if (expectedSessionId === replacementSessionId) {
+      throw new Error("replacement session precisa de uma nova identidade");
+    }
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const rows = db
+          .prepare(
+            `SELECT task_id
+               FROM task_dispatch_queue
+              WHERE mission_id = ? AND pane_id = ? AND session_id = ?
+                AND worker_incarnation_id = ?`,
+          )
+          .all(
+            missionId,
+            paneId,
+            expectedSessionId,
+            workerIncarnationId,
+          ) as Array<{ task_id: string }>;
+        if (rows.length !== 1) {
+          throw new Error(
+            "nenhum dispatch exato autoriza rebind do worker reiniciado",
+          );
+        }
+        const current = this.#getRow(db, rows[0]!.task_id);
+        if (!current) {
+          throw new Error("dispatch desapareceu antes do rebind do worker");
+        }
+        this.#assertCurrentIntent(db, current);
+        const isRunning = current.state === "running";
+        const isRecoverableSuperseded =
+          current.state === "superseded" &&
+          (current.last_error === TASK_DISPATCH_MISSING_RUNTIME_REASON ||
+            current.last_error === TASK_DISPATCH_SESSION_EXIT_REASON);
+        if (!isRunning && !isRecoverableSuperseded) {
+          throw new Error(
+            `dispatch ${current.state} não autoriza rebind do worker`,
+          );
+        }
+        if (
+          current.handoff_id !== null ||
+          current.handoff_accepted_at !== null ||
+          current.integration_receipt_json !== null ||
+          current.completed_at !== null
+        ) {
+          throw new Error("rebind do worker recusou dispatch com receipt");
+        }
+        const task = db
+          .prepare(
+            `SELECT status FROM tasks WHERE id = ? AND mission_id = ?`,
+          )
+          .get(current.task_id, missionId) as
+          | { status: string }
+          | undefined;
+        const expectedTaskStatus = isRunning ? "running" : "pending";
+        if (task?.status !== expectedTaskStatus) {
+          throw new Error(
+            `task não está ${expectedTaskStatus} para rebind do worker`,
+          );
+        }
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET state = 'running', session_id = ?,
+                    last_heartbeat_at = ?, lease_expires_at = ?,
+                    last_error = NULL, revision = revision + 1,
+                    updated_at = ?
+              WHERE task_id = ? AND mission_id = ? AND revision = ?
+                AND pane_id = ? AND session_id = ?
+                AND worker_incarnation_id = ? AND state = ?
+                AND handoff_id IS NULL AND handoff_accepted_at IS NULL
+                AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(
+            replacementSessionId,
+            now,
+            now + leaseMs,
+            now,
+            current.task_id,
+            missionId,
+            current.revision,
+            paneId,
+            expectedSessionId,
+            workerIncarnationId,
+            current.state,
+          );
+        if (updated.changes !== 1) {
+          throw new Error("rebind do worker perdeu CAS do dispatch");
+        }
+        if (isRecoverableSuperseded) {
+          const resumedTask = db
+            .prepare(
+              `UPDATE tasks SET status = 'running', updated_at = ?
+               WHERE id = ? AND mission_id = ? AND status = 'pending'`,
+            )
+            .run(now, current.task_id, missionId);
+          if (resumedTask.changes !== 1) {
+            throw new Error("rebind do worker perdeu CAS da task pending");
+          }
+        }
+        return this.#getFromDatabase(db, current.task_id);
+      })
+      .immediate();
+    if (!record) {
+      throw new Error("dispatch desapareceu após rebind do worker");
+    }
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
+   * An exact PTY exit proves the old process is gone, so it is safe to retain
+   * the worktree and schedule another incarnation. The superseded lease doubles
+   * as a persisted bounded backoff fence for the next claim.
+   */
   blockSessionExit(input: {
     readonly sessionId: string;
     readonly workerIncarnationId: string;
@@ -1125,16 +1550,18 @@ export class TaskDispatchStore {
         const dispatch = this.#getRow(db, current.task_id);
         if (!dispatch) return null;
         this.#assertCurrentIntent(db, dispatch);
+        const retryAt = now + taskDispatchRetryDelay(dispatch.attempt);
         const updated = db
           .prepare(
             `UPDATE task_dispatch_queue
-         SET state = 'blocked', last_error = ?, revision = revision + 1,
-             updated_at = ?
+         SET state = 'superseded', last_error = ?, revision = revision + 1,
+             lease_expires_at = ?, updated_at = ?
          WHERE task_id = ? AND revision = ? AND session_id = ?
            AND worker_incarnation_id = ? AND state = 'running'`,
           )
           .run(
             reason,
+            retryAt,
             now,
             current.task_id,
             current.revision,
@@ -1144,9 +1571,9 @@ export class TaskDispatchStore {
         if (updated.changes !== 1)
           throw new Error("session exit perdeu CAS do dispatch");
         db.prepare(
-          `UPDATE tasks SET status = 'failed', updated_at = ? WHERE id = ?`,
+          `UPDATE tasks SET status = 'pending', updated_at = ?
+           WHERE id = ? AND status = 'running'`,
         ).run(now, current.task_id);
-        this.#blockMission(db, current.mission_id, reason, now);
         return this.#getFromDatabase(db, current.task_id);
       })
       .immediate();
@@ -1259,6 +1686,162 @@ export class TaskDispatchStore {
     if (!record) {
       throw new Error("dispatch desapareceu após refinar falha de bootstrap");
     }
+    this.#binding.emitChange();
+    return record;
+  }
+
+  /**
+   * Compensates a bootstrap failure only after the caller proved that the
+   * exact physical worker is gone (or that no pane was created). The attempt
+   * becomes superseded and the scheduler may claim the task again.
+   */
+  requeueTechnicalBootstrapFailure(input: {
+    readonly taskId: string;
+    readonly missionId: string;
+    readonly leaseToken: string;
+    readonly workerIncarnationId: string;
+    readonly paneId?: string;
+    readonly sessionId?: string;
+    readonly error: string;
+  }): TaskDispatchRecord {
+    const taskId = idSchema.parse(input.taskId);
+    const missionId = idSchema.parse(input.missionId);
+    const workerIncarnationId = idSchema.parse(input.workerIncarnationId);
+    const paneId =
+      input.paneId === undefined ? undefined : idSchema.parse(input.paneId);
+    const sessionId =
+      input.sessionId === undefined
+        ? undefined
+        : idSchema.parse(input.sessionId);
+    const message = input.error.trim().slice(0, 65_536);
+    if (!message) throw new Error("retry técnico exige causa registrada");
+    const hash = tokenHash(input.leaseToken);
+    const now = this.#binding.now();
+    const db = this.#binding.writeDatabase();
+    const record = db
+      .transaction(() => {
+        const current = this.#getRow(db, taskId);
+        if (!current) throw new Error(`dispatch não encontrado: ${taskId}`);
+        if (
+          current.mission_id !== missionId ||
+          current.lease_token_hash !== hash ||
+          current.worker_incarnation_id !== workerIncarnationId
+        ) {
+          throw new Error(
+            "retry técnico perdeu task/mission/incarnation/lease do dispatch",
+          );
+        }
+        if (
+          ![
+            "claimed",
+            "routed",
+            "spawning",
+            "running",
+            "blocked",
+            "superseded",
+          ].includes(current.state)
+        ) {
+          throw new Error(
+            `retry técnico recusou dispatch no estado ${current.state}`,
+          );
+        }
+        if (
+          current.handoff_id !== null ||
+          current.handoff_accepted_at !== null ||
+          current.integration_receipt_json !== null ||
+          current.completed_at !== null
+        ) {
+          throw new Error("retry técnico recusou dispatch com receipt");
+        }
+        if (
+          (current.pane_id !== null || current.session_id !== null) &&
+          (current.pane_id !== paneId || current.session_id !== sessionId)
+        ) {
+          throw new Error(
+            "retry técnico perdeu a identidade física exata do worker",
+          );
+        }
+        if (
+          current.state === "blocked" &&
+          current.last_error !== TASK_DISPATCH_SESSION_EXIT_REASON
+        ) {
+          throw new Error(
+            "retry técnico recusou um bloqueio que não prova exit físico",
+          );
+        }
+        if (current.state === "superseded") {
+          const task = db
+            .prepare(
+              `SELECT status FROM tasks WHERE id = ? AND mission_id = ?`,
+            )
+            .get(taskId, missionId) as { status: string } | undefined;
+          const mission = db
+            .prepare(
+              `SELECT status, intent_version FROM missions WHERE id = ?`,
+            )
+            .get(missionId) as
+            | { status: string; intent_version: number }
+            | undefined;
+          if (
+            task?.status !== "pending" ||
+            mission?.status !== "running" ||
+            mission.intent_version !== current.intent_version
+          ) {
+            throw new Error(
+              "retry técnico superseded divergiu de task/mission running",
+            );
+          }
+          return this.#getFromDatabase(db, taskId);
+        }
+        const mission = db
+          .prepare(`SELECT intent_version FROM missions WHERE id = ?`)
+          .get(missionId) as { intent_version: number } | undefined;
+        if (!mission || mission.intent_version !== current.intent_version) {
+          throw new Error("intentVersion obsoleta durante retry técnico");
+        }
+        resumeTaskDispatchMissionAfterTechnicalFailure(
+          db,
+          missionId,
+          current.state === "blocked" ? current.last_error : null,
+          now,
+        );
+        const updated = db
+          .prepare(
+            `UPDATE task_dispatch_queue
+                SET state = 'superseded', last_error = ?,
+                    revision = revision + 1, lease_expires_at = ?,
+                    updated_at = ?
+              WHERE task_id = ? AND mission_id = ?
+                AND lease_token_hash = ? AND worker_incarnation_id = ?
+                AND state IN ('claimed', 'routed', 'spawning', 'running', 'blocked')
+                AND handoff_id IS NULL AND handoff_accepted_at IS NULL
+                AND integration_receipt_json IS NULL AND completed_at IS NULL`,
+          )
+          .run(
+            message,
+            now,
+            now,
+            taskId,
+            missionId,
+            hash,
+            workerIncarnationId,
+          );
+        if (updated.changes !== 1) {
+          throw new Error("retry técnico perdeu CAS do dispatch");
+        }
+        const task = db
+          .prepare(
+            `UPDATE tasks SET status = 'pending', updated_at = ?
+             WHERE id = ? AND mission_id = ? AND status IN ('running', 'failed')`,
+          )
+          .run(now, taskId, missionId);
+        if (task.changes !== 1) {
+          throw new Error("retry técnico não encontrou task running/failed");
+        }
+        return this.#getFromDatabase(db, taskId);
+      })
+      .immediate();
+    if (!record) throw new Error("dispatch desapareceu após retry técnico");
     this.#binding.emitChange();
     return record;
   }

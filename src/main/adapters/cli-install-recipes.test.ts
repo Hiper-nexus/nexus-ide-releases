@@ -11,7 +11,6 @@ const ARGV_IDS = [
   'codex',
   'gemini',
   'opencode',
-  'omp',
   'kimi',
   'grok',
 ] as const;

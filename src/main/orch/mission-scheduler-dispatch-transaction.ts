@@ -1,5 +1,6 @@
 import { app } from "electron";
-import type { Mission } from "../../shared/orch-types";
+import type { Mission, Squad } from "../../shared/orch-types";
+import { hasCurrentDispatchAuthority } from "../../shared/mission-intent";
 import type { ProviderQuotaEntry } from "../../shared/quota-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
@@ -10,13 +11,13 @@ import {
   isCredentiallessOpenCodeModel,
   isProviderAuthReadyForModel,
 } from "../adapters/model-auth-readiness";
-import { getContextWorkflowService } from "../context/context-workflow-registry";
 import {
   hasAvailableAccount,
   listAccounts,
   pickAvailable,
 } from "../persistence/account-store";
 import { listProviderSettings } from "../persistence/provider-config-store";
+import { getSessionState } from "../pty/pty-manager";
 import { supportsEnforceableWorkspaceWriteNativeAuthority } from "../pty/autonomous-cli-policy";
 import { getOrchSettings } from "../persistence/settings-store";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
@@ -25,8 +26,7 @@ import { requireQuotaService } from "../quota/quota-service";
 import { trustRealMissionCodexProjectPath } from "../real-mission-codex-trust";
 import { ensureGuidedGitBaseline } from "../runtime/guided-greenfield-baseline";
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
-import { assertGuidedPrevcExecutionReady } from "./guided-mission-prevc";
-import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import { classifyOperationalFailure } from "../runtime/operational-failure-policy";
 import { isGuidedDeliveryTaskKind } from "./guided-task-kind";
 import {
   awaitMissionSchedulerAuthorityFence,
@@ -49,16 +49,66 @@ import { selectMissionSchedulerWorktreeDependencies } from "./mission-scheduler-
 import { countLiveMissionWorkerSlots } from "./mission-driver-io";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { getSquad } from "./squad-store";
+import { snapshotSquadAuthority } from "./squad-authority-snapshot";
+import { hashMissionIntentContract } from "./mission-pane-authority";
 import { spawnPaneAndMaybePrompt } from "./tool-util";
 import {
   projectMissionSchedulerWorkerSlots,
 } from "./task-dispatch-worker-retirement";
+import { taskDispatchQualityRepairReason } from "./task-dispatch-store";
 import { TASK_DISPATCH_SESSION_EXIT_REASON } from "./task-dispatch-persistence";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
+import type { PlannedTaskRecord } from "./task-store";
 import { reserveWorkerSpawnSlot } from "./tools-panes";
+import { requestMissionPaneClose } from "./pane-registry";
 
 export const MISSION_SCHEDULER_BOOTSTRAP_FAILURE_PREFIX =
   "Falha durante o bootstrap do worker:";
+
+export class MissionSchedulerCapacityWaitError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(
+      `capacity_wait: ${message}`,
+      cause === undefined ? undefined : { cause },
+    );
+    this.name = "MissionSchedulerCapacityWaitError";
+  }
+}
+
+export class MissionSchedulerRetryableDispatchError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "MissionSchedulerRetryableDispatchError";
+  }
+}
+
+export class MissionSchedulerDispatchAuthorityError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "MissionSchedulerDispatchAuthorityError";
+  }
+}
+
+export function isMissionSchedulerCapacityWait(error: unknown): boolean {
+  if (error instanceof MissionSchedulerCapacityWaitError) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /\bcapacity_wait:/iu.test(message) ||
+    /\bmaxWorkers=\d+\s+já está reservado por dispatches duráveis\b/iu.test(
+      message,
+    )
+  );
+}
+
+export function isMissionSchedulerRetryableDispatchError(
+  error: unknown,
+): boolean {
+  return (
+    isMissionSchedulerCapacityWait(error) ||
+    error instanceof MissionSchedulerRetryableDispatchError ||
+    classifyOperationalFailure(error) === "retryable"
+  );
+}
 
 export function missionSchedulerBootstrapFailureDetail(error: unknown): string {
   const cause = (error instanceof Error ? error.message : String(error))
@@ -251,29 +301,211 @@ export function missionSchedulerLiveRosterAdapter(input: {
   });
 }
 
+export interface MissionSchedulerPreProviderAuthority {
+  readonly missionId: string;
+  readonly intentVersion: number;
+  readonly intentAuthority: string;
+  readonly taskId: string;
+  readonly planAuthority: string;
+  readonly squadRevisionHash: string;
+}
+
+function intentAuthoritySnapshot(mission: Mission): string {
+  return hashMissionIntentContract({
+    id: mission.id,
+    intentVersion: mission.intentVersion ?? 0,
+    intentContract: mission.intentContract ?? null,
+    squadId: mission.squadId ?? null,
+  });
+}
+
+function planAuthoritySnapshot(planned: PlannedTaskRecord): string {
+  return hashMissionIntentContract({
+    plannerId: planned.plannerId,
+    taskId: planned.taskId,
+    missionId: planned.missionId,
+    intentVersion: planned.intentVersion,
+    squadId: planned.squadId,
+    rosterHash: planned.rosterHash,
+    agentRef: planned.agentRef,
+    agentCategory: planned.agentCategory,
+    agent: planned.agent,
+    plannedTitle: planned.plannedTitle,
+    plannedDetail: planned.plannedDetail,
+    taskTitle: planned.task.title,
+    taskDetail: planned.task.detail,
+  });
+}
+
 /**
- * Last mission-level gate before scheduler provider discovery. Keeping this
- * boundary ahead of route/account/claim/worktree work makes task metadata
- * incapable of suppressing PREVC.
+ * Captures the exact approved intent, immutable task-plan receipt and current
+ * squad revision used by a worker dispatch. PREVC is deliberately absent:
+ * workers may run while Main prepares it, and `ensurePrevcMergeReady` remains
+ * the mandatory promotion boundary.
  */
-export function assertMissionSchedulerPreProviderAuthority(input: {
-  readonly mission: Pick<Mission, "id" | "intentContract" | "squadId">;
-  readonly workflow: Parameters<
-    typeof assertGuidedPrevcExecutionReady
-  >[0]["workflow"];
-}): void {
-  const contract = input.mission.intentContract;
-  if (!contract) {
+export function captureMissionSchedulerPreProviderAuthority(input: {
+  readonly mission: Mission | null;
+  readonly planned: PlannedTaskRecord | null;
+  readonly squad: Squad | null;
+}): MissionSchedulerPreProviderAuthority {
+  const { mission, planned, squad } = input;
+  if (!mission?.intentContract || !hasCurrentDispatchAuthority(mission)) {
     throw new Error(
-      "scheduler dispatch requires an approved mission contract",
+      "scheduler dispatch requires current approved mission authority",
     );
   }
-  assertGuidedPrevcExecutionReady({
-    required: missionRequiresGuidedPrevc(input.mission),
-    missionId: input.mission.id,
-    approvedGoal: contract.goal,
-    approvedAcceptanceCriteria: contract.acceptanceCriteria,
-    workflow: input.workflow,
+  if (!mission.squadId || !squad || squad.id !== mission.squadId) {
+    throw new Error("scheduler dispatch squad is unavailable or changed");
+  }
+  const squadRevisionHash = snapshotSquadAuthority(squad).hash;
+  if (mission.intentContract.squadRevisionHash !== squadRevisionHash) {
+    throw new Error(
+      "scheduler dispatch squad changed after mission approval",
+    );
+  }
+  if (
+    !planned ||
+    planned.missionId !== mission.id ||
+    planned.intentVersion !== mission.intentContract.intentVersion ||
+    planned.squadId !== mission.squadId ||
+    planned.taskId !== planned.task.id ||
+    planned.task.title !== planned.plannedTitle ||
+    planned.task.detail !== planned.plannedDetail
+  ) {
+    throw new Error(
+      "scheduler dispatch task diverged from the sealed plan authority",
+    );
+  }
+  return Object.freeze({
+    missionId: mission.id,
+    intentVersion: mission.intentContract.intentVersion,
+    intentAuthority: intentAuthoritySnapshot(mission),
+    taskId: planned.taskId,
+    planAuthority: planAuthoritySnapshot(planned),
+    squadRevisionHash,
+  });
+}
+
+/** Revalidates intent, plan and squad after every asynchronous preparation. */
+export function assertMissionSchedulerPreProviderAuthority(input: {
+  readonly expected: MissionSchedulerPreProviderAuthority;
+  readonly mission: Mission | null;
+  readonly planned: PlannedTaskRecord | null;
+  readonly squad: Squad | null;
+}): void {
+  const current = captureMissionSchedulerPreProviderAuthority(input);
+  if (
+    current.missionId !== input.expected.missionId ||
+    current.intentVersion !== input.expected.intentVersion ||
+    current.intentAuthority !== input.expected.intentAuthority
+  ) {
+    throw new Error(
+      "scheduler dispatch intent authority changed before provider effect",
+    );
+  }
+  if (
+    current.taskId !== input.expected.taskId ||
+    current.planAuthority !== input.expected.planAuthority
+  ) {
+    throw new Error(
+      "scheduler dispatch plan authority changed before provider effect",
+    );
+  }
+  if (current.squadRevisionHash !== input.expected.squadRevisionHash) {
+    throw new Error(
+      "scheduler dispatch squad authority changed before provider effect",
+    );
+  }
+}
+
+function hasExactBootstrapExitProof(
+  dispatch: TaskDispatchRecord | null,
+  input: {
+    readonly paneId: string;
+    readonly sessionId: string;
+    readonly workerIncarnationId: string;
+  },
+): boolean {
+  return Boolean(
+    (dispatch?.state === "blocked" || dispatch?.state === "superseded") &&
+      dispatch.lastError === TASK_DISPATCH_SESSION_EXIT_REASON &&
+      dispatch.paneId === input.paneId &&
+      dispatch.sessionId === input.sessionId &&
+      dispatch.workerIncarnationId === input.workerIncarnationId,
+  );
+}
+
+async function compensateRetryableBootstrapFailure(input: {
+  readonly scope: ProjectExecutionScope;
+  readonly missionId: string;
+  readonly taskId: string;
+  readonly stores: ReturnType<typeof getProjectDomainStores>;
+  readonly leaseToken: string;
+  readonly workerIncarnationId: string;
+  readonly paneId: string | null;
+  readonly sessionId: string | null;
+  readonly error: unknown;
+}): Promise<void> {
+  const { paneId, sessionId, workerIncarnationId } = input;
+  if (Boolean(paneId) !== Boolean(sessionId)) {
+    throw new MissionSchedulerDispatchAuthorityError(
+      "bootstrap retry encontrou identidade física parcial",
+    );
+  }
+  if (paneId && sessionId) {
+    const exactIdentity = { paneId, sessionId, workerIncarnationId };
+    const alreadyExited = hasExactBootstrapExitProof(
+      input.stores.taskDispatches.get(input.taskId),
+      exactIdentity,
+    );
+    const closed =
+      alreadyExited ||
+      (await requestMissionPaneClose({
+        scope: input.scope,
+        missionId: input.missionId,
+        paneId,
+        sessionId,
+        role: "worker",
+        workerIncarnationId,
+      }));
+    const physicallyGone =
+      closed ||
+      hasExactBootstrapExitProof(
+        input.stores.taskDispatches.get(input.taskId),
+        exactIdentity,
+      ) ||
+      getSessionState(sessionId) === null ||
+      getSessionState(sessionId) === "exited";
+    if (!physicallyGone) {
+      throw new MissionSchedulerDispatchAuthorityError(
+        "bootstrap retry não comprovou o encerramento físico do worker",
+      );
+    }
+    const missionPaneRows = input.stores.missionPanes
+      .list(input.missionId)
+      .filter((row) => row.paneId === paneId);
+    const exactPane = input.stores.missionPanes.findByPaneId(paneId);
+    if (
+      missionPaneRows.length > 1 ||
+      (missionPaneRows.length === 1 &&
+        (!exactPane ||
+          exactPane.role !== "worker" ||
+          exactPane.workerIncarnationId !== workerIncarnationId))
+    ) {
+      throw new MissionSchedulerDispatchAuthorityError(
+        "bootstrap retry encontrou autoridade ambígua no pane persistido",
+      );
+    }
+    if (exactPane) input.stores.missionPanes.remove(exactPane.id);
+  }
+  input.stores.taskDispatches.requeueTechnicalBootstrapFailure({
+    taskId: input.taskId,
+    missionId: input.missionId,
+    leaseToken: input.leaseToken,
+    workerIncarnationId,
+    ...(paneId ? { paneId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    error: missionSchedulerBootstrapFailureDetail(input.error),
   });
 }
 
@@ -305,6 +537,9 @@ export async function dispatchMissionSchedulerTask(
     );
   }
   const task = planned.task;
+  const qualityRepairReason = taskDispatchQualityRepairReason(
+    stores.taskDispatches.get(taskId),
+  );
   const decoded = decodeTaskScheduleDetail(task.detail);
   const meta = assertSealedTaskSchedule(planned, decoded.meta);
   const mapped = taskRecordToSchedulerTask(task);
@@ -314,25 +549,25 @@ export async function dispatchMissionSchedulerTask(
   ) {
     throw new Error(`scheduler request ${taskId} divergiu do plano selado`);
   }
-  const workflow = getContextWorkflowService(scope);
-  const assertCurrentPrevcAuthority = (): void => {
-    const currentWorkflow = workflow.getMissionWorkflow(missionId);
+  const squad = mission.squadId ? getSquad(mission.squadId) : null;
+  const dispatchAuthority = captureMissionSchedulerPreProviderAuthority({
+    mission,
+    planned,
+    squad,
+  });
+  const assertCurrentDispatchAuthority = (): void => {
+    const currentMission = stores.missions.get(missionId);
+    const currentPlanned = stores.tasks.getPlannedTask(taskId);
     assertMissionSchedulerPreProviderAuthority({
-      mission,
-      workflow: currentWorkflow,
+      expected: dispatchAuthority,
+      mission: currentMission,
+      planned: currentPlanned,
+      squad: currentMission?.squadId
+        ? getSquad(currentMission.squadId)
+        : null,
     });
-    // Saved/manual specialty squads retain their legacy optional PREVC path.
-    // A guided task never reaches provider discovery, account resolution,
-    // claim or worktree materialization without the stronger assertion above.
-    if (currentWorkflow.contract) {
-      workflow.assertMutationAllowed(
-        missionId,
-        "nexus_mission_spawn_pane",
-        {},
-      );
-    }
   };
-  assertCurrentPrevcAuthority();
+  assertCurrentDispatchAuthority();
   const dependencyHandoffs = loadMissionSchedulerDependencyHandoffs({
     missionId,
     dependsOn: mapped.dependsOn,
@@ -361,11 +596,7 @@ export async function dispatchMissionSchedulerTask(
       });
     });
   const orchestratorCliId =
-    mission.squadId
-      ? getSquad(mission.squadId)?.agents.find(
-          (agent) => agent.category === "orchestrator",
-        )?.cli
-      : undefined;
+    squad?.agents.find((agent) => agent.category === "orchestrator")?.cli;
   const sealedRoute = resolveSealedWorkerRoute({
     taskText,
     agent: planned.agent,
@@ -373,31 +604,33 @@ export async function dispatchMissionSchedulerTask(
     rosterHash: planned.rosterHash,
     orchestratorCliId,
   });
+  const operatorChoice = isOperatorChoicePolicy(
+    getOrchSettings().squadCliPolicy,
+  );
+  const useTaskWorktree =
+    executionMode === "isolated_worktree" ||
+    (operatorChoice && executionMode === "read_only");
   if (executionMode === "isolated_worktree") {
     const liveAdapter = getAdapter(sealedRoute.routeContract.adapterId);
-    const operatorChoice = isOperatorChoicePolicy(
-      getOrchSettings().squadCliPolicy,
-    );
     // Governed: require Codex-class native workspace-write. Operator-choice:
-    // any builtin cli-pty is enough at the seal — the PTY path wraps the
-    // process in the Nexus Seatbelt (fail-closed without a constructible
-    // boundary on non-macOS).
+    // any live cli-pty is enough because the worker runs in its own worktree
+    // and only Main can integrate a validated candidate.
     const writeEligible =
       liveAdapter?.kind === "cli-pty" &&
-      isBuiltinAdapter(liveAdapter.id) &&
       (operatorChoice ||
-        supportsEnforceableWorkspaceWriteNativeAuthority(liveAdapter));
+        (isBuiltinAdapter(liveAdapter.id) &&
+          supportsEnforceableWorkspaceWriteNativeAuthority(liveAdapter)));
     if (!liveAdapter || !writeEligible) {
       throw new Error(
         `workspace_write_unsupported: ${sealedRoute.routeContract.adapterId} ` +
           (operatorChoice
-            ? "não possui adapter cli-pty builtin para escrita sob escolha livre"
+            ? "não possui uma rota cli-pty ativa para o worktree da tarefa"
             : "não possui sandbox nativo builtin qualificado para o dispatch selado"),
       );
     }
   }
   const accountId = await awaitMissionSchedulerAuthorityFence({
-    assertCurrentAuthority: assertCurrentPrevcAuthority,
+    assertCurrentAuthority: assertCurrentDispatchAuthority,
     prepare: () =>
       missionSchedulerRouteRequiresAccount(
         sealedRoute.routeContract.adapterId,
@@ -406,7 +639,7 @@ export async function dispatchMissionSchedulerTask(
         ? resolveMissionSpawnAccountId(sealedRoute.decision.adapterId)
         : Promise.resolve(undefined),
   });
-  if (executionMode === "read_only") {
+  if (executionMode === "read_only" && !operatorChoice) {
     const adapterId = sealedRoute.decision.adapterId;
     // Two ways to earn a read_only lane, both enforced outside the prompt:
     // the provider's own verified profile (codex argv, grok Seatbelt), or the
@@ -447,7 +680,12 @@ export async function dispatchMissionSchedulerTask(
       ).live + workerSlotProjection.activeDispatchCount,
     allowedTools: plannedAllowedTools,
   });
-  if (!reservation.ok) throw new Error(reservation.error);
+  if (!reservation.ok) {
+    if (reservation.code === "budget_exhausted") {
+      throw new MissionSchedulerCapacityWaitError(reservation.error);
+    }
+    throw new Error(reservation.error);
+  }
 
   let worktreeCreated = false;
   let dispatchLeaseToken: string | null = null;
@@ -456,7 +694,7 @@ export async function dispatchMissionSchedulerTask(
   let boundPaneId: string | null = null;
   let boundSessionId: string | null = null;
   try {
-    assertCurrentPrevcAuthority();
+    assertCurrentDispatchAuthority();
     if (
       executionMode === "isolated_worktree" &&
       isGuidedDeliveryTaskKind(meta.guidedTaskKind)
@@ -485,8 +723,8 @@ export async function dispatchMissionSchedulerTask(
     dispatchRevision = claim.revision;
     dispatchWorkerIncarnationId = claim.workerIncarnationId;
     const worktree =
-      executionMode === "isolated_worktree"
-        ? requireWorktreeRuntimeRegistry().create({
+      useTaskWorktree
+        ? await requireWorktreeRuntimeRegistry().create({
             scope,
             missionId,
             taskId,
@@ -535,7 +773,7 @@ export async function dispatchMissionSchedulerTask(
       `dispatch:${claim.id}`,
     );
     const assertCurrentSpawnAuthority = (): void => {
-      assertCurrentPrevcAuthority();
+      assertCurrentDispatchAuthority();
       const current = stores.taskDispatches.assertLifecycleAuthority({
         taskId,
         missionId,
@@ -577,6 +815,7 @@ export async function dispatchMissionSchedulerTask(
             agentName: planned.agent.agentName,
             category: meta.agentCategory,
             executionMode,
+            qualityRepairReason,
           },
           dependencyHandoffs,
         ),
@@ -587,7 +826,6 @@ export async function dispatchMissionSchedulerTask(
             ? null
             : [...planned.agent.allowedSkills],
         readOnly: executionMode === "read_only",
-        suppressOmpAutoSpawn: true,
       },
       {
         invocation: {
@@ -650,6 +888,51 @@ export async function dispatchMissionSchedulerTask(
       },
     );
   } catch (error) {
+    if (isMissionSchedulerCapacityWait(error)) {
+      throw error instanceof MissionSchedulerCapacityWaitError
+        ? error
+        : new MissionSchedulerCapacityWaitError(
+            error instanceof Error ? error.message : String(error),
+            error,
+          );
+    }
+    const disposition = classifyOperationalFailure(error);
+    if (
+      disposition === "retryable" &&
+      dispatchLeaseToken &&
+      dispatchWorkerIncarnationId
+    ) {
+      try {
+        await compensateRetryableBootstrapFailure({
+          scope,
+          missionId,
+          taskId,
+          stores,
+          leaseToken: dispatchLeaseToken,
+          workerIncarnationId: dispatchWorkerIncarnationId,
+          paneId: boundPaneId,
+          sessionId: boundSessionId,
+          error,
+        });
+        throw new MissionSchedulerRetryableDispatchError(
+          missionSchedulerBootstrapFailureDetail(error),
+          error,
+        );
+      } catch (recoveryError) {
+        if (recoveryError instanceof MissionSchedulerRetryableDispatchError) {
+          throw recoveryError;
+        }
+        error = new MissionSchedulerDispatchAuthorityError(
+          "falha técnica transitória não pôde ser compensada com autoridade exata",
+          recoveryError,
+        );
+      }
+    } else if (disposition === "retryable" && !dispatchLeaseToken) {
+      throw new MissionSchedulerRetryableDispatchError(
+        missionSchedulerBootstrapFailureDetail(error),
+        error,
+      );
+    }
     const failureDetail = missionSchedulerBootstrapFailureDetail(error);
     if (worktreeCreated) {
       try {

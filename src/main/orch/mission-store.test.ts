@@ -16,6 +16,7 @@ import {
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_REASON,
 } from './mission-orchestrator-exit-policy';
 import { hashMissionIntentContract } from './mission-pane-authority';
+import { RETIRED_ROSTER_ROUTE_MARKER } from '../../shared/retired-adapter-policy';
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -248,6 +249,60 @@ describe('scoped mission store', () => {
     });
   });
 
+  it('publishes a fresh review revision for a retired sealed route without rewriting its squad or old plan', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope({ checkoutId: 'retired-route-reapproval' });
+    let now = 100;
+    const store = createScopedMissionStore(runtimeManager, scope, {
+      now: () => ++now,
+      idFactory: () => 'mission-retired-route',
+    });
+    const contract = {
+      ...compileIntentContract({
+        goal: 'Continuar uma missão criada antes da remoção do provider',
+        intentVersion: 4,
+      }),
+      approvedAt: 80,
+      dispatchedAt: 90,
+    };
+    const shell = store.create({
+      title: 'Legacy route',
+      description:
+        `${RETIRED_ROSTER_ROUTE_MARKER} O seal antigo exige revisão do squad.`,
+      squadId: 'squad-legacy',
+      intentState: 'executing',
+      intentVersion: 4,
+      intentContract: contract,
+    });
+    store.setStatus(shell.id, 'running');
+    const blocked = store.update(shell.id, {
+      status: 'blocked',
+      intentState: 'blocked_technical',
+    });
+    if (!blocked) throw new Error('mission must exist');
+
+    const reapproval = store.publishDeadGraphReapprovalRevision(
+      shell.id,
+      blocked,
+    );
+
+    expect(reapproval).toMatchObject({
+      status: 'pending',
+      intentState: 'awaiting_approval',
+      intentVersion: 5,
+      squadId: 'squad-legacy',
+      intentContract: {
+        goal: contract.goal,
+        intentVersion: 5,
+      },
+    });
+    expect(reapproval.intentContract).not.toHaveProperty('approvedAt');
+    expect(reapproval.intentContract).not.toHaveProperty('dispatchedAt');
+    expect(() =>
+      store.publishDeadGraphReapprovalRevision(shell.id, blocked),
+    ).toThrow(/CAS changed/i);
+  });
+
   it('promotes plan with a main-only squad CAS and keeps renderer patches unable to rebind it', () => {
     const runtimeManager = manager();
     const scope = testProjectScope({ checkoutId: 'plan-promotion-cas' });
@@ -428,6 +483,18 @@ describe('scoped mission store', () => {
     expect(store.setOrchestratorSession('mission-stable', 'session-b')).toMatchObject({
       orchestratorSessionId: 'session-b',
     });
+    expect(
+      store.clearOrchestratorSessionIfMatches('mission-stable', 'session-a'),
+    ).toBeNull();
+    expect(store.get('mission-stable')).toMatchObject({
+      orchestratorSessionId: 'session-b',
+    });
+    expect(
+      store.clearOrchestratorSessionIfMatches('mission-stable', 'session-b'),
+    ).toMatchObject({
+      orchestratorSessionId: undefined,
+    });
+    store.setOrchestratorSession('mission-stable', 'session-b');
 
     runtimeManager.close(scope);
     const reopened = createScopedMissionStore(runtimeManager, scope);

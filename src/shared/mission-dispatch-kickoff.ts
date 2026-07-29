@@ -89,22 +89,22 @@ export interface IntentDispatchKickoffInput {
 /**
  * Describes the worker-authority rule actually in force.
  *
- * Under `operator-choice` the jail is the Nexus Seatbelt boundary, not a brand
- * allowlist, so the roster the operator approved is the roster to use. Telling
- * the Maestro otherwise made it silently substitute Codex for the executor the
- * operator had chosen.
+ * Under `operator-choice` the task worktree + session bearer + Main-owned merge
+ * are the practical boundary, not a brand allowlist, so the roster the
+ * operator approved is the roster to use. Telling the Maestro otherwise made
+ * it silently substitute Codex for the executor the operator had chosen.
  */
 function workerAuthorityLines(operatorChoice: boolean): readonly string[] {
   if (operatorChoice) {
     return [
       '- Use EXATAMENTE o roster aprovado. A CLI de cada especialista foi escolhida pelo operador; não substitua por outra marca.',
-      '- O dispatcher Nexus valida capability, instalação, autenticação, quota/cooldown e modelo antes de criar a RouteReservation de uso único. A confinação é o Seatbelt do kernel Nexus, não uma lista de marcas.',
-      '- Se uma CLI do roster falhar a validação, registre status=blocked com a causa exata. Não troque o especialista por conta própria.',
+      '- O dispatcher Nexus valida capability, instalação, autenticação, quota/cooldown e modelo antes de criar a RouteReservation de uso único. O worker recebe worktree isolado, bearer por sessão, autoaprovação e web liberada; só o Main integra o resultado.',
+      '- Falha técnica ou falta momentânea de capacidade deve ser retentada pelo dispatcher. Use blocked somente para autenticação, decisão humana ou ação destrutiva ambígua; não troque o especialista por conta própria.',
     ];
   }
   return [
     '- Nesta release, workers mission-bound de escrita e leitura usam somente o Codex builtin qualificado. Selecione agentRef/category/executionMode exatos do roster.',
-    '- O dispatcher Nexus valida capability, instalação, autenticação, quota/cooldown e modelo antes de criar a RouteReservation de uso único. Roster legado com Kimi, OMP, Grok, AGY, OpenCode ou Claude como worker falha fechado; não tente materializá-lo.',
+    '- O dispatcher Nexus valida capability, instalação, autenticação, quota/cooldown e modelo antes de criar a RouteReservation de uso único. Roster legado com uma CLI não qualificada como worker falha fechado; não tente materializá-lo.',
     '- Essas CLIs continuam disponíveis em painéis e no Terminal/manual fora da execução autônoma da missão.',
   ];
 }
@@ -121,15 +121,15 @@ function standardStateLines(input: IntentDispatchKickoffInput): string[] {
   ];
   if (input.guidedPrevcRequired && input.guidedPrevcFrozen === false) {
     lines.push(
-      '- Exige PREVC e o contrato ainda não está congelado: o contexto versionado não ficou pronto.',
+      '- PREVC paralelo: o main prepara o contexto enquanto os workers executam; freeze exato, sensores e revisão são concluídos na promoção final.',
     );
   } else if (input.guidedPrevcRequired) {
     lines.push(
-      '- Exige PREVC; o main já congelou o contrato exato antes de abrir esta CLI.',
+      '- PREVC já congelado: o main conclui revisões e sensores na fronteira de promoção sem bloquear o início dos workers.',
     );
   } else {
     lines.push(
-      '- PREVC oportunista: as garantias ligam se o contexto estiver pronto; a missão segue se não estiver.',
+      '- PREVC paralelo: o main prepara o contexto sem bloquear os workers e exige as garantias completas somente na promoção final.',
     );
   }
   return lines;
@@ -144,29 +144,16 @@ function standardStateLines(input: IntentDispatchKickoffInput): string[] {
  * acompanhe". A model told simultaneously that it conducts and that nearly
  * every action belongs to someone else stalls instead of acting.
  */
-function standardSequenceLines(input: IntentDispatchKickoffInput): string[] {
-  const lines: string[] = [];
-  if (input.guidedPrevcRequired && input.guidedPrevcFrozen === false) {
-    lines.push(
-      '1. nexus_context_doctor até o contexto ficar ready — única mutação autorizada antes do freeze.',
-      '2. nexus_mission_freeze_contract com o objetivo e os critérios exatos acima.',
-      '3. nexus_workflow_prepare_execution; siga quando nexus_workflow_get mostrar stage=execution.',
-    );
-  } else if (input.guidedPrevcRequired) {
-    lines.push(
-      '1. nexus_workflow_prepare_execution; siga quando nexus_workflow_get mostrar stage=execution (o Nexus roda planning e revisões nesse intervalo).',
-    );
-  } else {
-    lines.push(
-      '1. Se o contexto estiver pronto, congele com nexus_mission_freeze_contract para ligar as garantias PREVC. Se não estiver, siga e tente depois — nunca pare por isso.',
-    );
-  }
+function standardSequenceLines(): string[] {
+  const lines = [
+    '1. Comece a execução: o main prepara o contexto PREVC em paralelo. Não pare a missão para rodar Doctor/freeze; freeze, sensores e revisão serão concluídos automaticamente antes da promoção final.',
+  ];
   const from = lines.length;
   lines.push(
     `${from + 1}. Consulte nexus_task list. Se já houver tasks desta intenção, o plano está selado: acompanhe e delegue a partir dele. Só monte um plano — em UMA chamada nexus_task plan, proporcional ao objetivo — quando a lista vier vazia. Cada task leva agentRef e category exatos do roster, executionMode (isolated_worktree com ownership.files, ou read_only para scout/reviewer), ownership e dependências.`,
     `${from + 2}. Conduza: acompanhe os especialistas, destrave dependências, mantenha paralelismo dentro do limite. Tarefa longa (dev server, testes, build) vai em nexus_bg_run + nexus_bg_wait/nexus_bg_kill.`,
     `${from + 3}. A cada entrega: processe e chame nexus_handoff_ack com o handoffId exato. O ACK é o que reconhece consumo.`,
-    `${from + 4}. Feche com status=done quando houver receipts: com contrato congelado, PREVC completo e receipts imutáveis; sem ele, nota durável (≥ 40 caracteres em note=…) + worker registrado + handoff aceito.`,
+    `${from + 4}. Feche com status=done somente após o main produzir PREVC completo e receipts imutáveis ligados ao diff, sensores e revisão.`,
   );
   return lines;
 }
@@ -188,7 +175,7 @@ function standardEscalationLines(input: IntentDispatchKickoffInput): string[] {
   ];
   if (input.guidedPrevcRequired) {
     lines.push(
-      '- Workflow que não alcança stage=execution é bloqueio real: registre a causa e não inicie worker fora do contrato.',
+      '- PREVC ainda pendente não bloqueia worker: continue a execução; o main retenta contexto, sensores e revisão antes de promover.',
     );
   }
   return lines;
@@ -343,7 +330,7 @@ export function buildIntentDispatchKickoffPrompt(
     ...standardStateLines(input),
     '',
     '## Como conduzir',
-    ...standardSequenceLines(input),
+    ...standardSequenceLines(),
     '',
     '## Quando algo não sai como esperado',
     ...standardEscalationLines(input),

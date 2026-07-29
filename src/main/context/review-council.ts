@@ -7,6 +7,7 @@ import { canonicalJson } from './canonical-json';
 const COMMIT_HASH = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const HASH_256 = /^[a-f0-9]{64}$/;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const STATIC_ANALYSIS_PROVIDER_PREFIX = 'nexus-static-analysis-';
 
 export interface ReviewBinding {
   readonly projectId: string;
@@ -436,14 +437,13 @@ export class ReviewCouncil {
   evaluate(): ReviewGateResult {
     const minimumReports = this.risk === 'critical' ? 2 : 1;
     const reports = this.listReports();
-    if (reports.length < minimumReports) {
-      return Object.freeze({
-        ready: false,
-        reason: 'review-quorum-missing',
-        blockingFindingCount: 0,
-        reportCount: reports.length,
-      });
-    }
+    // Deterministic Main-owned analysis contributes durable findings, not an
+    // independent human/agent identity. It can block promotion but must never
+    // satisfy quorum or create false "reviewer disagreement" on advisories.
+    const quorumReports = reports.filter(
+      (report) =>
+        !report.reviewerProvider.startsWith(STATIC_ANALYSIS_PROVIDER_PREFIX),
+    );
     const findings = [...this.#findingState.values()];
     const blockers = findings.filter(
       (finding) =>
@@ -455,16 +455,29 @@ export class ReviewCouncil {
         ready: false,
         reason: 'blocking-findings',
         blockingFindingCount: blockers.length,
-        reportCount: reports.length,
+        reportCount: quorumReports.length,
       });
     }
-    const reportFindingSets = reports.map(
+    if (quorumReports.length < minimumReports) {
+      return Object.freeze({
+        ready: false,
+        reason: 'review-quorum-missing',
+        blockingFindingCount: 0,
+        reportCount: quorumReports.length,
+      });
+    }
+    const reportFindingSets = quorumReports.map(
       (report) => new Set(report.findings.map((finding) => finding.fingerprint)),
     );
+    const quorumFindingFingerprints = new Set(
+      quorumReports.flatMap((report) =>
+        report.findings.map((finding) => finding.fingerprint)),
+    );
     const hasNonBlockingDivergence =
-      reports.length > 1 &&
+      quorumReports.length > 1 &&
       findings.some(
         (finding) =>
+          quorumFindingFingerprints.has(finding.fingerprint) &&
           finding.status === 'open' &&
           reportFindingSets.some((set) => set.has(finding.fingerprint)) &&
           reportFindingSets.some((set) => !set.has(finding.fingerprint)),
@@ -474,14 +487,14 @@ export class ReviewCouncil {
         ready: false,
         reason: 'adjudication-required',
         blockingFindingCount: 0,
-        reportCount: reports.length,
+        reportCount: quorumReports.length,
       });
     }
     return Object.freeze({
       ready: true,
       reason: 'ready',
       blockingFindingCount: 0,
-      reportCount: reports.length,
+      reportCount: quorumReports.length,
     });
   }
 

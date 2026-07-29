@@ -1,4 +1,8 @@
 import type { AgentCategory } from '../../shared/orch-types';
+import {
+  isRetiredAdapterId,
+  RetiredRosterRouteError,
+} from '../../shared/retired-adapter-policy';
 import type { TaskPlanAgentSnapshot } from './task-store';
 import {
   classifyTask,
@@ -27,8 +31,8 @@ const MECHANICALLY_WORKSPACE_WRITE_CLIS = new Set(['codex']);
  * Id-level backstop for sealed task/claim authority under the `governed`
  * policy. Live builtin origin and the exact adapter argv declaration are
  * rechecked again before process spawn. Under `operator-choice`, callers
- * pass `operatorChoice=true` so any CLI id clears this id-level gate — the
- * Seatbelt at spawn remains the real boundary.
+ * pass `operatorChoice=true` so any CLI id clears this id-level gate. The
+ * practical default boundary is its isolated worktree plus Main-owned merge.
  */
 export function supportsMechanicallyWorkspaceWriteCli(
   adapterId: string,
@@ -125,6 +129,12 @@ export function resolveSealedWorkerRoute(input: {
 }): SealedWorkerRoute {
   if (input.agent.category === 'orchestrator') {
     throw new Error('sealed worker route cannot target the orchestrator');
+  }
+  if (isRetiredAdapterId(input.agent.cli)) {
+    throw new RetiredRosterRouteError(
+      input.agent.cli,
+      `${input.agent.id}/${input.agent.agentName}`,
+    );
   }
   if (input.agent.cli === 'claude') {
     // Match mission-task-plan-authority: one Claude process per mission.

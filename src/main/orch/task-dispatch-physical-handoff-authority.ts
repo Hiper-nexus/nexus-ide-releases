@@ -30,7 +30,7 @@ const physicalHandoffRowSchema = z
     receipt_id: identifierSchema,
     tool_call_id: identifierSchema,
     tool_name: z.literal("nexus_handoff_submit"),
-    source: z.enum(["http-mcp", "omp-rpc-stdio"]),
+    source: z.enum(["http-mcp", "pty-stream", "omp-rpc-stdio"]),
     receipt_mission_id: identifierSchema,
     receipt_session_id: identifierSchema,
     receipt_worker_incarnation_id: identifierSchema,
@@ -45,7 +45,7 @@ const auditIntentPayloadSchema = z
     schema: z.literal("nexus.mcp-audit/v1"),
     project_id: identifierSchema,
     checkout_id: identifierSchema,
-    source: z.enum(["http-mcp", "omp-rpc-stdio"]),
+    source: z.enum(["http-mcp", "pty-stream", "omp-rpc-stdio"]),
     invocation_id: identifierSchema,
   })
   .passthrough();
@@ -53,7 +53,7 @@ const auditIntentPayloadSchema = z
 export interface PhysicalTaskHandoffAuthority {
   readonly receiptId: string;
   readonly toolCallId: string;
-  readonly source: "http-mcp" | "omp-rpc-stdio";
+  readonly source: "http-mcp" | "pty-stream" | "omp-rpc-stdio";
   readonly authoritySha256: string;
   readonly worktreeHeadSha?: string;
   readonly issuedAt: number;
@@ -90,7 +90,7 @@ function parseAuditPayload(
 /**
  * Re-prove the immutable physical worker boundary inside the caller's current
  * SQLite transaction. Neither a handoff row nor a coordinator-supplied
- * integration receipt can stand in for the exact MCP/OMP tool invocation.
+ * integration receipt can stand in for the exact MCP tool invocation.
  */
 export function assertPhysicalTaskHandoffAuthority(
   db: TaskDispatchDatabase,

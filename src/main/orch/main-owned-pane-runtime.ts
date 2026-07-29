@@ -39,6 +39,8 @@ import type { BoundSpawnAuthority } from "./spawn-authority";
 import { makeId } from "./store-util";
 import { resolveCwdForScope } from "./workspace-path";
 import { sameMissionPaneAuthoritySeal } from "./mission-pane-authority";
+import { getOrchSettings } from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 
 export interface PaneOrchMeta {
   missionId?: string;
@@ -357,17 +359,20 @@ export function spawnMainOwnedMissionPane(
       requestId,
       ok: false,
       error:
-        `adapter ${options.adapterId} has no main-owned PTY transport ` +
-      "(RPC mission workers use the dedicated OMP lane)",
+        `adapter ${options.adapterId} has no main-owned PTY transport`,
     };
   }
   const executionScope = options.executionScope ?? options.scope;
+  const operatorChoice = isOperatorChoicePolicy(
+    getOrchSettings().squadCliPolicy,
+  );
   const writableMissionWorkerIntent =
     options.role === "worker" &&
     Boolean(options.missionId?.trim()) &&
     options.readOnly !== true &&
     options.nativeReadOnly !== true;
   const missionBoundWritableWorker =
+    !operatorChoice &&
     writableMissionWorkerIntent &&
     isMissionBoundCodexWorkspaceAuthority({
       source: "pending",
@@ -393,6 +398,7 @@ export function spawnMainOwnedMissionPane(
     };
   }
   if (
+    !operatorChoice &&
     writableMissionWorkerIntent &&
     (adapter.id !== "codex" ||
       !isBuiltinAdapter(adapter.id) ||
@@ -406,16 +412,18 @@ export function spawnMainOwnedMissionPane(
         "isolated worker spawn refused before provider preparation",
     };
   }
-  const nativeReadOnly = requiresReadOnlyNativeAuthority({
-    source: "pending",
-    adapterId: adapter.id,
-    role: options.role,
-    missionId: options.missionId,
-    contextRevision: options.contextRevision,
-    authoritySeal: options.authoritySeal,
-    readOnly: options.readOnly,
-    nativeReadOnly: options.nativeReadOnly,
-  });
+  const nativeReadOnly =
+    !operatorChoice &&
+    requiresReadOnlyNativeAuthority({
+      source: "pending",
+      adapterId: adapter.id,
+      role: options.role,
+      missionId: options.missionId,
+      contextRevision: options.contextRevision,
+      authoritySeal: options.authoritySeal,
+      readOnly: options.readOnly,
+      nativeReadOnly: options.nativeReadOnly,
+    });
   if (
     nativeReadOnly &&
     (!isBuiltinAdapter(adapter.id) ||
@@ -442,6 +450,9 @@ export function spawnMainOwnedMissionPane(
         allowedTools: options.allowedTools,
         allowedSkills: options.allowedSkills,
       }),
+      {
+        mode: operatorChoice ? "operator-choice" : "hardened",
+      },
     ),
   });
   if (!prepared.ok) return { requestId, ok: false, error: prepared.error };

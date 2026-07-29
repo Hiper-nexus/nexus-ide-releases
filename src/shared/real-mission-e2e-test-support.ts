@@ -74,19 +74,42 @@ export function validPassEvidence(
     "validation-primary",
   ] as const;
 
-  // Linha do tempo física da cadeia linear: cada membro começa quando o
-  // anterior completa (receipt.completedAt === dispatch.completedAt).
-  let cursor = 15;
-  const timeline = chain.map((member, index) => {
-    const base = cursor;
-    cursor += 5;
+  // Linha do tempo física do DAG: roots de advisory + executor se sobrepõem;
+  // cada reviewer/QA começa somente depois do dependency receipt exato.
+  const taskIdByPlannerId = new Map(
+    chain.map((member) => [
+      member.plannerId,
+      `task-${memberSlug(member.agentRef)}`,
+    ]),
+  );
+  const completedAtByPlannerId = new Map<string, number>();
+  let nextRootStart = 15;
+  const timeline = chain.map((member) => {
+    const dependencyTaskIds = member.dependsOnPlannerIds.map((plannerId) => {
+      const taskId = taskIdByPlannerId.get(plannerId);
+      if (!taskId) throw new Error(`unknown fixture dependency ${plannerId}`);
+      return taskId;
+    });
+    const dependencyCompletedAt = member.dependsOnPlannerIds.map(
+      (plannerId) => {
+        const completedAt = completedAtByPlannerId.get(plannerId);
+        if (completedAt === undefined) {
+          throw new Error(`fixture dependency is not topological: ${plannerId}`);
+        }
+        return completedAt;
+      },
+    );
+    const base =
+      dependencyCompletedAt.length === 0
+        ? nextRootStart++
+        : Math.max(...dependencyCompletedAt) + 1;
+    const completedAt = base + 5;
+    completedAtByPlannerId.set(member.plannerId, completedAt);
     return {
       member,
-      index,
       slug: memberSlug(member.agentRef),
       taskId: `task-${memberSlug(member.agentRef)}`,
-      previousTaskId:
-        index > 0 ? `task-${memberSlug(chain[index - 1]!.agentRef)}` : null,
+      dependencyTaskIds,
       routeConsumedAt: base,
       spawnedAt: base,
       ptyDataAt: base + 1,
@@ -99,10 +122,12 @@ export function validPassEvidence(
       acceptDeadlineAt: base + 4,
       handoffConsumedAt: base + 4,
       consumedDependencyAt: base,
-      completedAt: base + 5,
+      completedAt,
     };
   });
-  const lastCompletedAt = cursor;
+  const lastCompletedAt = Math.max(
+    ...timeline.map((step) => step.completedAt),
+  );
   const completionCompletedAt = lastCompletedAt + 1;
   const finishedAt = lastCompletedAt + 2;
 
@@ -115,7 +140,7 @@ export function validPassEvidence(
     agentRef: step.member.agentRef,
     agentCategory: step.member.agentCategory,
     executionMode: step.member.executionMode,
-    dependsOn: step.previousTaskId === null ? [] : [step.previousTaskId],
+    dependsOn: [...step.dependencyTaskIds],
   }));
   const dispatches = timeline.map((step) => ({
     taskId: step.taskId,
@@ -123,7 +148,7 @@ export function validPassEvidence(
     agentRef: step.member.agentRef,
     agentCategory: step.member.agentCategory,
     executionMode: step.member.executionMode,
-    dependsOn: step.previousTaskId === null ? [] : [step.previousTaskId],
+    dependsOn: [...step.dependencyTaskIds],
     state: "completed",
     routeReservationId: `reservation-${step.slug}`,
     routeConsumedAt: step.routeConsumedAt,
@@ -202,20 +227,27 @@ export function validPassEvidence(
       },
     ],
   }));
-  const dependencyConsumptions = timeline.slice(1).map((step) => {
-    const previous = timeline[step.index - 1]!;
-    return {
-      missionId: "mission-e2e",
-      consumerTaskId: step.taskId,
-      dependencyTaskId: previous.taskId,
-      handoffId: `handoff-${previous.slug}`,
-      consumerSessionId: `session-${step.slug}`,
-      consumerWorkerIncarnationId: `incarnation-${step.slug}`,
-      promptSha256: sha(`${step.slug}-accepted-prompt`),
-      handoffSummarySha256: sha(`${previous.slug}-handoff-summary`),
-      consumedAt: step.consumedDependencyAt,
-    };
-  });
+  const dependencyConsumptions = timeline.flatMap((step) =>
+    step.dependencyTaskIds.map((dependencyTaskId) => {
+      const dependency = timeline.find(
+        (candidate) => candidate.taskId === dependencyTaskId,
+      );
+      if (!dependency) {
+        throw new Error(`unknown fixture dependency task ${dependencyTaskId}`);
+      }
+      return {
+        missionId: "mission-e2e",
+        consumerTaskId: step.taskId,
+        dependencyTaskId: dependency.taskId,
+        handoffId: `handoff-${dependency.slug}`,
+        consumerSessionId: `session-${step.slug}`,
+        consumerWorkerIncarnationId: `incarnation-${step.slug}`,
+        promptSha256: sha(`${step.slug}-accepted-prompt`),
+        handoffSummarySha256: sha(`${dependency.slug}-handoff-summary`),
+        consumedAt: step.consumedDependencyAt,
+      };
+    }),
+  );
   const participation = REAL_MISSION_E2E_ADVISORS.map((advisor) => {
     const step = timeline.find(
       (candidate) => candidate.member.agentRef === advisor.id,

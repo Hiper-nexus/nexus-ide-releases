@@ -89,6 +89,18 @@ function context(executionRoot?: string): AgentGateContext {
   };
 }
 
+function orchestratorContext(): AgentGateContext {
+  return {
+    ...context(),
+    token: "orchestrator-token",
+    label: "Maestro",
+    role: "orchestrator",
+    sessionId: "orchestrator-session",
+    workerIncarnationId: undefined,
+    agentName: "Maestro",
+  };
+}
+
 function invocation(
   overrides: Partial<NonNullable<McpToolInvocation["effectIntent"]>> = {},
 ): McpToolInvocation {
@@ -264,6 +276,31 @@ describe("handoff MCP stop receipt", () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+
+  it("accepts a physical PTY-stream final handoff from the current Maestro", async () => {
+    const submitted = {
+      ...handoff("unverified"),
+      sessionId: "orchestrator-session",
+      fromAgent: "Maestro",
+    };
+    mocks.submit.mockReturnValue(submitted);
+
+    const result = await submitTool().handler(
+      {
+        status: "success",
+        summary:
+          "O Maestro concluiu a entrega e registrou as evidências operacionais.",
+      },
+      orchestratorContext(),
+      invocation({ source: "pty-stream" }),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      handoffId: submitted.id,
+    });
+    expect(mocks.submitWithReplay).toHaveBeenCalledOnce();
   });
 
   it("rejects a plan handoff whose UTF-8 payload exceeds 32 KiB", async () => {

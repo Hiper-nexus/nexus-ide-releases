@@ -1,12 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildShutdownFailureNotice,
-  PhysicalOmpShutdownError,
   PhysicalPtyShutdownError,
   shutdownOrchestrationRuntimesWithProof,
   shutdownPtyRuntimeWithProof,
 } from "./app-shutdown";
-import type { PhysicalSessionShutdownResult } from "./app-shutdown";
 import type { TerminateAllSessionsResult } from "./pty/pty-manager";
 
 function result(
@@ -21,20 +19,8 @@ function result(
   };
 }
 
-function ompResult(
-  patch: Partial<PhysicalSessionShutdownResult> = {},
-): PhysicalSessionShutdownResult {
-  return {
-    ok: true,
-    attemptedSessionIds: ["omp-a"],
-    terminatedSessionIds: ["omp-a"],
-    failedSessionIds: [],
-    ...patch,
-  };
-}
-
 describe("shutdownPtyRuntimeWithProof", () => {
-  it("keeps orchestration stores alive through both physical runtime proofs", async () => {
+  it("keeps orchestration stores alive through the physical runtime proof", async () => {
     const order: string[] = [];
     const shutdown = shutdownOrchestrationRuntimesWithProof({
       quiesceOrchestration: async () => {
@@ -51,32 +37,23 @@ describe("shutdownPtyRuntimeWithProof", () => {
         order.push("reconcile-exits");
         return true;
       },
-      terminateAllOmpSessions: async () => {
-        order.push("terminate-omp");
-        return ompResult();
-      },
       closeOrchestration: async () => {
         order.push("close-orchestration");
       },
     });
 
-    await expect(shutdown).resolves.toEqual({
-      pty: result(),
-      omp: ompResult(),
-    });
+    await expect(shutdown).resolves.toEqual(result());
     expect(order).toEqual([
       "quiesce",
       "terminate-ptys",
       "shutdown-host",
       "reconcile-exits",
-      "terminate-omp",
       "close-orchestration",
     ]);
   });
 
   it("does not remove exit observers or stores when PTY proof fails", async () => {
     const reconcileOrchestratorExits = vi.fn();
-    const terminateAllOmpSessions = vi.fn(async () => ompResult());
     const closeOrchestration = vi.fn(async () => undefined);
 
     await expect(
@@ -90,17 +67,14 @@ describe("shutdownPtyRuntimeWithProof", () => {
           }),
         shutdownPtyHost: vi.fn(),
         reconcileOrchestratorExits,
-        terminateAllOmpSessions,
         closeOrchestration,
       }),
     ).rejects.toBeInstanceOf(PhysicalPtyShutdownError);
     expect(reconcileOrchestratorExits).not.toHaveBeenCalled();
-    expect(terminateAllOmpSessions).not.toHaveBeenCalled();
     expect(closeOrchestration).not.toHaveBeenCalled();
   });
 
   it("keeps exit observers and stores alive while durable reconciliation is pending", async () => {
-    const terminateAllOmpSessions = vi.fn(async () => ompResult());
     const closeOrchestration = vi.fn(async () => undefined);
 
     await expect(
@@ -109,57 +83,10 @@ describe("shutdownPtyRuntimeWithProof", () => {
         terminateAllSessions: async () => result(),
         shutdownPtyHost: vi.fn(),
         reconcileOrchestratorExits: () => false,
-        terminateAllOmpSessions,
         closeOrchestration,
       }),
     ).rejects.toThrow(/not durably complete/);
-    expect(terminateAllOmpSessions).not.toHaveBeenCalled();
     expect(closeOrchestration).not.toHaveBeenCalled();
-  });
-
-  it("retains the registry after OMP failure so the native retry can reconcile again", async () => {
-    let registryAlive = true;
-    let ompAttempt = 0;
-    const reconciledWithLiveRegistry: boolean[] = [];
-    const closeOrchestration = vi.fn(async () => {
-      registryAlive = false;
-    });
-    const deps = {
-      quiesceOrchestration: async () => undefined,
-      terminateAllSessions: async () => result(),
-      shutdownPtyHost: vi.fn(),
-      reconcileOrchestratorExits: () => {
-        reconciledWithLiveRegistry.push(registryAlive);
-        return registryAlive;
-      },
-      terminateAllOmpSessions: async () => {
-        ompAttempt += 1;
-        return ompAttempt === 1
-          ? ompResult({
-              ok: false,
-              terminatedSessionIds: [],
-              failedSessionIds: ["omp-a"],
-            })
-          : ompResult();
-      },
-      closeOrchestration,
-    };
-
-    await expect(
-      shutdownOrchestrationRuntimesWithProof(deps),
-    ).rejects.toBeInstanceOf(PhysicalOmpShutdownError);
-    expect(registryAlive).toBe(true);
-    expect(closeOrchestration).not.toHaveBeenCalled();
-
-    await expect(
-      shutdownOrchestrationRuntimesWithProof(deps),
-    ).resolves.toEqual({
-      pty: result(),
-      omp: ompResult(),
-    });
-    expect(reconciledWithLiveRegistry).toEqual([true, true]);
-    expect(closeOrchestration).toHaveBeenCalledOnce();
-    expect(registryAlive).toBe(false);
   });
 
   it("awaits the physical inventory proof before shutting down the host", async () => {

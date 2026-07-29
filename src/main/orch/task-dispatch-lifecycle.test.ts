@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   exitTap: null as null | ((sessionId: string) => void),
   heartbeat: vi.fn(),
   blockExpired: vi.fn(),
+  requeueMissingRuntime: vi.fn(),
   blockSessionExit: vi.fn(),
   refineBootstrapSessionExitBlock: vi.fn(),
   list: vi.fn(),
@@ -66,6 +67,7 @@ const suite = {
   taskDispatches: {
     heartbeat: mocks.heartbeat,
     blockExpired: mocks.blockExpired,
+    requeueMissingRuntime: mocks.requeueMissingRuntime,
     blockSessionExit: mocks.blockSessionExit,
     refineBootstrapSessionExitBlock: mocks.refineBootstrapSessionExitBlock,
     list: mocks.list,
@@ -114,22 +116,22 @@ describe('main-owned task dispatch lifecycle', () => {
     expect(mocks.heartbeat).toHaveBeenCalledTimes(2);
   });
 
-  it('renews OMP RPC activity through the same incarnation fence', () => {
+  it('renews external worker activity through the same incarnation fence', () => {
     mocks.getContextBySession.mockReturnValue(null);
     mocks.getExternalWorkerSessionInfo.mockReturnValue({
-      sessionId: 'omp-session',
+      sessionId: 'external-session',
       role: 'worker',
       missionId: 'mission-a',
-      workerIncarnationId: 'worker-incarnation-omp',
+      workerIncarnationId: 'worker-incarnation-external',
       scope,
     });
 
-    mocks.dataTap?.('omp-session', 'protocol text delta');
+    mocks.dataTap?.('external-session', 'protocol text delta');
 
     expect(mocks.heartbeat).toHaveBeenCalledWith({
-      sessionId: 'omp-session',
+      sessionId: 'external-session',
       missionId: 'mission-a',
-      workerIncarnationId: 'worker-incarnation-omp',
+      workerIncarnationId: 'worker-incarnation-external',
       leaseMs: 10 * 60_000,
     });
   });
@@ -163,26 +165,26 @@ describe('main-owned task dispatch lifecycle', () => {
     }
   });
 
-  it('resolve o scope OMP no exit mesmo se o gate já foi liberado', () => {
+  it('resolves the external worker scope on exit after the gate is released', () => {
     mocks.getContextBySession.mockReturnValue(null);
     mocks.getExternalWorkerSessionInfo.mockReturnValue({
-      sessionId: 'omp-session',
+      sessionId: 'external-session',
       role: 'worker',
       missionId: 'mission-a',
-      workerIncarnationId: 'worker-incarnation-omp',
+      workerIncarnationId: 'worker-incarnation-external',
       scope,
     });
 
-    mocks.exitTap?.('omp-session');
+    mocks.exitTap?.('external-session');
 
     expect(mocks.blockSessionExit).toHaveBeenCalledWith({
-      sessionId: 'omp-session',
-      workerIncarnationId: 'worker-incarnation-omp',
+      sessionId: 'external-session',
+      workerIncarnationId: 'worker-incarnation-external',
       reason: TASK_DISPATCH_SESSION_EXIT_REASON,
     });
   });
 
-  it('adopts a live exact session after restart and blocks an expired unknown effect', async () => {
+  it('adopts a live exact session after restart and requeues an expired unknown effect', async () => {
     mocks.list.mockReturnValue([
       {
         taskId: 'task-live', missionId: 'mission-a', revision: 3,
@@ -212,42 +214,70 @@ describe('main-owned task dispatch lifecycle', () => {
       workerIncarnationId: 'worker-incarnation-live',
       leaseMs: 10 * 60_000,
     });
-    expect(mocks.blockExpired).toHaveBeenCalledWith({
+    expect(mocks.requeueMissingRuntime).toHaveBeenCalledWith({
       taskId: 'task-unknown',
       revision: 2,
-      reason: expect.stringMatching(/reiniciou.*provar.*pane/i),
     });
+    expect(mocks.blockExpired).not.toHaveBeenCalled();
   });
 
-  it('adota sessão OMP RPC viva pela mesma identidade durável', async () => {
+  it('adopts a live external session by the same durable identity', async () => {
     mocks.list.mockReturnValue([{
-      id: 'dispatch-omp',
-      taskId: 'task-omp',
+      id: 'dispatch-external',
+      taskId: 'task-external',
       missionId: 'mission-a',
       revision: 4,
       state: 'running',
-      sessionId: 'omp-session',
+      sessionId: 'external-session',
       leaseExpiresAt: 900,
-      workerIncarnationId: 'worker-incarnation-omp',
+      workerIncarnationId: 'worker-incarnation-external',
     }]);
     mocks.getExternalWorkerSessionInfo.mockReturnValue({
-      sessionId: 'omp-session',
+      sessionId: 'external-session',
       role: 'worker',
       missionId: 'mission-a',
-      workerIncarnationId: 'worker-incarnation-omp',
+      workerIncarnationId: 'worker-incarnation-external',
       scope,
     });
 
     await reconcileTaskDispatchLifecycle(now);
 
     expect(mocks.heartbeat).toHaveBeenCalledWith({
-      sessionId: 'omp-session',
+      sessionId: 'external-session',
       missionId: 'mission-a',
-      dispatchId: 'dispatch-omp',
-      workerIncarnationId: 'worker-incarnation-omp',
+      dispatchId: 'dispatch-external',
+      workerIncarnationId: 'worker-incarnation-external',
       leaseMs: 10 * 60_000,
     });
-    expect(mocks.blockExpired).not.toHaveBeenCalled();
+    expect(mocks.requeueMissingRuntime).not.toHaveBeenCalled();
+  });
+
+  it('never requeues a physically live worker when heartbeat persistence fails', async () => {
+    mocks.list.mockReturnValue([{
+      id: 'dispatch-live-db-error',
+      taskId: 'task-live-db-error',
+      missionId: 'mission-a',
+      revision: 5,
+      state: 'running',
+      sessionId: 'session-live-db-error',
+      leaseExpiresAt: 900,
+      workerIncarnationId: 'worker-incarnation-live-db-error',
+    }]);
+    mocks.getAgentSessionInfo.mockReturnValue({
+      sessionId: 'session-live-db-error',
+      role: 'worker',
+      missionId: 'mission-a',
+      workerIncarnationId: 'worker-incarnation-live-db-error',
+      scope,
+    });
+    mocks.heartbeat.mockImplementationOnce(() => {
+      throw new Error('database temporarily busy');
+    });
+
+    await reconcileTaskDispatchLifecycle(now);
+
+    expect(mocks.heartbeat).toHaveBeenCalledOnce();
+    expect(mocks.requeueMissingRuntime).not.toHaveBeenCalled();
   });
 
   it('does not adopt a live session from a previous worker incarnation', async () => {
@@ -272,11 +302,32 @@ describe('main-owned task dispatch lifecycle', () => {
     await reconcileTaskDispatchLifecycle(now);
 
     expect(mocks.heartbeat).not.toHaveBeenCalled();
-    expect(mocks.blockExpired).toHaveBeenCalledWith({
+    expect(mocks.requeueMissingRuntime).toHaveBeenCalledWith({
       taskId: 'task-current',
       revision: 4,
-      reason: expect.stringMatching(/reiniciou.*provar.*pane/i),
     });
+    expect(mocks.blockExpired).not.toHaveBeenCalled();
+  });
+
+  it('requeues a bound worker immediately when its exact runtime is missing', async () => {
+    mocks.list.mockReturnValue([{
+      id: 'dispatch-missing',
+      taskId: 'task-missing',
+      missionId: 'mission-a',
+      revision: 6,
+      state: 'running',
+      sessionId: 'session-missing',
+      leaseExpiresAt: now + 60_000,
+      workerIncarnationId: 'worker-incarnation-missing',
+    }]);
+
+    await reconcileTaskDispatchLifecycle(now);
+
+    expect(mocks.requeueMissingRuntime).toHaveBeenCalledWith({
+      taskId: 'task-missing',
+      revision: 6,
+    });
+    expect(mocks.blockExpired).not.toHaveBeenCalled();
   });
 
   it('retires a terminal dispatch through its exact physical identity', async () => {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
@@ -25,12 +26,29 @@ function requireMemoryEnabled(): void {
   }
 }
 
-/** Proveniência default: missão quando houver, senão o pane/CLI que gravou. */
+/**
+ * Proveniência default opaque derivada exclusivamente da autoridade física
+ * emitida pelo Main. O hash evita colisões por delimitadores controláveis e
+ * impede outro pane/worker da mesma missão de usurpar supersession.
+ */
 function defaultSource(ctx: AgentGateContext): string {
-  const source = ctx.missionId
-    ? `mission:${ctx.missionId}`
-    : `pane:${ctx.providerId ?? ctx.label}`;
-  return source.slice(0, 256);
+  const authority = createHash('sha256')
+    .update(
+      JSON.stringify([
+        ctx.scope.installationId,
+        ctx.scope.projectId,
+        ctx.scope.checkoutId,
+        ctx.role,
+        ctx.missionId ?? null,
+        ctx.providerId ?? null,
+        ctx.agentName ?? null,
+        ctx.workerIncarnationId ?? null,
+        ctx.sessionId ?? null,
+        ctx.label,
+      ]),
+    )
+    .digest('hex');
+  return `agent-authored:${ctx.missionId ? 'mission' : 'pane'}:${authority}`;
 }
 
 const retainArgsSchema = z
@@ -55,11 +73,13 @@ const recallArgsSchema = z
 const retainTool: McpToolDef = {
   name: 'nexus_memory_retain',
   description:
-    'Persist a durable memory (fact, decision, preference, or note) shared by ' +
-    'every CLI hosted in this workspace. Identical content is deduplicated; ' +
-    'secret-like tokens are redacted before storage. Use importance 1-5 ' +
-    '(default 3) and scope "global" only for user-level facts that apply to ' +
-    'every project. Pass supersedes=<id> to replace an outdated memory.',
+    'Persist an agent-authored memory candidate (fact, decision, preference, ' +
+    'or note) shared by every CLI hosted in this workspace. Candidates remain ' +
+    'available to explicit recall but are not auto-injected as trusted facts; ' +
+    'automatic context only uses Nexus-verified trusted events. Identical ' +
+    'content is deduplicated and secret-like tokens are redacted. Pass ' +
+    'supersedes=<id> only to replace an outdated memory authored by this same ' +
+    'physical agent authority in the same scope.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -81,7 +101,7 @@ const retainTool: McpToolDef = {
     requireMemoryEnabled();
     const input = retainArgsSchema.parse(args);
     const store = getWorkspaceMemoryStore(ctx.scope);
-    return store.retain({ ...input, source: defaultSource(ctx) });
+    return store.retainAgentAuthored(input, { source: defaultSource(ctx) });
   },
 };
 

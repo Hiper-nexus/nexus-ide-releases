@@ -23,17 +23,64 @@ function adapter(
 }
 
 describe('shouldUseEphemeralHome', () => {
-  it('usa HOME efêmero para adapters Claude-like com gate ativo', () => {
-    expect(shouldUseEphemeralHome(adapter(true), true)).toBe(true);
+  it('preserva o HOME nativo do Claude no autopiloto mesmo com gate ativo', () => {
+    expect(
+      shouldUseEphemeralHome(adapter(true), true, {
+        mode: 'operator-choice',
+      }),
+    ).toBe(false);
+  });
+
+  it('usa HOME efêmero para o Claude nativo no modo Hardened', () => {
+    expect(
+      shouldUseEphemeralHome(adapter(true), true, { mode: 'hardened' }),
+    ).toBe(true);
+  });
+
+  it('mantém Claude-family de terceiro isolado em ambos os modos', () => {
+    const glm = adapter(true, false, {
+      ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+    });
+    expect(
+      shouldUseEphemeralHome(glm, true, { mode: 'operator-choice' }),
+    ).toBe(true);
+    expect(
+      shouldUseEphemeralHome(glm, true, { mode: 'hardened' }),
+    ).toBe(true);
   });
 
   it('preserva HOME real para workers não-Claude mesmo com gate ativo', () => {
-    expect(shouldUseEphemeralHome(adapter(false), true)).toBe(false);
+    expect(
+      shouldUseEphemeralHome(adapter(false), true, { mode: 'hardened' }),
+    ).toBe(false);
   });
 
   it('honra ephemeralHome apenas em adapters que carregam MCP por arquivo', () => {
-    expect(shouldUseEphemeralHome(adapter(true, true), false)).toBe(true);
-    expect(shouldUseEphemeralHome(adapter(false, true), false)).toBe(false);
+    expect(
+      shouldUseEphemeralHome(adapter(true, true), false, {
+        mode: 'operator-choice',
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseEphemeralHome(adapter(false, true), false, {
+        mode: 'operator-choice',
+      }),
+    ).toBe(false);
+  });
+
+  it('falha fechado no modo Hardened quando o caller omite a política', () => {
+    expect(shouldUseEphemeralHome(adapter(true), true)).toBe(true);
+  });
+
+  it('reconhece endpoint Claude-family efetivo resolvido no spawn', () => {
+    expect(
+      shouldUseEphemeralHome(adapter(true), true, {
+        mode: 'operator-choice',
+        effectiveEnv: {
+          ANTHROPIC_BASE_URL: 'https://proxy.example/anthropic',
+        },
+      }),
+    ).toBe(true);
   });
 });
 
@@ -84,5 +131,29 @@ describe('isThirdPartyClaudeFamily', () => {
     expect(
       isThirdPartyClaudeFamily(adapter(true, false, { ANTHROPIC_BASE_URL: '' })),
     ).toBe(false);
+    expect(
+      isThirdPartyClaudeFamily(
+        adapter(true, false, { ANTHROPIC_BASE_URL: '   ' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('considera o ambiente efetivo preparado para o spawn', () => {
+    expect(
+      isThirdPartyClaudeFamily(adapter(true), {
+        ANTHROPIC_BASE_URL: 'https://proxy.example/anthropic',
+      }),
+    ).toBe(true);
+  });
+
+  it('não deixa um ambiente efetivo vazio apagar o endpoint estático', () => {
+    expect(
+      isThirdPartyClaudeFamily(
+        adapter(true, false, {
+          ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+        }),
+        { ANTHROPIC_BASE_URL: '' },
+      ),
+    ).toBe(true);
   });
 });

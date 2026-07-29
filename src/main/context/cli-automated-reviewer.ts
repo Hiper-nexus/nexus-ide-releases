@@ -1,5 +1,4 @@
 import type { ProjectExecutionScope } from '../../shared/types';
-import { listProviderSettings } from '../persistence/provider-config-store';
 import { requestPaneClose } from '../orch/pane-registry';
 import { isSessionInjectableIdle } from '../orch/agent-status';
 import {
@@ -11,16 +10,7 @@ import {
   type McpToolInvocation,
 } from '../orch/mcp-protocol';
 import { routeTask, type TaskTier } from '../orch/task-router';
-import {
-  getAdapter,
-  isBuiltinAdapter,
-} from '../adapters/adapter-registry';
-import { isOmpRpcSession } from '../adapters/omp-rpc-ipc';
 import { getSessionState } from '../pty/pty-manager';
-import {
-  supportsEnforceableReadOnlyNativeAuthority,
-  supportsEnforceableWorkspaceWriteNativeAuthority,
-} from '../pty/autonomous-cli-policy';
 import type { MissionContract } from './contract-compiler';
 import {
   automatedReviewSessions,
@@ -35,6 +25,7 @@ import {
   automatedReviewTools,
 } from '../orch/prevc-reviewer-profile';
 import { isCurrentProcessRealMissionE2E } from '../../shared/real-mission-e2e';
+import { listIndependentCliReviewCandidates } from './cli-independent-review-policy';
 
 /** Ordinary missions: 10 min. Real-mission release gate: 20 min — the merge
  * council spawns live CLI reviewers and cold HOME + MCP boot routinely exceeds
@@ -124,60 +115,73 @@ export function selectAutomatedReviewerRoutes(
   authorProviders: readonly string[],
 ): readonly ReviewerRoute[] {
   const required = contract.reviewerPolicy.minimumReviewers;
-  // Provider is not an identity boundary. The physical reviewer pane receives
-  // a fresh main-owned agent id and PTY session; the session registry and
-  // council reject either value when it aliases any author or prior reviewer.
-  // Keeping this parameter in the injected selector contract is intentional
-  // API compatibility, but it must never exclude the only release-qualified
-  // worker provider.
-  void authorProviders;
-  const providers = listProviderSettings().filter(
-    (provider) => {
-      if (
-        provider.adapterId !== 'codex' ||
-        !provider.enabled ||
-        !provider.installed ||
-        provider.authStrategy === 'login-needed' ||
-        provider.kind !== 'cli-pty'
-      ) {
-        return false;
-      }
-      const adapter = getAdapter(provider.adapterId);
-      return Boolean(
-        adapter?.kind === 'cli-pty' &&
-          isBuiltinAdapter(adapter.id) &&
-          supportsEnforceableWorkspaceWriteNativeAuthority(adapter) &&
-          supportsEnforceableReadOnlyNativeAuthority(adapter),
-      );
-    },
-  );
-  const decision = routeTask(
-    `Independent ${contract.risk} code review for ${contract.goal}`,
-    providers.map((provider) => ({
-      id: provider.adapterId,
-      installed: true,
-      models: provider.models,
-    })),
-    undefined,
-    tierFor(contract),
-    true,
-  );
-  if (!decision) {
+  const reserveClaude = authorProviders.includes('claude');
+  const candidates = listIndependentCliReviewCandidates({
+    reserveClaude,
+  });
+  if (candidates.length === 0) {
     throw new Error(
       `independent review quorum unavailable: need ${required}, found 0`,
     );
   }
-  // Quorum independence is enforced by reviewer identity + physical session.
-  // Multiple Codex reviewer panes are therefore valid for every risk tier.
-  return Object.freeze(
-    Array.from({ length: required }, () =>
+
+  const routes: ReviewerRoute[] = [];
+  let unused = [...candidates];
+  let claudeSelected = false;
+  while (routes.length < required) {
+    if (unused.length === 0) {
+      unused = candidates.filter(
+        (candidate) =>
+          candidate.adapterId !== 'claude' || !claudeSelected,
+      );
+    }
+    if (unused.length === 0) break;
+
+    const decision = routeTask(
+      `Independent ${contract.risk} code review for ${contract.goal}`,
+      unused.map((candidate) => ({
+        id: candidate.adapterId,
+        installed: true,
+        models: [...candidate.models],
+      })),
+      undefined,
+      tierFor(contract),
+      false,
+    );
+    if (!decision) break;
+    if (
+      !unused.some(
+        (candidate) => candidate.adapterId === decision.adapterId,
+      )
+    ) {
+      throw new Error(
+        `independent review router returned unavailable CLI: ${decision.adapterId}`,
+      );
+    }
+    routes.push(
       Object.freeze({
         adapterId: decision.adapterId,
         ...(decision.model ? { model: decision.model } : {}),
         ...(decision.effort ? { effort: decision.effort } : {}),
       }),
-    ),
-  );
+    );
+    if (decision.adapterId === 'claude') claudeSelected = true;
+    unused = unused.filter(
+      (candidate) => candidate.adapterId !== decision.adapterId,
+    );
+  }
+
+  if (routes.length < required) {
+    throw new Error(
+      `independent review quorum unavailable: need ${required}, found ${routes.length}`,
+    );
+  }
+
+  // Provider labels are not identity boundaries. Every route below receives a
+  // fresh Main-owned agent + PTY session, which the session registry checks
+  // against every author and prior reviewer. We still spread the quorum across
+  // providers when possible and never run two Claude OAuth sessions.
+  return Object.freeze(routes);
 }
 
 function reviewerPrompt(
@@ -215,6 +219,12 @@ function reviewerPrompt(
       : []),
     '',
     'Report every concrete finding with severity/category/file/line/criterionRefs/invariantRefs/evidence/recommendation.',
+    '',
+    '## Required senior review coverage',
+    'Trace each changed behavior through callers, dependencies, public contracts and integration boundaries; assess architecture fit and blast radius, not only local syntax.',
+    'Actively search for dead or unreachable code, abandoned compatibility paths, duplicate implementations, and APIs/functions that are semantically similar enough to diverge or conflict.',
+    'Inspect tests and coverage evidence for the changed behavior. Report missing boundary, regression, integration or failure-path coverage as a concrete finding when the contract is not proven.',
+    'Any candidate-quality preflight in the context is evidence to verify, never a substitute for your own checkout and diff inspection.',
     'When finished, call nexus_merge_review_submit exactly once:',
     JSON.stringify({ reviewSessionId, findings: [] }),
     'Use an empty findings array only after you have inspected the diff and found no issue.',
@@ -262,8 +272,7 @@ export class CliAutomatedReviewer {
     this.#close = dependencies.close ?? requestPaneClose;
     this.#isSessionLive =
       dependencies.isSessionLive ??
-      ((sessionId) =>
-        getSessionState(sessionId) !== null || isOmpRpcSession(sessionId));
+      ((sessionId) => getSessionState(sessionId) !== null);
     this.#isInjectableIdle =
       dependencies.isInjectableIdle ?? isSessionInjectableIdle;
     this.#deliverPrompt = dependencies.deliverPrompt ?? deliverAgentPrompt;

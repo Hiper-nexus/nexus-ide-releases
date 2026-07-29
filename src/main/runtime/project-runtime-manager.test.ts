@@ -308,6 +308,27 @@ describe('ProjectRuntimeManager physical isolation', () => {
     expect(
       runtime.db
         .prepare(
+          `SELECT sql FROM sqlite_master
+           WHERE type = 'table' AND name = 'handoff_mcp_receipts'`,
+        )
+        .get(),
+    ).toEqual({
+      sql: expect.stringContaining("'pty-stream'"),
+    });
+    expect(
+      runtime.db
+        .prepare(
+          `SELECT migration_id, schema_version
+           FROM __nexus_schema_migrations WHERE schema_version = 25`,
+        )
+        .get(),
+    ).toEqual({
+      migration_id: '025-handoff-pty-stream-provenance',
+      schema_version: 25,
+    });
+    expect(
+      runtime.db
+        .prepare(
           `SELECT "unique" AS unique_index
            FROM pragma_index_list('handoff_mcp_receipts')
            WHERE name = 'idx_handoff_mcp_receipts_logical_operation'`,

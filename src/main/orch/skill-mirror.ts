@@ -180,7 +180,6 @@ function defaultSourceDirs(home: string): string[] {
     path.join(home, '.kimi-code', 'skills'),
     path.join(home, '.grok', 'skills'),
     path.join(home, '.config', 'opencode', 'skills'),
-    path.join(home, '.omp', 'agent', 'skills'),
   ];
 }
 

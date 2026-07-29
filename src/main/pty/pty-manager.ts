@@ -6,6 +6,7 @@ import type { WebContents } from "electron";
 import { PTY_CHANNELS } from "../../shared/channels";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
 import type { ProjectExecutionScope } from "../../shared/types";
+import type { SquadCliPolicy } from "../../shared/settings-types";
 import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
 import type { MissionPaneAuthoritySeal } from "../../shared/orch-types";
 import { PET_STUDIO_SQUAD_ID } from "../../shared/pet-studio";
@@ -36,10 +37,7 @@ import {
   isBuiltinAdapter,
   resolveAdapterBinary,
 } from "../adapters/adapter-registry";
-import {
-  governedOmpArgs,
-  resolveGovernedCliProfile,
-} from "../orch/governed-cli-profile";
+import { resolveGovernedCliProfile } from "../orch/governed-cli-profile";
 import {
   prepareCodexGovernedSession,
   type CodexGovernedProcessSandbox,
@@ -67,11 +65,7 @@ import {
   requiresAdvisoryProcessSandbox,
   resolveAdvisoryProcessSandbox,
 } from "./advisory-process-sandbox";
-import {
-  assertOperatorChoiceWriterConfinement,
-  isOperatorChoiceWorkspaceWrite,
-  resolveOperatorChoiceWriterSandbox,
-} from "./operator-choice-writer-sandbox";
+import { resolveMissionCliExecutionPolicy } from "./mission-cli-execution-policy";
 import { getOrchSettings } from "../persistence/settings-store";
 
 /**
@@ -299,9 +293,18 @@ export type AgentSpawnHook = (
 ) => AgentSpawnDecoration | null;
 
 let agentSpawnHook: AgentSpawnHook | null = null;
+let squadCliPolicyLookup: () => SquadCliPolicy = () =>
+  getOrchSettings().squadCliPolicy;
 
 export function setAgentSpawnHook(hook: AgentSpawnHook | null): void {
   agentSpawnHook = hook;
+}
+
+/** Test seam for exercising both product modes without touching user settings. */
+export function setSquadCliPolicyLookupForTests(
+  lookup: (() => SquadCliPolicy) | null,
+): void {
+  squadCliPolicyLookup = lookup ?? (() => getOrchSettings().squadCliPolicy);
 }
 
 /**
@@ -1008,7 +1011,7 @@ export function spawnAgentSession(
   const trustedDecorationArgs = decoration
     ? [...decoration.extraArgs]
     : [];
-  const nativeReadOnly = requiresReadOnlyNativeAuthority({
+  const requestedNativeReadOnly = requiresReadOnlyNativeAuthority({
     source: authority.source,
     adapterId: adapter.id,
     role: authority.context?.role,
@@ -1070,8 +1073,29 @@ export function spawnAgentSession(
       (authority.context?.missionId?.trim() ||
         authority.context?.contextRevision),
   );
-  const governedWorkspaceWriter =
-    missionBoundWritableWorker || petStudioWritableOrchestrator;
+  const isMissionParticipant = Boolean(
+    authority.context &&
+      (authority.context.missionId?.trim() ||
+        authority.context.squadId?.trim() ||
+        authority.context.contextRevision),
+  );
+  const executionPolicy = resolveMissionCliExecutionPolicy({
+    squadCliPolicy: squadCliPolicyLookup(),
+    isMissionParticipant,
+    requestsNativeReadOnly: requestedNativeReadOnly,
+    requestsWorkspaceWriteSandbox:
+      writableWorkerIntent || petStudioWritableOrchestrator,
+    requiresAdvisorySandbox: requiresAdvisoryProcessSandbox(
+      adapter.id,
+      authority.context?.readOnly === true,
+    ),
+    isPetStudioWorkspaceWriter: petStudioWritableOrchestrator,
+  });
+  const nativeReadOnly = executionPolicy.enforceNativeReadOnly;
+  const governedWorkspaceWriter = Boolean(
+    executionPolicy.enforceWorkspaceWriteSandbox &&
+      (missionBoundWritableWorker || petStudioWritableOrchestrator),
+  );
   if (decoration) {
     Object.assign(env, decoration.env);
     args.push(...decoration.extraArgs);
@@ -1085,8 +1109,10 @@ export function spawnAgentSession(
   }
   const governedProfile = Boolean(
     decoration &&
+      executionPolicy.preparePrivateCodexProfile &&
       (requiresSpawnGate(authority.context) ||
-        missionBoundWritableWorker),
+        missionBoundWritableWorker ||
+        petStudioWritableOrchestrator),
   );
   let trustedCodexPermissionProfile: string | undefined;
   let codexProcessSandbox: CodexGovernedProcessSandbox | undefined;
@@ -1121,8 +1147,6 @@ export function spawnAgentSession(
         trustedCodexPermissionProfile =
           codex.codexPermissionProfile;
         codexProcessSandbox = codex.codexProcessSandbox;
-      } else if (adapter.id === "omp") {
-        args.push(...governedOmpArgs(policy.allowedSkills));
       }
     } catch (error) {
       decoration?.onSpawnFailed?.();
@@ -1138,8 +1162,8 @@ export function spawnAgentSession(
     nativeReadOnly,
   );
   const enforceWorkspaceWriteSandbox =
-    writableWorkerIntent || petStudioWritableOrchestrator;
-  // Advisory-unconfined lane (kimi/agy/opencode/omp read_only mission
+    executionPolicy.enforceWorkspaceWriteSandbox;
+  // Advisory-unconfined lane (for example kimi/agy/opencode read_only mission
   // workers): MCP read-only authority only, no native confinement claim.
   const advisoryUnconfinedParticipation = Boolean(
     !nativeReadOnly &&
@@ -1149,12 +1173,14 @@ export function spawnAgentSession(
       authority.context?.missionId?.trim() &&
       isAdvisoryUnconfinedCli(adapter.id),
   );
-  const operatorChoiceWorkspaceWrite = isOperatorChoiceWorkspaceWrite({
-    squadCliPolicy: getOrchSettings().squadCliPolicy,
-    adapterId: adapter.id,
-    writableWorkerIntent,
-    hasCodexNativeWriteAuthority: governedWorkspaceWriter,
-  });
+  const operatorChoiceWorkspaceWrite = Boolean(
+    executionPolicy.isFrictionless && writableWorkerIntent,
+  );
+  const frictionlessMissionWorker = Boolean(
+    executionPolicy.isFrictionless &&
+      authority.context?.role === "worker" &&
+      authority.context?.missionId?.trim(),
+  );
   const trustedCodexExternalProcessSandbox = Boolean(
     adapter.id === "codex" &&
       codexProcessSandbox &&
@@ -1164,18 +1190,21 @@ export function spawnAgentSession(
   let trustedNativeRuntimeReadPaths: string[] = [];
   let trustedNativeLaunch: TrustedNativeConfinementLaunch | null = null;
   try {
-    if (writableWorkerIntent && !authority.coordinationScope) {
+    if (
+      (writableWorkerIntent || frictionlessMissionWorker) &&
+      !authority.coordinationScope
+    ) {
       throw new Error(
-        "mission-bound writable worker requires a main-owned coordination scope",
+        "mission-bound worker requires a main-owned coordination scope",
       );
     }
     if (
-      writableWorkerIntent &&
+      (writableWorkerIntent || frictionlessMissionWorker) &&
       authority.scope.rootRealPath ===
         authority.coordinationScope?.rootRealPath
     ) {
       throw new Error(
-        "mission-bound writable worker requires a physically distinct execution worktree",
+        "autopilot mission worker requires a physically distinct execution worktree",
       );
     }
     if (
@@ -1226,7 +1255,15 @@ export function spawnAgentSession(
       trustedCodexExternalProcessSandbox,
       advisoryUnconfinedParticipation,
       operatorChoiceWorkspaceWrite,
+      operatorChoiceParticipation: executionPolicy.isFrictionless,
     });
+    if (
+      executionPolicy.enableLiveWeb &&
+      adapter.id === "codex" &&
+      !args.includes("--search")
+    ) {
+      args.push("--search");
+    }
   } catch (error) {
     decoration?.onSpawnFailed?.();
     throw error;
@@ -1338,12 +1375,7 @@ export function spawnAgentSession(
       decoration?.onSpawnFailed?.();
       throw error;
     }
-  } else if (
-    requiresAdvisoryProcessSandbox(
-      adapter.id,
-      authority.context?.readOnly === true,
-    )
-  ) {
+  } else if (executionPolicy.applyAdvisorySandbox) {
     // Advisory CLIs have no native read-only profile, so a prompt is the only
     // thing asking them to behave — and a prompt is not a boundary. Nexus wraps
     // them in its OWN Seatbelt profile instead: the kernel mounts the execution
@@ -1352,8 +1384,8 @@ export function spawnAgentSession(
     // to build that boundary must abort the spawn, never downgrade it.
     //
     // Writable-runtime resolution (never the real user home):
-    //  - decoration.sandboxDir present (AGY native lease) → that runtime;
-    //  - decoration overrode HOME to an ephemeral overlay (OMP/AGY-direct) →
+    //  - decoration.sandboxDir present → that explicitly minted runtime;
+    //  - decoration overrode HOME to an ephemeral overlay →
     //    the overlay itself is the private runtime;
     //  - HOME is still the real user home (Kimi/Grok/OpenCode carry their state
     //    in provider env vars, not HOME) → mint a fresh private runtime, keep
@@ -1480,67 +1512,6 @@ export function spawnAgentSession(
     }
   }
 
-  if (operatorChoiceWorkspaceWrite) {
-    // Operator-choice writer: CLI has no Codex-class native workspace-write
-    // profile. Nexus wraps the process in its own Seatbelt with a WRITABLE
-    // execution root (isolated worktree) + private session runtime. Fail
-    // closed without a constructible boundary — never downgrade to a prompt.
-    try {
-      const decorationOverrodeHome = Boolean(decoration && decoration.env.HOME);
-      const planResolved = resolveOperatorChoiceWriterSandbox({
-        adapterId: adapter.id,
-        sessionId,
-        binaryPath: bin,
-        rootRealPath: authority.scope.rootRealPath,
-        spawnEnv,
-        decorationSandboxDir: decoration?.sandboxDir,
-        decorationProcessHome: decoration?.processHome,
-        decorationOverrodeHome,
-        providerStateReadPaths: decoration?.providerStateReadPaths,
-        providerStateWritePaths: decoration?.providerStateWritePaths,
-      });
-      assertOperatorChoiceWriterConfinement(
-        adapter.id,
-        planResolved,
-        process.platform,
-      );
-      if (planResolved) {
-        const worktreeGit = planResolved.worktreeGit;
-        const plan = buildScopedExecPlan({
-          platform: process.platform,
-          executable: bin,
-          args,
-          cwd,
-          rootRealPath: authority.scope.rootRealPath,
-          sandboxDir: planResolved.sandbox.sandboxDir,
-          privateHome: planResolved.sandbox.sandboxDir,
-          processHome: planResolved.sandbox.processHome,
-          env: spawnEnv,
-          readOnlyRoot: false,
-          sandboxProfile: planResolved.sandboxProfile,
-          extraReadPaths: [
-            ...planResolved.sandbox.extraWritePaths,
-            ...planResolved.sandbox.providerStateReadPaths,
-            ...worktreeGit.readPaths,
-          ],
-          extraWritePaths: [
-            ...planResolved.sandbox.extraWritePaths,
-            ...planResolved.sandbox.providerStateWritePaths,
-            ...worktreeGit.writePaths,
-          ],
-          protectedWritePaths: [...worktreeGit.protectedPaths],
-        });
-        spawnFile = plan.file;
-        spawnArgs = plan.args;
-        spawnCwd = plan.cwd;
-        spawnEnv = cleanEnv(plan.env);
-      }
-    } catch (error) {
-      decoration?.onSpawnFailed?.();
-      throw error;
-    }
-  }
-
   const idleMs =
     adapter.stateParsing.idle.type === "timeout"
       ? adapter.stateParsing.idle.ms
@@ -1607,7 +1578,9 @@ export function spawnAgentSession(
       immediateMissionGoal: authority.context?.immediateMissionGoal,
       workerIncarnationId: authority.context?.workerIncarnationId,
       readOnly: authority.context?.readOnly === true,
-      nativeReadOnly,
+      // Record the sealed task semantic, even when the default autopilot does
+      // not turn it into a provider/kernel confinement profile.
+      nativeReadOnly: requestedNativeReadOnly,
       allowedTools:
         authority.context?.allowedTools === null ||
         authority.context?.allowedTools === undefined
@@ -2377,7 +2350,7 @@ export function terminateAllSessions(
     ) {
       // A shutdown attempt permanently revokes PTY spawn admission for this
       // process lifetime, even when physical proof fails and the app remains
-      // open to report/retry. OMP uses the same sticky fail-closed contract;
+      // open to report/retry. The same sticky fail-closed contract applies;
       // reopening only this lane would let a new process escape the retained
       // shutdown inventory. Clear only the completed flight so a retry can
       // drive the still-registered sessions again.

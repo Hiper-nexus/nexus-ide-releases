@@ -465,6 +465,84 @@ export function addApprovedIntentOwnershipClaims(
   return Object.freeze(fitGuidedOwnershipBudget(ordered));
 }
 
+/**
+ * Mutation ownership for Guided delivery: intent artifacts only — never the
+ * full repository inventory. Callers may pass an already-expanded blast set as
+ * `extraClaims`; the inventory catalog remains an allowlist/context, not a claim.
+ */
+export function resolveGuidedMutationOwnership(
+  contract: Pick<MissionIntentContract, "goal" | "acceptanceCriteria">,
+  extraClaims: readonly string[] = [],
+): readonly string[] {
+  const claims = new Set<string>();
+  for (const claim of approvedIntentOwnershipClaims(contract)) {
+    claims.add(claim);
+  }
+  for (const rawClaim of extraClaims) {
+    const normalized = normalizeFileOwnership(rawClaim);
+    if (isForbiddenOwnershipClaim(normalized)) {
+      throw new Error(
+        "guided_plan_ownership_invalid: o blast contém um caminho reservado",
+      );
+    }
+    claims.add(normalized);
+  }
+  const ordered = [...claims].sort((left, right) =>
+    left.localeCompare(right),
+  );
+  return Object.freeze(fitGuidedOwnershipBudget(ordered));
+}
+
+/** Free-form plans that reclaim most of the greenfield catalog are repo-wide. */
+export const MAX_FREE_FORM_GREENFIELD_OVERLAP = 24;
+export const MAX_FREE_FORM_TOP_LEVEL_ROOTS = 24;
+export const MAX_FREE_FORM_OWNERSHIP_FILES = 96;
+
+/**
+ * Detect free-form plans that effectively claim the whole repository.
+ *
+ * Counts unique greenfield-catalog roots (exact or nested under a catalog
+ * entry), distinct top-level path roots, and raw file volume — any one over
+ * the budget is repo-wide.
+ */
+export function ownershipLooksRepoWide(
+  files: readonly string[],
+): boolean {
+  if (files.length === 0) return false;
+  if (files.length >= MAX_FREE_FORM_OWNERSHIP_FILES) return true;
+  const catalogHits = new Set<string>();
+  const topLevelRoots = new Set<string>();
+  for (const raw of files) {
+    let normalized: string;
+    try {
+      normalized = normalizeFileOwnership(raw);
+    } catch {
+      continue;
+    }
+    const segments = normalized.split("/");
+    const root = segments[0] ?? normalized;
+    topLevelRoots.add(root);
+    // Exact match, top-level catalog root, or nested under a multi-segment
+    // catalog entry (e.g. claim `src/main/foo` when catalog has `src/main`).
+    if (guidedGreenfieldOwnershipSet.has(normalized)) {
+      catalogHits.add(normalized);
+      continue;
+    }
+    let prefix = "";
+    for (const segment of segments) {
+      prefix = prefix ? `${prefix}/${segment}` : segment;
+      if (guidedGreenfieldOwnershipSet.has(prefix)) {
+        catalogHits.add(prefix);
+        break;
+      }
+    }
+  }
+  return (
+    catalogHits.size >= MAX_FREE_FORM_GREENFIELD_OVERLAP ||
+    topLevelRoots.size >= MAX_FREE_FORM_TOP_LEVEL_ROOTS
+  );
+}
+
 function validateOwnershipCatalog(
   version: typeof GUIDED_OWNERSHIP_CATALOG_VERSION,
   entries: readonly string[],

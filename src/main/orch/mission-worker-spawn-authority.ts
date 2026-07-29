@@ -27,8 +27,9 @@ export interface MissionWorkerSpawnGate {
  * callers without a contextRevision are data — none of them can widen this
  * release-owned allowlist under `governed`.
  *
- * Under `operator-choice` (orch.squadCliPolicy), any builtin cli-pty may write;
- * the Nexus Seatbelt at spawn remains the real boundary.
+ * Under `operator-choice` (orch.squadCliPolicy), any live cli-pty may write
+ * inside its task worktree; session authority and Main-owned merge remain the
+ * promotion boundary.
  *
  * Manual Terminal panes have no missionId and remain multi-provider. An
  * explicitly identified mission orchestrator is also outside the worker
@@ -42,6 +43,9 @@ export function assertReleaseQualifiedMissionWorkerSpawn(
   const operatorChoice = isOperatorChoicePolicy(
     getOrchSettings().squadCliPolicy,
   );
+  if (operatorChoice && adapter?.kind === 'cli-pty') {
+    return;
+  }
   const qualified =
     adapter?.kind === 'cli-pty' &&
     isReleaseQualifiedMissionWorkerCli(adapter.id) &&
@@ -59,14 +63,6 @@ export function assertReleaseQualifiedMissionWorkerSpawn(
     (supportsEnforceableReadOnlyNativeAuthority(adapter) ||
       supportsAdvisoryParticipationCli(adapter.id));
   if (readOnlyParticipant) return;
-  if (
-    operatorChoice &&
-    options.readOnly !== true &&
-    adapter?.kind === 'cli-pty' &&
-    isBuiltinAdapter(adapter.id)
-  ) {
-    return;
-  }
   throw new Error(
     `governed_worker_spawn_unsupported: ${options.adapterId} não pode executar ` +
       'como worker autônomo de missão nesta release; use o adapter Codex builtin ' +
@@ -77,14 +73,15 @@ export function assertReleaseQualifiedMissionWorkerSpawn(
 
 /**
  * Whether a revision-bound writable worker may use this adapter under the
- * current squad CLI policy. Codex native sandbox always qualifies; under
- * operator-choice any builtin cli-pty qualifies (Seatbelt wraps at spawn).
+ * current squad CLI policy. Codex native sandbox qualifies in governed mode;
+ * under operator-choice any live cli-pty qualifies for an isolated task
+ * worktree.
  */
 export function isRevisionBoundWritableWorkerAdapterAllowed(
   adapterId: string,
 ): boolean {
   const adapter = getAdapter(adapterId);
-  if (!adapter || adapter.kind !== 'cli-pty' || !isBuiltinAdapter(adapter.id)) {
+  if (!adapter || adapter.kind !== 'cli-pty') {
     return false;
   }
   if (isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)) {
@@ -92,6 +89,7 @@ export function isRevisionBoundWritableWorkerAdapterAllowed(
   }
   return (
     adapter.id === 'codex' &&
+    isBuiltinAdapter(adapter.id) &&
     supportsEnforceableWorkspaceWriteNativeAuthority(adapter)
   );
 }

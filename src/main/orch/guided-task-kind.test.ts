@@ -24,7 +24,7 @@ describe("GuidedTaskKind authority parser", () => {
     },
     {
       kind: "isolated-advisory",
-      plannerId: "guided-advisory-omp",
+      plannerId: "guided-advisory-opencode",
       agentCategory: "scout",
       executionMode: "isolated_worktree",
       domain: GUIDED_TASK_DOMAINS.isolatedAdvisory,
@@ -58,6 +58,14 @@ describe("GuidedTaskKind authority parser", () => {
           plannerId,
           agentCategory,
           executionMode,
+          domains: [domain],
+        }),
+      ).toBe(kind);
+      expect(
+        parseGuidedTaskKind({
+          plannerId,
+          agentCategory,
+          executionMode,
           domains: [domain, "sequential-only"],
         }),
       ).toBe(kind);
@@ -77,25 +85,18 @@ describe("GuidedTaskKind authority parser", () => {
 
   it.each([
     {
-      label: "missing sequential fence",
-      plannerId: GUIDED_MISSION_QA_TASK_ID,
-      agentCategory: "reviewer",
-      executionMode: "isolated_worktree",
-      domains: [GUIDED_TASK_DOMAINS.qualityGate],
-    },
-    {
       label: "wrong QA category",
       plannerId: GUIDED_MISSION_QA_TASK_ID,
       agentCategory: "executor",
       executionMode: "isolated_worktree",
-      domains: [GUIDED_TASK_DOMAINS.qualityGate, "sequential-only"],
+      domains: [GUIDED_TASK_DOMAINS.qualityGate],
     },
     {
       label: "canonical identity impersonation",
       plannerId: "other-task",
       agentCategory: "executor",
       executionMode: "isolated_worktree",
-      domains: [GUIDED_TASK_DOMAINS.implementation, "sequential-only"],
+      domains: [GUIDED_TASK_DOMAINS.implementation],
     },
     {
       label: "multiple Guided domains",
@@ -105,7 +106,6 @@ describe("GuidedTaskKind authority parser", () => {
       domains: [
         GUIDED_TASK_DOMAINS.advisory,
         GUIDED_TASK_DOMAINS.independentReview,
-        "sequential-only",
       ],
     },
   ] as const)("fails closed for $label", (input) => {

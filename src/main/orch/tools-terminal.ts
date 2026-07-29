@@ -15,6 +15,11 @@ import {
   type SandboxProfile,
 } from '../runtime/process-sandbox';
 import { assertGovernedWorkspaceControlBoundary } from './governed-workspace-control-boundary';
+import { getOrchSettings } from '../persistence/settings-store';
+import {
+  isOperatorChoicePolicy,
+  type SquadCliPolicyMode,
+} from '../../shared/squad-cli-policy';
 
 /**
  * Terminal execution MCP tools for Jarvis agent.
@@ -84,6 +89,22 @@ function appendOutput(buffer: OutputBuffer, chunk: Buffer | string): void {
 function boundedTimeout(raw: unknown): number {
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return DEFAULT_TIMEOUT_MS;
   return Math.min(Math.max(1, Math.floor(raw)), MAX_TIMEOUT_MS);
+}
+
+export function resolveTerminalSandboxProfile(
+  rawProfile: string | undefined,
+  squadCliPolicy: SquadCliPolicyMode,
+): SandboxProfile | undefined {
+  if (
+    rawProfile === 'workspace-only' ||
+    rawProfile === 'workspace-net' ||
+    rawProfile === 'yolo'
+  ) {
+    return rawProfile;
+  }
+  return isOperatorChoicePolicy(squadCliPolicy)
+    ? 'workspace-net'
+    : undefined;
 }
 
 function isSameCheckout(
@@ -169,8 +190,9 @@ const terminalRun: McpToolDef = {
         type: 'string',
         enum: ['workspace-only', 'workspace-net', 'yolo'],
         description:
-          'Sandbox profile: workspace-only (default, no net on macOS), ' +
-          'workspace-net (path confined + network), yolo (same as net, never host-wide).',
+          'Sandbox profile: workspace-net is the Autopilot default; ' +
+          'Hardened defaults to workspace-only on macOS/Windows. Explicit ' +
+          'workspace-only denies network; yolo still remains checkout-confined.',
       },
     },
     required: ['command'],
@@ -184,12 +206,10 @@ const terminalRun: McpToolDef = {
     const timeoutMs = boundedTimeout(args.timeoutMs);
     const env = sanitizeEnv(args.env);
     const rawProfile = str(args, 'sandboxProfile');
-    const sandboxProfile: SandboxProfile | undefined =
-      rawProfile === 'workspace-only' ||
-      rawProfile === 'workspace-net' ||
-      rawProfile === 'yolo'
-        ? rawProfile
-        : undefined;
+    const sandboxProfile = resolveTerminalSandboxProfile(
+      rawProfile,
+      getOrchSettings().squadCliPolicy,
+    );
     const sandbox = createScopedSandboxHome(executionScope);
     let plan;
     try {

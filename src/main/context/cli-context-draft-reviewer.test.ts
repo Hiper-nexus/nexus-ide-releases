@@ -5,6 +5,8 @@ import type { SpawnToolOptions } from '../orch/tool-util';
 import type { ContextDraftRecord } from './context-draft-store';
 
 const selectionDeps = vi.hoisted(() => ({
+  mode: 'governed' as 'governed' | 'operator-choice',
+  accountAvailable: true,
   providers: [] as Partial<ProviderSettingsInfo>[],
   adapters: new Map<
     string,
@@ -18,7 +20,7 @@ const selectionDeps = vi.hoisted(() => ({
       };
       quirks: {
         mcpAutoload: boolean;
-        nexusMcp?: 'codex';
+        nexusMcp?: string;
       };
       control?: {
         permission: {
@@ -64,6 +66,12 @@ const paneDeps = vi.hoisted(() => ({
 
 vi.mock('../persistence/provider-config-store', () => ({
   listProviderSettings: () => selectionDeps.providers,
+}));
+vi.mock('../persistence/settings-store', () => ({
+  getOrchSettings: () => ({ squadCliPolicy: selectionDeps.mode }),
+}));
+vi.mock('../persistence/account-store', () => ({
+  hasAvailableAccount: () => selectionDeps.accountAvailable,
 }));
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: (id: string) => selectionDeps.adapters.get(id) ?? null,
@@ -177,7 +185,17 @@ function reviewedDraft(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  selectionDeps.mode = 'governed';
+  selectionDeps.accountAvailable = true;
   selectionDeps.providers.length = 0;
+  selectionDeps.providers.push({
+    adapterId: 'codex',
+    enabled: true,
+    installed: true,
+    authStrategy: 'subscription',
+    kind: 'cli-pty',
+    models: ['review-model'],
+  });
   selectionDeps.adapters.clear();
   selectionDeps.builtinIds.clear();
   selectionDeps.adapters.set('codex', qualifiedCodexAdapter());
@@ -192,6 +210,7 @@ describe('CLI context draft reviewer', () => {
   });
 
   it('routes a Codex-authored draft to a fresh qualified Codex reviewer', () => {
+    selectionDeps.providers.length = 0;
     selectionDeps.providers.push(
       {
         adapterId: 'codex',
@@ -263,6 +282,7 @@ describe('CLI context draft reviewer', () => {
   });
 
   it('accepts Codex only when its enforceable read-only policy is declared', () => {
+    selectionDeps.providers.length = 0;
     selectionDeps.providers.push({
       adapterId: 'codex',
       enabled: true,
@@ -277,6 +297,7 @@ describe('CLI context draft reviewer', () => {
   });
 
   it('rejects a user Codex lookalike from independent read-only review', () => {
+    selectionDeps.providers.length = 0;
     selectionDeps.providers.push({
       adapterId: 'codex',
       enabled: true,
@@ -292,6 +313,31 @@ describe('CLI context draft reviewer', () => {
       id: string;
     }>;
     expect(candidates).toEqual([]);
+  });
+
+  it('routes context review through another physical MCP CLI in operator-choice', () => {
+    selectionDeps.mode = 'operator-choice';
+    selectionDeps.providers.length = 0;
+    selectionDeps.providers.push({
+      adapterId: 'kimi',
+      enabled: true,
+      installed: true,
+      authStrategy: 'subscription',
+      kind: 'cli-pty',
+      models: ['kimi-code/k3'],
+    });
+    selectionDeps.adapters.set('kimi', {
+      id: 'kimi',
+      kind: 'cli-pty',
+      quirks: { mcpAutoload: false, nexusMcp: 'kimi' },
+    });
+    selectionDeps.builtinIds.add('kimi');
+
+    expect(selectIndependentContextReviewerRoute('codex')).toEqual({
+      adapterId: 'kimi',
+      model: 'review-model',
+      effort: 'high',
+    });
   });
 
   it.each(['approved', 'rejected'] as const)(
@@ -510,12 +556,28 @@ describe('CLI context draft reviewer', () => {
   });
 
   it('recovers a title-drifted reviewer pane matched by agentName and resumes the review', async () => {
+    selectionDeps.mode = 'operator-choice';
+    selectionDeps.providers.length = 0;
+    selectionDeps.providers.push({
+      adapterId: 'kimi',
+      enabled: true,
+      installed: true,
+      authStrategy: 'subscription',
+      kind: 'cli-pty',
+      models: ['kimi-code/k3'],
+    });
+    selectionDeps.adapters.set('kimi', {
+      id: 'kimi',
+      kind: 'cli-pty',
+      quirks: { mcpAutoload: false, nexusMcp: 'kimi' },
+    });
+    selectionDeps.builtinIds.add('kimi');
     const scope = testProjectScope();
     const draft = proposedDraft();
     const approved = reviewedDraft('approved', {
-      id: contextDraftReviewerAgentName('codex', draft.id),
+      id: contextDraftReviewerAgentName('kimi', draft.id),
       sessionId: 'session-preserved',
-      provider: 'codex',
+      provider: 'kimi',
     });
     paneDeps.snapshots.push({
       paneId: 'pane-preserved',
@@ -524,8 +586,8 @@ describe('CLI context draft reviewer', () => {
       title: 'glm — working',
       kind: 'cli-agent',
       state: 'idle',
-      agentName: contextDraftReviewerAgentName('codex', draft.id),
-      adapterId: 'codex',
+      agentName: contextDraftReviewerAgentName('kimi', draft.id),
+      adapterId: 'kimi',
       scope,
       missionId: draft.missionId ?? undefined,
     });

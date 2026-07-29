@@ -194,7 +194,8 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
   {
     id: FEATURE_FLAG_IDS.nexusMemory,
     owner: 'memory',
-    description: 'Local-first .nexus-memory/ Markdown memory with wikilinks.',
+    description:
+      'Nexus-owned, Obsidian-readable Markdown projection of canonical memory.',
     channel: 'dev',
     createdAt: '2026-07-13',
     removeAfter: '2026-12-31',
@@ -206,7 +207,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.workspaceMemory,
     owner: 'memory',
     description:
-      'Workspace-scoped agentic memory (retain/recall/stats) over SQLite FTS5, shared by all hosted CLIs; derived from oh-my-pi mnemopi design.',
+      'Workspace-scoped agentic memory (retain/recall/stats) over SQLite FTS5, shared by all hosted CLIs.',
     channel: 'dev',
     createdAt: '2026-07-15',
     removeAfter: '2026-12-31',
@@ -229,7 +230,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.remoteRelayTransport,
     owner: 'remote',
     description:
-      'E2E transport for the mobile companion: blind relay rooms + AES-256-GCM sealed frames (oh-my-pi wire). Relay URL must be configured explicitly; never defaults to a public relay.',
+      'E2E transport for the mobile companion: blind relay rooms + AES-256-GCM sealed frames. Relay URL must be configured explicitly; never defaults to a public relay.',
     channel: 'dev',
     createdAt: '2026-07-15',
     removeAfter: '2027-06-30',

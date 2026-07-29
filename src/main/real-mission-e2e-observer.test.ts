@@ -249,7 +249,6 @@ describe("real mission observer advisor participation", () => {
         "kimi",
         "agy",
         "opencode",
-        "omp",
         "claude",
         "glm",
       ],
@@ -258,7 +257,7 @@ describe("real mission observer advisor participation", () => {
 
     expect(harness.finishes).not.toContain("advisor-absent");
     const evidence = observer.evidence(Date.now(), "fail", "timeout");
-    expect(evidence.participation).toHaveLength(7);
+    expect(evidence.participation).toHaveLength(6);
     expect(
       evidence.participation.every(
         (row) =>

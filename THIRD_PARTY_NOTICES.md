@@ -243,8 +243,6 @@ at commit `03c48d073` (MIT, Copyright (c) 2025 Mario Zechner, Copyright (c)
 - `src/vendor/omp/discovery/` + `src/main/discovery/` — multi-ecosystem agent-config discovery (subset)
 - `src/vendor/omp/wire/` + `src/main/remote/relay/` — E2E collab wire protocol + content-blind relay (Bun→Node port)
 - `src/main/orch/review-findings.ts` + builtin squad `review-p0p3` — review pipeline schema/prompts (derived)
-- `src/main/adapters/omp-rpc-*.ts` — RPC mode frame types (derived; omp binary is consumed as an external
-  user-installed process and is NEVER redistributed with Nexus — upstream binary embeds AGPL-3.0 mupdf)
 
 License text: `third_party/licenses/oh-my-pi-MIT.txt`. Provenance ledger:
 `third_party/provenance/oh-my-pi-03c48d0.json`. Vendoring policy: pinned copy,

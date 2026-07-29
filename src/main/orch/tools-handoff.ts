@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import {
   canSubmitMissionHandoff,
   hasCurrentApprovedDispatchContract,
@@ -20,40 +19,7 @@ import { compactText } from "./session-compaction";
 import { TASK_DISPATCH_HEARTBEAT_LEASE_MS } from "./task-dispatch-lifecycle";
 import type { ScopedHandoff } from "./handoff-store";
 import { handoffRawPayloadSha256 } from "./handoff-payload-identity";
-
-function committedWorktreeHead(
-  ctx: Parameters<McpToolDef["handler"]>[1],
-  requirePhysicalWorktree: boolean,
-): string | undefined {
-  if (!requirePhysicalWorktree) return undefined;
-  const worktree = ctx.executionScope?.rootRealPath;
-  if (!worktree) {
-    throw new Error(
-      "handoff_provenance: worker execution worktree is unavailable",
-    );
-  }
-  let head: string;
-  try {
-    head = execFileSync(
-      "git",
-      ["-C", worktree, "rev-parse", "--verify", "HEAD^{commit}"],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 15_000,
-      },
-    ).trim();
-  } catch (error) {
-    throw new Error(
-      "handoff_provenance: committed worker HEAD is unavailable",
-      { cause: error },
-    );
-  }
-  if (!/^[a-f0-9]{40,64}$/u.test(head)) {
-    throw new Error("handoff_provenance: committed worker HEAD is invalid");
-  }
-  return head;
-}
+import { committedPhysicalWorkerHead } from "./physical-handoff-git";
 
 function requireHandoffMcpEffectIntent(
   invocation: McpToolInvocation | undefined,
@@ -61,7 +27,7 @@ function requireHandoffMcpEffectIntent(
   const intent = invocation?.effectIntent;
   if (
     !intent ||
-    (intent.source !== "http-mcp" && intent.source !== "omp-rpc-stdio") ||
+    (intent.source !== "http-mcp" && intent.source !== "pty-stream") ||
     intent.toolName !== "nexus_handoff_submit" ||
     !invocation?.agentTransportPhysicalReceipt
   ) {
@@ -185,7 +151,7 @@ const handoffSubmitTool: McpToolDef = {
     if (!origin.ok && !terminalReplayCandidate) {
       throw new Error(origin.error);
     }
-    const worktreeHeadSha = committedWorktreeHead(
+    const worktreeHeadSha = await committedPhysicalWorkerHead(
       ctx,
       ctx.role === "worker" && boundDispatch !== undefined,
     );

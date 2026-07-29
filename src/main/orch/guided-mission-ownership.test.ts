@@ -7,6 +7,10 @@ import { testProjectScope } from "./__tests__/scope-fixture";
 import {
   approvedIntentOwnershipClaims,
   listRepositoryOwnershipClaims,
+  ownershipLooksRepoWide,
+  MAX_FREE_FORM_GREENFIELD_OVERLAP,
+  MAX_FREE_FORM_OWNERSHIP_FILES,
+  MAX_FREE_FORM_TOP_LEVEL_ROOTS,
 } from "./guided-mission-ownership";
 
 describe("guided mission ownership inventory authority", () => {
@@ -92,5 +96,64 @@ describe("guided mission ownership inventory authority", () => {
     } finally {
       fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("ownershipLooksRepoWide", () => {
+  it("counts nested claims under catalog directory roots", () => {
+    const catalogDirs = [
+      "src",
+      "docs",
+      "apps",
+      "packages",
+      "server",
+      "mobile",
+      "api",
+      "lib",
+      "bin",
+      "cmd",
+      "internal",
+      "infra",
+      "k8s",
+      "docker",
+      "config",
+      "database",
+      "backend",
+      "android",
+      "ios",
+      "assets",
+      "examples",
+      "benches",
+      "crates",
+      "gradle",
+    ];
+    expect(catalogDirs).toHaveLength(MAX_FREE_FORM_GREENFIELD_OVERLAP);
+    expect(
+      ownershipLooksRepoWide(
+        catalogDirs.map((root, index) => `${root}/nested/file-${index}.ts`),
+      ),
+    ).toBe(true);
+    expect(ownershipLooksRepoWide(["src/a.ts", "src/b.ts", "docs/c.md"])).toBe(
+      false,
+    );
+  });
+
+  it("flags excessive file volume and top-level root fan-out", () => {
+    expect(
+      ownershipLooksRepoWide(
+        Array.from(
+          { length: MAX_FREE_FORM_OWNERSHIP_FILES },
+          (_, index) => `artifact-${index}.txt`,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      ownershipLooksRepoWide(
+        Array.from(
+          { length: MAX_FREE_FORM_TOP_LEVEL_ROOTS },
+          (_, index) => `root-${index}/a.txt`,
+        ),
+      ),
+    ).toBe(true);
   });
 });

@@ -31,11 +31,17 @@ describe('project symbol index', () => {
       'export interface InvoicePolicy {}\nexport function settleInvoice() {}\n');
     fs.mkdirSync(path.join(root, 'node_modules'));
     fs.writeFileSync(path.join(root, 'node_modules/ignored.ts'), 'class NotOurSymbol {}');
+    fs.mkdirSync(path.join(root, '.nexus-memory'));
+    fs.writeFileSync(
+      path.join(root, '.nexus-memory/generated.ts'),
+      'class MemoryProjectionMustNotBeIndexed {}',
+    );
 
     const result = buildProjectSymbolIndex(scope);
     expect(result.symbols.has('InvoicePolicy')).toBe(true);
     expect(result.symbols.has('settleInvoice')).toBe(true);
     expect(result.symbols.has('NotOurSymbol')).toBe(false);
+    expect(result.symbols.has('MemoryProjectionMustNotBeIndexed')).toBe(false);
   });
 
   it('does not follow source-tree symlinks', () => {

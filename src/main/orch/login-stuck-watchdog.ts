@@ -56,8 +56,6 @@ const STUCK_PATTERNS: StuckPattern[] = [
   { flavor: 'grok', re: /signing in/i, label: 'grok signing-in spinner' },
   // Device-flow prompts that wait for a keypress nobody will send.
   { flavor: '*', re: /press enter to log ?in/i, label: 'press-enter-to-login prompt' },
-  // omp waits on its auth broker when no provider credential is wired.
-  { flavor: 'omp', re: /auth-broker/i, label: 'omp auth-broker wait' },
   // Codex ChatGPT login screen.
   { flavor: 'codex', re: /sign in with chatgpt/i, label: 'codex ChatGPT login screen' },
   // AGY (Antigravity) Google OAuth screen.

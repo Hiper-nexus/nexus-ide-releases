@@ -25,6 +25,14 @@ export interface ProjectGitRunner {
   ): ProjectGitResult;
 }
 
+export interface AsyncProjectGitRunner {
+  run(
+    cwd: string,
+    args: readonly string[],
+    options?: { readonly allowFailure?: boolean },
+  ): Promise<ProjectGitResult>;
+}
+
 export interface GitRepositoryProof {
   readonly isShallow: boolean;
   readonly originHashes: readonly string[];
@@ -106,6 +114,38 @@ function optionalGitLines(
   if (result.status !== 0) return [];
   return result.stdout
     .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+async function requiredGitAsync(
+  runner: AsyncProjectGitRunner,
+  cwd: string,
+  args: readonly string[],
+): Promise<string> {
+  const result = await runner.run(cwd, ['--no-replace-objects', ...args]);
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout).trim().slice(0, 512);
+    throw new Error(
+      `git ${args.join(' ')} failed${detail ? `: ${detail}` : ''}`,
+    );
+  }
+  return result.stdout.trim();
+}
+
+async function optionalGitLinesAsync(
+  runner: AsyncProjectGitRunner,
+  cwd: string,
+  args: readonly string[],
+): Promise<string[]> {
+  const result = await runner.run(
+    cwd,
+    ['--no-replace-objects', ...args],
+    { allowFailure: true },
+  );
+  if (result.status !== 0) return [];
+  return result.stdout
+    .split(/\r?\n/u)
     .map((value) => value.trim())
     .filter(Boolean);
 }
@@ -193,6 +233,56 @@ export function collectGitRepositoryProof(
     rootCommits: Object.freeze(uniqueSorted(roots)),
     headCommit:
       head && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(head) ? head : null,
+  });
+}
+
+export async function collectGitRepositoryProofAsync(
+  rootRealPath: string,
+  runner: AsyncProjectGitRunner,
+): Promise<GitRepositoryProof> {
+  const inside = await requiredGitAsync(runner, rootRealPath, [
+    'rev-parse',
+    '--is-inside-work-tree',
+  ]);
+  if (inside !== 'true') throw new Error('workspace is not a Git worktree');
+  const shallow =
+    (await requiredGitAsync(runner, rootRealPath, [
+      'rev-parse',
+      '--is-shallow-repository',
+    ])) === 'true';
+  const [origins, roots, heads] = await Promise.all([
+    optionalGitLinesAsync(runner, rootRealPath, [
+      'config',
+      '--local',
+      '--no-includes',
+      '--get-all',
+      'remote.origin.url',
+    ]),
+    optionalGitLinesAsync(runner, rootRealPath, [
+      'rev-list',
+      '--max-parents=0',
+      'HEAD',
+    ]),
+    optionalGitLinesAsync(runner, rootRealPath, ['rev-parse', 'HEAD']),
+  ]);
+  const rootCommits = roots.filter((value) =>
+    /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value),
+  );
+  const head = heads[0];
+  return Object.freeze({
+    isShallow: shallow,
+    originHashes: Object.freeze(
+      uniqueSorted(
+        origins
+          .map(originHash)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ),
+    rootCommits: Object.freeze(uniqueSorted(rootCommits)),
+    headCommit:
+      head && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(head)
+        ? head
+        : null,
   });
 }
 
@@ -325,6 +415,20 @@ export function isGitCommitReachable(
   );
   if (result.status === 0) return true;
   return false;
+}
+
+export async function isGitCommitReachableAsync(
+  rootRealPath: string,
+  commit: string,
+  runner: AsyncProjectGitRunner,
+): Promise<boolean> {
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(commit)) return false;
+  const result = await runner.run(
+    rootRealPath,
+    ['--no-replace-objects', 'merge-base', '--is-ancestor', commit, 'HEAD'],
+    { allowFailure: true },
+  );
+  return result.status === 0;
 }
 
 export function repositoryLineageId(manifest: ProjectManifest): string {

@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const GIT_SHA = /^[a-f0-9]{40,64}$/;
 
@@ -111,6 +112,73 @@ export function assertIntegratedPhysicalGitAuthority(input: {
     );
   }
   assertAncestor(input.rootRealPath, workerHead, integratedHead);
+}
+
+/**
+ * Recompute the exact PREVC candidate identity from physical Git.
+ *
+ * MergeQueue validates one synthetic candidate commit and then publishes that
+ * exact commit as its integration receipt. Durable sensor/review rows are only
+ * authoritative when their base, candidate and binary diff still resolve to
+ * that physical commit.
+ */
+export function assertQualityCandidatePhysicalGitAuthority(input: {
+  readonly rootRealPath: string;
+  readonly baseSha: string;
+  readonly candidateHeadSha: string;
+  readonly diffHash: string;
+  readonly integratedHeadSha: string;
+}): void {
+  const base = resolveCommit(input.rootRealPath, input.baseSha, "quality base");
+  const candidate = resolveCommit(
+    input.rootRealPath,
+    input.candidateHeadSha,
+    "quality candidate",
+  );
+  const integrated = resolveCommit(
+    input.rootRealPath,
+    input.integratedHeadSha,
+    "quality integration",
+  );
+  if (candidate !== integrated) {
+    throw new Error(
+      "quality evidence candidate does not match the exact integrated Git receipt",
+    );
+  }
+  assertAncestor(input.rootRealPath, base, candidate);
+  let diff: string;
+  try {
+    diff = execFileSync(
+      "git",
+      [
+        "-C",
+        input.rootRealPath,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--binary",
+        "--full-index",
+        base,
+        candidate,
+      ],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 15_000,
+        maxBuffer: 32 * 1024 * 1024,
+      },
+    );
+  } catch (error) {
+    throw new Error("physical quality candidate diff is unavailable", {
+      cause: error,
+    });
+  }
+  const physicalDiffHash = createHash("sha256").update(diff).digest("hex");
+  if (physicalDiffHash !== input.diffHash) {
+    throw new Error(
+      "quality evidence diff diverges from the physical integrated candidate",
+    );
+  }
 }
 
 /** Exact no-change proof: worker, receipt and checkout must share one HEAD. */

@@ -567,8 +567,8 @@ export function prepareAccountForSpawn(
     nativeEmail.trim().toLowerCase() === account.email.trim().toLowerCase()
   ) {
     // …MAS "linhagem compartilhada" só existe quando o pane roda no HOME REAL.
-    // Um pane gated (orquestrador, allowedTools/Skills) roda num HOME efêmero,
-    // e ali o CLI NÃO enxerga o login do Keychain: sem token env ele abre
+    // Um pane isolado (Hardened/Claude-family de terceiro) NÃO enxerga o
+    // login do Keychain: sem token env ele abre
     // "Not logged in · Run /login" mesmo com a máquina autenticada — a
     // identidade projetada no .claude.json ainda mostra "Welcome back", o que
     // mascarava a causa. Verificado na mão: HOME efêmero + identidade + sem
@@ -693,8 +693,8 @@ export function pickAvailable(
 
 /**
  * Whether `adapterId` has at least one account able to serve a spawn now.
- * Adapters with no Nexus-managed accounts (omp self-manages auth under
- * ~/.omp) report available — third-party auth state is not ours to judge.
+ * Adapters with no Nexus-managed accounts report available — third-party
+ * auth state is not ours to judge.
  */
 export function hasAvailableAccount(
   adapterId: string,

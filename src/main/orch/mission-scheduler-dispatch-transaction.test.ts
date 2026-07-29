@@ -2,9 +2,99 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   MISSION_SCHEDULER_BOOTSTRAP_FAILURE_PREFIX,
+  MissionSchedulerCapacityWaitError,
+  assertMissionSchedulerPreProviderAuthority,
+  captureMissionSchedulerPreProviderAuthority,
+  isMissionSchedulerCapacityWait,
+  isMissionSchedulerRetryableDispatchError,
   persistMissionSchedulerDispatchFailure,
 } from "./mission-scheduler-dispatch-transaction";
 import { TASK_DISPATCH_SESSION_EXIT_REASON } from "./task-dispatch-persistence";
+import { compileIntentContract } from "../../shared/mission-intent";
+import type { Mission, Squad } from "../../shared/orch-types";
+import type { PlannedTaskRecord } from "./task-store";
+import { snapshotSquadAuthority } from "./squad-authority-snapshot";
+
+const authoritySquad: Squad = {
+  id: "agentic-scheduler-authority",
+  name: "Scheduler authority",
+  createdAt: "1",
+  builtin: false,
+  orchestratorInstructions: "Coordene a missão aprovada.",
+  agents: [
+    {
+      id: "orchestrator",
+      agentName: "Maestro",
+      category: "orchestrator",
+      cli: "codex",
+    },
+    {
+      id: "executor",
+      agentName: "Executor",
+      category: "executor",
+      cli: "codex",
+      allowedTools: ["Read", "Edit"],
+    },
+  ],
+};
+
+function schedulerAuthorityFixture(): {
+  mission: Mission;
+  planned: PlannedTaskRecord;
+  squad: Squad;
+} {
+  const intent = compileIntentContract({
+    goal: "Executar sem aguardar o freeze PREVC",
+    acceptanceCriteria: ["O merge continua validado pelo Main"],
+    intentVersion: 3,
+    source: "typed",
+    lane: "standard",
+  });
+  const mission: Mission = {
+    id: "mission-scheduler-authority",
+    title: "Autoridade do scheduler",
+    description: intent.goal,
+    status: "running",
+    squadId: authoritySquad.id,
+    milestones: [],
+    learnings: "",
+    intentState: "executing",
+    intentVersion: 3,
+    intentContract: {
+      ...intent,
+      approvedAt: 10,
+      dispatchedAt: 11,
+      squadRevisionHash: snapshotSquadAuthority(authoritySquad).hash,
+    },
+    createdAt: 1,
+    updatedAt: 2,
+  };
+  const planned: PlannedTaskRecord = {
+    plannerId: "implementation",
+    taskId: "task-scheduler-authority",
+    missionId: mission.id,
+    intentVersion: 3,
+    squadId: authoritySquad.id,
+    rosterHash: "a".repeat(64),
+    agentRef: "executor",
+    agentCategory: "executor",
+    agent: authoritySquad.agents[1]!,
+    plannedTitle: "Implementar",
+    plannedDetail: "Aplicar a correção aprovada.",
+    task: {
+      id: "task-scheduler-authority",
+      missionId: mission.id,
+      title: "Implementar",
+      detail: "Aplicar a correção aprovada.",
+      status: "pending",
+      projectId: "project-a",
+      checkoutId: "checkout-a",
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  };
+  return { mission, planned, squad: authoritySquad };
+}
 
 function blockedBootstrapSnapshot(
   overrides: Partial<{
@@ -34,6 +124,100 @@ function blockedBootstrapSnapshot(
 }
 
 describe("mission scheduler dispatch bootstrap failure provenance", () => {
+  it("captures guided dispatch authority without requiring a PREVC workflow", () => {
+    const fixture = schedulerAuthorityFixture();
+
+    const authority = captureMissionSchedulerPreProviderAuthority(fixture);
+
+    expect(authority).toMatchObject({
+      missionId: fixture.mission.id,
+      intentVersion: 3,
+      taskId: fixture.planned.taskId,
+      squadRevisionHash: fixture.mission.intentContract?.squadRevisionHash,
+    });
+    expect(() =>
+      assertMissionSchedulerPreProviderAuthority({
+        expected: authority,
+        ...fixture,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects intent, plan and squad drift across asynchronous preparation", () => {
+    const fixture = schedulerAuthorityFixture();
+    const expected = captureMissionSchedulerPreProviderAuthority(fixture);
+    const changedIntent: Mission = {
+      ...fixture.mission,
+      intentContract: {
+        ...fixture.mission.intentContract!,
+        goal: "Objetivo alterado depois da aprovação",
+      },
+    };
+    const changedPlan: PlannedTaskRecord = {
+      ...fixture.planned,
+      plannedTitle: "Plano substituído",
+      task: {
+        ...fixture.planned.task,
+        title: "Plano substituído",
+      },
+    };
+    const changedSquad: Squad = {
+      ...fixture.squad,
+      orchestratorInstructions: "Instruções alteradas depois da aprovação.",
+    };
+
+    expect(() =>
+      assertMissionSchedulerPreProviderAuthority({
+        expected,
+        mission: changedIntent,
+        planned: fixture.planned,
+        squad: fixture.squad,
+      }),
+    ).toThrow(/intent authority changed/i);
+    expect(() =>
+      assertMissionSchedulerPreProviderAuthority({
+        expected,
+        mission: fixture.mission,
+        planned: changedPlan,
+        squad: fixture.squad,
+      }),
+    ).toThrow(/plan authority changed/i);
+    expect(() =>
+      assertMissionSchedulerPreProviderAuthority({
+        expected,
+        mission: fixture.mission,
+        planned: fixture.planned,
+        squad: changedSquad,
+      }),
+    ).toThrow(/squad changed after mission approval/i);
+  });
+
+  it("classifies capacity and transient provider bootstrap failures as retryable", () => {
+    expect(
+      isMissionSchedulerCapacityWait(
+        new MissionSchedulerCapacityWaitError(
+          "maxWorkers=1 is already reserved",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      isMissionSchedulerCapacityWait(
+        new Error("maxWorkers=1 já está reservado por dispatches duráveis"),
+      ),
+    ).toBe(true);
+    expect(
+      isMissionSchedulerCapacityWait(new Error("worker spawn failed")),
+    ).toBe(false);
+    expect(
+      isMissionSchedulerRetryableDispatchError(
+        new Error("worker spawn failed"),
+      ),
+    ).toBe(true);
+    const corruption = new Error("dispatch database is corrupt");
+    corruption.name = "ScopedStoreCorruptionError";
+    expect(isMissionSchedulerRetryableDispatchError(corruption)).toBe(false);
+  });
+
   it("refines the exact generic exit block with the real bootstrap cause", () => {
     const current = blockedBootstrapSnapshot();
     const refineBootstrapSessionExitBlock = vi.fn();

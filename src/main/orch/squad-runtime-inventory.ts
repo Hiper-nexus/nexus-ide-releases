@@ -1,5 +1,8 @@
 import type { AdapterInfo } from "../../shared/adapter-types";
-import { orchestrationEvidenceOf } from "../../shared/adapter-types";
+import {
+  adapterCapabilityMatrixOf,
+  orchestrationEvidenceOf,
+} from "../../shared/adapter-types";
 import type { Squad } from "../../shared/orch-types";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { listAdapterInfos } from "../adapters/adapter-registry";
@@ -17,6 +20,8 @@ export interface LiveSquadRuntimeInventory {
   readonly policy: SquadRuntimeCliPolicy;
   readonly adapters: readonly AdapterInfo[];
   readonly workerAdapters: readonly AdapterInfo[];
+  /** Policy-qualified candidates that may own the Maestro session. */
+  readonly orchestratorAdapters: readonly AdapterInfo[];
   readonly verifiedOrchestrators: readonly AdapterInfo[];
   readonly verifiedOrchestratorCliIds: ReadonlySet<string>;
 }
@@ -24,8 +29,8 @@ export interface LiveSquadRuntimeInventory {
 /**
  * Rebuild the autonomous route inventory from main-owned adapter metadata,
  * provider readiness and account state. A persisted provider row is never
- * sufficient by itself, and a direct/legacy CLI is not a guided worker unless
- * it can return Nexus MCP/OMP handoff receipts.
+ * sufficient by itself. A guided worker must have either physical MCP or the
+ * Main-owned PTY-stream handoff route.
  */
 export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
   const adapterInfos = listAdapterInfos();
@@ -42,12 +47,10 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
       return Object.freeze({
         ...provider,
         adapterLoaded: adapter !== undefined,
-        // AdapterInfo.orchestratorCapable is the compatibility name for a
-        // declared per-session Nexus MCP route. Orchestration evidence is a
-        // stricter, separate qualification used only for the Maestro.
+        // Worker completion remains independent from Maestro mission control.
         guidedHandoffCapable:
           adapter?.kind === "cli-pty" &&
-          adapter.orchestratorCapable === true,
+          adapter.taskHandoffCapable === true,
         autonomousWorkspaceWriteCapable:
           adapter?.kind === "cli-pty" &&
           adapter.autonomousWorkspaceWriteCapable === true,
@@ -108,6 +111,18 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
   const verifiedOrchestrators = adapters.filter(
     (adapter) => orchestrationEvidenceOf(adapter) === "verified",
   );
+  const orchestratorAdapters = operatorChoice
+    ? adapters.filter((adapter) => {
+        const capabilities = adapterCapabilityMatrixOf(adapter);
+        return (
+          adapter.kind === "cli-pty" &&
+          adapter.missionControlCapable === true &&
+          capabilities.launchable &&
+          capabilities.promptInjectable &&
+          capabilities.statusObservable
+        );
+      })
+    : verifiedOrchestrators;
   return Object.freeze({
     policy,
     adapters: Object.freeze(adapters),
@@ -116,6 +131,7 @@ export function liveSquadRuntimeInventory(): LiveSquadRuntimeInventory {
         policy.routableWorkerCliIds.has(adapter.id),
       ),
     ),
+    orchestratorAdapters: Object.freeze(orchestratorAdapters),
     verifiedOrchestrators: Object.freeze(verifiedOrchestrators),
     verifiedOrchestratorCliIds: new Set(
       verifiedOrchestrators.map((adapter) => adapter.id),

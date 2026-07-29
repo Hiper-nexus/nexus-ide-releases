@@ -124,7 +124,7 @@ describe('guided squad deterministic skill policy', () => {
     ).not.toContain('not-a-nexus-skill');
   });
 
-  it('grants visual generation only to the requested Codex visual owner', () => {
+  it('grants visual generation only to the requested handoff-capable visual owner, independent of CLI brand', () => {
     const source = policySquad();
     source.agents = [
       source.agents[0]!,
@@ -132,7 +132,7 @@ describe('guided squad deterministic skill policy', () => {
         id: 'visual',
         agentName: 'Executor visual do pet',
         category: 'executor',
-        cli: 'codex',
+        cli: 'kimi',
       },
       {
         id: 'backend',

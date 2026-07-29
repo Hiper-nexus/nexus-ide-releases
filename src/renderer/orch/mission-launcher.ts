@@ -1,6 +1,10 @@
 import type { AdapterInfo, PaneModel } from "../../shared/types";
 import type { Squad, SquadAgent } from "../../shared/orch-types";
-import { orchestrationEvidenceOf } from "../../shared/adapter-types";
+import {
+  adapterCapabilityMatrixOf,
+  orchestrationEvidenceOf,
+} from "../../shared/adapter-types";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import {
   buildIntentDispatchKickoffPrompt as buildSharedIntentDispatchKickoffPrompt,
   type IntentDispatchKickoffInput,
@@ -322,6 +326,7 @@ export function buildIntentDispatchKickoffPrompt(input: {
   missionTitle?: IntentDispatchKickoffInput['missionTitle'];
   promotedPlan?: IntentDispatchKickoffInput['promotedPlan'];
   guidedPrevcRequired?: IntentDispatchKickoffInput['guidedPrevcRequired'];
+  operatorChoice?: IntentDispatchKickoffInput['operatorChoice'];
 }): string {
   return buildSharedIntentDispatchKickoffPrompt(input);
 }
@@ -458,6 +463,9 @@ export async function launchSquadMission(
   }
 
   const orchDefaults = await window.nexus.settings.orchGet();
+  const operatorChoice = isOperatorChoicePolicy(
+    orchDefaults.squadCliPolicy,
+  );
   if (
     options.forceLegacyLaunch &&
     profile !== 'pet-studio' &&
@@ -488,15 +496,33 @@ export async function launchSquadMission(
         "Escolha outro em Configurações › Providers.",
     };
   }
-  if (!hasDeclaredOrchestratorMcpRoute(selectedAdapter)) {
+  const selectedCapabilities = adapterCapabilityMatrixOf(selectedAdapter);
+  const operatorRouteReady =
+    selectedAdapter.kind === 'cli-pty' &&
+    selectedAdapter.installed &&
+    selectedAdapter.missionControlCapable === true &&
+    selectedCapabilities.launchable &&
+    selectedCapabilities.promptInjectable &&
+    selectedCapabilities.statusObservable;
+  if (
+    operatorChoice
+      ? !operatorRouteReady
+      : !hasDeclaredOrchestratorMcpRoute(selectedAdapter)
+  ) {
     return {
       ok: false,
       error:
-        `${selectedAdapter.label} ainda não declara uma rota Nexus MCP ` +
-        "para coordenar squads. Escolha um provider compatível nas Configurações.",
+        operatorChoice
+          ? `${selectedAdapter.label} não oferece o canal Main-owned de controle e conclusão necessário para coordenar esta missão. Ela continua disponível como worker/reviewer quando tiver handoff PTY.`
+          : `${selectedAdapter.label} ainda não declara uma rota Nexus MCP ` +
+            "para coordenar squads. Escolha um provider compatível nas Configurações.",
     };
   }
-  if (!isDeclaredOrchestratorAdapter(selectedAdapter)) {
+  if (
+    operatorChoice
+      ? !selectedAdapter.installed
+      : !isDeclaredOrchestratorAdapter(selectedAdapter)
+  ) {
     return {
       ok: false,
       error:
@@ -516,7 +542,7 @@ export async function launchSquadMission(
     options.existingMissionId && options.authorizeDispatch,
   );
   const orchestrationEvidence = orchestrationEvidenceOf(selectedAdapter);
-  if (orchestrationEvidence === 'unsupported') {
+  if (!operatorChoice && orchestrationEvidence === 'unsupported') {
     return {
       ok: false,
       error:
@@ -525,6 +551,7 @@ export async function launchSquadMission(
     };
   }
   if (
+    !operatorChoice &&
     orchestrationEvidence === 'experimental' &&
     !intentFirst &&
     !nativeApprovalBoundDispatch

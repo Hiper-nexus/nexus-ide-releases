@@ -211,10 +211,9 @@ export const realMissionE2EEvidenceSchema = z
         pane.agentRef === REAL_MISSION_E2E_QA_ID &&
         pane.adapterId === "codex",
     );
-    // A cadeia selada é linear e derivada do roster advisor presente:
-    // scouts advisor → executor codex → revisor codex → reviewers advisor →
-    // QA codex. Cada membro depende exatamente do anterior e consome o
-    // handoff do anterior; advisors skipped ficam fora da cadeia.
+    // O DAG selado é derivado do roster advisor presente: scouts e executor
+    // são raízes do fan-out; a cadeia de reviewers parte do executor e termina
+    // no QA. Advisors skipped ficam fora do grafo.
     const presentAdvisorClis = evidence.participation
       .filter((row) => row.skipped === null)
       .map((row) => row.cli);
@@ -239,6 +238,33 @@ export const realMissionE2EEvidenceSchema = z
     const chainReceipts = chainDispatches.map(
       (dispatch) => dispatch?.integrationReceipt ?? null,
     );
+    const chainIndexByPlannerId = new Map(
+      chain.map((member, index) => [member.plannerId, index]),
+    );
+    const expectedDependencyTaskIds = (
+      member: (typeof chain)[number],
+    ): readonly string[] | null => {
+      const ids = member.dependsOnPlannerIds.map((plannerId) => {
+        const dependencyIndex = chainIndexByPlannerId.get(plannerId);
+        return dependencyIndex === undefined
+          ? undefined
+          : chainPlans[dependencyIndex]?.taskId;
+      });
+      return ids.every((taskId): taskId is string => Boolean(taskId))
+        ? ids
+        : null;
+    };
+    const exactDependencies = (
+      actual: readonly string[],
+      member: (typeof chain)[number],
+    ): boolean => {
+      const expected = expectedDependencyTaskIds(member);
+      return Boolean(
+        expected &&
+          actual.length === expected.length &&
+          actual.every((taskId, index) => taskId === expected[index]),
+      );
+    };
     const chainNoChangeReferences = chainReceipts.map((receipt) =>
       receipt?.kind === "worktree_validated_no_change"
         ? /^no-change:([a-f0-9]{40,64}):([a-f0-9]{64})$/u.exec(
@@ -523,14 +549,10 @@ export const realMissionE2EEvidenceSchema = z
       chain.every((member, index) => {
         const task = chainPlans[index];
         if (!task) return false;
-        const previousTask = index > 0 ? chainPlans[index - 1] : undefined;
         return (
           task.agentCategory === member.agentCategory &&
           task.executionMode === member.executionMode &&
-          (index === 0
-            ? task.dependsOn.length === 0
-            : task.dependsOn.length === 1 &&
-              task.dependsOn[0] === previousTask?.taskId)
+          exactDependencies(task.dependsOn, member)
         );
       });
     const chainDispatchIsExact =
@@ -538,17 +560,12 @@ export const realMissionE2EEvidenceSchema = z
       chain.every((member, index) => {
         const dispatch = chainDispatches[index];
         const receipt = chainReceipts[index];
-        const previousDispatch =
-          index > 0 ? chainDispatches[index - 1] : undefined;
         return Boolean(
           dispatch &&
             dispatch.taskId === chainPlans[index]?.taskId &&
             dispatch.agentCategory === member.agentCategory &&
             dispatch.executionMode === member.executionMode &&
-            (index === 0
-              ? dispatch.dependsOn.length === 0
-              : dispatch.dependsOn.length === 1 &&
-                dispatch.dependsOn[0] === previousDispatch?.taskId) &&
+            exactDependencies(dispatch.dependsOn, member) &&
             completedDispatchIsPhysical(dispatch) &&
             (member.kind === "execution"
               ? receipt?.kind === "worktree_integrated"
@@ -616,49 +633,66 @@ export const realMissionE2EEvidenceSchema = z
         noChangeHead === evidence.repository.finalHeadSha
       );
     });
+    const dependencyEdges = chain.flatMap((member, consumerIndex) =>
+      member.dependsOnPlannerIds.map((plannerId) => ({
+        consumerIndex,
+        dependencyIndex: chainIndexByPlannerId.get(plannerId) ?? -1,
+      })),
+    );
     const chainConsumptionIsExact =
-      evidence.dependencyConsumptions.length === chain.length - 1 &&
-      chain.every((_, index) => {
-        if (index === 0) return true;
-        const dispatch = chainDispatches[index];
+      evidence.dependencyConsumptions.length === dependencyEdges.length &&
+      dependencyEdges.every(({ consumerIndex, dependencyIndex }) => {
+        if (dependencyIndex < 0) return false;
+        const dispatch = chainDispatches[consumerIndex];
         const receipt = evidence.dependencyConsumptions.find(
-          (candidate) => candidate.consumerTaskId === dispatch?.taskId,
+          (candidate) =>
+            candidate.consumerTaskId === dispatch?.taskId &&
+            candidate.dependencyTaskId ===
+              chainDispatches[dependencyIndex]?.taskId,
         );
-        const previousDispatch = chainDispatches[index - 1];
-        const previousHandoff = chainHandoffs[index - 1];
+        const dependencyDispatch = chainDispatches[dependencyIndex];
+        const dependencyHandoff = chainHandoffs[dependencyIndex];
         return Boolean(
           receipt &&
             receipt.missionId === evidence.mission?.id &&
-            receipt.dependencyTaskId === previousDispatch?.taskId &&
-            receipt.handoffId === previousHandoff?.id &&
+            receipt.dependencyTaskId === dependencyDispatch?.taskId &&
+            receipt.handoffId === dependencyHandoff?.id &&
             receipt.consumerSessionId === dispatch?.sessionId &&
             receipt.consumerWorkerIncarnationId ===
               dispatch?.workerIncarnationId &&
-            receipt.handoffSummarySha256 === previousHandoff?.summarySha256 &&
-            (previousDispatch?.completedAt ?? Number.MAX_SAFE_INTEGER) <=
+            receipt.handoffSummarySha256 ===
+              dependencyHandoff?.summarySha256 &&
+            (dependencyDispatch?.completedAt ?? Number.MAX_SAFE_INTEGER) <=
               receipt.consumedAt &&
             receipt.consumedAt <= (dispatch?.handoffAcceptedAt ?? -1) &&
             receipt.consumedAt <=
-              (chainHandoffs[index]?.auditIntent?.occurredAt ?? -1),
+              (chainHandoffs[consumerIndex]?.auditIntent?.occurredAt ?? -1),
         );
       });
     const chainTimingIsExact =
-      chain.every((_, index) => {
+      chain.every((member, index) => {
         const receipt = chainReceipts[index];
         const dispatch = chainDispatches[index];
         const handoff = chainHandoffs[index];
-        const previousReceipt = index > 0 ? chainReceipts[index - 1] : null;
+        const dependencies = member.dependsOnPlannerIds.map((plannerId) => {
+          const dependencyIndex = chainIndexByPlannerId.get(plannerId);
+          return dependencyIndex === undefined
+            ? null
+            : chainReceipts[dependencyIndex];
+        });
         return Boolean(
           receipt &&
             receipt.completedAt === dispatch?.completedAt &&
             (handoff?.physicalReceipt?.issuedAt ?? Number.MAX_SAFE_INTEGER) <=
               receipt.completedAt &&
-            (index === 0 ||
-              (previousReceipt !== null &&
-                previousReceipt.completedAt <=
+            dependencies.every(
+              (dependencyReceipt) =>
+                dependencyReceipt !== null &&
+                dependencyReceipt.completedAt <=
                   (dispatch?.routeConsumedAt ?? -1) &&
-                previousReceipt.completedAt <=
-                  (handoff?.physicalReceipt?.issuedAt ?? -1))),
+                dependencyReceipt.completedAt <=
+                  (handoff?.physicalReceipt?.issuedAt ?? -1),
+            ),
         );
       }) &&
       chainHandoffs.every(

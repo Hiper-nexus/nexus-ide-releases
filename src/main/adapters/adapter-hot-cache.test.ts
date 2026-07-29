@@ -40,7 +40,7 @@ describe('adapter-hot-cache', () => {
 
   it('invalidate clears snapshot', () => {
     invalidateAdapterHotCache();
-    loadAdaptersHot(() => [fake('omp')], 60_000);
+    loadAdaptersHot(() => [fake('grok')], 60_000);
     expect(getAdapterHotCache()).not.toBeNull();
     invalidateAdapterHotCache();
     expect(getAdapterHotCache()).toBeNull();

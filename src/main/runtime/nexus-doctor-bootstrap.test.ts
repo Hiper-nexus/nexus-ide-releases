@@ -132,7 +132,7 @@ describe('Nexus Doctor production bootstrap', () => {
     }).readOnlyCapable).toBe(false);
   });
 
-  it('wires cached runtime, real context, providers and multi-PC status', () => {
+  it('wires cached runtime, real context, providers and multi-PC status', async () => {
     let captured: NexusDoctorOptions | undefined;
     const expected = { ready: true } as NexusDoctorReport;
     const inspectReadiness = vi.fn((options: NexusDoctorOptions) => {
@@ -160,7 +160,7 @@ describe('Nexus Doctor production bootstrap', () => {
       },
     );
 
-    expect(inspectConfiguredNexusReadiness(scope)).toBe(expected);
+    await expect(inspectConfiguredNexusReadiness(scope)).resolves.toBe(expected);
     expect(captured?.multiPc).toEqual({
       leaseBackendConfigured: true,
       syncBackendConfigured: true,

@@ -14,6 +14,11 @@ import {
   type ContextWorkflowService,
   type WorkflowIdentity,
 } from './context-workflow-service';
+import type {
+  CandidateQualityAnalysis,
+  RunCandidateQualityAnalysisInput,
+} from './candidate-quality-scanner';
+import { createCandidateQualityReviewReport } from './candidate-quality-review';
 
 export interface MergeValidationCoordinatorDependencies {
   readonly runSensor?: (
@@ -33,6 +38,9 @@ export interface MergeValidationCoordinatorDependencies {
   readonly runReview?: (
     input: RunAutomatedReviewInput,
   ) => ReturnType<CliAutomatedReviewer['run']>;
+  readonly runCandidateQuality?: (
+    input: RunCandidateQualityAnalysisInput,
+  ) => Promise<CandidateQualityAnalysis>;
   readonly resolveAuthor?: (
     context: MergeValidationContext,
   ) => WorkflowIdentity;
@@ -42,6 +50,9 @@ export class MergeValidationCoordinator {
   readonly #service: ContextWorkflowService;
   readonly #runSensor: NonNullable<MergeValidationCoordinatorDependencies['runSensor']>;
   readonly #runReview: NonNullable<MergeValidationCoordinatorDependencies['runReview']>;
+  readonly #runCandidateQuality: NonNullable<
+    MergeValidationCoordinatorDependencies['runCandidateQuality']
+  >;
   readonly #resolveAuthor: NonNullable<MergeValidationCoordinatorDependencies['resolveAuthor']>;
 
   constructor(
@@ -51,6 +62,16 @@ export class MergeValidationCoordinator {
     this.#service = service;
     const reviewer = new CliAutomatedReviewer();
     this.#runReview = dependencies.runReview ?? ((input) => reviewer.run(input));
+    this.#runCandidateQuality =
+      dependencies.runCandidateQuality ??
+      (async (input) => {
+        // Keep the TypeScript AST engine off the Electron startup path. It is
+        // loaded only when a committed merge candidate actually needs review.
+        const { runCandidateQualityAnalysis } = await import(
+          './candidate-quality-scanner'
+        );
+        return runCandidateQualityAnalysis(input);
+      });
     this.#resolveAuthor = dependencies.resolveAuthor ?? ((context) => {
       const worktree = requireWorktreeRuntimeRegistry().get(
         context.scope,
@@ -136,14 +157,72 @@ export class MergeValidationCoordinator {
       });
     }
 
+    const author = this.#resolveAuthor(context);
+    let candidateQualityMarkdown = '';
+    if (context.phase === 'candidate') {
+      try {
+        const analysis = await this.#runCandidateQuality({
+          scope: context.scope,
+          checkoutPath: context.checkoutPath,
+          baseSha: context.integrationBaseSha,
+          headSha: context.candidateSha,
+          diffHash: context.diffHash,
+          changedFiles: context.changedFiles,
+          ...(context.signal ? { signal: context.signal } : {}),
+        });
+        assertMcpInvocationCurrent(context);
+        const report = createCandidateQualityReviewReport({
+          risk: contract.risk,
+          binding,
+          author,
+          analysis,
+        });
+        assertMcpInvocationCurrent(context);
+        this.#service.recordMergeReviewReport(report);
+        evidenceIds.push(`review:${report.reviewId}`);
+        candidateQualityMarkdown = analysis.reviewerMarkdown;
+        if (
+          analysis.findings.some(
+            (finding) =>
+              finding.severity === 'critical' || finding.severity === 'high',
+          )
+        ) {
+          return Object.freeze({
+            sensorsPassed: true,
+            reviewPassed: false,
+            evidenceIds: Object.freeze([...new Set(evidenceIds)]),
+          });
+        }
+      } catch (error) {
+        // The independent physical reviewer remains authoritative when this
+        // bounded advisory analyzer cannot inspect an unusual repository. An
+        // authority revocation still propagates through this assertion.
+        assertMcpInvocationCurrent(context);
+        const detail = error instanceof Error ? error.message : String(error);
+        candidateQualityMarkdown = [
+          '## Main-owned candidate quality preflight',
+          'Status: unavailable — continue with independent manual inspection.',
+          `Reason: ${detail.replace(/[\0\r\n]/gu, ' ').slice(0, 512)}`,
+          '',
+          'Explicitly inspect unreachable/dead code, duplicated functions or exported APIs, process/module boundaries, integration blast radius, and missing tests or line-coverage evidence.',
+        ].join('\n');
+        console.warn('[merge-quality] bounded candidate analysis unavailable:', detail);
+      }
+    }
+
     assertMcpInvocationCurrent(context);
+    const contextMarkdown = this.#service.compileMissionSnapshot(
+      context.missionId,
+    ).markdown;
     const review = await this.#runReview({
       scope: context.scope,
       checkoutPath: context.checkoutPath,
       contract,
       binding,
-      author: this.#resolveAuthor(context),
-      contextMarkdown: this.#service.compileMissionSnapshot(context.missionId).markdown,
+      author,
+      contextMarkdown: candidateQualityMarkdown
+        ? `${contextMarkdown}\n\n${candidateQualityMarkdown}`
+        : contextMarkdown,
       persist: (report) => {
         assertMcpInvocationCurrent(context);
         this.#service.recordMergeReviewReport(report);

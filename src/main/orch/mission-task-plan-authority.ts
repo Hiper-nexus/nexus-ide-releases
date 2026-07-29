@@ -16,10 +16,10 @@ import {
   emitPlannedTasksWithContract,
   type PlannerTaskInput,
 } from "./mission-scheduler";
+import { ownershipLooksRepoWide, MAX_FREE_FORM_GREENFIELD_OVERLAP } from "./guided-mission-ownership";
 import { encodeTaskScheduleDetail } from "./mission-scheduler-meta";
 import {
   assertClosedAcyclicPlanDependencies,
-  supportsAdvisoryParticipationCli,
   supportsMechanicallyReadOnlyCli,
   supportsMechanicallyWorkspaceWriteCli,
   type PlannedExecutionMode,
@@ -37,6 +37,7 @@ import { snapshotSquadAuthority } from "./squad-authority-snapshot";
 import { listAdapterInfos } from "../adapters/adapter-registry";
 import { getOrchSettings } from "../persistence/settings-store";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
+import type { SquadCliPolicy } from "../../shared/settings-types";
 
 type WorkerCategory = Exclude<AgentCategory, "orchestrator">;
 
@@ -54,6 +55,7 @@ export interface MissionTaskPlanAuthorityDeps {
     scope: ProjectExecutionScope,
     missionId: string,
   ) => readonly unknown[];
+  readonly squadCliPolicy: () => SquadCliPolicy;
 }
 
 export interface MissionTaskPlanResult {
@@ -96,6 +98,7 @@ const DEFAULT_DEPS: MissionTaskPlanAuthorityDeps = Object.freeze({
     listAdapterInfos().find((adapter) => adapter.id === adapterId) ?? null,
   listMissionWorktrees: (scope: ProjectExecutionScope, missionId: string) =>
     requireWorktreeRuntimeRegistry().listMission(scope, missionId),
+  squadCliPolicy: () => getOrchSettings().squadCliPolicy,
 });
 
 function stringItems(value: unknown): string[] {
@@ -154,17 +157,20 @@ function resolveRosterAgent(
   }
   if (assignedAgent.cli === "claude") {
     // reserveClaude protects the single Claude OAuth session from concurrent
-    // Claude processes. A Claude advisor (read_only only) is admissible when
-    // the squad orchestrator is NOT Claude — there is exactly one Claude
-    // process in that mission. Writable Claude workers stay forbidden.
+    // Claude processes. In default autopilot the mission's one Claude process
+    // may also own an isolated worktree when the orchestrator is NOT Claude.
+    // Governed mode retains the narrower read-only advisor rule.
     const orchestratorCli = squad.agents.find(
       (agent) => agent.category === "orchestrator",
     )?.cli;
-    if (orchestratorCli === "claude" || mode !== "read_only") {
+    if (
+      orchestratorCli === "claude" ||
+      (!operatorChoice && mode !== "read_only")
+    ) {
       throw new Error(
         `task ${taskId} cannot use ${assignedAgent.id}: reserveClaude keeps the ` +
-          "Claude OAuth session exclusive to the orchestrator; Claude só " +
-          "participa como advisor read_only quando o orquestrador não é Claude",
+          "Claude OAuth session exclusive per mission; no modo Hardened Claude " +
+          "só participa como advisor read_only quando o orquestrador não é Claude",
       );
     }
   }
@@ -204,11 +210,10 @@ function resolveRosterAgent(
       `task ${taskId} governed writer is not release-enabled at the physical dispatch boundary`,
     );
   }
-  const advisoryCli = supportsAdvisoryParticipationCli(assignedAgent.cli);
   if (
     mode === "read_only" &&
-    !capabilities.autonomousReadOnly &&
-    !advisoryCli
+    !operatorChoice &&
+    !capabilities.autonomousReadOnly
   ) {
     throw new Error(
       `task ${taskId} read_only requires a mechanically confined CLI; ` +
@@ -233,8 +238,8 @@ function resolveRosterAgent(
   // confined lane.
   if (
     mode === "read_only" &&
-    !supportsMechanicallyReadOnlyCli(assignedAgent.cli) &&
-    !advisoryCli
+    !operatorChoice &&
+    !supportsMechanicallyReadOnlyCli(assignedAgent.cli)
   ) {
     throw new Error(
       `task ${taskId} read_only capability is not release-enabled at the physical dispatch boundary`,
@@ -247,7 +252,10 @@ function parsePlanTask(
   raw: unknown,
   index: number,
   squad: Squad,
-  deps: Pick<MissionTaskPlanAuthorityDeps, "getAdapterInfo">,
+  deps: Pick<
+    MissionTaskPlanAuthorityDeps,
+    "getAdapterInfo" | "squadCliPolicy"
+  >,
 ): ParsedPlanTask {
   if (!raw || typeof raw !== "object") {
     throw new Error(`invalid task at index ${index}`);
@@ -279,6 +287,15 @@ function parsePlanTask(
     symbols: stringItems(row.ownership?.symbols),
     domains: stringItems(row.ownership?.domains),
   };
+  const operatorChoice = isOperatorChoicePolicy(
+    deps.squadCliPolicy(),
+  );
+  if (!operatorChoice && ownershipLooksRepoWide(ownership.files)) {
+    throw new Error(
+      `task ${id} ownership.files looks repo-wide; partition claims per task ` +
+        `(at most ${MAX_FREE_FORM_GREENFIELD_OVERLAP} greenfield-catalog top-level paths)`,
+    );
+  }
   const agentRef =
     typeof row.agentRef === "string" && row.agentRef.trim()
       ? row.agentRef.trim()
@@ -288,9 +305,6 @@ function parsePlanTask(
   }
   const category = workerCategory(id, row.category);
   const mode = executionMode(id, row.executionMode);
-  const operatorChoice = isOperatorChoicePolicy(
-    getOrchSettings().squadCliPolicy,
-  );
   const assignedAgent = resolveRosterAgent(
     id,
     agentRef,

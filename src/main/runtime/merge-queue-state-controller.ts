@@ -3,12 +3,14 @@ import {
   MergeCasError,
   MergeQueueBlockedError,
   MergeQueueBusyError,
+  MergeQueuePersistenceError,
   MergeQueueStateError,
   type MergeQueueBlock,
   type MergeQueueEntry,
   type MergeQueueEntryStatus,
   type MergeQueueEvent,
   type MergeQueueEventType,
+  type MergeFailureDisposition,
   type MergeQueueIntegrationState,
   type MergeQueueStateSnapshot,
   type MergeQueueStateStore,
@@ -42,6 +44,7 @@ interface BlockAttemptInput {
   readonly errorName: string;
   readonly reason: string;
   readonly now: number;
+  readonly disposition: MergeFailureDisposition;
   readonly integratedSha?: string;
   /** Exact Git CAS restored candidate → integration base. */
   readonly integrationRolledBack?: boolean;
@@ -63,8 +66,19 @@ export class MergeQueueStateController {
   }
 
   snapshot(scopeKey: string): MergeQueueStateSnapshot {
+    let snapshot: MergeQueueStateSnapshot;
     try {
-      return validateMergeQueueStateSnapshot(this.#store.read(scopeKey));
+      snapshot = this.#store.read(scopeKey);
+    } catch (error) {
+      throw new MergeQueuePersistenceError(
+        error instanceof Error
+          ? `merge queue persistence read failed: ${error.message}`
+          : 'merge queue persistence read failed',
+        { cause: error },
+      );
+    }
+    try {
+      return validateMergeQueueStateSnapshot(snapshot);
     } catch (error) {
       throw new MergeQueueStateError(
         error instanceof Error ? error.message : 'invalid merge queue state',
@@ -186,6 +200,7 @@ export class MergeQueueStateController {
       errorName: input.errorName,
       reason: input.reason,
       blockedAt: input.now,
+      disposition: input.disposition,
     });
     this.mutate(claimed.scopeKey, (state, nextRevision) => {
       const current = this.#assertCurrentAttempt(state, claimed);
@@ -302,14 +317,29 @@ export class MergeQueueStateController {
       const nextRevision = snapshot.revision + 1;
       const next = update(current, nextRevision);
       const state = this.#validatedState(next, nextRevision);
-      if (this.#store.compareAndSwap(scopeKey, snapshot.revision, state)) return;
+      let swapped: boolean;
+      try {
+        swapped = this.#store.compareAndSwap(
+          scopeKey,
+          snapshot.revision,
+          state,
+        );
+      } catch (error) {
+        throw new MergeQueuePersistenceError(
+          error instanceof Error
+            ? `merge queue persistence write failed: ${error.message}`
+            : 'merge queue persistence write failed',
+          { cause: error },
+        );
+      }
+      if (swapped) return;
       if (expectedRevision !== undefined) {
         throw new MergeCasError(
           'merge queue compare-and-swap rejected the fenced retry transition',
         );
       }
     }
-    throw new MergeQueueStateError(
+    throw new MergeQueuePersistenceError(
       'merge queue persistence CAS could not converge',
     );
   }

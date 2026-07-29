@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  assertMissionSchedulerPreProviderAuthority,
   awaitMissionSchedulerAuthorityFence,
   buildMissionSchedulerTaskPrompt,
   finalizeGuidedIsolatedAdvisory,
@@ -9,10 +8,16 @@ import {
   loadMissionSchedulerDependencyHandoffs,
   MISSION_SCHEDULER_WORKER_LEASE_POLICY,
   missionAccountQuotaScores,
+  missionSchedulerConfiguredWorkerCap,
   missionSchedulerLiveRosterAdapter,
   missionSchedulerRouteRequiresAccount,
   missionSchedulerHasKickoffAuthority,
+  projectQualityRepairFailure,
+  projectUnchangedQueueRepair,
+  projectTerminalFinalizationFailure,
   projectTerminalMergeFailure,
+  recoverableIntegratedMergeEntry,
+  requeueRetiredQualityRepairs,
   reconcileMissionCompletionAfterSchedulerTick,
   reconcileInterruptedWorktreeReservationFailuresForScope,
   reconcileTerminalMergeFailureForScope,
@@ -29,8 +34,228 @@ import { runBoundedMissionSchedulerPass } from "./mission-scheduler-concurrency"
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "../runtime/worktree-manager";
 import type { Mission } from "../../shared/orch-types";
+import { MissionSchedulerDispatchAuthorityError } from "./mission-scheduler-dispatch-transaction";
 
-describe("mission scheduler asynchronous PREVC fence", () => {
+describe("mission scheduler asynchronous authority fence", () => {
+  it("defers transient finalization failures and projects only proven terminal authority loss", () => {
+    const blockMergeFailureByCoordinator = vi.fn();
+    const dispatches = {
+      get: vi.fn(() => ({
+        taskId: "task-finalize",
+        missionId: "mission-finalize",
+        state: "handoff_ready" as const,
+        revision: 7,
+      })),
+      blockMergeFailureByCoordinator,
+    };
+
+    expect(
+      projectTerminalFinalizationFailure(
+        {
+          missionId: "mission-finalize",
+          taskId: "task-finalize",
+          error: new Error("temporary sqlite busy"),
+        },
+        dispatches as never,
+      ),
+    ).toBe(false);
+    expect(blockMergeFailureByCoordinator).not.toHaveBeenCalled();
+
+    expect(
+      projectTerminalFinalizationFailure(
+        {
+          missionId: "mission-finalize",
+          taskId: "task-finalize",
+          error: new MissionSchedulerDispatchAuthorityError(
+            "finalization authority diverged",
+          ),
+        },
+        dispatches as never,
+      ),
+    ).toBe(true);
+    expect(blockMergeFailureByCoordinator).toHaveBeenCalledOnce();
+  });
+
+  it("selects a retryable post-restart integrated merge for automatic finalization", () => {
+    const snapshot = {
+      revision: 8,
+      activeTaskKey: null,
+      blocked: {
+        taskKey: "mission-a:task-a",
+        errorName: "MergeInterruptedError",
+        reason: "restart during finalizing",
+        blockedAt: 10,
+        disposition: "retryable" as const,
+      },
+      events: [],
+      entries: [
+        {
+          id: "merge-a",
+          taskKey: "mission-a:task-a",
+          missionId: "mission-a",
+          taskId: "task-a",
+          attempt: 1,
+          status: "blocked" as const,
+          integratedSha: "a".repeat(40),
+          evidenceIds: [],
+          createdAt: 1,
+          updatedAt: 10,
+        },
+      ],
+    };
+
+    expect(
+      recoverableIntegratedMergeEntry(snapshot, "mission-a", "task-a"),
+    ).toMatchObject({
+      status: "blocked",
+      integratedSha: "a".repeat(40),
+    });
+    expect(
+      recoverableIntegratedMergeEntry(
+        {
+          ...snapshot,
+          blocked: { ...snapshot.blocked, disposition: "terminal" },
+        },
+        "mission-a",
+        "task-a",
+      ),
+    ).toBeNull();
+  });
+
+  it("projects quality rejection to repair and requeues only after exact retirement proof", () => {
+    const blockedDispatch = {
+      taskId: "task-repair",
+      revision: 9,
+      state: "merging",
+      sessionId: "session-repair",
+      workerIncarnationId: "incarnation-repair",
+    };
+    const blockQualityRepairByCoordinator = vi.fn(() => undefined);
+    const error = Object.assign(
+      new Error("candidate review failed"),
+      {
+        name: "MergeValidationRejectedError",
+        evidenceIds: ["review:finding-1"],
+      },
+    );
+
+    expect(
+      projectQualityRepairFailure(
+        { taskId: "task-repair", error },
+        {
+          get: () => blockedDispatch,
+          blockQualityRepairByCoordinator,
+          requeueQualityRepairAfterWorkerExit: vi.fn(),
+        },
+      ),
+    ).toBe(true);
+    expect(blockQualityRepairByCoordinator).toHaveBeenCalledWith({
+      taskId: "task-repair",
+      revision: 9,
+      reason:
+        "candidate review failed; evidence=review:finding-1",
+    });
+
+    const retryRequired = Object.assign(
+      new Error("retry requires a new task commit"),
+      { name: "MergeRetryRequiredError" },
+    );
+    expect(
+      projectUnchangedQueueRepair(
+        {
+          taskId: "task-repair",
+          error: retryRequired,
+          snapshot: {
+            revision: 12,
+            activeTaskKey: null,
+            blocked: {
+              taskKey: "mission-repair:task-repair",
+              errorName: "MergeValidationRejectedError",
+              reason: "candidate review failed",
+              blockedAt: 10,
+              disposition: "repair",
+            },
+            events: [],
+            entries: [{
+              id: "merge-repair",
+              taskKey: "mission-repair:task-repair",
+              missionId: "mission-repair",
+              taskId: "task-repair",
+              attempt: 1,
+              status: "blocked",
+              evidenceIds: [],
+              createdAt: 1,
+              updatedAt: 10,
+            }],
+          },
+        },
+        {
+          get: () => blockedDispatch,
+          blockQualityRepairByCoordinator,
+          requeueQualityRepairAfterWorkerExit: vi.fn(),
+        },
+      ),
+    ).toBe(true);
+    expect(blockQualityRepairByCoordinator).toHaveBeenLastCalledWith({
+      taskId: "task-repair",
+      revision: 9,
+      reason: "candidate review failed",
+    });
+
+    const requeueQualityRepairAfterWorkerExit = vi.fn(() => undefined);
+    expect(
+      requeueRetiredQualityRepairs({
+        dispatches: [{
+          ...blockedDispatch,
+          state: "blocked",
+          lastError:
+            "[NEXUS_QUALITY_REPAIR] candidate review failed",
+        }],
+        retiredTaskIds: [],
+        alreadyRetiredTaskIds: [],
+        store: { requeueQualityRepairAfterWorkerExit },
+      }),
+    ).toEqual([]);
+    expect(requeueQualityRepairAfterWorkerExit).not.toHaveBeenCalled();
+
+    expect(
+      requeueRetiredQualityRepairs({
+        dispatches: [{
+          ...blockedDispatch,
+          state: "blocked",
+          lastError:
+            "[NEXUS_QUALITY_REPAIR] candidate review failed",
+        }],
+        retiredTaskIds: ["task-repair"],
+        alreadyRetiredTaskIds: [],
+        store: { requeueQualityRepairAfterWorkerExit },
+      }),
+    ).toEqual(["task-repair"]);
+    expect(requeueQualityRepairAfterWorkerExit).toHaveBeenCalledWith({
+      taskId: "task-repair",
+      revision: 9,
+      sessionId: "session-repair",
+      workerIncarnationId: "incarnation-repair",
+    });
+  });
+
+  it("uses the approved maxWorkers budget as the scheduler ceiling", () => {
+    const intent = compileIntentContract({
+      goal: "Executar duas tarefas sem exceder a capacidade aprovada",
+      acceptanceCriteria: ["A segunda tarefa aguarda a primeira"],
+      intentVersion: 1,
+      source: "typed",
+      lane: "standard",
+    });
+
+    expect(
+      missionSchedulerConfiguredWorkerCap({
+        ...intent,
+        budgets: { ...intent.budgets, maxWorkers: 1 },
+      }),
+    ).toBe(1);
+  });
+
   it("routes a promoted builtin mission only through the post-merge PREVC bridge", async () => {
     const intent = compileIntentContract({
       goal: "Executar o PRD promovido",
@@ -119,39 +344,6 @@ describe("mission scheduler asynchronous PREVC fence", () => {
     },
   );
 
-  it.each(["missing", "corrupt", "legacy"])(
-    "blocks provider/claim/worktree for guided %s metadata before execution",
-    (metadataKind) => {
-      const providerDiscovery = vi.fn();
-      const claim = vi.fn();
-      const worktree = vi.fn();
-      const contract = compileIntentContract({
-        goal: "Entregar com PREVC",
-        acceptanceCriteria: ["Entrega validada"],
-        intentVersion: 1,
-        source: "typed",
-        lane: "standard",
-      });
-
-      expect(() => {
-        assertMissionSchedulerPreProviderAuthority({
-          mission: {
-            id: "mission-guided-metadata",
-            squadId: "agentic-guided-metadata",
-            intentContract: contract,
-          },
-          workflow: { contract: null, workflow: null },
-        });
-        providerDiscovery(metadataKind);
-        claim(metadataKind);
-        worktree(metadataKind);
-      }).toThrow(/guided_prevc_required/i);
-      expect(providerDiscovery).not.toHaveBeenCalled();
-      expect(claim).not.toHaveBeenCalled();
-      expect(worktree).not.toHaveBeenCalled();
-    },
-  );
-
   it("blocks claim/worktree after deferred account preparation loses authority", async () => {
     let releasePreparation!: (value: string) => void;
     const preparation = new Promise<string>((resolve) => {
@@ -163,7 +355,7 @@ describe("mission scheduler asynchronous PREVC fence", () => {
     const operation = awaitMissionSchedulerAuthorityFence({
       assertCurrentAuthority: () => {
         if (!authorityCurrent) {
-          throw new Error("guided_prevc_not_at_execution");
+          throw new Error("mission_dispatch_authority_revoked");
         }
       },
       prepare: () => preparation,
@@ -175,7 +367,9 @@ describe("mission scheduler asynchronous PREVC fence", () => {
     authorityCurrent = false;
     releasePreparation("account-a");
 
-    await expect(operation).rejects.toThrow(/guided_prevc_not_at_execution/);
+    await expect(operation).rejects.toThrow(
+      /mission_dispatch_authority_revoked/,
+    );
     expect(claim).not.toHaveBeenCalled();
     expect(worktree).not.toHaveBeenCalled();
   });
@@ -256,14 +450,14 @@ function guidedIsolatedAdvisoryDispatch(
   return {
     ...guidedQualityGateDispatch(),
     id: "dispatch-guided-advisory",
-    taskId: "guided-advisory-omp",
-    workerId: "Advisor OMP",
+    taskId: "guided-advisory-opencode",
+    workerId: "Advisor OpenCode",
     ownership: {
       files: ["src"],
       symbols: [],
       domains: ["guided-isolated-advisory", "sequential-only"],
     },
-    agentRef: "advisor-omp",
+    agentRef: "advisor-opencode",
     agentCategory: "architect",
     workerIncarnationId: "worker-incarnation-guided-advisory",
     sessionId: "session-guided-advisory",
@@ -282,11 +476,11 @@ function isolatedAdvisoryPreparation(
     record: {
       ...prepared.record,
       id: "worktree-guided-advisory",
-      taskId: "guided-advisory-omp",
-      taskKey: "mission-guided:guided-advisory-omp",
-      workerId: "Advisor OMP",
-      worktreePath: "/runtime/worktrees/guided-advisory-omp",
-      branchRef: "refs/heads/nexus/guided-advisory-omp",
+      taskId: "guided-advisory-opencode",
+      taskKey: "mission-guided:guided-advisory-opencode",
+      workerId: "Advisor OpenCode",
+      worktreePath: "/runtime/worktrees/guided-advisory-opencode",
+      branchRef: "refs/heads/nexus/guided-advisory-opencode",
       ownership: {
         files: ["src"],
         symbols: [],
@@ -469,23 +663,23 @@ describe("mission scheduler worker lease contract", () => {
     ).toBe(true);
   });
 
-  it("rejects login-needed OMP through the production scheduler conversion", () => {
+  it("rejects login-needed AGY through the production scheduler conversion", () => {
     const accountAvailable = vi.fn(() => true);
     expect(
       missionSchedulerLiveRosterAdapter({
         provider: {
-          adapterId: "omp",
+          adapterId: "agy",
           enabled: true,
           installed: true,
           authStrategy: "login-needed",
-          models: ["anthropic/claude-sonnet"],
-          defaultModel: "anthropic/claude-sonnet",
+          models: ["gemini-3.6-pro-high"],
+          defaultModel: "gemini-3.6-pro-high",
         },
-        requestedModel: "anthropic/claude-sonnet",
+        requestedModel: "gemini-3.6-pro-high",
         hasAvailableAccount: accountAvailable,
       }),
     ).toMatchObject({
-      id: "omp",
+      id: "agy",
       installed: false,
     });
     expect(accountAvailable).not.toHaveBeenCalled();
@@ -552,6 +746,35 @@ describe("mission scheduler worker lease contract", () => {
     expect(prompt).toContain("nem tente nexus_clarify");
     expect(prompt).toContain("faça somente um commit LOCAL");
     expect(prompt).not.toContain("não crie commit vazio");
+  });
+
+  it("turns a rejected candidate into an explicit corrective worker prompt", () => {
+    const prompt = buildMissionSchedulerTaskPrompt(
+      {
+        id: "task-quality-repair",
+        status: "pending",
+        dependsOn: [],
+        ownership: {
+          files: ["src"],
+          symbols: [],
+          domains: ["implementation"],
+        },
+        merged: false,
+        parallelEligible: true,
+      },
+      {
+        agentName: "Executor principal",
+        category: "executor",
+        executionMode: "isolated_worktree",
+        qualityRepairReason:
+          "candidate review failed; evidence=review:finding-1",
+      },
+    );
+
+    expect(prompt).toContain("tentativa de reparo automático");
+    expect(prompt).toContain("candidate review failed");
+    expect(prompt).toContain("confirme no workspace");
+    expect(prompt).toContain("novo commit LOCAL");
   });
 
   it("feeds the next worker only a bounded handoff bound to the completed physical dependency", () => {
@@ -762,7 +985,7 @@ describe("mission scheduler worker lease contract", () => {
     ).toBe(true);
     const prompt = buildMissionSchedulerTaskPrompt(
       {
-        id: "guided-advisory-omp",
+        id: "guided-advisory-opencode",
         status: "pending",
         dependsOn: [],
         ownership: {
@@ -774,7 +997,7 @@ describe("mission scheduler worker lease contract", () => {
         parallelEligible: false,
       },
       {
-        agentName: "Advisor OMP",
+        agentName: "Advisor OpenCode",
         category: "architect",
         executionMode: "isolated_worktree",
       },
@@ -854,7 +1077,7 @@ describe("mission scheduler worker lease contract", () => {
         {
           scope,
           missionId: "mission-guided",
-          taskId: "guided-advisory-omp",
+          taskId: "guided-advisory-opencode",
           dispatch: handoffReady,
         },
         {
@@ -890,7 +1113,7 @@ describe("mission scheduler worker lease contract", () => {
         {
           scope: testProjectScope(),
           missionId: "mission-guided",
-          taskId: "guided-advisory-omp",
+          taskId: "guided-advisory-opencode",
           dispatch: guidedIsolatedAdvisoryDispatch(),
         },
         {
@@ -918,7 +1141,7 @@ describe("mission scheduler worker lease contract", () => {
         {
           scope: testProjectScope(),
           missionId: "mission-guided",
-          taskId: "guided-advisory-omp",
+          taskId: "guided-advisory-opencode",
           dispatch: guidedIsolatedAdvisoryDispatch(),
         },
         {
@@ -945,7 +1168,7 @@ describe("mission scheduler worker lease contract", () => {
         {
           scope: testProjectScope(),
           missionId: "mission-guided",
-          taskId: "guided-advisory-omp",
+          taskId: "guided-advisory-opencode",
           dispatch: guidedIsolatedAdvisoryDispatch({
             ownership: {
               files: ["src"],
@@ -1130,7 +1353,7 @@ describe("mission scheduler worker lease contract", () => {
           now: () => 42,
         },
       ),
-    ).rejects.toThrow(/green sensors.*independent review/i);
+    ).rejects.toThrow(/sensors or review rejected the candidate checkout/i);
 
     expect(markValidated).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
@@ -1235,6 +1458,7 @@ describe("mission scheduler worker lease contract", () => {
           errorName: "MergeInterruptedError",
           reason: "merge interrompido durante post-validating",
           blockedAt: 10,
+          disposition: "terminal",
         },
       })),
       mergeSnapshot: vi.fn(() => ({
@@ -1245,6 +1469,7 @@ describe("mission scheduler worker lease contract", () => {
           errorName: "MergeInterruptedError",
           reason: "merge interrompido durante post-validating",
           blockedAt: 10,
+          disposition: "terminal",
         },
         events: [],
         entries: [
@@ -1276,6 +1501,39 @@ describe("mission scheduler worker lease contract", () => {
         /merge interrompido durante post-validating/i,
       ),
     });
+  });
+
+  it("leaves a retryable interrupted merge for automatic queue recovery", () => {
+    const scope = testProjectScope();
+    const blockMergeFailureByCoordinator = vi.fn();
+    const registry = {
+      reconcile: vi.fn(() => ({
+        action: "blocked-interrupted",
+        taskKey: "task-key-retry",
+      })),
+      mergeSnapshot: vi.fn(() => ({
+        revision: 2,
+        activeTaskKey: null,
+        blocked: {
+          taskKey: "task-key-retry",
+          errorName: "MergeInterruptedError",
+          reason: "provider process ended during post-validation",
+          blockedAt: 10,
+          disposition: "retryable",
+        },
+        events: [],
+        entries: [],
+      })),
+    };
+
+    expect(
+      reconcileTerminalMergeFailureForScope(scope, {
+        registry: registry as never,
+        getDispatches: () =>
+          ({ get: vi.fn(), blockMergeFailureByCoordinator }) as never,
+      }),
+    ).toBe(false);
+    expect(blockMergeFailureByCoordinator).not.toHaveBeenCalled();
   });
 
   it("projects a failed interrupted worktree reservation before its lease expires", () => {

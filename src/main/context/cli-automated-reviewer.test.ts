@@ -85,6 +85,9 @@ describe('CLI automated reviewer', () => {
         executionScope: expect.objectContaining({ rootRealPath: '/candidate' }),
         omitHandoffContract: true,
         allowedTools: expect.not.arrayContaining(['nexus_file_write', 'nexus_terminal_run']),
+        prompt: expect.stringContaining(
+          'dead or unreachable code, abandoned compatibility paths, duplicate implementations',
+        ),
       }),
       expect.objectContaining({
         onPaneCreated: expect.any(Function),

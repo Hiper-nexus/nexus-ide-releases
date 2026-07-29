@@ -79,7 +79,6 @@ export function orchestrationEvidenceForAdapter(
 }
 
 function hasPromptTemplate(adapter: Adapter): boolean {
-  if (adapter.kind === 'cli-rpc') return true;
   if (adapter.kind !== 'cli-pty') return false;
   if (adapter.promptInjection.method === 'stdin') return true;
   return adapter.spawn.headless.some((arg) => arg.includes('{{PROMPT}}'));
@@ -96,14 +95,12 @@ export function adapterCapabilityMatrixForAdapter(
   adapter: Adapter,
   origin: AdapterOrigin,
 ): AdapterCapabilityMatrix {
-  const launchable =
-    adapter.kind === 'cli-pty' || adapter.kind === 'cli-rpc';
+  const launchable = adapter.kind === 'cli-pty';
   const promptInjectable = launchable && hasPromptTemplate(adapter);
   const statusObservable =
-    adapter.kind === 'cli-rpc' ||
-    (adapter.kind === 'cli-pty' &&
-      (adapter.stateParsing.idle.type === 'regex' ||
-        adapter.stateParsing.idle.type === 'timeout'));
+    adapter.kind === 'cli-pty' &&
+    (adapter.stateParsing.idle.type === 'regex' ||
+      adapter.stateParsing.idle.type === 'timeout');
   const resumable =
     adapter.kind === 'cli-pty' &&
     (adapter.spawn.resumeArgs.length > 0 ||
@@ -135,6 +132,42 @@ export function adapterCapabilityMatrixForAdapter(
     governedWriter,
     verifiedMaestro,
   });
+}
+
+/**
+ * PTY-stream handoff is a Main-owned protocol, so it does not depend on a
+ * provider plugin being bundled by Nexus. Any launchable CLI whose prompt can
+ * be injected and whose terminal lifecycle is observable can return the
+ * session-bound completion marker. Hardened write authority remains a
+ * separate, release-owned capability.
+ */
+export function taskHandoffCapabilityForAdapter(
+  adapter: Adapter,
+  origin: AdapterOrigin,
+): boolean {
+  const capabilities = adapterCapabilityMatrixForAdapter(adapter, origin);
+  return (
+    capabilities.launchable &&
+    capabilities.promptInjectable &&
+    capabilities.statusObservable
+  );
+}
+
+/**
+ * The Main-owned action/result protocol rides the same observable PTY facts as
+ * physical worker handoff, but is published separately so Maestro eligibility
+ * can never be inferred from a one-way completion route.
+ */
+export function missionControlCapabilityForAdapter(
+  adapter: Adapter,
+  origin: AdapterOrigin,
+): boolean {
+  const capabilities = adapterCapabilityMatrixForAdapter(adapter, origin);
+  return (
+    capabilities.launchable &&
+    capabilities.promptInjectable &&
+    capabilities.statusObservable
+  );
 }
 
 /** Validate and load a single raw JSON object as an adapter. */
@@ -240,7 +273,6 @@ function toAdapterInfo(
   resolution: AdapterBinResolution,
   origin: AdapterOrigin,
 ): AdapterInfo {
-  // cli-rpc shares the CLI install/auth surface with cli-pty (same binary).
   const installCommand =
     adapter.kind !== 'api-provider' ? adapter.install.command : '';
   const loginHint =
@@ -267,6 +299,8 @@ function toAdapterInfo(
     installCommand,
     loginHint,
     idleTimeoutMs: resolveIdleTimeoutMs(adapter),
+    taskHandoffCapable: taskHandoffCapabilityForAdapter(adapter, origin),
+    missionControlCapable: missionControlCapabilityForAdapter(adapter, origin),
     orchestratorCapable:
       adapter.kind === 'cli-pty' &&
       hasNexusMcpCapability(adapter.quirks),
@@ -487,8 +521,6 @@ export function primaryKeyEnvVar(adapter: Adapter): string | null {
   if (adapter.auth.method === 'oauth' || adapter.auth.method === 'subscription') {
     return null;
   }
-  // cli-rpc declares no env passthrough block (no PTY spawn env to inject).
-  if (adapter.kind === 'cli-rpc') return adapter.auth.envVarFallback ?? null;
   return adapter.auth.envVarFallback ?? adapter.env.passthrough[0] ?? null;
 }
 
@@ -537,8 +569,8 @@ export function resolveAdapterBinary(id: string): string | null {
  * Re-fold PATH, re-probe every adapter binary, broadcast. Use after external
  * CLI installs (brew/npm/kimi installer) without restarting the app.
  */
-export function rescanAdapterBinaries(): AdapterInfo[] {
-  refreshUserPath();
+export async function rescanAdapterBinaries(): Promise<AdapterInfo[]> {
+  await refreshUserPath();
   refreshInstalledCache();
   invalidateAdapterHotCache();
   const infos = listAdapterInfos();

@@ -23,7 +23,6 @@ describe("real mission advisor expectations", () => {
       "kimi",
       "agy",
       "opencode",
-      "omp",
       "claude",
       "glm",
     ]);
@@ -34,7 +33,6 @@ describe("real mission advisor expectations", () => {
       ["kimi", "advisory-unconfined", null],
       ["agy", "advisory-unconfined", null],
       ["opencode", "advisory-unconfined", null],
-      ["omp", "advisory-unconfined", null],
       ["claude", "mechanically-confined", null],
       ["glm", "advisory-unconfined", null],
     ]);
@@ -47,9 +45,9 @@ describe("real mission advisor expectations", () => {
   it("parses the skip env as a comma-separated CLI list in canonical order", () => {
     expect(
       realMissionE2EAdvisorSkipClis({
-        NEXUS_REAL_MISSION_ADVISOR_SKIP: "omp, grok ,unknown-cli,agy",
+        NEXUS_REAL_MISSION_ADVISOR_SKIP: "opencode, grok ,unknown-cli,agy",
       }),
-    ).toEqual(["grok", "agy", "omp"]);
+    ).toEqual(["grok", "agy", "opencode"]);
     expect(realMissionE2EAdvisorSkipClis({})).toEqual([]);
     expect(
       realMissionE2EAdvisorSkipClis({
@@ -69,7 +67,7 @@ describe("real mission advisor expectations", () => {
     ).toBe("no-credential");
     expect(
       realMissionAdvisorPtyExpectations(expectations).map((entry) => entry.cli),
-    ).toEqual(["grok", "agy", "opencode", "omp", "glm"]);
+    ).toEqual(["grok", "agy", "opencode", "glm"]);
   });
 
   it("reserves the claude advisor in the claude orchestrator variant", () => {
@@ -88,7 +86,7 @@ describe("real mission advisor expectations", () => {
     // reserveClaude: nenhuma sessão worker claude entra na cerca física.
     expect(
       realMissionAdvisorPtyExpectations(expectations).map((entry) => entry.cli),
-    ).toEqual(["grok", "kimi", "agy", "opencode", "omp", "glm"]);
+    ).toEqual(["grok", "kimi", "agy", "opencode", "glm"]);
     // A advisor reservada nunca entra na exigência de handoff.
     const participation = buildRealMissionParticipation({
       expectations,
@@ -110,7 +108,6 @@ describe("real mission advisor expectations", () => {
       "kimi",
       "agy",
       "opencode",
-      "omp",
       "glm",
     ]);
   });
@@ -174,7 +171,6 @@ describe("real mission advisor participation receipts", () => {
     expect(realMissionAdvisorsMissingHandoff(participation)).toEqual([
       "agy",
       "opencode",
-      "omp",
       "claude",
       "glm",
     ]);
@@ -182,7 +178,7 @@ describe("real mission advisor participation receipts", () => {
 
   it("excludes skipped advisors from the handoff requirement", () => {
     const participation = buildRealMissionParticipation({
-      expectations: expectedRealMissionAdvisors(["agy", "omp", "claude"]),
+      expectations: expectedRealMissionAdvisors(["agy", "opencode", "claude"]),
       ptyByCli: new Map(),
       dispatches: [],
       handoffIssuedAt: () => null,
@@ -200,7 +196,6 @@ describe("real mission advisor participation receipts", () => {
     expect(realMissionAdvisorsMissingHandoff(participation)).toEqual([
       "grok",
       "kimi",
-      "opencode",
       "glm",
     ]);
   });
@@ -226,7 +221,7 @@ describe("real mission physical PTY gate with advisors", () => {
   const gate = () =>
     new ExactRealMissionPhysicalPtyGate(
       "mission-e2e",
-      realMissionAdvisorPtyExpectations(expectedRealMissionAdvisors(["omp"])),
+      realMissionAdvisorPtyExpectations(expectedRealMissionAdvisors(["opencode"])),
     );
 
   it("accepts one physical session per expected advisor identity", () => {
@@ -252,11 +247,11 @@ describe("real mission physical PTY gate with advisors", () => {
   it("rejects skipped or unknown advisor CLIs as roster violations", () => {
     const fence = gate();
 
-    // omp está skipped (fora do roster): sessão física dela é violação.
+    // OpenCode está skipped (fora do roster): sessão física dela é violação.
     expect(
       fence.inspect(
-        "session-omp",
-        advisorAgent("session-omp", "omp", "E2E Advisor OMP"),
+        "session-opencode",
+        advisorAgent("session-opencode", "opencode", "E2E Advisor OpenCode"),
       ).kind,
     ).toBe("violation");
     // CLI sem rota advisory nunca entra na cerca.

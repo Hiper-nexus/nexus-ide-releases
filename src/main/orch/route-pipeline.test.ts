@@ -71,19 +71,18 @@ describe('scoreRouteCandidate', () => {
     expect(open.total).toBeLessThan(-1000);
   });
 
-  it('boosts omp under prefer participation', () => {
-    const e = entry('omp', 'zai/glm-5');
+  it('boosts an explicitly preferred adapter', () => {
+    const e = entry('grok', 'grok-4.1');
     const prefer = scoreRouteCandidate(e, 2, {
       tier: 'medium',
       modelCatalog: catalog,
-      context: { ompParticipation: 'prefer' },
+      context: { preferAdapters: ['grok'] },
     });
-    const off = scoreRouteCandidate(e, 2, {
+    const neutral = scoreRouteCandidate(e, 2, {
       tier: 'medium',
       modelCatalog: catalog,
-      context: { ompParticipation: 'off' },
     });
-    expect(prefer.omp).toBeGreaterThan(off.omp);
+    expect(prefer.preference).toBeGreaterThan(neutral.preference);
   });
 });
 
@@ -106,46 +105,43 @@ describe('multiScoreRerank', () => {
   it('prefers less-used adapter for diversity', () => {
     const ranked = [
       entry('codex', 'gpt-5.4'),
-      entry('omp', 'zai/glm-5'),
+      entry('grok', 'grok-4.1'),
     ];
     const { ranked: out } = multiScoreRerank({
       ranked,
       tier: 'medium',
       modelCatalog: catalog,
-      context: { ompParticipation: 'diversity' },
       missionUseCounts: new Map([['codex', 3]]),
     });
-    // codex heavily used → diversity attenuation drops it below omp.
-    expect(out[0]?.c.adapterId).toBe('omp');
+    // codex heavily used → diversity attenuation drops it below grok.
+    expect(out[0]?.c.adapterId).toBe('grok');
   });
 
   it('reports the same diversity multiplier used by the score', () => {
     const ranked = [
       entry('codex', 'gpt-5.4'),
-      entry('omp', 'zai/glm-5'),
+      entry('grok', 'grok-4.1'),
     ];
     const { note } = multiScoreRerank({
       ranked,
       tier: 'medium',
       modelCatalog: catalog,
-      context: { ompParticipation: 'diversity' },
       missionUseCounts: new Map([
         ['codex', 1],
-        ['omp', 2],
+        ['grok', 2],
       ]),
     });
 
     expect(note).toContain('diversity×1');
   });
 
-  it('keeps unused table lead ahead of unused omp under diversity', () => {
-    const ranked = [entry('glm', 'glm-5.2'), entry('omp', 'zai/glm-5')];
+  it('keeps an unused table lead ahead of another unused adapter', () => {
+    const ranked = [entry('glm', 'glm-5.2'), entry('grok', 'grok-4.1')];
     const { ranked: out } = multiScoreRerank({
       ranked,
       tier: 'medium',
       modelCatalog: catalog,
       context: {
-        ompParticipation: 'diversity',
         missionUsedAdapters: new Set(['claude']),
       },
       missionUseCounts: new Map([['claude', 1]]),
@@ -156,8 +152,8 @@ describe('multiScoreRerank', () => {
 
 describe('countAdapterUses', () => {
   it('counts occurrences', () => {
-    const m = countAdapterUses(['codex', 'omp', 'codex']);
+    const m = countAdapterUses(['codex', 'grok', 'codex']);
     expect(m.get('codex')).toBe(2);
-    expect(m.get('omp')).toBe(1);
+    expect(m.get('grok')).toBe(1);
   });
 });

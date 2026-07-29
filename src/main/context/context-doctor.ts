@@ -143,6 +143,7 @@ export type ContextReadinessCode =
   | 'missing-sensors'
   | 'invalid-sensors'
   | 'missing-required-sensors'
+  | 'missing-quality-sensors'
   | 'missing-context-attestation'
   | 'invalid-context-attestation'
   | 'invalid-context'
@@ -198,7 +199,17 @@ const DEFAULT_POLICY = Object.freeze({
   }),
 });
 
-const RECOMMENDED_PACKAGE_SENSOR_IDS = ['typecheck', 'unit'] as const;
+const CORE_PACKAGE_SENSOR_IDS = ['typecheck', 'unit'] as const;
+const QUALITY_PACKAGE_SENSOR_IDS = [
+  'dead-code',
+  'duplication',
+  'api-similarity',
+  'coverage',
+] as const;
+const RECOMMENDED_PACKAGE_SENSOR_IDS = [
+  ...CORE_PACKAGE_SENSOR_IDS,
+  ...QUALITY_PACKAGE_SENSOR_IDS,
+] as const;
 type RecommendedPackageSensorId =
   (typeof RECOMMENDED_PACKAGE_SENSOR_IDS)[number];
 type JavascriptPackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
@@ -207,6 +218,10 @@ const RECOMMENDED_PACKAGE_SENSOR_SCRIPTS =
   Object.freeze<Record<RecommendedPackageSensorId, string>>({
     typecheck: 'typecheck',
     unit: 'test',
+    'dead-code': 'dead-code',
+    duplication: 'duplication',
+    'api-similarity': 'api-similarity',
+    coverage: 'coverage',
   });
 const DESIGN_SYSTEM_SENSOR = Object.freeze({
   id: 'design-system',
@@ -566,12 +581,11 @@ function defaultSensorsForScope(scope: ProjectExecutionScope) {
   return Object.freeze({
     schemaVersion: 1 as const,
     sensors: Object.freeze([
-      ...(scripts.has('typecheck')
-        ? [defaultPackageSensor('typecheck', manager)]
-        : []),
-      ...(scripts.has('test')
-        ? [defaultPackageSensor('unit', manager)]
-        : []),
+      ...RECOMMENDED_PACKAGE_SENSOR_IDS.flatMap((id) =>
+        scripts.has(RECOMMENDED_PACKAGE_SENSOR_SCRIPTS[id])
+          ? [defaultPackageSensor(id, manager)]
+          : [],
+      ),
       DESIGN_SYSTEM_SENSOR,
     ]),
   });
@@ -821,7 +835,7 @@ export function inspectContextReadiness(
     sensorIds = applicableContextSensors(scope, sensors.data.sensors)
       .map((sensor) => sensor.id)
       .sort();
-    const missing = RECOMMENDED_PACKAGE_SENSOR_IDS.filter(
+    const missing = CORE_PACKAGE_SENSOR_IDS.filter(
       (id) => !sensorIds.includes(id),
     );
     const expected = expectedPackageSensorIds(
@@ -847,6 +861,35 @@ export function inspectContextReadiness(
         message:
           'Sensores recomendados ausentes porque a stack não expõe esses scripts.',
         details: missingOptional,
+      });
+    }
+    const missingQuality = QUALITY_PACKAGE_SENSOR_IDS.filter(
+      (id) => !sensorIds.includes(id),
+    );
+    const expectedQuality = expectedPackageSensorIds(
+      scope,
+      sensors.data.sensors,
+    );
+    const missingExpectedQuality = missingQuality.filter((id) =>
+      expectedQuality.has(id),
+    );
+    const missingUnavailableQuality = missingQuality.filter(
+      (id) => !expectedQuality.has(id),
+    );
+    if (missingExpectedQuality.length > 0) {
+      warnings.push({
+        code: 'missing-quality-sensors',
+        message:
+          'O projeto expõe checks de qualidade sênior sem sensores canônicos configurados.',
+        details: missingExpectedQuality,
+      });
+    }
+    if (missingUnavailableQuality.length > 0) {
+      warnings.push({
+        code: 'missing-quality-sensors',
+        message:
+          'Checks de qualidade sênior permanecem advisory porque a stack não expõe comandos compatíveis.',
+        details: missingUnavailableQuality,
       });
     }
   }

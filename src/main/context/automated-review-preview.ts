@@ -8,6 +8,7 @@ const WALK_EXCLUSIONS = new Set([
   '.context',
   '.git',
   '.nexus',
+  '.nexus-memory',
   'coverage',
   'node_modules',
   'third_party',
