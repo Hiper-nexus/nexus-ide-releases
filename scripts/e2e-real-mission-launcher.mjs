@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -636,6 +637,129 @@ export function preflightStagedGrokAuthentication(
   }
 }
 
+const AGY_AUTH_PROBE_TIMEOUT_MS = 75_000;
+const AGY_AUTH_PROBE_MAX_BUFFER_BYTES = 256 * 1024;
+const AGY_MISSING_CREDENTIAL_PATTERN =
+  /(?:you are not authenticated|not authenticated|not logged in|not signed in|authentication required|login required|please (?:log|sign) in|run\s+\/login|complete (?:the )?(?:google )?(?:oauth|authentication)|no (?:oauth )?credentials?)/iu;
+
+function agyProbeOperationalFailure(reason, cause = undefined) {
+  return new Error(`AGY authentication probe failed operationally: ${reason}`, {
+    ...(cause === undefined ? {} : { cause }),
+  });
+}
+
+/**
+ * AGY 1.1 authenticates from the native macOS keyring/profile. It does not use
+ * the legacy Gemini CLI oauth_creds.json/google_accounts.active contract.
+ * Prove the session through the already trust-checked binary while HOME still
+ * points at the real operator profile. The nonce prevents a banner, cached
+ * text or stale file from being mistaken for a live model response.
+ */
+export function preflightNativeAgyAuthentication(
+  operatorHome,
+  {
+    binary = null,
+    environment = process.env,
+    run = spawnSync,
+  } = {},
+) {
+  if (
+    typeof operatorHome !== "string" ||
+    !path.isAbsolute(operatorHome) ||
+    operatorHome.includes("\0") ||
+    typeof binary !== "string" ||
+    !path.isAbsolute(binary) ||
+    binary.includes("\0")
+  ) {
+    throw agyProbeOperationalFailure("invalid native profile or trusted binary");
+  }
+  const home = path.resolve(operatorHome);
+  try {
+    if (!fs.statSync(home).isDirectory()) {
+      throw agyProbeOperationalFailure("operator HOME is not a directory");
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("AGY authentication probe failed operationally:")
+    ) {
+      throw error;
+    }
+    throw agyProbeOperationalFailure("operator HOME is unavailable", error);
+  }
+  const nonce = randomBytes(16).toString("hex");
+  const marker = `NEXUS_AGY_AUTH_OK_${nonce}`;
+  const prompt =
+    `Sem usar ferramentas, responda exatamente ${marker} e nada mais.`;
+  const inherited = Object.fromEntries(
+    Object.entries(environment).filter(
+      ([key, value]) =>
+        SAFE_CHILD_ENV_KEYS.has(key) && typeof value === "string",
+    ),
+  );
+  let result;
+  try {
+    result = run(
+      binary,
+      [
+        "--model",
+        "gemini-3.6-flash-low",
+        "--effort",
+        "low",
+        "--mode",
+        "plan",
+        "--sandbox",
+        "--output-format",
+        "text",
+        "--print-timeout",
+        "60s",
+        "--print",
+        prompt,
+      ],
+      {
+        cwd: home,
+        encoding: "utf8",
+        env: {
+          ...inherited,
+          HOME: home,
+          USERPROFILE: home,
+          PATH:
+            typeof environment.PATH === "string" && environment.PATH
+              ? environment.PATH
+              : "/usr/bin:/bin:/usr/sbin:/sbin",
+          LANG: inherited.LANG ?? "C",
+          LC_ALL: "C",
+        },
+        shell: false,
+        timeout: AGY_AUTH_PROBE_TIMEOUT_MS,
+        maxBuffer: AGY_AUTH_PROBE_MAX_BUFFER_BYTES,
+      },
+    );
+  } catch (error) {
+    throw agyProbeOperationalFailure("trusted binary could not be executed", error);
+  }
+  if (result?.error || result?.signal || result?.status === null) {
+    throw agyProbeOperationalFailure("process timeout, signal or spawn error");
+  }
+  const output = `${result?.stdout ?? ""}\n${result?.stderr ?? ""}`;
+  if (AGY_MISSING_CREDENTIAL_PATTERN.test(output)) {
+    return Object.freeze({ kind: "missing-credential" });
+  }
+  if (
+    result?.status === 0 &&
+    typeof result.stdout === "string" &&
+    result.stdout.trim() === marker
+  ) {
+    return Object.freeze({ kind: "authenticated" });
+  }
+  if (result?.status === 0) {
+    throw agyProbeOperationalFailure("returned an unverified response");
+  }
+  throw agyProbeOperationalFailure(
+    `exited with status ${String(result?.status ?? "unknown")}`,
+  );
+}
+
 /**
  * True only when a Kimi credentials JSON carries a non-empty access token
  * whose declared expiry is safely in the future. A refresh token alone is not
@@ -894,8 +1018,10 @@ export function stageClaudeNativeIdentity(
  * NEXUS_REAL_MISSION_ADVISOR_SKIP for the child observer. Returns a per-CLI
  * status map: "staged" (material ready in the isolated HOME; for claude this
  * means the keychain credential is present — nothing is copied), "skipped"
- * (material absent, onSkip fired) or "credentialless" (opencode without auth,
- * which still works via credentialless models).
+ * (material is positively absent, onSkip fired) or "credentialless" (opencode
+ * without auth, which still works via credentialless models). An installed
+ * advisor whose live probe fails operationally blocks the release instead of
+ * being mislabeled as logged out.
  */
 export function stageAdvisorAuthentication(
   isolatedHome,
@@ -905,6 +1031,7 @@ export function stageAdvisorAuthentication(
     environment = process.env,
     run = spawnSync,
     grokBinary = "grok",
+    agyBinary = null,
   } = {},
 ) {
   const home = path.resolve(isolatedHome);
@@ -1029,94 +1156,23 @@ export function stageAdvisorAuthentication(
     }
   }
 
-  // agy: OAuth secret in keychain (service "gemini", account "antigravity")
-  // and/or ~/.gemini/oauth_creds.json. Keychain *metadata* alone is NOT a live
-  // session — google_accounts can have active:null after logout while the
-  // genp item remains. Staging a half-dead AGY put it in the product-wizard
-  // roster as "login new" and disabled "Usar este squad" forever.
-  // Never copy the whole antigravity tree (binaries, caches, conversations).
-  if (process.platform !== "darwin") {
+  // agy: the current Antigravity CLI uses the native keyring/profile. The
+  // legacy Gemini CLI files are neither necessary nor sufficient, and copying
+  // them into the isolated HOME creates a false "login new" state. Admit AGY
+  // only after its trusted binary proves the real operator session. Nothing
+  // from ~/.gemini is copied: the mission spawn preserves the native AGY HOME.
+  if (process.platform !== "darwin" || !agyBinary) {
     statuses.agy = report("agy", "skipped");
   } else {
-    const oauthCredsPath = path.join(source, ".gemini", "oauth_creds.json");
-    const oauthUsable = (() => {
-      try {
-        const raw = fs.readFileSync(oauthCredsPath, "utf8");
-        const parsed = JSON.parse(raw);
-        const access =
-          typeof parsed?.access_token === "string"
-            ? parsed.access_token.trim()
-            : "";
-        const refresh =
-          typeof parsed?.refresh_token === "string"
-            ? parsed.refresh_token.trim()
-            : "";
-        return access.length > 0 || refresh.length > 0;
-      } catch {
-        return false;
-      }
-    })();
-    const accountsActive = (() => {
-      try {
-        const raw = fs.readFileSync(
-          path.join(source, ".gemini", "google_accounts.json"),
-          "utf8",
-        );
-        const parsed = JSON.parse(raw);
-        return (
-          typeof parsed?.active === "string" &&
-          parsed.active.includes("@")
-        );
-      } catch {
-        return false;
-      }
-    })();
-    const keychainSecret = run(
-      "/usr/bin/security",
-      ["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"],
-      {
-        encoding: "utf8",
-        env: { PATH: "/usr/bin:/bin", LANG: "C" },
-        shell: false,
-        timeout: 10_000,
-      },
+    const preflight = preflightNativeAgyAuthentication(source, {
+      binary: agyBinary,
+      environment,
+      run,
+    });
+    statuses.agy = report(
+      "agy",
+      preflight.kind === "authenticated" ? "staged" : "skipped",
     );
-    const keychainUsable =
-      keychainSecret.status === 0 &&
-      typeof keychainSecret.stdout === "string" &&
-      keychainSecret.stdout.trim().length > 0;
-    // Live session: usable oauth_creds OR (keychain secret + active account).
-    const live = oauthUsable || (keychainUsable && accountsActive);
-    if (!live) {
-      statuses.agy = report("agy", "skipped");
-    } else {
-      const geminiDestination = path.join(home, ".gemini");
-      stageAdvisorAuthFile(
-        path.join(source, ".gemini", "google_accounts.json"),
-        geminiDestination,
-        {
-          label: "agy google accounts identity",
-          requirePrivateMode: false,
-          privateRoot: home,
-        },
-      );
-      stageAdvisorAuthFile(
-        path.join(source, ".gemini", "installation_id"),
-        geminiDestination,
-        {
-          label: "agy installation id",
-          requirePrivateMode: false,
-          privateRoot: home,
-        },
-      );
-      if (oauthUsable) {
-        stageAdvisorAuthFile(oauthCredsPath, geminiDestination, {
-          label: "agy oauth credentials",
-          privateRoot: home,
-        });
-      }
-      statuses.agy = report("agy", "staged");
-    }
   }
 
   // opencode: $XDG_DATA_HOME/opencode/auth.json, defaulting to

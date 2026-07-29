@@ -955,22 +955,32 @@ export function assertRealMissionPassEvidence(raw) {
         scope.checkoutId === first?.checkoutId
       );
     });
-  // Scouts advisor validam o HEAD inicial (antes do executor); o revisor
-  // codex, os reviewers advisor e o QA validam o HEAD final integrado.
-  // worktree_validated_no_change selam o HEAD no reference; read_only_validated
-  // (harness Main-owned) exige só o head físico do handoff.
+  // Advisors e executor são raízes independentes: com capacidade limitada,
+  // um advisor pode observar o HEAD inicial até a integração ou o HEAD final
+  // somente a partir do receipt de integração. O SHA e o issuedAt precisam
+  // contar a mesma história causal; nenhum terceiro HEAD é aceito. O revisor
+  // codex e o QA dependem da cadeia e validam sempre o HEAD final integrado.
+  // worktree_validated_no_change ainda precisa selar exatamente o mesmo HEAD
+  // observado fisicamente; read_only_validated exige só esse HEAD.
   const chainHeadIsExact = chain.every((member, index) => {
-    const head = record(chainHandoffs[index]?.physicalReceipt)?.worktreeHeadSha;
+    const physicalReceipt = record(chainHandoffs[index]?.physicalReceipt);
+    const head = physicalReceipt?.worktreeHeadSha;
     const receipt = chainReceipts[index];
     const noChangeHead = chainNoChangeMatches[index]?.[1];
     if (member.kind === "advisory") {
+      const executorIntegratedAt = executorReceipt?.completedAt;
+      const headMatchesIntegrationChronology =
+        Number.isInteger(executorIntegratedAt) &&
+        ((head === repository?.initialHeadSha &&
+          Number.isInteger(physicalReceipt?.issuedAt) &&
+          physicalReceipt.issuedAt <= executorIntegratedAt) ||
+          (head === repository?.finalHeadSha &&
+            Number.isInteger(physicalReceipt?.issuedAt) &&
+            physicalReceipt.issuedAt >= executorIntegratedAt));
       if (receipt?.kind === "read_only_validated") {
-        return head === repository?.initialHeadSha;
+        return headMatchesIntegrationChronology;
       }
-      return (
-        head === repository?.initialHeadSha &&
-        noChangeHead === repository?.initialHeadSha
-      );
+      return headMatchesIntegrationChronology && noChangeHead === head;
     }
     if (member.kind === "execution") {
       return typeof head === "string" && head !== repository?.initialHeadSha;

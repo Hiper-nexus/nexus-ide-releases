@@ -37,6 +37,7 @@ import { makeValidRealMissionEvidence } from "./test-support/real-mission-eviden
 import {
   assertAdvisorBinaries,
   nodeBinDirsNearCodexPackage,
+  preflightNativeAgyAuthentication,
   stageAdvisorAuthentication,
 } from "./e2e-real-mission-launcher.mjs";
 
@@ -630,6 +631,71 @@ describe("real mission local prerequisites and state restoration", () => {
 describe("independent evidence verifier", () => {
   it("accepts the complete executor, reviewer and physical-QA proof chain", () => {
     expect(assertRealMissionPassEvidence(validEvidence()).status).toBe("pass");
+  });
+
+  it("binds an independent advisor HEAD to the executor integration chronology", () => {
+    const withAdvisorHead = (head, noChangeHead = head, issuedAt) => {
+      const evidence = validEvidence();
+      const dispatch = evidence.dispatches.find(
+        (candidate) =>
+          candidate.plannerId === "guided-advisory-2-e2e-advisor-kimi",
+      );
+      const handoff = evidence.handoffs.find(
+        (candidate) => candidate.id === dispatch.handoffId,
+      );
+      const cleanDiff = dispatch.integrationReceipt.reference.split(":").at(-1);
+
+      handoff.physicalReceipt.worktreeHeadSha = head;
+      dispatch.integrationReceipt.reference =
+        `no-change:${noChangeHead}:${cleanDiff}`;
+      if (issuedAt !== undefined) {
+        const acceptedAttempt = handoff.deliveryAttempts[0];
+        const participation = evidence.participation.find(
+          (row) => row.cli === "kimi",
+        );
+        handoff.physicalReceipt.issuedAt = issuedAt;
+        acceptedAttempt.startedAt = issuedAt;
+        acceptedAttempt.acceptedAt = issuedAt;
+        acceptedAttempt.acceptDeadlineAt = issuedAt + 1;
+        handoff.consumedAt = issuedAt + 1;
+        dispatch.handoffAcceptedAt = issuedAt;
+        dispatch.completedAt = issuedAt + 1;
+        dispatch.integrationReceipt.completedAt = issuedAt + 1;
+        participation.handoffAt = issuedAt;
+      }
+      return evidence;
+    };
+    const baseline = validEvidence();
+    const { initialHeadSha, finalHeadSha } = baseline.repository;
+    const executorCompletedAt = baseline.dispatches.find(
+      (dispatch) => dispatch.plannerId === "guided-execution",
+    ).completedAt;
+
+    expect(() =>
+      assertRealMissionPassEvidence(withAdvisorHead(finalHeadSha)),
+    ).toThrow(/incomplete/);
+    expect(
+      assertRealMissionPassEvidence(
+        withAdvisorHead(finalHeadSha, finalHeadSha, executorCompletedAt),
+      ).status,
+    ).toBe("pass");
+    expect(() =>
+      assertRealMissionPassEvidence(
+        withAdvisorHead(
+          initialHeadSha,
+          initialHeadSha,
+          executorCompletedAt + 1,
+        ),
+      ),
+    ).toThrow(/incomplete/);
+    expect(() =>
+      assertRealMissionPassEvidence(withAdvisorHead("e".repeat(40))),
+    ).toThrow(/incomplete/);
+    expect(() =>
+      assertRealMissionPassEvidence(
+        withAdvisorHead(finalHeadSha, "c".repeat(40)),
+      ),
+    ).toThrow(/incomplete/);
   });
 
   it("accepts official advisor preflight skips while retaining the post-QA proof chain", () => {
@@ -1284,6 +1350,13 @@ describe("real mission advisor authentication staging", () => {
   const keychainRun = (status) =>
     vi.fn().mockImplementation((bin, args = []) => {
       const joined = Array.isArray(args) ? args.join(" ") : "";
+      if (bin === "/trusted/agy" && args.includes("--print")) {
+        const prompt = args.at(-1) ?? "";
+        const marker = prompt.match(/NEXUS_AGY_AUTH_OK_[a-f0-9]{32}/u)?.[0];
+        return marker
+          ? { status: 0, stdout: `${marker}\n`, stderr: "" }
+          : { status: 1, stdout: "", stderr: "missing marker" };
+      }
       if (bin === "grok" && joined === "models") {
         return {
           status: 0,
@@ -1409,6 +1482,7 @@ describe("real mission advisor authentication staging", () => {
       environment: {},
       onSkip,
       run,
+      agyBinary: "/trusted/agy",
     });
 
     expect(statuses).toEqual({
@@ -1468,18 +1542,6 @@ describe("real mission advisor authentication staging", () => {
       ],
       [".kimi-code/device_id", "device-uuid-test\n"],
       [".kimi-code/config.toml", 'default_model = "kimi-code/k3"\n'],
-      [
-        ".gemini/google_accounts.json",
-        JSON.stringify({ active: "operator@example.com", old: [] }) + "\n",
-      ],
-      [".gemini/installation_id", "install-1\n"],
-      [
-        ".gemini/oauth_creds.json",
-        JSON.stringify({
-          access_token: "agy-at",
-          refresh_token: "agy-rt",
-        }) + "\n",
-      ],
       [".local/share/opencode/auth.json", '{"opencode":1}\n'],
       [
         ".local/share/ai-launcher/providers.conf",
@@ -1495,7 +1557,6 @@ describe("real mission advisor authentication staging", () => {
       ".grok",
       ".kimi-code",
       ".kimi-code/credentials",
-      ".gemini",
       ".local/share/opencode",
       ".local/share/ai-launcher",
     ]) {
@@ -1504,6 +1565,181 @@ describe("real mission advisor authentication staging", () => {
         directory,
       ).toBe(0o700);
     }
+    expect(fs.existsSync(path.join(isolatedHome, ".gemini"))).toBe(false);
+  });
+
+  it("proves native AGY auth through a bounded plan-mode probe without leaking inherited secrets", () => {
+    const root = makeTemp();
+    const operatorHome = path.join(root, "operator-home");
+    fs.mkdirSync(operatorHome, { recursive: true });
+    const run = vi.fn((binary, args) => {
+      const prompt = args.at(-1) ?? "";
+      const marker = prompt.match(/NEXUS_AGY_AUTH_OK_[a-f0-9]{32}/u)?.[0];
+      return {
+        status: marker ? 0 : 1,
+        stdout: marker ? `${marker}\n` : "",
+        stderr: "",
+      };
+    });
+
+    expect(
+      preflightNativeAgyAuthentication(operatorHome, {
+        binary: "/trusted/agy",
+        environment: {
+          PATH: "/trusted:/usr/bin:/bin",
+          LANG: "pt_BR.UTF-8",
+          GOOGLE_API_KEY: "must-not-reach-probe",
+          GEMINI_API_KEY: "must-not-reach-probe",
+        },
+        run,
+      }),
+    ).toEqual({ kind: "authenticated" });
+
+    expect(run).toHaveBeenCalledTimes(1);
+    const [binary, args, options] = run.mock.calls[0];
+    expect(binary).toBe("/trusted/agy");
+    expect(args).toEqual([
+      "--model",
+      "gemini-3.6-flash-low",
+      "--effort",
+      "low",
+      "--mode",
+      "plan",
+      "--sandbox",
+      "--output-format",
+      "text",
+      "--print-timeout",
+      "60s",
+      "--print",
+      expect.stringMatching(/NEXUS_AGY_AUTH_OK_[a-f0-9]{32}/u),
+    ]);
+    expect(options).toEqual(
+      expect.objectContaining({
+        cwd: path.resolve(operatorHome),
+        encoding: "utf8",
+        shell: false,
+        timeout: 75_000,
+        maxBuffer: 256 * 1024,
+        env: expect.objectContaining({
+          HOME: path.resolve(operatorHome),
+          USERPROFILE: path.resolve(operatorHome),
+          PATH: "/trusted:/usr/bin:/bin",
+        }),
+      }),
+    );
+    expect(options.env.GOOGLE_API_KEY).toBeUndefined();
+    expect(options.env.GEMINI_API_KEY).toBeUndefined();
+  });
+
+  it("blocks an AGY probe that exits cleanly without the exact nonce", () => {
+    const operatorHome = makeTemp();
+    const run = vi.fn(() => ({
+      status: 0,
+      stdout: "AGY is ready\n",
+      stderr: "",
+    }));
+
+    expect(
+      () =>
+        preflightNativeAgyAuthentication(operatorHome, {
+          binary: "/trusted/agy",
+          environment: {},
+          run,
+        }),
+    ).toThrow(
+      /AGY authentication probe failed operationally: returned an unverified response/u,
+    );
+  });
+
+  it("distinguishes a positively identified missing AGY login from an operational failure", () => {
+    const operatorHome = makeTemp();
+    const loggedOut = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "You are not authenticated. Run /login to continue.\n",
+    }));
+    expect(
+      preflightNativeAgyAuthentication(operatorHome, {
+        binary: "/trusted/agy",
+        environment: {},
+        run: loggedOut,
+      }),
+    ).toEqual({ kind: "missing-credential" });
+
+    const timedOut = vi.fn(() => ({
+      status: null,
+      signal: "SIGTERM",
+      error: Object.assign(new Error("spawn timed out"), { code: "ETIMEDOUT" }),
+      stdout: "",
+      stderr: "",
+    }));
+    expect(() =>
+      preflightNativeAgyAuthentication(operatorHome, {
+        binary: "/trusted/agy",
+        environment: {},
+        run: timedOut,
+      }),
+    ).toThrow(/AGY authentication probe failed operationally/u);
+  });
+
+  it("does not downgrade an available AGY binary failure to an advisor skip", () => {
+    if (process.platform !== "darwin") return;
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    fs.mkdirSync(sourceHome, { recursive: true });
+
+    expect(() =>
+      stageAdvisorAuthentication(isolatedHome, {
+        sourceHome,
+        environment: { PATH: "/trusted:/usr/bin:/bin" },
+        onSkip: vi.fn(),
+        run: vi.fn(() => ({
+          status: 2,
+          stdout: "",
+          stderr: "model service unavailable\n",
+        })),
+        agyBinary: "/trusted/agy",
+      }),
+    ).toThrow(/AGY authentication probe failed operationally/u);
+  });
+
+  it("admits keychain-only AGY even when legacy Gemini account files say inactive", () => {
+    if (process.platform !== "darwin") return;
+    const root = makeTemp();
+    const sourceHome = path.join(root, "real-home");
+    const isolatedHome = path.join(root, "isolated-home");
+    writePrivate(
+      path.join(sourceHome, ".gemini", "google_accounts.json"),
+      JSON.stringify({ active: null, old: ["operator@example.com"] }),
+    );
+    writePrivate(
+      path.join(sourceHome, ".gemini", "installation_id"),
+      "legacy-installation-id\n",
+    );
+    const onSkip = vi.fn();
+    const run = keychainRun(1);
+
+    const statuses = stageAdvisorAuthentication(isolatedHome, {
+      sourceHome,
+      environment: { PATH: "/trusted:/usr/bin:/bin" },
+      onSkip,
+      run,
+      agyBinary: "/trusted/agy",
+    });
+
+    expect(statuses.agy).toBe("staged");
+    expect(onSkip).not.toHaveBeenCalledWith("agy");
+    expect(
+      fs.existsSync(path.join(isolatedHome, ".gemini", "oauth_creds.json")),
+    ).toBe(false);
+    expect(
+      run.mock.calls.some(
+        ([binary, args]) =>
+          binary === "/usr/bin/security" &&
+          args.includes("antigravity"),
+      ),
+    ).toBe(false);
   });
 
   it("skips Grok when the copied profile fails its isolated auth preflight", () => {

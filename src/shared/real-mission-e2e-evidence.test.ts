@@ -80,6 +80,88 @@ describe("real mission E2E PASS graph", () => {
     );
   });
 
+  it("binds an independent advisor HEAD to the executor integration chronology", () => {
+    const withAdvisorHead = (
+      head: string,
+      noChangeHead = head,
+      issuedAt?: number,
+    ): Record<string, unknown> => {
+      const evidence = validPassEvidence();
+      const dispatch = (
+        evidence.dispatches as Array<Record<string, unknown>>
+      ).find(
+        (candidate) =>
+          candidate.plannerId === "guided-advisory-2-e2e-advisor-kimi",
+      )!;
+      const handoff = (
+        evidence.handoffs as Array<Record<string, unknown>>
+      ).find((candidate) => candidate.id === dispatch.handoffId)!;
+      const receipt = dispatch.integrationReceipt as Record<string, unknown>;
+      const physicalReceipt = handoff.physicalReceipt as Record<
+        string,
+        unknown
+      >;
+      const cleanDiff = String(receipt.reference).split(":").at(-1);
+
+      physicalReceipt.worktreeHeadSha = head;
+      receipt.reference = `no-change:${noChangeHead}:${cleanDiff}`;
+      if (issuedAt !== undefined) {
+        const acceptedAttempt = (
+          handoff.deliveryAttempts as Array<Record<string, unknown>>
+        )[0]!;
+        const participation = (
+          evidence.participation as Array<Record<string, unknown>>
+        ).find((row) => row.cli === "kimi")!;
+        physicalReceipt.issuedAt = issuedAt;
+        acceptedAttempt.startedAt = issuedAt;
+        acceptedAttempt.acceptedAt = issuedAt;
+        acceptedAttempt.acceptDeadlineAt = issuedAt + 1;
+        handoff.consumedAt = issuedAt + 1;
+        dispatch.handoffAcceptedAt = issuedAt;
+        dispatch.completedAt = issuedAt + 1;
+        receipt.completedAt = issuedAt + 1;
+        participation.handoffAt = issuedAt;
+      }
+      return evidence;
+    };
+    const baseline = validPassEvidence();
+    const repository = baseline.repository as Record<string, unknown>;
+    const initialHead = repository.initialHeadSha as string;
+    const finalHead = repository.finalHeadSha as string;
+    const executorCompletedAt = (
+      baseline.dispatches as Array<Record<string, unknown>>
+    ).find((dispatch) => dispatch.plannerId === "guided-execution")!
+      .completedAt as number;
+
+    expect(() =>
+      parseRealMissionE2EEvidence(withAdvisorHead(finalHead)),
+    ).toThrow(/real-mission invariants/);
+    expect(
+      parseRealMissionE2EEvidence(
+        withAdvisorHead(finalHead, finalHead, executorCompletedAt),
+      ).status,
+    ).toBe("pass");
+    expect(() =>
+      parseRealMissionE2EEvidence(
+        withAdvisorHead(
+          initialHead,
+          initialHead,
+          executorCompletedAt + 1,
+        ),
+      ),
+    ).toThrow(/real-mission invariants/);
+
+    const unknownHead = "c".repeat(40);
+    expect(() =>
+      parseRealMissionE2EEvidence(withAdvisorHead(unknownHead)),
+    ).toThrow(/real-mission invariants/);
+    expect(() =>
+      parseRealMissionE2EEvidence(
+        withAdvisorHead(finalHead, "a".repeat(40)),
+      ),
+    ).toThrow(/real-mission invariants/);
+  });
+
   it("rejects durable rows that never came from a physical worker PTY", () => {
     const evidence = validPassEvidence();
     const worker = (evidence.panes as Array<Record<string, unknown>>)[1];

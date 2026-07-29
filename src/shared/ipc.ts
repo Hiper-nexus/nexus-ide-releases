@@ -75,6 +75,7 @@ const paneModelSchema = z.object({
   id: z.string().min(1).max(128),
   kind: z.enum(['shell', 'cli-agent', 'browser']),
   title: z.string().max(512),
+  isStructuralPlaceholder: z.literal(true).optional(),
   cwd: z.string().max(4096).optional(),
   browserUrl: z.string().max(4096).optional(),
   browserOpenRequestId: z.string().min(1).max(128).optional(),

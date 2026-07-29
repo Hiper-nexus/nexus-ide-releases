@@ -53,6 +53,56 @@ function mount(): { root: Root; host: HTMLDivElement } {
   return { root, host };
 }
 
+function installPresentationHarness(): (
+  request: MissionPanePresentationRequest,
+) => void {
+  let handler: ((request: MissionPanePresentationRequest) => void) | null = null;
+  Object.defineProperty(window, 'nexus', {
+    configurable: true,
+    value: {
+      orch: {
+        onPaneSpawnRequest: listener(),
+        onPanePresentationRequest: vi.fn(
+          (next: (request: MissionPanePresentationRequest) => void) => {
+            handler = next;
+            return vi.fn();
+          },
+        ),
+        onPaneRecoveryRequest: listener(),
+        onBrowserOpenRequest: listener(),
+        onPaneCloseRequest: listener(),
+        onMissionsChanged: listener(),
+        onHandoffsChanged: listener(),
+        onTodosChanged: listener(),
+        onSquadsChanged: listener(),
+        syncPanes: vi.fn(),
+        sendPaneSpawnResult: vi.fn(),
+        sendPaneRecoveryResult: vi.fn(),
+        sendBrowserOpenResult: vi.fn(),
+      },
+    },
+  });
+  return (request) => {
+    if (!handler) throw new Error('presentation handler is not mounted');
+    handler(request);
+  };
+}
+
+function presentationRequest(id: string): MissionPanePresentationRequest {
+  return {
+    missionId: `mission-${id}`,
+    paneId: `pane-${id}`,
+    sessionId: `session-${id}`,
+    role: 'orchestrator',
+    pane: {
+      adapterId: 'codex',
+      cwd: `/workspace/${id}`,
+      title: 'Maestro',
+      role: 'orchestrator',
+    },
+  };
+}
+
 describe('orchestration bridge pane recovery', () => {
   afterEach(() => {
     setActiveWorkspacePath(null);
@@ -65,7 +115,7 @@ describe('orchestration bridge pane recovery', () => {
     terminal.waitForSession.mockReset().mockResolvedValue('session-new');
   });
 
-  it('adopts an exact live main-owned session after reload without respawning it', async () => {
+  it('replaces a lone bare shell while adopting an exact live main-owned session', async () => {
     let presentationHandler:
       | ((req: MissionPanePresentationRequest) => void)
       | null = null;
@@ -107,7 +157,12 @@ describe('orchestration bridge pane recovery', () => {
       root: {
         kind: 'leaf',
         id: 'leaf-shell',
-        pane: { id: 'shell-1', kind: 'shell', title: 'Shell' },
+        pane: {
+          id: 'shell-1',
+          kind: 'shell',
+          title: 'Shell',
+          isStructuralPlaceholder: true,
+        },
       },
       focusedPaneId: 'shell-1',
     });
@@ -147,7 +202,7 @@ describe('orchestration bridge pane recovery', () => {
     expect(terminal.respawnMissionPaneFresh).not.toHaveBeenCalled();
     expect(terminal.cancelPaneRecovery).not.toHaveBeenCalled();
     expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
-      .toEqual(['shell-1', 'pane-live']);
+      .toEqual(['pane-live']);
     expect(listPanes(useLayoutStore.getState().root)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -157,6 +212,141 @@ describe('orchestration bridge pane recovery', () => {
         }),
       ]),
     );
+    act(() => mounted.root.unmount());
+  });
+
+  it('normalizes a restored bare shell beside the exact healthy mission pane', async () => {
+    terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+      paneId === 'pane-restored' ? 'session-restored' : null,
+    );
+    const present = installPresentationHarness();
+    useHomeStore.setState({ visible: false });
+    useLayoutStore.getState().setPanes([
+      {
+        id: 'shell-restored',
+        kind: 'shell',
+        title: 'shell',
+        isStructuralPlaceholder: true,
+      },
+      {
+        id: 'pane-restored',
+        kind: 'cli-agent',
+        title: 'Maestro',
+        adapterId: 'codex',
+        missionId: 'mission-restored',
+        role: 'orchestrator',
+      },
+    ]);
+    const mounted = mount();
+
+    act(() => {
+      present(presentationRequest('restored'));
+    });
+
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['pane-restored']);
+    expect(terminal.markPersistedAuthorityOnSpawn).not.toHaveBeenCalled();
+    expect(terminal.waitForSession).not.toHaveBeenCalled();
+    act(() => mounted.root.unmount());
+  });
+
+  it('preserves identifiable manual shells and mixed layouts', async () => {
+    terminal.waitForSession
+      .mockResolvedValueOnce('session-manual')
+      .mockResolvedValueOnce('session-mixed');
+    const present = installPresentationHarness();
+    useHomeStore.setState({ visible: false });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-manual-shell',
+        pane: {
+          id: 'shell-manual',
+          kind: 'shell',
+          title: 'Meu terminal',
+          cwd: '/workspace/manual',
+          titlePinned: true,
+        },
+      },
+      focusedPaneId: 'shell-manual',
+    });
+    const mounted = mount();
+
+    await act(async () => {
+      present(presentationRequest('manual'));
+      await vi.waitFor(() => {
+        expect(terminal.waitForSession).toHaveBeenCalledWith(
+          'pane-manual',
+          75_000,
+        );
+      });
+    });
+
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['shell-manual', 'pane-manual']);
+
+    act(() => {
+      useLayoutStore.getState().setPanes([
+        { id: 'shell-mixed', kind: 'shell', title: 'shell' },
+        {
+          id: 'browser-mixed',
+          kind: 'browser',
+          title: 'browser',
+          browserUrl: 'https://example.com',
+        },
+      ]);
+    });
+
+    await act(async () => {
+      present(presentationRequest('mixed'));
+      await vi.waitFor(() => {
+        expect(terminal.waitForSession).toHaveBeenCalledWith(
+          'pane-mixed',
+          75_000,
+        );
+      });
+    });
+
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['shell-mixed', 'browser-mixed', 'pane-mixed']);
+    act(() => mounted.root.unmount());
+  });
+
+  it('preserves a bare shell claimed by the operator even when it is the only pane', async () => {
+    terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+      paneId === 'shell-operator' ? 'session-operator' : null,
+    );
+    terminal.waitForSession.mockResolvedValueOnce('session-mission');
+    const present = installPresentationHarness();
+    useHomeStore.setState({ visible: false });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-operator-shell',
+        pane: {
+          id: 'shell-operator',
+          kind: 'shell',
+          title: 'shell',
+        },
+      },
+      focusedPaneId: 'shell-operator',
+    });
+    const mounted = mount();
+
+    await act(async () => {
+      present(presentationRequest('mission'));
+      await vi.waitFor(() => {
+        expect(terminal.waitForSession).toHaveBeenCalledWith(
+          'pane-mission',
+          75_000,
+        );
+      });
+    });
+
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['shell-operator', 'pane-mission']);
+    expect(terminal.getPaneSessionId('shell-operator'))
+      .toBe('session-operator');
     act(() => mounted.root.unmount());
   });
 
@@ -199,6 +389,7 @@ describe('orchestration bridge pane recovery', () => {
           id: 'shell-home-placeholder',
           kind: 'shell',
           title: 'Shell',
+          isStructuralPlaceholder: true,
         },
       },
       focusedPaneId: 'shell-home-placeholder',

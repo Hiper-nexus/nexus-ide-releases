@@ -42,7 +42,10 @@ export function createLeaf(pane: PaneModel): LayoutNode {
 
 /** Build the initial single-pane workspace. */
 export function initialTree(): LayoutNode {
-  return createLeaf(createPane('shell'));
+  return createLeaf({
+    ...createPane('shell'),
+    isStructuralPlaceholder: true,
+  });
 }
 
 /**

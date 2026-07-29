@@ -65,6 +65,7 @@ import {
   requiresAdvisoryProcessSandbox,
   resolveAdvisoryProcessSandbox,
 } from "./advisory-process-sandbox";
+import { resolveAgyNativeProfile } from "./agy-native-profile";
 import { resolveMissionCliExecutionPolicy } from "./mission-cli-execution-policy";
 import { getOrchSettings } from "../persistence/settings-store";
 
@@ -1392,10 +1393,24 @@ export function spawnAgentSession(
     //    the real HOME as processHome, and grant only the Nexus ephemeral
     //    artifact tree. The real home is NEVER the writable sandbox root.
     try {
-      const realHome = os.homedir();
-      const decorationOverrodeHome = Boolean(decoration && decoration.env.HOME);
-      let advisoryRuntimeDir = decoration?.sandboxDir;
-      let advisoryProcessHome = decoration?.processHome;
+      const isAgyNativeProfile = adapter.id === "agy";
+      const agyNativeProfile = isAgyNativeProfile
+        ? resolveAgyNativeProfile({ inheritedHome: spawnEnv.HOME })
+        : null;
+      const realHome = agyNativeProfile?.processHome ?? os.homedir();
+      // AGY 1.1 resolves OAuth/config from the OS account profile, never from
+      // Electron's isolated HOME or the historical Gemini CLI env override.
+      if (isAgyNativeProfile) delete spawnEnv.GEMINI_CLI_HOME;
+      const decorationOverrodeHome = Boolean(
+        !isAgyNativeProfile && decoration?.env.HOME,
+      );
+      // Ignore any legacy AGY overlay runtime. Its writable scratch is fresh;
+      // the native profile is exposed only through exact Seatbelt grants.
+      let advisoryRuntimeDir = isAgyNativeProfile
+        ? undefined
+        : decoration?.sandboxDir;
+      let advisoryProcessHome =
+        agyNativeProfile?.processHome ?? decoration?.processHome;
       const advisoryEphemeralGrants: string[] = [];
       const advisoryReadOnlyGrants: string[] = [];
       if (!advisoryRuntimeDir && !decorationOverrodeHome) {
@@ -1409,27 +1424,29 @@ export function spawnAgentSession(
         // that points into the Nexus ephemeral tree (never HOME). Grant exactly
         // those per-session dirs — not the whole ephemeral root, so one advisor
         // cannot read a sibling session's bearer-bearing config.
-        const ephemeralRoot = path.join(realHome, ".nexus", "ephemeral");
-        for (const envVar of [
-          "KIMI_CODE_HOME",
-          "GROK_HOME",
-          "OPENCODE_CONFIG_DIR",
-          "XDG_DATA_HOME",
-          "GEMINI_CLI_HOME",
-        ]) {
-          const value = spawnEnv[envVar];
-          if (!value || !path.isAbsolute(value)) continue;
-          let real: string;
-          try {
-            real = fs.realpathSync.native(value);
-          } catch {
-            continue;
-          }
-          if (
-            real.startsWith(`${ephemeralRoot}${path.sep}`) &&
-            fs.statSync(real).isDirectory()
-          ) {
-            advisoryEphemeralGrants.push(real);
+        if (!isAgyNativeProfile) {
+          const ephemeralRoot = path.join(realHome, ".nexus", "ephemeral");
+          for (const envVar of [
+            "KIMI_CODE_HOME",
+            "GROK_HOME",
+            "OPENCODE_CONFIG_DIR",
+            "XDG_DATA_HOME",
+            "GEMINI_CLI_HOME",
+          ]) {
+            const value = spawnEnv[envVar];
+            if (!value || !path.isAbsolute(value)) continue;
+            let real: string;
+            try {
+              real = fs.realpathSync.native(value);
+            } catch {
+              continue;
+            }
+            if (
+              real.startsWith(`${ephemeralRoot}${path.sep}`) &&
+              fs.statSync(real).isDirectory()
+            ) {
+              advisoryEphemeralGrants.push(real);
+            }
           }
         }
       }
@@ -1437,7 +1454,7 @@ export function spawnAgentSession(
       // Keychain. AGY 1.1 reads the Keychain DB file directly — not only via
       // securityd — so without a read grant the CLI silently falls into the
       // OAuth re-login flow (physically verified). READ-ONLY, never writable.
-      if (advisoryProcessHome) {
+      if (advisoryProcessHome && !isAgyNativeProfile) {
         const keychainsDir = path.join(realHome, "Library", "Keychains");
         try {
           if (fs.statSync(keychainsDir).isDirectory()) {
@@ -1455,15 +1472,19 @@ export function spawnAgentSession(
         binaryPath: bin,
         processHome: advisoryProcessHome,
         runtimeDir: advisoryRuntimeDir,
-        providerStateReadPaths: [
-          ...(decoration?.providerStateReadPaths ?? []),
-          ...advisoryEphemeralGrants,
-          ...advisoryReadOnlyGrants,
-        ],
-        providerStateWritePaths: [
-          ...(decoration?.providerStateWritePaths ?? []),
-          ...advisoryEphemeralGrants,
-        ],
+        providerStateReadPaths: agyNativeProfile
+          ? agyNativeProfile.providerStateReadPaths
+          : [
+              ...(decoration?.providerStateReadPaths ?? []),
+              ...advisoryEphemeralGrants,
+              ...advisoryReadOnlyGrants,
+            ],
+        providerStateWritePaths: agyNativeProfile
+          ? agyNativeProfile.providerStateWritePaths
+          : [
+              ...(decoration?.providerStateWritePaths ?? []),
+              ...advisoryEphemeralGrants,
+            ],
       });
       assertAdvisoryConfinement(
         adapter.id,

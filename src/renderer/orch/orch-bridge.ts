@@ -185,6 +185,53 @@ function paneFromPresentation(
   };
 }
 
+function isStructuralWorkspacePlaceholder(pane: PaneModel): boolean {
+  return pane.kind === 'shell' && pane.isStructuralPlaceholder === true;
+}
+
+/**
+ * A fresh workspace owns one structural shell until the first real surface is
+ * mounted. Home visibility cannot identify it: intent-first launch hides Home
+ * before Main publishes the orchestrator. The explicit marker is cleared when
+ * the operator opens that terminal, so shape alone can never authorize an
+ * automated close of a live manual shell.
+ */
+function panesAfterMainOwnedPresentation(
+  existing: PaneModel[],
+  pane: PaneModel,
+): PaneModel[] {
+  const current = existing.find((candidate) => candidate.id === pane.id);
+  if (!current) {
+    return (
+      existing.length === 1 &&
+      isStructuralWorkspacePlaceholder(existing[0]!)
+    )
+      ? [pane]
+      : [...existing, pane];
+  }
+
+  const others = existing.filter((candidate) => candidate.id !== pane.id);
+  return (
+    others.length === 1 &&
+    isStructuralWorkspacePlaceholder(others[0]!)
+  )
+    ? [current]
+    : existing;
+}
+
+function normalizeExactHealthyPresentation(
+  req: MissionPanePresentationRequest,
+): void {
+  const layout = useLayoutStore.getState();
+  const existing = listPanes(layout.root);
+  const current = existing.find((candidate) => candidate.id === req.paneId);
+  if (!current) return;
+  const next = panesAfterMainOwnedPresentation(existing, current);
+  if (next === existing) return;
+  useHomeStore.getState().hide();
+  layout.setPanes(next);
+}
+
 async function presentLiveMainOwnedPane(
   req: MissionPanePresentationRequest,
   scope: PresentationScope,
@@ -207,17 +254,11 @@ async function presentLiveMainOwnedPane(
   // never grants a fresh renderer-authored spawn.
   markPersistedAuthorityOnSpawn(req.paneId);
   useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
-  const wasHomeVisible = useHomeStore.getState().visible;
   useHomeStore.getState().hide();
-  if (!current) {
-    const pane = paneFromPresentation(req);
-    const isHomePlaceholder =
-      wasHomeVisible &&
-      existing.length === 1 &&
-      existing[0]?.kind === 'shell';
-    useLayoutStore
-      .getState()
-      .setPanes(isHomePlaceholder ? [pane] : [...existing, pane]);
+  const pane = current ?? paneFromPresentation(req);
+  const next = panesAfterMainOwnedPresentation(existing, pane);
+  if (next !== existing) {
+    useLayoutStore.getState().setPanes(next);
   }
 
   const sessionId = await waitForSession(
@@ -240,10 +281,11 @@ function requestLiveMainOwnedPanePresentation(
   req: MissionPanePresentationRequest,
 ): void {
   const scope = capturePresentationScope();
-  if (
-    !isPresentationScopeCurrent(scope) ||
-    isExactHealthyPresentation(req)
-  ) return;
+  if (!isPresentationScopeCurrent(scope)) return;
+  if (isExactHealthyPresentation(req)) {
+    normalizeExactHealthyPresentation(req);
+    return;
+  }
   const key = presentationKey(req, scope);
   if (presentationInFlight.has(key)) return;
   const flight = presentLiveMainOwnedPane(req, scope)

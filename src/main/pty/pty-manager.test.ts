@@ -972,6 +972,116 @@ describe("PTY session ownership (renderer capability boundary)", () => {
   });
 });
 
+describe("AGY advisory native profile", () => {
+  const macosIt = process.platform === "darwin" ? it : it.skip;
+
+  macosIt(
+    "keeps the OS account HOME when Electron HOME is isolated and grants only AGY state",
+    async () => {
+      const root = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nexus-agy-native-profile-"),
+      );
+      const worktree = path.join(root, "project", "worktree");
+      const nativeHome = path.join(root, "native-home");
+      const isolatedElectronHome = path.join(root, "electron-home");
+      const geminiHome = path.join(nativeHome, ".gemini");
+      const agyState = path.join(geminiHome, "antigravity-cli");
+      const keychains = path.join(nativeHome, "Library", "Keychains");
+      const nativeMcpConfig = path.join(agyState, "mcp_config.json");
+      const binary = path.join(root, "bin", "agy");
+      fs.mkdirSync(worktree, { recursive: true });
+      fs.mkdirSync(isolatedElectronHome, { recursive: true });
+      fs.mkdirSync(agyState, { recursive: true });
+      fs.mkdirSync(keychains, { recursive: true });
+      fs.mkdirSync(path.dirname(binary), { recursive: true });
+      fs.writeFileSync(binary, "#!/bin/sh\n");
+      fs.chmodSync(binary, 0o755);
+      fs.writeFileSync(
+        nativeMcpConfig,
+        '{"mcpServers":{"existing":{"command":"leave-me-alone"}}}\n',
+      );
+      const originalMcpConfig = fs.readFileSync(nativeMcpConfig);
+      const nativeUser = os.userInfo();
+      const userInfoSpy = vi.spyOn(os, "userInfo").mockReturnValue({
+        ...nativeUser,
+        homedir: nativeHome,
+      });
+      vi.stubEnv("HOME", isolatedElectronHome);
+      setAgentSpawnHook(null);
+      const host = fakeHost();
+      setPtyHost(host.host);
+      const baseAuthority = revisionBoundWorker(
+        fs.realpathSync.native(worktree),
+      );
+      const authority: BoundSpawnAuthority = {
+        ...baseAuthority,
+        context: {
+          ...baseAuthority.context!,
+          readOnly: true,
+          nativeReadOnly: false,
+        },
+      };
+      let sessionId: string | null = null;
+
+      try {
+        ({ sessionId } = spawnMainOwnedAgentSession(
+          {
+            kind: "cli-agent",
+            paneId: "agy-native-profile",
+            cols: 100,
+            rows: 30,
+          },
+          builtinCliPtyAdapter("agy"),
+          { binPath: binary },
+          authority,
+        ));
+
+        const spec = host.specFor(sessionId);
+        const profile = spec.args[1] ?? "";
+        const writeSection = profile.slice(
+          profile.indexOf("(allow file-write*"),
+          profile.indexOf("(deny file-read*"),
+        );
+        const readSection = profile.slice(profile.indexOf("(deny file-read*"));
+
+        expect(spec.file).toBe("/usr/bin/sandbox-exec");
+        expect(spec.cwd).toBe(fs.realpathSync.native(worktree));
+        expect(spec.env.HOME).toBe(fs.realpathSync.native(nativeHome));
+        expect(spec.env.HOME).not.toBe(
+          fs.realpathSync.native(isolatedElectronHome),
+        );
+        expect(profile).toContain("(allow network*)");
+        expect(readSection).toContain(
+          `(subpath ${JSON.stringify(fs.realpathSync.native(geminiHome))})`,
+        );
+        expect(readSection).toContain(
+          `(subpath ${JSON.stringify(fs.realpathSync.native(keychains))})`,
+        );
+        expect(writeSection).toContain(
+          `(subpath ${JSON.stringify(fs.realpathSync.native(agyState))})`,
+        );
+        expect(writeSection).not.toContain(
+          `(subpath ${JSON.stringify(fs.realpathSync.native(geminiHome))})`,
+        );
+        expect(writeSection).not.toContain(
+          `(subpath ${JSON.stringify(fs.realpathSync.native(keychains))})`,
+        );
+        expect(spec.args.join(" ")).not.toContain("mcp_config");
+        expect(spec.env.GEMINI_CLI_HOME).toBeUndefined();
+        expect(fs.readFileSync(nativeMcpConfig).equals(originalMcpConfig)).toBe(
+          true,
+        );
+        expect(fs.readdirSync(isolatedElectronHome)).toEqual([]);
+      } finally {
+        if (sessionId) await orchTerminateSession(sessionId);
+        userInfoSpy.mockRestore();
+        vi.unstubAllEnvs();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
 describe("cli-agent spawn argv hardening", () => {
   it("replaces governed Codex CODEX_HOME in the final spawn but preserves direct panes", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-spawn-"));

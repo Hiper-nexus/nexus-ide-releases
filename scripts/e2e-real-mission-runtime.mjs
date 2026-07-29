@@ -619,9 +619,10 @@ async function runPackagedRealMissionCore(
       });
       // Multi-CLI advisors join the mission through the Nexus MCP overlays,
       // which resolve CLI profiles relative to the child's isolated HOME. Stage
-      // each advisor's auth material from the real operator profile; missing
-      // credentials or binaries are skips (never gate failures) and are handed
-      // to the child observer via NEXUS_REAL_MISSION_ADVISOR_SKIP.
+      // each advisor's auth material from the real operator profile. Positively
+      // absent credentials or binaries are skips; an installed CLI whose live
+      // probe fails operationally blocks the gate instead of being hidden as a
+      // skip. Official skips are handed to the child observer below.
       const advisorSkips = new Set();
       const onAdvisorSkip = (cliId) => advisorSkips.add(cliId);
       const advisorAuthStatuses = stageAdvisorAuthentication(
@@ -633,6 +634,7 @@ async function runPackagedRealMissionCore(
           // Run refresh probes only through the exact binary that already
           // passed the owner/mode/realpath checks above.
           grokBinary: trustedAdvisorBinaries.grok ?? null,
+          agyBinary: trustedAdvisorBinaries.agy ?? null,
         },
       );
       const advisorBinaryStatuses = assertAdvisorBinaries({

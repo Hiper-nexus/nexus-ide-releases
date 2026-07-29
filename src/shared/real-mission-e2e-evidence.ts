@@ -621,22 +621,31 @@ export const realMissionE2EEvidenceSchema = z
           handoff?.auditIntent?.scope.checkoutId ===
             chainHandoffs[0]?.auditIntent?.scope.checkoutId,
       );
-    // Scouts advisor validam o HEAD inicial (antes do executor); o revisor
-    // codex, os reviewers advisor e o QA validam o HEAD final integrado.
-    // Receipts worktree_validated_no_change selam o HEAD no reference;
-    // read_only_validated (harness Main-owned) exige só o head físico.
+    // Advisors e executor são raízes independentes: com capacidade limitada,
+    // um advisor pode observar o HEAD inicial até a integração ou o HEAD final
+    // somente a partir do receipt de integração. O SHA e o issuedAt precisam
+    // contar a mesma história causal; nenhum terceiro HEAD é aceito. O revisor
+    // codex e o QA dependem da cadeia e validam sempre o HEAD final integrado.
+    // Receipts worktree_validated_no_change ainda precisam selar exatamente o
+    // mesmo HEAD observado fisicamente; read_only_validated exige só esse HEAD.
     const chainHeadIsExact = chain.every((member, index) => {
-      const head = chainHandoffs[index]?.physicalReceipt?.worktreeHeadSha;
+      const physicalReceipt = chainHandoffs[index]?.physicalReceipt;
+      const head = physicalReceipt?.worktreeHeadSha;
       const receipt = chainReceipts[index];
       const noChangeHead = chainNoChangeReferences[index]?.[1];
       if (member.kind === "advisory") {
+        const executorIntegratedAt = executorReceipt?.completedAt;
+        const headMatchesIntegrationChronology =
+          executorIntegratedAt !== undefined &&
+          ((head === evidence.repository.initialHeadSha &&
+            (physicalReceipt?.issuedAt ?? Number.MAX_SAFE_INTEGER) <=
+              executorIntegratedAt) ||
+            (head === evidence.repository.finalHeadSha &&
+              (physicalReceipt?.issuedAt ?? -1) >= executorIntegratedAt));
         if (receipt?.kind === "read_only_validated") {
-          return head === evidence.repository.initialHeadSha;
+          return headMatchesIntegrationChronology;
         }
-        return (
-          head === evidence.repository.initialHeadSha &&
-          noChangeHead === evidence.repository.initialHeadSha
-        );
+        return headMatchesIntegrationChronology && noChangeHead === head;
       }
       if (member.kind === "execution") {
         return (

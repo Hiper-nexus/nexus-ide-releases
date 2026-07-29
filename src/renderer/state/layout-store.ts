@@ -80,6 +80,8 @@ interface LayoutState {
   toggleMaximizePane(paneId: string): void;
   /** Drop a spent orchRequestId so Reiniciar does not reuse a dead token. */
   clearOrchRequestId(paneId: string): void;
+  /** Claim Home's empty-state shell so automation can never discard it. */
+  claimStructuralPlaceholder(paneId: string): void;
   focus(paneId: string): void;
   setTitle(paneId: string, title: string): void;
   /** User rename — pins the title so shell escapes stop overriding it. */
@@ -611,6 +613,21 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     const pane = listPanes(get().root).find((p) => p.id === paneId);
     if (!pane?.orchRequestId) return;
     const root = updatePane(get().root, paneId, { orchRequestId: undefined });
+    set({ root });
+    persist({ ...get(), root });
+  },
+
+  claimStructuralPlaceholder: (paneId) => {
+    const pane = listPanes(get().root).find(
+      (candidate) => candidate.id === paneId,
+    );
+    if (
+      pane?.kind !== 'shell' ||
+      pane.isStructuralPlaceholder !== true
+    ) return;
+    const root = updatePane(get().root, paneId, {
+      isStructuralPlaceholder: undefined,
+    });
     set({ root });
     persist({ ...get(), root });
   },

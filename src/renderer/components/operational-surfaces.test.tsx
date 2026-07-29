@@ -510,7 +510,12 @@ describe("operational Home and Launch surfaces", () => {
   });
 
   it("reuses the hidden placeholder shell when opening the terminal from Home", async () => {
-    const pane = { id: "shell-1", kind: "shell" as const, title: "shell" };
+    const pane = {
+      id: "shell-1",
+      kind: "shell" as const,
+      title: "shell",
+      isStructuralPlaceholder: true as const,
+    };
     useHomeStore.setState({ visible: true });
     useWorkspaceStore.setState({
       current: {
@@ -536,6 +541,9 @@ describe("operational Home and Launch surfaces", () => {
     expect(
       listPanes(useLayoutStore.getState().root).map((item) => item.id),
     ).toEqual(["shell-1"]);
+    expect(
+      listPanes(useLayoutStore.getState().root)[0]?.isStructuralPlaceholder,
+    ).toBeUndefined();
 
     act(() => root.unmount());
   });

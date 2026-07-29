@@ -750,6 +750,9 @@ export async function executeJarvisAction(
         panes.length === 1 && panes[0].kind === 'shell' && !panes[0].orchRequestId;
       const paneId =
         loneShell && homeVisible ? panes[0].id : layout.addShellPane();
+      if (loneShell && homeVisible) {
+        layout.claimStructuralPlaceholder(paneId);
+      }
       revealPaneForUser(paneId);
       markEffect(control);
       const sessionId = await waitForSession(paneId, 5_000);

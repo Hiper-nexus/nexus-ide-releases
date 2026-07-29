@@ -54,6 +54,9 @@ export function HomeDeck() {
   const openForSquad = useMissionWizardStore((s) => s.openForSquad);
   const openSettings = useSettingsStore((s) => s.toggleDrawer);
   const addShellPane = useLayoutStore((s) => s.addShellPane);
+  const claimStructuralPlaceholder = useLayoutStore(
+    (s) => s.claimStructuralPlaceholder,
+  );
   const paneCount = useLayoutStore((s) => listPanes(s.root).length);
   const viewKind = useLayoutStore((s) => s.viewKind);
 
@@ -200,6 +203,7 @@ export function HomeDeck() {
       !panes[0].orchRequestId;
     hide();
     if (loneShell) {
+      claimStructuralPlaceholder(panes[0]!.id);
       useLayoutStore.getState().focus(panes[0]!.id);
       return;
     }

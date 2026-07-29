@@ -322,6 +322,12 @@ export interface PaneModel {
   id: string;
   kind: PaneKind;
   title: string;
+  /**
+   * Renderer-owned empty-state shell. Automated presentation may replace this
+   * pane only while the marker is present; opening the terminal claims it for
+   * the operator and clears the marker.
+   */
+  isStructuralPlaceholder?: true;
   cwd?: string;
   /** Initial/current URL for browser panes. */
   browserUrl?: string;
