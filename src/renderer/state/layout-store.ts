@@ -499,7 +499,13 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     persist(s);
     // Closing the LAST pane replaces it with a fresh shell — visually a no-op.
     // Surface the Home deck so the click has feedback and a next step.
-    if (next === null) useHomeStore.getState().show();
+    //
+    // Only for a close the OPERATOR asked for. Field trap (28/07): when a
+    // mission died its pane was closed by the runtime, Home popped over the
+    // terminal and swallowed the very output explaining the failure — the
+    // mission "started and went back to the home screen" with no reason left
+    // on screen. A pane that dies on its own must leave its transcript visible.
+    if (next === null && reason === 'user') useHomeStore.getState().show();
   },
 
   toggleMaximizePane: (paneId) => {

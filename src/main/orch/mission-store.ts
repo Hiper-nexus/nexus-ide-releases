@@ -953,11 +953,15 @@ export class ScopedMissionStore {
     const id = entityIdSchema.parse(rawId);
     const expectedVersion = expected.intentVersion ?? 0;
     const expectedContract = expected.intentContract;
+    // Field trap (28/07): requiring the intentState to also be blocked_* made
+    // the inconsistent pair `blocked` + `dispatched` fail here with an opaque
+    // "contract is invalid", leaving the mission wedged. `status === 'blocked'`
+    // is the authority; a stale intent pair is exactly what this transaction
+    // heals. Only a finished mission stays out.
     if (
       expected.id !== id ||
       expected.status !== 'blocked' ||
-      (expected.intentState !== 'blocked_technical' &&
-        expected.intentState !== 'blocked_user') ||
+      expected.intentState === 'done' ||
       !expectedContract ||
       expectedContract.intentVersion !== expectedVersion ||
       expectedVersion <= 0 ||
