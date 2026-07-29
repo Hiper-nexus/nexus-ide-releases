@@ -86,4 +86,39 @@ describe('closeMissionRuntimeAndPanes', () => {
     });
     expect(harness.close).not.toHaveBeenCalled();
   });
+
+  it('sweeps orphan renderer panes when the mission row is already gone', async () => {
+    harness.closeRuntime.mockResolvedValue({
+      ok: false,
+      terminatedSessionIds: [],
+      error: 'Missão não encontrada.',
+    });
+
+    await expect(
+      closeMissionRuntimeAndPanes('mission-a', 'orphan-sweep'),
+    ).resolves.toEqual({
+      ok: true,
+      terminatedSessionIds: [],
+    });
+    expect(harness.close).toHaveBeenCalledOnce();
+    expect(harness.close).toHaveBeenCalledWith('pane-a', 'orphan-sweep');
+  });
+
+  it('sweeps orphan panes for an already-done mission with no closable runtime', async () => {
+    harness.closeRuntime.mockResolvedValue({
+      ok: false,
+      mission: { id: 'mission-a', status: 'done' },
+      terminatedSessionIds: [],
+      error: 'Missão concluída não possui execução encerrável.',
+    });
+
+    await expect(
+      closeMissionRuntimeAndPanes('mission-a', 'done-sweep'),
+    ).resolves.toMatchObject({
+      ok: true,
+      mission: { id: 'mission-a' },
+      terminatedSessionIds: [],
+    });
+    expect(harness.close).toHaveBeenCalledWith('pane-a', 'done-sweep');
+  });
 });

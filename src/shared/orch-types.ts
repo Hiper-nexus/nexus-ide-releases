@@ -308,7 +308,8 @@ export interface Mission {
 export type MissionRuntimeCloseResult =
   | {
       readonly ok: true;
-      readonly mission: Mission;
+      /** Absent when the mission row was already gone (orphan pane sweep). */
+      readonly mission?: Mission;
       readonly terminatedSessionIds: readonly string[];
     }
   | {

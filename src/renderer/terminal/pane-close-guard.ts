@@ -1,6 +1,7 @@
 import type { PaneModel, PaneSessionState } from '../../shared/types';
 import { listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { askConfirm } from '../state/confirm-store';
 import { closeMissionRuntimeAndPanes } from '../orch/close-mission-runtime';
@@ -31,7 +32,8 @@ export async function requestPaneClose(
   const layout = useLayoutStore.getState();
   const pane = listPanes(layout.root).find((candidate) => candidate.id === paneId);
   if (!pane) return false;
-  const missionId = pane.missionId;
+  const missionId =
+    pane.missionId ?? useOrchStore.getState().paneMissions[paneId];
   if (missionId) {
     const result = await closeMissionRuntimeAndPanes(
       missionId,
