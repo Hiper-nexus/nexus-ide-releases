@@ -406,6 +406,80 @@ BEGIN
 END;
 `;
 
+/**
+ * Transport acceptance, explicit result consumption and final synthesis are
+ * three different facts. These immutable receipts bind the latter two to the
+ * exact physical Maestro tool calls and keep the final fan-out output durable
+ * before mission completion can retire any runtime.
+ */
+const FANOUT_PHYSICAL_COMPLETION_PROOF_SCHEMA = `
+CREATE TABLE handoff_ack_receipts (
+  receipt_id              TEXT PRIMARY KEY,
+  handoff_id              TEXT NOT NULL,
+  delivery_attempt_id     TEXT NOT NULL UNIQUE,
+  tool_call_id            TEXT NOT NULL UNIQUE,
+  tool_name               TEXT NOT NULL CHECK (tool_name = 'nexus_handoff_ack'),
+  source                  TEXT NOT NULL CHECK (source IN ('http-mcp', 'pty-stream')),
+  mission_id              TEXT NOT NULL,
+  orchestrator_session_id TEXT NOT NULL,
+  authority_sha256        TEXT NOT NULL CHECK (length(authority_sha256) = 64),
+  payload_sha256          TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+  issued_at               INTEGER NOT NULL CHECK (issued_at >= 0),
+  acknowledged_at         INTEGER NOT NULL CHECK (acknowledged_at >= issued_at),
+  CHECK (receipt_id = tool_call_id),
+  FOREIGN KEY (handoff_id) REFERENCES handoffs(id) ON DELETE CASCADE,
+  FOREIGN KEY (delivery_attempt_id)
+    REFERENCES handoff_delivery_attempts(id) ON DELETE CASCADE,
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_handoff_ack_receipts_mission
+  ON handoff_ack_receipts(mission_id, orchestrator_session_id, acknowledged_at);
+
+CREATE INDEX idx_handoff_ack_receipts_handoff
+  ON handoff_ack_receipts(handoff_id, orchestrator_session_id, acknowledged_at);
+
+CREATE TRIGGER handoff_ack_receipts_immutable
+BEFORE UPDATE ON handoff_ack_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'handoff ACK receipt is immutable');
+END;
+
+CREATE TABLE mission_fanout_consolidation_receipts (
+  mission_id              TEXT NOT NULL,
+  intent_version          INTEGER NOT NULL CHECK (intent_version >= 0),
+  plan_hash               TEXT NOT NULL CHECK (length(plan_hash) = 64),
+  topology                TEXT NOT NULL CHECK (topology = 'team-read-only-fanout'),
+  orchestrator_session_id TEXT NOT NULL,
+  receipt_id              TEXT NOT NULL UNIQUE,
+  tool_call_id            TEXT NOT NULL UNIQUE,
+  tool_name               TEXT NOT NULL CHECK (tool_name = 'nexus_mission_set_status'),
+  source                  TEXT NOT NULL CHECK (source IN ('http-mcp', 'pty-stream')),
+  authority_sha256        TEXT NOT NULL CHECK (length(authority_sha256) = 64),
+  payload_sha256          TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+  final_output            TEXT NOT NULL CHECK (length(trim(final_output)) >= 40),
+  final_output_sha256     TEXT NOT NULL CHECK (length(final_output_sha256) = 64),
+  maestro_perspective     TEXT NOT NULL CHECK (length(trim(maestro_perspective)) >= 20),
+  maestro_sha256          TEXT NOT NULL CHECK (length(maestro_sha256) = 64),
+  issued_at               INTEGER NOT NULL CHECK (issued_at >= 0),
+  created_at              INTEGER NOT NULL CHECK (created_at >= issued_at),
+  PRIMARY KEY (mission_id, intent_version, orchestrator_session_id),
+  CHECK (receipt_id = tool_call_id),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_fanout_consolidation_session
+  ON mission_fanout_consolidation_receipts(
+    mission_id, orchestrator_session_id, created_at
+  );
+
+CREATE TRIGGER mission_fanout_consolidation_immutable
+BEFORE UPDATE ON mission_fanout_consolidation_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'mission fanout consolidation receipt is immutable');
+END;
+`;
+
 export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpec[] =
   [
     {
@@ -473,5 +547,11 @@ export const ORCHESTRATION_PROJECT_MIGRATION_SPECS: readonly ProjectMigrationSpe
       schemaVersion: 25,
       appVersion: '0.19.37',
       sql: HANDOFF_PTY_STREAM_PROVENANCE_SCHEMA,
+    },
+    {
+      id: '026-fanout-physical-completion-proof',
+      schemaVersion: 26,
+      appVersion: '0.19.38',
+      sql: FANOUT_PHYSICAL_COMPLETION_PROOF_SCHEMA,
     },
   ];

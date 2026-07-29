@@ -66,6 +66,7 @@ import type { WorktreeRecord } from "../runtime/worktree-contract";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { taskDispatchQualityRepairReason } from "./task-dispatch-store";
 import { reconcileLegacyGuidedDirtyCheckoutBootstrap } from "./task-dispatch-lifecycle";
+import { hasTeamReadOnlyFanoutDomain } from "../../shared/mission-topology";
 
 export {
   awaitMissionSchedulerAuthorityFence,
@@ -106,6 +107,27 @@ export function missionSchedulerConfiguredWorkerCap(
   contract: Pick<MissionIntentContract, "budgets">,
 ): number {
   return contract.budgets.maxWorkers;
+}
+
+/**
+ * The fast path is restricted to the sealed, root-only, non-mutating team
+ * topology. A mixed, legacy, dependent, or write-owning plan keeps the
+ * adaptive concurrency ceiling.
+ */
+export function isTeamReadOnlyFanoutSchedulerWave(
+  tasks: readonly SchedulerRuntimeTask[],
+): boolean {
+  return (
+    tasks.some((task) => task.status === "pending") &&
+    tasks.every(
+      (task) =>
+        task.parallelEligible === true &&
+        task.dependsOn.length === 0 &&
+        task.ownership.files.length === 0 &&
+        task.ownership.symbols.length === 0 &&
+        hasTeamReadOnlyFanoutDomain(task.ownership.domains),
+    )
+  );
 }
 
 /**
@@ -1276,6 +1298,8 @@ async function tickMission(
             cores: 8,
             paneBudget: 8,
           }),
+          useConfiguredCapForCurrentWave: () =>
+            isTeamReadOnlyFanoutSchedulerWave(currentSchedulerTasks),
           now: () => configured?.now?.() ?? Date.now(),
           dispatchTask: (request, dispatchSignal) =>
             dispatchMissionSchedulerTask(
@@ -1315,6 +1339,7 @@ async function tickMission(
   const currentMission = stores.missions.get(missionId);
   await reconcileMissionCompletionAfterSchedulerTick({
     mission: currentMission,
+    dispatches: stores.taskDispatches.list(missionId),
     // Guided completion is PREVC/Mission Driver-owned. The bridge proves the
     // exact current sealed wave is terminal, validates the integrated binding,
     // publishes one idempotent final handoff and only wakes the Driver.

@@ -715,6 +715,90 @@ describe("mission task plan authority", () => {
     }
   });
 
+  it("admits every roster role only for a sealed team read-only fanout", () => {
+    const readOnlyCodex = adapterInfo("codex", {
+      autonomousWorkspaceWriteCapable: false,
+      capabilities: {
+        launchable: true,
+        promptInjectable: true,
+        statusObservable: true,
+        resumable: true,
+        autonomousReadOnly: true,
+        governedWriter: false,
+        verifiedMaestro: false,
+      },
+    });
+    const roundtableGoal =
+      "Teste de todos panes, cada um me fala o que faz na missão";
+    const contract = compileIntentContract({
+      goal: roundtableGoal,
+      intentVersion: 7,
+    });
+    const mission = {
+      id: "mission-a",
+      status: "running",
+      description: contract.goal,
+      intentState: "dispatched",
+      intentVersion: 7,
+      orchestratorSessionId: "session-a",
+      squadId: squad.id,
+      intentContract: {
+        ...contract,
+        approvedAt: 1,
+        dispatchedAt: 1,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    };
+    const task = {
+      ...validTask,
+      executionMode: "read_only",
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: ["team-read-only-fanout"],
+      },
+    };
+    const fanout = harness({
+      mission,
+      adapterOverrides: { codex: readOnlyCodex },
+    });
+
+    expect(() =>
+      planMissionTasks(
+        { missionId: "mission-a", tasks: [task] },
+        orchestratorContext(),
+        fanout.suite,
+        fanout.deps,
+      ),
+    ).not.toThrow();
+    expect(fanout.createPlanAtomically).toHaveBeenCalledOnce();
+
+    const deliveryContract = compileIntentContract({
+      goal: "Analise o projeto e entregue um parecer",
+      intentVersion: 7,
+    });
+    const delivery = harness({
+      mission: {
+        ...mission,
+        description: deliveryContract.goal,
+        intentContract: {
+          ...mission.intentContract,
+          ...deliveryContract,
+        },
+      },
+      adapterOverrides: { codex: readOnlyCodex },
+    });
+    expect(() =>
+      planMissionTasks(
+        { missionId: "mission-a", tasks: [task] },
+        orchestratorContext(),
+        delivery.suite,
+        delivery.deps,
+      ),
+    ).toThrow(/reviewer\/scout/i);
+    expect(delivery.createPlanAtomically).not.toHaveBeenCalled();
+  });
+
   it("requires a closed dependency graph before the atomic store call", () => {
     const { suite, deps, createPlanAtomically } = harness();
     expect(() =>

@@ -185,6 +185,14 @@ function humanPromptQueueActivity(kind: string): string {
   }
 }
 
+export function effectiveMissionReviewGoal(input: {
+  readonly mode: WizardMode | null;
+  readonly intent: string;
+  readonly missionGoal: string;
+}): string {
+  return input.mode === "agentic" ? input.intent : input.missionGoal;
+}
+
 export function MissionWizard() {
   const draftHydrationBarrier = useRef(createDraftHydrationBarrier()).current;
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -2188,6 +2196,11 @@ export function MissionWizard() {
               providers={providers}
               accounts={accounts}
               squadCliPolicy={squadCliPolicy}
+              missionGoal={effectiveMissionReviewGoal({
+                mode,
+                intent,
+                missionGoal,
+              })}
               guided={
                 mode === "agentic" || selectedSquad.id === NEXUS_PLAN_SQUAD_ID
               }

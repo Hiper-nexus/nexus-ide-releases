@@ -1,4 +1,9 @@
 import type { Mission, Squad } from "../../shared/orch-types";
+import {
+  classifyStandardMissionTopology,
+  TEAM_READ_ONLY_FANOUT_DOMAIN,
+  type StandardMissionTopology,
+} from "../../shared/mission-topology";
 import type { ProjectExecutionScope } from "../../shared/types";
 import {
   authReadyModelsForProvider,
@@ -12,6 +17,7 @@ import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-regi
 import {
   assertExactRosterRoutes,
   assertGuidedPlanTaskDetailBudgets,
+  assertRosterCompleteGuidedTeamFanoutReceipt,
   assertRosterCompleteGuidedV2Receipt,
   chooseCorrectiveQualityGate,
   choosePrimaryExecutor,
@@ -31,6 +37,7 @@ import {
   guidedFanoutPlannerId,
   guidedIndependentReviewDetail,
   guidedQualityGateDetail,
+  guidedTeamCoordinationDetail,
 } from "./guided-mission-prompt";
 import {
   GUIDED_MISSION_PLANNER_TASK_ID,
@@ -41,6 +48,7 @@ import {
   sealMainOwnedMissionTaskPlan,
   type MissionTaskPlanAuthorityDeps,
 } from "./mission-task-plan-authority";
+import { standardTopologyFromSealedTaskDetails } from "./guided-mission-topology-authority";
 import type { LiveRosterAdapter } from "./mission-scheduler-plan";
 import {
   getProjectDomainStores,
@@ -104,6 +112,7 @@ export type GuidedMissionPlanResult =
       applicable: true;
       sealed: false;
       reason: "already-sealed";
+      topology: StandardMissionTopology;
       workerAgentRef: string;
       taskId: string;
     }>
@@ -111,6 +120,7 @@ export type GuidedMissionPlanResult =
       applicable: true;
       sealed: true;
       reason: "sealed";
+      topology: StandardMissionTopology;
       workerAgentRef: string;
       taskId: string;
     }>;
@@ -198,7 +208,27 @@ export function ensureGuidedMissionPlan(
       "guided_plan_contract_missing: missão aprovada não encontrada",
     );
   }
-  const ineligible = guidedPlanEligibility(mission);
+  const intentVersion = mission.intentContract.intentVersion;
+  const existing = suite.tasks.listPlannedTasks(missionId, intentVersion);
+  const existingTopology =
+    existing.length > 0
+      ? standardTopologyFromSealedTaskDetails(
+          existing.map(
+            (entry) => entry.task?.detail ?? entry.plannedDetail ?? "",
+          ),
+        )
+      : undefined;
+  if (existingTopology === "invalid") {
+    throw new Error(
+      "guided_plan_mixed_topology_blocked: o receipt selado mistura " +
+        "delivery e team-read-only-fanout; replaneje e reaprove a missão " +
+        "antes de iniciar qualquer provider",
+    );
+  }
+  const ineligible = guidedPlanEligibility(mission, {
+    hasExistingPlan: existing.length > 0,
+    existingTopology,
+  });
   if (ineligible) {
     return Object.freeze({
       applicable: false,
@@ -206,7 +236,6 @@ export function ensureGuidedMissionPlan(
       reason: ineligible,
     });
   }
-  const intentVersion = mission.intentContract.intentVersion;
   if (!mission.squadId) {
     throw new Error("guided_plan_squad_missing: missão sem squad aprovado");
   }
@@ -220,25 +249,37 @@ export function ensureGuidedMissionPlan(
       "guided_plan_squad_stale: o squad mudou depois da aprovação",
     );
   }
-  // Recovery is an authority boundary too. Old app versions could persist an
-  // engine-generated squad containing a direct/legacy CLI such as Aider. It
-  // must not be allowed into a scheduler that waits for physical MCP receipts,
-  // even when an older task-plan row already exists.
-  deps.assertStandardSquadReadiness(squad);
-  const existing = suite.tasks.listPlannedTasks(missionId, intentVersion);
   if (existing.length > 0) {
+    const topology = existingTopology ?? "delivery";
+    // Recovery derives authority from the immutable receipt, never from a
+    // fresh interpretation of goal text. This prevents a classifier update
+    // from invalidating a delivery that was already approved and sealed.
+    if (topology === "delivery") deps.assertStandardSquadReadiness(squad);
     // Never rewrite an immutable current receipt. Recovery may reuse only the
     // exact roster-complete Guided v2 graph; older valid receipts remain
     // blocked until the operator reapproves a fresh intent/plan.
-    const recovered = assertRosterCompleteGuidedV2Receipt(existing, squad);
+    const recovered =
+      topology === "team-read-only-fanout"
+        ? assertRosterCompleteGuidedTeamFanoutReceipt(existing, squad)
+        : assertRosterCompleteGuidedV2Receipt(existing, squad);
+    const primary =
+      "primary" in recovered ? recovered.primary : recovered.implementation;
     return Object.freeze({
       applicable: true,
       sealed: false,
       reason: "already-sealed",
-      workerAgentRef: recovered.implementation.agentRef,
-      taskId: recovered.implementation.taskId,
+      topology,
+      workerAgentRef: primary.agentRef,
+      taskId: primary.taskId,
     });
   }
+  const topology: StandardMissionTopology =
+    mission.intentContract.promotedPlan
+      ? "delivery"
+      : classifyStandardMissionTopology(mission.intentContract.goal);
+  // New plans may use the fast classifier as a proposal. Once sealed, the
+  // task receipt above is the sole topology authority across restarts.
+  if (topology === "delivery") deps.assertStandardSquadReadiness(squad);
   const adapters = deps.listLiveAdapters();
   const rosterWorkers = squad.agents.filter(isGuidedWorkerAgent);
   const taskPlanRosterHash = snapshotTaskPlanRoster(squad.agents).hash;
@@ -246,6 +287,84 @@ export function ensureGuidedMissionPlan(
     throw new Error(
       "guided_plan_roster_too_large: o plano suporta no máximo 64 workers aprovados",
     );
+  }
+  if (
+    topology === "team-read-only-fanout" &&
+    rosterWorkers.length === 0
+  ) {
+    throw new Error(
+      "guided_team_fanout_empty: squad aprovado não possui workers",
+    );
+  }
+  assertExactRosterRoutes({
+    mission,
+    workers: rosterWorkers,
+    adapters,
+    rosterHash: taskPlanRosterHash,
+    orchestratorCliId: squad.agents.find(
+      (agent) => agent.category === "orchestrator",
+    )?.cli,
+  });
+  if (topology === "team-read-only-fanout") {
+    const coordinationTasks: GuidedPlanTaskDetailInput[] = rosterWorkers.map(
+      (agent, index) => ({
+        id: guidedFanoutPlannerId(
+          agent.category === "reviewer" ? "review" : "advisory",
+          agent,
+          index,
+        ),
+        title: `Responder com ${agent.agentName}: ${mission.title}`.slice(
+          0,
+          1_024,
+        ),
+        detail: guidedTeamCoordinationDetail(mission, agent),
+        agentRef: agent.id,
+        category: agent.category,
+        executionMode: "read_only",
+        ownership: {
+          files: [],
+          symbols: [],
+          domains: [
+            agent.category === "reviewer"
+              ? GUIDED_TASK_DOMAINS.independentReview
+              : GUIDED_TASK_DOMAINS.advisory,
+            TEAM_READ_ONLY_FANOUT_DOMAIN,
+          ],
+        },
+        dependsOn: [],
+      }),
+    );
+    assertGuidedPlanTaskDetailBudgets({
+      missionId,
+      intentVersion,
+      tasks: coordinationTasks,
+    });
+    const plan = sealMainOwnedMissionTaskPlan(
+      { missionId, tasks: coordinationTasks },
+      suite.tasks.scope,
+      suite,
+      deps,
+      mission.status === "pending" &&
+        mission.intentState === "ready_to_start" &&
+        typeof mission.intentContract.approvedAt === "number"
+        ? {
+            kind: "approved-preflight",
+            intentVersion,
+            approvedAt: mission.intentContract.approvedAt,
+            approvalReviewSha256:
+              mission.intentContract.approvalReviewSha256,
+          }
+        : undefined,
+    );
+    const primary = plan.planned[0]!;
+    return Object.freeze({
+      applicable: true,
+      sealed: true,
+      reason: "sealed",
+      topology,
+      workerAgentRef: primary.agentRef,
+      taskId: primary.taskId,
+    });
   }
   const operatorChoice =
     deps.squadCliPolicy() === "operator-choice";
@@ -267,15 +386,6 @@ export function ensureGuidedMissionPlan(
   const independentReviewers = rosterWorkers.filter(
     (agent) => agent.category === "reviewer" && agent.id !== qualityGate.id,
   );
-  assertExactRosterRoutes({
-    mission,
-    workers: rosterWorkers,
-    adapters,
-    rosterHash: taskPlanRosterHash,
-    orchestratorCliId: squad.agents.find(
-      (agent) => agent.category === "orchestrator",
-    )?.cli,
-  });
   const intentOwnership = resolveGuidedMutationOwnership(
     mission.intentContract,
   );
@@ -419,6 +529,7 @@ export function ensureGuidedMissionPlan(
     applicable: true,
     sealed: true,
     reason: "sealed",
+    topology,
     workerAgentRef: worker.id,
     taskId: taskIdFromPlan(plan),
   });

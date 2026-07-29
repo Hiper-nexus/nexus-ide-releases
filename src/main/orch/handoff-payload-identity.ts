@@ -6,6 +6,19 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+export function physicalAgentActionPayloadSha256(
+  toolName: "nexus_handoff_ack" | "nexus_mission_set_status",
+  args: Readonly<Record<string, unknown>>,
+): string {
+  return sha256(
+    canonicalJson({
+      schema: "nexus.physical-agent-action-payload/v1",
+      toolName,
+      args,
+    }),
+  );
+}
+
 /**
  * Identity of the complete validated MCP argument object before any display
  * compaction or normalization. Unknown JSON fields remain part of the digest

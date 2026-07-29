@@ -497,6 +497,101 @@ describe("guided dirty checkout checkpoint", () => {
     );
   });
 
+  it("coalesces concurrent baseline probes for the same physical workspace", async () => {
+    const root = freshRoot("concurrent-baseline");
+    const scope = scopeFor(root);
+    const git = new ProcessGitRunner();
+    git.run(root, ["init", "--quiet", "-b", "main"]);
+    fs.writeFileSync(path.join(root, "app.txt"), "base\n");
+    git.run(root, ["add", "--", "app.txt"]);
+    git.run(root, ["commit", "-m", "user baseline"], {
+      env: {
+        GIT_AUTHOR_NAME: "User",
+        GIT_AUTHOR_EMAIL: "user@localhost",
+        GIT_COMMITTER_NAME: "User",
+        GIT_COMMITTER_EMAIL: "user@localhost",
+      },
+    });
+
+    const delegate = new AsyncProcessGitRunner();
+    let topLevelProbes = 0;
+    const asyncGit: AsyncGitRunner = {
+      async run(cwd, args, options) {
+        if (
+          args[0] === "rev-parse" &&
+          args[1] === "--show-toplevel"
+        ) {
+          topLevelProbes += 1;
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        }
+        return delegate.run(cwd, args, options);
+      },
+    };
+
+    const [first, second, third] = await Promise.all([
+      ensureGuidedGitBaselineForWorktreeAsync(scope, {
+        asyncGitRunner: asyncGit,
+      }),
+      ensureGuidedGitBaselineForWorktreeAsync(scope, {
+        asyncGitRunner: asyncGit,
+      }),
+      ensureGuidedGitBaselineForWorktreeAsync(scope, {
+        asyncGitRunner: asyncGit,
+      }),
+    ]);
+
+    expect(topLevelProbes).toBe(1);
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+  });
+
+  it("clears a failed concurrent baseline so a later dispatch can retry", async () => {
+    const root = freshRoot("retry-baseline");
+    const scope = scopeFor(root);
+    const git = new ProcessGitRunner();
+    git.run(root, ["init", "--quiet", "-b", "main"]);
+    fs.writeFileSync(path.join(root, "app.txt"), "base\n");
+    git.run(root, ["add", "--", "app.txt"]);
+    git.run(root, ["commit", "-m", "user baseline"], {
+      env: {
+        GIT_AUTHOR_NAME: "User",
+        GIT_AUTHOR_EMAIL: "user@localhost",
+        GIT_COMMITTER_NAME: "User",
+        GIT_COMMITTER_EMAIL: "user@localhost",
+      },
+    });
+
+    const delegate = new AsyncProcessGitRunner();
+    let topLevelProbes = 0;
+    const asyncGit: AsyncGitRunner = {
+      async run(cwd, args, options) {
+        if (
+          args[0] === "rev-parse" &&
+          args[1] === "--show-toplevel"
+        ) {
+          topLevelProbes += 1;
+          if (topLevelProbes === 1) {
+            throw new Error("transient baseline probe failure");
+          }
+        }
+        return delegate.run(cwd, args, options);
+      },
+    };
+
+    await expect(
+      ensureGuidedGitBaselineForWorktreeAsync(scope, {
+        asyncGitRunner: asyncGit,
+      }),
+    ).rejects.toThrow("transient baseline probe failure");
+
+    await expect(
+      ensureGuidedGitBaselineForWorktreeAsync(scope, {
+        asyncGitRunner: asyncGit,
+      }),
+    ).resolves.toMatchObject({ kind: "existing" });
+    expect(topLevelProbes).toBe(2);
+  });
+
   it("promotes the exact tracked, staged and untracked operator view without rewriting bytes", () => {
     const root = freshRoot("dirty-checkpoint");
     const scope = scopeFor(root);

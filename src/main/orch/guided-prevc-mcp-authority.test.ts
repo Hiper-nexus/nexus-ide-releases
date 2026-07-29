@@ -379,12 +379,22 @@ describe("guided PREVC MCP pre-execution fence", () => {
         expect(called.handler).toHaveBeenCalledOnce();
       }
       for (const [name, args] of maestroCalls) {
-        const called = await call({
-          name,
-          args,
-          ctx: physicalMaestro(),
-          snapshot: fence(stage),
-        });
+        const maestroCtx = physicalMaestro();
+        const invoke = () =>
+          call({
+            name,
+            args,
+            ctx: maestroCtx,
+            snapshot: fence(stage),
+          });
+        const called =
+          name === "nexus_handoff_ack"
+            ? await runInsidePtyStreamAgentTransport(
+                maestroCtx.sessionId!,
+                maestroCtx,
+                invoke,
+              )
+            : await invoke();
         expect(
           called.result,
           `${stage ?? "no-contract"}:${name}:${JSON.stringify(called.result)}`,
@@ -994,5 +1004,21 @@ describe("guided PREVC MCP pre-execution fence", () => {
         squadId: "saved-specialty-squad",
       }),
     ).not.toThrow();
+  });
+
+  it("fails closed for mixed sealed topology even on a manual saved squad", async () => {
+    const { assertUnfrozenGuidedExecutionEffectAllowed } =
+      await import("./mcp-dispatch");
+    expect(() =>
+      assertUnfrozenGuidedExecutionEffectAllowed(
+        {
+          ...approvedMission(),
+          squadId: "saved-specialty-squad",
+        },
+        "invalid",
+      ),
+    ).toThrow(
+      /guided_plan_mixed_topology_blocked.*replaneje.*reaprove/i,
+    );
   });
 });

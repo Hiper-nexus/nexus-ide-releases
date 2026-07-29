@@ -319,12 +319,12 @@ describe('ProjectRuntimeManager physical isolation', () => {
       runtime.db
         .prepare(
           `SELECT migration_id, schema_version
-           FROM __nexus_schema_migrations WHERE schema_version = 25`,
+           FROM __nexus_schema_migrations WHERE schema_version = 26`,
         )
         .get(),
     ).toEqual({
-      migration_id: '025-handoff-pty-stream-provenance',
-      schema_version: 25,
+      migration_id: '026-fanout-physical-completion-proof',
+      schema_version: 26,
     });
     expect(
       runtime.db
@@ -344,6 +344,22 @@ describe('ProjectRuntimeManager physical isolation', () => {
         )
         .get(),
     ).toEqual({ count: 1 });
+    expect(
+      runtime.db
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'table'
+             AND name IN (
+               'handoff_ack_receipts',
+               'mission_fanout_consolidation_receipts'
+             )
+           ORDER BY name`,
+        )
+        .all(),
+    ).toEqual([
+      { name: 'handoff_ack_receipts' },
+      { name: 'mission_fanout_consolidation_receipts' },
+    ]);
     runtime.db
       .prepare(
         `INSERT INTO missions

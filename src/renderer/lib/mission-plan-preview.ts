@@ -2,6 +2,7 @@ import type { RichModelMetadataView } from '../../shared/model-metadata-types';
 import type { MissionLane } from '../../shared/mission-intent';
 import type { Squad, SquadAgent } from '../../shared/orch-types';
 import type { AdapterInfo } from '../../shared/types';
+import { classifyStandardMissionTopology } from '../../shared/mission-topology';
 
 export interface MissionWavePreview {
   title: string;
@@ -205,6 +206,7 @@ export function buildRosterCostPreview(input: {
 export function forecastMissionWaves(input: {
   lane: MissionLane | undefined;
   maxWorkers: number;
+  goal?: string;
 }): MissionWavePreview[] {
   const standardExecutionDetail =
     input.maxWorkers <= 0
@@ -261,6 +263,23 @@ export function forecastMissionWaves(input: {
         },
       ];
     case 'standard':
+      if (
+        classifyStandardMissionTopology(input.goal ?? '') ===
+        'team-read-only-fanout'
+      ) {
+        return [
+          {
+            title: 'Responder em paralelo',
+            detail:
+              'Cada especialista responde ao objetivo em somente leitura, sem depender do participante anterior.',
+          },
+          {
+            title: 'Consolidar handoffs',
+            detail:
+              'O Nexus comprova todas as respostas físicas e encerra a rodada.',
+          },
+        ];
+      }
       return [
         {
           title: 'Entender e planejar',

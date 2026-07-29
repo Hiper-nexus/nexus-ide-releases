@@ -57,6 +57,7 @@ function makeDeps(opts: {
   dispatchThrows?: Record<string, Error>;
   dispatchDelayMs?: Record<string, number>;
   isRetryableDispatchError?: (error: unknown) => boolean;
+  useConfiguredCapForCurrentWave?: () => boolean;
 }): {
   deps: SchedulerRuntimeDeps;
   dispatched: string[];
@@ -77,6 +78,12 @@ function makeDeps(opts: {
     listActiveWorkers: () => workers,
     scheduleConfig: () =>
       opts.config ?? { configuredCap: 4, cores: 8, paneBudget: 8 },
+    ...(opts.useConfiguredCapForCurrentWave
+      ? {
+          useConfiguredCapForCurrentWave:
+            opts.useConfiguredCapForCurrentWave,
+        }
+      : {}),
     now: () => NOW,
     dispatchTask: async (req) => {
       const delay = opts.dispatchDelayMs?.[req.taskId] ?? 0;
@@ -163,6 +170,84 @@ describe('mission-scheduler-runtime P2 flag + driver', () => {
     expect(dispatched).toEqual(['a', 'b', 'c']);
     expect(result.state.telemetry.waves).toBe(1);
     expect(result.state.telemetry.maxWaveSize).toBe(3);
+  });
+
+  it('keeps ordinary tasks at the adaptive initial cap', async () => {
+    const tasks = [
+      baseTask('a'),
+      baseTask('b'),
+      baseTask('c'),
+      baseTask('d'),
+    ];
+    const { deps, dispatched } = makeDeps({
+      enabled: true,
+      tasks,
+      config: { configuredCap: 4, cores: 8, paneBudget: 4 },
+    });
+
+    const result = await runSchedulerTick(
+      deps,
+      createSchedulerRuntimeState(),
+    );
+
+    expect(result.decision.plan.kind).toBe('dispatch');
+    if (result.decision.plan.kind !== 'dispatch') return;
+    expect(result.decision.plan.effectiveCap).toBe(2);
+    expect(result.decision.plan.waveSize).toBe(2);
+    expect(dispatched).toEqual(['a', 'b']);
+  });
+
+  it('uses the configured cap for one proven read-only team fan-out wave', async () => {
+    const tasks = [
+      baseTask('a'),
+      baseTask('b'),
+      baseTask('c'),
+      baseTask('d'),
+    ];
+    const { deps, dispatched } = makeDeps({
+      enabled: true,
+      tasks,
+      config: { configuredCap: 4, cores: 8, paneBudget: 4 },
+      useConfiguredCapForCurrentWave: () => true,
+    });
+
+    const result = await runSchedulerTick(
+      deps,
+      createSchedulerRuntimeState(),
+    );
+
+    expect(result.decision.plan.kind).toBe('dispatch');
+    if (result.decision.plan.kind !== 'dispatch') return;
+    expect(result.decision.plan.effectiveCap).toBe(4);
+    expect(result.decision.plan.waveSize).toBe(4);
+    expect(dispatched).toEqual(['a', 'b', 'c', 'd']);
+    expect(result.state.adaptiveCap).toEqual(DEFAULT_ADAPTIVE_CAP);
+  });
+
+  it('still honors the CPU ceiling for a read-only team fan-out wave', async () => {
+    const tasks = [
+      baseTask('a'),
+      baseTask('b'),
+      baseTask('c'),
+      baseTask('d'),
+    ];
+    const { deps, dispatched } = makeDeps({
+      enabled: true,
+      tasks,
+      config: { configuredCap: 8, cores: 4, paneBudget: 8 },
+      useConfiguredCapForCurrentWave: () => true,
+    });
+
+    const result = await runSchedulerTick(
+      deps,
+      createSchedulerRuntimeState(),
+    );
+
+    expect(result.decision.plan.kind).toBe('dispatch');
+    if (result.decision.plan.kind !== 'dispatch') return;
+    expect(result.decision.plan.effectiveCap).toBe(2);
+    expect(result.decision.plan.waveSize).toBe(2);
+    expect(dispatched).toEqual(['a', 'b']);
   });
 
   it('parallel wave keeps siblings and retries a transient spawn failure', async () => {

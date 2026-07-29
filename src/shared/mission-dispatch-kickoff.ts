@@ -4,6 +4,7 @@ import {
   type PromotedPlanSnapshot,
 } from './mission-intent';
 import { retargetSquadInstructions } from './mission-identity';
+import type { StandardMissionTopology } from './mission-topology';
 
 function rosterBlock(agents: readonly SquadAgent[]): string {
   return agents
@@ -75,6 +76,11 @@ export interface IntentDispatchKickoffInput {
   readonly guidedPrevcRequired?: boolean;
   /** False only while Maestro must run Doctor and freeze before execution. */
   readonly guidedPrevcFrozen?: boolean;
+  /**
+   * Main-owned topology recovered from the sealed task receipt. Goal text may
+   * propose a graph during planning, but it is never dispatch authority.
+   */
+  readonly standardTopology?: StandardMissionTopology;
   /**
    * True when orch.squadCliPolicy is `operator-choice` — the default. The
    * worker-authority block used to state "somente o Codex builtin" no matter
@@ -194,6 +200,63 @@ function standardLimitLines(): string[] {
   ];
 }
 
+function buildTeamRoundtableKickoffPrompt(
+  input: IntentDispatchKickoffInput,
+  headingTitle: string,
+  explicitCriteria: readonly string[],
+): string {
+  const criteria =
+    explicitCriteria.length > 0
+      ? explicitCriteria.map((criterion) => `- ${criterion}`).join('\n')
+      : [
+          '- Cada especialista despachado responde ao objetivo e entrega seu handoff.',
+          '- O Maestro identifica sua própria perspectiva na consolidação final.',
+        ].join('\n');
+  const attachments =
+    input.attachmentPaths && input.attachmentPaths.length > 0
+      ? [
+          '',
+          '## Anexos validados pelo Nexus',
+          ...input.attachmentPaths.map((attachmentPath) => `- ${attachmentPath}`),
+        ]
+      : [];
+  const compactMemory =
+    input.compactMemoryMarkdown?.trim()
+      ? ['', input.compactMemoryMarkdown.trim()]
+      : [];
+  const squadInstructions = reusableSquadInstructions(
+    input.squad,
+    input.goal,
+  );
+  return [
+    `# Rodada da equipe — ${headingTitle}`,
+    `missionId=${input.missionId}`,
+    'lane=standard · topology=team-read-only-fanout',
+    '',
+    '## Objetivo',
+    input.goal.trim(),
+    '',
+    '## Critérios de aceite',
+    criteria,
+    ...attachments,
+    ...compactMemory,
+    '',
+    `## Limites aprovados\nrisco=${input.risk} · maxWorkers=${input.maxWorkers}`,
+    squadInstructions,
+    '',
+    `## Especialistas participantes\n${rosterBlock(input.squad.agents) || '(sem especialistas definidos)'}`,
+    '',
+    '## Condução',
+    '- O Main já selou uma tarefa raiz, somente leitura, para cada especialista.',
+    '- O Main despacha todos os especialistas em paralelo na mesma onda; não espera a resposta de um para iniciar o próximo.',
+    '- O Maestro acompanha e reconhece os handoffs; na consolidação acrescenta uma seção “Maestro” com sua própria perspectiva. Não cria plano, não inicia workers, não faz polling sequencial, não assume o trabalho dos participantes e não transforma respostas independentes em uma cadeia executor → revisão → QA.',
+    '- Consuma o handoff de cada especialista somente depois de processá-lo, chamando nexus_handoff_ack com o handoffId exato.',
+    '- Depois de TODOS os ACKs, produza a resposta final completa, inclua o heading markdown `## Maestro` com sua síntese própria e chame nexus_mission_set_status uma vez com {status:"done", note:"<resposta final completa>"}. Esse receipt durável é obrigatório; colar/aceitar uma entrega não conclui a missão.',
+    '- Falha transitória recebe retry. Use blocked somente para autenticação, decisão humana real ou autorização sensível.',
+    '- Responda em português claro e preserve a contribuição individual de cada participante.',
+  ].join('\n');
+}
+
 /**
  * Provider-independent approved dispatch prompt. It lives in shared because
  * the main process is the launch authority while the renderer only presents
@@ -226,6 +289,16 @@ export function buildIntentDispatchKickoffPrompt(
       : [];
   const lane = input.lane ?? 'standard';
   const squadInstructions = reusableSquadInstructions(input.squad, input.goal);
+  if (
+    lane === 'standard' &&
+    input.standardTopology === 'team-read-only-fanout'
+  ) {
+    return buildTeamRoundtableKickoffPrompt(
+      input,
+      headingTitle,
+      explicitCriteria,
+    );
+  }
   if (lane === 'consult') {
     return [
       `# Missão de consulta (read-only) — ${headingTitle}`,

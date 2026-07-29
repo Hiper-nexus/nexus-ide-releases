@@ -10,6 +10,7 @@ import {
   MISSION_SCHEDULER_WORKER_LEASE_POLICY,
   missionAccountQuotaScores,
   missionSchedulerConfiguredWorkerCap,
+  isTeamReadOnlyFanoutSchedulerWave,
   missionSchedulerLiveRosterAdapter,
   missionSchedulerRouteRequiresAccount,
   missionSchedulerHasKickoffAuthority,
@@ -39,6 +40,73 @@ import { testProjectScope } from "./__tests__/scope-fixture";
 import { INTERRUPTED_WORKTREE_RESERVATION_FAILURE_MARKER } from "../runtime/worktree-manager";
 import type { Mission } from "../../shared/orch-types";
 import { MissionSchedulerDispatchAuthorityError } from "./mission-scheduler-dispatch-transaction";
+import { TEAM_READ_ONLY_FANOUT_DOMAIN } from "../../shared/mission-topology";
+import type { SchedulerRuntimeTask } from "./mission-scheduler-runtime";
+
+function schedulerTask(
+  id: string,
+  overrides: Partial<SchedulerRuntimeTask> = {},
+): SchedulerRuntimeTask {
+  return {
+    id,
+    status: "pending",
+    dependsOn: [],
+    ownership: {
+      files: [],
+      symbols: [],
+      domains: [TEAM_READ_ONLY_FANOUT_DOMAIN],
+    },
+    merged: false,
+    parallelEligible: true,
+    ...overrides,
+  };
+}
+
+describe("team read-only fan-out scheduler wave", () => {
+  it("admits the configured cap only when every live task is a bounded fan-out reader", () => {
+    expect(
+      isTeamReadOnlyFanoutSchedulerWave([
+        schedulerTask("a"),
+        schedulerTask("b"),
+        schedulerTask("done", { status: "done", merged: true }),
+      ]),
+    ).toBe(true);
+
+    expect(
+      isTeamReadOnlyFanoutSchedulerWave([
+        schedulerTask("a"),
+        schedulerTask("writer", {
+          ownership: {
+            files: ["src/write.ts"],
+            symbols: [],
+            domains: [TEAM_READ_ONLY_FANOUT_DOMAIN],
+          },
+        }),
+      ]),
+    ).toBe(false);
+
+    expect(
+      isTeamReadOnlyFanoutSchedulerWave([
+        schedulerTask("a"),
+        schedulerTask("ordinary", {
+          ownership: {
+            files: [],
+            symbols: [],
+            domains: ["guided-advisory"],
+          },
+        }),
+      ]),
+    ).toBe(false);
+  });
+
+  it("does not bypass the adaptive cap without a pending fan-out task", () => {
+    expect(
+      isTeamReadOnlyFanoutSchedulerWave([
+        schedulerTask("done", { status: "done", merged: true }),
+      ]),
+    ).toBe(false);
+  });
+});
 
 describe("mission scheduler asynchronous authority fence", () => {
   it("does not let a preserved retry worktree consume its own maxWorkers=1 slot", () => {
@@ -532,6 +600,18 @@ describe("mission scheduler asynchronous authority fence", () => {
     await expect(
       reconcileMissionCompletionAfterSchedulerTick({
         mission,
+        dispatches: [
+          {
+            missionId: mission.id,
+            intentVersion: 2,
+            executionMode: "isolated_worktree",
+            ownership: {
+              files: ["src"],
+              symbols: [],
+              domains: ["guided-implementation"],
+            },
+          },
+        ],
         runGuidedBridge,
         completeLegacy,
       }),
@@ -577,6 +657,7 @@ describe("mission scheduler asynchronous authority fence", () => {
       await expect(
         reconcileMissionCompletionAfterSchedulerTick({
           mission,
+          dispatches: [],
           runGuidedBridge,
           completeLegacy,
         }),

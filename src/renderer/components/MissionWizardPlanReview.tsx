@@ -7,6 +7,7 @@ import type {
 } from '../../shared/orch-types';
 import type { RichModelMetadataView } from '../../shared/model-metadata-types';
 import type { MissionLane } from '../../shared/mission-intent';
+import { classifyStandardMissionTopology } from '../../shared/mission-topology';
 import {
   buildRosterCostPreview,
   forecastMissionWaves,
@@ -141,7 +142,13 @@ export function MissionWizardPlanReview({
   const waves = forecastMissionWaves({
     lane: contract.lane,
     maxWorkers: contract.budgets.maxWorkers,
+    goal: contract.promotedPlan ? '' : contract.goal,
   });
+  const isTeamReadOnlyFanout =
+    !contract.promotedPlan &&
+    (contract.lane ?? 'standard') === 'standard' &&
+    classifyStandardMissionTopology(contract.goal) ===
+      'team-read-only-fanout';
   const costs = buildRosterCostPreview({
     roster,
     adapters,
@@ -164,7 +171,10 @@ export function MissionWizardPlanReview({
         <strong>Objetivo:</strong> {contract.goal || mission.description}
       </p>
       <p className="wizard__mode-desc">
-        <strong>Modo:</strong> {laneLabel(contract.lane)}
+        <strong>Modo:</strong>{' '}
+        {isTeamReadOnlyFanout
+          ? 'rodada da equipe · somente leitura'
+          : laneLabel(contract.lane)}
         {' · '}
         <strong>Risco:</strong> {contract.risk}
         {' · '}
@@ -191,9 +201,9 @@ export function MissionWizardPlanReview({
         <section className="wizard__plan-card">
           <h3 className="wizard__label">ONDAS PREVISTAS</h3>
           <p className="wizard__hint-sm">
-            Estimativa antes do plano de tarefas controlado pelo Nexus;
-            dependências reais podem executar estas etapas em sequência ou
-            dividi-las.
+            {isTeamReadOnlyFanout
+              ? 'O Main sela uma tarefa raiz por especialista e inicia a equipe na mesma onda.'
+              : 'Estimativa antes do plano de tarefas controlado pelo Nexus; dependências reais podem executar estas etapas em sequência ou dividi-las.'}
           </p>
           <ol className="wizard__mode-desc">
             {waves.map((wave) => (
@@ -230,10 +240,22 @@ export function MissionWizardPlanReview({
 
         <section className="wizard__plan-card">
           <h3 className="wizard__label">
-            REVISÃO TÉCNICA AUTOMÁTICA AO FINAL
+            {isTeamReadOnlyFanout
+              ? 'ENTREGAS DA EQUIPE'
+              : 'REVISÃO TÉCNICA AUTOMÁTICA AO FINAL'}
           </h3>
           <p className="wizard__mode-desc">
-            <strong>{reviewStatus.label}</strong> {reviewStatus.detail}
+            {isTeamReadOnlyFanout ? (
+              <>
+                <strong>Handoffs físicos obrigatórios.</strong> O Nexus só
+                encerra depois de receber e consumir a resposta de cada
+                especialista.
+              </>
+            ) : (
+              <>
+                <strong>{reviewStatus.label}</strong> {reviewStatus.detail}
+              </>
+            )}
           </p>
         </section>
       </div>
@@ -245,9 +267,9 @@ export function MissionWizardPlanReview({
         </p>
       )}
       <p className="wizard__mode-desc">
-        Depois de começar, o Nexus conduz a implementação, a revisão
-        independente e a validação final. Ele só volta a você para uma decisão
-        real, uma autorização sensível ou um bloqueio comprovado.
+        {isTeamReadOnlyFanout
+          ? 'Depois de começar, todos os especialistas respondem em paralelo e o Maestro consolida a rodada. O Nexus só volta a você para autenticação, decisão real ou autorização sensível.'
+          : 'Depois de começar, o Nexus conduz a implementação, a revisão independente e a validação final. Ele só volta a você para uma decisão real, uma autorização sensível ou um bloqueio comprovado.'}
       </p>
       {error && (
         <p className="wizard__error" role="alert" aria-live="assertive">

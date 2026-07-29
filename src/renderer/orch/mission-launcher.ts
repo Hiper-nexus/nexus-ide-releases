@@ -194,6 +194,7 @@ export function buildIntentDispatchKickoffPrompt(input: {
   missionTitle?: IntentDispatchKickoffInput['missionTitle'];
   promotedPlan?: IntentDispatchKickoffInput['promotedPlan'];
   guidedPrevcRequired?: IntentDispatchKickoffInput['guidedPrevcRequired'];
+  standardTopology?: IntentDispatchKickoffInput['standardTopology'];
   operatorChoice?: IntentDispatchKickoffInput['operatorChoice'];
 }): string {
   return buildSharedIntentDispatchKickoffPrompt(input);

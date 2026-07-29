@@ -1,4 +1,8 @@
 import type { Handoff, Mission } from "../../shared/orch-types";
+import {
+  hasTeamReadOnlyFanoutDomain,
+  type StandardMissionTopology,
+} from "../../shared/mission-topology";
 import type { ScopedMissionStore } from "./mission-store";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
 import type {
@@ -40,6 +44,39 @@ type SchedulerHandoffDispatch = Pick<
   | "handoffId"
   | "handoffAcceptedAt"
 >;
+
+type SchedulerCompletionDispatch = Pick<
+  TaskDispatchRecord,
+  "missionId" | "intentVersion" | "executionMode" | "ownership"
+>;
+
+/**
+ * Completion topology comes from the persisted dispatch projection of the
+ * sealed plan. Goal text is proposal-time input and may be reclassified by a
+ * later release; it must never change the completion owner after approval.
+ *
+ * Only a non-empty, all-marker wave is fan-out. Empty or fully unmarked
+ * projections remain delivery; a mixed immutable projection is invalid and
+ * cannot select either completion owner.
+ */
+export function missionSchedulerCompletionTopology(
+  mission: Mission,
+  dispatches: readonly SchedulerCompletionDispatch[],
+): StandardMissionTopology | null {
+  const intentVersion = mission.intentVersion ?? 0;
+  const current = dispatches.filter(
+    (dispatch) =>
+      dispatch.missionId === mission.id &&
+      dispatch.intentVersion === intentVersion,
+  );
+  if (current.length === 0) return "delivery";
+  const markerCount = current.filter((dispatch) =>
+    hasTeamReadOnlyFanoutDomain(dispatch.ownership.domains),
+  ).length;
+  if (markerCount === 0) return "delivery";
+  if (markerCount === current.length) return "team-read-only-fanout";
+  return null;
+}
 
 export function missionSchedulerHasKickoffAuthority(
   missions: Pick<ScopedMissionStore, "hasCurrentKickoffAcceptance">,
@@ -157,12 +194,18 @@ export async function awaitMissionSchedulerAuthorityFence<T>(input: {
  */
 export async function reconcileMissionCompletionAfterSchedulerTick(input: {
   readonly mission: Mission | null;
+  readonly dispatches: readonly SchedulerCompletionDispatch[];
   readonly runGuidedBridge: () => Promise<unknown>;
   readonly completeLegacy: (intentVersion: number) => void;
 }): Promise<"guided" | "legacy" | "none"> {
   const mission = input.mission;
   if (!mission || mission.status !== "running") return "none";
-  if (missionRequiresGuidedPrevc(mission)) {
+  const topology = missionSchedulerCompletionTopology(
+    mission,
+    input.dispatches,
+  );
+  if (topology === null) return "none";
+  if (missionRequiresGuidedPrevc(mission, topology)) {
     await input.runGuidedBridge();
     return "guided";
   }

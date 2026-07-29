@@ -137,6 +137,175 @@ describe.skipIf(!sqliteAvailable)('ScopedUsageStore', () => {
     expect(reopened.hasProviderSession('codex', 'session-a')).toBe(false);
   });
 
+  it('reports only the first deterministic provider event as newly created', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+
+    expect(store.record('codex', usage({ outputTokens: 1 }))).toBe(true);
+    expect(store.record('codex', usage({ outputTokens: 1 }))).toBe(false);
+    expect(store.record('codex', usage({ outputTokens: 9 }))).toBe(false);
+    expect(store.totalsBySession('session-a')).toMatchObject({
+      outputTokens: 9,
+      turns: 1,
+    });
+  });
+
+  it('counts distinct stable Codex events from the same session and millisecond', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    const timestamp = '2026-07-05T16:54:17.773Z';
+    const thread = 'a'.repeat(64);
+
+    expect(
+      store.record(
+        'codex',
+        usage({
+          messageId: `codex:v2:${thread}:1:${timestamp}`,
+          inputTokens: 10,
+          outputTokens: 1,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      store.record(
+        'codex',
+        usage({
+          messageId: `codex:v2:${thread}:2:${timestamp}`,
+          inputTokens: 20,
+          outputTokens: 2,
+        }),
+      ),
+    ).toBe(true);
+    expect(store.totalsBySession('session-a')).toMatchObject({
+      inputTokens: 30,
+      outputTokens: 3,
+      turns: 2,
+    });
+  });
+
+  it('keeps one stable Codex replay idempotent across a manager restart', () => {
+    const { baseDir, scope } = fixture();
+    const timestamp = '2026-07-05T16:54:17.773Z';
+    const event = usage({
+      messageId: `codex:v2:${'b'.repeat(64)}:1:${timestamp}`,
+      outputTokens: 7,
+    });
+    const firstManager = manager(baseDir);
+    expect(
+      createScopedUsageStore(firstManager, scope).record('codex', event),
+    ).toBe(true);
+    firstManager.closeAll();
+    managers.splice(managers.indexOf(firstManager), 1);
+
+    const reopened = createScopedUsageStore(manager(baseDir), scope);
+    expect(reopened.record('codex', event)).toBe(false);
+    expect(reopened.totalsBySession('session-a')).toMatchObject({
+      outputTokens: 7,
+      turns: 1,
+    });
+  });
+
+  it('claims one matching legacy Codex id without duplicating it after upgrade', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    const timestamp = '2026-07-05T16:54:17.773Z';
+    const legacy = usage({
+      messageId: `codex:${timestamp}`,
+      inputTokens: 20,
+      outputTokens: 2,
+    });
+    expect(store.record('codex', legacy)).toBe(true);
+
+    const firstStable = {
+      ...legacy,
+      messageId: `codex:v2:${'c'.repeat(64)}:1:${timestamp}`,
+      inputTokens: 10,
+      outputTokens: 1,
+    };
+    expect(store.record('codex', firstStable)).toBe(true);
+    const matchingLegacyStable = {
+      ...legacy,
+      messageId: `codex:v2:${'c'.repeat(64)}:2:${timestamp}`,
+    };
+    expect(
+      store.record('codex', matchingLegacyStable),
+    ).toBe(false);
+    expect(store.totalsBySession('session-a')).toMatchObject({
+      inputTokens: 30,
+      outputTokens: 3,
+      turns: 2,
+    });
+
+    expect(store.record('codex', firstStable)).toBe(false);
+    expect(store.record('codex', matchingLegacyStable)).toBe(false);
+    expect(store.totalsBySession('session-a')).toMatchObject({
+      inputTokens: 30,
+      outputTokens: 3,
+      turns: 2,
+    });
+  });
+
+  it('resolves only one unambiguous persisted Codex pane authority', () => {
+    const { baseDir, scope } = fixture();
+    const workerPath = path.join(path.dirname(scope.rootRealPath), 'worker-a');
+    fs.mkdirSync(workerPath);
+    const workerScope: ProjectExecutionScope = Object.freeze({
+      ...scope,
+      rootRealPath: fs.realpathSync(workerPath),
+    });
+    const runtimeManager = manager(baseDir);
+    const mission = createScopedMissionStore(runtimeManager, scope).create({
+      title: 'Scoped mission',
+    });
+    createScopedMissionPaneStore(runtimeManager, scope).record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Worker',
+      paneId: 'pane-worker',
+      cwd: workerScope.rootRealPath,
+      executionScope: workerScope,
+    });
+    const store = createScopedUsageStore(runtimeManager, scope);
+    store.record(
+      'codex',
+      usage({
+        sessionId: 'legacy-parent',
+        messageId: 'external-event',
+        paneId: 'pane-worker',
+        missionId: mission.id,
+      }),
+    );
+    expect(store.codexSessionAuthority('legacy-parent')).toEqual({
+      paneId: 'pane-worker',
+      executionRoot: workerScope.rootRealPath,
+    });
+
+    const secondPath = path.join(path.dirname(scope.rootRealPath), 'worker-b');
+    fs.mkdirSync(secondPath);
+    const secondScope: ProjectExecutionScope = Object.freeze({
+      ...scope,
+      rootRealPath: fs.realpathSync(secondPath),
+    });
+    createScopedMissionPaneStore(runtimeManager, scope).record({
+      missionId: mission.id,
+      adapterId: 'codex',
+      title: 'Second worker',
+      paneId: 'pane-worker-b',
+      cwd: secondScope.rootRealPath,
+      executionScope: secondScope,
+    });
+    store.record(
+      'codex',
+      usage({
+        sessionId: 'legacy-parent',
+        messageId: 'second-event',
+        paneId: 'pane-worker-b',
+        missionId: mission.id,
+      }),
+    );
+    expect(store.codexSessionAuthority('legacy-parent')).toBeNull();
+  });
+
   it('binds mission attribution to the persisted pane owner', () => {
     const { baseDir, scope } = fixture();
     const runtimeManager = manager(baseDir);

@@ -188,11 +188,17 @@ vi.mock('./project-domain-store-registry', () => ({
             (attempt.state === 'reserved' || attempt.state === 'pasted')
           ) attempt.state = 'failed';
         }
-        const attemptNo = [...storeMocks.deliveryAttempts.values()]
-          .filter((attempt) => attempt.handoffId === handoffId).length + 1;
-        if (attemptNo > maxAttempts) {
+        const priorAttempts = [...storeMocks.deliveryAttempts.values()].filter(
+          (attempt) => attempt.handoffId === handoffId,
+        );
+        const sessionAttempts = priorAttempts.filter(
+          (attempt) =>
+            attempt.orchestratorSessionId === orchestratorSessionId,
+        ).length;
+        if (sessionAttempts >= maxAttempts) {
           throw new Error('handoff delivery attempt budget exhausted');
         }
+        const attemptNo = priorAttempts.length + 1;
         const attempt = {
           id: `attempt-${storeMocks.nextAttemptId++}`,
           handoffId,
@@ -774,7 +780,199 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
-  it('assenta entrega durável mesmo após o pane do Maestro morrer', async () => {
+  it('recupera o Maestro uma vez após esgotar o retry de entrega durável', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const current = authorizeSchedulerOwnedHandoff(scope);
+    const owner = { id: 101 };
+    paneMocks.authorities.set('orchestrator-session', {
+      owner,
+      paneId: 'orchestrator-pane',
+      sessionId: 'orchestrator-session',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'orchestrator',
+      scope,
+    });
+    scopeMocks.scopesByOwner.set(owner.id, scope);
+    const recover = vi.fn(async () => true);
+    delivery.configureHandoffDeliveryRuntimeRecovery(recover);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(current, scope);
+    await vi.advanceTimersByTimeAsync(25_000);
+
+    expect(recover).toHaveBeenCalledOnce();
+    expect(recover).toHaveBeenCalledWith({
+      scope,
+      missionId: 'mission-a',
+      sessionId: 'orchestrator-session',
+      paneId: 'orchestrator-pane',
+      handoffId: current.id,
+    });
+    expect(storeMocks.missionUpdates).toEqual([]);
+    expect(
+      storeMocks.missions.get(`${scope.projectId}:${scope.checkoutId}:mission-a`)
+        ?.status,
+    ).toBe('running');
+
+    delivery.onHandoffSubmitted(current, scope);
+    await vi.runAllTicks();
+    expect(recover).toHaveBeenCalledOnce();
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('repete recuperação técnica e reentrega no novo Maestro sem bloquear a missão', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const current = authorizeSchedulerOwnedHandoff(scope);
+    const owner = { id: 101 };
+    paneMocks.authorities.set('orchestrator-session', {
+      owner,
+      paneId: 'orchestrator-pane',
+      sessionId: 'orchestrator-session',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'orchestrator',
+      scope,
+    });
+    scopeMocks.scopesByOwner.set(owner.id, scope);
+    const recover = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockImplementationOnce(async () => {
+        const missionKey =
+          `${scope.projectId}:${scope.checkoutId}:mission-a`;
+        storeMocks.missions.set(missionKey, {
+          ...storeMocks.missions.get(missionKey),
+          orchestratorSessionId: 'orchestrator-session-rebound',
+        });
+        paneMocks.authorities.set('orchestrator-session-rebound', {
+          owner,
+          paneId: 'orchestrator-pane',
+          sessionId: 'orchestrator-session-rebound',
+          kind: 'cli-agent',
+          missionId: 'mission-a',
+          role: 'orchestrator',
+          scope,
+        });
+        delivery.redeliverPendingHandoffs(scope, 'mission-a');
+        return true;
+      });
+    delivery.configureHandoffDeliveryRuntimeRecovery(recover);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(current, scope);
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(recover).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(recover).toHaveBeenCalledTimes(2);
+    expect([...storeMocks.deliveryAttempts.values()].at(-1)).toMatchObject({
+      handoffId: current.id,
+      orchestratorSessionId: 'orchestrator-session-rebound',
+      attemptNo: 3,
+    });
+    expect(
+      ptyMocks.writes.mock.calls.filter(
+        ([sessionId, data]) =>
+          sessionId === 'orchestrator-session-rebound' &&
+          String(data).includes(`handoff_id=${current.id}`),
+      ),
+    ).toHaveLength(1);
+    expect(storeMocks.missionUpdates).toEqual([]);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it.each(['done', 'consumed', 'session-rebound'] as const)(
+    'cancela retry obsoleto quando a autoridade fica %s',
+    async (settlement) => {
+      const delivery = await import('./idle-delivery');
+      const scope = testProjectScope();
+      const current = authorizeSchedulerOwnedHandoff(scope);
+      const owner = { id: 101 };
+      paneMocks.authorities.set('orchestrator-session', {
+        owner,
+        paneId: 'orchestrator-pane',
+        sessionId: 'orchestrator-session',
+        kind: 'cli-agent',
+        missionId: 'mission-a',
+        role: 'orchestrator',
+        scope,
+      });
+      scopeMocks.scopesByOwner.set(owner.id, scope);
+      const recover = vi.fn(async () => false);
+      delivery.configureHandoffDeliveryRuntimeRecovery(recover);
+      ptyMocks.state = 'idle';
+      delivery.initIdleDelivery();
+
+      delivery.onHandoffSubmitted(current, scope);
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(recover).toHaveBeenCalledOnce();
+
+      const missionKey =
+        `${scope.projectId}:${scope.checkoutId}:mission-a`;
+      if (settlement === 'done') {
+        storeMocks.missions.set(missionKey, {
+          ...storeMocks.missions.get(missionKey),
+          status: 'done',
+        });
+      } else if (settlement === 'consumed') {
+        storeMocks.handoffs.set(current.id, {
+          ...current,
+          delivered: true,
+          deliveryState: 'consumed',
+        });
+      } else {
+        storeMocks.missions.set(missionKey, {
+          ...storeMocks.missions.get(missionKey),
+          orchestratorSessionId: 'orchestrator-session-rebound',
+        });
+      }
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(recover).toHaveBeenCalledOnce();
+      delivery.shutdownIdleDelivery();
+    },
+  );
+
+  it('rearma o restante do backoff se o relógio recua antes do timer', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    const current = authorizeSchedulerOwnedHandoff(scope);
+    const owner = { id: 101 };
+    paneMocks.authorities.set('orchestrator-session', {
+      owner,
+      paneId: 'orchestrator-pane',
+      sessionId: 'orchestrator-session',
+      kind: 'cli-agent',
+      missionId: 'mission-a',
+      role: 'orchestrator',
+      scope,
+    });
+    scopeMocks.scopesByOwner.set(owner.id, scope);
+    const recover = vi.fn(async () => false);
+    delivery.configureHandoffDeliveryRuntimeRecovery(recover);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(current, scope);
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(recover).toHaveBeenCalledOnce();
+
+    vi.setSystemTime(Date.now() - 30_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(recover).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(recover).toHaveBeenCalledTimes(2);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('mantém o handoff na fila quando o pane do Maestro morreu, sem fabricar aceite ou ACK', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     const current = authorizeSchedulerOwnedHandoff(scope);
@@ -784,9 +982,9 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.onHandoffSubmitted(current, scope);
     await vi.advanceTimersByTimeAsync(25_000);
 
-    expect(storeMocks.delivered).toEqual([{ scope, id: 'handoff-a' }]);
-    expect(storeMocks.consumed).toEqual([{ scope, id: 'handoff-a' }]);
-    expect(storeMocks.handoffs.get('handoff-a')?.deliveryState).toBe('consumed');
+    expect(storeMocks.delivered).toEqual([]);
+    expect(storeMocks.consumed).toEqual([]);
+    expect(storeMocks.handoffs.get('handoff-a')?.deliveryState).toBe('queued');
     expect(ptyMocks.writes).not.toHaveBeenCalled();
     expect(storeMocks.missionUpdates).toEqual([]);
     expect(
@@ -796,7 +994,7 @@ describe('idle delivery authority and lifecycle', () => {
     delivery.shutdownIdleDelivery();
   });
 
-  it('recupera após accepted persistir sem consumed e sem pane do Maestro', async () => {
+  it('preserva accepted sem consumed até o ACK físico do Maestro após restart', async () => {
     const delivery = await import('./idle-delivery');
     const scope = testProjectScope();
     const current = authorizeSchedulerOwnedHandoff(scope);
@@ -819,9 +1017,9 @@ describe('idle delivery authority and lifecycle', () => {
     ).toBe(true);
     expect(storeMocks.handoffs.get(current.id)).toMatchObject({
       delivered: true,
-      deliveryState: 'consumed',
+      deliveryState: 'submitted',
     });
-    expect(storeMocks.consumed).toEqual([{ scope, id: current.id }]);
+    expect(storeMocks.consumed).toEqual([]);
     expect(ptyMocks.writes).not.toHaveBeenCalled();
   });
 

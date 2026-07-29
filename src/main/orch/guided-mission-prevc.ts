@@ -20,6 +20,7 @@ import { decodeTaskScheduleDetail } from "./mission-scheduler-meta";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { bindFreezeDraftToApprovedIntent } from "./mission-freeze-authority";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import { standardTopologyFromSealedTaskDetails } from "./guided-mission-topology-authority";
 import {
   hasGuidedTaskDomain,
   parseGuidedTaskKind,
@@ -250,7 +251,19 @@ export function ensureGuidedMissionPrevc(
       "guided_prevc_contract_missing: missão aprovada não encontrada",
     );
   }
-  if (!missionRequiresGuidedPrevc(mission)) {
+  const taskDetails = deps.listPlannedTaskDetails(
+    scope,
+    missionId,
+    mission.intentContract.intentVersion,
+  );
+  const topology = standardTopologyFromSealedTaskDetails(taskDetails);
+  if (topology === "invalid") {
+    throw new Error(
+      "guided_prevc_contract_stale: o receipt selado mistura delivery e " +
+        "team-read-only-fanout; replaneje e reaprove a missão",
+    );
+  }
+  if (!missionRequiresGuidedPrevc(mission, topology)) {
     return Object.freeze({
       required: false,
       frozen: false,
@@ -258,11 +271,6 @@ export function ensureGuidedMissionPrevc(
       readyForWorkerDispatch: false,
     });
   }
-  const taskDetails = deps.listPlannedTaskDetails(
-    scope,
-    missionId,
-    mission.intentContract.intentVersion,
-  );
   // Receipt validity remains a separate fail-closed gate. These bytes can
   // block recovery, but can never opt this mission out of PREVC.
   assertGuidedPrevcTaskDetailsV2(taskDetails);

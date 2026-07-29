@@ -13,6 +13,7 @@ import { defaultSquadModelForAdapter } from "../../shared/squad-model-defaults";
 import type { SquadCliPolicy } from "../../shared/settings-types";
 import { isAdapterModelAuthenticated } from "../orch/mission-runtime-readiness";
 import { AgentAvatar } from "./AgentAvatar";
+import { deriveMissionWizardRoundtableState } from "./mission-wizard-roundtable";
 import { ProviderLogo } from "./ProviderLogo";
 import { ModelMetaBadge } from "./model/ModelMetaBadge";
 
@@ -31,6 +32,8 @@ interface MissionWizardReviewProps {
   accounts?: AccountInfo[];
   /** Beginner path: summarize the team and disclose CLI/tool tuning on demand. */
   guided?: boolean;
+  /** Current goal, used only to explain the topology already selected by Main. */
+  missionGoal?: string;
   /** Exact next decision; prevents a PRD shortcut from promising approval too early. */
   launchLabel?: string;
   highlightedAgentId: string | null;
@@ -120,6 +123,7 @@ export function MissionWizardReview({
   providers = [],
   accounts = [],
   guided = false,
+  missionGoal = "",
   launchLabel,
   highlightedAgentId,
   error,
@@ -156,6 +160,12 @@ export function MissionWizardReview({
   }, [squadCliPolicyProp]);
   const squadCliPolicy = squadCliPolicyProp ?? squadCliPolicyState;
   const operatorChoice = isOperatorChoicePolicy(squadCliPolicy);
+  const roundtable = deriveMissionWizardRoundtableState({
+    guided,
+    missionGoal,
+    squad,
+    roster,
+  });
   const orchestratorAgent =
     roster.find((agent) => agent.category === "orchestrator") ?? null;
   const orchestratorAdapter = adapters.find(
@@ -209,8 +219,7 @@ export function MissionWizardReview({
   ): boolean => {
     if (!adapter) return false;
     const capabilities = adapterCapabilityMatrixOf(adapter);
-    const isAdvisorRole =
-      agent.category === "reviewer" || agent.category === "scout";
+    const isAdvisorRole = roundtable.isAdvisorRole(agent.category);
     const advisoryLane =
       isAdvisorRole &&
       supportsAdvisoryParticipationCli(adapter.id) &&
@@ -265,9 +274,7 @@ export function MissionWizardReview({
         );
         const label = adapter?.label ?? unqualifiedWorker.cli;
         const capabilities = adapterCapabilityMatrixOf(adapter);
-        const isAdvisorRole =
-          unqualifiedWorker.category === "reviewer" ||
-          unqualifiedWorker.category === "scout";
+        const isAdvisorRole = roundtable.isAdvisorRole(unqualifiedWorker.category);
         const advisoryLane =
           isAdvisorRole &&
           supportsAdvisoryParticipationCli(unqualifiedWorker.cli) &&
@@ -304,7 +311,7 @@ export function MissionWizardReview({
             : `${label} precisa de autenticação válida para executar o worker ${unqualifiedWorker.agentName} automaticamente nesta release.`;
         }
         if (operatorChoice) {
-          return `${label} precisa estar instalada, autenticada e pronta para lançar o worker ${unqualifiedWorker.agentName}. No autopiloto, a tarefa usa worktree isolado, acesso de rede e merge validado pelo Nexus.`;
+          return `${label} precisa estar instalada, autenticada e pronta para lançar o worker ${unqualifiedWorker.agentName}. ${roundtable.workerLaunchContext}`;
         }
         if (
           capabilities.launchable &&
@@ -379,13 +386,7 @@ export function MissionWizardReview({
           <p className="wizard__label">
             {guided ? "Equipe preparada" : squad.name}
           </p>
-          {guided && (
-            <p className="wizard__review-summary">
-              {squad.name} · {roster.length}{" "}
-              {roster.length === 1 ? "agente" : "agentes"} para executar e
-              verificar a missão.
-            </p>
-          )}
+          {guided && <p className="wizard__review-summary">{roundtable.guidedSummary}</p>}
         </div>
         {guided && (
           <span
@@ -454,9 +455,7 @@ export function MissionWizardReview({
             </span>
           </div>
           <p className="wizard__hint-sm">
-            {operatorChoice
-              ? "Autopiloto: qualquer CLI autenticada pode ser Maestro, executor ou reviewer. Cada tarefa usa worktree isolado, acesso de rede e merge validado pelo Nexus. Salvar a configuração não inicia agentes."
-              : "O Maestro automático usa somente provider com gate verificado. Executores e arquitetos exigem escrita confinada; reviewers e scouts também podem usar uma CLI com leitura autônoma confinada. CLIs sem essas qualificações continuam visíveis como uso manual no Terminal. Salvar a configuração não inicia agentes."}
+            {roundtable.configurationHint(operatorChoice)}
           </p>
           <p className="wizard__hint-sm">
             Use * só no orquestrador; workers precisam de tools explícitas ou
@@ -731,9 +730,7 @@ export function MissionWizardReview({
                       <p className="wizard__row-error">
                         {operatorChoice
                           ? "CLI precisa estar instalada e autenticada para rodar neste papel."
-                          : a.category === "reviewer" || a.category === "scout"
-                            ? "Esta função exige leitura autônoma confinada e autenticação."
-                            : "Esta função exige escrita autônoma confinada e autenticação."}{" "}
+                          : roundtable.governedQualificationMessage(a.category)}{" "}
                         {operatorChoice
                           ? "Faça login na CLI ou troque o provider."
                           : "Escolha uma CLI qualificada; as opções marcadas como somente manual não iniciam workers."}

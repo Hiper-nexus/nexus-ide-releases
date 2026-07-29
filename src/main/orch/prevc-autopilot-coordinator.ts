@@ -17,6 +17,7 @@ import {
   type WorktreeRecord,
 } from "../runtime/worktree-contract";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import { standardTopologyFromSealedTaskDetails } from "./guided-mission-topology-authority";
 import { hashMissionIntentAuthority } from "./mission-pane-authority";
 import { requestMissionDriverTick } from "./mission-driver-runtime";
 import {
@@ -496,6 +497,7 @@ interface GuidedPostMergeAuthoritySeal {
   readonly rosterHash: string;
   readonly squadId: string;
   readonly taskIds: readonly string[];
+  readonly topology: "delivery";
   readonly frozenContractHash: string;
   readonly contextRevision: string;
   readonly baseSha: string;
@@ -525,7 +527,7 @@ export function inspectGuidedPrevcPostMergeAuthority(
 ): GuidedPostMergeInspection {
   const suite = dependencies.storesForScope(scope);
   const mission = suite.missions.get(missionId);
-  if (!mission || !missionRequiresGuidedPrevc(mission)) {
+  if (!mission || !missionRequiresGuidedPrevc(mission, "delivery")) {
     return Object.freeze({
       ready: false,
       reason: "mission is outside Main-owned guided PREVC",
@@ -546,6 +548,20 @@ export function inspectGuidedPrevcPostMergeAuthority(
     return Object.freeze({
       ready: false,
       reason: "current sealed Guided v2 plan is missing",
+    });
+  }
+  const topology = standardTopologyFromSealedTaskDetails(
+    receipt.tasks.map((task) => task.detail),
+  );
+  if (topology === "invalid") {
+    throw new Error(
+      "guided post-merge mission topology is mixed; replan and reapprove",
+    );
+  }
+  if (!missionRequiresGuidedPrevc(mission, topology)) {
+    return Object.freeze({
+      ready: false,
+      reason: "mission is outside Main-owned guided PREVC",
     });
   }
   assertGuidedPlanSquadAuthority({
@@ -624,6 +640,7 @@ export function inspectGuidedPrevcPostMergeAuthority(
     rosterHash: receipt.rosterHash,
     squadId: receipt.squadId,
     taskIds: Object.freeze(receipt.tasks.map((task) => task.taskId)),
+    topology: "delivery",
     frozenContractHash: frozen.contract.contract.contractHash,
     contextRevision: frozen.contract.contract.contextRevision,
     baseSha: frozen.contract.contract.baseCommit,
@@ -635,7 +652,6 @@ export function inspectGuidedPrevcPostMergeAuthority(
       !currentMission ||
       !currentMission.intentContract ||
       currentMission.status !== "running" ||
-      !missionRequiresGuidedPrevc(currentMission) ||
       currentMission.intentVersion !== seal.intentVersion ||
       currentMission.intentContract.intentVersion !== seal.intentVersion ||
       hashMissionIntentAuthority(currentMission.intentContract) !==
@@ -656,6 +672,20 @@ export function inspectGuidedPrevcPostMergeAuthority(
     );
     if (!currentReceipt) {
       throw new Error("guided post-merge task authority was revoked");
+    }
+    const currentTopology = standardTopologyFromSealedTaskDetails(
+      currentReceipt.tasks.map((task) => task.detail),
+    );
+    if (currentTopology === "invalid") {
+      throw new Error(
+        "guided post-merge mission topology was replaced by a mixed receipt",
+      );
+    }
+    if (
+      currentTopology !== seal.topology ||
+      !missionRequiresGuidedPrevc(currentMission, currentTopology)
+    ) {
+      throw new Error("guided post-merge mission topology was revoked");
     }
     assertGuidedPlanSquadAuthority({
       mission: currentMission,
@@ -1303,9 +1333,26 @@ export function runGuidedPrevcPostMergeBridge(
       dependencies,
     );
     if (!inspection.ready) {
+      const suite = dependencies.storesForScope(scope);
+      const currentMission = suite.missions.get(missionId);
+      const currentIntentVersion =
+        currentMission?.intentContract?.intentVersion;
+      const currentReceipt =
+        currentIntentVersion === undefined
+          ? null
+          : suite.tasks.getPlanReceipt(missionId, currentIntentVersion);
+      const currentTopology = standardTopologyFromSealedTaskDetails(
+        currentReceipt?.tasks.map((task) => task.detail) ?? [],
+      );
+      if (currentTopology === "invalid") {
+        throw new Error(
+          "guided post-merge mission topology is mixed; replan and reapprove",
+        );
+      }
       return Object.freeze({
         applicable: missionRequiresGuidedPrevc(
-          dependencies.storesForScope(scope).missions.get(missionId) ?? {},
+          currentMission ?? {},
+          currentTopology,
         ),
         ready: false,
         reason: inspection.reason,

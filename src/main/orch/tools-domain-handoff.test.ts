@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   getStores: vi.fn(),
   heartbeat: vi.fn(),
   acceptHandoff: vi.fn(),
-  markConsumedAfterAcceptedDelivery: vi.fn(),
+  markConsumedFromPhysicalAck: vi.fn(),
 }));
 
 vi.mock("./gate", async (importOriginal) => ({
@@ -203,8 +203,7 @@ describe("handoff MCP stop receipt", () => {
         submitFromPhysicalAgentBoundaryAndTransitionDispatch:
           mocks.submitAndTransition,
         list: vi.fn(),
-        markConsumedAfterAcceptedDelivery:
-          mocks.markConsumedAfterAcceptedDelivery,
+        markConsumedFromPhysicalAck: mocks.markConsumedFromPhysicalAck,
       },
       taskDispatches: {
         list: () => [],
@@ -391,7 +390,7 @@ describe("handoff MCP stop receipt", () => {
   });
 
   it("acks only one handoff through the current physical orchestrator delivery", async () => {
-    mocks.markConsumedAfterAcceptedDelivery.mockReturnValue(true);
+    mocks.markConsumedFromPhysicalAck.mockReturnValue(true);
     const orchestrator = {
       ...context(),
       token: "orchestrator-token",
@@ -402,16 +401,26 @@ describe("handoff MCP stop receipt", () => {
     };
 
     await expect(
-      acknowledgeTool().handler({ handoffId: "handoff-a" }, orchestrator),
+      acknowledgeTool().handler(
+        { handoffId: "handoff-a" },
+        orchestrator,
+        invocation({
+          toolCallId: "ack-tool-call-a",
+          toolName: "nexus_handoff_ack",
+        }),
+      ),
     ).resolves.toEqual({
       ok: true,
       handoffId: "handoff-a",
       deliveryState: "consumed",
     });
-    expect(mocks.markConsumedAfterAcceptedDelivery).toHaveBeenCalledWith(
-      "handoff-a",
-      "mission-a",
-      "orchestrator-session",
+    expect(mocks.markConsumedFromPhysicalAck).toHaveBeenCalledWith(
+      {
+        handoffId: "handoff-a",
+        missionId: "mission-a",
+        orchestratorSessionId: "orchestrator-session",
+      },
+      expect.any(Object),
     );
   });
 

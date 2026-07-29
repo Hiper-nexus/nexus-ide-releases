@@ -32,11 +32,16 @@ interface AgentTransportBinding {
   readonly issuedInvocationIds: Set<string>;
 }
 
+export type PhysicalAgentToolName =
+  | "nexus_handoff_submit"
+  | "nexus_handoff_ack"
+  | "nexus_mission_set_status";
+
 interface PendingReceipt {
   readonly source: AgentTransportProvenanceSource;
   readonly requestId: string;
   readonly toolCallId: string;
-  readonly toolName: "nexus_handoff_submit";
+  readonly toolName: PhysicalAgentToolName;
   readonly missionId: string;
   readonly sessionId: string;
   readonly workerIncarnationId?: string;
@@ -49,7 +54,7 @@ interface PendingReceipt {
 export interface ConsumedAgentTransportPhysicalReceipt {
   readonly source: AgentTransportProvenanceSource;
   readonly toolCallId: string;
-  readonly toolName: "nexus_handoff_submit";
+  readonly toolName: PhysicalAgentToolName;
   readonly missionId: string;
   readonly sessionId: string;
   readonly workerIncarnationId?: string;
@@ -295,7 +300,9 @@ export function runInsidePtyStreamAgentTransport<T>(
 
 /**
  * Dispatcher/PTY ingest seam. A direct store call is insufficient: minting
- * also requires the active, physically authenticated CLI transport.
+ * also requires the active, physically authenticated CLI transport. These are
+ * the three terminal orchestration actions whose durable receipts must prove
+ * which physical worker/Maestro invocation produced them.
  */
 export function mintAgentTransportPhysicalReceipt(input: {
   readonly ctx: AgentGateContext;
@@ -306,7 +313,11 @@ export function mintAgentTransportPhysicalReceipt(input: {
   if (
     !active ||
     !active.live ||
-    input.toolName !== "nexus_handoff_submit" ||
+    !(
+      input.toolName === "nexus_handoff_submit" ||
+      input.toolName === "nexus_handoff_ack" ||
+      input.toolName === "nexus_mission_set_status"
+    ) ||
     active.token !== input.ctx.token ||
     active.projectId !== input.ctx.scope.projectId ||
     active.checkoutId !== input.ctx.scope.checkoutId ||
@@ -334,7 +345,7 @@ export function mintAgentTransportPhysicalReceipt(input: {
     source: active.source,
     requestId: active.requestId,
     toolCallId: input.toolCallId,
-    toolName: "nexus_handoff_submit",
+    toolName: input.toolName,
     missionId: input.ctx.missionId,
     sessionId: input.ctx.sessionId,
     workerIncarnationId: input.ctx.workerIncarnationId,

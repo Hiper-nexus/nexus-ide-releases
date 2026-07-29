@@ -39,6 +39,81 @@ function prompt(operatorChoice: boolean): string {
 }
 
 describe('kickoff worker authority', () => {
+  it('conducts a roster roundtable as one parallel read-only wave', () => {
+    const text = buildIntentDispatchKickoffPrompt({
+      squad: {
+        ...squad,
+        agents: [
+          ...squad.agents,
+          {
+            id: 'agent-review',
+            agentName: 'Revisor',
+            category: 'reviewer',
+            cli: 'kimi',
+            model: 'kimi-code',
+            tools: [],
+          },
+        ],
+      } as Squad,
+      missionId: 'mission-roundtable',
+      goal: 'Teste de todos panes, cada um me fala o que faz na missão',
+      acceptanceCriteria: [],
+      risk: 'low',
+      maxWorkers: 2,
+      standardTopology: 'team-read-only-fanout',
+      operatorChoice: true,
+    });
+
+    expect(text).toMatch(/rodada da equipe/i);
+    expect(text).toMatch(/todos os especialistas.*em paralelo/i);
+    expect(text).toMatch(/O Main despacha todos/i);
+    expect(text).toMatch(/Maestro acompanha e reconhece os handoffs/i);
+    expect(text).toMatch(/seção “Maestro”.*própria perspectiva/i);
+    expect(text).toMatch(/depois de TODOS os ACKs[\s\S]*## Maestro/i);
+    expect(text).toMatch(
+      /nexus_mission_set_status[\s\S]*status:"done"[\s\S]*receipt durável/i,
+    );
+    expect(text).toMatch(/somente leitura/i);
+    expect(text).toMatch(/handoff.*cada especialista/i);
+    expect(text).not.toMatch(/implementar|worktree|PREVC/i);
+    expect(text).not.toMatch(/nexus_task list/i);
+  });
+
+  it('preserves sealed attachments, memory and squad guidance in a roundtable', () => {
+    const text = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-roundtable-context',
+      goal: 'Peça para todos os agentes analisarem o anexo e responderem',
+      acceptanceCriteria: ['Cada agente cita o anexo'],
+      risk: 'medium',
+      maxWorkers: 4,
+      attachmentPaths: ['/safe/brief.pdf'],
+      compactMemoryMarkdown: '## Memória relevante\nDecisão arquitetural A.',
+      standardTopology: 'team-read-only-fanout',
+    });
+
+    expect(text).toContain('/safe/brief.pdf');
+    expect(text).toContain('Decisão arquitetural A.');
+    expect(text).toContain('Coordene execução e QA.');
+    expect(text).toContain('risco=medium · maxWorkers=4');
+  });
+
+  it('keeps a mutating team request on the delivery path', () => {
+    const text = buildIntentDispatchKickoffPrompt({
+      squad,
+      missionId: 'mission-delivery',
+      goal: 'Cada agente deve corrigir um bug diferente no projeto',
+      acceptanceCriteria: [],
+      risk: 'medium',
+      maxWorkers: 2,
+      operatorChoice: true,
+    });
+
+    expect(text).toMatch(/Missão autorizada/i);
+    expect(text).toMatch(/worktree isolado/i);
+    expect(text).not.toMatch(/rodada da equipe/i);
+  });
+
   it('keeps the approved roster under operator-choice', () => {
     // Field trap (28/07): the block always said "somente o Codex builtin", so
     // the Maestro announced "a rota indicou grok, mas ... só podem usar Codex"

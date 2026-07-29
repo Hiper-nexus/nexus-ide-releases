@@ -94,6 +94,7 @@ function createWorld(
     ) => Promise<void>;
     readonly highRisk?: boolean;
     readonly criticalRisk?: boolean;
+    readonly goal?: string;
     readonly initialStage?: WorkflowStage;
     readonly runReviewGate?: {
       readonly ready: boolean;
@@ -109,7 +110,9 @@ function createWorld(
     rootRealPath: `/workspace/prevc-bridge-${missionSequence}`,
   });
   const intent = compileIntentContract({
-    goal: "Entregar o sistema aprovado com validação final",
+    goal:
+      options.goal ??
+      "Entregar o sistema aprovado com validação final",
     acceptanceCriteria: ["Entrega integrada, revisada e testada"],
     source: "typed",
     lane: "standard",
@@ -931,6 +934,30 @@ describe("production guided PREVC post-merge bridge", () => {
     expect(
       world.mission.milestones.every((step) => step.status === "pending"),
     ).toBe(true);
+  });
+
+  it("keeps a sealed delivery receipt in PREVC when its goal resembles a roundtable", async () => {
+    const world = createWorld({
+      goal: "Todos os agentes devem responder o que fazem nesta missão",
+    });
+
+    const inspection = inspectGuidedPrevcPostMergeAuthority(
+      world.scope,
+      world.missionId,
+      world.dependencies,
+    );
+    const result = await runGuidedPrevcPostMergeBridge(
+      world.scope,
+      world.missionId,
+      world.dependencies,
+    );
+
+    expect(inspection.ready).toBe(true);
+    expect(result).toMatchObject({
+      applicable: true,
+      ready: true,
+      driverWakeRequested: true,
+    });
   });
 
   it("treats a non-running guided mission as initially not ready without PREVC effects", async () => {

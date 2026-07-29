@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { TEAM_READ_ONLY_FANOUT_DOMAIN } from "../../shared/mission-topology";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { GitRunner } from "./git-command";
 
@@ -242,6 +243,7 @@ export const OWNERSHIP_NON_CLAIM_DOMAINS = Object.freeze(
     "guided-implementation",
     "guided-quality-gate",
     "sequential-only",
+    TEAM_READ_ONLY_FANOUT_DOMAIN,
   ]),
 );
 

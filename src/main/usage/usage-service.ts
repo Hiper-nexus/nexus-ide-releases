@@ -32,7 +32,10 @@ import {
 } from '../persistence/provider-session-store';
 import { ClaudeTranscriptWatcher } from './claude-transcript-watcher';
 import type { UsageEvent } from './claude-transcript';
-import { CodexUsageScanner } from './codex-scanner';
+import {
+  CodexUsageScanner,
+  type CodexRolloutSource,
+} from './codex-scanner';
 import {
   configureProjectUsageStoreRegistry,
   disposeProjectUsageStoreRegistry,
@@ -50,6 +53,7 @@ interface DictatedAttribution {
   ptySessionId: string;
   adapterId: string;
   paneId: string;
+  executionRoot: string;
   accountId?: string;
 }
 
@@ -59,12 +63,22 @@ interface ScopeTelemetryState {
   /** Main-authorized isolated checkouts observed for live agent sessions. */
   readonly executionRoots: Set<string>;
   readonly dictated: Map<string, DictatedAttribution>;
-  readonly resumedPaneIds: Map<string, Set<string>>;
+  readonly resumedSessions: Map<
+    string,
+    {
+      readonly adapterId: string;
+      readonly paneIds: Set<string>;
+      readonly executionRoots: Set<string>;
+    }
+  >;
   readonly accountIdByProviderSession: Map<string, string>;
-  readonly pendingResumePanes: Map<string, number>;
   readonly pendingLaunches: Map<
     string,
-    { readonly adapterId: string; readonly startedAt: number }
+    {
+      readonly adapterId: string;
+      readonly startedAt: number;
+      readonly executionRoot: string;
+    }
   >;
   watcher: ClaudeTranscriptWatcher | null;
   broadcastTimer: ReturnType<typeof setTimeout> | null;
@@ -72,6 +86,8 @@ interface ScopeTelemetryState {
 
 const SESSION_CLOCK_SKEW_MS = 5 * 60_000;
 const SESSION_BIND_WINDOW_MS = 24 * 60 * 60_000;
+const CODEX_ROLLOUT_SPAWN_SKEW_MS = 30_000;
+const CODEX_ROLLOUT_START_WINDOW_MS = 5 * 60_000;
 
 function scopeKey(scope: ProjectExecutionScope): string {
   return `${scope.projectId}\0${scope.checkoutId}`;
@@ -85,6 +101,21 @@ function isInside(root: string, candidate: string): boolean {
       !relative.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relative))
   );
+}
+
+function isPhysicalRootAuthorized(
+  configuredRoot: string,
+  observedRoot: string,
+): boolean {
+  try {
+    const physicalRoot = fs.realpathSync(configuredRoot);
+    return (
+      physicalRoot === configuredRoot &&
+      isInside(physicalRoot, observedRoot)
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function isUsageCwdAuthorized(
@@ -199,9 +230,8 @@ export class UsageTelemetryService {
       state.broadcastTimer = null;
       state.executionRoots.clear();
       state.dictated.clear();
-      state.resumedPaneIds.clear();
+      state.resumedSessions.clear();
       state.accountIdByProviderSession.clear();
-      state.pendingResumePanes.clear();
       state.pendingLaunches.clear();
     }
     this.#states.clear();
@@ -234,9 +264,8 @@ export class UsageTelemetryService {
       stores: this.#registry.forScope(immutableScope),
       executionRoots: new Set([immutableScope.rootRealPath]),
       dictated: new Map(),
-      resumedPaneIds: new Map(),
+      resumedSessions: new Map(),
       accountIdByProviderSession: new Map(),
-      pendingResumePanes: new Map(),
       pendingLaunches: new Map(),
       watcher: null,
       broadcastTimer: null,
@@ -299,6 +328,7 @@ export class UsageTelemetryService {
         ptySessionId: info.ptySessionId,
         adapterId: info.adapterId,
         paneId: info.paneId,
+        executionRoot,
         ...(info.accountId ? { accountId: info.accountId } : {}),
       });
       if (info.accountId) {
@@ -311,6 +341,7 @@ export class UsageTelemetryService {
       state.pendingLaunches.set(info.ptySessionId, {
         adapterId: info.adapterId,
         startedAt: Date.now(),
+        executionRoot,
       });
     }
     this.#watchProvider(state.scope, info.adapterId);
@@ -331,10 +362,22 @@ export class UsageTelemetryService {
       accountId,
     );
     if (persisted) {
-      state.pendingResumePanes.set(paneId, Date.now());
-      const paneIds = state.resumedPaneIds.get(persisted.id) ?? new Set();
+      const executionRoot = this.#registerResumePaneRoot(state, paneId);
+      if (!executionRoot) return null;
+      const existing = state.resumedSessions.get(persisted.id);
+      if (existing && existing.adapterId !== adapterId) {
+        throw new Error('provider session resume changed adapter identity');
+      }
+      const paneIds = existing?.paneIds ?? new Set<string>();
+      const executionRoots =
+        existing?.executionRoots ?? new Set<string>();
       paneIds.add(paneId);
-      state.resumedPaneIds.set(persisted.id, paneIds);
+      executionRoots.add(executionRoot);
+      state.resumedSessions.set(persisted.id, {
+        adapterId,
+        paneIds,
+        executionRoots,
+      });
       if (accountId) {
         state.accountIdByProviderSession.set(persisted.id, accountId);
       }
@@ -350,15 +393,47 @@ export class UsageTelemetryService {
     const captured = state.stores.usage.latestProviderSessionByPane(paneId);
     if (!captured) return null;
     if (captured.provider !== adapterId) return null;
-    state.pendingResumePanes.set(paneId, Date.now());
-    const paneIds = state.resumedPaneIds.get(captured.sessionId) ?? new Set();
+    const executionRoot = this.#registerResumePaneRoot(state, paneId);
+    if (!executionRoot) return null;
+    const existing = state.resumedSessions.get(captured.sessionId);
+    if (existing && existing.adapterId !== adapterId) {
+      throw new Error('provider session resume changed adapter identity');
+    }
+    const paneIds = existing?.paneIds ?? new Set<string>();
+    const executionRoots = existing?.executionRoots ?? new Set<string>();
     paneIds.add(paneId);
-    state.resumedPaneIds.set(captured.sessionId, paneIds);
+    executionRoots.add(executionRoot);
+    state.resumedSessions.set(captured.sessionId, {
+      adapterId,
+      paneIds,
+      executionRoots,
+    });
     if (captured.accountId) {
       state.accountIdByProviderSession.set(captured.sessionId, captured.accountId);
     }
     this.#watchProvider(scope, adapterId);
     return captured.sessionId;
+  }
+
+  #registerResumePaneRoot(
+    state: ScopeTelemetryState,
+    paneId: string,
+  ): string | null {
+    const pane = getPaneAuthzInfo(paneId);
+    if (!pane?.scope || !sameProjectScope(pane.scope, state.scope)) {
+      return null;
+    }
+    const configuredRoot =
+      pane.executionScope?.rootRealPath ?? pane.scope.rootRealPath;
+    let executionRoot: string;
+    try {
+      executionRoot = fs.realpathSync(configuredRoot);
+    } catch {
+      return null;
+    }
+    if (executionRoot !== configuredRoot) return null;
+    this.#registerExecutionRoot(state, executionRoot);
+    return executionRoot;
   }
 
   #onClaudeEvent(state: ScopeTelemetryState, event: UsageEvent): void {
@@ -368,30 +443,58 @@ export class UsageTelemetryService {
       'claude',
       event.sessionId,
     );
-    state.stores.usage.record('claude', {
+    const isNew = state.stores.usage.record('claude', {
       ...event,
       paneId: attribution?.paneId ?? null,
       missionId: attribution?.missionId ?? null,
       accountId: attribution?.accountId ?? null,
     });
-    this.#awardAgentTurn(state, 'claude', event);
+    if (isNew) this.#awardAgentTurn(state, 'claude', event);
     this.#scheduleBroadcast(state);
   }
 
-  #onCodexEvent(state: ScopeTelemetryState, event: UsageEvent): void {
-    if (!this.#acceptProviderEvent(state, 'codex', event)) return;
+  #onCodexEvent(
+    state: ScopeTelemetryState,
+    event: UsageEvent,
+    observedCwd: string,
+    source: CodexRolloutSource,
+  ): void {
+    if (
+      source.providerSessionId !== event.sessionId ||
+      !source.rolloutSessionId ||
+      source.rolloutSessionId !== source.threadId
+    ) {
+      return;
+    }
+    let observedRoot: string;
+    try {
+      observedRoot = fs.realpathSync(observedCwd);
+    } catch {
+      return;
+    }
+    if (
+      !this.#acceptProviderEvent(
+        state,
+        'codex',
+        event,
+        observedRoot,
+        source,
+      )
+    ) {
+      return;
+    }
     const attribution = this.#attributionForEvent(
       state,
       'codex',
       event.sessionId,
     );
-    state.stores.usage.record('codex', {
+    const isNew = state.stores.usage.record('codex', {
       ...event,
       paneId: attribution?.paneId ?? null,
       missionId: attribution?.missionId ?? null,
       accountId: attribution?.accountId ?? null,
     });
-    this.#awardAgentTurn(state, 'codex', event);
+    if (isNew) this.#awardAgentTurn(state, 'codex', event);
     this.#scheduleBroadcast(state);
   }
 
@@ -434,8 +537,10 @@ export class UsageTelemetryService {
       // already scoped/trusted, so retain its stable pane id directly.
       paneId = dictated.paneId;
     } else {
-      const resumed = state.resumedPaneIds.get(providerSessionId);
-      if (resumed?.size === 1) paneId = [...resumed][0];
+      const resumed = state.resumedSessions.get(providerSessionId);
+      if (resumed?.adapterId === provider && resumed.paneIds.size === 1) {
+        paneId = [...resumed.paneIds][0];
+      }
     }
     if (!paneId) {
       return accountId
@@ -456,33 +561,72 @@ export class UsageTelemetryService {
     state: ScopeTelemetryState,
     provider: 'claude' | 'codex',
     event: UsageEvent,
+    observedCwd?: string,
+    codexSource?: CodexRolloutSource,
   ): boolean {
     const dictated = state.dictated.get(event.sessionId);
-    if (
-      dictated?.adapterId === provider ||
+    if (dictated?.adapterId === provider) {
+      if (provider !== 'codex') return true;
+      return Boolean(
+        observedCwd &&
+          isPhysicalRootAuthorized(
+            dictated.executionRoot,
+            observedCwd,
+          ),
+      );
+    }
+
+    const resumed = state.resumedSessions.get(event.sessionId);
+    if (resumed?.adapterId === provider && resumed.paneIds.size === 1) {
+      if (provider !== 'codex') return true;
+      if (!observedCwd || resumed.executionRoots.size !== 1) return false;
+      return isPhysicalRootAuthorized(
+        [...resumed.executionRoots][0],
+        observedCwd,
+      );
+    }
+
+    if (provider === 'codex') {
+      const authority = state.stores.usage.codexSessionAuthority(
+        event.sessionId,
+      );
+      if (authority) {
+        if (
+          !observedCwd ||
+          !isPhysicalRootAuthorized(
+            authority.executionRoot,
+            observedCwd,
+          )
+        ) {
+          return false;
+        }
+        if (authority.paneId) {
+          state.resumedSessions.set(event.sessionId, {
+            adapterId: provider,
+            paneIds: new Set([authority.paneId]),
+            executionRoots: new Set([authority.executionRoot]),
+          });
+        }
+        return true;
+      }
+      if (state.stores.usage.hasProviderSession(provider, event.sessionId)) {
+        return false;
+      }
+    } else if (
       state.stores.usage.hasProviderSession(provider, event.sessionId)
     ) {
       return true;
     }
+
     const timestamp = event.timestamp;
     const now = Date.now();
     if (timestamp === null || timestamp > now + SESSION_CLOCK_SKEW_MS) {
       return false;
     }
 
+    const observedRoot = provider === 'codex' ? observedCwd ?? null : null;
     const candidatePaneIds = new Set<string>();
-    const recentResumePanes = new Set<string>();
-    for (const [paneId, startedAt] of state.pendingResumePanes) {
-      if (
-        now - startedAt <= SESSION_BIND_WINDOW_MS &&
-        timestamp >= startedAt - SESSION_CLOCK_SKEW_MS
-      ) {
-        recentResumePanes.add(paneId);
-        candidatePaneIds.add(paneId);
-      } else if (now - startedAt > SESSION_BIND_WINDOW_MS) {
-        state.pendingResumePanes.delete(paneId);
-      }
-    }
+    const candidateExecutionRoots = new Set<string>();
     const recentLaunches = new Set<string>();
     for (const [ptySessionId, launch] of state.pendingLaunches) {
       if (
@@ -495,19 +639,42 @@ export class UsageTelemetryService {
         }
         continue;
       }
-      recentLaunches.add(ptySessionId);
-      const pane = getPaneAuthzInfo(ptySessionId);
-      if (pane?.scope && sameProjectScope(pane.scope, state.scope)) {
-        candidatePaneIds.add(pane.paneId);
+      if (
+        provider === 'codex' &&
+        (!observedRoot ||
+          !isInside(launch.executionRoot, observedRoot) ||
+          codexSource?.providerSessionId !== event.sessionId ||
+          codexSource.threadId !== codexSource.providerSessionId ||
+          codexSource.rolloutSessionId !== codexSource.threadId ||
+          codexSource.sessionStartedAt === null ||
+          codexSource.sessionStartedAt <
+            launch.startedAt - CODEX_ROLLOUT_SPAWN_SKEW_MS ||
+          codexSource.sessionStartedAt >
+            launch.startedAt + CODEX_ROLLOUT_START_WINDOW_MS)
+      ) {
+        continue;
       }
+      const pane = getPaneAuthzInfo(ptySessionId);
+      if (!pane?.scope || !sameProjectScope(pane.scope, state.scope)) continue;
+      const authorizedRoot =
+        pane.executionScope?.rootRealPath ?? pane.scope.rootRealPath;
+      if (authorizedRoot !== launch.executionRoot) continue;
+      recentLaunches.add(ptySessionId);
+      candidatePaneIds.add(pane.paneId);
+      candidateExecutionRoots.add(launch.executionRoot);
     }
-    if (recentResumePanes.size === 0 && recentLaunches.size === 0) return false;
-    if (candidatePaneIds.size === 1) {
-      state.resumedPaneIds.set(event.sessionId, candidatePaneIds);
+    if (recentLaunches.size === 0) return false;
+    if (
+      candidatePaneIds.size !== 1 ||
+      candidateExecutionRoots.size !== 1
+    ) {
+      return false;
     }
-    for (const paneId of recentResumePanes) {
-      state.pendingResumePanes.delete(paneId);
-    }
+    state.resumedSessions.set(event.sessionId, {
+      adapterId: provider,
+      paneIds: candidatePaneIds,
+      executionRoots: candidateExecutionRoots,
+    });
     for (const ptySessionId of recentLaunches) {
       state.pendingLaunches.delete(ptySessionId);
     }
@@ -518,19 +685,30 @@ export class UsageTelemetryService {
     if (this.#codexScanner) return;
     this.#codexScanner = new CodexUsageScanner({
       isWatched: (cwd) => this.#scopeForCwd(cwd) !== null,
-      onEvent: (event, cwd) => {
+      onEvent: (event, cwd, source) => {
         // Fresh Codex sessions are main-dictated before their transcript is
         // scanned. Prefer that exact provider-session binding: isolated task
         // worktrees intentionally live outside the coordination checkout and
         // therefore cannot be attributed safely from cwd alone.
         const exact = [...this.#states.values()].filter(
-          (candidate) =>
-            candidate.dictated.get(event.sessionId)?.adapterId === 'codex',
+          (candidate) => {
+            if (
+              candidate.dictated.get(event.sessionId)?.adapterId === 'codex'
+            ) {
+              return true;
+            }
+            const resumed = candidate.resumedSessions.get(event.sessionId);
+            return (
+              resumed?.adapterId === 'codex' &&
+              resumed.paneIds.size === 1 &&
+              resumed.executionRoots.size === 1
+            );
+          },
         );
         const state =
           exact.length === 1 ? exact[0] : this.#scopeForCwd(cwd);
         if (!state) return;
-        this.#onCodexEvent(state, event);
+        this.#onCodexEvent(state, event, cwd, source);
       },
     });
     this.#codexScanner.start();

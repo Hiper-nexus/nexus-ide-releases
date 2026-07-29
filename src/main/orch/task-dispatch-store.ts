@@ -52,8 +52,11 @@ import {
 } from "./task-dispatch-persistence";
 import {
   completeMissionFromVerifiedTaskPlan,
+  hasExactFanoutConsolidationReplay,
   hasVerifiedGuidedTaskPlanAuthority,
+  recordFanoutMissionConsolidation,
   type CompleteMissionFromVerifiedPlanInput,
+  type RecordFanoutMissionConsolidationInput,
 } from "./task-dispatch-mission-completion-authority";
 import { assertTaskQualityReceiptAuthority } from "./task-dispatch-quality-receipt-authority";
 import {
@@ -808,6 +811,20 @@ export class TaskDispatchStore {
     input: CompleteMissionFromVerifiedPlanInput,
   ): boolean {
     return completeMissionFromVerifiedTaskPlan(this.#binding, input);
+  }
+
+  recordFanoutConsolidation(
+    input: RecordFanoutMissionConsolidationInput,
+  ): boolean {
+    return recordFanoutMissionConsolidation(this.#binding, input);
+  }
+
+  hasExactFanoutConsolidationReplay(input: {
+    readonly missionId: string;
+    readonly orchestratorSessionId: string;
+    readonly finalOutput: string;
+  }): boolean {
+    return hasExactFanoutConsolidationReplay(this.#binding, input);
   }
 
   /**

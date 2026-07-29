@@ -38,6 +38,7 @@ import {
 } from '../orch/mission-list-action';
 import { toUserFacingMissionError } from '../lib/user-facing-mission-error';
 import { closeMissionRuntimeAndPanes } from '../orch/close-mission-runtime';
+import { MissionResultDetail } from './MissionResultDetail';
 
 /**
  * Orchestration drawer — the mission control surface (docs/ARCHITECTURE.md
@@ -77,16 +78,20 @@ function MissionRow({
   mission,
   handoffCount,
   onReopen,
+  onViewResult,
   onRemove,
   hasVisiblePanes,
 }: {
   mission: Mission;
   handoffCount: number;
   onReopen: (mission: Mission) => void;
+  onViewResult: (mission: Mission) => void;
   onRemove: (mission: Mission) => void;
   hasVisiblePanes: boolean;
 }) {
   const listAction = missionListAction(mission, hasVisiblePanes);
+  const hasTerminalResult =
+    mission.status === 'done' || mission.status === 'failed';
   return (
     <li className="orch-item">
       <div className="orch-item__head">
@@ -101,10 +106,18 @@ function MissionRow({
         )}
         <button
           className="orch-panel__btn"
-          onClick={() => onReopen(mission)}
-          title="Restaura os panes da missão; as CLIs retomam a conversa com --resume"
+          onClick={() =>
+            hasTerminalResult
+              ? onViewResult(mission)
+              : onReopen(mission)
+          }
+          title={
+            hasTerminalResult
+              ? 'Abre o relatório persistido sem iniciar uma CLI'
+              : 'Restaura os panes da missão; as CLIs retomam a conversa com --resume'
+          }
         >
-          Reabrir
+          {hasTerminalResult ? 'Ver resultado' : 'Reabrir'}
         </button>
         {listAction !== 'none' && (
           <button
@@ -292,6 +305,9 @@ export function OrchestrationPanel() {
   );
   const mcpInfo = useOrchStore((s) => s.mcpInfo);
   const tab = useOrchStore((s) => s.panelTab);
+  const selectedMissionId = useOrchStore((s) => s.selectedMissionId);
+  const openMissionDetail = useOrchStore((s) => s.openMissionDetail);
+  const clearMissionDetail = useOrchStore((s) => s.clearMissionDetail);
   const setTab = useOrchStore((s) => s.setPanelTab);
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<Squad | null>(null);
@@ -371,6 +387,8 @@ export function OrchestrationPanel() {
   }
 
   const visibleTodoLists = todoLists.filter((l) => l.items.length > 0);
+  const selectedMission =
+    missions.find((mission) => mission.id === selectedMissionId) ?? null;
   const handoffCountByMission = new Map<string, number>();
   for (const h of handoffs) {
     if (h.missionId) {
@@ -420,7 +438,12 @@ export function OrchestrationPanel() {
         {tab === 'missions' && (
           <>
             {notice && <p className="orch-panel__notice">{notice}</p>}
-            {missions.length === 0 ? (
+            {selectedMission ? (
+              <MissionResultDetail
+                mission={selectedMission}
+                onBack={clearMissionDetail}
+              />
+            ) : missions.length === 0 ? (
               <EmptyState
                 className="orch-panel__empty-state orch-panel__empty--story"
                 icon="mission"
@@ -456,6 +479,9 @@ export function OrchestrationPanel() {
                     mission={m}
                     handoffCount={handoffCountByMission.get(m.id) ?? 0}
                     onReopen={onReopenMission}
+                    onViewResult={(mission) =>
+                      openMissionDetail(mission.id)
+                    }
                     onRemove={onRemoveMission}
                     hasVisiblePanes={
                       livePaneIdsForMission(m.id).length > 0

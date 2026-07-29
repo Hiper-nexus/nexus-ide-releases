@@ -496,6 +496,14 @@ export function MissionRail() {
   function selectMission(m: Mission) {
     setBusy(m.id);
     setNote(null);
+    // Terminal rows are durable reports, not dormant runtimes. Opening one
+    // must never materialize a new CLI merely to recover text that Main
+    // already persisted with the mission.
+    if (m.status === 'done' || m.status === 'failed') {
+      useOrchStore.getState().openMissionDetail(m.id);
+      setBusy(null);
+      return;
+    }
     // Already on screen: bring it to the front. Clicking a mission whose pane
     // was alive fell straight into reopen, which neither focused the pane nor
     // dismissed the home screen — so the mission "did not open" and the
@@ -836,6 +844,10 @@ export function MissionRail() {
                           lane,
                           technicalRecovery,
                         );
+                        const openTitle =
+                          m.status === 'done' || m.status === 'failed'
+                            ? 'Ver resultado final persistido'
+                            : resumeCopy.title;
                         const routeDisplay = missionRouteDisplay(m.latestRoute);
                         const canPromotePlan =
                           lane === 'plan' &&
@@ -871,8 +883,8 @@ export function MissionRail() {
                               } mission-rail__item--tone-${statusUi.tone}`}
                               disabled={busy !== null}
                               aria-current={liveInGrid ? 'true' : undefined}
-                              aria-label={`${m.title}. ${statusUi.label}. ${resumeCopy.title}`}
-                              title={`${m.title}\n${resumeCopy.title}${
+                              aria-label={`${m.title}. ${statusUi.label}. ${openTitle}`}
+                              title={`${m.title}\n${openTitle}${
                                 routeDisplay ? `\n${routeDisplay.title}` : ''
                               }`}
                               onClick={() => selectMission(m)}

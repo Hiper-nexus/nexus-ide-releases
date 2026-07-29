@@ -38,6 +38,10 @@ import { listAdapterInfos } from "../adapters/adapter-registry";
 import { getOrchSettings } from "../persistence/settings-store";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import type { SquadCliPolicy } from "../../shared/settings-types";
+import {
+  classifyStandardMissionTopology,
+  hasTeamReadOnlyFanoutDomain,
+} from "../../shared/mission-topology";
 
 type WorkerCategory = Exclude<AgentCategory, "orchestrator">;
 
@@ -137,6 +141,7 @@ function resolveRosterAgent(
   squad: Squad,
   getAdapterInfo: MissionTaskPlanAuthorityDeps["getAdapterInfo"],
   operatorChoice = false,
+  teamReadOnlyFanout = false,
 ): SquadAgent {
   const matches = squad.agents.filter(
     (agent) => agent.id === agentRef || agent.agentName === agentRef,
@@ -224,7 +229,8 @@ function resolveRosterAgent(
     mode === "read_only" &&
     !capabilities.governedWriter &&
     category !== "reviewer" &&
-    category !== "scout"
+    category !== "scout" &&
+    !teamReadOnlyFanout
   ) {
     throw new Error(
       `task ${taskId} read_only-only CLI is restricted to reviewer/scout`,
@@ -256,6 +262,7 @@ function parsePlanTask(
     MissionTaskPlanAuthorityDeps,
     "getAdapterInfo" | "squadCliPolicy"
   >,
+  allowTeamReadOnlyFanout = false,
 ): ParsedPlanTask {
   if (!raw || typeof raw !== "object") {
     throw new Error(`invalid task at index ${index}`);
@@ -314,6 +321,8 @@ function parsePlanTask(
     squad,
     deps.getAdapterInfo,
     operatorChoice,
+    allowTeamReadOnlyFanout &&
+      hasTeamReadOnlyFanoutDomain(ownership.domains),
   );
   return {
     id,
@@ -439,8 +448,11 @@ export function sealMainOwnedMissionTaskPlan(
     );
   }
 
+  const allowTeamReadOnlyFanout =
+    classifyStandardMissionTopology(mission.intentContract.goal) ===
+    "team-read-only-fanout";
   const inputs = rawTasks.map((raw, index) =>
-    parsePlanTask(raw, index, squad, deps),
+    parsePlanTask(raw, index, squad, deps, allowTeamReadOnlyFanout),
   );
   const requiredWorkerAgentRef =
     mission.intentContract.requiredWorkerAgentRef;

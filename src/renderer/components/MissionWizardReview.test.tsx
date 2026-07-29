@@ -300,6 +300,52 @@ describe("MissionWizardReview orchestrator provider", () => {
     act(() => root.unmount());
   });
 
+  it("explica a rodada paralela sem prometer implementação", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const worker: SquadAgent = {
+      ...orchestrator,
+      id: "worker",
+      agentName: "Especialista",
+      category: "reviewer",
+      allowedTools: [],
+    };
+
+    act(() => {
+      root.render(
+        <MissionWizardReview
+          squadCliPolicy="governed"
+          squad={{ ...squad, agents: [orchestrator, worker] }}
+          roster={[orchestrator, worker]}
+          adapters={[codex]}
+          providers={[provider(codex)]}
+          guided
+          missionGoal="Teste de todos panes, cada um me fala o que faz na missão"
+          highlightedAgentId={null}
+          error={null}
+          spawning={false}
+          rosterSaved={false}
+          rosterInvalidAgent={null}
+          onSaveRoster={vi.fn()}
+          onUpdateAgent={vi.fn()}
+          onError={vi.fn()}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onLaunch={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).toMatch(
+      /1 especialista responde em paralelo.*Maestro consolida com sua perspectiva/i,
+    );
+    expect(host.textContent).toMatch(/somente leitura/i);
+    expect(host.textContent).not.toMatch(/executar e verificar a missão/i);
+    expect(host.textContent).not.toMatch(/Cada tarefa usa worktree isolado/i);
+    act(() => root.unmount());
+  });
+
   it("não promove o primeiro worker a Maestro quando o roster é inválido", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

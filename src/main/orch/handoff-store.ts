@@ -36,6 +36,7 @@ import {
   inspectCurrentAgentTransportPhysicalReceipt,
   type AgentTransportPhysicalReceipt,
 } from "./http-mcp-boundary";
+import { markHandoffConsumedFromPhysicalAck } from "./handoff-physical-ack-authority";
 import {
   commitTaskDispatchHandoffInTransaction,
   resolveCommittedTaskDispatchHandoffReplayInTransaction,
@@ -511,6 +512,14 @@ export class ScopedHandoffStore {
             )
           : undefined;
       if (
+        inspectedReceipt &&
+        inspectedReceipt.toolName !== "nexus_handoff_submit"
+      ) {
+        throw new Error(
+          "handoff submit requires an exact physical nexus_handoff_submit receipt",
+        );
+      }
+      if (
         mcpBoundary &&
         receiptExpectation &&
         logicalOperationKey &&
@@ -616,6 +625,14 @@ export class ScopedHandoffStore {
               receiptExpectation,
             )
           : undefined;
+      if (
+        consumedReceipt &&
+        consumedReceipt.toolName !== "nexus_handoff_submit"
+      ) {
+        throw new Error(
+          "handoff submit consumed a non-submit physical receipt",
+        );
+      }
       if (consumedReceipt) {
         this.#assertCorrelatedMcpAuditIntent(db, consumedReceipt);
         this.#reservePhysicalHandoffSpendInTransaction(
@@ -623,20 +640,12 @@ export class ScopedHandoffStore {
           input.missionId!,
         );
       }
-      const resolved = this.#resolveEvidence(db, input.missionId, evidenceIds);
-      const id = this.#binding.makeId("handoff");
-      const handoff: ScopedHandoff = {
-        id,
-        missionId: input.missionId,
-        sessionId: input.sessionId,
-        workerIncarnationId: input.workerIncarnationId,
-        fromAgent: input.fromAgent,
-        authorityOrigin,
-        mcpProvenance: consumedReceipt
+      const submitProvenance: HandoffMcpProvenance | undefined =
+        consumedReceipt
           ? Object.freeze({
               receiptId: consumedReceipt.toolCallId,
               toolCallId: consumedReceipt.toolCallId,
-              toolName: consumedReceipt.toolName,
+              toolName: "nexus_handoff_submit",
               source: consumedReceipt.source,
               missionId: consumedReceipt.missionId,
               sessionId: consumedReceipt.sessionId,
@@ -646,8 +655,18 @@ export class ScopedHandoffStore {
               rawPayloadSha256: mcpBoundary?.options.rawPayloadSha256,
               logicalOperationKey,
               issuedAt: consumedReceipt.issuedAt,
-            } satisfies HandoffMcpProvenance)
-          : undefined,
+            })
+          : undefined;
+      const resolved = this.#resolveEvidence(db, input.missionId, evidenceIds);
+      const id = this.#binding.makeId("handoff");
+      const handoff: ScopedHandoff = {
+        id,
+        missionId: input.missionId,
+        sessionId: input.sessionId,
+        workerIncarnationId: input.workerIncarnationId,
+        fromAgent: input.fromAgent,
+        authorityOrigin,
+        mcpProvenance: submitProvenance,
         status: input.status,
         claimTrust: "untrusted",
         summary: input.summary,
@@ -1131,16 +1150,23 @@ export class ScopedHandoffStore {
          SET state = 'failed', failed_at = ?, failure_code = ?
          WHERE handoff_id = ? AND state IN ('reserved', 'pasted')`,
         ).run(now, "acceptance_observer_lost", handoffId);
-        const latest = db
+        const counters = db
           .prepare(
-            `SELECT COALESCE(MAX(attempt_no), 0) AS attempt_no
-         FROM handoff_delivery_attempts WHERE handoff_id = ?`,
+            `SELECT
+               COALESCE(MAX(attempt_no), 0) AS latest_attempt_no,
+               COUNT(CASE WHEN orchestrator_session_id = ? THEN 1 END)
+                 AS session_attempts
+             FROM handoff_delivery_attempts
+             WHERE handoff_id = ?`,
           )
-          .get(handoffId) as { attempt_no: number };
-        const attemptNo = latest.attempt_no + 1;
-        if (attemptNo > maxAttempts) {
+          .get(sessionId, handoffId) as {
+          latest_attempt_no: number;
+          session_attempts: number;
+        };
+        if (counters.session_attempts >= maxAttempts) {
           throw new Error("handoff delivery attempt budget exhausted");
         }
+        const attemptNo = counters.latest_attempt_no + 1;
         const id = this.#binding.makeId("handoff-delivery");
         db.prepare(
           `INSERT INTO handoff_delivery_attempts (
@@ -1380,6 +1406,37 @@ export class ScopedHandoffStore {
       .immediate();
     if (outcome === 1) this.#binding.emitChange();
     return outcome > 0;
+  }
+
+  /**
+   * Production ACK path. Unlike the compatibility method above, this persists
+   * an immutable receipt for the exact authenticated Maestro tool call and its
+   * append-only audit intent in the same transaction as consumption.
+   */
+  markConsumedFromPhysicalAck(
+    input: {
+      readonly handoffId: string;
+      readonly missionId: string;
+      readonly orchestratorSessionId: string;
+    },
+    physicalReceipt: AgentTransportPhysicalReceipt,
+  ): boolean {
+    const id = identifierSchema.parse(input.handoffId);
+    const missionId = identifierSchema.parse(input.missionId);
+    const orchestratorSessionId = identifierSchema.parse(
+      input.orchestratorSessionId,
+    );
+    const outcome = markHandoffConsumedFromPhysicalAck(
+      this.#binding,
+      {
+        handoffId: id,
+        missionId,
+        orchestratorSessionId,
+      },
+      physicalReceipt,
+    );
+    if (outcome === "created") this.#binding.emitChange();
+    return outcome !== null;
   }
 
   hasTrustedFromSession(

@@ -51,6 +51,16 @@ interface DeliveryAuthority extends DurableDeliveryAuthority {
   readonly paneId: string;
 }
 
+export interface HandoffDeliveryRuntimeRecoveryRequest
+  extends DurableDeliveryAuthority {
+  readonly paneId: string;
+  readonly handoffId: string;
+}
+
+export type HandoffDeliveryRuntimeRecovery = (
+  request: HandoffDeliveryRuntimeRecoveryRequest,
+) => boolean | Promise<boolean>;
+
 interface PendingEnter {
   readonly authority: DeliveryAuthority;
   readonly handoffId: string;
@@ -70,6 +80,16 @@ let untapState: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
 let untapSemanticStatus: (() => void) | null = null;
 let unsubscribeScopeChanges: (() => void) | null = null;
+let recoverDefectiveRuntime: HandoffDeliveryRuntimeRecovery | null = null;
+const runtimeRecoveryAttempts = new Map<
+  string,
+  {
+    attempts: number;
+    nextAttemptAt: number;
+    inFlight: boolean;
+    retryTimer?: ReturnType<typeof setTimeout>;
+  }
+>();
 
 const MAX_DELIVERY_SUMMARY = 4000;
 /**
@@ -82,6 +102,191 @@ const SUBMIT_ACCEPTANCE_WINDOW_MS = 12_000;
 const MAX_DELIVERY_ATTEMPTS = MAX_HANDOFF_DELIVERY_ATTEMPTS;
 const HANDOFF_DELIVERY_CTA =
   'Handoff não entregue. Clique em Reabrir para retomar o orquestrador e reenviar a entrega.';
+const RUNTIME_RECOVERY_RETRY_BASE_MS = 5_000;
+const RUNTIME_RECOVERY_RETRY_MAX_MS = 60_000;
+
+export function configureHandoffDeliveryRuntimeRecovery(
+  recovery: HandoffDeliveryRuntimeRecovery | null,
+): void {
+  for (const state of runtimeRecoveryAttempts.values()) {
+    if (state.retryTimer) clearTimeout(state.retryTimer);
+  }
+  recoverDefectiveRuntime = recovery;
+  runtimeRecoveryAttempts.clear();
+}
+
+function runtimeRecoveryKey(authority: DeliveryAuthority): string {
+  return JSON.stringify([
+    authority.scope.installationId,
+    authority.scope.projectId,
+    authority.scope.checkoutId,
+    authority.scope.rootRealPath,
+    authority.missionId,
+    authority.sessionId,
+  ]);
+}
+
+function runtimeRecoveryDelay(attempts: number): number {
+  return Math.min(
+    RUNTIME_RECOVERY_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1),
+    RUNTIME_RECOVERY_RETRY_MAX_MS,
+  );
+}
+
+function clearRuntimeRecoveryAttempt(key: string): void {
+  const current = runtimeRecoveryAttempts.get(key);
+  if (current?.retryTimer) clearTimeout(current.retryTimer);
+  runtimeRecoveryAttempts.delete(key);
+}
+
+function runtimeRecoveryIsStillRequired(
+  authority: DeliveryAuthority,
+  handoffId: string,
+): boolean {
+  try {
+    const stores = getProjectDomainStores(authority.scope);
+    const mission = stores.missions.get(authority.missionId);
+    if (
+      mission?.status !== 'running' ||
+      mission.orchestratorSessionId !== authority.sessionId
+    ) {
+      return false;
+    }
+    const handoff = stores.handoffs.get(handoffId);
+    if (
+      !handoff ||
+      handoff.missionId !== authority.missionId ||
+      handoff.delivered ||
+      handoff.deliveryState !== 'queued'
+    ) {
+      return false;
+    }
+    const runtime = getPaneRuntimeAuthorityBySession(authority.sessionId);
+    return (
+      !runtime ||
+      (runtime.sessionId === authority.sessionId &&
+        runtime.paneId === authority.paneId &&
+        runtime.missionId === authority.missionId &&
+        runtime.role === 'orchestrator' &&
+        Boolean(runtime.scope) &&
+        sameProjectScope(runtime.scope!, authority.scope))
+    );
+  } catch {
+    // A transient store read must not turn a recoverable delivery into a
+    // permanent wedge. The concrete recovery path repeats this proof before
+    // touching a physical process.
+    return true;
+  }
+}
+
+function scheduleRuntimeRecoveryRetry(
+  key: string,
+  authority: DeliveryAuthority,
+  handoffId: string,
+  state: {
+    attempts: number;
+    nextAttemptAt: number;
+    inFlight: boolean;
+    retryTimer?: ReturnType<typeof setTimeout>;
+  },
+  delay: number,
+): void {
+  if (state.retryTimer) clearTimeout(state.retryTimer);
+  const boundedDelay = Math.max(1, delay);
+  const retryTimer = setTimeout(
+    () => requestRuntimeRecovery(authority, handoffId),
+    boundedDelay,
+  );
+  runtimeRecoveryAttempts.set(key, { ...state, retryTimer });
+}
+
+function requestRuntimeRecovery(
+  authority: DeliveryAuthority,
+  handoffId: string,
+): void {
+  const recovery = recoverDefectiveRuntime;
+  if (!recovery) return;
+  const key = runtimeRecoveryKey(authority);
+  const now = Date.now();
+  const previous = runtimeRecoveryAttempts.get(key);
+  if (previous?.inFlight) return;
+  if (previous?.nextAttemptAt === Number.POSITIVE_INFINITY) return;
+  if ((previous?.nextAttemptAt ?? 0) > now) {
+    scheduleRuntimeRecoveryRetry(
+      key,
+      authority,
+      handoffId,
+      previous!,
+      previous!.nextAttemptAt - now,
+    );
+    return;
+  }
+  if (!runtimeRecoveryIsStillRequired(authority, handoffId)) {
+    clearRuntimeRecoveryAttempt(key);
+    return;
+  }
+  const attempts = (previous?.attempts ?? 0) + 1;
+  if (previous?.retryTimer) clearTimeout(previous.retryTimer);
+  const inFlightState = {
+    attempts,
+    nextAttemptAt: now + runtimeRecoveryDelay(attempts),
+    inFlight: true,
+  };
+  runtimeRecoveryAttempts.set(key, inFlightState);
+  const request = Object.freeze({
+    sessionId: authority.sessionId,
+    missionId: authority.missionId,
+    paneId: authority.paneId,
+    handoffId,
+    scope: Object.freeze({ ...authority.scope }),
+  });
+  void Promise.resolve(recovery(request))
+    .then((recovered) => {
+      if (
+        recoverDefectiveRuntime !== recovery ||
+        runtimeRecoveryAttempts.get(key) !== inFlightState
+      ) {
+        return;
+      }
+      if (recovered) {
+        runtimeRecoveryAttempts.set(key, {
+          attempts,
+          nextAttemptAt: Number.POSITIVE_INFINITY,
+          inFlight: false,
+        });
+        return;
+      }
+      if (!runtimeRecoveryIsStillRequired(authority, handoffId)) {
+        clearRuntimeRecoveryAttempt(key);
+        return;
+      }
+      const delay = runtimeRecoveryDelay(attempts);
+      scheduleRuntimeRecoveryRetry(key, authority, handoffId, {
+        attempts,
+        nextAttemptAt: Date.now() + delay,
+        inFlight: false,
+      }, delay);
+    })
+    .catch((error) => {
+      if (
+        recoverDefectiveRuntime !== recovery ||
+        runtimeRecoveryAttempts.get(key) !== inFlightState
+      ) {
+        return;
+      }
+      if (!runtimeRecoveryIsStillRequired(authority, handoffId)) {
+        clearRuntimeRecoveryAttempt(key);
+        return;
+      }
+      const delay = runtimeRecoveryDelay(attempts);
+      scheduleRuntimeRecoveryRetry(key, authority, handoffId, {
+        attempts,
+        nextAttemptAt: Date.now() + delay,
+        inFlight: false,
+      }, delay);
+      console.warn('[idle-delivery] automatic Maestro recovery failed:', error);
+    });
+}
 
 function ownerKey(owner: PaneRuntimeAuthority['owner']): number {
   if (!owner) return 0;
@@ -293,69 +498,10 @@ function durableDispatchOwnsHandoff(
 }
 
 /**
- * When the durable dispatcher already owns the handoff, PTY paste is advisory
- * and usually impossible (orchestrator busy). Still write the accepted-delivery
- * + consumption receipts the verified completion / PREVC bridge require.
- */
-function settleDurableOwnedHandoffDelivery(
-  authority: DurableDeliveryAuthority,
-  handoff: Handoff,
-): boolean {
-  const stores = getProjectDomainStores(authority.scope);
-  const current = stores.handoffs.get(handoff.id);
-  if (!current) return false;
-  if (current.deliveryState === 'consumed') return true;
-  if (
-    current.deliveryState === 'submitted' ||
-    current.deliveryState === 'acknowledged'
-  ) {
-    return stores.handoffs.markConsumedAfterAcceptedDelivery(
-      current.id,
-      authority.missionId,
-      authority.sessionId,
-    );
-  }
-  if (current.deliveryState !== 'queued') return false;
-  try {
-    const attempt = stores.handoffs.reserveDeliveryAttempt({
-      handoffId: current.id,
-      missionId: authority.missionId,
-      orchestratorSessionId: authority.sessionId,
-      maxAttempts: MAX_DELIVERY_ATTEMPTS,
-    });
-    stores.handoffs.markDeliveryAttemptPasted({
-      attemptId: attempt.id,
-      handoffId: current.id,
-      acceptDeadlineAt: Date.now() + SUBMIT_ACCEPTANCE_WINDOW_MS,
-    });
-    if (
-      !stores.handoffs.acceptDeliveryAttempt({
-        attemptId: attempt.id,
-        handoffId: current.id,
-      })
-    ) {
-      return false;
-    }
-    return stores.handoffs.markConsumedAfterAcceptedDelivery(
-      current.id,
-      authority.missionId,
-      authority.sessionId,
-    );
-  } catch (error) {
-    console.warn(
-      '[idle-delivery] settle durable handoff failed ' +
-        `(mission=${authority.missionId}, handoff=${handoff.id}): ` +
-        (error instanceof Error ? error.message : String(error)),
-    );
-    return false;
-  }
-}
-
-/**
- * Restart lane for the exact scheduler-owned crash window in which delivery
- * acceptance committed but consumption did not. Durable mission, kickoff,
- * intent, dispatch, physical session/incarnation and MCP provenance are all
- * re-proved before the existing accepted-attempt CAS may consume the handoff.
+ * Restart lane for an accepted scheduler-owned delivery whose explicit Maestro
+ * ACK has not committed yet. Re-prove its durable authority, but deliberately
+ * preserve `submitted`: accepting a PTY paste proves transport only. The exact
+ * orchestrator must call `nexus_handoff_ack` after processing the result.
  */
 export function recoverAcceptedSchedulerHandoffDelivery(
   handoff: Handoff,
@@ -373,9 +519,7 @@ export function recoverAcceptedSchedulerHandoffDelivery(
       current.deliveryState !== 'acknowledged')
   ) return false;
   const authority = schedulerDeliveryAuthority(current, scope);
-  return authority
-    ? settleDurableOwnedHandoffDelivery(authority, current)
-    : false;
+  return authority !== null;
 }
 
 function missionDispatchesAlreadyTerminal(
@@ -412,10 +556,11 @@ function blockDeliveryFailure(
       durableDispatchOwnsHandoff(authority, handoffId) ||
       missionDispatchesAlreadyTerminal(authority)
     ) {
+      requestRuntimeRecovery(authority, handoffId);
       console.warn(
-        '[idle-delivery] handoff não injetado no orquestrador após requeue ' +
-          `limitado, mas o dispatcher durável já possui o handoff — missão ` +
-          `permanece em curso (mission=${authority.missionId}, ` +
+        '[idle-delivery] Maestro não aceitou a entrega após retry limitado; ' +
+          `recuperação física foi solicitada e a missão permanece em curso ` +
+          `(mission=${authority.missionId}, ` +
           `handoff=${handoffId}, session=${authority.sessionId}, ` +
           `attempts=${attempts})`,
       );
@@ -465,9 +610,6 @@ function retryOrBlockDelivery(
   attemptNo: number,
 ): void {
   if (!isCurrentAuthority(authority)) return;
-  // Durable merge already owns the handoff; keep retrying PTY paste only
-  // burns the attempt budget and spams blockDeliveryFailure.
-  if (durableDispatchOwnsHandoff(authority, handoffId)) return;
   if (attemptNo >= MAX_DELIVERY_ATTEMPTS) {
     blockDeliveryFailure(authority, handoffId, attemptNo);
     return;
@@ -550,9 +692,6 @@ function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
     !isCurrentAuthority(authority) ||
     !isSessionInjectableIdle(authority.sessionId)
   ) return false;
-  if (durableDispatchOwnsHandoff(authority, handoff.id)) {
-    return settleDurableOwnedHandoffDelivery(authority, handoff);
-  }
   const stores = getProjectDomainStores(authority.scope);
   const current = stores.handoffs.get(handoff.id);
   if (!current) return false;
@@ -677,6 +816,7 @@ export function shutdownIdleDelivery(): void {
   untapSemanticStatus = null;
   unsubscribeScopeChanges = null;
   queues.clear();
+  configureHandoffDeliveryRuntimeRecovery(null);
   for (const pending of [...pendingEnters]) clearPendingEnter(pending);
 }
 
@@ -727,13 +867,6 @@ export function onHandoffSubmitted(
   // its own validated result. Never queue that message back into the same PTY.
   if (petCompletion) return petCompletion;
   if (isDiagnosticDriverHandoff(handoff)) return null;
-  const schedulerAuthority = schedulerDeliveryAuthority(handoff, scope);
-  if (
-    schedulerAuthority &&
-    settleDurableOwnedHandoffDelivery(schedulerAuthority, handoff)
-  ) {
-    return null;
-  }
   const authority = targetAuthority(handoff, scope);
   if (!authority) return null; // No trusted orchestrator — stays listed as pending.
   if (

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { splitTailChunk, type UsageEvent } from './claude-transcript';
 import { CodexFileIngest } from './codex-transcript';
 
@@ -15,15 +16,32 @@ import { CodexFileIngest } from './codex-transcript';
 interface FileState {
   offset: number;
   remainder: string;
+  decoder: StringDecoder;
   ingest: CodexFileIngest;
   skip: boolean;
   /** Known cwd not currently owned by an active project scope. */
   inactiveCwd: string | null;
 }
 
+export interface CodexRolloutSource {
+  /** Canonical provider session used by exact resume. */
+  providerSessionId: string;
+  /** Physical thread that owns this rollout. */
+  threadId: string;
+  /** Physical thread id encoded in the immutable rollout filename. */
+  rolloutSessionId: string | null;
+  /** Creation time from the first (file-owning) session_meta. */
+  sessionStartedAt: number | null;
+  parentThreadId?: string;
+}
+
 export interface CodexScannerOptions {
   isWatched: (cwd: string) => boolean;
-  onEvent: (event: UsageEvent, cwd: string) => void;
+  onEvent: (
+    event: UsageEvent,
+    cwd: string,
+    source: CodexRolloutSource,
+  ) => void;
   sessionsDir?: string;
   pollMs?: number;
 }
@@ -31,6 +49,17 @@ export interface CodexScannerOptions {
 const DEFAULT_POLL_MS = 10_000;
 /** Após ler este tanto sem session_meta, o arquivo é considerado inatribuível. */
 const META_DISCOVERY_BYTES = 128 * 1024;
+/** Never allocate an entire long-running rollout in the Electron main process. */
+const READ_CHUNK_BYTES = 512 * 1024;
+/** Bound synchronous JSON/SQLite work before timers and IPC get another turn. */
+const MAX_LINES_PER_SLICE = 32;
+const MAX_SLICE_MS = 8;
+const ROLLOUT_SESSION_ID =
+  /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function dayDir(root: string, date: Date): string {
   const y = date.getFullYear();
@@ -109,6 +138,7 @@ export class CodexUsageScanner {
       state = {
         offset: 0,
         remainder: '',
+        decoder: new StringDecoder('utf8'),
         ingest: new CodexFileIngest(),
         skip: false,
         inactiveCwd: null,
@@ -123,6 +153,7 @@ export class CodexUsageScanner {
       // complete without repeatedly scanning unrelated projects.
       state.offset = 0;
       state.remainder = '';
+      state.decoder = new StringDecoder('utf8');
       state.ingest = new CodexFileIngest();
       state.inactiveCwd = null;
     }
@@ -138,6 +169,7 @@ export class CodexUsageScanner {
       this.files.set(file, {
         offset: 0,
         remainder: '',
+        decoder: new StringDecoder('utf8'),
         ingest: new CodexFileIngest(),
         skip: false,
         inactiveCwd: null,
@@ -146,45 +178,87 @@ export class CodexUsageScanner {
     }
     if (size === state.offset) return;
 
-    let chunk: string;
+    let fh: fs.promises.FileHandle;
     try {
-      const fh = await fs.promises.open(file, 'r');
-      try {
-        const len = size - state.offset;
-        const buf = Buffer.alloc(len);
-        await fh.read(buf, 0, len, state.offset);
-        chunk = buf.toString('utf-8');
-      } finally {
-        await fh.close();
-      }
+      fh = await fs.promises.open(file, 'r');
     } catch {
       return;
     }
-    state.offset = size;
 
-    const { lines, remainder } = splitTailChunk(state.remainder, chunk);
-    state.remainder = remainder;
-    for (const line of lines) {
-      const event = state.ingest.ingestLine(line);
-      const cwd = state.ingest.cwd;
-      // A workspace can become active later. Park the rollout and replay it
-      // from the head when its immutable scope is registered.
-      if (cwd && !this.opts.isWatched(cwd)) {
-        state.inactiveCwd = cwd;
-        return;
-      }
-      if (event && cwd) {
+    let linesInSlice = 0;
+    let sliceStartedAt = Date.now();
+    const rolloutSessionId =
+      ROLLOUT_SESSION_ID.exec(path.basename(file))?.[1] ?? null;
+    try {
+      while (state.offset < size) {
         if (this.stopped) return;
+        const readOffset = state.offset;
+        const length = Math.min(READ_CHUNK_BYTES, size - readOffset);
+        const buffer = Buffer.allocUnsafe(length);
+        let bytesRead: number;
         try {
-          this.opts.onEvent(event, cwd);
+          ({ bytesRead } = await fh.read(buffer, 0, length, readOffset));
         } catch {
-          // Consumidor nunca derruba o scanner.
+          return;
+        }
+        if (bytesRead <= 0) return;
+        state.offset = readOffset + bytesRead;
+
+        const chunk = state.decoder.write(buffer.subarray(0, bytesRead));
+        const { lines, remainder } = splitTailChunk(state.remainder, chunk);
+        state.remainder = remainder;
+        for (const line of lines) {
+          const event = state.ingest.ingestLine(line);
+          const cwd = state.ingest.cwd;
+          // A workspace can become active later. Park the rollout and replay it
+          // from the head when its immutable scope is registered.
+          if (cwd && !this.opts.isWatched(cwd)) {
+            state.inactiveCwd = cwd;
+            return;
+          }
+          if (event && cwd) {
+            if (this.stopped) return;
+            try {
+              const threadId = state.ingest.threadId;
+              if (!threadId) {
+                throw new Error('Codex usage event has no rollout thread id');
+              }
+              this.opts.onEvent(event, cwd, {
+                providerSessionId: event.sessionId,
+                threadId,
+                rolloutSessionId,
+                sessionStartedAt: state.ingest.sessionStartedAt,
+                ...(state.ingest.parentThreadId
+                  ? { parentThreadId: state.ingest.parentThreadId }
+                  : {}),
+              });
+            } catch {
+              // Consumidor nunca derruba o scanner.
+            }
+          }
+          linesInSlice += 1;
+          if (
+            linesInSlice >= MAX_LINES_PER_SLICE ||
+            Date.now() - sliceStartedAt >= MAX_SLICE_MS
+          ) {
+            await yieldToEventLoop();
+            if (this.stopped) return;
+            linesInSlice = 0;
+            sliceStartedAt = Date.now();
+          }
+        }
+        // Head suficiente lido sem session_meta: inatribuível, não insiste.
+        if (
+          lines.length > 0 &&
+          !state.ingest.cwd &&
+          state.offset > META_DISCOVERY_BYTES
+        ) {
+          state.skip = true;
+          return;
         }
       }
-    }
-    // Head inteiro lido sem session_meta: inatribuível, não insiste.
-    if (!state.ingest.cwd && state.offset > META_DISCOVERY_BYTES) {
-      state.skip = true;
+    } finally {
+      await fh.close().catch(() => undefined);
     }
   }
 }

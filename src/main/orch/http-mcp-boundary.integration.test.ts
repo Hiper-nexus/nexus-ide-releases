@@ -48,6 +48,7 @@ import { createTaskDispatchStore } from "./task-dispatch-store";
 
 const MISSION_ID = "mission-http-physical";
 const SESSION_ID = "session-http-physical";
+const ORCHESTRATOR_SESSION_ID = "session-http-maestro";
 const INCARNATION_ID = "incarnation-http-physical";
 const CONTEXT_REVISION = "context-http-physical";
 const HEAD_A = "a".repeat(40);
@@ -143,6 +144,8 @@ describe("physical HTTP MCP handoff boundary", () => {
   let missions: ReturnType<typeof createScopedMissionStore>;
   let tasks: ReturnType<typeof createScopedTaskStore>;
   let dispatches: ReturnType<typeof createTaskDispatchStore>;
+  let handoffs: ReturnType<typeof createScopedHandoffStore>;
+  let orchestratorCtx: AgentGateContext;
 
   beforeEach(async () => {
     handlerCalls = 0;
@@ -165,6 +168,7 @@ describe("physical HTTP MCP handoff boundary", () => {
       intentContract: approved.intentContract,
     });
     missions.setStatus(MISSION_ID, "running");
+    missions.setOrchestratorSession(MISSION_ID, ORCHESTRATOR_SESSION_ID);
     tasks = createScopedTaskStore(manager, scope);
     let nextDispatchId = 0;
     dispatches = createTaskDispatchStore(manager, scope, {
@@ -173,7 +177,7 @@ describe("physical HTTP MCP handoff boundary", () => {
           ? INCARNATION_ID
           : `${prefix}-http-${++nextDispatchId}`,
     });
-    const handoffs = createScopedHandoffStore(manager, scope, {
+    handoffs = createScopedHandoffStore(manager, scope, {
       idFactory: () => `handoff-http-${++nextHandoffId}`,
     });
     const resolveCommittedReplayCandidate: CommittedPhysicalHandoffReplayCandidateResolver =
@@ -215,7 +219,10 @@ describe("physical HTTP MCP handoff boundary", () => {
           stateMatches && dispatch.handoffId === matchingHandoffs[0]!.id
         );
       };
-    currentMission = approved;
+    currentMission = {
+      ...approved,
+      orchestratorSessionId: ORCHESTRATOR_SESSION_ID,
+    };
     currentGuidedFence = INACTIVE_GUIDED_PREVC_MCP_FENCE;
 
     resetGateForTests();
@@ -230,6 +237,16 @@ describe("physical HTTP MCP handoff boundary", () => {
       allowedTools: ["nexus_handoff_submit"],
     });
     bindTokenToSession(ctx.token, SESSION_ID);
+    orchestratorCtx = mintToken({
+      label: "physical Maestro",
+      role: "orchestrator",
+      providerId: "codex",
+      missionId: MISSION_ID,
+      contextRevision: CONTEXT_REVISION,
+      scope,
+      allowedTools: null,
+    });
+    bindTokenToSession(orchestratorCtx.token, ORCHESTRATOR_SESSION_ID);
 
     const handoffTool: McpToolDef = {
       name: "nexus_handoff_submit",
@@ -324,8 +341,34 @@ describe("physical HTTP MCP handoff boundary", () => {
         };
       },
     };
+    const acknowledgeTool: McpToolDef = {
+      name: "nexus_handoff_ack",
+      description: "physical Maestro ACK integration fixture",
+      inputSchema: {
+        type: "object",
+        properties: { handoffId: { type: "string" } },
+        required: ["handoffId"],
+      },
+      handler: async (args, toolCtx, invocation) => {
+        const receipt = invocation?.agentTransportPhysicalReceipt;
+        if (!receipt || !toolCtx.missionId || !toolCtx.sessionId) {
+          throw new Error("physical ACK receipt missing");
+        }
+        const handoffId = String(args.handoffId);
+        const consumed = handoffs.markConsumedFromPhysicalAck(
+          {
+            handoffId,
+            missionId: toolCtx.missionId,
+            orchestratorSessionId: toolCtx.sessionId,
+          },
+          receipt,
+        );
+        if (!consumed) throw new Error("handoff is not awaiting consumption");
+        return { handoffId, deliveryState: "consumed" };
+      },
+    };
     registry = {
-      tools: [handoffTool],
+      tools: [handoffTool, acknowledgeTool],
       serverName: "nexus-http-proof",
       serverVersion: "1",
     };
@@ -578,11 +621,14 @@ describe("physical HTTP MCP handoff boundary", () => {
       )
       .sort();
     expect(importers).toEqual([
+      "fanout-consolidation-receipt-authority.ts",
+      "handoff-physical-ack-authority.ts",
       "handoff-store.ts",
       "mcp-dispatch.ts",
       "mcp-protocol.ts",
       "mcp-server.ts",
       "pty-stream-handoff.ts",
+      "task-dispatch-mission-completion-authority.ts",
     ]);
   });
 
@@ -660,6 +706,180 @@ describe("physical HTTP MCP handoff boundary", () => {
       expect.objectContaining({ result: "intent" }),
       expect.objectContaining({ result: "ok" }),
     ]);
+  });
+
+  it("persists and replays only the exact physical Maestro ACK", async () => {
+    const handoff = handoffs.submit({
+      missionId: MISSION_ID,
+      sessionId: SESSION_ID,
+      fromAgent: "worker",
+      status: "success",
+      summary: "Durable result awaiting the exact physical Maestro ACK.",
+    });
+    const dispatchAck = (context = orchestratorCtx) =>
+      runInsidePtyStreamAgentTransport(context.sessionId!, context, () =>
+        dispatchToolCall(
+          "pty-stream",
+          registry,
+          "nexus_handoff_ack",
+          { handoffId: handoff.id },
+          context,
+          dispatchOptions(() => currentMission),
+        ),
+      );
+
+    await expect(dispatchAck()).resolves.toMatchObject({ ok: false });
+    expect(handoffs.get(handoff.id)?.deliveryState).toBe("queued");
+
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: MISSION_ID,
+      orchestratorSessionId: ORCHESTRATOR_SESSION_ID,
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: handoff.id,
+      }),
+    ).toBe(true);
+
+    await expect(dispatchAck()).resolves.toMatchObject({
+      ok: true,
+      result: {
+        handoffId: handoff.id,
+        deliveryState: "consumed",
+      },
+    });
+    expect(handoffs.get(handoff.id)?.deliveryState).toBe("consumed");
+    expect(
+      manager
+        .open(testProjectScope())
+        .db.prepare(
+          `SELECT handoff_id, delivery_attempt_id, orchestrator_session_id
+           FROM handoff_ack_receipts`,
+        )
+        .all(),
+    ).toEqual([
+      {
+        handoff_id: handoff.id,
+        delivery_attempt_id: attempt.id,
+        orchestrator_session_id: ORCHESTRATOR_SESSION_ID,
+      },
+    ]);
+
+    manager.close(testProjectScope());
+    await expect(dispatchAck()).resolves.toMatchObject({ ok: true });
+    expect(
+      manager
+        .open(testProjectScope())
+        .db.prepare(`SELECT COUNT(*) AS count FROM handoff_ack_receipts`)
+        .get(),
+    ).toEqual({ count: 1 });
+
+    const stale = mintToken({
+      label: "stale Maestro",
+      role: "orchestrator",
+      providerId: "codex",
+      missionId: MISSION_ID,
+      contextRevision: CONTEXT_REVISION,
+      scope: testProjectScope(),
+      allowedTools: null,
+    });
+    bindTokenToSession(stale.token, "session-http-maestro-stale");
+    await expect(dispatchAck(stale)).resolves.toMatchObject({ ok: false });
+    expect(
+      manager
+        .open(testProjectScope())
+        .db.prepare(`SELECT COUNT(*) AS count FROM handoff_ack_receipts`)
+        .get(),
+    ).toEqual({ count: 1 });
+
+    const reboundSessionId = "session-http-maestro-rebound";
+    expect(
+      missions.rebindOrchestratorSession(MISSION_ID, reboundSessionId),
+    ).toMatchObject({
+      orchestratorSessionId: reboundSessionId,
+      status: "running",
+    });
+    currentMission = {
+      ...currentMission,
+      orchestratorSessionId: reboundSessionId,
+    };
+    expect(handoffs.get(handoff.id)).toMatchObject({
+      delivered: false,
+      deliveryState: "queued",
+    });
+
+    const reboundCtx = mintToken({
+      label: "replacement physical Maestro",
+      role: "orchestrator",
+      providerId: "codex",
+      missionId: MISSION_ID,
+      contextRevision: CONTEXT_REVISION,
+      scope: testProjectScope(),
+      allowedTools: null,
+    });
+    bindTokenToSession(reboundCtx.token, reboundSessionId);
+    const reboundAttempt = handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: MISSION_ID,
+      orchestratorSessionId: reboundSessionId,
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: reboundAttempt.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: reboundAttempt.id,
+        handoffId: handoff.id,
+      }),
+    ).toBe(true);
+
+    await expect(dispatchAck(reboundCtx)).resolves.toMatchObject({
+      ok: true,
+      result: {
+        handoffId: handoff.id,
+        deliveryState: "consumed",
+      },
+    });
+    expect(
+      manager
+        .open(testProjectScope())
+        .db.prepare(
+          `SELECT delivery_attempt_id, orchestrator_session_id
+           FROM handoff_ack_receipts
+           WHERE handoff_id = ?
+           ORDER BY acknowledged_at, receipt_id`,
+        )
+        .all(handoff.id),
+    ).toEqual([
+      {
+        delivery_attempt_id: attempt.id,
+        orchestrator_session_id: ORCHESTRATOR_SESSION_ID,
+      },
+      {
+        delivery_attempt_id: reboundAttempt.id,
+        orchestrator_session_id: reboundSessionId,
+      },
+    ]);
+
+    manager.close(testProjectScope());
+    await expect(dispatchAck(reboundCtx)).resolves.toMatchObject({ ok: true });
+    expect(
+      manager
+        .open(testProjectScope())
+        .db.prepare(`SELECT COUNT(*) AS count FROM handoff_ack_receipts`)
+        .get(),
+    ).toEqual({ count: 2 });
   });
 
   it("revokes detached HTTP async resources after the request operation settles", async () => {

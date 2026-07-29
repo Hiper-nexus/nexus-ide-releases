@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { Mission } from "../../shared/orch-types";
+import { TEAM_READ_ONLY_FANOUT_DOMAIN } from "../../shared/mission-topology";
 import { ContextReadinessError } from "../context/context-workflow-service";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
@@ -194,6 +195,33 @@ describe("main-owned guided PREVC preflight", () => {
     ).toBe(false);
   });
 
+  it("skips guided PREVC only for an explicit read-only team fanout", () => {
+    const guided = approvedMission();
+    const withGoal = (goal: string): Mission => ({
+      ...guided,
+      description: goal,
+      intentContract: {
+        ...guided.intentContract!,
+        goal,
+      },
+    });
+
+    expect(
+      missionRequiresGuidedPrevc(
+        withGoal(
+          "Todos os agentes devem responder o que fazem nesta missão",
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      missionRequiresGuidedPrevc(
+        withGoal(
+          "Todos os agentes devem revisar e corrigir o código desta missão",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it.each([
     ["missing", []],
     ["corrupt", ["NEXUS_SCHEDULE_META:{broken}\n---\nExecutar"]],
@@ -237,6 +265,40 @@ describe("main-owned guided PREVC preflight", () => {
       expect(deps.hasMaterializedWorkerAuthority).not.toHaveBeenCalled();
     },
   );
+
+  it("fails closed on mixed sealed topology before workflow/provider materialization", () => {
+    const fanoutDetail = encodeTaskScheduleDetail("Responder", {
+      dependsOn: [],
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: [TEAM_READ_ONLY_FANOUT_DOMAIN],
+      },
+      merged: false,
+      parallelEligible: true,
+      agentRef: "reviewer",
+      agentCategory: "reviewer",
+      executionMode: "read_only",
+    });
+    const workflowForScope = vi.fn();
+    const deps = {
+      getMission: () => approvedMission(),
+      listPlannedTaskDetails: () => [fanoutDetail, guidedDetail()],
+      hasMaterializedWorkerAuthority: vi.fn(),
+      ensureGreenfieldBaseline: vi.fn(),
+      workflowForScope,
+    } as unknown as GuidedMissionPrevcDeps;
+
+    expect(() =>
+      ensureGuidedMissionPrevc(
+        testProjectScope(),
+        "mission-guided",
+        deps,
+      ),
+    ).toThrow(/guided_prevc_contract_stale.*mistura.*replaneje.*reaprove/i);
+    expect(workflowForScope).not.toHaveBeenCalled();
+    expect(deps.hasMaterializedWorkerAuthority).not.toHaveBeenCalled();
+  });
 
   it("freezes in Main and advances deterministic planning before reporting dispatch readiness", () => {
     const mission = approvedMission();

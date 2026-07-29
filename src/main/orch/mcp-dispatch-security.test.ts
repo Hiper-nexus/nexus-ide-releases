@@ -22,6 +22,7 @@ import { bindTokenToSession, mintToken, resetGateForTests } from "./gate";
 import { dispatchToolCall } from "./mcp-dispatch";
 import type { McpDispatchOptions } from "./mcp-dispatch";
 import type { IntentGateMissionResolver } from "./mcp-dispatch";
+import { runInsidePtyStreamAgentTransport } from "./http-mcp-boundary";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
@@ -1417,6 +1418,7 @@ describe("MCP dispatch effect safety", () => {
       { missionId: TEST_MISSION_ID, status: "blocked" },
       orchestratorMissionContext(),
       {
+        ...workflowOptions(),
         resolveMissionForIntentGate: () => ({
           mission: {
             ...dispatchedMissionFixture().mission,
@@ -1433,6 +1435,141 @@ describe("MCP dispatch effect safety", () => {
 
     expect(result.ok).toBe(true);
     expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("reports success after mission_set_status durably finishes its own mission", async () => {
+    let state = dispatchedMissionFixture();
+    const handler = vi.fn(async () => {
+      state = {
+        ...state,
+        mission: {
+          ...state.mission,
+          status: "done",
+          intentState: "done",
+        },
+      };
+      return { status: "done" };
+    });
+
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith({
+        name: "nexus_mission_set_status",
+        description: "finish mission",
+        inputSchema: { type: "object", properties: {} },
+        handler,
+      }),
+      "nexus_mission_set_status",
+      { missionId: TEST_MISSION_ID, status: "done" },
+      orchestratorMissionContext(),
+      {
+        ...workflowOptions(),
+        resolveMissionForIntentGate: () => state,
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: { status: "done" },
+    });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("replays only the exact durable fan-out completion after its response is lost", async () => {
+    const sessionId = "session-maestro-response-loss";
+    const finalOutput =
+      "## Maestro\n\nSíntese final completa e já consolidada.";
+    const ctx = orchestratorMissionContext();
+    bindTokenToSession(ctx.token, sessionId);
+    const done = dispatchedMissionFixture();
+    const resolveMissionForIntentGate = () => ({
+      ...done,
+      mission: {
+        ...done.mission,
+        status: "done" as const,
+        intentState: "done" as const,
+        orchestratorSessionId: sessionId,
+      },
+    });
+    const resolveReplay = vi.fn(
+      (_scope, candidate: {
+        missionId: string;
+        sessionId: string;
+        finalOutput: string;
+      }) =>
+        candidate.missionId === TEST_MISSION_ID &&
+        candidate.sessionId === sessionId &&
+        candidate.finalOutput === finalOutput,
+    );
+    const handler = vi.fn(async (_args, _ctx, meta) => ({
+      status: "done",
+      hasPhysicalReceipt: Boolean(meta.agentTransportPhysicalReceipt),
+    }));
+    const registry = registryWith({
+      name: "nexus_mission_set_status",
+      description: "finish fan-out mission",
+      inputSchema: { type: "object", properties: {} },
+      handler,
+    });
+    const options: McpDispatchOptions = {
+      ...workflowOptions(),
+      resolveMissionForIntentGate,
+      resolveCommittedFanoutConsolidationReplayCandidate: resolveReplay,
+    };
+
+    const exact = await runInsidePtyStreamAgentTransport(
+      sessionId,
+      ctx,
+      () =>
+        dispatchToolCall(
+          "pty-stream",
+          registry,
+          "nexus_mission_set_status",
+          {
+            missionId: TEST_MISSION_ID,
+            status: "done",
+            note: finalOutput,
+          },
+          ctx,
+          options,
+        ),
+    );
+
+    expect(exact).toMatchObject({
+      ok: true,
+      result: { status: "done", hasPhysicalReceipt: true },
+    });
+    expect(handler).toHaveBeenCalledOnce();
+
+    handler.mockClear();
+    const divergent = await runInsidePtyStreamAgentTransport(
+      sessionId,
+      ctx,
+      () =>
+        dispatchToolCall(
+          "pty-stream",
+          registry,
+          "nexus_mission_set_status",
+          {
+            missionId: TEST_MISSION_ID,
+            status: "done",
+            note: `${finalOutput}\n\nconteúdo divergente`,
+          },
+          ctx,
+          options,
+        ),
+    );
+
+    expect(divergent).toMatchObject({ ok: false, denied: true });
+    expect(handler).not.toHaveBeenCalled();
+    expect(resolveReplay).toHaveBeenLastCalledWith(
+      auditScope,
+      expect.objectContaining({
+        missionId: TEST_MISSION_ID,
+        sessionId,
+        finalOutput: expect.stringContaining("conteúdo divergente"),
+      }),
+    );
   });
 
   it("ops lane runs execution effects without a frozen PREVC contract", async () => {

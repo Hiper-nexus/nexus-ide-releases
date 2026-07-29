@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Squad } from "../../shared/orch-types";
+import { TEAM_READ_ONLY_FANOUT_DOMAIN } from "../../shared/mission-topology";
 import {
   decodeTaskScheduleDetail,
   encodeTaskScheduleDetail,
@@ -362,9 +363,101 @@ describe("Guided Planner v2", () => {
       applicable: true,
       sealed: false,
       reason: "already-sealed",
+      topology: "delivery",
       workerAgentRef: implementation.agentRef,
       taskId: implementation.taskId,
     });
+    expect(recovery.createPlanAtomically).not.toHaveBeenCalled();
+  });
+
+  it("recovers delivery topology from its sealed receipt instead of reclassifying goal text", () => {
+    const current = mission();
+    const roundtableLikeGoal =
+      "Todos os agentes devem responder o que fazem nesta missão";
+    const recovery = harness({
+      currentMission: {
+        ...current,
+        description: roundtableLikeGoal,
+        intentContract: {
+          ...current.intentContract!,
+          goal: roundtableLikeGoal,
+        },
+      },
+      existing: sealedGuidedV2Receipt(),
+    });
+
+    expect(
+      ensureGuidedMissionPlan(
+        recovery.suite,
+        "mission-guided",
+        recovery.deps,
+      ),
+    ).toMatchObject({
+      applicable: true,
+      sealed: false,
+      reason: "already-sealed",
+      topology: "delivery",
+    });
+    expect(recovery.deps.assertStandardSquadReadiness).toHaveBeenCalledWith(
+      squad,
+    );
+    expect(recovery.createPlanAtomically).not.toHaveBeenCalled();
+  });
+
+  it("blocks a saved squad with mixed sealed topology before any provider lookup or spawn authority", () => {
+    const savedSquad: Squad = {
+      ...squad,
+      id: "user-squad",
+      agents: squad.agents.map((agent) => ({ ...agent })),
+    };
+    const current = mission({
+      squadId: savedSquad.id,
+      intentContract: {
+        ...mission().intentContract!,
+        squadRevisionHash: snapshotSquadAuthority(savedSquad).hash,
+      },
+    });
+    const existing = sealedGuidedV2Receipt().map((entry, index) => {
+      const decoded = decodeTaskScheduleDetail(entry.task.detail);
+      if (!decoded.meta) throw new Error("missing sealed schedule metadata");
+      const detail =
+        index === 0
+          ? encodeTaskScheduleDetail(decoded.body, {
+              ...decoded.meta,
+              ownership: {
+                ...decoded.meta.ownership,
+                domains: [
+                  ...decoded.meta.ownership.domains,
+                  TEAM_READ_ONLY_FANOUT_DOMAIN,
+                ],
+              },
+            })
+          : entry.task.detail;
+      return {
+        ...entry,
+        squadId: savedSquad.id,
+        plannedDetail: detail,
+        task: { ...entry.task, detail },
+      };
+    });
+    const recovery = harness({
+      currentMission: current,
+      liveSquad: savedSquad,
+      existing,
+    });
+
+    expect(() =>
+      ensureGuidedMissionPlan(
+        recovery.suite,
+        "mission-guided",
+        recovery.deps,
+      ),
+    ).toThrow(
+      /guided_plan_mixed_topology_blocked.*replaneje.*reaprove/i,
+    );
+    expect(recovery.deps.getSquad).not.toHaveBeenCalled();
+    expect(recovery.deps.assertStandardSquadReadiness).not.toHaveBeenCalled();
+    expect(recovery.deps.listLiveAdapters).not.toHaveBeenCalled();
     expect(recovery.createPlanAtomically).not.toHaveBeenCalled();
   });
 

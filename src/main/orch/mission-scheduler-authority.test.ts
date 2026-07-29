@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { compileIntentContract } from "../../shared/mission-intent";
 import type { Handoff, Mission } from "../../shared/orch-types";
+import { TEAM_READ_ONLY_FANOUT_DOMAIN } from "../../shared/mission-topology";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import {
   findCurrentSchedulerOwnedHandoffDispatch,
   missionHasSchedulerProgress,
+  reconcileMissionCompletionAfterSchedulerTick,
 } from "./mission-scheduler-authority";
 
 function mission(overrides: Partial<Mission> = {}): Mission {
@@ -95,6 +98,148 @@ describe("mission scheduler durable authority", () => {
         dispatch({ intentVersion: 6 }),
       ]),
     ).toBe(false);
+  });
+
+  it("keeps an unmarked sealed delivery receipt PREVC-owned when wording resembles fan-out", async () => {
+    const intent = compileIntentContract({
+      goal: "todos os panes me falam o que fazem nesta missão",
+      acceptanceCriteria: ["A entrega permanece validada"],
+      intentVersion: 7,
+      source: "typed",
+      lane: "standard",
+    });
+    const currentMission = mission({
+      squadId: "nexus-story-impl",
+      intentContract: {
+        ...intent,
+        approvedAt: 1,
+        dispatchedAt: 2,
+        promotedPlan: {} as never,
+      },
+      intentState: "executing",
+    });
+    const runGuidedBridge = vi.fn(async () => undefined);
+    const completeLegacy = vi.fn();
+
+    await expect(
+      reconcileMissionCompletionAfterSchedulerTick({
+        mission: currentMission,
+        dispatches: [
+          dispatch({
+            executionMode: "isolated_worktree",
+            ownership: {
+              files: ["src"],
+              symbols: [],
+              domains: ["guided-implementation"],
+            },
+          }),
+        ],
+        runGuidedBridge,
+        completeLegacy,
+      }),
+    ).resolves.toBe("guided");
+    expect(runGuidedBridge).toHaveBeenCalledOnce();
+    expect(completeLegacy).not.toHaveBeenCalled();
+  });
+
+  it("refuses mixed fan-out markers for a saved squad instead of completing as legacy", async () => {
+    const intent = compileIntentContract({
+      goal: "todos os panes me falam o que fazem nesta missão",
+      acceptanceCriteria: ["A topologia selada deve ser homogênea"],
+      intentVersion: 7,
+      source: "typed",
+      lane: "standard",
+    });
+    const currentMission = mission({
+      squadId: "saved-mixed-squad",
+      intentContract: {
+        ...intent,
+        approvedAt: 1,
+        dispatchedAt: 2,
+      },
+      intentState: "executing",
+    });
+    const runGuidedBridge = vi.fn(async () => undefined);
+    const completeLegacy = vi.fn();
+
+    await expect(
+      reconcileMissionCompletionAfterSchedulerTick({
+        mission: currentMission,
+        dispatches: [
+          dispatch({
+            ownership: {
+              files: [],
+              symbols: [],
+              domains: [TEAM_READ_ONLY_FANOUT_DOMAIN],
+            },
+          }),
+          dispatch({
+            taskId: "task-b",
+            ownership: {
+              files: [],
+              symbols: [],
+              domains: [],
+            },
+          }),
+        ],
+        runGuidedBridge,
+        completeLegacy,
+      }),
+    ).resolves.toBe("none");
+    expect(runGuidedBridge).not.toHaveBeenCalled();
+    expect(completeLegacy).not.toHaveBeenCalled();
+  });
+
+  it("routes an all-marker sealed fan-out without reclassifying its goal", async () => {
+    const intent = compileIntentContract({
+      goal: "Entregar o fluxo guiado normalmente",
+      acceptanceCriteria: ["Cada resposta física é consumida"],
+      intentVersion: 7,
+      source: "typed",
+      lane: "standard",
+    });
+    const currentMission = mission({
+      squadId: "agentic-guided-fanout",
+      intentContract: {
+        ...intent,
+        approvedAt: 1,
+        dispatchedAt: 2,
+      },
+      intentState: "executing",
+    });
+    const runGuidedBridge = vi.fn(async () => undefined);
+    const completeLegacy = vi.fn();
+
+    await expect(
+      reconcileMissionCompletionAfterSchedulerTick({
+        mission: currentMission,
+        dispatches: [
+          dispatch({
+            ownership: {
+              files: [],
+              symbols: [],
+              domains: [TEAM_READ_ONLY_FANOUT_DOMAIN],
+            },
+          }),
+          dispatch({
+            taskId: "task-b",
+            ownership: {
+              files: [],
+              symbols: [],
+              domains: [
+                "guided-advisory",
+                TEAM_READ_ONLY_FANOUT_DOMAIN,
+              ],
+            },
+          }),
+        ],
+        runGuidedBridge,
+        completeLegacy,
+      }),
+    ).resolves.toBe("legacy");
+    expect(runGuidedBridge).not.toHaveBeenCalled();
+    expect(completeLegacy).toHaveBeenCalledOnce();
+    expect(completeLegacy).toHaveBeenCalledWith(7);
   });
 
   it("binds a scheduler-owned handoff to one exact physical dispatch", () => {

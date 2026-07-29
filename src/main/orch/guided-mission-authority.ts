@@ -2,6 +2,10 @@ import {
   isEngineGeneratedSquadId,
   type Mission,
 } from "../../shared/orch-types";
+import {
+  classifyStandardMissionTopology,
+  type StandardMissionTopology,
+} from "../../shared/mission-topology";
 
 type GuidedMissionAuthoritySubject = Pick<
   Mission,
@@ -37,13 +41,18 @@ export function hasMainOwnedGuidedDeliveryAuthority(
  */
 export function missionRequiresGuidedPrevc(
   mission: GuidedMissionAuthoritySubject,
+  sealedTopology?: StandardMissionTopology,
 ): boolean {
   const contract = mission.intentContract;
+  const topology =
+    sealedTopology ??
+    classifyStandardMissionTopology(contract?.goal ?? "");
   return Boolean(
     contract &&
       (contract.lane ?? "standard") === "standard" &&
       HUMAN_GUIDED_INTENT_SOURCES.has(contract.source) &&
       !contract.requiredWorkerAgentRef &&
+      topology !== "team-read-only-fanout" &&
       hasMainOwnedGuidedDeliveryAuthority(mission),
   );
 }

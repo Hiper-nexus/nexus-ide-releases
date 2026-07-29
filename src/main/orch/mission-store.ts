@@ -45,7 +45,6 @@ import {
 import {
   HANDOFF_REBIND_BLOCK_CTA,
   HANDOFF_REBIND_BLOCK_MARKER,
-  MAX_HANDOFF_DELIVERY_ATTEMPTS,
 } from './handoff-delivery-policy';
 import {
   MISSION_ORCHESTRATOR_PRE_DISPATCH_EXIT_MARKER,
@@ -759,12 +758,7 @@ export class ScopedMissionStore {
       if (!mission) return false;
 
       const staleDeliveries = db.prepare(
-        `SELECT h.id, h.delivery_state, h.submitted_at,
-                COALESCE((
-                  SELECT MAX(attempt_no)
-                  FROM handoff_delivery_attempts
-                  WHERE handoff_id = h.id
-                ), 0) AS latest_attempt_no
+        `SELECT h.id, h.delivery_state, h.submitted_at
          FROM handoffs AS h
          WHERE h.mission_id = ?
            AND h.status = 'success'
@@ -789,15 +783,13 @@ export class ScopedMissionStore {
         id: string;
         delivery_state: string;
         submitted_at: number | null;
-        latest_attempt_no: number;
       }>;
 
       const blocked = staleDeliveries.some((handoff) =>
         !['submitted', 'acknowledged', 'consumed'].includes(
           handoff.delivery_state,
         ) ||
-        handoff.submitted_at === null ||
-        handoff.latest_attempt_no >= MAX_HANDOFF_DELIVERY_ATTEMPTS,
+        handoff.submitted_at === null,
       );
       if (blocked) {
         const description = mission.description.includes(

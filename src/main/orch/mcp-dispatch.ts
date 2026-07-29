@@ -49,6 +49,8 @@ import {
   permissionScopeForTool,
   type CommittedPhysicalHandoffReplayCandidate,
   type CommittedPhysicalHandoffReplayCandidateResolver,
+  type CommittedFanoutConsolidationReplayCandidate,
+  type CommittedFanoutConsolidationReplayCandidateResolver,
   type IntentGateMissionResolver,
   type McpDispatchOptions,
   type McpDispatchSource,
@@ -66,6 +68,10 @@ import { mintAgentTransportPhysicalReceipt } from "./http-mcp-boundary";
 import { assertGovernedWorkspaceControlBoundary } from "./governed-workspace-control-boundary";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
 import {
+  standardTopologyFromSealedTaskDetails,
+  type SealedStandardMissionTopology,
+} from "./guided-mission-topology-authority";
+import {
   assertGuidedPrevcMcpFence,
   INACTIVE_GUIDED_PREVC_MCP_FENCE,
   resolveProductionGuidedPrevcMcpFence,
@@ -80,6 +86,8 @@ export {
   permissionScopeForTool,
   type CommittedPhysicalHandoffReplayCandidate,
   type CommittedPhysicalHandoffReplayCandidateResolver,
+  type CommittedFanoutConsolidationReplayCandidate,
+  type CommittedFanoutConsolidationReplayCandidateResolver,
   type IntentGateMissionResolver,
   type McpConfirmationHandler,
   type McpConfirmationRequest,
@@ -93,8 +101,15 @@ export {
 
 export function assertUnfrozenGuidedExecutionEffectAllowed(
   mission: Parameters<typeof missionRequiresGuidedPrevc>[0],
+  sealedTopology?: SealedStandardMissionTopology,
 ): void {
-  if (!missionRequiresGuidedPrevc(mission)) return;
+  if (sealedTopology === "invalid") {
+    throw new Error(
+      "guided_plan_mixed_topology_blocked: o receipt selado mistura " +
+        "delivery e team-read-only-fanout; replaneje e reaprove a missão",
+    );
+  }
+  if (!missionRequiresGuidedPrevc(mission, sealedTopology)) return;
   throw new Error(
     "guided_prevc_required: execução bloqueada até nexus_context_doctor, " +
       "nexus_mission_freeze_contract e stage=execution",
@@ -109,9 +124,17 @@ function resolveProductionWorkflowAuthority(
   const stored = service.getMissionWorkflow(missionId).contract;
   if (!stored) {
     let mission: Mission | null = null;
+    let sealedTopology: SealedStandardMissionTopology = "delivery";
     try {
       const stores = getProjectDomainStores(scope);
       mission = stores.missions.get(missionId);
+      const intentVersion = mission?.intentContract?.intentVersion;
+      if (intentVersion !== undefined) {
+        const receipt = stores.tasks.getPlanReceipt(missionId, intentVersion);
+        sealedTopology = standardTopologyFromSealedTaskDetails(
+          receipt?.tasks.map((task) => task.detail) ?? [],
+        );
+      }
     } catch (error) {
       // Unit/standalone dispatch seams may inject their own intent authority
       // without booting the production stores. A real production dispatch has
@@ -132,7 +155,10 @@ function resolveProductionWorkflowAuthority(
         args: Readonly<Record<string, unknown>>,
       ) => {
         if (mission) {
-          assertUnfrozenGuidedExecutionEffectAllowed(mission);
+          assertUnfrozenGuidedExecutionEffectAllowed(
+            mission,
+            sealedTopology,
+          );
         }
         for (const candidate of mutationTargetPaths(args)) {
           if (candidate === ".context" || candidate.startsWith(".context/")) {
@@ -249,6 +275,56 @@ function resolveProductionCommittedPhysicalHandoffReplayCandidate(
         dispatch.state === "completed"
       : dispatch.state === "blocked";
     return stateMatches && dispatch.handoffId === handoff.id;
+  } catch {
+    return false;
+  }
+}
+
+function resolveProductionCommittedFanoutConsolidationReplayCandidate(
+  scope: ProjectExecutionScope,
+  candidate: CommittedFanoutConsolidationReplayCandidate,
+): boolean {
+  try {
+    const suite = getProjectDomainStores(scope);
+    const mission = suite.missions.get(candidate.missionId);
+    return Boolean(
+        mission?.status === "done" &&
+        mission.orchestratorSessionId === candidate.sessionId &&
+        hasCurrentApprovedDispatchContract(mission) &&
+        suite.taskDispatches.hasExactFanoutConsolidationReplay({
+          missionId: candidate.missionId,
+          orchestratorSessionId: candidate.sessionId,
+          finalOutput: candidate.finalOutput,
+        }),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isCommittedFanoutConsolidationReplayCandidate(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  ctx: AgentGateContext,
+  args: Readonly<Record<string, unknown>>,
+  mission: Mission,
+  resolve: CommittedFanoutConsolidationReplayCandidateResolver,
+): boolean {
+  if (
+    ctx.role !== "orchestrator" ||
+    !ctx.sessionId ||
+    mission.status !== "done" ||
+    args.status !== "done" ||
+    typeof args.note !== "string"
+  ) {
+    return false;
+  }
+  try {
+    return resolve(scope, {
+      missionId,
+      sessionId: ctx.sessionId,
+      finalOutput: args.note,
+    });
   } catch {
     return false;
   }
@@ -665,6 +741,9 @@ export async function dispatchToolCall(
   const resolveCommittedReplayCandidate =
     options.resolveCommittedPhysicalHandoffReplayCandidate ??
     resolveProductionCommittedPhysicalHandoffReplayCandidate;
+  const resolveCommittedFanoutReplayCandidate =
+    options.resolveCommittedFanoutConsolidationReplayCandidate ??
+    resolveProductionCommittedFanoutConsolidationReplayCandidate;
   type IntentCheck =
     | {
         readonly ok: true;
@@ -705,6 +784,19 @@ export async function dispatchToolCall(
           args,
           resolved.mission,
           resolveCommittedReplayCandidate,
+        )
+      ) {
+        return { ok: true, resolved };
+      }
+      if (
+        canonical === "mission_set_status" &&
+        isCommittedFanoutConsolidationReplayCandidate(
+          ctx.scope,
+          ctx.missionId,
+          ctx,
+          args,
+          resolved.mission,
+          resolveCommittedFanoutReplayCandidate,
         )
       ) {
         return { ok: true, resolved };
@@ -1267,7 +1359,17 @@ export async function dispatchToolCall(
           })
         : undefined;
     const agentTransportPhysicalReceipt =
-      physicalAgentTransport && tool.name === "nexus_handoff_submit"
+      physicalAgentTransport &&
+      (
+        tool.name === "nexus_handoff_submit" ||
+        tool.name === "nexus_handoff_ack" ||
+        (
+          tool.name === "nexus_mission_set_status" &&
+          args.status === "done" &&
+          typeof args.note === "string" &&
+          /(?:^|\n)#{1,6}[ \t]+Maestro[ \t]*(?:\r?\n|$)/iu.test(args.note)
+        )
+      )
         ? mintAgentTransportPhysicalReceipt({
             ctx,
             toolCallId: invocationId!,
@@ -1296,14 +1398,15 @@ export async function dispatchToolCall(
     // The handler may have awaited an OS/network boundary without performing
     // its own final checkpoint. Revalidate centrally before reporting success.
     //
-    // A physical handoff is intentionally self-revoking: persisting a
-    // blocked/failed handoff atomically demotes its task/mission, so repeating
-    // the semantic intent gate *after* that durable commit would turn a real
-    // success into a false dispatch_required error. The handoff handler
-    // checkpoints this same callback immediately before consuming its physical
-    // receipt. After it returns, retain every bearer/abort/guided/workflow
-    // check, but do not require the pre-commit running state to still exist.
-    assertCurrentAuthorityState(canonical !== "handoff_submit");
+    // Both physical terminal writes are intentionally self-revoking. A
+    // successful handoff may demote a task/mission and mission_set_status may
+    // finish it, so repeating the pre-commit running-state gate would report a
+    // false error after the durable write. Their handlers checkpoint authority
+    // before consuming the one-shot physical receipt. Keep bearer, abort,
+    // guided and workflow checks here without requiring the former intent.
+    const recheckIntent =
+      canonical !== "handoff_submit" && canonical !== "mission_set_status";
+    assertCurrentAuthorityState(recheckIntent);
     if (queuePromptId && ctx.missionId) {
       completeMissionPrompt(ctx.scope, ctx.missionId, queuePromptId, true);
     }

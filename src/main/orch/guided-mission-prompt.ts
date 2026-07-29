@@ -166,6 +166,42 @@ export function guidedAdvisoryDetail(
   ].join("\n");
 }
 
+export function guidedTeamCoordinationDetail(
+  mission: Mission,
+  agent: SquadAgent,
+): string {
+  const contract = mission.intentContract;
+  if (!contract) {
+    throw new Error(
+      "guided_plan_contract_missing: missão sem contrato aprovado",
+    );
+  }
+  const attachments =
+    contract.attachmentPaths && contract.attachmentPaths.length > 0
+      ? [
+          "",
+          "Anexos validados pelo Nexus:",
+          ...contract.attachmentPaths.map((attachmentPath) => `- ${attachmentPath}`),
+        ]
+      : [];
+  return [
+    `Participe como ${agent.agentName} de uma rodada paralela da equipe.`,
+    "Responda diretamente ao objetivo sob a perspectiva do seu papel no roster.",
+    "Esta tarefa é somente leitura: não edite arquivos, não crie commit, não implemente código e não inicie outra tarefa.",
+    "Se o objetivo pedir apenas apresentação, não explore o repositório nem rode testes/build. Se pedir análise, inspecione somente o contexto necessário.",
+    "Finalize com um handoff curto, concreto e em português para o Maestro apresentar ao operador.",
+    "",
+    "Objetivo aprovado:",
+    contract.goal,
+    "",
+    "Critérios de aceite:",
+    ...contract.acceptanceCriteria.map(
+      (criterion, criterionIndex) => `${criterionIndex + 1}. ${criterion}`,
+    ),
+    ...attachments,
+  ].join("\n");
+}
+
 export function guidedIndependentReviewDetail(
   mission: Mission,
   agent: SquadAgent,

@@ -207,11 +207,17 @@ async function presentLiveMainOwnedPane(
   // never grants a fresh renderer-authored spawn.
   markPersistedAuthorityOnSpawn(req.paneId);
   useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
+  const wasHomeVisible = useHomeStore.getState().visible;
   useHomeStore.getState().hide();
   if (!current) {
+    const pane = paneFromPresentation(req);
+    const isHomePlaceholder =
+      wasHomeVisible &&
+      existing.length === 1 &&
+      existing[0]?.kind === 'shell';
     useLayoutStore
       .getState()
-      .setPanes([...existing, paneFromPresentation(req)]);
+      .setPanes(isHomePlaceholder ? [pane] : [...existing, pane]);
   }
 
   const sessionId = await waitForSession(

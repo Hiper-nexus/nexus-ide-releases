@@ -366,28 +366,34 @@ describe("scoped handoff store", () => {
       { attemptNo: 2, state: "accepted", acceptedAt: 150 },
     ]);
 
-    const blocked = missions.rebindOrchestratorSession(
+    const rebound = missions.rebindOrchestratorSession(
       "mission-delivery",
       "orchestrator-session-rebound",
     );
-    expect(blocked).toMatchObject({
-      status: "blocked",
+    expect(rebound).toMatchObject({
       orchestratorSessionId: "orchestrator-session-rebound",
     });
-    expect(blocked?.description).toMatch(
-      /Handoff não reentregue[\s\S]*Clique em “Retomar missão”/i,
-    );
+    expect(rebound?.status).not.toBe("blocked");
     const repeated = missions.rebindOrchestratorSession(
       "mission-delivery",
       "orchestrator-session-rebound",
     );
-    expect(
-      repeated?.description.match(/Clique em “Retomar missão”/g),
-    ).toHaveLength(1);
+    expect(repeated?.status).not.toBe("blocked");
     expect(reopened.listDeliveryAttempts(handoff.id)).toHaveLength(2);
     expect(reopened.get(handoff.id)).toMatchObject({
-      delivered: true,
-      deliveryState: "submitted",
+      delivered: false,
+      deliveryState: "queued",
+    });
+    const third = reopened.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: "mission-delivery",
+      orchestratorSessionId: "orchestrator-session-rebound",
+      maxAttempts: 2,
+    });
+    expect(third).toMatchObject({
+      attemptNo: 3,
+      orchestratorSessionId: "orchestrator-session-rebound",
+      state: "reserved",
     });
   });
 

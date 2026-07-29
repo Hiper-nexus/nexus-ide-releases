@@ -2,7 +2,10 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MissionWizard } from "./MissionWizard";
+import {
+  effectiveMissionReviewGoal,
+  MissionWizard,
+} from "./MissionWizard";
 import { useMissionWizardStore } from "../state/mission-wizard-store";
 import { useOrchStore } from "../state/orch-store";
 import { useWorkspaceStore } from "../state/workspace-store";
@@ -61,6 +64,28 @@ const initialOrch = useOrchStore.getState();
 const initialWorkspace = useWorkspaceStore.getState();
 const initialProviders = useProviderStore.getState();
 const mountedRoots = new Set<Root>();
+
+describe("effectiveMissionReviewGoal", () => {
+  it("uses the agentic intent before missionGoal is compiled", () => {
+    expect(
+      effectiveMissionReviewGoal({
+        mode: "agentic",
+        intent: "Todos os panes devem responder em paralelo",
+        missionGoal: "",
+      }),
+    ).toBe("Todos os panes devem responder em paralelo");
+  });
+
+  it("keeps the explicit mission goal in saved-squad review", () => {
+    expect(
+      effectiveMissionReviewGoal({
+        mode: "squad",
+        intent: "rascunho",
+        missionGoal: "Objetivo aprovado",
+      }),
+    ).toBe("Objetivo aprovado");
+  });
+});
 
 const squad: Squad = {
   id: "squad-1",

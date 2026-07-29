@@ -421,6 +421,7 @@ describe("Guided Planner v2", () => {
       applicable: true,
       sealed: true,
       reason: "sealed",
+      topology: "delivery",
       workerAgentRef: "generalist",
       taskId: plannedTaskId(
         "mission-guided",

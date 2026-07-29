@@ -5,6 +5,7 @@ import {
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
+  type McpToolInvocation,
 } from './mcp-protocol';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
@@ -54,6 +55,7 @@ import { encodeTaskScheduleDetail } from './mission-scheduler-meta';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import { planMissionTasks } from './mission-task-plan-authority';
 import { liveSquadRuntimeInventory } from './squad-runtime-inventory';
+import { standardTopologyFromSealedTaskDetails } from './guided-mission-topology-authority';
 
 /**
  * MCP tools for handoffs (2), agents (3), missions (5), squad/catalog/task
@@ -221,6 +223,24 @@ const missionListTool: McpToolDef = {
   },
 };
 
+function requireFanoutConsolidationPhysicalReceipt(
+  invocation: McpToolInvocation | undefined,
+): NonNullable<McpToolInvocation['agentTransportPhysicalReceipt']> {
+  const intent = invocation?.effectIntent;
+  if (
+    !intent ||
+    (intent.source !== 'http-mcp' && intent.source !== 'pty-stream') ||
+    intent.toolName !== 'nexus_mission_set_status' ||
+    !invocation?.agentTransportPhysicalReceipt
+  ) {
+    throw new Error(
+      'fanout_consolidation_provenance: exact physical Maestro tool-call receipt is required',
+    );
+  }
+  assertMcpInvocationCurrent(invocation);
+  return invocation.agentTransportPhysicalReceipt;
+}
+
 const missionSetStatusTool: McpToolDef = {
   name: 'nexus_mission_set_status',
   description:
@@ -251,7 +271,7 @@ const missionSetStatusTool: McpToolDef = {
     },
     required: ['missionId', 'status'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const missionId = requireStr(args, 'missionId');
     const status = missionStatusSchema.parse(args.status);
     const note = str(args, 'note')?.trim() ?? '';
@@ -262,7 +282,6 @@ const missionSetStatusTool: McpToolDef = {
     if (current.status === 'done' && status !== 'done') {
       throw new Error('completed mission status is immutable');
     }
-    if (current.status === 'done' && status === 'done') return current;
     if (status === 'blocked' || status === 'failed') {
       // Release gate: orchestrator CLI demoting to blocked aborts the proof
       // while advisors/workers are still in the durable scheduler (seen as
@@ -288,11 +307,51 @@ const missionSetStatusTool: McpToolDef = {
         intentVersion !== undefined &&
         stores.tasks?.hasPlan?.(missionId, intentVersion) === true
       ) {
-        throw new Error(
-          'task_dispatcher_authority: missão com plano selado só conclui pelo motor ' +
-            'Nexus após receipts de integração e entrega aceita de todos os handoffs',
+        const planReceipt = stores.tasks.getPlanReceipt(
+          missionId,
+          intentVersion,
         );
+        const topology = standardTopologyFromSealedTaskDetails(
+          planReceipt?.tasks.map((task) => task.detail) ?? [],
+        );
+        if (topology !== 'team-read-only-fanout') {
+          if (current.status === 'done') return current;
+          throw new Error(
+            'task_dispatcher_authority: missão delivery com plano selado só ' +
+              'conclui pelo motor Nexus após receipts verificados; status=done ' +
+              'do Maestro não substitui PREVC ou integração',
+          );
+        }
+        assertCurrentMissionOrchestratorSession(ctx, current);
+        const physicalReceipt =
+          requireFanoutConsolidationPhysicalReceipt(invocation);
+        const recorded = stores.taskDispatches.recordFanoutConsolidation({
+          missionId,
+          intentVersion,
+          orchestratorSessionId: ctx.sessionId!,
+          finalOutput: note,
+          physicalReceipt,
+        });
+        if (!recorded) {
+          throw new Error(
+            'task_dispatcher_authority: a consolidação fanout só é aceita após ' +
+              'todos os receipts físicos, ACKs nexus_handoff_ack e a seção ## Maestro',
+          );
+        }
+        stores.taskDispatches.completeMissionFromVerifiedPlan({
+          missionId,
+          intentVersion,
+        });
+        const completed = stores.missions.get(missionId);
+        if (completed?.status !== 'done') {
+          throw new Error(
+            'task_dispatcher_authority: consolidação persistida, mas a prova final ' +
+              'mudou antes da conclusão; o scheduler retomará de forma idempotente',
+          );
+        }
+        return completed;
       }
+      if (current.status === 'done') return current;
       const workflow = getContextWorkflowService(ctx.scope);
       if (!workflow.isMissionDriverComplete(
         missionId,

@@ -11,6 +11,7 @@ import type {
 } from '../../shared/orch-types';
 import { listPanes } from '../lib/split-tree';
 import { setActiveWorkspacePath } from '../state/active-workspace';
+import { useHomeStore } from '../state/home-store';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useOrchBridge } from './orch-bridge';
@@ -55,6 +56,7 @@ function mount(): { root: Root; host: HTMLDivElement } {
 describe('orchestration bridge pane recovery', () => {
   afterEach(() => {
     setActiveWorkspacePath(null);
+    useHomeStore.setState({ visible: false });
     Reflect.deleteProperty(window, 'nexus');
     document.body.innerHTML = '';
     vi.clearAllMocks();
@@ -144,6 +146,8 @@ describe('orchestration bridge pane recovery', () => {
     );
     expect(terminal.respawnMissionPaneFresh).not.toHaveBeenCalled();
     expect(terminal.cancelPaneRecovery).not.toHaveBeenCalled();
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['shell-1', 'pane-live']);
     expect(listPanes(useLayoutStore.getState().root)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -153,6 +157,80 @@ describe('orchestration bridge pane recovery', () => {
         }),
       ]),
     );
+    act(() => mounted.root.unmount());
+  });
+
+  it('replaces the Home placeholder shell with the first main-owned mission pane', async () => {
+    let presentationHandler:
+      | ((req: MissionPanePresentationRequest) => void)
+      | null = null;
+    terminal.waitForSession.mockResolvedValueOnce('session-home');
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPanePresentationRequest: vi.fn(
+            (cb: (req: MissionPanePresentationRequest) => void) => {
+              presentationHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+        },
+      },
+    });
+    useHomeStore.setState({ visible: true });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-home-placeholder',
+        pane: {
+          id: 'shell-home-placeholder',
+          kind: 'shell',
+          title: 'Shell',
+        },
+      },
+      focusedPaneId: 'shell-home-placeholder',
+    });
+    const mounted = mount();
+
+    await act(async () => {
+      presentationHandler?.({
+        missionId: 'mission-home',
+        paneId: 'pane-home',
+        sessionId: 'session-home',
+        role: 'orchestrator',
+        pane: {
+          adapterId: 'codex',
+          model: 'gpt-5.6-sol',
+          cwd: '/workspace/home',
+          title: 'Maestro',
+          agentName: 'Maestro',
+          role: 'orchestrator',
+        },
+      });
+      await vi.waitFor(() => {
+        expect(terminal.waitForSession).toHaveBeenCalledWith(
+          'pane-home',
+          75_000,
+        );
+      });
+    });
+
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toEqual(['pane-home']);
+    expect(useHomeStore.getState().visible).toBe(false);
     act(() => mounted.root.unmount());
   });
 

@@ -6,6 +6,10 @@ Data: 2026-07-29
 
 ### Liveness de missão e panes
 
+- **Cada missão recebe a topologia certa**: pedidos de implementação continuam
+  no fluxo executor → revisão → QA. Rodadas explícitas como “cada pane diga o
+  que faz” despacham todos os especialistas em paralelo, preservam cada
+  resposta e só terminam após a consolidação durável do Maestro.
 - **Aprovação sem espera artificial**: o clique de aprovação retorna assim que
   o Main sela e persiste a missão. Descoberta de contas, quota, PREVC e
   preparação dos agentes continuam em paralelo, sem manter o wizard em
@@ -37,6 +41,10 @@ Data: 2026-07-29
   autoridade continuam em retry com backoff até uma resposta real, sem deixar
   o pane preso em “Aguarda você”. Se o layout persistido não carregar, o Nexus
   abre um shell seguro em vez de voltar para a tela inicial indefinidamente.
+- **Telemetria não bloqueia a UI**: rollouts grandes do Codex são lidos em
+  blocos limitados com yield para o event loop. Histórico copiado, sessões de
+  outro workspace e replay de eventos não inflam mais custo/XP nem seguram
+  scheduler, panes ou IPC por dezenas de segundos.
 
 ### Design system live
 

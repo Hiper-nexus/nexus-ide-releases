@@ -5,7 +5,13 @@ import {
   hasCurrentDispatchAuthority,
   isAutoDerivedCriterion,
 } from '../../shared/mission-intent';
+import {
+  compactMissionContext,
+  missionCompactHasProgress,
+  renderMissionCompact,
+} from '../../shared/mission-context-compact';
 import { buildIntentDispatchKickoffPrompt } from '../../shared/mission-dispatch-kickoff';
+import type { StandardMissionTopology } from '../../shared/mission-topology';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { getOrchSettings } from '../persistence/settings-store';
 import type { Mission, MissionPaneSpec, Squad } from '../../shared/orch-types';
@@ -46,6 +52,7 @@ import {
   getPtyStreamMissionControl,
   type PtyStreamMissionControl,
 } from './pty-stream-mission-control';
+import { ensureGuidedMissionPlanForScope } from './guided-mission-planner';
 
 const BOOT_IDLE_WINDOW_MS = 15_000;
 /**
@@ -627,6 +634,7 @@ function buildPetStudioKickoffPrompt(
 export function buildCanonicalMissionKickoffPrompt(
   mission: Mission,
   squad: Squad,
+  standardTopology: StandardMissionTopology = 'delivery',
 ): string {
   const contract = mission.intentContract;
   if (!contract) {
@@ -644,6 +652,7 @@ export function buildCanonicalMissionKickoffPrompt(
   ) {
     return buildPetStudioKickoffPrompt(mission, squad);
   }
+  const compactMemory = compactMissionContext({ mission });
   return buildIntentDispatchKickoffPrompt({
     squad,
     missionId: mission.id,
@@ -654,10 +663,14 @@ export function buildCanonicalMissionKickoffPrompt(
     maxWorkers: contract.budgets.maxWorkers,
     lane: contract.lane ?? 'standard',
     attachmentPaths: contract.attachmentPaths,
+    compactMemoryMarkdown: missionCompactHasProgress(compactMemory)
+      ? renderMissionCompact(compactMemory)
+      : null,
     promotedPlan: contract.promotedPlan
       ? assertPromotedPlanSnapshot(contract.promotedPlan)
       : undefined,
     operatorChoice: isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
+    standardTopology,
   });
 }
 
@@ -775,12 +788,19 @@ export function submitMissionKickoffFromRenderer(
   if (!initial.mission.intentContract || !squad) {
     throw new Error('kickoff canônico exige contrato atual e squad salvo');
   }
+  const plan = ensureGuidedMissionPlanForScope(scope, initial.mission.id);
+  const standardTopology: StandardMissionTopology =
+    plan.applicable ? plan.topology : 'delivery';
   const input = {
     ...request,
     prompt: bindPtyMissionControlToKickoff(
       initial.mission,
       request.sessionId,
-      buildCanonicalMissionKickoffPrompt(initial.mission, squad),
+      buildCanonicalMissionKickoffPrompt(
+        initial.mission,
+        squad,
+        standardTopology,
+      ),
     ),
   };
   assertSafePtyPrompt(input.prompt);

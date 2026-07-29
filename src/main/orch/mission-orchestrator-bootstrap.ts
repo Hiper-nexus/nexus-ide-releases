@@ -1,7 +1,13 @@
 import type { WebContents } from "electron";
 import { z } from "zod";
 import { GUIDED_PLAN_BLOCK_MARKER } from "../../shared/guided-mission-plan";
+import {
+  compactMissionContext,
+  missionCompactHasProgress,
+  renderMissionCompact,
+} from "../../shared/mission-context-compact";
 import { buildIntentDispatchKickoffPrompt } from "../../shared/mission-dispatch-kickoff";
+import type { StandardMissionTopology } from "../../shared/mission-topology";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { getOrchSettings } from "../persistence/settings-store";
 import {
@@ -788,14 +794,35 @@ export class MissionOrchestratorBootstrapService {
       bootstrapFlightKey(scope, missionId),
       bootstrapMissionApprovalSnapshot(initial),
     );
-    const guidedPrevcRequired = missionRequiresGuidedPrevc(initial);
     // Worker authority never depends on PREVC preparation. Main prepares only
     // project context in parallel; freeze and review happen after handoff at
     // the promotion boundary so their seal cannot invalidate live workers.
     const guidedPrevcFrozen = false;
+    let standardTopology: StandardMissionTopology = "delivery";
     try {
-      this.#deps.ensurePlanGitBaseline?.(scope, missionId);
-      this.#deps.ensureMissionPlan?.(scope, missionId);
+      const requiresPrePlanGitBaseline =
+        initial.intentContract?.lane === "plan" ||
+        Boolean(initial.intentContract?.promotedPlan);
+      if (requiresPrePlanGitBaseline) {
+        this.#deps.ensurePlanGitBaseline?.(scope, missionId);
+      }
+      const planResult = this.#deps.ensureMissionPlan?.(scope, missionId);
+      if (
+        planResult &&
+        typeof planResult === "object" &&
+        "applicable" in planResult &&
+        planResult.applicable === true &&
+        "topology" in planResult &&
+        planResult.topology === "team-read-only-fanout"
+      ) {
+        standardTopology = "team-read-only-fanout";
+      }
+      if (
+        !requiresPrePlanGitBaseline &&
+        standardTopology !== "team-read-only-fanout"
+      ) {
+        this.#deps.ensurePlanGitBaseline?.(scope, missionId);
+      }
     } catch (error) {
       return this.#failure(
         scope,
@@ -807,6 +834,10 @@ export class MissionOrchestratorBootstrapService {
         ),
       );
     }
+    const isTeamReadOnlyFanout =
+      standardTopology === "team-read-only-fanout";
+    const guidedPrevcRequired =
+      missionRequiresGuidedPrevc(initial, standardTopology);
 
     const squad = initial.squadId ? this.#deps.getSquad(initial.squadId) : null;
     const orchestrator = squad ? chooseOrchestrator(squad) : null;
@@ -892,6 +923,7 @@ export class MissionOrchestratorBootstrapService {
     const runtime = approvedRuntime;
     let isPrevcPreparationStarted = false;
     const preparePrevcInBackground = (): void => {
+      if (isTeamReadOnlyFanout) return;
       if ((initial.intentContract?.lane ?? "standard") !== "standard") return;
       if (isPrevcPreparationStarted) return;
       isPrevcPreparationStarted = true;
@@ -1202,6 +1234,7 @@ export class MissionOrchestratorBootstrapService {
       }
 
       this.#deps.emitDispatched(current);
+      const compactMemory = compactMissionContext({ mission: current });
       const prompt = buildIntentDispatchKickoffPrompt({
         squad,
         missionId,
@@ -1212,11 +1245,15 @@ export class MissionOrchestratorBootstrapService {
         maxWorkers: current.intentContract!.budgets.maxWorkers,
         lane: current.intentContract!.lane ?? "standard",
         attachmentPaths,
+        compactMemoryMarkdown: missionCompactHasProgress(compactMemory)
+          ? renderMissionCompact(compactMemory)
+          : null,
         promotedPlan: current.intentContract!.promotedPlan
           ? assertPromotedPlanSnapshot(current.intentContract!.promotedPlan)
           : undefined,
         guidedPrevcRequired,
         guidedPrevcFrozen,
+        standardTopology,
         // The prompt must state the policy actually in force; otherwise the
         // Maestro substitutes Codex for the operator's chosen executor.
         operatorChoice: isOperatorChoicePolicy(

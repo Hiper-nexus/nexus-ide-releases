@@ -4,6 +4,8 @@ import {
   hasCurrentApprovedDispatchContract,
   missionIntentContractSchema,
 } from "../../shared/mission-intent";
+import { hasTeamReadOnlyFanoutDomain } from "../../shared/mission-topology";
+import { PRIOR_MISSION_MEMORY_SEPARATOR } from "../../shared/mission-result-format";
 import { ScopedStoreBinding, ScopedStoreCorruptionError } from "./scoped-store";
 import {
   EMPTY_GIT_DIFF_SHA256,
@@ -24,13 +26,51 @@ import {
 import { assertSealedTaskDispatchPlanAuthority } from "./task-dispatch-sealed-plan-authority";
 import { assertTaskQualityReceiptAuthority } from "./task-dispatch-quality-receipt-authority";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import {
+  inspectCurrentAgentTransportPhysicalReceipt,
+  type AgentTransportPhysicalReceipt,
+} from "./http-mcp-boundary";
+import { physicalAgentActionPayloadSha256 } from "./handoff-payload-identity";
+import {
+  parseFanoutFinalOutput,
+  persistFanoutConsolidationReceipt,
+  readVerifiedFanoutConsolidation,
+  verifiedFanoutAckTime,
+} from "./fanout-consolidation-receipt-authority";
 
 export interface CompleteMissionFromVerifiedPlanInput {
   readonly missionId: string;
   readonly intentVersion: number;
 }
 
-type VerifiedPlanAuthorityMode = "inspect-guided" | "complete-legacy";
+export interface RecordFanoutMissionConsolidationInput
+  extends CompleteMissionFromVerifiedPlanInput {
+  readonly orchestratorSessionId: string;
+  readonly finalOutput: string;
+  readonly physicalReceipt: AgentTransportPhysicalReceipt;
+}
+
+type VerifiedPlanAuthorityMode =
+  | "inspect-guided"
+  | "record-fanout-consolidation"
+  | "complete-legacy";
+
+const MAX_VISIBLE_MISSION_RESULT_CHARS = 65_536;
+function boundedFanoutLearnings(
+  finalOutput: string,
+  priorLearnings: string,
+): string {
+  const available =
+    MAX_VISIBLE_MISSION_RESULT_CHARS -
+    finalOutput.length -
+    PRIOR_MISSION_MEMORY_SEPARATOR.length;
+  if (!priorLearnings.trim() || available <= 0) return finalOutput;
+  return (
+    finalOutput +
+    PRIOR_MISSION_MEMORY_SEPARATOR +
+    priorLearnings.slice(-available)
+  );
+}
 
 /**
  * One physical authority proof serves both completion owners. Guided PREVC
@@ -39,7 +79,9 @@ type VerifiedPlanAuthorityMode = "inspect-guided" | "complete-legacy";
  */
 function verifyCompletedTaskPlanAuthority(
   binding: ScopedStoreBinding,
-  input: CompleteMissionFromVerifiedPlanInput,
+  input:
+    | CompleteMissionFromVerifiedPlanInput
+    | RecordFanoutMissionConsolidationInput,
   mode: VerifiedPlanAuthorityMode,
 ): boolean {
   const missionId = taskDispatchIdSchema.parse(input.missionId);
@@ -48,6 +90,51 @@ function verifyCompletedTaskPlanAuthority(
     .int()
     .nonnegative()
     .parse(input.intentVersion);
+  const consolidation =
+    mode === "record-fanout-consolidation"
+      ? parseFanoutFinalOutput(
+          (input as RecordFanoutMissionConsolidationInput).finalOutput,
+        )
+      : null;
+  const consolidationInput =
+    mode === "record-fanout-consolidation"
+      ? (input as RecordFanoutMissionConsolidationInput)
+      : null;
+  const consolidationPayloadSha256 =
+    consolidation && consolidationInput
+      ? physicalAgentActionPayloadSha256("nexus_mission_set_status", {
+          missionId,
+          status: "done",
+          note: consolidation.finalOutput,
+        })
+      : null;
+  const consolidationExpectation =
+    consolidationInput && consolidationPayloadSha256
+      ? {
+          projectId: binding.scope.projectId,
+          checkoutId: binding.scope.checkoutId,
+          missionId,
+          sessionId: taskDispatchIdSchema.parse(
+            consolidationInput.orchestratorSessionId,
+          ),
+          rawPayloadSha256: consolidationPayloadSha256,
+        }
+      : null;
+  const inspectedConsolidationReceipt =
+    consolidationInput && consolidationExpectation
+      ? inspectCurrentAgentTransportPhysicalReceipt(
+          consolidationInput.physicalReceipt,
+          consolidationExpectation,
+        )
+      : null;
+  if (
+    inspectedConsolidationReceipt &&
+    inspectedConsolidationReceipt.toolName !== "nexus_mission_set_status"
+  ) {
+    throw new Error(
+      "fanout consolidation requires an exact physical nexus_mission_set_status receipt",
+    );
+  }
   const now = binding.now();
   const db = binding.writeDatabase();
   const verification = db.transaction(() => {
@@ -102,15 +189,6 @@ function verifyCompletedTaskPlanAuthority(
     if (intent.intentVersion !== intentVersion || intent.lane !== "standard") {
       return false;
     }
-    const guided = missionRequiresGuidedPrevc({
-      squadId: mission.squad_id ?? undefined,
-      intentContract: intent,
-    });
-    if (mode === "inspect-guided" ? !guided : guided) {
-      // Beginner guided completion is exclusively mission-driver-owned.
-      // Task metadata and legacy receipts cannot opt it into auto-done.
-      return false;
-    }
     const prevcReceipt = db
       .prepare(
         `SELECT 1 AS present FROM mission_step_receipts
@@ -119,7 +197,12 @@ function verifyCompletedTaskPlanAuthority(
       .get(missionId);
     // Any immutable step receipt makes mission-driver the sole completion
     // authority, including non-guided/best-effort PREVC workflows.
-    if (mode === "complete-legacy" && prevcReceipt !== undefined) return false;
+    if (
+      mode !== "inspect-guided" &&
+      prevcReceipt !== undefined
+    ) {
+      return false;
+    }
 
     const rawPlan = db
       .prepare(
@@ -243,6 +326,13 @@ function verifyCompletedTaskPlanAuthority(
     let expectedDependencyConsumptions = 0;
     const physicalReceiptIds = new Set<string>();
     const physicalToolCallIds = new Set<string>();
+    let teamReadOnlyFanoutDispatches = 0;
+    const completedDeliveries: Array<{
+      readonly handoffId: string;
+      readonly deliveryAttemptId: string;
+      readonly acceptedAt: number;
+      readonly consumedAt: number;
+    }> = [];
     for (const entry of plan.tasks) {
       const row = dispatchByTask.get(entry.taskId);
       const rosterAgent = rosterById.get(entry.agentRef);
@@ -277,6 +367,11 @@ function verifyCompletedTaskPlanAuthority(
         sealed.task.status !== "done"
       ) {
         return false;
+      }
+      if (
+        hasTeamReadOnlyFanoutDomain(sealed.schedule.ownership.domains)
+      ) {
+        teamReadOnlyFanoutDispatches += 1;
       }
       let physical;
       try {
@@ -461,10 +556,26 @@ function verifyCompletedTaskPlanAuthority(
                       AND attempt.orchestrator_session_id = ?
                     ORDER BY attempt.accepted_at DESC, attempt.id DESC
                     LIMIT 1
-                  ) AS accepted_attempt_id
+                  ) AS accepted_attempt_id,
+                  (
+                    SELECT attempt.accepted_at
+                    FROM handoff_delivery_attempts AS attempt
+                    WHERE attempt.handoff_id = h.id
+                      AND attempt.mission_id = h.mission_id
+                      AND attempt.state = 'accepted'
+                      AND attempt.accepted_at IS NOT NULL
+                      AND attempt.orchestrator_session_id = ?
+                    ORDER BY attempt.accepted_at DESC, attempt.id DESC
+                    LIMIT 1
+                  ) AS accepted_at
            FROM handoffs AS h WHERE h.id = ? AND h.mission_id = ?`,
         )
-        .get(mission.orch_session_id, row.handoff_id, missionId) as
+        .get(
+          mission.orch_session_id,
+          mission.orch_session_id,
+          row.handoff_id,
+          missionId,
+        ) as
         | {
             status: string;
             session_id: string | null;
@@ -475,6 +586,7 @@ function verifyCompletedTaskPlanAuthority(
             consumed_by_session: string | null;
             consumed_delivery_attempt_id: string | null;
             accepted_attempt_id: string | null;
+            accepted_at: number | null;
           }
         | undefined;
       if (
@@ -487,26 +599,125 @@ function verifyCompletedTaskPlanAuthority(
         delivery.consumed_at === null ||
         delivery.consumed_by_session !== mission.orch_session_id ||
         !delivery.accepted_attempt_id ||
+        delivery.accepted_at === null ||
         delivery.consumed_delivery_attempt_id !== delivery.accepted_attempt_id
       ) {
         return false;
       }
+      completedDeliveries.push({
+        handoffId: row.handoff_id,
+        deliveryAttemptId: delivery.accepted_attempt_id,
+        acceptedAt: delivery.accepted_at,
+        consumedAt: delivery.consumed_at,
+      });
+    }
+    if (
+      teamReadOnlyFanoutDispatches > 0 &&
+      teamReadOnlyFanoutDispatches < dispatchRows.length
+    ) {
+      // A marker is Main-owned topology authority, not decorative metadata.
+      // A mixed immutable receipt is therefore neither delivery nor fan-out
+      // and must never fall through to a saved squad's legacy completion.
+      return false;
+    }
+    const sealedTopology =
+      teamReadOnlyFanoutDispatches === dispatchRows.length
+        ? "team-read-only-fanout"
+        : "delivery";
+    const guided = missionRequiresGuidedPrevc(
+      {
+        squadId: mission.squad_id ?? undefined,
+        intentContract: intent,
+      },
+      sealedTopology,
+    );
+    if (mode === "inspect-guided" ? !guided : guided) {
+      // The sealed plan decides the completion owner. Goal wording is not
+      // reinterpreted after approval; mixed markers were rejected above.
+      return false;
     }
     if (dependencyConsumptions.length !== expectedDependencyConsumptions) {
       return false;
     }
+    let latestFanoutAckAt = 0;
+    if (sealedTopology === "team-read-only-fanout") {
+      for (const delivery of completedDeliveries) {
+        const ackAt = verifiedFanoutAckTime(db, binding, {
+          missionId,
+          orchestratorSessionId: mission.orch_session_id,
+          handoffId: delivery.handoffId,
+          deliveryAttemptId: delivery.deliveryAttemptId,
+          acceptedAt: delivery.acceptedAt,
+          consumedAt: delivery.consumedAt,
+          now,
+        });
+        if (ackAt === null) return false;
+        latestFanoutAckAt = Math.max(latestFanoutAckAt, ackAt);
+      }
+    }
+    if (mode === "record-fanout-consolidation") {
+      if (
+        sealedTopology !== "team-read-only-fanout" ||
+        !consolidation ||
+        !consolidationInput ||
+        !consolidationPayloadSha256 ||
+        !consolidationExpectation ||
+        !inspectedConsolidationReceipt ||
+        consolidationInput.orchestratorSessionId !== mission.orch_session_id ||
+        inspectedConsolidationReceipt.issuedAt < latestFanoutAckAt
+      ) {
+        return false;
+      }
+      return persistFanoutConsolidationReceipt(db, binding, {
+        missionId,
+        intentVersion,
+        planHash: rawPlan.plan_hash,
+        orchestratorSessionId: mission.orch_session_id,
+        finalOutput: consolidation.finalOutput,
+        maestroPerspective: consolidation.maestroPerspective,
+        payloadSha256: consolidationPayloadSha256,
+        now,
+        physicalReceipt: consolidationInput.physicalReceipt,
+        expectation: consolidationExpectation,
+        inspected: inspectedConsolidationReceipt,
+      });
+    }
     if (mode === "inspect-guided") return true;
 
-    const note =
+    const fanoutConsolidation =
+      sealedTopology === "team-read-only-fanout"
+        ? readVerifiedFanoutConsolidation(db, binding, {
+            missionId,
+            intentVersion,
+            planHash: rawPlan.plan_hash,
+            orchestratorSessionId: mission.orch_session_id,
+            latestAckAt: latestFanoutAckAt,
+            now,
+          })
+        : null;
+    if (
+      sealedTopology === "team-read-only-fanout" &&
+      !fanoutConsolidation
+    ) {
+      return false;
+    }
+
+    const authorityNote =
       `## Conclusão automática verificada\nO motor Nexus integrou e validou ` +
       `${plan.tasks.length} task(s) do plano ${rawPlan.plan_hash.slice(0, 12)}, ` +
       "com nexus_handoff_submit físicos, handoffs entregues, consumo " +
       "explicitamente reconhecido e receipts duráveis.";
-    const separator = mission.learnings.trim() ? "\n\n" : "";
-    const learnings = `${mission.learnings}${separator}${note}`.slice(
-      0,
-      65_536,
-    );
+    // The visible fan-out result is the product, not an append-only diagnostic.
+    // Preserve it byte-for-byte within the same 64 KiB bound used by the
+    // physical receipt. Prefixing old learnings used to truncate the newest
+    // Maestro synthesis and made a successful mission appear to lose output.
+    const learnings = fanoutConsolidation
+      ? boundedFanoutLearnings(
+          fanoutConsolidation.final_output,
+          mission.learnings,
+        )
+      : `${mission.learnings}${mission.learnings.trim() ? "\n\n" : ""}${authorityNote}`
+          .slice(0, 65_536);
     const updated = db
       .prepare(
         `UPDATE missions
@@ -557,4 +768,146 @@ export function completeMissionFromVerifiedTaskPlan(
   );
   if (completed) binding.emitChange();
   return completed;
+}
+
+interface FanoutReplayInput {
+  readonly missionId: string;
+  readonly orchestratorSessionId: string;
+  readonly finalOutput: string;
+}
+
+function exactExistingFanoutConsolidation(
+  binding: ScopedStoreBinding,
+  input: FanoutReplayInput,
+) {
+  const db = binding.readDatabase();
+  const mission = db
+    .prepare(
+      `SELECT status, intent_version, orch_session_id
+       FROM missions WHERE id = ?`,
+    )
+    .get(input.missionId) as
+    | {
+        readonly status: string;
+        readonly intent_version: number;
+        readonly orch_session_id: string | null;
+      }
+    | undefined;
+  if (
+    mission?.status !== "done" ||
+    mission.orch_session_id !== input.orchestratorSessionId
+  ) {
+    return null;
+  }
+  const plan = db
+    .prepare(
+      `SELECT plan_hash FROM mission_task_plans
+       WHERE mission_id = ? AND intent_version = ?`,
+    )
+    .get(input.missionId, mission.intent_version) as
+    | { readonly plan_hash: string }
+    | undefined;
+  const latestAck = db
+    .prepare(
+      `SELECT COALESCE(MAX(acknowledged_at), 0) AS at
+       FROM handoff_ack_receipts
+       WHERE mission_id = ? AND orchestrator_session_id = ?`,
+    )
+    .get(input.missionId, input.orchestratorSessionId) as {
+    readonly at: number;
+  };
+  if (!plan) return null;
+  const receipt = readVerifiedFanoutConsolidation(db, binding, {
+    missionId: input.missionId,
+    intentVersion: mission.intent_version,
+    planHash: plan.plan_hash,
+    orchestratorSessionId: input.orchestratorSessionId,
+    latestAckAt: latestAck.at,
+    now: binding.now(),
+  });
+  return receipt?.final_output === input.finalOutput
+    ? { intentVersion: mission.intent_version, planHash: plan.plan_hash }
+    : null;
+}
+
+export function hasExactFanoutConsolidationReplay(
+  binding: ScopedStoreBinding,
+  rawInput: FanoutReplayInput,
+): boolean {
+  const input = {
+    missionId: taskDispatchIdSchema.parse(rawInput.missionId),
+    orchestratorSessionId: taskDispatchIdSchema.parse(
+      rawInput.orchestratorSessionId,
+    ),
+    finalOutput: parseFanoutFinalOutput(rawInput.finalOutput).finalOutput,
+  };
+  return exactExistingFanoutConsolidation(binding, input) !== null;
+}
+
+function replayFanoutMissionConsolidation(
+  binding: ScopedStoreBinding,
+  input: RecordFanoutMissionConsolidationInput,
+): boolean {
+  const consolidation = parseFanoutFinalOutput(input.finalOutput);
+  const exact = exactExistingFanoutConsolidation(binding, {
+    missionId: input.missionId,
+    orchestratorSessionId: input.orchestratorSessionId,
+    finalOutput: consolidation.finalOutput,
+  });
+  if (!exact) return false;
+  const payloadSha256 = physicalAgentActionPayloadSha256(
+    "nexus_mission_set_status",
+    { missionId: input.missionId, status: "done", note: consolidation.finalOutput },
+  );
+  const expectation = {
+    projectId: binding.scope.projectId,
+    checkoutId: binding.scope.checkoutId,
+    missionId: input.missionId,
+    sessionId: input.orchestratorSessionId,
+    rawPayloadSha256: payloadSha256,
+  };
+  const inspected = inspectCurrentAgentTransportPhysicalReceipt(
+    input.physicalReceipt,
+    expectation,
+  );
+  const db = binding.writeDatabase();
+  return db.transaction(() => {
+    const current = exactExistingFanoutConsolidation(binding, {
+      missionId: input.missionId,
+      orchestratorSessionId: input.orchestratorSessionId,
+      finalOutput: consolidation.finalOutput,
+    });
+    if (
+      !current ||
+      current.intentVersion !== exact.intentVersion ||
+      current.planHash !== exact.planHash
+    ) {
+      return false;
+    }
+    return persistFanoutConsolidationReceipt(db, binding, {
+      ...input,
+      ...consolidation,
+      ...exact,
+      payloadSha256,
+      now: binding.now(),
+      expectation,
+      inspected,
+    });
+  }).immediate();
+}
+
+export function recordFanoutMissionConsolidation(
+  binding: ScopedStoreBinding,
+  input: RecordFanoutMissionConsolidationInput,
+): boolean {
+  const recorded = verifyCompletedTaskPlanAuthority(
+    binding,
+    input,
+    "record-fanout-consolidation",
+  );
+  const replayed = recorded
+    ? false
+    : replayFanoutMissionConsolidation(binding, input);
+  if (recorded || replayed) binding.emitChange();
+  return recorded || replayed;
 }

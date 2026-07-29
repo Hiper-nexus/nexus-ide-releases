@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testProjectScope } from "./__tests__/scope-fixture";
+import { TEAM_READ_ONLY_FANOUT_DOMAIN } from "../../shared/mission-topology";
+import { encodeTaskScheduleDetail } from "./mission-scheduler-meta";
 
 const h = vi.hoisted(() => ({
   getStores: vi.fn(),
@@ -117,10 +119,106 @@ beforeEach(() => {
   h.getWorkflowService.mockReset();
   h.getStores.mockReturnValue({
     missions: { get: () => mission },
+    tasks: {
+      getPlanReceipt: () => ({
+        tasks: [{ detail: "sealed delivery task" }],
+      }),
+    },
   });
 });
 
 describe("production guided PREVC MCP fence snapshot", () => {
+  it("uses sealed task topology instead of reclassifying roundtable-like goal text", () => {
+    const roundtableLikeMission = {
+      ...mission,
+      intentContract: {
+        ...mission.intentContract,
+        goal: "Todos os agentes devem responder o que fazem nesta missão",
+      },
+    };
+    h.getStores.mockReturnValue({
+      missions: { get: () => roundtableLikeMission },
+      tasks: {
+        getPlanReceipt: () => ({
+          tasks: [{ detail: "sealed delivery task" }],
+        }),
+      },
+    });
+    h.getWorkflowService.mockReturnValue({
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+
+    expect(
+      resolveProductionGuidedPrevcMcpFence(scope, mission.id),
+    ).toMatchObject({
+      required: true,
+      active: true,
+      hasContract: false,
+    });
+  });
+
+  it("keeps PREVC inactive for an all-marker sealed fan-out receipt", () => {
+    const detail = encodeTaskScheduleDetail("Responder.", {
+      dependsOn: [],
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: [TEAM_READ_ONLY_FANOUT_DOMAIN],
+      },
+      merged: false,
+      parallelEligible: true,
+      agentRef: "worker-a",
+      agentCategory: "executor",
+      executionMode: "read_only",
+    });
+    h.getStores.mockReturnValue({
+      missions: { get: () => mission },
+      tasks: {
+        getPlanReceipt: () => ({ tasks: [{ detail }] }),
+      },
+    });
+
+    expect(
+      resolveProductionGuidedPrevcMcpFence(scope, mission.id),
+    ).toMatchObject({
+      required: false,
+      active: false,
+    });
+    expect(h.getWorkflowService).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a mixed sealed topology before resolving workflow authority", () => {
+    const fanoutDetail = encodeTaskScheduleDetail("Responder.", {
+      dependsOn: [],
+      ownership: {
+        files: [],
+        symbols: [],
+        domains: [TEAM_READ_ONLY_FANOUT_DOMAIN],
+      },
+      merged: false,
+      parallelEligible: true,
+      agentRef: "worker-a",
+      agentCategory: "executor",
+      executionMode: "read_only",
+    });
+    h.getStores.mockReturnValue({
+      missions: { get: () => mission },
+      tasks: {
+        getPlanReceipt: () => ({
+          tasks: [
+            { detail: fanoutDetail },
+            { detail: "sealed delivery task" },
+          ],
+        }),
+      },
+    });
+
+    expect(() =>
+      resolveProductionGuidedPrevcMcpFence(scope, mission.id),
+    ).toThrow(/guided_prevc_contract_stale.*mixes delivery/i);
+    expect(h.getWorkflowService).not.toHaveBeenCalled();
+  });
+
   it("is active without a contract and compiles current context before execution", () => {
     const compileMissionSnapshot = vi.fn(() => ({
       contextRevision: contract.contextRevision,

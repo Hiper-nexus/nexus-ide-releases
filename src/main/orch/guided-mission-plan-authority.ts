@@ -1,4 +1,9 @@
 import type { Mission, Squad, SquadAgent } from "../../shared/orch-types";
+import {
+  classifyStandardMissionTopology,
+  hasTeamReadOnlyFanoutDomain,
+  type StandardMissionTopology,
+} from "../../shared/mission-topology";
 import { hasMainOwnedGuidedDeliveryAuthority } from "./guided-mission-authority";
 import {
   GUIDED_MISSION_PLANNER_TASK_ID,
@@ -43,6 +48,11 @@ export interface GuidedPlanTaskDetailInput extends PlannerTaskInput {
 export interface GuidedV2ReceiptAuthority {
   readonly implementation: PlannedTaskRecord;
   readonly qualityGate: PlannedTaskRecord;
+  readonly ordered: readonly PlannedTaskRecord[];
+}
+
+export interface GuidedTeamFanoutReceiptAuthority {
+  readonly primary: PlannedTaskRecord;
   readonly ordered: readonly PlannedTaskRecord[];
 }
 
@@ -97,6 +107,10 @@ export function assertGuidedPlanTaskDetailBudgets(input: {
 
 export function guidedPlanEligibility(
   mission: Mission,
+  options: {
+    readonly hasExistingPlan?: boolean;
+    readonly existingTopology?: StandardMissionTopology;
+  } = {},
 ):
   | "lane-not-standard"
   | "automation-owned"
@@ -117,7 +131,17 @@ export function guidedPlanEligibility(
   // synthesized by the beginner flow. Saved/manual specialty squads keep
   // their established orchestrator-authored plan: forcing executor→reviewer
   // would invalidate legitimate rosters such as review/research-only squads.
-  if (!hasMainOwnedGuidedDeliveryAuthority(mission)) {
+  if (
+    !hasMainOwnedGuidedDeliveryAuthority(mission) &&
+    (
+      (options.hasExistingPlan === true &&
+        options.existingTopology !== "team-read-only-fanout") ||
+      Boolean(mission.intentContract?.promotedPlan) ||
+      (options.hasExistingPlan !== true &&
+        classifyStandardMissionTopology(mission.intentContract?.goal ?? "") !==
+          "team-read-only-fanout")
+    )
+  ) {
     return "squad-not-engine-generated";
   }
   return null;
@@ -139,6 +163,87 @@ function recoveredGuidedStage(
     return category === "reviewer" ? "independent-review" : "advisory";
   }
   return kind;
+}
+
+export function assertRosterCompleteGuidedTeamFanoutReceipt(
+  planned: readonly PlannedTaskRecord[],
+  squad: Squad,
+): GuidedTeamFanoutReceiptAuthority {
+  try {
+    const workers = squad.agents.filter(isGuidedWorkerAgent);
+    if (planned.length !== workers.length || planned.length === 0) {
+      legacyGuidedReceipt(
+        "a rodada de equipe não possui exatamente uma tarefa por worker",
+      );
+    }
+    const rosterHash = snapshotTaskPlanRoster(squad.agents).hash;
+    const plannedByAgent = new Map(
+      planned.map((entry) => [entry.agentRef, entry] as const),
+    );
+    if (
+      plannedByAgent.size !== workers.length ||
+      planned.some(
+        (entry) =>
+          entry.squadId !== squad.id || entry.rosterHash !== rosterHash,
+      )
+    ) {
+      legacyGuidedReceipt(
+        "a rodada de equipe diverge do squad/roster atualmente aprovado",
+      );
+    }
+
+    for (const worker of workers) {
+      const entry = plannedByAgent.get(worker.id);
+      if (!entry || entry.agentCategory !== worker.category) {
+        legacyGuidedReceipt(
+          `a rodada de equipe não cobre a identidade ${worker.id}`,
+        );
+      }
+      assertGuidedTeamFanoutEntry(entry, worker);
+    }
+
+    const ordered = workers.map((worker) => plannedByAgent.get(worker.id)!);
+    return Object.freeze({
+      primary: ordered[0]!,
+      ordered: Object.freeze(ordered),
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("guided_plan_legacy_receipt_blocked:")
+    ) {
+      throw error;
+    }
+    legacyGuidedReceipt(
+      error instanceof Error ? error.message : String(error),
+      error,
+    );
+  }
+}
+
+function assertGuidedTeamFanoutEntry(
+  entry: PlannedTaskRecord,
+  worker: GuidedWorkerAgent,
+): void {
+  const meta = assertSealedTaskSchedule(
+    entry,
+    decodeTaskScheduleDetail(entry.task.detail).meta,
+  );
+  const expectedKind =
+    worker.category === "reviewer" ? "independent-review" : "advisory";
+  if (
+    meta.guidedTaskKind !== expectedKind ||
+    meta.executionMode !== "read_only" ||
+    meta.dependsOn.length !== 0 ||
+    meta.parallelEligible !== true ||
+    meta.ownership.files.length !== 0 ||
+    meta.ownership.symbols.length !== 0 ||
+    !hasTeamReadOnlyFanoutDomain(meta.ownership.domains)
+  ) {
+    legacyGuidedReceipt(
+      `a tarefa ${entry.taskId} não é uma raiz paralela somente leitura`,
+    );
+  }
 }
 
 export function assertRosterCompleteGuidedV2Receipt(

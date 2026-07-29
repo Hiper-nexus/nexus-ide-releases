@@ -99,6 +99,238 @@ describe('CodexUsageScanner multi-project activation', () => {
         outputTokens: 3,
       }),
       workspace,
+      {
+        providerSessionId: 'session-a',
+        threadId: 'session-a',
+        rolloutSessionId: null,
+        sessionStartedAt: null,
+      },
+    );
+    scanner.stop();
+  });
+
+  it('cede ao event loop durante um replay grande sem perder nem duplicar eventos', async () => {
+    const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-scan-yield-'));
+    roots.push(sessionsDir);
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-workspace-yield-'));
+    roots.push(workspace);
+    const rollout = path.join(dayDirectory(sessionsDir), 'rollout-large.jsonl');
+    const usageLines = Array.from({ length: 160 }, (_, index) =>
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp: new Date(Date.UTC(2026, 6, 29, 12, 0, 0, index)).toISOString(),
+        payload: {
+          type: 'token_count',
+          info: {
+            last_token_usage: {
+              input_tokens: index + 10,
+              cached_input_tokens: 1,
+              output_tokens: 1,
+            },
+          },
+        },
+      }),
+    );
+    fs.writeFileSync(
+      rollout,
+      [
+        JSON.stringify({
+          type: 'session_meta',
+          payload: { id: 'session-large', cwd: workspace },
+        }),
+        JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5' } }),
+        ...usageLines,
+        '',
+      ].join('\n'),
+    );
+
+    const messageIds: string[] = [];
+    let eventsSeenWhenTimerRan: number | null = null;
+    const scanner = new CodexUsageScanner({
+      sessionsDir,
+      pollMs: 60_000,
+      isWatched: (cwd) => cwd === workspace,
+      onEvent: (event) => {
+        messageIds.push(event.messageId ?? '');
+        if (messageIds.length === 1) {
+          setTimeout(() => {
+            eventsSeenWhenTimerRan = messageIds.length;
+          }, 0);
+        }
+      },
+    });
+
+    scanner.start();
+    await eventually(() => expect(messageIds).toHaveLength(usageLines.length));
+    await eventually(() => expect(eventsSeenWhenTimerRan).not.toBeNull());
+    expect(eventsSeenWhenTimerRan).toBeLessThan(usageLines.length);
+    expect(new Set(messageIds)).toHaveLength(usageLines.length);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(messageIds).toHaveLength(usageLines.length);
+    scanner.stop();
+  });
+
+  it('preserva UTF-8 quando um caractere cruza a fronteira de leitura', async () => {
+    const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-scan-utf8-'));
+    roots.push(sessionsDir);
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-workspace-é-'));
+    roots.push(workspace);
+    const chunkBytes = 512 * 1024;
+    const payload = {
+      type: 'session_meta',
+      payload: { id: 'session-utf8', padding: '', cwd: workspace },
+    };
+    const serialized = () => JSON.stringify(payload);
+    const markerOffset = () => Buffer.from(serialized()).indexOf(Buffer.from('é'));
+    payload.payload.padding = 'x'.repeat(chunkBytes - 1 - markerOffset());
+    expect(markerOffset()).toBe(chunkBytes - 1);
+    const rollout = path.join(dayDirectory(sessionsDir), 'rollout-utf8.jsonl');
+    fs.writeFileSync(
+      rollout,
+      [
+        serialized(),
+        JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5' } }),
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-07-29T12:00:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                input_tokens: 10,
+                cached_input_tokens: 2,
+                output_tokens: 1,
+              },
+            },
+          },
+        }),
+        '',
+      ].join('\n'),
+    );
+
+    const onEvent = vi.fn();
+    const scanner = new CodexUsageScanner({
+      sessionsDir,
+      pollMs: 60_000,
+      isWatched: (cwd) => cwd === workspace,
+      onEvent,
+    });
+
+    scanner.start();
+    await eventually(() => expect(onEvent).toHaveBeenCalledTimes(1));
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-utf8' }),
+      workspace,
+      {
+        providerSessionId: 'session-utf8',
+        threadId: 'session-utf8',
+        rolloutSessionId: null,
+        sessionStartedAt: null,
+      },
+    );
+    scanner.stop();
+  });
+
+  it('separa thread e provider session sem emitir o histórico copiado do pai', async () => {
+    const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-scan-fork-'));
+    roots.push(sessionsDir);
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-workspace-fork-'));
+    roots.push(workspace);
+    const parentThreadId = '019fab5d-b0bc-7fc1-ac78-510e35abbc48';
+    const childThreadId = '019fad78-bf8f-7b63-837f-750b9c02bcd3';
+    const rollout = path.join(
+      dayDirectory(sessionsDir),
+      `rollout-2026-07-29T12-00-00-${childThreadId}.jsonl`,
+    );
+    const usageLine = (timestamp: string) =>
+      JSON.stringify({
+        type: 'event_msg',
+        timestamp,
+        payload: {
+          type: 'token_count',
+          info: {
+            last_token_usage: {
+              input_tokens: 10,
+              cached_input_tokens: 2,
+              output_tokens: 1,
+            },
+          },
+        },
+      });
+    fs.writeFileSync(
+      rollout,
+      [
+        JSON.stringify({
+          type: 'session_meta',
+          payload: {
+            id: childThreadId,
+            session_id: parentThreadId,
+            parent_thread_id: parentThreadId,
+            timestamp: '2026-07-29T10:43:19.590Z',
+            cwd: workspace,
+          },
+        }),
+        JSON.stringify({
+          type: 'session_meta',
+          payload: {
+            id: parentThreadId,
+            session_id: parentThreadId,
+            timestamp: '2026-07-29T10:00:00.000Z',
+            cwd: workspace,
+          },
+        }),
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-07-29T10:43:19.987Z',
+          payload: {
+            type: 'task_started',
+            turn_id: '019fab5e-ee23-77e0-a9a8-3434e9581ec0',
+            started_at: 1_785_286_553,
+          },
+        }),
+        // Codex restamps the copied parent history at child-spawn time, so a
+        // timestamp-only filter would incorrectly count this enormous event.
+        usageLine('2026-07-29T10:43:19.988Z'),
+        JSON.stringify({
+          type: 'event_msg',
+          timestamp: '2026-07-29T10:43:20.262Z',
+          payload: {
+            type: 'task_started',
+            turn_id: '019fad78-c243-7c10-957a-9b08377e4fed',
+            started_at: 1_785_321_800,
+          },
+        }),
+        usageLine('2026-07-29T10:43:20.300Z'),
+        '',
+      ].join('\n'),
+    );
+
+    const onEvent = vi.fn();
+    const scanner = new CodexUsageScanner({
+      sessionsDir,
+      pollMs: 60_000,
+      isWatched: (cwd) => cwd === workspace,
+      onEvent,
+    });
+
+    scanner.start();
+    await eventually(() => expect(onEvent).toHaveBeenCalledTimes(1));
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: parentThreadId,
+        messageId: expect.stringMatching(
+          /^codex:v2:[a-f0-9]{64}:2:2026-07-29T10:43:20\.300Z$/,
+        ),
+      }),
+      workspace,
+      {
+        providerSessionId: parentThreadId,
+        threadId: childThreadId,
+        rolloutSessionId: childThreadId,
+        sessionStartedAt: Date.parse('2026-07-29T10:43:19.590Z'),
+        parentThreadId,
+      },
     );
     scanner.stop();
   });

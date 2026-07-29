@@ -72,6 +72,13 @@ export interface SchedulerRuntimeDeps {
   listTasks(): readonly SchedulerRuntimeTask[];
   listActiveWorkers(): readonly ActiveWorker[];
   scheduleConfig(): ScheduleConfig;
+  /**
+   * A bounded, non-mutating wave may use the approved configured ceiling
+   * without teaching the adaptive writer cap from conflict-free reads.
+   */
+  useConfiguredCapForCurrentWave?(
+    tasks: readonly SchedulerRuntimeTask[],
+  ): boolean;
   now(): number;
   /** Optional blast-radius expander (pure file set). */
   expandFiles?(files: readonly string[]): readonly string[];
@@ -151,6 +158,7 @@ function resolveConfig(
   deps: SchedulerRuntimeDeps,
   state: SchedulerRuntimeState,
   parallelEnabled: boolean,
+  useConfiguredCap: boolean,
 ): ScheduleConfig {
   const base = deps.scheduleConfig();
   if (!parallelEnabled) {
@@ -160,6 +168,7 @@ function resolveConfig(
       paneBudget: base.paneBudget,
     };
   }
+  if (useConfiguredCap) return base;
   // Adaptive cap is the configured ceiling when flag is on (starts 2–3).
   return {
     configuredCap: Math.min(base.configuredCap, state.adaptiveCap.currentCap),
@@ -183,8 +192,17 @@ export async function runSchedulerTick(
 }> {
   throwIfMissionSchedulerAborted(signal);
   const parallelEnabled = deps.isParallelSchedulerEnabled();
-  const tasks = toScheduleTasks(deps.listTasks());
-  const config = resolveConfig(deps, state, parallelEnabled);
+  const runtimeTasks = deps.listTasks();
+  const useConfiguredCap =
+    parallelEnabled &&
+    deps.useConfiguredCapForCurrentWave?.(runtimeTasks) === true;
+  const tasks = toScheduleTasks(runtimeTasks);
+  const config = resolveConfig(
+    deps,
+    state,
+    parallelEnabled,
+    useConfiguredCap,
+  );
   const decision = decideSchedule(
     tasks,
     deps.listActiveWorkers(),
@@ -201,7 +219,7 @@ export async function runSchedulerTick(
     // Capture the narrowed variant: inside the async closure below TypeScript
     // can no longer prove `decision.plan` is still the dispatch member.
     const dispatchPlan = decision.plan;
-    const taskMap = new Map(deps.listTasks().map((t) => [t.id, t]));
+    const taskMap = new Map(runtimeTasks.map((t) => [t.id, t]));
     const waveParallel = parallelEnabled && dispatchPlan.waveSize > 1;
 
     const dispatchOne = async (taskId: string): Promise<string | null> => {
@@ -253,10 +271,12 @@ export async function runSchedulerTick(
       }
     }
     const telemetry = recordScheduleTelemetry(nextState.telemetry, decision.plan);
-    const adaptiveCap = decideAdaptiveCap(nextState.adaptiveCap, {
-      kind: 'wave',
-      waveSize: decision.plan.waveSize,
-    });
+    const adaptiveCap = useConfiguredCap
+      ? nextState.adaptiveCap
+      : decideAdaptiveCap(nextState.adaptiveCap, {
+          kind: 'wave',
+          waveSize: decision.plan.waveSize,
+        });
     nextState = { telemetry, adaptiveCap };
     deps.onTelemetry?.(telemetry, decision.plan);
   }

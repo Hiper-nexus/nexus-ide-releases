@@ -190,4 +190,105 @@ describe('MissionWizardPlanReview', () => {
 
     act(() => root.unmount());
   });
+
+  it('reviews a team roundtable without calling it an implementation', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const goal =
+      'Teste de todos panes, cada um me fala o que faz na missão';
+    const roundtableMission: Mission = {
+      ...mission,
+      title: 'Rodada do time',
+      description: goal,
+      intentContract: {
+        ...mission.intentContract!,
+        goal,
+        acceptanceCriteria: [],
+        budgets: {
+          ...mission.intentContract!.budgets,
+          maxWorkers: 4,
+        },
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <MissionWizardPlanReview
+          mission={roundtableMission}
+          squad={squad}
+          roster={squad.agents}
+          adapters={[adapter]}
+          error={null}
+          spawning={false}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onStart={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).toMatch(/rodada da equipe.*somente leitura/i);
+    expect(host.textContent).toMatch(/Responder em paralelo/i);
+    expect(host.textContent).toMatch(/Handoffs físicos obrigatórios/i);
+    expect(host.textContent).not.toMatch(
+      /conduz a implementação|Revisão técnica automática ao final/i,
+    );
+    act(() => root.unmount());
+  });
+
+  it('keeps a promoted plan on delivery topology even when its title resembles a roundtable', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const goal =
+      'Todos os panes devem responder o que fazem nesta missão';
+    const promotedMission: Mission = {
+      ...mission,
+      description: goal,
+      intentContract: {
+        ...mission.intentContract!,
+        goal,
+        promotedPlan: {
+          version: 1,
+          handoffId: 'handoff-plan',
+          sourceIntentVersion: 1,
+          sourceSessionId: 'session-plan',
+          handoffCreatedAt: 1,
+          physicalReceipt: {
+            receiptId: 'receipt-plan',
+            toolCallId: 'tool-plan',
+            source: 'http-mcp',
+            authoritySha256: 'd'.repeat(64),
+            issuedAt: 1,
+          },
+          summary: 'Plano aprovado',
+          artifacts: [],
+          summarySha256: 'a'.repeat(64),
+          artifactsSha256: 'b'.repeat(64),
+          digest: 'c'.repeat(64),
+        },
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        <MissionWizardPlanReview
+          mission={promotedMission}
+          squad={squad}
+          roster={squad.agents}
+          adapters={[adapter]}
+          error={null}
+          spawning={false}
+          onBack={vi.fn()}
+          onCancel={vi.fn()}
+          onStart={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).not.toMatch(/rodada da equipe/i);
+    expect(host.textContent).toMatch(/Revisão técnica automática ao final/i);
+    act(() => root.unmount());
+  });
 });

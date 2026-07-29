@@ -6,6 +6,7 @@ import type {
   PaneSnapshot,
   Squad,
 } from '../../shared/orch-types';
+import { TEAM_READ_ONLY_FANOUT_DOMAIN } from '../../shared/mission-topology';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   runMissionKickoffAcceptance,
@@ -37,6 +38,16 @@ import type { TaskDispatchRecord } from './task-dispatch-store';
 import { TERMINAL_OPERATIONAL_FAILURE_MARKER } from '../runtime/operational-failure-policy';
 import { RETIRED_ROSTER_ROUTE_MARKER } from '../../shared/retired-adapter-policy';
 import { RetiredRosterRouteError } from '../../shared/retired-adapter-policy';
+import {
+  decodeTaskScheduleDetail,
+  encodeTaskScheduleDetail,
+} from './mission-scheduler-meta';
+import { ensureGuidedMissionPlan } from './guided-mission-planner';
+import {
+  harness as guidedPlannerHarness,
+  mission as guidedMission,
+  sealedGuidedV2Receipt,
+} from './guided-mission-planner-test-harness';
 
 const scope = Object.freeze({
   version: 1 as const,
@@ -536,6 +547,120 @@ describe('initial main-owned orchestrator bootstrap', () => {
     expect(h.deps.prepareOpportunisticPrevc).not.toHaveBeenCalled();
   });
 
+  it('launches an explicit read-only team fanout without Git baseline or PREVC preparation', async () => {
+    const h = harness();
+    const goal =
+      'Todos os agentes devem responder o que fazem nesta missão';
+    h.mission = {
+      ...h.mission,
+      description: goal,
+      intentContract: {
+        ...h.mission.intentContract!,
+        goal,
+      },
+    };
+    const order: string[] = [];
+    h.deps.ensurePlanGitBaseline = vi.fn(() => {
+      order.push('baseline');
+    });
+    h.deps.ensureMissionPlan = vi.fn(() => {
+      order.push('plan');
+      return {
+        applicable: true,
+        sealed: true,
+        reason: 'sealed',
+        topology: 'team-read-only-fanout',
+        workerAgentRef: 'worker-a',
+        taskId: 'task-a',
+      };
+    });
+    h.deps.prepareOpportunisticPrevc = vi.fn(() => {
+      order.push('prevc');
+    });
+    const originalSpawn = h.deps.spawnMainOwnedPane;
+    h.deps.spawnMainOwnedPane = (input) => {
+      order.push('provider');
+      return originalSpawn(input);
+    };
+
+    const result = await new MissionOrchestratorBootstrapService(
+      h.deps,
+    ).bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({ ok: true, missionId: h.mission.id });
+    expect(order).toEqual(['plan', 'provider']);
+    expect(h.deps.ensurePlanGitBaseline).not.toHaveBeenCalled();
+    expect(h.deps.ensureMissionPlan).toHaveBeenCalledWith(
+      scope,
+      h.mission.id,
+    );
+    expect(h.deps.prepareOpportunisticPrevc).not.toHaveBeenCalled();
+    expect(h.spawned).toHaveLength(1);
+    expect(h.kickoffPrompts).toHaveLength(1);
+    expect(h.kickoffPrompts[0]).toMatch(/Rodada da equipe/i);
+    expect(h.kickoffPrompts[0]).toMatch(/O Main despacha todos/i);
+  });
+
+  it('keeps an already-sealed delivery receipt authoritative when its text resembles a roundtable', async () => {
+    const h = harness();
+    const goal =
+      'Todos os agentes devem responder o que fazem nesta missão';
+    h.mission = {
+      ...h.mission,
+      description: goal,
+      intentContract: {
+        ...h.mission.intentContract!,
+        goal,
+      },
+    };
+    h.deps.ensurePlanGitBaseline = vi.fn();
+    h.deps.ensureMissionPlan = vi.fn(() => ({
+      applicable: true,
+      sealed: false,
+      reason: 'already-sealed',
+      topology: 'delivery',
+      workerAgentRef: 'worker-a',
+      taskId: 'task-a',
+    }));
+    h.deps.prepareOpportunisticPrevc = vi.fn();
+
+    const result = await new MissionOrchestratorBootstrapService(
+      h.deps,
+    ).bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({ ok: true, missionId: h.mission.id });
+    expect(h.deps.ensurePlanGitBaseline).toHaveBeenCalledOnce();
+    expect(h.deps.prepareOpportunisticPrevc).toHaveBeenCalledOnce();
+    expect(h.kickoffPrompts[0]).not.toMatch(/Rodada da equipe/i);
+    expect(h.kickoffPrompts[0]).toMatch(/PREVC paralelo/i);
+  });
+
+  it('keeps Git and PREVC prework for a team mission that mutates code', async () => {
+    const h = harness();
+    const goal =
+      'Todos os agentes devem revisar e corrigir o código desta missão';
+    h.mission = {
+      ...h.mission,
+      description: goal,
+      intentContract: {
+        ...h.mission.intentContract!,
+        goal,
+      },
+    };
+    h.deps.ensurePlanGitBaseline = vi.fn();
+    h.deps.ensureMissionPlan = vi.fn();
+    h.deps.prepareOpportunisticPrevc = vi.fn();
+
+    const result = await new MissionOrchestratorBootstrapService(
+      h.deps,
+    ).bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({ ok: true, missionId: h.mission.id });
+    expect(h.deps.ensurePlanGitBaseline).toHaveBeenCalledOnce();
+    expect(h.deps.ensureMissionPlan).toHaveBeenCalledOnce();
+    expect(h.deps.prepareOpportunisticPrevc).toHaveBeenCalledOnce();
+  });
+
   it('blocks durably before any provider effect when the main-owned plan preflight fails', async () => {
     const h = harness();
     h.deps.ensureMissionPlan = vi.fn(() => {
@@ -560,6 +685,70 @@ describe('initial main-owned orchestrator bootstrap', () => {
       intentState: 'blocked_technical',
       description: expect.stringMatching(/orquestrador não iniciado.*CTA/is),
     });
+  });
+
+  it('blocks a saved squad with mixed sealed topology before any provider effect', async () => {
+    const h = harness();
+    const current = guidedMission({
+      squadId: squad.id,
+      intentContract: {
+        ...guidedMission().intentContract!,
+        squadRevisionHash: snapshotSquadAuthority(squad).hash,
+      },
+    });
+    const existing = sealedGuidedV2Receipt().map((entry, index) => {
+      const decoded = decodeTaskScheduleDetail(entry.task.detail);
+      if (!decoded.meta) throw new Error('missing sealed schedule metadata');
+      const detail =
+        index === 0
+          ? encodeTaskScheduleDetail(decoded.body, {
+              ...decoded.meta,
+              ownership: {
+                ...decoded.meta.ownership,
+                domains: [
+                  ...decoded.meta.ownership.domains,
+                  TEAM_READ_ONLY_FANOUT_DOMAIN,
+                ],
+              },
+            })
+          : entry.task.detail;
+      return {
+        ...entry,
+        squadId: squad.id,
+        plannedDetail: detail,
+        task: { ...entry.task, detail },
+      };
+    });
+    const planner = guidedPlannerHarness({
+      currentMission: current,
+      liveSquad: squad,
+      existing,
+    });
+    h.deps.ensureMissionPlan = vi.fn(() =>
+      ensureGuidedMissionPlan(
+        planner.suite,
+        current.id,
+        planner.deps,
+      ),
+    );
+
+    const result = await new MissionOrchestratorBootstrapService(
+      h.deps,
+    ).bootstrap(scope, h.mission.id);
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'preflight_failed',
+      error: expect.stringMatching(
+        /guided_plan_mixed_topology_blocked.*replaneje.*reaprove/i,
+      ),
+    });
+    expect(planner.deps.getSquad).not.toHaveBeenCalled();
+    expect(planner.deps.listLiveAdapters).not.toHaveBeenCalled();
+    expect(planner.createPlanAtomically).not.toHaveBeenCalled();
+    expect(h.spawned).toEqual([]);
+    expect(h.recorded).toEqual([]);
+    expect(h.kickoffPrompts).toEqual([]);
   });
 
   it('starts the orchestrator when opportunistic PREVC preparation throws synchronously', async () => {
@@ -2164,6 +2353,7 @@ describe('plan promotion runtime restart', () => {
         applicable: true,
         sealed: true,
         reason: 'sealed',
+        topology: 'delivery',
         workerAgentRef: 'executor',
         taskId: 'task-guided-v2',
       }),

@@ -39,6 +39,8 @@ import {
   HANDOFF_DELIVERY_OUTBOX_RECONCILE_MS,
   reconcilePendingHandoffDeliveryOutbox,
 } from './handoff-delivery-outbox';
+import { configureHandoffDeliveryRuntimeRecovery } from './idle-delivery';
+import { recoverHandoffDeliveryRuntime } from './handoff-delivery-runtime-recovery';
 import { terminateUnauthorizedMissionRuntimes } from './mission-runtime-termination';
 import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
 import {
@@ -93,6 +95,7 @@ export function startOrchestrationCoordinator(): void {
   prepareTaskDispatchLifecycle();
   prepareMissionOrchestratorExitLifecycle();
   prepareMissionOrchestratorBootstrapRecovery();
+  configureHandoffDeliveryRuntimeRecovery(recoverHandoffDeliveryRuntime);
   disposeLoginWatchdog = installLoginStuckWatchdog({ autoTick: false });
 
   const instance = createOrchestrationReconciler([
@@ -219,6 +222,7 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     shutdownTaskDispatchLifecycle();
     shutdownMissionOrchestratorExitLifecycle();
     await shutdownMissionOrchestratorBootstrapRecovery();
+    configureHandoffDeliveryRuntimeRecovery(null);
     coordinator = null;
   })();
   coordinatorStopFlight = stop;

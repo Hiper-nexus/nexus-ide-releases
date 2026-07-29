@@ -148,6 +148,27 @@ describe('mission plan preview', () => {
     expect(waves.at(-1)?.title).toBe('Validar e integrar');
   });
 
+  it('previews a team roundtable as one parallel response wave', () => {
+    const waves = forecastMissionWaves({
+      lane: 'standard',
+      maxWorkers: 4,
+      goal: 'Teste de todos panes, cada um me fala o que faz na missão',
+    });
+
+    expect(waves).toEqual([
+      {
+        title: 'Responder em paralelo',
+        detail:
+          'Cada especialista responde ao objetivo em somente leitura, sem depender do participante anterior.',
+      },
+      {
+        title: 'Consolidar handoffs',
+        detail:
+          'O Nexus comprova todas as respostas físicas e encerra a rodada.',
+      },
+    ]);
+  });
+
   it('uses singular and zero-worker language without promising parallelism', () => {
     expect(
       forecastMissionWaves({ lane: 'standard', maxWorkers: 1 })[1]?.detail,

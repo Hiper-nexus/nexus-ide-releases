@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
-import type { ProjectExecutionScope } from '../../shared/types';
+import {
+  projectExecutionScopeSchema,
+  type ProjectExecutionScope,
+} from '../../shared/types';
 import { priceForModel } from '../orch/pricing';
 import {
   ScopedStoreBinding,
@@ -11,6 +14,7 @@ import {
 } from '../orch/scoped-store';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import type { UsageEvent } from './claude-transcript';
+import { legacyCodexUsageMessageId } from './codex-transcript';
 
 /**
  * Project-local token accounting backed by the V1 `usage_events` contract.
@@ -52,6 +56,11 @@ export interface CapturedProviderSession {
   capturedAt: number;
 }
 
+export interface CodexSessionAuthority {
+  paneId: string | null;
+  executionRoot: string;
+}
+
 interface UsageMetadata {
   schemaVersion: 1;
   sessionId: string;
@@ -72,6 +81,23 @@ interface TotalsRow {
   cache_write_tokens: number | null;
   cost_micros: number | null;
   turns: number | null;
+}
+
+interface PersistedUsageIdentityRow {
+  model: unknown;
+  input_units: unknown;
+  output_units: unknown;
+  session_id: unknown;
+  message_id: unknown;
+  cache_read_tokens: unknown;
+  cache_write_5m_tokens: unknown;
+  cache_write_1h_tokens: unknown;
+  source_timestamp: unknown;
+}
+
+interface ResolvedUsageIdentity {
+  id: string;
+  existed: boolean;
 }
 
 const CACHE_READ_RATIO = 0.1;
@@ -117,6 +143,24 @@ const sessionMetadataSchema = z
     recordedAt: z.number().int().nonnegative().safe(),
   })
   .strict();
+const persistedPaneExecutionScopeSchema = z
+  .object({
+    executionScope: projectExecutionScopeSchema,
+  })
+  .passthrough();
+const persistedUsageIdentitySchema = z
+  .object({
+    model: z.string().min(1).max(256),
+    input_units: z.number().int().nonnegative().safe(),
+    output_units: z.number().int().nonnegative().safe(),
+    session_id: z.string().min(1).max(512),
+    message_id: z.string().min(1).max(512),
+    cache_read_tokens: z.number().int().nonnegative().safe(),
+    cache_write_5m_tokens: z.number().int().nonnegative().safe(),
+    cache_write_1h_tokens: z.number().int().nonnegative().safe(),
+    source_timestamp: z.number().int().nonnegative().safe().nullable(),
+  })
+  .strict();
 
 /** Cost in USD derived from a provider-reported event and the pricing table. */
 export function computeRealCost(ev: UsageEvent): number {
@@ -149,6 +193,100 @@ function deterministicUsageId(
     .update(messageId)
     .digest('hex');
   return `usage-${digest}`;
+}
+
+function isMatchingLegacyCodexUsage(
+  row: PersistedUsageIdentityRow,
+  record: UsageRecord,
+  legacyMessageId: string,
+  stableMessageId: string,
+): boolean {
+  let persisted: z.infer<typeof persistedUsageIdentitySchema>;
+  try {
+    persisted = persistedUsageIdentitySchema.parse(row);
+  } catch (error) {
+    throw new ScopedStoreCorruptionError('legacy Codex usage identity', {
+      cause: error,
+    });
+  }
+  const claimMatches =
+    persisted.message_id === legacyMessageId ||
+    persisted.message_id === stableMessageId;
+  return Boolean(
+    claimMatches &&
+      persisted.model === record.model &&
+      persisted.input_units === record.inputTokens &&
+      persisted.output_units === record.outputTokens &&
+      persisted.session_id === record.sessionId &&
+      persisted.cache_read_tokens === record.cacheReadTokens &&
+      persisted.cache_write_5m_tokens === record.cacheWrite5mTokens &&
+      persisted.cache_write_1h_tokens === record.cacheWrite1hTokens &&
+      persisted.source_timestamp === record.timestamp,
+  );
+}
+
+function persistedUsageIdentity(
+  db: Database.Database,
+  id: string,
+  provider: string,
+): PersistedUsageIdentityRow | undefined {
+  return db.prepare(
+    `SELECT model,
+            input_units,
+            output_units,
+            json_extract(metadata_json, '$.sessionId') AS session_id,
+            json_extract(metadata_json, '$.messageId') AS message_id,
+            json_extract(metadata_json, '$.cacheReadTokens') AS cache_read_tokens,
+            json_extract(metadata_json, '$.cacheWrite5mTokens') AS cache_write_5m_tokens,
+            json_extract(metadata_json, '$.cacheWrite1hTokens') AS cache_write_1h_tokens,
+            json_extract(metadata_json, '$.sourceTimestamp') AS source_timestamp
+     FROM usage_events
+     WHERE id = ? AND provider = ? AND event_type = ?`,
+  ).get(
+    id,
+    provider,
+    TOKEN_EVENT_TYPE,
+  ) as PersistedUsageIdentityRow | undefined;
+}
+
+function resolveMessageUsageIdentity(
+  db: Database.Database,
+  provider: string,
+  record: UsageRecord,
+  messageId: string,
+): ResolvedUsageIdentity {
+  const stableId = deterministicUsageId(provider, record.sessionId, messageId);
+  const stableExists =
+    db.prepare('SELECT 1 AS found FROM usage_events WHERE id = ?').get(
+      stableId,
+    ) !== undefined;
+  if (stableExists || provider !== 'codex') {
+    return { id: stableId, existed: stableExists };
+  }
+
+  const legacyMessageId = legacyCodexUsageMessageId(messageId);
+  if (!legacyMessageId) return { id: stableId, existed: false };
+  const legacyId = deterministicUsageId(
+    provider,
+    record.sessionId,
+    legacyMessageId,
+  );
+  const legacyRow = persistedUsageIdentity(db, legacyId, provider);
+  if (
+    !legacyRow ||
+    !isMatchingLegacyCodexUsage(
+      legacyRow,
+      record,
+      legacyMessageId,
+      messageId,
+    )
+  ) {
+    return { id: stableId, existed: false };
+  }
+  // The legacy physical row claims exactly one v2 ordinal. Updating its
+  // metadata with the stable id makes restart replay idempotent while allowing
+  // other same-millisecond ordinals to insert.
+  return { id: legacyId, existed: true };
 }
 
 function toTotals(row: TotalsRow | undefined): UsageTotals {
@@ -217,7 +355,7 @@ export class ScopedUsageStore {
   record(
     rawProvider: UsageProvider,
     rawRecord: UsageRecord,
-  ): void {
+  ): boolean {
     const provider = usageProviderSchema.parse(rawProvider);
     const record = usageEventSchema.parse(rawRecord);
     const db = this.#binding.writeDatabase();
@@ -246,9 +384,14 @@ export class ScopedUsageStore {
       sourceTimestamp: record.timestamp,
       recordedAt: now,
     });
-    const id = record.messageId
-      ? deterministicUsageId(provider, record.sessionId, record.messageId)
-      : this.#binding.makeId('usage');
+    const identity = record.messageId
+      ? resolveMessageUsageIdentity(
+          db,
+          provider,
+          record,
+          record.messageId,
+        )
+      : { id: this.#binding.makeId('usage'), existed: false };
     db.prepare(
       `INSERT INTO usage_events
          (id, mission_id, pane_id, provider, model, event_type, input_units,
@@ -266,7 +409,7 @@ export class ScopedUsageStore {
        WHERE usage_events.provider = excluded.provider
          AND usage_events.event_type = excluded.event_type`,
     ).run(
-      id,
+      identity.id,
       ownership.missionId,
       ownership.internalPaneId,
       provider,
@@ -279,6 +422,7 @@ export class ScopedUsageStore {
       record.timestamp ?? now,
     );
     this.#binding.emitChange();
+    return !identity.existed;
   }
 
   totals(): UsageTotals {
@@ -458,6 +602,63 @@ export class ScopedUsageStore {
       | { found?: unknown }
       | undefined;
     return row?.found === 1;
+  }
+
+  /**
+   * Resolves one unambiguous physical authority for a historical Codex
+   * session. A session spanning multiple panes/roots is not resumable from
+   * telemetry alone.
+   */
+  codexSessionAuthority(
+    rawSessionId: string,
+  ): CodexSessionAuthority | null {
+    const sessionId = z.string().min(1).max(512).parse(rawSessionId);
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT DISTINCT
+           COALESCE(
+             mission_panes.pane_id,
+             json_extract(usage_events.metadata_json, '$.displayPaneId')
+           ) AS display_pane_id,
+           mission_panes.scope_json
+         FROM usage_events
+         LEFT JOIN mission_panes
+           ON mission_panes.id = usage_events.pane_id
+         WHERE usage_events.event_type = ?
+           AND usage_events.provider = 'codex'
+           AND json_extract(usage_events.metadata_json, '$.sessionId') = ?
+           AND (
+             usage_events.pane_id IS NULL OR
+             mission_panes.adapter_id = 'codex'
+           )
+         LIMIT 2`,
+      )
+      .all(TOKEN_EVENT_TYPE, sessionId) as Array<{
+        display_pane_id: unknown;
+        scope_json: unknown;
+      }>;
+    if (rows.length !== 1) return null;
+    try {
+      const paneId = nullableEntityIdSchema.parse(
+        rows[0].display_pane_id,
+      ) ?? null;
+      if (rows[0].scope_json === null) {
+        return { paneId: null, executionRoot: this.scope.rootRealPath };
+      }
+      const paneScope = persistedPaneExecutionScopeSchema.parse(
+        JSON.parse(z.string().parse(rows[0].scope_json)),
+      );
+      return {
+        paneId,
+        executionRoot: paneScope.executionScope.rootRealPath,
+      };
+    } catch (error) {
+      throw new ScopedStoreCorruptionError(
+        'Codex provider session authority',
+        { cause: error },
+      );
+    }
   }
 
   #resolvePaneOwnership(

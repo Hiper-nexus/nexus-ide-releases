@@ -1181,16 +1181,15 @@ async function commitEmptyBaselineAsync(
   }
 }
 
-/**
- * Scheduler-facing baseline. All potentially expensive repository walks and
- * index writes use the asynchronous Git runner so Electron keeps servicing
- * IPC/PTYS while a large workspace is checkpointed.
- */
-export async function ensureGuidedGitBaselineForWorktreeAsync(
-  scope: ProjectExecutionScope,
-  dependencies: GuidedGitBaselineAsyncDeps = {},
+const guidedGitBaselineInFlight = new Map<
+  string,
+  Promise<GuidedGitBaselineResult>
+>();
+
+async function ensureGuidedGitBaselineForWorktreeUncoalesced(
+  dependencies: GuidedGitBaselineAsyncDeps,
+  rootRealPath: string,
 ): Promise<GuidedGitBaselineResult> {
-  const rootRealPath = canonicalRoot(scope);
   const git =
     dependencies.asyncGitRunner ?? new AsyncProcessGitRunner();
   const entries = (await fs.promises.readdir(rootRealPath)).filter(
@@ -1268,6 +1267,39 @@ export async function ensureGuidedGitBaselineForWorktreeAsync(
     integrationRef: reference,
     headSha: baselineHead,
   });
+}
+
+/**
+ * Scheduler-facing baseline. All potentially expensive repository walks and
+ * index writes use the asynchronous Git runner so Electron keeps servicing
+ * IPC/PTYS while a large workspace is checkpointed.
+ *
+ * A fan-out wave may ask for several worktrees in the same tick. Those
+ * concurrent workers share only this immutable baseline probe/checkpoint;
+ * each worker still receives its own disposable worktree and physical Git
+ * proof. The entry is removed on both success and failure so later repository
+ * changes and transient failures are always observed by a fresh probe.
+ */
+export async function ensureGuidedGitBaselineForWorktreeAsync(
+  scope: ProjectExecutionScope,
+  dependencies: GuidedGitBaselineAsyncDeps = {},
+): Promise<GuidedGitBaselineResult> {
+  const rootRealPath = canonicalRoot(scope);
+  const current = guidedGitBaselineInFlight.get(rootRealPath);
+  if (current) return current;
+
+  const operation = ensureGuidedGitBaselineForWorktreeUncoalesced(
+    dependencies,
+    rootRealPath,
+  );
+  let tracked: Promise<GuidedGitBaselineResult>;
+  tracked = operation.finally(() => {
+    if (guidedGitBaselineInFlight.get(rootRealPath) === tracked) {
+      guidedGitBaselineInFlight.delete(rootRealPath);
+    }
+  });
+  guidedGitBaselineInFlight.set(rootRealPath, tracked);
+  return tracked;
 }
 
 /**

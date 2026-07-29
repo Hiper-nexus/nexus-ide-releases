@@ -31,6 +31,16 @@ import {
   hasAutomaticTechnicalRecovery,
   TERMINAL_OPERATIONAL_FAILURE_MARKER,
 } from '../../shared/mission-recovery-policy';
+import { physicalAgentActionPayloadSha256 } from './handoff-payload-identity';
+import {
+  bindTokenToSession,
+  mintToken,
+  resetGateForTests,
+} from './gate';
+import {
+  mintAgentTransportPhysicalReceipt,
+  runInsidePtyStreamAgentTransport,
+} from './http-mcp-boundary';
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -121,6 +131,258 @@ function insertPhysicalHandoffAuthority(input: {
     handoff.created_at,
   );
   return receiptId;
+}
+
+function insertPhysicalToolAuditIntent(input: {
+  readonly runtime: ProjectRuntimeManager;
+  readonly scope: ReturnType<typeof testProjectScope>;
+  readonly missionId: string;
+  readonly sessionId: string;
+  readonly toolName: 'nexus_handoff_ack' | 'nexus_mission_set_status';
+  readonly toolCallId: string;
+  readonly occurredAt: number;
+  readonly source?: 'http-mcp' | 'pty-stream';
+}): void {
+  input.runtime
+    .open(input.scope)
+    .db.prepare(
+      `INSERT INTO audit_events
+         (id, mission_id, actor, action, outcome, payload_json, occurred_at)
+       VALUES (?, ?, ?, ?, 'intent', ?, ?)`,
+    )
+    .run(
+      `audit-${input.toolCallId}`,
+      input.missionId,
+      input.sessionId,
+      input.toolName,
+      JSON.stringify({
+        schema: 'nexus.mcp-audit/v1',
+        timestamp: new Date(input.occurredAt).toISOString(),
+        project_id: input.scope.projectId,
+        checkout_id: input.scope.checkoutId,
+        source: input.source ?? 'http-mcp',
+        invocation_id: input.toolCallId,
+        args: {},
+        duration_ms: 0,
+        user_authorized: false,
+      }),
+      input.occurredAt,
+  );
+}
+
+function withPhysicalMaestroReceipt<T>(input: {
+  readonly scope: ReturnType<typeof testProjectScope>;
+  readonly missionId: string;
+  readonly sessionId: string;
+  readonly toolName: 'nexus_handoff_ack' | 'nexus_mission_set_status';
+  readonly toolCallId: string;
+  readonly invoke: (
+    receipt: ReturnType<typeof mintAgentTransportPhysicalReceipt>,
+  ) => T;
+}): T {
+  resetGateForTests();
+  const context = mintToken({
+    label: 'Maestro físico do teste',
+    role: 'orchestrator',
+    providerId: 'agy',
+    missionId: input.missionId,
+    scope: input.scope,
+    allowedTools: null,
+  });
+  bindTokenToSession(context.token, input.sessionId);
+  try {
+    return runInsidePtyStreamAgentTransport(
+      input.sessionId,
+      context,
+      () => {
+        const receipt = mintAgentTransportPhysicalReceipt({
+          ctx: context,
+          toolCallId: input.toolCallId,
+          toolName: input.toolName,
+        });
+        return input.invoke(receipt);
+      },
+    );
+  } finally {
+    resetGateForTests();
+  }
+}
+
+function acknowledgeFanoutFromPhysicalMaestro(input: {
+  readonly runtime: ProjectRuntimeManager;
+  readonly scope: ReturnType<typeof testProjectScope>;
+  readonly handoffs: ReturnType<typeof createScopedHandoffStore>;
+  readonly missionId: string;
+  readonly sessionId: string;
+  readonly handoffId: string;
+}): number {
+  const toolCallId = `physical-ack-rebind-${++physicalReceiptSequence}`;
+  insertPhysicalToolAuditIntent({
+    ...input,
+    toolName: 'nexus_handoff_ack',
+    toolCallId,
+    source: 'pty-stream',
+    occurredAt: Date.now(),
+  });
+  const consumed = withPhysicalMaestroReceipt({
+    ...input,
+    toolName: 'nexus_handoff_ack',
+    toolCallId,
+    invoke: (receipt) =>
+      input.handoffs.markConsumedFromPhysicalAck(
+        {
+          handoffId: input.handoffId,
+          missionId: input.missionId,
+          orchestratorSessionId: input.sessionId,
+        },
+        receipt,
+      ),
+  });
+  expect(consumed).toBe(true);
+  return (
+    input.runtime
+      .open(input.scope)
+      .db.prepare(
+        `SELECT acknowledged_at FROM handoff_ack_receipts
+         WHERE handoff_id = ? AND orchestrator_session_id = ?`,
+      )
+      .get(input.handoffId, input.sessionId) as {
+      acknowledged_at: number;
+    }
+  ).acknowledged_at;
+}
+
+function consolidateFanoutFromPhysicalMaestro(input: {
+  readonly runtime: ProjectRuntimeManager;
+  readonly scope: ReturnType<typeof testProjectScope>;
+  readonly dispatches: ReturnType<typeof createTaskDispatchStore>;
+  readonly missionId: string;
+  readonly intentVersion: number;
+  readonly sessionId: string;
+  readonly finalOutput: string;
+}): boolean {
+  const toolCallId = `physical-consolidation-rebind-${++physicalReceiptSequence}`;
+  insertPhysicalToolAuditIntent({
+    ...input,
+    toolName: 'nexus_mission_set_status',
+    toolCallId,
+    source: 'pty-stream',
+    occurredAt: Date.now(),
+  });
+  return withPhysicalMaestroReceipt({
+    ...input,
+    toolName: 'nexus_mission_set_status',
+    toolCallId,
+    invoke: (receipt) =>
+      input.dispatches.recordFanoutConsolidation({
+        missionId: input.missionId,
+        intentVersion: input.intentVersion,
+        orchestratorSessionId: input.sessionId,
+        finalOutput: input.finalOutput,
+        physicalReceipt: receipt,
+      }),
+  });
+}
+
+function insertPhysicalFanoutAck(input: {
+  readonly runtime: ProjectRuntimeManager;
+  readonly scope: ReturnType<typeof testProjectScope>;
+  readonly missionId: string;
+  readonly sessionId: string;
+  readonly handoffId: string;
+  readonly attemptId: string;
+}): number {
+  const db = input.runtime.open(input.scope).db;
+  const consumed = db
+    .prepare(`SELECT consumed_at FROM handoffs WHERE id = ?`)
+    .get(input.handoffId) as { consumed_at: number };
+  const toolCallId = `physical-ack-${++physicalReceiptSequence}`;
+  insertPhysicalToolAuditIntent({
+    ...input,
+    toolName: 'nexus_handoff_ack',
+    toolCallId,
+    occurredAt: consumed.consumed_at,
+  });
+  db.prepare(
+    `INSERT INTO handoff_ack_receipts
+       (receipt_id, handoff_id, delivery_attempt_id, tool_call_id, tool_name,
+        source, mission_id, orchestrator_session_id, authority_sha256,
+        payload_sha256, issued_at, acknowledged_at)
+     VALUES (?, ?, ?, ?, 'nexus_handoff_ack', 'http-mcp', ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    toolCallId,
+    input.handoffId,
+    input.attemptId,
+    toolCallId,
+    input.missionId,
+    input.sessionId,
+    createHash('sha256').update(toolCallId).digest('hex'),
+    physicalAgentActionPayloadSha256('nexus_handoff_ack', {
+      handoffId: input.handoffId,
+    }),
+    consumed.consumed_at,
+    consumed.consumed_at,
+  );
+  return consumed.consumed_at;
+}
+
+function insertFanoutConsolidation(input: {
+  readonly runtime: ProjectRuntimeManager;
+  readonly scope: ReturnType<typeof testProjectScope>;
+  readonly missionId: string;
+  readonly intentVersion: number;
+  readonly sessionId: string;
+  readonly noEarlierThan: number;
+  readonly finalOutput: string;
+}): void {
+  const db = input.runtime.open(input.scope).db;
+  const plan = db
+    .prepare(
+      `SELECT plan_hash FROM mission_task_plans
+       WHERE mission_id = ? AND intent_version = ?`,
+    )
+    .get(input.missionId, input.intentVersion) as { plan_hash: string };
+  const heading = /\n## Maestro\n/iu.exec(input.finalOutput);
+  if (!heading) throw new Error('test consolidation requires ## Maestro');
+  const maestro = input.finalOutput
+    .slice(heading.index + heading[0].length)
+    .trim();
+  const createdAt = Math.max(input.noEarlierThan, Date.now());
+  const toolCallId = `physical-consolidation-${++physicalReceiptSequence}`;
+  insertPhysicalToolAuditIntent({
+    ...input,
+    toolName: 'nexus_mission_set_status',
+    toolCallId,
+    occurredAt: createdAt,
+  });
+  db.prepare(
+    `INSERT INTO mission_fanout_consolidation_receipts
+       (mission_id, intent_version, plan_hash, topology,
+        orchestrator_session_id, receipt_id, tool_call_id, tool_name, source,
+        authority_sha256, payload_sha256, final_output, final_output_sha256,
+        maestro_perspective, maestro_sha256, issued_at, created_at)
+     VALUES (?, ?, ?, 'team-read-only-fanout', ?, ?, ?,
+             'nexus_mission_set_status', 'http-mcp', ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    input.missionId,
+    input.intentVersion,
+    plan.plan_hash,
+    input.sessionId,
+    toolCallId,
+    toolCallId,
+    createHash('sha256').update(toolCallId).digest('hex'),
+    physicalAgentActionPayloadSha256('nexus_mission_set_status', {
+      missionId: input.missionId,
+      status: 'done',
+      note: input.finalOutput,
+    }),
+    input.finalOutput,
+    createHash('sha256').update(input.finalOutput).digest('hex'),
+    maestro,
+    createHash('sha256').update(maestro).digest('hex'),
+    createdAt,
+    createdAt,
+  );
 }
 
 function seedIntegratedQualityAuthority(input: {
@@ -335,6 +597,8 @@ function verifiedPlanFixture(
   options: {
     domains?: readonly string[];
     squadId?: string;
+    goal?: string;
+    mixedTopology?: boolean;
   } = {},
 ) {
   const runtime = manager();
@@ -344,7 +608,7 @@ function verifiedPlanFixture(
   const handoffs = createScopedHandoffStore(runtime, scope);
   const dispatches = createTaskDispatchStore(runtime, scope);
   const contract = approvedIntentContract({
-    goal: `Completar pelo motor (${label})`,
+    goal: options.goal ?? `Completar pelo motor (${label})`,
     intentVersion: 7,
   });
   const squadId = options.squadId ?? 'golden-squad';
@@ -360,9 +624,18 @@ function verifiedPlanFixture(
   const ownership = {
     files: ['src/golden.ts'],
     symbols: [],
-    domains: [...(options.domains ?? [])],
+    domains: [
+      ...(options.mixedTopology
+        ? ['team-read-only-fanout']
+        : (options.domains ?? [])),
+    ],
   };
-  const [task] = tasks.createPlanAtomically({
+  const secondaryOwnership = {
+    files: ['src/secondary.ts'],
+    symbols: [],
+    domains: [] as string[],
+  };
+  const [task, secondaryTask] = tasks.createPlanAtomically({
     missionId: mission.id,
     intentVersion: 7,
     squad: {
@@ -376,6 +649,18 @@ function verifiedPlanFixture(
           model: 'gpt-5.6-sol',
           effort: 'high',
         },
+        ...(options.mixedTopology
+          ? [
+              {
+                id: 'secondary-worker',
+                agentName: 'Secondary Worker',
+                category: 'executor' as const,
+                cli: 'codex',
+                model: 'gpt-5.6-sol',
+                effort: 'high' as const,
+              },
+            ]
+          : []),
       ],
     },
     rows: [
@@ -393,118 +678,176 @@ function verifiedPlanFixture(
         agentRef: 'worker',
         agentCategory: 'executor',
       },
+      ...(options.mixedTopology
+        ? [
+            {
+              plannerId: 'secondary-implement',
+              title: 'Implementar caminho secundário',
+              detail: encodeTaskScheduleDetail(
+                'Implementar e testar o caminho secundário.',
+                {
+                  dependsOn: [],
+                  ownership: secondaryOwnership,
+                  merged: false,
+                  agentRef: 'secondary-worker',
+                  agentCategory: 'executor' as const,
+                  executionMode: 'isolated_worktree' as const,
+                },
+              ),
+              agentRef: 'secondary-worker',
+              agentCategory: 'executor' as const,
+            },
+          ]
+        : []),
     ],
   });
   const receipt = tasks.getPlanReceipt(mission.id, 7)!;
-  const route = missions.reserveRouteDecision(mission.id, task!.title, {
-    tier: 'hard',
-    adapterId: 'codex',
-    model: 'gpt-5.6-sol',
-    effort: 'high',
-    reason: 'roster selado',
-    alternatives: [],
-  });
-  const claim = dispatches.claim({
-    missionId: mission.id,
-    taskId: task!.id,
-    intentVersion: 7,
-    workerId: 'Golden Worker',
-    leaseOwner: 'main',
-    leaseMs: 30_000,
-    ownership,
-    executionMode: 'isolated_worktree',
-    agentRef: 'worker',
-    agentCategory: 'executor',
-    rosterHash: receipt.rosterHash,
-    routeContract: {
-      adapterId: 'codex',
-      model: 'gpt-5.6-sol',
-      effort: 'high',
-    },
-  });
-  const routed = dispatches.attachRoute({
-    taskId: task!.id,
-    revision: claim.revision,
-    leaseToken: claim.leaseToken,
-    routeReservationId: route.id,
-    adapterId: 'codex',
-    model: 'gpt-5.6-sol',
-    effort: 'high',
-  });
-  missions.consumeRouteReservation(
-    {
-      reservationId: route.id,
+  let sharedQualityEvidenceIds: readonly string[] | null = null;
+  const completePlannedTask = (input: {
+    task: NonNullable<typeof task>;
+    taskOwnership: typeof ownership;
+    workerId: string;
+    agentRef: string;
+    sessionId: string;
+    suffix: string;
+  }) => {
+    const route = missions.reserveRouteDecision(
+      mission.id,
+      input.task.title,
+      {
+        tier: 'hard',
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+        reason: 'roster selado',
+        alternatives: [],
+      },
+    );
+    const claim = dispatches.claim({
       missionId: mission.id,
+      taskId: input.task.id,
+      intentVersion: 7,
+      workerId: input.workerId,
+      leaseOwner: 'main',
+      leaseMs: 30_000,
+      ownership: input.taskOwnership,
+      executionMode: 'isolated_worktree',
+      agentRef: input.agentRef,
+      agentCategory: 'executor',
+      rosterHash: receipt.rosterHash,
+      routeContract: {
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      },
+    });
+    const routed = dispatches.attachRoute({
+      taskId: input.task.id,
+      revision: claim.revision,
+      leaseToken: claim.leaseToken,
+      routeReservationId: route.id,
       adapterId: 'codex',
       model: 'gpt-5.6-sol',
       effort: 'high',
-    },
-    `dispatch:${claim.id}`,
-  );
-  dispatches.bindSpawn({
-    taskId: task!.id,
-    revision: routed.revision,
-    leaseToken: claim.leaseToken,
-    workerIncarnationId: claim.workerIncarnationId,
-    paneId: 'pane-golden',
+    });
+    missions.consumeRouteReservation(
+      {
+        reservationId: route.id,
+        missionId: mission.id,
+        adapterId: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+      },
+      `dispatch:${claim.id}`,
+    );
+    dispatches.bindSpawn({
+      taskId: input.task.id,
+      revision: routed.revision,
+      leaseToken: claim.leaseToken,
+      workerIncarnationId: claim.workerIncarnationId,
+      paneId: `pane-${input.suffix}`,
+      sessionId: input.sessionId,
+    });
+    const handoff = handoffs.submit({
+      missionId: mission.id,
+      sessionId: input.sessionId,
+      workerIncarnationId: claim.workerIncarnationId,
+      fromAgent: input.workerId,
+      status: 'success',
+      summary: 'Implementação integrada com testes e commit local verificados.',
+    });
+    insertPhysicalHandoffAuthority({
+      runtime,
+      scope,
+      missionId: mission.id,
+      handoffId: handoff.id,
+      sessionId: input.sessionId,
+      workerIncarnationId: claim.workerIncarnationId,
+      worktreeHeadSha: repositoryHead(),
+    });
+    const ready = dispatches.acceptHandoff({
+      sessionId: input.sessionId,
+      workerIncarnationId: claim.workerIncarnationId,
+      handoffId: handoff.id,
+    });
+    const integratedHeadSha = repositoryHead();
+    sharedQualityEvidenceIds ??= seedIntegratedQualityAuthority({
+      runtime,
+      scope,
+      missionId: mission.id,
+      headSha: integratedHeadSha,
+      label,
+    });
+    dispatches.completeByCoordinator({
+      taskId: input.task.id,
+      revision: ready.revision,
+      receipt: {
+        kind: 'worktree_integrated',
+        reference: integratedHeadSha,
+        completedAt: Date.now(),
+        evidenceIds: [...sharedQualityEvidenceIds],
+      },
+    });
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId: handoff.id,
+      missionId: mission.id,
+      orchestratorSessionId: 'orchestrator-golden',
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    handoffs.acceptDeliveryAttempt({
+      attemptId: attempt.id,
+      handoffId: handoff.id,
+    });
+    handoffs.markConsumedAfterAcceptedDelivery(
+      handoff.id,
+      mission.id,
+      'orchestrator-golden',
+    );
+    return { claim, handoff };
+  };
+  const primary = completePlannedTask({
+    task: task!,
+    taskOwnership: ownership,
+    workerId: 'Golden Worker',
+    agentRef: 'worker',
     sessionId: 'session-golden',
+    suffix: 'golden',
   });
-  const handoff = handoffs.submit({
-    missionId: mission.id,
-    sessionId: 'session-golden',
-    workerIncarnationId: claim.workerIncarnationId,
-    fromAgent: 'Golden Worker',
-    status: 'success',
-    summary: 'Implementação integrada com testes e commit local verificados.',
-  });
-  insertPhysicalHandoffAuthority({
-    runtime,
-    scope,
-    missionId: mission.id,
-    handoffId: handoff.id,
-    sessionId: 'session-golden',
-    workerIncarnationId: claim.workerIncarnationId,
-    worktreeHeadSha: repositoryHead(),
-  });
-  const ready = dispatches.acceptHandoff({
-    sessionId: 'session-golden',
-    workerIncarnationId: claim.workerIncarnationId,
-    handoffId: handoff.id,
-  });
-  const integratedHeadSha = repositoryHead();
-  const qualityEvidenceIds = seedIntegratedQualityAuthority({
-    runtime,
-    scope,
-    missionId: mission.id,
-    headSha: integratedHeadSha,
-    label,
-  });
-  dispatches.completeByCoordinator({
-    taskId: task!.id,
-    revision: ready.revision,
-    receipt: {
-      kind: 'worktree_integrated',
-      reference: integratedHeadSha,
-      completedAt: Date.now(),
-      evidenceIds: [...qualityEvidenceIds],
-    },
-  });
-  const attempt = handoffs.reserveDeliveryAttempt({
-    handoffId: handoff.id,
-    missionId: mission.id,
-    orchestratorSessionId: 'orchestrator-golden',
-    maxAttempts: 2,
-  });
-  handoffs.markDeliveryAttemptPasted({
-    attemptId: attempt.id,
-    handoffId: handoff.id,
-    acceptDeadlineAt: Date.now() + 10_000,
-  });
-  handoffs.acceptDeliveryAttempt({
-    attemptId: attempt.id,
-    handoffId: handoff.id,
-  });
-  handoffs.markConsumedAfterAcceptedDelivery(handoff.id, mission.id, 'orchestrator-golden');
+  if (secondaryTask) {
+    completePlannedTask({
+      task: secondaryTask,
+      taskOwnership: secondaryOwnership,
+      workerId: 'Secondary Worker',
+      agentRef: 'secondary-worker',
+      sessionId: 'session-secondary',
+      suffix: 'secondary',
+    });
+  }
   return {
     runtime,
     scope,
@@ -514,7 +857,7 @@ function verifiedPlanFixture(
     dispatches,
     mission,
     task: task!,
-    handoff,
+    handoff: primary.handoff,
   };
 }
 
@@ -745,6 +1088,8 @@ function readOnlyPhysicalHandoffFixture(
   options: {
     executionMode?: 'read_only' | 'isolated_worktree';
     worktreeHeadSha?: string;
+    teamReadOnlyFanout?: boolean;
+    priorLearnings?: string;
   } = {},
 ) {
   const runtime = manager();
@@ -755,12 +1100,16 @@ function readOnlyPhysicalHandoffFixture(
   const dispatches = createTaskDispatchStore(runtime, scope);
   const executionMode = options.executionMode ?? 'read_only';
   const ownership = {
-    files: ['src'],
+    files: options.teamReadOnlyFanout ? [] : ['src'],
     symbols: [],
-    domains: [
-      executionMode === 'read_only' ? 'guided-advisory' : 'guided-isolated-advisory',
-      'sequential-only',
-    ],
+    domains: options.teamReadOnlyFanout
+      ? ['guided-advisory', 'team-read-only-fanout']
+      : [
+          executionMode === 'read_only'
+            ? 'guided-advisory'
+            : 'guided-isolated-advisory',
+          'sequential-only',
+        ],
   };
   const contract = approvedIntentContract({
     goal: 'Mapear riscos antes da execução principal',
@@ -774,6 +1123,9 @@ function readOnlyPhysicalHandoffFixture(
     intentContract: contract,
     orchestratorSessionId: 'orchestrator-guided-advisor',
   });
+  if (options.priorLearnings) {
+    missions.appendLearning(mission.id, options.priorLearnings);
+  }
   missions.setStatus(mission.id, 'running');
   const [task] = tasks.createPlanAtomically({
     missionId: mission.id,
@@ -798,6 +1150,9 @@ function readOnlyPhysicalHandoffFixture(
           dependsOn: [],
           ownership,
           merged: false,
+          ...(options.teamReadOnlyFanout
+            ? { parallelEligible: true }
+            : {}),
           agentRef: 'advisor',
           agentCategory: 'architect',
           executionMode,
@@ -944,6 +1299,282 @@ describe('durable task dispatcher authority', () => {
         evidenceIds: [fixture.physicalReceiptId],
       },
     });
+  });
+
+  it('keeps fan-out running after the last ACK and completes after durable Maestro consolidation recovery', () => {
+    const fixture = readOnlyPhysicalHandoffFixture({
+      teamReadOnlyFanout: true,
+      priorLearnings: 'H'.repeat(65_536),
+    });
+    const completed = fixture.dispatches.completeReadOnlyFromTrustedHandoff({
+      taskId: fixture.task.id,
+      revision: fixture.ready.revision,
+    });
+    expect(completed).toMatchObject({
+      state: 'completed',
+      integrationReceipt: {
+        kind: 'read_only_validated',
+        evidenceIds: [fixture.physicalReceiptId],
+      },
+    });
+
+    const handoffs = createScopedHandoffStore(fixture.runtime, fixture.scope);
+    const attempt = handoffs.reserveDeliveryAttempt({
+      handoffId: fixture.handoff.id,
+      missionId: fixture.mission.id,
+      orchestratorSessionId: 'orchestrator-guided-advisor',
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: attempt.id,
+      handoffId: fixture.handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: attempt.id,
+        handoffId: fixture.handoff.id,
+      }),
+    ).toBe(true);
+    expect(
+      handoffs.markConsumedAfterAcceptedDelivery(
+        fixture.handoff.id,
+        fixture.mission.id,
+        'orchestrator-guided-advisor',
+      ),
+    ).toBe(true);
+    expect(
+      fixture.dispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(false);
+    const missionStore = createScopedMissionStore(
+      fixture.runtime,
+      fixture.scope,
+    );
+    expect(missionStore.get(fixture.mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+
+    const lastAckAt = insertPhysicalFanoutAck({
+      runtime: fixture.runtime,
+      scope: fixture.scope,
+      missionId: fixture.mission.id,
+      sessionId: 'orchestrator-guided-advisor',
+      handoffId: fixture.handoff.id,
+      attemptId: attempt.id,
+    });
+    expect(
+      fixture.dispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(false);
+    expect(missionStore.get(fixture.mission.id)?.status).toBe('running');
+
+    const finalSuffix =
+      '\n\n## Maestro\nMinha síntese prioriza liveness e validação completa ' +
+      'sem bloquear o usuário.\nFIM-DA-SINTESE-MAESTRO';
+    const finalPrefix =
+      '# Consolidação da rodada\n## Especialistas\nPerspectivas verificadas.\n';
+    const finalOutput =
+      finalPrefix +
+      'R'.repeat(65_536 - finalPrefix.length - finalSuffix.length) +
+      finalSuffix;
+    insertFanoutConsolidation({
+      runtime: fixture.runtime,
+      scope: fixture.scope,
+      missionId: fixture.mission.id,
+      intentVersion: 4,
+      sessionId: 'orchestrator-guided-advisor',
+      noEarlierThan: lastAckAt,
+      finalOutput,
+    });
+
+    fixture.runtime.close(fixture.scope);
+    const restartedDispatches = createTaskDispatchStore(
+      fixture.runtime,
+      fixture.scope,
+    );
+    expect(
+      restartedDispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(true);
+    const restartedMission = createScopedMissionStore(
+      fixture.runtime,
+      fixture.scope,
+    ).get(fixture.mission.id);
+    expect(restartedMission).toMatchObject({
+      status: 'done',
+      intentState: 'done',
+      learnings: expect.stringContaining('## Maestro'),
+    });
+    expect(restartedMission?.learnings).toBe(finalOutput);
+    expect(restartedMission?.learnings).toHaveLength(65_536);
+    expect(restartedMission?.learnings).toMatch(/FIM-DA-SINTESE-MAESTRO$/);
+  });
+
+  it('rebinds fan-out after an old physical ACK and consolidation without wedging current completion', () => {
+    const fixture = readOnlyPhysicalHandoffFixture({
+      teamReadOnlyFanout: true,
+    });
+    fixture.dispatches.completeReadOnlyFromTrustedHandoff({
+      taskId: fixture.task.id,
+      revision: fixture.ready.revision,
+    });
+    const handoffs = createScopedHandoffStore(fixture.runtime, fixture.scope);
+    const missions = createScopedMissionStore(fixture.runtime, fixture.scope);
+    const oldSessionId = 'orchestrator-guided-advisor';
+    const currentSessionId = 'orchestrator-guided-advisor-rebound';
+    const oldAttempt = handoffs.reserveDeliveryAttempt({
+      handoffId: fixture.handoff.id,
+      missionId: fixture.mission.id,
+      orchestratorSessionId: oldSessionId,
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: oldAttempt.id,
+      handoffId: fixture.handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: oldAttempt.id,
+        handoffId: fixture.handoff.id,
+      }),
+    ).toBe(true);
+    acknowledgeFanoutFromPhysicalMaestro({
+      runtime: fixture.runtime,
+      scope: fixture.scope,
+      handoffs,
+      missionId: fixture.mission.id,
+      sessionId: oldSessionId,
+      handoffId: fixture.handoff.id,
+    });
+    const oldOutput =
+      '# Consolidação antiga\n## Especialistas\nRodada antiga.\n\n' +
+      '## Maestro\nEsta síntese pertence somente à sessão física anterior.';
+    expect(consolidateFanoutFromPhysicalMaestro({
+      runtime: fixture.runtime,
+      scope: fixture.scope,
+      dispatches: fixture.dispatches,
+      missionId: fixture.mission.id,
+      intentVersion: 4,
+      sessionId: oldSessionId,
+      finalOutput: oldOutput,
+    })).toBe(true);
+
+    expect(
+      missions.rebindOrchestratorSession(
+        fixture.mission.id,
+        currentSessionId,
+      ),
+    ).toMatchObject({
+      orchestratorSessionId: currentSessionId,
+      status: 'running',
+    });
+    expect(handoffs.get(fixture.handoff.id)).toMatchObject({
+      delivered: false,
+      deliveryState: 'queued',
+    });
+    expect(
+      fixture.dispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(false);
+
+    const currentAttempt = handoffs.reserveDeliveryAttempt({
+      handoffId: fixture.handoff.id,
+      missionId: fixture.mission.id,
+      orchestratorSessionId: currentSessionId,
+      maxAttempts: 2,
+    });
+    handoffs.markDeliveryAttemptPasted({
+      attemptId: currentAttempt.id,
+      handoffId: fixture.handoff.id,
+      acceptDeadlineAt: Date.now() + 10_000,
+    });
+    expect(
+      handoffs.acceptDeliveryAttempt({
+        attemptId: currentAttempt.id,
+        handoffId: fixture.handoff.id,
+      }),
+    ).toBe(true);
+    acknowledgeFanoutFromPhysicalMaestro({
+      runtime: fixture.runtime,
+      scope: fixture.scope,
+      handoffs,
+      missionId: fixture.mission.id,
+      sessionId: currentSessionId,
+      handoffId: fixture.handoff.id,
+    });
+    expect(
+      fixture.dispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(false);
+    const currentOutput =
+      '# Consolidação recuperada\n## Especialistas\nRodada atual.\n\n' +
+      '## Maestro\nA nova sessão confirmou todos os ACKs antes de concluir.';
+    expect(consolidateFanoutFromPhysicalMaestro({
+      runtime: fixture.runtime,
+      scope: fixture.scope,
+      dispatches: fixture.dispatches,
+      missionId: fixture.mission.id,
+      intentVersion: 4,
+      sessionId: currentSessionId,
+      finalOutput: currentOutput,
+    })).toBe(true);
+
+    expect(
+      fixture.dispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 4,
+      }),
+    ).toBe(true);
+    expect(missions.get(fixture.mission.id)).toMatchObject({
+      status: 'done',
+      intentState: 'done',
+      learnings: currentOutput,
+    });
+    const db = fixture.runtime.open(fixture.scope).db;
+    expect(
+      db
+        .prepare(
+          `SELECT orchestrator_session_id, delivery_attempt_id
+           FROM handoff_ack_receipts WHERE handoff_id = ?
+           ORDER BY acknowledged_at, receipt_id`,
+        )
+        .all(fixture.handoff.id),
+    ).toEqual([
+      {
+        orchestrator_session_id: oldSessionId,
+        delivery_attempt_id: oldAttempt.id,
+      },
+      {
+        orchestrator_session_id: currentSessionId,
+        delivery_attempt_id: currentAttempt.id,
+      },
+    ]);
+    expect(
+      db
+        .prepare(
+          `SELECT orchestrator_session_id
+           FROM mission_fanout_consolidation_receipts
+           WHERE mission_id = ? AND intent_version = ?
+           ORDER BY created_at, receipt_id`,
+        )
+        .all(fixture.mission.id, 4),
+    ).toEqual([
+      { orchestrator_session_id: oldSessionId },
+      { orchestrator_session_id: currentSessionId },
+    ]);
   });
 
   it('completes an isolated advisory from the exact physical HEAD without bypassing PREVC', () => {
@@ -2064,6 +2695,43 @@ describe('durable task dispatcher authority', () => {
     db.prepare(`DELETE FROM mission_contracts WHERE mission_id = ?`).run(
       fixture.mission.id,
     );
+
+    expect(
+      fixture.dispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 7,
+      }),
+    ).toBe(false);
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+  });
+
+  it('keeps an existing delivery receipt PREVC-owned when its goal now matches the fan-out classifier', () => {
+    const fixture = verifiedPlanFixture('delivery-receipt-topology', {
+      squadId: 'agentic-guided-delivery-receipt',
+      goal: 'todos os panes me falam o que fazem nesta missão',
+    });
+
+    expect(
+      fixture.dispatches.completeMissionFromVerifiedPlan({
+        missionId: fixture.mission.id,
+        intentVersion: 7,
+      }),
+    ).toBe(false);
+    expect(fixture.missions.get(fixture.mission.id)).toMatchObject({
+      status: 'running',
+      intentState: 'executing',
+    });
+  });
+
+  it('refuses a fully verified mixed-marker plan from a saved squad', () => {
+    const fixture = verifiedPlanFixture('custom-mixed-topology', {
+      squadId: 'saved-mixed-squad',
+      goal: 'todos os panes me falam o que fazem nesta missão',
+      mixedTopology: true,
+    });
 
     expect(
       fixture.dispatches.completeMissionFromVerifiedPlan({

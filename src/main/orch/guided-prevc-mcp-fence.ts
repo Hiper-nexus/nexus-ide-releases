@@ -10,6 +10,7 @@ import {
   type AgentGateContext,
 } from "./gate";
 import { missionRequiresGuidedPrevc } from "./guided-mission-authority";
+import { standardTopologyFromSealedTaskDetails } from "./guided-mission-topology-authority";
 import { effectPolicyForTool } from "./mcp-effect-policy";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 
@@ -63,7 +64,19 @@ export function resolveProductionGuidedPrevcMcpFence(
   ) {
     stale("approved intent version is no longer current");
   }
-  if (!missionRequiresGuidedPrevc(mission)) {
+  const receipt = stores.tasks.getPlanReceipt(
+    missionId,
+    approved.intentVersion,
+  );
+  const topology = standardTopologyFromSealedTaskDetails(
+    receipt?.tasks.map((task) => task.detail) ?? [],
+  );
+  if (topology === "invalid") {
+    stale(
+      "sealed task plan mixes delivery and team-read-only-fanout authority",
+    );
+  }
+  if (!missionRequiresGuidedPrevc(mission, topology)) {
     return INACTIVE_GUIDED_PREVC_MCP_FENCE;
   }
 

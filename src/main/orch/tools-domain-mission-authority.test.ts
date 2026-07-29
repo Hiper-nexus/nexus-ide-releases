@@ -424,7 +424,10 @@ describe('mission creation authority', () => {
         }),
         setStatus,
       },
-      tasks: { hasPlan: () => true },
+      tasks: {
+        hasPlan: () => true,
+        getPlanReceipt: () => ({ tasks: [] }),
+      },
     });
 
     await expect(missionSetStatusTool().handler(

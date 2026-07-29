@@ -39,6 +39,24 @@ function requireHandoffMcpEffectIntent(
   return invocation.agentTransportPhysicalReceipt;
 }
 
+function requireHandoffAckPhysicalReceipt(
+  invocation: McpToolInvocation | undefined,
+): NonNullable<McpToolInvocation["agentTransportPhysicalReceipt"]> {
+  const intent = invocation?.effectIntent;
+  if (
+    !intent ||
+    (intent.source !== "http-mcp" && intent.source !== "pty-stream") ||
+    intent.toolName !== "nexus_handoff_ack" ||
+    !invocation?.agentTransportPhysicalReceipt
+  ) {
+    throw new Error(
+      "handoff_ack_provenance: exact physical Maestro tool-call receipt is required",
+    );
+  }
+  assertMcpInvocationCurrent(invocation);
+  return invocation.agentTransportPhysicalReceipt;
+}
+
 const handoffSubmitTool: McpToolDef = {
   name: "nexus_handoff_submit",
   description:
@@ -263,19 +281,23 @@ const handoffAcknowledgeTool: McpToolDef = {
     properties: { handoffId: { type: "string" } },
     required: ["handoffId"],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     if (ctx.role !== "orchestrator" || !ctx.missionId || !ctx.sessionId) {
       throw new Error(
         "handoff acknowledgement requires the current physical mission orchestrator",
       );
     }
     const handoffId = requireStr(args, "handoffId");
+    const physicalReceipt = requireHandoffAckPhysicalReceipt(invocation);
     const consumed = getProjectDomainStores(
       ctx.scope,
-    ).handoffs.markConsumedAfterAcceptedDelivery(
-      handoffId,
-      ctx.missionId,
-      ctx.sessionId,
+    ).handoffs.markConsumedFromPhysicalAck(
+      {
+        handoffId,
+        missionId: ctx.missionId,
+        orchestratorSessionId: ctx.sessionId,
+      },
+      physicalReceipt,
     );
     if (!consumed)
       throw new Error("handoff is not awaiting consumption in this mission");

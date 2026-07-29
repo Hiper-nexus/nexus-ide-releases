@@ -25,6 +25,8 @@ interface OrchState {
   mcpInfo: McpRuntimeInfo | null;
   panelOpen: boolean;
   panelTab: OrchPanelTab;
+  /** Durable mission report selected for inspection; never runtime authority. */
+  selectedMissionId: string | null;
   /** Ops Board — pipeline espacial de missões (overlay de workspace). */
   boardOpen: boolean;
   /** paneId → missionId for panes spawned by the orchestration layer. */
@@ -41,6 +43,8 @@ interface OrchState {
   resetProjectState(): void;
   togglePanel(): void;
   openPanel(tab: OrchPanelTab): void;
+  openMissionDetail(missionId: string): void;
+  clearMissionDetail(): void;
   setPanelTab(tab: OrchPanelTab): void;
   toggleBoard(): void;
   openBoard(): void;
@@ -71,6 +75,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
   mcpInfo: null,
   panelOpen: false,
   panelTab: 'missions',
+  selectedMissionId: null,
   boardOpen: false,
   paneMissions: {},
   boundWorkspacePath: null,
@@ -193,11 +198,20 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       squads: [],
       paneMissions: {},
       boundWorkspacePath: null,
+      selectedMissionId: null,
       workspaceEpoch: s.workspaceEpoch + 1,
     })),
 
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
-  openPanel: (tab) => set({ panelOpen: true, panelTab: tab }),
+  openPanel: (tab) =>
+    set({ panelOpen: true, panelTab: tab, selectedMissionId: null }),
+  openMissionDetail: (missionId) =>
+    set({
+      panelOpen: true,
+      panelTab: 'missions',
+      selectedMissionId: missionId,
+    }),
+  clearMissionDetail: () => set({ selectedMissionId: null }),
   setPanelTab: (tab) => set({ panelTab: tab }),
   toggleBoard: () => set((s) => ({ boardOpen: !s.boardOpen })),
   openBoard: () => set({ boardOpen: true }),
